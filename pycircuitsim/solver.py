@@ -1,9 +1,11 @@
 """
-DC Solver for linear and non-linear circuits using Modified Nodal Analysis (MNA).
+DC and Transient Solvers for linear and non-linear circuits using Modified Nodal Analysis (MNA).
 
-This module implements the DCSolver class, which solves for the DC operating
-point of circuits. The solver uses MNA formulation to construct and solve
-the circuit equations:
+This module implements:
+1. DCSolver: Solves for the DC operating point of circuits
+2. TransientSolver: Performs time-domain analysis using Backward Euler integration
+
+Both solvers use MNA formulation to construct and solve the circuit equations:
 
     [G  B] [v]     [i]
     [    ] [ ] =   [ ]
@@ -22,11 +24,12 @@ The solver handles:
 - Voltage sources (augmented matrix with B and C blocks)
 - Current sources (RHS vector stamping)
 - Non-linear MOSFETs (Newton-Raphson iteration)
+- Capacitors (Backward Euler companion model for transient analysis)
 """
 from typing import Dict, List, Tuple
 import numpy as np
 from pycircuitsim.circuit import Circuit
-from pycircuitsim.models.passive import VoltageSource
+from pycircuitsim.models.passive import VoltageSource, Capacitor
 
 
 class DCSolver:
@@ -437,4 +440,232 @@ class DCSolver:
             f"DCSolver(circuit={self.circuit}, "
             f"tolerance={self.tolerance}, "
             f"max_iterations={self.max_iterations})"
+        )
+
+
+class TransientSolver:
+    """
+    Transient Solver for time-domain analysis using Backward Euler integration.
+
+    The TransientSolver performs time-domain simulation of circuits with capacitors.
+    It uses the Backward Euler method to discretize capacitors into companion models
+    (equivalent conductance and current source) at each timestep.
+
+    Algorithm:
+    1. Perform DC analysis at t=0 to find initial conditions
+    2. For each timestep:
+       a. Update capacitor companion models (G_eq = C/dt, I_eq = G_eq * V_prev)
+       b. Solve DC circuit at current timestep
+       c. Update capacitor voltages for next timestep
+       d. Store results
+
+    Attributes:
+        circuit: Circuit object containing components and topology
+        t_stop: Stop time for simulation in seconds
+        dt: Timestep size in seconds
+    """
+
+    def __init__(self, circuit: Circuit, t_stop: float, dt: float):
+        """
+        Initialize the Transient Solver.
+
+        Args:
+            circuit: Circuit object to simulate
+            t_stop: Stop time for simulation in seconds
+            dt: Timestep size in seconds (must be positive)
+
+        Raises:
+            ValueError: If dt or t_stop is not positive
+        """
+        if dt <= 0:
+            raise ValueError(f"Timestep dt must be positive, got {dt}")
+        if t_stop <= 0:
+            raise ValueError(f"Stop time t_stop must be positive, got {t_stop}")
+
+        self.circuit = circuit
+        self.t_stop = t_stop
+        self.dt = dt
+
+    def solve(self) -> Dict[str, np.ndarray]:
+        """
+        Perform transient analysis from t=0 to t=t_stop.
+
+        This method:
+        1. Performs DC analysis at t=0 to find initial operating point
+        2. Iterates through timesteps, updating capacitor companion models
+        3. Solves circuit at each timestep using DC solver
+        4. Returns time series of node voltages
+
+        Returns:
+            Dictionary containing:
+                - "time": numpy array of time points
+                - node names: numpy arrays of voltages at each time point
+
+        Raises:
+            np.linalg.LinAlgError: If the circuit matrix is singular (unsolvable)
+            RuntimeError: If DC solver fails to converge
+        """
+        # Get circuit topology
+        nodes = self.circuit.get_nodes()
+        node_map = self.circuit.get_node_map()
+        num_nodes = len(nodes)
+        num_voltage_sources = self.circuit.count_voltage_sources()
+
+        # Calculate number of timesteps
+        num_steps = int(np.ceil(self.t_stop / self.dt)) + 1
+
+        # Initialize storage arrays
+        time = np.zeros(num_steps)
+        voltages_over_time = {node: np.zeros(num_steps) for node in nodes}
+
+        # Step 1: Initial conditions from capacitor voltages
+        # For transient analysis, we use the capacitor's initial voltage (v_prev)
+        # instead of doing a DC solve (which would give steady-state, not transient)
+
+        # Build initial voltage estimate based on capacitor v_prev values
+        initial_voltages = {"0": 0.0, "GND": 0.0}
+
+        # For each capacitor, estimate the node voltages based on v_prev
+        for component in self.circuit.components:
+            if isinstance(component, Capacitor):
+                node_i, node_j = component.nodes[0], component.nodes[1]
+
+                # If one node is ground, the other is at v_prev
+                if node_j == "0" or node_j == "GND":
+                    initial_voltages[node_i] = component.v_prev
+                elif node_i == "0" or node_i == "GND":
+                    initial_voltages[node_j] = -component.v_prev
+                else:
+                    # Both nodes are non-ground: we can't determine individual voltages
+                    # from just the difference, so set them to 0 for now
+                    # The first timestep will correct this
+                    if node_i not in initial_voltages:
+                        initial_voltages[node_i] = 0.0
+                    if node_j not in initial_voltages:
+                        initial_voltages[node_j] = 0.0
+
+        # For any remaining nodes, set to 0V
+        for node in nodes:
+            if node not in initial_voltages:
+                initial_voltages[node] = 0.0
+
+        # Store initial voltages
+        time[0] = 0.0
+        for node in nodes:
+            voltages_over_time[node][0] = initial_voltages.get(node, 0.0)
+
+        # Step 2: Time-stepping loop
+        for step in range(1, num_steps):
+            # Current time
+            current_time = step * self.dt
+            time[step] = min(current_time, self.t_stop)
+
+            # Update capacitor companion models for this timestep
+            for component in self.circuit.components:
+                if isinstance(component, Capacitor):
+                    # Get companion model: G_eq = C/dt, I_eq = G_eq * V_prev
+                    g_eq, i_eq = component.get_companion_model(self.dt, component.v_prev)
+
+            # Build and solve MNA matrix for this timestep
+            mna_matrix = np.zeros((num_nodes + num_voltage_sources, num_nodes + num_voltage_sources))
+            rhs = np.zeros(num_nodes + num_voltage_sources)
+
+            # Stamp all components (capacitors now use companion model)
+            for component in self.circuit.components:
+                component.stamp_conductance(mna_matrix, node_map)
+                component.stamp_rhs(rhs, node_map)
+
+            # Handle voltage sources
+            self._stamp_voltage_sources(mna_matrix, rhs, node_map, num_nodes)
+
+            # Solve for node voltages at this timestep
+            try:
+                solution = np.linalg.solve(mna_matrix, rhs)
+            except np.linalg.LinAlgError as e:
+                raise np.linalg.LinAlgError(
+                    f"Circuit matrix is singular at t={current_time:.6f}s. "
+                    f"Check for floating nodes or short circuits."
+                ) from e
+
+            # Extract node voltages from solution
+            timestep_voltages = {}
+            for idx, node in enumerate(nodes):
+                timestep_voltages[node] = float(solution[idx])
+            timestep_voltages["0"] = 0.0
+            timestep_voltages["GND"] = 0.0
+
+            # Store voltages
+            for node in nodes:
+                voltages_over_time[node][step] = timestep_voltages[node]
+
+            # Update capacitor voltages for next timestep
+            for component in self.circuit.components:
+                if isinstance(component, Capacitor):
+                    component.update_voltage(timestep_voltages)
+
+        # Prepare results dictionary
+        results = {"time": time}
+        for node in nodes:
+            results[node] = voltages_over_time[node]
+
+        return results
+
+    def _stamp_voltage_sources(
+        self,
+        mna_matrix: np.ndarray,
+        rhs: np.ndarray,
+        node_map: Dict[str, int],
+        num_nodes: int,
+    ) -> None:
+        """
+        Stamp voltage source equations to MNA matrix.
+
+        For each voltage source, we add:
+        - B matrix column: connection to node voltages
+        - C matrix row: voltage constraint equation
+        - RHS entry: voltage source value
+
+        The voltage source equation is: V_pos - V_neg = V_source
+
+        Args:
+            mna_matrix: MNA matrix to modify (in-place)
+            rhs: RHS vector to modify (in-place)
+            node_map: Mapping from node names to matrix indices
+            num_nodes: Number of non-ground nodes
+        """
+        voltage_source_index = 0
+
+        for component in self.circuit.components:
+            if isinstance(component, VoltageSource):
+                # Get voltage source nodes
+                pos_node = component.nodes[0]  # Positive terminal
+                neg_node = component.nodes[1]  # Negative terminal
+                voltage = component.voltage
+
+                # The row index for this voltage source's equation
+                vs_row = num_nodes + voltage_source_index
+
+                # Stamp B matrix (voltage source current flows into nodes)
+                if pos_node != "0" and pos_node in node_map:
+                    pos_idx = node_map[pos_node]
+                    mna_matrix[vs_row, pos_idx] += 1.0
+                    mna_matrix[pos_idx, vs_row] += 1.0
+
+                if neg_node != "0" and neg_node in node_map:
+                    neg_idx = node_map[neg_node]
+                    mna_matrix[vs_row, neg_idx] -= 1.0
+                    mna_matrix[neg_idx, vs_row] -= 1.0
+
+                # Stamp voltage source value to RHS
+                rhs[vs_row] = voltage
+
+                # Move to next voltage source
+                voltage_source_index += 1
+
+    def __repr__(self) -> str:
+        """String representation of the solver."""
+        return (
+            f"TransientSolver(circuit={self.circuit}, "
+            f"t_stop={self.t_stop}, "
+            f"dt={self.dt})"
         )
