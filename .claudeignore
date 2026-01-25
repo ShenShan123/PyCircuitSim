@@ -1,0 +1,101 @@
+# -----------------------------
+# 系统与开发环境 (System & Env)
+# -----------------------------
+.git/
+.vscode/
+.idea/
+.DS_Store
+node_modules/
+venv/
+.venv/
+env/
+.env/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# -----------------------------
+# 数据集与大数据 (Data & Large Files)
+# -----------------------------
+# 屏蔽通常存放数据的目录
+data/
+dataset/
+datasets/
+raw_data/
+processed_data/
+
+# 屏蔽常见的大型数据格式
+*.csv
+*.tsv
+*.jsonl
+*.parquet
+*.feather
+*.pkl      # Pickle文件是二进制，读了全是乱码
+*.pickle
+*.npy      # Numpy 二进制
+*.npz
+*.hdf5
+*.h5
+*.arrow    # Hugging Face Dataset 缓存
+*.db       # SQLite 数据库
+*.sqlite
+
+# -----------------------------
+# 神经网络模型权重 (Model Weights)
+# -----------------------------
+# 这些完全是二进制文件，绝对不要让 Claude 读
+models/
+checkpoints/
+weights/
+*.pt       # PyTorch
+*.pth
+*.ckpt     # PyTorch Lightning
+*.bin      # Hugging Face
+*.safetensors # Hugging Face (现在很常用)
+*.onnx
+*.pb       # TensorFlow
+*.keras
+*.tflite
+
+# -----------------------------
+# 图片与多媒体 (Media)
+# -----------------------------
+# 虽然 Claude 识图，但训练用的数万张图片会让它崩溃
+imgs/
+images/
+videos/
+*.jpg
+*.jpeg
+*.png
+*.gif
+*.svg
+*.mp4
+
+# -----------------------------
+# 日志与监控 (Logs & Visualization)
+# -----------------------------
+# TensorBoard 和 Weights & Biases 的日志目录
+runs/
+lightning_logs/
+wandb/
+mlruns/    # MLflow
+logs/
+*.log
+
+# -----------------------------
+# Jupyter & EDA 产物
+# -----------------------------
+.ipynb_checkpoints/
+# 屏蔽 EDA 生成的 HTML 报告（如 pandas-profiling）
+*.html
+site/
+build/
+dist/
+
+# -----------------------------
+# 特例放行 (Whitelist)
+# -----------------------------
+# 如果你有非常小的示例数据 CSV 需要 Claude 理解，可以用 ! 排除
+# !data/sample_submission.csv
+# !data/config.json
