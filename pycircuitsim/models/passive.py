@@ -375,3 +375,195 @@ class CurrentSource(Component):
     def __repr__(self) -> str:
         """String representation of the current source."""
         return f"CurrentSource({self.name}, nodes={self.nodes}, I={self.current}A)"
+
+
+class Capacitor(Component):
+    """
+    Linear capacitor using Backward Euler companion model for transient analysis.
+
+    For DC analysis, a capacitor is an open circuit (I = 0).
+    For transient analysis, the capacitor is discretized using Backward Euler:
+
+    The companion model represents the capacitor as:
+    - Equivalent conductance: G_eq = C / dt
+    - Equivalent current source: I_eq = G_eq * V_prev
+
+    where V_prev is the voltage across the capacitor at the previous timestep.
+
+    This allows the capacitor to be modeled as a resistor in parallel with
+    a current source during each timestep of transient analysis.
+
+    Attributes:
+        name: Component identifier (e.g., 'C1')
+        nodes: List of two node names
+        capacitance: Capacitance value in farads
+        v_prev: Voltage across capacitor at previous timestep (starts at 0)
+        _g_eq: Equivalent conductance from companion model (C/dt)
+        _i_eq: Equivalent current from companion model (G_eq * V_prev)
+    """
+
+    def __init__(self, name: str, nodes: List[str], value: float):
+        """
+        Initialize a capacitor.
+
+        Args:
+            name: Component identifier (e.g., 'C1', 'C_load')
+            nodes: List of exactly two node names (e.g., ['n1', 'n2'])
+            value: Capacitance value in farads (must be positive)
+
+        Raises:
+            ValueError: If capacitance is not positive or nodes count is not 2
+        """
+        super().__init__(name, nodes, value)
+
+        # Validate number of nodes
+        if len(nodes) != 2:
+            raise ValueError(f"Capacitor must have exactly 2 nodes, got {len(nodes)}")
+
+        # Validate capacitance value
+        if value is None or value <= 0:
+            raise ValueError(f"Capacitance must be positive, got {value}")
+
+        self.capacitance = float(value)
+        self.v_prev = 0.0  # Initial voltage across capacitor
+
+        # Companion model parameters (set during transient analysis)
+        self._g_eq = 0.0  # Equivalent conductance
+        self._i_eq = 0.0  # Equivalent current source
+
+    def get_nodes(self) -> List[str]:
+        """
+        Return list of node names this capacitor connects to.
+
+        Returns:
+            List of two node names
+        """
+        return self.nodes
+
+    def get_companion_model(self, dt: float, v_prev: float) -> tuple[float, float]:
+        """
+        Calculate Backward Euler companion model parameters.
+
+        The companion model represents the discrete-time capacitor as:
+        - G_eq = C / dt (equivalent conductance)
+        - I_eq = G_eq * V_prev (equivalent current source)
+
+        Args:
+            dt: Timestep size in seconds
+            v_prev: Voltage across capacitor at previous timestep
+
+        Returns:
+            Tuple of (G_eq, I_eq) where:
+                G_eq: Equivalent conductance in siemens
+                I_eq: Equivalent current in amperes
+        """
+        g_eq = self.capacitance / dt
+        i_eq = g_eq * v_prev
+
+        # Store for stamping
+        self._g_eq = g_eq
+        self._i_eq = i_eq
+
+        return g_eq, i_eq
+
+    def stamp_conductance(self, matrix: np.ndarray, node_map: Dict[str, int]) -> None:
+        """
+        Add equivalent conductance (G_eq) to the MNA matrix.
+
+        After the companion model is set, this stamps G_eq the same way
+        a resistor stamps its conductance. For a capacitor between nodes i and j:
+        - Add G_eq to diagonal entries G[i,i] and G[j,j]
+        - Subtract G_eq from off-diagonal entries G[i,j] and G[j,i]
+
+        Ground node (node "0") is not in the node_map and is skipped.
+
+        Args:
+            matrix: The MNA matrix to modify (in-place)
+            node_map: Mapping from node names to matrix indices
+        """
+        node_i, node_j = self.nodes[0], self.nodes[1]
+        g = self._g_eq
+
+        # Stamp node i (skip if ground)
+        if node_i != "0" and node_i in node_map:
+            idx_i = node_map[node_i]
+            matrix[idx_i, idx_i] += g
+
+            # Stamp connection to node j
+            if node_j != "0" and node_j in node_map:
+                idx_j = node_map[node_j]
+                matrix[idx_i, idx_j] -= g
+                matrix[idx_j, idx_i] -= g
+
+        # Stamp node j (skip if ground or already handled)
+        if node_j != "0" and node_j in node_map:
+            idx_j = node_map[node_j]
+            matrix[idx_j, idx_j] += g
+
+    def stamp_rhs(self, rhs: np.ndarray, node_map: Dict[str, int]) -> None:
+        """
+        Add equivalent current source (I_eq) to the RHS vector.
+
+        After the companion model is set, this stamps I_eq the same way
+        a current source stamps its current. For a capacitor between nodes i and j:
+        - Add +I_eq to node_i
+        - Add -I_eq to node_j
+
+        Ground node (node "0") is not in the node_map and is skipped.
+
+        Args:
+            rhs: The RHS vector to modify (in-place)
+            node_map: Mapping from node names to matrix indices
+        """
+        node_i, node_j = self.nodes[0], self.nodes[1]
+
+        # Add +I_eq to node_i
+        if node_i != "0" and node_i in node_map:
+            idx_i = node_map[node_i]
+            rhs[idx_i] += self._i_eq
+
+        # Add -I_eq to node_j
+        if node_j != "0" and node_j in node_map:
+            idx_j = node_map[node_j]
+            rhs[idx_j] -= self._i_eq
+
+    def update_voltage(self, voltages: Dict[str, float]) -> None:
+        """
+        Update the previous voltage after a timestep completes.
+
+        This should be called after each timestep in transient analysis
+        to store the current voltage for the next timestep's companion model.
+
+        Args:
+            voltages: Dictionary mapping node names to voltage values
+        """
+        node_i, node_j = self.nodes[0], self.nodes[1]
+
+        # Get voltages (default to 0 if node not found)
+        v_i = voltages.get(node_i, 0.0)
+        v_j = voltages.get(node_j, 0.0)
+
+        # Update v_prev for next timestep
+        self.v_prev = v_i - v_j
+
+    def calculate_current(self, voltages: Dict[str, float]) -> float:
+        """
+        Calculate current flowing through the capacitor.
+
+        For DC analysis, the capacitor is an open circuit (I = 0).
+        For transient analysis, the actual current is calculated by the solver
+        using the companion model.
+
+        Args:
+            voltages: Dictionary mapping node names to voltage values
+
+        Returns:
+            Current flowing from first node to second node (0 for DC analysis)
+        """
+        # In DC analysis, capacitor is open circuit
+        # In transient analysis, current is calculated by solver using companion model
+        return 0.0
+
+    def __repr__(self) -> str:
+        """String representation of the capacitor."""
+        return f"Capacitor({self.name}, nodes={self.nodes}, C={self.capacitance}F)"

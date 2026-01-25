@@ -6,7 +6,7 @@ starting with the Resistor model.
 """
 import pytest
 import numpy as np
-from pycircuitsim.models.passive import Resistor, VoltageSource, CurrentSource
+from pycircuitsim.models.passive import Resistor, VoltageSource, CurrentSource, Capacitor
 
 
 def test_resistor_creation():
@@ -285,3 +285,155 @@ def test_current_source_stamp_conductance():
 
     # Current sources don't contribute to conductance matrix
     assert np.allclose(matrix, 0.0)
+
+
+def test_capacitor_creation():
+    """Test that a Capacitor can be created with proper parameters."""
+    # Valid capacitor
+    c1 = Capacitor("C1", ["n1", "n2"], 1e-6)
+    assert c1.name == "C1"
+    assert c1.get_nodes() == ["n1", "n2"]
+    assert c1.capacitance == 1e-6
+    assert c1.v_prev == 0.0  # Initial voltage is zero
+
+    # Capacitor connected to ground
+    c2 = Capacitor("C2", ["n1", "0"], 100e-12)
+    assert c2.get_nodes() == ["n1", "0"]
+    assert c2.capacitance == 100e-12
+
+
+def test_capacitor_creation_invalid():
+    """Test that invalid capacitor parameters raise errors."""
+    # Negative capacitance
+    with pytest.raises(ValueError, match="Capacitance must be positive"):
+        Capacitor("C1", ["n1", "n2"], -1e-6)
+
+    # Zero capacitance
+    with pytest.raises(ValueError, match="Capacitance must be positive"):
+        Capacitor("C1", ["n1", "n2"], 0.0)
+
+    # Wrong number of nodes
+    with pytest.raises(ValueError, match="Capacitor must have exactly 2 nodes"):
+        Capacitor("C1", ["n1"], 1e-6)
+
+    with pytest.raises(ValueError, match="Capacitor must have exactly 2 nodes"):
+        Capacitor("C1", ["n1", "n2", "n3"], 1e-6)
+
+
+def test_capacitor_companion_model():
+    """Test Backward Euler companion model: G_eq = C/dt, I_eq = G_eq * V_prev."""
+    c1 = Capacitor("C1", ["n1", "n2"], 1e-6)  # 1 uF
+
+    # Test with dt = 1ms, v_prev = 0V
+    dt = 1e-3
+    v_prev = 0.0
+    g_eq, i_eq = c1.get_companion_model(dt, v_prev)
+
+    # G_eq = C/dt = 1e-6 / 1e-3 = 0.001 S
+    assert np.isclose(g_eq, 0.001)
+    # I_eq = G_eq * V_prev = 0.001 * 0 = 0 A
+    assert np.isclose(i_eq, 0.0)
+
+    # Test with dt = 1ms, v_prev = 5V
+    v_prev = 5.0
+    g_eq, i_eq = c1.get_companion_model(dt, v_prev)
+
+    # G_eq = C/dt = 0.001 S (unchanged)
+    assert np.isclose(g_eq, 0.001)
+    # I_eq = G_eq * V_prev = 0.001 * 5 = 0.005 A
+    assert np.isclose(i_eq, 0.005)
+
+    # Test with different timestep: dt = 10us
+    dt = 10e-6
+    v_prev = 3.0
+    g_eq, i_eq = c1.get_companion_model(dt, v_prev)
+
+    # G_eq = C/dt = 1e-6 / 10e-6 = 0.1 S
+    assert np.isclose(g_eq, 0.1)
+    # I_eq = G_eq * V_prev = 0.1 * 3 = 0.3 A
+    assert np.isclose(i_eq, 0.3)
+
+
+def test_capacitor_stamp_conductance():
+    """Test that capacitor stamps G_eq to MNA matrix after companion model is set."""
+    matrix = np.zeros((3, 3))
+    node_map = {"n1": 0, "n2": 1, "n3": 2}
+
+    # Create capacitor and set companion model
+    c1 = Capacitor("C1", ["n1", "n2"], 1e-6)
+    dt = 1e-3
+    v_prev = 5.0
+    g_eq, i_eq = c1.get_companion_model(dt, v_prev)
+
+    # Stamp conductance
+    c1.stamp_conductance(matrix, node_map)
+
+    # Check that G_eq is stamped (same pattern as resistor)
+    assert np.isclose(matrix[0, 0], g_eq)  # G[n1, n1]
+    assert np.isclose(matrix[1, 1], g_eq)  # G[n2, n2]
+    assert np.isclose(matrix[0, 1], -g_eq)  # G[n1, n2]
+    assert np.isclose(matrix[1, 0], -g_eq)  # G[n2, n1]
+
+    # Other terms should remain zero
+    assert matrix[2, 2] == 0.0
+    assert matrix[0, 2] == 0.0
+
+
+def test_capacitor_stamp_rhs():
+    """Test that capacitor stamps I_eq to RHS vector after companion model is set."""
+    rhs = np.zeros(3)
+    node_map = {"n1": 0, "n2": 1, "n3": 2}
+
+    # Create capacitor and set companion model
+    c1 = Capacitor("C1", ["n1", "n2"], 1e-6)
+    dt = 1e-3
+    v_prev = 5.0
+    g_eq, i_eq = c1.get_companion_model(dt, v_prev)
+
+    # Stamp RHS
+    c1.stamp_rhs(rhs, node_map)
+
+    # Should add +I_eq to n1 and -I_eq to n2
+    assert np.isclose(rhs[0], i_eq)   # +I_eq at n1
+    assert np.isclose(rhs[1], -i_eq)  # -I_eq at n2
+    assert np.isclose(rhs[2], 0.0)    # No change at n3
+
+
+def test_capacitor_update_voltage():
+    """Test that capacitor updates v_prev after timestep."""
+    c1 = Capacitor("C1", ["n1", "n2"], 1e-6)
+
+    # Initial voltage
+    assert c1.v_prev == 0.0
+
+    # Update to new voltage
+    voltages = {"n1": 5.0, "n2": 2.0}
+    c1.update_voltage(voltages)
+
+    # v_prev should be updated to V_n1 - V_n2 = 3V
+    assert c1.v_prev == 3.0
+
+    # Update again
+    voltages = {"n1": 4.0, "n2": 1.0}
+    c1.update_voltage(voltages)
+
+    # v_prev should be updated to V_n1 - V_n2 = 3V
+    assert c1.v_prev == 3.0
+
+    # Test with ground node
+    c2 = Capacitor("C2", ["n1", "0"], 100e-12)
+    voltages = {"n1": 10.0, "0": 0.0}
+    c2.update_voltage(voltages)
+    assert c2.v_prev == 10.0
+
+
+def test_capacitor_current_dc():
+    """Test that capacitor returns 0 current for DC analysis."""
+    c1 = Capacitor("C1", ["n1", "n2"], 1e-6)
+
+    # In DC analysis, capacitor is open circuit (I = 0)
+    voltages = {"n1": 5.0, "n2": 2.0}
+    current = c1.calculate_current(voltages)
+
+    # Should return 0 for DC analysis
+    assert np.isclose(current, 0.0)
