@@ -8,7 +8,12 @@ This package contains all circuit component models including:
 """
 
 from pycircuitsim.models.base import Component
-from pycircuitsim.models.passive import Resistor, VoltageSource, CurrentSource
+from pycircuitsim.models.passive import (
+    Resistor,
+    VoltageSource,
+    CurrentSource,
+    Capacitor
+)
 from pycircuitsim.models.mosfet import NMOS, PMOS
 
 __all__ = [
@@ -16,6 +21,7 @@ __all__ = [
     'Resistor',
     'VoltageSource',
     'CurrentSource',
+    'Capacitor',
     'NMOS',
     'PMOS',
 ]
