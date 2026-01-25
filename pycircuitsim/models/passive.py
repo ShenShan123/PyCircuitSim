@@ -147,3 +147,117 @@ class Resistor(Component):
     def __repr__(self) -> str:
         """String representation of the resistor."""
         return f"Resistor({self.name}, nodes={self.nodes}, R={self.resistance}Ω)"
+
+
+class VoltageSource(Component):
+    """
+    Ideal DC voltage source.
+
+    A voltage source maintains a fixed voltage difference between its terminals.
+    In MNA formulation, voltage sources require special handling:
+    - They add a row and column to the MNA matrix (the current through the source)
+    - The voltage constraint is added to the RHS vector
+
+    For a voltage source between nodes i and j:
+    - Adds equation: V_i - V_j = V_source
+    - Adds unknown: I_source (current flowing from positive to negative terminal)
+
+    The actual matrix stamping is handled by the solver, which builds the
+    augmented MNA matrix with B and C blocks for voltage sources.
+
+    Attributes:
+        name: Component identifier (e.g., 'V1', 'V_dd')
+        nodes: List of two node names [positive, negative]
+        voltage: Voltage value in volts
+    """
+
+    def __init__(self, name: str, nodes: List[str], value: float):
+        """
+        Initialize a voltage source.
+
+        Args:
+            name: Component identifier (e.g., 'V1', 'V_dd')
+            nodes: List of exactly two node names [positive, negative]
+            value: Voltage value in volts
+
+        Raises:
+            ValueError: If nodes count is not 2
+        """
+        super().__init__(name, nodes, value)
+
+        # Validate number of nodes
+        if len(nodes) != 2:
+            raise ValueError(f"VoltageSource must have exactly 2 nodes, got {len(nodes)}")
+
+        # Store voltage value
+        self.voltage = float(value)
+
+    def get_nodes(self) -> List[str]:
+        """
+        Return list of node names this voltage source connects to.
+
+        Returns:
+            List of two node names [positive, negative]
+        """
+        return self.nodes
+
+    def stamp_conductance(self, matrix: np.ndarray, node_map: Dict[str, int]) -> None:
+        """
+        Interface for conductance stamping (pass-through for voltage sources).
+
+        Voltage sources require special MNA handling with augmented matrix.
+        The actual stamping of B and C matrix blocks is handled by the solver.
+
+        This method exists to satisfy the Component interface but does nothing,
+        as the solver will handle the matrix augmentation when it detects
+        voltage sources in the circuit.
+
+        Args:
+            matrix: The MNA matrix (not modified by voltage sources directly)
+            node_map: Mapping from node names to matrix indices
+        """
+        # Voltage sources don't stamp to conductance matrix directly
+        # The solver will handle B/C matrix augmentation
+        pass
+
+    def stamp_rhs(self, rhs: np.ndarray, node_map: Dict[str, int]) -> None:
+        """
+        Interface for RHS stamping (pass-through for voltage sources).
+
+        The voltage constraint equation (V_pos - V_neg = V_source)
+        is added by the solver when building the augmented MNA system.
+
+        This method exists to satisfy the Component interface but does nothing,
+        as the solver will handle the RHS modification for voltage constraints.
+
+        Args:
+            rhs: The RHS vector (not modified by voltage sources directly)
+            node_map: Mapping from node names to matrix indices
+        """
+        # Voltage sources don't stamp to RHS directly
+        # The solver will handle this when building augmented system
+        pass
+
+    def calculate_current(self, voltages: Dict[str, float]) -> float:
+        """
+        Interface for current calculation (placeholder for voltage sources).
+
+        The current through a voltage source is determined by the circuit
+        topology and is calculated by the solver during MNA solving.
+
+        This method exists to satisfy the Component interface but returns 0.0,
+        as the actual current will be extracted from the solution vector.
+
+        Args:
+            voltages: Dictionary mapping node names to voltage values
+
+        Returns:
+            Current placeholder (0.0, actual current calculated by solver)
+        """
+        # Current through voltage source is calculated by solver
+        # This is a placeholder to satisfy the interface
+        return 0.0
+
+    def __repr__(self) -> str:
+        """String representation of the voltage source."""
+        return f"VoltageSource({self.name}, nodes={self.nodes}, V={self.voltage}V)"

@@ -6,7 +6,7 @@ starting with the Resistor model.
 """
 import pytest
 import numpy as np
-from pycircuitsim.models.passive import Resistor
+from pycircuitsim.models.passive import Resistor, VoltageSource
 
 
 def test_resistor_creation():
@@ -122,3 +122,86 @@ def test_resistor_current():
     voltages = {"n1": 10.0, "0": 0.0}
     current = r2.calculate_current(voltages)
     assert np.isclose(current, 0.1)  # (10 - 0) / 100 = 0.1 A
+
+
+def test_voltage_source_creation():
+    """Test that a VoltageSource can be created with proper parameters."""
+    # Valid voltage source
+    v1 = VoltageSource("V1", ["n1", "n2"], 5.0)
+    assert v1.name == "V1"
+    assert v1.get_nodes() == ["n1", "n2"]
+    assert v1.voltage == 5.0
+
+    # Voltage source connected to ground
+    v2 = VoltageSource("V2", ["n1", "0"], 3.3)
+    assert v2.get_nodes() == ["n1", "0"]
+    assert v2.voltage == 3.3
+
+
+def test_voltage_source_creation_invalid():
+    """Test that invalid voltage source parameters raise errors."""
+    # Wrong number of nodes
+    with pytest.raises(ValueError, match="VoltageSource must have exactly 2 nodes"):
+        VoltageSource("V1", ["n1"], 5.0)
+
+    with pytest.raises(ValueError, match="VoltageSource must have exactly 2 nodes"):
+        VoltageSource("V1", ["n1", "n2", "n3"], 5.0)
+
+
+def test_voltage_source_get_nodes():
+    """Test that VoltageSource returns correct nodes."""
+    v1 = VoltageSource("V1", ["n1", "n2"], 5.0)
+    assert v1.get_nodes() == ["n1", "n2"]
+
+    # Test with ground
+    v2 = VoltageSource("V2", ["n1", "0"], 3.3)
+    assert v2.get_nodes() == ["n1", "0"]
+
+
+def test_voltage_source_stamp_rhs():
+    """Test that voltage source interface is available (solver handles MNA)."""
+    # Voltage sources don't stamp to RHS in the traditional sense
+    # The solver will handle the B/C matrix augmentation
+    rhs = np.zeros(3)
+    node_map = {"n1": 0, "n2": 1, "n3": 2}
+
+    v1 = VoltageSource("V1", ["n1", "n2"], 5.0)
+    # This should not raise an error, but also not modify RHS
+    # (the actual voltage value will be used by the solver)
+    v1.stamp_rhs(rhs, node_map)
+
+    # For now, voltage sources don't directly stamp to RHS
+    # The solver will handle this when it builds the augmented MNA matrix
+    assert np.allclose(rhs, 0.0)
+
+
+def test_voltage_source_stamp_conductance():
+    """Test that voltage source interface is available for conductance stamping."""
+    # Voltage sources require special MNA handling (adds rows/cols)
+    # The solver will handle the B/C matrix augmentation
+    matrix = np.zeros((3, 3))
+    node_map = {"n1": 0, "n2": 1, "n3": 2}
+
+    v1 = VoltageSource("V1", ["n1", "n2"], 5.0)
+    # This should not raise an error
+    # (the actual stamping will be done by the solver)
+    v1.stamp_conductance(matrix, node_map)
+
+    # For now, voltage sources don't directly stamp to conductance matrix
+    # The solver will handle this when it builds the augmented MNA matrix
+    assert np.allclose(matrix, 0.0)
+
+
+def test_voltage_source_current():
+    """Test that voltage source current calculation interface exists."""
+    v1 = VoltageSource("V1", ["n1", "n2"], 5.0)
+
+    # Current through a voltage source is determined by the circuit
+    # For now, we just test that the interface exists
+    # (actual current will be calculated by the solver)
+    voltages = {"n1": 5.0, "n2": 0.0}
+    current = v1.calculate_current(voltages)
+
+    # Current calculation will be handled by the solver
+    # For now, just verify the interface works
+    assert isinstance(current, float)
