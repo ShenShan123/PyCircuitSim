@@ -261,3 +261,117 @@ class VoltageSource(Component):
     def __repr__(self) -> str:
         """String representation of the voltage source."""
         return f"VoltageSource({self.name}, nodes={self.nodes}, V={self.voltage}V)"
+
+
+class CurrentSource(Component):
+    """
+    Ideal DC current source.
+
+    A current source maintains a fixed current flow from its positive terminal
+    to its negative terminal. In MNA formulation, current sources contribute
+    directly to the RHS vector:
+
+    - Adds +I to the source node (node[0], where current flows from)
+    - Adds -I to the sink node (node[1], where current flows to)
+
+    Current sources do not contribute to the conductance matrix since they
+    are independent sources (not dependent on voltage).
+
+    Attributes:
+        name: Component identifier (e.g., 'I1', 'I_bias')
+        nodes: List of two node names [source, sink]
+        current: Current value in amperes (flows from node[0] to node[1])
+    """
+
+    def __init__(self, name: str, nodes: List[str], value: float):
+        """
+        Initialize a current source.
+
+        Args:
+            name: Component identifier (e.g., 'I1', 'I_bias')
+            nodes: List of exactly two node names [source, sink]
+            value: Current value in amperes
+
+        Raises:
+            ValueError: If nodes count is not 2
+        """
+        super().__init__(name, nodes, value)
+
+        # Validate number of nodes
+        if len(nodes) != 2:
+            raise ValueError(f"CurrentSource must have exactly 2 nodes, got {len(nodes)}")
+
+        # Store current value
+        self.current = float(value)
+
+    def get_nodes(self) -> List[str]:
+        """
+        Return list of node names this current source connects to.
+
+        Returns:
+            List of two node names [source, sink]
+        """
+        return self.nodes
+
+    def stamp_conductance(self, matrix: np.ndarray, node_map: Dict[str, int]) -> None:
+        """
+        Interface for conductance stamping (pass-through for current sources).
+
+        Current sources are independent sources and do not contribute to
+        the conductance matrix in MNA formulation. They only affect the
+        RHS vector through stamp_rhs().
+
+        Args:
+            matrix: The MNA matrix (not modified by current sources)
+            node_map: Mapping from node names to matrix indices
+        """
+        # Current sources don't stamp to conductance matrix
+        pass
+
+    def stamp_rhs(self, rhs: np.ndarray, node_map: Dict[str, int]) -> None:
+        """
+        Add current source terms to the RHS vector.
+
+        For a current source from node_i to node_j:
+        - Add +I to node_i (current flows out of source node)
+        - Add -I to node_j (current flows into sink node)
+
+        Ground node (node "0") is not in the node_map and is skipped.
+
+        Args:
+            rhs: The RHS vector to modify (in-place)
+            node_map: Mapping from node names to matrix indices
+        """
+        node_i, node_j = self.nodes[0], self.nodes[1]
+
+        # Add +I to source node (current flows out)
+        if node_i != "0" and node_i in node_map:
+            idx_i = node_map[node_i]
+            rhs[idx_i] += self.current
+
+        # Add -I to sink node (current flows in)
+        if node_j != "0" and node_j in node_map:
+            idx_j = node_map[node_j]
+            rhs[idx_j] -= self.current
+
+    def calculate_current(self, voltages: Dict[str, float]) -> float:
+        """
+        Calculate the current through the current source.
+
+        For an ideal current source, the current is fixed regardless of
+        the voltage across its terminals. This method returns the
+        specified current value.
+
+        Args:
+            voltages: Dictionary mapping node names to voltage values
+                      (not used for ideal current sources)
+
+        Returns:
+            Current value in amperes (constant)
+        """
+        # Ideal current source always returns its specified current
+        return self.current
+
+    def __repr__(self) -> str:
+        """String representation of the current source."""
+        return f"CurrentSource({self.name}, nodes={self.nodes}, I={self.current}A)"

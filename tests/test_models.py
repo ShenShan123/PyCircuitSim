@@ -6,7 +6,7 @@ starting with the Resistor model.
 """
 import pytest
 import numpy as np
-from pycircuitsim.models.passive import Resistor, VoltageSource
+from pycircuitsim.models.passive import Resistor, VoltageSource, CurrentSource
 
 
 def test_resistor_creation():
@@ -205,3 +205,83 @@ def test_voltage_source_current():
     # Current calculation will be handled by the solver
     # For now, just verify the interface works
     assert isinstance(current, float)
+
+
+def test_current_source_creation():
+    """Test that a CurrentSource can be created with proper parameters."""
+    # Valid current source
+    i1 = CurrentSource("I1", ["n1", "n2"], 0.005)
+    assert i1.name == "I1"
+    assert i1.get_nodes() == ["n1", "n2"]
+    assert i1.current == 0.005
+
+    # Current source connected to ground
+    i2 = CurrentSource("I2", ["n1", "0"], 0.001)
+    assert i2.get_nodes() == ["n1", "0"]
+    assert i2.current == 0.001
+
+
+def test_current_source_creation_invalid():
+    """Test that invalid current source parameters raise errors."""
+    # Wrong number of nodes
+    with pytest.raises(ValueError, match="CurrentSource must have exactly 2 nodes"):
+        CurrentSource("I1", ["n1"], 0.005)
+
+    with pytest.raises(ValueError, match="CurrentSource must have exactly 2 nodes"):
+        CurrentSource("I1", ["n1", "n2", "n3"], 0.005)
+
+
+def test_current_source_stamp_rhs():
+    """Test that current source stamps RHS correctly (+I to source, -I to sink)."""
+    rhs = np.zeros(3)
+    node_map = {"n1": 0, "n2": 1, "n3": 2}
+
+    # Current source from n1 to n2 with 0.01 A
+    i1 = CurrentSource("I1", ["n1", "n2"], 0.01)
+    i1.stamp_rhs(rhs, node_map)
+
+    # Should add +I to source node (n1) and -I to sink node (n2)
+    assert np.isclose(rhs[0], 0.01)   # +I at n1
+    assert np.isclose(rhs[1], -0.01)  # -I at n2
+    assert np.isclose(rhs[2], 0.0)    # No change at n3
+
+
+def test_current_source_stamp_rhs_with_ground():
+    """Test that current source stamps correctly when connected to ground."""
+    rhs = np.zeros(2)
+    node_map = {"n1": 0, "n2": 1}
+
+    # Current source from n1 to ground with 0.005 A
+    i1 = CurrentSource("I1", ["n1", "0"], 0.005)
+    i1.stamp_rhs(rhs, node_map)
+
+    # Should add +I to source node (n1), ground is not in matrix
+    assert np.isclose(rhs[0], 0.005)   # +I at n1
+    assert np.isclose(rhs[1], 0.0)     # No change at n2
+
+
+def test_current_source_current():
+    """Test that current source returns its current value."""
+    i1 = CurrentSource("I1", ["n1", "n2"], 0.005)
+
+    # Current source should return its current value regardless of voltages
+    voltages = {"n1": 5.0, "n2": 0.0}
+    current = i1.calculate_current(voltages)
+    assert np.isclose(current, 0.005)
+
+    # Test with different voltage (should still return same current)
+    voltages = {"n1": 10.0, "n2": 2.0}
+    current = i1.calculate_current(voltages)
+    assert np.isclose(current, 0.005)
+
+
+def test_current_source_stamp_conductance():
+    """Test that current source doesn't stamp to conductance matrix."""
+    matrix = np.zeros((3, 3))
+    node_map = {"n1": 0, "n2": 1, "n3": 2}
+
+    i1 = CurrentSource("I1", ["n1", "n2"], 0.01)
+    i1.stamp_conductance(matrix, node_map)
+
+    # Current sources don't contribute to conductance matrix
+    assert np.allclose(matrix, 0.0)
