@@ -50,7 +50,8 @@ class DCSolver:
     """
 
     def __init__(self, circuit: Circuit, tolerance: float = 1e-9, max_iterations: int = 50,
-                 output_file: Optional[Path] = None, initial_guess: Optional[Dict[str, float]] = None):
+                 output_file: Optional[Path] = None, initial_guess: Optional[Dict[str, float]] = None,
+                 logger: Optional[Logger] = None):
         """
         Initialize the DC Solver.
 
@@ -60,14 +61,16 @@ class DCSolver:
             max_iterations: Maximum Newton-Raphson iterations (default: 50)
             output_file: Optional path to output log file (.lis file)
             initial_guess: Optional initial voltage guess for Newton-Raphson (dictionary of node->voltage)
+            logger: Optional external Logger instance for logging (reuses existing logger)
         """
         self.circuit = circuit
         self.tolerance = tolerance
         self.max_iterations = max_iterations
         self.output_file = output_file
-        self.logger: Optional[Logger] = None
+        self.logger = logger  # Use external logger if provided
         self.initial_guess = initial_guess
         self.last_solution: Optional[Dict[str, float]] = None
+        self._owns_logger = False  # Track if we created the logger (for cleanup)
 
     def __enter__(self):
         """
@@ -76,10 +79,12 @@ class DCSolver:
         Returns:
             DCSolver instance
         """
-        if self.output_file:
+        if self.logger is None and self.output_file:
+            # Create new logger only if we don't have one and output_file is specified
             netlist_name = getattr(self.circuit, 'netlist', 'Unknown')
             self.logger = Logger(netlist_name, self.output_file)
             self.logger.__enter__()
+            self._owns_logger = True
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
@@ -91,7 +96,7 @@ class DCSolver:
             exc_val: Exception value if an error occurred
             exc_tb: Exception traceback if an error occurred
         """
-        if self.logger:
+        if self.logger and self._owns_logger:
             self.logger.__exit__(exc_type, exc_val, exc_tb)
         return False  # Don't suppress exceptions
 

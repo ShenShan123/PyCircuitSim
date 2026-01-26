@@ -182,7 +182,7 @@ def run_dc_sweep(
                 solver.logger.log_sweep_point_start(point_num=point_num, sweep_value=current_value)
 
             # Create solver with initial guess from OP (reuses logger context)
-            point_solver = DCSolver(circuit, initial_guess=op_solution)
+            point_solver = DCSolver(circuit, initial_guess=op_solution, logger=solver.logger)
 
             # Solve at this point
             solution = point_solver.solve(skip_header=True)
