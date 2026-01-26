@@ -40,10 +40,10 @@ class Visualizer:
         sweep_variable: str,
         output_path: str,
         title: Optional[str] = None,
-        figsize: tuple = (10, 6)
+        figsize: tuple = (10, 8)
     ) -> None:
         """
-        Plot DC sweep analysis results.
+        Plot DC sweep analysis results with separate voltage and current subplots.
 
         Args:
             sweep_values: List of swept source values (e.g., voltage or current)
@@ -52,37 +52,75 @@ class Visualizer:
             sweep_variable: Name of the swept variable (for x-axis label)
             output_path: Path where the plot image will be saved
             title: Optional plot title. If None, auto-generated
-            figsize: Figure size as (width, height) in inches
+            figsize: Figure size as (width, height) in inches (default taller for 2 subplots)
         """
-        fig, ax = plt.subplots(figsize=figsize)
+        # Create figure with 2 subplots (top and bottom)
+        fig, (ax_voltage, ax_current) = plt.subplots(2, 1, figsize=figsize, sharex=True)
 
         if not results:
-            ax.text(
-                0.5, 0.5,
-                'No data to plot',
-                ha='center', va='center',
-                transform=ax.transAxes,
-                fontsize=12
-            )
-            ax.set_xlabel(f'{sweep_variable}')
+            # No data case
+            for ax in [ax_voltage, ax_current]:
+                ax.text(0.5, 0.5, 'No data to plot',
+                       ha='center', va='center',
+                       transform=ax.transAxes, fontsize=12)
+            ax_voltage.set_ylabel('Voltage (V)')
+            ax_current.set_ylabel('Current (A)')
+            ax_current.set_xlabel(f'{sweep_variable}')
         else:
-            # Plot each node/branch variable
+            # Separate voltages and currents
+            voltages = {}
+            currents = {}
+
             for node_name, values in results.items():
                 if len(values) != len(sweep_values):
                     print(f"Warning: Length mismatch for {node_name}. Skipping.")
                     continue
 
-                ax.plot(sweep_values, values, marker='o', markersize=3, label=node_name)
+                # Check node name prefix for voltage/current classification
+                if node_name.startswith('i(') or node_name.startswith('I('):
+                    currents[node_name] = values
+                elif node_name.startswith('v(') or node_name.startswith('V(') or node_name.startswith('node_'):
+                    voltages[node_name] = values
+                else:
+                    # Heuristic: check magnitude to guess
+                    max_val = max(abs(v) for v in values) if values else 0
+                    if max_val < 1.0:  # Likely current
+                        currents[node_name] = values
+                    else:  # Likely voltage
+                        voltages[node_name] = values
 
-            ax.set_xlabel(f'{sweep_variable}')
-            ax.set_ylabel('Voltage (V) / Current (A)')
-            ax.legend(loc='best')
-            ax.grid(True, alpha=0.3)
+            # Plot voltages on top subplot
+            if voltages:
+                for node_name, values in voltages.items():
+                    ax_voltage.plot(sweep_values, values, marker='o', markersize=3, label=node_name)
+                ax_voltage.set_ylabel('Voltage (V)')
+                ax_voltage.legend(loc='best')
+                ax_voltage.grid(True, alpha=0.3)
+            else:
+                ax_voltage.text(0.5, 0.5, 'No voltage data',
+                              ha='center', va='center',
+                              transform=ax_voltage.transAxes, fontsize=12)
+                ax_voltage.set_ylabel('Voltage (V)')
+
+            # Plot currents on bottom subplot
+            if currents:
+                for node_name, values in currents.items():
+                    ax_current.plot(sweep_values, values, marker='o', markersize=3, label=node_name)
+                ax_current.set_ylabel('Current (A)')
+                ax_current.legend(loc='best')
+                ax_current.grid(True, alpha=0.3)
+            else:
+                ax_current.text(0.5, 0.5, 'No current data',
+                              ha='center', va='center',
+                              transform=ax_current.transAxes, fontsize=12)
+                ax_current.set_ylabel('Current (A)')
+
+            ax_current.set_xlabel(f'{sweep_variable}')
 
         # Set title
         if title is None:
             title = f'DC Sweep Analysis - {sweep_variable}'
-        ax.set_title(title)
+        fig.suptitle(title, y=0.98)  # Overall title for both subplots
 
         # Tight layout and save
         plt.tight_layout()

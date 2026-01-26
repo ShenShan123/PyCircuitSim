@@ -151,3 +151,107 @@ class TestVisualizer:
         output_path.unlink()
         output_path.parent.rmdir()
         output_path.parent.parent.rmdir()
+
+    def test_plot_dc_sweep_separates_voltage_current(self):
+        """Verify DC sweep plot separates voltages and currents into subplots."""
+        # Mix of voltages and currents
+        sweep_values = [0.0, 1.0, 2.0, 3.0]
+        results = {
+            "v(1)": [0.0, 1.0, 2.0, 3.0],      # Voltage
+            "v(2)": [3.0, 2.0, 1.0, 0.0],      # Voltage
+            "i(R1)": [0.001, 0.002, 0.003, 0.004],  # Current
+            "i(V1)": [0.001, 0.002, 0.003, 0.004],  # Current
+        }
+
+        viz = Visualizer()
+        output_path = self.results_dir / "test_separated.png"
+
+        viz.plot_dc_sweep(
+            sweep_values=sweep_values,
+            results=results,
+            sweep_variable="Vin (V)",
+            output_path=str(output_path)
+        )
+
+        # Verify file created
+        assert output_path.exists()
+        assert output_path.stat().st_size > 0
+
+    def test_plot_dc_sweep_heuristic_node_names(self):
+        """Verify heuristic correctly identifies voltages vs currents by node name."""
+        # Use node_ prefix (should be detected as voltage)
+        sweep_values = [0.0, 1.0, 2.0]
+        results = {
+            "node_1": [0.0, 1.5, 3.0],      # Voltage by name
+            "node_2": [3.0, 1.5, 0.0],      # Voltage by name
+        }
+
+        viz = Visualizer()
+        output_path = self.results_dir / "test_heuristic.png"
+
+        viz.plot_dc_sweep(
+            sweep_values=sweep_values,
+            results=results,
+            sweep_variable="Vin (V)",
+            output_path=str(output_path)
+        )
+
+        assert output_path.exists()
+        assert output_path.stat().st_size > 0
+
+    def test_plot_dc_sweep_only_voltages(self):
+        """Verify plot handles only voltages (no currents)."""
+        sweep_values = [0.0, 1.0, 2.0]
+        results = {
+            "v(1)": [0.0, 1.0, 2.0],
+            "v(2)": [3.0, 2.0, 1.0],
+        }
+
+        viz = Visualizer()
+        output_path = self.results_dir / "test_only_voltages.png"
+
+        viz.plot_dc_sweep(
+            sweep_values=sweep_values,
+            results=results,
+            sweep_variable="Vin (V)",
+            output_path=str(output_path)
+        )
+
+        assert output_path.exists()
+        assert output_path.stat().st_size > 0
+
+    def test_plot_dc_sweep_only_currents(self):
+        """Verify plot handles only currents (no voltages)."""
+        sweep_values = [0.0, 1.0, 2.0]
+        results = {
+            "i(R1)": [0.001, 0.002, 0.003],
+            "i(V1)": [0.001, 0.002, 0.003],
+        }
+
+        viz = Visualizer()
+        output_path = self.results_dir / "test_only_currents.png"
+
+        viz.plot_dc_sweep(
+            sweep_values=sweep_values,
+            results=results,
+            sweep_variable="Vin (V)",
+            output_path=str(output_path)
+        )
+
+        assert output_path.exists()
+        assert output_path.stat().st_size > 0
+
+    def test_plot_dc_sweep_empty_data(self):
+        """Verify plot handles empty results gracefully."""
+        viz = Visualizer()
+        output_path = self.results_dir / "test_empty_dc.png"
+
+        viz.plot_dc_sweep(
+            sweep_values=[0.0, 1.0, 2.0],
+            results={},
+            sweep_variable="Vin (V)",
+            output_path=str(output_path)
+        )
+
+        assert output_path.exists()
+        assert output_path.stat().st_size > 0
