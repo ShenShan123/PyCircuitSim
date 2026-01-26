@@ -190,8 +190,8 @@ class VoltageSource(Component):
         # Initialize with value (stored in self.value by parent class)
         super().__init__(name, nodes, value)
 
-        # Note: self.voltage property references self.value automatically
-        # No need to store separately
+        # Store current (will be set by solver)
+        self._current = 0.0
 
     @property
     def voltage(self) -> float:
@@ -251,23 +251,27 @@ class VoltageSource(Component):
 
     def calculate_current(self, voltages: Dict[str, float]) -> float:
         """
-        Interface for current calculation (placeholder for voltage sources).
+        Calculate current through voltage source.
 
-        The current through a voltage source is determined by the circuit
-        topology and is calculated by the solver during MNA solving.
-
-        This method exists to satisfy the Component interface but returns 0.0,
-        as the actual current will be extracted from the solution vector.
+        The current is stored by the solver after MNA solving.
+        Current flows from positive terminal to negative terminal.
 
         Args:
-            voltages: Dictionary mapping node names to voltage values
+            voltages: Dictionary mapping node names to voltage values (not used)
 
         Returns:
-            Current placeholder (0.0, actual current calculated by solver)
+            Current through voltage source in amperes
         """
-        # Current through voltage source is calculated by solver
-        # This is a placeholder to satisfy the interface
-        return 0.0
+        return getattr(self, '_current', 0.0)
+
+    def set_current(self, current: float) -> None:
+        """
+        Set the current through this voltage source (called by solver).
+
+        Args:
+            current: Current value in amperes
+        """
+        self._current = float(current)
 
     def __repr__(self) -> str:
         """String representation of the voltage source."""

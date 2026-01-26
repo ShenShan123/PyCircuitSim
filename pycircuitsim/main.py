@@ -187,11 +187,24 @@ def run_dc_sweep(
             # Solve at this point
             solution = point_solver.solve(skip_header=True)
 
-            # Store results
+            # Store node voltages
             for node, node_value in solution.items():
                 if node not in all_results:
                     all_results[node] = []
                 all_results[node].append(node_value)
+
+            # Calculate and store device currents
+            for comp in circuit.components:
+                try:
+                    current = comp.calculate_current(solution)
+                    # Use format: i(comp_name) for currents
+                    current_key = f"i({comp.name})"
+                    if current_key not in all_results:
+                        all_results[current_key] = []
+                    all_results[current_key].append(current)
+                except (NotImplementedError, AttributeError):
+                    # Skip components that don't support current calculation
+                    pass
 
         # Log final results
         if solver.logger:
@@ -208,6 +221,25 @@ def run_dc_sweep(
         sweep_variable=f"{source_name} (V)" if source_name.startswith('V') else f"{source_name} (A)",
         output_path=str(plot_path)
     )
+
+    # Save waveform data to CSV
+    import csv
+    csv_path = output_path / "dc_sweep.csv"
+    with open(csv_path, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+
+        # Write header
+        header = [f"{source_name} (V)"] + list(all_results.keys())
+        writer.writerow(header)
+
+        # Write data
+        for i, sweep_val in enumerate(sweep_values):
+            row = [f"{sweep_val:.6f}"]
+            for key in all_results.keys():
+                row.append(f"{all_results[key][i]:.6e}")
+            writer.writerow(row)
+
+    logger.info(f"Waveform data saved to: {csv_path}")
 
     return all_results
 

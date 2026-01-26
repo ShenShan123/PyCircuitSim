@@ -202,6 +202,9 @@ class DCSolver:
         # Extract node voltages from solution
         voltages = self._extract_voltages(solution, nodes)
 
+        # Extract and store voltage source currents
+        self._store_source_currents(solution, nodes)
+
         # Log iteration for linear circuit (single iteration)
         if self.logger:
             # Calculate device currents
@@ -390,6 +393,33 @@ class DCSolver:
                 component.voltage = original_voltages[vs_idx]
                 vs_idx += 1
 
+        # Extract and store voltage source currents from final operating point
+        # Build final MNA matrix and solve to get full solution (voltages + currents)
+        mna_matrix_final = np.zeros((matrix_size, matrix_size))
+        rhs_final = np.zeros(matrix_size)
+
+        # Stamp all components at final voltages
+        for component in self.circuit.components:
+            if not isinstance(component, (NMOS, PMOS)):
+                component.stamp_conductance(mna_matrix_final, node_map)
+                component.stamp_rhs(rhs_final, node_map)
+
+        # Stamp MOSFETs at final operating point
+        for component in self.circuit.components:
+            if isinstance(component, (NMOS, PMOS)):
+                self._stamp_mosfet(component, mna_matrix_final, rhs_final, node_map, voltages)
+
+        # Handle voltage sources
+        self._stamp_voltage_sources(mna_matrix_final, rhs_final, node_map, num_nodes, voltages=voltages)
+
+        # Solve to get full solution including currents
+        try:
+            solution_final = np.linalg.solve(mna_matrix_final, rhs_final)
+            self._store_source_currents(solution_final, nodes)
+        except np.linalg.LinAlgError:
+            # If singular, skip current extraction
+            pass
+
         return voltages
 
     def _stamp_mosfet(
@@ -571,6 +601,33 @@ class DCSolver:
         voltages["GND"] = 0.0
 
         return voltages
+
+    def _store_source_currents(self, solution: np.ndarray, nodes: List[str]) -> None:
+        """
+        Extract and store voltage source currents from solution vector.
+
+        The solution vector contains voltage source currents after the node voltages.
+        This method extracts those currents and stores them in the VoltageSource objects
+        so they can be retrieved via calculate_current().
+
+        Args:
+            solution: Solution vector from np.linalg.solve
+            nodes: List of non-ground node names
+        """
+        num_nodes = len(nodes)
+        vs_idx = 0
+
+        # Iterate through circuit components to find voltage sources in order
+        for component in self.circuit.components:
+            if isinstance(component, VoltageSource):
+                # Extract current from solution vector (after node voltages)
+                current_idx = num_nodes + vs_idx
+                if current_idx < len(solution):
+                    current = float(solution[current_idx])
+                    # Store current in the voltage source object
+                    if hasattr(component, 'set_current'):
+                        component.set_current(current)
+                vs_idx += 1
 
     def get_last_solution(self) -> Optional[Dict[str, float]]:
         """
