@@ -50,6 +50,10 @@ class NMOS(Component):
         K: Transconductance parameter K = KP * (W/L)
     """
 
+    # Voltage clamping limits to prevent numerical overflow
+    _MAX_V_OVERDRIVE = 5.0  # Maximum V_gs - V_th before clamping (volts)
+    _MAX_V_DS = 10.0  # Maximum V_ds before clamping (volts)
+
     def __init__(
         self,
         name: str,
@@ -177,6 +181,11 @@ class NMOS(Component):
         # Calculate overdrive voltage
         v_ov = v_gs - self.VTO
 
+        # Apply voltage clamping to prevent numerical overflow
+        # This ensures numerical stability during Newton-Raphson iterations
+        v_ov = np.clip(v_ov, -self._MAX_V_OVERDRIVE, self._MAX_V_OVERDRIVE)
+        v_ds = np.clip(v_ds, -self._MAX_V_DS, self._MAX_V_DS)
+
         # Check operating region (linear vs saturation)
         if v_ds < v_ov:
             # Linear region (triode region)
@@ -224,6 +233,11 @@ class NMOS(Component):
         # Calculate overdrive voltage
         v_ov = v_gs - self.VTO
 
+        # Apply voltage clamping to ensure consistent behavior with calculate_current
+        # This ensures numerical stability during Newton-Raphson iterations
+        v_ov = np.clip(v_ov, -self._MAX_V_OVERDRIVE, self._MAX_V_OVERDRIVE)
+        v_ds = np.clip(v_ds, -self._MAX_V_DS, self._MAX_V_DS)
+
         # Check operating region (linear vs saturation)
         if v_ds < v_ov:
             # Linear region (triode region)
@@ -270,6 +284,10 @@ class PMOS(Component):
         KP: Process transconductance parameter in A/V^2 (default: -20u A/V^2)
         K: Transconductance parameter K = KP * (W/L)
     """
+
+    # Voltage clamping limits to prevent numerical overflow
+    _MAX_V_OVERDRIVE = 5.0  # Maximum |V_gs - V_th| before clamping (volts)
+    _MAX_V_DS = 10.0  # Maximum |V_ds| before clamping (volts)
 
     def __init__(
         self,
@@ -401,6 +419,11 @@ class PMOS(Component):
         # Calculate overdrive voltage (will be negative for PMOS)
         v_ov = v_gs - self.VTO
 
+        # Apply voltage clamping to prevent numerical overflow
+        # This ensures numerical stability during Newton-Raphson iterations
+        v_ov = np.clip(v_ov, -self._MAX_V_OVERDRIVE, self._MAX_V_OVERDRIVE)
+        v_ds = np.clip(v_ds, -self._MAX_V_DS, self._MAX_V_DS)
+
         # Check operating region (linear vs saturation)
         # For PMOS, we compare absolute values
         if abs(v_ds) < abs(v_ov):
@@ -447,6 +470,11 @@ class PMOS(Component):
 
         # Calculate overdrive voltage (will be negative for PMOS)
         v_ov = v_gs - self.VTO
+
+        # Apply voltage clamping to ensure consistent behavior with calculate_current
+        # This ensures numerical stability during Newton-Raphson iterations
+        v_ov = np.clip(v_ov, -self._MAX_V_OVERDRIVE, self._MAX_V_OVERDRIVE)
+        v_ds = np.clip(v_ds, -self._MAX_V_DS, self._MAX_V_DS)
 
         # Check operating region (linear vs saturation)
         if abs(v_ds) < abs(v_ov):

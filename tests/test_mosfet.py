@@ -287,3 +287,98 @@ class TestMOSFETStamping:
         """Test that NMOS returns correct node list."""
         m1 = NMOS("M1", ["nd", "ng", "ns", "nb"], L=1e-6, W=10e-6)
         assert m1.get_nodes() == ["nd", "ng", "ns", "nb"]
+
+
+class TestNMOSVoltageClamping:
+    """Test NMOS voltage clamping to prevent numerical overflow."""
+
+    def test_nmos_voltage_clamping_extreme(self):
+        """Verify MOSFET clamps extreme voltages to prevent overflow"""
+        m1 = NMOS("M1", ["d", "g", "s", "b"], L=1e-6, W=10e-6)
+
+        # Extreme voltages that would cause overflow
+        extreme_voltages = {"d": 1000.0, "g": 1000.0, "s": 0.0, "b": 0.0}
+
+        # Should not raise overflow error
+        current = m1.calculate_current(extreme_voltages)
+
+        # Current should be clamped/limited, not inf or nan
+        assert not np.isinf(current), f"Current should not be infinite, got {current}"
+        assert not np.isnan(current), f"Current should not be NaN, got {current}"
+        assert current >= 0  # NMOS current should be non-negative
+
+    def test_nmos_voltage_clamping_reasonable(self):
+        """Verify clamped current is at physically reasonable level"""
+        m1 = NMOS("M1", ["d", "g", "s", "b"], L=1e-6, W=10e-6)
+
+        # With V_gs = 1000V, without clamping this would be enormous
+        # With clamping to 5V overdrive, should be much smaller
+        extreme_voltages = {"d": 1000.0, "g": 1000.0, "s": 0.0, "b": 0.0}
+        current = m1.calculate_current(extreme_voltages)
+
+        # Calculate what it should be with clamping (V_ov max = 5V, V_ds max = 10V)
+        # V_ds = 10 (clamped), V_ov = 5 (clamped)
+        # Since V_ds > V_ov, in saturation
+        # I_ds = 0.5 * K * V_ov^2 = 0.5 * 200e-6 * 25 = 2.5e-3 A = 2.5 mA
+        K = 20e-6 * (10e-6 / 1e-6)  # 200e-6
+        max_expected_current = 0.5 * K * 5.0**2
+
+        # Current should be close to the clamped value, not unreasonably large
+        assert np.isclose(current, max_expected_current, rtol=0.01), \
+            f"Current {current} should be clamped to ~{max_expected_current}"
+
+    def test_nmos_conductance_clamping(self):
+        """Verify conductance calculations handle clamped voltages"""
+        m1 = NMOS("M1", ["d", "g", "s", "b"], L=1e-6, W=10e-6)
+
+        # Extreme voltages
+        extreme_voltages = {"d": 1000.0, "g": 1000.0, "s": 0.0, "b": 0.0}
+
+        gds, gm = m1.get_conductance(extreme_voltages)
+
+        # Conductances should be finite
+        assert not np.isinf(gm), f"gm should not be infinite, got {gm}"
+        assert not np.isnan(gm), f"gm should not be NaN, got {gm}"
+        assert not np.isinf(gds), f"gds should not be infinite, got {gds}"
+        assert not np.isnan(gds), f"gds should not be NaN, got {gds}"
+        assert gm >= 0  # Transconductance should be non-negative
+        assert gds >= 0  # Output conductance should be non-negative
+
+        # With clamping, gm should be K * V_ov = 200e-6 * 5 = 1e-3
+        K = 20e-6 * (10e-6 / 1e-6)
+        expected_gm = K * 5.0
+        assert np.isclose(gm, expected_gm, rtol=0.01), \
+            f"gm {gm} should be clamped to ~{expected_gm}"
+
+
+class TestPMOSVoltageClamping:
+    """Test PMOS voltage clamping to prevent numerical overflow."""
+
+    def test_pmos_voltage_clamping(self):
+        """Verify PMOS clamps extreme negative voltages"""
+        m1 = PMOS("M1", ["d", "g", "s", "b"], L=1e-6, W=20e-6)
+
+        # Extreme negative voltages
+        extreme_voltages = {"d": -1000.0, "g": -1000.0, "s": 0.0, "b": 0.0}
+
+        current = m1.calculate_current(extreme_voltages)
+
+        # Current should be clamped, not inf or nan
+        assert not np.isinf(current), f"Current should not be infinite, got {current}"
+        assert not np.isnan(current), f"Current should not be NaN, got {current}"
+        assert current <= 0  # PMOS current should be non-positive
+
+    def test_pmos_conductance_clamping(self):
+        """Verify PMOS conductance calculations handle clamped voltages"""
+        m1 = PMOS("M1", ["d", "g", "s", "b"], L=1e-6, W=20e-6)
+
+        # Extreme negative voltages
+        extreme_voltages = {"d": -1000.0, "g": -1000.0, "s": 0.0, "b": 0.0}
+
+        gds, gm = m1.get_conductance(extreme_voltages)
+
+        # Conductances should be finite
+        assert not np.isinf(gm), f"gm should not be infinite, got {gm}"
+        assert not np.isnan(gm), f"gm should not be NaN, got {gm}"
+        assert not np.isinf(gds), f"gds should not be infinite, got {gds}"
+        assert not np.isnan(gds), f"gds should not be NaN, got {gds}"
