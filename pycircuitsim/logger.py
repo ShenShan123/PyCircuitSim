@@ -258,14 +258,14 @@ class Logger:
         self._write_separator("-")
         self._write("")
 
-    def log_final_results(self, results: Dict[str, float], title: str = "Final Results") -> None:
+    def log_final_results(self, results: Dict[str, any], title: str = "Final Results") -> None:
         """
         Write final operating point results.
 
         Parameters
         ----------
-        results : Dict[str, float]
-            Final node voltages (node name -> voltage)
+        results : Dict[str, float] or Dict[str, List[float]]
+            Final node voltages (node name -> voltage) or sweep results (node name -> list of voltages)
         title : str, optional
             Title for the results section (default: "Final Results")
         """
@@ -273,12 +273,28 @@ class Logger:
         self._write(title)
         self._write_separator("=")
 
-        if results:
-            self._write("Node Voltages:")
-            for node, voltage in sorted(results.items()):
-                self._write(f"  {node:>6s}: {voltage:12.6g} V")
-        else:
+        if not results:
             self._write("No results to display")
+        else:
+            # Check if this is a sweep result (list of values) or single operating point (single value)
+            first_value = next(iter(results.values()))
+            is_sweep = isinstance(first_value, list)
+
+            if is_sweep:
+                # DC sweep results
+                self._write("DC Sweep Results Summary")
+                self._write(f"  Total sweep points: {len(first_value)}")
+                self._write("")
+                self._write("Final node voltages (at last sweep point):")
+                for node, voltages in sorted(results.items()):
+                    if voltages:  # Check if list is not empty
+                        final_voltage = voltages[-1]
+                        self._write(f"  {node:>6s}: {final_voltage:12.6g} V")
+            else:
+                # Single operating point
+                self._write("Node Voltages:")
+                for node, voltage in sorted(results.items()):
+                    self._write(f"  {node:>6s}: {voltage:12.6g} V")
 
         self._write_separator("=")
         self._write("")

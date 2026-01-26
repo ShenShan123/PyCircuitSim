@@ -188,3 +188,63 @@ def test_diode_like_circuit_with_mos():
         # For now, accept if Newton-Raphson doesn't converge
         # This is expected for the initial implementation
         assert "failed to converge" in str(e).lower()
+
+
+def test_dc_solver_creates_log_file(tmp_path):
+    """Verify DCSolver creates .lis file when output_file provided"""
+    from pycircuitsim.models.passive import Resistor, VoltageSource
+
+    # Create simple resistive divider
+    circuit = Circuit()
+    circuit.add_component(Resistor("R1", ["1", "2"], 1000.0))
+    circuit.add_component(Resistor("R2", ["2", "0"], 1000.0))
+    circuit.add_component(VoltageSource("V1", ["1", "0"], 5.0))
+
+    output_file = tmp_path / "test_simulation.lis"
+
+    with DCSolver(circuit, output_file=output_file) as solver:
+        solution = solver.solve()
+
+    # Verify log file was created
+    assert output_file.exists(), "Log file should be created"
+    content = output_file.read_text()
+    assert "DC Operating Point Analysis" in content
+    assert "v(1)" in content or "node_1" in content or "1" in content
+
+
+def test_dc_solver_logs_iterations(tmp_path):
+    """Verify DCSolver logs iteration information"""
+    from pycircuitsim.models.passive import Resistor, VoltageSource
+
+    # Create linear circuit (converges in 1 iteration)
+    circuit = Circuit()
+    circuit.add_component(Resistor("R1", ["1", "2"], 1000.0))
+    circuit.add_component(Resistor("R2", ["2", "0"], 1000.0))
+    circuit.add_component(VoltageSource("V1", ["1", "0"], 5.0))
+
+    output_file = tmp_path / "test_iterations.lis"
+
+    with DCSolver(circuit, output_file=output_file) as solver:
+        solution = solver.solve()
+
+    content = output_file.read_text()
+    # Should contain iteration information
+    assert "Iteration" in content
+    assert "CONVERGED" in content
+
+
+def test_dc_solver_no_log_without_output_file():
+    """Verify DCSolver works without output_file (no logging)"""
+    from pycircuitsim.models.passive import Resistor, VoltageSource
+
+    circuit = Circuit()
+    circuit.add_component(Resistor("R1", ["1", "2"], 1000.0))
+    circuit.add_component(Resistor("R2", ["2", "0"], 1000.0))
+    circuit.add_component(VoltageSource("V1", ["1", "0"], 5.0))
+
+    # No output_file specified
+    solver = DCSolver(circuit)
+    solution = solver.solve()
+
+    # Should still work and produce solution
+    assert len(solution) > 0

@@ -133,28 +133,53 @@ def run_dc_sweep(
     # Store original value
     original_value = source_component.value
 
-    # Run sweep
+    # Setup output file for logging
+    output_file = output_path / "simulation.lis"
+
+    # Run sweep with logging
     sweep_values = []
     all_results = {}
 
-    current_value = start
-    while current_value <= stop:
-        # Update source value
-        source_component.value = current_value
+    # Use context manager to enable logging
+    with DCSolver(circuit, output_file=output_file) as solver:
+        # Log header with sweep parameters
+        if solver.logger:
+            solver.logger.log_header("DC Sweep Analysis", analysis_params)
+            num_nodes = len(circuit.get_nodes())
+            num_vsources = circuit.count_voltage_sources()
+            solver.logger.log_circuit_summary(
+                component_count=len(circuit.components),
+                node_count=num_nodes,
+                vsource_count=num_vsources
+            )
 
-        # Solve at this point
-        solver = DCSolver(circuit)
-        solution = solver.solve()
+        point_num = 0
+        current_value = start
+        while current_value <= stop:
+            # Update source value
+            source_component.value = current_value
 
-        # Store results
-        sweep_values.append(current_value)
-        for node, node_value in solution.items():
-            if node not in all_results:
-                all_results[node] = []
-            all_results[node].append(node_value)
+            # Log sweep point start
+            if solver.logger:
+                solver.logger.log_sweep_point_start(point_num=point_num, sweep_value=current_value)
 
-        # Increment
-        current_value += step
+            # Solve at this point (skip header since we already logged it)
+            solution = solver.solve(skip_header=True)
+
+            # Store results
+            sweep_values.append(current_value)
+            for node, node_value in solution.items():
+                if node not in all_results:
+                    all_results[node] = []
+                all_results[node].append(node_value)
+
+            # Increment
+            current_value += step
+            point_num += 1
+
+        # Log final results
+        if solver.logger:
+            solver.logger.log_final_results(all_results, title="DC Sweep Final Results")
 
     # Restore original value
     source_component.value = original_value

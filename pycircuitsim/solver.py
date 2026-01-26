@@ -26,10 +26,12 @@ The solver handles:
 - Non-linear MOSFETs (Newton-Raphson iteration)
 - Capacitors (Backward Euler companion model for transient analysis)
 """
-from typing import Dict, List, Tuple
+from typing import Dict, List, Tuple, Optional
+from pathlib import Path
 import numpy as np
 from pycircuitsim.circuit import Circuit
 from pycircuitsim.models.passive import VoltageSource, Capacitor
+from pycircuitsim.logger import Logger, IterationInfo
 
 
 class DCSolver:
@@ -47,7 +49,8 @@ class DCSolver:
         max_iterations: Maximum Newton-Raphson iterations
     """
 
-    def __init__(self, circuit: Circuit, tolerance: float = 1e-9, max_iterations: int = 50):
+    def __init__(self, circuit: Circuit, tolerance: float = 1e-9, max_iterations: int = 50,
+                 output_file: Optional[Path] = None):
         """
         Initialize the DC Solver.
 
@@ -55,12 +58,41 @@ class DCSolver:
             circuit: Circuit object to solve
             tolerance: Convergence tolerance for Newton-Raphson (default: 1e-9)
             max_iterations: Maximum Newton-Raphson iterations (default: 50)
+            output_file: Optional path to output log file (.lis file)
         """
         self.circuit = circuit
         self.tolerance = tolerance
         self.max_iterations = max_iterations
+        self.output_file = output_file
+        self.logger: Optional[Logger] = None
 
-    def solve(self) -> Dict[str, float]:
+    def __enter__(self):
+        """
+        Enter the context manager and initialize the logger.
+
+        Returns:
+            DCSolver instance
+        """
+        if self.output_file:
+            netlist_name = getattr(self.circuit, 'netlist', 'Unknown')
+            self.logger = Logger(netlist_name, self.output_file)
+            self.logger.__enter__()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        """
+        Exit the context manager and close the logger.
+
+        Args:
+            exc_type: Exception type if an error occurred
+            exc_val: Exception value if an error occurred
+            exc_tb: Exception traceback if an error occurred
+        """
+        if self.logger:
+            self.logger.__exit__(exc_type, exc_val, exc_tb)
+        return False  # Don't suppress exceptions
+
+    def solve(self, skip_header: bool = False) -> Dict[str, float]:
         """
         Solve the circuit for DC operating point.
 
@@ -70,6 +102,9 @@ class DCSolver:
 
         The MNA matrix has size (num_nodes + num_voltage_sources) x (num_nodes + num_voltage_sources).
 
+        Args:
+            skip_header: If True, skip logging header (for use in DC sweep)
+
         Returns:
             Dictionary mapping node names to voltage values (including ground at 0V)
 
@@ -77,6 +112,17 @@ class DCSolver:
             np.linalg.LinAlgError: If the circuit matrix is singular (unsolvable)
             RuntimeError: If Newton-Raphson fails to converge
         """
+        # Log header and circuit summary if logger is available
+        if self.logger and not skip_header:
+            self.logger.log_header("DC Operating Point Analysis", {})
+            num_nodes = len(self.circuit.get_nodes())
+            num_vsources = self.circuit.count_voltage_sources()
+            self.logger.log_circuit_summary(
+                component_count=len(self.circuit.components),
+                node_count=num_nodes,
+                vsource_count=num_vsources
+            )
+
         # Check if circuit has non-linear components
         has_non_linear = self._has_non_linear_components()
 
@@ -142,6 +188,36 @@ class DCSolver:
 
         # Extract node voltages from solution
         voltages = self._extract_voltages(solution, nodes)
+
+        # Log iteration for linear circuit (single iteration)
+        if self.logger:
+            # Calculate device currents
+            currents = {}
+            for comp in self.circuit.components:
+                try:
+                    current = comp.calculate_current(voltages)
+                    currents[comp.name] = current
+                except (NotImplementedError, AttributeError):
+                    # Skip components that don't support current calculation
+                    pass
+
+            # Create iteration info
+            iter_info = IterationInfo(
+                iteration=0,
+                voltages=voltages.copy(),
+                deltas={},  # No deltas for linear solve
+                currents=currents,
+                conductances={}  # No conductances for linear solve
+            )
+            self.logger.log_iteration(point_num=0, iter_info=iter_info)
+
+            # Log convergence
+            self.logger.log_convergence(
+                point_num=0,
+                converged=True,
+                iterations=1,
+                tolerance=0.0  # Linear solve has exact solution
+            )
 
         return voltages
 
@@ -232,16 +308,54 @@ class DCSolver:
 
                 # Update voltages and check convergence
                 max_change = 0.0
+                deltas = {}
                 for idx, node in enumerate(nodes):
                     old_voltage = voltages[node]
                     # Apply damping for stability
                     damping = 0.8
                     new_voltage = old_voltage + damping * delta[idx]
+                    deltas[node] = abs(new_voltage - old_voltage)
                     voltages[node] = new_voltage
                     max_change = max(max_change, abs(new_voltage - old_voltage))
 
+                # Log iteration if logger is available
+                if self.logger:
+                    # Calculate device currents
+                    currents = {}
+                    conductances = {}
+                    for comp in self.circuit.components:
+                        try:
+                            current = comp.calculate_current(voltages)
+                            currents[comp.name] = current
+
+                            # Get conductances for MOSFETs
+                            if isinstance(comp, (NMOS, PMOS)):
+                                gm, gds = comp.get_conductance(voltages)
+                                conductances[comp.name] = {"gm": gm, "gds": gds}
+                        except (NotImplementedError, AttributeError):
+                            # Skip components that don't support current calculation
+                            pass
+
+                    # Create iteration info
+                    iter_info = IterationInfo(
+                        iteration=iteration,
+                        voltages=voltages.copy(),
+                        deltas=deltas,
+                        currents=currents,
+                        conductances=conductances
+                    )
+                    self.logger.log_iteration(point_num=0, iter_info=iter_info)
+
                 # Check convergence
                 if max_change < self.tolerance:
+                    # Log convergence
+                    if self.logger:
+                        self.logger.log_convergence(
+                            point_num=0,
+                            converged=True,
+                            iterations=iteration + 1,
+                            tolerance=max_change
+                        )
                     # Converged at this source step, move to next step
                     break
 
