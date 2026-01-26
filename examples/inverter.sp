@@ -4,8 +4,9 @@
 
 Vdd 1 0 3.3
 Vin 2 0 0
-Mp1 1 2 3 1 PMOS L=1u W=20u
-Mn1 0 2 3 0 NMOS L=1u W=10u
+Mp1 3 2 1 1 PMOS L=1u W=20u
+Mn1 3 2 0 0 NMOS L=1u W=10u
+Rload 3 0 10000
 
 * DC Sweep Analysis
 * Sweep input voltage from 0V to 3.3V

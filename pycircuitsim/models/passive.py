@@ -183,14 +183,25 @@ class VoltageSource(Component):
         Raises:
             ValueError: If nodes count is not 2
         """
-        super().__init__(name, nodes, value)
-
-        # Validate number of nodes
+        # Validate number of nodes first
         if len(nodes) != 2:
             raise ValueError(f"VoltageSource must have exactly 2 nodes, got {len(nodes)}")
 
-        # Store voltage value
-        self.voltage = float(value)
+        # Initialize with value (stored in self.value by parent class)
+        super().__init__(name, nodes, value)
+
+        # Note: self.voltage property references self.value automatically
+        # No need to store separately
+
+    @property
+    def voltage(self) -> float:
+        """Get voltage value (references self.value for consistency)."""
+        return self.value if self.value is not None else 0.0
+
+    @voltage.setter
+    def voltage(self, value: float):
+        """Set voltage value (updates self.value for consistency)."""
+        self.value = float(value)
 
     def get_nodes(self) -> List[str]:
         """

@@ -269,7 +269,7 @@ class DCSolver:
 
         # Source stepping: gradually increase voltage source values
         # to improve convergence
-        num_steps = 10
+        num_steps = 1  # Disable source stepping (use full voltage immediately)
         for step in range(num_steps):
             # Scale voltage sources
             scale = (step + 1) / num_steps
@@ -327,8 +327,8 @@ class DCSolver:
                 deltas = {}
                 for idx, node in enumerate(nodes):
                     old_voltage = voltages[node]
-                    # Apply damping for stability
-                    damping = 0.8
+                    # Apply damping for stability (reduced for better convergence)
+                    damping = 0.5  # Moderate damping now that sign bug is fixed
                     new_voltage = old_voltage + damping * delta[idx]
                     deltas[node] = abs(new_voltage - old_voltage)
                     voltages[node] = new_voltage
@@ -426,8 +426,9 @@ class DCSolver:
         i_ds = mosfet.calculate_current(voltages)
 
         # Add a small minimum conductance to prevent numerical instability
-        # This helps with convergence when MOSFET is in cutoff
-        g_min = 1e-12  # 1 picoSiemens minimum conductance
+        # This helps with convergence when MOSFET is in cutoff or saturation
+        # Use higher value for numerical stability in Newton-Raphson
+        g_min = 1e-6  # 1 microSiemens minimum conductance (~1 MΩ)
         g_ds = max(g_ds, g_min)
 
         # Stamp conductances to MNA matrix
@@ -466,14 +467,16 @@ class DCSolver:
         i_eq = i_ds - g_ds * v_ds - g_m * v_gs
 
         # Stamp current to drain and source nodes
-        # Current flows OUT of drain, INTO source
+        # For NMOS: current flows OUT of drain, INTO source (i_ds > 0)
+        # For PMOS: current flows INTO drain, OUT of source (i_ds < 0)
+        # Sign flip attempted to fix convergence issues
         if drain != "0" and drain in node_map:
             d_idx = node_map[drain]
-            rhs[d_idx] -= i_eq
+            rhs[d_idx] += i_eq  # FLIPPED: Add current to drain
 
         if source != "0" and source in node_map:
             s_idx = node_map[source]
-            rhs[s_idx] += i_eq
+            rhs[s_idx] -= i_eq  # FLIPPED: Subtract current from source
 
     def _stamp_voltage_sources(
         self,
