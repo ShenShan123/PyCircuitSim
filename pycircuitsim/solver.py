@@ -50,7 +50,7 @@ class DCSolver:
     """
 
     def __init__(self, circuit: Circuit, tolerance: float = 1e-9, max_iterations: int = 50,
-                 output_file: Optional[Path] = None):
+                 output_file: Optional[Path] = None, initial_guess: Optional[Dict[str, float]] = None):
         """
         Initialize the DC Solver.
 
@@ -59,12 +59,15 @@ class DCSolver:
             tolerance: Convergence tolerance for Newton-Raphson (default: 1e-9)
             max_iterations: Maximum Newton-Raphson iterations (default: 50)
             output_file: Optional path to output log file (.lis file)
+            initial_guess: Optional initial voltage guess for Newton-Raphson (dictionary of node->voltage)
         """
         self.circuit = circuit
         self.tolerance = tolerance
         self.max_iterations = max_iterations
         self.output_file = output_file
         self.logger: Optional[Logger] = None
+        self.initial_guess = initial_guess
+        self.last_solution: Optional[Dict[str, float]] = None
 
     def __enter__(self):
         """
@@ -128,10 +131,15 @@ class DCSolver:
 
         if has_non_linear:
             # Use Newton-Raphson for non-linear circuits
-            return self._solve_newton()
+            solution = self._solve_newton()
         else:
             # Direct solve for linear circuits
-            return self._solve_linear()
+            solution = self._solve_linear()
+
+        # Store the solution for potential reuse
+        self.last_solution = solution.copy()
+
+        return solution
 
     def _has_non_linear_components(self) -> bool:
         """
@@ -271,9 +279,17 @@ class DCSolver:
                     component.voltage = original_voltages[vs_idx] * scale
                     vs_idx += 1
 
-            # Initial guess: use 0V for first step, previous result for subsequent steps
+            # Initial guess: use provided initial_guess for first step if available,
+            # otherwise use 0V for first step, previous result for subsequent steps
             if step == 0:
-                voltages = {node: 0.0 for node in nodes}
+                if self.initial_guess is not None:
+                    # Use provided initial guess
+                    voltages = {node: 0.0 for node in nodes}
+                    for node, voltage in self.initial_guess.items():
+                        if node in voltages:
+                            voltages[node] = voltage
+                else:
+                    voltages = {node: 0.0 for node in nodes}
             voltages["0"] = 0.0
             voltages["GND"] = 0.0
 
@@ -548,6 +564,15 @@ class DCSolver:
 
         return voltages
 
+    def get_last_solution(self) -> Optional[Dict[str, float]]:
+        """
+        Get the last computed solution from this solver.
+
+        Returns:
+            Dictionary mapping node names to voltages, or None if solve() hasn't been called yet
+        """
+        return self.last_solution
+
     def __repr__(self) -> str:
         """String representation of the solver."""
         return (
@@ -579,7 +604,8 @@ class TransientSolver:
         dt: Timestep size in seconds
     """
 
-    def __init__(self, circuit: Circuit, t_stop: float, dt: float):
+    def __init__(self, circuit: Circuit, t_stop: float, dt: float,
+                 initial_guess: Optional[Dict[str, float]] = None):
         """
         Initialize the Transient Solver.
 
@@ -587,6 +613,7 @@ class TransientSolver:
             circuit: Circuit object to simulate
             t_stop: Stop time for simulation in seconds
             dt: Timestep size in seconds (must be positive)
+            initial_guess: Optional initial voltage guess from DC operating point
 
         Raises:
             ValueError: If dt or t_stop is not positive
@@ -599,6 +626,7 @@ class TransientSolver:
         self.circuit = circuit
         self.t_stop = t_stop
         self.dt = dt
+        self.initial_guess = initial_guess
 
     def solve(self) -> Dict[str, np.ndarray]:
         """
@@ -638,6 +666,12 @@ class TransientSolver:
 
         # Build initial voltage estimate based on capacitor v_prev values
         initial_voltages = {"0": 0.0, "GND": 0.0}
+
+        # Use initial_guess if provided (from DC operating point)
+        if self.initial_guess is not None:
+            for node, voltage in self.initial_guess.items():
+                if node not in ["0", "GND"]:
+                    initial_voltages[node] = voltage
 
         # For each capacitor, estimate the node voltages based on v_prev
         for component in self.circuit.components:

@@ -104,6 +104,10 @@ def run_dc_sweep(
     """
     Run DC sweep analysis and generate plots.
 
+    Uses two-stage analysis:
+    1. Stage 1: Compute DC operating point at initial conditions
+    2. Stage 2: Perform DC sweep using OP solution as initial guess
+
     Args:
         circuit: Circuit object
         analysis_params: DC sweep parameters (source, start, stop, step)
@@ -136,11 +140,27 @@ def run_dc_sweep(
     # Setup output file for logging
     output_file = output_path / "simulation.lis"
 
-    # Run sweep with logging
+    # STAGE 1: Run single DC operating point first
+    logger.info("Stage 1: Computing DC operating point...")
+    op_solver = DCSolver(circuit, output_file=output_file)
+    with op_solver:
+        op_solution = op_solver.solve()
+    logger.info(f"DC operating point computed: {len(op_solution)} nodes")
+
+    # STAGE 2: Use OP solution as initial guess for sweep
+    logger.info("Stage 2: Running DC sweep with OP initial guess...")
+
+    # Generate sweep values
     sweep_values = []
+    current_value = start
+    while current_value <= stop:
+        sweep_values.append(current_value)
+        current_value += step
+
+    # Run sweep with logging
     all_results = {}
 
-    # Use context manager to enable logging
+    # Use context manager to enable logging for sweep
     with DCSolver(circuit, output_file=output_file) as solver:
         # Log header with sweep parameters
         if solver.logger:
@@ -153,9 +173,7 @@ def run_dc_sweep(
                 vsource_count=num_vsources
             )
 
-        point_num = 0
-        current_value = start
-        while current_value <= stop:
+        for point_num, current_value in enumerate(sweep_values):
             # Update source value
             source_component.value = current_value
 
@@ -163,19 +181,17 @@ def run_dc_sweep(
             if solver.logger:
                 solver.logger.log_sweep_point_start(point_num=point_num, sweep_value=current_value)
 
-            # Solve at this point (skip header since we already logged it)
-            solution = solver.solve(skip_header=True)
+            # Create solver with initial guess from OP (reuses logger context)
+            point_solver = DCSolver(circuit, initial_guess=op_solution)
+
+            # Solve at this point
+            solution = point_solver.solve(skip_header=True)
 
             # Store results
-            sweep_values.append(current_value)
             for node, node_value in solution.items():
                 if node not in all_results:
                     all_results[node] = []
                 all_results[node].append(node_value)
-
-            # Increment
-            current_value += step
-            point_num += 1
 
         # Log final results
         if solver.logger:
@@ -205,6 +221,10 @@ def run_transient(
     """
     Run transient analysis and generate plots.
 
+    Uses two-stage analysis:
+    1. Stage 1: Compute DC operating point for initial conditions
+    2. Stage 2: Perform transient analysis using OP solution as initial guess
+
     Args:
         circuit: Circuit object
         analysis_params: Transient parameters (tstep, tstop)
@@ -214,14 +234,22 @@ def run_transient(
     Returns:
         Dictionary mapping node names to their value lists over time
     """
-    from pycircuitsim.solver import TransientSolver
+    from pycircuitsim.solver import DCSolver, TransientSolver
     import numpy as np
 
     time_step = analysis_params['tstep']
     final_time = analysis_params['tstop']
 
-    # Create solver and run simulation
-    solver = TransientSolver(circuit, t_stop=final_time, dt=time_step)
+    # STAGE 1: Run DC operating point first for initial guess
+    logger.info("Stage 1: Computing DC operating point for transient initialization...")
+    op_solver = DCSolver(circuit)
+    op_solution = op_solver.solve()
+    logger.info(f"DC operating point computed: {len(op_solution)} nodes")
+
+    # STAGE 2: Use OP solution as initial guess for transient
+    logger.info("Stage 2: Running transient analysis...")
+    solver = TransientSolver(circuit, t_stop=final_time, dt=time_step,
+                            initial_guess=op_solution)
     results = solver.solve()
 
     # Convert numpy arrays to lists for plotting

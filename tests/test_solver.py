@@ -248,3 +248,107 @@ def test_dc_solver_no_log_without_output_file():
 
     # Should still work and produce solution
     assert len(solution) > 0
+
+
+def test_dc_solver_initial_guess():
+    """Verify DCSolver can use initial guess to speed convergence"""
+    from pycircuitsim.models.mosfet import NMOS
+    from pycircuitsim.models.passive import Resistor, VoltageSource
+
+    # Create simple inverter circuit
+    circuit = Circuit()
+    circuit.add_component(VoltageSource("Vdd", ["1", "0"], 3.3))
+    circuit.add_component(VoltageSource("Vin", ["2", "0"], 1.65))
+    circuit.add_component(NMOS("M1", ["0", "2", "3", "0"], L=1e-6, W=10e-6))
+    circuit.add_component(Resistor("Rload", ["1", "3"], 10000.0))
+
+    # Solve without initial guess
+    solver1 = DCSolver(circuit)
+    solution1 = solver1.solve()
+
+    # Solve WITH initial guess (should converge faster)
+    # Provide solution1 as initial guess
+    solver2 = DCSolver(circuit, initial_guess=solution1)
+    solution2 = solver2.solve()
+
+    # Verify solutions match
+    assert len(solution1) == len(solution2)
+    for node in solution1:
+        assert abs(solution1[node] - solution2[node]) < 1e-6
+
+    # Should converge immediately (1 iteration) with good guess
+    # Note: We're not checking exact iteration count here since source stepping
+    # complicates this, but we verify the solution is correct
+
+
+def test_two_stage_dc_sweep():
+    """Verify two-stage DC sweep (OP then sweep) works correctly"""
+    from pycircuitsim.models.passive import Resistor, VoltageSource
+
+    # Create simple resistive divider (linear circuit for predictable results)
+    circuit = Circuit()
+    circuit.add_component(VoltageSource("V1", ["1", "0"], 5.0))
+    circuit.add_component(VoltageSource("Vin", ["2", "0"], 2.5))
+    circuit.add_component(Resistor("R1", ["1", "3"], 1000.0))
+    circuit.add_component(Resistor("R2", ["3", "2"], 1000.0))
+    circuit.add_component(Resistor("R3", ["2", "0"], 1000.0))
+
+    # Stage 1: DC OP at initial Vin
+    op_solver = DCSolver(circuit)
+    op_solution = op_solver.solve()
+
+    # Stage 2: Sweep Vin using OP as initial guess
+    source = None
+    for comp in circuit.components:
+        if comp.name == "Vin":
+            source = comp
+            break
+    assert source is not None, "Vin source not found"
+    original_value = source.value
+
+    results = []
+    for vin in [0.0, 2.5, 5.0]:
+        source.value = vin
+        solver = DCSolver(circuit, initial_guess=op_solution)
+        solution = solver.solve()
+        results.append(solution["3"])  # Output voltage at node 3
+
+    source.value = original_value
+
+    # Verify the sweep produces valid results
+    # With linear resistors, results should be deterministic and finite
+    assert len(results) == 3
+    for vout in results:
+        assert not np.isnan(vout), "Output voltage should not be NaN"
+        assert not np.isinf(vout), "Output voltage should not be infinite"
+
+    # Verify that using initial guess doesn't break convergence
+    # The results should be the same as solving without initial guess
+    source.value = 2.5
+    solver_no_guess = DCSolver(circuit)
+    solution_no_guess = solver_no_guess.solve()
+    source.value = original_value
+
+    # Compare with the result from sweep (middle point)
+    assert abs(results[1] - solution_no_guess["3"]) < 1e-6, \
+        f"Results with and without initial guess should match"
+
+
+def test_dc_solver_get_last_solution():
+    """Verify DCSolver can retrieve last solution for reuse"""
+    from pycircuitsim.models.passive import Resistor, VoltageSource
+
+    circuit = Circuit()
+    circuit.add_component(Resistor("R1", ["1", "2"], 1000.0))
+    circuit.add_component(Resistor("R2", ["2", "0"], 1000.0))
+    circuit.add_component(VoltageSource("V1", ["1", "0"], 5.0))
+
+    solver = DCSolver(circuit)
+    solution = solver.solve()
+
+    # Verify get_last_solution() returns the solution
+    last_solution = solver.get_last_solution()
+    assert last_solution is not None
+    assert len(last_solution) == len(solution)
+    for node in solution:
+        assert abs(last_solution[node] - solution[node]) < 1e-10
