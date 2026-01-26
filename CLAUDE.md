@@ -32,13 +32,18 @@ This is an open-source, Python-based circuit simulator designed to provide a cle
 * **Input**: Parse `.sp` files similar to HSPICE format.
 * **Output**:
     * Real-time simulation progress and convergence status via console logging.
-    * Detailed simulation logs saved as `.lis` files (HSPICE-like format):
+    * Detailed simulation logs saved as `<circuit_name>_simulation.lis` (HSPICE-like format):
       - Iteration-by-iteration Newton-Raphson convergence data
       - Node voltages, voltage deltas, device currents
       - MOSFET conductances (gm, gds) for each iteration
       - Sweep point information for DC sweep analysis
-    * Save waveforms and timing diagrams after simulation completes.
-    * DC sweep plots with separate voltage and current subplots for better readability.
+    * Waveform data saved as `<circuit_name>_dc_sweep.csv` or `<circuit_name>_transient.csv`:
+      - CSV format with all node voltages and device currents
+      - Compatible with Excel, Python pandas, MATLAB
+      - Uses scientific notation for precision
+    * Plot files saved as `<circuit_name>_dc_sweep.png` or `<circuit_name>_transient.png`
+    * DC sweep plots have separate voltage/current subplots for better readability
+    * All output files organized in subdirectory: `results/<circuit_name>/`
 
 ## 4. Architecture & Design Guidelines
 
@@ -130,10 +135,34 @@ The project includes several example netlists in the `examples/` directory:
 
 ## 9. Output Files
 
+PyCircuitSim generates output files organized by circuit name in the `results/` directory:
+
+**Directory Structure:**
+```
+results/
+├── inverter/
+│   ├── inverter_simulation.lis      # Detailed simulation log
+│   ├── inverter_dc_sweep.png        # DC sweep plot
+│   └── inverter_dc_sweep.csv        # Waveform data
+├── sram_cell/
+│   ├── sram_cell_simulation.lis
+│   ├── sram_cell_dc_sweep.png
+│   └── sram_cell_dc_sweep.csv
+└── ...
+```
+
+### File Naming Convention
+All output files use the format: `<circuit_name>_<analysis_type>.<ext>`
+
+- **Simulation Log**: `<circuit_name>_simulation.lis`
+- **DC Sweep Plot**: `<circuit_name>_dc_sweep.png`
+- **DC Sweep Data**: `<circuit_name>_dc_sweep.csv`
+- **Transient Plot**: `<circuit_name>_transient.png`
+- **Transient Data**: `<circuit_name>_transient.csv` (future)
+- **DC OP Point**: `<circuit_name>_dc_op_point.txt`
+
 ### Simulation Log Files (.lis)
 PyCircuitSim generates detailed simulation log files in HSPICE-like `.lis` format:
-
-**Location:** `<output_dir>/simulation.lis`
 
 **Contents:**
 - **Header**: Analysis type, parameters, timestamp
@@ -141,41 +170,174 @@ PyCircuitSim generates detailed simulation log files in HSPICE-like `.lis` forma
 - **Iteration Details** (for each sweep point or time step):
   - Node voltages for current iteration
   - Voltage deltas (change from previous iteration)
-  - Device currents through all components
+  - Device currents through all components (including voltage sources!)
   - MOSFET conductances (gm, gds) when applicable
 - **Convergence Status**: Iteration count, final tolerance
 - **Final Results**: Node voltages at each sweep point
 
+### CSV Waveform Data
+CSV files contain numerical data for analysis in external tools:
+
+**Format:**
+```csv
+Vin (V), 1, 2, 3, i(Vdd), i(Vin), i(Mp1), i(Mn1), i(Rload)
+0.000000, 3.300000e+00, 0.000000e+00, 3.297501e+00, -3.297501e-06, ...
+0.100000, 3.300000e+00, 1.000000e-01, 3.297423e+00, -3.297423e-06, ...
+...
+```
+
+**Columns:**
+- First column: Sweep variable (e.g., Vin)
+- Remaining columns: Node voltages and device currents
+- Uses scientific notation (e.g., `3.300000e+00`)
+- All currents labeled as `i(component_name)`
+
+**Usage:**
+```python
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Load CSV data
+df = pd.read_csv('results/inverter/inverter_dc_sweep.csv')
+
+# Plot custom graph
+plt.plot(df['Vin (V)'], df['3'], label='Output')
+plt.plot(df['Vin (V)'], df['i(Vdd)']*1000, label='Vdd current (mA)')
+plt.xlabel('Input Voltage (V)')
+plt.ylabel('Output Voltage (V) / Current (mA)')
+plt.legend()
+plt.grid(True)
+```
+
 ### Plot Files
-* **DC Sweep**: `dc_sweep.png` - Separate subplots for voltages (top) and currents (bottom)
-* **Transient Analysis**: `transient.png` - Time-domain waveforms with auto-scaled time axis
+* **DC Sweep**: `<circuit_name>_dc_sweep.png` - Separate subplots for voltages (top) and currents (bottom)
+* **Transient Analysis**: `<circuit_name>_transient.png` - Time-domain waveforms with auto-scaled time axis
+
+**Plot Features:**
+- Top subplot: All node voltages
+- Bottom subplot: All device currents
+- Automatic detection of voltage vs current signals
+- Shared x-axis for easy comparison
+- High resolution (150 DPI) for publication quality
 
 ### Example .lis File Excerpt
 ```
 ----------------------------------------------------------------------
-  Iteration 3:
-    Node Voltages:
-           1:          3.3 V
-           2:          1.65 V
-           3:          0.82 V
-    Device Currents:
-          Mp1:      -1.2e-05 A
-          Mn1:       1.2e-05 A
-    Conductances:
-          Mp1: gm=4.5e-05 S, gds=2.3e-06 S
+Sweep Point 5: Sweep Value = 0.500
 ----------------------------------------------------------------------
-Point 5: CONVERGED in 3 iterations
-Final tolerance: 3.2e-07
+  Iteration 0:
+    Node Voltages:
+           1:            3.3 V
+           2:          0.05 V
+           3:       3.29705 V
+    Voltage Changes:
+           1:  0.00 V
+           2:         0.05 V
+           3:      0.00004 V
+    Device Currents:
+         Mp1: -2.472357e-06 A
+         Mn1:  0.000000e+00 A
+         Vdd:  0.000000e+00 A
+         Vin:  0.000000e+00 A
+       Rload:   0.0003297 A
+    Device Conductances:
+      Mp1: gm=1.018980e-03 S, gds=1.017156e-06 S
+      Mn1:
+         gds: 0 S
+          gm: 0 S
+----------------------------------------------------------------------
+Point 5: CONVERGED in 1 iterations
+Final tolerance: 4.38427e-05
 ----------------------------------------------------------------------
 ```
 
-## 10. Example Syntax
+## 10. Example Usage
+
+### Basic Simulation
+```bash
+# Run DC sweep simulation
+python main.py examples/inverter.sp -o results/
+
+# Output files created in results/inverter/:
+#   - inverter_simulation.lis      (detailed log)
+#   - inverter_dc_sweep.png       (plot)
+#   - inverter_dc_sweep.csv        (waveform data)
+```
+
+### Correct MOSFET Terminal Order
+**IMPORTANT**: The terminal order for MOSFETs is `drain gate source bulk`:
+
+**NMOS** (N-channel):
+- Correct: `Mn1 3 2 0 0 NMOS L=1u W=10u`
+  - drain=3 (output), gate=2 (input), source=0 (GND), bulk=0 (GND)
+- Current flows drain → source when ON
+
+**PMOS** (P-channel):
+- Correct: `Mp1 3 2 1 1 PMOS L=1u W=20u`
+  - drain=3 (output), gate=2 (input), source=1 (Vdd), bulk=1 (Vdd)
+- Current flows source → drain when ON (opposite of NMOS)
+
+**Common Mistake**: Swapping drain/source terminals leads to incorrect circuit behavior!
+
+### Example Netlist (CMOS Inverter)
 ```spice
-* Inverter Simulation
+* CMOS Inverter with Correct MOSFET Terminal Order
+* Demonstrates voltage switching from HIGH to LOW
+
+* Power supply
 Vdd 1 0 3.3
+
+* Input voltage source
 Vin 2 0 0
-M1 3 2 0 0 NMOS L=1u W=10u
-R1 1 3 10k
+
+* PMOS (pull-up transistor)
+* drain=output, gate=input, source=Vdd, bulk=Vdd
+Mp1 3 2 1 1 PMOS L=1u W=20u
+
+* NMOS (pull-down transistor)
+* drain=output, gate=input, source=GND, bulk=GND
+Mn1 3 2 0 0 NMOS L=1u W=10u
+
+* Load resistor (prevents floating output)
+Rload 3 0 10000
+
+* DC Sweep: Sweep input from 0V to 3.3V in 0.1V steps
 .dc Vin 0 3.3 0.1
+
 .end
+```
+
+### Command Line Options
+```bash
+# Specify custom output directory
+python main.py examples/inverter.sp -o my_results
+
+# Enable verbose logging
+python main.py examples/inverter.sp -o results --verbose
+```
+
+### Accessing Waveform Data
+```python
+import pandas as pd
+import matplotlib.pyplot as plt
+
+# Load CSV data
+df = pd.read_csv('results/inverter/inverter_dc_sweep.csv')
+
+# Plot inverter transfer characteristic
+plt.figure(figsize=(10, 6))
+plt.plot(df['Vin (V)'], df['3'], 'b-', linewidth=2, label='V(out)')
+plt.xlabel('Input Voltage (V)')
+plt.ylabel('Output Voltage (V)')
+plt.title('Inverter DC Transfer Characteristic')
+plt.grid(True)
+plt.legend()
+plt.show()
+
+# Verify KCL at Vin = 0V (first row)
+vdd_current = df['i(Vdd)'][0] * 1e6  # Convert to microamps
+load_current = df['i(Rload)'][0] * 1e6
+print(f"Vdd current: {vdd_current:.2f} µA")
+print(f"Load current: {load_current:.2f} µA")
+print(f"KCL check: i(Vdd) + i(Mp1) + i(Mn1) + i(Rload) = 0")
 ```

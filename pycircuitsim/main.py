@@ -58,9 +58,11 @@ def run_simulation(
     logger.info(f"Loading netlist: {netlist_path}")
 
     # Set output directory
+    # Extract circuit name from netlist filename (e.g., "inverter" from "inverter.sp")
+    circuit_name = netlist_file.stem  # Gets filename without extension
     if output_dir is None:
         output_dir = "results"
-    output_path = Path(output_dir)
+    output_path = Path(output_dir) / circuit_name
     output_path.mkdir(parents=True, exist_ok=True)
 
     # Parse netlist
@@ -78,19 +80,19 @@ def run_simulation(
     # Run DC sweep analysis if present
     if parser.analysis_type == "dc":
         logger.info("Running DC sweep analysis...")
-        dc_results = run_dc_sweep(circuit, parser.analysis_params, visualizer, output_path)
+        dc_results = run_dc_sweep(circuit, parser.analysis_params, visualizer, output_path, circuit_name)
         logger.info(f"DC sweep complete: {len(dc_results)} points computed")
 
     # Run transient analysis if present
     if parser.analysis_type == "tran":
         logger.info("Running transient analysis...")
-        tran_results = run_transient(circuit, parser.analysis_params, visualizer, output_path)
+        tran_results = run_transient(circuit, parser.analysis_params, visualizer, output_path, circuit_name)
         logger.info(f"Transient analysis complete: {len(tran_results)} time points")
 
     # If no analysis specified, run a single DC operating point
     if parser.analysis_type is None:
         logger.info("No analysis specified. Running single DC operating point.")
-        run_dc_op_point(circuit, output_path)
+        run_dc_op_point(circuit, output_path, circuit_name)
 
     logger.info(f"Simulation complete. Results saved to: {output_path}")
 
@@ -99,7 +101,8 @@ def run_dc_sweep(
     circuit: Circuit,
     analysis_params: Dict,
     visualizer: Visualizer,
-    output_path: Path
+    output_path: Path,
+    circuit_name: str
 ) -> Dict[str, List[float]]:
     """
     Run DC sweep analysis and generate plots.
@@ -113,6 +116,7 @@ def run_dc_sweep(
         analysis_params: DC sweep parameters (source, start, stop, step)
         visualizer: Visualizer instance for plotting
         output_path: Directory to save plots
+        circuit_name: Name of the circuit (for file naming)
 
     Returns:
         Dictionary mapping node names to their value lists
@@ -138,7 +142,7 @@ def run_dc_sweep(
     original_value = source_component.value
 
     # Setup output file for logging
-    output_file = output_path / "simulation.lis"
+    output_file = output_path / f"{circuit_name}_simulation.lis"
 
     # STAGE 1: Run single DC operating point first
     logger.info("Stage 1: Computing DC operating point...")
@@ -214,7 +218,7 @@ def run_dc_sweep(
     source_component.value = original_value
 
     # Generate plot
-    plot_path = output_path / "dc_sweep.png"
+    plot_path = output_path / f"{circuit_name}_dc_sweep.png"
     visualizer.plot_dc_sweep(
         sweep_values=sweep_values,
         results=all_results,
@@ -224,7 +228,7 @@ def run_dc_sweep(
 
     # Save waveform data to CSV
     import csv
-    csv_path = output_path / "dc_sweep.csv"
+    csv_path = output_path / f"{circuit_name}_dc_sweep.csv"
     with open(csv_path, 'w', newline='') as csvfile:
         writer = csv.writer(csvfile)
 
@@ -248,7 +252,8 @@ def run_transient(
     circuit: Circuit,
     analysis_params: Dict,
     visualizer: Visualizer,
-    output_path: Path
+    output_path: Path,
+    circuit_name: str
 ) -> Dict[str, List[float]]:
     """
     Run transient analysis and generate plots.
@@ -262,6 +267,7 @@ def run_transient(
         analysis_params: Transient parameters (tstep, tstop)
         visualizer: Visualizer instance for plotting
         output_path: Directory to save plots
+        circuit_name: Name of the circuit (for file naming)
 
     Returns:
         Dictionary mapping node names to their value lists over time
@@ -293,7 +299,7 @@ def run_transient(
         all_results[node] = voltages.tolist()
 
     # Generate plot
-    plot_path = output_path / "transient.png"
+    plot_path = output_path / f"{circuit_name}_transient.png"
     visualizer.plot_transient(
         time_points=time_points,
         results=all_results,
@@ -305,7 +311,8 @@ def run_transient(
 
 def run_dc_op_point(
     circuit: Circuit,
-    output_path: Path
+    output_path: Path,
+    circuit_name: str
 ) -> None:
     """
     Run a single DC operating point analysis.
@@ -313,6 +320,7 @@ def run_dc_op_point(
     Args:
         circuit: Circuit object to analyze
         output_path: Directory to save results
+        circuit_name: Name of the circuit (for file naming)
     """
     from pycircuitsim.solver import DCSolver
 
@@ -320,7 +328,7 @@ def run_dc_op_point(
     solution = solver.solve()
 
     # Save results to text file
-    result_file = output_path / "dc_op_point.txt"
+    result_file = output_path / f"{circuit_name}_dc_op_point.txt"
     with open(result_file, 'w') as f:
         f.write("DC Operating Point Results\n")
         f.write("=" * 40 + "\n")
