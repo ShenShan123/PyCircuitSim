@@ -66,7 +66,8 @@ class DCSolver:
 
     def __init__(self, circuit: Circuit, tolerance: float = 1e-9, max_iterations: int = 50,
                  output_file: Optional[Path] = None, initial_guess: Optional[Dict[str, float]] = None,
-                 logger: Optional[Logger] = None, use_source_stepping: bool = True):
+                 logger: Optional[Logger] = None, use_source_stepping: bool = True,
+                 source_stepping_steps: int = 20):
         """
         Initialize the DC Solver.
 
@@ -78,6 +79,7 @@ class DCSolver:
             initial_guess: Optional initial voltage guess for Newton-Raphson (dictionary of node->voltage)
             logger: Optional external Logger instance for logging (reuses existing logger)
             use_source_stepping: Enable source stepping homotopy (default: True)
+            source_stepping_steps: Number of source stepping steps (default: 20)
         """
         self.circuit = circuit
         self.tolerance = tolerance
@@ -86,6 +88,7 @@ class DCSolver:
         self.logger = logger  # Use external logger if provided
         self.initial_guess = initial_guess
         self.use_source_stepping = use_source_stepping
+        self.source_stepping_steps = source_stepping_steps
         self.last_solution: Optional[Dict[str, float]] = None
         self._owns_logger = False  # Track if we created the logger (for cleanup)
 
@@ -294,9 +297,8 @@ class DCSolver:
 
         # Source stepping: gradually increase voltage source values
         # to improve convergence
-        # Use more steps for circuits with MOSFETs to help Newton-Raphson converge
-        # Only enable source stepping if use_source_stepping is True
-        num_steps = 20 if (self._has_non_linear_components() and self.use_source_stepping) else 1
+        # Use configurable number of steps when source stepping is enabled
+        num_steps = self.source_stepping_steps if (self._has_non_linear_components() and self.use_source_stepping) else 1
         for step in range(num_steps):
             # Scale voltage sources
             scale = (step + 1) / num_steps

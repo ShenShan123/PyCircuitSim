@@ -201,12 +201,16 @@ def run_dc_sweep(
                 solver.logger.log_sweep_point_start(point_num=point_num, sweep_value=current_value)
 
             # Create solver with appropriate initial guess
+            # Use reduced source stepping (5 steps) for faster convergence during sweep
+            # This balances performance (fewer steps than Stage 1's 20) with convergence stability
             if point_num == 0:
                 # First point: use OP solution
-                point_solver = DCSolver(circuit, initial_guess=op_solution, logger=solver.logger)
+                point_solver = DCSolver(circuit, initial_guess=op_solution, logger=solver.logger,
+                                       use_source_stepping=True, source_stepping_steps=5)
             else:
                 # Subsequent points: use previous solution (continuation method)
-                point_solver = DCSolver(circuit, initial_guess=prev_solution, logger=solver.logger)
+                point_solver = DCSolver(circuit, initial_guess=prev_solution, logger=solver.logger,
+                                       use_source_stepping=True, source_stepping_steps=5)
 
             # Solve at this point
             solution = point_solver.solve(skip_header=True)
