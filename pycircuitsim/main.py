@@ -57,15 +57,7 @@ def run_simulation(
 
     logger.info(f"Loading netlist: {netlist_path}")
 
-    # Set output directory
-    # Extract circuit name from netlist filename (e.g., "inverter" from "inverter.sp")
-    circuit_name = netlist_file.stem  # Gets filename without extension
-    if output_dir is None:
-        output_dir = "results"
-    output_path = Path(output_dir) / circuit_name
-    output_path.mkdir(parents=True, exist_ok=True)
-
-    # Parse netlist
+    # Parse netlist first to determine analysis type
     parser = Parser()
     try:
         parser.parse_file(str(netlist_file))
@@ -73,6 +65,23 @@ def run_simulation(
         logger.info(f"Parsed {len(circuit.components)} components")
     except Exception as e:
         raise ValueError(f"Failed to parse netlist: {e}")
+
+    # Set output directory with analysis type subdirectory
+    # Extract circuit name from netlist filename (e.g., "inverter" from "inverter.sp")
+    circuit_name = netlist_file.stem  # Gets filename without extension
+    if output_dir is None:
+        output_dir = "results"
+
+    # Create analysis type subdirectory
+    if parser.analysis_type == "dc":
+        analysis_subdir = "dc"
+    elif parser.analysis_type == "tran":
+        analysis_subdir = "tran"
+    else:
+        analysis_subdir = "dc_op"  # Single DC operating point
+
+    output_path = Path(output_dir) / circuit_name / analysis_subdir
+    output_path.mkdir(parents=True, exist_ok=True)
 
     # Initialize visualizer
     visualizer = Visualizer()
@@ -146,7 +155,9 @@ def run_dc_sweep(
 
     # STAGE 1: Run single DC operating point first
     logger.info("Stage 1: Computing DC operating point...")
-    op_solver = DCSolver(circuit, output_file=output_file)
+    # Use .ic initial conditions if provided, otherwise None (solver will use 0V guess)
+    initial_guess = circuit.initial_conditions if circuit.initial_conditions else None
+    op_solver = DCSolver(circuit, output_file=output_file, initial_guess=initial_guess)
     with op_solver:
         op_solution = op_solver.solve()
     logger.info(f"DC operating point computed: {len(op_solution)} nodes")
@@ -177,6 +188,9 @@ def run_dc_sweep(
                 vsource_count=num_vsources
             )
 
+        # Initialize previous solution tracker
+        prev_solution = op_solution.copy()
+
         for point_num, current_value in enumerate(sweep_values):
             # Update source value
             source_component.value = current_value
@@ -185,11 +199,19 @@ def run_dc_sweep(
             if solver.logger:
                 solver.logger.log_sweep_point_start(point_num=point_num, sweep_value=current_value)
 
-            # Create solver with initial guess from OP (reuses logger context)
-            point_solver = DCSolver(circuit, initial_guess=op_solution, logger=solver.logger)
+            # Create solver with appropriate initial guess
+            if point_num == 0:
+                # First point: use OP solution
+                point_solver = DCSolver(circuit, initial_guess=op_solution, logger=solver.logger)
+            else:
+                # Subsequent points: use previous solution (continuation method)
+                point_solver = DCSolver(circuit, initial_guess=prev_solution, logger=solver.logger)
 
             # Solve at this point
             solution = point_solver.solve(skip_header=True)
+
+            # Store this solution for next point's initial guess
+            prev_solution = solution.copy()
 
             # Store node voltages
             for node, node_value in solution.items():
@@ -280,7 +302,9 @@ def run_transient(
 
     # STAGE 1: Run DC operating point first for initial guess
     logger.info("Stage 1: Computing DC operating point for transient initialization...")
-    op_solver = DCSolver(circuit)
+    # Use .ic initial conditions if provided, otherwise None (solver will use 0V guess)
+    initial_guess = circuit.initial_conditions if circuit.initial_conditions else None
+    op_solver = DCSolver(circuit, initial_guess=initial_guess)
     op_solution = op_solver.solve()
     logger.info(f"DC operating point computed: {len(op_solution)} nodes")
 
@@ -324,7 +348,9 @@ def run_dc_op_point(
     """
     from pycircuitsim.solver import DCSolver
 
-    solver = DCSolver(circuit)
+    # Use .ic initial conditions if provided, otherwise None (solver will use 0V guess)
+    initial_guess = circuit.initial_conditions if circuit.initial_conditions else None
+    solver = DCSolver(circuit, initial_guess=initial_guess)
     solution = solver.solve()
 
     # Save results to text file
