@@ -364,6 +364,33 @@ class DCSolver:
                 # Handle voltage sources (B and C matrices)
                 self._stamp_voltage_sources(mna_matrix, rhs, node_map, num_nodes, voltages=voltages)
 
+                # MNA Matrix Conditioning Check
+                # Check if the conductance matrix (top-left portion) is ill-conditioned
+                if num_nodes > 0:
+                    try:
+                        conductance_matrix = mna_matrix[:num_nodes, :num_nodes]
+                        cond_number = np.linalg.cond(conductance_matrix)
+                        if cond_number > 1e12:
+                            # Matrix is ill-conditioned - this can cause numerical instability
+                            if self.logger:
+                                self.logger._write_separator("-")
+                                self.logger._write(f"WARNING: Ill-conditioned MNA matrix at step {step + 1}, iteration {iteration + 1}")
+                                self.logger._write(f"  Condition number: {cond_number:.2e}")
+                                self.logger._write(f"  This may cause numerical inaccuracies or convergence issues")
+                                self.logger._write_separator("-")
+                    except np.linalg.LinAlgError:
+                        # Singular matrix - will be caught by the solver below
+                        pass
+
+                    # Check for negative diagonal elements in conductance matrix
+                    # (indicates physically unrealistic conductance values)
+                    for i in range(min(num_nodes, len(mna_matrix))):
+                        diag_value = mna_matrix[i, i]
+                        if diag_value < 0:
+                            if self.logger:
+                                self.logger._write(f"WARNING: Negative diagonal element Y[{i},{i}] = {diag_value:.6e} S")
+                                self.logger._write(f"  This may indicate incorrect device conductance calculation")
+
                 # Solve for delta
                 try:
                     delta = np.linalg.solve(mna_matrix, rhs)
