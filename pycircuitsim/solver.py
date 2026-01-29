@@ -67,7 +67,8 @@ class DCSolver:
     def __init__(self, circuit: Circuit, tolerance: float = 1e-9, max_iterations: int = 50,
                  output_file: Optional[Path] = None, initial_guess: Optional[Dict[str, float]] = None,
                  logger: Optional[Logger] = None, use_source_stepping: bool = True,
-                 source_stepping_steps: int = 20):
+                 source_stepping_steps: int = 20,
+                 damping_factor: float = 1.0):
         """
         Initialize the DC Solver.
 
@@ -80,6 +81,7 @@ class DCSolver:
             logger: Optional external Logger instance for logging (reuses existing logger)
             use_source_stepping: Enable source stepping homotopy (default: True)
             source_stepping_steps: Number of source stepping steps (default: 20)
+            damping_factor: Initial damping factor for Newton-Raphson (default: 1.0, 0.5 = aggressive damping)
         """
         self.circuit = circuit
         self.tolerance = tolerance
@@ -89,6 +91,7 @@ class DCSolver:
         self.initial_guess = initial_guess
         self.use_source_stepping = use_source_stepping
         self.source_stepping_steps = source_stepping_steps
+        self.damping_factor = damping_factor
         self.last_solution: Optional[Dict[str, float]] = None
         self._owns_logger = False  # Track if we created the logger (for cleanup)
 
@@ -280,6 +283,9 @@ class DCSolver:
         """
         from pycircuitsim.models.mosfet import NMOS, PMOS
 
+        # Reset damping to default for each solve
+        self.damping_factor = 1.0
+
         # Get circuit topology
         nodes = self.circuit.get_nodes()
         node_map = self.circuit.get_node_map()
@@ -369,12 +375,19 @@ class DCSolver:
 
                 # Update voltages and check convergence
                 max_change = 0.0
+                max_delta = np.max(np.abs(delta))
                 deltas = {}
+
+                # Adaptive damping: Check if we need to enable damping
+                # Large deltas (>1V) indicate potential divergence
+                if max_delta > 1.0 and self.damping_factor == 1.0:
+                    # Enable damping for this iteration to prevent overshooting
+                    self.damping_factor = 0.5
+
                 for idx, node in enumerate(nodes):
                     old_voltage = voltages[node]
-                    # Apply damping for stability (reduced for better convergence)
-                    damping = 0.5  # Moderate damping now that sign bug is fixed
-                    new_voltage = old_voltage + damping * delta[idx]
+                    # Apply adaptive damping for stability
+                    new_voltage = old_voltage + self.damping_factor * delta[idx]
                     deltas[node] = abs(new_voltage - old_voltage)
                     voltages[node] = new_voltage
                     max_change = max(max_change, abs(new_voltage - old_voltage))
@@ -409,6 +422,9 @@ class DCSolver:
 
                 # Check convergence
                 if max_change < self.tolerance:
+                    # Reset damping if converged well
+                    if max_delta < 0.1 and self.damping_factor < 1.0:
+                        self.damping_factor = 1.0
                     # Log convergence
                     if self.logger:
                         self.logger.log_convergence(
