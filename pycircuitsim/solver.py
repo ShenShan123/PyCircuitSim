@@ -33,6 +33,21 @@ from pycircuitsim.circuit import Circuit
 from pycircuitsim.models.passive import VoltageSource, Capacitor
 from pycircuitsim.logger import Logger, IterationInfo
 
+# Helper function to check if component is a MOSFET (Level 1 or BSIM4V5)
+def _is_mosfet(component):
+    """Check if component is any type of MOSFET."""
+    from pycircuitsim.models.mosfet import NMOS, PMOS
+    if isinstance(component, (NMOS, PMOS)):
+        return True
+    # Try to import BSIM4V5 types
+    try:
+        from pycircuitsim.models.bsim4v5 import BSIM4V5_NMOS, BSIM4V5_PMOS
+        if isinstance(component, (BSIM4V5_NMOS, BSIM4V5_PMOS)):
+            return True
+    except ImportError:
+        pass
+    return False
+
 
 class DCSolver:
     """
@@ -51,7 +66,7 @@ class DCSolver:
 
     def __init__(self, circuit: Circuit, tolerance: float = 1e-9, max_iterations: int = 50,
                  output_file: Optional[Path] = None, initial_guess: Optional[Dict[str, float]] = None,
-                 logger: Optional[Logger] = None):
+                 logger: Optional[Logger] = None, use_source_stepping: bool = True):
         """
         Initialize the DC Solver.
 
@@ -62,6 +77,7 @@ class DCSolver:
             output_file: Optional path to output log file (.lis file)
             initial_guess: Optional initial voltage guess for Newton-Raphson (dictionary of node->voltage)
             logger: Optional external Logger instance for logging (reuses existing logger)
+            use_source_stepping: Enable source stepping homotopy (default: True)
         """
         self.circuit = circuit
         self.tolerance = tolerance
@@ -69,6 +85,7 @@ class DCSolver:
         self.output_file = output_file
         self.logger = logger  # Use external logger if provided
         self.initial_guess = initial_guess
+        self.use_source_stepping = use_source_stepping
         self.last_solution: Optional[Dict[str, float]] = None
         self._owns_logger = False  # Track if we created the logger (for cleanup)
 
@@ -156,7 +173,7 @@ class DCSolver:
         from pycircuitsim.models.mosfet import NMOS, PMOS
 
         for component in self.circuit.components:
-            if isinstance(component, (NMOS, PMOS)):
+            if _is_mosfet(component):
                 return True
         return False
 
@@ -277,7 +294,9 @@ class DCSolver:
 
         # Source stepping: gradually increase voltage source values
         # to improve convergence
-        num_steps = 1  # Disable source stepping (use full voltage immediately)
+        # Use more steps for circuits with MOSFETs to help Newton-Raphson converge
+        # Only enable source stepping if use_source_stepping is True
+        num_steps = 20 if (self._has_non_linear_components() and self.use_source_stepping) else 1
         for step in range(num_steps):
             # Scale voltage sources
             scale = (step + 1) / num_steps
@@ -309,14 +328,30 @@ class DCSolver:
 
                 # Stamp linear components (resistors, current sources)
                 for component in self.circuit.components:
-                    if not isinstance(component, (NMOS, PMOS)):
+                    if not _is_mosfet(component):
                         component.stamp_conductance(mna_matrix, node_map)
                         component.stamp_rhs(rhs, node_map)
 
                 # Stamp MOSFET conductances and currents
+                # For BSIM4V5, use their own stamp methods (handle 3 conductances properly)
+                # For Level 1, use _stamp_mosfet
                 for component in self.circuit.components:
-                    if isinstance(component, (NMOS, PMOS)):
-                        self._stamp_mosfet(component, mna_matrix, rhs, node_map, voltages)
+                    if _is_mosfet(component):
+                        # Check if it's a BSIM4V5 component
+                        try:
+                            from pycircuitsim.models.bsim4v5 import BSIM4V5_NMOS, BSIM4V5_PMOS
+                            if isinstance(component, (BSIM4V5_NMOS, BSIM4V5_PMOS)):
+                                # BSIM4V5 has its own stamping methods that handle Gm, Gds, Gmbs
+                                # First, calculate current at this voltage point to update conductances
+                                component.calculate_current(voltages)
+                                component.stamp_conductance(mna_matrix, node_map)
+                                component.stamp_rhs(rhs, node_map)
+                            else:
+                                # Level 1 MOSFET - use solver's stamping
+                                self._stamp_mosfet(component, mna_matrix, rhs, node_map, voltages)
+                        except ImportError:
+                            # No BSIM4V5 available, use solver's stamping
+                            self._stamp_mosfet(component, mna_matrix, rhs, node_map, voltages)
 
                 # Handle voltage sources (B and C matrices)
                 self._stamp_voltage_sources(mna_matrix, rhs, node_map, num_nodes, voltages=voltages)
@@ -400,14 +435,23 @@ class DCSolver:
 
         # Stamp all components at final voltages
         for component in self.circuit.components:
-            if not isinstance(component, (NMOS, PMOS)):
+            if not _is_mosfet(component):
                 component.stamp_conductance(mna_matrix_final, node_map)
                 component.stamp_rhs(rhs_final, node_map)
 
         # Stamp MOSFETs at final operating point
         for component in self.circuit.components:
-            if isinstance(component, (NMOS, PMOS)):
-                self._stamp_mosfet(component, mna_matrix_final, rhs_final, node_map, voltages)
+            if _is_mosfet(component):
+                try:
+                    from pycircuitsim.models.bsim4v5 import BSIM4V5_NMOS, BSIM4V5_PMOS
+                    if isinstance(component, (BSIM4V5_NMOS, BSIM4V5_PMOS)):
+                        component.calculate_current(voltages)
+                        component.stamp_conductance(mna_matrix_final, node_map)
+                        component.stamp_rhs(rhs_final, node_map)
+                    else:
+                        self._stamp_mosfet(component, mna_matrix_final, rhs_final, node_map, voltages)
+                except ImportError:
+                    self._stamp_mosfet(component, mna_matrix_final, rhs_final, node_map, voltages)
 
         # Handle voltage sources
         self._stamp_voltage_sources(mna_matrix_final, rhs_final, node_map, num_nodes, voltages=voltages)
@@ -693,6 +737,208 @@ class TransientSolver:
         self.dt = dt
         self.initial_guess = initial_guess
 
+    def _has_non_linear_components(self) -> bool:
+        """
+        Check if circuit contains non-linear components (MOSFETs).
+
+        Returns:
+            True if circuit has MOSFETs, False otherwise
+        """
+        from pycircuitsim.models.mosfet import NMOS, PMOS
+
+        for component in self.circuit.components:
+            if _is_mosfet(component):
+                return True
+        return False
+
+    def _solve_timestep_newton(
+        self,
+        nodes: List[str],
+        node_map: Dict[str, int],
+        num_nodes: int,
+        num_voltage_sources: int,
+        initial_voltages: Dict[str, float],
+        time: float
+    ) -> Dict[str, float]:
+        """
+        Solve circuit at a single timestep using Newton-Raphson iteration.
+
+        This method is used for non-linear circuits (with MOSFETs).
+        It iteratively linearizes the circuit equations until convergence.
+
+        Args:
+            nodes: List of non-ground node names
+            node_map: Mapping from node names to matrix indices
+            num_nodes: Number of non-ground nodes
+            num_voltage_sources: Number of voltage sources
+            initial_voltages: Initial voltage guess from previous timestep
+            time: Current simulation time
+
+        Returns:
+            Dictionary mapping node names to voltage values
+
+        Raises:
+            RuntimeError: If Newton-Raphson fails to converge
+        """
+        from pycircuitsim.models.mosfet import NMOS, PMOS
+
+        # Matrix size: num_nodes + num_voltage_sources
+        matrix_size = num_nodes + num_voltage_sources
+
+        # Use previous timestep's voltages as initial guess
+        voltages = initial_voltages.copy()
+
+        # Newton-Raphson parameters
+        tolerance = 1e-6
+        max_iterations = 100  # Increased for complex circuits
+        damping = 0.5
+
+        for iteration in range(max_iterations):
+            # Build MNA matrix and RHS
+            mna_matrix = np.zeros((matrix_size, matrix_size))
+            rhs = np.zeros(matrix_size)
+
+            # Stamp linear components (resistors, capacitors)
+            for component in self.circuit.components:
+                if not _is_mosfet(component):
+                    component.stamp_conductance(mna_matrix, node_map)
+                    component.stamp_rhs(rhs, node_map)
+
+            # Stamp voltage sources (with time-varying support)
+            self._stamp_voltage_sources(mna_matrix, rhs, node_map, num_nodes, time, voltages)
+
+            # Stamp MOSFETs at current voltage estimate
+            for component in self.circuit.components:
+                if _is_mosfet(component):
+                    try:
+                        from pycircuitsim.models.bsim4v5 import BSIM4V5_NMOS, BSIM4V5_PMOS
+                        if isinstance(component, (BSIM4V5_NMOS, BSIM4V5_PMOS)):
+                            component.calculate_current(voltages)
+                            component.stamp_conductance(mna_matrix, node_map)
+                            component.stamp_rhs(rhs, node_map)
+                        else:
+                            self._stamp_mosfet_transient(component, mna_matrix, rhs, node_map, voltages)
+                    except ImportError:
+                        self._stamp_mosfet_transient(component, mna_matrix, rhs, node_map, voltages)
+
+            # Solve for voltage updates
+            try:
+                solution = np.linalg.solve(mna_matrix, rhs)
+            except np.linalg.LinAlgError:
+                raise RuntimeError(
+                    f"Circuit matrix is singular at t={time:.6e}s during Newton-Raphson iteration {iteration+1}"
+                )
+
+            # Extract voltage deltas
+            deltas = {}
+            max_delta = 0.0
+            for idx, node in enumerate(nodes):
+                delta = solution[idx]
+                deltas[node] = delta
+                max_delta = max(max_delta, abs(delta))
+
+            # Check convergence
+            if max_delta < tolerance:
+                # Converged! Update voltages one final time
+                for node in nodes:
+                    if node in voltages:
+                        voltages[node] += deltas[node]
+                break
+
+            # Update voltages with damping for stability
+            for node in nodes:
+                if node in deltas:
+                    voltages[node] += damping * deltas[node]
+        else:
+            # Did not converge
+            raise RuntimeError(
+                f"Newton-Raphson failed to converge at t={time:.6e}s after {max_iterations} iterations. "
+                f"Final max delta: {max_delta:.2e}"
+            )
+
+        # Add ground nodes
+        voltages["0"] = 0.0
+        voltages["GND"] = 0.0
+
+        return voltages
+
+    def _stamp_mosfet_transient(
+        self,
+        mosfet,
+        mna_matrix: np.ndarray,
+        rhs: np.ndarray,
+        node_map: Dict[str, int],
+        voltages: Dict[str, float],
+    ) -> None:
+        """
+        Stamp MOSFET conductance and current to MNA matrix for transient analysis.
+
+        This is the same as the DC solver's MOSFET stamping, but kept separate
+        to avoid confusion with the linear transient path.
+
+        Args:
+            mosfet: MOSFET component (NMOS or PMOS)
+            mna_matrix: MNA matrix to modify (in-place)
+            rhs: RHS vector to modify (in-place)
+            node_map: Mapping from node names to matrix indices
+            voltages: Current voltage estimate at this timestep
+        """
+        # Get MOSFET terminals
+        drain = mosfet.nodes[0]
+        gate = mosfet.nodes[1]
+        source = mosfet.nodes[2]
+
+        # Get conductances at current operating point
+        g_ds, g_m = mosfet.get_conductance(voltages)
+
+        # Get current at operating point
+        i_ds = mosfet.calculate_current(voltages)
+
+        # Add minimum conductance to prevent numerical instability
+        g_min = 1e-6
+        g_ds = max(g_ds, g_min)
+
+        # Stamp conductances to MNA matrix
+        if drain != "0" and drain in node_map:
+            d_idx = node_map[drain]
+            mna_matrix[d_idx, d_idx] += g_ds
+
+        if source != "0" and source in node_map:
+            s_idx = node_map[source]
+            mna_matrix[s_idx, s_idx] += g_ds
+
+        if drain != "0" and drain in node_map and source != "0" and source in node_map:
+            d_idx = node_map[drain]
+            s_idx = node_map[source]
+            mna_matrix[d_idx, s_idx] -= g_ds
+            mna_matrix[s_idx, d_idx] -= g_ds
+
+        # Stamp transconductance
+        if gate != "0" and gate in node_map and drain != "0" and drain in node_map:
+            g_idx = node_map[gate]
+            d_idx = node_map[drain]
+            mna_matrix[d_idx, g_idx] += g_m
+
+        # Stamp equivalent current source to RHS
+        v_d = voltages.get(drain, 0.0)
+        v_g = voltages.get(gate, 0.0)
+        v_s = voltages.get(source, 0.0)
+
+        v_ds = v_d - v_s
+        v_gs = v_g - v_s
+
+        # Equivalent current source
+        i_eq = i_ds - g_ds * v_ds - g_m * v_gs
+
+        # Stamp current to drain and source nodes
+        if drain != "0" and drain in node_map:
+            d_idx = node_map[drain]
+            rhs[d_idx] += i_eq
+
+        if source != "0" and source in node_map:
+            s_idx = node_map[source]
+            rhs[s_idx] -= i_eq
+
     def solve(self) -> Dict[str, np.ndarray]:
         """
         Perform transient analysis from t=0 to t=t_stop.
@@ -779,33 +1025,54 @@ class TransientSolver:
                     # Get companion model: G_eq = C/dt, I_eq = G_eq * V_prev
                     g_eq, i_eq = component.get_companion_model(self.dt, component.v_prev)
 
-            # Build and solve MNA matrix for this timestep
-            mna_matrix = np.zeros((num_nodes + num_voltage_sources, num_nodes + num_voltage_sources))
-            rhs = np.zeros(num_nodes + num_voltage_sources)
+            # Check if circuit has non-linear components
+            has_non_linear = self._has_non_linear_components()
 
-            # Stamp all components (capacitors now use companion model)
-            for component in self.circuit.components:
-                component.stamp_conductance(mna_matrix, node_map)
-                component.stamp_rhs(rhs, node_map)
-
-            # Handle voltage sources
-            self._stamp_voltage_sources(mna_matrix, rhs, node_map, num_nodes)
+            # Get initial guess for this timestep (use previous timestep's voltages)
+            prev_voltages = {}
+            for node in nodes:
+                prev_voltages[node] = voltages_over_time[node][step - 1]
 
             # Solve for node voltages at this timestep
-            try:
-                solution = np.linalg.solve(mna_matrix, rhs)
-            except np.linalg.LinAlgError as e:
-                raise np.linalg.LinAlgError(
-                    f"Circuit matrix is singular at t={current_time:.6f}s. "
-                    f"Check for floating nodes or short circuits."
-                ) from e
+            if has_non_linear:
+                # Use Newton-Raphson for non-linear circuits
+                timestep_voltages = self._solve_timestep_newton(
+                    nodes=nodes,
+                    node_map=node_map,
+                    num_nodes=num_nodes,
+                    num_voltage_sources=num_voltage_sources,
+                    initial_voltages=prev_voltages,
+                    time=current_time
+                )
+            else:
+                # Use simple linear solve for linear circuits
+                # Build and solve MNA matrix for this timestep
+                mna_matrix = np.zeros((num_nodes + num_voltage_sources, num_nodes + num_voltage_sources))
+                rhs = np.zeros(num_nodes + num_voltage_sources)
 
-            # Extract node voltages from solution
-            timestep_voltages = {}
-            for idx, node in enumerate(nodes):
-                timestep_voltages[node] = float(solution[idx])
-            timestep_voltages["0"] = 0.0
-            timestep_voltages["GND"] = 0.0
+                # Stamp all components (capacitors now use companion model)
+                for component in self.circuit.components:
+                    component.stamp_conductance(mna_matrix, node_map)
+                    component.stamp_rhs(rhs, node_map)
+
+                # Handle voltage sources (with time-varying support)
+                self._stamp_voltage_sources(mna_matrix, rhs, node_map, num_nodes, current_time)
+
+                # Solve for node voltages at this timestep
+                try:
+                    solution = np.linalg.solve(mna_matrix, rhs)
+                except np.linalg.LinAlgError as e:
+                    raise np.linalg.LinAlgError(
+                        f"Circuit matrix is singular at t={current_time:.6f}s. "
+                        f"Check for floating nodes or short circuits."
+                    ) from e
+
+                # Extract node voltages from solution
+                timestep_voltages = {}
+                for idx, node in enumerate(nodes):
+                    timestep_voltages[node] = float(solution[idx])
+                timestep_voltages["0"] = 0.0
+                timestep_voltages["GND"] = 0.0
 
             # Store voltages
             for node in nodes:
@@ -829,6 +1096,8 @@ class TransientSolver:
         rhs: np.ndarray,
         node_map: Dict[str, int],
         num_nodes: int,
+        time: float = 0.0,
+        voltages: Dict[str, float] = None,
     ) -> None:
         """
         Stamp voltage source equations to MNA matrix.
@@ -836,16 +1105,21 @@ class TransientSolver:
         For each voltage source, we add:
         - B matrix column: connection to node voltages
         - C matrix row: voltage constraint equation
-        - RHS entry: voltage source value
+        - RHS entry: voltage source value (for linear) or mismatch (for Newton-Raphson)
 
         The voltage source equation is: V_pos - V_neg = V_source
+        For Newton-Raphson: delta_V_pos - delta_V_neg = V_source - (V_pos_old - V_neg_old)
 
         Args:
             mna_matrix: MNA matrix to modify (in-place)
             rhs: RHS vector to modify (in-place)
             node_map: Mapping from node names to matrix indices
             num_nodes: Number of non-ground nodes
+            time: Current simulation time (for time-varying sources)
+            voltages: Current voltage estimate (for Newton-Raphson mismatch computation)
         """
+        from pycircuitsim.models.passive import PulseVoltageSource
+
         voltage_source_index = 0
 
         for component in self.circuit.components:
@@ -853,7 +1127,12 @@ class TransientSolver:
                 # Get voltage source nodes
                 pos_node = component.nodes[0]  # Positive terminal
                 neg_node = component.nodes[1]  # Negative terminal
-                voltage = component.voltage
+
+                # Get voltage value (support time-varying sources)
+                if isinstance(component, PulseVoltageSource):
+                    voltage_target = component.get_voltage_at_time(time)
+                else:
+                    voltage_target = component.voltage
 
                 # The row index for this voltage source's equation
                 vs_row = num_nodes + voltage_source_index
@@ -870,7 +1149,15 @@ class TransientSolver:
                     mna_matrix[neg_idx, vs_row] -= 1.0
 
                 # Stamp voltage source value to RHS
-                rhs[vs_row] = voltage
+                # For Newton-Raphson, compute mismatch: V_source - (V_pos_old - V_neg_old)
+                if voltages is not None:
+                    # Newton-Raphson: compute mismatch
+                    v_pos = voltages.get(pos_node, 0.0)
+                    v_neg = voltages.get(neg_node, 0.0)
+                    rhs[vs_row] = voltage_target - (v_pos - v_neg)
+                else:
+                    # Linear analysis: use source value directly
+                    rhs[vs_row] = voltage_target
 
                 # Move to next voltage source
                 voltage_source_index += 1

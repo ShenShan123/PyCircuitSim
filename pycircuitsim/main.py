@@ -157,7 +157,7 @@ def run_dc_sweep(
     logger.info("Stage 1: Computing DC operating point...")
     # Use .ic initial conditions if provided, otherwise None (solver will use 0V guess)
     initial_guess = circuit.initial_conditions if circuit.initial_conditions else None
-    op_solver = DCSolver(circuit, output_file=output_file, initial_guess=initial_guess)
+    op_solver = DCSolver(circuit, output_file=output_file, initial_guess=initial_guess, use_source_stepping=True)
     with op_solver:
         op_solution = op_solver.solve()
     logger.info(f"DC operating point computed: {len(op_solution)} nodes")
@@ -176,7 +176,8 @@ def run_dc_sweep(
     all_results = {}
 
     # Use context manager to enable logging for sweep
-    with DCSolver(circuit, output_file=output_file) as solver:
+    # Disable source stepping during sweep (use continuation method instead)
+    with DCSolver(circuit, output_file=output_file, use_source_stepping=False) as solver:
         # Log header with sweep parameters
         if solver.logger:
             solver.logger.log_header("DC Sweep Analysis", analysis_params)
