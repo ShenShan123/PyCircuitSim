@@ -421,7 +421,17 @@ static void bsim4_calc_ueff(
 
     /* Calculate effective gate overdrive and body bias */
     Vgsteff = Vgs - Vth;
-    if (Vgsteff < 0.0) Vgsteff = 0.0;
+    /* For NMOS (type=1): Vgsteff > 0 when ON, clamp at 0 when OFF */
+    /* For PMOS (type=-1): Vgsteff < 0 when ON, clamp at 0 when OFF */
+    /* The correct clamping should keep Vgsteff positive for calculations */
+    if (m->type == 1) {
+        /* NMOS: clamp negative values to 0 */
+        if (Vgsteff < 0.0) Vgsteff = 0.0;
+    } else {
+        /* PMOS: keep negative Vgsteff as-is (device is ON when Vgsteff < 0) */
+        /* But the magnitude should be positive for subsequent calculations */
+        if (Vgsteff < 0.0) Vgsteff = -Vgsteff;  /* Use absolute value */
+    }
 
     Vbseff = Vbs;
     if (Vbseff > 0.0) Vbseff = 0.0;
@@ -796,7 +806,14 @@ int bsim4_iv_evaluate(
     /* Calculate Vgsteff - use simple calculation for I-V model */
     /* Note: Use effective gate voltage from poly depletion */
     i->Vgsteff = Vgs_eff - i->Vth;
-    if (i->Vgsteff < 0.0) i->Vgsteff = 0.0;
+    /* Handle PMOS correctly: for PMOS, Vgsteff is negative when ON */
+    if (m->type == 1) {
+        /* NMOS: clamp negative values to 0 */
+        if (i->Vgsteff < 0.0) i->Vgsteff = 0.0;
+    } else {
+        /* PMOS: use absolute value for calculations (negative Id will be restored by type sign) */
+        if (i->Vgsteff < 0.0) i->Vgsteff = -i->Vgsteff;
+    }
     i->dVgsteff_dVg = dVgs_eff_dVg;
     i->dVgsteff_dVd = 0.0;
     i->dVgsteff_dVb = 0.0;

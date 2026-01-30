@@ -403,6 +403,7 @@ void BSIM4_InitModel_45nm_PMOS(BSIM4_Model *model)
     model->voff = -0.126;       /* freePDK45 value! */
 
     /* Substrate and doping parameters - freePDK45 values */
+    model->nsub = 1.0e17;       /* Substrate doping (cm^-3) - placeholder */
     model->ngate = 2.0e20;      /* freePDK45 value! */
     model->ndep = 2.44e18;      /* freePDK45 value! */
     model->nsd = 2.0e20;        /* freePDK45 value! */
