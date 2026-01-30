@@ -16,6 +16,11 @@ Supported analysis:
 - DC sweep: .dc <source> <start> <stop> <step>
 - Transient: .tran <tstep> <tstop>
 
+Supported directives:
+- Initial conditions: .ic V(<node>)=<value> ...
+- Model definitions: .model <name> <type> <params>
+- Include files: .include <filename>
+
 Value suffixes supported:
 - k/K: kilo (1e3)
 - u/U: micro (1e-6)
@@ -24,6 +29,7 @@ Value suffixes supported:
 """
 from typing import Dict, Optional, Tuple
 import re
+from pathlib import Path
 
 from pycircuitsim.circuit import Circuit
 from pycircuitsim.models import (
@@ -47,6 +53,7 @@ class Parser:
         circuit: Circuit object containing all parsed components
         analysis_type: Type of analysis ('dc', 'tran', or None)
         analysis_params: Dictionary of analysis parameters
+        models: Dictionary of model definitions (name -> type + params)
     """
 
     # Unit suffix multipliers
@@ -66,6 +73,7 @@ class Parser:
         self.circuit = Circuit()
         self.analysis_type: Optional[str] = None
         self.analysis_params: Dict[str, float] = {}
+        self.models: Dict[str, Dict[str, any]] = {}  # Model definitions
 
     def parse_file(self, filename: str) -> None:
         """
@@ -81,9 +89,76 @@ class Parser:
             FileNotFoundError: If the netlist file doesn't exist
             ValueError: If the netlist contains invalid syntax
         """
+        # Store current file for .include resolution
+        self._current_file = str(Path(filename).resolve())
+
         with open(filename, 'r') as f:
-            for line in f:
-                self.parse_line(line.strip())
+            lines = f.readlines()
+
+        # First pass: handle line continuations and collect models/includes
+        processed_lines = []
+        continued_line = ""
+        in_model = False  # Track if we're in a .model definition
+
+        for raw_line in lines:
+            line = raw_line.strip()
+
+            # Skip empty lines and comments
+            if not line or line.startswith('*'):
+                continue
+
+            # Handle line continuations (lines starting with '+')
+            if line.startswith('+'):
+                continuation = line[1:].strip()
+                continuation = continuation.replace(' = ', '=').replace('= ', '=')
+                import re
+                continuation = re.sub(r'\s*=\s*', '=', continuation)
+                continued_line += " " + continuation
+                continue
+
+            # If we have a continued line, add it to processed lines
+            if continued_line:
+                processed_lines.append(continued_line)
+                continued_line = ""
+                in_model = False
+
+            # Check if this is a new .model or .include or analysis line
+            if line.lower().startswith('.model') or line.lower().startswith('.include') or \
+               line.lower().startswith('.dc') or line.lower().startswith('.tran') or \
+               line.lower().startswith('.ic') or line.lower().startswith('.end'):
+                line = line.replace(' = ', '=').replace('= ', '=')
+                line = ' '.join(line.split())
+
+                # For .model lines, start accumulating continuations
+                if line.lower().startswith('.model'):
+                    continued_line = line
+                    in_model = True
+                else:
+                    processed_lines.append(line)
+            else:
+                # Regular line (component definition)
+                line = line.replace(' = ', '=').replace('= ', '=')
+                line = ' '.join(line.split())
+                processed_lines.append(line)
+
+        # Process any remaining continued line
+        if continued_line:
+            processed_lines.append(continued_line)
+
+        # Pre-pass: collect all .model and .include directives first
+        # This ensures models are available before components that reference them
+        for line in processed_lines:
+            if line.lower().startswith('.model'):
+                self._parse_model(line)
+            elif line.lower().startswith('.include'):
+                # Includes may add more models, so process them
+                self.parse_line(line)
+
+        # Second pass: parse all remaining lines (components, analysis, etc.)
+        for line in processed_lines:
+            # Skip .model and .include (already processed)
+            if not line.lower().startswith(('.model', '.include')):
+                self.parse_line(line)
 
     def parse_line(self, line: str) -> None:
         """
@@ -124,6 +199,12 @@ class Parser:
             self._parse_dc(line)
         elif line.startswith('.tran'):
             self._parse_tran(line)
+        elif line.startswith('.ic'):
+            self._parse_ic(line)
+        elif line.lower().startswith('.model'):
+            self._parse_model(line)
+        elif line.lower().startswith('.include'):
+            self._parse_include(line)
         # Ignore other directives (.option, .measure, etc.)
 
     def _parse_value(self, value_str: str) -> float:
@@ -196,7 +277,11 @@ class Parser:
 
     def _parse_voltage_source(self, line: str) -> None:
         """
-        Parse a voltage source line: V<name> <n+> <n-> <value>.
+        Parse a voltage source line: V<name> <n+> <n-> <value> or V<name> <n+> <n-> PULSE <params>.
+
+        Supports:
+        - DC voltage source: V1 1 0 3.3
+        - PULSE source: V1 1 0 PULSE 0 3.3 1n 0.1n 0.1n 5n 10n
 
         Args:
             line: Voltage source definition line
@@ -210,10 +295,30 @@ class Parser:
 
         name = parts[0]
         nodes = [parts[1], parts[2]]
-        value = self._parse_value(parts[3])
 
-        voltage_source = VoltageSource(name, nodes, value)
-        self.circuit.add_component(voltage_source)
+        # Check if it's a PULSE source
+        if len(parts) >= 4 and parts[3].upper() == 'PULSE':
+            # PULSE source: V1 n+ n- PULSE V1 V2 TD TR TF PW PER
+            if len(parts) < 11:
+                raise ValueError(f"PULSE source requires 8 parameters: {line}")
+
+            from pycircuitsim.models.passive import PulseVoltageSource
+
+            v1 = self._parse_value(parts[4])
+            v2 = self._parse_value(parts[5])
+            td = self._parse_value(parts[6])
+            tr = self._parse_value(parts[7])
+            tf = self._parse_value(parts[8])
+            pw = self._parse_value(parts[9])
+            per = self._parse_value(parts[10])
+
+            pulse_source = PulseVoltageSource(name, nodes, v1, v2, td, tr, tf, pw, per)
+            self.circuit.add_component(pulse_source)
+        else:
+            # DC voltage source
+            value = self._parse_value(parts[3])
+            voltage_source = VoltageSource(name, nodes, value)
+            self.circuit.add_component(voltage_source)
 
     def _parse_current_source(self, line: str) -> None:
         """
@@ -270,13 +375,78 @@ class Parser:
         if L is None or W is None:
             raise ValueError(f"MOSFET missing L or W parameter: {line}")
 
-        # Create appropriate transistor type
-        if model == "NMOS":
+        # Check if model name references a .model definition
+        model_name = parts[5]  # Keep case for model lookup
+
+        # First, check if it's a direct NMOS/PMOS keyword (backward compatibility)
+        if model_name.upper() == "NMOS":
             mosfet = NMOS(name, nodes, L=L, W=W)
-        elif model == "PMOS":
+            self.circuit.add_component(mosfet)
+            return
+        elif model_name.upper() == "PMOS":
             mosfet = PMOS(name, nodes, L=L, W=W)
+            self.circuit.add_component(mosfet)
+            return
+
+        # Look up model in .model definitions
+        if model_name not in self.models:
+            raise ValueError(f"Model '{model_name}' not found. Available models: {list(self.models.keys())}")
+
+        model_def = self.models[model_name]
+        model_type = model_def['type']
+        model_params = model_def['params']
+
+        # Check if it's a BSIM4 model (LEVEL=54)
+        level = model_params.get('LEVEL', 1)
+
+        if level == 54:
+            # BSIM4V5 model
+            from pycircuitsim.models.bsim4v5 import BSIM4V5_NMOS, BSIM4V5_PMOS
+
+            # Pass ALL model parameters to BSIM4V5 (not just a subset)
+            # This allows proper use of freePDK45 and other PDK libraries
+            bsim4_params = {}
+
+            for param_name, param_value in model_params.items():
+                # Skip LEVEL parameter (used for model selection only)
+                if param_name == 'LEVEL':
+                    continue
+
+                # Handle U0 unit conversion
+                # - BSIM4 C model expects SI units (m^2/V-s), U0 ~ 0.01-0.1
+                # - Some netlists may use cm^2/V-s directly, U0 ~ 100-500
+                # Heuristic: if U0 > 10, assume cm^2/V-s and convert to m^2/V-s
+                if param_name == 'U0':
+                    if param_value > 10.0:
+                        # Likely in cm^2/V-s, convert to m^2/V-s (divide by 1e4)
+                        bsim4_params['U0'] = param_value / 1e4
+                    else:
+                        # Already in m^2/V-s (freePDK45 uses SI units)
+                        bsim4_params['U0'] = param_value
+                # Handle TOX parameter names (TOXE is BSIM4 standard, TOX is short form)
+                elif param_name == 'TOXE':
+                    bsim4_params['TOX'] = param_value
+                elif param_name == 'TOX':
+                    bsim4_params['TOX'] = param_value
+                # Pass all other parameters as-is
+                else:
+                    bsim4_params[param_name] = param_value
+
+            # Create BSIM4V5 component
+            if model_type.upper() == 'NMOS':
+                mosfet = BSIM4V5_NMOS(name, nodes, L=L, W=W, params=bsim4_params)
+            elif model_type.upper() == 'PMOS':
+                mosfet = BSIM4V5_PMOS(name, nodes, L=L, W=W, params=bsim4_params)
+            else:
+                raise ValueError(f"Unsupported model type for BSIM4: {model_type}")
         else:
-            raise ValueError(f"Unknown MOSFET model: {model}")
+            # Level 1 or other models - use original implementation
+            if model_type.upper() == 'NMOS':
+                mosfet = NMOS(name, nodes, L=L, W=W)
+            elif model_type.upper() == 'PMOS':
+                mosfet = PMOS(name, nodes, L=L, W=W)
+            else:
+                raise ValueError(f"Unknown MOSFET model type: {model_type}")
 
         self.circuit.add_component(mosfet)
 
@@ -321,3 +491,109 @@ class Parser:
             "tstep": self._parse_value(parts[1]),
             "tstop": self._parse_value(parts[2]),
         }
+
+    def _parse_ic(self, line: str) -> None:
+        """
+        Parse an initial condition line: .ic V(<node>)=<value> V(<node>)=<value> ...
+
+        Sets initial voltages for specified nodes, which is useful for
+        defining the initial state of bistable circuits like SRAM cells.
+
+        Args:
+            line: Initial condition line (e.g., ".ic V(2)=3.3 V(3)=0")
+
+        Raises:
+            ValueError: If the line has invalid syntax
+
+        Examples:
+            .ic V(2)=3.3 V(3)=0
+            .ic V(node1)=1.8 V(node2)=0.5
+        """
+        # Remove ".ic" prefix
+        ic_spec = line[3:].strip()
+
+        # Pattern to match V(node)=value or V(node)=value, with multiple assignments
+        # Supports: V(2)=3.3, V(2)=3.3 V(3)=0, V(node1)=1.8 V(node2)=0.5
+        pattern = r'V\(\s*([^)]+)\s*\)\s*=\s*([0-9.eE+-]+[kKuUnNpP]?)'
+
+        matches = re.findall(pattern, ic_spec)
+
+        if not matches:
+            raise ValueError(f"Invalid .ic syntax: {line}")
+
+        for node_str, value_str in matches:
+            node = node_str.strip()
+            value = self._parse_value(value_str)
+            self.circuit.initial_conditions[node] = value
+
+    def _parse_model(self, line: str) -> None:
+        """
+        Parse a .model line: .model <name> NMOS/PMOS <params>
+
+        Args:
+            line: Model definition line
+
+        Raises:
+            ValueError: If the line has invalid syntax
+        """
+        # Remove ".model" prefix and get parts
+        model_spec = line[6:].strip()
+
+        # Remove parentheses if present (HSPICE style: .model name TYPE (params))
+        model_spec = model_spec.replace('(', ' ').replace(')', ' ')
+        parts = model_spec.split()
+
+        if len(parts) < 2:
+            raise ValueError(f"Invalid .model syntax: {line}")
+
+        model_name = parts[0]
+        model_type = parts[1].upper()
+
+        # Parse parameters (supports key=value format)
+        params = {}
+        for part in parts[2:]:
+            if '=' in part:
+                key, value = part.split('=', 1)
+                key = key.strip()
+                value = value.strip()
+                if key and value:  # Skip empty keys or values
+                    try:
+                        params[key.upper()] = self._parse_value(value)
+                    except ValueError:
+                        # Skip parameters that can't be parsed (e.g., empty values)
+                        pass
+
+        # Store model definition
+        self.models[model_name] = {
+            'type': model_type,
+            'params': params
+        }
+
+    def _parse_include(self, line: str) -> None:
+        """
+        Parse an .include directive: .include <filename>
+
+        Args:
+            line: Include directive line
+
+        Raises:
+            ValueError: If the line has invalid syntax
+            FileNotFoundError: If the included file doesn't exist
+        """
+        # Remove ".include" prefix
+        include_spec = line[8:].strip()
+        included_file = include_spec.strip('"\'')  # Remove quotes
+
+        # Resolve path relative to current file
+        current_file = getattr(self, '_current_file', None)
+        if current_file:
+            current_dir = Path(current_file).parent
+            included_path = current_dir / included_file
+        else:
+            included_path = Path(included_file)
+
+        if not included_path.exists():
+            raise FileNotFoundError(f"Included file not found: {included_path}")
+
+        # Parse the included file using parse_file (handles line continuations)
+        self.parse_file(str(included_path))

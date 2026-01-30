@@ -35,6 +35,7 @@ class Circuit:
         """
         self.components: List[Component] = []
         self.nodes: Set[str] = set()
+        self.initial_conditions: Dict[str, float] = {}  # Node -> initial voltage
 
     def add_component(self, component: Component) -> None:
         """

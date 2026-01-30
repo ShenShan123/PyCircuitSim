@@ -391,19 +391,43 @@ class DCSolver:
                                 self.logger._write(f"WARNING: Negative diagonal element Y[{i},{i}] = {diag_value:.6e} S")
                                 self.logger._write(f"  This may indicate incorrect device conductance calculation")
 
-                # Solve for delta
+                # Solve the MNA system
+                # With companion model (direct voltage source RHS), the solution
+                # is the NEW voltage, not a delta correction.
                 try:
-                    delta = np.linalg.solve(mna_matrix, rhs)
+                    solution = np.linalg.solve(mna_matrix, rhs)
                 except np.linalg.LinAlgError as e:
                     raise np.linalg.LinAlgError(
                         f"Circuit matrix is singular at source step {step + 1}, iteration {iteration + 1}. "
                         f"Check circuit topology or initial guess."
                     ) from e
 
-                # Update voltages and check convergence
+                # Update voltages using companion model formulation
+                # The solution contains the new voltages directly
                 max_change = 0.0
-                max_delta = np.max(np.abs(delta))
+                max_delta = 0.0
                 deltas = {}
+
+                # Identify voltage-source-constrained nodes
+                # These nodes must reach their target values exactly (no damping)
+                vs_constrained_nodes = set()
+                for component in self.circuit.components:
+                    if isinstance(component, VoltageSource):
+                        pos_node = component.nodes[0]
+                        neg_node = component.nodes[1]
+                        # If one terminal is ground, the other is constrained
+                        if neg_node == "0":
+                            vs_constrained_nodes.add(pos_node)
+                        elif pos_node == "0":
+                            vs_constrained_nodes.add(neg_node)
+
+                for idx, node in enumerate(nodes):
+                    old_voltage = voltages[node]
+                    new_voltage_solution = solution[idx]
+
+                    # Calculate delta for convergence check
+                    delta_v = new_voltage_solution - old_voltage
+                    max_delta = max(max_delta, abs(delta_v))
 
                 # Adaptive damping: Check if we need to enable damping
                 # Large deltas (>1V) indicate potential divergence
@@ -413,8 +437,18 @@ class DCSolver:
 
                 for idx, node in enumerate(nodes):
                     old_voltage = voltages[node]
-                    # Apply adaptive damping for stability
-                    new_voltage = old_voltage + self.damping_factor * delta[idx]
+                    new_voltage_solution = solution[idx]
+
+                    if node in vs_constrained_nodes:
+                        # Voltage source nodes: use solution directly (no damping)
+                        # These must satisfy the constraint exactly
+                        new_voltage = new_voltage_solution
+                    else:
+                        # Free nodes: apply adaptive damping
+                        # damping=1.0 -> fully use new voltage
+                        # damping=0.5 -> average of old and new
+                        new_voltage = self.damping_factor * new_voltage_solution + (1.0 - self.damping_factor) * old_voltage
+
                     deltas[node] = abs(new_voltage - old_voltage)
                     voltages[node] = new_voltage
                     max_change = max(max_change, abs(new_voltage - old_voltage))
@@ -593,14 +627,15 @@ class DCSolver:
         # Stamp current to drain and source nodes
         # For NMOS: current flows OUT of drain, INTO source (i_ds > 0)
         # For PMOS: current flows INTO drain, OUT of source (i_ds < 0)
-        # Sign flip attempted to fix convergence issues
+        # RHS gets NEGATIVE i_eq at drain (current flows OUT of node into MOSFET)
+        # and POSITIVE i_eq at source (current flows INTO node from MOSFET)
         if drain != "0" and drain in node_map:
             d_idx = node_map[drain]
-            rhs[d_idx] += i_eq  # FLIPPED: Add current to drain
+            rhs[d_idx] -= i_eq
 
         if source != "0" and source in node_map:
             s_idx = node_map[source]
-            rhs[s_idx] -= i_eq  # FLIPPED: Subtract current from source
+            rhs[s_idx] += i_eq
 
     def _stamp_voltage_sources(
         self,
@@ -652,14 +687,10 @@ class DCSolver:
                     mna_matrix[neg_idx, vs_row] -= 1.0
 
                 # Stamp voltage source value to RHS
-                if voltages is None:
-                    # Linear solve: use voltage value directly
-                    rhs[vs_row] = voltage
-                else:
-                    # Newton-Raphson: use voltage mismatch
-                    v_pos = voltages.get(pos_node, 0.0)
-                    v_neg = voltages.get(neg_node, 0.0)
-                    rhs[vs_row] = voltage - (v_pos - v_neg)
+                # Use direct voltage value for companion model consistency.
+                # The companion model for MOSFETs solves for V directly,
+                # so voltage sources should also use direct form.
+                rhs[vs_row] = voltage
 
                 # Move to next voltage source
                 voltage_source_index += 1

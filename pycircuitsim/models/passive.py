@@ -278,6 +278,188 @@ class VoltageSource(Component):
         return f"VoltageSource({self.name}, nodes={self.nodes}, V={self.voltage}V)"
 
 
+class PulseVoltageSource(VoltageSource):
+    """
+    PULSE voltage source for transient analysis.
+
+    A PULSE source generates a periodic pulse waveform defined by:
+    - V1: Initial value
+    - V2: Pulsed value
+    - TD: Delay time
+    - TR: Rise time
+    - TF: Fall time
+    - PW: Pulse width
+    - PER: Period
+
+    The waveform repeats with period PER. The pulse goes from V1 to V2,
+    stays at V2 for PW time, then returns to V1.
+
+    Attributes:
+        name: Component identifier (e.g., 'V1', 'V_in')
+        nodes: List of two node names [positive, negative]
+        v1: Initial voltage value (volts)
+        v2: Pulsed voltage value (volts)
+        td: Delay time before first pulse (seconds)
+        tr: Rise time (seconds)
+        tf: Fall time (seconds)
+        pw: Pulse width at V2 (seconds)
+        per: Period of the waveform (seconds)
+    """
+
+    def __init__(
+        self,
+        name: str,
+        nodes: List[str],
+        v1: float,
+        v2: float,
+        td: float,
+        tr: float,
+        tf: float,
+        pw: float,
+        per: float
+    ):
+        """
+        Initialize a PULSE voltage source.
+
+        Args:
+            name: Component identifier (e.g., 'V1', 'V_in')
+            nodes: List of exactly two node names [positive, negative]
+            v1: Initial voltage value in volts
+            v2: Pulsed voltage value in volts
+            td: Delay time in seconds
+            tr: Rise time in seconds
+            tf: Fall time in seconds
+            pw: Pulse width in seconds
+            per: Period in seconds
+
+        Raises:
+            ValueError: If nodes count is not 2, or if timing parameters are invalid
+        """
+        # Validate number of nodes
+        if len(nodes) != 2:
+            raise ValueError(f"PulseVoltageSource must have exactly 2 nodes, got {len(nodes)}")
+
+        # Initialize with v1 as initial value
+        super().__init__(name, nodes, v1)
+
+        # Store pulse parameters
+        self.v1 = float(v1)
+        self.v2 = float(v2)
+        self.td = float(td)
+        self.tr = float(tr)
+        self.tf = float(tf)
+        self.pw = float(pw)
+        self.per = float(per)
+
+        # Validate timing parameters
+        if self.td < 0:
+            raise ValueError(f"Delay time TD must be non-negative, got {td}")
+        if self.tr <= 0:
+            raise ValueError(f"Rise time TR must be positive, got {tr}")
+        if self.tf <= 0:
+            raise ValueError(f"Fall time TF must be positive, got {tf}")
+        if self.pw <= 0:
+            raise ValueError(f"Pulse width PW must be positive, got {pw}")
+        if self.per <= 0:
+            raise ValueError(f"Period PER must be positive, got {per}")
+        if self.per < (self.pw + self.tr + self.tf):
+            raise ValueError(f"Period ({per}) must be >= PW+TR+TF ({self.pw + self.tr + self.tf})")
+
+    def get_voltage_at_time(self, time: float) -> float:
+        """
+        Get the voltage value at a specific time.
+
+        The PULSE waveform follows this pattern:
+        - 0 ≤ t < TD: V1 (initial delay)
+        - TD ≤ t < TD+TR: Ramp from V1 to V2 (rising edge)
+        - TD+TR ≤ t < TD+TR+PW: V2 (pulse high)
+        - TD+TR+PW ≤ t < TD+TR+PW+TF: Ramp from V2 to V1 (falling edge)
+        - TD+TR+PW+TF ≤ t < PER: V1 (off time)
+        - Pattern repeats every PER
+
+        Args:
+            time: Time in seconds
+
+        Returns:
+            Voltage value at the given time
+        """
+        # Handle negative time (use initial value)
+        if time < 0:
+            return self.v1
+
+        # Calculate position within current period
+        t_in_period = time % self.per
+
+        # Check if we're still in initial delay
+        if time < self.td:
+            return self.v1
+
+        # Time since delay ended
+        t_since_delay = time - self.td
+        t_in_pulse_period = t_since_delay % self.per
+
+        # Rising edge
+        if t_in_pulse_period < self.tr:
+            # Linear ramp from V1 to V2
+            fraction = t_in_pulse_period / self.tr
+            return self.v1 + fraction * (self.v2 - self.v1)
+
+        # Pulse high
+        elif t_in_pulse_period < (self.tr + self.pw):
+            return self.v2
+
+        # Falling edge
+        elif t_in_pulse_period < (self.tr + self.pw + self.tf):
+            # Linear ramp from V2 to V1
+            t_fall = t_in_pulse_period - (self.tr + self.pw)
+            fraction = t_fall / self.tf
+            return self.v2 + fraction * (self.v1 - self.v2)
+
+        # Off time (back to V1)
+        else:
+            return self.v1
+
+    @property
+    def voltage(self) -> float:
+        """
+        Get current voltage value.
+
+        For time-varying sources, this returns the initial value (v1).
+        Use get_voltage_at_time(t) for time-dependent values.
+
+        Returns:
+            Initial voltage value (v1)
+        """
+        return self.v1
+
+    @voltage.setter
+    def voltage(self, value: float) -> None:
+        """
+        Set voltage value for DC analysis compatibility.
+
+        For pulse sources, setting the voltage scales both v1 and v2 proportionally.
+        This allows DC source stepping to work with pulse sources.
+
+        Args:
+            value: New voltage value (scales the pulse waveform)
+        """
+        # Calculate scaling factor based on current v1
+        if self.v1 != 0:
+            scale = value / self.v1
+            # Scale both v1 and v2 to maintain pulse amplitude
+            self.v1 = float(value)
+            self.v2 = self.v2 * scale
+        else:
+            # If v1 is 0, just set v1 and leave v2 unchanged
+            self.v1 = float(value)
+
+    def __repr__(self) -> str:
+        """String representation of the PULSE voltage source."""
+        return (f"PulseVoltageSource({self.name}, nodes={self.nodes}, "
+                f"V1={self.v1}V, V2={self.v2}V, TD={self.td}s, "
+                f"TR={self.tr}s, TF={self.tf}s, PW={self.pw}s, PER={self.per}s)")
+
+
 class CurrentSource(Component):
     """
     Ideal DC current source.

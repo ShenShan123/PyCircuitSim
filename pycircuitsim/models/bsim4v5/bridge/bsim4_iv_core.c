@@ -35,6 +35,58 @@
 #define CHARGE (Q_CHARGE * 1e6)  /* Convert to SI units */
 
 /*
+ * Temperature Scaling Helper Functions
+ *
+ * BSIM4.5.0 includes several temperature-dependent parameters:
+ * 1. Mobility (U0) scales with (T/Tnom)^ute
+ * 2. Threshold voltage (Vth) shifts with temperature using kt1, kt2
+ * 3. Saturation velocity (vsat) scales with (T/Tnom)^at
+ */
+
+/* Calculate temperature-scaled mobility */
+static inline double temp_scale_u0(const BSIM4_Model *m, double u0_tnom)
+{
+    if (m->ute == 0.0) {
+        return u0_tnom;  /* No temperature dependence */
+    }
+    double T_ratio = m->temp / m->tnom;
+    return u0_tnom * pow(T_ratio, m->ute);
+}
+
+/* Calculate temperature-scaled saturation velocity */
+static inline double temp_scale_vsat(const BSIM4_Model *m, double vsat_tnom)
+{
+    if (m->at == 0.0) {
+        return vsat_tnom;  /* No temperature dependence */
+    }
+    double T_ratio = m->temp / m->tnom;
+    return vsat_tnom * pow(T_ratio, m->at);
+}
+
+/* Calculate threshold voltage shift due to temperature */
+static inline double temp_shift_vth(const BSIM4_Model *m, double Leff __attribute__((unused)), double Phis)
+{
+    /* BSIM4 temperature dependence formula:
+     * Vth(T) = Vth(Tnom) + (kt1 + kt1l/Leff) * (T/Tnom - 1) + kt2 * (T/Tnom - 1) * Phis
+     *
+     * Simplified version (kt1l = 0):
+     * Vth_shift = kt1 * (T/Tnom - 1) + kt2 * (T/Tnom - 1) * Phis
+     */
+    double T_ratio = m->temp / m->tnom;
+    double T_factor = T_ratio - 1.0;  /* Normalized temperature difference */
+
+    /* kt1 term: primary temperature coefficient */
+    double T_shift = m->kt1 * T_factor;
+
+    /* kt2 term: secondary temperature coefficient (Phis-dependent) */
+    if (m->kt2 != 0.0) {
+        T_shift += m->kt2 * T_factor * Phis;
+    }
+
+    return T_shift;
+}
+
+/*
  * Poly Gate Depletion Effect
  * Original: b4ld.c lines 4709-4739
  *
@@ -249,7 +301,7 @@ static void bsim4_calc_vth(
         /* 2*phi_F = 2 * (kT/q) * ln(NSUB/ni) */
         /* where ni (intrinsic carrier concentration) = 1.45e10 cm^-3 for Si at 300K */
         double ni = 1.45e16;  /* m^-3, converted from 1.45e10 cm^-3 */
-        double Vtm = K_BOLTZMANN * 300.0 / Q_CHARGE;  /* Thermal voltage at 300K */
+        double Vtm = K_BOLTZMANN * m->temp / Q_CHARGE;  /* Thermal voltage at device temperature */
         double nsub_si = m->nsub * 1e6;  /* Convert cm^-3 to m^-3 */
         Phis = 2.0 * Vtm * log(nsub_si / ni);
     }
@@ -327,6 +379,9 @@ static void bsim4_calc_vth(
     Vth = m->type * m->vth0 + K1ox * (sqrtPhisb - sqrtPhis0) - k2ox * Vbseff
           - Delt_vth - Vth_NarrowW;
 
+    /* Apply temperature effects to Vth */
+    Vth += temp_shift_vth(m, Leff_in, Phis);
+
     /* Calculate derivatives */
     dVth_dVb = -K1ox * (1.0 / (2.0 * sqrtPhisb)) - k2ox;  /* Simplified */
     dVth_dVd = 0.0;  /* TODO: Add proper derivative */
@@ -357,8 +412,8 @@ static void bsim4_calc_ueff(
     double Denomi, dDenomi_dVg, dDenomi_dVd, dDenomi_dVb;
     double Vgsteff, Vbseff, Vtm;
 
-    /* Get mobility parameters */
-    u0 = m->u0;
+    /* Get mobility parameters with temperature scaling */
+    u0 = temp_scale_u0(m, m->u0);
     ua = m->ua;
     ub = m->ub;
     uc = m->uc;
@@ -474,7 +529,9 @@ static void bsim4_calc_vdsat(
     }
 
     /* Calculate EsatL (saturation field * length) */
-    EsatL = 2.0 * m->vsat / ueff;
+    /* Apply temperature scaling to vsat */
+    double vsat_eff = temp_scale_vsat(m, m->vsat);
+    EsatL = 2.0 * vsat_eff / ueff;
 
     /* Calculate Vdsat (simplified for Phase 1) */
     if (Rds == 0.0) {
@@ -579,8 +636,10 @@ static void bsim4_calc_idl(
     beta = ueff * CoxeffWovL;
 
     /* Calculate saturation field */
-    EsatL = 2.0 * m->vsat / ueff;
-    dEsatL_dVg = -2.0 * m->vsat / (ueff * ueff) * i->dueff_dVg;
+    /* Apply temperature scaling to vsat */
+    double vsat_eff_idl = temp_scale_vsat(m, m->vsat);
+    EsatL = 2.0 * vsat_eff_idl / ueff;
+    dEsatL_dVg = -2.0 * vsat_eff_idl / (ueff * ueff) * i->dueff_dVg;
 
     /* Calculate Abulk (bulk charge effect) - BSIM4 style */
     /* First calculate depletion depth */

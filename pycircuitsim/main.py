@@ -166,11 +166,22 @@ def run_dc_sweep(
     logger.info("Stage 2: Running DC sweep with OP initial guess...")
 
     # Generate sweep values
+    # Handle both increasing (step > 0) and decreasing (step < 0) sweeps
     sweep_values = []
-    current_value = start
-    while current_value <= stop:
-        sweep_values.append(current_value)
-        current_value += step
+    if step > 0:
+        # Increasing sweep: start < stop
+        current_value = start
+        while current_value <= stop:
+            sweep_values.append(current_value)
+            current_value += step
+    elif step < 0:
+        # Decreasing sweep: start > stop
+        current_value = start
+        while current_value >= stop:
+            sweep_values.append(current_value)
+            current_value += step
+    else:
+        raise ValueError(f"DC sweep step cannot be zero: {step}")
 
     # Run sweep with logging
     all_results = {}
