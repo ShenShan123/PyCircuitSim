@@ -1,9 +1,35 @@
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
+*$py.class
 *.so
-.pytest_cache/
-.coverage
-results/
+
+# Distribution / packaging
+.Python
 *.egg-info/
 dist/
 build/
+
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Simulation results (users can generate their own)
+results/
+*.lis
+*.csv
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Debug files
+*.out
+debug_*

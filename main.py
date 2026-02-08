@@ -50,7 +50,7 @@ Examples:
 
     # Import here to avoid errors if package not installed
     try:
-        from pycircuitsim.main import run_simulation
+        from pycircuitsim.simulation import run_simulation
     except ImportError:
         print("Error: PyCircuitSim package not found.", file=sys.stderr)
         print("Install with: pip install -e .", file=sys.stderr)

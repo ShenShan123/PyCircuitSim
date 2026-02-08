@@ -33,20 +33,11 @@ from pycircuitsim.circuit import Circuit
 from pycircuitsim.models.passive import VoltageSource, Capacitor
 from pycircuitsim.logger import Logger, IterationInfo
 
-# Helper function to check if component is a MOSFET (Level 1 or BSIM4V5)
+# Helper function to check if component is a MOSFET
 def _is_mosfet(component):
-    """Check if component is any type of MOSFET."""
+    """Check if component is a Level 1 MOSFET."""
     from pycircuitsim.models.mosfet import NMOS, PMOS
-    if isinstance(component, (NMOS, PMOS)):
-        return True
-    # Try to import BSIM4V5 types
-    try:
-        from pycircuitsim.models.bsim4v5 import BSIM4V5_NMOS, BSIM4V5_PMOS
-        if isinstance(component, (BSIM4V5_NMOS, BSIM4V5_PMOS)):
-            return True
-    except ImportError:
-        pass
-    return False
+    return isinstance(component, (NMOS, PMOS))
 
 
 class DCSolver:
@@ -341,25 +332,10 @@ class DCSolver:
                         component.stamp_rhs(rhs, node_map)
 
                 # Stamp MOSFET conductances and currents
-                # For BSIM4V5, use their own stamp methods (handle 3 conductances properly)
                 # For Level 1, use _stamp_mosfet
                 for component in self.circuit.components:
                     if _is_mosfet(component):
-                        # Check if it's a BSIM4V5 component
-                        try:
-                            from pycircuitsim.models.bsim4v5 import BSIM4V5_NMOS, BSIM4V5_PMOS
-                            if isinstance(component, (BSIM4V5_NMOS, BSIM4V5_PMOS)):
-                                # BSIM4V5 has its own stamping methods that handle Gm, Gds, Gmbs
-                                # First, calculate current at this voltage point to update conductances
-                                component.calculate_current(voltages)
-                                component.stamp_conductance(mna_matrix, node_map)
-                                component.stamp_rhs(rhs, node_map)
-                            else:
-                                # Level 1 MOSFET - use solver's stamping
-                                self._stamp_mosfet(component, mna_matrix, rhs, node_map, voltages)
-                        except ImportError:
-                            # No BSIM4V5 available, use solver's stamping
-                            self._stamp_mosfet(component, mna_matrix, rhs, node_map, voltages)
+                        self._stamp_mosfet(component, mna_matrix, rhs, node_map, voltages)
 
                 # Handle voltage sources (B and C matrices)
                 self._stamp_voltage_sources(mna_matrix, rhs, node_map, num_nodes, voltages=voltages)
@@ -521,16 +497,7 @@ class DCSolver:
         # Stamp MOSFETs at final operating point
         for component in self.circuit.components:
             if _is_mosfet(component):
-                try:
-                    from pycircuitsim.models.bsim4v5 import BSIM4V5_NMOS, BSIM4V5_PMOS
-                    if isinstance(component, (BSIM4V5_NMOS, BSIM4V5_PMOS)):
-                        component.calculate_current(voltages)
-                        component.stamp_conductance(mna_matrix_final, node_map)
-                        component.stamp_rhs(rhs_final, node_map)
-                    else:
-                        self._stamp_mosfet(component, mna_matrix_final, rhs_final, node_map, voltages)
-                except ImportError:
-                    self._stamp_mosfet(component, mna_matrix_final, rhs_final, node_map, voltages)
+                self._stamp_mosfet(component, mna_matrix_final, rhs_final, node_map, voltages)
 
         # Handle voltage sources
         self._stamp_voltage_sources(mna_matrix_final, rhs_final, node_map, num_nodes, voltages=voltages)
@@ -886,16 +853,7 @@ class TransientSolver:
             # Stamp MOSFETs at current voltage estimate
             for component in self.circuit.components:
                 if _is_mosfet(component):
-                    try:
-                        from pycircuitsim.models.bsim4v5 import BSIM4V5_NMOS, BSIM4V5_PMOS
-                        if isinstance(component, (BSIM4V5_NMOS, BSIM4V5_PMOS)):
-                            component.calculate_current(voltages)
-                            component.stamp_conductance(mna_matrix, node_map)
-                            component.stamp_rhs(rhs, node_map)
-                        else:
-                            self._stamp_mosfet_transient(component, mna_matrix, rhs, node_map, voltages)
-                    except ImportError:
-                        self._stamp_mosfet_transient(component, mna_matrix, rhs, node_map, voltages)
+                    self._stamp_mosfet_transient(component, mna_matrix, rhs, node_map, voltages)
 
             # Solve for voltage updates
             try:

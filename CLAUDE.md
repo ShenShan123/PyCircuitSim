@@ -1,7 +1,7 @@
 # Project: PyCircuitSim
 
 ## Overview
-Python-based SPICE-like circuit simulator emphasizing educational clarity and modular architecture. Supports DC/transient analysis with Level 1 and BSIM4V5 (45nm) MOSFET models.
+Python-based SPICE-like circuit simulator emphasizing educational clarity and modular architecture. Supports DC/transient analysis with Level 1 MOSFET models.
 
 **Core Principles:**
 * Pure Python with clean, readable code
@@ -11,20 +11,25 @@ Python-based SPICE-like circuit simulator emphasizing educational clarity and mo
 ## Architecture
 
 ### Module Structure
-* `pycircuitsim/parser.py` - Two-pass netlist parsing, `.model` directive support
-* `pycircuitsim/circuit.py` - Circuit topology management
-* `pycircuitsim/solver.py` - MNA matrix construction, Newton-Raphson solver
-* `pycircuitsim/models/base.py` - Abstract `Component` base class
-* `pycircuitsim/models/passive.py` - R, C, V, I sources (including PWL/PULSE)
-* `pycircuitsim/models/mosfet.py` - Level 1 Shichman-Hodges model
-* `pycircuitsim/models/bsim4v5/` - Industry-standard Level 54 compact model
-* `pycircuitsim/logger.py` - HSPICE-like .lis output
-* `pycircuitsim/visualizer.py` - Matplotlib plotting
-* `examples/*.sp` - Example netlists for testing and debugging (DC, transient analysis)
-* `results/` - Directory for simulation output files (`.lis`, `.png`)
+```
+pycircuitsim/
+├── __init__.py         # Package initialization, exports public API
+├── simulation.py       # Simulation orchestration (run_simulation, run_dc_sweep, run_transient)
+├── parser.py           # Two-pass netlist parsing, .model directive support
+├── circuit.py          # Circuit topology management
+├── solver.py           # MNA matrix construction, Newton-Raphson solver
+├── logger.py           # HSPICE-like .lis output
+├── visualizer.py       # Matplotlib plotting
+└── models/
+    ├── __init__.py
+    ├── base.py         # Component abstract base class
+    ├── passive.py      # R, C, V, I sources (including PULSE)
+    └── mosfet.py       # Level 1 Shichman-Hodges model
 
-### FreePDK45 for BSIM4V5 MOSFET Model
-* `freePDK45nm_spice/` - Directory for freePDK45nm model card (`.l` files)
+main.py                 # CLI entry point (single main entrance)
+examples/*.sp           # Example netlists
+results/                # Simulation output (.lis, .csv, .png)
+```
 
 ### Key Algorithms
 * **MNA (Modified Nodal Analysis)** - Circuit equation matrix construction
@@ -36,15 +41,15 @@ Python-based SPICE-like circuit simulator emphasizing educational clarity and mo
 
 ### Devices
 * Passive: R, C
-* Active: NMOS/PMOS (Level 1, BSIM4V5)
-* Sources: DC voltage/current, PWL, PULSE
+* Active: NMOS/PMOS (Level 1 Shichman-Hodges)
+* Sources: DC voltage/current, PULSE
 
 ### Analysis
 * `.dc` - DC sweep analysis
 * `.tran` - Transient analysis
 
 ### Directives
-* `.model` - MOSFET model definitions (LEVEL=1 or 54)
+* `.model` - MOSFET model definitions (LEVEL=1 only)
 * `.include` - External library files
 * `.ic` - Initial conditions (critical for SRAM/bistable circuits)
 
@@ -52,7 +57,7 @@ Python-based SPICE-like circuit simulator emphasizing educational clarity and mo
 
 ### Phase 1: Core Implementation ✅ Complete
 - [x] MNA matrix construction
-- [x] Level 1 MOSFET model
+- [x] Level 1 MOSFET model (Shichman-Hodges)
 - [x] Newton-Raphson solver
 - [x] Transient analysis with capacitors
 
@@ -62,30 +67,10 @@ Python-based SPICE-like circuit simulator emphasizing educational clarity and mo
 - [x] Two-stage DC analysis
 - [x] Enhanced visualization
 
-### Phase 3: BSIM4V5 Integration 
-- [x] C library wrapper with ctypes
-- [x] PTM 45nm PDK integration
-- [x] Parser enhancements for `.model` directive
-- [x] Standalone model verification
-- [x] Circuit simulation with Newton-Raphson convergence
-
-### Phase 4: Stabilization & Production Ready 
-- [x] Fixed BSIM4V5 Newton-Raphson divergence
-- [x] Fixed BSIM4V5 characteristic curve discontinuities
+### Phase 3: Production Ready ✅ Complete
 - [x] Comprehensive numerical validation
-- [x] Cleaned up debug/test artifacts
-
-### Phase 5: Documentation & Validation 
-- [x] Created comprehensive BSIM4V5 integration status document
-- [x] Validated current accuracy vs ngspice (0.13% error)
-- [x] Documented known limitations and future work
-- [x] Production ready for educational and research use
-
-### BSIM4V5 Model Library
-The BSIM4V5 model is implemented as a compiled C library with Python ctypes bindings:
-- **Library path**: `pycircuitsim/models/bsim4v5/bridge/libbsim4v5.so`
-- **Source files**: `pycircuitsim/models/bsim4v5/bridge/*.c`
-- **Build**: Run `make` in the bridge directory to compile the library
+- [x] Clean project structure
+- [x] Documentation and examples
 
 ---
 
@@ -95,10 +80,14 @@ The BSIM4V5 model is implemented as a compiled C library with Python ctypes bind
 Create a netlist (`.sp` file) with your circuit. Examples provided in `examples/` directory.
 
 ```bash
-# RC transient analysis example
-python main.py examples/rc_transient.sp
+# Set PYTHONPATH if not installed
+export PYTHONPATH=/path/to/NN_SPICE:$PYTHONPATH
 
-# Custom circuit example
+# Run simulation
+python main.py examples/rc_transient.sp
+python main.py examples/test_nmos_level1.sp
+
+# Custom circuit
 python main.py your_circuit.sp
 ```
 
@@ -107,17 +96,29 @@ python main.py your_circuit.sp
 
 ```spice
 * NMOS: drain=output, gate=input, source=GND, bulk=GND
-Mn1 3 2 0 0 NMOS_VTL L=45n W=90n
+Mn1 3 2 0 0 NMOS_VTL L=1u W=10u
 
 * PMOS: drain=output, gate=input, source=Vdd, bulk=Vdd
-Mp1 3 2 1 1 PMOS_VTL L=45n W=180n
+Mp1 3 2 1 1 PMOS_VTL L=1u W=20u
+```
+
+### Python API
+```python
+from pycircuitsim.simulation import run_simulation
+
+# Run simulation programmatically
+run_simulation(
+    netlist_path='circuit.sp',
+    output_dir='results',
+    verbose=True
+)
 ```
 
 ### Output Files
 Results organized in `results/<circuit_name>/<analysis_type>/`:
 - `*_simulation.lis` - Detailed iteration log (HSPICE-like)
-- `*_dc_sweep.csv` - Waveform data (node voltages + device currents)
-- `*_dc_sweep.png` - Voltage/current plots
+- `*_dc_sweep.csv` / `*_transient.csv` - Waveform data (node voltages + device currents)
+- `*_dc_sweep.png` / `*_transient.png` - Voltage/current plots
 
 ## Development Guidelines
 
@@ -128,8 +129,9 @@ Results organized in `results/<circuit_name>/<analysis_type>/`:
 - Voltage clamping: Vgs ± 5V, Vds ± 10V
 
 ### Separation Principle
-- **Solver** builds MNA matrix, executes Newton-Raphson (no device equations)
-- **Device Models** calculate current/conductances from voltages (no matrix operations)
+- **Solver** (`solver.py`) builds MNA matrix, executes Newton-Raphson (no device equations)
+- **Device Models** (`models/`) calculate current/conductances from voltages (no matrix operations)
+- **Simulation** (`simulation.py`) orchestrates the workflow (parse → solve → visualize)
 - All devices inherit from `Component` base class
 
 ### Key Numerical Techniques
@@ -139,11 +141,17 @@ Results organized in `results/<circuit_name>/<analysis_type>/`:
 - Two-stage analysis: DC OP → DC sweep/transient
 - Voltage-source-constrained nodes exempt from damping
 
+### Entry Points
+- **CLI**: `main.py` - Command-line interface (argparse, error handling)
+- **API**: `pycircuitsim.simulation.run_simulation()` - Programmatic access
+- **Module**: `pycircuitsim` - Package exports (Circuit, Parser, Visualizer, run_simulation)
+
 ## References
 - **ngspice** - Physics equation verification
 - **Xyce** - Architecture patterns for device/solver separation
-- **BSIM4V5 spec** - Industry-standard compact model
+- **Shichman-Hodges Model** - Level 1 MOSFET compact model
 
-## Other Memoos
+## Other Notes
 - Use conda environment `pycircuitsim`
 - Git commit for every significant change
+- Single main entrance: `main.py` at project root

@@ -396,57 +396,20 @@ class Parser:
         model_type = model_def['type']
         model_params = model_def['params']
 
-        # Check if it's a BSIM4 model (LEVEL=54)
+        # Only Level 1 model is supported
         level = model_params.get('LEVEL', 1)
 
-        if level == 54:
-            # BSIM4V5 model
-            from pycircuitsim.models.bsim4v5 import BSIM4V5_NMOS, BSIM4V5_PMOS
+        if level != 1:
+            raise ValueError(f"Only LEVEL=1 is supported. Got LEVEL={level}. "
+                           f"Please use Level 1 Shichman-Hodges model.")
 
-            # Pass ALL model parameters to BSIM4V5 (not just a subset)
-            # This allows proper use of freePDK45 and other PDK libraries
-            bsim4_params = {}
-
-            for param_name, param_value in model_params.items():
-                # Skip LEVEL parameter (used for model selection only)
-                if param_name == 'LEVEL':
-                    continue
-
-                # Handle U0 unit conversion
-                # - BSIM4 C model expects SI units (m^2/V-s), U0 ~ 0.01-0.1
-                # - Some netlists may use cm^2/V-s directly, U0 ~ 100-500
-                # Heuristic: if U0 > 10, assume cm^2/V-s and convert to m^2/V-s
-                if param_name == 'U0':
-                    if param_value > 10.0:
-                        # Likely in cm^2/V-s, convert to m^2/V-s (divide by 1e4)
-                        bsim4_params['U0'] = param_value / 1e4
-                    else:
-                        # Already in m^2/V-s (freePDK45 uses SI units)
-                        bsim4_params['U0'] = param_value
-                # Handle TOX parameter names (TOXE is BSIM4 standard, TOX is short form)
-                elif param_name == 'TOXE':
-                    bsim4_params['TOX'] = param_value
-                elif param_name == 'TOX':
-                    bsim4_params['TOX'] = param_value
-                # Pass all other parameters as-is
-                else:
-                    bsim4_params[param_name] = param_value
-
-            # Create BSIM4V5 component
-            if model_type.upper() == 'NMOS':
-                mosfet = BSIM4V5_NMOS(name, nodes, L=L, W=W, params=bsim4_params)
-            elif model_type.upper() == 'PMOS':
-                mosfet = BSIM4V5_PMOS(name, nodes, L=L, W=W, params=bsim4_params)
-            else:
-                raise ValueError(f"Unsupported model type for BSIM4: {model_type}")
+        # Level 1 model
+        if model_type.upper() == 'NMOS':
+            mosfet = NMOS(name, nodes, L=L, W=W)
+        elif model_type.upper() == 'PMOS':
+            mosfet = PMOS(name, nodes, L=L, W=W)
         else:
-            # Level 1 or other models - use original implementation
-            if model_type.upper() == 'NMOS':
-                mosfet = NMOS(name, nodes, L=L, W=W)
-            elif model_type.upper() == 'PMOS':
-                mosfet = PMOS(name, nodes, L=L, W=W)
-            else:
-                raise ValueError(f"Unknown MOSFET model type: {model_type}")
+            raise ValueError(f"Unknown MOSFET model type: {model_type}")
 
         self.circuit.add_component(mosfet)
 
