@@ -40,6 +40,7 @@ from pycircuitsim.models import (
     NMOS,
     PMOS,
 )
+from pycircuitsim.config import BSIMCMG_OSDI_PATH, GENERIC_MODELCARD_DIR
 
 
 class Parser:
@@ -68,12 +69,19 @@ class Parser:
         'P': 1e-12,
     }
 
-    def __init__(self):
-        """Initialize an empty parser."""
+    def __init__(self, osdi_path: Optional[str] = None, modelcard_base_dir: Optional[str] = None):
+        """Initialize an empty parser.
+
+        Args:
+            osdi_path: Path to BSIM-CMG OSDI binary (defaults to config value)
+            modelcard_base_dir: Base directory for modelcard files (defaults to generic modelcards)
+        """
         self.circuit = Circuit()
         self.analysis_type: Optional[str] = None
         self.analysis_params: Dict[str, float] = {}
         self.models: Dict[str, Dict[str, any]] = {}  # Model definitions
+        self._osdi_path = osdi_path or BSIMCMG_OSDI_PATH
+        self._modelcard_base_dir = modelcard_base_dir or GENERIC_MODELCARD_DIR
 
     def parse_file(self, filename: str) -> None:
         """
@@ -343,7 +351,9 @@ class Parser:
 
     def _parse_mosfet(self, line: str) -> None:
         """
-        Parse a MOSFET line: M<name> <d> <g> <s> <b> <model> L=<l> W=<w>.
+        Parse a MOSFET line: M<name> <d> <g> <s> <b> <model> L=<l> W=<w> [NFIN=<nf> ...].
+
+        Supports both Level 1 (L, W) and Level 72/BSIM-CMG (L, NFIN, TFIN, HFIN, FPITCH).
 
         Args:
             line: MOSFET definition line
@@ -352,7 +362,7 @@ class Parser:
             ValueError: If the line has invalid syntax
         """
         # MOSFET line format: M<name> <d> <g> <s> <b> <model> L=<l> W=<w>
-        # We need to handle L and W which are key=value pairs
+        # BSIM-CMG format: M<name> <d> <g> <s> <b> <model> L=<l> NFIN=<nf> [TFIN=<tf>] ...
         parts = line.split()
 
         if len(parts) < 7:
@@ -362,28 +372,45 @@ class Parser:
         nodes = parts[1:5]  # [drain, gate, source, bulk]
         model = parts[5].upper()  # NMOS or PMOS
 
-        # Extract L and W parameters
+        # Extract geometric parameters (Level 1: L, W; BSIM-CMG: L, NFIN, TFIN, HFIN, FPITCH)
         L = None
         W = None
+        NFIN = None
+        TFIN = None
+        HFIN = None
+        FPITCH = None
 
         for part in parts[6:]:
             if part.startswith('L='):
                 L = self._parse_value(part[2:])
             elif part.startswith('W='):
                 W = self._parse_value(part[2:])
+            elif part.startswith('NFIN='):
+                NFIN = float(part[5:])  # Number of fins (integer or float)
+            elif part.startswith('TFIN='):
+                TFIN = self._parse_value(part[5:])
+            elif part.startswith('HFIN='):
+                HFIN = self._parse_value(part[5:])
+            elif part.startswith('FPITCH='):
+                FPITCH = self._parse_value(part[7:])
 
-        if L is None or W is None:
-            raise ValueError(f"MOSFET missing L or W parameter: {line}")
+        # L is always required
+        if L is None:
+            raise ValueError(f"MOSFET missing L parameter: {line}")
 
         # Check if model name references a .model definition
         model_name = parts[5]  # Keep case for model lookup
 
         # First, check if it's a direct NMOS/PMOS keyword (backward compatibility)
         if model_name.upper() == "NMOS":
+            if W is None:
+                raise ValueError(f"Level 1 NMOS missing W parameter: {line}")
             mosfet = NMOS(name, nodes, L=L, W=W)
             self.circuit.add_component(mosfet)
             return
         elif model_name.upper() == "PMOS":
+            if W is None:
+                raise ValueError(f"Level 1 PMOS missing W parameter: {line}")
             mosfet = PMOS(name, nodes, L=L, W=W)
             self.circuit.add_component(mosfet)
             return
@@ -396,20 +423,82 @@ class Parser:
         model_type = model_def['type']
         model_params = model_def['params']
 
-        # Only Level 1 model is supported
+        # Check model level (1 = Level 1 Shichman-Hodges, 72 = BSIM-CMG)
         level = model_params.get('LEVEL', 1)
 
-        if level != 1:
-            raise ValueError(f"Only LEVEL=1 is supported. Got LEVEL={level}. "
-                           f"Please use Level 1 Shichman-Hodges model.")
+        if level == 1:
+            # Level 1 Shichman-Hodges model
+            if W is None:
+                raise ValueError(f"Level 1 MOSFET missing W parameter: {line}")
 
-        # Level 1 model
-        if model_type.upper() == 'NMOS':
-            mosfet = NMOS(name, nodes, L=L, W=W)
-        elif model_type.upper() == 'PMOS':
-            mosfet = PMOS(name, nodes, L=L, W=W)
+            if model_type.upper() == 'NMOS':
+                mosfet = NMOS(name, nodes, L=L, W=W)
+            elif model_type.upper() == 'PMOS':
+                mosfet = PMOS(name, nodes, L=L, W=W)
+            else:
+                raise ValueError(f"Unknown MOSFET model type: {model_type}")
+
+        elif level == 72:
+            # BSIM-CMG compact model
+            if NFIN is None:
+                raise ValueError(f"BSIM-CMG (LEVEL=72) MOSFET missing NFIN parameter: {line}")
+
+            # Import BSIM-CMG models
+            try:
+                from pycircuitsim.models.mosfet_cmg import NMOS_CMG, PMOS_CMG
+            except ImportError as e:
+                raise ImportError(
+                    f"Failed to import BSIM-CMG models: {e}. "
+                    "Ensure PyCMG is built and OSDI binary exists."
+                )
+
+            # Resolve modelcard path
+            # For BSIM-CMG, the modelcard is embedded in the .model directive
+            # We need to create a temporary modelcard file or use an existing one
+            # For now, we'll use the model name to look up a modelcard file
+            modelcard_filename = f"{model_name}.1"  # e.g., "nmos1.1"
+            modelcard_path = Path(self._modelcard_base_dir) / f"modelcard.{model_type.lower()}.1"
+
+            if not modelcard_path.exists():
+                raise FileNotFoundError(
+                    f"BSIM-CMG modelcard not found: {modelcard_path}. "
+                    f"Expected modelcard file for model '{model_name}' in {self._modelcard_base_dir}"
+                )
+
+            if model_type.upper() == 'NMOS':
+                mosfet = NMOS_CMG(
+                    name=name,
+                    nodes=nodes,
+                    osdi_path=self._osdi_path,
+                    modelcard_path=str(modelcard_path),
+                    model_name=model_name,
+                    L=L,
+                    NFIN=NFIN,
+                    TFIN=TFIN,
+                    HFIN=HFIN,
+                    FPITCH=FPITCH,
+                )
+            elif model_type.upper() == 'PMOS':
+                mosfet = PMOS_CMG(
+                    name=name,
+                    nodes=nodes,
+                    osdi_path=self._osdi_path,
+                    modelcard_path=str(modelcard_path),
+                    model_name=model_name,
+                    L=L,
+                    NFIN=NFIN,
+                    TFIN=TFIN,
+                    HFIN=HFIN,
+                    FPITCH=FPITCH,
+                )
+            else:
+                raise ValueError(f"Unknown MOSFET model type: {model_type}")
+
         else:
-            raise ValueError(f"Unknown MOSFET model type: {model_type}")
+            raise ValueError(
+                f"Unsupported MOSFET LEVEL={level}. "
+                f"Supported levels: LEVEL=1 (Shichman-Hodges), LEVEL=72 (BSIM-CMG)"
+            )
 
         self.circuit.add_component(mosfet)
 

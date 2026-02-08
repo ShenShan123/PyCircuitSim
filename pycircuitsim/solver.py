@@ -543,9 +543,16 @@ class DCSolver:
         drain = mosfet.nodes[0]
         gate = mosfet.nodes[1]
         source = mosfet.nodes[2]
+        bulk = mosfet.nodes[3]
 
         # Get conductances at current operating point
-        g_ds, g_m = mosfet.get_conductance(voltages)
+        # Handle both 2-tuple (Level 1) and 3-tuple (BSIM-CMG) returns
+        conductance_result = mosfet.get_conductance(voltages)
+        if len(conductance_result) == 2:
+            g_ds, g_m = conductance_result
+            g_mb = 0.0  # No bulk transconductance for Level 1
+        else:
+            g_ds, g_m, g_mb = conductance_result
 
         # Get current at operating point
         i_ds = mosfet.calculate_current(voltages)
@@ -578,18 +585,27 @@ class DCSolver:
             d_idx = node_map[drain]
             mna_matrix[d_idx, g_idx] += g_m
 
+        # g_mb from bulk to drain (bulk transconductance, for BSIM-CMG)
+        if abs(g_mb) > 1e-12 and bulk != source:
+            if bulk != "0" and bulk in node_map and drain != "0" and drain in node_map:
+                b_idx = node_map[bulk]
+                d_idx = node_map[drain]
+                mna_matrix[d_idx, b_idx] += g_mb
+
         # Stamp equivalent current source to RHS
-        # The RHS should contain: I_ds - g_ds*V_ds - g_m*V_gs
+        # The RHS should contain: I_ds - g_ds*V_ds - g_m*V_gs - g_mb*V_bs
         # This represents the constant term in the linearized equation
         v_d = voltages.get(drain, 0.0)
         v_g = voltages.get(gate, 0.0)
         v_s = voltages.get(source, 0.0)
+        v_b = voltages.get(bulk, 0.0)
 
         v_ds = v_d - v_s
         v_gs = v_g - v_s
+        v_bs = v_b - v_s
 
         # Equivalent current source (Newton-Raphson constant term)
-        i_eq = i_ds - g_ds * v_ds - g_m * v_gs
+        i_eq = i_ds - g_ds * v_ds - g_m * v_gs - g_mb * v_bs
 
         # Stamp current to drain and source nodes
         # For NMOS: current flows OUT of drain, INTO source (i_ds > 0)
@@ -921,9 +937,16 @@ class TransientSolver:
         drain = mosfet.nodes[0]
         gate = mosfet.nodes[1]
         source = mosfet.nodes[2]
+        bulk = mosfet.nodes[3]
 
         # Get conductances at current operating point
-        g_ds, g_m = mosfet.get_conductance(voltages)
+        # Handle both 2-tuple (Level 1) and 3-tuple (BSIM-CMG) returns
+        conductance_result = mosfet.get_conductance(voltages)
+        if len(conductance_result) == 2:
+            g_ds, g_m = conductance_result
+            g_mb = 0.0  # No bulk transconductance for Level 1
+        else:
+            g_ds, g_m, g_mb = conductance_result
 
         # Get current at operating point
         i_ds = mosfet.calculate_current(voltages)
@@ -953,16 +976,25 @@ class TransientSolver:
             d_idx = node_map[drain]
             mna_matrix[d_idx, g_idx] += g_m
 
+        # g_mb from bulk to drain (bulk transconductance, for BSIM-CMG)
+        if abs(g_mb) > 1e-12 and bulk != source:
+            if bulk != "0" and bulk in node_map and drain != "0" and drain in node_map:
+                b_idx = node_map[bulk]
+                d_idx = node_map[drain]
+                mna_matrix[d_idx, b_idx] += g_mb
+
         # Stamp equivalent current source to RHS
         v_d = voltages.get(drain, 0.0)
         v_g = voltages.get(gate, 0.0)
         v_s = voltages.get(source, 0.0)
+        v_b = voltages.get(bulk, 0.0)
 
         v_ds = v_d - v_s
         v_gs = v_g - v_s
+        v_bs = v_b - v_s
 
         # Equivalent current source
-        i_eq = i_ds - g_ds * v_ds - g_m * v_gs
+        i_eq = i_ds - g_ds * v_ds - g_m * v_gs - g_mb * v_bs
 
         # Stamp current to drain and source nodes
         if drain != "0" and drain in node_map:
