@@ -227,7 +227,9 @@ class NMOS_CMG(Component):
             Drain current I_ds = I_d - I_s (in amperes)
         """
         result = self._eval_dc(voltages)
-        return result["ids"]  # Drain-source current (Id - Is)
+        # IMPORTANT: PyCMG uses SPICE convention (positive = INTO terminal)
+        # Negate to match pycircuitsim convention
+        return -result["ids"]
 
     def get_conductance(self, voltages: Dict[str, float]) -> Tuple[float, float, float]:
         """
@@ -249,6 +251,11 @@ class NMOS_CMG(Component):
         g_ds = result.get("gds", 0.0)
         g_m = result.get("gm", 0.0)
         g_mb = result.get("gmb", 0.0)
+
+        # IMPORTANT: gds should always be positive (output conductance)
+        # Negative gds (negative resistance) causes divergence
+        # gm and gmb are signed transconductances, preserve their signs
+        g_ds = abs(g_ds)
 
         return (g_ds, g_m, g_mb)
 
@@ -278,6 +285,9 @@ class PMOS_CMG(Component):
     follow standard PMOS conventions.
 
     Terminal order: [drain, gate, source, bulk]
+
+    NOTE: PMOS current sign convention may differ from NMOS due to
+    hole current flow direction.
     """
 
     def __init__(
@@ -404,7 +414,10 @@ class PMOS_CMG(Component):
     def calculate_current(self, voltages: Dict[str, float]) -> float:
         """Calculate drain current I_ds."""
         result = self._eval_dc(voltages)
-        return result["ids"]  # Drain-source current
+        # IMPORTANT: PyCMG uses SPICE convention (positive = INTO terminal)
+        # Negate to match pycircuitsim convention
+        # Solver handles PMOS vs NMOS RHS stamping correctly
+        return -result["ids"]
 
     def get_conductance(self, voltages: Dict[str, float]) -> Tuple[float, float, float]:
         """Calculate small-signal conductance parameters."""
@@ -413,6 +426,10 @@ class PMOS_CMG(Component):
         g_ds = result.get("gds", 0.0)
         g_m = result.get("gm", 0.0)
         g_mb = result.get("gmb", 0.0)
+
+        # IMPORTANT: gds should always be positive (output conductance)
+        # gm and gmb are signed transconductances, preserve their signs
+        g_ds = abs(g_ds)
 
         return (g_ds, g_m, g_mb)
 

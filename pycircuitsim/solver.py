@@ -35,9 +35,14 @@ from pycircuitsim.logger import Logger, IterationInfo
 
 # Helper function to check if component is a MOSFET
 def _is_mosfet(component):
-    """Check if component is a Level 1 MOSFET."""
+    """Check if component is a MOSFET (Level 1 or BSIM-CMG)."""
     from pycircuitsim.models.mosfet import NMOS, PMOS
-    return isinstance(component, (NMOS, PMOS))
+    try:
+        from pycircuitsim.models.mosfet_cmg import NMOS_CMG, PMOS_CMG
+        return isinstance(component, (NMOS, PMOS, NMOS_CMG, PMOS_CMG))
+    except ImportError:
+        # BSIM-CMG models not available (PyCMG not built)
+        return isinstance(component, (NMOS, PMOS))
 
 
 class DCSolver:
@@ -608,17 +613,37 @@ class DCSolver:
         i_eq = i_ds - g_ds * v_ds - g_m * v_gs - g_mb * v_bs
 
         # Stamp current to drain and source nodes
-        # For NMOS: current flows OUT of drain, INTO source (i_ds > 0)
-        # For PMOS: current flows INTO drain, OUT of source (i_ds < 0)
-        # RHS gets NEGATIVE i_eq at drain (current flows OUT of node into MOSFET)
-        # and POSITIVE i_eq at source (current flows INTO node from MOSFET)
-        if drain != "0" and drain in node_map:
-            d_idx = node_map[drain]
-            rhs[d_idx] -= i_eq
+        # IMPORTANT: NMOS and PMOS have OPPOSITE current directions!
+        # Check device type to apply correct stamping
+        from pycircuitsim.models.mosfet import PMOS
+        try:
+            from pycircuitsim.models.mosfet_cmg import PMOS_CMG
+            is_pmos = isinstance(mosfet, (PMOS, PMOS_CMG))
+        except ImportError:
+            is_pmos = isinstance(mosfet, PMOS)
 
-        if source != "0" and source in node_map:
-            s_idx = node_map[source]
-            rhs[s_idx] += i_eq
+        if is_pmos:
+            # PMOS: current flows INTO drain, OUT of source (i_ds < 0)
+            # RHS needs POSITIVE i_eq at drain (current INTO node)
+            # and NEGATIVE i_eq at source (current OUT OF node)
+            if drain != "0" and drain in node_map:
+                d_idx = node_map[drain]
+                rhs[d_idx] += i_eq  # OPPOSITE of NMOS
+
+            if source != "0" and source in node_map:
+                s_idx = node_map[source]
+                rhs[s_idx] -= i_eq  # OPPOSITE of NMOS
+        else:
+            # NMOS: current flows OUT of drain, INTO source (i_ds > 0)
+            # RHS gets NEGATIVE i_eq at drain (current OUT of node)
+            # and POSITIVE i_eq at source (current INTO node)
+            if drain != "0" and drain in node_map:
+                d_idx = node_map[drain]
+                rhs[d_idx] -= i_eq
+
+            if source != "0" and source in node_map:
+                s_idx = node_map[source]
+                rhs[s_idx] += i_eq
 
     def _stamp_voltage_sources(
         self,
@@ -997,13 +1022,32 @@ class TransientSolver:
         i_eq = i_ds - g_ds * v_ds - g_m * v_gs - g_mb * v_bs
 
         # Stamp current to drain and source nodes
-        if drain != "0" and drain in node_map:
-            d_idx = node_map[drain]
-            rhs[d_idx] += i_eq
+        # Apply same PMOS/NMOS-specific stamping as DC solver
+        from pycircuitsim.models.mosfet import PMOS
+        try:
+            from pycircuitsim.models.mosfet_cmg import PMOS_CMG
+            is_pmos = isinstance(mosfet, (PMOS, PMOS_CMG))
+        except ImportError:
+            is_pmos = isinstance(mosfet, PMOS)
 
-        if source != "0" and source in node_map:
-            s_idx = node_map[source]
-            rhs[s_idx] -= i_eq
+        if is_pmos:
+            # PMOS: current INTO drain, OUT OF source
+            if drain != "0" and drain in node_map:
+                d_idx = node_map[drain]
+                rhs[d_idx] += i_eq
+
+            if source != "0" and source in node_map:
+                s_idx = node_map[source]
+                rhs[s_idx] -= i_eq
+        else:
+            # NMOS: current OUT OF drain, INTO source
+            if drain != "0" and drain in node_map:
+                d_idx = node_map[drain]
+                rhs[d_idx] -= i_eq
+
+            if source != "0" and source in node_map:
+                s_idx = node_map[source]
+                rhs[s_idx] += i_eq
 
     def solve(self) -> Dict[str, np.ndarray]:
         """
