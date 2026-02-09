@@ -872,10 +872,14 @@ class TransientSolver:
         # Use previous timestep's voltages as initial guess
         voltages = initial_voltages.copy()
 
-        # Newton-Raphson parameters
-        tolerance = 1e-6
-        max_iterations = 100  # Increased for complex circuits
-        damping = 0.5
+        # Newton-Raphson parameters (aligned with DC solver)
+        tolerance = 1e-9  # Match DC solver (was 1e-6, too loose)
+        max_iterations = 100
+        # Start with no damping (adaptive damping enabled below if needed)
+        damping = 1.0  # Will be reduced to 0.5 if max_delta > 1.0
+
+        # DEBUG: Track convergence behavior
+        debug_log = []
 
         for iteration in range(max_iterations):
             # Build MNA matrix and RHS
@@ -904,28 +908,72 @@ class TransientSolver:
                     f"Circuit matrix is singular at t={time:.6e}s during Newton-Raphson iteration {iteration+1}"
                 )
 
-            # Extract voltage deltas
-            deltas = {}
+            # Extract voltages from solution (matches DC solver approach)
+            # Solution contains NEW voltages, not deltas (due to MNA formulation)
             max_delta = 0.0
+            deltas = {}
+
+            # Identify voltage-source-constrained nodes (exempt from damping)
+            vs_constrained_nodes = set()
+            from pycircuitsim.models.passive import VoltageSource
+            for component in self.circuit.components:
+                if isinstance(component, VoltageSource):
+                    pos_node = component.nodes[0]
+                    neg_node = component.nodes[1]
+                    # If one terminal is ground, the other is constrained
+                    if neg_node == "0":
+                        vs_constrained_nodes.add(pos_node)
+                    elif pos_node == "0":
+                        vs_constrained_nodes.add(neg_node)
+
+            # Calculate deltas for convergence check
             for idx, node in enumerate(nodes):
-                delta = solution[idx]
-                deltas[node] = delta
-                max_delta = max(max_delta, abs(delta))
+                old_voltage = voltages[node]
+                new_voltage_solution = solution[idx]  # Absolute voltage from MNA
+                delta_v = new_voltage_solution - old_voltage
+                deltas[node] = delta_v
+                max_delta = max(max_delta, abs(delta_v))
+
+            # DEBUG: Log first few and last few iterations
+            if iteration < 5 or iteration >= max_iterations - 5:
+                debug_log.append(f"  Iter {iteration}: max_delta={max_delta:.6e}, damping={damping:.2f}")
 
             # Check convergence
             if max_delta < tolerance:
-                # Converged! Update voltages one final time
-                for node in nodes:
-                    if node in voltages:
-                        voltages[node] += deltas[node]
+                # Converged! Use new voltages directly
+                for idx, node in enumerate(nodes):
+                    voltages[node] = solution[idx]
+                if len(debug_log) > 0:
+                    print(f"\nDEBUG: Converged at t={time:.6e}s after {iteration+1} iterations")
                 break
 
-            # Update voltages with damping for stability
-            for node in nodes:
-                if node in deltas:
-                    voltages[node] += damping * deltas[node]
+            # Adaptive damping (match DC solver, but more aggressive for transient)
+            if max_delta >= 0.1:  # Lower threshold for transient stability
+                damping = 0.5  # Enable damping if deltas are non-trivial
+            else:
+                damping = 1.0  # Small deltas, no damping needed
+
+            # Update voltages with damping (match DC solver approach)
+            for idx, node in enumerate(nodes):
+                old_voltage = voltages[node]
+                new_voltage_solution = solution[idx]
+
+                if node in vs_constrained_nodes:
+                    # Voltage source nodes: use solution directly
+                    voltages[node] = new_voltage_solution
+                else:
+                    # Free nodes: apply damping (blend old and new)
+                    voltages[node] = damping * new_voltage_solution + (1.0 - damping) * old_voltage
         else:
-            # Did not converge
+            # Did not converge - print debug log
+            if len(debug_log) > 0:
+                print(f"\nDEBUG: Convergence failure at t={time:.6e}s:")
+                for log_line in debug_log:
+                    print(log_line)
+                print(f"\n  Final voltages:")
+                for node in nodes[:5]:  # Print first 5 nodes
+                    print(f"    {node}: {voltages[node]:.6f}V")
+
             raise RuntimeError(
                 f"Newton-Raphson failed to converge at t={time:.6e}s after {max_iterations} iterations. "
                 f"Final max delta: {max_delta:.2e}"
