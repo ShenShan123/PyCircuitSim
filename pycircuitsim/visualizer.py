@@ -226,3 +226,87 @@ class Visualizer:
         plt.close(fig)
 
         print(f"Transient plot saved to: {output_path}")
+
+    def plot_bode(
+        self,
+        ac_results: Dict[str, np.ndarray],
+        nodes: List[str],
+        output_path: str,
+        title: Optional[str] = None,
+        figsize: tuple = (10, 8)
+    ) -> None:
+        """
+        Plot Bode diagram (magnitude and phase vs frequency) for AC analysis.
+
+        Args:
+            ac_results: Dictionary with 'frequency' array and complex voltage arrays for each node
+            nodes: List of node names to plot
+            output_path: Path where the plot image will be saved
+            title: Optional plot title. If None, auto-generated
+            figsize: Figure size as (width, height) in inches
+        """
+        # Create figure with 2 subplots (magnitude and phase)
+        fig, (ax_mag, ax_phase) = plt.subplots(2, 1, figsize=figsize, sharex=True)
+
+        frequencies = ac_results["frequency"]
+
+        if len(frequencies) == 0:
+            # No data case
+            for ax in [ax_mag, ax_phase]:
+                ax.text(0.5, 0.5, 'No data to plot',
+                       ha='center', va='center',
+                       transform=ax.transAxes, fontsize=12)
+            ax_mag.set_ylabel('Magnitude (dB)')
+            ax_phase.set_ylabel('Phase (degrees)')
+            ax_phase.set_xlabel('Frequency (Hz)')
+        else:
+            # Plot magnitude and phase for each node
+            for node in nodes:
+                if node in ["0", "GND"]:
+                    continue  # Skip ground node
+
+                if node not in ac_results:
+                    continue
+
+                v_complex = ac_results[node]
+
+                # Calculate magnitude in dB and phase in degrees
+                v_mag = np.abs(v_complex)
+                v_mag_db = 20 * np.log10(v_mag + 1e-20)  # Add small value to avoid log(0)
+
+                v_phase_rad = np.angle(v_complex)
+                v_phase_deg = np.rad2deg(v_phase_rad)
+
+                # Plot magnitude (top subplot)
+                ax_mag.semilogx(frequencies, v_mag_db, linewidth=1.5, label=f'V({node})')
+
+                # Plot phase (bottom subplot)
+                ax_phase.semilogx(frequencies, v_phase_deg, linewidth=1.5, label=f'V({node})')
+
+            # Configure magnitude plot
+            ax_mag.set_ylabel('Magnitude (dB)')
+            ax_mag.legend(loc='best')
+            ax_mag.grid(True, which='both', alpha=0.3)
+
+            # Configure phase plot
+            ax_phase.set_ylabel('Phase (degrees)')
+            ax_phase.set_xlabel('Frequency (Hz)')
+            ax_phase.legend(loc='best')
+            ax_phase.grid(True, which='both', alpha=0.3)
+
+        # Set title
+        if title is None:
+            title = 'AC Analysis - Bode Plot'
+        fig.suptitle(title, y=0.98)
+
+        # Tight layout and save
+        plt.tight_layout()
+
+        # Create directory if needed
+        output_file = Path(output_path)
+        output_file.parent.mkdir(parents=True, exist_ok=True)
+
+        plt.savefig(output_path, dpi=150, bbox_inches='tight')
+        plt.close(fig)
+
+        print(f"Bode plot saved to: {output_path}")

@@ -15,6 +15,7 @@ Supported components:
 Supported analysis:
 - DC sweep: .dc <source> <start> <stop> <step>
 - Transient: .tran <tstep> <tstop>
+- AC analysis: .ac <sweep_type> <num_points> <fstart> <fstop>
 
 Supported directives:
 - Initial conditions: .ic V(<node>)=<value> ...
@@ -133,7 +134,7 @@ class Parser:
             # Check if this is a new .model or .include or analysis line
             if line.lower().startswith('.model') or line.lower().startswith('.include') or \
                line.lower().startswith('.dc') or line.lower().startswith('.tran') or \
-               line.lower().startswith('.ic') or line.lower().startswith('.end'):
+               line.lower().startswith('.ac') or line.lower().startswith('.ic') or line.lower().startswith('.end'):
                 line = line.replace(' = ', '=').replace('= ', '=')
                 line = ' '.join(line.split())
 
@@ -207,6 +208,8 @@ class Parser:
             self._parse_dc(line)
         elif line.startswith('.tran'):
             self._parse_tran(line)
+        elif line.startswith('.ac'):
+            self._parse_ac(line)
         elif line.startswith('.ic'):
             self._parse_ic(line)
         elif line.lower().startswith('.model'):
@@ -290,6 +293,7 @@ class Parser:
         Supports:
         - DC voltage source: V1 1 0 3.3
         - PULSE source: V1 1 0 PULSE 0 3.3 1n 0.1n 0.1n 5n 10n
+        - AC voltage source: V1 1 0 DC=1.0 AC=0.1 0 (DC bias, AC magnitude, AC phase in degrees)
 
         Args:
             line: Voltage source definition line
@@ -323,9 +327,32 @@ class Parser:
             pulse_source = PulseVoltageSource(name, nodes, v1, v2, td, tr, tf, pw, per)
             self.circuit.add_component(pulse_source)
         else:
-            # DC voltage source
-            value = self._parse_value(parts[3])
-            voltage_source = VoltageSource(name, nodes, value)
+            # Check if it's an AC specification: DC=x AC=y phase
+            dc_value = None
+            ac_magnitude = 0.0
+            ac_phase = 0.0
+
+            # Look for DC=, AC= keywords
+            for i, part in enumerate(parts[3:], start=3):
+                if part.upper().startswith('DC='):
+                    dc_value = self._parse_value(part[3:])
+                elif part.upper().startswith('AC='):
+                    ac_magnitude = self._parse_value(part[3:])
+                    # Check if phase follows AC magnitude
+                    if i + 1 < len(parts) and not parts[i + 1].upper().startswith(('DC=', 'AC=')):
+                        try:
+                            ac_phase = float(parts[i + 1])
+                        except ValueError:
+                            pass  # Not a phase value, skip
+                elif dc_value is None and not part.upper().startswith(('DC=', 'AC=')):
+                    # No DC= keyword, treat first value as DC value
+                    dc_value = self._parse_value(part)
+
+            # Default DC value to 0 if only AC specified
+            if dc_value is None:
+                dc_value = 0.0
+
+            voltage_source = VoltageSource(name, nodes, dc_value, ac_magnitude=ac_magnitude, ac_phase=ac_phase)
             self.circuit.add_component(voltage_source)
 
     def _parse_current_source(self, line: str) -> None:
@@ -401,23 +428,24 @@ class Parser:
         # Check if model name references a .model definition
         model_name = parts[5]  # Keep case for model lookup
 
-        # First, check if it's a direct NMOS/PMOS keyword (backward compatibility)
-        if model_name.upper() == "NMOS":
-            if W is None:
-                raise ValueError(f"Level 1 NMOS missing W parameter: {line}")
-            mosfet = NMOS(name, nodes, L=L, W=W)
-            self.circuit.add_component(mosfet)
-            return
-        elif model_name.upper() == "PMOS":
-            if W is None:
-                raise ValueError(f"Level 1 PMOS missing W parameter: {line}")
-            mosfet = PMOS(name, nodes, L=L, W=W)
-            self.circuit.add_component(mosfet)
-            return
-
-        # Look up model in .model definitions
+        # Look up model in .model definitions first
+        # If not found, fall back to direct NMOS/PMOS keyword (backward compatibility)
         if model_name not in self.models:
-            raise ValueError(f"Model '{model_name}' not found. Available models: {list(self.models.keys())}")
+            # No .model definition found, check if it's a direct NMOS/PMOS keyword
+            if model_name.upper() == "NMOS":
+                if W is None:
+                    raise ValueError(f"Level 1 NMOS missing W parameter: {line}")
+                mosfet = NMOS(name, nodes, L=L, W=W)
+                self.circuit.add_component(mosfet)
+                return
+            elif model_name.upper() == "PMOS":
+                if W is None:
+                    raise ValueError(f"Level 1 PMOS missing W parameter: {line}")
+                mosfet = PMOS(name, nodes, L=L, W=W)
+                self.circuit.add_component(mosfet)
+                return
+            else:
+                raise ValueError(f"Model '{model_name}' not found. Available models: {list(self.models.keys())}")
 
         model_def = self.models[model_name]
         model_type = model_def['type']
@@ -431,10 +459,28 @@ class Parser:
             if W is None:
                 raise ValueError(f"Level 1 MOSFET missing W parameter: {line}")
 
+            # Extract model parameters (VTO, KP, LAMBDA, etc.)
+            # Use defaults from NMOS/PMOS class if not specified
+            VTO = model_params.get('VTO', None)
+            KP = model_params.get('KP', None)
+            LAMBDA = model_params.get('LAMBDA', None)
+
             if model_type.upper() == 'NMOS':
-                mosfet = NMOS(name, nodes, L=L, W=W)
+                # Build kwargs dict with only non-None parameters
+                kwargs = {'L': L, 'W': W}
+                if VTO is not None:
+                    kwargs['VTO'] = VTO
+                if KP is not None:
+                    kwargs['KP'] = KP
+                mosfet = NMOS(name, nodes, **kwargs)
             elif model_type.upper() == 'PMOS':
-                mosfet = PMOS(name, nodes, L=L, W=W)
+                # Build kwargs dict with only non-None parameters
+                kwargs = {'L': L, 'W': W}
+                if VTO is not None:
+                    kwargs['VTO'] = VTO
+                if KP is not None:
+                    kwargs['KP'] = KP
+                mosfet = PMOS(name, nodes, **kwargs)
             else:
                 raise ValueError(f"Unknown MOSFET model type: {model_type}")
 
@@ -542,6 +588,37 @@ class Parser:
         self.analysis_params = {
             "tstep": self._parse_value(parts[1]),
             "tstop": self._parse_value(parts[2]),
+        }
+
+    def _parse_ac(self, line: str) -> None:
+        """
+        Parse an AC analysis line: .ac <sweep_type> <num_points> <fstart> <fstop>.
+
+        Sweep types:
+        - dec: decade sweep (logarithmic, num_points per decade)
+        - lin: linear sweep (num_points total between fstart and fstop)
+        - oct: octave sweep (logarithmic, num_points per octave)
+
+        Args:
+            line: AC analysis line (e.g., ".ac dec 10 1k 10e6")
+
+        Raises:
+            ValueError: If the line has invalid syntax
+        """
+        parts = line.split()
+        if len(parts) < 5:
+            raise ValueError(f"Invalid .ac syntax: {line}")
+
+        sweep_type = parts[1].lower()
+        if sweep_type not in ['dec', 'lin', 'oct']:
+            raise ValueError(f"Invalid AC sweep type: {sweep_type}. Must be 'dec', 'lin', or 'oct'")
+
+        self.analysis_type = "ac"
+        self.analysis_params = {
+            "sweep_type": sweep_type,
+            "num_points": int(parts[2]),
+            "fstart": self._parse_value(parts[3]),
+            "fstop": self._parse_value(parts[4]),
         }
 
     def _parse_ic(self, line: str) -> None:

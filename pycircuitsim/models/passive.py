@@ -151,7 +151,7 @@ class Resistor(Component):
 
 class VoltageSource(Component):
     """
-    Ideal DC voltage source.
+    Ideal DC voltage source with optional AC specification.
 
     A voltage source maintains a fixed voltage difference between its terminals.
     In MNA formulation, voltage sources require special handling:
@@ -169,16 +169,21 @@ class VoltageSource(Component):
         name: Component identifier (e.g., 'V1', 'V_dd')
         nodes: List of two node names [positive, negative]
         voltage: Voltage value in volts
+        ac_magnitude: AC magnitude for AC analysis (volts, default 0)
+        ac_phase: AC phase for AC analysis (degrees, default 0)
     """
 
-    def __init__(self, name: str, nodes: List[str], value: float):
+    def __init__(self, name: str, nodes: List[str], value: float,
+                 ac_magnitude: float = 0.0, ac_phase: float = 0.0):
         """
         Initialize a voltage source.
 
         Args:
             name: Component identifier (e.g., 'V1', 'V_dd')
             nodes: List of exactly two node names [positive, negative]
-            value: Voltage value in volts
+            value: Voltage value in volts (DC value)
+            ac_magnitude: AC magnitude in volts (default 0)
+            ac_phase: AC phase in degrees (default 0)
 
         Raises:
             ValueError: If nodes count is not 2
@@ -192,6 +197,10 @@ class VoltageSource(Component):
 
         # Store current (will be set by solver)
         self._current = 0.0
+
+        # AC analysis parameters
+        self.ac_magnitude = float(ac_magnitude)
+        self.ac_phase = float(ac_phase)
 
     @property
     def voltage(self) -> float:

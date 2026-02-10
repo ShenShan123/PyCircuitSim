@@ -1327,3 +1327,363 @@ class TransientSolver:
             f"t_stop={self.t_stop}, "
             f"dt={self.dt})"
         )
+
+
+class ACSolver:
+    """
+    AC (small-signal frequency domain) Solver for linear and linearized circuits.
+
+    The ACSolver performs small-signal AC analysis by:
+    1. Computing DC operating point using DCSolver
+    2. Linearizing the circuit around the operating point
+    3. Building complex MNA matrix (with capacitances and transconductances)
+    4. Sweeping frequency and computing complex node voltages
+
+    Algorithm:
+    1. DC analysis to find operating point (all AC sources = 0)
+    2. For each frequency:
+       a. Build complex admittance matrix Y = G + jwC
+       b. Stamp MOSFET small-signal parameters (gm, gds, Cgs, Cgd)
+       c. Stamp AC sources to RHS
+       d. Solve Y * V = I for complex voltages
+       e. Store magnitude and phase
+
+    Attributes:
+        circuit: Circuit object containing components and topology
+        dc_solution: DC operating point voltages (computed once)
+    """
+
+    def __init__(self, circuit: Circuit, dc_solution: Optional[Dict[str, float]] = None):
+        """
+        Initialize the AC Solver.
+
+        Args:
+            circuit: Circuit object to analyze
+            dc_solution: Optional pre-computed DC operating point (if None, will compute)
+        """
+        self.circuit = circuit
+        self.dc_solution = dc_solution
+
+    def solve(self, frequencies: np.ndarray) -> Dict[str, np.ndarray]:
+        """
+        Perform AC analysis over a range of frequencies.
+
+        This method:
+        1. Computes DC operating point (if not provided)
+        2. For each frequency, solves the small-signal circuit
+        3. Returns complex voltages at each node for each frequency
+
+        Args:
+            frequencies: Array of frequencies in Hz
+
+        Returns:
+            Dictionary containing:
+                - "frequency": numpy array of frequencies (Hz)
+                - node names: numpy arrays of complex voltages at each frequency
+
+        Raises:
+            np.linalg.LinAlgError: If the circuit matrix is singular
+            RuntimeError: If DC operating point fails to converge
+        """
+        # Step 1: Compute DC operating point if not provided
+        if self.dc_solution is None:
+            from pycircuitsim.solver import DCSolver
+            dc_solver = DCSolver(self.circuit)
+            with dc_solver:
+                self.dc_solution = dc_solver.solve()
+
+        # Get circuit topology
+        nodes = self.circuit.get_nodes()
+        node_map = self.circuit.get_node_map()
+        num_nodes = len(nodes)
+        num_voltage_sources = self.circuit.count_voltage_sources()
+
+        # Matrix size: num_nodes + num_voltage_sources
+        matrix_size = num_nodes + num_voltage_sources
+
+        # Initialize storage arrays for results
+        num_freqs = len(frequencies)
+        voltages_over_freq = {node: np.zeros(num_freqs, dtype=complex) for node in nodes}
+        voltages_over_freq["frequency"] = frequencies
+
+        # Step 2: Frequency sweep
+        for freq_idx, freq in enumerate(frequencies):
+            omega = 2 * np.pi * freq
+
+            # Build complex MNA matrix: Y = G + jwC
+            mna_matrix = np.zeros((matrix_size, matrix_size), dtype=complex)
+            rhs = np.zeros(matrix_size, dtype=complex)
+
+            # Stamp linear components (resistors, capacitors)
+            for component in self.circuit.components:
+                if not _is_mosfet(component):
+                    self._stamp_component_ac(component, mna_matrix, rhs, node_map, omega)
+
+            # Stamp MOSFETs (small-signal model: gm, gds, capacitances)
+            for component in self.circuit.components:
+                if _is_mosfet(component):
+                    self._stamp_mosfet_ac(component, mna_matrix, node_map, omega)
+
+            # Stamp voltage sources (DC sources become short circuits, AC sources become AC stimulus)
+            self._stamp_voltage_sources_ac(mna_matrix, rhs, node_map, num_nodes)
+
+            # Solve the complex linear system
+            try:
+                solution = np.linalg.solve(mna_matrix, rhs)
+            except np.linalg.LinAlgError as e:
+                raise np.linalg.LinAlgError(
+                    f"Circuit matrix is singular at f={freq:.3e} Hz. "
+                    f"Check circuit topology or AC sources."
+                ) from e
+
+            # Extract complex node voltages from solution
+            for idx, node in enumerate(nodes):
+                voltages_over_freq[node][freq_idx] = complex(solution[idx])
+
+        return voltages_over_freq
+
+    def _stamp_component_ac(
+        self,
+        component,
+        mna_matrix: np.ndarray,
+        rhs: np.ndarray,
+        node_map: Dict[str, int],
+        omega: float
+    ) -> None:
+        """
+        Stamp a passive component for AC analysis.
+
+        For AC analysis:
+        - Resistors: stamp conductance G (same as DC)
+        - Capacitors: stamp admittance jwC (frequency-dependent)
+        - Voltage sources: handled separately
+        - Current sources: stamp to RHS (AC current sources not yet supported)
+
+        Args:
+            component: Component to stamp
+            mna_matrix: Complex MNA matrix to modify (in-place)
+            rhs: Complex RHS vector to modify (in-place)
+            node_map: Mapping from node names to matrix indices
+            omega: Angular frequency (2*pi*f) in rad/s
+        """
+        from pycircuitsim.models.passive import Resistor, Capacitor, CurrentSource
+
+        if isinstance(component, Resistor):
+            # Resistor: stamp conductance (real, frequency-independent)
+            node_i, node_j = component.nodes[0], component.nodes[1]
+            g = component.conductance
+
+            # Stamp exactly as in DC analysis
+            if node_i != "0" and node_i in node_map:
+                idx_i = node_map[node_i]
+                mna_matrix[idx_i, idx_i] += g
+
+                if node_j != "0" and node_j in node_map:
+                    idx_j = node_map[node_j]
+                    mna_matrix[idx_i, idx_j] -= g
+                    mna_matrix[idx_j, idx_i] -= g
+
+            if node_j != "0" and node_j in node_map:
+                idx_j = node_map[node_j]
+                mna_matrix[idx_j, idx_j] += g
+
+        elif isinstance(component, Capacitor):
+            # Capacitor: stamp admittance Y_C = jwC (imaginary, frequency-dependent)
+            node_i, node_j = component.nodes[0], component.nodes[1]
+            y_c = 1j * omega * component.capacitance
+
+            # Stamp same pattern as resistor, but with complex admittance
+            if node_i != "0" and node_i in node_map:
+                idx_i = node_map[node_i]
+                mna_matrix[idx_i, idx_i] += y_c
+
+                if node_j != "0" and node_j in node_map:
+                    idx_j = node_map[node_j]
+                    mna_matrix[idx_i, idx_j] -= y_c
+                    mna_matrix[idx_j, idx_i] -= y_c
+
+            if node_j != "0" and node_j in node_map:
+                idx_j = node_map[node_j]
+                mna_matrix[idx_j, idx_j] += y_c
+
+        elif isinstance(component, CurrentSource):
+            # Current source: stamp to RHS (AC current sources not yet implemented)
+            # For now, only DC current sources contribute (AC magnitude = 0)
+            pass
+
+        # VoltageSource handled separately in _stamp_voltage_sources_ac
+
+    def _stamp_mosfet_ac(
+        self,
+        mosfet,
+        mna_matrix: np.ndarray,
+        node_map: Dict[str, int],
+        omega: float
+    ) -> None:
+        """
+        Stamp MOSFET small-signal model for AC analysis.
+
+        Small-signal MOSFET model includes:
+        - gm: transconductance (gate to drain)
+        - gds: output conductance (drain to source)
+        - gmb: bulk transconductance (bulk to drain, if applicable)
+        - Cgs: gate-source capacitance (creates admittance jwCgs)
+        - Cgd: gate-drain capacitance (Miller capacitance, jwCgd)
+        - Cdb: drain-bulk capacitance (jwCdb, often small)
+        - Csb: source-bulk capacitance (jwCsb, often small)
+
+        For now, we implement gm, gds, gmb (from DC linearization).
+        Capacitances (Cgs, Cgd, etc.) will be added in Phase 5.
+
+        Args:
+            mosfet: MOSFET component (NMOS or PMOS)
+            mna_matrix: Complex MNA matrix to modify (in-place)
+            node_map: Mapping from node names to matrix indices
+            omega: Angular frequency (2*pi*f) in rad/s
+        """
+        # Get MOSFET terminals
+        drain = mosfet.nodes[0]
+        gate = mosfet.nodes[1]
+        source = mosfet.nodes[2]
+        bulk = mosfet.nodes[3]
+
+        # Get small-signal conductances at DC operating point
+        conductance_result = mosfet.get_conductance(self.dc_solution)
+        if len(conductance_result) == 2:
+            g_ds, g_m = conductance_result
+            g_mb = 0.0
+        else:
+            g_ds, g_m, g_mb = conductance_result
+
+        # Add minimum conductance for numerical stability
+        g_min = 1e-6
+        g_ds = max(g_ds, g_min)
+
+        # Stamp conductances (same as DC, but to complex matrix)
+        # g_ds between drain and source
+        if drain != "0" and drain in node_map:
+            d_idx = node_map[drain]
+            mna_matrix[d_idx, d_idx] += g_ds
+
+        if source != "0" and source in node_map:
+            s_idx = node_map[source]
+            mna_matrix[s_idx, s_idx] += g_ds
+
+        if drain != "0" and drain in node_map and source != "0" and source in node_map:
+            d_idx = node_map[drain]
+            s_idx = node_map[source]
+            mna_matrix[d_idx, s_idx] -= g_ds
+            mna_matrix[s_idx, d_idx] -= g_ds
+
+        # g_m transconductance: i_d = gm * (v_g - v_s)
+        # Stamp for drain equation (KCL at drain node)
+        if gate != "0" and gate in node_map and drain != "0" and drain in node_map:
+            g_idx = node_map[gate]
+            d_idx = node_map[drain]
+            mna_matrix[d_idx, g_idx] += g_m
+
+        if source != "0" and source in node_map and drain != "0" and drain in node_map:
+            s_idx = node_map[source]
+            d_idx = node_map[drain]
+            mna_matrix[d_idx, s_idx] -= g_m
+
+        # Stamp for source equation (KCL at source node: current into source = -i_d)
+        if gate != "0" and gate in node_map and source != "0" and source in node_map:
+            g_idx = node_map[gate]
+            s_idx = node_map[source]
+            mna_matrix[s_idx, g_idx] -= g_m
+
+        if source != "0" and source in node_map:
+            s_idx = node_map[source]
+            mna_matrix[s_idx, s_idx] += g_m
+
+        # g_mb bulk transconductance: i_d = gmb * (v_b - v_s)
+        if abs(g_mb) > 1e-12 and bulk != source:
+            # Stamp for drain equation
+            if bulk != "0" and bulk in node_map and drain != "0" and drain in node_map:
+                b_idx = node_map[bulk]
+                d_idx = node_map[drain]
+                mna_matrix[d_idx, b_idx] += g_mb
+
+            if source != "0" and source in node_map and drain != "0" and drain in node_map:
+                s_idx = node_map[source]
+                d_idx = node_map[drain]
+                mna_matrix[d_idx, s_idx] -= g_mb
+
+            # Stamp for source equation
+            if bulk != "0" and bulk in node_map and source != "0" and source in node_map:
+                b_idx = node_map[bulk]
+                s_idx = node_map[source]
+                mna_matrix[s_idx, b_idx] -= g_mb
+
+            if source != "0" and source in node_map:
+                s_idx = node_map[source]
+                mna_matrix[s_idx, s_idx] += g_mb
+
+        # TODO: Add capacitance stamping (Cgs, Cgd, Cdb, Csb) in Phase 5
+        # These will be obtained from mosfet.get_capacitances() method
+        # For now, only resistive small-signal model is implemented
+
+    def _stamp_voltage_sources_ac(
+        self,
+        mna_matrix: np.ndarray,
+        rhs: np.ndarray,
+        node_map: Dict[str, int],
+        num_nodes: int
+    ) -> None:
+        """
+        Stamp voltage sources for AC analysis.
+
+        For AC analysis:
+        - DC voltage sources become SHORT CIRCUITS (V_ac = 0)
+        - AC voltage sources provide AC stimulus (V_ac = magnitude * e^(j*phase))
+
+        The voltage source stamping adds:
+        - B/C matrix blocks (same as DC)
+        - RHS: AC magnitude with phase for AC sources, 0 for DC-only sources
+
+        Args:
+            mna_matrix: Complex MNA matrix to modify (in-place)
+            rhs: Complex RHS vector to modify (in-place)
+            node_map: Mapping from node names to matrix indices
+            num_nodes: Number of non-ground nodes
+        """
+        voltage_source_index = 0
+
+        for component in self.circuit.components:
+            if isinstance(component, VoltageSource):
+                # Get voltage source nodes
+                pos_node = component.nodes[0]
+                neg_node = component.nodes[1]
+
+                # The row index for this voltage source's equation
+                vs_row = num_nodes + voltage_source_index
+
+                # Stamp B/C matrix (same as DC analysis)
+                if pos_node != "0" and pos_node in node_map:
+                    pos_idx = node_map[pos_node]
+                    mna_matrix[vs_row, pos_idx] += 1.0
+                    mna_matrix[pos_idx, vs_row] += 1.0
+
+                if neg_node != "0" and neg_node in node_map:
+                    neg_idx = node_map[neg_node]
+                    mna_matrix[vs_row, neg_idx] -= 1.0
+                    mna_matrix[neg_idx, vs_row] -= 1.0
+
+                # Stamp AC stimulus to RHS
+                # Convert AC magnitude and phase to complex phasor
+                ac_mag = component.ac_magnitude
+                ac_phase_deg = component.ac_phase
+                ac_phase_rad = np.deg2rad(ac_phase_deg)
+
+                # Complex phasor: V = magnitude * e^(j*phase)
+                v_ac = ac_mag * np.exp(1j * ac_phase_rad)
+
+                rhs[vs_row] = v_ac
+
+                # Move to next voltage source
+                voltage_source_index += 1
+
+    def __repr__(self) -> str:
+        """String representation of the solver."""
+        return f"ACSolver(circuit={self.circuit})"

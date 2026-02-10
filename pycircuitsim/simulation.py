@@ -8,6 +8,7 @@ parsing, circuit solving, and visualization.
 import logging
 from pathlib import Path
 from typing import Optional, Dict, List
+import numpy as np
 
 from pycircuitsim.parser import Parser
 from pycircuitsim.circuit import Circuit
@@ -77,6 +78,8 @@ def run_simulation(
         analysis_subdir = "dc"
     elif parser.analysis_type == "tran":
         analysis_subdir = "tran"
+    elif parser.analysis_type == "ac":
+        analysis_subdir = "ac"
     else:
         analysis_subdir = "dc_op"  # Single DC operating point
 
@@ -93,10 +96,16 @@ def run_simulation(
         logger.info(f"DC sweep complete: {len(dc_results)} points computed")
 
     # Run transient analysis if present
-    if parser.analysis_type == "tran":
+    elif parser.analysis_type == "tran":
         logger.info("Running transient analysis...")
         tran_results = run_transient(circuit, parser.analysis_params, visualizer, output_path, circuit_name)
         logger.info(f"Transient analysis complete: {len(tran_results)} time points")
+
+    # Run AC analysis if present
+    elif parser.analysis_type == "ac":
+        logger.info("Running AC analysis...")
+        ac_results = run_ac_sweep(circuit, parser.analysis_params, visualizer, output_path, circuit_name)
+        logger.info(f"AC analysis complete: {len(ac_results['frequency'])} frequency points")
 
     # If no analysis specified, run a single DC operating point
     if parser.analysis_type is None:
@@ -378,3 +387,110 @@ def run_dc_op_point(
             f.write(f"{node}: {value:.6f}\n")
 
     logger.info(f"DC operating point saved to: {result_file}")
+
+
+def run_ac_sweep(
+    circuit: Circuit,
+    params: Dict,
+    visualizer: Visualizer,
+    output_path: Path,
+    circuit_name: str
+) -> Dict[str, np.ndarray]:
+    """
+    Run AC (small-signal frequency domain) analysis.
+
+    This function:
+    1. Computes DC operating point
+    2. Generates frequency sweep array based on sweep type
+    3. Solves small-signal circuit at each frequency
+    4. Saves results and generates Bode plots
+
+    Args:
+        circuit: Circuit object to analyze
+        params: Dictionary with 'sweep_type', 'num_points', 'fstart', 'fstop'
+        visualizer: Visualizer object for plotting
+        output_path: Path where results should be saved
+        circuit_name: Base name for output files
+
+    Returns:
+        Dictionary with frequency array and complex voltages for each node
+    """
+    from pycircuitsim.solver import ACSolver
+    import numpy as np
+    import pandas as pd
+
+    logger.info("Computing DC operating point for AC analysis...")
+
+    # Step 1: Compute DC operating point
+    # For AC analysis, all AC sources are set to 0 during DC solve
+    from pycircuitsim.solver import DCSolver
+    from pycircuitsim.logger import Logger
+
+    # Create logger for DC operating point
+    dc_log_file = output_path / f"{circuit_name}_dc_op_simulation.lis"
+    dc_logger = Logger(circuit_name, dc_log_file)
+
+    with dc_logger:
+        dc_solver = DCSolver(circuit, logger=dc_logger)
+        with dc_solver:
+            dc_solution = dc_solver.solve()
+
+    logger.info("DC operating point computed")
+    for node, voltage in dc_solution.items():
+        if node not in ["0", "GND"]:
+            logger.info(f"  V({node}) = {voltage:.6f} V")
+
+    # Step 2: Generate frequency array
+    sweep_type = params["sweep_type"]
+    num_points = params["num_points"]
+    fstart = params["fstart"]
+    fstop = params["fstop"]
+
+    if sweep_type == "dec":
+        # Decade sweep: num_points per decade
+        num_decades = np.log10(fstop / fstart)
+        total_points = int(num_points * num_decades)
+        frequencies = np.logspace(np.log10(fstart), np.log10(fstop), total_points)
+    elif sweep_type == "oct":
+        # Octave sweep: num_points per octave
+        num_octaves = np.log2(fstop / fstart)
+        total_points = int(num_points * num_octaves)
+        frequencies = np.logspace(np.log10(fstart), np.log10(fstop), total_points)
+    else:  # "lin"
+        # Linear sweep: num_points total between fstart and fstop
+        frequencies = np.linspace(fstart, fstop, num_points)
+
+    logger.info(f"AC sweep: {sweep_type.upper()} {len(frequencies)} points from {fstart:.3e} Hz to {fstop:.3e} Hz")
+
+    # Step 3: Solve AC circuit at each frequency
+    ac_solver = ACSolver(circuit, dc_solution=dc_solution)
+    ac_results = ac_solver.solve(frequencies)
+
+    logger.info(f"AC analysis complete: {len(frequencies)} frequency points")
+
+    # Step 4: Save results to CSV
+    csv_file = output_path / f"{circuit_name}_ac_sweep.csv"
+
+    # Convert complex voltages to magnitude and phase
+    data = {"frequency": frequencies}
+
+    for node in circuit.get_nodes():
+        if node not in ["0", "GND"]:
+            v_complex = ac_results[node]
+            v_mag = np.abs(v_complex)
+            v_phase_rad = np.angle(v_complex)
+            v_phase_deg = np.rad2deg(v_phase_rad)
+
+            data[f"V({node})_mag"] = v_mag
+            data[f"V({node})_phase"] = v_phase_deg
+
+    df = pd.DataFrame(data)
+    df.to_csv(csv_file, index=False)
+    logger.info(f"AC results saved to: {csv_file}")
+
+    # Step 5: Generate Bode plots
+    png_file = output_path / f"{circuit_name}_ac_bode.png"
+    visualizer.plot_bode(ac_results, circuit.get_nodes(), str(png_file))
+    logger.info(f"Bode plot saved to: {png_file}")
+
+    return ac_results
