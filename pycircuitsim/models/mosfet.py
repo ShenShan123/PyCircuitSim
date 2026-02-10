@@ -296,7 +296,7 @@ class PMOS(Component):
         L: float,
         W: float,
         VTO: float = -0.7,
-        KP: float = -20e-6
+        KP: float = 20e-6
     ):
         """
         Initialize a PMOS transistor.
@@ -479,12 +479,12 @@ class PMOS(Component):
         # Check operating region (linear vs saturation)
         if abs(v_ds) < abs(v_ov):
             # Linear region (triode region)
-            # Same derivatives as NMOS
-            g_m = self.K * v_ds
-            g_ds = self.K * (v_ov - v_ds)
+            # For PMOS with positive KP: conductances come out negative, take absolute values
+            g_m = abs(self.K * v_ds)
+            g_ds = abs(self.K * (v_ov - v_ds))
         else:
             # Saturation region
-            g_m = self.K * v_ov
+            g_m = abs(self.K * v_ov)
             g_ds = 0.0
 
         return g_ds, g_m
