@@ -29,7 +29,6 @@ Value suffixes supported:
 - p/P: pico (1e-12)
 """
 from typing import Dict, Optional, Tuple
-import os
 import re
 from pathlib import Path
 
@@ -42,7 +41,7 @@ from pycircuitsim.models import (
     NMOS,
     PMOS,
 )
-from pycircuitsim.config import BSIMCMG_OSDI_PATH, GENERIC_MODELCARD_DIR, ASAP7_MODELCARD_DIR
+from pycircuitsim.config import BSIMCMG_OSDI_PATH, GENERIC_MODELCARD_DIR
 
 
 class Parser:
@@ -101,7 +100,7 @@ class Parser:
         self._modelcard_base_dir = modelcard_base_dir or GENERIC_MODELCARD_DIR
 
         # Allow override of ASAP7 modelcard directory via environment variable
-        self._asap7_modelcard_dir = os.environ.get("ASAP7_MODELCARD_DIR", ASAP7_MODELCARD_DIR)
+        self._asap7_modelcard_dir = os.environ.get("ASAP7_MODELCARD_DIR", modelcard_base_dir or "")
 
     def parse_file(self, filename: str) -> None:
         """
@@ -518,244 +517,11 @@ class Parser:
                 )
 
             # Resolve modelcard path
-            # Support both ASAP7 naming (7nm_TT.pm, 7nm_FF.pm, 7nm_SS.pm)
-            # and generic naming (modelcard.nmos.1, modelcard.pmos.1)
-            modelcard_path = None
+            # For BSIM-CMG, the modelcard is embedded in the .model directive
+            # We need to create a temporary modelcard file or use an existing one
+            # For now, we'll use the model name to look up a modelcard file
+            modelcard_path = Path(self._modelcard_base_dir) / f"modelcard.{model_type.lower()}.1"
 
-            # Try ASAP7 naming first
-            for asap7_file in self.ASAP7_MODELCARD_FILES:
-                asap7_path = Path(self._asap7_modelcard_dir) / asap7_file
-                if asap7_path.exists():
-                    modelcard_path = asap7_path
-                    break
-
-            # Fall back to generic naming
-            if modelcard_path is None:
-                generic_path = Path(self._modelcard_base_dir) / f"modelcard.{model_type.lower()}.1"
-                if generic_path.exists():
-                    modelcard_path = generic_path
-
-            if modelcard_path is None:
+            if not modelcard_path.exists():
                 raise FileNotFoundError(
-                    f"BSIM-CMG modelcard not found. Tried:\n"
-                    f"  - ASAP7 directory: {self._asap7_modelcard_dir} (files: {self.ASAP7_MODELCARD_FILES})\n"
-                    f"  - Generic directory: {self._modelcard_base_dir} (modelcard.{model_type.lower()}.1)\n"
-                    f"Model referenced: '{model_name}' (type={model_type}, level={level})\n"
-                    f"Hint: Set ASAP7_MODELCARD_DIR environment variable if using ASAP7 PDK."
-                )
-
-            if model_type.upper() == 'NMOS':
-                mosfet = NMOS_CMG(
-                    name=name,
-                    nodes=nodes,
-                    osdi_path=self._osdi_path,
-                    modelcard_path=str(modelcard_path),
-                    model_name=model_name,
-                    L=L,
-                    NFIN=NFIN,
-                    TFIN=TFIN,
-                    HFIN=HFIN,
-                    FPITCH=FPITCH,
-                )
-            elif model_type.upper() == 'PMOS':
-                mosfet = PMOS_CMG(
-                    name=name,
-                    nodes=nodes,
-                    osdi_path=self._osdi_path,
-                    modelcard_path=str(modelcard_path),
-                    model_name=model_name,
-                    L=L,
-                    NFIN=NFIN,
-                    TFIN=TFIN,
-                    HFIN=HFIN,
-                    FPITCH=FPITCH,
-                )
-            else:
-                raise ValueError(f"Unknown MOSFET model type: {model_type}")
-
-        else:
-            raise ValueError(
-                f"Unsupported MOSFET LEVEL={level}. "
-                f"Supported levels: LEVEL=1 (Shichman-Hodges), LEVEL=72 (BSIM-CMG)"
-            )
-
-        self.circuit.add_component(mosfet)
-
-    def _parse_dc(self, line: str) -> None:
-        """
-        Parse a DC sweep analysis line: .dc <source> <start> <stop> <step>.
-
-        Args:
-            line: DC sweep analysis line
-
-        Raises:
-            ValueError: If the line has invalid syntax
-        """
-        parts = line.split()
-        if len(parts) < 5:
-            raise ValueError(f"Invalid .dc syntax: {line}")
-
-        self.analysis_type = "dc"
-        self.analysis_params = {
-            "source": parts[1],
-            "start": self._parse_value(parts[2]),
-            "stop": self._parse_value(parts[3]),
-            "step": self._parse_value(parts[4]),
-        }
-
-    def _parse_tran(self, line: str) -> None:
-        """
-        Parse a transient analysis line: .tran <tstep> <tstop>.
-
-        Args:
-            line: Transient analysis line
-
-        Raises:
-            ValueError: If the line has invalid syntax
-        """
-        parts = line.split()
-        if len(parts) < 3:
-            raise ValueError(f"Invalid .tran syntax: {line}")
-
-        self.analysis_type = "tran"
-        self.analysis_params = {
-            "tstep": self._parse_value(parts[1]),
-            "tstop": self._parse_value(parts[2]),
-        }
-
-    def _parse_ac(self, line: str) -> None:
-        """
-        Parse an AC analysis line: .ac <sweep_type> <num_points> <fstart> <fstop>.
-
-        Sweep types:
-        - dec: decade sweep (logarithmic, num_points per decade)
-        - lin: linear sweep (num_points total between fstart and fstop)
-        - oct: octave sweep (logarithmic, num_points per octave)
-
-        Args:
-            line: AC analysis line (e.g., ".ac dec 10 1k 10e6")
-
-        Raises:
-            ValueError: If the line has invalid syntax
-        """
-        parts = line.split()
-        if len(parts) < 5:
-            raise ValueError(f"Invalid .ac syntax: {line}")
-
-        sweep_type = parts[1].lower()
-        if sweep_type not in ['dec', 'lin', 'oct']:
-            raise ValueError(f"Invalid AC sweep type: {sweep_type}. Must be 'dec', 'lin', or 'oct'")
-
-        self.analysis_type = "ac"
-        self.analysis_params = {
-            "sweep_type": sweep_type,
-            "num_points": int(parts[2]),
-            "fstart": self._parse_value(parts[3]),
-            "fstop": self._parse_value(parts[4]),
-        }
-
-    def _parse_ic(self, line: str) -> None:
-        """
-        Parse an initial condition line: .ic V(<node>)=<value> V(<node>)=<value> ...
-
-        Sets initial voltages for specified nodes, which is useful for
-        defining the initial state of bistable circuits like SRAM cells.
-
-        Args:
-            line: Initial condition line (e.g., ".ic V(2)=3.3 V(3)=0")
-
-        Raises:
-            ValueError: If the line has invalid syntax
-
-        Examples:
-            .ic V(2)=3.3 V(3)=0
-            .ic V(node1)=1.8 V(node2)=0.5
-        """
-        # Remove ".ic" prefix
-        ic_spec = line[3:].strip()
-
-        # Pattern to match V(node)=value or V(node)=value, with multiple assignments
-        # Supports: V(2)=3.3, V(2)=3.3 V(3)=0, V(node1)=1.8 V(node2)=0.5
-        pattern = r'V\(\s*([^)]+)\s*\)\s*=\s*([0-9.eE+-]+[kKuUnNpP]?)'
-
-        matches = re.findall(pattern, ic_spec)
-
-        if not matches:
-            raise ValueError(f"Invalid .ic syntax: {line}")
-
-        for node_str, value_str in matches:
-            node = node_str.strip()
-            value = self._parse_value(value_str)
-            self.circuit.initial_conditions[node] = value
-
-    def _parse_model(self, line: str) -> None:
-        """
-        Parse a .model line: .model <name> NMOS/PMOS <params>
-
-        Args:
-            line: Model definition line
-
-        Raises:
-            ValueError: If the line has invalid syntax
-        """
-        # Remove ".model" prefix and get parts
-        model_spec = line[6:].strip()
-
-        # Remove parentheses if present (HSPICE style: .model name TYPE (params))
-        model_spec = model_spec.replace('(', ' ').replace(')', ' ')
-        parts = model_spec.split()
-
-        if len(parts) < 2:
-            raise ValueError(f"Invalid .model syntax: {line}")
-
-        model_name = parts[0]
-        model_type = parts[1].upper()
-
-        # Parse parameters (supports key=value format)
-        params = {}
-        for part in parts[2:]:
-            if '=' in part:
-                key, value = part.split('=', 1)
-                key = key.strip()
-                value = value.strip()
-                if key and value:  # Skip empty keys or values
-                    try:
-                        params[key.upper()] = self._parse_value(value)
-                    except ValueError:
-                        # Skip parameters that can't be parsed (e.g., empty values)
-                        pass
-
-        # Store model definition
-        self.models[model_name] = {
-            'type': model_type,
-            'params': params
-        }
-
-    def _parse_include(self, line: str) -> None:
-        """
-        Parse an .include directive: .include <filename>
-
-        Args:
-            line: Include directive line
-
-        Raises:
-            ValueError: If the line has invalid syntax
-            FileNotFoundError: If the included file doesn't exist
-        """
-        # Remove ".include" prefix
-        include_spec = line[8:].strip()
-        included_file = include_spec.strip('"\'')  # Remove quotes
-
-        # Resolve path relative to current file
-        current_file = getattr(self, '_current_file', None)
-        if current_file:
-            current_dir = Path(current_file).parent
-            included_path = current_dir / included_file
-        else:
-            included_path = Path(included_file)
-
-        if not included_path.exists():
-            raise FileNotFoundError(f"Included file not found: {included_path}")
-
-        # Parse the included file using parse_file (handles line continuations)
-        self.parse_file(str(included_path))
+                    f"BSIM-CMG modelcard not found: {modelcard_path}. "
