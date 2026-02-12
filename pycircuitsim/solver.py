@@ -829,7 +829,8 @@ class TransientSolver:
     """
 
     def __init__(self, circuit: Circuit, t_stop: float, dt: float,
-                 initial_guess: Optional[Dict[str, float]] = None):
+                 initial_guess: Optional[Dict[str, float]] = None,
+                 debug: bool = False):
         """
         Initialize the Transient Solver.
 
@@ -838,6 +839,7 @@ class TransientSolver:
             t_stop: Stop time for simulation in seconds
             dt: Timestep size in seconds (must be positive)
             initial_guess: Optional initial voltage guess from DC operating point
+            debug: Enable debug logging for convergence diagnostics
 
         Raises:
             ValueError: If dt or t_stop is not positive
@@ -851,6 +853,7 @@ class TransientSolver:
         self.t_stop = t_stop
         self.dt = dt
         self.initial_guess = initial_guess
+        self.debug = debug
 
     def _has_non_linear_components(self) -> bool:
         """
@@ -909,8 +912,8 @@ class TransientSolver:
         # Start with no damping (adaptive damping enabled below if needed)
         damping = 1.0  # Will be reduced to 0.5 if max_delta > 1.0
 
-        # DEBUG: Track convergence behavior
-        debug_log = []
+        # Debug: Track convergence behavior (if enabled)
+        debug_log = [] if self.debug else None
 
         for iteration in range(max_iterations):
             # Build MNA matrix and RHS
@@ -966,7 +969,7 @@ class TransientSolver:
                 max_delta = max(max_delta, abs(delta_v))
 
             # DEBUG: Log first few and last few iterations
-            if iteration < 5 or iteration >= max_iterations - 5:
+            if self.debug and (iteration < 5 or iteration >= max_iterations - 5):
                 debug_log.append(f"  Iter {iteration}: max_delta={max_delta:.6e}, damping={damping:.2f}")
 
             # Check convergence
@@ -974,13 +977,13 @@ class TransientSolver:
                 # Converged! Use new voltages directly
                 for idx, node in enumerate(nodes):
                     voltages[node] = solution[idx]
-                if len(debug_log) > 0:
+                if self.debug and debug_log is not None and len(debug_log) > 0:
                     print(f"\nDEBUG: Converged at t={time:.6e}s after {iteration+1} iterations")
                 break
 
-            # Adaptive damping (match DC solver, but more aggressive for transient)
-            if max_delta >= 0.1:  # Lower threshold for transient stability
-                damping = 0.5  # Enable damping if deltas are non-trivial
+            # Adaptive damping (match DC solver threshold)
+            if max_delta >= 1.0:  # Use >= to catch max_delta == 1.0
+                damping = 0.5  # Enable damping if deltas are large
             else:
                 damping = 1.0  # Small deltas, no damping needed
 
@@ -997,7 +1000,7 @@ class TransientSolver:
                     voltages[node] = damping * new_voltage_solution + (1.0 - damping) * old_voltage
         else:
             # Did not converge - print debug log
-            if len(debug_log) > 0:
+            if self.debug and debug_log is not None and len(debug_log) > 0:
                 print(f"\nDEBUG: Convergence failure at t={time:.6e}s:")
                 for log_line in debug_log:
                     print(log_line)
@@ -1054,6 +1057,12 @@ class TransientSolver:
 
         # Get current at operating point
         i_ds = mosfet.calculate_current(voltages)
+
+        # NOTE: MOSFET internal capacitances are NOT stamped here
+        # The Level-1 capacitance model (get_capacitances) exists but requires
+        # state tracking across timesteps (V_prev), similar to Capacitor class.
+        # This is planned for future implementation.
+        # For now, transient analysis works correctly with explicit capacitors in the netlist.
 
         # Add minimum conductance to prevent numerical instability
         g_min = 1e-6

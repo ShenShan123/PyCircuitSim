@@ -60,14 +60,22 @@ class Parser:
 
     # Unit suffix multipliers
     UNIT_SUFFIXES = {
-        'k': 1e3,
+        't': 1e12,  # tera
+        'T': 1e12,
+        'g': 1e9,   # giga
+        'G': 1e9,
+        'm': 1e6,   # mega (milli is less common in circuits)
+        'M': 1e6,
+        'k': 1e3,   # kilo
         'K': 1e3,
-        'u': 1e-6,
+        'u': 1e-6,  # micro
         'U': 1e-6,
-        'n': 1e-9,
+        'n': 1e-9,  # nano
         'N': 1e-9,
-        'p': 1e-12,
+        'p': 1e-12, # pico
         'P': 1e-12,
+        'f': 1e-15, # femto
+        'F': 1e-15,
     }
 
     def __init__(self, osdi_path: Optional[str] = None, modelcard_base_dir: Optional[str] = None):

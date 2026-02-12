@@ -254,6 +254,73 @@ class NMOS(Component):
 
         return g_ds, g_m
 
+    def get_capacitances(self, voltages: Dict[str, float]) -> Dict[str, float]:
+        """
+        Calculate MOSFET internal capacitances for transient analysis.
+
+        Uses Meyer capacitance model (simplified):
+        - C_gs: Gate-source overlap + channel capacitance
+        - C_gd: Gate-drain overlap + channel capacitance
+        - C_db: Drain-bulk junction capacitance
+        - C_sb: Source-bulk junction capacitance
+
+        Args:
+            voltages: Dictionary mapping node names to voltage values
+
+        Returns:
+            Dictionary with capacitance values in Farads
+        """
+        # Extract voltages
+        v_d = voltages.get(self.nodes[0], 0.0)  # Drain
+        v_g = voltages.get(self.nodes[1], 0.0)  # Gate
+        v_s = voltages.get(self.nodes[2], 0.0)  # Source
+        v_b = voltages.get(self.nodes[3], 0.0)  # Bulk
+
+        v_gs = v_g - v_s
+        v_gd = v_g - v_d
+        v_ds = v_d - v_s
+
+        # Oxide capacitance (C_ox = epsilon_ox * W * L / t_ox)
+        # Assuming t_ox = 10nm for typical 180nm process
+        epsilon_ox = 3.45e-11  # F/m (SiO2)
+        t_ox = 10e-9  # meters
+        C_ox = epsilon_ox * self.W * self.L / t_ox
+
+        # Overlap capacitances (fixed)
+        C_ov = 0.2 * C_ox  # 20% of oxide as overlap
+
+        # Junction capacitances (simplified)
+        C_j0 = 1e-15  # 1fF zero-bias junction capacitance
+
+        # Voltage-dependent junction capacitances
+        phi_bi = 0.7  # Built-in potential (V)
+        # Clamp junction voltages to avoid division issues
+        v_db = max(v_d - v_b, -phi_bi + 0.01)
+        v_sb = max(v_s - v_b, -phi_bi + 0.01)
+
+        C_db = C_j0 / (1 + v_db / phi_bi)**0.5
+        C_sb = C_j0 / (1 + v_sb / phi_bi)**0.5
+
+        # Check operating region for channel capacitance division
+        v_ov = v_gs - self.VTO
+
+        if v_gs < self.VTO:  # Cutoff
+            C_gs = C_ov
+            C_gd = C_ov
+        elif v_ds < v_ov:  # Linear
+            C_gs = C_ov + 0.5 * C_ox
+            C_gd = C_ov + 0.5 * C_ox
+        else:  # Saturation
+            C_gs = C_ov + 0.66 * C_ox  # 2/3 of C_ox
+            C_gd = C_ov  # Only overlap
+
+        return {
+            "cgs": C_gs,
+            "cgd": C_gd,
+            "cdb": C_db,
+            "csb": C_sb,
+        }
+
     def __repr__(self) -> str:
         """String representation of the NMOS transistor."""
         return (f"NMOS({self.name}, nodes={self.nodes}, "
@@ -296,7 +363,7 @@ class PMOS(Component):
         L: float,
         W: float,
         VTO: float = -0.7,
-        KP: float = 20e-6
+        KP: float = -20e-6
     ):
         """
         Initialize a PMOS transistor.
@@ -482,15 +549,82 @@ class PMOS(Component):
         # Linear region: |V_ds| < |V_ov| equivalent to v_ds > v_ov
         if v_ds > v_ov:
             # Linear region (triode region)
-            # For PMOS with positive KP: conductances come out negative, take absolute values
-            g_m = abs(self.K * v_ds)
-            g_ds = abs(self.K * (v_ov - v_ds))
+            # Use absolute value of K (conductance magnitude) and absolute voltage values
+            g_m = abs(self.K) * abs(v_ds)
+            g_ds = abs(self.K) * abs(v_ov - v_ds)
         else:
             # Saturation region
-            g_m = abs(self.K * v_ov)
+            g_m = abs(self.K) * abs(v_ov)
             g_ds = 0.0
 
         return g_ds, g_m
+
+    def get_capacitances(self, voltages: Dict[str, float]) -> Dict[str, float]:
+        """
+        Calculate MOSFET internal capacitances for transient analysis.
+
+        Uses Meyer capacitance model (simplified):
+        - C_gs: Gate-source overlap + channel capacitance
+        - C_gd: Gate-drain overlap + channel capacitance
+        - C_db: Drain-bulk junction capacitance
+        - C_sb: Source-bulk junction capacitance
+
+        Args:
+            voltages: Dictionary mapping node names to voltage values
+
+        Returns:
+            Dictionary with capacitance values in Farads
+        """
+        # Extract voltages
+        v_d = voltages.get(self.nodes[0], 0.0)  # Drain
+        v_g = voltages.get(self.nodes[1], 0.0)  # Gate
+        v_s = voltages.get(self.nodes[2], 0.0)  # Source
+        v_b = voltages.get(self.nodes[3], 0.0)  # Bulk
+
+        v_gs = v_g - v_s
+        v_gd = v_g - v_d
+        v_ds = v_d - v_s
+
+        # Oxide capacitance (C_ox = epsilon_ox * W * L / t_ox)
+        # Assuming t_ox = 10nm for typical 180nm process
+        epsilon_ox = 3.45e-11  # F/m (SiO2)
+        t_ox = 10e-9  # meters
+        C_ox = epsilon_ox * self.W * self.L / t_ox
+
+        # Overlap capacitances (fixed)
+        C_ov = 0.2 * C_ox  # 20% of oxide as overlap
+
+        # Junction capacitances (simplified)
+        C_j0 = 1e-15  # 1fF zero-bias junction capacitance
+
+        # Voltage-dependent junction capacitances
+        phi_bi = 0.7  # Built-in potential (V)
+        # Clamp junction voltages to avoid division issues
+        v_db = max(v_d - v_b, -phi_bi + 0.01)
+        v_sb = max(v_s - v_b, -phi_bi + 0.01)
+
+        C_db = C_j0 / (1 + v_db / phi_bi)**0.5
+        C_sb = C_j0 / (1 + v_sb / phi_bi)**0.5
+
+        # Check operating region for channel capacitance division
+        v_ov = v_gs - self.VTO
+
+        if v_gs > self.VTO:  # Cutoff (PMOS: V_gs > V_th)
+            C_gs = C_ov
+            C_gd = C_ov
+        elif v_ds > v_ov:  # Linear (PMOS: v_ds > v_ov when both negative)
+            C_gs = C_ov + 0.5 * C_ox
+            C_gd = C_ov + 0.5 * C_ox
+        else:  # Saturation
+            C_gs = C_ov + 0.66 * C_ox  # 2/3 of C_ox
+            C_gd = C_ov  # Only overlap
+
+        return {
+            "cgs": C_gs,
+            "cgd": C_gd,
+            "cdb": C_db,
+            "csb": C_sb,
+        }
 
     def __repr__(self) -> str:
         """String representation of the PMOS transistor."""
