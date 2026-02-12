@@ -403,7 +403,7 @@ class PulseVoltageSource(VoltageSource):
         if time < self.td:
             return self.v1
 
-        # Time since delay ended
+        # Time since delay ended (only compute after delay!)
         t_since_delay = time - self.td
         t_in_pulse_period = t_since_delay % self.per
 

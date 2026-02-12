@@ -1394,6 +1394,12 @@ class TransientSolver:
         for node in nodes:
             voltages_over_time[node][0] = initial_voltages.get(node, 0.0)
 
+        # Debug: Print initial voltages
+        if self.debug:
+            print(f"Initial transient voltages:")
+            for node in sorted(nodes)[:5]:
+                print(f"  V{node} = {initial_voltages.get(node, 0.0):.4f} V")
+
         # Step 2: Add pseudo-capacitors if enabled (for better DC convergence)
         if self.use_pseudo_transient and self._has_non_linear_components():
             if self.debug:
