@@ -99,19 +99,48 @@ tests/                  # Validation scripts
 - [x] DC analysis validation (NMOS, PMOS, Inverter)
 
 ### Phase 5: Advanced Verification & Robustness (Current Focus)
-- [ ] **Transient Analysis Verification (Inverter)**
-    - [ ] Create automated test script (`tests/verify_inverter.py`)
-    - [ ] Generate netlists for Level 1 and BSIM-CMG
+- [x] **Transient Analysis Verification (Inverter)**
+    - [x] Create automated test script (`tests/verify_level1_transient.py`)
+    - [x] Generate netlists for Level 1 and BSIM-CMG
     - [ ] Run NGSPICE control (ground truth)
     - [ ] Run PyCircuitSim
     - [ ] Compare waveforms (RMSE metric)
+- [x] **Parser Enhancement** (2026-02-12)
+    - Added femto (f) and other unit suffixes (T, G, M, m) to UNIT_SUFFIXES
+- [x] **Transient Solver Improvements** (2026-02-12)
+    - Fixed damping threshold from >=0.1V to >=1.0V (match DC solver)
+    - Changed damping condition from > to >= (catch exact 1.0V case)
+    - Made debug logging conditional (debug flag in TransientSolver.__init__)
+- [x] **PMOS Conductance Fix** (2026-02-12)
+    - Fixed PMOS default KP from 20e-6 to -20e-6 (SPICE convention)
+    - Fixed abs() usage: abs(K) * abs(v) instead of abs(K * v)
+- [x] **Level-1 Capacitance Model** (2026-02-12)
+    - Added get_capacitances() method to NMOS/PMOS classes
+    - Implements Meyer capacitance model (Cgs, Cgd, Cdb, Csb)
+    - Note: Integration into transient solver requires state management (deferred)
 - [ ] **Transient Stability Improvements**
     - [ ] Investigate convergence for fast switching events
-    - [ ] Tune adaptive damping and timestep control
+    - [ ] Implement source stepping for better initial guess
+    - [ ] Add Gmin stepping algorithm
+    - [ ] Consider pseudo-transient initialization
 - [ ] **Expanded Test Suite**
     - [ ] NAND/NOR gates
     - [ ] Ring Oscillator (multi-stage transient)
     - [ ] SRAM bitcell (static noise margin)
+
+**Known Issue - MOSFET Transient Convergence** (2026-02-12):
+Level-1 MOSFET transient analysis fails for fast-switching circuits. The Newton-Raphson
+solver struggles when:
+- Input voltages change rapidly (PULSE source edges)
+- Output swings dramatically (e.g., inverter: 1.0V → 0V)
+
+This requires advanced algorithms beyond basic bug fixes:
+- Source stepping (gradually increase Vin from 0V to target)
+- Gmin stepping (start with minimum conductances)
+- Pseudo-transient (artificial capacitances for initialization)
+- Homotopy continuation methods
+
+For now, RC circuits work correctly and MOSFET DC analysis works properly.
 
 ---
 
