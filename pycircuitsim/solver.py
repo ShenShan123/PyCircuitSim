@@ -1203,6 +1203,17 @@ class TransientSolver:
                 if node not in ["0", "GND"]:
                     initial_voltages[node] = voltage
 
+            # Initialize capacitor v_prev from DC operating point
+            # This is critical: capacitors must start with their DC voltage,
+            # otherwise the transient analysis will have incorrect initial conditions
+            for component in self.circuit.components:
+                if isinstance(component, Capacitor):
+                    node_i, node_j = component.nodes[0], component.nodes[1]
+                    v_i = self.initial_guess.get(node_i, 0.0)
+                    v_j = self.initial_guess.get(node_j, 0.0)
+                    # v_prev is the voltage across the capacitor (V_i - V_j)
+                    component.v_prev = v_i - v_j
+
         # For each capacitor, estimate the node voltages based on v_prev
         for component in self.circuit.components:
             if isinstance(component, Capacitor):
@@ -1368,15 +1379,13 @@ class TransientSolver:
                     mna_matrix[neg_idx, vs_row] -= 1.0
 
                 # Stamp voltage source value to RHS
-                # For Newton-Raphson, compute mismatch: V_source - (V_pos_old - V_neg_old)
-                if voltages is not None:
-                    # Newton-Raphson: compute mismatch
-                    v_pos = voltages.get(pos_node, 0.0)
-                    v_neg = voltages.get(neg_node, 0.0)
-                    rhs[vs_row] = voltage_target - (v_pos - v_neg)
-                else:
-                    # Linear analysis: use source value directly
-                    rhs[vs_row] = voltage_target
+                # Use direct voltage value for companion model consistency.
+                # The companion model for MOSFETs solves for V directly,
+                # so voltage sources should also use direct form.
+                # NOTE: Previous implementation used voltage_target - (v_pos - v_neg)
+                # which caused oscillation in Newton-Raphson. The correct formulation
+                # (matching DC solver) is to use the direct voltage value.
+                rhs[vs_row] = voltage_target
 
                 # Move to next voltage source
                 voltage_source_index += 1
