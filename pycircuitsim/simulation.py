@@ -329,14 +329,22 @@ def run_transient(
     logger.info("Stage 1: Computing DC operating point for transient initialization...")
     # Use .ic initial conditions if provided, otherwise None (solver will use 0V guess)
     initial_guess = circuit.initial_conditions if circuit.initial_conditions else None
-    op_solver = DCSolver(circuit, initial_guess=initial_guess)
+    op_solver = DCSolver(circuit, initial_guess=initial_guess, use_source_stepping=True)
     op_solution = op_solver.solve()
     logger.info(f"DC operating point computed: {len(op_solution)} nodes")
 
     # STAGE 2: Use OP solution as initial guess for transient
-    logger.info("Stage 2: Running transient analysis...")
+    logger.info("Stage 2: Running transient analysis with Gmin stepping and pseudo-transient initialization...")
     solver = TransientSolver(circuit, t_stop=final_time, dt=time_step,
-                            initial_guess=op_solution)
+                            initial_guess=op_solution,
+                            use_gmin_stepping=True,
+                            gmin_initial=1e-8,
+                            gmin_final=1e-12,
+                            gmin_steps=10,
+                            use_pseudo_transient=True,
+                            pseudo_transient_steps=10,
+                            pseudo_transient_cap=1e-12,
+                            debug=True)
     results = solver.solve()
 
     # Convert numpy arrays to lists for plotting
