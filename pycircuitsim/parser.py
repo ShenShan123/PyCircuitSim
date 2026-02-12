@@ -81,9 +81,9 @@ class Parser:
 
     # ASAP7 modelcard filenames (from ASAP7 PDK)
     ASAP7_MODELCARD_FILES = [
-        "7nm_TT.pm",
-        "7nm_FF.pm",
-        "7nm_SS.pm",
+        "7nm_TT_160803.pm",  # Typical-Typical corner
+        "7nm_FF.pm",          # Fast-Fast corner
+        "7nm_SS.pm",           # Slow-Slow corner
     ]
 
     def __init__(self, osdi_path: Optional[str] = None, modelcard_base_dir: Optional[str] = None):
