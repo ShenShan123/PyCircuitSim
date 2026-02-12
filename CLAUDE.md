@@ -1,7 +1,9 @@
 # Project: PyCircuitSim
 
 ## Overview
-Python-based SPICE-like circuit simulator emphasizing educational clarity and modular architecture. Supports DC/transient analysis with Level 1 MOSFET models and BSIM-CMG FinFET compact models (LEVEL=72).
+Python-based SPICE-like circuit simulator emphasizing educational clarity and modular architecture. 
+**Primary Goal:** specific support for **Level-1 MOS models** and **PyCMG-wrapped CMG models** (LEVEL=72). 
+The simulator must support **Operating Point (OP)**, **DC Sweep**, and **Transient Analysis** for both model types.
 
 **Core Principles:**
 * Pure Python with clean, readable code
@@ -33,6 +35,7 @@ PyCMG/                  # BSIM-CMG OSDI wrapper (external submodule)
 main.py                 # CLI entry point (single main entrance)
 examples/*.sp           # Example netlists
 results/                # Simulation output (.lis, .csv, .png)
+tests/                  # Validation scripts
 ```
 
 ### Key Algorithms
@@ -51,15 +54,24 @@ results/                # Simulation output (.lis, .csv, .png)
 * Sources: DC voltage/current, PULSE
 
 ### Analysis
-* `.dc` - DC sweep analysis
-* `.tran` - Transient analysis
+* `.op` - Operating Point Analysis (Basic DC solution)
+* `.dc` - DC Sweep Analysis
+* `.tran` - Transient Analysis
 
 ### Directives
 * `.model` - MOSFET model definitions (LEVEL=1 or LEVEL=72)
 * `.include` - External library files
 * `.ic` - Initial conditions (critical for SRAM/bistable circuits)
 
-## Status
+## Validation Strategy
+
+**Mandatory Requirement:**
+* **Test Case:** An inverter circuit must be used to verify functionality.
+* **Analysis:** The inverter must successfully pass **Transient Analysis**.
+* **Ground Truth:** All simulation results must be verified against **NGSPICE**.
+* **Metric:** Waveforms and operating points must match NGSPICE within reasonable numerical tolerance.
+
+## Status & Roadmap
 
 ### Phase 1: Core Implementation ✅ Complete
 - [x] MNA matrix construction
@@ -85,7 +97,21 @@ results/                # Simulation output (.lis, .csv, .png)
 - [x] ASAP7 7nm modelcard compatibility
 - [x] **Critical bug fix: PMOS RHS stamping**
 - [x] DC analysis validation (NMOS, PMOS, Inverter)
-- [ ] Transient analysis stability (convergence issues remain)
+
+### Phase 5: Advanced Verification & Robustness (Current Focus)
+- [ ] **Transient Analysis Verification (Inverter)**
+    - [ ] Create automated test script (`tests/verify_inverter.py`)
+    - [ ] Generate netlists for Level 1 and BSIM-CMG
+    - [ ] Run NGSPICE control (ground truth)
+    - [ ] Run PyCircuitSim
+    - [ ] Compare waveforms (RMSE metric)
+- [ ] **Transient Stability Improvements**
+    - [ ] Investigate convergence for fast switching events
+    - [ ] Tune adaptive damping and timestep control
+- [ ] **Expanded Test Suite**
+    - [ ] NAND/NOR gates
+    - [ ] Ring Oscillator (multi-stage transient)
+    - [ ] SRAM bitcell (static noise margin)
 
 ---
 
@@ -94,46 +120,6 @@ results/                # Simulation output (.lis, .csv, .png)
 ### Basic Simulation
 Create a netlist (`.sp` file) with your circuit. Examples provided in `examples/` directory.
 
-```bash
-# Set PYTHONPATH if not installed
-export PYTHONPATH=/path/to/NN_SPICE:$PYTHONPATH
-
-# Run simulation
-python main.py examples/rc_transient.sp
-python main.py examples/test_nmos_level1.sp
-
-# Custom circuit
-python main.py your_circuit.sp
-```
-
-### MOSFET Terminal Order
-**Important**: Terminals are `drain gate source bulk`
-
-**Level 1 Models (Shichman-Hodges):**
-```spice
-* NMOS: drain=output, gate=input, source=GND, bulk=GND
-Mn1 3 2 0 0 NMOS_VTL L=1u W=10u
-
-* PMOS: drain=output, gate=input, source=Vdd, bulk=Vdd
-Mp1 3 2 1 1 PMOS_VTL L=1u W=20u
-
-.model NMOS_VTL NMOS (LEVEL=1 VTO=0.7 KP=50u)
-.model PMOS_VTL PMOS (LEVEL=1 VTO=-0.7 KP=-20u)
-```
-
-**BSIM-CMG Models (FinFET LEVEL=72):**
-```spice
-* NMOS FinFET: 10 fins, 30nm channel length
-Mn1 3 2 0 0 nmos1 L=30n NFIN=10
-
-* PMOS FinFET: 10 fins, 30nm channel length
-Mp1 3 2 1 1 pmos1 L=30n NFIN=10
-
-* Use ASAP7 7nm modelcards or custom BSIM-CMG parameters
-.model nmos1 NMOS (LEVEL=72)
-.model pmos1 PMOS (LEVEL=72)
-```
-
 **BSIM-CMG Geometric Parameters:**
 - `L` - Channel length (required, in meters e.g., 30n)
 - `NFIN` - Number of fins (required, integer or float)
@@ -141,23 +127,10 @@ Mp1 3 2 1 1 pmos1 L=30n NFIN=10
 - `HFIN` - Fin height (optional, uses modelcard default)
 - `FPITCH` - Fin pitch (optional, uses modelcard default)
 
-### Python API
-```python
-from pycircuitsim.simulation import run_simulation
-
-# Run simulation programmatically
-run_simulation(
-    netlist_path='circuit.sp',
-    output_dir='results',
-    verbose=True
-)
-```
-
 ### Output Files
 Results organized in `results/<circuit_name>/<analysis_type>/`:
 - `*_simulation.lis` - Detailed iteration log (HSPICE-like)
 - `*_dc_sweep.csv` / `*_transient.csv` - Waveform data (node voltages + device currents)
-- `*_dc_sweep.png` / `*_transient.png` - Voltage/current plots
 
 ## Development Guidelines
 
@@ -184,6 +157,14 @@ Results organized in `results/<circuit_name>/<analysis_type>/`:
 - **CLI**: `main.py` - Command-line interface (argparse, error handling)
 - **API**: `pycircuitsim.simulation.run_simulation()` - Programmatic access
 - **Module**: `pycircuitsim` - Package exports (Circuit, Parser, Visualizer, run_simulation)
+
+
+## Environment & Tools
+* **Conda Environment**: `pycircuitsim` in `/home/shenshan/.conda/envs/pycircuitsim`
+* **OpenVAF Compiler:** `/usr/local/bin/openvaf`
+* **NGSPICE Simulator:** `/usr/local/ngspice-45.2/bin/ngspice`
+* **Build System:** CMake / Make
+* **Python Bindings:** PyBind11
 
 ## Critical Bugs and Solutions
 
@@ -364,9 +345,24 @@ return (abs(g_ds), g_m, g_mb)
 - **Xyce** - Architecture patterns for device/solver separation
 - **Shichman-Hodges Model** - Level 1 MOSFET compact model
 - **BSIM-CMG** - FinFET compact model (LEVEL=72), integrated via PyCMG
+- **ASAP7** - https://github.com/The-OpenROAD-Project/asap7_pdk_r1p7.git
+- **PyCMG** - https://github.com/ShenShan123/PyCMG.git
 
 ## Other Notes
-- Use conda environment `pycircuitsim`
 - Git commit for every significant change
 - Single main entrance: `main.py` at project root
-- BSIM-CMG integration: Requires PyCMG library with OSDI binary (see `PyCMG/README.md`)
+
+## Other Tips in This Project
+* **Start every complex task in plan mode:** 
+    * Pour your energy into the plan for 1-shot the implementation.
+    * The moment something goes sideways, just switch back to plan mode and re-plan. Don't keep pushing.
+    * Enter plan mode for verification steps, not just for the build.
+* **Update CLAUDE.md:**
+    * After every correction, update your CLAUDE.md so you don't make that mistake again.
+* **Never be lazy:** 
+    * Never be lazy in writing the code and running tests.
+    * Do NOT use any simplifed equations or self-defined CMG models as reference, ALWAYS use simulation results as ground truth for comparison.
+* Use subagents. 
+    * Use a second agent to review the plan as a staff engineer.
+    * If you want to try multiple solutions, use multiple subagents, git commit to different branches. Roll back and to the main branch and create new branch when the subagent find it's a dead end.
+* Enable the "Explanatory" or "Learning" output style in /config to explain the *why* behind its changes.

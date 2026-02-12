@@ -425,8 +425,9 @@ class PMOS(Component):
         v_ds = np.clip(v_ds, -self._MAX_V_DS, self._MAX_V_DS)
 
         # Check operating region (linear vs saturation)
-        # For PMOS, we compare absolute values
-        if abs(v_ds) < abs(v_ov):
+        # For PMOS, both v_ds and v_ov are negative in normal operation
+        # Linear region: |V_ds| < |V_ov| equivalent to v_ds > v_ov (since both negative)
+        if v_ds > v_ov:
             # Linear region (triode region)
             # Same equation as NMOS, but KP is negative
             i_ds = self.K * (v_ov * v_ds - 0.5 * v_ds**2)
@@ -477,7 +478,9 @@ class PMOS(Component):
         v_ds = np.clip(v_ds, -self._MAX_V_DS, self._MAX_V_DS)
 
         # Check operating region (linear vs saturation)
-        if abs(v_ds) < abs(v_ov):
+        # For PMOS, both v_ds and v_ov are negative in normal operation
+        # Linear region: |V_ds| < |V_ov| equivalent to v_ds > v_ov
+        if v_ds > v_ov:
             # Linear region (triode region)
             # For PMOS with positive KP: conductances come out negative, take absolute values
             g_m = abs(self.K * v_ds)

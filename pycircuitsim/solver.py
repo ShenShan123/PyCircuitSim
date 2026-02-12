@@ -569,7 +569,10 @@ class DCSolver:
         g_ds = max(g_ds, g_min)
 
         # Stamp conductances to MNA matrix
-        # g_ds between drain and source
+        # IMPORTANT: Conductances are ALWAYS positive in the matrix!
+        # The current direction is handled by RHS stamping, not conductance signs.
+
+        # g_ds between drain and source (resistive channel)
         if drain != "0" and drain in node_map:
             d_idx = node_map[drain]
             mna_matrix[d_idx, d_idx] += g_ds
@@ -584,11 +587,33 @@ class DCSolver:
             mna_matrix[d_idx, s_idx] -= g_ds
             mna_matrix[s_idx, d_idx] -= g_ds
 
-        # g_m from gate to drain (controlled by gate voltage, affects drain current)
+        # g_m transconductance stamping (VCCS: gate controls drain current)
+        # For both NMOS and PMOS, we use the SAME transconductance stamping pattern.
+        # The current direction difference is handled by RHS stamping, not conductance signs.
+        #
+        # The transconductance represents the sensitivity of |I_ds| to V_gs,
+        # which has the same sign for both NMOS and PMOS (increasing |V_gs| increases |I_ds|).
+
+        # Drain equation: current = g_m * V_gs
         if gate != "0" and gate in node_map and drain != "0" and drain in node_map:
             g_idx = node_map[gate]
             d_idx = node_map[drain]
             mna_matrix[d_idx, g_idx] += g_m
+
+        if drain != "0" and drain in node_map and source != "0" and source in node_map:
+            d_idx = node_map[drain]
+            s_idx = node_map[source]
+            mna_matrix[d_idx, s_idx] -= g_m
+
+        # Source equation: current = -g_m * V_gs (KCL)
+        if gate != "0" and gate in node_map and source != "0" and source in node_map:
+            g_idx = node_map[gate]
+            s_idx = node_map[source]
+            mna_matrix[s_idx, g_idx] -= g_m
+
+        if source != "0" and source in node_map:
+            s_idx = node_map[source]
+            mna_matrix[s_idx, s_idx] += g_m
 
         # g_mb from bulk to drain (bulk transconductance, for BSIM-CMG)
         if abs(g_mb) > 1e-12 and bulk != source:
@@ -598,8 +623,9 @@ class DCSolver:
                 mna_matrix[d_idx, b_idx] += g_mb
 
         # Stamp equivalent current source to RHS
-        # The RHS should contain: I_ds - g_ds*V_ds - g_m*V_gs - g_mb*V_bs
-        # This represents the constant term in the linearized equation
+        # The linearized equation is:
+        # I_d = g_ds*V_ds + g_m*V_gs + g_mb*V_bs + i_eq
+        # where i_eq = i_ds - g_ds*v_ds - g_m*v_gs - g_mb*v_bs
         v_d = voltages.get(drain, 0.0)
         v_g = voltages.get(gate, 0.0)
         v_s = voltages.get(source, 0.0)
@@ -612,9 +638,7 @@ class DCSolver:
         # Equivalent current source (Newton-Raphson constant term)
         i_eq = i_ds - g_ds * v_ds - g_m * v_gs - g_mb * v_bs
 
-        # Stamp current to drain and source nodes
-        # IMPORTANT: NMOS and PMOS have OPPOSITE current directions!
-        # Check device type to apply correct stamping
+        # Check device type for correct current direction
         from pycircuitsim.models.mosfet import PMOS
         try:
             from pycircuitsim.models.mosfet_cmg import PMOS_CMG
@@ -622,21 +646,28 @@ class DCSolver:
         except ImportError:
             is_pmos = isinstance(mosfet, PMOS)
 
+        # Stamp current to drain and source nodes
+        # IMPORTANT: NMOS and PMOS have OPPOSITE current directions!
+        #
+        # For Level-1 PMOS with positive KP:
+        # - The equation gives positive i_ds for normal operation (Vgs < VTO, Vds < 0)
+        # - Positive i_ds from equation represents S→D current direction
+        # - So current ENTERS drain (opposite of NMOS D→S convention)
+        #
+        # MNA RHS convention: positive value = current entering the node
+        # - NMOS: current leaves drain → rhs[drain] -= i_eq
+        # - PMOS: current enters drain → rhs[drain] += i_eq
         if is_pmos:
-            # PMOS: current flows INTO drain, OUT of source (i_ds < 0)
-            # RHS needs POSITIVE i_eq at drain (current INTO node)
-            # and NEGATIVE i_eq at source (current OUT OF node)
+            # PMOS: current flows INTO drain (from source), OUT OF source
             if drain != "0" and drain in node_map:
                 d_idx = node_map[drain]
-                rhs[d_idx] += i_eq  # OPPOSITE of NMOS
+                rhs[d_idx] += i_eq
 
             if source != "0" and source in node_map:
                 s_idx = node_map[source]
-                rhs[s_idx] -= i_eq  # OPPOSITE of NMOS
+                rhs[s_idx] -= i_eq
         else:
-            # NMOS: current flows OUT of drain, INTO source (i_ds > 0)
-            # RHS gets NEGATIVE i_eq at drain (current OUT of node)
-            # and POSITIVE i_eq at source (current INTO node)
+            # NMOS: current flows OUT OF drain (to source), INTO source
             if drain != "0" and drain in node_map:
                 d_idx = node_map[drain]
                 rhs[d_idx] -= i_eq
@@ -1029,6 +1060,10 @@ class TransientSolver:
         g_ds = max(g_ds, g_min)
 
         # Stamp conductances to MNA matrix
+        # IMPORTANT: Conductances are ALWAYS positive in the matrix!
+        # The current direction is handled by RHS stamping, not conductance signs.
+
+        # g_ds between drain and source (resistive channel)
         if drain != "0" and drain in node_map:
             d_idx = node_map[drain]
             mna_matrix[d_idx, d_idx] += g_ds
@@ -1043,13 +1078,29 @@ class TransientSolver:
             mna_matrix[d_idx, s_idx] -= g_ds
             mna_matrix[s_idx, d_idx] -= g_ds
 
-        # Stamp transconductance
+        # g_m transconductance stamping (same pattern for NMOS and PMOS)
+        # Drain equation: current = g_m * V_gs
         if gate != "0" and gate in node_map and drain != "0" and drain in node_map:
             g_idx = node_map[gate]
             d_idx = node_map[drain]
             mna_matrix[d_idx, g_idx] += g_m
 
-        # g_mb from bulk to drain (bulk transconductance, for BSIM-CMG)
+        if drain != "0" and drain in node_map and source != "0" and source in node_map:
+            d_idx = node_map[drain]
+            s_idx = node_map[source]
+            mna_matrix[d_idx, s_idx] -= g_m
+
+        # Source equation: current = -g_m * V_gs (KCL)
+        if gate != "0" and gate in node_map and source != "0" and source in node_map:
+            g_idx = node_map[gate]
+            s_idx = node_map[source]
+            mna_matrix[s_idx, g_idx] -= g_m
+
+        if source != "0" and source in node_map:
+            s_idx = node_map[source]
+            mna_matrix[s_idx, s_idx] += g_m
+
+        # g_mb from bulk to drain (bulk transconductance)
         if abs(g_mb) > 1e-12 and bulk != source:
             if bulk != "0" and bulk in node_map and drain != "0" and drain in node_map:
                 b_idx = node_map[bulk]
@@ -1066,11 +1117,10 @@ class TransientSolver:
         v_gs = v_g - v_s
         v_bs = v_b - v_s
 
-        # Equivalent current source
+        # Equivalent current source (same formula for NMOS and PMOS)
         i_eq = i_ds - g_ds * v_ds - g_m * v_gs - g_mb * v_bs
 
-        # Stamp current to drain and source nodes
-        # Apply same PMOS/NMOS-specific stamping as DC solver
+        # Check device type for correct current direction
         from pycircuitsim.models.mosfet import PMOS
         try:
             from pycircuitsim.models.mosfet_cmg import PMOS_CMG
@@ -1078,8 +1128,10 @@ class TransientSolver:
         except ImportError:
             is_pmos = isinstance(mosfet, PMOS)
 
+        # Stamp current to drain and source nodes
+        # (See DC solver comments for explanation)
         if is_pmos:
-            # PMOS: current INTO drain, OUT OF source
+            # PMOS: current flows INTO drain, OUT OF source
             if drain != "0" and drain in node_map:
                 d_idx = node_map[drain]
                 rhs[d_idx] += i_eq
@@ -1088,7 +1140,7 @@ class TransientSolver:
                 s_idx = node_map[source]
                 rhs[s_idx] -= i_eq
         else:
-            # NMOS: current OUT OF drain, INTO source
+            # NMOS: current flows OUT OF drain, INTO source
             if drain != "0" and drain in node_map:
                 d_idx = node_map[drain]
                 rhs[d_idx] -= i_eq
