@@ -544,6 +544,17 @@ class Parser:
                     f"Hint: Set ASAP7_MODELCARD_DIR environment variable if using ASAP7 PDK."
                 )
 
+            # Determine the model_card_name for ASAP7 modelcards.
+            # ASAP7 modelcards define models like "nmos_rvt", "pmos_rvt" etc.,
+            # which differ from the user's netlist model name (e.g., "nmos1").
+            # Default to RVT (regular Vth) variant if using ASAP7.
+            model_card_name = None
+            if str(modelcard_path).startswith(str(self._asap7_modelcard_dir)):
+                if model_type.upper() == 'NMOS':
+                    model_card_name = "nmos_rvt"
+                elif model_type.upper() == 'PMOS':
+                    model_card_name = "pmos_rvt"
+
             if model_type.upper() == 'NMOS':
                 mosfet = NMOS_CMG(
                     name=name,
@@ -556,6 +567,7 @@ class Parser:
                     TFIN=TFIN,
                     HFIN=HFIN,
                     FPITCH=FPITCH,
+                    model_card_name=model_card_name,
                 )
             elif model_type.upper() == 'PMOS':
                 mosfet = PMOS_CMG(
@@ -569,6 +581,7 @@ class Parser:
                     TFIN=TFIN,
                     HFIN=HFIN,
                     FPITCH=FPITCH,
+                    model_card_name=model_card_name,
                 )
             else:
                 raise ValueError(f"Unknown MOSFET model type: {model_type}")

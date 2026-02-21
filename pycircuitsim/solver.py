@@ -623,9 +623,27 @@ class DCSolver:
                 mna_matrix[d_idx, b_idx] += g_mb
 
         # Stamp equivalent current source to RHS
-        # The linearized equation is:
-        # I_d = g_ds*V_ds + g_m*V_gs + g_mb*V_bs + i_eq
-        # where i_eq = i_ds - g_ds*v_ds - g_m*v_gs - g_mb*v_bs
+        #
+        # MNA convention: G*x = b where row i represents KCL at node i.
+        # The conductance stamps in G encode: g_ds*(V_d-V_s) + g_m*(V_g-V_s)
+        # which represents current LEAVING drain through the linearized MOSFET.
+        #
+        # The constant term (i_eq) also represents current leaving drain:
+        #   I_leaving_drain = g_ds*V_ds + g_m*V_gs + i_eq
+        # At V0: i_eq = I_leaving_drain(V0) - g_ds*V_ds0 - g_m*V_gs0
+        #
+        # For NMOS: calculate_current returns positive = current leaving drain (D->S).
+        # For PMOS: calculate_current returns positive = current INTO drain.
+        #   So I_leaving_drain(V0) = -calculate_current for PMOS.
+
+        # Check device type
+        from pycircuitsim.models.mosfet import PMOS
+        try:
+            from pycircuitsim.models.mosfet_cmg import PMOS_CMG
+            is_pmos = isinstance(mosfet, (PMOS, PMOS_CMG))
+        except ImportError:
+            is_pmos = isinstance(mosfet, PMOS)
+
         v_d = voltages.get(drain, 0.0)
         v_g = voltages.get(gate, 0.0)
         v_s = voltages.get(source, 0.0)
@@ -635,46 +653,23 @@ class DCSolver:
         v_gs = v_g - v_s
         v_bs = v_b - v_s
 
-        # Equivalent current source (Newton-Raphson constant term)
-        i_eq = i_ds - g_ds * v_ds - g_m * v_gs - g_mb * v_bs
+        # Convert to "leaving drain" convention for MNA
+        # NMOS: i_ds > 0 = current leaving drain (already correct)
+        # PMOS: i_ds > 0 = current INTO drain, so negate for "leaving"
+        i_leaving = -i_ds if is_pmos else i_ds
 
-        # Check device type for correct current direction
-        from pycircuitsim.models.mosfet import PMOS
-        try:
-            from pycircuitsim.models.mosfet_cmg import PMOS_CMG
-            is_pmos = isinstance(mosfet, (PMOS, PMOS_CMG))
-        except ImportError:
-            is_pmos = isinstance(mosfet, PMOS)
+        # Newton-Raphson constant: i_eq = I_leaving(V0) - g_ds*V_ds0 - g_m*V_gs0
+        i_eq = i_leaving - g_ds * v_ds - g_m * v_gs - g_mb * v_bs
 
-        # Stamp current to drain and source nodes
-        # IMPORTANT: NMOS and PMOS have OPPOSITE current directions!
-        #
-        # For Level-1 PMOS with positive KP:
-        # - The equation gives positive i_ds for normal operation (Vgs < VTO, Vds < 0)
-        # - Positive i_ds from equation represents S→D current direction
-        # - So current ENTERS drain (opposite of NMOS D→S convention)
-        #
-        # MNA RHS convention: positive value = current entering the node
-        # - NMOS: current leaves drain → rhs[drain] -= i_eq
-        # - PMOS: current enters drain → rhs[drain] += i_eq
-        if is_pmos:
-            # PMOS: current flows INTO drain (from source), OUT OF source
-            if drain != "0" and drain in node_map:
-                d_idx = node_map[drain]
-                rhs[d_idx] += i_eq
+        # Stamp to RHS: b[d] = -i_eq (since G*x + i_eq = 0 => G*x = -i_eq)
+        # Or equivalently: rhs[d] -= i_eq
+        if drain != "0" and drain in node_map:
+            d_idx = node_map[drain]
+            rhs[d_idx] -= i_eq
 
-            if source != "0" and source in node_map:
-                s_idx = node_map[source]
-                rhs[s_idx] -= i_eq
-        else:
-            # NMOS: current flows OUT OF drain (to source), INTO source
-            if drain != "0" and drain in node_map:
-                d_idx = node_map[drain]
-                rhs[d_idx] -= i_eq
-
-            if source != "0" and source in node_map:
-                s_idx = node_map[source]
-                rhs[s_idx] += i_eq
+        if source != "0" and source in node_map:
+            s_idx = node_map[source]
+            rhs[s_idx] += i_eq
 
     def _stamp_voltage_sources(
         self,
@@ -1267,7 +1262,15 @@ class TransientSolver:
                 d_idx = node_map[drain]
                 mna_matrix[d_idx, b_idx] += g_mb
 
-        # Stamp equivalent current source to RHS
+        # Stamp equivalent current source to RHS (same logic as DC solver)
+        # See _stamp_mosfet() for detailed derivation.
+        from pycircuitsim.models.mosfet import PMOS
+        try:
+            from pycircuitsim.models.mosfet_cmg import PMOS_CMG
+            is_pmos = isinstance(mosfet, (PMOS, PMOS_CMG))
+        except ImportError:
+            is_pmos = isinstance(mosfet, PMOS)
+
         v_d = voltages.get(drain, 0.0)
         v_g = voltages.get(gate, 0.0)
         v_s = voltages.get(source, 0.0)
@@ -1277,37 +1280,22 @@ class TransientSolver:
         v_gs = v_g - v_s
         v_bs = v_b - v_s
 
-        # Equivalent current source (same formula for NMOS and PMOS)
-        i_eq = i_ds - g_ds * v_ds - g_m * v_gs - g_mb * v_bs
+        # Convert to "leaving drain" convention for MNA
+        # NMOS: i_ds > 0 = current leaving drain (already correct)
+        # PMOS: i_ds > 0 = current INTO drain, so negate for "leaving"
+        i_leaving = -i_ds if is_pmos else i_ds
 
-        # Check device type for correct current direction
-        from pycircuitsim.models.mosfet import PMOS
-        try:
-            from pycircuitsim.models.mosfet_cmg import PMOS_CMG
-            is_pmos = isinstance(mosfet, (PMOS, PMOS_CMG))
-        except ImportError:
-            is_pmos = isinstance(mosfet, PMOS)
+        # Newton-Raphson constant: i_eq = I_leaving(V0) - conductance terms at V0
+        i_eq = i_leaving - g_ds * v_ds - g_m * v_gs - g_mb * v_bs
 
-        # Stamp current to drain and source nodes
-        # (See DC solver comments for explanation)
-        if is_pmos:
-            # PMOS: current flows INTO drain, OUT OF source
-            if drain != "0" and drain in node_map:
-                d_idx = node_map[drain]
-                rhs[d_idx] += i_eq
+        # Stamp to RHS: rhs[d] -= i_eq (same for both NMOS and PMOS)
+        if drain != "0" and drain in node_map:
+            d_idx = node_map[drain]
+            rhs[d_idx] -= i_eq
 
-            if source != "0" and source in node_map:
-                s_idx = node_map[source]
-                rhs[s_idx] -= i_eq
-        else:
-            # NMOS: current flows OUT OF drain, INTO source
-            if drain != "0" and drain in node_map:
-                d_idx = node_map[drain]
-                rhs[d_idx] -= i_eq
-
-            if source != "0" and source in node_map:
-                s_idx = node_map[source]
-                rhs[s_idx] += i_eq
+        if source != "0" and source in node_map:
+            s_idx = node_map[source]
+            rhs[s_idx] += i_eq
 
     def solve(self) -> Dict[str, np.ndarray]:
         """

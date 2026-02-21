@@ -1,0 +1,19 @@
+* NGSPICE CMOS Inverter OP Test - ASAP7 BSIM-CMG
+* L=30nm, NFIN=10, Vdd=0.7V
+* Test at Vin=0V (expect Vout~0.7V) and Vin=0.7V (expect Vout~0V)
+*
+* NOTE: Requires combined baked modelcard with both nmos_rvt and pmos_rvt
+*       as bsimcmg type, with L/NFIN/DEVTYPE baked in.
+*       Use verify_bsimcmg_op.py to generate it.
+
+.include "verify_bsimcmg_op_results/ng_inverter_mc_0.0.lib"
+.temp 27
+
+Vdd vdd 0 0.7
+Vin in 0 0.0
+Np out in vdd vdd pmos_rvt
+Nn out in 0 0 nmos_rvt
+
+.op
+
+.end

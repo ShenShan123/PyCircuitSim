@@ -1,0 +1,24 @@
+* NGSPICE NMOS OP Test - ASAP7 BSIM-CMG
+* Vds=0.5V, Vgs=0.5V, L=30nm, NFIN=10
+*
+* NOTE: This netlist requires a baked modelcard with L/NFIN/DEVTYPE
+*       injected into the .model block (NGSPICE OSDI limitation).
+*       Use verify_bsimcmg_op.py to generate baked modelcards automatically.
+*
+* Run with:
+*   ngspice -b ngspice_nmos_op_runner.cir
+*   (runner loads OSDI and sources this file)
+
+.include "verify_bsimcmg_op_results/ng_nmos_rvt.lib"
+.temp 27
+
+Vd d 0 0.5
+Vg g 0 0.5
+Vs s 0 0
+Ve e 0 0
+
+N1 d g s e nmos_rvt
+
+.op
+
+.end

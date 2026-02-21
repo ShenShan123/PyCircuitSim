@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 # Add PyCMG to Python path if not already present
-PYCMG_PATH = Path(__file__).parent.parent.parent / "PyCMG"
+PYCMG_PATH = Path(__file__).parent.parent.parent / "models" / "PyCMG"
 if str(PYCMG_PATH) not in sys.path:
     sys.path.insert(0, str(PYCMG_PATH))
 
@@ -70,6 +70,7 @@ class NMOS_CMG(Component):
         HFIN: Optional[float] = None,
         FPITCH: Optional[float] = None,
         temperature: float = DEFAULT_TEMPERATURE,
+        model_card_name: Optional[str] = None,
     ):
         """
         Initialize an NMOS FinFET using BSIM-CMG.
@@ -79,13 +80,15 @@ class NMOS_CMG(Component):
             nodes: List of exactly four node names [drain, gate, source, bulk]
             osdi_path: Path to BSIM-CMG OSDI binary (.osdi file)
             modelcard_path: Path to modelcard file (.pm, .lib, or .model)
-            model_name: Model name from modelcard (e.g., "nmos1", "asap7_nmos")
+            model_name: Model name from netlist (e.g., "nmos1")
             L: Channel length in meters
             NFIN: Number of fins
             TFIN: Fin thickness in meters (optional)
             HFIN: Fin height in meters (optional)
             FPITCH: Fin pitch in meters (optional)
             temperature: Device temperature in Kelvin (default: 300.15K = 27°C)
+            model_card_name: Name of the model in the modelcard file (e.g., "nmos_rvt").
+                If None, falls back to model_name.
 
         Raises:
             ValueError: If node count is not 4, or L/NFIN are invalid
@@ -118,10 +121,14 @@ class NMOS_CMG(Component):
         self.temperature = float(temperature)
 
         # Create PyCMG model (loads modelcard parameters)
+        # model_card_name overrides model_name for modelcard lookup
+        # This allows netlist model names (e.g., "nmos1") to differ from
+        # modelcard model names (e.g., "nmos_rvt" in ASAP7)
         self._pycmg_model = Model(
             osdi_path=osdi_path,
             modelcard_path=modelcard_path,
-            model_name=model_name
+            model_name=model_card_name or model_name,
+            model_card_name=model_card_name,
         )
 
         # Build instance parameters dictionary
@@ -216,20 +223,24 @@ class NMOS_CMG(Component):
 
     def calculate_current(self, voltages: Dict[str, float]) -> float:
         """
-        Calculate drain current I_ds given terminal voltages.
+        Calculate drain terminal current magnitude.
 
-        Uses the BSIM-CMG compact model via PyCMG to compute the drain current.
+        Uses the BSIM-CMG compact model via PyCMG. Returns the drain terminal
+        current 'id' (not the internal channel current 'ids').
+
+        For NMOS ON: PyCMG id < 0 (SPICE: current OUT of drain), so -id > 0.
+        The solver expects positive values; NMOS/PMOS sign difference is
+        handled by the RHS stamping in solver.py.
 
         Args:
             voltages: Dictionary mapping node names to voltage values
 
         Returns:
-            Drain current I_ds = I_d - I_s (in amperes)
+            Drain terminal current (positive for NMOS ON)
         """
         result = self._eval_dc(voltages)
-        # IMPORTANT: PyCMG uses SPICE convention (positive = INTO terminal)
-        # Negate to match pycircuitsim convention
-        return -result["ids"]
+        # NMOS: negate SPICE id (negative when ON) to get positive value
+        return -result["id"]
 
     def get_conductance(self, voltages: Dict[str, float]) -> Tuple[float, float, float]:
         """
@@ -303,6 +314,7 @@ class PMOS_CMG(Component):
         HFIN: Optional[float] = None,
         FPITCH: Optional[float] = None,
         temperature: float = DEFAULT_TEMPERATURE,
+        model_card_name: Optional[str] = None,
     ):
         """
         Initialize a PMOS FinFET using BSIM-CMG.
@@ -344,7 +356,8 @@ class PMOS_CMG(Component):
         self._pycmg_model = Model(
             osdi_path=osdi_path,
             modelcard_path=modelcard_path,
-            model_name=model_name
+            model_name=model_card_name or model_name,
+            model_card_name=model_card_name,
         )
 
         # Build instance parameters dictionary
@@ -412,12 +425,19 @@ class PMOS_CMG(Component):
         self._cache_voltages = None
 
     def calculate_current(self, voltages: Dict[str, float]) -> float:
-        """Calculate drain current I_ds."""
+        """
+        Calculate drain terminal current magnitude.
+
+        For PMOS ON: PyCMG id > 0 (SPICE: current INTO drain), so id > 0.
+        The solver expects positive values; PMOS RHS stamping in solver.py
+        handles the opposite current direction vs NMOS.
+
+        Returns:
+            Drain terminal current (positive for PMOS ON)
+        """
         result = self._eval_dc(voltages)
-        # IMPORTANT: PyCMG uses SPICE convention (positive = INTO terminal)
-        # Negate to match pycircuitsim convention
-        # Solver handles PMOS vs NMOS RHS stamping correctly
-        return -result["ids"]
+        # PMOS: id is already positive when ON (SPICE: current INTO drain)
+        return result["id"]
 
     def get_conductance(self, voltages: Dict[str, float]) -> Tuple[float, float, float]:
         """Calculate small-signal conductance parameters."""

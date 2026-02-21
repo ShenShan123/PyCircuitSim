@@ -1,0 +1,17 @@
+* NGSPICE PMOS OP Test - ASAP7 BSIM-CMG
+* Vdd=0.7V, Vg=0.2V, Rload=10k, L=30nm, NFIN=10
+*
+* NOTE: Requires baked modelcard with L/NFIN/DEVTYPE=0.
+*       Use verify_bsimcmg_op.py to generate it.
+
+.include "verify_bsimcmg_op_results/ng_pmos_rvt.lib"
+.temp 27
+
+Vdd vdd 0 0.7
+Vg g 0 0.2
+N1 drain g vdd vdd pmos_rvt
+Rload drain 0 10k
+
+.op
+
+.end

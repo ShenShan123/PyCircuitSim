@@ -1,0 +1,27 @@
+* BSIM-CMG CMOS Inverter Transient - NGSPICE Reference
+* Used by tests/verify_bsimcmg_tran.py for ground truth comparison
+*
+* This netlist requires:
+*   1. OSDI binary loaded via .control block
+*   2. Baked modelcards with DEVTYPE, L, NFIN parameters
+*   3. Run via runner script (see verify_bsimcmg_tran_results/)
+*
+* Circuit: CMOS inverter, Vdd=0.7V, L=30nm, NFIN=10, Cload=10fF
+* Input: PULSE 0->0.7V, td=0.5ns, tr=0.1ns, tf=0.1ns, pw=0.8ns, per=2ns
+
+.include "verify_bsimcmg_tran_results/combined_baked.lib"
+.temp 27
+
+Vdd vdd 0 0.7
+Vin in 0 PULSE(0 0.7 0.5n 0.1n 0.1n 0.8n 2n)
+
+* OSDI devices use N prefix (not M)
+Np out in vdd vdd pmos_rvt
+Nn out in 0 0 nmos_rvt
+
+Cload out 0 10f
+
+.ic V(out)=0.7
+.tran 10p 5n uic
+
+.end
