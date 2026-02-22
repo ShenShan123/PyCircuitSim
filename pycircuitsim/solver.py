@@ -1304,7 +1304,7 @@ class TransientSolver:
             s_idx = node_map[source]
             rhs[s_idx] += i_eq
 
-        # --- Intrinsic capacitance stamping (Backward Euler companion model) ---
+        # --- Intrinsic capacitance stamping (Trapezoidal Rule companion model) ---
         # Only for BSIM-CMG devices that have capacitance data
         try:
             from pycircuitsim.models.mosfet_cmg import NMOS_CMG, PMOS_CMG
@@ -1319,9 +1319,9 @@ class TransientSolver:
             # Cgd: between gate and drain
             cgd = abs(caps.get("cgd", 0.0))
             if cgd > 1e-20 and dt > 0:
-                g_cgd = cgd / dt
+                g_cgd = 2.0 * cgd / dt
                 v_gd_prev = mosfet._v_prev_tran["g"] - mosfet._v_prev_tran["d"]
-                i_cgd = g_cgd * v_gd_prev
+                i_cgd = g_cgd * v_gd_prev + getattr(mosfet, '_i_prev_cgd', 0.0)
 
                 # Stamp g_cgd between gate and drain
                 if gate != "0" and gate in node_map:
@@ -1347,9 +1347,9 @@ class TransientSolver:
             # Cgs: between gate and source
             cgs = abs(caps.get("cgs", 0.0))
             if cgs > 1e-20 and dt > 0:
-                g_cgs = cgs / dt
+                g_cgs = 2.0 * cgs / dt
                 v_gs_prev = mosfet._v_prev_tran["g"] - mosfet._v_prev_tran["s"]
-                i_cgs = g_cgs * v_gs_prev
+                i_cgs = g_cgs * v_gs_prev + getattr(mosfet, '_i_prev_cgs', 0.0)
 
                 if gate != "0" and gate in node_map:
                     g_idx = node_map[gate]
@@ -1373,9 +1373,9 @@ class TransientSolver:
             # Cdd (drain junction): between drain and source
             cdd = abs(caps.get("cdd", 0.0))
             if cdd > 1e-20 and dt > 0:
-                g_cdd = cdd / dt
+                g_cdd = 2.0 * cdd / dt
                 v_ds_prev = mosfet._v_prev_tran["d"] - mosfet._v_prev_tran["s"]
-                i_cdd = g_cdd * v_ds_prev
+                i_cdd = g_cdd * v_ds_prev + getattr(mosfet, '_i_prev_cdd', 0.0)
 
                 if drain != "0" and drain in node_map:
                     d_idx = node_map[drain]
@@ -1579,10 +1579,35 @@ class TransientSolver:
                         if isinstance(component, Capacitor):
                             component.update_voltage(timestep_voltages)
 
-                    # Update MOSFET charge state for next timestep
+                    # Update MOSFET charge state for next timestep (with trapezoidal cap currents)
                     for component in self.circuit.components:
                         if _is_mosfet(component) and hasattr(component, 'update_charge_state'):
-                            component.update_charge_state(timestep_voltages)
+                            # Compute intrinsic cap currents for trapezoidal
+                            cap_currents = {}
+                            if hasattr(component, 'get_capacitances') and hasattr(component, '_v_prev_tran') and component._v_prev_tran is not None:
+                                caps = component.get_capacitances(timestep_voltages)
+                                v_d = timestep_voltages.get(component.nodes[0], 0.0)
+                                v_g = timestep_voltages.get(component.nodes[1], 0.0)
+                                v_s = timestep_voltages.get(component.nodes[2], 0.0)
+                                v_prev = component._v_prev_tran
+                                dt = current_dt
+
+                                cgd = abs(caps.get("cgd", 0.0))
+                                if cgd > 1e-20:
+                                    g_eq = 2.0 * cgd / dt
+                                    cap_currents["i_cgd"] = g_eq * ((v_g - v_d) - (v_prev["g"] - v_prev["d"])) - getattr(component, '_i_prev_cgd', 0.0)
+
+                                cgs = abs(caps.get("cgs", 0.0))
+                                if cgs > 1e-20:
+                                    g_eq = 2.0 * cgs / dt
+                                    cap_currents["i_cgs"] = g_eq * ((v_g - v_s) - (v_prev["g"] - v_prev["s"])) - getattr(component, '_i_prev_cgs', 0.0)
+
+                                cdd_val = abs(caps.get("cdd", 0.0))
+                                if cdd_val > 1e-20:
+                                    g_eq = 2.0 * cdd_val / dt
+                                    cap_currents["i_cdd"] = g_eq * ((v_d - v_s) - (v_prev["d"] - v_prev["s"])) - getattr(component, '_i_prev_cdd', 0.0)
+
+                            component.update_charge_state(timestep_voltages, cap_currents)
 
                     if self.debug and dt_reduction_count > 0:
                         print(f"  Converged at t={current_time:.2e}s with reduced dt={current_dt:.2e}")

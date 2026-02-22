@@ -637,6 +637,10 @@ class Capacitor(Component):
         self._g_eq = 0.0  # Equivalent conductance
         self._i_eq = 0.0  # Equivalent current source
 
+        # Trapezoidal integration state
+        self._i_prev = 0.0  # Current through capacitor at previous timestep
+        self._use_trapezoidal = True  # Use trapezoidal (True) vs backward Euler (False)
+
     def get_nodes(self) -> List[str]:
         """
         Return list of node names this capacitor connects to.
@@ -647,26 +651,30 @@ class Capacitor(Component):
         return self.nodes
 
     def get_companion_model(self, dt: float, v_prev: float) -> tuple[float, float]:
-        """
-        Calculate Backward Euler companion model parameters.
+        """Calculate companion model parameters using Trapezoidal Rule.
 
-        The companion model represents the discrete-time capacitor as:
-        - G_eq = C / dt (equivalent conductance)
-        - I_eq = G_eq * V_prev (equivalent current source)
+        Trapezoidal Rule (2nd order, matches NGSPICE default):
+            G_eq = 2*C/dt
+            I_eq = G_eq * V_prev + I_prev
+
+        Backward Euler (1st order, fallback):
+            G_eq = C/dt
+            I_eq = G_eq * V_prev
 
         Args:
             dt: Timestep size in seconds
             v_prev: Voltage across capacitor at previous timestep
 
         Returns:
-            Tuple of (G_eq, I_eq) where:
-                G_eq: Equivalent conductance in siemens
-                I_eq: Equivalent current in amperes
+            Tuple of (G_eq, I_eq)
         """
-        g_eq = self.capacitance / dt
-        i_eq = g_eq * v_prev
+        if self._use_trapezoidal:
+            g_eq = 2.0 * self.capacitance / dt
+            i_eq = g_eq * v_prev + self._i_prev
+        else:
+            g_eq = self.capacitance / dt
+            i_eq = g_eq * v_prev
 
-        # Store for stamping
         self._g_eq = g_eq
         self._i_eq = i_eq
 
@@ -734,23 +742,21 @@ class Capacitor(Component):
             rhs[idx_j] -= self._i_eq
 
     def update_voltage(self, voltages: Dict[str, float]) -> None:
-        """
-        Update the previous voltage after a timestep completes.
+        """Update state after a timestep completes.
 
-        This should be called after each timestep in transient analysis
-        to store the current voltage for the next timestep's companion model.
-
-        Args:
-            voltages: Dictionary mapping node names to voltage values
+        For trapezoidal integration, also computes and stores the capacitor
+        current for use in the next timestep's companion model.
         """
         node_i, node_j = self.nodes[0], self.nodes[1]
-
-        # Get voltages (default to 0 if node not found)
         v_i = voltages.get(node_i, 0.0)
         v_j = voltages.get(node_j, 0.0)
+        v_new = v_i - v_j
 
-        # Update v_prev for next timestep
-        self.v_prev = v_i - v_j
+        if self._use_trapezoidal:
+            # I_cap(n) = G_eq * (V_new - V_prev) - I_prev
+            self._i_prev = self._g_eq * (v_new - self.v_prev) - self._i_prev
+
+        self.v_prev = v_new
 
     def calculate_current(self, voltages: Dict[str, float]) -> float:
         """

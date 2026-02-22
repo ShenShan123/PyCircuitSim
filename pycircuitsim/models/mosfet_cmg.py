@@ -317,8 +317,13 @@ class NMOS_CMG(Component):
             "s": voltages.get(self.nodes[2], 0.0),
             "b": voltages.get(self.nodes[3], 0.0),
         }
+        # Trapezoidal integration state for intrinsic caps
+        self._i_prev_cgd = 0.0
+        self._i_prev_cgs = 0.0
+        self._i_prev_cdd = 0.0
 
-    def update_charge_state(self, voltages: Dict[str, float]) -> None:
+    def update_charge_state(self, voltages: Dict[str, float],
+                            cap_currents: Optional[Dict[str, float]] = None) -> None:
         """Update charge state after a converged timestep."""
         charges = self.get_charges(voltages)
         self._q_prev = charges.copy()
@@ -328,6 +333,10 @@ class NMOS_CMG(Component):
             "s": voltages.get(self.nodes[2], 0.0),
             "b": voltages.get(self.nodes[3], 0.0),
         }
+        if cap_currents is not None:
+            self._i_prev_cgd = cap_currents.get("i_cgd", 0.0)
+            self._i_prev_cgs = cap_currents.get("i_cgs", 0.0)
+            self._i_prev_cdd = cap_currents.get("i_cdd", 0.0)
 
 
 
@@ -538,8 +547,13 @@ class PMOS_CMG(Component):
             "s": voltages.get(self.nodes[2], 0.0),
             "b": voltages.get(self.nodes[3], 0.0),
         }
+        # Trapezoidal integration state for intrinsic caps
+        self._i_prev_cgd = 0.0
+        self._i_prev_cgs = 0.0
+        self._i_prev_cdd = 0.0
 
-    def update_charge_state(self, voltages: Dict[str, float]) -> None:
+    def update_charge_state(self, voltages: Dict[str, float],
+                            cap_currents: Optional[Dict[str, float]] = None) -> None:
         """Update charge state after a converged timestep."""
         charges = self.get_charges(voltages)
         self._q_prev = charges.copy()
@@ -549,3 +563,7 @@ class PMOS_CMG(Component):
             "s": voltages.get(self.nodes[2], 0.0),
             "b": voltages.get(self.nodes[3], 0.0),
         }
+        if cap_currents is not None:
+            self._i_prev_cgd = cap_currents.get("i_cgd", 0.0)
+            self._i_prev_cgs = cap_currents.get("i_cgs", 0.0)
+            self._i_prev_cdd = cap_currents.get("i_cdd", 0.0)
