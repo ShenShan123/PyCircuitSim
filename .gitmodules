@@ -1,0 +1,3 @@
+[submodule "models/PyCMG"]
+	path = models/PyCMG
+	url = https://github.com/ShenShan123/PyCMG.git

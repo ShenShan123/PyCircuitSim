@@ -43,5 +43,8 @@ Thumbs.db
 debug_*
 *.log
 
+# Duplicate model files (originals in pycircuitsim/models/)
+models/*.py
+
 # Claude Code
 .claude_statusline_exec.sh
