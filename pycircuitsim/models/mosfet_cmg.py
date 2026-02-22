@@ -151,6 +151,10 @@ class NMOS_CMG(Component):
         self._eval_cache: Optional[Dict[str, float]] = None
         self._cache_voltages: Optional[Tuple[float, float, float, float]] = None
 
+        # Charge state for transient analysis
+        self._q_prev: Optional[Dict[str, float]] = None
+        self._v_prev_tran: Optional[Dict[str, float]] = None
+
     def get_nodes(self) -> List[str]:
         """
         Return list of node names this NMOS_CMG connects to.
@@ -287,6 +291,45 @@ class NMOS_CMG(Component):
             "cdd": result.get("cdd", 0.0),
         }
 
+    def get_charges(self, voltages: Dict[str, float]) -> Dict[str, float]:
+        """Get terminal charges from BSIM-CMG eval_dc().
+
+        Returns:
+            Dictionary with keys: qg, qd, qs, qb (Coulombs)
+        """
+        result = self._eval_dc(voltages)
+        return {
+            "qg": result.get("qg", 0.0),
+            "qd": result.get("qd", 0.0),
+            "qs": result.get("qs", 0.0),
+            "qb": result.get("qb", 0.0),
+        }
+
+    def init_charge_state(self, voltages: Dict[str, float]) -> None:
+        """Initialize charge state from DC operating point.
+        Must be called before transient analysis starts.
+        """
+        charges = self.get_charges(voltages)
+        self._q_prev = charges.copy()
+        self._v_prev_tran = {
+            "d": voltages.get(self.nodes[0], 0.0),
+            "g": voltages.get(self.nodes[1], 0.0),
+            "s": voltages.get(self.nodes[2], 0.0),
+            "b": voltages.get(self.nodes[3], 0.0),
+        }
+
+    def update_charge_state(self, voltages: Dict[str, float]) -> None:
+        """Update charge state after a converged timestep."""
+        charges = self.get_charges(voltages)
+        self._q_prev = charges.copy()
+        self._v_prev_tran = {
+            "d": voltages.get(self.nodes[0], 0.0),
+            "g": voltages.get(self.nodes[1], 0.0),
+            "s": voltages.get(self.nodes[2], 0.0),
+            "b": voltages.get(self.nodes[3], 0.0),
+        }
+
+
 
 class PMOS_CMG(Component):
     """
@@ -380,6 +423,10 @@ class PMOS_CMG(Component):
         self._eval_cache: Optional[Dict[str, float]] = None
         self._cache_voltages: Optional[Tuple[float, float, float, float]] = None
 
+        # Charge state for transient analysis
+        self._q_prev: Optional[Dict[str, float]] = None
+        self._v_prev_tran: Optional[Dict[str, float]] = None
+
     def get_nodes(self) -> List[str]:
         """Return list of node names."""
         return self.nodes
@@ -463,4 +510,42 @@ class PMOS_CMG(Component):
             "cgs": result.get("cgs", 0.0),
             "cdg": result.get("cdg", 0.0),
             "cdd": result.get("cdd", 0.0),
+        }
+
+    def get_charges(self, voltages: Dict[str, float]) -> Dict[str, float]:
+        """Get terminal charges from BSIM-CMG eval_dc().
+
+        Returns:
+            Dictionary with keys: qg, qd, qs, qb (Coulombs)
+        """
+        result = self._eval_dc(voltages)
+        return {
+            "qg": result.get("qg", 0.0),
+            "qd": result.get("qd", 0.0),
+            "qs": result.get("qs", 0.0),
+            "qb": result.get("qb", 0.0),
+        }
+
+    def init_charge_state(self, voltages: Dict[str, float]) -> None:
+        """Initialize charge state from DC operating point.
+        Must be called before transient analysis starts.
+        """
+        charges = self.get_charges(voltages)
+        self._q_prev = charges.copy()
+        self._v_prev_tran = {
+            "d": voltages.get(self.nodes[0], 0.0),
+            "g": voltages.get(self.nodes[1], 0.0),
+            "s": voltages.get(self.nodes[2], 0.0),
+            "b": voltages.get(self.nodes[3], 0.0),
+        }
+
+    def update_charge_state(self, voltages: Dict[str, float]) -> None:
+        """Update charge state after a converged timestep."""
+        charges = self.get_charges(voltages)
+        self._q_prev = charges.copy()
+        self._v_prev_tran = {
+            "d": voltages.get(self.nodes[0], 0.0),
+            "g": voltages.get(self.nodes[1], 0.0),
+            "s": voltages.get(self.nodes[2], 0.0),
+            "b": voltages.get(self.nodes[3], 0.0),
         }

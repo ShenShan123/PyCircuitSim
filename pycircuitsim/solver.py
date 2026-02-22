@@ -1304,6 +1304,99 @@ class TransientSolver:
             s_idx = node_map[source]
             rhs[s_idx] += i_eq
 
+        # --- Intrinsic capacitance stamping (Backward Euler companion model) ---
+        # Only for BSIM-CMG devices that have capacitance data
+        try:
+            from pycircuitsim.models.mosfet_cmg import NMOS_CMG, PMOS_CMG
+            is_cmg = isinstance(mosfet, (NMOS_CMG, PMOS_CMG))
+        except ImportError:
+            is_cmg = False
+
+        if is_cmg and hasattr(mosfet, '_q_prev') and mosfet._q_prev is not None:
+            caps = mosfet.get_capacitances(voltages)
+            dt = self.dt
+
+            # Cgd: between gate and drain
+            cgd = abs(caps.get("cgd", 0.0))
+            if cgd > 1e-20 and dt > 0:
+                g_cgd = cgd / dt
+                v_gd_prev = mosfet._v_prev_tran["g"] - mosfet._v_prev_tran["d"]
+                i_cgd = g_cgd * v_gd_prev
+
+                # Stamp g_cgd between gate and drain
+                if gate != "0" and gate in node_map:
+                    g_idx = node_map[gate]
+                    mna_matrix[g_idx, g_idx] += g_cgd
+                if drain != "0" and drain in node_map:
+                    d_idx = node_map[drain]
+                    mna_matrix[d_idx, d_idx] += g_cgd
+                if gate != "0" and gate in node_map and drain != "0" and drain in node_map:
+                    g_idx = node_map[gate]
+                    d_idx = node_map[drain]
+                    mna_matrix[g_idx, d_idx] -= g_cgd
+                    mna_matrix[d_idx, g_idx] -= g_cgd
+
+                # Stamp i_cgd to RHS
+                if gate != "0" and gate in node_map:
+                    g_idx = node_map[gate]
+                    rhs[g_idx] += i_cgd
+                if drain != "0" and drain in node_map:
+                    d_idx = node_map[drain]
+                    rhs[d_idx] -= i_cgd
+
+            # Cgs: between gate and source
+            cgs = abs(caps.get("cgs", 0.0))
+            if cgs > 1e-20 and dt > 0:
+                g_cgs = cgs / dt
+                v_gs_prev = mosfet._v_prev_tran["g"] - mosfet._v_prev_tran["s"]
+                i_cgs = g_cgs * v_gs_prev
+
+                if gate != "0" and gate in node_map:
+                    g_idx = node_map[gate]
+                    mna_matrix[g_idx, g_idx] += g_cgs
+                if source != "0" and source in node_map:
+                    s_idx = node_map[source]
+                    mna_matrix[s_idx, s_idx] += g_cgs
+                if gate != "0" and gate in node_map and source != "0" and source in node_map:
+                    g_idx = node_map[gate]
+                    s_idx = node_map[source]
+                    mna_matrix[g_idx, s_idx] -= g_cgs
+                    mna_matrix[s_idx, g_idx] -= g_cgs
+
+                if gate != "0" and gate in node_map:
+                    g_idx = node_map[gate]
+                    rhs[g_idx] += i_cgs
+                if source != "0" and source in node_map:
+                    s_idx = node_map[source]
+                    rhs[s_idx] -= i_cgs
+
+            # Cdd (drain junction): between drain and source
+            cdd = abs(caps.get("cdd", 0.0))
+            if cdd > 1e-20 and dt > 0:
+                g_cdd = cdd / dt
+                v_ds_prev = mosfet._v_prev_tran["d"] - mosfet._v_prev_tran["s"]
+                i_cdd = g_cdd * v_ds_prev
+
+                if drain != "0" and drain in node_map:
+                    d_idx = node_map[drain]
+                    mna_matrix[d_idx, d_idx] += g_cdd
+                if source != "0" and source in node_map:
+                    s_idx = node_map[source]
+                    mna_matrix[s_idx, s_idx] += g_cdd
+                if drain != "0" and drain in node_map and source != "0" and source in node_map:
+                    d_idx = node_map[drain]
+                    s_idx = node_map[source]
+                    mna_matrix[d_idx, s_idx] -= g_cdd
+                    mna_matrix[s_idx, d_idx] -= g_cdd
+
+                if drain != "0" and drain in node_map:
+                    d_idx = node_map[drain]
+                    rhs[d_idx] += i_cdd
+                if source != "0" and source in node_map:
+                    s_idx = node_map[source]
+                    rhs[s_idx] -= i_cdd
+
+
     def solve(self) -> Dict[str, np.ndarray]:
         """
         Perform transient analysis from t=0 to t=t_stop.
@@ -1383,6 +1476,11 @@ class TransientSolver:
         for node in nodes:
             if node not in initial_voltages:
                 initial_voltages[node] = 0.0
+
+        # Initialize MOSFET charge state for intrinsic capacitance tracking
+        for component in self.circuit.components:
+            if _is_mosfet(component) and hasattr(component, 'init_charge_state'):
+                component.init_charge_state(initial_voltages)
 
         # Store initial voltages
         time[0] = 0.0
@@ -1480,6 +1578,11 @@ class TransientSolver:
                     for component in self.circuit.components:
                         if isinstance(component, Capacitor):
                             component.update_voltage(timestep_voltages)
+
+                    # Update MOSFET charge state for next timestep
+                    for component in self.circuit.components:
+                        if _is_mosfet(component) and hasattr(component, 'update_charge_state'):
+                            component.update_charge_state(timestep_voltages)
 
                     if self.debug and dt_reduction_count > 0:
                         print(f"  Converged at t={current_time:.2e}s with reduced dt={current_dt:.2e}")
