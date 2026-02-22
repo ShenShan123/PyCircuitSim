@@ -321,6 +321,116 @@ wrdata {csv_path} v(out) v(in)
 
 
 # ---------------------------------------------------------------------------
+# PyCircuitSim netlist generation & runner
+# ---------------------------------------------------------------------------
+def create_pycircuitsim_netlist(config: TestConfig) -> Path:
+    """Generate a PyCircuitSim inverter transient netlist for *one* config.
+
+    Node mapping: 1=Vdd, 2=Vin, 3=Vout.
+    Uses LEVEL=72 model definitions for BSIM-CMG via PyCMG.
+
+    Returns the path to the written ``.sp`` file.
+    """
+    netlist_path = RESULTS_DIR / f"pycircuitsim_{config.name}.sp"
+    content = f"""\
+* BSIM-CMG Inverter Transient - PyCircuitSim ({config.name})
+* VDD={config.vdd}V, L={L*1e9:.0f}n, NFIN={NFIN}, Cload={config.cload*1e15:.0f}fF
+
+* Power supply
+Vdd 1 0 {config.vdd}
+
+* Input pulse: {config.pulse_v1} -> {config.pulse_v2}V
+Vin 2 0 PULSE {config.pulse_v1} {config.pulse_v2} {config.td} {config.tr} {config.tf} {config.pw} {config.per}
+
+* PMOS (drain=out, gate=in, source=Vdd, bulk=Vdd)
+Mp1 3 2 1 1 pmos1 L={L*1e9:.0f}n NFIN={NFIN}
+
+* NMOS (drain=out, gate=in, source=GND, bulk=GND)
+Mn1 3 2 0 0 nmos1 L={L*1e9:.0f}n NFIN={NFIN}
+
+* Load capacitance
+Cload 3 0 {config.cload}
+
+* Initial condition: output starts high (PMOS on, NMOS off when Vin=0)
+.ic V(3)={config.vdd}
+
+* Model definitions (LEVEL=72 BSIM-CMG)
+.model nmos1 NMOS (LEVEL=72)
+.model pmos1 PMOS (LEVEL=72)
+
+* Transient: {config.tstep*1e12:.1f}ps step, {config.tstop*1e9:.1f}ns total
+.tran {config.tstep} {config.tstop}
+
+.end
+"""
+    netlist_path.write_text(content)
+    print(f"[PySim] Netlist ({config.name}): {netlist_path}")
+    return netlist_path
+
+
+def run_pycircuitsim(netlist_path: Path, config: TestConfig) -> Dict[str, np.ndarray]:
+    """Run PyCircuitSim transient simulation for *one* config.
+
+    Parses the netlist, runs DC operating point (with source stepping),
+    then runs transient analysis with Gmin stepping and pseudo-transient
+    initialization.
+
+    Returns a dict with numpy arrays: ``time``, ``v(out)``, ``v(in)``.
+    """
+    import logging
+
+    from pycircuitsim.parser import Parser
+    from pycircuitsim.solver import DCSolver, TransientSolver
+
+    # Suppress verbose logging during simulation
+    logging.disable(logging.CRITICAL)
+
+    parser = Parser()
+    parser.parse_file(str(netlist_path))
+    circuit = parser.circuit
+
+    time_step: float = parser.analysis_params["tstep"]
+    final_time: float = parser.analysis_params["tstop"]
+
+    # Stage 1: DC operating point
+    initial_guess = circuit.initial_conditions if circuit.initial_conditions else None
+    op_solver = DCSolver(circuit, initial_guess=initial_guess, use_source_stepping=True)
+    op_solution = op_solver.solve()
+
+    # Stage 2: Transient analysis
+    solver = TransientSolver(
+        circuit,
+        t_stop=final_time,
+        dt=time_step,
+        initial_guess=op_solution,
+        use_gmin_stepping=True,
+        gmin_initial=1e-9,
+        gmin_final=1e-12,
+        gmin_steps=5,
+        use_pseudo_transient=True,
+        pseudo_transient_steps=5,
+        pseudo_transient_cap=1e-12,
+        debug=False,
+    )
+    results = solver.solve()
+
+    # Restore logging
+    logging.disable(logging.NOTSET)
+
+    # Node mapping: '1'=Vdd, '2'=Vin, '3'=Vout
+    result: Dict[str, np.ndarray] = {
+        "time": results["time"],
+        "v(out)": results["3"],
+        "v(in)": results["2"],
+    }
+    print(
+        f"[PySim] Done ({config.name}): {len(result['time'])} pts, "
+        f"V(out) [{result['v(out)'].min():.4f}, {result['v(out)'].max():.4f}]V"
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
 # Stub: single-test runner (to be implemented in subsequent tasks)
 # ---------------------------------------------------------------------------
 def run_single_test(
