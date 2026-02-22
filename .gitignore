@@ -15,8 +15,16 @@ build/
 .coverage
 htmlcov/
 
-# Simulation results (users can generate their own)
+# Simulation results (generated at runtime)
 results/
+tests/verify_bsimcmg_dc_results/
+tests/verify_bsimcmg_op_results/
+tests/verify_bsimcmg_tran_results/
+
+# Generated plans (session artifacts)
+docs/plans/
+
+# NGSPICE output files
 *.lis
 *.csv
 
@@ -30,6 +38,10 @@ results/
 .DS_Store
 Thumbs.db
 
-# Debug files
+# Debug / temp files
 *.out
 debug_*
+*.log
+
+# Claude Code
+.claude_statusline_exec.sh
