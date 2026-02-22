@@ -221,7 +221,107 @@ def create_baked_modelcard() -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Stub: single-test runner (to be implemented in Task 2+)
+# NGSPICE netlist generation & runner
+# ---------------------------------------------------------------------------
+def create_ngspice_netlist(config: TestConfig, baked_lib: Path) -> Path:
+    """Generate an NGSPICE inverter transient netlist for *one* config.
+
+    The netlist uses OSDI-style device names (N prefix) with instance params
+    baked into the modelcard.  All timing / voltage values are drawn from
+    ``config`` so the same function works for every parametric point.
+
+    Returns the path to the written ``.cir`` file.
+    """
+    netlist_path = RESULTS_DIR / f"ngspice_{config.name}.cir"
+    content = f"""\
+* BSIM-CMG CMOS Inverter Transient - NGSPICE ({config.name})
+.include "{baked_lib}"
+.temp 27
+Vdd vdd 0 {config.vdd}
+Vin in 0 PULSE({config.pulse_v1} {config.pulse_v2} {config.td} {config.tr} {config.tf} {config.pw} {config.per})
+Np out in vdd vdd pmos_rvt
+Nn out in 0 0 nmos_rvt
+Cload out 0 {config.cload}
+.ic V(out)={config.vdd}
+.tran {config.tstep} {config.tstop} uic
+.end
+"""
+    netlist_path.write_text(content)
+    print(f"[NGSPICE] Netlist ({config.name}): {netlist_path}")
+    return netlist_path
+
+
+def run_ngspice(netlist_path: Path, config: TestConfig) -> Dict[str, np.ndarray]:
+    """Run NGSPICE transient simulation and parse ``wrdata`` output.
+
+    Creates a lightweight runner script that loads the OSDI binary, sources the
+    netlist, runs the simulation, and writes the result to a CSV via ``wrdata``.
+
+    The wrdata format has a header line, then rows with:
+        time  v(out)  time  v(in)
+    Columns 0/1 carry time & v(out); column 3 carries v(in).
+
+    Returns a dict with numpy arrays: ``time``, ``v(out)``, ``v(in)``.
+    """
+    csv_path = RESULTS_DIR / f"ngspice_{config.name}.csv"
+    log_path = RESULTS_DIR / f"ngspice_{config.name}.log"
+    runner_path = RESULTS_DIR / f"ngspice_{config.name}_runner.cir"
+
+    runner_content = f"""\
+* NGSPICE transient runner ({config.name})
+.control
+osdi {OSDI_PATH}
+source {netlist_path}
+set filetype=ascii
+set wr_vecnames
+run
+wrdata {csv_path} v(out) v(in)
+.endc
+.end
+"""
+    runner_path.write_text(runner_content)
+
+    print(f"[NGSPICE] Running simulation ({config.name})...")
+    res = subprocess.run(
+        [NGSPICE_BIN, "-b", "-o", str(log_path), str(runner_path)],
+        capture_output=True,
+        text=True,
+    )
+
+    if not csv_path.exists():
+        log_content = log_path.read_text() if log_path.exists() else "(no log)"
+        raise RuntimeError(
+            f"NGSPICE produced no output: {csv_path}\n"
+            f"RC={res.returncode}, log (tail): ...{log_content[-500:]}\n"
+        )
+
+    # Parse wrdata: header + data rows  (time, v(out), time, v(in))
+    with csv_path.open() as f:
+        lines = f.readlines()
+
+    data_rows: list[list[float]] = []
+    for line in lines[1:]:          # skip header
+        stripped = line.strip()
+        if not stripped:
+            continue
+        vals = [float(x) for x in stripped.split()]
+        data_rows.append(vals)
+
+    data = np.array(data_rows)
+    result: Dict[str, np.ndarray] = {
+        "time": data[:, 0],
+        "v(out)": data[:, 1],
+        "v(in)": data[:, 3],
+    }
+    print(
+        f"[NGSPICE] Done ({config.name}): {len(result['time'])} pts, "
+        f"V(out) [{result['v(out)'].min():.4f}, {result['v(out)'].max():.4f}]V"
+    )
+    return result
+
+
+# ---------------------------------------------------------------------------
+# Stub: single-test runner (to be implemented in subsequent tasks)
 # ---------------------------------------------------------------------------
 def run_single_test(
     config: TestConfig,
