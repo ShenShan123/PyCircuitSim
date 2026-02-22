@@ -33,14 +33,14 @@ import matplotlib.pyplot as plt
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "models" / "PyCMG"))
+sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG"))
 
 OSDI_PATH = (
-    PROJECT_ROOT / "models" / "PyCMG" / "build-deep-verify" / "osdi" / "bsimcmg.osdi"
+    PROJECT_ROOT / "external_compact_models" / "PyCMG" / "build-deep-verify" / "osdi" / "bsimcmg.osdi"
 )
 MODELCARD_PATH = (
     PROJECT_ROOT
-    / "models"
+    / "external_compact_models"
     / "PyCMG"
     / "tech_model_cards"
     / "ASAP7"

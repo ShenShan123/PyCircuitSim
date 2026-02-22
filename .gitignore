@@ -44,7 +44,7 @@ debug_*
 *.log
 
 # Duplicate model files (originals in pycircuitsim/models/)
-models/*.py
+external_compact_models/*.py
 
 # Claude Code
 .claude_statusline_exec.sh

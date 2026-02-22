@@ -37,10 +37,10 @@ import matplotlib.pyplot as plt
 # -- Project paths -----------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "models" / "PyCMG"))
+sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG"))
 
-OSDI_PATH = PROJECT_ROOT / "models" / "PyCMG" / "build-deep-verify" / "osdi" / "bsimcmg.osdi"
-MODELCARD_PATH = PROJECT_ROOT / "models" / "PyCMG" / "tech_model_cards" / "ASAP7" / "7nm_TT_160803.pm"
+OSDI_PATH = PROJECT_ROOT / "external_compact_models" / "PyCMG" / "build-deep-verify" / "osdi" / "bsimcmg.osdi"
+MODELCARD_PATH = PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tech_model_cards" / "ASAP7" / "7nm_TT_160803.pm"
 NGSPICE_BIN = "/usr/local/ngspice-45.2/bin/ngspice"
 RESULTS_DIR = PROJECT_ROOT / "tests" / "verify_bsimcmg_tran_results"
 

@@ -568,7 +568,7 @@ pycircuitsim/
     ├── mosfet.py       # Level 1 Shichman-Hodges model
     └── mosfet_cmg.py   # BSIM-CMG FinFET model (LEVEL=72) via PyCMG
 
-models/PyCMG/           # BSIM-CMG OSDI wrapper (git submodule)
+external_compact_models/PyCMG/  # BSIM-CMG OSDI wrapper (git submodule)
 main.py                 # CLI entry point
 examples/*.sp           # Example netlists
 results/                # Simulation output

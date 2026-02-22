@@ -31,7 +31,7 @@ pycircuitsim/
     ├── mosfet.py       # Level 1 Shichman-Hodges model
     └── mosfet_cmg.py   # BSIM-CMG FinFET model (LEVEL=72) via PyCMG
 
-models/
+external_compact_models/
 ├── PyCMG/              # BSIM-CMG OSDI wrapper (git submodule)
 │   ├── pycmg/          # Python ctypes-based OSDI interface (Model, Instance)
 │   ├── build-deep-verify/osdi/bsimcmg.osdi  # Compiled OSDI binary
@@ -123,7 +123,7 @@ tests/                  # Validation scripts & NGSPICE comparison
 
 ### Phase 6: PyCMG Update & NGSPICE Verification ✅ Complete (2026-02-21)
 - [x] **PyCMG updated to latest** (34 commits: multi-tech, Jacobian, DEVTYPE injection)
-- [x] **Path references fixed** (PyCMG → models/PyCMG, ASAP7 dir updated)
+- [x] **Path references fixed** (PyCMG → external_compact_models/PyCMG, ASAP7 dir updated)
 - [x] **ASAP7 modelcard name mapping** (parser auto-maps to nmos_rvt/pmos_rvt)
 - [x] **calculate_current() bug fix** (use terminal `id` not channel `ids`)
 - [x] **RHS stamping unified** (single "current leaving drain" convention)
@@ -422,7 +422,7 @@ modelcard and failed with "no nmos1 model found".
 **Affected**: `config.py`, `mosfet_cmg.py`
 
 **Root Cause:**
-PyCMG was moved from `PROJECT_ROOT/PyCMG/` to `PROJECT_ROOT/models/PyCMG/` but path
+PyCMG was moved from `PROJECT_ROOT/PyCMG/` to `PROJECT_ROOT/external_compact_models/PyCMG/` but path
 references were never updated. Also, ASAP7 modelcard directory changed from
 `tech_model_cards/asap7_pdk_r1p7/models/hspice/` to `tech_model_cards/ASAP7/`.
 

@@ -20,7 +20,7 @@ import sys
 from pathlib import Path
 
 # Add PyCMG to Python path if not already present
-PYCMG_PATH = Path(__file__).parent.parent.parent / "models" / "PyCMG"
+PYCMG_PATH = Path(__file__).parent.parent.parent / "external_compact_models" / "PyCMG"
 if str(PYCMG_PATH) not in sys.path:
     sys.path.insert(0, str(PYCMG_PATH))
 
