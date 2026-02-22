@@ -4,7 +4,7 @@
 
 **Pure Python Circuit Simulator for Education**
 
-A clean, readable SPICE-like circuit simulator emphasizing architectural clarity and learning.
+A clean, readable SPICE-like circuit simulator with production-grade BSIM-CMG FinFET model support via PyCMG/OSDI.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -31,13 +31,13 @@ A clean, readable SPICE-like circuit simulator emphasizing architectural clarity
 
 ## Overview
 
-PyCircuitSim is an open-source, pure Python circuit simulator designed for educational purposes. It provides a clean implementation of SPICE-like simulation with emphasis on code readability and modular architecture.
+PyCircuitSim is an open-source, pure Python circuit simulator designed for educational purposes and compact model integration. It provides a clean implementation of SPICE-like simulation with emphasis on code readability and modular architecture, plus production-grade BSIM-CMG FinFET model support via PyCMG/OSDI.
 
 ### Key Design Goals
 
 - **Educational Clarity**: Clean, well-documented code that's easy to understand and modify
 - **Modular Architecture**: Complete separation between solver engine and device models
-- **Pure Python**: No compiled dependencies, easy to install and modify
+- **Compact Model Integration**: BSIM-CMG FinFET models (LEVEL=72) via PyCMG/OSDI
 - **HSPICE Compatibility**: Supports standard SPICE netlist syntax
 
 ### What It Does
@@ -45,7 +45,8 @@ PyCircuitSim is an open-source, pure Python circuit simulator designed for educa
 PyCircuitSim simulates electronic circuits using:
 - **Modified Nodal Analysis (MNA)** for circuit equations
 - **Newton-Raphson iteration** for non-linear components (MOSFETs)
-- **Backward Euler integration** for transient analysis
+- **Trapezoidal integration** for transient analysis (2nd order)
+- **BSIM-CMG compact models** for FinFET device simulation (ASAP7 7nm)
 
 ---
 
@@ -59,8 +60,8 @@ PyCircuitSim simulates electronic circuits using:
 | Capacitor | `C` | Linear capacitance |
 | Voltage Source | `V` | DC or PULSE waveform |
 | Current Source | `I` | DC current source |
-| NMOS | `M` | N-channel MOSFET (Level 1) |
-| PMOS | `M` | P-channel MOSFET (Level 1) |
+| NMOS/PMOS Level 1 | `M` | Shichman-Hodges MOSFET |
+| NMOS/PMOS Level 72 | `M` | BSIM-CMG FinFET via PyCMG/OSDI |
 
 ### Supported Analyses
 
@@ -70,7 +71,7 @@ PyCircuitSim simulates electronic circuits using:
 
 ### Supported Directives
 
-- `.model` - MOSFET model definitions
+- `.model` - MOSFET model definitions (LEVEL=1 or LEVEL=72)
 - `.include` - Include external library files
 - `.ic` - Set initial node voltages
 
@@ -88,8 +89,8 @@ PyCircuitSim simulates electronic circuits using:
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/NN_SPICE.git
-cd NN_SPICE
+git clone https://github.com/ShenShan123/PyCircuitSim.git
+cd PyCircuitSim
 
 # Install dependencies (international users: use Tsinghua mirror)
 pip install -r requirements.txt
@@ -366,6 +367,40 @@ C3 6 0 100f
 .end
 ```
 
+### Example 5: BSIM-CMG FinFET Inverter (ASAP7 7nm)
+
+```spice
+* BSIM-CMG CMOS Inverter - ASAP7 7nm FinFET
+* VDD=0.7V, L=30nm, NFIN=10
+
+* Power supply
+Vdd 1 0 0.7
+
+* Input pulse
+Vin 2 0 PULSE 0 0.7 0.5n 0.1n 0.1n 0.8n 2n
+
+* PMOS (drain=out, gate=in, source=Vdd, bulk=Vdd)
+Mp1 3 2 1 1 pmos1 L=30n NFIN=10
+
+* NMOS (drain=out, gate=in, source=GND, bulk=GND)
+Mn1 3 2 0 0 nmos1 L=30n NFIN=10
+
+* Load capacitance
+Cload 3 0 10f
+
+* Initial condition
+.ic V(3)=0.7
+
+* Model definitions (LEVEL=72 = BSIM-CMG via PyCMG)
+.model nmos1 NMOS (LEVEL=72)
+.model pmos1 PMOS (LEVEL=72)
+
+* Transient analysis
+.tran 10p 5n
+
+.end
+```
+
 ---
 
 ## Python API
@@ -519,21 +554,25 @@ PyCircuitSim follows a clean, modular architecture:
 ```
 pycircuitsim/
 ├── __init__.py         # Package initialization, public API exports
+├── config.py           # Path configuration (OSDI binary, modelcards)
 ├── simulation.py       # Simulation orchestration (high-level workflow)
 ├── parser.py           # Netlist parser (HSPICE syntax)
 ├── circuit.py          # Circuit topology (nodes, components)
-├── solver.py           # MNA + Newton-Raphson solvers
+├── solver.py           # MNA + Newton-Raphson + Transient solvers
 ├── logger.py           # HSPICE-like logging (.lis files)
 ├── visualizer.py       # Matplotlib plotting
 └── models/
     ├── __init__.py
     ├── base.py         # Component abstract base class
     ├── passive.py      # R, C, V, I, PULSE sources
-    └── mosfet.py       # Level 1 Shichman-Hodges model
+    ├── mosfet.py       # Level 1 Shichman-Hodges model
+    └── mosfet_cmg.py   # BSIM-CMG FinFET model (LEVEL=72) via PyCMG
 
+models/PyCMG/           # BSIM-CMG OSDI wrapper (git submodule)
 main.py                 # CLI entry point
 examples/*.sp           # Example netlists
 results/                # Simulation output
+tests/                  # NGSPICE validation scripts
 ```
 
 ### Module Responsibilities
@@ -603,17 +642,17 @@ Improves convergence for difficult circuits:
 3. Use previous step's solution as initial guess
 4. Reduces risk of convergence failures
 
-### Backward Euler Integration
+### Trapezoidal Integration
 
 For transient analysis with capacitors:
 
 ```
-v(t + Δt) = v(t) + Δt/C · i(t + Δt)
+i(t+Δt) = 2C/Δt · [v(t+Δt) - v(t)] - i(t)
 ```
 
-- Implicit integration (stable for large time steps)
-- Converts capacitors to conductance + current source
-- C_total = C + Δt/C for each capacitor
+- 2nd order implicit integration (A-stable)
+- Converts capacitors to companion conductance + current source
+- Also stamps BSIM-CMG intrinsic capacitances (Cgd, Cgs, Cdd) as companion models
 
 ---
 
@@ -709,57 +748,65 @@ PyCircuitSim is intentionally simplified for educational use:
 
 ### Not Supported
 
-- ❌ Inductors (L)
-- ❌ Mutual inductance (transformers)
-- ❌ BSIM MOSFET models (only Level 1)
-- ❌ AC analysis (.ac)
-- ❌ Noise analysis (.noise)
-- ❌ Distortion analysis (.disto)
-- ❌ Complex directives (.option, .measure, .param)
-- ❌ Subcircuits (.subckt)
+- Inductors (L)
+- Mutual inductance (transformers)
+- AC analysis (.ac)
+- Noise analysis (.noise)
+- Complex directives (.option, .measure, .param)
+- Subcircuits (.subckt)
 
 ### Known Limitations
 
-- **Accuracy**: Level 1 MOSFET model is simplistic (no short-channel effects)
-- **Speed**: Pure Python is ~10-100× slower than compiled simulators
+- **Speed**: Pure Python is ~10-100x slower than compiled simulators
 - **Scale**: Tested on circuits with <100 components
-- **Convergence**: May fail on strongly non-linear circuits
+- **Convergence**: May fail on strongly non-linear circuits without source stepping
 
 ### When to Use Other Tools
 
 Consider ngspice, Xyce, or Spectre for:
 - Production IC design
 - Large-scale circuits (>1000 components)
-- Advanced device models (BSIM3/4, HICUM)
 - High-frequency or RF simulation
 
 ---
 
 ## Current Status
 
-### ✅ Complete Features
+### Complete Features
 
 - [x] MNA matrix construction
 - [x] Level 1 MOSFET (Shichman-Hodges)
+- [x] BSIM-CMG FinFET (LEVEL=72) via PyCMG/OSDI
 - [x] Newton-Raphson solver with damping
 - [x] Source stepping for convergence
-- [x] DC sweep analysis
-- [x] Transient analysis with capacitors
+- [x] DC operating point, DC sweep, and transient analysis
+- [x] Trapezoidal integration (2nd order) with intrinsic capacitances
 - [x] PULSE voltage sources
 - [x] HSPICE-like logging (.lis)
-- [x] Automatic plot generation
-- [x] CSV data export
+- [x] CSV data export and automatic plot generation
 - [x] Initial conditions (.ic)
 - [x] Python API
 
-### 🚧 Future Work
+### NGSPICE Verification (ASAP7 7nm)
+
+All results validated against NGSPICE 45.2 with BSIM-CMG OSDI:
+
+| Test | Metric | Result |
+|------|--------|--------|
+| NMOS/PMOS OP | Relative error | < 0.02% |
+| DC sweep (Id-Vgs, VTC) | NRMSE | < 0.1% |
+| Transient (baseline) | NRMSE (post-settling) | 0.23% |
+| Comprehensive (14 configs) | NRMSE (worst case) | 0.95% |
+
+The comprehensive suite sweeps VDD (0.5-0.8V), Cload (1-100fF), input slew (10-500ps), and pulse width (0.2-2.0ns). All 14 configurations pass with NRMSE well under 5%.
+
+### Future Work
 
 - [ ] Inductor support
 - [ ] AC small-signal analysis
-- [ ] More MOSFET models (BSIM3/4)
 - [ ] Subcircuit support
-- [ ] Parametric analysis (.step)
-- [ ] Performance optimization (NumPy vectorization)
+- [ ] Adaptive timestep control
+- [ ] Expanded test suite (NAND/NOR, ring oscillator, SRAM)
 
 ---
 
@@ -796,13 +843,17 @@ Contributions are welcome! Areas of interest:
   - Website: http://ngspice.sourceforge.net
   - Reference for netlist syntax and device equations
 
+- **PyCMG**: Python BSIM-CMG OSDI wrapper
+  - Repository: https://github.com/ShenShan123/PyCMG
+  - Provides ctypes-based OSDI interface for compact models
+
+- **ASAP7 PDK**: Arizona State Predictive 7nm PDK
+  - Repository: https://github.com/The-OpenROAD-Project/asap7_pdk_r1p7
+  - FinFET modelcards used for BSIM-CMG validation
+
 - **Xyce**: Parallel electronic simulator
   - Website: https://xyce.sandia.gov
   - Architectural patterns for solver-device separation
-
-- **Qucs**: Quite Universal Circuit Simulator
-  - Website: http://qucs.sourceforge.net
-  - GUI-based circuit simulation
 
 ### Books
 
@@ -831,8 +882,8 @@ Developed as an educational tool to demonstrate SPICE-like simulation in pure Py
 ## Contact
 
 For questions, issues, or contributions:
-- GitHub Issues: https://github.com/yourusername/NN_SPICE/issues
-- Discussions: https://github.com/yourusername/NN_SPICE/discussions
+- GitHub Issues: https://github.com/ShenShan123/PyCircuitSim/issues
+- Discussions: https://github.com/ShenShan123/PyCircuitSim/discussions
 
 ---
 
