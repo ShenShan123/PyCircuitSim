@@ -21,6 +21,7 @@ A clean, readable SPICE-like circuit simulator with production-grade BSIM-CMG Fi
 - [Examples](#examples)
 - [Python API](#python-api)
 - [Output Files](#output-files)
+- [Verification](#verification)
 - [Architecture](#architecture)
 - [Algorithms](#algorithms)
 - [Development](#development)
@@ -79,80 +80,88 @@ PyCircuitSim simulates electronic circuits using:
 
 ## Installation
 
-### Requirements
+### Prerequisites
 
-- Python 3.10 or higher
-- NumPy 1.20+
-- Matplotlib 3.3+
+- Python 3.10+
+- Conda (recommended for environment management)
 
-### Install from Source
+### Setting Up the Environment
 
 ```bash
-# Clone the repository
-git clone https://github.com/ShenShan123/PyCircuitSim.git
+# Clone the repository with submodules
+git clone --recurse-submodules https://github.com/ShenShan123/PyCircuitSim.git
 cd PyCircuitSim
 
-# Install dependencies (international users: use Tsinghua mirror)
-pip install -r requirements.txt
-# or in China:
-pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
+# Create and activate the conda environment
+conda create -n pycircuitsim python=3.10
+conda activate pycircuitsim
+
+# Install Python dependencies
+pip install numpy matplotlib
 ```
 
-### Development Installation
+### BSIM-CMG Setup (Optional)
+
+To use BSIM-CMG FinFET models (LEVEL=72), the PyCMG submodule and a compiled OSDI binary are required:
 
 ```bash
-# Install in editable mode
-pip install -e .
+# Initialize the PyCMG submodule (if not cloned with --recurse-submodules)
+git submodule update --init --recursive
 
-# Run tests
-pytest tests/
+# Verify the OSDI binary exists
+ls external_compact_models/PyCMG/build-deep-verify/osdi/bsimcmg.osdi
 ```
+
+The ASAP7 7nm modelcards are included in `external_compact_models/PyCMG/tech_model_cards/ASAP7/`.
 
 ---
 
 ## Quick Start
 
-### Running Simulations
+### Running a Simulation
 
 ```bash
-# Basic usage
-python main.py examples/rc_transient.sp
+# Activate the environment
+conda activate pycircuitsim
 
-# Specify output directory
-python main.py examples/test_nmos_level1.sp -o my_results
+# Run a Level-1 CMOS inverter DC sweep
+python main.py examples/test_cmos_inverter_level1.sp
 
-# Enable verbose logging
+# Run a BSIM-CMG inverter transient simulation
+python main.py examples/bsimcmg_inverter_tran.sp
+
+# Specify a custom output directory
+python main.py examples/bsimcmg_inverter_tran.sp -o my_results
+
+# Enable verbose logging (shows Newton-Raphson iterations)
 python main.py examples/test_cmos_inverter_level1.sp -v
 ```
 
-### Your First Circuit
+### CLI Options
 
-Create a file `voltage_divider.sp`:
+```
+usage: main.py [-h] [-o OUTPUT_DIR] [-v] netlist
 
-```spice
-* Simple Voltage Divider
-* Input voltage
-Vin 1 0 10
+positional arguments:
+  netlist               Path to the HSPICE-format netlist file
 
-* Resistors
-R1 1 2 1k
-R2 2 0 1k
-
-* DC sweep: vary Vin from 0 to 10V
-.dc Vin 0 10 1
-
-.end
+options:
+  -o, --output DIR      Output directory for results (default: results)
+  -v, --verbose         Enable verbose logging output
 ```
 
-Run the simulation:
+### Output Location
 
-```bash
-python main.py voltage_divider.sp
+Results are saved to `results/<circuit_name>/<analysis_type>/` by default:
+
 ```
-
-Results are saved to `results/voltage_divider/dc/`:
-- `voltage_divider_dc_sweep.csv` - Numerical data
-- `voltage_divider_dc_sweep.png` - Plot
+results/
+└── bsimcmg_inverter_tran/
+    └── tran/
+        ├── bsimcmg_inverter_tran_simulation.lis   # Iteration log
+        ├── bsimcmg_inverter_tran_transient.csv     # Waveform data
+        └── bsimcmg_inverter_tran_transient.png     # Plot
+```
 
 ---
 
@@ -185,34 +194,42 @@ Mp1 3 2 1 1 PMOS_VTL L=1u W=20u
 
 | Suffix | Multiplier | Example |
 |--------|-----------|---------|
-| `k`, `K` | 10³ | `1k` = 1,000 |
-| `u`, `U` | 10⁻⁶ | `1u` = 0.000001 |
-| `n`, `N` | 10⁻⁹ | `1n` = 0.000000001 |
-| `p`, `P` | 10⁻¹² | `1p` = 0.000000000001 |
+| `T` | 10^12 | `1T` = 1,000,000,000,000 |
+| `G` | 10^9 | `1G` = 1,000,000,000 |
+| `M` (uppercase) | 10^6 | `1M` = 1,000,000 |
+| `k`, `K` | 10^3 | `1k` = 1,000 |
+| `m` (lowercase) | 10^-3 | `1m` = 0.001 |
+| `u`, `U` | 10^-6 | `1u` = 0.000001 |
+| `n`, `N` | 10^-9 | `1n` = 0.000000001 |
+| `p`, `P` | 10^-12 | `1p` = 10^-12 |
+| `f`, `F` | 10^-15 | `1f` = 10^-15 |
 
 ### Analysis Commands
 
 ```spice
+* DC Operating Point
+.op
+
 * DC Sweep: .dc <source> <start> <stop> <step>
 .dc Vin 0 3.3 0.1
 
 * Transient: .tran <tstep> <tstop>
-.tran 1n 100n
+.tran 10p 5n
 ```
 
 ### MOSFET Models
 
+#### Level 1 (Shichman-Hodges)
+
 ```spice
-* NMOS Level 1 Model
 .model NMOS_VTL NMOS (
     LEVEL=1
-    VTO=0.7      ; Threshold voltage
-    KP=110u      ; Transconductance
-    GAMMA=0.4    ; Body effect
-    LAMBDA=0.02  ; Channel-length modulation
+    VTO=0.7      ; Threshold voltage (V)
+    KP=110u      ; Transconductance parameter (A/V^2)
+    GAMMA=0.4    ; Body effect coefficient (V^0.5)
+    LAMBDA=0.02  ; Channel-length modulation (1/V)
 )
 
-* PMOS Level 1 Model
 .model PMOS_VTL PMOS (
     LEVEL=1
     VTO=-0.7
@@ -222,6 +239,28 @@ Mp1 3 2 1 1 PMOS_VTL L=1u W=20u
 )
 ```
 
+#### Level 72 (BSIM-CMG FinFET)
+
+```spice
+* Model declaration (device parameters come from ASAP7 modelcard)
+.model nmos1 NMOS (LEVEL=72)
+.model pmos1 PMOS (LEVEL=72)
+
+* Instance parameters are specified on the device line
+Mn1 out in 0 0 nmos1 L=30n NFIN=10
+Mp1 out in vdd vdd pmos1 L=30n NFIN=10
+```
+
+**BSIM-CMG geometric parameters:**
+
+| Parameter | Description | Notes |
+|-----------|-------------|-------|
+| `L` | Channel length | Required (e.g., `30n`) |
+| `NFIN` | Number of fins | Required (integer or float) |
+| `TFIN` | Fin thickness | Optional (uses modelcard default) |
+| `HFIN` | Fin height | Optional (uses modelcard default) |
+| `FPITCH` | Fin pitch | Optional (uses modelcard default) |
+
 ### PULSE Sources
 
 ```spice
@@ -229,8 +268,8 @@ Mp1 3 2 1 1 PMOS_VTL L=1u W=20u
 Vclk 1 0 PULSE(0 3.3 0n 1n 1n 10n 20n)
 
 * Parameters:
-* V1  : Initial value
-* V2  : Pulsed value
+* V1  : Initial value (V)
+* V2  : Pulsed value (V)
 * TD  : Delay time
 * TR  : Rise time
 * TF  : Fall time
@@ -238,167 +277,106 @@ Vclk 1 0 PULSE(0 3.3 0n 1n 1n 10n 20n)
 * PER : Period
 ```
 
+### Initial Conditions
+
+```spice
+* Set initial node voltage (useful for bistable circuits)
+.ic V(out)=0.7
+```
+
 ---
 
 ## Examples
 
-### Example 1: Common-Source Amplifier
+### Level 1: CMOS Inverter DC Sweep
+
+File: `examples/test_cmos_inverter_level1.sp`
 
 ```spice
-* Common-Source NMOS Amplifier
-
-* Bias and input
-Vdd 1 0 5
-Vbias 2 0 2.5
-Vin 3 0 0 AC 1
-
-* MOSFET
-Mn1 1 2 0 0 NMOS_VTL L=1u W=10u
-
-* Load resistor
-Rd 1 0 10k
-
-* Input resistor
-Rin 3 2 1k
-
-* NMOS Model
-.model NMOS_VTL NMOS (
-    LEVEL=1
-    VTO=1.0
-    KP=100u
-    GAMMA=0.3
-    LAMBDA=0.01
-)
-
-* DC sweep of input
-.dc Vin 0 3 0.1
-
-.end
-```
-
-### Example 2: CMOS Inverter
-
-```spice
-* CMOS Inverter - Voltage Transfer Characteristic
-
-* Power supply
+* CMOS Inverter - Level 1 Models
 Vdd 1 0 3.3
-
-* Input voltage (swept)
 Vin 2 0 1.65
 
-* PMOS transistor (drain=3, gate=2, source=1, bulk=1)
-Mp1 3 2 1 1 PMOS_VTL L=1u W=20u
+Mp1 3 2 1 1 PMOS L=1u W=20u
+Mn1 3 2 0 0 NMOS L=1u W=10u
 
-* NMOS transistor (drain=3, gate=2, source=0, bulk=0)
-Mn1 3 2 0 0 NMOS_VTL L=1u W=10u
-
-* NMOS model
-.model NMOS_VTL NMOS (LEVEL=1 VTO=0.7 KP=110u GAMMA=0.4 LAMBDA=0.02)
-
-* PMOS model
-.model PMOS_VTL PMOS (LEVEL=1 VTO=-0.7 KP=50u GAMMA=0.5 LAMBDA=0.03)
-
-* DC sweep: Vin from 0 to 3.3V
 .dc Vin 0 3.3 0.1
 
 .end
 ```
 
-### Example 3: RC Circuit (Transient)
-
-```spice
-* RC Charging Circuit - Transient Analysis
-
-* Voltage source (step input)
-V1 1 0 5
-
-* Resistor and capacitor
-R1 1 2 1k
-C1 2 0 1n
-
-* Initial condition: capacitor initially uncharged
-.ic V(2)=0
-
-* Transient analysis: 1ns step, 10µs total
-.tran 1n 10u
-
-.end
+```bash
+python main.py examples/test_cmos_inverter_level1.sp
 ```
 
-### Example 4: Ring Oscillator
+### Level 1: Inverter Transient
+
+File: `examples/level1_inverter_tran.sp`
 
 ```spice
-* 3-Stage Ring Oscillator
-
-* Power supply
+* CMOS Inverter Transient - Level 1
 Vdd 1 0 3.3
+Vin 2 0 PULSE(0 3.3 1n 0.1n 0.1n 5n 10n)
 
-* Stage 1
-Mp1 2 0 1 1 PMOS_VTL L=1u W=10u
-Mn1 2 0 3 0 NMOS_VTL L=1u W=5u
+Mp1 3 2 1 1 PMOS_VTL L=1u W=20u
+Mn1 3 2 0 0 NMOS_VTL L=1u W=10u
+Cload 3 0 100f
 
-* Stage 2
-Mp2 4 2 1 1 PMOS_VTL L=1u W=10u
-Mn2 4 2 5 0 NMOS_VTL L=1u W=5u
+.ic V(3)=3.3
 
-* Stage 3
-Mp3 6 4 1 1 PMOS_VTL L=1u W=10u
-Mn3 6 4 7 0 NMOS_VTL L=1u W=5u
+.model NMOS_VTL NMOS (LEVEL=1 VTO=0.7 KP=110u GAMMA=0.4 LAMBDA=0.02)
+.model PMOS_VTL PMOS (LEVEL=1 VTO=-0.7 KP=50u GAMMA=0.5 LAMBDA=0.03)
 
-* Feedback connection
-Rfb 6 0 1M
-
-* Load capacitors
-C1 2 0 100f
-C2 4 0 100f
-C3 6 0 100f
-
-* Initial conditions to kickstart oscillation
-.ic V(2)=1.65
-
-* MOSFET models
-.model NMOS_VTL NMOS (LEVEL=1 VTO=0.7 KP=110u)
-.model PMOS_VTL PMOS (LEVEL=1 VTO=-0.7 KP=50u)
-
-* Transient analysis
 .tran 100p 50n
 
 .end
 ```
 
-### Example 5: BSIM-CMG FinFET Inverter (ASAP7 7nm)
+```bash
+python main.py examples/level1_inverter_tran.sp
+```
+
+### BSIM-CMG: FinFET Inverter Transient (ASAP7 7nm)
+
+File: `examples/bsimcmg_inverter_tran.sp`
 
 ```spice
 * BSIM-CMG CMOS Inverter - ASAP7 7nm FinFET
-* VDD=0.7V, L=30nm, NFIN=10
-
-* Power supply
 Vdd 1 0 0.7
-
-* Input pulse
 Vin 2 0 PULSE 0 0.7 0.5n 0.1n 0.1n 0.8n 2n
 
-* PMOS (drain=out, gate=in, source=Vdd, bulk=Vdd)
 Mp1 3 2 1 1 pmos1 L=30n NFIN=10
-
-* NMOS (drain=out, gate=in, source=GND, bulk=GND)
 Mn1 3 2 0 0 nmos1 L=30n NFIN=10
-
-* Load capacitance
 Cload 3 0 10f
 
-* Initial condition
 .ic V(3)=0.7
 
-* Model definitions (LEVEL=72 = BSIM-CMG via PyCMG)
 .model nmos1 NMOS (LEVEL=72)
 .model pmos1 PMOS (LEVEL=72)
 
-* Transient analysis
 .tran 10p 5n
 
 .end
+```
+
+```bash
+python main.py examples/bsimcmg_inverter_tran.sp
+```
+
+### BSIM-CMG: NMOS DC Sweep
+
+File: `examples/bsimcmg_nmos_dc.sp`
+
+```bash
+python main.py examples/bsimcmg_nmos_dc.sp
+```
+
+### RC Transient
+
+File: `examples/rc_transient.sp`
+
+```bash
+python main.py examples/rc_transient.sp
 ```
 
 ---
@@ -410,23 +388,22 @@ Cload 3 0 10f
 ```python
 from pycircuitsim.simulation import run_simulation
 
-# Run a simulation
+# Run a simulation from a netlist file
 run_simulation(
-    netlist_path='circuit.sp',
+    netlist_path='examples/bsimcmg_inverter_tran.sp',
     output_dir='my_results',
     verbose=True
 )
 ```
 
-### Advanced: Direct API Access
+### Direct Solver Access
 
 ```python
 from pycircuitsim import Parser, DCSolver
-import matplotlib.pyplot as plt
 
 # Parse netlist
 parser = Parser()
-parser.parse_file('circuit.sp')
+parser.parse_file('examples/test_cmos_inverter_level1.sp')
 circuit = parser.circuit
 
 # Run DC analysis
@@ -443,39 +420,40 @@ for component in circuit.components:
     print(f"{component.name}: {current:.6f} A")
 ```
 
-### Custom Visualization
+### DC Sweep
 
 ```python
-from pycircuitsim import Parser, DCSolver, Visualizer
-import numpy as np
+from pycircuitsim.simulation import run_dc_sweep
+from pycircuitsim import Parser
 
-# Parse and solve
 parser = Parser()
-parser.parse_file('circuit.sp')
+parser.parse_file('examples/test_cmos_inverter_level1.sp')
 circuit = parser.circuit
 
-# Parameter sweep
-source_values = np.linspace(0, 3.3, 100)
-results = {'V(in)': source_values}
+# run_dc_sweep returns sweep values and results dict
+sweep_values, results = run_dc_sweep(circuit)
+```
 
-for v in source_values:
-    # Modify source value
-    circuit.components[0].value = v
+### Transient Analysis
 
-    # Solve
-    solver = DCSolver(circuit)
-    solution = solver.solve()
+```python
+from pycircuitsim import Parser
+from pycircuitsim.solver import DCSolver, TransientSolver
 
-    # Store output
-    results.setdefault('V(out)', []).append(solution.get('out', 0))
+parser = Parser()
+parser.parse_file('examples/bsimcmg_inverter_tran.sp')
+circuit = parser.circuit
 
-# Plot
-visualizer = Visualizer()
-visualizer.plot_dc_sweep(
-    sweep_values=source_values,
-    results=results,
-    sweep_variable='Input (V)',
-    output_path='custom_plot.png'
+# First solve DC operating point
+dc_solver = DCSolver(circuit)
+dc_solution = dc_solver.solve()
+
+# Then run transient
+tran_solver = TransientSolver(circuit)
+time_points, results = tran_solver.solve(
+    tstep=10e-12,    # 10 ps
+    tstop=5e-9,      # 5 ns
+    dc_solution=dc_solution
 )
 ```
 
@@ -483,7 +461,7 @@ visualizer.plot_dc_sweep(
 
 ## Output Files
 
-PyCircuitSim generates several output files organized by circuit name and analysis type:
+PyCircuitSim generates output files organized by circuit name and analysis type:
 
 ```
 results/
@@ -502,48 +480,109 @@ results/
 
 HSPICE-like detailed logs showing:
 - Circuit summary (component count, node count)
-- Newton-Raphson iterations
-- Convergence status
+- Newton-Raphson iterations per step
+- Convergence status and iteration count
 - Final node voltages and device currents
-
-Example:
-```
-================================================================================
-                    PyCircuitSim - DC Sweep Analysis
-================================================================================
-
-Circuit Summary:
-  Components: 3
-  Nodes: 4
-  Voltage Sources: 1
-
---------------------------------------------------------------------------------
-Sweep Point 0: Vin = 0.00 V
---------------------------------------------------------------------------------
-  Newton-Raphson Iteration 1:
-    max_delta = 2.5000e+00 V
-  Newton-Raphson Iteration 2:
-    max_delta = 1.2500e-01 V
-  Newton-Raphson Iteration 3:
-    max_delta = 3.1250e-03 V
-  Converged in 3 iterations
-
-Final Results:
-  V(1) = 0.0000e+00 V
-  V(2) = 0.0000e+00 V
-  i(V1) = -1.0000e-03 A
-```
 
 ### CSV Data Files
 
-Column-oriented data suitable for plotting in Excel, MATLAB, or Python:
+Column-oriented waveform data, importable into Excel, MATLAB, or Python:
 
 ```csv
-Vin (V),V(1),V(2),i(V1),i(Mn1)
-0.000000,0.000000e+00,0.000000e+00,-1.000000e-03,-1.000000e-03
-0.100000,1.000000e-01,9.900990e-02,-9.900990e-04,-9.900990e-04
-...
+Vin (V),V(1),V(2),V(3),i(Vdd),i(Vin)
+0.000000,3.300000e+00,0.000000e+00,3.299967e+00,...
+0.100000,3.300000e+00,1.000000e-01,3.299934e+00,...
 ```
+
+---
+
+## Verification
+
+All BSIM-CMG results are validated against NGSPICE 45.2 with BSIM-CMG OSDI. Verification scripts are in `tests/`.
+
+### Running Verification
+
+```bash
+conda activate pycircuitsim
+
+# Operating point verification (NMOS, PMOS, Inverter)
+python tests/verify_bsimcmg_op.py
+
+# DC sweep verification (Id-Vgs, VTC)
+python tests/verify_bsimcmg_dc.py
+
+# Transient verification (single baseline config)
+python tests/verify_bsimcmg_tran.py
+
+# Comprehensive transient verification (14 parametric configs)
+python tests/verify_bsimcmg_tran_comprehensive.py
+
+# Run all verification scripts
+python tests/verify_bsimcmg_op.py && \
+python tests/verify_bsimcmg_dc.py && \
+python tests/verify_bsimcmg_tran.py && \
+python tests/verify_bsimcmg_tran_comprehensive.py
+```
+
+### Verification Results
+
+#### Operating Point
+
+| Test | Metric | Result |
+|------|--------|--------|
+| NMOS OP (Vgs=0.7V, Vds=0.5V) | Relative error | 0.00% |
+| PMOS OP (Vgs=-0.7V, Vds=-0.5V) | Relative error | 0.01% |
+| Inverter OP (Vin=0V) | Relative error | 0.00% |
+| Inverter OP (Vin=0.7V) | Relative error | 0.00% |
+
+#### DC Sweep
+
+| Test | Metric | Result |
+|------|--------|--------|
+| NMOS Id-Vgs (Vds=0.5V, Vgs=0-0.7V) | NRMSE | 0.010% |
+| PMOS Id-Vgs (Vds=-0.5V, Vgs=0 to -0.7V) | NRMSE | 0.014% |
+| Inverter VTC (Vin=0-0.7V) | NRMSE | 0.002% |
+
+#### Transient (Baseline)
+
+| Metric | Value |
+|--------|-------|
+| NRMSE (post-settling) | 0.23% |
+| NRMSE (full-range) | 0.29% |
+| Max absolute error | 9.9 mV (1.4% of Vdd) |
+
+#### Comprehensive Transient (14 Configurations)
+
+The comprehensive suite sweeps VDD, Cload, input slew, and pulse width. All 14 configurations pass (NRMSE < 5%).
+
+| Config | VDD | Cload | tr/tf | pw | NRMSE(%) | MaxErr(mV) | Status |
+|--------|-----|-------|-------|----|----------|------------|--------|
+| vdd_0p5 | 0.50V | 10fF | 100ps | 0.8ns | 0.17 | 5.2 | PASS |
+| vdd_0p6 | 0.60V | 10fF | 100ps | 0.8ns | 0.22 | 10.1 | PASS |
+| baseline | 0.70V | 10fF | 100ps | 0.8ns | 0.22 | 9.9 | PASS |
+| vdd_0p8 | 0.80V | 10fF | 100ps | 0.8ns | 0.20 | 11.1 | PASS |
+| cload_1fF | 0.70V | 1fF | 100ps | 0.8ns | 0.95 | 67.3 | PASS |
+| cload_5fF | 0.70V | 5fF | 100ps | 0.8ns | 0.30 | 17.6 | PASS |
+| cload_50fF | 0.70V | 50fF | 100ps | 0.8ns | 0.04 | 1.3 | PASS |
+| cload_100fF | 0.70V | 100fF | 100ps | 0.8ns | 0.03 | 0.9 | PASS |
+| slew_10ps | 0.70V | 10fF | 10ps | 0.8ns | 0.15 | 7.2 | PASS |
+| slew_50ps | 0.70V | 10fF | 50ps | 0.8ns | 0.13 | 6.1 | PASS |
+| slew_500ps | 0.70V | 10fF | 500ps | 0.8ns | 0.17 | 8.3 | PASS |
+| pw_0p2ns | 0.70V | 10fF | 100ps | 0.2ns | 0.31 | 9.9 | PASS |
+| pw_0p5ns | 0.70V | 10fF | 100ps | 0.5ns | 0.26 | 9.9 | PASS |
+| pw_2p0ns | 0.70V | 10fF | 100ps | 2.0ns | 0.15 | 9.9 | PASS |
+
+### Verification Scripts
+
+| Script | Purpose |
+|--------|---------|
+| `tests/verify_bsimcmg_op.py` | OP analysis: PyCircuitSim vs NGSPICE for NMOS, PMOS, inverter |
+| `tests/verify_bsimcmg_dc.py` | DC sweep: Id-Vgs and VTC curves vs NGSPICE |
+| `tests/verify_bsimcmg_tran.py` | Transient: single inverter config vs NGSPICE |
+| `tests/verify_bsimcmg_tran_comprehensive.py` | Transient: 14-config parametric sweep vs NGSPICE |
+| `tests/verify_level1_transient.py` | Level 1 transient validation |
+
+Each script generates comparison plots and detailed metrics in `tests/verify_bsimcmg_*_results/`.
 
 ---
 
@@ -552,57 +591,62 @@ Vin (V),V(1),V(2),i(V1),i(Mn1)
 PyCircuitSim follows a clean, modular architecture:
 
 ```
-pycircuitsim/
-├── __init__.py         # Package initialization, public API exports
-├── config.py           # Path configuration (OSDI binary, modelcards)
-├── simulation.py       # Simulation orchestration (high-level workflow)
-├── parser.py           # Netlist parser (HSPICE syntax)
-├── circuit.py          # Circuit topology (nodes, components)
-├── solver.py           # MNA + Newton-Raphson + Transient solvers
-├── logger.py           # HSPICE-like logging (.lis files)
-├── visualizer.py       # Matplotlib plotting
-└── models/
+pycircuitsim/                    # Python package (simulator core)
+├── __init__.py                  # Public API exports
+├── config.py                    # Path configuration (OSDI binary, modelcards)
+├── simulation.py                # Simulation orchestration
+├── parser.py                    # Netlist parser (HSPICE syntax)
+├── circuit.py                   # Circuit topology (nodes, components)
+├── solver.py                    # MNA + Newton-Raphson + Transient solvers
+├── logger.py                    # HSPICE-like logging (.lis files)
+├── visualizer.py                # Matplotlib plotting
+└── models/                      # Device model implementations
     ├── __init__.py
-    ├── base.py         # Component abstract base class
-    ├── passive.py      # R, C, V, I, PULSE sources
-    ├── mosfet.py       # Level 1 Shichman-Hodges model
-    └── mosfet_cmg.py   # BSIM-CMG FinFET model (LEVEL=72) via PyCMG
+    ├── base.py                  # Component abstract base class
+    ├── passive.py               # R, C, V, I, PULSE sources
+    ├── mosfet.py                # Level 1 Shichman-Hodges model
+    └── mosfet_cmg.py            # BSIM-CMG FinFET model (LEVEL=72)
 
-external_compact_models/PyCMG/  # BSIM-CMG OSDI wrapper (git submodule)
-main.py                 # CLI entry point
-examples/*.sp           # Example netlists
-results/                # Simulation output
-tests/                  # NGSPICE validation scripts
+external_compact_models/         # External compact model binaries
+└── PyCMG/                       # BSIM-CMG OSDI wrapper (git submodule)
+    ├── pycmg/                   # Python ctypes-based OSDI interface
+    ├── build-deep-verify/osdi/  # Compiled OSDI binary (bsimcmg.osdi)
+    └── tech_model_cards/ASAP7/  # ASAP7 7nm FinFET modelcards
+
+main.py                          # CLI entry point
+examples/                        # Example netlists (.sp files)
+tests/                           # NGSPICE verification scripts
+results/                         # Simulation output (generated at runtime)
 ```
 
 ### Module Responsibilities
 
 | Module | Responsibility |
 |--------|---------------|
-| `simulation.py` | Orchestrates parse → solve → visualize workflow |
-| `parser.py` | Two-pass netlist parsing, model definitions |
-| `circuit.py` | Stores circuit topology, component list |
-| `solver.py` | MNA construction, Newton-Raphson iteration |
-| `models/` | Device physics (I-V equations, conductances) |
+| `simulation.py` | Orchestrates parse -> solve -> visualize workflow |
+| `parser.py` | Two-pass netlist parsing, `.model`/`.include`/`.ic` directives |
+| `circuit.py` | Stores circuit topology, component list, node mapping |
+| `solver.py` | MNA construction, Newton-Raphson iteration, transient stepping |
+| `models/` | Device physics (I-V equations, conductances, capacitances) |
 | `logger.py` | HSPICE-compatible output formatting |
 | `visualizer.py` | Automatic plot generation |
 
 ### Design Principles
 
 1. **Separation of Concerns**
-   - Solver doesn't know device physics
-   - Device models don't touch matrices
-   - Simulation orchestrates but doesn't compute
+   - Solver builds matrices and iterates (no device equations)
+   - Device models compute current/conductances from voltages (no matrix operations)
+   - Simulation orchestrates the workflow (parse -> solve -> visualize)
 
 2. **Modularity**
-   - Each component independently implemented
-   - Common `Component` base class interface
-   - Easy to add new device types
+   - All devices inherit from the `Component` base class
+   - Common interface: `calculate_current()`, `get_conductances()`
+   - New devices can be added without modifying the solver
 
-3. **Extensibility**
-   - Inherit from `Component` to add devices
-   - Implement `stamp_conductance()` and `stamp_rhs()`
-   - Solver automatically handles new devices
+3. **Compact Model Integration**
+   - BSIM-CMG models are accessed via PyCMG's ctypes-based OSDI interface
+   - The `mosfet_cmg.py` module wraps PyCMG's `Model`/`Instance` classes
+   - Intrinsic capacitances (Cgd, Cgs, Cdd) are extracted for transient analysis
 
 ---
 
@@ -613,25 +657,26 @@ tests/                  # NGSPICE validation scripts
 PyCircuitSim uses MNA to construct circuit equations:
 
 ```
-[G  C] [v]     [i]
-[      ] [ ] = [ ]  (Conductance matrix)
-[Cᵀ 0] [j]     [v]     (Current unknowns)
+[G  B] [v]   [i]
+[    ] [ ] = [ ]
+[C  D] [j]   [e]
 ```
 
-- **G**: Conductance matrix (resistive elements)
-- **C**: Incidence matrix (voltage sources)
-- **v**: Node voltages
-- **j**: Source currents
+- **G**: Conductance matrix (resistive elements + linearized MOSFETs)
+- **B, C**: Voltage source incidence matrices
+- **v**: Node voltages (unknowns)
+- **j**: Voltage source currents (unknowns)
+- **i, e**: Known current/voltage excitations
 
 ### Newton-Raphson Iteration
 
 For non-linear circuits (MOSFETs):
 
-1. Linearize devices at current operating point
-2. Construct MNA matrix
-3. Solve for voltage update Δv
-4. Apply damping: v_new = v_old + α·Δv (α = 0.5)
-5. Repeat until convergence (max|Δv| < 1µV)
+1. Linearize devices at current operating point (compute gds, gm, gmb)
+2. Construct MNA matrix with linearized conductances
+3. Solve for voltage update dv
+4. Apply damping: `v_new = v_old + alpha * dv` (alpha = 0.5 for |dv| >= 1V)
+5. Repeat until convergence (max|dv| < 1 uV)
 
 ### Source Stepping
 
@@ -640,42 +685,34 @@ Improves convergence for difficult circuits:
 1. Start with all sources at 0V
 2. Gradually ramp sources to final values (20 steps)
 3. Use previous step's solution as initial guess
-4. Reduces risk of convergence failures
 
 ### Trapezoidal Integration
 
-For transient analysis with capacitors:
+For transient analysis with capacitors and MOSFET intrinsic capacitances:
 
 ```
-i(t+Δt) = 2C/Δt · [v(t+Δt) - v(t)] - i(t)
+i(t+dt) = (2C/dt) * [v(t+dt) - v(t)] - i(t)
 ```
 
 - 2nd order implicit integration (A-stable)
 - Converts capacitors to companion conductance + current source
 - Also stamps BSIM-CMG intrinsic capacitances (Cgd, Cgs, Cdd) as companion models
+- Charge state tracking via `get_charges()`, `init_charge_state()`, `update_charge_state()`
+
+### Convergence Aids
+
+- **Gmin stepping**: Exponentially decaying minimum conductance (1e-9 to 1e-12)
+- **Pseudo-transient initialization**: Artificial capacitances for startup (auto-scaled to 5x max circuit cap)
+- **Adaptive damping**: Oscillation detection with automatic damping adjustment
+- **Voltage clamping**: Vgs +/-5V, Vds +/-10V to prevent numerical overflow
 
 ---
 
 ## Development
 
-### Running Tests
-
-```bash
-# Run all tests
-pytest tests/
-
-# Run specific test module
-pytest tests/test_parser.py
-pytest tests/test_solver.py
-pytest tests/test_transient.py
-
-# Run with coverage
-pytest --cov=pycircuitsim tests/
-```
-
 ### Adding New Components
 
-1. **Create component class** in `models/`:
+1. Create a component class inheriting from `Component` in `pycircuitsim/models/`:
 
 ```python
 from pycircuitsim.models.base import Component
@@ -685,60 +722,38 @@ class Inductor(Component):
         super().__init__(name, nodes, value)
 
     def stamp_conductance(self, mna_matrix, node_map):
-        # Add inductor conductance to MNA matrix
+        # Add inductor entries to MNA matrix
         pass
 
     def stamp_rhs(self, rhs, node_map):
         # Add current to RHS vector
         pass
 
-    def calculate_current(self, voltages):
-        # Calculate branch current from voltages
+    def calculate_current(self, voltages: dict) -> float:
+        # Calculate branch current from node voltages
         pass
 ```
 
-2. **Register in parser** (`parser.py`):
-
-```python
-def _parse_component(self, line: str):
-    if line.startswith('L'):
-        self._parse_inductor(line)
-    # ...
-```
-
-3. **Add tests**:
-
-```python
-def test_inductor_dc():
-    # Test inductor in DC circuit
-    pass
-```
+2. Register in parser (`pycircuitsim/parser.py`)
+3. Add to `_is_mosfet()` or equivalent type helpers in solver if needed
+4. Write tests
 
 ### Coding Style
 
 - **Type hints**: Required for all function signatures
-- **Variable names**: Descriptive (e.g., `v_gate`, not `vg`)
+- **Variable names**: Descriptive (`v_gate`, `i_drain`, not `a`, `b`)
 - **Docstrings**: Required for public APIs
-- **Maximum line length**: 100 characters
-- **Import order**: stdlib → third-party → local
+- **Import order**: stdlib, third-party, local
 
 ### Debugging Tips
 
-Enable verbose logging:
+Enable verbose logging to see Newton-Raphson convergence:
 
 ```bash
 python main.py circuit.sp -v
 ```
 
-Check `.lis` files for:
-- Newton-Raphson convergence status
-- Matrix condition numbers
-- Device currents at each iteration
-
-Common issues:
-- **Singular matrix**: Add minimum conductance (1µS)
-- **Divergence**: Try source stepping or voltage clamping
-- **Slow convergence**: Reduce damping factor or increase steps
+Check `.lis` files for iteration counts, convergence status, and device currents.
 
 ---
 
@@ -770,98 +785,29 @@ Consider ngspice, Xyce, or Spectre for:
 
 ---
 
-## Current Status
+## Future Work
 
-### Complete Features
-
-- [x] MNA matrix construction
-- [x] Level 1 MOSFET (Shichman-Hodges)
-- [x] BSIM-CMG FinFET (LEVEL=72) via PyCMG/OSDI
-- [x] Newton-Raphson solver with damping
-- [x] Source stepping for convergence
-- [x] DC operating point, DC sweep, and transient analysis
-- [x] Trapezoidal integration (2nd order) with intrinsic capacitances
-- [x] PULSE voltage sources
-- [x] HSPICE-like logging (.lis)
-- [x] CSV data export and automatic plot generation
-- [x] Initial conditions (.ic)
-- [x] Python API
-
-### NGSPICE Verification (ASAP7 7nm)
-
-All results validated against NGSPICE 45.2 with BSIM-CMG OSDI:
-
-| Test | Metric | Result |
-|------|--------|--------|
-| NMOS/PMOS OP | Relative error | < 0.02% |
-| DC sweep (Id-Vgs, VTC) | NRMSE | < 0.1% |
-| Transient (baseline) | NRMSE (post-settling) | 0.23% |
-| Comprehensive (14 configs) | NRMSE (worst case) | 0.95% |
-
-The comprehensive suite sweeps VDD (0.5-0.8V), Cload (1-100fF), input slew (10-500ps), and pulse width (0.2-2.0ns). All 14 configurations pass with NRMSE well under 5%.
-
-### Future Work
-
+- [ ] Adaptive timestep control (local truncation error estimates)
+- [ ] Expanded test suite (NAND/NOR gates, ring oscillator, SRAM)
 - [ ] Inductor support
 - [ ] AC small-signal analysis
-- [ ] Subcircuit support
-- [ ] Adaptive timestep control
-- [ ] Expanded test suite (NAND/NOR, ring oscillator, SRAM)
-
----
-
-## Contributing
-
-Contributions are welcome! Areas of interest:
-
-1. **New device models** (diodes, BJTs, op-amps)
-2. **Analysis types** (AC, noise, sensitivity)
-3. **Performance** (JIT compilation, GPU acceleration)
-4. **Documentation** (tutorials, examples)
-5. **Tests** (validation vs ngspice)
-
-### Pull Request Guidelines
-
-- Write clear commit messages (Conventional Commits)
-- Add tests for new features
-- Update documentation
-- Ensure all tests pass: `pytest tests/`
+- [ ] Subcircuit support (.subckt)
 
 ---
 
 ## References
 
-### Academic Papers
-
-- **Shichman, H., & Hodges, D. A.** (1968). "Modeling and Simulation of Insulated-Gate Field-Effect Transistor Switching Circuits." *IEEE Journal of Solid-State Circuits*.
-
-- **Nagel, L. W.** (1975). "SPICE2: A Computer Program to Simulate Semiconductor Circuits." *Memorandum No. ERL-M520*, UC Berkeley.
-
 ### Software
 
-- **ngspice**: Open-source SPICE simulator
-  - Website: http://ngspice.sourceforge.net
-  - Reference for netlist syntax and device equations
+- **ngspice** - Open-source SPICE simulator ([ngspice.sourceforge.net](http://ngspice.sourceforge.net)). Reference for netlist syntax and device equations.
+- **PyCMG** - Python BSIM-CMG OSDI wrapper ([github.com/ShenShan123/PyCMG](https://github.com/ShenShan123/PyCMG)). Provides ctypes-based OSDI interface for compact models.
+- **ASAP7 PDK** - Arizona State Predictive 7nm PDK ([github.com/The-OpenROAD-Project/asap7_pdk_r1p7](https://github.com/The-OpenROAD-Project/asap7_pdk_r1p7)). FinFET modelcards used for BSIM-CMG validation.
+- **Xyce** - Parallel electronic simulator ([xyce.sandia.gov](https://xyce.sandia.gov)). Architectural patterns for solver-device separation.
 
-- **PyCMG**: Python BSIM-CMG OSDI wrapper
-  - Repository: https://github.com/ShenShan123/PyCMG
-  - Provides ctypes-based OSDI interface for compact models
+### Academic
 
-- **ASAP7 PDK**: Arizona State Predictive 7nm PDK
-  - Repository: https://github.com/The-OpenROAD-Project/asap7_pdk_r1p7
-  - FinFET modelcards used for BSIM-CMG validation
-
-- **Xyce**: Parallel electronic simulator
-  - Website: https://xyce.sandia.gov
-  - Architectural patterns for solver-device separation
-
-### Books
-
-- **Rabaey, J. M., Chandrakasan, A., & Nikolic, B.** (2003). *Digital Integrated Circuits: A Design Perspective*. Prentice Hall.
-
-- **Razavi, B.** (2001). *Design of Analog CMOS Integrated Circuits*. McGraw-Hill.
-
-- **Sedra, A. S., & Smith, K. C.** (2014). *Microelectronic Circuits*. Oxford University Press.
+- Shichman, H., & Hodges, D. A. (1968). "Modeling and Simulation of Insulated-Gate Field-Effect Transistor Switching Circuits." *IEEE JSSC*.
+- Nagel, L. W. (1975). "SPICE2: A Computer Program to Simulate Semiconductor Circuits." *ERL-M520*, UC Berkeley.
 
 ---
 
@@ -875,20 +821,9 @@ MIT License - see LICENSE file for details.
 
 Developed as an educational tool to demonstrate SPICE-like simulation in pure Python. Inspired by ngspice, Xyce, and the original SPICE2 from UC Berkeley.
 
-**Purpose**: Teaching circuit simulation, numerical methods, and software architecture to students and engineers.
-
 ---
 
 ## Contact
 
-For questions, issues, or contributions:
 - GitHub Issues: https://github.com/ShenShan123/PyCircuitSim/issues
 - Discussions: https://github.com/ShenShan123/PyCircuitSim/discussions
-
----
-
-<div align="center">
-
-**Happy Simulating! 📈⚡**
-
-</div>
