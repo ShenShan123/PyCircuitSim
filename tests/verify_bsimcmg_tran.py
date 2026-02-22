@@ -74,7 +74,7 @@ PMOS_INST_PARAMS: Dict[str, Any] = {"L": L, "NFIN": float(NFIN), "DEVTYPE": 0}
 STARTUP_EXCLUSION = 0.1e-9  # 0.1ns (reduced: pseudo-caps now auto-scaled)
 
 # Acceptance criteria
-NRMSE_THRESHOLD = 0.10  # 10% of Vdd
+NRMSE_THRESHOLD = 0.05  # 5% of Vdd (tightened after trapezoidal + intrinsic caps)
 
 
 # ============================================================================

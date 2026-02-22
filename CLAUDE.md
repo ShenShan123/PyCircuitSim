@@ -131,19 +131,26 @@ tests/                  # Validation scripts & NGSPICE comparison
 - [x] **DC sweep verification** — Id-Vgs, VTC vs NGSPICE (all < 0.1% NRMSE)
 - [x] **Transient verification** — Inverter vs NGSPICE (2.1% NRMSE post-settling)
 
+### Phase 7: Transient Accuracy Improvement ✅ Complete (2026-02-22)
+- [x] **Auto-scaled pseudo-caps** — pseudo-cap reduced from 1pF to 5x max circuit cap (50fF for 10fF load)
+- [x] **Reduced Gmin stepping** — gmin_initial 1e-8→1e-9, steps 10→5, startup exclusion 0.3ns→0.1ns
+- [x] **BSIM-CMG intrinsic capacitances** — Cgd, Cgs, Cdd stamped as companion models in MNA matrix
+- [x] **Trapezoidal integration** — Upgraded from Backward Euler (1st order) to Trapezoidal Rule (2nd order)
+- [x] **Charge state tracking** — get_charges(), init_charge_state(), update_charge_state() in mosfet_cmg.py
+- [x] **Results:** Post-settling NRMSE 2.1% → **0.62%**, full-range 14.2% → 9.8%
+
 ### Future Work
 - [ ] **Expanded Test Suite**
     - [ ] NAND/NOR gates
     - [ ] Ring Oscillator (multi-stage transient)
     - [ ] SRAM bitcell (static noise margin)
-- [ ] **Transient Startup Artifact** — Gmin stepping + pseudo-transient creates ~0.3ns artifact
-- [ ] **BSIM-CMG Intrinsic Capacitances** — Use charge derivatives for transient (currently external Cload only)
+- [ ] **Transient Startup Artifact** — Gmin stepping still creates ~0.1ns artifact (reduced from 0.3ns)
+- [ ] **Adaptive Timestep** — Use local truncation error estimate for automatic timestep control
 
-**Known Issue - Transient Startup Artifact** (2026-02-21):
-Gmin stepping + pseudo-transient initialization creates a startup artifact in the first ~0.3ns.
-The 1pF pseudo-capacitors (100x larger than typical 10fF load) dominate the circuit during
-initialization, pulling V(out) away from the correct DC operating point. After pseudo-caps are
-removed and the circuit settles, accuracy is excellent (2.1% NRMSE vs NGSPICE).
+**Known Issue - Transient Startup Artifact** (2026-02-22, updated):
+Gmin stepping + pseudo-transient initialization creates a startup artifact in the first ~0.1ns
+(reduced from 0.3ns by auto-scaling pseudo-caps to 5x circuit capacitance). After settling,
+accuracy is excellent (0.62% NRMSE vs NGSPICE with trapezoidal integration).
 
 ---
 
@@ -422,7 +429,7 @@ references were never updated. Also, ASAP7 modelcard directory changed from
 
 ---
 
-## BSIM-CMG NGSPICE Verification Results (2026-02-21)
+## BSIM-CMG NGSPICE Verification Results (2026-02-22)
 
 All verification scripts in `tests/`:
 
@@ -435,7 +442,15 @@ All verification scripts in `tests/`:
 | NMOS DC sweep | `verify_bsimcmg_dc.py` | NRMSE | 0.010% |
 | PMOS DC sweep | `verify_bsimcmg_dc.py` | NRMSE | 0.014% |
 | Inverter VTC | `verify_bsimcmg_dc.py` | NRMSE | 0.002% |
-| Inverter Transient | `verify_bsimcmg_tran.py` | NRMSE (post-settling) | 2.10% |
+| Inverter Transient | `verify_bsimcmg_tran.py` | NRMSE (post-settling) | **0.62%** |
+
+**Transient accuracy improvement history (Phase 7, 2026-02-22):**
+| Change | Post-settling NRMSE | Full-range NRMSE |
+|--------|--------------------:|------------------:|
+| Baseline (Phase 6) | 2.10% | 14.24% |
+| + Auto-scaled pseudo-caps | 2.05% | 7.13% |
+| + Intrinsic capacitances (Cgd, Cgs, Cdd) | 1.46% | — |
+| + Trapezoidal integration | **0.62%** | **9.82%** |
 
 Run all: `conda run -n pycircuitsim python tests/verify_bsimcmg_op.py && conda run -n pycircuitsim python tests/verify_bsimcmg_dc.py && conda run -n pycircuitsim python tests/verify_bsimcmg_tran.py`
 
