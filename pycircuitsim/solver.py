@@ -949,7 +949,8 @@ class TransientSolver:
         num_voltage_sources: int,
         initial_voltages: Dict[str, float],
         time: float,
-        step_index: int = 0
+        step_index: int = 0,
+        use_gmin: bool = True
     ) -> Dict[str, float]:
         """
         Solve circuit at a single timestep using Newton-Raphson iteration.
@@ -986,15 +987,15 @@ class TransientSolver:
 
         # Calculate Gmin value for this timestep (if enabled)
         gmin = self.gmin_final
-        if self.use_gmin_stepping and step_index < self.gmin_steps:
+        if use_gmin and self.use_gmin_stepping and step_index < self.gmin_steps:
             # Exponential decay from gmin_initial to gmin_final
             alpha = step_index / (self.gmin_steps - 1) if self.gmin_steps > 1 else 1.0
             gmin = self.gmin_initial * (1 - alpha) + self.gmin_final * alpha
             if self.debug:
                 print(f"  Gmin stepping: step {step_index}, gmin = {gmin:.2e}")
 
-        # Start with moderate damping (more aggressive for early timesteps)
-        damping = 0.75 if step_index < 5 else 1.0
+        # Start with full damping (no damping); reduce if needed during iteration
+        damping = 1.0
 
         # Track previous max_delta for adaptive damping
         prev_max_delta = float('inf')
@@ -1493,8 +1494,21 @@ class TransientSolver:
             for node in sorted(nodes)[:5]:
                 print(f"  V{node} = {initial_voltages.get(node, 0.0):.4f} V")
 
-        # Step 2: Add pseudo-capacitors if enabled (for better DC convergence)
-        if self.use_pseudo_transient and self._has_non_linear_components():
+        # Step 2: Add pseudo-capacitors if enabled AND no DC OP provided
+        # If a valid DC operating point was provided as initial_guess, skip
+        # pseudo-transient and Gmin stepping — they create startup artifacts.
+        has_dc_op = self.initial_guess is not None and len(self.initial_guess) > 0
+        if has_dc_op:
+            # DC OP provides correct initial conditions; convergence aids not needed
+            effective_use_pseudo = False
+            effective_use_gmin = False
+            if self.debug:
+                print(f"DC operating point provided — skipping pseudo-transient and Gmin stepping")
+        else:
+            effective_use_pseudo = self.use_pseudo_transient
+            effective_use_gmin = self.use_gmin_stepping
+
+        if effective_use_pseudo and self._has_non_linear_components():
             if self.debug:
                 print(f"Adding pseudo-capacitors for better DC convergence (first {self.pseudo_transient_steps} steps)")
             self._add_pseudo_capacitors()
@@ -1509,7 +1523,7 @@ class TransientSolver:
             time[step] = min(current_time, self.t_stop)
 
             # Remove pseudo-capacitors after specified steps
-            if self.use_pseudo_transient and step == self.pseudo_transient_steps + 1:
+            if effective_use_pseudo and step == self.pseudo_transient_steps + 1:
                 if self.debug:
                     print(f"Removing pseudo-capacitors at step {step}")
                 self._remove_pseudo_capacitors()
@@ -1543,7 +1557,8 @@ class TransientSolver:
                             num_voltage_sources=num_voltage_sources,
                             initial_voltages=prev_voltages,
                             time=current_time,
-                            step_index=step - 1  # Zero-based index for Gmin stepping
+                            step_index=step - 1,
+                            use_gmin=effective_use_gmin
                         )
                     else:
                         # Use simple linear solve for linear circuits
