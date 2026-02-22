@@ -137,20 +137,16 @@ tests/                  # Validation scripts & NGSPICE comparison
 - [x] **BSIM-CMG intrinsic capacitances** — Cgd, Cgs, Cdd stamped as companion models in MNA matrix
 - [x] **Trapezoidal integration** — Upgraded from Backward Euler (1st order) to Trapezoidal Rule (2nd order)
 - [x] **Charge state tracking** — get_charges(), init_charge_state(), update_charge_state() in mosfet_cmg.py
-- [x] **Results:** Post-settling NRMSE 2.1% → **0.62%**, full-range 14.2% → 9.8%
+- [x] **Charge state tracking** — get_charges(), init_charge_state(), update_charge_state() in mosfet_cmg.py
+- [x] **Skip convergence aids with DC OP** — pseudo-transient and Gmin stepping skipped when valid DC OP is provided
+- [x] **Results:** NRMSE 2.1% → **0.23%** (post-settling), full-range 14.2% → **0.29%**, max error 94mV → **9.9mV**
 
 ### Future Work
 - [ ] **Expanded Test Suite**
     - [ ] NAND/NOR gates
     - [ ] Ring Oscillator (multi-stage transient)
     - [ ] SRAM bitcell (static noise margin)
-- [ ] **Transient Startup Artifact** — Gmin stepping still creates ~0.1ns artifact (reduced from 0.3ns)
 - [ ] **Adaptive Timestep** — Use local truncation error estimate for automatic timestep control
-
-**Known Issue - Transient Startup Artifact** (2026-02-22, updated):
-Gmin stepping + pseudo-transient initialization creates a startup artifact in the first ~0.1ns
-(reduced from 0.3ns by auto-scaling pseudo-caps to 5x circuit capacitance). After settling,
-accuracy is excellent (0.62% NRMSE vs NGSPICE with trapezoidal integration).
 
 ---
 
@@ -442,7 +438,9 @@ All verification scripts in `tests/`:
 | NMOS DC sweep | `verify_bsimcmg_dc.py` | NRMSE | 0.010% |
 | PMOS DC sweep | `verify_bsimcmg_dc.py` | NRMSE | 0.014% |
 | Inverter VTC | `verify_bsimcmg_dc.py` | NRMSE | 0.002% |
-| Inverter Transient | `verify_bsimcmg_tran.py` | NRMSE (post-settling) | **0.62%** |
+| Inverter Transient | `verify_bsimcmg_tran.py` | NRMSE (post-settling) | **0.23%** |
+| Inverter Transient | `verify_bsimcmg_tran.py` | NRMSE (full-range) | **0.29%** |
+| Inverter Transient | `verify_bsimcmg_tran.py` | Max error | 9.9 mV (1.4% Vdd) |
 
 **Transient accuracy improvement history (Phase 7, 2026-02-22):**
 | Change | Post-settling NRMSE | Full-range NRMSE |
@@ -450,7 +448,8 @@ All verification scripts in `tests/`:
 | Baseline (Phase 6) | 2.10% | 14.24% |
 | + Auto-scaled pseudo-caps | 2.05% | 7.13% |
 | + Intrinsic capacitances (Cgd, Cgs, Cdd) | 1.46% | — |
-| + Trapezoidal integration | **0.62%** | **9.82%** |
+| + Trapezoidal integration | 0.62% | 9.82% |
+| + Skip convergence aids with DC OP | **0.23%** | **0.29%** |
 
 Run all: `conda run -n pycircuitsim python tests/verify_bsimcmg_op.py && conda run -n pycircuitsim python tests/verify_bsimcmg_dc.py && conda run -n pycircuitsim python tests/verify_bsimcmg_tran.py`
 
