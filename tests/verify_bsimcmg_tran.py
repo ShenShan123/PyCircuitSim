@@ -70,9 +70,8 @@ PULSE_PER = 2.0e-9
 NMOS_INST_PARAMS: Dict[str, Any] = {"L": L, "NFIN": float(NFIN), "DEVTYPE": 1}
 PMOS_INST_PARAMS: Dict[str, Any] = {"L": L, "NFIN": float(NFIN), "DEVTYPE": 0}
 
-# Startup exclusion: Gmin stepping + pseudo-transient artifact
-# PyCircuitSim uses 10 Gmin steps + 10 pseudo-transient steps at 10ps each = 0.2ns settling
-STARTUP_EXCLUSION = 0.3e-9  # 0.3ns (generous margin for full recovery)
+# Startup exclusion: reduced with auto-scaled pseudo-caps
+STARTUP_EXCLUSION = 0.1e-9  # 0.1ns (reduced: pseudo-caps now auto-scaled)
 
 # Acceptance criteria
 NRMSE_THRESHOLD = 0.10  # 10% of Vdd
@@ -234,9 +233,9 @@ def run_pycircuitsim(netlist_path: Path) -> Dict[str, np.ndarray]:
         circuit, t_stop=final_time, dt=time_step,
         initial_guess=op_solution,
         use_gmin_stepping=True,
-        gmin_initial=1e-8, gmin_final=1e-12, gmin_steps=10,
+        gmin_initial=1e-9, gmin_final=1e-12, gmin_steps=5,
         use_pseudo_transient=True,
-        pseudo_transient_steps=10, pseudo_transient_cap=1e-12,
+        pseudo_transient_steps=5, pseudo_transient_cap=1e-12,
         debug=False,
     )
     results = solver.solve()

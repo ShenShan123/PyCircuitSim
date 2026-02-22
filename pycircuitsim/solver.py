@@ -893,21 +893,28 @@ class TransientSolver:
         return False
 
     def _add_pseudo_capacitors(self) -> None:
-        """
-        Add pseudo-capacitors from all non-ground nodes to ground for pseudo-transient initialization.
-
-        This adds artificial capacitance to improve DC convergence during the first few timesteps.
-        The pseudo-capacitors are removed after the specified number of steps.
-        """
+        """Add pseudo-capacitors scaled to circuit capacitance for initialization."""
         from pycircuitsim.models.passive import Capacitor
 
-        # Get all non-ground nodes
-        nodes = self.circuit.get_nodes()
+        # Auto-detect max circuit capacitance
+        max_circuit_cap = 0.0
+        for component in self.circuit.components:
+            if isinstance(component, Capacitor) and not component.name.startswith("_pseudo_"):
+                max_circuit_cap = max(max_circuit_cap, component.capacitance)
 
-        # Add a pseudo-capacitor from each node to ground
+        # Scale pseudo-cap: 5x the largest circuit cap, or use user-specified value
+        if max_circuit_cap > 0 and self.pseudo_transient_cap > 10 * max_circuit_cap:
+            effective_cap = 5.0 * max_circuit_cap
+            if self.debug:
+                print(f"  Auto-scaling pseudo-cap: {self.pseudo_transient_cap:.2e} -> "
+                      f"{effective_cap:.2e} (5x max circuit cap {max_circuit_cap:.2e})")
+        else:
+            effective_cap = self.pseudo_transient_cap
+
+        nodes = self.circuit.get_nodes()
         pseudo_cap_idx = 0
         for node in nodes:
-            cap = Capacitor(f"_pseudo_{pseudo_cap_idx}", [node, "0"], self.pseudo_transient_cap)
+            cap = Capacitor(f"_pseudo_{pseudo_cap_idx}", [node, "0"], effective_cap)
             self.circuit.components.append(cap)
             self._pseudo_capacitors.append(cap)
             pseudo_cap_idx += 1
