@@ -149,6 +149,42 @@ tests/                  # Validation scripts & NGSPICE comparison
 - [x] **Summary reporting** — Formatted table, CSV export, color-coded bar chart by sweep type
 - [x] **Results:** All 21 configs PASS (NRMSE < 5%), worst case 0.95% (Cload=1fF), best 0.03% (Cload=100fF, NFIN=1)
 
+### Phase 9: Multi-Technology Transient Verification ✅ Complete (2026-02-23)
+- [x] **Parser enhancement** — Added `modelcard_path` and `model_name_map` parameters to `Parser.__init__()` for non-ASAP7 technologies (backward-compatible)
+- [x] **5-technology support** — ASAP7 (0.7V), TSMC5 (0.65V), TSMC7 (0.75V), TSMC12 (0.80V), TSMC16 (0.80V)
+- [x] **Merged modelcard creation** — Concatenates separate NMOS+PMOS naive modelcards for TSMC technologies
+- [x] **Per-tech baked modelcards** — Handles asymmetric L (NMOS=16nm, PMOS=20nm), DEVTYPE injection
+- [x] **TSMC7 PMOS workaround** — LVT PMOS has PDIBL2_i<0 bug; uses SVT PMOS (`pch_svt_mac`) instead
+- [x] **Two-phase strategy** — Baseline test per tech, then parametric sweep only if baseline passes
+- [x] **Results:** 35/35 PASS across all 5 techs (after Phase 10 charge-based fix)
+
+| Tech | Baseline NRMSE | Best Config | Worst Config | Notes |
+|------|---------------|------------|-------------|-------|
+| ASAP7 | 0.19% | cload_100fF (0.02%) | cload_1fF (0.84%) | Reference tech |
+| TSMC5 | 0.06% | cload_100fF (0.00%) | cload_1fF (0.26%) | All PASS |
+| TSMC7 | 0.01% | cload_100fF (0.00%) | cload_1fF (0.18%) | SVT PMOS; All PASS |
+| TSMC12 | 0.09% | cload_100fF (0.00%) | cload_1fF (0.47%) | All PASS |
+| TSMC16 | 0.08% | cload_100fF (0.00%) | cload_1fF (0.51%) | All PASS |
+
+Run: `conda run -n pycircuitsim python tests/verify_multi_tech_tran.py`
+
+### Phase 10: Charge-Based Transient Integration ✅ Complete (2026-02-23)
+- [x] **Charge-based intrinsic cap stamping** — Replaced capacitance-based `I = C(V) * dV/dt` with charge-based `I = dQ/dt` using terminal charges from PyCMG `get_charges()`
+- [x] **Full capacitance matrix** — Stamps 3x3 terminal capacitance matrix (cgg, cgd, cgs, cdg, cdd + derived source terms) instead of three 2-terminal caps
+- [x] **Terminal current tracking** — `_i_prev_gate`/`_i_prev_drain` replace branch currents `_i_prev_cgd`/`_i_prev_cgs`/`_i_prev_cdd`
+- [x] **Configurable NR tolerance** — Added `nr_tolerance` parameter to `TransientSolver` (default: 1e-7, was hardcoded 1e-6)
+- [x] **Results:** TSMC NRMSE reduced 30-300x; all 35 multi-tech configs PASS; all 21 ASAP7 comprehensive configs PASS
+
+| Metric | Before (Phase 9) | After (Phase 10) | Improvement |
+|--------|------------------|-------------------|-------------|
+| TSMC5 baseline | 4.25% | 0.06% | 71x |
+| TSMC7 baseline | 1.32% | 0.01% | 132x |
+| TSMC12 baseline | 3.42% | 0.09% | 38x |
+| TSMC16 baseline | 3.70% | 0.08% | 46x |
+| ASAP7 baseline | 0.22% | 0.19% | 1.2x |
+| Multi-tech FAIL count | 2/35 | 0/35 | Fixed |
+| Worst TSMC config | 9.74% (TSMC5 vdd_0p6) | 0.51% (TSMC16 cload_1fF) | 19x |
+
 ### Future Work
 - [ ] **Expanded Test Suite**
     - [ ] NAND/NOR gates
@@ -446,18 +482,19 @@ All verification scripts in `tests/`:
 | NMOS DC sweep | `verify_bsimcmg_dc.py` | NRMSE | 0.010% |
 | PMOS DC sweep | `verify_bsimcmg_dc.py` | NRMSE | 0.014% |
 | Inverter VTC | `verify_bsimcmg_dc.py` | NRMSE | 0.002% |
-| Inverter Transient | `verify_bsimcmg_tran.py` | NRMSE (post-settling) | **0.23%** |
-| Inverter Transient | `verify_bsimcmg_tran.py` | NRMSE (full-range) | **0.29%** |
-| Inverter Transient | `verify_bsimcmg_tran.py` | Max error | 9.9 mV (1.4% Vdd) |
+| Inverter Transient | `verify_bsimcmg_tran.py` | NRMSE (post-settling) | **0.20%** |
+| Inverter Transient | `verify_bsimcmg_tran.py` | NRMSE (full-range) | **0.26%** |
+| Inverter Transient | `verify_bsimcmg_tran.py` | Max error | 7.6 mV (1.1% Vdd) |
 
-**Transient accuracy improvement history (Phase 7, 2026-02-22):**
+**Transient accuracy improvement history (Phase 7→10):**
 | Change | Post-settling NRMSE | Full-range NRMSE |
 |--------|--------------------:|------------------:|
 | Baseline (Phase 6) | 2.10% | 14.24% |
 | + Auto-scaled pseudo-caps | 2.05% | 7.13% |
 | + Intrinsic capacitances (Cgd, Cgs, Cdd) | 1.46% | — |
 | + Trapezoidal integration | 0.62% | 9.82% |
-| + Skip convergence aids with DC OP | **0.23%** | **0.29%** |
+| + Skip convergence aids with DC OP | 0.23% | 0.29% |
+| + Charge-based integration + NR tol 1e-7 (Phase 10) | **0.20%** | **0.26%** |
 
 Run all: `conda run -n pycircuitsim python tests/verify_bsimcmg_op.py && conda run -n pycircuitsim python tests/verify_bsimcmg_dc.py && conda run -n pycircuitsim python tests/verify_bsimcmg_tran.py`
 
@@ -468,27 +505,27 @@ Script: `tests/verify_bsimcmg_tran_comprehensive.py`
 
 | Config | VDD | NFIN_N | NFIN_P | Cload | tr/tf | pw | NRMSE(%) | MaxErr(mV) | Status |
 |--------|-----|--------|--------|-------|-------|----|----------|------------|--------|
-| vdd_0p5 | 0.50 | 10 | 10 | 10fF | 100ps | 0.8ns | 0.17 | 5.2 | PASS |
-| vdd_0p6 | 0.60 | 10 | 10 | 10fF | 100ps | 0.8ns | 0.22 | 10.1 | PASS |
-| baseline | 0.70 | 10 | 10 | 10fF | 100ps | 0.8ns | 0.22 | 9.9 | PASS |
-| vdd_0p8 | 0.80 | 10 | 10 | 10fF | 100ps | 0.8ns | 0.20 | 11.1 | PASS |
-| cload_1fF | 0.70 | 10 | 10 | 1fF | 100ps | 0.8ns | 0.95 | 67.3 | PASS |
-| cload_5fF | 0.70 | 10 | 10 | 5fF | 100ps | 0.8ns | 0.30 | 17.6 | PASS |
-| cload_50fF | 0.70 | 10 | 10 | 50fF | 100ps | 0.8ns | 0.04 | 1.3 | PASS |
-| cload_100fF | 0.70 | 10 | 10 | 100fF | 100ps | 0.8ns | 0.03 | 0.9 | PASS |
-| slew_10ps | 0.70 | 10 | 10 | 10fF | 10ps | 0.8ns | 0.15 | 7.2 | PASS |
-| slew_50ps | 0.70 | 10 | 10 | 10fF | 50ps | 0.8ns | 0.13 | 6.1 | PASS |
-| slew_500ps | 0.70 | 10 | 10 | 10fF | 500ps | 0.8ns | 0.17 | 8.3 | PASS |
-| pw_0p2ns | 0.70 | 10 | 10 | 10fF | 100ps | 0.2ns | 0.31 | 9.9 | PASS |
-| pw_0p5ns | 0.70 | 10 | 10 | 10fF | 100ps | 0.5ns | 0.26 | 9.9 | PASS |
-| pw_2p0ns | 0.70 | 10 | 10 | 10fF | 100ps | 2.0ns | 0.15 | 9.9 | PASS |
-| nfin_1 | 0.70 | 1 | 1 | 10fF | 100ps | 0.8ns | 0.03 | 0.9 | PASS |
-| nfin_2 | 0.70 | 2 | 2 | 10fF | 100ps | 0.8ns | 0.05 | 1.3 | PASS |
-| nfin_5 | 0.70 | 5 | 5 | 10fF | 100ps | 0.8ns | 0.10 | 3.9 | PASS |
-| nfin_20 | 0.70 | 20 | 20 | 10fF | 100ps | 0.8ns | 0.30 | 17.6 | PASS |
-| pn_0p5 | 0.70 | 10 | 5 | 10fF | 100ps | 0.8ns | 0.18 | 8.9 | PASS |
-| pn_1p5 | 0.70 | 10 | 15 | 10fF | 100ps | 0.8ns | 0.25 | 12.0 | PASS |
-| pn_2p0 | 0.70 | 10 | 20 | 10fF | 100ps | 0.8ns | 0.26 | 13.2 | PASS |
+| vdd_0p5 | 0.50 | 10 | 10 | 10fF | 100ps | 0.8ns | 0.14 | 4.7 | PASS |
+| vdd_0p6 | 0.60 | 10 | 10 | 10fF | 100ps | 0.8ns | 0.17 | 6.1 | PASS |
+| baseline | 0.70 | 10 | 10 | 10fF | 100ps | 0.8ns | 0.19 | 7.6 | PASS |
+| vdd_0p8 | 0.80 | 10 | 10 | 10fF | 100ps | 0.8ns | 0.21 | 12.9 | PASS |
+| cload_1fF | 0.70 | 10 | 10 | 1fF | 100ps | 0.8ns | 0.84 | 42.0 | PASS |
+| cload_5fF | 0.70 | 10 | 10 | 5fF | 100ps | 0.8ns | 0.37 | 20.8 | PASS |
+| cload_50fF | 0.70 | 10 | 10 | 50fF | 100ps | 0.8ns | 0.04 | 1.7 | PASS |
+| cload_100fF | 0.70 | 10 | 10 | 100fF | 100ps | 0.8ns | 0.02 | 0.9 | PASS |
+| slew_10ps | 0.70 | 10 | 10 | 10fF | 10ps | 0.8ns | 0.01 | 0.9 | PASS |
+| slew_50ps | 0.70 | 10 | 10 | 10fF | 50ps | 0.8ns | 0.09 | 4.0 | PASS |
+| slew_500ps | 0.70 | 10 | 10 | 10fF | 500ps | 0.8ns | 0.05 | 3.8 | PASS |
+| pw_0p2ns | 0.70 | 10 | 10 | 10fF | 100ps | 0.2ns | 0.26 | 7.6 | PASS |
+| pw_0p5ns | 0.70 | 10 | 10 | 10fF | 100ps | 0.5ns | 0.22 | 7.6 | PASS |
+| pw_2p0ns | 0.70 | 10 | 10 | 10fF | 100ps | 2.0ns | 0.13 | 7.6 | PASS |
+| nfin_1 | 0.70 | 1 | 1 | 10fF | 100ps | 0.8ns | 0.02 | 0.9 | PASS |
+| nfin_2 | 0.70 | 2 | 2 | 10fF | 100ps | 0.8ns | 0.04 | 1.7 | PASS |
+| nfin_5 | 0.70 | 5 | 5 | 10fF | 100ps | 0.8ns | 0.11 | 4.1 | PASS |
+| nfin_20 | 0.70 | 20 | 20 | 10fF | 100ps | 0.8ns | 0.37 | 20.8 | PASS |
+| pn_0p5 | 0.70 | 10 | 5 | 10fF | 100ps | 0.8ns | 0.16 | 7.6 | PASS |
+| pn_1p5 | 0.70 | 10 | 15 | 10fF | 100ps | 0.8ns | 0.20 | 7.9 | PASS |
+| pn_2p0 | 0.70 | 10 | 20 | 10fF | 100ps | 0.8ns | 0.23 | 12.9 | PASS |
 
 Run: `conda run -n pycircuitsim python tests/verify_bsimcmg_tran_comprehensive.py`
 

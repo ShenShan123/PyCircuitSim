@@ -317,10 +317,10 @@ class NMOS_CMG(Component):
             "s": voltages.get(self.nodes[2], 0.0),
             "b": voltages.get(self.nodes[3], 0.0),
         }
-        # Trapezoidal integration state for intrinsic caps
-        self._i_prev_cgd = 0.0
-        self._i_prev_cgs = 0.0
-        self._i_prev_cdd = 0.0
+        # Terminal capacitive currents for charge-based trapezoidal integration
+        # At DC operating point, dQ/dt = 0, so all initial currents are 0
+        self._i_prev_gate = 0.0
+        self._i_prev_drain = 0.0
 
     def update_charge_state(self, voltages: Dict[str, float],
                             cap_currents: Optional[Dict[str, float]] = None) -> None:
@@ -334,9 +334,8 @@ class NMOS_CMG(Component):
             "b": voltages.get(self.nodes[3], 0.0),
         }
         if cap_currents is not None:
-            self._i_prev_cgd = cap_currents.get("i_cgd", 0.0)
-            self._i_prev_cgs = cap_currents.get("i_cgs", 0.0)
-            self._i_prev_cdd = cap_currents.get("i_cdd", 0.0)
+            self._i_prev_gate = cap_currents.get("i_gate", 0.0)
+            self._i_prev_drain = cap_currents.get("i_drain", 0.0)
 
 
 
@@ -547,10 +546,10 @@ class PMOS_CMG(Component):
             "s": voltages.get(self.nodes[2], 0.0),
             "b": voltages.get(self.nodes[3], 0.0),
         }
-        # Trapezoidal integration state for intrinsic caps
-        self._i_prev_cgd = 0.0
-        self._i_prev_cgs = 0.0
-        self._i_prev_cdd = 0.0
+        # Terminal capacitive currents for charge-based trapezoidal integration
+        # At DC operating point, dQ/dt = 0, so all initial currents are 0
+        self._i_prev_gate = 0.0
+        self._i_prev_drain = 0.0
 
     def update_charge_state(self, voltages: Dict[str, float],
                             cap_currents: Optional[Dict[str, float]] = None) -> None:
@@ -564,6 +563,5 @@ class PMOS_CMG(Component):
             "b": voltages.get(self.nodes[3], 0.0),
         }
         if cap_currents is not None:
-            self._i_prev_cgd = cap_currents.get("i_cgd", 0.0)
-            self._i_prev_cgs = cap_currents.get("i_cgs", 0.0)
-            self._i_prev_cdd = cap_currents.get("i_cdd", 0.0)
+            self._i_prev_gate = cap_currents.get("i_gate", 0.0)
+            self._i_prev_drain = cap_currents.get("i_drain", 0.0)

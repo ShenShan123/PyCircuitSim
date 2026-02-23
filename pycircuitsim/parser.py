@@ -28,7 +28,7 @@ Value suffixes supported:
 - n/N: nano (1e-9)
 - p/P: pico (1e-12)
 """
-from typing import Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 import os
 import re
 from pathlib import Path
@@ -86,19 +86,34 @@ class Parser:
         "7nm_SS.pm",           # Slow-Slow corner
     ]
 
-    def __init__(self, osdi_path: Optional[str] = None, modelcard_base_dir: Optional[str] = None):
+    def __init__(
+        self,
+        osdi_path: Optional[str] = None,
+        modelcard_base_dir: Optional[str] = None,
+        modelcard_path: Optional[str] = None,
+        model_name_map: Optional[Dict[str, str]] = None,
+    ):
         """Initialize an empty parser.
 
         Args:
             osdi_path: Path to BSIM-CMG OSDI binary (defaults to config value)
             modelcard_base_dir: Base directory for modelcard files (defaults to generic modelcards)
+            modelcard_path: Explicit path to a modelcard file (bypasses auto-discovery).
+                Useful for non-ASAP7 technologies with separate NMOS/PMOS files
+                that have been merged into a single file.
+            model_name_map: Mapping from device type ("NMOS"/"PMOS") to the model
+                name inside the modelcard file (e.g. {"NMOS": "nch_svt_mac",
+                "PMOS": "pch_lvt_mac"}). If None, uses ASAP7 auto-detection
+                or falls back to no remapping.
         """
         self.circuit = Circuit()
         self.analysis_type: Optional[str] = None
         self.analysis_params: Dict[str, float] = {}
-        self.models: Dict[str, Dict[str, any]] = {}  # Model definitions
+        self.models: Dict[str, Dict[str, Any]] = {}  # Model definitions
         self._osdi_path = osdi_path or BSIMCMG_OSDI_PATH
         self._modelcard_base_dir = modelcard_base_dir or GENERIC_MODELCARD_DIR
+        self._explicit_modelcard = modelcard_path
+        self._model_name_map = model_name_map
 
         # Allow override of ASAP7 modelcard directory via environment variable
         self._asap7_modelcard_dir = os.environ.get("ASAP7_MODELCARD_DIR", ASAP7_MODELCARD_DIR)
@@ -518,22 +533,29 @@ class Parser:
                 )
 
             # Resolve modelcard path
-            # Support both ASAP7 naming (7nm_TT.pm, 7nm_FF.pm, 7nm_SS.pm)
-            # and generic naming (modelcard.nmos.1, modelcard.pmos.1)
+            # Priority: explicit path > ASAP7 auto-discovery > generic naming
             modelcard_path = None
 
-            # Try ASAP7 naming first
-            for asap7_file in self.ASAP7_MODELCARD_FILES:
-                asap7_path = Path(self._asap7_modelcard_dir) / asap7_file
-                if asap7_path.exists():
-                    modelcard_path = asap7_path
-                    break
+            if self._explicit_modelcard:
+                # Use explicitly provided modelcard path (e.g., merged TSMC file)
+                modelcard_path = Path(self._explicit_modelcard)
+                if not modelcard_path.exists():
+                    raise FileNotFoundError(
+                        f"Explicit modelcard not found: {modelcard_path}"
+                    )
+            else:
+                # Try ASAP7 naming first
+                for asap7_file in self.ASAP7_MODELCARD_FILES:
+                    asap7_path = Path(self._asap7_modelcard_dir) / asap7_file
+                    if asap7_path.exists():
+                        modelcard_path = asap7_path
+                        break
 
-            # Fall back to generic naming
-            if modelcard_path is None:
-                generic_path = Path(self._modelcard_base_dir) / f"modelcard.{model_type.lower()}.1"
-                if generic_path.exists():
-                    modelcard_path = generic_path
+                # Fall back to generic naming
+                if modelcard_path is None:
+                    generic_path = Path(self._modelcard_base_dir) / f"modelcard.{model_type.lower()}.1"
+                    if generic_path.exists():
+                        modelcard_path = generic_path
 
             if modelcard_path is None:
                 raise FileNotFoundError(
@@ -541,15 +563,19 @@ class Parser:
                     f"  - ASAP7 directory: {self._asap7_modelcard_dir} (files: {self.ASAP7_MODELCARD_FILES})\n"
                     f"  - Generic directory: {self._modelcard_base_dir} (modelcard.{model_type.lower()}.1)\n"
                     f"Model referenced: '{model_name}' (type={model_type}, level={level})\n"
-                    f"Hint: Set ASAP7_MODELCARD_DIR environment variable if using ASAP7 PDK."
+                    f"Hint: Set ASAP7_MODELCARD_DIR environment variable if using ASAP7 PDK,\n"
+                    f"or pass modelcard_path= to Parser() for non-ASAP7 technologies."
                 )
 
-            # Determine the model_card_name for ASAP7 modelcards.
-            # ASAP7 modelcards define models like "nmos_rvt", "pmos_rvt" etc.,
-            # which differ from the user's netlist model name (e.g., "nmos1").
-            # Default to RVT (regular Vth) variant if using ASAP7.
+            # Determine the model_card_name (name inside the modelcard file).
+            # Priority: explicit map > ASAP7 auto-detection > no remapping
             model_card_name = None
-            if str(modelcard_path).startswith(str(self._asap7_modelcard_dir)):
+            if self._model_name_map:
+                model_card_name = self._model_name_map.get(model_type.upper())
+            elif str(modelcard_path).startswith(str(self._asap7_modelcard_dir)):
+                # ASAP7 modelcards define models like "nmos_rvt", "pmos_rvt" etc.,
+                # which differ from the user's netlist model name (e.g., "nmos1").
+                # Default to RVT (regular Vth) variant if using ASAP7.
                 if model_type.upper() == 'NMOS':
                     model_card_name = "nmos_rvt"
                 elif model_type.upper() == 'PMOS':

@@ -832,7 +832,8 @@ class TransientSolver:
                  gmin_steps: int = 5,
                  use_pseudo_transient: bool = True,
                  pseudo_transient_steps: int = 3,
-                 pseudo_transient_cap: float = 1e-12):
+                 pseudo_transient_cap: float = 1e-12,
+                 nr_tolerance: float = 1e-7):
         """
         Initialize the Transient Solver.
 
@@ -849,6 +850,7 @@ class TransientSolver:
             use_pseudo_transient: Enable pseudo-transient initialization (default: True)
             pseudo_transient_steps: Number of initial timesteps with pseudo-capacitance (default: 3)
             pseudo_transient_cap: Artificial capacitance value in Farads (default: 1e-12 F)
+            nr_tolerance: Newton-Raphson convergence tolerance (default: 1e-7 V)
 
         Raises:
             ValueError: If dt or t_stop is not positive
@@ -874,6 +876,9 @@ class TransientSolver:
         self.use_pseudo_transient = use_pseudo_transient
         self.pseudo_transient_steps = pseudo_transient_steps
         self.pseudo_transient_cap = pseudo_transient_cap
+
+        # Newton-Raphson convergence tolerance
+        self.nr_tolerance = nr_tolerance
 
         # Store pseudo-capacitor references for cleanup
         self._pseudo_capacitors: List = []
@@ -982,7 +987,7 @@ class TransientSolver:
         voltages = initial_voltages.copy()
 
         # Newton-Raphson parameters (aligned with DC solver)
-        tolerance = 1e-6  # Relaxed from 1e-9 for transient (fast-switching circuits)
+        tolerance = self.nr_tolerance
         max_iterations = 200  # Increased from 100 for difficult convergence
 
         # Calculate Gmin value for this timestep (if enabled)
@@ -1305,8 +1310,10 @@ class TransientSolver:
             s_idx = node_map[source]
             rhs[s_idx] += i_eq
 
-        # --- Intrinsic capacitance stamping (Trapezoidal Rule companion model) ---
-        # Only for BSIM-CMG devices that have capacitance data
+        # --- Charge-based intrinsic capacitance stamping (Trapezoidal Rule) ---
+        # Uses terminal charges Q(V) from compact model for exact integration,
+        # instead of capacitance-based linearization I = C(V) * dV/dt.
+        # Theory: I_t(n+1) = 2/dt * [Q_t(n+1) - Q_t(n)] - I_t(n)
         try:
             from pycircuitsim.models.mosfet_cmg import NMOS_CMG, PMOS_CMG
             is_cmg = isinstance(mosfet, (NMOS_CMG, PMOS_CMG))
@@ -1314,88 +1321,80 @@ class TransientSolver:
             is_cmg = False
 
         if is_cmg and hasattr(mosfet, '_q_prev') and mosfet._q_prev is not None:
+            charges = mosfet.get_charges(voltages)
             caps = mosfet.get_capacitances(voltages)
             dt = self.dt
 
-            # Cgd: between gate and drain
-            cgd = abs(caps.get("cgd", 0.0))
-            if cgd > 1e-20 and dt > 0:
-                g_cgd = 2.0 * cgd / dt
-                v_gd_prev = mosfet._v_prev_tran["g"] - mosfet._v_prev_tran["d"]
-                i_cgd = g_cgd * v_gd_prev + getattr(mosfet, '_i_prev_cgd', 0.0)
+            # Terminal voltages at current NR iterate
+            v_g = voltages.get(gate, 0.0)
+            v_d = voltages.get(drain, 0.0)
+            v_s = voltages.get(source, 0.0)
 
-                # Stamp g_cgd between gate and drain
-                if gate != "0" and gate in node_map:
-                    g_idx = node_map[gate]
-                    mna_matrix[g_idx, g_idx] += g_cgd
-                if drain != "0" and drain in node_map:
-                    d_idx = node_map[drain]
-                    mna_matrix[d_idx, d_idx] += g_cgd
-                if gate != "0" and gate in node_map and drain != "0" and drain in node_map:
-                    g_idx = node_map[gate]
-                    d_idx = node_map[drain]
-                    mna_matrix[g_idx, d_idx] -= g_cgd
-                    mna_matrix[d_idx, g_idx] -= g_cgd
+            # History terms (constant within this timestep)
+            h_g = 2.0 / dt * mosfet._q_prev["qg"] + getattr(mosfet, '_i_prev_gate', 0.0)
+            h_d = 2.0 / dt * mosfet._q_prev["qd"] + getattr(mosfet, '_i_prev_drain', 0.0)
 
-                # Stamp i_cgd to RHS
-                if gate != "0" and gate in node_map:
-                    g_idx = node_map[gate]
-                    rhs[g_idx] += i_cgd
-                if drain != "0" and drain in node_map:
-                    d_idx = node_map[drain]
-                    rhs[d_idx] -= i_cgd
+            # Capacitive currents at NR iterate V0
+            i_g_cap = 2.0 / dt * charges["qg"] - h_g
+            i_d_cap = 2.0 / dt * charges["qd"] - h_d
+            # Source by charge conservation: i_s = -(i_g + i_d)
 
-            # Cgs: between gate and source
-            cgs = abs(caps.get("cgs", 0.0))
-            if cgs > 1e-20 and dt > 0:
-                g_cgs = 2.0 * cgs / dt
-                v_gs_prev = mosfet._v_prev_tran["g"] - mosfet._v_prev_tran["s"]
-                i_cgs = g_cgs * v_gs_prev + getattr(mosfet, '_i_prev_cgs', 0.0)
+            # Jacobian entries: dI_t/dV_j = 2/dt * C_tj
+            cgg = caps.get("cgg", 0.0)
+            cgd = caps.get("cgd", 0.0)
+            cgs = caps.get("cgs", 0.0)
+            cdg = caps.get("cdg", 0.0)
+            cdd = caps.get("cdd", 0.0)
+            # Derived from charge conservation on each terminal
+            cds = -(cdg + cdd)
+            csg = -(cgg + cdg)
+            csd = -(cgd + cdd)
+            css = -(cgs + cds)
 
-                if gate != "0" and gate in node_map:
-                    g_idx = node_map[gate]
-                    mna_matrix[g_idx, g_idx] += g_cgs
-                if source != "0" and source in node_map:
-                    s_idx = node_map[source]
-                    mna_matrix[s_idx, s_idx] += g_cgs
-                if gate != "0" and gate in node_map and source != "0" and source in node_map:
-                    g_idx = node_map[gate]
-                    s_idx = node_map[source]
-                    mna_matrix[g_idx, s_idx] -= g_cgs
-                    mna_matrix[s_idx, g_idx] -= g_cgs
+            scale = 2.0 / dt
 
-                if gate != "0" and gate in node_map:
-                    g_idx = node_map[gate]
-                    rhs[g_idx] += i_cgs
-                if source != "0" and source in node_map:
-                    s_idx = node_map[source]
-                    rhs[s_idx] -= i_cgs
+            # Node indices (None if ground)
+            g_idx = node_map.get(gate) if gate != "0" else None
+            d_idx = node_map.get(drain) if drain != "0" else None
+            s_idx = node_map.get(source) if source != "0" else None
 
-            # Cdd (drain junction): between drain and source
-            cdd = abs(caps.get("cdd", 0.0))
-            if cdd > 1e-20 and dt > 0:
-                g_cdd = 2.0 * cdd / dt
-                v_ds_prev = mosfet._v_prev_tran["d"] - mosfet._v_prev_tran["s"]
-                i_cdd = g_cdd * v_ds_prev + getattr(mosfet, '_i_prev_cdd', 0.0)
+            # --- Stamp Jacobian (conductance matrix) ---
+            # Gate row: dI_g/dV_g, dI_g/dV_d, dI_g/dV_s
+            if g_idx is not None:
+                mna_matrix[g_idx, g_idx] += scale * cgg
+                if d_idx is not None:
+                    mna_matrix[g_idx, d_idx] += scale * cgd
+                if s_idx is not None:
+                    mna_matrix[g_idx, s_idx] += scale * cgs
 
-                if drain != "0" and drain in node_map:
-                    d_idx = node_map[drain]
-                    mna_matrix[d_idx, d_idx] += g_cdd
-                if source != "0" and source in node_map:
-                    s_idx = node_map[source]
-                    mna_matrix[s_idx, s_idx] += g_cdd
-                if drain != "0" and drain in node_map and source != "0" and source in node_map:
-                    d_idx = node_map[drain]
-                    s_idx = node_map[source]
-                    mna_matrix[d_idx, s_idx] -= g_cdd
-                    mna_matrix[s_idx, d_idx] -= g_cdd
+            # Drain row: dI_d/dV_g, dI_d/dV_d, dI_d/dV_s
+            if d_idx is not None:
+                if g_idx is not None:
+                    mna_matrix[d_idx, g_idx] += scale * cdg
+                mna_matrix[d_idx, d_idx] += scale * cdd
+                if s_idx is not None:
+                    mna_matrix[d_idx, s_idx] += scale * cds
 
-                if drain != "0" and drain in node_map:
-                    d_idx = node_map[drain]
-                    rhs[d_idx] += i_cdd
-                if source != "0" and source in node_map:
-                    s_idx = node_map[source]
-                    rhs[s_idx] -= i_cdd
+            # Source row: dI_s/dV_g, dI_s/dV_d, dI_s/dV_s
+            if s_idx is not None:
+                if g_idx is not None:
+                    mna_matrix[s_idx, g_idx] += scale * csg
+                if d_idx is not None:
+                    mna_matrix[s_idx, d_idx] += scale * csd
+                mna_matrix[s_idx, s_idx] += scale * css
+
+            # --- Stamp RHS (NR constant) ---
+            # e_t = I_t(V0) - Σ_j(scale * C_tj * V0_j)
+            e_g = i_g_cap - scale * (cgg * v_g + cgd * v_d + cgs * v_s)
+            e_d = i_d_cap - scale * (cdg * v_g + cdd * v_d + cds * v_s)
+            e_s = -(e_g + e_d)  # Charge conservation
+
+            if g_idx is not None:
+                rhs[g_idx] -= e_g
+            if d_idx is not None:
+                rhs[d_idx] -= e_d
+            if s_idx is not None:
+                rhs[s_idx] -= e_s
 
 
     def solve(self) -> Dict[str, np.ndarray]:
@@ -1594,35 +1593,18 @@ class TransientSolver:
                         if isinstance(component, Capacitor):
                             component.update_voltage(timestep_voltages)
 
-                    # Update MOSFET charge state for next timestep (with trapezoidal cap currents)
+                    # Update MOSFET charge state for next timestep (charge-based terminal currents)
                     for component in self.circuit.components:
                         if _is_mosfet(component) and hasattr(component, 'update_charge_state'):
-                            # Compute intrinsic cap currents for trapezoidal
-                            cap_currents = {}
-                            if hasattr(component, 'get_capacitances') and hasattr(component, '_v_prev_tran') and component._v_prev_tran is not None:
-                                caps = component.get_capacitances(timestep_voltages)
-                                v_d = timestep_voltages.get(component.nodes[0], 0.0)
-                                v_g = timestep_voltages.get(component.nodes[1], 0.0)
-                                v_s = timestep_voltages.get(component.nodes[2], 0.0)
-                                v_prev = component._v_prev_tran
-                                dt = current_dt
-
-                                cgd = abs(caps.get("cgd", 0.0))
-                                if cgd > 1e-20:
-                                    g_eq = 2.0 * cgd / dt
-                                    cap_currents["i_cgd"] = g_eq * ((v_g - v_d) - (v_prev["g"] - v_prev["d"])) - getattr(component, '_i_prev_cgd', 0.0)
-
-                                cgs = abs(caps.get("cgs", 0.0))
-                                if cgs > 1e-20:
-                                    g_eq = 2.0 * cgs / dt
-                                    cap_currents["i_cgs"] = g_eq * ((v_g - v_s) - (v_prev["g"] - v_prev["s"])) - getattr(component, '_i_prev_cgs', 0.0)
-
-                                cdd_val = abs(caps.get("cdd", 0.0))
-                                if cdd_val > 1e-20:
-                                    g_eq = 2.0 * cdd_val / dt
-                                    cap_currents["i_cdd"] = g_eq * ((v_d - v_s) - (v_prev["d"] - v_prev["s"])) - getattr(component, '_i_prev_cdd', 0.0)
-
-                            component.update_charge_state(timestep_voltages, cap_currents)
+                            terminal_currents = {}
+                            if hasattr(component, '_q_prev') and component._q_prev is not None:
+                                charges_new = component.get_charges(timestep_voltages)
+                                dt_eff = current_dt
+                                h_g = 2.0 / dt_eff * component._q_prev["qg"] + getattr(component, '_i_prev_gate', 0.0)
+                                h_d = 2.0 / dt_eff * component._q_prev["qd"] + getattr(component, '_i_prev_drain', 0.0)
+                                terminal_currents["i_gate"] = 2.0 / dt_eff * charges_new["qg"] - h_g
+                                terminal_currents["i_drain"] = 2.0 / dt_eff * charges_new["qd"] - h_d
+                            component.update_charge_state(timestep_voltages, terminal_currents)
 
                     if self.debug and dt_reduction_count > 0:
                         print(f"  Converged at t={current_time:.2e}s with reduced dt={current_dt:.2e}")

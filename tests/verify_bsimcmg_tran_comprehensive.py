@@ -462,6 +462,7 @@ def run_pycircuitsim(netlist_path: Path, config: TestConfig) -> Dict[str, np.nda
         pseudo_transient_steps=5,
         pseudo_transient_cap=1e-12,
         debug=False,
+        nr_tolerance=1e-7,
     )
     results = solver.solve()
 
