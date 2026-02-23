@@ -2,17 +2,20 @@
 """
 Comprehensive parametric transient verification: PyCircuitSim vs NGSPICE.
 
-Sweeps VDD, Cload, input slew (tr/tf), and pulse width across 14 unique
-configurations built from a shared baseline.  Each configuration runs an
-NGSPICE reference and a PyCircuitSim simulation, then computes NRMSE.
+Sweeps VDD, Cload, input slew (tr/tf), pulse width, NFIN scaling, and P/N
+ratio across 21 unique configurations built from a shared baseline.  Each
+configuration runs an NGSPICE reference and a PyCircuitSim simulation, then
+computes NRMSE.
 
-Test Parameter Matrix (14 configs, 4 sweeps with shared baseline):
-  Sweep 1 – VDD:   0.5, 0.6, *0.7*, 0.8 V        (Cload=10fF, tr=100ps, pw=0.8ns)
-  Sweep 2 – Cload:  1, 5, *10*, 50, 100 fF         (VDD=0.7V, tr=100ps, pw=0.8ns)
-  Sweep 3 – Slew:   10, 50, *100*, 500 ps           (VDD=0.7V, Cload=10fF, pw=0.8ns)
-  Sweep 4 – PW:     0.2, 0.5, *0.8*, 2.0 ns         (VDD=0.7V, Cload=10fF, tr=100ps)
+Test Parameter Matrix (21 configs, 6 sweeps with shared baseline):
+  Sweep 1 – VDD:      0.5, 0.6, *0.7*, 0.8 V          (NFIN=10/10, Cload=10fF, tr=100ps, pw=0.8ns)
+  Sweep 2 – Cload:    1, 5, *10*, 50, 100 fF            (NFIN=10/10, VDD=0.7V, tr=100ps, pw=0.8ns)
+  Sweep 3 – Slew:     10, 50, *100*, 500 ps              (NFIN=10/10, VDD=0.7V, Cload=10fF, pw=0.8ns)
+  Sweep 4 – PW:       0.2, 0.5, *0.8*, 2.0 ns            (NFIN=10/10, VDD=0.7V, Cload=10fF, tr=100ps)
+  Sweep 5 – NFIN:     1, 2, 5, *10*, 20  (equal P/N)     (VDD=0.7V, Cload=10fF, tr=100ps, pw=0.8ns)
+  Sweep 6 – P/N ratio: 0.5, *1.0*, 1.5, 2.0              (NFIN_N=10, VDD=0.7V, Cload=10fF, tr=100ps, pw=0.8ns)
 
-  *baseline* config (VDD=0.7V, 10fF, 100ps, 0.8ns) is shared across sweeps.
+  *baseline* config (VDD=0.7V, NFIN=10/10, 10fF, 100ps, 0.8ns) is shared across sweeps.
 """
 from __future__ import annotations
 
@@ -60,9 +63,6 @@ from pycmg.testing import bake_inst_params
 # Device constants
 # ---------------------------------------------------------------------------
 L: float = 30e-9
-NFIN: int = 10
-NMOS_INST_PARAMS: Dict[str, Any] = {"L": L, "NFIN": float(NFIN), "DEVTYPE": 1}
-PMOS_INST_PARAMS: Dict[str, Any] = {"L": L, "NFIN": float(NFIN), "DEVTYPE": 0}
 
 # Acceptance criterion
 NRMSE_THRESHOLD: float = 0.05  # 5% of Vdd
@@ -84,7 +84,11 @@ class TestConfig:
     tf: float           # Input fall time [s]
     pw: float           # Pulse width [s]
     name: str           # Human-readable tag (e.g. "baseline", "vdd_0p5")
-    sweep_type: str     # Grouping key: "vdd", "cload", "slew", "pw"
+    sweep_type: str     # Grouping key: "vdd", "cload", "slew", "pw", "nfin", "pn_ratio"
+
+    # Geometry (fin counts)
+    nfin_n: int = 10    # NMOS fin count
+    nfin_p: int = 10    # PMOS fin count
 
     # PULSE low / high voltages
     pulse_v1: float = 0.0
@@ -98,8 +102,10 @@ class TestConfig:
 
     @property
     def tau_est(self) -> float:
-        """Rough RC time constant estimate."""
-        return max(self.cload / 1e-4, 0.1e-9)
+        """Rough RC time constant estimate, scaled by fin count."""
+        nfin_min = min(self.nfin_n, self.nfin_p)
+        i_est = nfin_min * 1e-5  # ~10µA per fin (ASAP7 7nm estimate)
+        return max(self.cload * self.vdd / i_est, 0.1e-9)
 
     @property
     def td(self) -> float:
@@ -132,6 +138,7 @@ class TestConfig:
         """One-line summary string."""
         return (
             f"{self.name:20s}  VDD={self.vdd:.2f}V  "
+            f"NFIN={self.nfin_n}/{self.nfin_p}  "
             f"Cload={self.cload*1e15:.0f}fF  "
             f"tr/tf={self.tr*1e12:.0f}ps  "
             f"pw={self.pw*1e9:.1f}ns  "
@@ -205,6 +212,38 @@ def _build_configs() -> List[TestConfig]:
             )
         )
 
+    # ---- Sweep 5: NFIN scaling, equal P/N (4 more, NFIN=10 is baseline) --
+    for nfin in [1, 2, 5, 20]:
+        configs.append(
+            TestConfig(
+                vdd=0.7,
+                cload=10e-15,
+                tr=100e-12,
+                tf=100e-12,
+                pw=0.8e-9,
+                name=f"nfin_{nfin}",
+                sweep_type="nfin",
+                nfin_n=nfin,
+                nfin_p=nfin,
+            )
+        )
+
+    # ---- Sweep 6: P/N ratio (3 more, P/N=1.0 is baseline) ---------------
+    for nfin_p, tag in [(5, "0p5"), (15, "1p5"), (20, "2p0")]:
+        configs.append(
+            TestConfig(
+                vdd=0.7,
+                cload=10e-15,
+                tr=100e-12,
+                tf=100e-12,
+                pw=0.8e-9,
+                name=f"pn_{tag}",
+                sweep_type="pn_ratio",
+                nfin_n=10,
+                nfin_p=nfin_p,
+            )
+        )
+
     return configs
 
 
@@ -212,15 +251,24 @@ ALL_CONFIGS: List[TestConfig] = _build_configs()
 
 
 # ---------------------------------------------------------------------------
-# Baked modelcard (shared across all configs)
+# Per-geometry baked modelcard cache
 # ---------------------------------------------------------------------------
-def create_baked_modelcard() -> Path:
-    """Create a combined baked modelcard for NGSPICE OSDI (once per run)."""
-    combined = RESULTS_DIR / "combined_baked.lib"
-    bake_inst_params(MODELCARD_PATH, combined, "nmos_rvt", NMOS_INST_PARAMS)
-    bake_inst_params(combined, combined, "pmos_rvt", PMOS_INST_PARAMS)
-    print(f"[NGSPICE] Baked modelcard: {combined}")
-    return combined
+_baked_cache: Dict[Tuple[int, int], Path] = {}
+
+
+def get_or_create_baked_modelcard(nfin_n: int, nfin_p: int) -> Path:
+    """Return a baked modelcard for the given NFIN geometry, creating if needed."""
+    key = (nfin_n, nfin_p)
+    if key in _baked_cache:
+        return _baked_cache[key]
+    baked = RESULTS_DIR / f"baked_nfin_n{nfin_n}_p{nfin_p}.lib"
+    nmos_params: Dict[str, Any] = {"L": L, "NFIN": float(nfin_n), "DEVTYPE": 1}
+    pmos_params: Dict[str, Any] = {"L": L, "NFIN": float(nfin_p), "DEVTYPE": 0}
+    bake_inst_params(MODELCARD_PATH, baked, "nmos_rvt", nmos_params)
+    bake_inst_params(baked, baked, "pmos_rvt", pmos_params)
+    _baked_cache[key] = baked
+    print(f"[NGSPICE] Baked modelcard (NFIN_N={nfin_n}, NFIN_P={nfin_p}): {baked}")
+    return baked
 
 
 # ---------------------------------------------------------------------------
@@ -337,7 +385,7 @@ def create_pycircuitsim_netlist(config: TestConfig) -> Path:
     netlist_path = RESULTS_DIR / f"pycircuitsim_{config.name}.sp"
     content = f"""\
 * BSIM-CMG Inverter Transient - PyCircuitSim ({config.name})
-* VDD={config.vdd}V, L={L*1e9:.0f}n, NFIN={NFIN}, Cload={config.cload*1e15:.0f}fF
+* VDD={config.vdd}V, L={L*1e9:.0f}n, NFIN_N={config.nfin_n}, NFIN_P={config.nfin_p}, Cload={config.cload*1e15:.0f}fF
 
 * Power supply
 Vdd 1 0 {config.vdd}
@@ -346,10 +394,10 @@ Vdd 1 0 {config.vdd}
 Vin 2 0 PULSE {config.pulse_v1} {config.pulse_v2} {config.td} {config.tr} {config.tf} {config.pw} {config.per}
 
 * PMOS (drain=out, gate=in, source=Vdd, bulk=Vdd)
-Mp1 3 2 1 1 pmos1 L={L*1e9:.0f}n NFIN={NFIN}
+Mp1 3 2 1 1 pmos1 L={L*1e9:.0f}n NFIN={config.nfin_p}
 
 * NMOS (drain=out, gate=in, source=GND, bulk=GND)
-Mn1 3 2 0 0 nmos1 L={L*1e9:.0f}n NFIN={NFIN}
+Mn1 3 2 0 0 nmos1 L={L*1e9:.0f}n NFIN={config.nfin_n}
 
 * Load capacitance
 Cload 3 0 {config.cload}
@@ -441,6 +489,8 @@ SWEEP_COLORS: Dict[str, str] = {
     "cload": "tab:green",
     "slew": "tab:orange",
     "pw": "tab:purple",
+    "nfin": "tab:red",
+    "pn_ratio": "tab:brown",
 }
 
 
@@ -527,7 +577,8 @@ def plot_single_comparison(
     ax1.set_ylabel("V(in) [V]")
     ax1.set_title(
         f"BSIM-CMG Inverter Transient: {config.name}\n"
-        f"VDD={config.vdd:.2f}V  Cload={config.cload*1e15:.0f}fF  "
+        f"VDD={config.vdd:.2f}V  NFIN={config.nfin_n}/{config.nfin_p}  "
+        f"Cload={config.cload*1e15:.0f}fF  "
         f"tr/tf={config.tr*1e12:.0f}ps  pw={config.pw*1e9:.1f}ns"
     )
     ax1.legend(loc="upper right")
@@ -585,10 +636,7 @@ def plot_single_comparison(
 # ---------------------------------------------------------------------------
 # Single-test orchestrator
 # ---------------------------------------------------------------------------
-def run_single_test(
-    config: TestConfig,
-    baked_lib: Path,
-) -> Dict[str, Any]:
+def run_single_test(config: TestConfig) -> Dict[str, Any]:
     """Run NGSPICE + PyCircuitSim for *one* config and return metrics.
 
     Orchestrates the full pipeline for a single parametric point:
@@ -606,6 +654,7 @@ def run_single_test(
         "passed": bool               # nrmse_post < NRMSE_THRESHOLD
     """
     # 1. NGSPICE reference
+    baked_lib = get_or_create_baked_modelcard(config.nfin_n, config.nfin_p)
     ng_netlist = create_ngspice_netlist(config, baked_lib)
     ng_data = run_ngspice(ng_netlist, config)
 
@@ -686,6 +735,8 @@ def plot_summary(results: List[Dict[str, Any]], save_path: Path) -> None:
         Patch(facecolor=SWEEP_COLORS["cload"], edgecolor="black", label="Cload sweep"),
         Patch(facecolor=SWEEP_COLORS["slew"], edgecolor="black", label="Slew sweep"),
         Patch(facecolor=SWEEP_COLORS["pw"], edgecolor="black", label="PW sweep"),
+        Patch(facecolor=SWEEP_COLORS["nfin"], edgecolor="black", label="NFIN sweep"),
+        Patch(facecolor=SWEEP_COLORS["pn_ratio"], edgecolor="black", label="P/N ratio sweep"),
         plt.Line2D([0], [0], color="red", linewidth=1.5, linestyle="--",
                     label=f"Threshold ({NRMSE_THRESHOLD*100:.0f}%)"),
     ]
@@ -707,7 +758,7 @@ def main() -> int:
 
     print("=" * 78)
     print("BSIM-CMG Comprehensive Transient Verification")
-    print(f"  {len(ALL_CONFIGS)} configurations across 4 parameter sweeps")
+    print(f"  {len(ALL_CONFIGS)} configurations across 6 parameter sweeps")
     print(f"  Acceptance: NRMSE < {NRMSE_THRESHOLD*100:.0f}% of Vdd (post-settling)")
     print(f"  Startup exclusion: {STARTUP_EXCLUSION*1e9:.1f}ns")
     print("=" * 78)
@@ -716,10 +767,6 @@ def main() -> int:
     print("\nTest matrix:")
     for i, cfg in enumerate(ALL_CONFIGS):
         print(f"  [{i+1:2d}] {cfg.summary()}")
-
-    # Bake modelcard once
-    print("\n--- Baking modelcard ---")
-    baked_lib = create_baked_modelcard()
 
     # Run each configuration
     results: List[Dict[str, Any]] = []
@@ -730,13 +777,13 @@ def main() -> int:
     for i, cfg in enumerate(ALL_CONFIGS):
         print(f"\n{'='*78}")
         print(f"[{i+1}/{len(ALL_CONFIGS)}] {cfg.name}  (sweep={cfg.sweep_type})")
-        print(f"  VDD={cfg.vdd:.2f}V  Cload={cfg.cload*1e15:.0f}fF  "
-              f"tr/tf={cfg.tr*1e12:.0f}ps  pw={cfg.pw*1e9:.1f}ns")
+        print(f"  VDD={cfg.vdd:.2f}V  NFIN={cfg.nfin_n}/{cfg.nfin_p}  "
+              f"Cload={cfg.cload*1e15:.0f}fF  tr/tf={cfg.tr*1e12:.0f}ps  pw={cfg.pw*1e9:.1f}ns")
         print(f"  td={cfg.td*1e9:.1f}ns  per={cfg.per*1e9:.1f}ns  "
               f"tstop={cfg.tstop*1e9:.1f}ns  tstep={cfg.tstep*1e12:.1f}ps")
 
         try:
-            result = run_single_test(cfg, baked_lib)
+            result = run_single_test(cfg)
             results.append(result)
             if result["passed"]:
                 n_pass += 1
@@ -760,8 +807,9 @@ def main() -> int:
     print("SUMMARY TABLE")
     print(f"{'='*78}")
     header = (
-        f"{'Config Name':20s} | {'VDD':>5s} | {'Cload':>7s} | {'tr/tf':>7s} | "
-        f"{'pw':>6s} | {'NRMSE(%)':>9s} | {'MaxErr(mV)':>10s} | {'Status':>6s}"
+        f"{'Config Name':20s} | {'VDD':>5s} | {'NFIN_N':>6s} | {'NFIN_P':>6s} | "
+        f"{'Cload':>7s} | {'tr/tf':>7s} | {'pw':>6s} | "
+        f"{'NRMSE(%)':>9s} | {'MaxErr(mV)':>10s} | {'Status':>6s}"
     )
     print(header)
     print("-" * len(header))
@@ -770,15 +818,15 @@ def main() -> int:
         cfg: TestConfig = r["config"]
         if "error" in r:
             print(
-                f"{cfg.name:20s} | {cfg.vdd:5.2f} | {cfg.cload*1e15:5.0f}fF | "
-                f"{cfg.tr*1e12:5.0f}ps | {cfg.pw*1e9:4.1f}ns | "
+                f"{cfg.name:20s} | {cfg.vdd:5.2f} | {cfg.nfin_n:6d} | {cfg.nfin_p:6d} | "
+                f"{cfg.cload*1e15:5.0f}fF | {cfg.tr*1e12:5.0f}ps | {cfg.pw*1e9:4.1f}ns | "
                 f"{'ERROR':>9s} | {'ERROR':>10s} | {'ERROR':>6s}"
             )
         else:
             status = "PASS" if r["passed"] else "FAIL"
             print(
-                f"{cfg.name:20s} | {cfg.vdd:5.2f} | {cfg.cload*1e15:5.0f}fF | "
-                f"{cfg.tr*1e12:5.0f}ps | {cfg.pw*1e9:4.1f}ns | "
+                f"{cfg.name:20s} | {cfg.vdd:5.2f} | {cfg.nfin_n:6d} | {cfg.nfin_p:6d} | "
+                f"{cfg.cload*1e15:5.0f}fF | {cfg.tr*1e12:5.0f}ps | {cfg.pw*1e9:4.1f}ns | "
                 f"{r['nrmse_post']*100:9.2f} | {r['max_err_mV']:10.1f} | "
                 f"{status:>6s}"
             )
@@ -793,12 +841,13 @@ def main() -> int:
     # -----------------------------------------------------------------------
     csv_path = RESULTS_DIR / "comprehensive_summary.csv"
     with csv_path.open("w") as f:
-        f.write("name,sweep_type,vdd,cload_fF,tr_ps,pw_ns,nrmse_pct,max_err_mV,status\n")
+        f.write("name,sweep_type,vdd,nfin_n,nfin_p,cload_fF,tr_ps,pw_ns,nrmse_pct,max_err_mV,status\n")
         for r in results:
             cfg = r["config"]
             if "error" in r:
                 f.write(
                     f"{cfg.name},{cfg.sweep_type},{cfg.vdd:.2f},"
+                    f"{cfg.nfin_n},{cfg.nfin_p},"
                     f"{cfg.cload*1e15:.1f},{cfg.tr*1e12:.1f},{cfg.pw*1e9:.2f},"
                     f",,ERROR\n"
                 )
@@ -806,6 +855,7 @@ def main() -> int:
                 status = "PASS" if r["passed"] else "FAIL"
                 f.write(
                     f"{cfg.name},{cfg.sweep_type},{cfg.vdd:.2f},"
+                    f"{cfg.nfin_n},{cfg.nfin_p},"
                     f"{cfg.cload*1e15:.1f},{cfg.tr*1e12:.1f},{cfg.pw*1e9:.2f},"
                     f"{r['nrmse_post']*100:.4f},{r['max_err_mV']:.2f},{status}\n"
                 )

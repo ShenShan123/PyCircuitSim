@@ -141,12 +141,13 @@ tests/                  # Validation scripts & NGSPICE comparison
 - [x] **Skip convergence aids with DC OP** — pseudo-transient and Gmin stepping skipped when valid DC OP is provided
 - [x] **Results:** NRMSE 2.1% → **0.23%** (post-settling), full-range 14.2% → **0.29%**, max error 94mV → **9.9mV**
 
-### Phase 8: Comprehensive Transient Test Suite ✅ Complete (2026-02-22)
-- [x] **Parametric test framework** — TestConfig dataclass with adaptive timing, 14 unique configurations
-- [x] **4-sweep coverage** — VDD (0.5-0.8V), Cload (1-100fF), slew (10-500ps), pulse width (0.2-2.0ns)
+### Phase 8: Comprehensive Transient Test Suite ✅ Complete (2026-02-22, updated 2026-02-23)
+- [x] **Parametric test framework** — TestConfig dataclass with adaptive timing, 21 unique configurations
+- [x] **6-sweep coverage** — VDD (0.5-0.8V), Cload (1-100fF), slew (10-500ps), pulse width (0.2-2.0ns), NFIN scaling (1-20), P/N ratio (0.5-2.0)
+- [x] **Geometry sweep** (2026-02-23) — Per-config NFIN_N/NFIN_P, per-geometry baked modelcard caching, NFIN-aware tau_est
 - [x] **Automated NGSPICE comparison** — Per-config netlist generation, wrdata parsing, interpolation
 - [x] **Summary reporting** — Formatted table, CSV export, color-coded bar chart by sweep type
-- [x] **Results:** All 14 configs PASS (NRMSE < 5%), worst case 0.95% (Cload=1fF), best 0.03% (Cload=100fF)
+- [x] **Results:** All 21 configs PASS (NRMSE < 5%), worst case 0.95% (Cload=1fF), best 0.03% (Cload=100fF, NFIN=1)
 
 ### Future Work
 - [ ] **Expanded Test Suite**
@@ -460,27 +461,34 @@ All verification scripts in `tests/`:
 
 Run all: `conda run -n pycircuitsim python tests/verify_bsimcmg_op.py && conda run -n pycircuitsim python tests/verify_bsimcmg_dc.py && conda run -n pycircuitsim python tests/verify_bsimcmg_tran.py`
 
-### Comprehensive Transient Verification (Phase 8, 2026-02-22)
+### Comprehensive Transient Verification (Phase 8, 2026-02-22, updated 2026-02-23)
 
-14 parametric configurations sweeping VDD, Cload, input slew, and pulse width.
+21 parametric configurations sweeping VDD, Cload, input slew, pulse width, NFIN scaling, and P/N ratio.
 Script: `tests/verify_bsimcmg_tran_comprehensive.py`
 
-| Config | VDD | Cload | tr/tf | pw | NRMSE(%) | MaxErr(mV) | Status |
-|--------|-----|-------|-------|----|----------|------------|--------|
-| vdd_0p5 | 0.50 | 10fF | 100ps | 0.8ns | 0.17 | 5.2 | PASS |
-| vdd_0p6 | 0.60 | 10fF | 100ps | 0.8ns | 0.22 | 10.1 | PASS |
-| baseline | 0.70 | 10fF | 100ps | 0.8ns | 0.22 | 9.9 | PASS |
-| vdd_0p8 | 0.80 | 10fF | 100ps | 0.8ns | 0.20 | 11.1 | PASS |
-| cload_1fF | 0.70 | 1fF | 100ps | 0.8ns | 0.95 | 67.3 | PASS |
-| cload_5fF | 0.70 | 5fF | 100ps | 0.8ns | 0.30 | 17.6 | PASS |
-| cload_50fF | 0.70 | 50fF | 100ps | 0.8ns | 0.04 | 1.3 | PASS |
-| cload_100fF | 0.70 | 100fF | 100ps | 0.8ns | 0.03 | 0.9 | PASS |
-| slew_10ps | 0.70 | 10fF | 10ps | 0.8ns | 0.15 | 7.2 | PASS |
-| slew_50ps | 0.70 | 10fF | 50ps | 0.8ns | 0.13 | 6.1 | PASS |
-| slew_500ps | 0.70 | 10fF | 500ps | 0.8ns | 0.17 | 8.3 | PASS |
-| pw_0p2ns | 0.70 | 10fF | 100ps | 0.2ns | 0.31 | 9.9 | PASS |
-| pw_0p5ns | 0.70 | 10fF | 100ps | 0.5ns | 0.26 | 9.9 | PASS |
-| pw_2p0ns | 0.70 | 10fF | 100ps | 2.0ns | 0.15 | 9.9 | PASS |
+| Config | VDD | NFIN_N | NFIN_P | Cload | tr/tf | pw | NRMSE(%) | MaxErr(mV) | Status |
+|--------|-----|--------|--------|-------|-------|----|----------|------------|--------|
+| vdd_0p5 | 0.50 | 10 | 10 | 10fF | 100ps | 0.8ns | 0.17 | 5.2 | PASS |
+| vdd_0p6 | 0.60 | 10 | 10 | 10fF | 100ps | 0.8ns | 0.22 | 10.1 | PASS |
+| baseline | 0.70 | 10 | 10 | 10fF | 100ps | 0.8ns | 0.22 | 9.9 | PASS |
+| vdd_0p8 | 0.80 | 10 | 10 | 10fF | 100ps | 0.8ns | 0.20 | 11.1 | PASS |
+| cload_1fF | 0.70 | 10 | 10 | 1fF | 100ps | 0.8ns | 0.95 | 67.3 | PASS |
+| cload_5fF | 0.70 | 10 | 10 | 5fF | 100ps | 0.8ns | 0.30 | 17.6 | PASS |
+| cload_50fF | 0.70 | 10 | 10 | 50fF | 100ps | 0.8ns | 0.04 | 1.3 | PASS |
+| cload_100fF | 0.70 | 10 | 10 | 100fF | 100ps | 0.8ns | 0.03 | 0.9 | PASS |
+| slew_10ps | 0.70 | 10 | 10 | 10fF | 10ps | 0.8ns | 0.15 | 7.2 | PASS |
+| slew_50ps | 0.70 | 10 | 10 | 10fF | 50ps | 0.8ns | 0.13 | 6.1 | PASS |
+| slew_500ps | 0.70 | 10 | 10 | 10fF | 500ps | 0.8ns | 0.17 | 8.3 | PASS |
+| pw_0p2ns | 0.70 | 10 | 10 | 10fF | 100ps | 0.2ns | 0.31 | 9.9 | PASS |
+| pw_0p5ns | 0.70 | 10 | 10 | 10fF | 100ps | 0.5ns | 0.26 | 9.9 | PASS |
+| pw_2p0ns | 0.70 | 10 | 10 | 10fF | 100ps | 2.0ns | 0.15 | 9.9 | PASS |
+| nfin_1 | 0.70 | 1 | 1 | 10fF | 100ps | 0.8ns | 0.03 | 0.9 | PASS |
+| nfin_2 | 0.70 | 2 | 2 | 10fF | 100ps | 0.8ns | 0.05 | 1.3 | PASS |
+| nfin_5 | 0.70 | 5 | 5 | 10fF | 100ps | 0.8ns | 0.10 | 3.9 | PASS |
+| nfin_20 | 0.70 | 20 | 20 | 10fF | 100ps | 0.8ns | 0.30 | 17.6 | PASS |
+| pn_0p5 | 0.70 | 10 | 5 | 10fF | 100ps | 0.8ns | 0.18 | 8.9 | PASS |
+| pn_1p5 | 0.70 | 10 | 15 | 10fF | 100ps | 0.8ns | 0.25 | 12.0 | PASS |
+| pn_2p0 | 0.70 | 10 | 20 | 10fF | 100ps | 0.8ns | 0.26 | 13.2 | PASS |
 
 Run: `conda run -n pycircuitsim python tests/verify_bsimcmg_tran_comprehensive.py`
 

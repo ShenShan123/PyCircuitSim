@@ -514,7 +514,7 @@ python tests/verify_bsimcmg_dc.py
 # Transient verification (single baseline config)
 python tests/verify_bsimcmg_tran.py
 
-# Comprehensive transient verification (14 parametric configs)
+# Comprehensive transient verification (21 parametric configs)
 python tests/verify_bsimcmg_tran_comprehensive.py
 
 # Run all verification scripts
@@ -551,26 +551,33 @@ python tests/verify_bsimcmg_tran_comprehensive.py
 | NRMSE (full-range) | 0.29% |
 | Max absolute error | 9.9 mV (1.4% of Vdd) |
 
-#### Comprehensive Transient (14 Configurations)
+#### Comprehensive Transient (21 Configurations)
 
-The comprehensive suite sweeps VDD, Cload, input slew, and pulse width. All 14 configurations pass (NRMSE < 5%).
+The comprehensive suite sweeps VDD, Cload, input slew, pulse width, NFIN scaling, and P/N ratio. All 21 configurations pass (NRMSE < 5%).
 
-| Config | VDD | Cload | tr/tf | pw | NRMSE(%) | MaxErr(mV) | Status |
-|--------|-----|-------|-------|----|----------|------------|--------|
-| vdd_0p5 | 0.50V | 10fF | 100ps | 0.8ns | 0.17 | 5.2 | PASS |
-| vdd_0p6 | 0.60V | 10fF | 100ps | 0.8ns | 0.22 | 10.1 | PASS |
-| baseline | 0.70V | 10fF | 100ps | 0.8ns | 0.22 | 9.9 | PASS |
-| vdd_0p8 | 0.80V | 10fF | 100ps | 0.8ns | 0.20 | 11.1 | PASS |
-| cload_1fF | 0.70V | 1fF | 100ps | 0.8ns | 0.95 | 67.3 | PASS |
-| cload_5fF | 0.70V | 5fF | 100ps | 0.8ns | 0.30 | 17.6 | PASS |
-| cload_50fF | 0.70V | 50fF | 100ps | 0.8ns | 0.04 | 1.3 | PASS |
-| cload_100fF | 0.70V | 100fF | 100ps | 0.8ns | 0.03 | 0.9 | PASS |
-| slew_10ps | 0.70V | 10fF | 10ps | 0.8ns | 0.15 | 7.2 | PASS |
-| slew_50ps | 0.70V | 10fF | 50ps | 0.8ns | 0.13 | 6.1 | PASS |
-| slew_500ps | 0.70V | 10fF | 500ps | 0.8ns | 0.17 | 8.3 | PASS |
-| pw_0p2ns | 0.70V | 10fF | 100ps | 0.2ns | 0.31 | 9.9 | PASS |
-| pw_0p5ns | 0.70V | 10fF | 100ps | 0.5ns | 0.26 | 9.9 | PASS |
-| pw_2p0ns | 0.70V | 10fF | 100ps | 2.0ns | 0.15 | 9.9 | PASS |
+| Config | VDD | NFIN_N/P | Cload | tr/tf | pw | NRMSE(%) | MaxErr(mV) | Status |
+|--------|-----|----------|-------|-------|----|----------|------------|--------|
+| vdd_0p5 | 0.50V | 10/10 | 10fF | 100ps | 0.8ns | 0.17 | 5.2 | PASS |
+| vdd_0p6 | 0.60V | 10/10 | 10fF | 100ps | 0.8ns | 0.22 | 10.1 | PASS |
+| baseline | 0.70V | 10/10 | 10fF | 100ps | 0.8ns | 0.22 | 9.9 | PASS |
+| vdd_0p8 | 0.80V | 10/10 | 10fF | 100ps | 0.8ns | 0.20 | 11.1 | PASS |
+| cload_1fF | 0.70V | 10/10 | 1fF | 100ps | 0.8ns | 0.95 | 67.3 | PASS |
+| cload_5fF | 0.70V | 10/10 | 5fF | 100ps | 0.8ns | 0.30 | 17.6 | PASS |
+| cload_50fF | 0.70V | 10/10 | 50fF | 100ps | 0.8ns | 0.04 | 1.3 | PASS |
+| cload_100fF | 0.70V | 10/10 | 100fF | 100ps | 0.8ns | 0.03 | 0.9 | PASS |
+| slew_10ps | 0.70V | 10/10 | 10fF | 10ps | 0.8ns | 0.15 | 7.2 | PASS |
+| slew_50ps | 0.70V | 10/10 | 10fF | 50ps | 0.8ns | 0.13 | 6.1 | PASS |
+| slew_500ps | 0.70V | 10/10 | 10fF | 500ps | 0.8ns | 0.17 | 8.3 | PASS |
+| pw_0p2ns | 0.70V | 10/10 | 10fF | 100ps | 0.2ns | 0.31 | 9.9 | PASS |
+| pw_0p5ns | 0.70V | 10/10 | 10fF | 100ps | 0.5ns | 0.26 | 9.9 | PASS |
+| pw_2p0ns | 0.70V | 10/10 | 10fF | 100ps | 2.0ns | 0.15 | 9.9 | PASS |
+| nfin_1 | 0.70V | 1/1 | 10fF | 100ps | 0.8ns | 0.03 | 0.9 | PASS |
+| nfin_2 | 0.70V | 2/2 | 10fF | 100ps | 0.8ns | 0.05 | 1.3 | PASS |
+| nfin_5 | 0.70V | 5/5 | 10fF | 100ps | 0.8ns | 0.10 | 3.9 | PASS |
+| nfin_20 | 0.70V | 20/20 | 10fF | 100ps | 0.8ns | 0.30 | 17.6 | PASS |
+| pn_0p5 | 0.70V | 10/5 | 10fF | 100ps | 0.8ns | 0.18 | 8.9 | PASS |
+| pn_1p5 | 0.70V | 10/15 | 10fF | 100ps | 0.8ns | 0.25 | 12.0 | PASS |
+| pn_2p0 | 0.70V | 10/20 | 10fF | 100ps | 0.8ns | 0.26 | 13.2 | PASS |
 
 ### Verification Scripts
 
@@ -579,7 +586,7 @@ The comprehensive suite sweeps VDD, Cload, input slew, and pulse width. All 14 c
 | `tests/verify_bsimcmg_op.py` | OP analysis: PyCircuitSim vs NGSPICE for NMOS, PMOS, inverter |
 | `tests/verify_bsimcmg_dc.py` | DC sweep: Id-Vgs and VTC curves vs NGSPICE |
 | `tests/verify_bsimcmg_tran.py` | Transient: single inverter config vs NGSPICE |
-| `tests/verify_bsimcmg_tran_comprehensive.py` | Transient: 14-config parametric sweep vs NGSPICE |
+| `tests/verify_bsimcmg_tran_comprehensive.py` | Transient: 21-config parametric sweep vs NGSPICE (6 sweeps) |
 | `tests/verify_level1_transient.py` | Level 1 transient validation |
 
 Each script generates comparison plots and detailed metrics in `tests/verify_bsimcmg_*_results/`.
