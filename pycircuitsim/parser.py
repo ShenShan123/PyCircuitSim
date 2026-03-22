@@ -612,10 +612,57 @@ class Parser:
             else:
                 raise ValueError(f"Unknown MOSFET model type: {model_type}")
 
+        elif level == 73:
+            # NN-based compact model
+            if NFIN is None:
+                raise ValueError(f"NN MOSFET (LEVEL=73) missing NFIN parameter: {line}")
+
+            try:
+                from pycircuitsim.models.mosfet_nn import NMOS_NN, PMOS_NN
+            except ImportError:
+                raise ImportError(
+                    "NN MOSFET model requires PyTorch. "
+                    "Install: pip install torch"
+                )
+
+            # Resolve model path from .model params or default checkpoint dir
+            from nn_model.config import CHECKPOINT_DIR
+            nn_model_path = model_params.get('MODEL_PATH', None)
+            nn_tech = model_params.get('TECH', None)
+
+            if model_type.upper() == 'NMOS':
+                if nn_model_path is None:
+                    if nn_tech and nn_tech.lower() != 'asap7':
+                        nn_model_path = str(CHECKPOINT_DIR / f"{nn_tech.lower()}_nmos_best.pt")
+                    else:
+                        nn_model_path = str(CHECKPOINT_DIR / "nmos_best.pt")
+                mosfet = NMOS_NN(
+                    name=name,
+                    nodes=nodes,
+                    model_path=nn_model_path,
+                    L=L,
+                    NFIN=NFIN,
+                )
+            elif model_type.upper() == 'PMOS':
+                if nn_model_path is None:
+                    if nn_tech and nn_tech.lower() != 'asap7':
+                        nn_model_path = str(CHECKPOINT_DIR / f"{nn_tech.lower()}_pmos_best.pt")
+                    else:
+                        nn_model_path = str(CHECKPOINT_DIR / "pmos_best.pt")
+                mosfet = PMOS_NN(
+                    name=name,
+                    nodes=nodes,
+                    model_path=nn_model_path,
+                    L=L,
+                    NFIN=NFIN,
+                )
+            else:
+                raise ValueError(f"Unknown MOSFET model type: {model_type}")
+
         else:
             raise ValueError(
                 f"Unsupported MOSFET LEVEL={level}. "
-                f"Supported levels: LEVEL=1 (Shichman-Hodges), LEVEL=72 (BSIM-CMG)"
+                f"Supported levels: LEVEL=1 (Shichman-Hodges), LEVEL=72 (BSIM-CMG), LEVEL=73 (NN)"
             )
 
         self.circuit.add_component(mosfet)

@@ -35,14 +35,20 @@ from pycircuitsim.logger import Logger, IterationInfo
 
 # Helper function to check if component is a MOSFET
 def _is_mosfet(component):
-    """Check if component is a MOSFET (Level 1 or BSIM-CMG)."""
+    """Check if component is a MOSFET (Level 1, BSIM-CMG, or NN)."""
     from pycircuitsim.models.mosfet import NMOS, PMOS
+    types = [NMOS, PMOS]
     try:
         from pycircuitsim.models.mosfet_cmg import NMOS_CMG, PMOS_CMG
-        return isinstance(component, (NMOS, PMOS, NMOS_CMG, PMOS_CMG))
+        types.extend([NMOS_CMG, PMOS_CMG])
     except ImportError:
-        # BSIM-CMG models not available (PyCMG not built)
-        return isinstance(component, (NMOS, PMOS))
+        pass
+    try:
+        from pycircuitsim.models.mosfet_nn import NMOS_NN, PMOS_NN
+        types.extend([NMOS_NN, PMOS_NN])
+    except ImportError:
+        pass
+    return isinstance(component, tuple(types))
 
 
 class DCSolver:
@@ -638,11 +644,18 @@ class DCSolver:
 
         # Check device type
         from pycircuitsim.models.mosfet import PMOS
+        pmos_types = [PMOS]
         try:
             from pycircuitsim.models.mosfet_cmg import PMOS_CMG
-            is_pmos = isinstance(mosfet, (PMOS, PMOS_CMG))
+            pmos_types.append(PMOS_CMG)
         except ImportError:
-            is_pmos = isinstance(mosfet, PMOS)
+            pass
+        try:
+            from pycircuitsim.models.mosfet_nn import PMOS_NN
+            pmos_types.append(PMOS_NN)
+        except ImportError:
+            pass
+        is_pmos = isinstance(mosfet, tuple(pmos_types))
 
         v_d = voltages.get(drain, 0.0)
         v_g = voltages.get(gate, 0.0)
@@ -1278,11 +1291,18 @@ class TransientSolver:
         # Stamp equivalent current source to RHS (same logic as DC solver)
         # See _stamp_mosfet() for detailed derivation.
         from pycircuitsim.models.mosfet import PMOS
+        pmos_types = [PMOS]
         try:
             from pycircuitsim.models.mosfet_cmg import PMOS_CMG
-            is_pmos = isinstance(mosfet, (PMOS, PMOS_CMG))
+            pmos_types.append(PMOS_CMG)
         except ImportError:
-            is_pmos = isinstance(mosfet, PMOS)
+            pass
+        try:
+            from pycircuitsim.models.mosfet_nn import PMOS_NN
+            pmos_types.append(PMOS_NN)
+        except ImportError:
+            pass
+        is_pmos = isinstance(mosfet, tuple(pmos_types))
 
         v_d = voltages.get(drain, 0.0)
         v_g = voltages.get(gate, 0.0)
@@ -1314,13 +1334,20 @@ class TransientSolver:
         # Uses terminal charges Q(V) from compact model for exact integration,
         # instead of capacitance-based linearization I = C(V) * dV/dt.
         # Theory: I_t(n+1) = 2/dt * [Q_t(n+1) - Q_t(n)] - I_t(n)
+        charge_types = []
         try:
             from pycircuitsim.models.mosfet_cmg import NMOS_CMG, PMOS_CMG
-            is_cmg = isinstance(mosfet, (NMOS_CMG, PMOS_CMG))
+            charge_types.extend([NMOS_CMG, PMOS_CMG])
         except ImportError:
-            is_cmg = False
+            pass
+        try:
+            from pycircuitsim.models.mosfet_nn import NMOS_NN, PMOS_NN
+            charge_types.extend([NMOS_NN, PMOS_NN])
+        except ImportError:
+            pass
+        is_charge_model = isinstance(mosfet, tuple(charge_types)) if charge_types else False
 
-        if is_cmg and hasattr(mosfet, '_q_prev') and mosfet._q_prev is not None:
+        if is_charge_model and hasattr(mosfet, '_q_prev') and mosfet._q_prev is not None:
             charges = mosfet.get_charges(voltages)
             caps = mosfet.get_capacitances(voltages)
             dt = self.dt

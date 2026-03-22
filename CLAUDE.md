@@ -1,9 +1,9 @@
 # Project: PyCircuitSim
 
 ## Overview
-Python-based SPICE-like circuit simulator emphasizing educational clarity and modular architecture. 
-**Primary Goal:** specific support for **Level-1 MOS models** and **PyCMG-wrapped CMG models** (LEVEL=72). 
-The simulator must support **Operating Point (OP)**, **DC Sweep**, and **Transient Analysis** for both model types.
+Python-based SPICE-like circuit simulator emphasizing educational clarity and modular architecture.
+**Primary Goal:** specific support for **Level-1 MOS models**, **PyCMG-wrapped CMG models** (LEVEL=72), and **NN-based compact models** (LEVEL=73).
+The simulator must support **Operating Point (OP)**, **DC Sweep**, and **Transient Analysis** for all model types.
 
 **Core Principles:**
 * Pure Python with clean, readable code
@@ -29,7 +29,21 @@ pycircuitsim/
     ├── base.py         # Component abstract base class
     ├── passive.py      # R, C, V, I sources (including PULSE)
     ├── mosfet.py       # Level 1 Shichman-Hodges model
-    └── mosfet_cmg.py   # BSIM-CMG FinFET model (LEVEL=72) via PyCMG
+    ├── mosfet_cmg.py   # BSIM-CMG FinFET model (LEVEL=72) via PyCMG
+    └── mosfet_nn.py    # NN-based compact model (LEVEL=73) via PyTorch
+
+nn_model/                           # NN training pipeline
+├── config.py                       # Hyperparams, paths, tech configs
+├── data/
+│   ├── generate.py                 # PyCMG bias sweep → .npz datasets
+│   ├── normalize.py                # Signed-log + z-score normalization
+│   └── dataset.py                  # PyTorch Dataset/DataLoader
+├── architecture/
+│   ├── direct_loss.py              # DirectNet MLP + DirectLoss (13 outputs)
+│   ├── mosfet_net.py               # Dual-head MLP (MOSFETNet, for reference)
+│   └── physics_loss.py             # Autograd derivative-supervised loss
+├── train.py                        # Training loop (direct13/finetune modes)
+└── checkpoints/                    # Saved model weights (.pt + _norm.npz)
 
 external_compact_models/
 ├── PyCMG/              # BSIM-CMG OSDI wrapper (git submodule)
@@ -45,7 +59,7 @@ tests/                  # Validation scripts & NGSPICE comparison
 ### Key Algorithms
 * **MNA (Modified Nodal Analysis)** - Circuit equation matrix construction
 * **Newton-Raphson** - Non-linear circuit solver
-* **Backward Euler** - Capacitor integration for transient analysis
+* **Trapezoidal Integration** - 2nd-order time integration for transient analysis (charge-based)
 * **Source Stepping** - Two-stage analysis for improved convergence
 
 ## Supported Features
@@ -55,6 +69,7 @@ tests/                  # Validation scripts & NGSPICE comparison
 * Active:
   - NMOS/PMOS Level 1 (Shichman-Hodges)
   - NMOS/PMOS Level 72 (BSIM-CMG FinFET via PyCMG)
+  - NMOS/PMOS Level 73 (NN-based compact model via PyTorch)
 * Sources: DC voltage/current, PULSE
 
 ### Analysis
@@ -63,7 +78,7 @@ tests/                  # Validation scripts & NGSPICE comparison
 * `.tran` - Transient Analysis
 
 ### Directives
-* `.model` - MOSFET model definitions (LEVEL=1 or LEVEL=72)
+* `.model` - MOSFET model definitions (LEVEL=1, LEVEL=72, or LEVEL=73)
 * `.include` - External library files
 * `.ic` - Initial conditions (critical for SRAM/bistable circuits)
 
@@ -137,7 +152,6 @@ tests/                  # Validation scripts & NGSPICE comparison
 - [x] **BSIM-CMG intrinsic capacitances** — Cgd, Cgs, Cdd stamped as companion models in MNA matrix
 - [x] **Trapezoidal integration** — Upgraded from Backward Euler (1st order) to Trapezoidal Rule (2nd order)
 - [x] **Charge state tracking** — get_charges(), init_charge_state(), update_charge_state() in mosfet_cmg.py
-- [x] **Charge state tracking** — get_charges(), init_charge_state(), update_charge_state() in mosfet_cmg.py
 - [x] **Skip convergence aids with DC OP** — pseudo-transient and Gmin stepping skipped when valid DC OP is provided
 - [x] **Results:** NRMSE 2.1% → **0.23%** (post-settling), full-range 14.2% → **0.29%**, max error 94mV → **9.9mV**
 
@@ -185,7 +199,38 @@ Run: `conda run -n pycircuitsim python tests/verify_multi_tech_tran.py`
 | Multi-tech FAIL count | 2/35 | 0/35 | Fixed |
 | Worst TSMC config | 9.74% (TSMC5 vdd_0p6) | 0.51% (TSMC16 cload_1fF) | 19x |
 
+### Phase 11: NN-Based Compact Model (LEVEL=73) ✅ Complete (2026-03-22, updated 2026-03-23)
+- [x] **Training pipeline** — `nn_model/` with data generation, normalization, training loop
+- [x] **Data generation** — PyCMG bias sweeps across Vgs/Vds/NFIN (~39K pts each per tech/device)
+- [x] **Signed-log normalization** — Floor-relative log transform handling 14-decade current range
+- [x] **DirectNet architecture** — 334K-param MLP (256 hidden, 5 layers, SiLU) predicting 13 outputs
+- [x] **PMOS source-relative frame** — Voltage shift by −Vs before NN eval for correct CMOS operation
+- [x] **Voltage clamping** — Input clipping to training range prevents NR extrapolation divergence
+- [x] **Autograd-consistent conductances** — Hybrid eval: gm/gds via autograd of id (Jacobian-consistent), charges/caps direct
+- [x] **Simulator integration** — `mosfet_nn.py` (NMOS_NN/PMOS_NN), parser LEVEL=73 dispatch, solver type checks
+- [x] **Multi-technology support** (2026-03-23) — TechConfig for ASAP7/TSMC5/7/12/16, per-device L and modelcard paths, `--tech` flag in data gen and training, per-tech checkpoint naming (`{tech}_{device}_best.pt`)
+- [x] **Multi-tech verification** (2026-03-23) — `tests/verify_nn_multi_tech.py` tests NMOS DC, PMOS DC, Inverter VTC across all 5 techs
+
+| Tech | NMOS DC (NRMSE) | PMOS DC (NRMSE) | Inverter VTC (NRMSE) | Avg |
+|------|----------------|----------------|---------------------|-----|
+| ASAP7 | 1.11% | 4.44% | 5.66% | 3.74% |
+| TSMC5 | 2.93% | 3.91% | 4.08% | 3.64% |
+| TSMC7 | 3.31% | 2.93% | 7.47% | 4.57% |
+| TSMC12 | 5.10% | 3.33% | 5.95% | 4.79% |
+| TSMC16 | 2.61% | 0.91% | 5.27% | 2.93% |
+
+All 15 tests PASS. Run: `conda run -n pycircuitsim python tests/verify_nn_multi_tech.py`
+
+**Key lessons learned:**
+- **Jacobian consistency is critical**: Direct prediction of gm/gds independently from id causes NR divergence. Must use autograd (`did/dVg`) or derivative supervision
+- **PMOS needs source-relative frame**: Training with Vs=0 but inference with Vs=VDD requires voltage shifting
+- **Training range must cover NR overshoot**: Margin of ±VDD beyond operating range, not just ±0.1V
+- **Signed-log normalization**: `sign(x) * log10(|x|/floor)` preserves sign and handles multi-decade range; original `sign(x) * log10(|x|)` had sign confusion for values < 1
+- **TSMC asymmetric L**: TSMC techs have different L for NMOS (16nm) and PMOS (20nm); TechConfig uses `L_nmos`/`L_pmos` fields
+
 ### Future Work
+- [ ] **Improved NN Accuracy** — Derivative supervision (PhysicsLoss), larger network, longer training
+- [ ] **Transient with NN** — Enable charge-based transient analysis with LEVEL=73
 - [ ] **Expanded Test Suite**
     - [ ] NAND/NOR gates
     - [ ] Ring Oscillator (multi-stage transient)
@@ -206,10 +251,67 @@ Create a netlist (`.sp` file) with your circuit. Examples provided in `examples/
 - `HFIN` - Fin height (optional, uses modelcard default)
 - `FPITCH` - Fin pitch (optional, uses modelcard default)
 
+### NN Model (LEVEL=73)
+```bash
+# Generate training data (supported techs: asap7, tsmc5, tsmc7, tsmc12, tsmc16, all)
+conda run -n pycircuitsim python -m nn_model.data.generate --device both --tech asap7
+# Train NMOS (add --tech tsmc5 for TSMC technologies)
+conda run -n pycircuitsim python -u -m nn_model.train --device-type nmos --mode direct13 --epochs 500 --hidden 256 --layers 5
+# Train PMOS
+conda run -n pycircuitsim python -u -m nn_model.train --device-type pmos --mode direct13 --epochs 500 --hidden 256 --layers 5
+```
+Checkpoints: ASAP7 → `{nmos,pmos}_best.pt`, TSMC → `{tech}_{nmos,pmos}_best.pt` + `_norm.npz`.
+Netlist usage: `.model nmos_nn NMOS (LEVEL=73)` with `L=30n NFIN=10`.
+For TSMC: `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5)` to load tech-specific checkpoint.
+
 ### Output Files
 Results organized in `results/<circuit_name>/<analysis_type>/`:
 - `*_simulation.lis` - Detailed iteration log (HSPICE-like)
 - `*_dc_sweep.csv` / `*_transient.csv` - Waveform data (node voltages + device currents)
+
+## Testing & Verification
+
+### Running Test Suites
+
+**All tests require conda environment activation:**
+```bash
+conda activate pycircuitsim
+```
+
+**Individual Test Suites:**
+- **OP Verification** (Operating Point): `python tests/verify_bsimcmg_op.py`
+  - Tests: NMOS, PMOS, Inverter at Vin=0 and Vin=0.7V
+  - Metric: Relative error vs NGSPICE (target: < 0.02%)
+
+- **DC Sweep Verification**: `python tests/verify_bsimcmg_dc.py`
+  - Tests: NMOS Id-Vgs, PMOS Id-Vgs, Inverter VTC
+  - Metric: NRMSE vs NGSPICE (target: < 0.1%)
+
+- **Transient Verification**: `python tests/verify_bsimcmg_tran.py`
+  - Tests: Inverter pulse response (single baseline config)
+  - Metric: NRMSE post-settling vs NGSPICE (target: < 0.5%)
+
+- **Comprehensive Transient Suite** (21 parametric configs): `python tests/verify_bsimcmg_tran_comprehensive.py`
+  - Sweeps: VDD (0.5-0.8V), Cload (1-100fF), slew (10-500ps), pulse width (0.2-2.0ns), NFIN (1-20), P/N ratio (0.5-2.0)
+  - Results: Summary table, CSV export, bar chart visualization
+
+- **Multi-Technology Transient** (5 techs: ASAP7, TSMC5/7/12/16): `python tests/verify_multi_tech_tran.py`
+  - Baseline test per technology, parametric sweep only if baseline passes
+  - Results: CSV summary + per-tech bar charts
+
+- **NN Multi-Technology** (5 techs: ASAP7, TSMC5/7/12/16): `python tests/verify_nn_multi_tech.py`
+  - Tests: NMOS DC sweep, PMOS DC sweep, Inverter VTC per technology
+  - Metric: NRMSE vs PyCMG ground truth (target: < 15% device, < 20% inverter)
+  - Results: All 15 tests PASS (0.91–7.47% NRMSE)
+
+**Quick Sanity Check (all core tests):**
+```bash
+python tests/verify_bsimcmg_op.py && \
+python tests/verify_bsimcmg_dc.py && \
+python tests/verify_bsimcmg_tran.py
+```
+
+---
 
 ## Development Guidelines
 
@@ -240,12 +342,54 @@ Results organized in `results/<circuit_name>/<analysis_type>/`:
 
 ## Environment & Tools
 * **Conda Environment**: `pycircuitsim` in `/home/shenshan/.conda/envs/pycircuitsim`
+* **PyTorch:** 2.10.0 (CPU, installed via pip in pycircuitsim env)
 * **OpenVAF Compiler:** `/usr/local/bin/openvaf`
 * **NGSPICE Simulator:** `/usr/local/ngspice-45.2/bin/ngspice`
 * **Build System:** CMake / Make
 * **Python Bindings:** PyBind11
 
 ## Critical Bugs and Solutions
+
+### NN Model: Jacobian Consistency Required for NR Convergence (FIXED: 2026-03-22)
+
+**Severity**: Critical — NR diverges completely without this fix
+**Affected**: NN-based MOSFET model (LEVEL=73) in any circuit with >1 device
+
+**Root Cause:**
+When the NN directly predicts id, gm, gds as independent outputs, there is no guarantee
+that `gm = did/dVg`. The solver's NR linearization assumes `id(V+dV) ≈ id(V) + gm*dVg + gds*dVd`,
+which fails if gm/gds are not actual derivatives of id.
+
+**Solution:**
+Use `torch.autograd.grad(id, Vg)` at inference time to compute conductances as exact
+derivatives of the predicted current. This is the `_eval_hybrid13()` method in `mosfet_nn.py`.
+Training still uses direct 13-output prediction (fast); only inference uses autograd (single sample, ~1ms).
+
+**Prevention:**
+- Never use independently-predicted conductances for NR stamping
+- Always derive gm/gds from autograd of id, or use PhysicsLoss during training
+
+---
+
+### NN Model: PMOS Source-Relative Voltage Frame (FIXED: 2026-03-22)
+
+**Severity**: High — PMOS returns zero current in CMOS circuits
+**Affected**: PMOS_NN in any circuit where source ≠ GND
+
+**Root Cause:**
+Training data generated with Vs=0. In CMOS circuits, PMOS source = VDD (e.g., 0.7V).
+The NN receives absolute voltages (Vd=0, Vg=0, Vs=0.7) which are outside the training range.
+
+**Solution:**
+Shift all PMOS voltages by −Vs before feeding to NN: `v_d_nn = v_d - v_s`, `v_g_nn = v_g - v_s`, etc.
+PMOS training data uses negative Vg/Vd range: `[-(VDD+margin), margin]` instead of `[-margin, VDD+margin]`.
+Set `self._is_pmos = True` in PMOS_NN constructor.
+
+**Prevention:**
+- Always train and evaluate in source-relative frame
+- PMOS voltage range must cover negative Vg (PMOS ON when Vsg > Vth, i.e., Vg < Vs)
+
+---
 
 ### CRITICAL: PMOS RHS Stamping & Current Convention (FIXED: 2026-02-09, REVISED: 2026-02-21)
 
@@ -400,7 +544,14 @@ rhs[s_idx] += i_eq
 **6. Update device-type helpers:**
 - Add new types to `_is_mosfet()` in `solver.py`
 - Add new types to PMOS check in `_stamp_mosfet()` (both DC and transient)
+- Add to charge-model check in `_stamp_mosfet_transient()` if model supports charges
 - Search for all `isinstance(component, ...)` calls
+
+**7. For NN-based models specifically:**
+- Conductances MUST be autograd derivatives of id (not independent predictions)
+- PMOS must shift voltages to source-relative frame before NN eval
+- Training voltage range must cover ±VDD beyond operating range for NR overshoot
+- Voltage clamping to training range prevents extrapolation garbage
 
 ---
 
@@ -538,6 +689,28 @@ Run: `conda run -n pycircuitsim python tests/verify_bsimcmg_tran_comprehensive.p
 - **BSIM-CMG** - FinFET compact model (LEVEL=72), integrated via PyCMG
 - **ASAP7** - https://github.com/The-OpenROAD-Project/asap7_pdk_r1p7.git
 - **PyCMG** - https://github.com/ShenShan123/PyCMG.git
+
+## Project Structure Notes
+
+### Important Path References
+- **PyCMG Location**: `/external_compact_models/PyCMG/` (git submodule, updated 2026-02-23)
+- **BSIM-CMG OSDI Binary**: `external_compact_models/PyCMG/build-deep-verify/osdi/bsimcmg.osdi`
+- **Modelcards**: `external_compact_models/PyCMG/tech_model_cards/`
+  - ASAP7: `ASAP7/` (auto-mapped to nmos_rvt/pmos_rvt)
+  - TSMC: Separate NMOS/PMOS modelcards merged on-demand
+- **Results Output**: `results/<circuit_name>/<analysis_type>/`
+  - `.lis` files: Iteration logs
+  - `.csv` files: Waveform data
+  - `.png` files: Plots (when visualization enabled)
+- **Examples**: `examples/` (50+ netlists for different tests/techs)
+- **Test Results**: `tests/verify_*_results/` (generated, not tracked in git)
+
+### Recent Changes (Latest 5 commits)
+1. **Phase 11 Multi-Tech NN** (2026-03-23): NN models for 5 techs, all 15 tests PASS (0.91–7.47% NRMSE)
+2. **Phase 11 NN Model** (2026-03-22): NN compact model (LEVEL=73) with training pipeline, simulator integration
+3. **Phase 10** (2026-02-23): Charge-based transient integration — TSMC accuracy improved 30-300x
+4. **Geometry Sweep** (2026-02-23): Per-config NFIN scaling and P/N ratio parametric testing
+5. **Multi-Technology** (2026-02-23): 5-technology support with per-tech modelcard caching
 
 ## Other Notes
 - Git commit for every significant change
