@@ -250,7 +250,50 @@ Run: `conda run -n pycircuitsim python tests/verify_nn_tran.py`
 - Steady-state accuracy is excellent (< 1% error between edges)
 - ASAP7 accuracy 10x better than TSMC — likely due to symmetric L and simpler geometry
 
+### Phase 13: Multi-Variant NN Model (PHIG Input) — Infrastructure Complete (2026-03-23)
+- [x] **VariantConfig dataclass** — Per-variant model names, PHIG values, and modelcard paths
+- [x] **PHIG as 7th input feature** — `[Vd, Vg, Vs, Vb, NFIN, T, PHIG]` (input_dim=7)
+- [x] **Multi-variant data generation** — Sweeps both SVT+LVT (or RVT+LVT) per tech, ~78K points per dataset
+- [x] **Normalizer updated** — Handles geometry shape `(N, 3)` with `[NFIN, T, PHIG]`
+- [x] **Training auto-detects input_dim** — From dataset shape (6 or 7)
+- [x] **Inference backward-compatible** — Auto-detects input_dim from checkpoint; 6-dim models ignore PHIG
+- [x] **Parser supports VT= and PHIG=** — `.model nmos1 NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)`
+- [x] **Verification updated** — `tests/verify_nn_multi_tech.py` tests both variants per tech
+- [ ] **Training pending** — 10 models need retraining with 7-dim data (~4h/model on CPU)
+
+**Variants per technology:**
+
+| Tech | Variant 1 | Variant 2 | NMOS PHIG (V1/V2) | PMOS PHIG (V1/V2) |
+|------|----------|----------|-------------------|-------------------|
+| ASAP7 | RVT | LVT | 4.372 / 4.307 | 4.811 / 4.868 |
+| TSMC5 | SVT | LVT | 4.534 / 4.410 | 4.560 / 4.671 |
+| TSMC7 | SVT | LVT | 4.461 / 4.402 | 4.631 / 4.693 |
+| TSMC12 | SVT | LVT | 4.510 / 4.419 | 4.570 / 4.665 |
+| TSMC16 | SVT | LVT | 4.470 / 4.419 | 4.570 / 4.665 |
+
+**Netlist usage:**
+```spice
+.model nmos1 NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)
+.model pmos1 PMOS (LEVEL=73 TECH=tsmc5 VT=lvt)
+```
+
+**Training commands (offline):**
+```bash
+# Generate multi-variant data
+python -m nn_model.data.generate --device both --tech all
+# Train all models
+for tech in asap7 tsmc5 tsmc7 tsmc12 tsmc16; do
+  for dev in nmos pmos; do
+    python -u -m nn_model.train --device-type $dev --tech $tech \
+      --mode direct13 --epochs 500 --hidden 256 --layers 5 --patience 100
+  done
+done
+# Verify
+python tests/verify_nn_multi_tech.py
+```
+
 ### Future Work
+- [ ] **Complete multi-variant training** — Retrain all 10 models with 7-dim PHIG input
 - [ ] **Improved NN Transient Accuracy** — Retrain with `--w-charges 1.5 --w-caps 1.0` (charge-emphasized weights), PhysicsLoss for autograd-supervised capacitances
 - [ ] **Expanded Test Suite**
     - [ ] NAND/NOR gates
@@ -284,6 +327,7 @@ conda run -n pycircuitsim python -u -m nn_model.train --device-type pmos --mode 
 Checkpoints: ASAP7 → `{nmos,pmos}_best.pt`, TSMC → `{tech}_{nmos,pmos}_best.pt` + `_norm.npz`.
 Netlist usage: `.model nmos_nn NMOS (LEVEL=73)` with `L=30n NFIN=10`.
 For TSMC: `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5)` to load tech-specific checkpoint.
+For device variants: `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` (SVT/LVT for TSMC, RVT/LVT for ASAP7).
 
 ### Output Files
 Results organized in `results/<circuit_name>/<analysis_type>/`:

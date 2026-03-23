@@ -1,7 +1,11 @@
 """Generate training data by sweeping PyCMG BSIM-CMG across bias points.
 
+Supports multi-variant data generation: for each technology, sweeps all
+device variants (e.g., SVT + LVT) and includes PHIG as an input feature.
+
 Usage:
     conda run -n pycircuitsim python -m nn_model.data.generate [--device nmos|pmos] [--tech asap7]
+    conda run -n pycircuitsim python -m nn_model.data.generate --device both --tech all
 """
 
 import sys
@@ -19,7 +23,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG"))
 
 from pycmg import Model, Instance
 from nn_model.config import (
-    OSDI_PATH, ASAP7_CONFIG, TechConfig, OUTPUT_COLUMNS, DATA_DIR,
+    OSDI_PATH, TechConfig, VariantConfig, OUTPUT_COLUMNS, DATA_DIR,
     TECH_CONFIGS,
 )
 
@@ -28,23 +32,21 @@ def create_pycmg_instance(
     tech: TechConfig,
     device_type: str,
     nfin: float,
+    variant: Optional[str] = None,
 ) -> Instance:
-    """Create a PyCMG Instance for the given tech/device/geometry.
+    """Create a PyCMG Instance for the given tech/device/geometry/variant.
 
     Args:
         tech: Technology configuration.
         device_type: 'nmos' or 'pmos'.
         nfin: Number of fins.
+        variant: Device variant name (e.g., 'svt', 'lvt'). If None, uses default.
 
     Returns:
         PyCMG Instance ready for eval_dc().
     """
-    if device_type == "nmos":
-        model_name = tech.nmos_model_name
-    else:
-        model_name = tech.pmos_model_name
-
-    modelcard_path = tech.get_modelcard_path(device_type)
+    model_name = tech.get_model_name(device_type, variant)
+    modelcard_path = tech.get_modelcard_path(device_type, variant)
 
     model = Model(
         osdi_path=OSDI_PATH,
@@ -156,102 +158,116 @@ def eval_single_point(
 def generate_dataset(
     tech: TechConfig,
     device_type: str,
+    variant_names: Optional[List[str]] = None,
     verbose: bool = True,
 ) -> Dict[str, np.ndarray]:
-    """Generate full training dataset for one device type across NFIN values.
+    """Generate full training dataset for one device type across NFIN values and variants.
 
-    Sweeps Vgs x Vds x NFIN with special case augmentation:
+    Sweeps Vgs x Vds x NFIN x Variant with special case augmentation:
     - Zero-bias anchors (all V=0)
     - Deep cutoff (Vg far below Vth)
-    - Reverse mode (Vds < 0)
     - Dense subthreshold sampling (near Vth)
 
     Args:
         tech: Technology configuration.
         device_type: 'nmos' or 'pmos'.
+        variant_names: List of variant names to include (default: all variants).
         verbose: Print progress.
 
     Returns:
-        Dict with keys: 'inputs' (N,4), 'geometry' (N,2), 'outputs' (N,13),
+        Dict with keys: 'inputs' (N,4), 'geometry' (N,3), 'outputs' (N,13),
         'metadata' containing tech/device info.
     """
     vdd = tech.vdd
     vgs_points, vds_points = generate_voltage_grid(vdd, device_type=device_type)
 
+    # Determine which variants to generate data for
+    if variant_names is None:
+        variants_to_use = list(tech.variants.items())
+    else:
+        variants_to_use = [(vn, tech.variants[vn]) for vn in variant_names
+                           if vn in tech.variants]
+
+    if not variants_to_use:
+        raise ValueError(f"No valid variants found for {tech.name}. "
+                         f"Available: {list(tech.variants.keys())}")
+
     all_inputs: List[np.ndarray] = []    # (Vd, Vg, Vs, Vb)
-    all_geometry: List[np.ndarray] = []  # (NFIN, T)
+    all_geometry: List[np.ndarray] = []  # (NFIN, T, PHIG)
     all_outputs: List[np.ndarray] = []   # 13 output columns
 
     total_points = 0
     failed_points = 0
 
-    for nfin in tech.nfin_values:
+    for variant_name, variant_cfg in variants_to_use:
+        phig = variant_cfg.get_phig(device_type)
         if verbose:
-            print(f"\n  NFIN={nfin}: Creating PyCMG instance...")
+            print(f"\n--- Variant: {variant_name} (PHIG={phig:.4f}) ---")
 
-        inst = create_pycmg_instance(tech, device_type, nfin)
-        nfin_points = 0
-        t0 = time.time()
+        for nfin in tech.nfin_values:
+            if verbose:
+                print(f"\n  NFIN={nfin}: Creating PyCMG instance "
+                      f"(model={variant_cfg.get_model_name(device_type)})...")
 
-        # --- Main grid sweep: Vgs x Vds ---
-        for vg in vgs_points:
-            for vd in vds_points:
-                # For NMOS: Vs=0, Vb=0 (standard common-source)
-                # For PMOS: also Vs=0, Vb=0 (PyCMG handles internal sign)
-                vs = 0.0
-                vb = 0.0
+            inst = create_pycmg_instance(tech, device_type, nfin, variant_name)
+            nfin_points = 0
+            t0 = time.time()
 
-                result = eval_single_point(inst, vd, vg, vs, vb)
-                if result is None:
-                    failed_points += 1
-                    continue
+            # --- Main grid sweep: Vgs x Vds ---
+            for vg in vgs_points:
+                for vd in vds_points:
+                    vs = 0.0
+                    vb = 0.0
 
-                all_inputs.append(np.array([vd, vg, vs, vb]))
-                all_geometry.append(np.array([float(nfin), tech.temperature]))
-                all_outputs.append(np.array([result[k] for k in OUTPUT_COLUMNS]))
-                nfin_points += 1
+                    result = eval_single_point(inst, vd, vg, vs, vb)
+                    if result is None:
+                        failed_points += 1
+                        continue
 
-        # --- Special case: zero-bias anchor ---
-        result = eval_single_point(inst, 0.0, 0.0, 0.0, 0.0)
-        if result is not None:
-            # Add multiple copies to increase weight
-            for _ in range(3):
-                all_inputs.append(np.array([0.0, 0.0, 0.0, 0.0]))
-                all_geometry.append(np.array([float(nfin), tech.temperature]))
-                all_outputs.append(np.array([result[k] for k in OUTPUT_COLUMNS]))
-                nfin_points += 1
-
-        # --- Special case: deep cutoff ---
-        # NMOS cutoff: Vg << Vth (Vg near 0 or negative)
-        # PMOS cutoff (source-relative): Vg > -|Vtp| (Vg near 0 or positive)
-        if device_type == "nmos":
-            cutoff_vg_values = [-0.1, -0.05, 0.0]
-            cutoff_vd_values = [0.0, vdd / 2, vdd]
-        else:
-            cutoff_vg_values = [0.0, 0.05, 0.1]
-            cutoff_vd_values = [0.0, -vdd / 2, -vdd]
-        for vg_cutoff in cutoff_vg_values:
-            for vd in cutoff_vd_values:
-                result = eval_single_point(inst, vd, vg_cutoff, 0.0, 0.0)
-                if result is not None:
-                    all_inputs.append(np.array([vd, vg_cutoff, 0.0, 0.0]))
-                    all_geometry.append(np.array([float(nfin), tech.temperature]))
+                    all_inputs.append(np.array([vd, vg, vs, vb]))
+                    all_geometry.append(np.array([float(nfin), tech.temperature, phig]))
                     all_outputs.append(np.array([result[k] for k in OUTPUT_COLUMNS]))
                     nfin_points += 1
 
-        elapsed = time.time() - t0
-        total_points += nfin_points
-        if verbose:
-            print(f"    Generated {nfin_points} points in {elapsed:.1f}s "
-                  f"({nfin_points / elapsed:.0f} pts/s)")
+            # --- Special case: zero-bias anchor ---
+            result = eval_single_point(inst, 0.0, 0.0, 0.0, 0.0)
+            if result is not None:
+                for _ in range(3):
+                    all_inputs.append(np.array([0.0, 0.0, 0.0, 0.0]))
+                    all_geometry.append(np.array([float(nfin), tech.temperature, phig]))
+                    all_outputs.append(np.array([result[k] for k in OUTPUT_COLUMNS]))
+                    nfin_points += 1
+
+            # --- Special case: deep cutoff ---
+            if device_type == "nmos":
+                cutoff_vg_values = [-0.1, -0.05, 0.0]
+                cutoff_vd_values = [0.0, vdd / 2, vdd]
+            else:
+                cutoff_vg_values = [0.0, 0.05, 0.1]
+                cutoff_vd_values = [0.0, -vdd / 2, -vdd]
+            for vg_cutoff in cutoff_vg_values:
+                for vd in cutoff_vd_values:
+                    result = eval_single_point(inst, vd, vg_cutoff, 0.0, 0.0)
+                    if result is not None:
+                        all_inputs.append(np.array([vd, vg_cutoff, 0.0, 0.0]))
+                        all_geometry.append(np.array([float(nfin), tech.temperature, phig]))
+                        all_outputs.append(np.array([result[k] for k in OUTPUT_COLUMNS]))
+                        nfin_points += 1
+
+            elapsed = time.time() - t0
+            total_points += nfin_points
+            if verbose:
+                print(f"    Generated {nfin_points} points in {elapsed:.1f}s "
+                      f"({nfin_points / elapsed:.0f} pts/s)")
 
     # Stack into arrays
     inputs = np.array(all_inputs, dtype=np.float64)     # (N, 4)
-    geometry = np.array(all_geometry, dtype=np.float64)  # (N, 2)
+    geometry = np.array(all_geometry, dtype=np.float64)  # (N, 3) — [NFIN, T, PHIG]
     outputs = np.array(all_outputs, dtype=np.float64)    # (N, 13)
 
     if verbose:
         print(f"\n  Total: {total_points} points, {failed_points} failures")
+        print(f"  Variants: {[v[0] for v in variants_to_use]}")
         print(f"  Input shape:  {inputs.shape}")
         print(f"  Geometry shape: {geometry.shape}")
         print(f"  Output shape: {outputs.shape}")
@@ -262,6 +278,10 @@ def generate_dataset(
             col = outputs[:, i]
             print(f"    {name:>6s}: {col.min():+.4e} / {col.max():+.4e}")
 
+        # Print PHIG range
+        phig_vals = np.unique(geometry[:, 2])
+        print(f"\n  PHIG values in dataset: {phig_vals}")
+
     metadata = {
         "tech_name": tech.name,
         "device_type": device_type,
@@ -270,6 +290,7 @@ def generate_dataset(
         "nfin_values": np.array(tech.nfin_values),
         "temperature": tech.temperature,
         "output_columns": OUTPUT_COLUMNS,
+        "variants": np.array([v[0] for v in variants_to_use]),
     }
 
     return {
@@ -310,6 +331,8 @@ def main() -> None:
     parser.add_argument("--tech", choices=list(TECH_CONFIGS.keys()) + ["all"],
                         default="asap7",
                         help="Technology to use (default: asap7)")
+    parser.add_argument("--variants", type=str, default="all",
+                        help="Comma-separated variant names (default: all)")
     args = parser.parse_args()
 
     # Select technologies
@@ -320,18 +343,28 @@ def main() -> None:
 
     devices = ["nmos", "pmos"] if args.device == "both" else [args.device]
 
+    # Parse variant names
+    if args.variants == "all":
+        variant_names = None  # generate_dataset will use all
+    else:
+        variant_names = [v.strip() for v in args.variants.split(",")]
+
     for tech in techs:
         for device_type in devices:
             L = tech.get_L(device_type)
+            avail_variants = list(tech.variants.keys())
+            use_variants = variant_names if variant_names else avail_variants
             print(f"\n{'='*60}")
             print(f"Generating {device_type.upper()} data for {tech.name}")
             print(f"  VDD={tech.vdd}V, L={L*1e9:.0f}nm")
             print(f"  NFIN values: {tech.nfin_values}")
+            print(f"  Variants: {use_variants}")
             print(f"  Temperature: {tech.temperature}K")
-            print(f"  Modelcard: {tech.get_modelcard_path(device_type)}")
             print(f"{'='*60}")
 
-            data = generate_dataset(tech, device_type, verbose=True)
+            data = generate_dataset(tech, device_type,
+                                    variant_names=variant_names,
+                                    verbose=True)
 
             output_path = DATA_DIR / f"{tech.name.lower()}_{device_type}.npz"
             save_dataset(data, output_path)

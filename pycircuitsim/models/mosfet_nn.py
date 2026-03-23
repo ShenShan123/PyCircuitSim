@@ -47,6 +47,7 @@ class _MOSFETNNBase(Component):
         L: float,
         NFIN: float,
         temperature: float = 300.15,
+        phig: Optional[float] = None,
     ):
         super().__init__(name, nodes, None)
 
@@ -60,6 +61,7 @@ class _MOSFETNNBase(Component):
         self.L = float(L)
         self.NFIN = float(NFIN)
         self.temperature = float(temperature)
+        self.phig = float(phig) if phig is not None else None
 
         # Load model and normalization stats
         model_path = Path(model_path)
@@ -70,18 +72,22 @@ class _MOSFETNNBase(Component):
         if not norm_path.exists():
             raise FileNotFoundError(f"Normalization stats not found: {norm_path}")
 
-        # Auto-detect model output_dim from checkpoint
+        # Auto-detect model dimensions from checkpoint
         state = torch.load(str(model_path), weights_only=True, map_location="cpu")
-        # Infer output_dim and hidden_dim from last linear layer
-        last_key = [k for k in state.keys() if k.endswith('.weight')][-1]
+        weight_keys = [k for k in state.keys() if k.endswith('.weight')]
+        # Infer input_dim from first layer, output_dim/hidden_dim from last layer
+        first_key = weight_keys[0]
+        last_key = weight_keys[-1]
+        input_dim = state[first_key].shape[1]
         output_dim = state[last_key].shape[0]
         hidden_dim = state[last_key].shape[1]
-        # Infer n_layers from number of weight matrices
-        n_weight_keys = len([k for k in state.keys() if k.endswith('.weight')])
-        n_layers = n_weight_keys  # includes output layer, but DirectNet adds it after loop
+        n_weight_keys = len(weight_keys)
+        n_layers = n_weight_keys
+
+        self._input_dim = input_dim  # 6 (legacy) or 7 (with PHIG)
 
         self._nn_model = DirectNet(
-            input_dim=6, hidden_dim=hidden_dim,
+            input_dim=input_dim, hidden_dim=hidden_dim,
             n_layers=n_layers - 1,  # -1 because DirectNet adds output layer separately
             output_dim=output_dim,
         )
@@ -93,7 +99,12 @@ class _MOSFETNNBase(Component):
 
         # Pre-compute normalized geometry features (constant per device)
         nfin_log = np.log2(max(self.NFIN, 1.0))
-        geo_raw = np.array([nfin_log, self.temperature])
+        if input_dim == 7 and self.phig is not None:
+            # 7-dim model: [Vd, Vg, Vs, Vb, log2(NFIN), T, PHIG]
+            geo_raw = np.array([nfin_log, self.temperature, self.phig])
+        else:
+            # Legacy 6-dim model: [Vd, Vg, Vs, Vb, log2(NFIN), T]
+            geo_raw = np.array([nfin_log, self.temperature])
         geo_range = self._norm_stats.input_max[4:] - self._norm_stats.input_min[4:]
         geo_range[geo_range < 1e-10] = 1.0
         self._geo_norm = (geo_raw - self._norm_stats.input_min[4:]) / geo_range
@@ -158,9 +169,9 @@ class _MOSFETNNBase(Component):
         v_range[v_range < 1e-10] = 1.0
         v_norm = (v_raw_clamped - stats.input_min[:4]) / v_range
 
-        # Build full input tensor: [Vd, Vg, Vs, Vb, NFIN, T]
+        # Build full input tensor: [Vd, Vg, Vs, Vb, NFIN, T] or [Vd, Vg, Vs, Vb, NFIN, T, PHIG]
         x_np = np.concatenate([v_norm, self._geo_norm]).astype(np.float32)
-        x = torch.tensor(x_np, dtype=torch.float32).unsqueeze(0)  # (1, 6)
+        x = torch.tensor(x_np, dtype=torch.float32).unsqueeze(0)  # (1, 6) or (1, 7)
 
         # Always use autograd for conductances (Jacobian consistency for NR).
         # Direct prediction of gm/gds is NOT consistent with id, causing NR

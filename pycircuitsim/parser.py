@@ -626,9 +626,37 @@ class Parser:
                 )
 
             # Resolve model path from .model params or default checkpoint dir
-            from nn_model.config import CHECKPOINT_DIR
+            from nn_model.config import CHECKPOINT_DIR, TECH_CONFIGS
             nn_model_path = model_params.get('MODEL_PATH', None)
             nn_tech = model_params.get('TECH', None)
+            nn_vt = model_params.get('VT', None)  # Device variant: svt, lvt, rvt
+            nn_phig_str = model_params.get('PHIG', None)  # Direct PHIG value
+
+            # Resolve PHIG from VT parameter or direct PHIG value
+            nn_phig = None
+            if nn_phig_str is not None:
+                nn_phig = float(nn_phig_str)
+            elif nn_vt is not None:
+                # Look up PHIG from tech config
+                tech_key = (nn_tech or "asap7").lower()
+                if tech_key in TECH_CONFIGS:
+                    tech_cfg = TECH_CONFIGS[tech_key]
+                    vt_lower = nn_vt.lower()
+                    if vt_lower in tech_cfg.variants:
+                        nn_phig = tech_cfg.variants[vt_lower].get_phig(
+                            model_type.lower())
+                    else:
+                        raise ValueError(
+                            f"Unknown VT={nn_vt} for {tech_key}. "
+                            f"Available: {list(tech_cfg.variants.keys())}")
+            else:
+                # Default variant PHIG
+                tech_key = (nn_tech or "asap7").lower()
+                if tech_key in TECH_CONFIGS:
+                    tech_cfg = TECH_CONFIGS[tech_key]
+                    if tech_cfg.default_variant and tech_cfg.variants:
+                        nn_phig = tech_cfg.variants[tech_cfg.default_variant].get_phig(
+                            model_type.lower())
 
             if model_type.upper() == 'NMOS':
                 if nn_model_path is None:
@@ -642,6 +670,7 @@ class Parser:
                     model_path=nn_model_path,
                     L=L,
                     NFIN=NFIN,
+                    phig=nn_phig,
                 )
             elif model_type.upper() == 'PMOS':
                 if nn_model_path is None:
@@ -655,6 +684,7 @@ class Parser:
                     model_path=nn_model_path,
                     L=L,
                     NFIN=NFIN,
+                    phig=nn_phig,
                 )
             else:
                 raise ValueError(f"Unknown MOSFET model type: {model_type}")

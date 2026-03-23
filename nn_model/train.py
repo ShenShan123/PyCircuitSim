@@ -180,9 +180,13 @@ def train(
         test_ds, batch_size=config.batch_size, shuffle=False, num_workers=0
     )
 
+    # Auto-detect input_dim from dataset (6 for legacy, 7 with PHIG)
+    input_dim = train_ds.inputs.shape[1]
+    print(f"Input dim: {input_dim} ({'with PHIG' if input_dim == 7 else 'legacy'})")
+
     # Model
     model = DirectNet(
-        input_dim=6,
+        input_dim=input_dim,
         hidden_dim=config.trunk_hidden,
         n_layers=config.trunk_layers + 1,
         output_dim=output_dim,
