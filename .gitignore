@@ -20,6 +20,9 @@ results/
 tests/verify_bsimcmg_dc_results/
 tests/verify_bsimcmg_op_results/
 tests/verify_bsimcmg_tran_results/
+tests/verify_bsimcmg_tran_comprehensive_results/
+tests/verify_multi_tech_tran_results/
+tests/verify_nn_tran_results/
 
 # Generated plans (session artifacts)
 docs/plans/

@@ -80,10 +80,22 @@ class DirectLoss(nn.Module):
     Supports both 4-output (id, qg, qd, qb) and 13-output (all) modes.
     """
 
-    def __init__(self, output_dim: int = 4, w_zero_bias: float = 5.0):
+    def __init__(
+        self,
+        output_dim: int = 4,
+        w_zero_bias: float = 5.0,
+        w_curr: float = 1.0,
+        w_cond: float = 1.0,
+        w_charges: float = 0.5,
+        w_caps: float = 0.3,
+    ):
         super().__init__()
         self.output_dim = output_dim
         self.w_zero_bias = w_zero_bias
+        self.w_curr = w_curr
+        self.w_cond = w_cond
+        self.w_charges = w_charges
+        self.w_caps = w_caps
         self.mse = nn.MSELoss()
 
     def forward(
@@ -125,11 +137,11 @@ class DirectLoss(nn.Module):
         loss_charges = (loss_qg + loss_qd + loss_qs + loss_qb) / 4.0
         loss_caps = (loss_cgg + loss_cgd + loss_cgs + loss_cdg + loss_cdd) / 5.0
 
-        # Weighted total: current most important, then conductances, then charges/caps
-        total = (1.0 * loss_curr
-                 + 1.0 * loss_cond
-                 + 0.5 * loss_charges
-                 + 0.3 * loss_caps)
+        # Weighted total (configurable via constructor)
+        total = (self.w_curr * loss_curr
+                 + self.w_cond * loss_cond
+                 + self.w_charges * loss_charges
+                 + self.w_caps * loss_caps)
 
         # Zero-bias penalty
         zero_mask = (x[:, 0] < 0.15) & (x[:, 1] < 0.15)

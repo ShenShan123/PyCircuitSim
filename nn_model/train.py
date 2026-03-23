@@ -161,6 +161,7 @@ def train(
     """
     device = torch.device(device_str)
     print(f"Training on {device}, output_dim={output_dim}")
+    print(f"Loss weights: w_id={config.w_id}, w_charges={config.w_charges}, w_caps={config.w_caps}")
 
     # Load and split
     train_ds, val_ds, test_ds, normalizer = load_and_split(
@@ -199,7 +200,14 @@ def train(
 
     print(f"Model parameters: {model.count_parameters()}")
 
-    criterion = DirectLoss(output_dim=output_dim, w_zero_bias=config.w_zero_bias)
+    criterion = DirectLoss(
+        output_dim=output_dim,
+        w_zero_bias=config.w_zero_bias,
+        w_curr=config.w_id,
+        w_cond=(config.w_gm + config.w_gds + config.w_gmb) / 3.0,
+        w_charges=config.w_charges,
+        w_caps=config.w_caps,
+    )
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=config.lr, weight_decay=config.weight_decay
     )
@@ -298,6 +306,10 @@ def main() -> None:
     parser.add_argument("--tech", choices=list(TECH_CONFIGS.keys()),
                         default="asap7",
                         help="Technology (default: asap7)")
+    parser.add_argument("--w-charges", type=float, default=None,
+                        help="Loss weight for charges (default: 0.5, finetune: 1.5)")
+    parser.add_argument("--w-caps", type=float, default=None,
+                        help="Loss weight for capacitances (default: 0.3, finetune: 1.0)")
     parser.add_argument("--cuda", action="store_true")
     args = parser.parse_args()
 
@@ -332,11 +344,18 @@ def main() -> None:
     # For finetune mode, lower LR and resume from existing
     if args.mode == "finetune":
         config.lr = args.lr if args.lr != 1e-3 else 1e-4  # Default to lower LR
+        # Boost charge/cap weights for transient accuracy (3x default)
+        config.w_charges = args.w_charges if args.w_charges is not None else 1.5
+        config.w_caps = args.w_caps if args.w_caps is not None else 1.0
         if args.resume is None:
             resume = str(CHECKPOINT_DIR / f"{save_prefix}_best.pt")
         else:
             resume = args.resume
     else:
+        if args.w_charges is not None:
+            config.w_charges = args.w_charges
+        if args.w_caps is not None:
+            config.w_caps = args.w_caps
         resume = args.resume
 
     device_str = "cuda" if args.cuda and torch.cuda.is_available() else "cpu"

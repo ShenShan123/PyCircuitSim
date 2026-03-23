@@ -228,9 +228,30 @@ All 15 tests PASS. Run: `conda run -n pycircuitsim python tests/verify_nn_multi_
 - **Signed-log normalization**: `sign(x) * log10(|x|/floor)` preserves sign and handles multi-decade range; original `sign(x) * log10(|x|)` had sign confusion for values < 1
 - **TSMC asymmetric L**: TSMC techs have different L for NMOS (16nm) and PMOS (20nm); TechConfig uses `L_nmos`/`L_pmos` fields
 
+### Phase 12: NN Transient Verification ✅ Complete (2026-03-23)
+- [x] **Transient test script** — `tests/verify_nn_tran.py` compares NN (LEVEL=73) transient against NGSPICE (BSIM-CMG OSDI) across 5 technologies
+- [x] **Charge-based integration** — Solver charge stamping already wired for NMOS_NN/PMOS_NN (no code changes needed)
+- [x] **Configurable loss weights** — DirectLoss now accepts `w_curr`, `w_cond`, `w_charges`, `w_caps` via constructor
+- [x] **Training CLI args** — `--w-charges` and `--w-caps` flags in `nn_model/train.py`; finetune mode defaults to 3x charge/cap boost
+- [x] **Results:** All 5 techs PASS (NRMSE < 15% Vdd)
+
+| Tech | NRMSE (%) | Max Error (mV) | Notes |
+|------|-----------|----------------|-------|
+| ASAP7 | 1.48% | 13.7 | Best accuracy |
+| TSMC5 | 7.02% | 324.3 | Worst — timing offset during transitions |
+| TSMC7 | 3.45% | 159.1 | |
+| TSMC12 | 3.83% | 254.2 | |
+| TSMC16 | 3.51% | 186.9 | |
+
+Run: `conda run -n pycircuitsim python tests/verify_nn_tran.py`
+
+**Key observations:**
+- Errors concentrated during **transition edges** (charge dynamics), not DC levels
+- Steady-state accuracy is excellent (< 1% error between edges)
+- ASAP7 accuracy 10x better than TSMC — likely due to symmetric L and simpler geometry
+
 ### Future Work
-- [ ] **Improved NN Accuracy** — Derivative supervision (PhysicsLoss), larger network, longer training
-- [ ] **Transient with NN** — Enable charge-based transient analysis with LEVEL=73
+- [ ] **Improved NN Transient Accuracy** — Retrain with `--w-charges 1.5 --w-caps 1.0` (charge-emphasized weights), PhysicsLoss for autograd-supervised capacitances
 - [ ] **Expanded Test Suite**
     - [ ] NAND/NOR gates
     - [ ] Ring Oscillator (multi-stage transient)
@@ -303,6 +324,11 @@ conda activate pycircuitsim
   - Tests: NMOS DC sweep, PMOS DC sweep, Inverter VTC per technology
   - Metric: NRMSE vs PyCMG ground truth (target: < 15% device, < 20% inverter)
   - Results: All 15 tests PASS (0.91–7.47% NRMSE)
+
+- **NN Transient** (5 techs: ASAP7, TSMC5/7/12/16): `python tests/verify_nn_tran.py`
+  - Tests: CMOS inverter transient per technology, NN (LEVEL=73) vs NGSPICE (BSIM-CMG)
+  - Metric: NRMSE vs NGSPICE (target: < 15% Vdd)
+  - Results: All 5 tests PASS (1.48–7.02% NRMSE)
 
 **Quick Sanity Check (all core tests):**
 ```bash
