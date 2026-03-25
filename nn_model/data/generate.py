@@ -23,8 +23,8 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG"))
 
 from pycmg import Model, Instance
 from nn_model.config import (
-    OSDI_PATH, TechConfig, VariantConfig, OUTPUT_COLUMNS, DATA_DIR,
-    TECH_CONFIGS,
+    OSDI_PATH, TechConfig, VariantConfig, ProcessParams, OUTPUT_COLUMNS,
+    DATA_DIR, TECH_CONFIGS,
 )
 
 
@@ -175,7 +175,7 @@ def generate_dataset(
         verbose: Print progress.
 
     Returns:
-        Dict with keys: 'inputs' (N,4), 'geometry' (N,3), 'outputs' (N,13),
+        Dict with keys: 'inputs' (N,4), 'geometry' (N,9), 'outputs' (N,13),
         'metadata' containing tech/device info.
     """
     vdd = tech.vdd
@@ -193,16 +193,16 @@ def generate_dataset(
                          f"Available: {list(tech.variants.keys())}")
 
     all_inputs: List[np.ndarray] = []    # (Vd, Vg, Vs, Vb)
-    all_geometry: List[np.ndarray] = []  # (NFIN, T, PHIG)
+    all_geometry: List[np.ndarray] = []  # (NFIN, T, PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW)
     all_outputs: List[np.ndarray] = []   # 13 output columns
 
     total_points = 0
     failed_points = 0
 
     for variant_name, variant_cfg in variants_to_use:
-        phig = variant_cfg.get_phig(device_type)
+        proc = variant_cfg.get_process_params(device_type)
         if verbose:
-            print(f"\n--- Variant: {variant_name} (PHIG={phig:.4f}) ---")
+            print(f"\n--- Variant: {variant_name} (PHIG={proc.phig:.4f}) ---")
 
         for nfin in tech.nfin_values:
             if verbose:
@@ -225,16 +225,18 @@ def generate_dataset(
                         continue
 
                     all_inputs.append(np.array([vd, vg, vs, vb]))
-                    all_geometry.append(np.array([float(nfin), tech.temperature, phig]))
+                    geo = np.array([float(nfin), tech.temperature] + proc.as_array())
+                    all_geometry.append(geo)
                     all_outputs.append(np.array([result[k] for k in OUTPUT_COLUMNS]))
                     nfin_points += 1
 
             # --- Special case: zero-bias anchor ---
             result = eval_single_point(inst, 0.0, 0.0, 0.0, 0.0)
             if result is not None:
+                geo = np.array([float(nfin), tech.temperature] + proc.as_array())
                 for _ in range(3):
                     all_inputs.append(np.array([0.0, 0.0, 0.0, 0.0]))
-                    all_geometry.append(np.array([float(nfin), tech.temperature, phig]))
+                    all_geometry.append(geo.copy())
                     all_outputs.append(np.array([result[k] for k in OUTPUT_COLUMNS]))
                     nfin_points += 1
 
@@ -245,12 +247,13 @@ def generate_dataset(
             else:
                 cutoff_vg_values = [0.0, 0.05, 0.1]
                 cutoff_vd_values = [0.0, -vdd / 2, -vdd]
+            geo = np.array([float(nfin), tech.temperature] + proc.as_array())
             for vg_cutoff in cutoff_vg_values:
                 for vd in cutoff_vd_values:
                     result = eval_single_point(inst, vd, vg_cutoff, 0.0, 0.0)
                     if result is not None:
                         all_inputs.append(np.array([vd, vg_cutoff, 0.0, 0.0]))
-                        all_geometry.append(np.array([float(nfin), tech.temperature, phig]))
+                        all_geometry.append(geo.copy())
                         all_outputs.append(np.array([result[k] for k in OUTPUT_COLUMNS]))
                         nfin_points += 1
 
@@ -262,7 +265,7 @@ def generate_dataset(
 
     # Stack into arrays
     inputs = np.array(all_inputs, dtype=np.float64)     # (N, 4)
-    geometry = np.array(all_geometry, dtype=np.float64)  # (N, 3) — [NFIN, T, PHIG]
+    geometry = np.array(all_geometry, dtype=np.float64)  # (N, 9) — [NFIN, T, PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW]
     outputs = np.array(all_outputs, dtype=np.float64)    # (N, 13)
 
     if verbose:
@@ -278,9 +281,17 @@ def generate_dataset(
             col = outputs[:, i]
             print(f"    {name:>6s}: {col.min():+.4e} / {col.max():+.4e}")
 
-        # Print PHIG range
-        phig_vals = np.unique(geometry[:, 2])
-        print(f"\n  PHIG values in dataset: {phig_vals}")
+        # Print process param ranges
+        from nn_model.config import PROCESS_PARAM_NAMES
+        print(f"\n  Process parameter ranges:")
+        for i, pname in enumerate(PROCESS_PARAM_NAMES):
+            col = geometry[:, 2 + i]
+            unique_vals = np.unique(col)
+            if len(unique_vals) <= 5:
+                print(f"    {pname:>6s}: {unique_vals}")
+            else:
+                print(f"    {pname:>6s}: [{col.min():.4e}, {col.max():.4e}] ({len(unique_vals)} unique)")
+
 
     metadata = {
         "tech_name": tech.name,
@@ -324,6 +335,85 @@ def save_dataset(data: Dict[str, np.ndarray], output_path: Path) -> None:
     print(f"\n  Saved to {output_path} ({output_path.stat().st_size / 1024:.0f} KB)")
 
 
+def generate_universal_dataset(
+    device_type: str,
+    verbose: bool = True,
+) -> Dict[str, np.ndarray]:
+    """Generate combined training data across ALL technologies and variants.
+
+    Concatenates per-tech datasets into a single universal dataset.
+    The process parameters in geometry columns discriminate between devices.
+
+    Args:
+        device_type: 'nmos' or 'pmos'.
+        verbose: Print progress.
+
+    Returns:
+        Dict with keys: 'inputs' (N,4), 'geometry' (N,9), 'outputs' (N,13),
+        'metadata' containing all tech/device info.
+    """
+    all_inputs = []
+    all_geometry = []
+    all_outputs = []
+    all_tech_names = []
+    all_variant_names = []
+
+    for tech_name, tech in TECH_CONFIGS.items():
+        if verbose:
+            print(f"\n{'='*60}")
+            print(f"Generating {device_type.upper()} data for {tech.name} "
+                  f"({len(tech.variants)} variants)")
+            print(f"{'='*60}")
+
+        data = generate_dataset(tech, device_type, verbose=verbose)
+        all_inputs.append(data["inputs"])
+        all_geometry.append(data["geometry"])
+        all_outputs.append(data["outputs"])
+        n_pts = data["inputs"].shape[0]
+        all_tech_names.extend([tech_name] * n_pts)
+        all_variant_names.extend(
+            [str(v) for v in data["metadata"]["variants"]] * (n_pts // len(data["metadata"]["variants"]) + 1)
+        )
+
+    inputs = np.concatenate(all_inputs, axis=0)
+    geometry = np.concatenate(all_geometry, axis=0)
+    outputs = np.concatenate(all_outputs, axis=0)
+
+    if verbose:
+        print(f"\n{'='*60}")
+        print(f"Universal {device_type.upper()} dataset:")
+        print(f"  Total points: {inputs.shape[0]}")
+        print(f"  Input shape:  {inputs.shape}")
+        print(f"  Geometry shape: {geometry.shape}")
+        print(f"  Output shape: {outputs.shape}")
+        print(f"  Technologies: {list(TECH_CONFIGS.keys())}")
+        from nn_model.config import PROCESS_PARAM_NAMES
+        print(f"  Process parameter ranges:")
+        for i, pname in enumerate(PROCESS_PARAM_NAMES):
+            col = geometry[:, 2 + i]
+            unique_vals = np.unique(col)
+            print(f"    {pname:>6s}: [{col.min():.4e}, {col.max():.4e}] ({len(unique_vals)} unique)")
+        print(f"{'='*60}")
+
+    metadata = {
+        "tech_name": "universal",
+        "device_type": device_type,
+        "vdd": 0.0,  # varies by tech
+        "L": 0.0,    # varies by tech
+        "nfin_values": np.array([1, 2, 5, 10, 15, 20]),
+        "temperature": 300.15,
+        "output_columns": OUTPUT_COLUMNS,
+        "variants": np.array(list(TECH_CONFIGS.keys())),
+    }
+
+    return {
+        "inputs": inputs,
+        "geometry": geometry,
+        "outputs": outputs,
+        "metadata": metadata,
+    }
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Generate NN training data from PyCMG")
     parser.add_argument("--device", choices=["nmos", "pmos", "both"], default="nmos",
@@ -333,15 +423,25 @@ def main() -> None:
                         help="Technology to use (default: asap7)")
     parser.add_argument("--variants", type=str, default="all",
                         help="Comma-separated variant names (default: all)")
+    parser.add_argument("--universal", action="store_true",
+                        help="Generate universal dataset across all techs/variants")
     args = parser.parse_args()
 
-    # Select technologies
+    devices = ["nmos", "pmos"] if args.device == "both" else [args.device]
+
+    if args.universal:
+        # Universal mode: combine all techs/variants into single dataset
+        for device_type in devices:
+            data = generate_universal_dataset(device_type, verbose=True)
+            output_path = DATA_DIR / f"universal_{device_type}.npz"
+            save_dataset(data, output_path)
+        return
+
+    # Per-tech mode (original behavior)
     if args.tech == "all":
         techs = list(TECH_CONFIGS.values())
     else:
         techs = [TECH_CONFIGS[args.tech]]
-
-    devices = ["nmos", "pmos"] if args.device == "both" else [args.device]
 
     # Parse variant names
     if args.variants == "all":

@@ -292,8 +292,60 @@ done
 python tests/verify_nn_multi_tech.py
 ```
 
+### Phase 14: Universal NN Model with Process Parameters ✅ Complete (2026-03-25)
+- [x] **ProcessParams dataclass** — 7 BSIM-CMG process params as NN input features
+- [x] **Sensitivity analysis** — Selected top 7 params by CV and unique-value count
+- [x] **25 device variants** — 13 NMOS + 12 PMOS across 5 techs (ASAP7: RVT/LVT/SLVT/SRAM, TSMC: SVT/LVT, TSMC7: +ULVT)
+- [x] **Universal data generation** — `--universal` flag concatenates all techs, ~505K points per model
+- [x] **13-dim input** — `[Vd, Vg, Vs, Vb, NFIN, T, PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW]`
+- [x] **2 universal checkpoints** — `universal_nmos_best.pt` (897K params, 384h×6L) + `universal_pmos_best.pt`
+- [x] **Parser auto-resolves** — TECH+VT → process params lookup; prefers universal checkpoint when available
+- [x] **Backward compatible** — Old 6-dim and 7-dim checkpoints still work unchanged
+
+**Process parameters (top 7 by sensitivity):**
+
+| Param | Physical Effect | CV(%) | Unique |
+|-------|----------------|-------|--------|
+| PHIG | Gate workfunction → Vth | 1.7 | 12/13 |
+| U0 | Low-field mobility → Ion | 72.6 | 13/13 |
+| VSAT | Saturation velocity → Idsat | 29.9 | 10/13 |
+| EOT | Oxide thickness → Cox | 16.1 | 4/13 |
+| ETA0 | DIBL coefficient | 691 | 11/13 |
+| CIT | Interface trap charge | 333 | 9/13 |
+| RDSW | S/D parasitic resistance | 119 | 2/13 |
+
+**Verification results (39/39 PASS):**
+
+| Tech | Variant | NMOS DC | PMOS DC | Inv VTC | Avg |
+|------|---------|---------|---------|---------|-----|
+| ASAP7 | RVT | 7.81% | 1.69% | 6.83% | 5.45% |
+| ASAP7 | LVT | 8.08% | 0.94% | 6.64% | 5.22% |
+| ASAP7 | SLVT | 8.33% | 0.57% | 8.42% | 5.77% |
+| ASAP7 | SRAM | 4.29% | 2.36% | 7.75% | 4.80% |
+| TSMC5 | SVT | 2.22% | 0.77% | 6.75% | 3.25% |
+| TSMC5 | LVT | 3.18% | 1.86% | 9.44% | 4.82% |
+| TSMC7 | SVT | 2.73% | 1.55% | 8.58% | 4.29% |
+| TSMC7 | LVT | 6.93% | 1.76% | 8.49% | 5.73% |
+| TSMC7 | ULVT | 7.14% | 1.76% | 7.28% | 5.39% |
+| TSMC12 | SVT | 6.11% | 1.91% | 7.87% | 5.30% |
+| TSMC12 | LVT | 2.40% | 1.00% | 6.03% | 3.15% |
+| TSMC16 | SVT | 5.62% | 1.68% | 8.75% | 5.35% |
+| TSMC16 | LVT | 1.96% | 1.68% | 8.24% | 3.96% |
+
+Run: `conda run -n pycircuitsim python tests/verify_nn_universal.py`
+
+**Training commands:**
+```bash
+# Generate universal data (~505K pts × 2 models)
+python -m nn_model.data.generate --device both --universal
+# Train universal NMOS (~10h CPU)
+python -u -m nn_model.train --device-type nmos --universal --mode direct13 --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048
+# Train universal PMOS (~12h CPU)
+python -u -m nn_model.train --device-type pmos --universal --mode direct13 --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048
+```
+
 ### Future Work
-- [ ] **Complete multi-variant training** — Retrain all 10 models with 7-dim PHIG input
+- [ ] **Expand universal model** — Add ULVT, HVT, LNVT variants from TSMC12/16 main library (~40 total devices)
 - [ ] **Improved NN Transient Accuracy** — Retrain with `--w-charges 1.5 --w-caps 1.0` (charge-emphasized weights), PhysicsLoss for autograd-supervised capacitances
 - [ ] **Expanded Test Suite**
     - [ ] NAND/NOR gates
@@ -324,10 +376,10 @@ conda run -n pycircuitsim python -u -m nn_model.train --device-type nmos --mode 
 # Train PMOS
 conda run -n pycircuitsim python -u -m nn_model.train --device-type pmos --mode direct13 --epochs 500 --hidden 256 --layers 5
 ```
-Checkpoints: ASAP7 → `{nmos,pmos}_best.pt`, TSMC → `{tech}_{nmos,pmos}_best.pt` + `_norm.npz`.
-Netlist usage: `.model nmos_nn NMOS (LEVEL=73)` with `L=30n NFIN=10`.
-For TSMC: `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5)` to load tech-specific checkpoint.
-For device variants: `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` (SVT/LVT for TSMC, RVT/LVT for ASAP7).
+Checkpoints: Universal → `universal_{nmos,pmos}_best.pt`, Per-tech → `{tech}_{nmos,pmos}_best.pt` + `_norm.npz`.
+Netlist usage: `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`.
+Parser auto-resolves process params from TECH+VT and prefers universal checkpoint when available.
+Direct process params: `.model nmos_nn NMOS (LEVEL=73 PHIG=4.41 U0=0.033 VSAT=65370 EOT=1.06e-9 ETA0=0.005 CIT=-9.81e-4 RDSW=15)`.
 
 ### Output Files
 Results organized in `results/<circuit_name>/<analysis_type>/`:
@@ -365,9 +417,14 @@ conda activate pycircuitsim
   - Results: CSV summary + per-tech bar charts
 
 - **NN Multi-Technology** (5 techs: ASAP7, TSMC5/7/12/16): `python tests/verify_nn_multi_tech.py`
-  - Tests: NMOS DC sweep, PMOS DC sweep, Inverter VTC per technology
-  - Metric: NRMSE vs PyCMG ground truth (target: < 15% device, < 20% inverter)
-  - Results: All 15 tests PASS (0.91–7.47% NRMSE)
+  - Tests: NMOS DC sweep, PMOS DC sweep, Inverter VTC per technology per variant
+  - Metric: NRMSE vs PyCMG ground truth (target: < 10% device, < 15% inverter)
+  - Auto-detects universal checkpoint if available
+
+- **NN Universal** (25 devices across 5 techs, all variants): `python tests/verify_nn_universal.py`
+  - Tests: NMOS DC, PMOS DC, Inverter VTC per tech+variant combo (39 tests)
+  - Metric: NRMSE vs PyCMG ground truth
+  - Results: All 39 tests PASS (0.57–9.44% NRMSE, avg 4.73%)
 
 - **NN Transient** (5 techs: ASAP7, TSMC5/7/12/16): `python tests/verify_nn_tran.py`
   - Tests: CMOS inverter transient per technology, NN (LEVEL=73) vs NGSPICE (BSIM-CMG)

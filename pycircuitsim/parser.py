@@ -625,45 +625,60 @@ class Parser:
                     "Install: pip install torch"
                 )
 
-            # Resolve model path from .model params or default checkpoint dir
-            from nn_model.config import CHECKPOINT_DIR, TECH_CONFIGS
+            # Resolve model path and process params from .model params
+            from nn_model.config import (
+                CHECKPOINT_DIR, TECH_CONFIGS, PROCESS_PARAM_NAMES,
+            )
             nn_model_path = model_params.get('MODEL_PATH', None)
             nn_tech = model_params.get('TECH', None)
             nn_vt = model_params.get('VT', None)  # Device variant: svt, lvt, rvt
-            nn_phig_str = model_params.get('PHIG', None)  # Direct PHIG value
 
-            # Resolve PHIG from VT parameter or direct PHIG value
+            # Resolve process parameters (7 params for universal model)
+            # Priority: direct params in netlist > TECH+VT lookup > default variant
+            tech_key = (nn_tech or "asap7").lower()
+            device_key = model_type.lower()
+            nn_process_params = None
             nn_phig = None
-            if nn_phig_str is not None:
-                nn_phig = float(nn_phig_str)
-            elif nn_vt is not None:
-                # Look up PHIG from tech config
-                tech_key = (nn_tech or "asap7").lower()
-                if tech_key in TECH_CONFIGS:
-                    tech_cfg = TECH_CONFIGS[tech_key]
+
+            # Check for direct process param values in netlist
+            direct_params = {}
+            for pname in PROCESS_PARAM_NAMES:
+                val_str = model_params.get(pname, None)
+                if val_str is not None:
+                    direct_params[pname.lower()] = float(val_str)
+
+            if direct_params:
+                # Direct params specified — use them (may be partial)
+                nn_process_params = direct_params
+                nn_phig = direct_params.get("phig", None)
+            elif tech_key in TECH_CONFIGS:
+                tech_cfg = TECH_CONFIGS[tech_key]
+                if nn_vt is not None:
                     vt_lower = nn_vt.lower()
                     if vt_lower in tech_cfg.variants:
-                        nn_phig = tech_cfg.variants[vt_lower].get_phig(
-                            model_type.lower())
+                        pp = tech_cfg.variants[vt_lower].get_process_params(device_key)
+                        nn_process_params = pp.as_dict()
+                        nn_phig = pp.phig
                     else:
                         raise ValueError(
                             f"Unknown VT={nn_vt} for {tech_key}. "
                             f"Available: {list(tech_cfg.variants.keys())}")
-            else:
-                # Default variant PHIG
-                tech_key = (nn_tech or "asap7").lower()
-                if tech_key in TECH_CONFIGS:
-                    tech_cfg = TECH_CONFIGS[tech_key]
-                    if tech_cfg.default_variant and tech_cfg.variants:
-                        nn_phig = tech_cfg.variants[tech_cfg.default_variant].get_phig(
-                            model_type.lower())
+                elif tech_cfg.default_variant and tech_cfg.variants:
+                    pp = tech_cfg.variants[tech_cfg.default_variant].get_process_params(device_key)
+                    nn_process_params = pp.as_dict()
+                    nn_phig = pp.phig
+
+            # Resolve model path: prefer universal > per-tech > default
+            if nn_model_path is None:
+                universal_path = CHECKPOINT_DIR / f"universal_{device_key}_best.pt"
+                if universal_path.exists():
+                    nn_model_path = str(universal_path)
+                elif nn_tech and nn_tech.lower() != 'asap7':
+                    nn_model_path = str(CHECKPOINT_DIR / f"{nn_tech.lower()}_{device_key}_best.pt")
+                else:
+                    nn_model_path = str(CHECKPOINT_DIR / f"{device_key}_best.pt")
 
             if model_type.upper() == 'NMOS':
-                if nn_model_path is None:
-                    if nn_tech and nn_tech.lower() != 'asap7':
-                        nn_model_path = str(CHECKPOINT_DIR / f"{nn_tech.lower()}_nmos_best.pt")
-                    else:
-                        nn_model_path = str(CHECKPOINT_DIR / "nmos_best.pt")
                 mosfet = NMOS_NN(
                     name=name,
                     nodes=nodes,
@@ -671,13 +686,9 @@ class Parser:
                     L=L,
                     NFIN=NFIN,
                     phig=nn_phig,
+                    process_params=nn_process_params,
                 )
             elif model_type.upper() == 'PMOS':
-                if nn_model_path is None:
-                    if nn_tech and nn_tech.lower() != 'asap7':
-                        nn_model_path = str(CHECKPOINT_DIR / f"{nn_tech.lower()}_pmos_best.pt")
-                    else:
-                        nn_model_path = str(CHECKPOINT_DIR / "pmos_best.pt")
                 mosfet = PMOS_NN(
                     name=name,
                     nodes=nodes,
@@ -685,6 +696,7 @@ class Parser:
                     L=L,
                     NFIN=NFIN,
                     phig=nn_phig,
+                    process_params=nn_process_params,
                 )
             else:
                 raise ValueError(f"Unknown MOSFET model type: {model_type}")

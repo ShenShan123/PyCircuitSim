@@ -83,7 +83,7 @@ class NormStats:
     back to physical units.
     """
     # Input normalization (min-max to [0, 1])
-    # shape (6,) for legacy or (7,) with PHIG: [Vd, Vg, Vs, Vb, log2(NFIN), T, PHIG]
+    # shape (6,) legacy, (7,) Phase 13 PHIG, or (13,) universal with 7 process params
     input_min: np.ndarray
     input_max: np.ndarray
 
@@ -141,7 +141,7 @@ class Normalizer:
 
         Args:
             inputs: (N, 4) — [Vd, Vg, Vs, Vb]
-            geometry: (N, 2) or (N, 3) — [NFIN, T] or [NFIN, T, PHIG]
+            geometry: (N, 2), (N, 3), or (N, 9) — see _build_combined_input()
             outputs: (N, 13) — 13 output columns
 
         Returns:
@@ -192,10 +192,10 @@ class Normalizer:
 
         Args:
             inputs: (N, 4) — [Vd, Vg, Vs, Vb]
-            geometry: (N, 2) or (N, 3) — [NFIN, T] or [NFIN, T, PHIG]
+            geometry: (N, 2), (N, 3), or (N, 9) — see _build_combined_input()
 
         Returns:
-            (N, 6) or (N, 7) normalized input array.
+            (N, 6), (N, 7), or (N, 13) normalized input array.
         """
         assert self.stats is not None, "Must call fit() first"
         combined = self._build_combined_input(inputs, geometry)
@@ -250,17 +250,23 @@ class Normalizer:
 
         Args:
             inputs: (N, 4) — [Vd, Vg, Vs, Vb]
-            geometry: (N, 2) or (N, 3) — [NFIN, T] or [NFIN, T, PHIG]
+            geometry: (N, 2), (N, 3), or (N, 9):
+                - (N, 2): [NFIN, T] — legacy
+                - (N, 3): [NFIN, T, PHIG] — Phase 13
+                - (N, 9): [NFIN, T, PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW] — universal
 
         Returns:
-            (N, 6) or (N, 7) — [Vd, Vg, Vs, Vb, log2(NFIN), T] or
-                                [Vd, Vg, Vs, Vb, log2(NFIN), T, PHIG]
+            (N, 6), (N, 7), or (N, 13) normalized feature vector.
         """
         # Transform NFIN to log2 scale (captures roughly linear scaling)
         nfin_log = np.log2(np.clip(geometry[:, 0], 1.0, None))
         temperature = geometry[:, 1]
-        if geometry.shape[1] >= 3:
-            # Multi-variant: PHIG is the 3rd geometry column
+        if geometry.shape[1] >= 9:
+            # Universal: all 7 process params follow [NFIN, T]
+            proc_params = geometry[:, 2:]  # (N, 7) — PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW
+            return np.column_stack([inputs, nfin_log, temperature, proc_params])
+        elif geometry.shape[1] >= 3:
+            # Phase 13: PHIG only
             phig = geometry[:, 2]
             return np.column_stack([inputs, nfin_log, temperature, phig])
         return np.column_stack([inputs, nfin_log, temperature])

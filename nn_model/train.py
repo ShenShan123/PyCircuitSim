@@ -182,7 +182,8 @@ def train(
 
     # Auto-detect input_dim from dataset (6 for legacy, 7 with PHIG)
     input_dim = train_ds.inputs.shape[1]
-    print(f"Input dim: {input_dim} ({'with PHIG' if input_dim == 7 else 'legacy'})")
+    dim_label = {6: "legacy", 7: "with PHIG", 13: "universal (7 process params)"}
+    print(f"Input dim: {input_dim} ({dim_label.get(input_dim, f'{input_dim}-dim')})")
 
     # Model
     model = DirectNet(
@@ -310,6 +311,8 @@ def main() -> None:
     parser.add_argument("--tech", choices=list(TECH_CONFIGS.keys()),
                         default="asap7",
                         help="Technology (default: asap7)")
+    parser.add_argument("--universal", action="store_true",
+                        help="Train universal model across all techs/variants")
     parser.add_argument("--w-charges", type=float, default=None,
                         help="Loss weight for charges (default: 0.5, finetune: 1.5)")
     parser.add_argument("--w-caps", type=float, default=None,
@@ -317,22 +320,32 @@ def main() -> None:
     parser.add_argument("--cuda", action="store_true")
     args = parser.parse_args()
 
-    tech_name = args.tech.lower()
-
-    if args.data is None:
-        data_path = DATA_DIR / f"{tech_name}_{args.device_type}.npz"
-        if not data_path.exists():
-            print(f"Dataset not found: {data_path}")
-            print(f"Run: python -m nn_model.data.generate --device {args.device_type} --tech {tech_name}")
-            sys.exit(1)
+    if args.universal:
+        tech_name = "universal"
+        if args.data is None:
+            data_path = DATA_DIR / f"universal_{args.device_type}.npz"
+            if not data_path.exists():
+                print(f"Dataset not found: {data_path}")
+                print(f"Run: python -m nn_model.data.generate --device {args.device_type} --universal")
+                sys.exit(1)
+        else:
+            data_path = Path(args.data)
+        save_prefix = f"universal_{args.device_type}"
     else:
-        data_path = Path(args.data)
-
-    # Save prefix includes tech name for non-ASAP7 techs
-    if tech_name == "asap7":
-        save_prefix = args.device_type
-    else:
-        save_prefix = f"{tech_name}_{args.device_type}"
+        tech_name = args.tech.lower()
+        if args.data is None:
+            data_path = DATA_DIR / f"{tech_name}_{args.device_type}.npz"
+            if not data_path.exists():
+                print(f"Dataset not found: {data_path}")
+                print(f"Run: python -m nn_model.data.generate --device {args.device_type} --tech {tech_name}")
+                sys.exit(1)
+        else:
+            data_path = Path(args.data)
+        # Save prefix includes tech name for non-ASAP7 techs
+        if tech_name == "asap7":
+            save_prefix = args.device_type
+        else:
+            save_prefix = f"{tech_name}_{args.device_type}"
 
     output_dim = 13 if args.mode in ("direct13", "finetune") else 4
 

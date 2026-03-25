@@ -48,6 +48,7 @@ class _MOSFETNNBase(Component):
         NFIN: float,
         temperature: float = 300.15,
         phig: Optional[float] = None,
+        process_params: Optional[Dict[str, float]] = None,
     ):
         super().__init__(name, nodes, None)
 
@@ -62,6 +63,7 @@ class _MOSFETNNBase(Component):
         self.NFIN = float(NFIN)
         self.temperature = float(temperature)
         self.phig = float(phig) if phig is not None else None
+        self.process_params = process_params  # Dict with phig, u0, vsat, eot, eta0, cit, rdsw
 
         # Load model and normalization stats
         model_path = Path(model_path)
@@ -84,7 +86,7 @@ class _MOSFETNNBase(Component):
         n_weight_keys = len(weight_keys)
         n_layers = n_weight_keys
 
-        self._input_dim = input_dim  # 6 (legacy) or 7 (with PHIG)
+        self._input_dim = input_dim  # 6 (legacy), 7 (Phase 13 PHIG), or 13 (universal)
 
         self._nn_model = DirectNet(
             input_dim=input_dim, hidden_dim=hidden_dim,
@@ -99,9 +101,19 @@ class _MOSFETNNBase(Component):
 
         # Pre-compute normalized geometry features (constant per device)
         nfin_log = np.log2(max(self.NFIN, 1.0))
-        if input_dim == 7 and self.phig is not None:
-            # 7-dim model: [Vd, Vg, Vs, Vb, log2(NFIN), T, PHIG]
-            geo_raw = np.array([nfin_log, self.temperature, self.phig])
+        if input_dim == 13 and self.process_params is not None:
+            # Universal model: [Vd, Vg, Vs, Vb, log2(NFIN), T, PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW]
+            pp = self.process_params
+            geo_raw = np.array([
+                nfin_log, self.temperature,
+                pp["phig"], pp["u0"], pp["vsat"],
+                pp["eot"], pp["eta0"], pp["cit"], pp["rdsw"],
+            ])
+        elif input_dim == 7 and (self.phig is not None or
+                                  (self.process_params and "phig" in self.process_params)):
+            # Phase 13 model: [Vd, Vg, Vs, Vb, log2(NFIN), T, PHIG]
+            phig_val = self.phig or self.process_params["phig"]
+            geo_raw = np.array([nfin_log, self.temperature, phig_val])
         else:
             # Legacy 6-dim model: [Vd, Vg, Vs, Vb, log2(NFIN), T]
             geo_raw = np.array([nfin_log, self.temperature])
