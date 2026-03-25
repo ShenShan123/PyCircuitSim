@@ -10,14 +10,14 @@ NN_MODEL_DIR = PROJECT_ROOT / "nn_model"
 CHECKPOINT_DIR = NN_MODEL_DIR / "checkpoints"
 DATA_DIR = NN_MODEL_DIR / "data" / "datasets"
 
-# PyCMG paths
-PYCMG_DIR = PROJECT_ROOT / "external_compact_models" / "PyCMG"
+# PyCMG paths (pycmg-wrapper: 21 device variants, 5 process nodes)
+PYCMG_DIR = Path("/home/shenshan/pycmg-wrapper")
 OSDI_PATH = str(PYCMG_DIR / "build-deep-verify" / "osdi" / "bsimcmg.osdi")
 
 # ASAP7 technology config
 ASAP7_MODELCARD = str(PYCMG_DIR / "tech_model_cards" / "ASAP7" / "7nm_TT_160803.pm")
 ASAP7_VDD = 0.7
-ASAP7_L = 30e-9  # 30nm channel length
+ASAP7_L = 7e-9  # 7nm drawn gate length (matching pycmg-wrapper)
 
 # Default temperature
 DEFAULT_TEMPERATURE = 300.15  # 27°C in Kelvin
@@ -103,6 +103,7 @@ class TechConfig:
     pmos_model_name: str
     vdd: float
     L: float
+    tfin: float = 6e-9  # Fin thickness [m] (ASAP7: 6.5nm, TSMC: 6nm)
     nfin_values: List[int] = field(default_factory=lambda: [1, 2, 5, 10, 15, 20])
     temperature: float = DEFAULT_TEMPERATURE
     # For techs with separate NMOS/PMOS modelcard files
@@ -168,7 +169,7 @@ class TechConfig:
 
 # --- ASAP7 (7nm academic PDK) ---
 # All models in single file: 7nm_TT_160803.pm
-# Symmetric L=30nm, VDD=0.7V, T=300.15K
+# Symmetric L=7nm, VDD=0.7V, T=300.15K, TFIN=6.5nm
 ASAP7_CONFIG = TechConfig(
     name="ASAP7",
     modelcard_path=ASAP7_MODELCARD,
@@ -176,6 +177,7 @@ ASAP7_CONFIG = TechConfig(
     pmos_model_name="pmos_rvt",
     vdd=ASAP7_VDD,
     L=ASAP7_L,
+    tfin=6.5e-9,
     default_variant="rvt",
     variants={
         "rvt": VariantConfig(
@@ -232,6 +234,20 @@ TSMC5_CONFIG = TechConfig(
             nmos_modelcard_path=str(_tsmc5_naive / "nch_lvt_mac_l16nm.l"),
             pmos_modelcard_path=str(_tsmc5_naive / "pch_lvt_mac_l20nm.l"),
         ),
+        "ulvt": VariantConfig(
+            "ulvt", "nch_ulvt_mac", "pch_ulvt_mac",
+            nmos_process=ProcessParams(phig=4.361, u0=0.0736, vsat=65204.0, eot=1.06e-9, eta0=0.0569, cit=-1.409e-3, rdsw=15.0),
+            pmos_process=ProcessParams(phig=4.735, u0=0.0570, vsat=52073.0, eot=1.10e-9, eta0=5.25e-4, cit=-1.428e-3, rdsw=17.0),
+            nmos_modelcard_path=str(_tsmc5_naive / "nch_ulvt_mac_l16nm.l"),
+            pmos_modelcard_path=str(_tsmc5_naive / "pch_ulvt_mac_l20nm.l"),
+        ),
+        "elvt": VariantConfig(
+            "elvt", "nch_elvt_mac", "pch_elvt_mac",
+            nmos_process=ProcessParams(phig=4.361, u0=0.0519, vsat=39832.0, eot=1.06e-9, eta0=-2.104e-3, cit=-1.591e-3, rdsw=15.0),
+            pmos_process=ProcessParams(phig=4.735, u0=0.0567, vsat=48826.0, eot=1.10e-9, eta0=-1.054e-3, cit=-1.428e-3, rdsw=17.0),
+            nmos_modelcard_path=str(_tsmc5_naive / "nch_elvt_mac_l16nm.l"),
+            pmos_modelcard_path=str(_tsmc5_naive / "pch_elvt_mac_l20nm.l"),
+        ),
     },
 )
 
@@ -267,11 +283,11 @@ TSMC7_CONFIG = TechConfig(
             pmos_modelcard_path=str(_tsmc7_naive / "pch_lvt_mac_l20nm.l"),
         ),
         "ulvt": VariantConfig(
-            "ulvt", "nch_ulvt_mac", "pch_lvt_mac",  # PMOS ULVT naive not available, reuse LVT
-            nmos_process=ProcessParams(phig=4.347, u0=0.1168, vsat=53283.677, eot=1.16e-9, eta0=-0.0128, cit=9.42e-4, rdsw=15.0),
-            pmos_process=ProcessParams(phig=4.692727, u0=0.1895, vsat=106620.77, eot=1.11e-9, eta0=0.0241, cit=-1.2e-3, rdsw=17.0),
+            "ulvt", "nch_ulvt_mac", "pch_ulvt_mac",
+            nmos_process=ProcessParams(phig=4.347, u0=0.1168, vsat=53284.0, eot=1.16e-9, eta0=-0.0128, cit=9.42e-4, rdsw=15.0),
+            pmos_process=ProcessParams(phig=4.740, u0=0.1021, vsat=78600.0, eot=1.11e-9, eta0=0.035, cit=-1.15e-3, rdsw=17.0),
             nmos_modelcard_path=str(_tsmc7_naive / "nch_ulvt_mac_l16nm.l"),
-            pmos_modelcard_path=str(_tsmc7_naive / "pch_lvt_mac_l20nm.l"),
+            pmos_modelcard_path=str(_tsmc7_naive / "pch_ulvt_mac_l20nm.l"),
         ),
     },
 )
@@ -307,6 +323,27 @@ TSMC12_CONFIG = TechConfig(
             nmos_modelcard_path=str(_tsmc12_naive / "nch_lvt_mac_l16nm.l"),
             pmos_modelcard_path=str(_tsmc12_naive / "pch_lvt_mac_l20nm.l"),
         ),
+        "ulvt": VariantConfig(
+            "ulvt", "nch_ulvt_mac", "pch_ulvt_mac",
+            nmos_process=ProcessParams(phig=4.330, u0=0.0825, vsat=76587.0, eot=1.46e-9, eta0=-3.817e-3, cit=-2.125e-3, rdsw=15.0),
+            pmos_process=ProcessParams(phig=4.768, u0=0.1061, vsat=82119.0, eot=1.42e-9, eta0=-0.0707, cit=-3.279e-3, rdsw=17.0),
+            nmos_modelcard_path=str(_tsmc12_naive / "nch_ulvt_mac_l16nm.l"),
+            pmos_modelcard_path=str(_tsmc12_naive / "pch_ulvt_mac_l20nm.l"),
+        ),
+        "hvt": VariantConfig(
+            "hvt", "nch_hvt_mac", "pch_hvt_mac",
+            nmos_process=ProcessParams(phig=4.580, u0=0.0889, vsat=70621.0, eot=1.46e-9, eta0=-0.2518, cit=-3.389e-3, rdsw=15.0),
+            pmos_process=ProcessParams(phig=4.520, u0=0.1323, vsat=70223.0, eot=1.42e-9, eta0=0.027, cit=-3.099e-3, rdsw=17.0),
+            nmos_modelcard_path=str(_tsmc12_naive / "nch_hvt_mac_l16nm.l"),
+            pmos_modelcard_path=str(_tsmc12_naive / "pch_hvt_mac_l20nm.l"),
+        ),
+        "lnvt": VariantConfig(
+            "lnvt", "nch_lnvt_mac", "pch_lnvt_mac",
+            nmos_process=ProcessParams(phig=4.250, u0=0.0834, vsat=63143.0, eot=1.46e-9, eta0=0.080, cit=8.936e-3, rdsw=15.0),
+            pmos_process=ProcessParams(phig=4.882, u0=0.0629, vsat=61621.0, eot=1.42e-9, eta0=0.1664, cit=3.513e-3, rdsw=17.0),
+            nmos_modelcard_path=str(_tsmc12_naive / "nch_lnvt_mac_l16nm.l"),
+            pmos_modelcard_path=str(_tsmc12_naive / "pch_lnvt_mac_l20nm.l"),
+        ),
     },
 )
 
@@ -340,6 +377,27 @@ TSMC16_CONFIG = TechConfig(
             pmos_process=ProcessParams(phig=4.665, u0=0.0764, vsat=23571.429, eot=1.42e-9, eta0=-0.1494, cit=-2.0e-3, rdsw=17.0),
             nmos_modelcard_path=str(_tsmc16_naive / "nch_lvt_mac_l16nm.l"),
             pmos_modelcard_path=str(_tsmc16_naive / "pch_lvt_mac_l20nm.l"),
+        ),
+        "ulvt": VariantConfig(
+            "ulvt", "nch_ulvt_mac", "pch_ulvt_mac",
+            nmos_process=ProcessParams(phig=4.330, u0=0.0733, vsat=74829.0, eot=1.46e-9, eta0=-0.0607, cit=-4.8e-3, rdsw=15.0),
+            pmos_process=ProcessParams(phig=4.768, u0=0.0664, vsat=11991.0, eot=1.42e-9, eta0=-1.79e-3, cit=-4.307e-3, rdsw=17.0),
+            nmos_modelcard_path=str(_tsmc16_naive / "nch_ulvt_mac_l16nm.l"),
+            pmos_modelcard_path=str(_tsmc16_naive / "pch_ulvt_mac_l20nm.l"),
+        ),
+        "hvt": VariantConfig(
+            "hvt", "nch_hvt_mac", "pch_hvt_mac",
+            nmos_process=ProcessParams(phig=4.580, u0=0.1361, vsat=128229.0, eot=1.46e-9, eta0=-0.1914, cit=-2.017e-3, rdsw=15.0),
+            pmos_process=ProcessParams(phig=4.520, u0=0.0753, vsat=88857.0, eot=1.42e-9, eta0=-0.010, cit=-3.419e-3, rdsw=17.0),
+            nmos_modelcard_path=str(_tsmc16_naive / "nch_hvt_mac_l16nm.l"),
+            pmos_modelcard_path=str(_tsmc16_naive / "pch_hvt_mac_l20nm.l"),
+        ),
+        "lnvt": VariantConfig(
+            "lnvt", "nch_lnvt_mac", "pch_lnvt_mac",
+            nmos_process=ProcessParams(phig=4.250, u0=0.0725, vsat=78557.0, eot=1.46e-9, eta0=0.1557, cit=6.064e-3, rdsw=15.0),
+            pmos_process=ProcessParams(phig=4.882, u0=0.0783, vsat=60271.0, eot=1.42e-9, eta0=0.1243, cit=5.814e-3, rdsw=17.0),
+            nmos_modelcard_path=str(_tsmc16_naive / "nch_lnvt_mac_l16nm.l"),
+            pmos_modelcard_path=str(_tsmc16_naive / "pch_lnvt_mac_l20nm.l"),
         ),
     },
 )

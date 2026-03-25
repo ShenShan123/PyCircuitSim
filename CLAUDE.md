@@ -344,8 +344,65 @@ python -u -m nn_model.train --device-type nmos --universal --mode direct13 --epo
 python -u -m nn_model.train --device-type pmos --universal --mode direct13 --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048
 ```
 
+### Phase 15: Universal NN v2 — 21 Variants with New PyCMG Wrapper ✅ Complete (2026-03-26)
+- [x] **New PyCMG wrapper** — Switched from `external_compact_models/PyCMG` to standalone `pycmg-wrapper` (21 device variants, 266 tests, 5 tech nodes)
+- [x] **ASAP7 L=7nm** — Updated from L=30nm to match pycmg-wrapper's 7nm drawn gate length
+- [x] **TFIN + DEVTYPE** — Added fin thickness (6.5nm ASAP7, 6nm TSMC) and device type flags to instance params
+- [x] **8 new Vt variants** — TSMC5: ulvt/elvt, TSMC7: ulvt (real PMOS), TSMC12: ulvt/hvt/lnvt, TSMC16: ulvt/hvt/lnvt
+- [x] **Universal dataset v2** — 815,598 pts × 2 (NMOS+PMOS), 21 unique process param combos, 0 generation failures
+- [x] **GPU-accelerated training** — Resumed from CPU checkpoints on A100 40GB, ~94min NMOS / ~118min PMOS
+- [x] **Verification script** — `tests/verify_nn_universal_v2.py` (63 tests: 21 variants × 3 tests)
+- [x] **Leave-one-out script** — `tests/verify_nn_leave_one_out.py` (transferability experiment)
+
+**Verification results (19/21 PASS):**
+
+| Tech | Variant | NMOS DC (%) | PMOS DC (%) | Inv VTC (%) | Avg (%) | Status |
+|------|---------|-------------|-------------|-------------|---------|--------|
+| ASAP7 | RVT | 3.34 | 1.46 | 6.60 | 3.80 | PASS |
+| ASAP7 | LVT | 3.62 | 1.08 | 4.69 | 3.13 | PASS |
+| ASAP7 | SLVT | 14.81 | 1.22 | 3.34 | 6.45 | FAIL |
+| ASAP7 | SRAM | 3.42 | 1.04 | 6.34 | 3.60 | PASS |
+| TSMC5 | SVT | 2.53 | 2.86 | 6.43 | 3.94 | PASS |
+| TSMC5 | LVT | 2.59 | 0.94 | 7.73 | 3.75 | PASS |
+| TSMC5 | ULVT | 0.89 | 1.56 | 10.60 | 4.35 | PASS |
+| TSMC5 | ELVT | 2.38 | 0.66 | 5.87 | 2.97 | PASS |
+| TSMC7 | SVT | 4.46 | 0.97 | 6.26 | 3.90 | PASS |
+| TSMC7 | LVT | 11.59 | 0.87 | 6.90 | 6.45 | FAIL |
+| TSMC7 | ULVT | 3.24 | 0.40 | 7.94 | 3.86 | PASS |
+| TSMC12 | SVT | 2.63 | 0.88 | 7.95 | 3.82 | PASS |
+| TSMC12 | LVT | 3.64 | 1.09 | 6.82 | 3.85 | PASS |
+| TSMC12 | ULVT | 2.10 | 1.59 | 7.63 | 3.78 | PASS |
+| TSMC12 | HVT | 4.35 | 1.22 | 7.41 | 4.32 | PASS |
+| TSMC12 | LNVT | 2.30 | 0.57 | 7.03 | 3.30 | PASS |
+| TSMC16 | SVT | 6.09 | 0.73 | 7.31 | 4.71 | PASS |
+| TSMC16 | LVT | 3.17 | 1.49 | 8.44 | 4.37 | PASS |
+| TSMC16 | ULVT | 2.44 | 1.78 | 9.06 | 4.42 | PASS |
+| TSMC16 | HVT | 4.79 | 0.93 | 6.08 | 3.93 | PASS |
+| TSMC16 | LNVT | 2.83 | 2.89 | 7.94 | 4.56 | PASS |
+
+**Per-technology average:**
+
+| Tech | NMOS DC | PMOS DC | Inv VTC | Overall Avg |
+|------|---------|---------|---------|-------------|
+| ASAP7 | 6.30% | 1.20% | 5.24% | 4.25% |
+| TSMC5 | 2.10% | 1.50% | 7.66% | 3.75% |
+| TSMC7 | 6.43% | 0.74% | 7.03% | 4.74% |
+| TSMC12 | 3.00% | 1.07% | 7.37% | 3.81% |
+| TSMC16 | 3.86% | 1.56% | 7.77% | 4.40% |
+
+Run: `conda run -n pycircuitsim python tests/verify_nn_universal_v2.py`
+
+**Training (GPU-accelerated):**
+```bash
+# Generate data (21 variants, ~815K pts × 2)
+conda run -n pycircuitsim python -m nn_model.data.generate --device both --universal
+# Train on GPU (A100 40GB, ~2h each with --resume from CPU checkpoint)
+conda run -n pycircuitsim python -u -m nn_model.train --device-type nmos --universal --mode direct13 --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048 --cuda
+conda run -n pycircuitsim python -u -m nn_model.train --device-type pmos --universal --mode direct13 --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048 --cuda
+```
+
 ### Future Work
-- [ ] **Expand universal model** — Add ULVT, HVT, LNVT variants from TSMC12/16 main library (~40 total devices)
+- [ ] **Leave-one-out transferability** — Run `tests/verify_nn_leave_one_out.py --device both` to measure zero-shot accuracy on held-out variants (ASAP7:slvt, TSMC5:elvt, TSMC7:ulvt, TSMC12:hvt, TSMC16:lnvt)
 - [ ] **Improved NN Transient Accuracy** — Retrain with `--w-charges 1.5 --w-caps 1.0` (charge-emphasized weights), PhysicsLoss for autograd-supervised capacitances
 - [ ] **Expanded Test Suite**
     - [ ] NAND/NOR gates

@@ -19,7 +19,7 @@ import numpy as np
 # Project imports
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG"))
+sys.path.insert(0, "/home/shenshan/pycmg-wrapper")
 
 from pycmg import Model, Instance
 from nn_model.config import (
@@ -56,7 +56,8 @@ def create_pycmg_instance(
     )
 
     L = tech.get_L(device_type)
-    inst_params = {"L": L, "NFIN": float(nfin)}
+    devtype = 1 if device_type == "nmos" else 0
+    inst_params = {"L": L, "NFIN": float(nfin), "TFIN": tech.tfin, "DEVTYPE": devtype}
     return Instance(model=model, params=inst_params, temperature=tech.temperature)
 
 
