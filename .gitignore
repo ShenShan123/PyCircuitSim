@@ -51,3 +51,4 @@ external_compact_models/*.py
 
 # Claude Code
 .claude_statusline_exec.sh
+nn_model/data/datasets/*.npz
