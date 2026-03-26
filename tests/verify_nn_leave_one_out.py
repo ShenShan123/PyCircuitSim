@@ -183,6 +183,7 @@ def train_loo_model(
     hidden: int = 384,
     layers: int = 6,
     batch_size: int = 2048,
+    use_cuda: bool = False,
 ) -> Tuple[DirectNet, Normalizer]:
     """Train a model on the reduced (leave-out) training set.
 
@@ -191,7 +192,7 @@ def train_loo_model(
     Returns:
         Tuple of (trained model, normalizer).
     """
-    device = torch.device("cpu")
+    device = torch.device("cuda" if use_cuda and torch.cuda.is_available() else "cpu")
     N = train_inputs.shape[0]
 
     # Shuffle and split: 85% train, 15% val
@@ -302,7 +303,7 @@ def evaluate_on_subset(
     Returns:
         Dict with 'id_nrmse_pct' and 'n_points'.
     """
-    device = torch.device("cpu")
+    device = next(model.parameters()).device
     model.eval()
 
     # Normalize inputs
@@ -394,6 +395,7 @@ def run_single_device(
     hidden: int,
     layers: int,
     batch_size: int,
+    use_cuda: bool = False,
 ) -> List[LOOResult]:
     """Run the full leave-one-out experiment for one device type."""
     print(f"\n{'='*70}")
@@ -434,6 +436,7 @@ def run_single_device(
         hidden=hidden,
         layers=layers,
         batch_size=batch_size,
+        use_cuda=use_cuda,
     )
 
     # 4. Evaluate on held-out (zero-shot) variants
@@ -584,6 +587,10 @@ def main() -> None:
         "--batch-size", type=int, default=2048,
         help="Training batch size (default: 2048)",
     )
+    parser.add_argument(
+        "--cuda", action="store_true",
+        help="Use CUDA GPU for training",
+    )
     args = parser.parse_args()
 
     devices = ["nmos", "pmos"] if args.device == "both" else [args.device]
@@ -604,6 +611,7 @@ def main() -> None:
             hidden=args.hidden,
             layers=args.layers,
             batch_size=args.batch_size,
+            use_cuda=args.cuda,
         )
         all_results.extend(results)
 
