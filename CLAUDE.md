@@ -39,10 +39,10 @@ nn_model/                           # NN training pipeline
 │   ├── normalize.py                # Signed-log + z-score normalization
 │   └── dataset.py                  # PyTorch Dataset/DataLoader
 ├── architecture/
-│   ├── direct_loss.py              # DirectNet MLP + DirectLoss (13 outputs)
+│   ├── direct_loss.py              # DirectNet MLP + DirectLoss + ChargeConsistencyLoss
 │   ├── mosfet_net.py               # Dual-head MLP (MOSFETNet, for reference)
 │   └── physics_loss.py             # Autograd derivative-supervised loss
-├── train.py                        # Training loop (direct13/finetune modes)
+├── train.py                        # Training loop (direct13/finetune/charge-finetune modes)
 └── checkpoints/                    # Saved model weights (.pt + _norm.npz)
 
 external_compact_models/
@@ -98,9 +98,11 @@ All phases (1-15) are complete. Key milestones:
 - **Phases 11-12:** NN compact model (LEVEL=73) — training pipeline, autograd conductances, multi-tech DC+transient verified
 - **Phases 13-15:** Universal NN v2 — 21 variants across 5 techs, 13-dim input (voltages + 7 process params), 19/21 PASS (ASAP7:SLVT and TSMC7:LVT FAIL on NMOS DC)
 - **Leave-one-out transferability** — 8/10 good transfer (gap < 5%), zero-shot avg 4.65% NRMSE, in-dist avg 0.95%
+- **Charge-finetune training** — ChargeConsistencyLoss (autograd dq/dV = C), trained from scratch 800 epochs on A100
+- **NN Transient (charge-finetune + VT fix)** — 5/5 PASS: ASAP7 6.20%, TSMC5 14.41%, TSMC7 7.15%, TSMC12 6.47%, TSMC16 7.42%
 
 ### Future Work
-- [ ] **Improved NN Transient Accuracy** — Retrain with `--w-charges 1.5 --w-caps 1.0`, PhysicsLoss for capacitances
+- [ ] **Improve TSMC5 Transient** — 14.41% NRMSE (close to 15% threshold); try denser mid-supply data (`--n-dense-mid 30`) + retrain
 - [ ] **Expanded Test Suite** — NAND/NOR gates, Ring Oscillator, SRAM bitcell
 - [ ] **Adaptive Timestep** — Local truncation error estimate for automatic timestep control
 
@@ -115,11 +117,13 @@ Create a netlist (`.sp` file). Examples in `examples/`.
 
 ### NN Model (LEVEL=73)
 ```bash
-# Generate universal data (21 variants, ~815K pts x 2)
+# Generate universal data (21 variants, ~815K pts x 2; add --n-dense-mid 30 for transient accuracy)
 conda run -n pycircuitsim python -m nn_model.data.generate --device both --universal
-# Train on GPU
+# Train on GPU (direct13 baseline)
 conda run -n pycircuitsim python -u -m nn_model.train --device-type nmos --universal --mode direct13 --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048 --cuda
 conda run -n pycircuitsim python -u -m nn_model.train --device-type pmos --universal --mode direct13 --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048 --cuda
+# Optional: charge-finetune for transient accuracy (autograd dq/dV = C consistency, ~5-10x slower)
+conda run -n pycircuitsim python -u -m nn_model.train --device-type nmos --universal --mode charge-finetune --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048 --cuda --resume none
 ```
 Checkpoints: Universal -> `universal_{nmos,pmos}_best.pt`, Per-tech -> `{tech}_{nmos,pmos}_best.pt` + `_norm.npz`.
 Netlist usage: `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`.

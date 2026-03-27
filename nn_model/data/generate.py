@@ -66,6 +66,7 @@ def generate_voltage_grid(
     device_type: str = "nmos",
     n_uniform: int = 71,
     n_dense_vth: int = 20,
+    n_dense_mid: int = 0,
     v_margin: float = -1.0,  # -1 means auto = VDD
     vth_approx: float = 0.2,
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -83,6 +84,8 @@ def generate_voltage_grid(
         device_type: 'nmos' or 'pmos'.
         n_uniform: Number of uniform grid points per axis.
         n_dense_vth: Extra dense points near Vth (for subthreshold transition).
+        n_dense_mid: Extra dense points near VDD/2 (for switching transition).
+            Both NMOS and PMOS are partially on here; charges change rapidly.
         v_margin: Extend sweep beyond operating range by this margin.
         vth_approx: Approximate threshold voltage magnitude.
 
@@ -99,6 +102,8 @@ def generate_voltage_grid(
         v_min = -v_margin
         v_max = vdd + v_margin
         vth_center = vth_approx
+        mid_vg = vdd / 2    # inverter switching point
+        mid_vd = vdd / 2    # output near mid-supply during transition
     else:
         # PMOS in source-relative frame (Vs=0):
         # Vg < 0 to turn on, Vd < 0 typically
@@ -106,6 +111,8 @@ def generate_voltage_grid(
         v_min = -(vdd + v_margin)
         v_max = v_margin
         vth_center = -vth_approx
+        mid_vg = -vdd / 2   # inverter switching point (source-relative)
+        mid_vd = -vdd / 2   # output near mid-supply during transition
 
     # Uniform grid for Vg
     vg_uniform = np.linspace(v_min, v_max, n_uniform)
@@ -114,10 +121,23 @@ def generate_voltage_grid(
     vth_range = 0.1
     vg_dense = np.linspace(vth_center - vth_range, vth_center + vth_range, n_dense_vth)
 
-    vg_all = np.unique(np.concatenate([vg_uniform, vg_dense]))
+    # Dense points near mid-supply (transition region)
+    extra_grids = [vg_uniform, vg_dense]
+    if n_dense_mid > 0:
+        mid_range = 0.15 * vdd  # +/- 15% of VDD around mid
+        vg_mid = np.linspace(mid_vg - mid_range, mid_vg + mid_range, n_dense_mid)
+        extra_grids.append(vg_mid)
 
-    # Uniform grid for Vd
-    vd_all = np.linspace(v_min, v_max, n_uniform)
+    vg_all = np.unique(np.concatenate(extra_grids))
+
+    # Uniform grid for Vd + optional mid-supply dense points
+    vd_uniform = np.linspace(v_min, v_max, n_uniform)
+    if n_dense_mid > 0:
+        mid_range_d = 0.15 * vdd
+        vd_mid = np.linspace(mid_vd - mid_range_d, mid_vd + mid_range_d, n_dense_mid)
+        vd_all = np.unique(np.concatenate([vd_uniform, vd_mid]))
+    else:
+        vd_all = vd_uniform
 
     return vg_all, vd_all
 
@@ -161,6 +181,8 @@ def generate_dataset(
     device_type: str,
     variant_names: Optional[List[str]] = None,
     verbose: bool = True,
+    n_dense_vth: int = 20,
+    n_dense_mid: int = 0,
 ) -> Dict[str, np.ndarray]:
     """Generate full training dataset for one device type across NFIN values and variants.
 
@@ -168,19 +190,25 @@ def generate_dataset(
     - Zero-bias anchors (all V=0)
     - Deep cutoff (Vg far below Vth)
     - Dense subthreshold sampling (near Vth)
+    - Optional dense mid-supply sampling (for transient switching)
 
     Args:
         tech: Technology configuration.
         device_type: 'nmos' or 'pmos'.
         variant_names: List of variant names to include (default: all variants).
         verbose: Print progress.
+        n_dense_vth: Extra dense points near Vth (default: 20).
+        n_dense_mid: Extra dense points near VDD/2 (default: 0, off).
 
     Returns:
         Dict with keys: 'inputs' (N,4), 'geometry' (N,9), 'outputs' (N,13),
         'metadata' containing tech/device info.
     """
     vdd = tech.vdd
-    vgs_points, vds_points = generate_voltage_grid(vdd, device_type=device_type)
+    vgs_points, vds_points = generate_voltage_grid(
+        vdd, device_type=device_type,
+        n_dense_vth=n_dense_vth, n_dense_mid=n_dense_mid,
+    )
 
     # Determine which variants to generate data for
     if variant_names is None:
@@ -339,6 +367,8 @@ def save_dataset(data: Dict[str, np.ndarray], output_path: Path) -> None:
 def generate_universal_dataset(
     device_type: str,
     verbose: bool = True,
+    n_dense_vth: int = 20,
+    n_dense_mid: int = 0,
 ) -> Dict[str, np.ndarray]:
     """Generate combined training data across ALL technologies and variants.
 
@@ -348,6 +378,8 @@ def generate_universal_dataset(
     Args:
         device_type: 'nmos' or 'pmos'.
         verbose: Print progress.
+        n_dense_vth: Extra dense points near Vth (default: 20).
+        n_dense_mid: Extra dense points near VDD/2 (default: 0, off).
 
     Returns:
         Dict with keys: 'inputs' (N,4), 'geometry' (N,9), 'outputs' (N,13),
@@ -366,7 +398,8 @@ def generate_universal_dataset(
                   f"({len(tech.variants)} variants)")
             print(f"{'='*60}")
 
-        data = generate_dataset(tech, device_type, verbose=verbose)
+        data = generate_dataset(tech, device_type, verbose=verbose,
+                                n_dense_vth=n_dense_vth, n_dense_mid=n_dense_mid)
         all_inputs.append(data["inputs"])
         all_geometry.append(data["geometry"])
         all_outputs.append(data["outputs"])
@@ -426,6 +459,11 @@ def main() -> None:
                         help="Comma-separated variant names (default: all)")
     parser.add_argument("--universal", action="store_true",
                         help="Generate universal dataset across all techs/variants")
+    parser.add_argument("--n-dense-vth", type=int, default=20,
+                        help="Dense sampling points near Vth (default: 20)")
+    parser.add_argument("--n-dense-mid", type=int, default=0,
+                        help="Dense sampling points near VDD/2 for transient "
+                             "accuracy (default: 0, off)")
     args = parser.parse_args()
 
     devices = ["nmos", "pmos"] if args.device == "both" else [args.device]
@@ -433,7 +471,10 @@ def main() -> None:
     if args.universal:
         # Universal mode: combine all techs/variants into single dataset
         for device_type in devices:
-            data = generate_universal_dataset(device_type, verbose=True)
+            data = generate_universal_dataset(
+                device_type, verbose=True,
+                n_dense_vth=args.n_dense_vth, n_dense_mid=args.n_dense_mid,
+            )
             output_path = DATA_DIR / f"universal_{device_type}.npz"
             save_dataset(data, output_path)
         return
@@ -461,11 +502,15 @@ def main() -> None:
             print(f"  NFIN values: {tech.nfin_values}")
             print(f"  Variants: {use_variants}")
             print(f"  Temperature: {tech.temperature}K")
+            print(f"  Dense Vth points: {args.n_dense_vth}")
+            print(f"  Dense mid-supply points: {args.n_dense_mid}")
             print(f"{'='*60}")
 
             data = generate_dataset(tech, device_type,
                                     variant_names=variant_names,
-                                    verbose=True)
+                                    verbose=True,
+                                    n_dense_vth=args.n_dense_vth,
+                                    n_dense_mid=args.n_dense_mid)
 
             output_path = DATA_DIR / f"{tech.name.lower()}_{device_type}.npz"
             save_dataset(data, output_path)

@@ -28,7 +28,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from nn_model.config import TrainConfig, CHECKPOINT_DIR, DATA_DIR, TECH_CONFIGS
 from nn_model.data.dataset import load_and_split
 from nn_model.data.normalize import Normalizer, inv_signed_log
-from nn_model.architecture.direct_loss import DirectNet, DirectLoss
+from nn_model.architecture.direct_loss import DirectNet, DirectLoss, ChargeConsistencyLoss
 
 
 def train_epoch(
@@ -86,6 +86,77 @@ def validate_epoch(
         n_batches += 1
 
     return {k: v / n_batches for k, v in total_losses.items()}
+
+
+def train_epoch_consistency(
+    model: DirectNet,
+    loader: DataLoader,
+    criterion: ChargeConsistencyLoss,
+    optimizer: torch.optim.Optimizer,
+    device: torch.device,
+) -> Dict[str, float]:
+    """Train one epoch with charge-cap consistency loss (requires autograd)."""
+    model.train()
+    total_losses: Dict[str, float] = {}
+    n_batches = 0
+
+    for x_batch, y_batch in loader:
+        x_batch = x_batch.to(device)
+        y_batch = y_batch.to(device)
+
+        optimizer.zero_grad()
+        # ChargeConsistencyLoss takes (model, x, targets) — runs forward internally
+        losses = criterion(model, x_batch, y_batch)
+        losses["total"].backward()
+
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=10.0)
+        optimizer.step()
+
+        for k, v in losses.items():
+            total_losses[k] = total_losses.get(k, 0.0) + v.item()
+        n_batches += 1
+
+    return {k: v / n_batches for k, v in total_losses.items()}
+
+
+def validate_epoch_consistency(
+    model: DirectNet,
+    loader: DataLoader,
+    criterion: ChargeConsistencyLoss,
+    device: torch.device,
+) -> Dict[str, float]:
+    """Validate with charge-cap consistency loss.
+
+    Uses fast direct-loss-only path (no autograd) for early stopping metric.
+    Consistency metrics are computed on one batch for logging only.
+    """
+    model.eval()
+    total_losses: Dict[str, float] = {}
+    n_batches = 0
+
+    # Fast path: direct loss only (no autograd), used for early stopping
+    with torch.no_grad():
+        for x_batch, y_batch in loader:
+            x_batch = x_batch.to(device)
+            y_batch = y_batch.to(device)
+
+            pred = model(x_batch)
+            losses = criterion.direct_loss(pred, y_batch, x_batch)
+
+            for k, v in losses.items():
+                total_losses[k] = total_losses.get(k, 0.0) + v.item()
+            n_batches += 1
+
+    avg_losses = {k: v / n_batches for k, v in total_losses.items()}
+
+    # Compute consistency metrics on one batch for logging (with autograd)
+    x_sample, y_sample = next(iter(loader))
+    x_sample, y_sample = x_sample.to(device), y_sample.to(device)
+    consist_losses = criterion(model, x_sample, y_sample)
+    avg_losses["cap_consist"] = consist_losses["cap_consist"].item()
+    avg_losses["cond_consist"] = consist_losses["cond_consist"].item()
+
+    return avg_losses
 
 
 @torch.no_grad()
@@ -148,6 +219,9 @@ def train(
     save_prefix: str = "nmos",
     output_dim: int = 13,
     resume_from: str = None,
+    use_charge_consistency: bool = False,
+    w_consistency: float = 1.0,
+    w_cond_consistency: float = 0.0,
 ) -> Tuple[DirectNet, Normalizer]:
     """Full training pipeline.
 
@@ -158,10 +232,16 @@ def train(
         save_prefix: Prefix for saved model files.
         output_dim: 4 (id,qg,qd,qb only) or 13 (all outputs).
         resume_from: Path to checkpoint to resume/fine-tune from.
+        use_charge_consistency: Use ChargeConsistencyLoss (autograd dq/dV = C).
+        w_consistency: Weight for charge-cap autograd consistency term.
+        w_cond_consistency: Weight for conductance autograd consistency term.
     """
     device = torch.device(device_str)
     print(f"Training on {device}, output_dim={output_dim}")
     print(f"Loss weights: w_id={config.w_id}, w_charges={config.w_charges}, w_caps={config.w_caps}")
+    if use_charge_consistency:
+        print(f"Charge consistency: w_consistency={w_consistency}, "
+              f"w_cond_consistency={w_cond_consistency}")
 
     # Load and split
     train_ds, val_ds, test_ds, normalizer = load_and_split(
@@ -205,14 +285,31 @@ def train(
 
     print(f"Model parameters: {model.count_parameters()}")
 
-    criterion = DirectLoss(
-        output_dim=output_dim,
-        w_zero_bias=config.w_zero_bias,
-        w_curr=config.w_id,
-        w_cond=(config.w_gm + config.w_gds + config.w_gmb) / 3.0,
-        w_charges=config.w_charges,
-        w_caps=config.w_caps,
-    )
+    # Criterion selection
+    if use_charge_consistency:
+        criterion = ChargeConsistencyLoss(
+            w_consistency=w_consistency,
+            w_cond_consistency=w_cond_consistency,
+            w_zero_bias=config.w_zero_bias,
+            w_curr=config.w_id,
+            w_cond=(config.w_gm + config.w_gds + config.w_gmb) / 3.0,
+            w_charges=config.w_charges,
+            w_caps=config.w_caps,
+        )
+        _train_fn = train_epoch_consistency
+        _val_fn = validate_epoch_consistency
+    else:
+        criterion = DirectLoss(
+            output_dim=output_dim,
+            w_zero_bias=config.w_zero_bias,
+            w_curr=config.w_id,
+            w_cond=(config.w_gm + config.w_gds + config.w_gmb) / 3.0,
+            w_charges=config.w_charges,
+            w_caps=config.w_caps,
+        )
+        _train_fn = train_epoch
+        _val_fn = validate_epoch
+
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=config.lr, weight_decay=config.weight_decay
     )
@@ -225,7 +322,10 @@ def train(
     best_path = CHECKPOINT_DIR / f"{save_prefix}_best.pt"
     norm_path = CHECKPOINT_DIR / f"{save_prefix}_norm.npz"
 
-    if output_dim == 13:
+    if use_charge_consistency:
+        header = (f"{'Ep':>4s} | {'Train':>8s} | {'Val':>8s} | {'LR':>9s} | "
+                  f"{'id':>7s} {'q':>7s} {'cap':>7s} {'ccons':>7s} | {'Status'}")
+    elif output_dim == 13:
         header = (f"{'Ep':>4s} | {'Train':>8s} | {'Val':>8s} | {'LR':>9s} | "
                   f"{'id':>7s} {'gm':>7s} {'gds':>7s} {'q':>7s} {'cap':>7s} | {'Status'}")
     else:
@@ -237,8 +337,8 @@ def train(
     t_start = time.time()
 
     for epoch in range(1, config.max_epochs + 1):
-        train_losses = train_epoch(model, train_loader, criterion, optimizer, device)
-        val_losses = validate_epoch(model, val_loader, criterion, device)
+        train_losses = _train_fn(model, train_loader, criterion, optimizer, device)
+        val_losses = _val_fn(model, val_loader, criterion, device)
         scheduler.step()
         lr = scheduler.get_last_lr()[0]
 
@@ -254,7 +354,12 @@ def train(
 
         should_print = (epoch % 20 == 0 or epoch <= 5 or bool(status))
         if should_print:
-            if output_dim == 13:
+            if use_charge_consistency:
+                print(f"{epoch:4d} | {train_losses['total']:8.5f} | "
+                      f"{val_losses['total']:8.5f} | {lr:9.2e} | "
+                      f"{val_losses['id']:7.5f} {val_losses['charges']:7.5f} "
+                      f"{val_losses['caps']:7.5f} {val_losses['cap_consist']:7.5f} |{status}")
+            elif output_dim == 13:
                 print(f"{epoch:4d} | {train_losses['total']:8.5f} | "
                       f"{val_losses['total']:8.5f} | {lr:9.2e} | "
                       f"{val_losses['id']:7.5f} {val_losses['gm']:7.5f} "
@@ -275,7 +380,7 @@ def train(
 
     # Load best and evaluate
     model.load_state_dict(torch.load(best_path, weights_only=True))
-    test_losses = validate_epoch(model, test_loader, criterion, device)
+    test_losses = _val_fn(model, test_loader, criterion, device)
     print(f"\nTest set losses:")
     for k, v in sorted(test_losses.items()):
         print(f"  {k:>10s}: {v:.6f}")
@@ -296,7 +401,8 @@ def main() -> None:
     parser = argparse.ArgumentParser(description="Train NN-based MOSFET model")
     parser.add_argument("--data", type=str, default=None)
     parser.add_argument("--device-type", choices=["nmos", "pmos"], default="nmos")
-    parser.add_argument("--mode", choices=["direct4", "direct13", "finetune"],
+    parser.add_argument("--mode", choices=["direct4", "direct13", "finetune",
+                                          "charge-finetune"],
                         default="direct13")
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--batch-size", type=int, default=1024)
@@ -317,6 +423,12 @@ def main() -> None:
                         help="Loss weight for charges (default: 0.5, finetune: 1.5)")
     parser.add_argument("--w-caps", type=float, default=None,
                         help="Loss weight for capacitances (default: 0.3, finetune: 1.0)")
+    parser.add_argument("--w-consistency", type=float, default=1.0,
+                        help="Weight for charge-cap autograd consistency loss "
+                             "(charge-finetune mode only, default: 1.0)")
+    parser.add_argument("--w-cond-consistency", type=float, default=0.0,
+                        help="Weight for conductance autograd consistency loss "
+                             "(charge-finetune mode only, default: 0.0)")
     parser.add_argument("--cuda", action="store_true")
     args = parser.parse_args()
 
@@ -347,7 +459,8 @@ def main() -> None:
         else:
             save_prefix = f"{tech_name}_{args.device_type}"
 
-    output_dim = 13 if args.mode in ("direct13", "finetune") else 4
+    output_dim = 13 if args.mode in ("direct13", "finetune", "charge-finetune") else 4
+    use_charge_consistency = (args.mode == "charge-finetune")
 
     config = TrainConfig(
         max_epochs=args.epochs,
@@ -358,16 +471,22 @@ def main() -> None:
         patience=args.patience,
     )
 
-    # For finetune mode, lower LR and resume from existing
-    if args.mode == "finetune":
-        config.lr = args.lr if args.lr != 1e-3 else 1e-4  # Default to lower LR
+    # For finetune modes, lower LR and resume from existing
+    if args.mode in ("finetune", "charge-finetune"):
         # Boost charge/cap weights for transient accuracy (3x default)
         config.w_charges = args.w_charges if args.w_charges is not None else 1.5
         config.w_caps = args.w_caps if args.w_caps is not None else 1.0
         if args.resume is None:
+            # Auto-resume from existing checkpoint
             resume = str(CHECKPOINT_DIR / f"{save_prefix}_best.pt")
+            config.lr = args.lr if args.lr != 1e-3 else 1e-4  # Lower LR for finetune
+        elif args.resume.lower() == "none":
+            # Explicit "none" → train from scratch (keep default LR)
+            resume = None
+            config.lr = args.lr
         else:
             resume = args.resume
+            config.lr = args.lr if args.lr != 1e-3 else 1e-4
     else:
         if args.w_charges is not None:
             config.w_charges = args.w_charges
@@ -379,7 +498,10 @@ def main() -> None:
     train(str(data_path), config, device_str,
           save_prefix=save_prefix,
           output_dim=output_dim,
-          resume_from=resume)
+          resume_from=resume,
+          use_charge_consistency=use_charge_consistency,
+          w_consistency=args.w_consistency,
+          w_cond_consistency=args.w_cond_consistency)
 
 
 if __name__ == "__main__":
