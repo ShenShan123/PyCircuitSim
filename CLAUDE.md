@@ -39,9 +39,7 @@ nn_model/                           # NN training pipeline
 │   ├── normalize.py                # Signed-log + z-score normalization
 │   └── dataset.py                  # PyTorch Dataset/DataLoader
 ├── architecture/
-│   ├── direct_loss.py              # DirectNet MLP + DirectLoss + ChargeConsistencyLoss
-│   ├── mosfet_net.py               # Dual-head MLP (MOSFETNet, for reference)
-│   └── physics_loss.py             # Autograd derivative-supervised loss
+│   └── direct_loss.py              # DirectNet MLP + DirectLoss + ChargeConsistencyLoss
 ├── train.py                        # Training loop (direct13/finetune/charge-finetune modes)
 └── checkpoints/                    # Saved model weights (.pt + _norm.npz)
 
@@ -147,6 +145,7 @@ All tests require: `conda activate pycircuitsim`
 | Comprehensive Transient | `verify_bsimcmg_tran_comprehensive.py` | 21 parametric configs (VDD, Cload, slew, pw, NFIN, P/N ratio) |
 | Multi-Tech Transient | `verify_multi_tech_tran.py` | 5 techs, baseline + parametric sweep |
 | NN Multi-Tech | `verify_nn_multi_tech.py` | NMOS/PMOS DC + Inverter VTC per tech (<10%/15%) |
+| NN Universal | `verify_nn_universal.py` | Universal NN model v1 |
 | NN Universal v2 | `verify_nn_universal_v2.py` | 21 variants x 3 tests (63 tests) |
 | NN Transient | `verify_nn_tran.py` | NN vs NGSPICE transient per tech (<15%) |
 | NN Leave-One-Out | `verify_nn_leave_one_out.py` | Zero-shot transferability experiment |
@@ -243,7 +242,7 @@ When integrating new compact models, follow this checklist:
 - **BSIM-CMG OSDI Binary**: `/home/shenshan/pycmg-wrapper/build-deep-verify/osdi/bsimcmg.osdi`
 - **Modelcards**: `/home/shenshan/pycmg-wrapper/tech_model_cards/` (ASAP7: `ASAP7/`, TSMC: `TSMC{5,7,12,16}/naive/`)
 - **Results Output**: `results/<circuit_name>/<analysis_type>/` (`.lis`, `.csv`, `.png`)
-- **Examples**: `examples/` (50+ netlists)
+- **Examples**: `examples/` (12 netlists)
 - **Test Results**: `tests/verify_*_results/` (generated, not tracked in git)
 
 ## Other Tips

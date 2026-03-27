@@ -309,33 +309,6 @@ Mn1 3 2 0 0 NMOS L=1u W=10u
 python main.py examples/test_cmos_inverter_level1.sp
 ```
 
-### Level 1: Inverter Transient
-
-File: `examples/level1_inverter_tran.sp`
-
-```spice
-* CMOS Inverter Transient - Level 1
-Vdd 1 0 3.3
-Vin 2 0 PULSE(0 3.3 1n 0.1n 0.1n 5n 10n)
-
-Mp1 3 2 1 1 PMOS_VTL L=1u W=20u
-Mn1 3 2 0 0 NMOS_VTL L=1u W=10u
-Cload 3 0 100f
-
-.ic V(3)=3.3
-
-.model NMOS_VTL NMOS (LEVEL=1 VTO=0.7 KP=110u GAMMA=0.4 LAMBDA=0.02)
-.model PMOS_VTL PMOS (LEVEL=1 VTO=-0.7 KP=50u GAMMA=0.5 LAMBDA=0.03)
-
-.tran 100p 50n
-
-.end
-```
-
-```bash
-python main.py examples/level1_inverter_tran.sp
-```
-
 ### BSIM-CMG: FinFET Inverter Transient (ASAP7 7nm)
 
 File: `examples/bsimcmg_inverter_tran.sp`
@@ -587,7 +560,6 @@ The comprehensive suite sweeps VDD, Cload, input slew, pulse width, NFIN scaling
 | `tests/verify_bsimcmg_dc.py` | DC sweep: Id-Vgs and VTC curves vs NGSPICE |
 | `tests/verify_bsimcmg_tran.py` | Transient: single inverter config vs NGSPICE |
 | `tests/verify_bsimcmg_tran_comprehensive.py` | Transient: 21-config parametric sweep vs NGSPICE (6 sweeps) |
-| `tests/verify_level1_transient.py` | Level 1 transient validation |
 
 Each script generates comparison plots and detailed metrics in `tests/verify_bsimcmg_*_results/`.
 
