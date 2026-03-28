@@ -154,7 +154,6 @@ class Parser:
             if line.startswith('+'):
                 continuation = line[1:].strip()
                 continuation = continuation.replace(' = ', '=').replace('= ', '=')
-                import re
                 continuation = re.sub(r'\s*=\s*', '=', continuation)
                 continued_line += " " + continuation
                 continue

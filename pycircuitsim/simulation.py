@@ -344,7 +344,7 @@ def run_transient(
                             use_pseudo_transient=True,
                             pseudo_transient_steps=10,
                             pseudo_transient_cap=1e-12,
-                            debug=True)
+                            debug=False)
     results = solver.solve()
 
     # Convert numpy arrays to lists for plotting

@@ -33,9 +33,10 @@ from pycircuitsim.circuit import Circuit
 from pycircuitsim.models.passive import VoltageSource, Capacitor
 from pycircuitsim.logger import Logger, IterationInfo
 
-# Helper function to check if component is a MOSFET
-def _is_mosfet(component):
-    """Check if component is a MOSFET (Level 1, BSIM-CMG, or NN)."""
+# --- Module-level MOSFET helpers (used by both DCSolver and TransientSolver) ---
+
+def _mosfet_types() -> tuple:
+    """Return tuple of all MOSFET classes (Level 1, BSIM-CMG, NN)."""
     from pycircuitsim.models.mosfet import NMOS, PMOS
     types = [NMOS, PMOS]
     try:
@@ -48,7 +49,110 @@ def _is_mosfet(component):
         types.extend([NMOS_NN, PMOS_NN])
     except ImportError:
         pass
-    return isinstance(component, tuple(types))
+    return tuple(types)
+
+
+def _pmos_types() -> tuple:
+    """Return tuple of all PMOS classes (Level 1, BSIM-CMG, NN)."""
+    from pycircuitsim.models.mosfet import PMOS
+    types = [PMOS]
+    try:
+        from pycircuitsim.models.mosfet_cmg import PMOS_CMG
+        types.append(PMOS_CMG)
+    except ImportError:
+        pass
+    try:
+        from pycircuitsim.models.mosfet_nn import PMOS_NN
+        types.append(PMOS_NN)
+    except ImportError:
+        pass
+    return tuple(types)
+
+
+def _is_mosfet(component) -> bool:
+    """Check if component is any MOSFET variant."""
+    return isinstance(component, _mosfet_types())
+
+
+def _is_pmos(component) -> bool:
+    """Check if component is any PMOS variant."""
+    return isinstance(component, _pmos_types())
+
+
+def _has_non_linear(circuit: Circuit) -> bool:
+    """Check if circuit contains non-linear components (MOSFETs)."""
+    return any(_is_mosfet(c) for c in circuit.components)
+
+
+def _stamp_mosfet_dc(
+    mosfet,
+    mna_matrix: np.ndarray,
+    rhs: np.ndarray,
+    node_map: Dict[str, int],
+    voltages: Dict[str, float],
+    gmin: float,
+) -> None:
+    """Stamp MOSFET conductance and NR current source to MNA matrix.
+
+    Shared by DCSolver._stamp_mosfet and TransientSolver._stamp_mosfet_transient.
+    The NR linearization stamps g_ds, g_m, g_mb conductances and the equivalent
+    current source i_eq = I_leaving(V0) - g_ds*V_ds0 - g_m*V_gs0 - g_mb*V_bs0.
+    """
+    drain, gate, source, bulk = mosfet.nodes
+
+    # Get conductances (2-tuple for Level 1, 3-tuple for CMG/NN)
+    conductance_result = mosfet.get_conductance(voltages)
+    if len(conductance_result) == 2:
+        g_ds, g_m = conductance_result
+        g_mb = 0.0
+    else:
+        g_ds, g_m, g_mb = conductance_result
+
+    i_ds = mosfet.calculate_current(voltages)
+    g_ds = max(g_ds, gmin)  # SPICE GMIN floor
+
+    # --- Stamp conductances ---
+    # g_ds between drain and source
+    if drain != "0" and drain in node_map:
+        d_idx = node_map[drain]
+        mna_matrix[d_idx, d_idx] += g_ds
+    if source != "0" and source in node_map:
+        s_idx = node_map[source]
+        mna_matrix[s_idx, s_idx] += g_ds
+    if drain != "0" and drain in node_map and source != "0" and source in node_map:
+        d_idx, s_idx = node_map[drain], node_map[source]
+        mna_matrix[d_idx, s_idx] -= g_ds
+        mna_matrix[s_idx, d_idx] -= g_ds
+
+    # g_m transconductance (VCCS: gate controls drain current)
+    if gate != "0" and gate in node_map and drain != "0" and drain in node_map:
+        mna_matrix[node_map[drain], node_map[gate]] += g_m
+    if drain != "0" and drain in node_map and source != "0" and source in node_map:
+        mna_matrix[node_map[drain], node_map[source]] -= g_m
+    if gate != "0" and gate in node_map and source != "0" and source in node_map:
+        mna_matrix[node_map[source], node_map[gate]] -= g_m
+    if source != "0" and source in node_map:
+        mna_matrix[node_map[source], node_map[source]] += g_m
+
+    # g_mb bulk transconductance (BSIM-CMG / NN)
+    if abs(g_mb) > 1e-12 and bulk != source:
+        if bulk != "0" and bulk in node_map and drain != "0" and drain in node_map:
+            mna_matrix[node_map[drain], node_map[bulk]] += g_mb
+
+    # --- Stamp NR equivalent current source to RHS ---
+    v_d, v_g = voltages.get(drain, 0.0), voltages.get(gate, 0.0)
+    v_s, v_b = voltages.get(source, 0.0), voltages.get(bulk, 0.0)
+    v_ds, v_gs, v_bs = v_d - v_s, v_g - v_s, v_b - v_s
+
+    # Convert to "leaving drain" convention:
+    # NMOS: i_ds positive = leaving drain; PMOS: i_ds positive = INTO drain
+    i_leaving = -i_ds if _is_pmos(mosfet) else i_ds
+    i_eq = i_leaving - g_ds * v_ds - g_m * v_gs - g_mb * v_bs
+
+    if drain != "0" and drain in node_map:
+        rhs[node_map[drain]] -= i_eq
+    if source != "0" and source in node_map:
+        rhs[node_map[source]] += i_eq
 
 
 class DCSolver:
@@ -179,18 +283,8 @@ class DCSolver:
         return solution
 
     def _has_non_linear_components(self) -> bool:
-        """
-        Check if circuit contains non-linear components (MOSFETs).
-
-        Returns:
-            True if circuit has MOSFETs, False otherwise
-        """
-        from pycircuitsim.models.mosfet import NMOS, PMOS
-
-        for component in self.circuit.components:
-            if _is_mosfet(component):
-                return True
-        return False
+        """Check if circuit contains non-linear components (MOSFETs)."""
+        return _has_non_linear(self.circuit)
 
     def _solve_linear(self) -> Dict[str, float]:
         """
@@ -549,155 +643,8 @@ class DCSolver:
         node_map: Dict[str, int],
         voltages: Dict[str, float],
     ) -> None:
-        """
-        Stamp MOSFET conductance and current to MNA matrix.
-
-        For a MOSFET, we stamp:
-        - g_ds (output conductance) between drain and source
-        - g_m (transconductance) from gate to drain
-        - Equivalent current source based on operating point
-
-        The Newton-Raphson linearization is:
-        I_ds(V) ≈ I_ds(V0) + g_ds*(V_ds - V_ds0) + g_m*(V_gs - V_gs0)
-        I_ds(V) - g_ds*V_ds - g_m*V_gs ≈ I_ds0 - g_ds*V_ds0 - g_m*V_gs0
-
-        Args:
-            mosfet: MOSFET component (NMOS or PMOS)
-            mna_matrix: MNA matrix to modify (in-place)
-            rhs: RHS vector to modify (in-place)
-            node_map: Mapping from node names to matrix indices
-            voltages: Current voltage estimate
-        """
-        # Get MOSFET terminals
-        drain = mosfet.nodes[0]
-        gate = mosfet.nodes[1]
-        source = mosfet.nodes[2]
-        bulk = mosfet.nodes[3]
-
-        # Get conductances at current operating point
-        # Handle both 2-tuple (Level 1) and 3-tuple (BSIM-CMG) returns
-        conductance_result = mosfet.get_conductance(voltages)
-        if len(conductance_result) == 2:
-            g_ds, g_m = conductance_result
-            g_mb = 0.0  # No bulk transconductance for Level 1
-        else:
-            g_ds, g_m, g_mb = conductance_result
-
-        # Get current at operating point
-        i_ds = mosfet.calculate_current(voltages)
-
-        # Add SPICE GMIN minimum conductance to prevent numerical instability
-        g_ds = max(g_ds, self.gmin)
-
-        # Stamp conductances to MNA matrix
-        # IMPORTANT: Conductances are ALWAYS positive in the matrix!
-        # The current direction is handled by RHS stamping, not conductance signs.
-
-        # g_ds between drain and source (resistive channel)
-        if drain != "0" and drain in node_map:
-            d_idx = node_map[drain]
-            mna_matrix[d_idx, d_idx] += g_ds
-
-        if source != "0" and source in node_map:
-            s_idx = node_map[source]
-            mna_matrix[s_idx, s_idx] += g_ds
-
-        if drain != "0" and drain in node_map and source != "0" and source in node_map:
-            d_idx = node_map[drain]
-            s_idx = node_map[source]
-            mna_matrix[d_idx, s_idx] -= g_ds
-            mna_matrix[s_idx, d_idx] -= g_ds
-
-        # g_m transconductance stamping (VCCS: gate controls drain current)
-        # For both NMOS and PMOS, we use the SAME transconductance stamping pattern.
-        # The current direction difference is handled by RHS stamping, not conductance signs.
-        #
-        # The transconductance represents the sensitivity of |I_ds| to V_gs,
-        # which has the same sign for both NMOS and PMOS (increasing |V_gs| increases |I_ds|).
-
-        # Drain equation: current = g_m * V_gs
-        if gate != "0" and gate in node_map and drain != "0" and drain in node_map:
-            g_idx = node_map[gate]
-            d_idx = node_map[drain]
-            mna_matrix[d_idx, g_idx] += g_m
-
-        if drain != "0" and drain in node_map and source != "0" and source in node_map:
-            d_idx = node_map[drain]
-            s_idx = node_map[source]
-            mna_matrix[d_idx, s_idx] -= g_m
-
-        # Source equation: current = -g_m * V_gs (KCL)
-        if gate != "0" and gate in node_map and source != "0" and source in node_map:
-            g_idx = node_map[gate]
-            s_idx = node_map[source]
-            mna_matrix[s_idx, g_idx] -= g_m
-
-        if source != "0" and source in node_map:
-            s_idx = node_map[source]
-            mna_matrix[s_idx, s_idx] += g_m
-
-        # g_mb from bulk to drain (bulk transconductance, for BSIM-CMG)
-        if abs(g_mb) > 1e-12 and bulk != source:
-            if bulk != "0" and bulk in node_map and drain != "0" and drain in node_map:
-                b_idx = node_map[bulk]
-                d_idx = node_map[drain]
-                mna_matrix[d_idx, b_idx] += g_mb
-
-        # Stamp equivalent current source to RHS
-        #
-        # MNA convention: G*x = b where row i represents KCL at node i.
-        # The conductance stamps in G encode: g_ds*(V_d-V_s) + g_m*(V_g-V_s)
-        # which represents current LEAVING drain through the linearized MOSFET.
-        #
-        # The constant term (i_eq) also represents current leaving drain:
-        #   I_leaving_drain = g_ds*V_ds + g_m*V_gs + i_eq
-        # At V0: i_eq = I_leaving_drain(V0) - g_ds*V_ds0 - g_m*V_gs0
-        #
-        # For NMOS: calculate_current returns positive = current leaving drain (D->S).
-        # For PMOS: calculate_current returns positive = current INTO drain.
-        #   So I_leaving_drain(V0) = -calculate_current for PMOS.
-
-        # Check device type
-        from pycircuitsim.models.mosfet import PMOS
-        pmos_types = [PMOS]
-        try:
-            from pycircuitsim.models.mosfet_cmg import PMOS_CMG
-            pmos_types.append(PMOS_CMG)
-        except ImportError:
-            pass
-        try:
-            from pycircuitsim.models.mosfet_nn import PMOS_NN
-            pmos_types.append(PMOS_NN)
-        except ImportError:
-            pass
-        is_pmos = isinstance(mosfet, tuple(pmos_types))
-
-        v_d = voltages.get(drain, 0.0)
-        v_g = voltages.get(gate, 0.0)
-        v_s = voltages.get(source, 0.0)
-        v_b = voltages.get(bulk, 0.0)
-
-        v_ds = v_d - v_s
-        v_gs = v_g - v_s
-        v_bs = v_b - v_s
-
-        # Convert to "leaving drain" convention for MNA
-        # NMOS: i_ds > 0 = current leaving drain (already correct)
-        # PMOS: i_ds > 0 = current INTO drain, so negate for "leaving"
-        i_leaving = -i_ds if is_pmos else i_ds
-
-        # Newton-Raphson constant: i_eq = I_leaving(V0) - g_ds*V_ds0 - g_m*V_gs0
-        i_eq = i_leaving - g_ds * v_ds - g_m * v_gs - g_mb * v_bs
-
-        # Stamp to RHS: b[d] = -i_eq (since G*x + i_eq = 0 => G*x = -i_eq)
-        # Or equivalently: rhs[d] -= i_eq
-        if drain != "0" and drain in node_map:
-            d_idx = node_map[drain]
-            rhs[d_idx] -= i_eq
-
-        if source != "0" and source in node_map:
-            s_idx = node_map[source]
-            rhs[s_idx] += i_eq
+        """Stamp MOSFET conductance and NR current source to MNA matrix (DC)."""
+        _stamp_mosfet_dc(mosfet, mna_matrix, rhs, node_map, voltages, self.gmin)
 
     def _stamp_voltage_sources(
         self,
@@ -924,18 +871,8 @@ class TransientSolver:
         self._pseudo_capacitors: List = []
 
     def _has_non_linear_components(self) -> bool:
-        """
-        Check if circuit contains non-linear components (MOSFETs).
-
-        Returns:
-            True if circuit has MOSFETs, False otherwise
-        """
-        from pycircuitsim.models.mosfet import NMOS, PMOS
-
-        for component in self.circuit.components:
-            if _is_mosfet(component):
-                return True
-        return False
+        """Check if circuit contains non-linear components (MOSFETs)."""
+        return _has_non_linear(self.circuit)
 
     def _add_pseudo_capacitors(self) -> None:
         """Add pseudo-capacitors scaled to circuit capacitance for initialization."""
@@ -1237,154 +1174,16 @@ class TransientSolver:
         node_map: Dict[str, int],
         voltages: Dict[str, float],
     ) -> None:
-        """
-        Stamp MOSFET conductance and current to MNA matrix for transient analysis.
-
-        This is the same as the DC solver's MOSFET stamping, but kept separate
-        to avoid confusion with the linear transient path.
-
-        Args:
-            mosfet: MOSFET component (NMOS or PMOS)
-            mna_matrix: MNA matrix to modify (in-place)
-            rhs: RHS vector to modify (in-place)
-            node_map: Mapping from node names to matrix indices
-            voltages: Current voltage estimate at this timestep
-        """
-        # Get MOSFET terminals
-        drain = mosfet.nodes[0]
-        gate = mosfet.nodes[1]
-        source = mosfet.nodes[2]
-        bulk = mosfet.nodes[3]
-
-        # Get conductances at current operating point
-        # Handle both 2-tuple (Level 1) and 3-tuple (BSIM-CMG) returns
-        conductance_result = mosfet.get_conductance(voltages)
-        if len(conductance_result) == 2:
-            g_ds, g_m = conductance_result
-            g_mb = 0.0  # No bulk transconductance for Level 1
-        else:
-            g_ds, g_m, g_mb = conductance_result
-
-        # Get current at operating point
-        i_ds = mosfet.calculate_current(voltages)
-
-        # NOTE: MOSFET internal capacitances are NOT stamped here
-        # The Level-1 capacitance model (get_capacitances) exists but requires
-        # state tracking across timesteps (V_prev), similar to Capacitor class.
-        # This is planned for future implementation.
-        # For now, transient analysis works correctly with explicit capacitors in the netlist.
-
-        # Add SPICE GMIN minimum conductance to prevent numerical instability
-        g_ds = max(g_ds, self.gmin)
-
-        # Stamp conductances to MNA matrix
-        # IMPORTANT: Conductances are ALWAYS positive in the matrix!
-        # The current direction is handled by RHS stamping, not conductance signs.
-
-        # g_ds between drain and source (resistive channel)
-        if drain != "0" and drain in node_map:
-            d_idx = node_map[drain]
-            mna_matrix[d_idx, d_idx] += g_ds
-
-        if source != "0" and source in node_map:
-            s_idx = node_map[source]
-            mna_matrix[s_idx, s_idx] += g_ds
-
-        if drain != "0" and drain in node_map and source != "0" and source in node_map:
-            d_idx = node_map[drain]
-            s_idx = node_map[source]
-            mna_matrix[d_idx, s_idx] -= g_ds
-            mna_matrix[s_idx, d_idx] -= g_ds
-
-        # g_m transconductance stamping (same pattern for NMOS and PMOS)
-        # Drain equation: current = g_m * V_gs
-        if gate != "0" and gate in node_map and drain != "0" and drain in node_map:
-            g_idx = node_map[gate]
-            d_idx = node_map[drain]
-            mna_matrix[d_idx, g_idx] += g_m
-
-        if drain != "0" and drain in node_map and source != "0" and source in node_map:
-            d_idx = node_map[drain]
-            s_idx = node_map[source]
-            mna_matrix[d_idx, s_idx] -= g_m
-
-        # Source equation: current = -g_m * V_gs (KCL)
-        if gate != "0" and gate in node_map and source != "0" and source in node_map:
-            g_idx = node_map[gate]
-            s_idx = node_map[source]
-            mna_matrix[s_idx, g_idx] -= g_m
-
-        if source != "0" and source in node_map:
-            s_idx = node_map[source]
-            mna_matrix[s_idx, s_idx] += g_m
-
-        # g_mb from bulk to drain (bulk transconductance)
-        if abs(g_mb) > 1e-12 and bulk != source:
-            if bulk != "0" and bulk in node_map and drain != "0" and drain in node_map:
-                b_idx = node_map[bulk]
-                d_idx = node_map[drain]
-                mna_matrix[d_idx, b_idx] += g_mb
-
-        # Stamp equivalent current source to RHS (same logic as DC solver)
-        # See _stamp_mosfet() for detailed derivation.
-        from pycircuitsim.models.mosfet import PMOS
-        pmos_types = [PMOS]
-        try:
-            from pycircuitsim.models.mosfet_cmg import PMOS_CMG
-            pmos_types.append(PMOS_CMG)
-        except ImportError:
-            pass
-        try:
-            from pycircuitsim.models.mosfet_nn import PMOS_NN
-            pmos_types.append(PMOS_NN)
-        except ImportError:
-            pass
-        is_pmos = isinstance(mosfet, tuple(pmos_types))
-
-        v_d = voltages.get(drain, 0.0)
-        v_g = voltages.get(gate, 0.0)
-        v_s = voltages.get(source, 0.0)
-        v_b = voltages.get(bulk, 0.0)
-
-        v_ds = v_d - v_s
-        v_gs = v_g - v_s
-        v_bs = v_b - v_s
-
-        # Convert to "leaving drain" convention for MNA
-        # NMOS: i_ds > 0 = current leaving drain (already correct)
-        # PMOS: i_ds > 0 = current INTO drain, so negate for "leaving"
-        i_leaving = -i_ds if is_pmos else i_ds
-
-        # Newton-Raphson constant: i_eq = I_leaving(V0) - conductance terms at V0
-        i_eq = i_leaving - g_ds * v_ds - g_m * v_gs - g_mb * v_bs
-
-        # Stamp to RHS: rhs[d] -= i_eq (same for both NMOS and PMOS)
-        if drain != "0" and drain in node_map:
-            d_idx = node_map[drain]
-            rhs[d_idx] -= i_eq
-
-        if source != "0" and source in node_map:
-            s_idx = node_map[source]
-            rhs[s_idx] += i_eq
+        """Stamp MOSFET conductance/current (DC part) + charge-based capacitance for transient."""
+        # DC conductance + NR current source stamping (shared with DCSolver)
+        _stamp_mosfet_dc(mosfet, mna_matrix, rhs, node_map, voltages, self.gmin)
 
         # --- Charge-based intrinsic capacitance stamping (Trapezoidal Rule) ---
         # Uses terminal charges Q(V) from compact model for exact integration,
         # instead of capacitance-based linearization I = C(V) * dV/dt.
         # Theory: I_t(n+1) = 2/dt * [Q_t(n+1) - Q_t(n)] - I_t(n)
-        charge_types = []
-        try:
-            from pycircuitsim.models.mosfet_cmg import NMOS_CMG, PMOS_CMG
-            charge_types.extend([NMOS_CMG, PMOS_CMG])
-        except ImportError:
-            pass
-        try:
-            from pycircuitsim.models.mosfet_nn import NMOS_NN, PMOS_NN
-            charge_types.extend([NMOS_NN, PMOS_NN])
-        except ImportError:
-            pass
-        is_charge_model = isinstance(mosfet, tuple(charge_types)) if charge_types else False
-
-        if is_charge_model and hasattr(mosfet, '_q_prev') and mosfet._q_prev is not None:
+        drain, gate, source, bulk = mosfet.nodes
+        if hasattr(mosfet, '_q_prev') and mosfet._q_prev is not None:
             charges = mosfet.get_charges(voltages)
             caps = mosfet.get_capacitances(voltages)
             dt = self._current_dt
@@ -2124,9 +1923,8 @@ class ACSolver:
                 s_idx = node_map[source]
                 mna_matrix[s_idx, s_idx] += g_mb
 
-        # TODO: Add capacitance stamping (Cgs, Cgd, Cdb, Csb) in Phase 5
-        # These will be obtained from mosfet.get_capacitances() method
-        # For now, only resistive small-signal model is implemented
+        # NOTE: AC capacitance stamping (Cgs, Cgd, etc.) not yet implemented.
+        # Only the resistive small-signal model is used for AC analysis.
 
     def _stamp_voltage_sources_ac(
         self,

@@ -222,40 +222,11 @@ class VoltageSource(Component):
         return self.nodes
 
     def stamp_conductance(self, matrix: np.ndarray, node_map: Dict[str, int]) -> None:
-        """
-        Interface for conductance stamping (pass-through for voltage sources).
-
-        Voltage sources require special MNA handling with augmented matrix.
-        The actual stamping of B and C matrix blocks is handled by the solver.
-
-        This method exists to satisfy the Component interface but does nothing,
-        as the solver will handle the matrix augmentation when it detects
-        voltage sources in the circuit.
-
-        Args:
-            matrix: The MNA matrix (not modified by voltage sources directly)
-            node_map: Mapping from node names to matrix indices
-        """
-        # Voltage sources don't stamp to conductance matrix directly
-        # The solver will handle B/C matrix augmentation
+        """No-op: solver handles voltage source B/C matrix augmentation."""
         pass
 
     def stamp_rhs(self, rhs: np.ndarray, node_map: Dict[str, int]) -> None:
-        """
-        Interface for RHS stamping (pass-through for voltage sources).
-
-        The voltage constraint equation (V_pos - V_neg = V_source)
-        is added by the solver when building the augmented MNA system.
-
-        This method exists to satisfy the Component interface but does nothing,
-        as the solver will handle the RHS modification for voltage constraints.
-
-        Args:
-            rhs: The RHS vector (not modified by voltage sources directly)
-            node_map: Mapping from node names to matrix indices
-        """
-        # Voltage sources don't stamp to RHS directly
-        # The solver will handle this when building augmented system
+        """No-op: solver handles voltage source RHS constraints."""
         pass
 
     def calculate_current(self, voltages: Dict[str, float]) -> float:
@@ -520,18 +491,7 @@ class CurrentSource(Component):
         return self.nodes
 
     def stamp_conductance(self, matrix: np.ndarray, node_map: Dict[str, int]) -> None:
-        """
-        Interface for conductance stamping (pass-through for current sources).
-
-        Current sources are independent sources and do not contribute to
-        the conductance matrix in MNA formulation. They only affect the
-        RHS vector through stamp_rhs().
-
-        Args:
-            matrix: The MNA matrix (not modified by current sources)
-            node_map: Mapping from node names to matrix indices
-        """
-        # Current sources don't stamp to conductance matrix
+        """No-op: current sources only contribute to RHS via stamp_rhs()."""
         pass
 
     def stamp_rhs(self, rhs: np.ndarray, node_map: Dict[str, int]) -> None:

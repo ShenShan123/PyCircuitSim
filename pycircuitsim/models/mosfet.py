@@ -108,45 +108,11 @@ class NMOS(Component):
         return self.nodes
 
     def stamp_conductance(self, matrix: np.ndarray, node_map: Dict[str, int]) -> None:
-        """
-        Add conductance terms to the MNA matrix.
-
-        For non-linear devices like MOSFETs, the conductance depends on the
-        operating point. This method stamps the small-signal conductance
-        calculated at the current bias point.
-
-        The Newton-Raphson solver will call this method iteratively with
-        updated voltages until convergence.
-
-        Args:
-            matrix: The MNA matrix to modify (in-place)
-            node_map: Mapping from node names to matrix indices
-
-        Note:
-            This is a placeholder for the Newton-Raphson solver integration.
-            The actual stamping uses the conductance values from get_conductance().
-        """
-        # For non-linear devices, the solver will:
-        # 1. Get terminal voltages from current solution
-        # 2. Call get_conductance() to get (g_ds, g_m)
-        # 3. Stamp these values to the matrix
-        # For now, this method exists to satisfy the Component interface
+        """No-op: solver stamps MOSFET conductances via get_conductance()."""
         pass
 
     def stamp_rhs(self, rhs: np.ndarray, node_map: Dict[str, int]) -> None:
-        """
-        Add current/source terms to the RHS vector.
-
-        MOSFETs are non-linear devices and don't contribute to the RHS
-        directly in the MNA formulation. Their behavior is captured through
-        the conductance matrix stamping.
-
-        Args:
-            rhs: The RHS vector to modify (in-place)
-            node_map: Mapping from node names to matrix indices
-        """
-        # MOSFETs don't contribute to RHS directly
-        # Their non-linear behavior is captured through conductance stamping
+        """No-op: solver handles MOSFET NR linearization directly."""
         pass
 
     def calculate_current(self, voltages: Dict[str, float]) -> float:
@@ -410,45 +376,11 @@ class PMOS(Component):
         return self.nodes
 
     def stamp_conductance(self, matrix: np.ndarray, node_map: Dict[str, int]) -> None:
-        """
-        Add conductance terms to the MNA matrix.
-
-        For non-linear devices like MOSFETs, the conductance depends on the
-        operating point. This method stamps the small-signal conductance
-        calculated at the current bias point.
-
-        The Newton-Raphson solver will call this method iteratively with
-        updated voltages until convergence.
-
-        Args:
-            matrix: The MNA matrix to modify (in-place)
-            node_map: Mapping from node names to matrix indices
-
-        Note:
-            This is a placeholder for the Newton-Raphson solver integration.
-            The actual stamping uses the conductance values from get_conductance().
-        """
-        # For non-linear devices, the solver will:
-        # 1. Get terminal voltages from current solution
-        # 2. Call get_conductance() to get (g_ds, g_m)
-        # 3. Stamp these values to the matrix
-        # For now, this method exists to satisfy the Component interface
+        """No-op: solver stamps MOSFET conductances via get_conductance()."""
         pass
 
     def stamp_rhs(self, rhs: np.ndarray, node_map: Dict[str, int]) -> None:
-        """
-        Add current/source terms to the RHS vector.
-
-        MOSFETs are non-linear devices and don't contribute to the RHS
-        directly in the MNA formulation. Their behavior is captured through
-        the conductance matrix stamping.
-
-        Args:
-            rhs: The RHS vector to modify (in-place)
-            node_map: Mapping from node names to matrix indices
-        """
-        # MOSFETs don't contribute to RHS directly
-        # Their non-linear behavior is captured through conductance stamping
+        """No-op: solver handles MOSFET NR linearization directly."""
         pass
 
     def calculate_current(self, voltages: Dict[str, float]) -> float:
