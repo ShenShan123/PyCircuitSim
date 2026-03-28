@@ -56,9 +56,10 @@ tests/                  # Validation scripts & NGSPICE comparison
 
 ### Key Algorithms
 * **MNA (Modified Nodal Analysis)** - Circuit equation matrix construction
-* **Newton-Raphson** - Non-linear circuit solver
-* **Trapezoidal Integration** - 2nd-order time integration for transient analysis (charge-based)
+* **Newton-Raphson** - Non-linear circuit solver with SPICE-standard convergence (RELTOL + VNTOL)
+* **BE→Trapezoidal Integration** - Backward Euler first step, then 2nd-order Trapezoidal (charge-based)
 * **Source Stepping** - Two-stage analysis for improved convergence
+* **LTE Sub-stepping** - Local truncation error estimation with adaptive internal sub-steps (opt-in)
 
 ## Supported Features
 
@@ -98,11 +99,13 @@ All phases (1-15) are complete. Key milestones:
 - **Leave-one-out transferability** — 8/10 good transfer (gap < 5%), zero-shot avg 4.65% NRMSE, in-dist avg 0.95%
 - **Charge-finetune training** — ChargeConsistencyLoss (autograd dq/dV = C), trained from scratch 800 epochs on A100
 - **NN Transient (charge-finetune + VT fix)** — 5/5 PASS: ASAP7 6.20%, TSMC5 14.41%, TSMC7 7.15%, TSMC12 6.47%, TSMC16 7.42%
+- **Solver accuracy improvements** — SPICE-standard convergence (RELTOL=1e-4, VNTOL=1e-7), GMIN reduction (1e-6→1e-12), BE→Trap first-step switching, relative oscillation threshold. NN transient improved: TSMC7 7.15→6.09%, TSMC12 6.47→5.92%, TSMC16 7.42→6.70%. BSIM-CMG transient unchanged at 0.20% (already at integration-method floor).
 
 ### Future Work
 - [ ] **Improve TSMC5 Transient** — 14.41% NRMSE (close to 15% threshold); try denser mid-supply data (`--n-dense-mid 30`) + retrain
 - [ ] **Expanded Test Suite** — NAND/NOR gates, Ring Oscillator, SRAM bitcell
-- [ ] **Adaptive Timestep** — Local truncation error estimate for automatic timestep control
+- [ ] **Adaptive Output Timestep** — Variable-length output array with true adaptive dt (current LTE sub-stepping is opt-in; full adaptive requires output grid changes)
+- [ ] **BDF-2/Gear Integration** — Higher-order method for stiff circuits (SRAM, ring oscillators)
 
 ---
 
@@ -172,11 +175,14 @@ python tests/verify_bsimcmg_op.py && python tests/verify_bsimcmg_dc.py && python
 - All devices inherit from `Component` base class
 
 ### Key Numerical Techniques
-- Minimum conductance (1uS) prevents singular matrices
+- **SPICE-standard convergence**: `|ΔV| < VNTOL + RELTOL × max(|V_old|, |V_new|)` (RELTOL=1e-4, VNTOL=1e-7)
+- **GMIN conductance** (1e-12 S) prevents singular matrices — was 1e-6, reduced to match NGSPICE
+- **BE→Trap switching**: Backward Euler for first transient step, then Trapezoidal (avoids startup ringing)
 - Source stepping (20 steps) improves convergence
-- Damping factor (0.5) for large voltage deltas
+- Adaptive damping with supply-relative oscillation detection
 - Two-stage analysis: DC OP -> DC sweep/transient
 - Voltage-source-constrained nodes exempt from damping
+- **LTE sub-stepping** (opt-in, disabled by default): estimates local truncation error from output-grid curvature, uses internal sub-steps when LTE exceeds threshold. Effective LTE = raw_LTE / n_substeps². Currently causes ~0.07% NRMSE regression due to trapezoidal history perturbation at sub-step boundaries.
 
 ### Entry Points
 - **CLI**: `main.py` - Command-line interface (argparse, error handling)

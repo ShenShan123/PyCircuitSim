@@ -45,9 +45,10 @@ PyCircuitSim is an open-source, pure Python circuit simulator designed for educa
 
 PyCircuitSim simulates electronic circuits using:
 - **Modified Nodal Analysis (MNA)** for circuit equations
-- **Newton-Raphson iteration** for non-linear components (MOSFETs)
-- **Trapezoidal integration** for transient analysis (2nd order)
-- **BSIM-CMG compact models** for FinFET device simulation (ASAP7 7nm)
+- **Newton-Raphson iteration** with SPICE-standard convergence (RELTOL + VNTOL)
+- **BE→Trapezoidal integration** for transient analysis (BE first step, then 2nd-order Trapezoidal)
+- **BSIM-CMG compact models** for FinFET device simulation (ASAP7 7nm, TSMC 5/7/12/16nm)
+- **NN-based compact models** (LEVEL=73) via PyTorch with autograd Jacobian consistency
 
 ---
 
@@ -63,6 +64,7 @@ PyCircuitSim simulates electronic circuits using:
 | Current Source | `I` | DC current source |
 | NMOS/PMOS Level 1 | `M` | Shichman-Hodges MOSFET |
 | NMOS/PMOS Level 72 | `M` | BSIM-CMG FinFET via PyCMG/OSDI |
+| NMOS/PMOS Level 73 | `M` | NN-based compact model via PyTorch |
 
 ### Supported Analyses
 
@@ -72,7 +74,7 @@ PyCircuitSim simulates electronic circuits using:
 
 ### Supported Directives
 
-- `.model` - MOSFET model definitions (LEVEL=1 or LEVEL=72)
+- `.model` - MOSFET model definitions (LEVEL=1, LEVEL=72, or LEVEL=73)
 - `.include` - Include external library files
 - `.ic` - Set initial node voltages
 
@@ -520,9 +522,9 @@ python tests/verify_bsimcmg_tran_comprehensive.py
 
 | Metric | Value |
 |--------|-------|
-| NRMSE (post-settling) | 0.23% |
-| NRMSE (full-range) | 0.29% |
-| Max absolute error | 9.9 mV (1.4% of Vdd) |
+| NRMSE (post-settling) | 0.20% |
+| NRMSE (full-range) | 0.26% |
+| Max absolute error | 7.6 mV (1.1% of Vdd) |
 
 #### Comprehensive Transient (21 Configurations)
 
@@ -530,27 +532,37 @@ The comprehensive suite sweeps VDD, Cload, input slew, pulse width, NFIN scaling
 
 | Config | VDD | NFIN_N/P | Cload | tr/tf | pw | NRMSE(%) | MaxErr(mV) | Status |
 |--------|-----|----------|-------|-------|----|----------|------------|--------|
-| vdd_0p5 | 0.50V | 10/10 | 10fF | 100ps | 0.8ns | 0.17 | 5.2 | PASS |
-| vdd_0p6 | 0.60V | 10/10 | 10fF | 100ps | 0.8ns | 0.22 | 10.1 | PASS |
-| baseline | 0.70V | 10/10 | 10fF | 100ps | 0.8ns | 0.22 | 9.9 | PASS |
-| vdd_0p8 | 0.80V | 10/10 | 10fF | 100ps | 0.8ns | 0.20 | 11.1 | PASS |
-| cload_1fF | 0.70V | 10/10 | 1fF | 100ps | 0.8ns | 0.95 | 67.3 | PASS |
-| cload_5fF | 0.70V | 10/10 | 5fF | 100ps | 0.8ns | 0.30 | 17.6 | PASS |
-| cload_50fF | 0.70V | 10/10 | 50fF | 100ps | 0.8ns | 0.04 | 1.3 | PASS |
-| cload_100fF | 0.70V | 10/10 | 100fF | 100ps | 0.8ns | 0.03 | 0.9 | PASS |
-| slew_10ps | 0.70V | 10/10 | 10fF | 10ps | 0.8ns | 0.15 | 7.2 | PASS |
-| slew_50ps | 0.70V | 10/10 | 10fF | 50ps | 0.8ns | 0.13 | 6.1 | PASS |
-| slew_500ps | 0.70V | 10/10 | 10fF | 500ps | 0.8ns | 0.17 | 8.3 | PASS |
-| pw_0p2ns | 0.70V | 10/10 | 10fF | 100ps | 0.2ns | 0.31 | 9.9 | PASS |
-| pw_0p5ns | 0.70V | 10/10 | 10fF | 100ps | 0.5ns | 0.26 | 9.9 | PASS |
-| pw_2p0ns | 0.70V | 10/10 | 10fF | 100ps | 2.0ns | 0.15 | 9.9 | PASS |
-| nfin_1 | 0.70V | 1/1 | 10fF | 100ps | 0.8ns | 0.03 | 0.9 | PASS |
-| nfin_2 | 0.70V | 2/2 | 10fF | 100ps | 0.8ns | 0.05 | 1.3 | PASS |
-| nfin_5 | 0.70V | 5/5 | 10fF | 100ps | 0.8ns | 0.10 | 3.9 | PASS |
-| nfin_20 | 0.70V | 20/20 | 10fF | 100ps | 0.8ns | 0.30 | 17.6 | PASS |
-| pn_0p5 | 0.70V | 10/5 | 10fF | 100ps | 0.8ns | 0.18 | 8.9 | PASS |
-| pn_1p5 | 0.70V | 10/15 | 10fF | 100ps | 0.8ns | 0.25 | 12.0 | PASS |
-| pn_2p0 | 0.70V | 10/20 | 10fF | 100ps | 0.8ns | 0.26 | 13.2 | PASS |
+| vdd_0p5 | 0.50V | 10/10 | 10fF | 100ps | 0.8ns | 0.14 | 4.7 | PASS |
+| vdd_0p6 | 0.60V | 10/10 | 10fF | 100ps | 0.8ns | 0.17 | 6.1 | PASS |
+| baseline | 0.70V | 10/10 | 10fF | 100ps | 0.8ns | 0.19 | 7.6 | PASS |
+| vdd_0p8 | 0.80V | 10/10 | 10fF | 100ps | 0.8ns | 0.21 | 12.9 | PASS |
+| cload_1fF | 0.70V | 10/10 | 1fF | 100ps | 0.8ns | 0.84 | 42.0 | PASS |
+| cload_5fF | 0.70V | 10/10 | 5fF | 100ps | 0.8ns | 0.37 | 20.8 | PASS |
+| cload_50fF | 0.70V | 10/10 | 50fF | 100ps | 0.8ns | 0.04 | 1.7 | PASS |
+| cload_100fF | 0.70V | 10/10 | 100fF | 100ps | 0.8ns | 0.02 | 0.9 | PASS |
+| slew_10ps | 0.70V | 10/10 | 10fF | 10ps | 0.8ns | 0.01 | 0.9 | PASS |
+| slew_50ps | 0.70V | 10/10 | 10fF | 50ps | 0.8ns | 0.09 | 4.0 | PASS |
+| slew_500ps | 0.70V | 10/10 | 10fF | 500ps | 0.8ns | 0.05 | 3.8 | PASS |
+| pw_0p2ns | 0.70V | 10/10 | 10fF | 100ps | 0.2ns | 0.26 | 7.6 | PASS |
+| pw_0p5ns | 0.70V | 10/10 | 10fF | 100ps | 0.5ns | 0.22 | 7.6 | PASS |
+| pw_2p0ns | 0.70V | 10/10 | 10fF | 100ps | 2.0ns | 0.13 | 7.6 | PASS |
+| nfin_1 | 0.70V | 1/1 | 10fF | 100ps | 0.8ns | 0.02 | 0.9 | PASS |
+| nfin_2 | 0.70V | 2/2 | 10fF | 100ps | 0.8ns | 0.04 | 1.7 | PASS |
+| nfin_5 | 0.70V | 5/5 | 10fF | 100ps | 0.8ns | 0.11 | 4.1 | PASS |
+| nfin_20 | 0.70V | 20/20 | 10fF | 100ps | 0.8ns | 0.37 | 20.8 | PASS |
+| pn_0p5 | 0.70V | 10/5 | 10fF | 100ps | 0.8ns | 0.16 | 7.6 | PASS |
+| pn_1p5 | 0.70V | 10/15 | 10fF | 100ps | 0.8ns | 0.20 | 7.9 | PASS |
+| pn_2p0 | 0.70V | 10/20 | 10fF | 100ps | 0.8ns | 0.23 | 12.9 | PASS |
+
+#### NN Transient (LEVEL=73, 5 Technologies)
+
+| Tech | VDD | NRMSE(%) | MaxErr(mV) | Status |
+|------|-----|----------|------------|--------|
+| ASAP7 | 0.70V | 6.29 | 268.3 | PASS |
+| TSMC5 | 0.65V | 14.41 | 499.7 | PASS |
+| TSMC7 | 0.75V | 6.09 | 396.4 | PASS |
+| TSMC12 | 0.80V | 5.92 | 311.7 | PASS |
+| TSMC16 | 0.80V | 6.70 | 364.2 | PASS |
 
 ### Verification Scripts
 
@@ -560,8 +572,11 @@ The comprehensive suite sweeps VDD, Cload, input slew, pulse width, NFIN scaling
 | `tests/verify_bsimcmg_dc.py` | DC sweep: Id-Vgs and VTC curves vs NGSPICE |
 | `tests/verify_bsimcmg_tran.py` | Transient: single inverter config vs NGSPICE |
 | `tests/verify_bsimcmg_tran_comprehensive.py` | Transient: 21-config parametric sweep vs NGSPICE (6 sweeps) |
+| `tests/verify_nn_tran.py` | NN transient: 5 technologies vs NGSPICE (<15% NRMSE) |
+| `tests/verify_nn_universal_v2.py` | NN universal: 21 variants × 3 tests (DC + VTC) |
+| `tests/verify_nn_leave_one_out.py` | NN zero-shot transferability experiment |
 
-Each script generates comparison plots and detailed metrics in `tests/verify_bsimcmg_*_results/`.
+Each script generates comparison plots and detailed metrics in `tests/verify_*_results/`.
 
 ---
 
@@ -654,8 +669,8 @@ For non-linear circuits (MOSFETs):
 1. Linearize devices at current operating point (compute gds, gm, gmb)
 2. Construct MNA matrix with linearized conductances
 3. Solve for voltage update dv
-4. Apply damping: `v_new = v_old + alpha * dv` (alpha = 0.5 for |dv| >= 1V)
-5. Repeat until convergence (max|dv| < 1 uV)
+4. Apply adaptive damping: `v_new = v_old + alpha * dv`
+5. Repeat until SPICE-standard convergence: `|dv| < VNTOL + RELTOL × max(|V_old|, |V_new|)` for all nodes (RELTOL=1e-4, VNTOL=1e-7)
 
 ### Source Stepping
 
@@ -665,24 +680,28 @@ Improves convergence for difficult circuits:
 2. Gradually ramp sources to final values (20 steps)
 3. Use previous step's solution as initial guess
 
-### Trapezoidal Integration
+### BE→Trapezoidal Integration
 
 For transient analysis with capacitors and MOSFET intrinsic capacitances:
 
 ```
-i(t+dt) = (2C/dt) * [v(t+dt) - v(t)] - i(t)
+Backward Euler (step 1):  i(t+dt) = (C/dt) * [v(t+dt) - v(t)]
+Trapezoidal (step 2+):    i(t+dt) = (2C/dt) * [v(t+dt) - v(t)] - i(t)
 ```
 
-- 2nd order implicit integration (A-stable)
+- Backward Euler for first timestep avoids startup ringing (standard SPICE technique)
+- 2nd order implicit Trapezoidal integration (A-stable) from step 2 onward
 - Converts capacitors to companion conductance + current source
-- Also stamps BSIM-CMG intrinsic capacitances (Cgd, Cgs, Cdd) as companion models
+- Also stamps BSIM-CMG/NN intrinsic capacitances (Cgd, Cgs, Cdd) as companion models
 - Charge state tracking via `get_charges()`, `init_charge_state()`, `update_charge_state()`
+- LTE-based adaptive sub-stepping available (opt-in, `max_substeps > 1`)
 
 ### Convergence Aids
 
+- **SPICE-standard GMIN**: Minimum channel conductance (1e-12 S, matching NGSPICE)
 - **Gmin stepping**: Exponentially decaying minimum conductance (1e-9 to 1e-12)
 - **Pseudo-transient initialization**: Artificial capacitances for startup (auto-scaled to 5x max circuit cap)
-- **Adaptive damping**: Oscillation detection with automatic damping adjustment
+- **Adaptive damping**: Oscillation detection with supply-relative threshold
 - **Voltage clamping**: Vgs +/-5V, Vds +/-10V to prevent numerical overflow
 
 ---
@@ -744,7 +763,6 @@ PyCircuitSim is intentionally simplified for educational use:
 
 - Inductors (L)
 - Mutual inductance (transformers)
-- AC analysis (.ac)
 - Noise analysis (.noise)
 - Complex directives (.option, .measure, .param)
 - Subcircuits (.subckt)
@@ -766,7 +784,8 @@ Consider ngspice, Xyce, or Spectre for:
 
 ## Future Work
 
-- [ ] Adaptive timestep control (local truncation error estimates)
+- [ ] Adaptive output timestep (variable-length output array with true adaptive dt)
+- [ ] BDF-2/Gear integration for stiff circuits (SRAM, ring oscillators)
 - [ ] Expanded test suite (NAND/NOR gates, ring oscillator, SRAM)
 - [ ] Inductor support
 - [ ] AC small-signal analysis
