@@ -3,8 +3,8 @@ PyCircuitSim Device Models Package.
 
 This package contains all circuit component models including:
 - Base abstract class (Component)
-- Passive components (Resistor, VoltageSource, CurrentSource)
-- Active components (NMOS, PMOS)
+- Passive components (Resistor, VoltageSource, CurrentSource, Capacitor)
+- Active components (NMOS_CMG, PMOS_CMG via BSIM-CMG; NMOS_NN, PMOS_NN via NN)
 """
 
 from pycircuitsim.models.base import Component
@@ -14,7 +14,6 @@ from pycircuitsim.models.passive import (
     CurrentSource,
     Capacitor
 )
-from pycircuitsim.models.mosfet import NMOS, PMOS
 
 __all__ = [
     'Component',
@@ -22,6 +21,4 @@ __all__ = [
     'VoltageSource',
     'CurrentSource',
     'Capacitor',
-    'NMOS',
-    'PMOS',
 ]

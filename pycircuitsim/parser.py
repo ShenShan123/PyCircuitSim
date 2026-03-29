@@ -39,8 +39,6 @@ from pycircuitsim.models import (
     Capacitor,
     VoltageSource,
     CurrentSource,
-    NMOS,
-    PMOS,
 )
 from pycircuitsim.config import BSIMCMG_OSDI_PATH, GENERIC_MODELCARD_DIR, ASAP7_MODELCARD_DIR
 
@@ -413,7 +411,7 @@ class Parser:
         """
         Parse a MOSFET line: M<name> <d> <g> <s> <b> <model> L=<l> W=<w> [NFIN=<nf> ...].
 
-        Supports both Level 1 (L, W) and Level 72/BSIM-CMG (L, NFIN, TFIN, HFIN, FPITCH).
+        Supports Level 72/BSIM-CMG (L, NFIN, TFIN, HFIN, FPITCH) and Level 73/NN.
 
         Args:
             line: MOSFET definition line
@@ -432,7 +430,7 @@ class Parser:
         nodes = parts[1:5]  # [drain, gate, source, bulk]
         model = parts[5].upper()  # NMOS or PMOS
 
-        # Extract geometric parameters (Level 1: L, W; BSIM-CMG: L, NFIN, TFIN, HFIN, FPITCH)
+        # Extract geometric parameters (BSIM-CMG: L, NFIN, TFIN, HFIN, FPITCH; NN: L, NFIN)
         L = None
         W = None
         NFIN = None
@@ -461,63 +459,18 @@ class Parser:
         # Check if model name references a .model definition
         model_name = parts[5]  # Keep case for model lookup
 
-        # Look up model in .model definitions first
-        # If not found, fall back to direct NMOS/PMOS keyword (backward compatibility)
+        # Look up model in .model definitions
         if model_name not in self.models:
-            # No .model definition found, check if it's a direct NMOS/PMOS keyword
-            if model_name.upper() == "NMOS":
-                if W is None:
-                    raise ValueError(f"Level 1 NMOS missing W parameter: {line}")
-                mosfet = NMOS(name, nodes, L=L, W=W)
-                self.circuit.add_component(mosfet)
-                return
-            elif model_name.upper() == "PMOS":
-                if W is None:
-                    raise ValueError(f"Level 1 PMOS missing W parameter: {line}")
-                mosfet = PMOS(name, nodes, L=L, W=W)
-                self.circuit.add_component(mosfet)
-                return
-            else:
-                raise ValueError(f"Model '{model_name}' not found. Available models: {list(self.models.keys())}")
+            raise ValueError(f"Model '{model_name}' not found. Available models: {list(self.models.keys())}")
 
         model_def = self.models[model_name]
         model_type = model_def['type']
         model_params = model_def['params']
 
-        # Check model level (1 = Level 1 Shichman-Hodges, 72 = BSIM-CMG)
-        level = model_params.get('LEVEL', 1)
+        # Check model level (72 = BSIM-CMG, 73 = NN)
+        level = model_params.get('LEVEL', 72)
 
-        if level == 1:
-            # Level 1 Shichman-Hodges model
-            if W is None:
-                raise ValueError(f"Level 1 MOSFET missing W parameter: {line}")
-
-            # Extract model parameters (VTO, KP, LAMBDA, etc.)
-            # Use defaults from NMOS/PMOS class if not specified
-            VTO = model_params.get('VTO', None)
-            KP = model_params.get('KP', None)
-            LAMBDA = model_params.get('LAMBDA', None)
-
-            if model_type.upper() == 'NMOS':
-                # Build kwargs dict with only non-None parameters
-                kwargs = {'L': L, 'W': W}
-                if VTO is not None:
-                    kwargs['VTO'] = VTO
-                if KP is not None:
-                    kwargs['KP'] = KP
-                mosfet = NMOS(name, nodes, **kwargs)
-            elif model_type.upper() == 'PMOS':
-                # Build kwargs dict with only non-None parameters
-                kwargs = {'L': L, 'W': W}
-                if VTO is not None:
-                    kwargs['VTO'] = VTO
-                if KP is not None:
-                    kwargs['KP'] = KP
-                mosfet = PMOS(name, nodes, **kwargs)
-            else:
-                raise ValueError(f"Unknown MOSFET model type: {model_type}")
-
-        elif level == 72:
+        if level == 72:
             # BSIM-CMG compact model
             if NFIN is None:
                 raise ValueError(f"BSIM-CMG (LEVEL=72) MOSFET missing NFIN parameter: {line}")
@@ -703,7 +656,7 @@ class Parser:
         else:
             raise ValueError(
                 f"Unsupported MOSFET LEVEL={level}. "
-                f"Supported levels: LEVEL=1 (Shichman-Hodges), LEVEL=72 (BSIM-CMG), LEVEL=73 (NN)"
+                f"Supported levels: LEVEL=72 (BSIM-CMG), LEVEL=73 (NN)"
             )
 
         self.circuit.add_component(mosfet)
