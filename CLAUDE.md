@@ -2,7 +2,7 @@
 
 ## Overview
 Python-based SPICE-like circuit simulator emphasizing educational clarity and modular architecture.
-**Primary Goal:** specific support for **Level-1 MOS models**, **PyCMG-wrapped CMG models** (LEVEL=72), and **NN-based compact models** (LEVEL=73).
+**Primary Goal:** specific support for **PyCMG-wrapped CMG models** (LEVEL=72) and **NN-based compact models** (LEVEL=73).
 The simulator must support **Operating Point (OP)**, **DC Sweep**, and **Transient Analysis** for all model types.
 
 **Core Principles:**
@@ -28,7 +28,6 @@ pycircuitsim/
     ├── __init__.py
     ├── base.py         # Component abstract base class
     ├── passive.py      # R, C, V, I sources (including PULSE)
-    ├── mosfet.py       # Level 1 Shichman-Hodges model
     ├── mosfet_cmg.py   # BSIM-CMG FinFET model (LEVEL=72) via PyCMG
     └── mosfet_nn.py    # NN-based compact model (LEVEL=73) via PyTorch
 
@@ -55,18 +54,18 @@ tests/                  # Validation scripts & NGSPICE comparison
 ```
 
 ### Key Algorithms
-* **MNA (Modified Nodal Analysis)** - Circuit equation matrix construction
+* **MNA (Modified Nodal Analysis)** - Sparse matrix construction (scipy.sparse lil_matrix→CSR+spsolve)
 * **Newton-Raphson** - Non-linear circuit solver with SPICE-standard convergence (RELTOL + VNTOL)
-* **BE→Trapezoidal Integration** - Backward Euler first step, then 2nd-order Trapezoidal (charge-based)
-* **Source Stepping** - Two-stage analysis for improved convergence
-* **LTE Sub-stepping** - Local truncation error estimation with adaptive internal sub-steps (opt-in)
+* **BE→Trap→BDF-2 Integration** - Backward Euler (step 1), Trapezoidal (default), BDF-2 (auto on stiffness)
+* **Source Stepping + GMIN Stepping** - Homotopy methods for convergence; GMIN stepping opt-in for bistable circuits
+* **LTE Sub-stepping** - Local truncation error estimation with adaptive internal sub-steps (opt-in via `max_substeps`)
+* **Bistable Convergence** - DC oscillation detection, adaptive damping, hard `.ic` mode (`force_ic`)
 
 ## Supported Features
 
 ### Devices
 * Passive: R, C
 * Active:
-  - NMOS/PMOS Level 1 (Shichman-Hodges)
   - NMOS/PMOS Level 72 (BSIM-CMG FinFET via PyCMG)
   - NMOS/PMOS Level 73 (NN-based compact model via PyTorch)
 * Sources: DC voltage/current, PULSE
@@ -77,7 +76,7 @@ tests/                  # Validation scripts & NGSPICE comparison
 * `.tran` - Transient Analysis
 
 ### Directives
-* `.model` - MOSFET model definitions (LEVEL=1, LEVEL=72, or LEVEL=73)
+* `.model` - MOSFET model definitions (LEVEL=72 or LEVEL=73)
 * `.include` - External library files
 * `.ic` - Initial conditions (critical for SRAM/bistable circuits)
 
@@ -91,7 +90,7 @@ tests/                  # Validation scripts & NGSPICE comparison
 ## Status
 
 All phases (1-15) are complete. Key milestones:
-- **Phases 1-3:** Core simulator (MNA, NR solver, Level-1 MOSFET, transient)
+- **Phases 1-3:** Core simulator (MNA, NR solver, transient)
 - **Phases 4-6:** BSIM-CMG (LEVEL=72) integration via PyCMG, NGSPICE-verified (<0.02% OP, <0.1% DC)
 - **Phases 7-10:** Charge-based transient (0.20% NRMSE vs NGSPICE), 5-tech support (ASAP7, TSMC5/7/12/16), 21-config parametric sweep all PASS
 - **Phases 11-12:** NN compact model (LEVEL=73) — training pipeline, autograd conductances, multi-tech DC+transient verified
@@ -100,14 +99,37 @@ All phases (1-15) are complete. Key milestones:
 - **Charge-finetune training** — ChargeConsistencyLoss (autograd dq/dV = C), trained from scratch 800 epochs on A100
 - **NN Transient (charge-finetune + VT fix)** — 5/5 PASS: ASAP7 6.20%, TSMC5 14.41%, TSMC7 7.15%, TSMC12 6.47%, TSMC16 7.42%
 - **Solver accuracy improvements** — SPICE-standard convergence (RELTOL=1e-4, VNTOL=1e-7), GMIN reduction (1e-6→1e-12), BE→Trap first-step switching, relative oscillation threshold. NN transient improved: TSMC7 7.15→6.09%, TSMC12 6.47→5.92%, TSMC16 7.42→6.70%. BSIM-CMG transient unchanged at 0.20% (already at integration-method floor).
+- **SRAM Solver Upgrades (Phases 1-3)** — Sparse matrix solver (scipy.sparse lil_matrix→CSR+spsolve), DC GMIN stepping + oscillation detection + adaptive damping + hard `.ic` mode (force_ic), BDF-2 integration (auto-switches on stiffness detection), LTE adaptive sub-stepping as constructor param. All 67 existing tests PASS with zero regression.
 
 ### Future Work
 - [ ] **Improve TSMC5 Transient** — 14.41% NRMSE (close to 15% threshold); try denser mid-supply data (`--n-dense-mid 30`) + retrain
-- [ ] **Expanded Test Suite** — NAND/NOR gates, Ring Oscillator, SRAM bitcell
-- [ ] **Adaptive Output Timestep** — Variable-length output array with true adaptive dt (current LTE sub-stepping is opt-in; full adaptive requires output grid changes)
-- [ ] **BDF-2/Gear Integration** — Higher-order method for stiff circuits (SRAM, ring oscillators)
+- [ ] **SRAM Validation (Phase 4)** — 6T bitcell DC+transient, 8-cell column, 64-bit array benchmark vs NGSPICE
+- [ ] **Adaptive Output Timestep** — Variable-length output array with true adaptive dt (full adaptive requires output grid changes)
 
 ---
+
+## Setup
+
+### Environment
+```bash
+# Create conda environment
+conda create -n pycircuitsim python=3.10 -y
+conda activate pycircuitsim
+
+# Install dependencies
+pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
+
+# Install PyTorch (CPU; for GPU training use the CUDA variant)
+pip install -i https://pypi.tuna.tsinghua.edu.cn/simple torch
+
+# Initialize PyCMG submodule
+git submodule update --init --recursive
+```
+
+### Prerequisites
+- **NGSPICE 45.2+**: `/usr/local/ngspice-45.2/bin/ngspice` (for verification tests)
+- **OpenVAF 23.5.0+**: `/usr/local/bin/openvaf` (for OSDI compilation)
+- **BSIM-CMG OSDI binary**: Pre-compiled at `/home/shenshan/pycmg-wrapper/build-deep-verify/osdi/bsimcmg.osdi`
 
 ## Quick Start
 
@@ -175,14 +197,17 @@ python tests/verify_bsimcmg_op.py && python tests/verify_bsimcmg_dc.py && python
 - All devices inherit from `Component` base class
 
 ### Key Numerical Techniques
+- **Sparse MNA solver**: `scipy.sparse.lil_matrix` for assembly, CSR + `spsolve` for linear solve. O(n) memory, O(n·log n) solve.
 - **SPICE-standard convergence**: `|ΔV| < VNTOL + RELTOL × max(|V_old|, |V_new|)` (RELTOL=1e-4, VNTOL=1e-7)
-- **GMIN conductance** (1e-12 S) prevents singular matrices — was 1e-6, reduced to match NGSPICE
-- **BE→Trap switching**: Backward Euler for first transient step, then Trapezoidal (avoids startup ringing)
+- **GMIN conductance** (1e-12 S) prevents singular matrices. DC GMIN stepping (opt-in via `use_gmin_stepping=True`): schedule [1e-6, 1e-8, 1e-10, 1e-12] for bistable circuits.
+- **BE→Trap→BDF-2 switching**: Backward Euler (step 1), Trapezoidal (step 2+), BDF-2 (auto on stiffness, NR>20 iters). One-way switch: once BDF-2 activated, stays on BDF-2.
 - Source stepping (20 steps) improves convergence
-- Adaptive damping with supply-relative oscillation detection
+- Adaptive damping with supply-relative thresholds and stuck-counter detection
+- **DC oscillation detection**: tracks last 5 NR voltage snapshots; accepts averaged solution if variance < 10× tolerance
+- **Hard `.ic` mode** (`force_ic=True`): stamps `.ic` nodes as temporary voltage source constraints, then re-solves unconstrained. Ensures correct bistable state for SRAM latches.
 - Two-stage analysis: DC OP -> DC sweep/transient
 - Voltage-source-constrained nodes exempt from damping
-- **LTE sub-stepping** (opt-in, disabled by default): estimates local truncation error from output-grid curvature, uses internal sub-steps when LTE exceeds threshold. Effective LTE = raw_LTE / n_substeps². Currently causes ~0.07% NRMSE regression due to trapezoidal history perturbation at sub-step boundaries.
+- **LTE sub-stepping** (opt-in via `max_substeps` constructor param, default 1=disabled): estimates local truncation error from output-grid curvature, uses internal sub-steps when LTE exceeds `lte_safety_factor` threshold.
 
 ### Entry Points
 - **CLI**: `main.py` - Command-line interface (argparse, error handling)
@@ -236,7 +261,6 @@ When integrating new compact models, follow this checklist:
 ## References
 - **ngspice** - Physics equation verification
 - **Xyce** - Architecture patterns for device/solver separation
-- **Shichman-Hodges Model** - Level 1 MOSFET compact model
 - **BSIM-CMG** - FinFET compact model (LEVEL=72), integrated via PyCMG
 - **ASAP7** - https://github.com/The-OpenROAD-Project/asap7_pdk_r1p7.git
 - **PyCMG** - https://github.com/ShenShan123/PyCMG.git
@@ -248,7 +272,7 @@ When integrating new compact models, follow this checklist:
 - **BSIM-CMG OSDI Binary**: `/home/shenshan/pycmg-wrapper/build-deep-verify/osdi/bsimcmg.osdi`
 - **Modelcards**: `/home/shenshan/pycmg-wrapper/tech_model_cards/` (ASAP7: `ASAP7/`, TSMC: `TSMC{5,7,12,16}/naive/`)
 - **Results Output**: `results/<circuit_name>/<analysis_type>/` (`.lis`, `.csv`, `.png`)
-- **Examples**: `examples/` (12 netlists)
+- **Examples**: `examples/` (13 netlists)
 - **Test Results**: `tests/verify_*_results/` (generated, not tracked in git)
 
 ## Other Tips

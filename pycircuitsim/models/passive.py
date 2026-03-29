@@ -592,14 +592,16 @@ class Capacitor(Component):
 
         self.capacitance = float(value)
         self.v_prev = 0.0  # Initial voltage across capacitor
+        self.v_prev2 = 0.0  # Two-step-ago voltage (for BDF-2)
 
         # Companion model parameters (set during transient analysis)
         self._g_eq = 0.0  # Equivalent conductance
         self._i_eq = 0.0  # Equivalent current source
 
-        # Trapezoidal integration state
+        # Integration state
         self._i_prev = 0.0  # Current through capacitor at previous timestep
         self._use_trapezoidal = True  # Use trapezoidal (True) vs backward Euler (False)
+        self._method = 'trap'  # Integration method: 'be', 'trap', or 'bdf2'
 
     def get_nodes(self) -> List[str]:
         """
@@ -611,15 +613,12 @@ class Capacitor(Component):
         return self.nodes
 
     def get_companion_model(self, dt: float, v_prev: float) -> tuple[float, float]:
-        """Calculate companion model parameters using Trapezoidal Rule.
+        """Calculate companion model parameters for transient integration.
 
-        Trapezoidal Rule (2nd order, matches NGSPICE default):
-            G_eq = 2*C/dt
-            I_eq = G_eq * V_prev + I_prev
-
-        Backward Euler (1st order, fallback):
-            G_eq = C/dt
-            I_eq = G_eq * V_prev
+        Supports three methods:
+        - Trapezoidal (2nd order, default): G_eq = 2C/dt, I_eq = G_eq*V_prev + I_prev
+        - Backward Euler (1st order): G_eq = C/dt, I_eq = G_eq*V_prev
+        - BDF-2 (2nd order, A-stable): G_eq = 1.5C/dt, I_eq = (2C/dt)*V_prev - (0.5C/dt)*V_prev2
 
         Args:
             dt: Timestep size in seconds
@@ -628,7 +627,10 @@ class Capacitor(Component):
         Returns:
             Tuple of (G_eq, I_eq)
         """
-        if self._use_trapezoidal:
+        if self._method == 'bdf2':
+            g_eq = 1.5 * self.capacitance / dt
+            i_eq = (2.0 * self.capacitance / dt) * self.v_prev - (0.5 * self.capacitance / dt) * self.v_prev2
+        elif self._use_trapezoidal:
             g_eq = 2.0 * self.capacitance / dt
             i_eq = g_eq * v_prev + self._i_prev
         else:
@@ -706,16 +708,19 @@ class Capacitor(Component):
 
         For trapezoidal integration, also computes and stores the capacitor
         current for use in the next timestep's companion model.
+        Rotates voltage history for BDF-2 (v_prev2 = v_prev before update).
         """
         node_i, node_j = self.nodes[0], self.nodes[1]
         v_i = voltages.get(node_i, 0.0)
         v_j = voltages.get(node_j, 0.0)
         v_new = v_i - v_j
 
-        if self._use_trapezoidal:
+        if self._use_trapezoidal and self._method != 'bdf2':
             # I_cap(n) = G_eq * (V_new - V_prev) - I_prev
             self._i_prev = self._g_eq * (v_new - self.v_prev) - self._i_prev
 
+        # Rotate voltage history for BDF-2
+        self.v_prev2 = self.v_prev
         self.v_prev = v_new
 
     def calculate_current(self, voltages: Dict[str, float]) -> float:

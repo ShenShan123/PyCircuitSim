@@ -130,6 +130,7 @@ class _MOSFETNNBase(Component):
 
         # Charge state for transient analysis
         self._q_prev: Optional[Dict[str, float]] = None
+        self._q_prev2: Optional[Dict[str, float]] = None  # Two-step-ago charges (BDF-2)
         self._v_prev_tran: Optional[Dict[str, float]] = None
         self._i_prev_gate: float = 0.0
         self._i_prev_drain: float = 0.0
@@ -397,6 +398,7 @@ class _MOSFETNNBase(Component):
         """Initialize charge state from DC operating point."""
         charges = self.get_charges(voltages)
         self._q_prev = charges.copy()
+        self._q_prev2 = charges.copy()  # BDF-2: same as q_prev at DC
         self._v_prev_tran = {
             "d": voltages.get(self.nodes[0], 0.0),
             "g": voltages.get(self.nodes[1], 0.0),
@@ -413,6 +415,7 @@ class _MOSFETNNBase(Component):
     ) -> None:
         """Update charge state after a converged timestep."""
         charges = self.get_charges(voltages)
+        self._q_prev2 = self._q_prev.copy() if self._q_prev is not None else charges.copy()
         self._q_prev = charges.copy()
         self._v_prev_tran = {
             "d": voltages.get(self.nodes[0], 0.0),

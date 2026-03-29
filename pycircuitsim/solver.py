@@ -29,16 +29,29 @@ The solver handles:
 from typing import Dict, List, Tuple, Optional
 from pathlib import Path
 import numpy as np
+from scipy.sparse import lil_matrix, issparse
+from scipy.sparse.linalg import spsolve
 from pycircuitsim.circuit import Circuit
 from pycircuitsim.models.passive import VoltageSource, Capacitor
 from pycircuitsim.logger import Logger, IterationInfo
 
+
+def _create_mna_matrix(size: int) -> lil_matrix:
+    """Create a sparse MNA matrix (LIL format for efficient element-by-element assembly)."""
+    return lil_matrix((size, size), dtype=np.float64)
+
+
+def _solve_mna(mna_matrix, rhs: np.ndarray) -> np.ndarray:
+    """Solve MNA system Ax=b, using sparse solver if matrix is sparse."""
+    if issparse(mna_matrix):
+        return spsolve(mna_matrix.tocsr(), rhs)
+    return np.linalg.solve(mna_matrix, rhs)
+
 # --- Module-level MOSFET helpers (used by both DCSolver and TransientSolver) ---
 
 def _mosfet_types() -> tuple:
-    """Return tuple of all MOSFET classes (Level 1, BSIM-CMG, NN)."""
-    from pycircuitsim.models.mosfet import NMOS, PMOS
-    types = [NMOS, PMOS]
+    """Return tuple of all MOSFET classes (BSIM-CMG, NN)."""
+    types = []
     try:
         from pycircuitsim.models.mosfet_cmg import NMOS_CMG, PMOS_CMG
         types.extend([NMOS_CMG, PMOS_CMG])
@@ -53,9 +66,8 @@ def _mosfet_types() -> tuple:
 
 
 def _pmos_types() -> tuple:
-    """Return tuple of all PMOS classes (Level 1, BSIM-CMG, NN)."""
-    from pycircuitsim.models.mosfet import PMOS
-    types = [PMOS]
+    """Return tuple of all PMOS classes (BSIM-CMG, NN)."""
+    types = []
     try:
         from pycircuitsim.models.mosfet_cmg import PMOS_CMG
         types.append(PMOS_CMG)
@@ -100,13 +112,8 @@ def _stamp_mosfet_dc(
     """
     drain, gate, source, bulk = mosfet.nodes
 
-    # Get conductances (2-tuple for Level 1, 3-tuple for CMG/NN)
-    conductance_result = mosfet.get_conductance(voltages)
-    if len(conductance_result) == 2:
-        g_ds, g_m = conductance_result
-        g_mb = 0.0
-    else:
-        g_ds, g_m, g_mb = conductance_result
+    # Get conductances (3-tuple: g_ds, g_m, g_mb)
+    g_ds, g_m, g_mb = mosfet.get_conductance(voltages)
 
     i_ds = mosfet.calculate_current(voltages)
     g_ds = max(g_ds, gmin)  # SPICE GMIN floor
@@ -175,7 +182,8 @@ class DCSolver:
                  logger: Optional[Logger] = None, use_source_stepping: bool = True,
                  source_stepping_steps: int = 20,
                  damping_factor: float = 1.0,
-                 reltol: float = 1e-4, vntol: float = 1e-7, gmin: float = 1e-12):
+                 reltol: float = 1e-4, vntol: float = 1e-7, gmin: float = 1e-12,
+                 use_gmin_stepping: bool = False, force_ic: bool = False):
         """
         Initialize the DC Solver.
 
@@ -192,6 +200,8 @@ class DCSolver:
             reltol: Relative convergence tolerance (default: 1e-4, tighter than SPICE 1e-3)
             vntol: Absolute voltage tolerance (default: 1e-7 V, tighter than SPICE 1e-6)
             gmin: Minimum MOSFET channel conductance (SPICE GMIN, default: 1e-12 S)
+            use_gmin_stepping: Enable DC GMIN stepping for bistable convergence (default: False)
+            force_ic: Enforce .ic as voltage constraints, not just initial guess (default: False)
         """
         self.circuit = circuit
         self.tolerance = tolerance
@@ -205,6 +215,8 @@ class DCSolver:
         self.reltol = reltol
         self.vntol = vntol
         self.gmin = gmin
+        self.use_gmin_stepping = use_gmin_stepping
+        self.force_ic = force_ic
         self.last_solution: Optional[Dict[str, float]] = None
         self._owns_logger = False  # Track if we created the logger (for cleanup)
 
@@ -306,7 +318,7 @@ class DCSolver:
         matrix_size = num_nodes + num_voltage_sources
 
         # Initialize MNA matrix and RHS vector
-        mna_matrix = np.zeros((matrix_size, matrix_size))
+        mna_matrix = _create_mna_matrix(matrix_size)
         rhs = np.zeros(matrix_size)
 
         # Stamp conductances (G matrix) and current sources (RHS)
@@ -319,7 +331,7 @@ class DCSolver:
 
         # Solve the linear system
         try:
-            solution = np.linalg.solve(mna_matrix, rhs)
+            solution = _solve_mna(mna_matrix, rhs)
         except np.linalg.LinAlgError as e:
             raise np.linalg.LinAlgError(
                 f"Circuit is singular or unsolvable. Check for floating nodes or short circuits."
@@ -363,29 +375,29 @@ class DCSolver:
 
         return voltages
 
+    def _apply_gmin_stepping(self, mna_matrix, node_map: Dict[str, int], gmin: float) -> None:
+        """Add minimum conductance from each node to ground for convergence aid."""
+        for node, idx in node_map.items():
+            mna_matrix[idx, idx] += gmin
+
     def _solve_newton(self) -> Dict[str, float]:
         """
         Solve non-linear circuit using Newton-Raphson iteration.
 
-        Algorithm:
-        1. Initial guess: all nodes at 0V
-        2. For each iteration:
-           a. Get MOSFET conductances (g_ds, g_m) at current voltages
-           b. Stamp conductances to matrix
-           c. Solve for delta
-           d. Update voltages: v += delta
-           e. Check convergence (max |delta| < tolerance)
-        3. Raise error if max_iterations exceeded
+        Features:
+        - Source stepping homotopy for improved convergence
+        - GMIN stepping (opt-in) for bistable circuits (SRAM latches)
+        - Adaptive damping with supply-relative thresholds
+        - Oscillation detection with averaged-solution acceptance
+        - Hard .ic mode (force_ic) via temporary voltage source constraints
 
         Returns:
             Dictionary mapping node names to voltage values
 
         Raises:
             RuntimeError: If Newton-Raphson fails to converge
-            np.linalg.LinAlgError: If the circuit matrix is singular (unsolvable)
+            np.linalg.LinAlgError: If the circuit matrix is singular
         """
-        from pycircuitsim.models.mosfet import NMOS, PMOS
-
         # Reset damping to default for each solve
         self.damping_factor = 1.0
 
@@ -393,9 +405,28 @@ class DCSolver:
         nodes = self.circuit.get_nodes()
         node_map = self.circuit.get_node_map()
         num_nodes = len(nodes)
-        num_voltage_sources = self.circuit.count_voltage_sources()
 
-        # Matrix size: num_nodes + num_voltage_sources
+        # --- Force IC: add temporary voltage source constraints ---
+        _ic_temp_sources: List[VoltageSource] = []
+        if self.force_ic and self.initial_guess:
+            # Find nodes already constrained by existing voltage sources
+            vs_constrained = set()
+            for comp in self.circuit.components:
+                if isinstance(comp, VoltageSource):
+                    if comp.nodes[1] in ("0", "GND"):
+                        vs_constrained.add(comp.nodes[0])
+                    elif comp.nodes[0] in ("0", "GND"):
+                        vs_constrained.add(comp.nodes[1])
+            # Add temp VS for IC nodes not already constrained
+            for node_name, voltage in self.initial_guess.items():
+                if (node_name not in ("0", "GND")
+                        and node_name not in vs_constrained
+                        and node_name in node_map):
+                    vs = VoltageSource(f"_V_ic_{node_name}", [node_name, "0"], voltage)
+                    self.circuit.components.append(vs)
+                    _ic_temp_sources.append(vs)
+
+        num_voltage_sources = self.circuit.count_voltage_sources()
         matrix_size = num_nodes + num_voltage_sources
 
         # Store original voltage source values for source stepping
@@ -404,200 +435,214 @@ class DCSolver:
             if isinstance(component, VoltageSource):
                 original_voltages.append(component.voltage)
 
-        # Source stepping: gradually increase voltage source values
-        # to improve convergence
-        # Use configurable number of steps when source stepping is enabled
-        num_steps = self.source_stepping_steps if (self._has_non_linear_components() and self.use_source_stepping) else 1
-        for step in range(num_steps):
-            # Scale voltage sources
-            scale = (step + 1) / num_steps
-            vs_idx = 0
-            for component in self.circuit.components:
-                if isinstance(component, VoltageSource):
-                    component.voltage = original_voltages[vs_idx] * scale
-                    vs_idx += 1
+        # Estimate supply voltage for supply-relative damping threshold
+        max_vs_voltage = max((abs(v) for v in original_voltages), default=1.0) or 1.0
 
-            # Initial guess: use provided initial_guess for first step if available,
-            # otherwise use 0V for first step, previous result for subsequent steps
-            if step == 0:
-                if self.initial_guess is not None:
-                    # Use provided initial guess
-                    voltages = {node: 0.0 for node in nodes}
-                    for node, voltage in self.initial_guess.items():
-                        if node in voltages:
-                            voltages[node] = voltage
-                else:
-                    voltages = {node: 0.0 for node in nodes}
-            voltages["0"] = 0.0
-            voltages["GND"] = 0.0
+        # --- GMIN stepping schedule ---
+        if self.use_gmin_stepping:
+            gmin_schedule = [1e-6, 1e-8, 1e-10, self.gmin]
+        else:
+            gmin_schedule = [self.gmin]
 
-            # Newton-Raphson iteration for this source step
-            for iteration in range(self.max_iterations // num_steps):
-                # Initialize MNA matrix and RHS vector
-                mna_matrix = np.zeros((matrix_size, matrix_size))
-                rhs = np.zeros(matrix_size)
+        voltages: Dict[str, float] = {}
+        final_converged = False
 
-                # Stamp linear components (resistors, current sources)
-                for component in self.circuit.components:
-                    if not _is_mosfet(component):
-                        component.stamp_conductance(mna_matrix, node_map)
-                        component.stamp_rhs(rhs, node_map)
-
-                # Stamp MOSFET conductances and currents
-                # For Level 1, use _stamp_mosfet
-                for component in self.circuit.components:
-                    if _is_mosfet(component):
-                        self._stamp_mosfet(component, mna_matrix, rhs, node_map, voltages)
-
-                # Handle voltage sources (B and C matrices)
-                self._stamp_voltage_sources(mna_matrix, rhs, node_map, num_nodes, voltages=voltages)
-
-                # MNA Matrix Conditioning Check
-                # Check if the conductance matrix (top-left portion) is ill-conditioned
-                if num_nodes > 0:
-                    try:
-                        conductance_matrix = mna_matrix[:num_nodes, :num_nodes]
-                        cond_number = np.linalg.cond(conductance_matrix)
-                        if cond_number > 1e12:
-                            # Matrix is ill-conditioned - this can cause numerical instability
-                            if self.logger:
-                                self.logger._write_separator("-")
-                                self.logger._write(f"WARNING: Ill-conditioned MNA matrix at step {step + 1}, iteration {iteration + 1}")
-                                self.logger._write(f"  Condition number: {cond_number:.2e}")
-                                self.logger._write(f"  This may cause numerical inaccuracies or convergence issues")
-                                self.logger._write_separator("-")
-                    except np.linalg.LinAlgError:
-                        # Singular matrix - will be caught by the solver below
-                        pass
-
-                    # Check for negative diagonal elements in conductance matrix
-                    # (indicates physically unrealistic conductance values)
-                    for i in range(min(num_nodes, len(mna_matrix))):
-                        diag_value = mna_matrix[i, i]
-                        if diag_value < 0:
-                            if self.logger:
-                                self.logger._write(f"WARNING: Negative diagonal element Y[{i},{i}] = {diag_value:.6e} S")
-                                self.logger._write(f"  This may indicate incorrect device conductance calculation")
-
-                # Solve the MNA system
-                # With companion model (direct voltage source RHS), the solution
-                # is the NEW voltage, not a delta correction.
-                try:
-                    solution = np.linalg.solve(mna_matrix, rhs)
-                except np.linalg.LinAlgError as e:
-                    raise np.linalg.LinAlgError(
-                        f"Circuit matrix is singular at source step {step + 1}, iteration {iteration + 1}. "
-                        f"Check circuit topology or initial guess."
-                    ) from e
-
-                # Update voltages using companion model formulation
-                # The solution contains the new voltages directly
-                max_change = 0.0
-                max_delta = 0.0
-                deltas = {}
-
-                # Identify voltage-source-constrained nodes
-                # These nodes must reach their target values exactly (no damping)
-                vs_constrained_nodes = set()
+        for gmin_level in gmin_schedule:
+            # Source stepping: gradually increase voltage source values
+            num_steps = self.source_stepping_steps if (self._has_non_linear_components() and self.use_source_stepping) else 1
+            for step in range(num_steps):
+                # Scale voltage sources
+                scale = (step + 1) / num_steps
+                vs_idx = 0
                 for component in self.circuit.components:
                     if isinstance(component, VoltageSource):
-                        pos_node = component.nodes[0]
-                        neg_node = component.nodes[1]
-                        # If one terminal is ground, the other is constrained
-                        if neg_node == "0":
-                            vs_constrained_nodes.add(pos_node)
-                        elif pos_node == "0":
-                            vs_constrained_nodes.add(neg_node)
+                        component.voltage = original_voltages[vs_idx] * scale
+                        vs_idx += 1
 
-                for idx, node in enumerate(nodes):
-                    old_voltage = voltages[node]
-                    new_voltage_solution = solution[idx]
-
-                    # Calculate delta for convergence check
-                    delta_v = new_voltage_solution - old_voltage
-                    max_delta = max(max_delta, abs(delta_v))
-
-                # Adaptive damping: Check if we need to enable damping
-                # Large deltas (>1V) indicate potential divergence
-                if max_delta > 1.0 and self.damping_factor == 1.0:
-                    # Enable damping for this iteration to prevent overshooting
-                    self.damping_factor = 0.5
-
-                for idx, node in enumerate(nodes):
-                    old_voltage = voltages[node]
-                    new_voltage_solution = solution[idx]
-
-                    if node in vs_constrained_nodes:
-                        # Voltage source nodes: use solution directly (no damping)
-                        # These must satisfy the constraint exactly
-                        new_voltage = new_voltage_solution
+                # Initial guess
+                if step == 0 and gmin_level == gmin_schedule[0]:
+                    if self.initial_guess is not None:
+                        voltages = {node: 0.0 for node in nodes}
+                        for node, voltage in self.initial_guess.items():
+                            if node in voltages:
+                                voltages[node] = voltage
                     else:
-                        # Free nodes: apply adaptive damping
-                        # damping=1.0 -> fully use new voltage
-                        # damping=0.5 -> average of old and new
-                        new_voltage = self.damping_factor * new_voltage_solution + (1.0 - self.damping_factor) * old_voltage
+                        voltages = {node: 0.0 for node in nodes}
+                voltages["0"] = 0.0
+                voltages["GND"] = 0.0
 
-                    deltas[node] = abs(new_voltage - old_voltage)
-                    voltages[node] = new_voltage
-                    max_change = max(max_change, abs(new_voltage - old_voltage))
+                # --- Adaptive damping state ---
+                damping = 1.0
+                prev_max_delta = float('inf')
+                stuck_counter = 0
+                voltage_history: List[Dict[str, float]] = []
 
-                # Log iteration if logger is available
-                if self.logger:
-                    # Calculate device currents
-                    currents = {}
-                    conductances = {}
-                    for comp in self.circuit.components:
-                        try:
-                            current = comp.calculate_current(voltages)
-                            currents[comp.name] = current
+                # Newton-Raphson iteration for this source step
+                nr_converged = False
+                max_change = 0.0
+                for iteration in range(self.max_iterations // num_steps):
+                    # Initialize MNA matrix and RHS vector
+                    mna_matrix = _create_mna_matrix(matrix_size)
+                    rhs = np.zeros(matrix_size)
 
-                            # Get conductances for MOSFETs
-                            if isinstance(comp, (NMOS, PMOS)):
-                                gm, gds = comp.get_conductance(voltages)
-                                conductances[comp.name] = {"gm": gm, "gds": gds}
-                        except (NotImplementedError, AttributeError):
-                            # Skip components that don't support current calculation
-                            pass
+                    # Stamp linear components (resistors, current sources)
+                    for component in self.circuit.components:
+                        if not _is_mosfet(component):
+                            component.stamp_conductance(mna_matrix, node_map)
+                            component.stamp_rhs(rhs, node_map)
 
-                    # Create iteration info
-                    iter_info = IterationInfo(
-                        iteration=iteration,
-                        voltages=voltages.copy(),
-                        deltas=deltas,
-                        currents=currents,
-                        conductances=conductances
-                    )
-                    self.logger.log_iteration(point_num=0, iter_info=iter_info)
+                    # Stamp MOSFET conductances and currents
+                    for component in self.circuit.components:
+                        if _is_mosfet(component):
+                            self._stamp_mosfet(component, mna_matrix, rhs, node_map, voltages)
 
-                # Check convergence: SPICE-standard RELTOL + VNTOL
-                # A node converges when |ΔV| < VNTOL + RELTOL * max(|V_old|, |V_new|)
-                all_converged = True
-                for node in nodes:
-                    dv = deltas.get(node, 0.0)
-                    v_new = voltages[node]
-                    # |V_old| ≈ |V_new| when close to convergence; use max for safety
-                    threshold = self.vntol + self.reltol * max(abs(v_new), abs(v_new - dv))
-                    if dv >= threshold:
-                        all_converged = False
+                    # Handle voltage sources (B and C matrices)
+                    self._stamp_voltage_sources(mna_matrix, rhs, node_map, num_nodes, voltages=voltages)
+
+                    # Apply node-level GMIN (conductance from each node to ground)
+                    if gmin_level > self.gmin:
+                        self._apply_gmin_stepping(mna_matrix, node_map, gmin_level)
+
+                    # Solve the MNA system
+                    try:
+                        solution = _solve_mna(mna_matrix, rhs)
+                    except (np.linalg.LinAlgError, RuntimeError) as e:
+                        raise np.linalg.LinAlgError(
+                            f"Circuit matrix is singular at source step {step + 1}, iteration {iteration + 1}. "
+                            f"Check circuit topology or initial guess."
+                        ) from e
+
+                    # Calculate deltas
+                    max_delta = 0.0
+                    deltas: Dict[str, float] = {}
+                    for idx, node in enumerate(nodes):
+                        delta_v = solution[idx] - voltages[node]
+                        max_delta = max(max_delta, abs(delta_v))
+
+                    # Track voltage history for oscillation detection
+                    voltage_snapshot = {node: solution[idx] for idx, node in enumerate(nodes)}
+                    voltage_history.append(voltage_snapshot)
+                    if len(voltage_history) > 5:
+                        voltage_history.pop(0)
+
+                    # --- Adaptive damping ---
+                    improvement_ratio = max_delta / (prev_max_delta + 1e-15)
+
+                    if improvement_ratio > 0.9 and iteration > 15:
+                        stuck_counter += 1
+                        if stuck_counter >= 2:
+                            damping = max(0.1, damping * 0.8)
+                            stuck_counter = 0
+                    elif improvement_ratio < 0.5:
+                        damping = min(1.0, damping * 1.1)
+                        stuck_counter = 0
+                    else:
+                        stuck_counter = 0
+
+                    # Supply-relative large-delta damping
+                    if max_delta > 0.5 * max_vs_voltage:
+                        damping = min(damping, 0.5)
+                    elif max_delta < 0.05 * max_vs_voltage:
+                        damping = min(1.0, damping * 1.2)
+
+                    prev_max_delta = max_delta
+
+                    # Identify voltage-source-constrained nodes
+                    vs_constrained_nodes = set()
+                    for component in self.circuit.components:
+                        if isinstance(component, VoltageSource):
+                            pos_node = component.nodes[0]
+                            neg_node = component.nodes[1]
+                            if neg_node == "0":
+                                vs_constrained_nodes.add(pos_node)
+                            elif pos_node == "0":
+                                vs_constrained_nodes.add(neg_node)
+
+                    # Update voltages with damping
+                    max_change = 0.0
+                    for idx, node in enumerate(nodes):
+                        old_voltage = voltages[node]
+                        new_voltage_solution = solution[idx]
+
+                        if node in vs_constrained_nodes:
+                            new_voltage = new_voltage_solution
+                        else:
+                            new_voltage = damping * new_voltage_solution + (1.0 - damping) * old_voltage
+
+                        deltas[node] = abs(new_voltage - old_voltage)
+                        voltages[node] = new_voltage
+                        max_change = max(max_change, abs(new_voltage - old_voltage))
+
+                    # Log iteration if logger is available
+                    if self.logger:
+                        currents = {}
+                        conductances = {}
+                        for comp in self.circuit.components:
+                            try:
+                                current = comp.calculate_current(voltages)
+                                currents[comp.name] = current
+                                if _is_mosfet(comp):
+                                    g_ds, g_m, g_mb = comp.get_conductance(voltages)
+                                    conductances[comp.name] = {"gm": g_m, "gds": g_ds, "gmb": g_mb}
+                            except (NotImplementedError, AttributeError):
+                                pass
+
+                        iter_info = IterationInfo(
+                            iteration=iteration,
+                            voltages=voltages.copy(),
+                            deltas=deltas,
+                            currents=currents,
+                            conductances=conductances
+                        )
+                        self.logger.log_iteration(point_num=0, iter_info=iter_info)
+
+                    # Check convergence: SPICE-standard RELTOL + VNTOL
+                    all_converged = True
+                    for node in nodes:
+                        dv = deltas.get(node, 0.0)
+                        v_new = voltages[node]
+                        threshold = self.vntol + self.reltol * max(abs(v_new), abs(v_new - dv))
+                        if dv >= threshold:
+                            all_converged = False
+                            break
+
+                    if all_converged:
+                        if self.logger:
+                            self.logger.log_convergence(
+                                point_num=0,
+                                converged=True,
+                                iterations=iteration + 1,
+                                tolerance=max_change
+                            )
+                        nr_converged = True
                         break
 
-                if all_converged:
-                    # Reset damping if converged well
-                    if max_delta < 0.1 and self.damping_factor < 1.0:
-                        self.damping_factor = 1.0
-                    # Log convergence
-                    if self.logger:
-                        self.logger.log_convergence(
-                            point_num=0,
-                            converged=True,
-                            iterations=iteration + 1,
-                            tolerance=max_change
-                        )
-                    # Converged at this source step, move to next step
-                    break
+                # --- Oscillation detection (NR exhausted without converging) ---
+                if not nr_converged and len(voltage_history) >= 3:
+                    max_rel_variance = 0.0
+                    avg_voltages: Dict[str, float] = {}
+                    for node in nodes:
+                        values = [s.get(node, 0.0) for s in voltage_history[-3:]]
+                        avg_voltages[node] = sum(values) / 3.0
+                        variance = max(values) - min(values)
+                        v_abs = max(abs(v) for v in values) if values else 0.0
+                        threshold = self.vntol + self.reltol * v_abs
+                        max_rel_variance = max(max_rel_variance, variance / (threshold + 1e-30))
 
-            # If we didn't converge at this step, continue anyway
-            # (source stepping often allows eventual convergence)
+                    if max_rel_variance < 10.0:
+                        # Oscillating within tolerance — accept averaged solution
+                        for node in nodes:
+                            voltages[node] = avg_voltages[node]
+                        voltages["0"] = 0.0
+                        voltages["GND"] = 0.0
+                        nr_converged = True
+
+                if nr_converged:
+                    final_converged = True
+
+            # GMIN continuation: use converged solution as initial guess for next level
+            if final_converged:
+                self.initial_guess = voltages.copy()
 
         # Restore original voltage source values
         vs_idx = 0
@@ -606,31 +651,41 @@ class DCSolver:
                 component.voltage = original_voltages[vs_idx]
                 vs_idx += 1
 
+        # --- Force IC cleanup ---
+        if _ic_temp_sources:
+            for vs in _ic_temp_sources:
+                self.circuit.components.remove(vs)
+            # Re-solve without IC constraints using constrained result as guess
+            saved_force_ic = self.force_ic
+            self.force_ic = False
+            self.initial_guess = voltages.copy()
+            num_voltage_sources = self.circuit.count_voltage_sources()
+            matrix_size = num_nodes + num_voltage_sources
+            try:
+                voltages = self._solve_newton()
+            finally:
+                self.force_ic = saved_force_ic
+            return voltages
+
         # Extract and store voltage source currents from final operating point
-        # Build final MNA matrix and solve to get full solution (voltages + currents)
-        mna_matrix_final = np.zeros((matrix_size, matrix_size))
+        mna_matrix_final = _create_mna_matrix(matrix_size)
         rhs_final = np.zeros(matrix_size)
 
-        # Stamp all components at final voltages
         for component in self.circuit.components:
             if not _is_mosfet(component):
                 component.stamp_conductance(mna_matrix_final, node_map)
                 component.stamp_rhs(rhs_final, node_map)
 
-        # Stamp MOSFETs at final operating point
         for component in self.circuit.components:
             if _is_mosfet(component):
                 self._stamp_mosfet(component, mna_matrix_final, rhs_final, node_map, voltages)
 
-        # Handle voltage sources
         self._stamp_voltage_sources(mna_matrix_final, rhs_final, node_map, num_nodes, voltages=voltages)
 
-        # Solve to get full solution including currents
         try:
-            solution_final = np.linalg.solve(mna_matrix_final, rhs_final)
+            solution_final = _solve_mna(mna_matrix_final, rhs_final)
             self._store_source_currents(solution_final, nodes)
-        except np.linalg.LinAlgError:
-            # If singular, skip current extraction
+        except (np.linalg.LinAlgError, RuntimeError):
             pass
 
         return voltages
@@ -809,7 +864,8 @@ class TransientSolver:
                  pseudo_transient_steps: int = 3,
                  pseudo_transient_cap: float = 1e-12,
                  nr_tolerance: float = 1e-7,
-                 reltol: float = 1e-4, vntol: float = 1e-7, gmin: float = 1e-12):
+                 reltol: float = 1e-4, vntol: float = 1e-7, gmin: float = 1e-12,
+                 max_substeps: int = 1, lte_safety_factor: float = 0.5):
         """
         Initialize the Transient Solver.
 
@@ -830,6 +886,8 @@ class TransientSolver:
             reltol: Relative convergence tolerance (default: 1e-4, tighter than SPICE 1e-3)
             vntol: Absolute voltage tolerance (default: 1e-7 V, tighter than SPICE 1e-6)
             gmin: Minimum MOSFET channel conductance (SPICE GMIN, default: 1e-12 S)
+            max_substeps: Max LTE-adaptive sub-steps per output interval (1=disabled, default: 1)
+            lte_safety_factor: LTE acceptance threshold (default: 0.5)
 
         Raises:
             ValueError: If dt or t_stop is not positive
@@ -864,8 +922,15 @@ class TransientSolver:
         self.vntol = vntol
         self.gmin = gmin
 
+        # LTE adaptive sub-stepping parameters
+        self.max_substeps = max_substeps
+        self.lte_safety_factor = lte_safety_factor
+
         # Active internal timestep (may differ from self.dt during sub-stepping)
         self._current_dt = dt
+
+        # Integration method: 'be', 'trap', or 'bdf2'
+        self._integration_method = 'be'
 
         # Store pseudo-capacitor references for cleanup
         self._pseudo_capacitors: List = []
@@ -955,8 +1020,6 @@ class TransientSolver:
         Raises:
             RuntimeError: If Newton-Raphson fails to converge
         """
-        from pycircuitsim.models.mosfet import NMOS, PMOS
-
         # Matrix size: num_nodes + num_voltage_sources
         matrix_size = num_nodes + num_voltage_sources
 
@@ -991,7 +1054,7 @@ class TransientSolver:
 
         for iteration in range(max_iterations):
             # Build MNA matrix and RHS
-            mna_matrix = np.zeros((matrix_size, matrix_size))
+            mna_matrix = _create_mna_matrix(matrix_size)
             rhs = np.zeros(matrix_size)
 
             # Stamp linear components (resistors, capacitors)
@@ -1014,8 +1077,8 @@ class TransientSolver:
 
             # Solve for voltage updates
             try:
-                solution = np.linalg.solve(mna_matrix, rhs)
-            except np.linalg.LinAlgError:
+                solution = _solve_mna(mna_matrix, rhs)
+            except (np.linalg.LinAlgError, RuntimeError):
                 raise RuntimeError(
                     f"Circuit matrix is singular at t={time:.6e}s during Newton-Raphson iteration {iteration+1}"
                 )
@@ -1072,6 +1135,7 @@ class TransientSolver:
                 # Converged! Use new voltages directly
                 for idx, node in enumerate(nodes):
                     voltages[node] = solution[idx]
+                self._last_nr_iterations = iteration + 1
                 if self.debug and debug_log is not None and len(debug_log) > 0:
                     print(f"\nDEBUG: Converged at t={time:.6e}s after {iteration+1} iterations")
                 break
@@ -1138,7 +1202,7 @@ class TransientSolver:
                 if max_rel_variance < 10.0:
                     if self.debug:
                         print(f"  WARNING: Newton-Raphson oscillating at t={time:.6e}s")
-                        print(f"  Max variance = {max_variance:.2e} (accepting averaged solution)")
+                        print(f"  Max variance = {max_rel_variance:.2e} (accepting averaged solution)")
                     # Use averaged voltages
                     for node in nodes:
                         voltages[node] = avg_voltages[node]
@@ -1178,33 +1242,36 @@ class TransientSolver:
         # DC conductance + NR current source stamping (shared with DCSolver)
         _stamp_mosfet_dc(mosfet, mna_matrix, rhs, node_map, voltages, self.gmin)
 
-        # --- Charge-based intrinsic capacitance stamping (Trapezoidal Rule) ---
-        # Uses terminal charges Q(V) from compact model for exact integration,
-        # instead of capacitance-based linearization I = C(V) * dV/dt.
-        # Theory: I_t(n+1) = 2/dt * [Q_t(n+1) - Q_t(n)] - I_t(n)
+        # --- Charge-based intrinsic capacitance stamping ---
+        # Supports BE, Trapezoidal, and BDF-2 integration methods.
+        # Theory: I_t(n+1) = coeff * Q_t(n+1) - history_terms
         drain, gate, source, bulk = mosfet.nodes
         if hasattr(mosfet, '_q_prev') and mosfet._q_prev is not None:
             charges = mosfet.get_charges(voltages)
             caps = mosfet.get_capacitances(voltages)
             dt = self._current_dt
 
-            # BE/Trap coefficient: 2/dt for Trapezoidal, 1/dt for Backward Euler
-            use_trap = getattr(self, '_use_trap_for_charges', True)
-            coeff = 2.0 / dt if use_trap else 1.0 / dt
+            # Select integration method coefficients
+            method = getattr(self, '_integration_method', 'trap')
+            if method == 'bdf2' and hasattr(mosfet, '_q_prev2') and mosfet._q_prev2 is not None:
+                coeff = 1.5 / dt
+                h_g = (2.0 / dt) * mosfet._q_prev["qg"] - (0.5 / dt) * mosfet._q_prev2["qg"]
+                h_d = (2.0 / dt) * mosfet._q_prev["qd"] - (0.5 / dt) * mosfet._q_prev2["qd"]
+            elif method == 'trap' or (method == 'bdf2' and mosfet._q_prev2 is None):
+                # Trapezoidal (or fallback when BDF-2 history not yet available)
+                coeff = 2.0 / dt
+                h_g = coeff * mosfet._q_prev["qg"] + getattr(mosfet, '_i_prev_gate', 0.0)
+                h_d = coeff * mosfet._q_prev["qd"] + getattr(mosfet, '_i_prev_drain', 0.0)
+            else:
+                # Backward Euler: no i_prev history term
+                coeff = 1.0 / dt
+                h_g = coeff * mosfet._q_prev["qg"]
+                h_d = coeff * mosfet._q_prev["qd"]
 
             # Terminal voltages at current NR iterate
             v_g = voltages.get(gate, 0.0)
             v_d = voltages.get(drain, 0.0)
             v_s = voltages.get(source, 0.0)
-
-            # History terms (constant within this timestep)
-            if use_trap:
-                h_g = coeff * mosfet._q_prev["qg"] + getattr(mosfet, '_i_prev_gate', 0.0)
-                h_d = coeff * mosfet._q_prev["qd"] + getattr(mosfet, '_i_prev_drain', 0.0)
-            else:
-                # Backward Euler: no i_prev history term
-                h_g = coeff * mosfet._q_prev["qg"]
-                h_d = coeff * mosfet._q_prev["qd"]
 
             # Capacitive currents at NR iterate V0
             i_g_cap = coeff * charges["qg"] - h_g
@@ -1388,12 +1455,13 @@ class TransientSolver:
         max_dt_reductions = 5  # Maximum NR convergence retries per sub-step
         has_non_linear = self._has_non_linear_components()
 
-        # LTE-adaptive sub-stepping: disabled by default (causes regression due to
-        # trapezoidal history perturbation at sub-step boundaries; effective LTE of
-        # n sub-steps is raw_lte / n^2, but state transitions degrade accuracy)
-        adaptive_substeps = 1       # Fixed at 1 = no sub-stepping
-        max_substeps = 1            # Set > 1 to enable LTE adaptation
-        lte_safety_factor = 1.0     # Normalized LTE acceptance threshold
+        # LTE-adaptive sub-stepping: uses constructor parameters
+        adaptive_substeps = 1
+        max_substeps = self.max_substeps
+        lte_safety_factor = self.lte_safety_factor
+
+        # Stiffness tracking for BDF-2 auto-switching
+        _stiff_switched = False  # Once True, stays on BDF-2
 
         for step in range(1, num_steps):
             # Current output time
@@ -1406,13 +1474,21 @@ class TransientSolver:
                     print(f"Removing pseudo-capacitors at step {step}")
                 self._remove_pseudo_capacitors()
 
-            # BE→Trap switching: use Backward Euler for first step to avoid
-            # trapezoidal ringing at DC→transient transition (standard SPICE technique)
-            use_trap = step > 1  # BE for step 1, Trapezoidal from step 2 onward
+            # Integration method selection: BE (step 1) → Trap (step 2+) → BDF-2 (on stiffness)
+            if step == 1:
+                self._integration_method = 'be'
+            elif _stiff_switched:
+                self._integration_method = 'bdf2'
+            else:
+                self._integration_method = 'trap'
+
+            # Set capacitor integration flags
+            use_trap = self._integration_method == 'trap'
             self._use_trap_for_charges = use_trap
             for component in self.circuit.components:
                 if isinstance(component, Capacitor):
                     component._use_trapezoidal = use_trap
+                    component._method = self._integration_method
 
             # Starting voltages for this output interval
             current_voltages = {}
@@ -1456,7 +1532,7 @@ class TransientSolver:
                             )
                         else:
                             matrix_size = num_nodes + num_voltage_sources
-                            mna_matrix = np.zeros((matrix_size, matrix_size))
+                            mna_matrix = _create_mna_matrix(matrix_size)
                             rhs = np.zeros(matrix_size)
 
                             for component in self.circuit.components:
@@ -1466,8 +1542,8 @@ class TransientSolver:
                             self._stamp_voltage_sources(mna_matrix, rhs, node_map, num_nodes, sub_time)
 
                             try:
-                                solution = np.linalg.solve(mna_matrix, rhs)
-                            except np.linalg.LinAlgError as e:
+                                solution = _solve_mna(mna_matrix, rhs)
+                            except (np.linalg.LinAlgError, RuntimeError) as e:
                                 raise np.linalg.LinAlgError(
                                     f"Circuit matrix is singular at t={sub_time:.6f}s. "
                                     f"Check for floating nodes or short circuits."
@@ -1490,11 +1566,17 @@ class TransientSolver:
                                 if hasattr(component, '_q_prev') and component._q_prev is not None:
                                     charges_new = component.get_charges(timestep_voltages)
                                     dt_eff = current_sub_dt
-                                    coeff = 2.0 / dt_eff if use_trap else 1.0 / dt_eff
-                                    if use_trap:
+                                    method = self._integration_method
+                                    if method == 'bdf2' and hasattr(component, '_q_prev2') and component._q_prev2 is not None:
+                                        coeff = 1.5 / dt_eff
+                                        h_g = (2.0 / dt_eff) * component._q_prev["qg"] - (0.5 / dt_eff) * component._q_prev2["qg"]
+                                        h_d = (2.0 / dt_eff) * component._q_prev["qd"] - (0.5 / dt_eff) * component._q_prev2["qd"]
+                                    elif method == 'trap':
+                                        coeff = 2.0 / dt_eff
                                         h_g = coeff * component._q_prev["qg"] + getattr(component, '_i_prev_gate', 0.0)
                                         h_d = coeff * component._q_prev["qd"] + getattr(component, '_i_prev_drain', 0.0)
-                                    else:
+                                    else:  # 'be'
+                                        coeff = 1.0 / dt_eff
                                         h_g = coeff * component._q_prev["qg"]
                                         h_d = coeff * component._q_prev["qd"]
                                     terminal_currents["i_gate"] = coeff * charges_new["qg"] - h_g
@@ -1518,6 +1600,13 @@ class TransientSolver:
             # Store at output point
             for node in nodes:
                 voltages_over_time[node][step] = current_voltages[node]
+
+            # Stiffness detection: if NR took > 20 iterations, switch to BDF-2
+            if (not _stiff_switched and has_non_linear and step > 2
+                    and getattr(self, '_last_nr_iterations', 0) > 20):
+                _stiff_switched = True
+                if self.debug:
+                    print(f"  Stiffness detected at step {step} (NR iters={self._last_nr_iterations}) -> switching to BDF-2")
 
             # LTE estimation for adaptive sub-stepping (need >= 3 output points)
             if step >= 2:

@@ -153,6 +153,7 @@ class NMOS_CMG(Component):
 
         # Charge state for transient analysis
         self._q_prev: Optional[Dict[str, float]] = None
+        self._q_prev2: Optional[Dict[str, float]] = None  # Two-step-ago charges (BDF-2)
         self._v_prev_tran: Optional[Dict[str, float]] = None
 
     def get_nodes(self) -> List[str]:
@@ -311,6 +312,7 @@ class NMOS_CMG(Component):
         """
         charges = self.get_charges(voltages)
         self._q_prev = charges.copy()
+        self._q_prev2 = charges.copy()  # BDF-2: same as q_prev at DC
         self._v_prev_tran = {
             "d": voltages.get(self.nodes[0], 0.0),
             "g": voltages.get(self.nodes[1], 0.0),
@@ -326,6 +328,7 @@ class NMOS_CMG(Component):
                             cap_currents: Optional[Dict[str, float]] = None) -> None:
         """Update charge state after a converged timestep."""
         charges = self.get_charges(voltages)
+        self._q_prev2 = self._q_prev.copy() if self._q_prev is not None else charges.copy()
         self._q_prev = charges.copy()
         self._v_prev_tran = {
             "d": voltages.get(self.nodes[0], 0.0),
@@ -336,7 +339,6 @@ class NMOS_CMG(Component):
         if cap_currents is not None:
             self._i_prev_gate = cap_currents.get("i_gate", 0.0)
             self._i_prev_drain = cap_currents.get("i_drain", 0.0)
-
 
 
 class PMOS_CMG(Component):
@@ -433,6 +435,7 @@ class PMOS_CMG(Component):
 
         # Charge state for transient analysis
         self._q_prev: Optional[Dict[str, float]] = None
+        self._q_prev2: Optional[Dict[str, float]] = None  # Two-step-ago charges (BDF-2)
         self._v_prev_tran: Optional[Dict[str, float]] = None
 
     def get_nodes(self) -> List[str]:
@@ -540,6 +543,7 @@ class PMOS_CMG(Component):
         """
         charges = self.get_charges(voltages)
         self._q_prev = charges.copy()
+        self._q_prev2 = charges.copy()  # BDF-2: same as q_prev at DC
         self._v_prev_tran = {
             "d": voltages.get(self.nodes[0], 0.0),
             "g": voltages.get(self.nodes[1], 0.0),
@@ -555,6 +559,7 @@ class PMOS_CMG(Component):
                             cap_currents: Optional[Dict[str, float]] = None) -> None:
         """Update charge state after a converged timestep."""
         charges = self.get_charges(voltages)
+        self._q_prev2 = self._q_prev.copy() if self._q_prev is not None else charges.copy()
         self._q_prev = charges.copy()
         self._v_prev_tran = {
             "d": voltages.get(self.nodes[0], 0.0),
