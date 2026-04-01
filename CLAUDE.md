@@ -32,7 +32,7 @@ pycircuitsim/
     └── mosfet_nn.py    # NN-based compact model (LEVEL=73) via PyTorch
 
 nn_model/                           # NN training pipeline
-├── config.py                       # Hyperparams, paths, tech configs
+├── config.py                       # NNTechConfig (wraps PyCMG TECH_REGISTRY) + ProcessParams + training hyperparams
 ├── data/
 │   ├── generate.py                 # PyCMG bias sweep → .npz datasets
 │   ├── normalize.py                # Signed-log + z-score normalization
@@ -44,9 +44,16 @@ nn_model/                           # NN training pipeline
 
 external_compact_models/
 ├── PyCMG/              # BSIM-CMG OSDI wrapper (git submodule)
-│   ├── pycmg/          # Python ctypes-based OSDI interface (Model, Instance)
-│   ├── build-deep-verify/osdi/bsimcmg.osdi  # Compiled OSDI binary
-│   └── tech_model_cards/ASAP7/              # ASAP7 7nm modelcards
+│   ├── pycmg/          # Python OSDI interface (Model, Instance, tech registry)
+│   │   ├── core.py     # Low-level OSDI: OsdiLibrary, OsdiModel, OsdiInstance
+│   │   ├── model.py    # Public API: Model, Instance, eval_dc, eval_tran
+│   │   ├── parser.py   # Modelcard parsing, SPICE number parsing
+│   │   ├── osdi_types.py # OSDI constants, ctypes structures
+│   │   └── tech.py     # TECH_REGISTRY, DeviceConfig, TechConfig, resolve_modelcard
+│   ├── build/osdi/bsimcmg.osdi             # Compiled OSDI binary
+│   └── modelcards/                          # Technology modelcards
+│       ├── ASAP7/                           # ASAP7 7nm modelcards
+│       └── TSMC{5,7,12,16}/naive/           # Pre-baked TSMC naive modelcards
 main.py                 # CLI entry point (single main entrance)
 examples/*.sp           # Example netlists
 results/                # Simulation output (.lis, .csv, .png)
@@ -129,7 +136,7 @@ git submodule update --init --recursive
 ### Prerequisites
 - **NGSPICE 45.2+**: `/usr/local/ngspice-45.2/bin/ngspice` (for verification tests)
 - **OpenVAF 23.5.0+**: `/usr/local/bin/openvaf` (for OSDI compilation)
-- **BSIM-CMG OSDI binary**: Pre-compiled at `/home/shenshan/pycmg-wrapper/build-deep-verify/osdi/bsimcmg.osdi`
+- **BSIM-CMG OSDI binary**: Pre-compiled at `external_compact_models/PyCMG/build/osdi/bsimcmg.osdi`
 
 ## Quick Start
 
@@ -253,8 +260,9 @@ When integrating new compact models, follow this checklist:
 3. **Training range covers NR overshoot** — Margin of +/-VDD beyond operating range, not just +/-0.1V
 4. **Voltage clamping** — Clip inputs to training range to prevent extrapolation garbage
 5. **Signed-log normalization** — `sign(x) * log10(|x|/floor)` preserves sign across 14-decade range
-6. **TSMC asymmetric L** — NMOS L=16nm, PMOS L=20nm; TechConfig uses `L_nmos`/`L_pmos`
+6. **TSMC asymmetric L** — NMOS L=16nm, PMOS L=20nm; NNTechConfig uses `L_nmos`/`L_pmos`
 7. **ASAP7 modelcard name mapping** — Parser auto-maps netlist names to `nmos_rvt`/`pmos_rvt`
+8. **PyCMG integration** — `nn_model/config.py` imports device structure from PyCMG's `TECH_REGISTRY` via `NNTechConfig`. ProcessParams (7 NN input features) are NN-specific and NOT from PyCMG. Training VDD may differ from PyCMG (e.g., ASAP7: train=0.7V, PyCMG=0.9V). Backward-compat aliases `TechConfig`/`VariantConfig` exist for test files.
 
 ---
 
@@ -268,9 +276,11 @@ When integrating new compact models, follow this checklist:
 ## Project Structure Notes
 
 ### Important Path References
-- **PyCMG Location**: `/home/shenshan/pycmg-wrapper` (standalone, 21 device variants)
-- **BSIM-CMG OSDI Binary**: `/home/shenshan/pycmg-wrapper/build-deep-verify/osdi/bsimcmg.osdi`
-- **Modelcards**: `/home/shenshan/pycmg-wrapper/tech_model_cards/` (ASAP7: `ASAP7/`, TSMC: `TSMC{5,7,12,16}/naive/`)
+- **PyCMG Location**: `external_compact_models/PyCMG/` (git submodule, 21 device variants)
+- **PyCMG Submodule**: `external_compact_models/PyCMG/` (git submodule)
+- **BSIM-CMG OSDI Binary**: `build/osdi/bsimcmg.osdi` (relative to PyCMG root)
+- **Modelcards**: `modelcards/` (relative to PyCMG root; ASAP7: `ASAP7/`, TSMC: `TSMC{5,7,12,16}/naive/`)
+- **PyCMG Test Helpers**: `tests/helpers.py` (relative to PyCMG root; was `pycmg/testing.py`)
 - **Results Output**: `results/<circuit_name>/<analysis_type>/` (`.lis`, `.csv`, `.png`)
 - **Examples**: `examples/` (13 netlists)
 - **Test Results**: `tests/verify_*_results/` (generated, not tracked in git)
