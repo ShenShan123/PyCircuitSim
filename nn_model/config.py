@@ -1,5 +1,6 @@
 """Configuration for NN-based compact model training."""
 
+import sys
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional
@@ -10,12 +11,17 @@ NN_MODEL_DIR = PROJECT_ROOT / "nn_model"
 CHECKPOINT_DIR = NN_MODEL_DIR / "checkpoints"
 DATA_DIR = NN_MODEL_DIR / "data" / "datasets"
 
-# PyCMG paths (pycmg-wrapper: 21 device variants, 5 process nodes)
-PYCMG_DIR = Path("/home/shenshan/pycmg-wrapper")
-OSDI_PATH = str(PYCMG_DIR / "build-deep-verify" / "osdi" / "bsimcmg.osdi")
+# PyCMG paths (submodule: 21 device variants, 5 process nodes)
+PYCMG_DIR = PROJECT_ROOT / "external_compact_models" / "PyCMG"
+OSDI_PATH = str(PYCMG_DIR / "build" / "osdi" / "bsimcmg.osdi")
+
+# Ensure PyCMG submodule is importable
+_PYCMG_PYPATH = str(PYCMG_DIR)
+if _PYCMG_PYPATH not in sys.path:
+    sys.path.insert(0, _PYCMG_PYPATH)
 
 # ASAP7 technology config
-ASAP7_MODELCARD = str(PYCMG_DIR / "tech_model_cards" / "ASAP7" / "7nm_TT_160803.pm")
+ASAP7_MODELCARD = str(PYCMG_DIR / "modelcards" / "ASAP7" / "7nm_TT_160803.pm")
 ASAP7_VDD = 0.7
 ASAP7_L = 7e-9  # 7nm drawn gate length (matching pycmg-wrapper)
 
@@ -23,7 +29,7 @@ ASAP7_L = 7e-9  # 7nm drawn gate length (matching pycmg-wrapper)
 DEFAULT_TEMPERATURE = 300.15  # 27°C in Kelvin
 
 # TSMC technology modelcard base
-TSMC_MODELCARDS = PYCMG_DIR / "tech_model_cards"
+TSMC_MODELCARDS = PYCMG_DIR / "modelcards"
 
 # Process parameter names used as NN input features (order matters!)
 PROCESS_PARAM_NAMES = ["PHIG", "U0", "VSAT", "EOT", "ETA0", "CIT", "RDSW"]

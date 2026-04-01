@@ -19,7 +19,9 @@ import numpy as np
 # Project imports
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, "/home/shenshan/pycmg-wrapper")
+PYCMG_PATH = PROJECT_ROOT / "external_compact_models" / "PyCMG"
+if str(PYCMG_PATH) not in sys.path:
+    sys.path.insert(0, str(PYCMG_PATH))
 
 from pycmg import Model, Instance
 from nn_model.config import (
