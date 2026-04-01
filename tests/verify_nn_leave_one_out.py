@@ -35,7 +35,6 @@ from torch.utils.data import DataLoader
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, "/home/shenshan/pycmg-wrapper")
 
 from nn_model.config import (
     TECH_CONFIGS, TechConfig, CHECKPOINT_DIR, DATA_DIR,

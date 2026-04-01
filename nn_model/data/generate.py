@@ -25,13 +25,13 @@ if str(PYCMG_PATH) not in sys.path:
 
 from pycmg import Model, Instance
 from nn_model.config import (
-    OSDI_PATH, TechConfig, VariantConfig, ProcessParams, OUTPUT_COLUMNS,
+    OSDI_PATH, NNTechConfig, NNVariantConfig, ProcessParams, OUTPUT_COLUMNS,
     DATA_DIR, TECH_CONFIGS,
 )
 
 
 def create_pycmg_instance(
-    tech: TechConfig,
+    tech: NNTechConfig,
     device_type: str,
     nfin: float,
     variant: Optional[str] = None,
@@ -179,7 +179,7 @@ def eval_single_point(
 
 
 def generate_dataset(
-    tech: TechConfig,
+    tech: NNTechConfig,
     device_type: str,
     variant_names: Optional[List[str]] = None,
     verbose: bool = True,
@@ -238,7 +238,7 @@ def generate_dataset(
         for nfin in tech.nfin_values:
             if verbose:
                 print(f"\n  NFIN={nfin}: Creating PyCMG instance "
-                      f"(model={variant_cfg.get_model_name(device_type)})...")
+                      f"(model={tech.get_model_name(device_type, variant_name)})...")
 
             inst = create_pycmg_instance(tech, device_type, nfin, variant_name)
             nfin_points = 0
