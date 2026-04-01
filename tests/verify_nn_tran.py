@@ -36,16 +36,17 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG"))
 
 OSDI_PATH = (
     PROJECT_ROOT / "external_compact_models" / "PyCMG"
-    / "build-deep-verify" / "osdi" / "bsimcmg.osdi"
+    / "build" / "osdi" / "bsimcmg.osdi"
 )
 TECH_MODEL_CARDS = (
-    PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tech_model_cards"
+    PROJECT_ROOT / "external_compact_models" / "PyCMG" / "modelcards"
 )
 NGSPICE_BIN = "/usr/local/ngspice-45.2/bin/ngspice"
 RESULTS_BASE = PROJECT_ROOT / "tests" / "verify_nn_tran_results"
 CHECKPOINT_DIR = PROJECT_ROOT / "nn_model" / "checkpoints"
 
-from pycmg.testing import bake_inst_params
+sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tests"))
+from helpers import bake_inst_params
 
 # Acceptance criterion — loose for NN (DC accuracy is 1-7%)
 NRMSE_THRESHOLD: float = 0.15  # 15% of Vdd
@@ -66,7 +67,7 @@ class TechConfig:
     pmos_model: str
     nmos_file: str      # Modelcard filename for NMOS
     pmos_file: str
-    tech_dir: str       # Subdir under tech_model_cards/
+    tech_dir: str       # Subdir under modelcards/
     l_nmos: float       # NMOS channel length [m]
     l_pmos: float       # PMOS channel length [m]
     nfin: int           # Default NFIN

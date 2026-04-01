@@ -30,13 +30,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG"))
 
-OSDI_PATH = PROJECT_ROOT / "external_compact_models" / "PyCMG" / "build-deep-verify" / "osdi" / "bsimcmg.osdi"
-MODELCARD_PATH = PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tech_model_cards" / "ASAP7" / "7nm_TT_160803.pm"
+OSDI_PATH = PROJECT_ROOT / "external_compact_models" / "PyCMG" / "build" / "osdi" / "bsimcmg.osdi"
+MODELCARD_PATH = PROJECT_ROOT / "external_compact_models" / "PyCMG" / "modelcards" / "ASAP7" / "7nm_TT_160803.pm"
 NGSPICE_BIN = "/usr/local/ngspice-45.2/bin/ngspice"
 RESULTS_DIR = PROJECT_ROOT / "tests" / "verify_bsimcmg_op_results"
 
 # -- PyCMG testing utilities -------------------------------------------------
-from pycmg.testing import bake_inst_params, run_ngspice_op
+sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tests"))
+from helpers import bake_inst_params, run_ngspice_op
 
 # -- PyCircuitSim imports ----------------------------------------------------
 from pycircuitsim.parser import Parser

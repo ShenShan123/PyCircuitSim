@@ -37,16 +37,17 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG"))
 
 OSDI_PATH = (
     PROJECT_ROOT / "external_compact_models" / "PyCMG"
-    / "build-deep-verify" / "osdi" / "bsimcmg.osdi"
+    / "build" / "osdi" / "bsimcmg.osdi"
 )
 TECH_MODEL_CARDS = (
-    PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tech_model_cards"
+    PROJECT_ROOT / "external_compact_models" / "PyCMG" / "modelcards"
 )
 NGSPICE_BIN = "/usr/local/ngspice-45.2/bin/ngspice"
 RESULTS_BASE = PROJECT_ROOT / "tests" / "verify_multi_tech_tran_results"
 
 # Baked-modelcard helper
-from pycmg.testing import bake_inst_params
+sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tests"))
+from helpers import bake_inst_params
 
 # Acceptance criterion
 NRMSE_THRESHOLD: float = 0.05  # 5% of Vdd
@@ -68,7 +69,7 @@ class TechConfig:
     pmos_model: str     # Model name in modelcard (e.g. "pch_lvt_mac")
     nmos_file: str      # Naive modelcard filename for NMOS
     pmos_file: str      # Naive modelcard filename for PMOS
-    tech_dir: str       # Subdir under tech_model_cards/ (e.g. "TSMC7/naive")
+    tech_dir: str       # Subdir under modelcards/ (e.g. "TSMC7/naive")
     l_nmos: float       # NMOS channel length [m]
     l_pmos: float       # PMOS channel length [m]
     nfin: int           # Default NFIN
