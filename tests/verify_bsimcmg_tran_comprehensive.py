@@ -34,7 +34,7 @@ from tests.bsimcmg_tran_common import (
 
 RESULTS_DIR = PROJECT_ROOT / "tests" / "verify_bsimcmg_tran_results" / "comprehensive"
 
-NFIN_SWEEP_VALUES = [1, 2, 5, 10, 20]
+NFIN_SWEEP_VALUES = [2, 5, 10]
 
 
 def build_vt_sweep(tech: TechProfile) -> List[TestConfig]:

@@ -28,8 +28,8 @@ pycircuitsim/
     ├── __init__.py
     ├── base.py         # Component abstract base class
     ├── passive.py      # R, C, V, I sources (including PULSE)
-    ├── mosfet_cmg.py   # BSIM-CMG FinFET model (LEVEL=72) via PyCMG
-    └── mosfet_nn.py    # NN-based compact model (LEVEL=73) via PyTorch
+    ├── mosfet_cmg.py   # BSIM-CMG FinFET model (LEVEL=72) via PyCMG — MOSFET_CMG base + NMOS/PMOS subclasses
+    └── mosfet_nn.py    # NN-based compact model (LEVEL=73) via PyTorch — _MOSFETNNBase + NMOS/PMOS subclasses
 
 nn_model/                           # NN training pipeline
 ├── config.py                       # NNTechConfig (wraps PyCMG TECH_REGISTRY) + ProcessParams + training hyperparams
@@ -57,7 +57,11 @@ external_compact_models/
 main.py                 # CLI entry point (single main entrance)
 examples/*.sp           # Example netlists
 results/                # Simulation output (.lis, .csv, .png)
-tests/                  # Validation scripts & NGSPICE comparison
+tests/
+├── test_common.py                   # Shared infrastructure: TechProfile, VtPair, ALL_TECHS, generic helpers
+├── bsimcmg_tran_common.py           # Transient-specific: TestConfig, runners, metrics, plots
+├── bsimcmg_dc_common.py             # DC-specific: DCTestConfig, runners, metrics, plots
+└── verify_*.py                      # 3-level test scripts (L1/L2/L3 for DC + transient)
 ```
 
 ### Key Algorithms
@@ -107,6 +111,8 @@ All phases (1-15) are complete. Key milestones:
 - **NN Transient (charge-finetune + VT fix)** — 5/5 PASS: ASAP7 6.20%, TSMC5 14.41%, TSMC7 7.15%, TSMC12 6.47%, TSMC16 7.42%
 - **Solver accuracy improvements** — SPICE-standard convergence (RELTOL=1e-4, VNTOL=1e-7), GMIN reduction (1e-6→1e-12), BE→Trap first-step switching, relative oscillation threshold. NN transient improved: TSMC7 7.15→6.09%, TSMC12 6.47→5.92%, TSMC16 7.42→6.70%. BSIM-CMG transient unchanged at 0.20% (already at integration-method floor).
 - **SRAM Solver Upgrades (Phases 1-3)** — Sparse matrix solver (scipy.sparse lil_matrix→CSR+spsolve), DC GMIN stepping + oscillation detection + adaptive damping + hard `.ic` mode (force_ic), BDF-2 integration (auto-switches on stiffness detection), LTE adaptive sub-stepping as constructor param. All 67 existing tests PASS with zero regression.
+- **3-level DC+Transient test suites** — 3-layer infrastructure: `test_common.py` (tech defs, generic helpers) -> `bsimcmg_{dc,tran}_common.py` (analysis-specific) -> `verify_*.py` (test scripts). All 223 tests PASS (0 FAIL, 0 ERROR): DC 113 (L1:2 + L2:67 + L3:44), Transient 110 (L1:1 + L2:37 + L3:72).
+  - **Known-bad combos excluded:** TSMC5 SVT (pch PDIBL2_i<0), TSMC7 SVT/LVT (inverter garbage / pch PDIBL2_i<0), TSMC16 LNVT (nch PDIBL2_i<0), TSMC16 L=24nm (PDIBL2_i<0), NFIN=1/20 (OSDI errors), P/N ratio where NFIN_P crosses NFIN group boundary (TSMC naive modelcards are NFIN-group-specific).
 
 ### Future Work
 - [ ] **Improve TSMC5 Transient** — 14.41% NRMSE (close to 15% threshold); try denser mid-supply data (`--n-dense-mid 30`) + retrain
@@ -169,15 +175,28 @@ Results organized in `results/<circuit_name>/<analysis_type>/`:
 
 All tests require: `conda activate pycircuitsim`
 
+**BSIM-CMG DC Verification (3-level, shared infra in `test_common.py` + `bsimcmg_dc_common.py`):**
+
+| Level | Script | Tests | What it tests |
+|-------|--------|-------|---------------|
+| 1 | `verify_bsimcmg_dc.py` | 2 | NMOS + PMOS Id-Vgs (ASAP7, <1% NRMSE) |
+| 2 | `verify_bsimcmg_dc_comprehensive.py` | 67 | VT/L/NFIN sweeps, NMOS+PMOS, 5 techs |
+| 3 | `verify_multi_tech_dc.py` | 44 | Inverter VTC + parametric (VT, L, NFIN, P/N) |
+
+**BSIM-CMG Transient Verification (3-level, shared infra in `test_common.py` + `bsimcmg_tran_common.py`):**
+
+| Level | Script | Tests | What it tests |
+|-------|--------|-------|---------------|
+| 1 | `verify_bsimcmg_tran.py` | 1 | Inverter pulse (ASAP7, <5% NRMSE) |
+| 2 | `verify_bsimcmg_tran_comprehensive.py` | 37 | VT/L/NFIN sweeps, 5 techs |
+| 3 | `verify_multi_tech_tran.py` | 72 | Multi-tech + parametric (P/N, VDD, Cload, slew, pw) |
+
+**Other:**
+
 | Test Suite | Script | What it tests |
 |-----------|--------|---------------|
 | OP Verification | `verify_bsimcmg_op.py` | NMOS, PMOS, Inverter OP vs NGSPICE (<0.02%) |
-| DC Sweep | `verify_bsimcmg_dc.py` | Id-Vgs, VTC vs NGSPICE (<0.1% NRMSE) |
-| Transient | `verify_bsimcmg_tran.py` | Inverter pulse vs NGSPICE (<0.5% NRMSE) |
-| Comprehensive Transient | `verify_bsimcmg_tran_comprehensive.py` | 21 parametric configs (VDD, Cload, slew, pw, NFIN, P/N ratio) |
-| Multi-Tech Transient | `verify_multi_tech_tran.py` | 5 techs, baseline + parametric sweep |
 | NN Multi-Tech | `verify_nn_multi_tech.py` | NMOS/PMOS DC + Inverter VTC per tech (<10%/15%) |
-| NN Universal | `verify_nn_universal.py` | Universal NN model v1 |
 | NN Universal v2 | `verify_nn_universal_v2.py` | 21 variants x 3 tests (63 tests) |
 | NN Transient | `verify_nn_tran.py` | NN vs NGSPICE transient per tech (<15%) |
 | NN Leave-One-Out | `verify_nn_leave_one_out.py` | Zero-shot transferability experiment |
