@@ -262,7 +262,7 @@ def train(
 
     # Auto-detect input_dim from dataset (6 for legacy, 7 with PHIG)
     input_dim = train_ds.inputs.shape[1]
-    dim_label = {6: "legacy", 7: "with PHIG", 13: "universal (7 process params)"}
+    dim_label = {6: "legacy", 7: "with PHIG", 13: "universal (7 process params)", 18: "universal (12 process params)"}
     print(f"Input dim: {input_dim} ({dim_label.get(input_dim, f'{input_dim}-dim')})")
 
     # Model

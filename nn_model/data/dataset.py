@@ -15,7 +15,7 @@ class MOSFETDataset(Dataset):
     """PyTorch Dataset wrapping normalized MOSFET I-V/Q-V data.
 
     Each sample provides:
-        - inputs: (6,) tensor [Vd, Vg, Vs, Vb, log2(NFIN), T] normalized to [0,1]
+        - inputs: (D,) tensor, D in {6, 7, 13, 18}, normalized to [0,1]
         - outputs: (13,) tensor [id, gm, gds, gmb, qg, qd, qs, qb, cgg, cgd, cgs, cdg, cdd]
                    in signed_log + z-score normalized space
     """
@@ -56,7 +56,7 @@ def load_and_split(
     """
     data = np.load(data_path, allow_pickle=True)
     inputs = data["inputs"]      # (N, 4)
-    geometry = data["geometry"]  # (N, 2)
+    geometry = data["geometry"]  # (N, 2+) — 2 (legacy), 3 (Phase 13), 9 (7 params), or 14 (12 params)
     outputs = data["outputs"]    # (N, 13)
 
     N = len(inputs)

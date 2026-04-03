@@ -28,6 +28,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from pycircuitsim.models.base import Component
 from nn_model.architecture.direct_loss import DirectNet
+from nn_model.config import PROCESS_PARAM_NAMES
 from nn_model.data.normalize import NormStats, inv_signed_log
 
 
@@ -63,7 +64,7 @@ class _MOSFETNNBase(Component):
         self.NFIN = float(NFIN)
         self.temperature = float(temperature)
         self.phig = float(phig) if phig is not None else None
-        self.process_params = process_params  # Dict with phig, u0, vsat, eot, eta0, cit, rdsw
+        self.process_params = process_params  # Dict with 12 process param keys
 
         # Load model and normalization stats
         model_path = Path(model_path)
@@ -86,7 +87,7 @@ class _MOSFETNNBase(Component):
         n_weight_keys = len(weight_keys)
         n_layers = n_weight_keys
 
-        self._input_dim = input_dim  # 6 (legacy), 7 (Phase 13 PHIG), or 13 (universal)
+        self._input_dim = input_dim  # 6 (legacy), 7 (Phase 13 PHIG), 13 (7 process params), or 18 (12 process params)
 
         self._nn_model = DirectNet(
             input_dim=input_dim, hidden_dim=hidden_dim,
@@ -100,17 +101,17 @@ class _MOSFETNNBase(Component):
         self._norm_stats = NormStats.load(str(norm_path))
 
         # Pre-compute normalized geometry features (constant per device)
+        # Number of process params the model expects = input_dim - 6 (4V + NFIN + T)
+        n_proc = input_dim - 6
         nfin_log = np.log2(max(self.NFIN, 1.0))
-        if input_dim == 13 and self.process_params is not None:
-            # Universal model: [Vd, Vg, Vs, Vb, log2(NFIN), T, PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW]
+        if self.process_params is not None and n_proc > 1:
+            # Universal model: use exactly the number of process params the model expects
             pp = self.process_params
-            geo_raw = np.array([
-                nfin_log, self.temperature,
-                pp["phig"], pp["u0"], pp["vsat"],
-                pp["eot"], pp["eta0"], pp["cit"], pp["rdsw"],
-            ])
-        elif input_dim == 7 and (self.phig is not None or
-                                  (self.process_params and "phig" in self.process_params)):
+            proc_names = PROCESS_PARAM_NAMES[:n_proc]
+            proc_vals = [pp.get(p.lower(), 0.0) for p in proc_names]
+            geo_raw = np.array([nfin_log, self.temperature] + proc_vals)
+        elif n_proc == 1 and (self.phig is not None or
+                               (self.process_params and "phig" in self.process_params)):
             # Phase 13 model: [Vd, Vg, Vs, Vb, log2(NFIN), T, PHIG]
             phig_val = self.phig or self.process_params["phig"]
             geo_raw = np.array([nfin_log, self.temperature, phig_val])

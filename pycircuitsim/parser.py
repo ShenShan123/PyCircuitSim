@@ -653,10 +653,96 @@ class Parser:
             else:
                 raise ValueError(f"Unknown MOSFET model type: {model_type}")
 
+        elif level == 74:
+            # BSIM-AR Transformer compact model
+            if NFIN is None:
+                raise ValueError(f"BSIM-AR (LEVEL=74) MOSFET missing NFIN parameter: {line}")
+
+            try:
+                from pycircuitsim.models.mosfet_bsimar import NMOS_BSIMAR, PMOS_BSIMAR
+            except ImportError:
+                raise ImportError(
+                    "BSIM-AR model requires PyTorch and BSIM-AR package. "
+                    "Install: pip install torch"
+                )
+
+            # Resolve model path and process params (same logic as LEVEL=73)
+            from nn_model.config import TECH_CONFIGS, PROCESS_PARAM_NAMES
+            from external_compact_models.BSIMAR.script.config import CHECKPOINT_DIR as AR_CHECKPOINT_DIR
+
+            nn_tech = model_params.get('TECH', None)
+            nn_vt = model_params.get('VT', None)
+            ar_model_path = model_params.get('MODEL_PATH', None)
+
+            tech_key = (nn_tech or "asap7").lower()
+            device_key = model_type.lower()
+            nn_process_params = None
+            nn_phig = None
+
+            # Check for direct process param values in netlist
+            direct_params = {}
+            for pname in PROCESS_PARAM_NAMES:
+                val_str = model_params.get(pname, None)
+                if val_str is not None:
+                    direct_params[pname.lower()] = float(val_str)
+
+            if direct_params:
+                nn_process_params = direct_params
+                nn_phig = direct_params.get("phig", None)
+            elif tech_key in TECH_CONFIGS:
+                tech_cfg = TECH_CONFIGS[tech_key]
+                if nn_vt is not None:
+                    vt_lower = nn_vt.lower()
+                    if vt_lower in tech_cfg.variants:
+                        pp = tech_cfg.variants[vt_lower].get_process_params(device_key)
+                        nn_process_params = pp.as_dict()
+                        nn_phig = pp.phig
+                    else:
+                        raise ValueError(
+                            f"Unknown VT={nn_vt} for {tech_key}. "
+                            f"Available: {list(tech_cfg.variants.keys())}")
+                elif tech_cfg.default_variant and tech_cfg.variants:
+                    pp = tech_cfg.variants[tech_cfg.default_variant].get_process_params(device_key)
+                    nn_process_params = pp.as_dict()
+                    nn_phig = pp.phig
+
+            # Resolve model path: prefer universal > per-tech > default
+            if ar_model_path is None:
+                universal_path = AR_CHECKPOINT_DIR / f"ar_universal_{device_key}_best.pt"
+                if universal_path.exists():
+                    ar_model_path = str(universal_path)
+                elif nn_tech:
+                    ar_model_path = str(AR_CHECKPOINT_DIR / f"ar_{nn_tech.lower()}_{device_key}_best.pt")
+                else:
+                    ar_model_path = str(AR_CHECKPOINT_DIR / f"ar_{device_key}_best.pt")
+
+            if model_type.upper() == 'NMOS':
+                mosfet = NMOS_BSIMAR(
+                    name=name,
+                    nodes=nodes,
+                    model_path=ar_model_path,
+                    L=L,
+                    NFIN=NFIN,
+                    phig=nn_phig,
+                    process_params=nn_process_params,
+                )
+            elif model_type.upper() == 'PMOS':
+                mosfet = PMOS_BSIMAR(
+                    name=name,
+                    nodes=nodes,
+                    model_path=ar_model_path,
+                    L=L,
+                    NFIN=NFIN,
+                    phig=nn_phig,
+                    process_params=nn_process_params,
+                )
+            else:
+                raise ValueError(f"Unknown MOSFET model type: {model_type}")
+
         else:
             raise ValueError(
                 f"Unsupported MOSFET LEVEL={level}. "
-                f"Supported levels: LEVEL=72 (BSIM-CMG), LEVEL=73 (NN)"
+                f"Supported levels: LEVEL=72 (BSIM-CMG), LEVEL=73 (NN), LEVEL=74 (BSIM-AR)"
             )
 
         self.circuit.add_component(mosfet)

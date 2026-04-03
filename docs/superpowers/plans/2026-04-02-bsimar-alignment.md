@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Modify BSIM-AR's Transformer-based autoregressive model to use the same 13-input / 13-output format as DirectNet, reuse our existing `.npz` data pipeline, and default to `DirectLoss` with signed_log normalization while preserving `WeightedBNILoss` as an alternative.
+**Goal:** Modify BSIM-AR's Transformer-based autoregressive model to use the same 18-input / 13-output format as DirectNet, reuse our existing `.npz` data pipeline, and default to `DirectLoss` with signed_log normalization while preserving `WeightedBNILoss` as an alternative.
 
 **Architecture:** BSIM-AR remains under `external_compact_models/BSIMAR/script/` as a standalone training pipeline that **imports** from `nn_model/` for data loading, normalization, and loss. No code duplication. The Transformer decoder-only architecture is kept; only I/O dimensions and data plumbing change.
 
@@ -14,7 +14,7 @@
 
 | Action | File | Responsibility |
 |--------|------|----------------|
-| **Modify** | `external_compact_models/BSIMAR/script/model.py` | Update default `input_dim=13, target_dim=13` |
+| **Modify** | `external_compact_models/BSIMAR/script/model.py` | Update default `input_dim=18, target_dim=13` |
 | **Rewrite** | `external_compact_models/BSIMAR/script/config.py` | Import from `nn_model.config`, CLI-friendly device selection, remove hardcoded paths |
 | **Keep** | `external_compact_models/BSIMAR/script/losses.py` | WeightedBNILoss + LDS (no changes) |
 | **Rewrite** | `external_compact_models/BSIMAR/script/train.py` | Support DirectLoss (default) + BNI, use DataLoader, save `_norm.npz` |
@@ -38,11 +38,11 @@
 
 - [ ] **Step 1: Update default dimensions**
 
-Change the `TransformerEncoderModel` constructor defaults from `input_dim=15, target_dim=9` to `input_dim=13, target_dim=13`:
+Change the `TransformerEncoderModel` constructor defaults from `input_dim=15, target_dim=9` to `input_dim=18, target_dim=13`:
 
 ```python
 class TransformerEncoderModel(nn.Module):
-    def __init__(self, input_dim=13, target_dim=13, d_model=32, nhead=4, 
+    def __init__(self, input_dim=18, target_dim=13, d_model=32, nhead=4, 
                  num_layers=2, dim_feedforward=64, dropout=0.1):
 ```
 
@@ -56,18 +56,18 @@ import sys; sys.path.insert(0, 'external_compact_models/BSIMAR')
 from script.model import TransformerEncoderModel
 m = TransformerEncoderModel()
 print(f'input_dim={m.input_dim}, target_dim={m.target_dim}')
-assert m.input_dim == 13 and m.target_dim == 13
+assert m.input_dim == 18 and m.target_dim == 13
 print('OK')
 "
 ```
 
-Expected: `input_dim=13, target_dim=13` and `OK`.
+Expected: `input_dim=18, target_dim=13` and `OK`.
 
 - [ ] **Step 3: Commit**
 
 ```bash
 git add external_compact_models/BSIMAR/script/model.py
-git commit -m "feat(bsimar): update default dims to 13-in/13-out matching DirectNet"
+git commit -m "feat(bsimar): update default dims to 18-in/13-out matching DirectNet"
 ```
 
 ---

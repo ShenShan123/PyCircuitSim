@@ -50,7 +50,7 @@ def _solve_mna(mna_matrix, rhs: np.ndarray) -> np.ndarray:
 # --- Module-level MOSFET helpers (used by both DCSolver and TransientSolver) ---
 
 def _mosfet_types() -> tuple:
-    """Return tuple of all MOSFET classes (BSIM-CMG, NN)."""
+    """Return tuple of all MOSFET classes (BSIM-CMG, NN, BSIM-AR)."""
     types = []
     try:
         from pycircuitsim.models.mosfet_cmg import NMOS_CMG, PMOS_CMG
@@ -62,11 +62,16 @@ def _mosfet_types() -> tuple:
         types.extend([NMOS_NN, PMOS_NN])
     except ImportError:
         pass
+    try:
+        from pycircuitsim.models.mosfet_bsimar import NMOS_BSIMAR, PMOS_BSIMAR
+        types.extend([NMOS_BSIMAR, PMOS_BSIMAR])
+    except ImportError:
+        pass
     return tuple(types)
 
 
 def _pmos_types() -> tuple:
-    """Return tuple of all PMOS classes (BSIM-CMG, NN)."""
+    """Return tuple of all PMOS classes (BSIM-CMG, NN, BSIM-AR)."""
     types = []
     try:
         from pycircuitsim.models.mosfet_cmg import PMOS_CMG
@@ -76,6 +81,11 @@ def _pmos_types() -> tuple:
     try:
         from pycircuitsim.models.mosfet_nn import PMOS_NN
         types.append(PMOS_NN)
+    except ImportError:
+        pass
+    try:
+        from pycircuitsim.models.mosfet_bsimar import PMOS_BSIMAR
+        types.append(PMOS_BSIMAR)
     except ImportError:
         pass
     return tuple(types)

@@ -203,7 +203,7 @@ def generate_dataset(
         n_dense_mid: Extra dense points near VDD/2 (default: 0, off).
 
     Returns:
-        Dict with keys: 'inputs' (N,4), 'geometry' (N,9), 'outputs' (N,13),
+        Dict with keys: 'inputs' (N,4), 'geometry' (N,14), 'outputs' (N,13),
         'metadata' containing tech/device info.
     """
     vdd = tech.vdd
@@ -224,7 +224,7 @@ def generate_dataset(
                          f"Available: {list(tech.variants.keys())}")
 
     all_inputs: List[np.ndarray] = []    # (Vd, Vg, Vs, Vb)
-    all_geometry: List[np.ndarray] = []  # (NFIN, T, PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW)
+    all_geometry: List[np.ndarray] = []  # (NFIN, T, PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW, CFS, TOXP, CGSL, UA, EU)
     all_outputs: List[np.ndarray] = []   # 13 output columns
 
     total_points = 0
@@ -296,7 +296,7 @@ def generate_dataset(
 
     # Stack into arrays
     inputs = np.array(all_inputs, dtype=np.float64)     # (N, 4)
-    geometry = np.array(all_geometry, dtype=np.float64)  # (N, 9) — [NFIN, T, PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW]
+    geometry = np.array(all_geometry, dtype=np.float64)  # (N, 14) — [NFIN, T, PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW, CFS, TOXP, CGSL, UA, EU]
     outputs = np.array(all_outputs, dtype=np.float64)    # (N, 13)
 
     if verbose:
@@ -384,7 +384,7 @@ def generate_universal_dataset(
         n_dense_mid: Extra dense points near VDD/2 (default: 0, off).
 
     Returns:
-        Dict with keys: 'inputs' (N,4), 'geometry' (N,9), 'outputs' (N,13),
+        Dict with keys: 'inputs' (N,4), 'geometry' (N,14), 'outputs' (N,13),
         'metadata' containing all tech/device info.
     """
     all_inputs = []
