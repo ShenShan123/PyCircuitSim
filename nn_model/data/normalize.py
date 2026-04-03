@@ -31,6 +31,29 @@ OUTPUT_COLUMN_ORDER = [
     "cgg", "cgd", "cgs", "cdg", "cdd",
 ]
 
+# BSIM-AR autoregressive order: easy targets first, hardest (id) last.
+# Charges (well-behaved, smooth) -> capacitances -> conductances -> current.
+BSIMAR_COLUMN_ORDER = [
+    "qg", "qd", "qs", "qb",
+    "cgg", "cgd", "cgs", "cdg", "cdd",
+    "gm", "gds", "gmb",
+    "id",
+]
+
+# Permutation indices: BSIMAR_COLUMN_ORDER[i] == OUTPUT_COLUMN_ORDER[_REORDER_IDX[i]]
+_REORDER_IDX = [OUTPUT_COLUMN_ORDER.index(c) for c in BSIMAR_COLUMN_ORDER]
+_UNREORDER_IDX = [BSIMAR_COLUMN_ORDER.index(c) for c in OUTPUT_COLUMN_ORDER]
+
+
+def reorder_outputs(arr: np.ndarray) -> np.ndarray:
+    """Permute columns from OUTPUT_COLUMN_ORDER -> BSIMAR_COLUMN_ORDER."""
+    return arr[:, _REORDER_IDX]
+
+
+def unreorder_outputs(arr: np.ndarray) -> np.ndarray:
+    """Permute columns from BSIMAR_COLUMN_ORDER -> OUTPUT_COLUMN_ORDER."""
+    return arr[:, _UNREORDER_IDX]
+
 
 def signed_log(x: np.ndarray, floor: float = 1e-18) -> np.ndarray:
     """Map signed values to floor-relative log scale, preserving sign.
@@ -83,7 +106,7 @@ class NormStats:
     back to physical units.
     """
     # Input normalization (min-max to [0, 1])
-    # shape (6,) legacy, (7,) Phase 13 PHIG, or (13,) universal with 7 process params
+    # shape (6,) legacy, (7,) Phase 13 PHIG, (13,) universal 7 params, or (18,) universal 12 params
     input_min: np.ndarray
     input_max: np.ndarray
 
@@ -141,7 +164,7 @@ class Normalizer:
 
         Args:
             inputs: (N, 4) — [Vd, Vg, Vs, Vb]
-            geometry: (N, 2), (N, 3), or (N, 9) — see _build_combined_input()
+            geometry: (N, 2), (N, 3), (N, 9), or (N, 14) — see _build_combined_input()
             outputs: (N, 13) — 13 output columns
 
         Returns:
@@ -192,10 +215,10 @@ class Normalizer:
 
         Args:
             inputs: (N, 4) — [Vd, Vg, Vs, Vb]
-            geometry: (N, 2), (N, 3), or (N, 9) — see _build_combined_input()
+            geometry: (N, 2), (N, 3), (N, 9), or (N, 14) — see _build_combined_input()
 
         Returns:
-            (N, 6), (N, 7), or (N, 13) normalized input array.
+            (N, 6), (N, 7), (N, 13), or (N, 18) normalized input array.
         """
         assert self.stats is not None, "Must call fit() first"
         combined = self._build_combined_input(inputs, geometry)
@@ -250,20 +273,21 @@ class Normalizer:
 
         Args:
             inputs: (N, 4) — [Vd, Vg, Vs, Vb]
-            geometry: (N, 2), (N, 3), or (N, 9):
+            geometry: (N, 2), (N, 3), (N, 9), or (N, 14):
                 - (N, 2): [NFIN, T] — legacy
                 - (N, 3): [NFIN, T, PHIG] — Phase 13
-                - (N, 9): [NFIN, T, PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW] — universal
+                - (N, 9): [NFIN, T, PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW] — universal (7 process params)
+                - (N, 14): [NFIN, T, <12 process params>] — universal (12 process params)
 
         Returns:
-            (N, 6), (N, 7), or (N, 13) normalized feature vector.
+            (N, 6), (N, 7), (N, 13), or (N, 18) normalized feature vector.
         """
         # Transform NFIN to log2 scale (captures roughly linear scaling)
         nfin_log = np.log2(np.clip(geometry[:, 0], 1.0, None))
         temperature = geometry[:, 1]
         if geometry.shape[1] >= 9:
-            # Universal: all 7 process params follow [NFIN, T]
-            proc_params = geometry[:, 2:]  # (N, 7) — PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW
+            # Universal: all process params follow [NFIN, T]
+            proc_params = geometry[:, 2:]  # (N, 12) — PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW, CFS, TOXP, CGSL, UA, EU
             return np.column_stack([inputs, nfin_log, temperature, proc_params])
         elif geometry.shape[1] >= 3:
             # Phase 13: PHIG only
