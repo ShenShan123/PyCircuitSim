@@ -1,20 +1,22 @@
 """BSIM-AR: Autoregressive Transformer training for MOSFET compact modeling.
 
-Uses the same .npz datasets and 18-in/13-out format as DirectNet (LEVEL=73).
-Default loss is DirectLoss with signed_log normalization. BNI loss is optional.
+Supports two normalization modes:
+  --norm-mode zscore   : plain z-score (paper's approach, default)
+  --norm-mode signedlog: signed_log + z-score (nn_model compat)
+
+Supports multiple loss functions:
+  --loss direct : DirectLoss (group-weighted MSE, same as DirectNet)
+  --loss mae    : MAE (simple or composed with --lds)
+  --loss bni    : WeightedBNILoss (batch-normalized interpolation)
 
 Usage:
-    # Universal model (all techs, DirectLoss)
+    # Paper's recommended setup (zscore + MAE + LDS + filtering)
     conda run -n pycircuitsim python -m external_compact_models.BSIMAR.script.main \
-        --device-type nmos --universal --cuda
+        --device-type nmos --universal --loss mae --lds --cuda
 
-    # Single tech with BNI loss
+    # Backward compat (signedlog + DirectLoss, no filter)
     conda run -n pycircuitsim python -m external_compact_models.BSIMAR.script.main \
-        --device-type nmos --tech asap7 --loss bni --cuda
-
-    # Custom architecture
-    conda run -n pycircuitsim python -m external_compact_models.BSIMAR.script.main \
-        --device-type pmos --universal --d-model 128 --nhead 4 --num-layers 4 --cuda
+        --device-type nmos --universal --norm-mode signedlog --loss direct --no-filter --cuda
 """
 
 import sys
@@ -32,14 +34,17 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from nn_model.config import TECH_CONFIGS, OUTPUT_COLUMNS
-from nn_model.data.dataset import load_and_split
-from nn_model.data.normalize import Normalizer
+from nn_model.data.normalize import (
+    OUTPUT_COLUMN_ORDER, reorder_outputs, unreorder_outputs, _UNREORDER_IDX,
+)
 from nn_model.architecture.direct_loss import DirectLoss
 
 from external_compact_models.BSIMAR.script.model import TransformerEncoderModel
 from external_compact_models.BSIMAR.script.config import (
     BSIMARConfig, CHECKPOINT_DIR, RESULTS_DIR, DATA_DIR, TARGETS,
 )
+from external_compact_models.BSIMAR.script.normalize import BSIMARNormalizer
+from external_compact_models.BSIMAR.script.data import load_and_split_bsimar
 from external_compact_models.BSIMAR.script.train import (
     train_epoch_direct, validate_epoch_direct,
     train_epoch_bni, validate_epoch_bni,
@@ -47,7 +52,7 @@ from external_compact_models.BSIMAR.script.train import (
     test_model, EarlyStopping,
 )
 from external_compact_models.BSIMAR.script.losses import (
-    WeightedBNILoss, compute_lds_weights_per_target,
+    WeightedBNILoss, MAELoss, compute_lds_weights_per_target,
 )
 from external_compact_models.BSIMAR.script.metrics import (
     compute_physical_metrics, print_metrics,
@@ -61,14 +66,26 @@ from external_compact_models.BSIMAR.script.utils import set_seed
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="BSIM-AR: Autoregressive Transformer for MOSFET modeling")
+    # Data
     parser.add_argument("--device-type", choices=["nmos", "pmos"], default="nmos")
     parser.add_argument("--data", type=str, default=None,
                         help="Path to .npz dataset (auto-resolved if omitted)")
     parser.add_argument("--tech", choices=list(TECH_CONFIGS.keys()), default="asap7")
     parser.add_argument("--universal", action="store_true",
                         help="Train universal model across all techs/variants")
-    parser.add_argument("--loss", choices=["direct", "bni"], default="direct",
-                        help="Loss function: direct (DirectLoss, default) or bni (WeightedBNILoss)")
+    # Normalization
+    parser.add_argument("--norm-mode", choices=["zscore", "signedlog"],
+                        default="zscore",
+                        help="Normalization mode (default: zscore)")
+    # Data filtering
+    parser.add_argument("--no-filter", action="store_true",
+                        help="Skip small-value data filtering")
+    # Loss
+    parser.add_argument("--loss", choices=["direct", "mae", "bni"], default="mae",
+                        help="Loss function (default: mae)")
+    parser.add_argument("--lds", action="store_true",
+                        help="Enable LDS reweighting (works with mae/bni)")
+    # Training
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--batch-size", type=int, default=1024)
     parser.add_argument("--patience", type=int, default=30)
@@ -79,7 +96,7 @@ def main() -> None:
     parser.add_argument("--num-layers", type=int, default=6)
     parser.add_argument("--dim-feedforward", type=int, default=1024)
     parser.add_argument("--dropout", type=float, default=0.2)
-    # DirectLoss weights
+    # DirectLoss weights (only used with --loss direct)
     parser.add_argument("--w-curr", type=float, default=1.0)
     parser.add_argument("--w-cond", type=float, default=1.0)
     parser.add_argument("--w-charges", type=float, default=0.5)
@@ -90,22 +107,18 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=42)
     # Output reordering
     parser.add_argument("--reorder", action="store_true",
-                        help="Reorder outputs for autoregressive (charges->caps->cond->id)")
+                        help="Reorder outputs for autoregressive "
+                             "(charges->caps->cond->id)")
     # Scheduled sampling
-    parser.add_argument("--scheduled-sampling", action="store_true",
-                        help="Use scheduled sampling (gradual teacher forcing -> autoregressive)")
-    parser.add_argument("--ss-warmup", type=int, default=100,
-                        help="Epochs to ramp scheduled sampling ratio (default: 100)")
-    parser.add_argument("--ss-max-ratio", type=float, default=0.5,
-                        help="Max autoregressive ratio (default: 0.5)")
+    parser.add_argument("--scheduled-sampling", action="store_true")
+    parser.add_argument("--ss-warmup", type=int, default=100)
+    parser.add_argument("--ss-max-ratio", type=float, default=0.5)
     # Consistency loss
-    parser.add_argument("--consistency-weight", type=float, default=0.0,
-                        help="Weight for TF-vs-AR consistency loss (0=off, default: 0)")
-    # Curriculum on output length
-    parser.add_argument("--curriculum", action="store_true",
-                        help="Use curriculum on output length (ramp from 1 to 13 targets)")
-    parser.add_argument("--curriculum-warmup", type=int, default=50,
-                        help="Epochs to ramp curriculum from 1 to all targets (default: 50)")
+    parser.add_argument("--consistency-weight", type=float, default=0.0)
+    # Curriculum
+    parser.add_argument("--curriculum", action="store_true")
+    parser.add_argument("--curriculum-warmup", type=int, default=50)
+    parser.add_argument("--exp-name", type=str, default=None)
     args = parser.parse_args()
 
     set_seed(args.seed)
@@ -122,26 +135,34 @@ def main() -> None:
                      else DATA_DIR / f"{tech_label}_{args.device_type}.npz")
         save_prefix = f"ar_{tech_label}_{args.device_type}"
 
+    if args.exp_name:
+        save_prefix = f"{args.exp_name}_{args.device_type}"
+
     if not data_path.exists():
         print(f"Dataset not found: {data_path}")
-        print(f"Generate with: python -m nn_model.data.generate "
-              f"--device {args.device_type} {'--universal' if args.universal else f'--tech {tech_label}'}")
         sys.exit(1)
 
     # -- Device --
-    device = torch.device("cuda" if args.cuda and torch.cuda.is_available() else "cpu")
-    print(f"Device: {device} | Loss: {args.loss} | Data: {data_path.name}")
+    device = torch.device(
+        "cuda" if args.cuda and torch.cuda.is_available() else "cpu")
+    print(f"Device: {device} | Norm: {args.norm_mode} | "
+          f"Loss: {args.loss}{'+lds' if args.lds else ''} | "
+          f"Filter: {not args.no_filter} | Data: {data_path.name}")
 
-    # -- Load data --
-    train_ds, val_ds, test_ds, normalizer = load_and_split(str(data_path))
+    # -- Load data (unified loader, handles both norm modes) --
+    train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
+        str(data_path),
+        column_names=OUTPUT_COLUMNS,
+        norm_mode=args.norm_mode,
+        apply_filter=not args.no_filter,
+    )
     input_dim = train_ds.inputs.shape[1]
     output_dim = train_ds.outputs.shape[1]
     print(f"Input dim: {input_dim}, Output dim: {output_dim}")
 
-    # -- Optional output reordering for autoregressive --
+    # -- Optional output reordering --
     _reorder_active = False
     if args.reorder:
-        from nn_model.data.normalize import reorder_outputs, unreorder_outputs, _UNREORDER_IDX
         _reorder_active = True
         train_ds.outputs = torch.tensor(
             reorder_outputs(train_ds.outputs.numpy()), dtype=torch.float32)
@@ -151,7 +172,7 @@ def main() -> None:
             reorder_outputs(test_ds.outputs.numpy()), dtype=torch.float32)
         print("Output columns reordered: charges->caps->cond->id")
 
-    # Create unreorder function for loss computation
+    # Unreorder function for DirectLoss (expects original column order)
     if _reorder_active:
         _unreorder_idx_t = torch.tensor(_UNREORDER_IDX, dtype=torch.long)
         def _unreorder_tensor(t: torch.Tensor) -> torch.Tensor:
@@ -160,11 +181,7 @@ def main() -> None:
     else:
         unreorder_fn = None
 
-    train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False)
-    test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False)
-
-    # -- Model --
+    # -- Model (must be created before optimizer) --
     model = TransformerEncoderModel(
         input_dim=input_dim,
         target_dim=output_dim,
@@ -177,36 +194,64 @@ def main() -> None:
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model params: {n_params:,}")
 
-    # -- Loss + training functions --
+    # -- Loss + training function selection --
     if args.loss == "direct":
         criterion = DirectLoss(
             output_dim=output_dim,
-            w_curr=args.w_curr,
-            w_cond=args.w_cond,
-            w_charges=args.w_charges,
-            w_caps=args.w_caps,
+            w_curr=args.w_curr, w_cond=args.w_cond,
+            w_charges=args.w_charges, w_caps=args.w_caps,
             w_zero_bias=args.w_zero_bias,
         )
         train_fn = train_epoch_direct
         val_fn = validate_epoch_direct
-    else:
+        # DirectLoss doesn't use LDS weights in the loader
+        train_loader = DataLoader(
+            train_ds, batch_size=args.batch_size, shuffle=True)
+
+    elif args.loss == "mae":
+        criterion = MAELoss()
+        train_fn = train_epoch_bni   # handles (x, y) and (x, y, w) batches
+        val_fn = validate_epoch_bni
+
+        if args.lds:
+            print("Computing LDS weights...")
+            lds_weights_np = compute_lds_weights_per_target(
+                train_ds.outputs.numpy(), n_bins=100,
+                lds_kernel="gaussian", lds_ks=5, lds_sigma=2.0,
+            )
+            train_ds_weighted = TensorDataset(
+                train_ds.inputs, train_ds.outputs,
+                torch.tensor(lds_weights_np, dtype=torch.float32),
+            )
+            train_loader = DataLoader(
+                train_ds_weighted, batch_size=args.batch_size, shuffle=True)
+        else:
+            train_loader = DataLoader(
+                train_ds, batch_size=args.batch_size, shuffle=True)
+
+    else:  # bni
         criterion = WeightedBNILoss()
-        # Compute LDS weights and wrap into a weighted Dataset so weights
-        # stay associated with samples through DataLoader shuffle.
-        print("Computing LDS weights...")
-        lds_weights_np = compute_lds_weights_per_target(
-            train_ds.outputs.numpy(), n_bins=100,
-            lds_kernel="gaussian", lds_ks=5, lds_sigma=2.0,
-        )
-        # Create a new Dataset that yields (x, y, w) tuples
-        train_ds = TensorDataset(
-            train_ds.inputs,
-            train_ds.outputs,
-            torch.tensor(lds_weights_np, dtype=torch.float32),
-        )
-        train_loader = DataLoader(train_ds, batch_size=args.batch_size, shuffle=True)
         train_fn = train_epoch_bni
         val_fn = validate_epoch_bni
+
+        if args.lds:
+            print("Computing LDS weights...")
+            lds_weights_np = compute_lds_weights_per_target(
+                train_ds.outputs.numpy(), n_bins=100,
+                lds_kernel="gaussian", lds_ks=5, lds_sigma=2.0,
+            )
+            train_ds_weighted = TensorDataset(
+                train_ds.inputs, train_ds.outputs,
+                torch.tensor(lds_weights_np, dtype=torch.float32),
+            )
+            train_loader = DataLoader(
+                train_ds_weighted, batch_size=args.batch_size, shuffle=True)
+        else:
+            train_loader = DataLoader(
+                train_ds, batch_size=args.batch_size, shuffle=True)
+
+    val_loader = DataLoader(val_ds, batch_size=args.batch_size, shuffle=False)
+    test_loader = DataLoader(test_ds, batch_size=args.batch_size, shuffle=False)
 
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=args.lr, weight_decay=1e-4)
@@ -222,33 +267,38 @@ def main() -> None:
         patience=args.patience, min_delta=1e-5, save_path=str(best_path))
 
     # -- Training loop --
-    print(f"\nTraining {save_prefix} for {args.epochs} epochs (patience={args.patience})")
+    print(f"\nTraining {save_prefix} for {args.epochs} epochs "
+          f"(patience={args.patience})")
     train_history, val_history = [], []
     best_val_loss = float("inf")
     t_start = time.time()
 
     for epoch in range(1, args.epochs + 1):
-        # Compute per-epoch scheduled sampling and curriculum parameters
-        ss_ratio = min(epoch / args.ss_warmup, args.ss_max_ratio) if args.scheduled_sampling else 0.0
-        n_targets = max(1, int(output_dim * min(epoch / args.curriculum_warmup, 1.0))) if args.curriculum else output_dim
+        ss_ratio = (min(epoch / args.ss_warmup, args.ss_max_ratio)
+                    if args.scheduled_sampling else 0.0)
+        n_targets = (max(1, int(output_dim * min(
+            epoch / args.curriculum_warmup, 1.0)))
+            if args.curriculum else output_dim)
 
-        if args.loss == "direct" and (args.curriculum or args.consistency_weight > 0 or args.scheduled_sampling):
-            t_losses = train_epoch_curriculum(
-                model, train_loader, criterion, optimizer, device,
-                n_targets=n_targets, ss_ratio=ss_ratio,
-                consistency_weight=args.consistency_weight,
-                unreorder_fn=unreorder_fn)
-        elif args.loss == "direct":
-            t_losses = train_fn(model, train_loader, criterion, optimizer, device,
-                                unreorder_fn=unreorder_fn)
-        else:
-            # BNI loss: no unreorder_fn (doesn't use DirectLoss column indices)
-            t_losses = train_fn(model, train_loader, criterion, optimizer, device)
-
+        # Select training path
         if args.loss == "direct":
-            v_losses = val_fn(model, val_loader, criterion, device,
-                              unreorder_fn=unreorder_fn)
+            if args.curriculum or args.consistency_weight > 0 or args.scheduled_sampling:
+                t_losses = train_epoch_curriculum(
+                    model, train_loader, criterion, optimizer, device,
+                    n_targets=n_targets, ss_ratio=ss_ratio,
+                    consistency_weight=args.consistency_weight,
+                    unreorder_fn=unreorder_fn)
+            else:
+                t_losses = train_fn(
+                    model, train_loader, criterion, optimizer, device,
+                    unreorder_fn=unreorder_fn)
+            v_losses = val_fn(
+                model, val_loader, criterion, device,
+                unreorder_fn=unreorder_fn)
         else:
+            # mae / bni: no unreorder_fn needed
+            t_losses = train_fn(
+                model, train_loader, criterion, optimizer, device)
             v_losses = val_fn(model, val_loader, criterion, device)
 
         train_loss = t_losses["total"]
@@ -268,39 +318,39 @@ def main() -> None:
 
         if epoch % 20 == 0 or epoch <= 5 or status:
             if args.loss == "direct":
-                print(f"  {epoch:4d} | train={train_loss:.5f} val={val_loss:.5f} | "
+                print(f"  {epoch:4d} | train={train_loss:.5f} "
+                      f"val={val_loss:.5f} | "
                       f"id={v_losses.get('id', 0):.5f} "
                       f"gm={v_losses.get('gm', 0):.5f} "
                       f"q={v_losses.get('charges', 0):.5f} "
                       f"cap={v_losses.get('caps', 0):.5f}{status}")
             else:
-                print(f"  {epoch:4d} | train={train_loss:.5f} val={val_loss:.5f}{status}")
+                print(f"  {epoch:4d} | train={train_loss:.5f} "
+                      f"val={val_loss:.5f}{status}")
 
     elapsed = time.time() - t_start
     print(f"\nDone in {elapsed:.0f}s ({elapsed / epoch:.1f}s/epoch)")
     print(f"Best val loss: {best_val_loss:.6f}")
 
-    # -- Save architecture config for inference reconstruction --
+    # -- Save architecture config --
     arch_config = {
-        "input_dim": input_dim,
-        "target_dim": output_dim,
-        "d_model": args.d_model,
-        "nhead": args.nhead,
+        "input_dim": input_dim, "target_dim": output_dim,
+        "d_model": args.d_model, "nhead": args.nhead,
         "num_layers": args.num_layers,
         "dim_feedforward": args.dim_feedforward,
         "dropout": args.dropout,
     }
     config_path = CHECKPOINT_DIR / f"{save_prefix}_config.npz"
-    np.savez(str(config_path), **{k: np.array(v) for k, v in arch_config.items()})
+    np.savez(str(config_path),
+             **{k: np.array(v) for k, v in arch_config.items()})
     print(f"Arch config: {config_path}")
 
     # -- Load best and test --
     model.load_state_dict(torch.load(str(best_path), weights_only=True))
     pred_norm, true_norm = test_model(model, test_loader, device)
 
-    # Unreorder predictions and targets back to original column order for metrics
+    # Unreorder back to standard column order for metrics
     if _reorder_active:
-        from nn_model.data.normalize import unreorder_outputs
         pred_norm = unreorder_outputs(pred_norm)
         true_norm = unreorder_outputs(true_norm)
 

@@ -1,0 +1,49 @@
+BSIM-AR Accuracy Ablation v2 — Summary
+========================================
+Date: 2026-04-06
+Model: d=64, nhead=4, num_layers=2, dim_ff=256, dropout=0.1
+Data: universal_nmos.npz (761K train, 95K val, 95K test)
+Training: 200 epochs, patience=30, batch=2048, lr=8e-4
+
+NOTE: Exp 2 ran to completion (early stop). Exp 3 & 4 were killed mid-training
+(background task timeout) but checkpoints from best epochs were evaluated.
+
+Avg R2_norm (normalized-space R2, the meaningful metric):
+---------------------------------------------------------
+| Exp | Description                          | avg R2_norm | id R2_n | gm R2_n | gds R2_n | caps R2_n avg | Stopped |
+|-----|--------------------------------------|-------------|---------|---------|----------|---------------|---------|
+| 1   | Baseline (TF only)                   |   0.9448    |  0.9815 |  0.9111 |   0.9519 |     0.9323    | ep 116  |
+| 2   | + Scheduled sampling                 |   0.9665    |  0.9831 |  0.9208 |   0.9667 |     0.9705    | ep ?    |
+| 3   | + Output reorder                     |  -1.1394    | -0.5291 | -0.5204 |  -0.2833 |    -1.1413    | KILLED  |
+| 4   | + Consistency + Curriculum            |  -0.4312    | -0.2082 | -0.0464 |  -0.0757 |    -0.4619    | KILLED  |
+
+Key per-target NRMSE (physical space):
+--------------------------------------
+| Exp | id     | gm      | gds        | charges avg | caps avg |
+|-----|--------|---------|------------|-------------|----------|
+| 1   | 5.88%  | 152.0%  | 190660.3%  | 3.46%       | 3.80%    |
+| 2   | 4.88%  | 14.38%  | 20.75%     | 3.58%       | 3.16%    |
+| 3   | inf    | 0.34%   | 0.40%      | 14.03%      | 36.31%   |
+| 4   | inf    | 0.34%   | 0.40%      | 14.69%      | 26.46%   |
+
+Analysis:
+---------
+1. Exp 1 → Exp 2: Scheduled sampling HELPS. R2_norm improved from 0.9448 → 0.9665.
+   gds NRMSE improved dramatically (190660% → 20.75%). gm improved (152% → 14.38%).
+   This confirms scheduled sampling closes the train-test gap.
+
+2. Exp 3 & 4 (with --reorder): CATASTROPHIC FAILURE. R2_norm went deeply negative.
+   These were killed mid-training, so the reorder models may not have converged yet.
+   However, the negative R2_norm suggests the reorder + unreorder pipeline may have a bug,
+   OR the model needs much longer training with reordered outputs to learn the new sequence.
+
+3. The --reorder flag changes the autoregressive order (charges first, id last).
+   This fundamentally changes what the model learns and may need different hyperparameters.
+   The killed-early results are NOT reliable for --reorder experiments.
+
+Conclusion:
+-----------
+- Scheduled sampling (Exp 2) is the clear winner for improving AR accuracy.
+- Output reordering needs further investigation (longer training or bug check).
+- R2_norm is the correct metric; physical-space R2 is meaningless for log-transformed data.
+- Best model: Exp 2 (SS only), avg R2_norm = 0.9665.

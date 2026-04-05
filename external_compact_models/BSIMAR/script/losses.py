@@ -134,3 +134,24 @@ class WeightedBNILoss(nn.Module):
         nae = torch.mean(abs_err)
         nse = torch.mean(sq_err)
         return 0.7 * nae + 0.3 * nse
+
+
+class MAELoss(nn.Module):
+    """Simple MAE loss with optional per-sample weights.
+
+    When used with pre-computed LDS weights, this becomes the paper's
+    MAE+LDS composed loss.  Without weights, it is plain MAE.
+    """
+
+    def forward(
+        self,
+        y_pred: torch.Tensor,
+        y_true: torch.Tensor,
+        weights: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        ae = torch.abs(y_pred - y_true)  # (B, D)
+        if weights is not None:
+            if weights.dim() == 1:
+                weights = weights.unsqueeze(1)
+            ae = ae * weights
+        return ae.mean()
