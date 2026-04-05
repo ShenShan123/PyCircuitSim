@@ -106,7 +106,7 @@ class NormStats:
     back to physical units.
     """
     # Input normalization (min-max to [0, 1])
-    # shape (6,) legacy, (7,) Phase 13 PHIG, (13,) universal 7 params, or (18,) universal 12 params
+    # shape (6,) legacy, (7,) Phase 13 PHIG, (13,) universal 7 params, (18,) 12 params, or (19,) 12 params + L
     input_min: np.ndarray
     input_max: np.ndarray
 
@@ -164,7 +164,7 @@ class Normalizer:
 
         Args:
             inputs: (N, 4) — [Vd, Vg, Vs, Vb]
-            geometry: (N, 2), (N, 3), (N, 9), or (N, 14) — see _build_combined_input()
+            geometry: (N, 2), (N, 3), (N, 9), (N, 14), or (N, 15) — see _build_combined_input()
             outputs: (N, 13) — 13 output columns
 
         Returns:
@@ -215,10 +215,10 @@ class Normalizer:
 
         Args:
             inputs: (N, 4) — [Vd, Vg, Vs, Vb]
-            geometry: (N, 2), (N, 3), (N, 9), or (N, 14) — see _build_combined_input()
+            geometry: (N, 2), (N, 3), (N, 9), (N, 14), or (N, 15) — see _build_combined_input()
 
         Returns:
-            (N, 6), (N, 7), (N, 13), or (N, 18) normalized input array.
+            (N, 6), (N, 7), (N, 13), (N, 18), or (N, 19) normalized input array.
         """
         assert self.stats is not None, "Must call fit() first"
         combined = self._build_combined_input(inputs, geometry)
@@ -269,28 +269,37 @@ class Normalizer:
         inputs: np.ndarray,
         geometry: np.ndarray,
     ) -> np.ndarray:
-        """Combine voltage inputs with geometry into feature vector.
+        """Combine voltage inputs with geometry into a single feature vector.
 
-        Args:
-            inputs: (N, 4) — [Vd, Vg, Vs, Vb]
-            geometry: (N, 2), (N, 3), (N, 9), or (N, 14):
-                - (N, 2): [NFIN, T] — legacy
-                - (N, 3): [NFIN, T, PHIG] — Phase 13
-                - (N, 9): [NFIN, T, PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW] — universal (7 process params)
-                - (N, 14): [NFIN, T, <12 process params>] — universal (12 process params)
+        Geometry column layouts (backward-compatible):
+          (N,  2): [NFIN, T]                         — legacy
+          (N,  3): [NFIN, T, PHIG]                   — Phase 13
+          (N,  9): [NFIN, T, PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW]  — 7-param
+          (N, 14): [NFIN, T, <12 process params>]     — 12-param (old universal)
+          (N, 15): [NFIN, L, T, <12 process params>]  — 12-param + L (current)
 
         Returns:
-            (N, 6), (N, 7), (N, 13), or (N, 18) normalized feature vector.
+          (N,  6): inputs + [log2(NFIN), T]
+          (N,  7): inputs + [log2(NFIN), T, PHIG]
+          (N, 13): inputs + [log2(NFIN), T, 7 params]
+          (N, 18): inputs + [log2(NFIN), T, 12 params]   (old)
+          (N, 19): inputs + [log2(NFIN), L, T, 12 params] (current)
         """
-        # Transform NFIN to log2 scale (captures roughly linear scaling)
         nfin_log = np.log2(np.clip(geometry[:, 0], 1.0, None))
+
+        if geometry.shape[1] == 15:
+            # Current format: [NFIN, L, T, 12 process params]
+            L_col      = geometry[:, 1]
+            temperature = geometry[:, 2]
+            proc_params = geometry[:, 3:]   # (N, 12)
+            return np.column_stack([inputs, nfin_log, L_col, temperature, proc_params])
+
+        # Legacy formats: [NFIN, T, ...]
         temperature = geometry[:, 1]
         if geometry.shape[1] >= 9:
-            # Universal: all process params follow [NFIN, T]
-            proc_params = geometry[:, 2:]  # (N, 12) — PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW, CFS, TOXP, CGSL, UA, EU
+            proc_params = geometry[:, 2:]   # (N, 7) or (N, 12)
             return np.column_stack([inputs, nfin_log, temperature, proc_params])
         elif geometry.shape[1] >= 3:
-            # Phase 13: PHIG only
             phig = geometry[:, 2]
             return np.column_stack([inputs, nfin_log, temperature, phig])
         return np.column_stack([inputs, nfin_log, temperature])

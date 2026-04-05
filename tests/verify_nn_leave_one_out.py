@@ -38,7 +38,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from nn_model.config import (
     TECH_CONFIGS, TechConfig, CHECKPOINT_DIR, DATA_DIR,
-    OSDI_PATH, PROCESS_PARAM_NAMES, TrainConfig,
+    OSDI_PATH, PROCESS_PARAM_NAMES, TrainConfig, extract_process_params,
+)
+from pycmg.nn_generate import (
+    generate_dataset, eval_single_point, _create_model_and_instance,
 )
 from nn_model.data.dataset import MOSFETDataset
 from nn_model.data.normalize import Normalizer, inv_signed_log
@@ -63,11 +66,18 @@ HELD_OUT: Dict[str, str] = {
 def get_variant_process_array(
     tech_key: str, variant_name: str, device_type: str,
 ) -> np.ndarray:
-    """Return the 7-element process param array for a given variant."""
+    """Return the 12-element process param array for a given variant.
+
+    Extracts process params on-the-fly from the resolved modelcard
+    for the first legal (L, NFIN) combo.
+    """
     tc = TECH_CONFIGS[tech_key]
-    vc = tc.variants[variant_name]
-    pp = vc.get_process_params(device_type)
-    return np.array(pp.as_array())
+    combos = tc.get_geometry_combos(device_type, variant_name)
+    if not combos:
+        raise ValueError(f"No geometry combos for {tech_key}/{variant_name}/{device_type}")
+    L, NFIN = combos[0]
+    _model, _inst, proc = _create_model_and_instance(tc, device_type, variant_name, L, NFIN)
+    return np.array(proc.as_array())
 
 
 def match_variant_mask(
@@ -75,36 +85,35 @@ def match_variant_mask(
 ) -> np.ndarray:
     """Return boolean mask for rows whose process params match the target.
 
+    Handles both old (N, 14) and new (N, 15) geometry layouts:
+      (N, 14): [NFIN, T, <12 process params>]  — process cols at [:, 2:]
+      (N, 15): [NFIN, L, T, <12 process params>] — process cols at [:, 3:]
+
     Args:
-        geometry: (N, 9) array with columns [NFIN, T, PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW].
-        process_array: (7,) target process params [PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW].
+        geometry: (N, 14) or (N, 15) array.
+        process_array: (12,) target process params.
 
     Returns:
         (N,) boolean mask.
     """
-    proc_cols = geometry[:, 2:]  # (N, 7)
+    if geometry.shape[1] == 15:
+        proc_cols = geometry[:, 3:]  # (N, 12)
+    else:
+        proc_cols = geometry[:, 2:]  # (N, 12) for 14-col, or (N, 7) for legacy 9-col
     return np.all(np.isclose(proc_cols, process_array, rtol=1e-4, atol=1e-10), axis=1)
 
 
 def generate_variant_ground_truth(
     tech_key: str, variant_name: str, device_type: str,
-    nfin_values: Optional[List[int]] = None,
 ) -> Dict[str, np.ndarray]:
     """Generate PyCMG ground truth for a variant not in the universal dataset.
 
-    Uses the same bias sweep as nn_model.data.generate but for a single variant.
+    Uses pycmg.nn_generate.generate_dataset for a single variant.
 
     Returns:
-        Dict with 'inputs' (N, 4), 'geometry' (N, 9), 'outputs' (N, 13).
+        Dict with 'inputs' (N, 4), 'geometry' (N, 15), 'outputs' (N, 13).
     """
-    from nn_model.data.generate import (
-        generate_dataset, create_pycmg_instance,
-    )
-
     tc = TECH_CONFIGS[tech_key]
-    if nfin_values is None:
-        nfin_values = tc.nfin_values
-
     data = generate_dataset(
         tc, device_type,
         variant_names=[variant_name],
@@ -127,7 +136,7 @@ def build_held_out_test_data(
     Args:
         device_type: 'nmos' or 'pmos'.
         inputs: (N, 4) universal dataset inputs.
-        geometry: (N, 9) universal dataset geometry.
+        geometry: (N, 14) or (N, 15) universal dataset geometry.
         outputs: (N, 13) universal dataset outputs.
 
     Returns:
@@ -295,7 +304,7 @@ def evaluate_on_subset(
         model: Trained DirectNet.
         normalizer: Fitted Normalizer.
         inputs: (N, 4) raw voltages.
-        geometry: (N, 9) raw geometry + process params.
+        geometry: (N, 14) or (N, 15) raw geometry + process params.
         outputs: (N, 13) raw outputs (ground truth).
         device_type: 'nmos' or 'pmos'.
 
