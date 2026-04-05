@@ -112,7 +112,8 @@ All phases (1-15) are complete. Key milestones:
 - **Solver accuracy improvements** — SPICE-standard convergence (RELTOL=1e-4, VNTOL=1e-7), GMIN reduction (1e-6→1e-12), BE→Trap first-step switching, relative oscillation threshold. NN transient improved: TSMC7 7.15→6.09%, TSMC12 6.47→5.92%, TSMC16 7.42→6.70%. BSIM-CMG transient unchanged at 0.20% (already at integration-method floor).
 - **SRAM Solver Upgrades (Phases 1-3)** — Sparse matrix solver (scipy.sparse lil_matrix→CSR+spsolve), DC GMIN stepping + oscillation detection + adaptive damping + hard `.ic` mode (force_ic), BDF-2 integration (auto-switches on stiffness detection), LTE adaptive sub-stepping as constructor param. All 67 existing tests PASS with zero regression.
 - **3-level DC+Transient test suites** — 3-layer infrastructure: `test_common.py` (tech defs, generic helpers) -> `bsimcmg_{dc,tran}_common.py` (analysis-specific) -> `verify_*.py` (test scripts). All 223 tests PASS (0 FAIL, 0 ERROR): DC 113 (L1:2 + L2:67 + L3:44), Transient 110 (L1:1 + L2:37 + L3:72).
-  - **Known-bad combos excluded:** TSMC5 SVT (pch PDIBL2_i<0), TSMC7 SVT/LVT (inverter garbage / pch PDIBL2_i<0), TSMC16 LNVT (nch PDIBL2_i<0), TSMC16 L=24nm (PDIBL2_i<0), NFIN=1/20 (OSDI errors), P/N ratio where NFIN_P crosses NFIN group boundary (TSMC naive modelcards are NFIN-group-specific).
+  - **Known-bad combos excluded:** TSMC5 SVT (pch PDIBL2_i<0), TSMC7 SVT/LVT (inverter garbage / pch PDIBL2_i<0), TSMC16 LNVT (nch PDIBL2_i<0), TSMC16 L=24nm (PDIBL2_i<0), NFIN=1 (NR divergence for tsmc5:ulvt / tsmc16:lnvt — ETA0_i/U0_i go negative, internal node drifts to 40V producing id=40kA + NaN derivatives; eval_dc now raises RuntimeError), P/N ratio where NFIN_P crosses NFIN group boundary (TSMC naive modelcards are NFIN-group-specific).
+- **PyCMG data generation migration** — NN training data generation moved from `nn_model.data.generate` to `external_compact_models/PyCMG/scripts/generate_nn_data.py`. Geometry format changed to 15-col `[NFIN, L, T, 12 process params]` (was 14-col). NN input dimension is now 19 features (was 18). Legal (L, NFIN) combos come from PDK bin boundaries (TSMC) or fallback list (ASAP7); process params extracted on-the-fly from modelcards (per-bin accurate). 954 total geometry combos across 5 techs, 21 variants. Existing checkpoints require retraining with the new data format.
 
 ### Future Work
 - [ ] **Improve TSMC5 Transient** — 14.41% NRMSE (close to 15% threshold); try denser mid-supply data (`--n-dense-mid 30`) + retrain
@@ -153,8 +154,18 @@ Create a netlist (`.sp` file). Examples in `examples/`.
 
 ### NN Model (LEVEL=73)
 ```bash
-# Generate universal data (21 variants, ~815K pts x 2; add --n-dense-mid 30 for transient accuracy)
-conda run -n pycircuitsim python -m nn_model.data.generate --device both --universal
+# Generate universal data (PyCMG is now the canonical data generator)
+# Uses PDK-defined (L, NFIN) bins for geometry coverage (TSMC bin boundaries,
+# ASAP7 fallback list) and extracts process parameters on-the-fly from
+# modelcards (per-bin accurate). 954 total geometry combos across 5 techs
+# and 21 variants.
+conda run -n pycircuitsim python external_compact_models/PyCMG/scripts/generate_nn_data.py \
+    --device both --universal
+
+# Optional: add --n-dense-mid 30 for transient accuracy
+conda run -n pycircuitsim python external_compact_models/PyCMG/scripts/generate_nn_data.py \
+    --device both --universal --n-dense-mid 30
+
 # Train on GPU (direct13 baseline)
 conda run -n pycircuitsim python -u -m nn_model.train --device-type nmos --universal --mode direct13 --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048 --cuda
 conda run -n pycircuitsim python -u -m nn_model.train --device-type pmos --universal --mode direct13 --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048 --cuda
@@ -282,6 +293,7 @@ When integrating new compact models, follow this checklist:
 6. **TSMC asymmetric L** — NMOS L=16nm, PMOS L=20nm; NNTechConfig uses `L_nmos`/`L_pmos`
 7. **ASAP7 modelcard name mapping** — Parser auto-maps netlist names to `nmos_rvt`/`pmos_rvt`
 8. **PyCMG integration** — `nn_model/config.py` imports device structure from PyCMG's `TECH_REGISTRY` via `NNTechConfig`. ProcessParams (7 NN input features) are NN-specific and NOT from PyCMG. Training VDD may differ from PyCMG (e.g., ASAP7: train=0.7V, PyCMG=0.9V). Backward-compat aliases `TechConfig`/`VariantConfig` exist for test files.
+9. **Data generation validates PyCMG output** — `eval_single_point` rejects NaN/Inf and `|id| > 1A`. PyCMG `eval_dc` raises `RuntimeError` on internal-node convergence failure. Default NFIN range is `[2, 3, 5, 10, 15, 20, 24]` (NFIN=1 excluded due to OSDI convergence failures).
 
 ---
 
