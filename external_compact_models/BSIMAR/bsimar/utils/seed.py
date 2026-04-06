@@ -1,6 +1,7 @@
-"""Utility functions for BSIM-AR training."""
+"""Small utilities shared across BSIMAR training scripts."""
 
 import os
+from typing import List
 
 import numpy as np
 import torch
@@ -16,7 +17,7 @@ def set_seed(seed: int = 42) -> None:
     torch.backends.cudnn.benchmark = False
 
 
-def create_directories(paths: list) -> None:
+def create_directories(paths: List[str]) -> None:
     """Create directories if they don't exist."""
     for path in paths:
         os.makedirs(path, exist_ok=True)

@@ -26,10 +26,15 @@ import torch.nn as nn
 PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
+# Make the new `bsimar` package importable regardless of cwd.
+_BSIMAR_PARENT = PROJECT_ROOT / "external_compact_models" / "BSIMAR"
+if str(_BSIMAR_PARENT) not in sys.path:
+    sys.path.insert(0, str(_BSIMAR_PARENT))
+
 from pycircuitsim.models.base import Component
-from nn_model.architecture.direct_loss import DirectNet
-from nn_model.config import PROCESS_PARAM_NAMES
-from nn_model.data.normalize import NormStats, inv_signed_log
+from bsimar.models.direct_net import DirectNet
+from bsimar.config import PROCESS_PARAM_NAMES
+from bsimar.data.normalize import NormStats, inv_signed_log
 
 
 class _MOSFETNNBase(Component):

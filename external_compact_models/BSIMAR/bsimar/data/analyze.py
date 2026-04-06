@@ -1,19 +1,16 @@
 """Analyze NN training dataset: distribution, outliers, and data quality.
 
 Usage:
-    conda run -n pycircuitsim python -m nn_model.data.analyze_dataset
+    conda run -n pycircuitsim python -m bsimar.data.analyze
 """
 
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List
 
 import numpy as np
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(PROJECT_ROOT))
-
-from nn_model.config import (
+from bsimar.config import (
     DATA_DIR, OUTPUT_COLUMNS, PROCESS_PARAM_NAMES, INPUT_COLUMNS,
 )
 
@@ -88,7 +85,6 @@ def check_physical_constraints(outputs: np.ndarray) -> None:
     gm_col = outputs[:, OUTPUT_COLUMNS.index("gm")]
     gds_col = outputs[:, OUTPUT_COLUMNS.index("gds")]
 
-    # 1. Check |id| range
     id_abs = np.abs(id_col)
     print(f"\n  |id| range: [{id_abs.min():.4e}, {id_abs.max():.4e}]")
     n_large_id = int((id_abs > 0.1).sum())
@@ -96,18 +92,15 @@ def check_physical_constraints(outputs: np.ndarray) -> None:
     print(f"  |id| > 100mA: {n_large_id} ({100*n_large_id/len(id_col):.3f}%)")
     print(f"  |id| > 1A:    {n_very_large_id} (should be 0)")
 
-    # 2. Check gds (should generally be positive in saturation)
     n_neg_gds = int((gds_col < 0).sum())
     print(f"\n  gds < 0: {n_neg_gds} ({100*n_neg_gds/len(gds_col):.3f}%)")
     if n_neg_gds > 0:
         neg_gds = gds_col[gds_col < 0]
         print(f"    Negative gds range: [{neg_gds.min():.4e}, {neg_gds.max():.4e}]")
 
-    # 3. Check for zero-current regions
     n_zero_id = int((id_abs < 1e-15).sum())
     print(f"\n  |id| < 1e-15 (near-zero): {n_zero_id} ({100*n_zero_id/len(id_col):.3f}%)")
 
-    # 4. Charge conservation: qg + qd + qs + qb ≈ 0
     qg = outputs[:, OUTPUT_COLUMNS.index("qg")]
     qd = outputs[:, OUTPUT_COLUMNS.index("qd")]
     qs = outputs[:, OUTPUT_COLUMNS.index("qs")]
@@ -118,12 +111,10 @@ def check_physical_constraints(outputs: np.ndarray) -> None:
     print(f"    Std:  {q_sum.std():.4e}")
     print(f"    Max |sum|: {np.abs(q_sum).max():.4e}")
 
-    # 5. Capacitance symmetry: cgg ≈ -(cgd + cgs)
     cgg = outputs[:, OUTPUT_COLUMNS.index("cgg")]
     cgd = outputs[:, OUTPUT_COLUMNS.index("cgd")]
     cgs = outputs[:, OUTPUT_COLUMNS.index("cgs")]
-    cap_err = cgg + cgd + cgs  # should be ~0 if cgg = -cgd - cgs
-    # Note: this is only approximate; BSIM-CMG doesn't enforce exact sum rule
+    cap_err = cgg + cgd + cgs
     print(f"\n  Capacitance check (cgg + cgd + cgs):")
     print(f"    Mean: {cap_err.mean():.4e}")
     print(f"    Max |err|: {np.abs(cap_err).max():.4e}")
@@ -180,7 +171,6 @@ def per_tech_summary(geometry: np.ndarray, outputs: np.ndarray) -> None:
     print(f"\n{'='*80}")
     print(f"  Per-Technology Summary")
     print(f"{'='*80}")
-    # Use PHIG + U0 + EOT as unique tech/variant identifier
     phig_idx = PROCESS_PARAM_NAMES.index("PHIG")
     u0_idx = PROCESS_PARAM_NAMES.index("U0")
     eot_idx = PROCESS_PARAM_NAMES.index("EOT")
@@ -189,7 +179,6 @@ def per_tech_summary(geometry: np.ndarray, outputs: np.ndarray) -> None:
     u0 = geometry[:, 2 + u0_idx]
     eot = geometry[:, 2 + eot_idx]
 
-    # Group by unique (PHIG, U0, EOT) combination
     combos = np.column_stack([phig, u0, eot])
     unique_combos = np.unique(combos, axis=0)
 
@@ -224,26 +213,18 @@ def analyze_dataset(path: Path, device_type: str) -> None:
     print(f"\n  Shape — inputs: {inputs.shape}, geometry: {geometry.shape}, "
           f"outputs: {outputs.shape}")
 
-    # 1. Basic statistics
     basic_stats(inputs, INPUT_NAMES, f"Input Voltages ({device_type.upper()})")
     basic_stats(geometry, GEOMETRY_NAMES, f"Geometry + Process Params ({device_type.upper()})")
     basic_stats(outputs, OUTPUT_COLUMNS, f"Output Columns ({device_type.upper()})")
 
-    # 2. Percentile distributions (outputs only)
     distribution_percentiles(outputs, OUTPUT_COLUMNS,
                              f"Outputs ({device_type.upper()})")
 
-    # 3. Outlier detection
     check_outliers(outputs, OUTPUT_COLUMNS,
                    f"Outputs ({device_type.upper()})", z_thresh=5.0)
 
-    # 4. Physical constraints
     check_physical_constraints(outputs)
-
-    # 5. Duplicates
     check_duplicate_points(inputs, geometry)
-
-    # 6. Per-tech summary
     per_tech_summary(geometry, outputs)
 
 

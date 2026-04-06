@@ -1,9 +1,10 @@
-"""Evaluation metrics for BSIM-AR predictions."""
+"""Physical-units evaluation metrics for BSIMAR predictions."""
 
-import numpy as np
 from typing import Dict
 
-from nn_model.data.normalize import OUTPUT_COLUMN_ORDER
+import numpy as np
+
+from bsimar.data.normalize import OUTPUT_COLUMN_ORDER
 
 
 def compute_physical_metrics(
@@ -14,8 +15,8 @@ def compute_physical_metrics(
 ) -> Dict[str, Dict[str, float]]:
     """Compute per-output metrics after denormalization.
 
-    Works with both BSIMARNormalizer and nn_model Normalizer
-    (duck-typing on denormalize_outputs).
+    Works with both `BSIMARNormalizer` and legacy `Normalizer`
+    (duck-typed on `denormalize_outputs`).
 
     Args:
         pred_norm: (N, 13) normalized predictions.
@@ -35,12 +36,10 @@ def compute_physical_metrics(
         y_t = true_phys[:, i]
         y_p = pred_phys[:, i]
 
-        # MRE filter: 1% of peak absolute value (avoids near-zero inflation)
         max_abs = np.abs(y_t).max()
         threshold = max_abs * mre_threshold_pct if max_abs > 0 else 0
         valid = np.abs(y_t) > threshold
 
-        # NRMSE (normalized to peak-to-peak range)
         data_range = y_t.max() - y_t.min()
         if data_range > 0:
             rmse = np.sqrt(np.mean((y_p - y_t) ** 2))
@@ -48,26 +47,22 @@ def compute_physical_metrics(
         else:
             nrmse_pct = 0.0
 
-        # MRE on valid samples
         if valid.sum() > 0:
             mre_pct = np.mean(
                 np.abs((y_t[valid] - y_p[valid]) / y_t[valid])) * 100
         else:
             mre_pct = float("nan")
 
-        # R2 (physical space)
         ss_res = np.sum((y_t - y_p) ** 2)
         ss_tot = np.sum((y_t - y_t.mean()) ** 2)
         r2 = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
 
-        # R2 in normalized space
         y_t_n = true_norm[:, i]
         y_p_n = pred_norm[:, i]
         ss_res_n = np.sum((y_t_n - y_p_n) ** 2)
         ss_tot_n = np.sum((y_t_n - y_t_n.mean()) ** 2)
         r2_norm = 1.0 - ss_res_n / ss_tot_n if ss_tot_n > 0 else 0.0
 
-        # MAE in normalized space
         mae_norm = np.mean(np.abs(pred_norm[:, i] - true_norm[:, i]))
 
         metrics[name] = {

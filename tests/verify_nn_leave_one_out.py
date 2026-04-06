@@ -35,18 +35,24 @@ from torch.utils.data import DataLoader
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "BSIMAR"))
 
-from nn_model.config import (
+from bsimar.config import (
     TECH_CONFIGS, TechConfig, CHECKPOINT_DIR, DATA_DIR,
-    OSDI_PATH, PROCESS_PARAM_NAMES, TrainConfig, extract_process_params,
+    OSDI_PATH, PROCESS_PARAM_NAMES, DirectNetConfig as TrainConfig,
+    extract_process_params,
 )
 from pycmg.nn_generate import (
     generate_dataset, eval_single_point, _create_model_and_instance,
 )
-from nn_model.data.dataset import MOSFETDataset
-from nn_model.data.normalize import Normalizer, inv_signed_log
-from nn_model.architecture.direct_loss import DirectNet, DirectLoss
-from nn_model.train import train_epoch, validate_epoch
+from bsimar.data.dataset import MOSFETDataset
+from bsimar.data.normalize import Normalizer, inv_signed_log
+from bsimar.models.direct_net import DirectNet
+from bsimar.losses.direct_loss import DirectLoss
+from bsimar.training.trainer import (
+    train_epoch_direct_mlp as train_epoch,
+    validate_epoch_direct_mlp as validate_epoch,
+)
 
 # ---------------------------------------------------------------------------
 # Held-out variant definition

@@ -45,15 +45,49 @@ BSIMAR addresses these challenges in Compact Model:
 
 ## 📁 Repository Structure
 
+BSIMAR is a unified package covering two complementary architectures:
+
+- **`DirectNet`** — baseline MLP predicting all 13 outputs in a single
+  forward pass. Fast to train, used as the reference for comparison.
+- **`TransformerEncoderModel`** (BSIM-AR) — autoregressive Transformer
+  encoder that generates outputs one-by-one with teacher forcing during
+  training. Primary model, higher accuracy at higher inference cost.
+
 ```
-.
-├── zeroshot.py              # Achieve learning for various nodes and devices
-├── finetune.py              # Fine-tune the model on devices at a specific process node
-├── model.py                 # Autoregressive model architecture definitions
-├── read_csv.py              # Load .csv files
-├── requirements.txt         # Python dependencies
-├── sampling_7nm_nchsvt.py   # Data sampling utilities
-└── utils.py                 # Utility functions
+BSIMAR/
+├── bsimar/                          # Python package — importable as `bsimar`
+│   ├── config.py                    # TECH_CONFIGS + DirectNetConfig + TransformerConfig
+│   ├── data/
+│   │   ├── normalize.py             # Normalizer + BSIMARNormalizer (zscore / signedlog)
+│   │   ├── dataset.py               # MOSFETDataset + loaders + small-value filtering
+│   │   └── analyze.py               # Dataset quality analysis
+│   ├── models/
+│   │   ├── direct_net.py            # Baseline MLP
+│   │   └── transformer.py           # Autoregressive Transformer
+│   ├── losses/
+│   │   ├── direct_loss.py           # DirectLoss + ChargeConsistencyLoss
+│   │   └── bni_mae.py               # WeightedBNILoss + MAELoss + LDS
+│   ├── training/
+│   │   ├── early_stopping.py
+│   │   └── trainer.py               # train_directnet, train_transformer
+│   ├── eval/
+│   │   ├── metrics.py               # compute_physical_metrics
+│   │   └── visualization.py         # scatter / loss-curve plots
+│   ├── utils/seed.py
+│   └── cli/train.py                 # `python -m bsimar.cli.train --model {direct,transformer}`
+├── checkpoints/                     # Trained weights (.pt + _norm.npz + _config.npz) — gitignored
+├── results/                         # Training plots — gitignored
+├── docs/                            # Reference paper, ablation notes
+├── imgs/                            # README imagery
+├── requirments.txt                  # Python dependencies
+└── README.md
+```
+
+Data is produced by PyCMG's data generator:
+
+```bash
+python external_compact_models/PyCMG/scripts/generate_nn_data.py \
+    --device both --universal
 ```
 
 ## 💻 Installation
@@ -99,12 +133,20 @@ The offering includes a pre-trained model and a version fine-tuned for 7nm nch_s
 #### Basic usage
 
 ```bash
-# For zero-shot node target prediction
-python pre_train.py 
+# Train DirectNet (baseline MLP)
+conda run -n pycircuitsim python -u -m bsimar.cli.train \
+    --model direct --device-type nmos --universal --mode direct13 \
+    --epochs 800 --hidden 384 --layers 6 --batch-size 2048 --cuda
 
-# For fine-tune node target prediction
-python fine_tuning.py
+# Train BSIM-AR Transformer (primary, recommended: zscore + MAE + LDS)
+conda run -n pycircuitsim python -u -m bsimar.cli.train \
+    --model transformer --device-type nmos --universal \
+    --loss mae --lds --cuda
 ```
+
+Both commands read `external_compact_models/BSIMAR/data/datasets/*.npz`
+(or a path you pass via `--data`) and write checkpoints + plots under
+`external_compact_models/BSIMAR/{checkpoints,results}/`.
 
 
 ## 🧠 Framework Components

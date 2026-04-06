@@ -1,12 +1,10 @@
-"""Direct output loss for fast MOSFET NN training (no autograd derivatives).
+"""DirectLoss and ChargeConsistencyLoss for direct-output MOSFET NN training.
 
-Trains on all 13 output columns directly. Conductances and capacitances
-from PyCMG are used as direct supervision targets — the NN learns to
-predict them as additional outputs rather than deriving them via autograd.
-
-This is ~50x faster than PhysicsLoss since it avoids create_graph=True.
-Jacobian consistency at inference time is still provided by autograd
-in mosfet_nn.py (single-sample, fast).
+DirectLoss trains on all 13 output columns directly. Conductances and
+capacitances from PyCMG are used as direct supervision targets — the NN
+learns to predict them as additional outputs rather than deriving them
+via autograd. This is ~50x faster than PhysicsLoss since it avoids
+create_graph=True.
 
 Output column layout (13 columns):
     [0]  id   — drain current
@@ -24,60 +22,16 @@ Output column layout (13 columns):
     [12] cdd  — dqd/dVd
 
 ChargeConsistencyLoss extends DirectLoss with autograd-enforced
-charge-capacitance consistency: dq/dV from autograd must match
-the capacitance targets from PyCMG. This is slower (~5-10x) due to
+charge-capacitance consistency: dq/dV from autograd must match the
+capacitance targets from PyCMG. This is slower (~5-10x) due to
 create_graph=True but produces smoother charge surfaces that improve
 transient simulation accuracy.
 """
 
-import torch
-import torch.nn as nn
 from typing import Dict
 
-
-class DirectNet(nn.Module):
-    """MLP predicting MOSFET outputs directly.
-
-    Supports two modes:
-    - output_dim=4:  predict [id, qg, qd, qb] only (Phase 1)
-    - output_dim=13: predict all 13 outputs including derivatives (Phase 2)
-
-    Input: (B, 6) normalized [Vd, Vg, Vs, Vb, NFIN, T]
-    """
-
-    def __init__(
-        self,
-        input_dim: int = 6,
-        hidden_dim: int = 128,
-        n_layers: int = 4,
-        output_dim: int = 4,
-    ):
-        super().__init__()
-        self.output_dim = output_dim
-
-        layers = []
-        in_dim = input_dim
-        for _ in range(n_layers):
-            layers.append(nn.Linear(in_dim, hidden_dim))
-            layers.append(nn.SiLU())
-            in_dim = hidden_dim
-        layers.append(nn.Linear(hidden_dim, output_dim))
-
-        self.net = nn.Sequential(*layers)
-        self._init_weights()
-
-    def _init_weights(self) -> None:
-        for m in self.modules():
-            if isinstance(m, nn.Linear):
-                nn.init.xavier_uniform_(m.weight)
-                if m.bias is not None:
-                    nn.init.zeros_(m.bias)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return self.net(x)
-
-    def count_parameters(self) -> int:
-        return sum(p.numel() for p in self.parameters() if p.requires_grad)
+import torch
+import torch.nn as nn
 
 
 class DirectLoss(nn.Module):
@@ -107,22 +61,20 @@ class DirectLoss(nn.Module):
     def forward(
         self,
         pred: torch.Tensor,
-        targets: torch.Tensor,  # (B, 13) full targets
-        x: torch.Tensor,        # (B, 6) inputs
+        targets: torch.Tensor,
+        x: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
         if self.output_dim == 13:
             return self._forward_13(pred, targets, x)
-        else:
-            return self._forward_4(pred, targets, x)
+        return self._forward_4(pred, targets, x)
 
     def _forward_13(
         self,
-        pred: torch.Tensor,    # (B, 13)
-        targets: torch.Tensor,  # (B, 13)
+        pred: torch.Tensor,
+        targets: torch.Tensor,
         x: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
         """Loss on all 13 outputs with per-group weighting."""
-        # Per-group MSE
         loss_id = self.mse(pred[:, 0:1], targets[:, 0:1])
         loss_gm = self.mse(pred[:, 1:2], targets[:, 1:2])
         loss_gds = self.mse(pred[:, 2:3], targets[:, 2:3])
@@ -137,19 +89,16 @@ class DirectLoss(nn.Module):
         loss_cdg = self.mse(pred[:, 11:12], targets[:, 11:12])
         loss_cdd = self.mse(pred[:, 12:13], targets[:, 12:13])
 
-        # Group losses
         loss_curr = loss_id
         loss_cond = (loss_gm + loss_gds + loss_gmb) / 3.0
         loss_charges = (loss_qg + loss_qd + loss_qs + loss_qb) / 4.0
         loss_caps = (loss_cgg + loss_cgd + loss_cgs + loss_cdg + loss_cdd) / 5.0
 
-        # Weighted total (configurable via constructor)
         total = (self.w_curr * loss_curr
                  + self.w_cond * loss_cond
                  + self.w_charges * loss_charges
                  + self.w_caps * loss_caps)
 
-        # Zero-bias penalty
         zero_mask = (x[:, 0] < 0.15) & (x[:, 1] < 0.15)
         if zero_mask.sum() > 0:
             loss_zero = self.mse(pred[zero_mask, 0:1], targets[zero_mask, 0:1])
@@ -171,11 +120,11 @@ class DirectLoss(nn.Module):
 
     def _forward_4(
         self,
-        pred: torch.Tensor,    # (B, 4)
-        targets: torch.Tensor,  # (B, 13)
+        pred: torch.Tensor,
+        targets: torch.Tensor,
         x: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
-        """Legacy 4-output loss."""
+        """Legacy 4-output loss (id, qg, qd, qb)."""
         t_id = targets[:, 0:1]
         t_qg = targets[:, 4:5]
         t_qd = targets[:, 5:6]
@@ -213,11 +162,6 @@ class ChargeConsistencyLoss(nn.Module):
     differentially consistent, which directly improves transient simulation
     accuracy by reducing timing errors at switching edges.
 
-    The consistency loss is computed on the charge outputs (cols 4-5: qg, qd)
-    by backpropagating through the network with create_graph=True. This is
-    ~5-10x slower than pure DirectLoss but much faster than full PhysicsLoss
-    (which also supervises conductances via autograd).
-
     Args:
         w_consistency: Weight for the autograd charge-cap consistency term.
         w_cond_consistency: Weight for autograd conductance consistency (did/dV).
@@ -240,52 +184,41 @@ class ChargeConsistencyLoss(nn.Module):
     def forward(
         self,
         model: nn.Module,
-        x: torch.Tensor,       # (B, input_dim) normalized
-        targets: torch.Tensor,  # (B, 13) normalized
+        x: torch.Tensor,
+        targets: torch.Tensor,
     ) -> Dict[str, torch.Tensor]:
         """Compute combined direct + consistency loss.
 
         Unlike DirectLoss.forward(pred, targets, x), this takes the model
         itself so it can run autograd through the forward pass.
         """
-        # Split: voltage dims need grad, geometry dims don't
         x_v = x[:, :4].requires_grad_(True)
         x_g = x[:, 4:]
         x_full = torch.cat([x_v, x_g], dim=1)
 
-        # Forward pass through model
-        pred = model(x_full)  # (B, 13)
+        pred = model(x_full)
 
-        # Standard direct loss (no autograd, fast)
         direct_losses = self.direct_loss(pred, targets, x)
-
-        # --- Charge-capacitance consistency via autograd ---
-        # Compute dqg/dV and dqd/dV from the charge predictions
-        # qg = pred[:, 4], qd = pred[:, 5]
 
         grad_qg = torch.autograd.grad(
             pred[:, 4].sum(), x_v, create_graph=True, retain_graph=True,
-        )[0]  # (B, 4): dqg/d[Vd, Vg, Vs, Vb]
-
+        )[0]
         grad_qd = torch.autograd.grad(
             pred[:, 5].sum(), x_v, create_graph=True, retain_graph=True,
-        )[0]  # (B, 4): dqd/d[Vd, Vg, Vs, Vb]
+        )[0]
 
-        # Autograd caps: [cgg, cgd, cgs, cdg, cdd]
-        cgg_ag = grad_qg[:, 1:2]   # dqg/dVg
-        cgd_ag = grad_qg[:, 0:1]   # dqg/dVd
-        cgs_ag = grad_qg[:, 2:3]   # dqg/dVs
-        cdg_ag = grad_qd[:, 1:2]   # dqd/dVg
-        cdd_ag = grad_qd[:, 0:1]   # dqd/dVd
+        cgg_ag = grad_qg[:, 1:2]
+        cgd_ag = grad_qg[:, 0:1]
+        cgs_ag = grad_qg[:, 2:3]
+        cdg_ag = grad_qd[:, 1:2]
+        cdd_ag = grad_qd[:, 0:1]
 
-        # Target caps from PyCMG (cols 8-12)
         t_cgg = targets[:, 8:9]
         t_cgd = targets[:, 9:10]
         t_cgs = targets[:, 10:11]
         t_cdg = targets[:, 11:12]
         t_cdd = targets[:, 12:13]
 
-        # Consistency: autograd caps vs PyCMG targets
         loss_cap_consistency = (
             self.mse(cgg_ag, t_cgg)
             + self.mse(cgd_ag, t_cgd)
@@ -294,15 +227,14 @@ class ChargeConsistencyLoss(nn.Module):
             + self.mse(cdd_ag, t_cdd)
         ) / 5.0
 
-        # Optional: conductance consistency (did/dV vs targets)
         loss_cond_consistency = torch.tensor(0.0, device=x.device)
         if self.w_cond_consistency > 0:
             grad_id = torch.autograd.grad(
                 pred[:, 0].sum(), x_v, create_graph=True, retain_graph=True,
-            )[0]  # (B, 4)
-            gm_ag = grad_id[:, 1:2]    # did/dVg
-            gds_ag = grad_id[:, 0:1]   # did/dVd
-            gmb_ag = grad_id[:, 3:4]   # did/dVb
+            )[0]
+            gm_ag = grad_id[:, 1:2]
+            gds_ag = grad_id[:, 0:1]
+            gmb_ag = grad_id[:, 3:4]
             loss_cond_consistency = (
                 self.mse(gm_ag, targets[:, 1:2])
                 + self.mse(gds_ag, targets[:, 2:3])

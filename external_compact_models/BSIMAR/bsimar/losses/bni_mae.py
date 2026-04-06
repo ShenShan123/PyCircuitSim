@@ -1,8 +1,8 @@
-"""Loss functions for BSIM-AR training.
+"""BNI, MAE, and LDS-weighted loss functions for BSIMAR training.
 
-WeightedBNILoss: Batch-Normalized Interpolation loss with optional LDS weights.
-LDS (Label Distribution Smoothing) provides per-sample weights to address
-imbalanced target distributions.
+- `WeightedBNILoss`: Batch-Normalized Interpolation loss.
+- `MAELoss`: Plain / LDS-weighted MAE loss.
+- `compute_lds_weights_per_target`: Label Distribution Smoothing weights.
 """
 
 import numpy as np
@@ -45,7 +45,7 @@ def compute_lds_weights_per_target(
         lds_kernel: Kernel type for smoothing.
         lds_ks: Kernel size.
         lds_sigma: Kernel sigma.
-        strategy: Binning strategy.
+        strategy: Binning strategy passed to KBinsDiscretizer.
 
     Returns:
         (N, D) per-sample weights, mean-normalized per target.
@@ -57,7 +57,6 @@ def compute_lds_weights_per_target(
 
     for d in range(D):
         y_col = y_train[:, d : d + 1]
-        # Skip constant columns
         if y_col.max() == y_col.min():
             weights_all[:, d] = 1.0
             continue
@@ -69,16 +68,13 @@ def compute_lds_weights_per_target(
             weights_all[:, d] = 1.0
             continue
 
-        # Empirical count
         counts = np.bincount(discrete, minlength=n_bins).astype(np.float32)
         counts = np.clip(counts, 1e-8, None)
 
-        # Smooth with kernel
         kernel = get_lds_kernel_window(lds_kernel, lds_ks, lds_sigma)
         smoothed = convolve1d(counts, weights=kernel, mode="constant")
         smoothed = np.clip(smoothed, 1e-8, None)
 
-        # Inverse frequency weights, clipped and mean-normalized
         eff_counts = smoothed[discrete]
         eff_counts = np.clip(eff_counts, 1e-4, None)
         weights = 1.0 / eff_counts
@@ -93,8 +89,8 @@ class WeightedBNILoss(nn.Module):
     """Batch-Normalized Interpolation loss with optional per-sample weights.
 
     Normalizes predictions and targets by batch statistics before computing
-    a weighted combination of normalized absolute error (NAE) and
-    normalized squared error (NSE).
+    a weighted combination of normalized absolute error (NAE) and normalized
+    squared error (NSE).
     """
 
     def __init__(self, epsilon: float = 1e-8):
@@ -115,7 +111,6 @@ class WeightedBNILoss(nn.Module):
                 base_loss = torch.mean((y_pred - y_true) ** 2 * weights)
             return base_loss
 
-        # Batch normalization of targets
         mean_true = y_true.mean(dim=0, keepdim=True)
         std_true = y_true.std(dim=0, keepdim=True) + self.epsilon
 
@@ -140,7 +135,7 @@ class MAELoss(nn.Module):
     """Simple MAE loss with optional per-sample weights.
 
     When used with pre-computed LDS weights, this becomes the paper's
-    MAE+LDS composed loss.  Without weights, it is plain MAE.
+    MAE+LDS composed loss. Without weights, it is plain MAE.
     """
 
     def forward(
@@ -149,7 +144,7 @@ class MAELoss(nn.Module):
         y_true: torch.Tensor,
         weights: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        ae = torch.abs(y_pred - y_true)  # (B, D)
+        ae = torch.abs(y_pred - y_true)
         if weights is not None:
             if weights.dim() == 1:
                 weights = weights.unsqueeze(1)

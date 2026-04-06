@@ -31,7 +31,13 @@ Value suffixes supported:
 from typing import Any, Dict, Optional, Tuple
 import os
 import re
+import sys
 from pathlib import Path
+
+# Make the `bsimar` package importable for LEVEL=73 / LEVEL=74 resolution below.
+_BSIMAR_PARENT = Path(__file__).resolve().parent.parent / "external_compact_models" / "BSIMAR"
+if str(_BSIMAR_PARENT) not in sys.path:
+    sys.path.insert(0, str(_BSIMAR_PARENT))
 
 from pycircuitsim.circuit import Circuit
 from pycircuitsim.models import (
@@ -578,7 +584,7 @@ class Parser:
                 )
 
             # Resolve model path and process params from .model params
-            from nn_model.config import (
+            from bsimar.config import (
                 CHECKPOINT_DIR, TECH_CONFIGS, PROCESS_PARAM_NAMES,
             )
             nn_model_path = model_params.get('MODEL_PATH', None)
@@ -667,8 +673,10 @@ class Parser:
                 )
 
             # Resolve model path and process params (same logic as LEVEL=73)
-            from nn_model.config import TECH_CONFIGS, PROCESS_PARAM_NAMES
-            from external_compact_models.BSIMAR.script.config import CHECKPOINT_DIR as AR_CHECKPOINT_DIR
+            from bsimar.config import (
+                TECH_CONFIGS, PROCESS_PARAM_NAMES,
+                CHECKPOINT_DIR as AR_CHECKPOINT_DIR,
+            )
 
             nn_tech = model_params.get('TECH', None)
             nn_vt = model_params.get('VT', None)

@@ -1,4 +1,4 @@
-"""Visualization for BSIM-AR training results."""
+"""Visualization for BSIMAR training results."""
 
 import os
 from typing import List
@@ -9,7 +9,7 @@ matplotlib.use("Agg")  # non-interactive backend
 import matplotlib.pyplot as plt
 from sklearn.metrics import r2_score
 
-from nn_model.data.normalize import OUTPUT_COLUMN_ORDER
+from bsimar.data.normalize import OUTPUT_COLUMN_ORDER
 
 
 def plot_scatter_comparison(
@@ -31,7 +31,6 @@ def plot_scatter_comparison(
         y_t = y_true[:, i]
         y_p = y_pred[:, i]
 
-        # Filter zeros for cleaner plot
         non_zero = y_t != 0
         if non_zero.sum() > 0:
             y_t_nz, y_p_nz = y_t[non_zero], y_p[non_zero]
@@ -47,7 +46,6 @@ def plot_scatter_comparison(
         ax.set_ylabel("Predicted")
         ax.grid(True, alpha=0.3)
 
-    # Hide unused axes
     for j in range(n_targets, len(axes)):
         axes[j].set_visible(False)
 
