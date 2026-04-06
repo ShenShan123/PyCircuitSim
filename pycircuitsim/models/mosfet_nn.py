@@ -27,7 +27,8 @@ PROJECT_ROOT = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(PROJECT_ROOT))
 
 # Make the new `bsimar` package importable regardless of cwd.
-_BSIMAR_PARENT = PROJECT_ROOT / "external_compact_models" / "BSIMAR"
+# Layout: external_compact_models/bsimar/ (package)
+_BSIMAR_PARENT = PROJECT_ROOT / "external_compact_models"
 if str(_BSIMAR_PARENT) not in sys.path:
     sys.path.insert(0, str(_BSIMAR_PARENT))
 

@@ -44,7 +44,7 @@ TECH_MODEL_CARDS = (
 NGSPICE_BIN = "/usr/local/ngspice-45.2/bin/ngspice"
 RESULTS_BASE = PROJECT_ROOT / "tests" / "verify_nn_tran_results"
 CHECKPOINT_DIR = (
-    PROJECT_ROOT / "external_compact_models" / "BSIMAR" / "checkpoints"
+    PROJECT_ROOT / "external_compact_models" / "bsimar" / "checkpoints"
 )
 
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tests"))

@@ -45,6 +45,8 @@ debug_*
 external_compact_models/*.py
 
 # BSIMAR checkpoints (large binaries, regenerable via training)
+external_compact_models/bsimar/checkpoints/
+# Legacy path (kept for history)
 external_compact_models/BSIMAR/checkpoints/
 
 # Experiment temp files

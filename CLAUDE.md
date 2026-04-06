@@ -32,34 +32,35 @@ pycircuitsim/
     └── mosfet_nn.py    # NN-based compact model (LEVEL=73) via PyTorch — _MOSFETNNBase + NMOS/PMOS subclasses
 
 external_compact_models/
-├── BSIMAR/             # Unified NN-based compact model package (DirectNet baseline + BSIM-AR Transformer)
-│   ├── bsimar/         # Python package — importable as `bsimar`
-│   │   ├── __init__.py
-│   │   ├── config.py               # NNTechConfig + ProcessParams + DirectNetConfig + TransformerConfig, re-exports from pycmg.nn_config
-│   │   ├── data/
-│   │   │   ├── normalize.py        # Normalizer (signed-log) + BSIMARNormalizer (zscore/signedlog) + signed_log helpers
-│   │   │   ├── dataset.py          # MOSFETDataset + load_and_split{_bsimar} + filter_small_targets
-│   │   │   └── analyze.py          # Dataset analysis script (distribution, outliers, physical constraints)
-│   │   ├── models/
-│   │   │   ├── direct_net.py       # DirectNet MLP (baseline used for comparison)
-│   │   │   └── transformer.py      # TransformerEncoderModel (primary, autoregressive)
-│   │   ├── losses/
-│   │   │   ├── direct_loss.py      # DirectLoss + ChargeConsistencyLoss
-│   │   │   └── bni_mae.py          # WeightedBNILoss + MAELoss + compute_lds_weights_per_target
-│   │   ├── training/
-│   │   │   ├── early_stopping.py
-│   │   │   └── trainer.py          # train_directnet, train_transformer, per-epoch helpers
-│   │   ├── eval/
-│   │   │   ├── metrics.py          # compute_physical_metrics, print_metrics
-│   │   │   └── visualization.py    # plot_scatter_comparison, plot_loss_curves
-│   │   ├── utils/seed.py
-│   │   └── cli/train.py            # Unified CLI: `python -m bsimar.cli.train --model {direct,transformer} ...`
-│   ├── checkpoints/    # Saved model weights for both architectures (.pt + _norm.npz + _config.npz) — gitignored
-│   ├── results/        # Training plots (scatter, loss curves) — gitignored
-│   ├── docs/           # Reference paper and ablation notes
-│   ├── imgs/           # README imagery
+├── bsimar/             # Unified NN-based compact model package — importable as `bsimar`
+│   ├── __init__.py
+│   ├── config.py                   # NNTechConfig + ProcessParams + DirectNetConfig + TransformerConfig, re-exports from pycmg.nn_config
+│   ├── data/
+│   │   ├── normalize.py            # Normalizer (signed-log) + BSIMARNormalizer (zscore/signedlog) + signed_log helpers
+│   │   ├── dataset.py              # MOSFETDataset + load_and_split{_bsimar} + filter_small_targets
+│   │   └── analyze.py              # Dataset analysis script (distribution, outliers, physical constraints)
+│   ├── models/
+│   │   ├── direct_net.py           # DirectNet MLP (baseline used for comparison)
+│   │   └── transformer.py          # TransformerEncoderModel (primary, autoregressive)
+│   ├── losses/
+│   │   ├── direct_loss.py          # DirectLoss + ChargeConsistencyLoss
+│   │   └── bni_mae.py              # WeightedBNILoss + MAELoss + compute_lds_weights_per_target
+│   ├── training/
+│   │   ├── early_stopping.py
+│   │   └── trainer.py              # train_directnet, train_transformer, per-epoch helpers
+│   ├── eval/
+│   │   ├── metrics.py              # compute_physical_metrics, print_metrics
+│   │   └── visualization.py        # plot_scatter_comparison, plot_loss_curves
+│   ├── utils/seed.py
+│   ├── cli/train.py                # Unified CLI: `python -m bsimar.cli.train --model {direct,transformer} ...`
+│   ├── checkpoints/                # Saved model weights (.pt + _norm.npz + _config.npz) — gitignored
+│   │   └── pretrained/             # Legacy pretrained .pth files from the paper
+│   ├── results/                    # Training plots — gitignored
+│   ├── docs/                       # Reference paper and ablation notes
+│   ├── imgs/                       # README imagery
 │   ├── README.md
-│   └── LICENSE
+│   ├── LICENSE
+│   └── requirments.txt
 │
 ├── PyCMG/              # BSIM-CMG OSDI wrapper (git submodule)
 │   ├── pycmg/          # Python OSDI interface (Model, Instance, tech registry)
@@ -132,7 +133,7 @@ All phases (1-15) are complete. Key milestones:
 - **3-level DC+Transient test suites** — 3-layer infrastructure: `test_common.py` (tech defs, generic helpers) -> `bsimcmg_{dc,tran}_common.py` (analysis-specific) -> `verify_*.py` (test scripts). All 223 tests PASS (0 FAIL, 0 ERROR): DC 113 (L1:2 + L2:67 + L3:44), Transient 110 (L1:1 + L2:37 + L3:72).
   - **Known-bad combos excluded:** TSMC5 SVT (pch PDIBL2_i<0), TSMC7 SVT/LVT (inverter garbage / pch PDIBL2_i<0), TSMC16 LNVT (nch PDIBL2_i<0), TSMC16 L=24nm (PDIBL2_i<0), NFIN=1 (NR divergence for tsmc5:ulvt / tsmc16:lnvt — ETA0_i/U0_i go negative, internal node drifts to 40V producing id=40kA + NaN derivatives; eval_dc now raises RuntimeError), P/N ratio where NFIN_P crosses NFIN group boundary (TSMC naive modelcards are NFIN-group-specific).
 - **PyCMG data generation migration** — NN training data generation moved from the old `nn_model.data.generate` into `external_compact_models/PyCMG/scripts/generate_nn_data.py`. Geometry format changed to 15-col `[NFIN, L, T, 12 process params]` (was 14-col). NN input dimension is now 19 features (was 18). Legal (L, NFIN) combos come from PDK bin boundaries (TSMC) or fallback list (ASAP7); process params extracted on-the-fly from modelcards (per-bin accurate). 954 total geometry combos across 5 techs, 21 variants. Existing checkpoints require retraining with the new data format.
-- **BSIMAR package refactor** — Consolidated the former `nn_model/` (DirectNet baseline) and `external_compact_models/BSIMAR/script/` (Transformer) into a single Python package at `external_compact_models/BSIMAR/bsimar/` with clean subpackages (`config`, `data`, `models`, `losses`, `training`, `eval`, `utils`, `cli`). DirectNet is now explicitly a baseline for comparison against the BSIM-AR Transformer. Unified CLI: `python -m bsimar.cli.train --model {direct,transformer} ...`. All downstream imports (pycircuitsim parser, mosfet_nn, mosfet_bsimar, tests/verify_nn_*) updated to the new `bsimar.*` namespace.
+- **BSIMAR package refactor** — Consolidated the former `nn_model/` (DirectNet baseline) and `external_compact_models/BSIMAR/script/` (Transformer) into a single Python package at `external_compact_models/bsimar/` with clean subpackages (`config`, `data`, `models`, `losses`, `training`, `eval`, `utils`, `cli`). The outer `BSIMAR/` directory was collapsed so the package sits directly under `external_compact_models/`. DirectNet is now explicitly a baseline for comparison against the BSIM-AR Transformer. Unified CLI: `python -m bsimar.cli.train --model {direct,transformer} ...`. All downstream imports (pycircuitsim parser, mosfet_nn, mosfet_bsimar, tests/verify_nn_*) updated to the new `bsimar.*` namespace.
 - **BSIM-AR Quick Smoke Test (NMOS, 50 epochs, 67K params)** — End-to-end pipeline verified on universal_nmos.npz (951K samples, input_dim=18). Three runs trained successfully without crashes:
   - **zscore + MAE+LDS:** best val loss 0.0606 @ epoch 32, AVG NRMSE 1.43%, MRE 12.79%, R2 0.968
   - **zscore + MAE (no LDS):** best val loss 0.0613 @ epoch 41, identical test metrics (shared checkpoint path)
@@ -145,7 +146,7 @@ All phases (1-15) are complete. Key milestones:
 - [ ] **Improve TSMC5 Transient** — 14.41% NRMSE (close to 15% threshold); try denser mid-supply data (`--n-dense-mid 30`) + retrain
 - [ ] **SRAM Validation (Phase 4)** — 6T bitcell DC+transient, 8-cell column, 64-bit array benchmark vs NGSPICE
 - [ ] **Adaptive Output Timestep** — Variable-length output array with true adaptive dt (full adaptive requires output grid changes)
-- [ ] **BSIM-AR — Default to zscore+MAE+LDS** — Document this as the recommended config in BSIMAR/README.md; deprecate signedlog mode for AR training (it remains valid for non-AR DirectNet).
+- [ ] **BSIM-AR — Default to zscore+MAE+LDS** — Document this as the recommended config in bsimar/README.md; deprecate signedlog mode for AR training (it remains valid for non-AR DirectNet).
 - [ ] **BSIM-AR — Speed up AR validation** — Implement KV-cache for the Transformer encoder so the 13 sequential steps reuse cached attention. Expected ~5-10x speedup on validation/test (currently 170-190s/epoch).
 - [ ] **BSIM-AR — Larger production model** — After the smoke test confirms the pipeline, retrain with paper-scale config (d_model=256, layers=6, ff=1024, ~110K params) for 500 epochs to get apples-to-apples comparison vs paper Table.
 - [ ] **BSIM-AR — Auto-disambiguate exp-names** — Add a guard in `main.py` that aborts (or appends a timestamp) if `<exp_name>_best.pt` already exists, to prevent silent checkpoint clobbering across parallel runs.
@@ -210,10 +211,10 @@ conda run -n pycircuitsim python -u -m bsimar.cli.train \
     --model transformer --device-type nmos --universal --loss mae --lds --cuda
 
 # Note: `bsimar` is importable because consumers add
-#       `external_compact_models/BSIMAR` to sys.path. Checkpoints live under
-#       `external_compact_models/BSIMAR/checkpoints/` for both models.
+#       `external_compact_models/` to sys.path. Checkpoints live under
+#       `external_compact_models/bsimar/checkpoints/` for both models.
 ```
-Checkpoints (under `external_compact_models/BSIMAR/checkpoints/`):
+Checkpoints (under `external_compact_models/bsimar/checkpoints/`):
 - DirectNet: `universal_{nmos,pmos}_best.pt` + `_norm.npz` (universal); `{tech}_{nmos,pmos}_best.pt` (per-tech).
 - Transformer: `ar_universal_{nmos,pmos}_best.pt` + `_norm.npz` + `_config.npz`.
 

@@ -35,7 +35,7 @@ import sys
 from pathlib import Path
 
 # Make the `bsimar` package importable for LEVEL=73 / LEVEL=74 resolution below.
-_BSIMAR_PARENT = Path(__file__).resolve().parent.parent / "external_compact_models" / "BSIMAR"
+_BSIMAR_PARENT = Path(__file__).resolve().parent.parent / "external_compact_models"
 if str(_BSIMAR_PARENT) not in sys.path:
     sys.path.insert(0, str(_BSIMAR_PARENT))
 
