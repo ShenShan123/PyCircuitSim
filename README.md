@@ -2,9 +2,17 @@
 
 <div align="center">
 
-**Pure Python Circuit Simulator for Education**
+**Pure Python Circuit Simulator with Compact-Model Research Bench**
 
-A clean, readable SPICE-like circuit simulator with production-grade BSIM-CMG FinFET model support via PyCMG/OSDI.
+A clean, readable SPICE-like circuit simulator with three coexisting
+compact-model families:
+
+- **BSIM-CMG** (LEVEL=72) via PyCMG/OSDI — the ground-truth FinFET model.
+- **DirectNet** (LEVEL=73) — a PyTorch MLP baseline compact model.
+- **BSIM-AR Transformer** (LEVEL=74) — a PyTorch autoregressive compact model.
+
+DirectNet and BSIM-AR share the same data pipeline and evaluation harness,
+so DirectNet can be used as a reference baseline for BSIM-AR research.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -21,6 +29,7 @@ A clean, readable SPICE-like circuit simulator with production-grade BSIM-CMG Fi
 - [Examples](#examples)
 - [Python API](#python-api)
 - [Output Files](#output-files)
+- [NN Compact Models (LEVEL=73 & LEVEL=74)](#nn-compact-models-level73--level74)
 - [Verification](#verification)
 - [Architecture](#architecture)
 - [Algorithms](#algorithms)
@@ -32,23 +41,37 @@ A clean, readable SPICE-like circuit simulator with production-grade BSIM-CMG Fi
 
 ## Overview
 
-PyCircuitSim is an open-source, pure Python circuit simulator designed for educational purposes and compact model integration. It provides a clean implementation of SPICE-like simulation with emphasis on code readability and modular architecture, plus production-grade BSIM-CMG FinFET model support via PyCMG/OSDI.
+PyCircuitSim is a pure-Python, HSPICE-compatible circuit simulator that
+doubles as a research bench for NN-based compact models. It pairs a
+readable MNA + Newton-Raphson solver with:
+
+- **BSIM-CMG** (LEVEL=72) via PyCMG/OSDI — the production-grade FinFET
+  compact model used as ground truth.
+- **DirectNet** (LEVEL=73) — a fast PyTorch MLP baseline compact model.
+- **BSIM-AR Transformer** (LEVEL=74) — an autoregressive Transformer
+  compact model that predicts I-V, Q-V, and C-V curves token-by-token.
+
+DirectNet and BSIM-AR live side-by-side in the unified `bsimar` package
+(`external_compact_models/bsimar/`) and share data generation,
+normalization, loss functions, training orchestration, metrics, and
+visualization. DirectNet acts as the baseline for comparison.
 
 ### Key Design Goals
 
-- **Educational Clarity**: Clean, well-documented code that's easy to understand and modify
-- **Modular Architecture**: Complete separation between solver engine and device models
-- **Compact Model Integration**: BSIM-CMG FinFET models (LEVEL=72) via PyCMG/OSDI
-- **HSPICE Compatibility**: Supports standard SPICE netlist syntax
+- **Educational Clarity**: Clean, well-documented code that's easy to understand and modify.
+- **Modular Architecture**: Complete separation between solver engine and device models.
+- **Compact Model Integration**: BSIM-CMG (LEVEL=72) via PyCMG/OSDI, plus two PyTorch NN compact models (LEVEL=73/74) with autograd Jacobian consistency.
+- **HSPICE Compatibility**: Supports standard SPICE netlist syntax.
+- **Research-friendly**: All three model families go through the same solver, so you can swap LEVEL=72/73/74 on the same netlist.
 
 ### What It Does
 
 PyCircuitSim simulates electronic circuits using:
-- **Modified Nodal Analysis (MNA)** for circuit equations
-- **Newton-Raphson iteration** with SPICE-standard convergence (RELTOL + VNTOL)
-- **BE→Trapezoidal integration** for transient analysis (BE first step, then 2nd-order Trapezoidal)
-- **BSIM-CMG compact models** for FinFET device simulation (ASAP7 7nm, TSMC 5/7/12/16nm)
-- **NN-based compact models** (LEVEL=73) via PyTorch with autograd Jacobian consistency
+- **Modified Nodal Analysis (MNA)** — sparse matrix assembly (`scipy.sparse` + `spsolve`).
+- **Newton-Raphson iteration** with SPICE-standard convergence (RELTOL + VNTOL).
+- **BE → Trapezoidal → BDF-2 integration** for transient analysis (BE first step, Trapezoidal by default, BDF-2 auto-switches on stiffness).
+- **BSIM-CMG compact models** for FinFET device simulation (ASAP7 7nm, TSMC 5/7/12/16nm).
+- **NN-based compact models** (LEVEL=73 DirectNet, LEVEL=74 BSIM-AR) via PyTorch with autograd Jacobian consistency.
 
 ---
 
@@ -62,9 +85,12 @@ PyCircuitSim simulates electronic circuits using:
 | Capacitor | `C` | Linear capacitance |
 | Voltage Source | `V` | DC or PULSE waveform |
 | Current Source | `I` | DC current source |
-| NMOS/PMOS Level 1 | `M` | Shichman-Hodges MOSFET |
 | NMOS/PMOS Level 72 | `M` | BSIM-CMG FinFET via PyCMG/OSDI |
-| NMOS/PMOS Level 73 | `M` | NN-based compact model via PyTorch |
+| NMOS/PMOS Level 73 | `M` | DirectNet (MLP) compact model via PyTorch — baseline |
+| NMOS/PMOS Level 74 | `M` | BSIM-AR Transformer compact model via PyTorch — primary |
+
+The legacy Shichman-Hodges `LEVEL=1` model has been removed. Only
+LEVEL=72/73/74 are supported.
 
 ### Supported Analyses
 
@@ -74,7 +100,7 @@ PyCircuitSim simulates electronic circuits using:
 
 ### Supported Directives
 
-- `.model` - MOSFET model definitions (LEVEL=1, LEVEL=72, or LEVEL=73)
+- `.model` - MOSFET model definitions (LEVEL=72, LEVEL=73, or LEVEL=74)
 - `.include` - Include external library files
 - `.ic` - Set initial node voltages
 
@@ -98,11 +124,15 @@ cd PyCircuitSim
 conda create -n pycircuitsim python=3.10
 conda activate pycircuitsim
 
-# Install Python dependencies
-pip install numpy matplotlib
+# Install Python dependencies (requirements.txt pins all solver + NN deps)
+pip install -r requirements.txt
+
+# PyTorch is required for LEVEL=73 / LEVEL=74 inference and for training
+# the bsimar compact models. Install CPU or CUDA build as appropriate:
+pip install torch
 ```
 
-### BSIM-CMG Setup (Optional)
+### BSIM-CMG Setup
 
 To use BSIM-CMG FinFET models (LEVEL=72), the PyCMG submodule and a compiled OSDI binary are required:
 
@@ -111,10 +141,22 @@ To use BSIM-CMG FinFET models (LEVEL=72), the PyCMG submodule and a compiled OSD
 git submodule update --init --recursive
 
 # Verify the OSDI binary exists
-ls external_compact_models/PyCMG/build-deep-verify/osdi/bsimcmg.osdi
+ls external_compact_models/PyCMG/build/osdi/bsimcmg.osdi
 ```
 
-The ASAP7 7nm modelcards are included in `external_compact_models/PyCMG/tech_model_cards/ASAP7/`.
+Technology modelcards ship inside PyCMG at `external_compact_models/PyCMG/modelcards/`:
+
+- `ASAP7/` — ASAP7 7nm predictive PDK.
+- `TSMC5/`, `TSMC7/`, `TSMC12/`, `TSMC16/` — naive TSMC bins.
+
+### NN Compact Model Setup (LEVEL=73 / LEVEL=74)
+
+The `bsimar` package at `external_compact_models/bsimar/` is importable
+once `external_compact_models/` is on `sys.path`. The `pycircuitsim`
+parser and the test harness add this automatically. Checkpoints live at
+`external_compact_models/bsimar/checkpoints/` and are resolved by the
+parser at netlist load time. See [NN Compact Models](#nn-compact-models-level73--level74)
+for training and inference details.
 
 ---
 
@@ -126,17 +168,23 @@ The ASAP7 7nm modelcards are included in `external_compact_models/PyCMG/tech_mod
 # Activate the environment
 conda activate pycircuitsim
 
-# Run a Level-1 CMOS inverter DC sweep
-python main.py examples/test_cmos_inverter_level1.sp
-
-# Run a BSIM-CMG inverter transient simulation
+# Run a BSIM-CMG (LEVEL=72) inverter transient simulation
 python main.py examples/bsimcmg_inverter_tran.sp
+
+# Run a BSIM-CMG NMOS DC sweep
+python main.py examples/bsimcmg_nmos_dc.sp
+
+# Run a DirectNet (LEVEL=73) NMOS DC sweep (requires a trained checkpoint)
+python main.py examples/nn_nmos_dc.sp
+
+# Run a BSIM-AR (LEVEL=74) inverter DC sweep
+python main.py examples/bsimar_inverter_dc.sp
 
 # Specify a custom output directory
 python main.py examples/bsimcmg_inverter_tran.sp -o my_results
 
 # Enable verbose logging (shows Newton-Raphson iterations)
-python main.py examples/test_cmos_inverter_level1.sp -v
+python main.py examples/bsimcmg_inverter_tran.sp -v
 ```
 
 ### CLI Options
@@ -221,30 +269,10 @@ Mp1 3 2 1 1 PMOS_VTL L=1u W=20u
 
 ### MOSFET Models
 
-#### Level 1 (Shichman-Hodges)
-
-```spice
-.model NMOS_VTL NMOS (
-    LEVEL=1
-    VTO=0.7      ; Threshold voltage (V)
-    KP=110u      ; Transconductance parameter (A/V^2)
-    GAMMA=0.4    ; Body effect coefficient (V^0.5)
-    LAMBDA=0.02  ; Channel-length modulation (1/V)
-)
-
-.model PMOS_VTL PMOS (
-    LEVEL=1
-    VTO=-0.7
-    KP=50u
-    GAMMA=0.5
-    LAMBDA=0.03
-)
-```
-
 #### Level 72 (BSIM-CMG FinFET)
 
 ```spice
-* Model declaration (device parameters come from ASAP7 modelcard)
+* Model declaration — device parameters come from the ASAP7 modelcard
 .model nmos1 NMOS (LEVEL=72)
 .model pmos1 PMOS (LEVEL=72)
 
@@ -262,6 +290,46 @@ Mp1 out in vdd vdd pmos1 L=30n NFIN=10
 | `TFIN` | Fin thickness | Optional (uses modelcard default) |
 | `HFIN` | Fin height | Optional (uses modelcard default) |
 | `FPITCH` | Fin pitch | Optional (uses modelcard default) |
+
+#### Level 73 (DirectNet — MLP baseline compact model)
+
+```spice
+* Auto-resolve process params from a technology + threshold variant
+.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)
+.model pmos_nn PMOS (LEVEL=73 TECH=tsmc5 VT=lvt)
+
+* Alternatively, supply process params directly on the .model line
+.model nmos_nn_direct NMOS (LEVEL=73
+    PHIG=4.41 U0=0.033 VSAT=65370 EOT=1.06e-9
+    ETA0=0.005 CIT=-9.81e-4 RDSW=15)
+
+* Device instances use the same L / NFIN syntax as LEVEL=72
+Mn1 out in 0 0 nmos_nn L=16n NFIN=10
+Mp1 out in vdd vdd pmos_nn L=16n NFIN=10
+```
+
+Checkpoints are resolved automatically:
+`external_compact_models/bsimar/checkpoints/universal_{nmos,pmos}_best.pt`
+(preferred if present) or per-tech `{tech}_{nmos,pmos}_best.pt`.
+
+#### Level 74 (BSIM-AR — autoregressive Transformer compact model)
+
+```spice
+* Same netlist syntax as LEVEL=73, just a different LEVEL
+.model nmos_ar NMOS (LEVEL=74 TECH=tsmc5 VT=lvt)
+.model pmos_ar PMOS (LEVEL=74 TECH=tsmc5 VT=lvt)
+
+Mn1 out in 0 0 nmos_ar L=16n NFIN=10
+Mp1 out in vdd vdd pmos_ar L=16n NFIN=10
+```
+
+BSIM-AR checkpoints: `ar_universal_{nmos,pmos}_best.pt` + `_norm.npz` +
+`_config.npz` under `external_compact_models/bsimar/checkpoints/`.
+
+Both LEVEL=73 and LEVEL=74 expose autograd-derived conductances (gm, gds,
+gmb) so Newton-Raphson stays consistent in multi-device circuits. See
+[NN Compact Models](#nn-compact-models-level73--level74) for training,
+checkpoint layout, and inference trade-offs.
 
 ### PULSE Sources
 
@@ -290,26 +358,22 @@ Vclk 1 0 PULSE(0 3.3 0n 1n 1n 10n 20n)
 
 ## Examples
 
-### Level 1: CMOS Inverter DC Sweep
+All example netlists live in `examples/`. The files below cover the three
+compact-model families plus a passive-only RC reference:
 
-File: `examples/test_cmos_inverter_level1.sp`
-
-```spice
-* CMOS Inverter - Level 1 Models
-Vdd 1 0 3.3
-Vin 2 0 1.65
-
-Mp1 3 2 1 1 PMOS L=1u W=20u
-Mn1 3 2 0 0 NMOS L=1u W=10u
-
-.dc Vin 0 3.3 0.1
-
-.end
-```
-
-```bash
-python main.py examples/test_cmos_inverter_level1.sp
-```
+| File | Analysis | Models used | What it demonstrates |
+|------|----------|-------------|----------------------|
+| `examples/bsimcmg_nmos_dc.sp` | DC sweep | LEVEL=72 | NMOS Id-Vgs against PyCMG/OSDI |
+| `examples/bsimcmg_pmos_dc.sp` | DC sweep | LEVEL=72 | PMOS Id-Vgs against PyCMG/OSDI |
+| `examples/bsimcmg_inverter_dc.sp` | DC sweep | LEVEL=72 | Inverter VTC |
+| `examples/bsimcmg_inverter_tran.sp` | Transient | LEVEL=72 | FinFET inverter pulse response |
+| `examples/bsimcmg_inverter_dc_asap7_ref.sp` | DC sweep | LEVEL=72 | ASAP7 reference configuration |
+| `examples/nn_nmos_op.sp` | OP | LEVEL=73 | DirectNet single-point NMOS |
+| `examples/nn_nmos_dc.sp` | DC sweep | LEVEL=73 | DirectNet NMOS Id-Vgs |
+| `examples/nn_inverter_dc.sp` | DC sweep | LEVEL=73 | DirectNet inverter VTC |
+| `examples/bsimar_nmos_dc.sp` | DC sweep | LEVEL=74 | BSIM-AR NMOS Id-Vgs |
+| `examples/bsimar_inverter_dc.sp` | DC sweep | LEVEL=74 | BSIM-AR inverter VTC |
+| `examples/rc_transient.sp` | Transient | passives | Pure RC reference |
 
 ### BSIM-CMG: FinFET Inverter Transient (ASAP7 7nm)
 
@@ -338,17 +402,19 @@ Cload 3 0 10f
 python main.py examples/bsimcmg_inverter_tran.sp
 ```
 
-### BSIM-CMG: NMOS DC Sweep
-
-File: `examples/bsimcmg_nmos_dc.sp`
+### DirectNet: NMOS DC Sweep (LEVEL=73)
 
 ```bash
-python main.py examples/bsimcmg_nmos_dc.sp
+python main.py examples/nn_nmos_dc.sp
+```
+
+### BSIM-AR: Inverter DC Sweep (LEVEL=74)
+
+```bash
+python main.py examples/bsimar_inverter_dc.sp
 ```
 
 ### RC Transient
-
-File: `examples/rc_transient.sp`
 
 ```bash
 python main.py examples/rc_transient.sp
@@ -378,7 +444,7 @@ from pycircuitsim import Parser, DCSolver
 
 # Parse netlist
 parser = Parser()
-parser.parse_file('examples/test_cmos_inverter_level1.sp')
+parser.parse_file('examples/bsimcmg_inverter_dc.sp')
 circuit = parser.circuit
 
 # Run DC analysis
@@ -402,7 +468,7 @@ from pycircuitsim.simulation import run_dc_sweep
 from pycircuitsim import Parser
 
 parser = Parser()
-parser.parse_file('examples/test_cmos_inverter_level1.sp')
+parser.parse_file('examples/bsimcmg_inverter_dc.sp')
 circuit = parser.circuit
 
 # run_dc_sweep returns sweep values and results dict
@@ -471,9 +537,129 @@ Vin (V),V(1),V(2),V(3),i(Vdd),i(Vin)
 
 ---
 
+## NN Compact Models (LEVEL=73 & LEVEL=74)
+
+Both NN compact-model families live in the unified `bsimar` package at
+`external_compact_models/bsimar/`. DirectNet is the baseline; BSIM-AR
+is the primary Transformer model; they share every layer below the
+model architecture itself:
+
+```
+external_compact_models/bsimar/
+├── config.py                 # TECH_CONFIGS + DirectNetConfig + TransformerConfig
+├── data/
+│   ├── normalize.py          # Normalizer (signed-log) + BSIMARNormalizer (zscore / signedlog)
+│   ├── dataset.py            # MOSFETDataset + load_and_split{,_bsimar} + small-value filtering
+│   └── analyze.py            # Dataset-quality reports (distribution, outliers, physical sanity)
+├── models/
+│   ├── direct_net.py         # DirectNet MLP (baseline)
+│   └── transformer.py        # TransformerEncoderModel (autoregressive, primary)
+├── losses/
+│   ├── direct_loss.py        # DirectLoss + ChargeConsistencyLoss
+│   └── bni_mae.py            # WeightedBNILoss + MAELoss + LDS reweighting
+├── training/
+│   ├── early_stopping.py
+│   └── trainer.py            # train_directnet, train_transformer, per-epoch helpers
+├── eval/
+│   ├── metrics.py            # compute_physical_metrics, print_metrics
+│   └── visualization.py      # scatter / loss-curve plots
+├── utils/seed.py
+├── cli/train.py              # Unified CLI entry point
+├── checkpoints/              # Trained weights — gitignored
+│   └── pretrained/           # Legacy pretrained .pth files from the paper
+├── results/                  # Training plots — gitignored
+└── docs/                     # Reference paper, ablation notes
+```
+
+### Data Generation
+
+Data is produced by PyCMG (the ground-truth BSIM-CMG model):
+
+```bash
+conda run -n pycircuitsim python \
+    external_compact_models/PyCMG/scripts/generate_nn_data.py \
+    --device both --universal
+```
+
+This walks 954 `(L, NFIN)` combinations across 5 techs and 21 threshold
+variants (legal bin boundaries for TSMC, a fallback list for ASAP7),
+extracts process parameters on-the-fly from the modelcards, and writes
+one `.npz` per device under
+`external_compact_models/bsimar/data/datasets/`. Each sample is a
+`19`-feature input (`Vd, Vg, Vs, Vb, log2(NFIN), L, T, <12 process params>`)
+and a `13`-column output (`id, gm, gds, gmb, qg, qd, qs, qb, cgg, cgd, cgs, cdg, cdd`).
+
+### Training
+
+Training is driven by a single CLI. The `--model` flag picks the architecture;
+every other flag is shared between the two:
+
+```bash
+# DirectNet (baseline MLP, ~2 s/epoch on a modern GPU)
+conda run -n pycircuitsim python -u -m bsimar.cli.train \
+    --model direct --device-type nmos --universal --mode direct13 \
+    --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048 --cuda
+
+# DirectNet charge-finetune (autograd dq/dV = C consistency, ~5-10x slower,
+# improves transient accuracy)
+conda run -n pycircuitsim python -u -m bsimar.cli.train \
+    --model direct --device-type nmos --universal --mode charge-finetune \
+    --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048 \
+    --cuda --resume none
+
+# BSIM-AR Transformer (paper recommended: zscore + MAE + LDS)
+conda run -n pycircuitsim python -u -m bsimar.cli.train \
+    --model transformer --device-type nmos --universal \
+    --loss mae --lds --cuda
+```
+
+Checkpoints land under `external_compact_models/bsimar/checkpoints/`:
+
+| File | Model | Notes |
+|------|-------|-------|
+| `universal_{nmos,pmos}_best.pt` + `_norm.npz` | DirectNet universal | Preferred by the parser |
+| `{tech}_{nmos,pmos}_best.pt` + `_norm.npz` | DirectNet per-tech | Fallback |
+| `ar_universal_{nmos,pmos}_best.pt` + `_norm.npz` + `_config.npz` | BSIM-AR universal | Transformer |
+
+### Inference (LEVEL=73 vs LEVEL=74)
+
+Both LEVELs are drop-in replacements for LEVEL=72 on the same netlist.
+They share the same sign conventions, the same Jacobian-via-autograd
+guarantee for Newton-Raphson consistency, and the same source-relative
+voltage frame for PMOS.
+
+Key differences:
+
+| Aspect | LEVEL=73 (DirectNet) | LEVEL=74 (BSIM-AR) |
+|--------|----------------------|---------------------|
+| Architecture | MLP (SiLU, 5-6 layers) | Transformer encoder with causal mask |
+| Forward pass | 1 per device eval | 13 sequential tokens per device eval |
+| Training time | Fast | Slower (~5-10x) |
+| Inference cost | ~1x | ~13x |
+| Role | Baseline | Primary research model |
+| Normalization | Signed-log + z-score (default) | z-score (default) or signed-log (optional) |
+
+---
+
 ## Verification
 
-All BSIM-CMG results are validated against NGSPICE 45.2 with BSIM-CMG OSDI. Verification scripts are in `tests/`.
+All BSIM-CMG results are validated against NGSPICE 45.2 with the
+BSIM-CMG OSDI binary. NN compact models (LEVEL=73/74) are validated
+against PyCMG/NGSPICE as the ground truth.
+
+### Test Harness Layout
+
+```
+tests/
+├── __init__.py
+├── common/                        # Shared test infrastructure (subpackage)
+│   ├── base.py                    # PROJECT_ROOT, OSDI_PATH, TechProfile, VtPair, NGSPICE runner
+│   ├── bsimcmg_dc.py              # DC-specific runners, metrics, plots
+│   ├── bsimcmg_tran.py            # Transient-specific runners, metrics, plots
+│   └── nn.py                      # NN helpers (nrmse, mre, checkpoint resolution, path bootstrap)
+├── references/                    # NGSPICE reference netlists (ngspice_*.cir)
+└── verify_*.py                    # Flat verification scripts
+```
 
 ### Running Verification
 
@@ -483,7 +669,7 @@ conda activate pycircuitsim
 # Operating point verification (NMOS, PMOS, Inverter)
 python tests/verify_bsimcmg_op.py
 
-# DC sweep verification (Id-Vgs, VTC)
+# DC sweep verification (Id-Vgs)
 python tests/verify_bsimcmg_dc.py
 
 # Transient verification (single baseline config)
@@ -492,11 +678,10 @@ python tests/verify_bsimcmg_tran.py
 # Comprehensive transient verification (21 parametric configs)
 python tests/verify_bsimcmg_tran_comprehensive.py
 
-# Run all verification scripts
+# Run L1 smoke suite in one line
 python tests/verify_bsimcmg_op.py && \
 python tests/verify_bsimcmg_dc.py && \
-python tests/verify_bsimcmg_tran.py && \
-python tests/verify_bsimcmg_tran_comprehensive.py
+python tests/verify_bsimcmg_tran.py
 ```
 
 ### Verification Results
@@ -569,14 +754,25 @@ The comprehensive suite sweeps VDD, Cload, input slew, pulse width, NFIN scaling
 | Script | Purpose |
 |--------|---------|
 | `tests/verify_bsimcmg_op.py` | OP analysis: PyCircuitSim vs NGSPICE for NMOS, PMOS, inverter |
-| `tests/verify_bsimcmg_dc.py` | DC sweep: Id-Vgs and VTC curves vs NGSPICE |
-| `tests/verify_bsimcmg_tran.py` | Transient: single inverter config vs NGSPICE |
-| `tests/verify_bsimcmg_tran_comprehensive.py` | Transient: 21-config parametric sweep vs NGSPICE (6 sweeps) |
+| `tests/verify_bsimcmg_dc.py` | DC sweep L1: Id-Vgs (ASAP7 baseline) |
+| `tests/verify_bsimcmg_dc_comprehensive.py` | DC sweep L2: 67-config VT/L/NFIN sweep across 5 techs |
+| `tests/verify_multi_tech_dc.py` | DC sweep L3: 44-config inverter VTC + parametric |
+| `tests/verify_bsimcmg_tran.py` | Transient L1: single inverter baseline |
+| `tests/verify_bsimcmg_tran_comprehensive.py` | Transient L2: 37-config VT/L/NFIN sweep |
+| `tests/verify_multi_tech_tran.py` | Transient L3: 72-config multi-tech parametric |
 | `tests/verify_nn_tran.py` | NN transient: 5 technologies vs NGSPICE (<15% NRMSE) |
 | `tests/verify_nn_universal_v2.py` | NN universal: 21 variants × 3 tests (DC + VTC) |
 | `tests/verify_nn_leave_one_out.py` | NN zero-shot transferability experiment |
 
 Each script generates comparison plots and detailed metrics in `tests/verify_*_results/`.
+
+> **Note:** The `verify_nn_*.py` scripts still reference the old
+> `tech.variants[v].get_process_params(device)` API that was removed
+> when `nn_model.config` was folded into `bsimar.config`. They need to
+> be ported to the new `NNTechConfig` API
+> (`tech.resolve_modelcard(...)` + `extract_process_params(...)`)
+> before they can run end-to-end. The BSIM-CMG scripts above are
+> unaffected and exercise the refactored `tests/common/` subpackage.
 
 ---
 
@@ -585,32 +781,47 @@ Each script generates comparison plots and detailed metrics in `tests/verify_*_r
 PyCircuitSim follows a clean, modular architecture:
 
 ```
-pycircuitsim/                    # Python package (simulator core)
-├── __init__.py                  # Public API exports
-├── config.py                    # Path configuration (OSDI binary, modelcards)
-├── simulation.py                # Simulation orchestration
-├── parser.py                    # Netlist parser (HSPICE syntax)
-├── circuit.py                   # Circuit topology (nodes, components)
-├── solver.py                    # MNA + Newton-Raphson + Transient solvers
-├── logger.py                    # HSPICE-like logging (.lis files)
-├── visualizer.py                # Matplotlib plotting
-└── models/                      # Device model implementations
+pycircuitsim/                       # Python package (simulator core)
+├── __init__.py                     # Public API exports
+├── config.py                       # Path configuration (OSDI binary, modelcards)
+├── simulation.py                   # Simulation orchestration
+├── parser.py                       # Netlist parser (HSPICE syntax)
+├── circuit.py                      # Circuit topology (nodes, components)
+├── solver.py                       # MNA + Newton-Raphson + Transient solvers
+├── logger.py                       # HSPICE-like logging (.lis files)
+├── visualizer.py                   # Matplotlib plotting
+└── models/                         # Device model implementations
     ├── __init__.py
-    ├── base.py                  # Component abstract base class
-    ├── passive.py               # R, C, V, I, PULSE sources
-    ├── mosfet.py                # Level 1 Shichman-Hodges model
-    └── mosfet_cmg.py            # BSIM-CMG FinFET model (LEVEL=72)
+    ├── base.py                     # Component abstract base class
+    ├── passive.py                  # R, C, V, I, PULSE sources
+    ├── mosfet_cmg.py               # BSIM-CMG FinFET (LEVEL=72) via PyCMG/OSDI
+    ├── mosfet_nn.py                # DirectNet (LEVEL=73) via PyTorch
+    └── mosfet_bsimar.py            # BSIM-AR Transformer (LEVEL=74) via PyTorch
 
-external_compact_models/         # External compact model binaries
-└── PyCMG/                       # BSIM-CMG OSDI wrapper (git submodule)
-    ├── pycmg/                   # Python ctypes-based OSDI interface
-    ├── build-deep-verify/osdi/  # Compiled OSDI binary (bsimcmg.osdi)
-    └── tech_model_cards/ASAP7/  # ASAP7 7nm FinFET modelcards
+external_compact_models/            # External compact-model packages
+├── bsimar/                         # Unified NN compact model package (DirectNet + BSIM-AR)
+│   ├── config.py                   # TECH_CONFIGS + DirectNetConfig + TransformerConfig
+│   ├── data/                       # Normalizers, dataset loaders, dataset analysis
+│   ├── models/                     # direct_net.py + transformer.py
+│   ├── losses/                     # direct_loss.py + bni_mae.py
+│   ├── training/                   # train_directnet, train_transformer, EarlyStopping
+│   ├── eval/                       # physical-units metrics, plots
+│   ├── cli/train.py                # `python -m bsimar.cli.train --model {direct,transformer}`
+│   ├── checkpoints/                # Trained weights (gitignored)
+│   └── docs/, imgs/, README.md, LICENSE
+│
+└── PyCMG/                          # BSIM-CMG OSDI wrapper (git submodule)
+    ├── pycmg/                      # Python ctypes-based OSDI interface
+    ├── build/osdi/bsimcmg.osdi     # Compiled OSDI binary
+    ├── modelcards/                 # Technology modelcards (ASAP7 + TSMC5/7/12/16)
+    └── scripts/generate_nn_data.py # NN training-data generator
 
-main.py                          # CLI entry point
-examples/                        # Example netlists (.sp files)
-tests/                           # NGSPICE verification scripts
-results/                         # Simulation output (generated at runtime)
+main.py                             # CLI entry point
+examples/                           # Example netlists (.sp files)
+tests/                              # NGSPICE verification scripts
+├── common/                         # Shared test infrastructure
+└── references/                     # NGSPICE reference netlists
+results/                            # Simulation output (generated at runtime)
 ```
 
 ### Module Responsibilities
@@ -618,12 +829,15 @@ results/                         # Simulation output (generated at runtime)
 | Module | Responsibility |
 |--------|---------------|
 | `simulation.py` | Orchestrates parse -> solve -> visualize workflow |
-| `parser.py` | Two-pass netlist parsing, `.model`/`.include`/`.ic` directives |
+| `parser.py` | Two-pass netlist parsing, `.model`/`.include`/`.ic` directives, LEVEL=73/74 process-param resolution via `bsimar.config` |
 | `circuit.py` | Stores circuit topology, component list, node mapping |
 | `solver.py` | MNA construction, Newton-Raphson iteration, transient stepping |
-| `models/` | Device physics (I-V equations, conductances, capacitances) |
+| `models/mosfet_cmg.py` | BSIM-CMG physics via PyCMG (LEVEL=72) |
+| `models/mosfet_nn.py` | DirectNet inference with autograd conductances (LEVEL=73) |
+| `models/mosfet_bsimar.py` | BSIM-AR Transformer inference (LEVEL=74), reuses `_MOSFETNNBase` |
 | `logger.py` | HSPICE-compatible output formatting |
 | `visualizer.py` | Automatic plot generation |
+| `bsimar.*` | Training / eval pipeline shared by LEVEL=73 and LEVEL=74 |
 
 ### Design Principles
 
