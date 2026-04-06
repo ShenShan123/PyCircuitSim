@@ -16,7 +16,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from tests.bsimcmg_tran_common import (
+from tests.common.bsimcmg_tran import (
     ALL_TECHS,
     make_baseline,
     run_test_suite,

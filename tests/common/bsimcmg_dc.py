@@ -24,7 +24,7 @@ import matplotlib.pyplot as plt
 # ---------------------------------------------------------------------------
 # Shared test infrastructure (from test_common)
 # ---------------------------------------------------------------------------
-from tests.test_common import (
+from tests.common.base import (
     PROJECT_ROOT, OSDI_PATH, MODELCARDS_DIR, NGSPICE_BIN,
     VtPair, TechProfile, ALL_TECHS, TECH_ORDER, TECH_COLORS,
     bake_inst_params,

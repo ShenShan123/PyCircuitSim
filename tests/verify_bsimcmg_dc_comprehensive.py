@@ -24,7 +24,7 @@ from typing import List
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from tests.bsimcmg_dc_common import (
+from tests.common.bsimcmg_dc import (
     ALL_TECHS,
     DCTestConfig,
     NFIN_SWEEP_VALUES,

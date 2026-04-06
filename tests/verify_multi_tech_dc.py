@@ -22,7 +22,7 @@ from typing import List
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from tests.bsimcmg_dc_common import (
+from tests.common.bsimcmg_dc import (
     DCTestConfig,
     INVERTER_VTC,
     NFIN_SWEEP_VALUES,
@@ -98,7 +98,7 @@ def build_parametric_configs(tech: TechProfile) -> List[DCTestConfig]:
 
 
 def main() -> int:
-    from tests.test_common import run_multi_tech_main, parse_tech_args
+    from tests.common.base import run_multi_tech_main, parse_tech_args
     tech_names = parse_tech_args("Level 3: Multi-tech DC verification (Inverter VTC)")
     if isinstance(tech_names, int):
         return tech_names

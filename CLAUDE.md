@@ -77,10 +77,15 @@ main.py                 # CLI entry point (single main entrance)
 examples/*.sp           # Example netlists
 results/                # Simulation output (.lis, .csv, .png)
 tests/
-├── test_common.py                   # Shared infrastructure: TechProfile, VtPair, ALL_TECHS, generic helpers
-├── bsimcmg_tran_common.py           # Transient-specific: TestConfig, runners, metrics, plots
-├── bsimcmg_dc_common.py             # DC-specific: DCTestConfig, runners, metrics, plots
-└── verify_*.py                      # 3-level test scripts (L1/L2/L3 for DC + transient)
+├── __init__.py
+├── common/                          # Shared test infrastructure (subpackage)
+│   ├── __init__.py
+│   ├── base.py                      # PROJECT_ROOT, OSDI_PATH, TechProfile, VtPair, ALL_TECHS, NGSPICE runner, generic orchestration
+│   ├── bsimcmg_dc.py                # DC-specific: DCTestConfig, runners, metrics, plots
+│   ├── bsimcmg_tran.py               # Transient-specific: TestConfig, runners, metrics, plots
+│   └── nn.py                        # NN-specific: nrmse, mre, directnet_checkpoint, transformer_checkpoint, path bootstrap
+├── references/                      # NGSPICE reference netlists (ngspice_*.cir)
+└── verify_*.py                      # 3-level test scripts (L1/L2/L3 for DC + transient, plus NN verification)
 ```
 
 ### Key Algorithms
@@ -130,7 +135,7 @@ All phases (1-15) are complete. Key milestones:
 - **NN Transient (charge-finetune + VT fix)** — 5/5 PASS: ASAP7 6.20%, TSMC5 14.41%, TSMC7 7.15%, TSMC12 6.47%, TSMC16 7.42%
 - **Solver accuracy improvements** — SPICE-standard convergence (RELTOL=1e-4, VNTOL=1e-7), GMIN reduction (1e-6→1e-12), BE→Trap first-step switching, relative oscillation threshold. NN transient improved: TSMC7 7.15→6.09%, TSMC12 6.47→5.92%, TSMC16 7.42→6.70%. BSIM-CMG transient unchanged at 0.20% (already at integration-method floor).
 - **SRAM Solver Upgrades (Phases 1-3)** — Sparse matrix solver (scipy.sparse lil_matrix→CSR+spsolve), DC GMIN stepping + oscillation detection + adaptive damping + hard `.ic` mode (force_ic), BDF-2 integration (auto-switches on stiffness detection), LTE adaptive sub-stepping as constructor param. All 67 existing tests PASS with zero regression.
-- **3-level DC+Transient test suites** — 3-layer infrastructure: `test_common.py` (tech defs, generic helpers) -> `bsimcmg_{dc,tran}_common.py` (analysis-specific) -> `verify_*.py` (test scripts). All 223 tests PASS (0 FAIL, 0 ERROR): DC 113 (L1:2 + L2:67 + L3:44), Transient 110 (L1:1 + L2:37 + L3:72).
+- **3-level DC+Transient test suites** — 3-layer infrastructure: `tests/common/base.py` (tech defs, generic helpers) -> `tests/common/bsimcmg_{dc,tran}.py` (analysis-specific) -> `verify_*.py` (test scripts). `tests/common/nn.py` consolidates the previously-duplicated NN scaffolding (nrmse, mre, checkpoint resolution, path bootstrap). NGSPICE reference netlists live in `tests/references/`. L1 regressions (OP, DC, transient) all pass against the refactored layout.
   - **Known-bad combos excluded:** TSMC5 SVT (pch PDIBL2_i<0), TSMC7 SVT/LVT (inverter garbage / pch PDIBL2_i<0), TSMC16 LNVT (nch PDIBL2_i<0), TSMC16 L=24nm (PDIBL2_i<0), NFIN=1 (NR divergence for tsmc5:ulvt / tsmc16:lnvt — ETA0_i/U0_i go negative, internal node drifts to 40V producing id=40kA + NaN derivatives; eval_dc now raises RuntimeError), P/N ratio where NFIN_P crosses NFIN group boundary (TSMC naive modelcards are NFIN-group-specific).
 - **PyCMG data generation migration** — NN training data generation moved from the old `nn_model.data.generate` into `external_compact_models/PyCMG/scripts/generate_nn_data.py`. Geometry format changed to 15-col `[NFIN, L, T, 12 process params]` (was 14-col). NN input dimension is now 19 features (was 18). Legal (L, NFIN) combos come from PDK bin boundaries (TSMC) or fallback list (ASAP7); process params extracted on-the-fly from modelcards (per-bin accurate). 954 total geometry combos across 5 techs, 21 variants. Existing checkpoints require retraining with the new data format.
 - **BSIMAR package refactor** — Consolidated the former `nn_model/` (DirectNet baseline) and `external_compact_models/BSIMAR/script/` (Transformer) into a single Python package at `external_compact_models/bsimar/` with clean subpackages (`config`, `data`, `models`, `losses`, `training`, `eval`, `utils`, `cli`). The outer `BSIMAR/` directory was collapsed so the package sits directly under `external_compact_models/`. DirectNet is now explicitly a baseline for comparison against the BSIM-AR Transformer. Unified CLI: `python -m bsimar.cli.train --model {direct,transformer} ...`. All downstream imports (pycircuitsim parser, mosfet_nn, mosfet_bsimar, tests/verify_nn_*) updated to the new `bsimar.*` namespace.

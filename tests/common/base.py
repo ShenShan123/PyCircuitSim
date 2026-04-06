@@ -24,8 +24,10 @@ import matplotlib.pyplot as plt
 # ---------------------------------------------------------------------------
 # Project paths
 # ---------------------------------------------------------------------------
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+# tests/common/base.py → parents[0]=common/, parents[1]=tests/, parents[2]=project root
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
+sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG"))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tests"))
 

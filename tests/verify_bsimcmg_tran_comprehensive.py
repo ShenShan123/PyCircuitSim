@@ -22,7 +22,7 @@ from typing import List
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from tests.bsimcmg_tran_common import (
+from tests.common.bsimcmg_tran import (
     ALL_TECHS,
     TECH_ORDER,
     TechProfile,
