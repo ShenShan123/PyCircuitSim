@@ -114,11 +114,23 @@ All phases (1-15) are complete. Key milestones:
 - **3-level DC+Transient test suites** — 3-layer infrastructure: `test_common.py` (tech defs, generic helpers) -> `bsimcmg_{dc,tran}_common.py` (analysis-specific) -> `verify_*.py` (test scripts). All 223 tests PASS (0 FAIL, 0 ERROR): DC 113 (L1:2 + L2:67 + L3:44), Transient 110 (L1:1 + L2:37 + L3:72).
   - **Known-bad combos excluded:** TSMC5 SVT (pch PDIBL2_i<0), TSMC7 SVT/LVT (inverter garbage / pch PDIBL2_i<0), TSMC16 LNVT (nch PDIBL2_i<0), TSMC16 L=24nm (PDIBL2_i<0), NFIN=1 (NR divergence for tsmc5:ulvt / tsmc16:lnvt — ETA0_i/U0_i go negative, internal node drifts to 40V producing id=40kA + NaN derivatives; eval_dc now raises RuntimeError), P/N ratio where NFIN_P crosses NFIN group boundary (TSMC naive modelcards are NFIN-group-specific).
 - **PyCMG data generation migration** — NN training data generation moved from `nn_model.data.generate` to `external_compact_models/PyCMG/scripts/generate_nn_data.py`. Geometry format changed to 15-col `[NFIN, L, T, 12 process params]` (was 14-col). NN input dimension is now 19 features (was 18). Legal (L, NFIN) combos come from PDK bin boundaries (TSMC) or fallback list (ASAP7); process params extracted on-the-fly from modelcards (per-bin accurate). 954 total geometry combos across 5 techs, 21 variants. Existing checkpoints require retraining with the new data format.
+- **BSIM-AR Quick Smoke Test (NMOS, 50 epochs, 67K params)** — End-to-end pipeline verified on universal_nmos.npz (951K samples, input_dim=18). Three runs trained successfully without crashes:
+  - **zscore + MAE+LDS:** best val loss 0.0606 @ epoch 32, AVG NRMSE 1.43%, MRE 12.79%, R2 0.968
+  - **zscore + MAE (no LDS):** best val loss 0.0613 @ epoch 41, identical test metrics (shared checkpoint path)
+  - **signedlog + MAE:** best val loss 0.1032 @ epoch 28, AVG NRMSE 7.14%, MRE 170.44%, **R2 -5.99 (collapsed)**
+  - **Key finding:** zscore dominates signedlog in physical-space metrics on every target. Signedlog R2_norm=0.91 looks fine but `inv_signed_log` denormalization amplifies AR-accumulated errors catastrophically (gds: R2_norm=0.81 → R2_phys=-74.09). This is a fundamental mismatch between log-compressed normalization and AR token-by-token error accumulation.
+  - **Bottleneck:** ~170-190s/epoch, dominated by sequential 13-step autoregressive validation on 60-95K samples (cannot be parallelized with current `forward()` impl).
+  - **Bug found:** concurrent runs sharing the same `--exp-name` overwrite each other's `_best.pt` checkpoints. Always use distinct exp-names for parallel experiments.
 
 ### Future Work
 - [ ] **Improve TSMC5 Transient** — 14.41% NRMSE (close to 15% threshold); try denser mid-supply data (`--n-dense-mid 30`) + retrain
 - [ ] **SRAM Validation (Phase 4)** — 6T bitcell DC+transient, 8-cell column, 64-bit array benchmark vs NGSPICE
 - [ ] **Adaptive Output Timestep** — Variable-length output array with true adaptive dt (full adaptive requires output grid changes)
+- [ ] **BSIM-AR — Default to zscore+MAE+LDS** — Document this as the recommended config in BSIMAR/README.md; deprecate signedlog mode for AR training (it remains valid for non-AR DirectNet).
+- [ ] **BSIM-AR — Speed up AR validation** — Implement KV-cache for the Transformer encoder so the 13 sequential steps reuse cached attention. Expected ~5-10x speedup on validation/test (currently 170-190s/epoch).
+- [ ] **BSIM-AR — Larger production model** — After the smoke test confirms the pipeline, retrain with paper-scale config (d_model=256, layers=6, ff=1024, ~110K params) for 500 epochs to get apples-to-apples comparison vs paper Table.
+- [ ] **BSIM-AR — Auto-disambiguate exp-names** — Add a guard in `main.py` that aborts (or appends a timestamp) if `<exp_name>_best.pt` already exists, to prevent silent checkpoint clobbering across parallel runs.
+- [ ] **BSIM-AR — Validate on PMOS + per-tech** — Smoke test only covered universal NMOS; need PMOS run + at least one per-tech run to confirm the pipeline handles all data shapes.
 
 ---
 

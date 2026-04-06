@@ -17,12 +17,7 @@ htmlcov/
 
 # Simulation results (generated at runtime)
 results/
-tests/verify_bsimcmg_dc_results/
-tests/verify_bsimcmg_op_results/
-tests/verify_bsimcmg_tran_results/
-tests/verify_bsimcmg_tran_comprehensive_results/
-tests/verify_multi_tech_tran_results/
-tests/verify_nn_tran_results/
+tests/verify_*_results/
 
 # Generated plans (session artifacts)
 docs/plans/
@@ -48,6 +43,13 @@ debug_*
 
 # Duplicate model files (originals in pycircuitsim/models/)
 external_compact_models/*.py
+
+# BSIMAR checkpoints (large binaries, regenerable via training)
+external_compact_models/BSIMAR/checkpoints/
+
+# Experiment temp files
+exp_pids.txt
+exp_queue.log
 
 # Claude Code
 .claude_statusline_exec.sh
