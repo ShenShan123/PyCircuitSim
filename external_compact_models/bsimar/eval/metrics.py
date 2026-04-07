@@ -11,7 +11,7 @@ def compute_physical_metrics(
     pred_norm: np.ndarray,
     true_norm: np.ndarray,
     normalizer,
-    mre_threshold_pct: float = 0.01,
+    mre_threshold_pct: float = 0.001,
 ) -> Dict[str, Dict[str, float]]:
     """Compute per-output metrics after denormalization.
 
@@ -23,6 +23,10 @@ def compute_physical_metrics(
         true_norm: (N, 13) normalized ground truth.
         normalizer: Fitted normalizer with denormalize_outputs() method.
         mre_threshold_pct: MRE filter as fraction of peak |y| per target.
+            Default 0.1% of peak |y|; small currents matter for the
+            circuit-simulator use case (BSIMAR is consumed at LEVEL=74)
+            and must not be filtered out. Only the bottom 0.1%-of-peak
+            samples (pure numerical noise from PyCMG) are excluded.
 
     Returns:
         Dict mapping output name to metric dict.

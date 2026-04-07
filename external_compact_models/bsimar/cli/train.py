@@ -99,6 +99,14 @@ def _run_direct(args: argparse.Namespace) -> None:
 # ── Transformer subcommand ───────────────────────────────────────────────────
 
 def _run_transformer(args: argparse.Namespace) -> None:
+    if args.norm_mode == "signedlog":
+        sys.exit(
+            "signedlog normalization is unstable for the autoregressive "
+            "transformer (inv_signed_log amplifies AR-accumulated errors "
+            "catastrophically — see CLAUDE.md smoke-test notes). Use "
+            "--norm-mode zscore."
+        )
+
     if args.universal:
         data_path = (Path(args.data) if args.data
                      else DATA_DIR / f"universal_{args.device_type}.npz")
@@ -153,6 +161,7 @@ def _run_transformer(args: argparse.Namespace) -> None:
         config=config,
         device_str=device_str,
         column_names=OUTPUT_COLUMNS,
+        overwrite=args.overwrite,
     )
 
 
@@ -179,7 +188,7 @@ def main() -> None:
     parser.add_argument("--epochs", type=int, default=500)
     parser.add_argument("--batch-size", type=int, default=1024)
     parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--patience", type=int, default=50)
+    parser.add_argument("--patience", type=int, default=10)
     parser.add_argument("--cuda", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
 
@@ -213,7 +222,13 @@ def main() -> None:
     parser.add_argument("--num-layers", type=int, default=6)
     parser.add_argument("--dim-feedforward", type=int, default=1024)
     parser.add_argument("--dropout", type=float, default=0.2)
-    parser.add_argument("--reorder", action="store_true")
+    parser.add_argument("--reorder", dest="reorder", action="store_true",
+                        default=True,
+                        help="[transformer] Reorder outputs to paper's "
+                             "Q-V → I-V → C-V order (default: on)")
+    parser.add_argument("--no-reorder", dest="reorder", action="store_false",
+                        help="[transformer] Disable output reordering "
+                             "(falls back to OUTPUT_COLUMN_ORDER)")
     parser.add_argument("--scheduled-sampling", action="store_true")
     parser.add_argument("--ss-warmup", type=int, default=100)
     parser.add_argument("--ss-max-ratio", type=float, default=0.5)
@@ -221,6 +236,9 @@ def main() -> None:
     parser.add_argument("--curriculum", action="store_true")
     parser.add_argument("--curriculum-warmup", type=int, default=50)
     parser.add_argument("--exp-name", type=str, default=None)
+    parser.add_argument("--overwrite", action="store_true",
+                        help="[transformer] Allow overwriting an existing "
+                             "<save_prefix>_best.pt checkpoint")
 
     # Loss weights (shared semantics, used only by their respective models)
     parser.add_argument("--w-curr", type=float, default=1.0,

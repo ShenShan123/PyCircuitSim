@@ -46,13 +46,14 @@ OUTPUT_COLUMN_ORDER = [
     "cgg", "cgd", "cgs", "cdg", "cdd",
 ]
 
-# BSIM-AR autoregressive order: easy targets first, hardest (id) last.
-# Charges (well-behaved, smooth) -> capacitances -> conductances -> current.
+# BSIM-AR autoregressive order: paper §4.2 — Q-V → I-V → C-V.
+# This matches the BSIM-CMG physical derivative chain (∂Q/∂V → I, then
+# ∂I/∂V → g, then ∂Q/∂V → C). Currents and conductances are emitted before
+# capacitances so each token conditions on its physical predecessor.
 BSIMAR_COLUMN_ORDER = [
-    "qg", "qd", "qs", "qb",
-    "cgg", "cgd", "cgs", "cdg", "cdd",
-    "gm", "gds", "gmb",
-    "id",
+    "qg", "qb", "qd", "qs",                          # Q-V
+    "id", "gm", "gds", "gmb",                        # I-V (currents + conductances)
+    "cgg", "cgd", "cgs", "cdg", "cdd",               # C-V
 ]
 
 # Permutation indices: BSIMAR_COLUMN_ORDER[i] == OUTPUT_COLUMN_ORDER[_REORDER_IDX[i]]
@@ -317,7 +318,12 @@ class BSIMARNormalizer:
 
             output_mean = outputs.mean(axis=0)
             output_std = outputs.std(axis=0)
-            output_std[output_std < 1e-30] = 1.0
+            # Match Normalizer / input_std clip threshold. The previous
+            # 1e-30 sentinel was a no-op for float64 std (lower bound
+            # ~1e-154); a borderline-constant column with std~1e-20 would
+            # blow up normalization. 1e-12 is the same threshold we use
+            # for input_std a few lines above.
+            output_std[output_std < 1e-12] = 1.0
 
             self.stats = BSIMARNormStats(
                 mode="zscore",

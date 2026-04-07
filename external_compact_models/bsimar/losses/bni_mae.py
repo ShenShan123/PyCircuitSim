@@ -34,7 +34,7 @@ def compute_lds_weights_per_target(
     n_bins: int = 100,
     lds_kernel: str = "gaussian",
     lds_ks: int = 5,
-    lds_sigma: float = 2.0,
+    lds_sigma: float = 0.8,
     strategy: str = "uniform",
 ) -> np.ndarray:
     """Compute LDS weights for each target dimension.

@@ -5,6 +5,6 @@
 """
 
 from bsimar.models.direct_net import DirectNet
-from bsimar.models.transformer import TransformerEncoderModel, PositionalEncoding
+from bsimar.models.transformer import TransformerEncoderModel
 
-__all__ = ["DirectNet", "TransformerEncoderModel", "PositionalEncoding"]
+__all__ = ["DirectNet", "TransformerEncoderModel"]
