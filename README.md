@@ -5,14 +5,17 @@
 **Pure Python Circuit Simulator with Compact-Model Research Bench**
 
 A clean, readable SPICE-like circuit simulator with three coexisting
-compact-model families:
+compact-model families that share the same solver:
 
-- **BSIM-CMG** (LEVEL=72) via PyCMG/OSDI — the ground-truth FinFET model.
-- **DirectNet** (LEVEL=73) — a PyTorch MLP baseline compact model.
-- **BSIM-AR Transformer** (LEVEL=74) — a PyTorch autoregressive compact model.
+- **BSIM-CMG** (LEVEL=72) via PyCMG/OSDI — production-grade FinFET ground truth.
+- **DirectNet** (LEVEL=73) — PyTorch MLP baseline.
+- **BSIM-AR Transformer** (LEVEL=74) — autoregressive compact model that
+  predicts I-V, Q-V, and C-V curves token-by-token.
 
-DirectNet and BSIM-AR share the same data pipeline and evaluation harness,
-so DirectNet can be used as a reference baseline for BSIM-AR research.
+DirectNet and BSIM-AR live side-by-side in the unified `bsimar` package
+(`external_compact_models/bsimar/`) and share data generation,
+normalization, losses, training, metrics, and visualization. DirectNet
+acts as the baseline for BSIM-AR research.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -21,7 +24,6 @@ so DirectNet can be used as a reference baseline for BSIM-AR research.
 
 ## Table of Contents
 
-- [Overview](#overview)
 - [Features](#features)
 - [Installation](#installation)
 - [Quick Start](#quick-start)
@@ -36,42 +38,6 @@ so DirectNet can be used as a reference baseline for BSIM-AR research.
 - [Development](#development)
 - [Limitations](#limitations)
 - [References](#references)
-
----
-
-## Overview
-
-PyCircuitSim is a pure-Python, HSPICE-compatible circuit simulator that
-doubles as a research bench for NN-based compact models. It pairs a
-readable MNA + Newton-Raphson solver with:
-
-- **BSIM-CMG** (LEVEL=72) via PyCMG/OSDI — the production-grade FinFET
-  compact model used as ground truth.
-- **DirectNet** (LEVEL=73) — a fast PyTorch MLP baseline compact model.
-- **BSIM-AR Transformer** (LEVEL=74) — an autoregressive Transformer
-  compact model that predicts I-V, Q-V, and C-V curves token-by-token.
-
-DirectNet and BSIM-AR live side-by-side in the unified `bsimar` package
-(`external_compact_models/bsimar/`) and share data generation,
-normalization, loss functions, training orchestration, metrics, and
-visualization. DirectNet acts as the baseline for comparison.
-
-### Key Design Goals
-
-- **Educational Clarity**: Clean, well-documented code that's easy to understand and modify.
-- **Modular Architecture**: Complete separation between solver engine and device models.
-- **Compact Model Integration**: BSIM-CMG (LEVEL=72) via PyCMG/OSDI, plus two PyTorch NN compact models (LEVEL=73/74) with autograd Jacobian consistency.
-- **HSPICE Compatibility**: Supports standard SPICE netlist syntax.
-- **Research-friendly**: All three model families go through the same solver, so you can swap LEVEL=72/73/74 on the same netlist.
-
-### What It Does
-
-PyCircuitSim simulates electronic circuits using:
-- **Modified Nodal Analysis (MNA)** — sparse matrix assembly (`scipy.sparse` + `spsolve`).
-- **Newton-Raphson iteration** with SPICE-standard convergence (RELTOL + VNTOL).
-- **BE → Trapezoidal → BDF-2 integration** for transient analysis (BE first step, Trapezoidal by default, BDF-2 auto-switches on stiffness).
-- **BSIM-CMG compact models** for FinFET device simulation (ASAP7 7nm, TSMC 5/7/12/16nm).
-- **NN-based compact models** (LEVEL=73 DirectNet, LEVEL=74 BSIM-AR) via PyTorch with autograd Jacobian consistency.
 
 ---
 
@@ -375,12 +341,10 @@ compact-model families plus a passive-only RC reference:
 | `examples/bsimar_inverter_dc.sp` | DC sweep | LEVEL=74 | BSIM-AR inverter VTC |
 | `examples/rc_transient.sp` | Transient | passives | Pure RC reference |
 
-### BSIM-CMG: FinFET Inverter Transient (ASAP7 7nm)
-
-File: `examples/bsimcmg_inverter_tran.sp`
+### Sample: BSIM-CMG FinFET Inverter Transient (ASAP7 7nm)
 
 ```spice
-* BSIM-CMG CMOS Inverter - ASAP7 7nm FinFET
+* examples/bsimcmg_inverter_tran.sp
 Vdd 1 0 0.7
 Vin 2 0 PULSE 0 0.7 0.5n 0.1n 0.1n 0.8n 2n
 
@@ -389,95 +353,25 @@ Mn1 3 2 0 0 nmos1 L=30n NFIN=10
 Cload 3 0 10f
 
 .ic V(3)=0.7
-
 .model nmos1 NMOS (LEVEL=72)
 .model pmos1 PMOS (LEVEL=72)
-
 .tran 10p 5n
-
 .end
 ```
 
-```bash
-python main.py examples/bsimcmg_inverter_tran.sp
-```
-
-### DirectNet: NMOS DC Sweep (LEVEL=73)
-
-```bash
-python main.py examples/nn_nmos_dc.sp
-```
-
-### BSIM-AR: Inverter DC Sweep (LEVEL=74)
-
-```bash
-python main.py examples/bsimar_inverter_dc.sp
-```
-
-### RC Transient
-
-```bash
-python main.py examples/rc_transient.sp
-```
+Run any example with `python main.py examples/<file>.sp`.
 
 ---
 
 ## Python API
 
-### Basic Usage
-
 ```python
+# High-level: parse + solve + plot in one call
 from pycircuitsim.simulation import run_simulation
+run_simulation('examples/bsimcmg_inverter_tran.sp',
+               output_dir='my_results', verbose=True)
 
-# Run a simulation from a netlist file
-run_simulation(
-    netlist_path='examples/bsimcmg_inverter_tran.sp',
-    output_dir='my_results',
-    verbose=True
-)
-```
-
-### Direct Solver Access
-
-```python
-from pycircuitsim import Parser, DCSolver
-
-# Parse netlist
-parser = Parser()
-parser.parse_file('examples/bsimcmg_inverter_dc.sp')
-circuit = parser.circuit
-
-# Run DC analysis
-solver = DCSolver(circuit)
-solution = solver.solve()
-
-# Access node voltages
-for node, voltage in solution.items():
-    print(f"{node}: {voltage:.4f} V")
-
-# Calculate device currents
-for component in circuit.components:
-    current = component.calculate_current(solution)
-    print(f"{component.name}: {current:.6f} A")
-```
-
-### DC Sweep
-
-```python
-from pycircuitsim.simulation import run_dc_sweep
-from pycircuitsim import Parser
-
-parser = Parser()
-parser.parse_file('examples/bsimcmg_inverter_dc.sp')
-circuit = parser.circuit
-
-# run_dc_sweep returns sweep values and results dict
-sweep_values, results = run_dc_sweep(circuit)
-```
-
-### Transient Analysis
-
-```python
+# Low-level: drive the solver directly
 from pycircuitsim import Parser
 from pycircuitsim.solver import DCSolver, TransientSolver
 
@@ -485,18 +379,14 @@ parser = Parser()
 parser.parse_file('examples/bsimcmg_inverter_tran.sp')
 circuit = parser.circuit
 
-# First solve DC operating point
-dc_solver = DCSolver(circuit)
-dc_solution = dc_solver.solve()
-
-# Then run transient
-tran_solver = TransientSolver(circuit)
-time_points, results = tran_solver.solve(
-    tstep=10e-12,    # 10 ps
-    tstop=5e-9,      # 5 ns
-    dc_solution=dc_solution
+dc_solution = DCSolver(circuit).solve()
+time_points, waveforms = TransientSolver(circuit).solve(
+    tstep=10e-12, tstop=5e-9, dc_solution=dc_solution,
 )
 ```
+
+`pycircuitsim.simulation` also exposes `run_dc_sweep()` and
+`run_transient()` for the full orchestrated workflow.
 
 ---
 
@@ -542,34 +432,8 @@ Vin (V),V(1),V(2),V(3),i(Vdd),i(Vin)
 Both NN compact-model families live in the unified `bsimar` package at
 `external_compact_models/bsimar/`. DirectNet is the baseline; BSIM-AR
 is the primary Transformer model; they share every layer below the
-model architecture itself:
-
-```
-external_compact_models/bsimar/
-├── config.py                 # TECH_CONFIGS + DirectNetConfig + TransformerConfig
-├── data/
-│   ├── normalize.py          # Normalizer (signed-log) + BSIMARNormalizer (zscore / signedlog)
-│   ├── dataset.py            # MOSFETDataset + load_and_split{,_bsimar} + small-value filtering
-│   └── analyze.py            # Dataset-quality reports (distribution, outliers, physical sanity)
-├── models/
-│   ├── direct_net.py         # DirectNet MLP (baseline)
-│   └── transformer.py        # TransformerEncoderModel (autoregressive, primary)
-├── losses/
-│   ├── direct_loss.py        # DirectLoss + ChargeConsistencyLoss
-│   └── bni_mae.py            # WeightedBNILoss + MAELoss + LDS reweighting
-├── training/
-│   ├── early_stopping.py
-│   └── trainer.py            # train_directnet, train_transformer, per-epoch helpers
-├── eval/
-│   ├── metrics.py            # compute_physical_metrics, print_metrics
-│   └── visualization.py      # scatter / loss-curve plots
-├── utils/seed.py
-├── cli/train.py              # Unified CLI entry point
-├── checkpoints/              # Trained weights — gitignored
-│   └── pretrained/           # Legacy pretrained .pth files from the paper
-├── results/                  # Training plots — gitignored
-└── docs/                     # Reference paper, ablation notes
-```
+model architecture itself (data, normalization, losses, training, eval).
+See [Architecture](#architecture) for the package layout.
 
 ### Data Generation
 
@@ -713,31 +577,19 @@ python tests/verify_bsimcmg_tran.py
 
 #### Comprehensive Transient (21 Configurations)
 
-The comprehensive suite sweeps VDD, Cload, input slew, pulse width, NFIN scaling, and P/N ratio. All 21 configurations pass (NRMSE < 5%).
+Sweeps VDD (0.5-0.8 V), Cload (1-100 fF), input slew (10-500 ps),
+pulse width (0.2-2.0 ns), NFIN scaling (1-20), and P/N ratio (0.5-2.0).
+**All 21 configs PASS (NRMSE < 5%); worst case 0.84% NRMSE / 42 mV at
+Cload=1fF.** Representative rows:
 
-| Config | VDD | NFIN_N/P | Cload | tr/tf | pw | NRMSE(%) | MaxErr(mV) | Status |
-|--------|-----|----------|-------|-------|----|----------|------------|--------|
-| vdd_0p5 | 0.50V | 10/10 | 10fF | 100ps | 0.8ns | 0.14 | 4.7 | PASS |
-| vdd_0p6 | 0.60V | 10/10 | 10fF | 100ps | 0.8ns | 0.17 | 6.1 | PASS |
-| baseline | 0.70V | 10/10 | 10fF | 100ps | 0.8ns | 0.19 | 7.6 | PASS |
-| vdd_0p8 | 0.80V | 10/10 | 10fF | 100ps | 0.8ns | 0.21 | 12.9 | PASS |
-| cload_1fF | 0.70V | 10/10 | 1fF | 100ps | 0.8ns | 0.84 | 42.0 | PASS |
-| cload_5fF | 0.70V | 10/10 | 5fF | 100ps | 0.8ns | 0.37 | 20.8 | PASS |
-| cload_50fF | 0.70V | 10/10 | 50fF | 100ps | 0.8ns | 0.04 | 1.7 | PASS |
-| cload_100fF | 0.70V | 10/10 | 100fF | 100ps | 0.8ns | 0.02 | 0.9 | PASS |
-| slew_10ps | 0.70V | 10/10 | 10fF | 10ps | 0.8ns | 0.01 | 0.9 | PASS |
-| slew_50ps | 0.70V | 10/10 | 10fF | 50ps | 0.8ns | 0.09 | 4.0 | PASS |
-| slew_500ps | 0.70V | 10/10 | 10fF | 500ps | 0.8ns | 0.05 | 3.8 | PASS |
-| pw_0p2ns | 0.70V | 10/10 | 10fF | 100ps | 0.2ns | 0.26 | 7.6 | PASS |
-| pw_0p5ns | 0.70V | 10/10 | 10fF | 100ps | 0.5ns | 0.22 | 7.6 | PASS |
-| pw_2p0ns | 0.70V | 10/10 | 10fF | 100ps | 2.0ns | 0.13 | 7.6 | PASS |
-| nfin_1 | 0.70V | 1/1 | 10fF | 100ps | 0.8ns | 0.02 | 0.9 | PASS |
-| nfin_2 | 0.70V | 2/2 | 10fF | 100ps | 0.8ns | 0.04 | 1.7 | PASS |
-| nfin_5 | 0.70V | 5/5 | 10fF | 100ps | 0.8ns | 0.11 | 4.1 | PASS |
-| nfin_20 | 0.70V | 20/20 | 10fF | 100ps | 0.8ns | 0.37 | 20.8 | PASS |
-| pn_0p5 | 0.70V | 10/5 | 10fF | 100ps | 0.8ns | 0.16 | 7.6 | PASS |
-| pn_1p5 | 0.70V | 10/15 | 10fF | 100ps | 0.8ns | 0.20 | 7.9 | PASS |
-| pn_2p0 | 0.70V | 10/20 | 10fF | 100ps | 0.8ns | 0.23 | 12.9 | PASS |
+| Config | VDD | Cload | NRMSE(%) | MaxErr(mV) |
+|--------|-----|-------|----------|------------|
+| baseline | 0.70V | 10fF | 0.19 | 7.6 |
+| vdd_0p5 | 0.50V | 10fF | 0.14 | 4.7 |
+| vdd_0p8 | 0.80V | 10fF | 0.21 | 12.9 |
+| cload_1fF (worst) | 0.70V | 1fF | 0.84 | 42.0 |
+| cload_100fF | 0.70V | 100fF | 0.02 | 0.9 |
+| nfin_20 | 0.70V | 10fF | 0.37 | 20.8 |
 
 #### NN Transient (LEVEL=73, 5 Technologies)
 
@@ -841,20 +693,15 @@ results/                            # Simulation output (generated at runtime)
 
 ### Design Principles
 
-1. **Separation of Concerns**
-   - Solver builds matrices and iterates (no device equations)
-   - Device models compute current/conductances from voltages (no matrix operations)
-   - Simulation orchestrates the workflow (parse -> solve -> visualize)
-
-2. **Modularity**
-   - All devices inherit from the `Component` base class
-   - Common interface: `calculate_current()`, `get_conductances()`
-   - New devices can be added without modifying the solver
-
-3. **Compact Model Integration**
-   - BSIM-CMG models are accessed via PyCMG's ctypes-based OSDI interface
-   - The `mosfet_cmg.py` module wraps PyCMG's `Model`/`Instance` classes
-   - Intrinsic capacitances (Cgd, Cgs, Cdd) are extracted for transient analysis
+- **Separation of concerns** — solver builds matrices and iterates (no
+  device equations); device models compute currents/conductances from
+  voltages (no matrix ops); `simulation.py` orchestrates the workflow.
+- **Modularity** — every device inherits from `Component` and exposes a
+  common interface (`calculate_current()`, `get_conductances()`); new
+  devices can be added without touching the solver.
+- **Drop-in compact models** — LEVEL=72/73/74 share sign conventions
+  and Jacobian-via-autograd contracts so the same netlist runs against
+  any of the three.
 
 ---
 
@@ -922,120 +769,50 @@ Trapezoidal (step 2+):    i(t+dt) = (2C/dt) * [v(t+dt) - v(t)] - i(t)
 
 ## Development
 
-### Adding New Components
+**Adding a new component:** subclass `pycircuitsim.models.base.Component`,
+implement `stamp_conductance()`, `stamp_rhs()`, and `calculate_current()`,
+then register the new prefix in `pycircuitsim/parser.py` (and in
+`solver._is_mosfet()` if it's a MOSFET-like nonlinear device).
 
-1. Create a component class inheriting from `Component` in `pycircuitsim/models/`:
+**Coding style:** type hints on all signatures, descriptive variable
+names (`v_gate`, `i_drain`), docstrings on public APIs, stdlib →
+third-party → local import order.
 
-```python
-from pycircuitsim.models.base import Component
-
-class Inductor(Component):
-    def __init__(self, name: str, nodes: list, value: float):
-        super().__init__(name, nodes, value)
-
-    def stamp_conductance(self, mna_matrix, node_map):
-        # Add inductor entries to MNA matrix
-        pass
-
-    def stamp_rhs(self, rhs, node_map):
-        # Add current to RHS vector
-        pass
-
-    def calculate_current(self, voltages: dict) -> float:
-        # Calculate branch current from node voltages
-        pass
-```
-
-2. Register in parser (`pycircuitsim/parser.py`)
-3. Add to `_is_mosfet()` or equivalent type helpers in solver if needed
-4. Write tests
-
-### Coding Style
-
-- **Type hints**: Required for all function signatures
-- **Variable names**: Descriptive (`v_gate`, `i_drain`, not `a`, `b`)
-- **Docstrings**: Required for public APIs
-- **Import order**: stdlib, third-party, local
-
-### Debugging Tips
-
-Enable verbose logging to see Newton-Raphson convergence:
-
-```bash
-python main.py circuit.sp -v
-```
-
-Check `.lis` files for iteration counts, convergence status, and device currents.
+**Debugging:** `python main.py circuit.sp -v` shows Newton-Raphson
+iterations; the `.lis` file records per-step convergence and final
+device currents.
 
 ---
 
 ## Limitations
 
-PyCircuitSim is intentionally simplified for educational use:
+PyCircuitSim is intentionally simplified for educational use.
 
-### Not Supported
+**Not supported:** inductors, mutual inductance, `.noise`, `.option`,
+`.measure`, `.param`, subcircuits (`.subckt`).
 
-- Inductors (L)
-- Mutual inductance (transformers)
-- Noise analysis (.noise)
-- Complex directives (.option, .measure, .param)
-- Subcircuits (.subckt)
-
-### Known Limitations
-
-- **Speed**: Pure Python is ~10-100x slower than compiled simulators
-- **Scale**: Tested on circuits with <100 components
-- **Convergence**: May fail on strongly non-linear circuits without source stepping
-
-### When to Use Other Tools
-
-Consider ngspice, Xyce, or Spectre for:
-- Production IC design
-- Large-scale circuits (>1000 components)
-- High-frequency or RF simulation
-
----
+**Known limits:** pure Python is ~10-100× slower than compiled
+simulators; tested on circuits with <100 components; strongly
+non-linear circuits may need source stepping. For production IC
+design, large netlists (>1000 components), or RF/high-frequency
+simulation, use ngspice / Xyce / Spectre.
 
 ## Future Work
 
-- [ ] Adaptive output timestep (variable-length output array with true adaptive dt)
-- [ ] BDF-2/Gear integration for stiff circuits (SRAM, ring oscillators)
-- [ ] Expanded test suite (NAND/NOR gates, ring oscillator, SRAM)
-- [ ] Inductor support
-- [ ] AC small-signal analysis
-- [ ] Subcircuit support (.subckt)
-
----
+- [ ] Adaptive output timestep
+- [ ] Expanded SRAM / ring-oscillator test suite
+- [ ] Inductor support, AC small-signal, `.subckt`
 
 ## References
 
-### Software
-
-- **ngspice** - Open-source SPICE simulator ([ngspice.sourceforge.net](http://ngspice.sourceforge.net)). Reference for netlist syntax and device equations.
-- **PyCMG** - Python BSIM-CMG OSDI wrapper ([github.com/ShenShan123/PyCMG](https://github.com/ShenShan123/PyCMG)). Provides ctypes-based OSDI interface for compact models.
-- **ASAP7 PDK** - Arizona State Predictive 7nm PDK ([github.com/The-OpenROAD-Project/asap7_pdk_r1p7](https://github.com/The-OpenROAD-Project/asap7_pdk_r1p7)). FinFET modelcards used for BSIM-CMG validation.
-- **Xyce** - Parallel electronic simulator ([xyce.sandia.gov](https://xyce.sandia.gov)). Architectural patterns for solver-device separation.
-
-### Academic
-
-- Shichman, H., & Hodges, D. A. (1968). "Modeling and Simulation of Insulated-Gate Field-Effect Transistor Switching Circuits." *IEEE JSSC*.
-- Nagel, L. W. (1975). "SPICE2: A Computer Program to Simulate Semiconductor Circuits." *ERL-M520*, UC Berkeley.
-
----
+- **ngspice** — open-source SPICE simulator ([ngspice.sourceforge.net](http://ngspice.sourceforge.net)). Reference for netlist syntax and device equations.
+- **PyCMG** — Python BSIM-CMG OSDI wrapper ([github.com/ShenShan123/PyCMG](https://github.com/ShenShan123/PyCMG)).
+- **ASAP7 PDK** — Arizona State Predictive 7nm PDK ([github.com/The-OpenROAD-Project/asap7_pdk_r1p7](https://github.com/The-OpenROAD-Project/asap7_pdk_r1p7)).
+- **Xyce** — parallel electronic simulator ([xyce.sandia.gov](https://xyce.sandia.gov)). Architectural patterns for solver-device separation.
+- Shichman & Hodges (1968), "Modeling and Simulation of Insulated-Gate Field-Effect Transistor Switching Circuits," *IEEE JSSC*.
+- Nagel, L. W. (1975), "SPICE2: A Computer Program to Simulate Semiconductor Circuits," *ERL-M520*, UC Berkeley.
 
 ## License
 
-MIT License - see LICENSE file for details.
-
----
-
-## Acknowledgments
-
-Developed as an educational tool to demonstrate SPICE-like simulation in pure Python. Inspired by ngspice, Xyce, and the original SPICE2 from UC Berkeley.
-
----
-
-## Contact
-
-- GitHub Issues: https://github.com/ShenShan123/PyCircuitSim/issues
-- Discussions: https://github.com/ShenShan123/PyCircuitSim/discussions
+MIT — see [LICENSE](LICENSE). Inspired by ngspice, Xyce, and SPICE2.
+Issues / discussions: <https://github.com/ShenShan123/PyCircuitSim>.
