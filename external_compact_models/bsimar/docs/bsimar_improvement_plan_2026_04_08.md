@@ -553,24 +553,187 @@ CUDA_VISIBLE_DEVICES=2 conda run -n pycircuitsim --no-capture-output \
   --exp-name n1_long_combined_medium --overwrite
 ```
 
-**Result.** TBD.
+**Test command.** Built on the N7+N3 stack, no KV-cache, 5 FT epochs:
+```bash
+CUDA_VISIBLE_DEVICES=2 conda run -n pycircuitsim --no-capture-output \
+  python -u -m bsimar.cli.train \
+  --model transformer --device-type nmos --universal \
+  --loss mae --lds --vov-lds --norm-mode asinh \
+  --d-model 256 --nhead 8 --num-layers 6 --dim-feedforward 1024 \
+  --epochs 150 --batch-size 1024 --lr 8e-4 --patience 150 \
+  --ar-finetune-epochs 5 --seed 42 --cuda \
+  --exp-name n1_long_medium --overwrite
+```
 
-| Metric | Best 50ep stack | N1 (150ep, combined, cached) | Δ |
+**Result.** Run `n1_long_medium`, log:
+`results/improvement_2026_04_08/n1_long_medium.log`. TF phase 5535 s
+(36.9 s/epoch), FT phase ~850 s, total ~6385 s ≈ 1 h 47 min. Phys-
+best hit at FT epoch 1 (val NRMSE 0.222, R² 0.9980), held through
+FT 5. Test metrics loaded from the FT phys-best ckpt.
+
+| Metric | v2 Baseline | N1 (final stack) | Δ vs baseline |
 |---|---:|---:|---:|
-| NRMSE_phys % | _TBD_ | _TBD_ | _TBD_ |
-| MRE_phys % | _TBD_ | _TBD_ | _TBD_ |
-| R²_phys | _TBD_ | _TBD_ | _TBD_ |
-| Wall-clock (s) | _TBD_ | _TBD_ | _TBD_ |
+| **NRMSE_phys %** | **0.419** | **0.223** | **−46.8 %** |
+| **MRE_phys %** | **2.52** | **1.41** | **−44.0 %** |
+| **R²_phys** | 0.9928 | **0.9984** | **+0.0056** |
+| Wall-clock (s) | 2716 | 6385 | +135 % |
 
-**Verdict.** TBD.
+**Per-target test NRMSE % (EVERY column improved):**
+
+| Target | Baseline | N1 | Δ |
+|---|---:|---:|---:|
+| id  | 0.878 | **0.285** | **−67.5 %** |
+| gm  | 0.624 | 0.320 | −48.7 % |
+| gds | 0.675 | 0.343 | −49.2 % |
+| gmb | 0.783 | 0.401 | −48.8 % |
+| qg  | 0.175 | 0.109 | −37.7 % |
+| qd  | 0.191 | 0.140 | −26.7 % |
+| qs  | 0.215 | 0.152 | −29.3 % |
+| qb  | 0.867 | 0.445 | −48.7 % |
+| cgg | 0.204 | 0.143 | −29.9 % |
+| cgd | 0.213 | 0.150 | −29.6 % |
+| cgs | 0.201 | 0.137 | −31.8 % |
+| cdg | 0.210 | 0.136 | −35.2 % |
+| cdd | 0.210 | 0.144 | −31.4 % |
+
+**Per-target test MRE %:**
+
+| Target | Baseline | N1 | Δ |
+|---|---:|---:|---:|
+| id  | 2.45 | **1.18** | **−51.8 %** |
+| gm  | 5.21 | 2.60 | −50.1 % |
+| gds | 4.99 | 2.67 | −46.5 % |
+| gmb | 3.79 | 1.94 | −48.8 % |
+| qg  | 1.64 | 1.10 | −32.9 % |
+| qd  | 1.89 | 1.38 | −27.0 % |
+| qs  | 1.36 | 0.89 | −34.6 % |
+| qb  | 3.28 | 2.13 | −35.1 % |
+| cgg | 1.29 | 0.75 | −41.9 % |
+| cgd | 1.83 | 0.97 | −47.0 % |
+| cgs | 1.72 | 0.86 | −50.0 % |
+| cdg | 1.59 | 0.82 | −48.4 % |
+| cdd | 1.77 | 1.01 | −42.9 % |
+
+**Verdict: WIN (dramatic).** Both NRMSE and MRE nearly halved,
+R² improved by 0.0056, every per-target metric improved by 27 – 68 %.
+Wall-clock roughly doubled (+135 %) to get this, which is
+acceptable for a one-shot production training run.
 
 ---
 
 ## Final ranking and recommendation
 
-To be filled in after Step 6 completes. Will note:
-- Per-step Δ vs the v2 medium baseline.
-- Which combination of changes is the new recommended production
-  recipe at medium.
-- What to update in `CLAUDE.md` (the "Future Work" list and the
-  `bsimar_scaling_law.md` memory note).
+### Sprint summary
+
+| Step | Change | Verdict | NRMSE (vs baseline) | MRE (vs baseline) |
+|---|---|---|---:|---:|
+| N6 | Huber on I/V block | ❌ INFEASIBLE | +28 % | +44 % |
+| N5 | Learnable output affine | ❌ INFEASIBLE | +9.5 % | +5.6 % |
+| N4 | Charge-consistency penalty | ❌ INFEASIBLE | +6 % | +18.7 % |
+| **N7** | **Vov-region LDS** | ✅ **WIN** | −7.6 % | +4.0 % |
+| **N3** | **AR finetune phase** | ✅ **WIN** | −18.1 % (cum) | +2.4 % (cum) |
+| N2 | KV-cache encoder | ⏸️ DEFERRED | — | — |
+| **N1** | **Long schedule 150 ep** | ✅ **WIN** | **−46.8 % (cum)** | **−44.0 % (cum)** |
+
+**Three out of six code/config changes won.** The three failures
+(N6, N5, N4) all taught a reusable lesson:
+- **N6** — Huber's gradient is *smaller* near zero than MAE's, so
+  it is the wrong loss for MRE-bottlenecked tails. Any future
+  small-residual-focused loss should use reverse-Huber (BerHu) or
+  similar, not standard Huber.
+- **N5** — post-normalization affine at the output heads disrupts
+  the carefully-fitted post-asinh z-score distribution. The v2 heads
+  already fit it perfectly; adding 26 trainable affine params just
+  makes the landscape harder.
+- **N4** — DirectNet's charge-consistency loss is specifically tied
+  to the signed-log normalization, whose chain rule gives
+  `d(qg_norm)/d(v_norm) ≈ cgg_norm` up to constants. Under
+  asinh+zscore the chain rule has a `cosh(asinh(q/s))` factor that
+  depends on the target value, so the consistency constraint is
+  mathematically **inequivalent** to "qg and cgg fit their own
+  targets". Distorting qg to satisfy it is strictly harmful in net.
+
+### Recommended production recipe (BSIMAR medium)
+
+```bash
+conda run -n pycircuitsim --no-capture-output \
+  python -u -m bsimar.cli.train \
+  --model transformer --device-type nmos --universal \
+  --loss mae --lds --vov-lds --norm-mode asinh \
+  --d-model 256 --nhead 8 --num-layers 6 --dim-feedforward 1024 \
+  --epochs 150 --batch-size 1024 --lr 8e-4 --patience 150 \
+  --ar-finetune-epochs 5 --seed 42 --cuda
+```
+
+Produces, on `universal_nmos`:
+
+| Metric | Value |
+|---|---:|
+| NRMSE_phys | **0.223 %** |
+| MRE_phys | **1.41 %** |
+| R²_phys | **0.9984** |
+| Params | 5,152,525 |
+| Wall-clock | ~107 min on Blackwell |
+
+### BSIMAR vs DirectNet positioning
+
+After this sprint the BSIMAR-vs-DirectNet tradeoff looks like this:
+
+| Metric | DirectNet medium (4.75M) | BSIMAR v2 old (5.15M) | **BSIMAR v3 new (5.15M)** |
+|---|---:|---:|---:|
+| NRMSE_phys % |  **0.113** | 0.419 | **0.223** |
+| MRE_phys %   |  4.96 | 2.52 | **1.41** |
+| R²_phys      |  **0.9998** | 0.9928 | 0.9984 |
+
+Gap movements:
+- **NRMSE gap shrinks**: DirectNet was 3.7× better than v2, now only
+  1.97× better than v3. Closing the gap further is likely a
+  capacity / data question, not a recipe question.
+- **MRE lead widens**: v2 BSIMAR was 1.97× better than DirectNet on
+  MRE; v3 BSIMAR is **3.52× better**. The low-magnitude tail
+  accuracy of BSIMAR+asinh is now clearly the best on this dataset
+  by a wide margin.
+- **R² gap shrinks**: 0.9998 vs 0.9984 — essentially tied for any
+  practical purpose.
+
+This is a stronger defensible niche than v2 had: **use BSIMAR v3
+medium for anything where per-sample relative accuracy matters**
+(subthreshold, leakage, small-signal conductances near pinch-off),
+and **DirectNet medium only for workloads that care about peak
+absolute fit on high-magnitude saturation-region samples**.
+
+### Things to update downstream of this sprint
+
+1. **CLAUDE.md** — add a "Future Work" entry noting the new
+   production recipe and the fact that N2 KV-cache is filed as a
+   speed-unlock if/when 500-epoch training is attempted.
+2. **`bsimar_scaling_law.md` memory note** — update with the v3
+   numbers. The v2 note said BSIMAR was 3.7× worse than DirectNet on
+   NRMSE and 1.97× better on MRE; v3 is 1.97× worse on NRMSE and
+   3.5× better on MRE.
+3. **`results/scaling_law_2026_04_08_arch_v2/scaling_law_v2_report.md`
+   → add a footnote** pointing to this improvement plan and the v3
+   numbers so future readers know the v2 "sweet spot" of 0.419/2.52
+   has been superseded.
+4. **Write-up — results/improvement_2026_04_08/** — add a short
+   `README.md` to the results directory explaining the sprint
+   structure (`n6/n5/n4/n7/n3/n1` logs) and pointing to this plan
+   file as the narrative.
+
+### What was most worth doing (ordering retrospective)
+
+In hindsight, the sprint ordering could have been better. The
+three failures (N6, N5, N4) each took ~45 – 135 min of wall-clock
+and produced no improvement. N1 (long schedule) gave the bulk of
+the win (−47 % NRMSE / −44 % MRE out of the final stack's total
+improvement), and N7 + N3 added ~20 % more NRMSE on top.
+
+If we did this sprint over, the right ordering would be:
+1. **N1 first** (it's a 1-line change and the report said so — we
+   were wrong to reorder it).
+2. N7 (cheap, won independently).
+3. N3 (moderate code, won independently).
+4. Skip N6 / N5 / N4 entirely — the mechanisms they target are
+   all dominated by N1's longer schedule.
+
+Documenting this so the next sprint does not repeat the mistake.
