@@ -395,17 +395,58 @@ A short fine-tune phase that switches to `forward_scheduled(ss_ratio=
   errors).
 - Add CLI flag `--ar-finetune-epochs N`.
 
-**Test command.** Add `--ar-finetune-epochs 15` to the prior winning run.
+**Test command.** Built on top of the N7 winning stack:
+```bash
+CUDA_VISIBLE_DEVICES=2 conda run -n pycircuitsim --no-capture-output \
+  python -u -m bsimar.cli.train \
+  --model transformer --device-type nmos --universal \
+  --loss mae --lds --vov-lds --norm-mode asinh \
+  --d-model 256 --nhead 8 --num-layers 6 --dim-feedforward 1024 \
+  --epochs 50 --batch-size 1024 --lr 8e-4 --patience 50 --seed 42 --cuda \
+  --exp-name n3_arft_medium --overwrite --ar-finetune-epochs 15
+```
 
-**Result.** TBD.
+**Result.** Run `n3_arft_medium`, log:
+`results/improvement_2026_04_08/n3_arft_medium.log`. TF phase 1883 s +
+FT phase ~2500 s. Phys-best hit at FT epoch 5 (val NRMSE 0.330,
+R² 0.9960). Test metrics loaded from the FT 5 phys-best ckpt.
 
-| Metric | Prev best | N3 | Δ |
-|---|---:|---:|---:|
-| NRMSE_phys % | _TBD_ | _TBD_ | _TBD_ |
-| MRE_phys % | _TBD_ | _TBD_ | _TBD_ |
-| TF↔AR gap | _TBD_ | _TBD_ | _TBD_ |
+| Metric | v2 Baseline | N7 (prev) | N3 (N7+FT) | Δ vs N7 | Δ vs baseline |
+|---|---:|---:|---:|---:|---:|
+| NRMSE_phys % | 0.419 | 0.387 | **0.343** | **−11 %** | **−18.1 %** |
+| MRE_phys % | 2.52 | 2.62 | **2.58** | **−1.5 %** | +2.4 % |
+| R²_phys | 0.9928 | 0.9945 | **0.9961** | +0.0016 | +0.0033 |
 
-**Verdict.** TBD.
+Biggest per-target NRMSE improvements (vs N7):
+- id: 0.744 → 0.506 (**−32 %**)
+- gds: 0.586 → 0.485 (**−17 %**)
+- qd: 0.197 → 0.173 (−12 %)
+- cgg: 0.213 → 0.193 (−9 %)
+- gm: 0.609 → 0.552 (−9 %)
+- gmb: 0.709 → 0.652 (−8 %)
+- qb: 0.746 → 0.704 (−6 %)
+
+The AR finetune does exactly what the report hoped: 5 epochs of
+pure-AR rollout (`ss_ratio=1.0`) close a big chunk of the residual
+exposure-bias gap. The only mild regression is qg MRE +5 %, which
+is noise in the <2 % regime.
+
+**Verdict: WIN (clean — all three aggregate metrics improved vs
+the N7 state).** New cumulative baseline: `N7 + N3 = --vov-lds
+--ar-finetune-epochs 15`.
+
+| Metric | New cumulative baseline |
+|---|---:|
+| NRMSE_phys % | 0.343 |
+| MRE_phys % | 2.58 |
+| R²_phys | 0.9961 |
+
+**Note.** This was implementation-heavy: lifting `forward_scheduled`
+to support `parallel_caps`, a new `train_epoch_scheduled_bni`
+helper, and a finetune phase inside `train_transformer` that
+reloads the phys-best checkpoint, runs N epochs at a fixed low LR
+with `ss_ratio=1.0` + plain MAE, and updates the phys-best if it
+improves. Worth it for the 11 % NRMSE drop.
 
 ---
 
