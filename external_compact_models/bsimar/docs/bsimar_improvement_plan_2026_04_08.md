@@ -154,16 +154,68 @@ free accuracy left in the under-resolved targets.
 - Persist the learned scale into `_norm.npz` next to the fitted scale
   so inference loads the trained value.
 
-**Test command.** Same as N6 but with `--learnable-asinh-scale` flag.
+**Implementation choice.** Modifying the asinh `s_k` mid-training
+requires re-deriving the per-target z-score (mean, std) on every
+update, which is invasive. We tested an *equivalent-DOF* simplification
+instead: a per-target trainable affine `gain[k] * raw_head_out[k] +
+bias[k]` after the per-target heads, initialised at the identity
+(gain=1, bias=0). The fixed denormaliser composes cleanly:
+`pred_phys = sinh((gain*raw + bias)*std_fixed + mean_fixed) * s_k`,
+so the affine can absorb a per-target asinh-scale correction without
+touching the data pipeline. +26 params (13 gains + 13 biases).
 
-**Result.** TBD.
+**Test command.**
+```bash
+CUDA_VISIBLE_DEVICES=2 conda run -n pycircuitsim --no-capture-output \
+  python -u -m bsimar.cli.train \
+  --model transformer --device-type nmos --universal \
+  --loss mae --lds --norm-mode asinh \
+  --d-model 256 --nhead 8 --num-layers 6 --dim-feedforward 1024 \
+  --epochs 50 --batch-size 1024 --lr 8e-4 --patience 50 --seed 42 --cuda \
+  --exp-name n5_affine_medium --overwrite --learnable-output-affine
+```
 
-| Metric | Prev best | N5 | Δ |
+**Result.** Run `n5_affine_medium`, log:
+`results/improvement_2026_04_08/n5_affine_medium.log`. Wall-clock 2648 s.
+
+| Metric | Baseline | N5 | Δ |
 |---|---:|---:|---:|
-| NRMSE_phys % | _TBD_ | _TBD_ | _TBD_ |
-| MRE_phys % | _TBD_ | _TBD_ | _TBD_ |
+| NRMSE_phys % | **0.419** | 0.459 | **+9.5 % (worse)** |
+| MRE_phys % | **2.52** | 2.66 | **+5.6 % (worse)** |
+| R²_phys | 0.9928 | 0.9923 | −0.0005 |
+| Wall-clock (s) | 2716 | 2648 | −2.5 % |
 
-**Verdict.** TBD.
+**Trajectory** (PHYS-val NRMSE %, baseline → N5):
+
+| Epoch | Baseline | N5 | Δ |
+|---:|---:|---:|---:|
+| 10 | 1.298 | 0.839 | **−35 %** |
+| 20 | 0.821 | 0.662 | **−19 %** |
+| 30 | 0.508 | 0.596 | +17 % |
+| 40 | 0.436 | 0.437 | 0 % |
+| 50 | 0.380 | 0.431 | +13 % |
+
+The early-epoch lead is real (the affine absorbs initial mismatch
+in the per-target normalization), but the late-epoch heads at the
+v2 baseline can fit the post-asinh z-score perfectly without the
+extra knob, and the affine *disturbs* that finely-tuned distribution.
+Charges + caps universally regressed (qb 0.867 → 0.991 NRMSE, the
+opposite of the report's expectation).
+
+**Verdict: INFEASIBLE.** Rewound via `git reset --hard 50a3a71`.
+
+**Postmortem.** The hypothesis was that an extra per-target
+post-normalization knob would let the optimizer correct for the
+per-target asinh-scale being "too tight". The data shows the
+opposite: the post-asinh z-score distribution is already an excellent
+fit for the encoder's residual stream, and adding 26 trainable affine
+params just makes the optimization landscape harder. A more invasive
+variant — making the asinh `s_k` itself trainable inside the data
+pipeline — would have a different mechanism (it re-normalizes the
+targets, not the predictions) and is not ruled out by this experiment.
+We do not pursue it: the report's expected gain ("modest gains on
+caps everywhere") is not large enough to justify re-architecting
+the data path.
 
 ---
 
