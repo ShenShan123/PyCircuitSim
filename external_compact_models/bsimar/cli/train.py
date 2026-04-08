@@ -164,6 +164,7 @@ def _run_transformer(args: argparse.Namespace) -> None:
         device_str=device_str,
         column_names=OUTPUT_COLUMNS,
         overwrite=args.overwrite,
+        vov_lds=args.vov_lds,
     )
 
 
@@ -253,6 +254,10 @@ def main() -> None:
     parser.add_argument("--overwrite", action="store_true",
                         help="[transformer] Allow overwriting an existing "
                              "<save_prefix>_best.pt checkpoint")
+    parser.add_argument("--vov-lds", action="store_true",
+                        help="[transformer mae+lds] N7 -- additional LDS "
+                             "weighting on Vg (Vov proxy) bins, multiplied "
+                             "into the per-target LDS weights.")
 
     # Loss weights (shared semantics, used only by their respective models)
     parser.add_argument("--w-curr", type=float, default=1.0,

@@ -677,6 +677,7 @@ def train_transformer(
     device_str: str = "cpu",
     column_names: Optional[list] = None,
     overwrite: bool = False,
+    vov_lds: bool = False,
 ) -> Tuple[nn.Module, BSIMARNormalizer]:
     """Full BSIM-AR Transformer training pipeline.
 
@@ -786,6 +787,23 @@ def train_transformer(
                 train_ds.outputs.numpy(), n_bins=100,
                 lds_kernel="gaussian", lds_ks=5, lds_sigma=0.8,
             )
+            # N7 — Vov-region LDS reweighting. The dataset has no Vth,
+            # so we use Vg (input column 1, normalized) as a proxy for
+            # Vov. compute_lds_weights_per_target on a single column
+            # returns shape (N, 1); we squeeze and broadcast across
+            # the per-target weights, then renormalize so the mean is 1.
+            if vov_lds:
+                print("Computing Vov(=Vg) LDS weights...")
+                vg_col = train_ds.inputs[:, 1:2].numpy()
+                vg_weights_np = compute_lds_weights_per_target(
+                    vg_col, n_bins=50,
+                    lds_kernel="gaussian", lds_ks=5, lds_sigma=1.0,
+                )  # (N, 1)
+                lds_weights_np = lds_weights_np * vg_weights_np  # broadcasts
+                # Renormalize per-column so each target's mean weight is 1.
+                col_means = lds_weights_np.mean(axis=0, keepdims=True)
+                col_means[col_means < 1e-12] = 1.0
+                lds_weights_np = lds_weights_np / col_means
             train_ds_weighted = TensorDataset(
                 train_ds.inputs, train_ds.outputs,
                 torch.tensor(lds_weights_np, dtype=torch.float32),
