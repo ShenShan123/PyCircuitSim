@@ -165,6 +165,7 @@ def _run_transformer(args: argparse.Namespace) -> None:
         column_names=OUTPUT_COLUMNS,
         overwrite=args.overwrite,
         vov_lds=args.vov_lds,
+        ar_finetune_epochs=args.ar_finetune_epochs,
     )
 
 
@@ -258,6 +259,12 @@ def main() -> None:
                         help="[transformer mae+lds] N7 -- additional LDS "
                              "weighting on Vg (Vov proxy) bins, multiplied "
                              "into the per-target LDS weights.")
+    parser.add_argument("--ar-finetune-epochs", type=int, default=0,
+                        help="[transformer mae] N3 -- after the cosine TF "
+                             "schedule completes, run N additional epochs "
+                             "with forward_scheduled(ss_ratio=1.0) and a "
+                             "fixed-low LR. Closes the residual TF<->AR "
+                             "exposure-bias gap.")
 
     # Loss weights (shared semantics, used only by their respective models)
     parser.add_argument("--w-curr", type=float, default=1.0,

@@ -435,14 +435,18 @@ class TransformerEncoderModel(nn.Module):
     ) -> torch.Tensor:
         """Forward pass with scheduled sampling.
 
-        For each target position, with probability ss_ratio, use the model's
-        own previous prediction instead of the ground-truth token.
+        For each AR target position, with probability ``ss_ratio``,
+        feed the model's own previous prediction (detached) instead
+        of the ground-truth token. ``ss_ratio == 1.0`` is the pure-AR
+        finetune mode used by N3 (no teacher forcing).
+
+        Under ``parallel_caps``, the AR loop only walks the first 8
+        targets (charges + currents/conds); the 5 cap outputs are
+        emitted in parallel from the final encoder hidden state, the
+        same way ``forward()`` does it. Caps therefore see no
+        scheduled sampling, but they fully participate in the loss
+        because they depend on the AR-perturbed encoder context.
         """
-        if self.parallel_caps:
-            raise NotImplementedError(
-                "parallel_caps not supported under scheduled sampling yet "
-                "(only used by --loss direct). Use the standard forward()."
-            )
         if ss_ratio <= 0.0:
             return self.forward(x, y)
 
@@ -452,7 +456,10 @@ class TransformerEncoderModel(nn.Module):
         ar_scalars = start_token
         predictions = []
 
-        for t in range(self.target_dim):
+        ar_steps = self.ar_target_dim
+        last_encoder_out: torch.Tensor | None = None
+
+        for t in range(ar_steps):
             ar_emb = self._embed_ar_scalars(ar_scalars)
             embedded = torch.cat([context_emb, ar_emb], dim=1)
             embedded = self._add_token_type(embedded)
@@ -461,11 +468,12 @@ class TransformerEncoderModel(nn.Module):
             causal_mask = self._generate_causal_mask(L).to(x.device)
 
             out = self.transformer_encoder(embedded, mask=causal_mask)
+            last_encoder_out = out
             head = self.output_heads[t]
             next_pred = head(out[:, -1, :]).squeeze(-1)
             predictions.append(next_pred)
 
-            if t < self.target_dim - 1:
+            if t < ar_steps - 1:
                 use_pred = torch.rand(batch_size, device=x.device) < ss_ratio
                 next_token = torch.where(
                     use_pred, next_pred.detach(), y[:, t]
@@ -473,6 +481,12 @@ class TransformerEncoderModel(nn.Module):
                 ar_scalars = torch.cat(
                     [ar_scalars, next_token.unsqueeze(1)], dim=1
                 )
+
+        if self.parallel_caps:
+            assert last_encoder_out is not None
+            pred_caps = self._parallel_cap_head(last_encoder_out[:, -1, :])
+            pred_qic = torch.stack(predictions, dim=1)
+            return torch.cat([pred_qic, pred_caps], dim=1)
 
         return torch.stack(predictions, dim=1)
 

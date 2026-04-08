@@ -235,6 +235,55 @@ def validate_epoch_direct_ar(
     return {k: v / n_batches for k, v in total_losses.items()}
 
 
+def train_epoch_scheduled_bni(
+    model: nn.Module,
+    loader: DataLoader,
+    criterion: nn.Module,
+    optimizer: optim.Optimizer,
+    device: torch.device,
+    ss_ratio: float = 1.0,
+) -> Dict[str, float]:
+    """N3 fine-tune helper: scheduled-sampling AR step with MAE/BNI.
+
+    Identical to ``train_epoch_bni`` except the forward pass uses
+    ``model.forward_scheduled(x, y, ss_ratio=ss_ratio)`` so the model
+    is rolled out autoregressively (feeding its own detached
+    predictions instead of the ground truth) for the AR target
+    block. Caps still emit in parallel under parallel_caps.
+    """
+    model.train()
+    total_loss = 0.0
+    n_batches = 0
+
+    for batch in loader:
+        if len(batch) == 3:
+            x_batch, y_batch, w_batch = batch
+            w_batch = w_batch.to(device)
+        else:
+            x_batch, y_batch = batch
+            w_batch = None
+
+        x_batch = x_batch.to(device)
+        y_batch = y_batch.to(device)
+
+        optimizer.zero_grad()
+        pred = model.forward_scheduled(x_batch, y_batch, ss_ratio=ss_ratio)
+
+        if w_batch is not None:
+            loss = criterion(pred, y_batch, weights=w_batch)
+        else:
+            loss = criterion(pred, y_batch)
+
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+
+        total_loss += loss.item()
+        n_batches += 1
+
+    return {"total": total_loss / n_batches}
+
+
 def train_epoch_bni(
     model: nn.Module,
     loader: DataLoader,
@@ -678,6 +727,7 @@ def train_transformer(
     column_names: Optional[list] = None,
     overwrite: bool = False,
     vov_lds: bool = False,
+    ar_finetune_epochs: int = 0,
 ) -> Tuple[nn.Module, BSIMARNormalizer]:
     """Full BSIM-AR Transformer training pipeline.
 
@@ -1013,6 +1063,75 @@ def train_transformer(
         print(f"Best phys score:   {best_phys_score:.6f}  "
               f"(NRMSE={best_phys_nrmse:.3f}%, R2={best_phys_r2:.4f})  "
               f"-> {phys_best_path}")
+
+    # ── N3 — AR fine-tune phase ──────────────────────────────────────────
+    # After the cosine TF schedule completes, optionally run a short
+    # pure-AR fine-tune phase (ss_ratio = 1.0) so the model trains on
+    # its own decoded sequence and closes the residual TF↔AR gap.
+    # Loads the phys-best checkpoint as the starting point so we
+    # build on the strongest TF-trained model. Uses the same optimizer
+    # state shape but a fixed-low LR (default: final cosine LR / 10).
+    if ar_finetune_epochs > 0 and loss_name in ("mae", "huber-mae"):
+        if phys_best_path.exists():
+            print(f"\n[N3] Loading phys-best checkpoint for AR finetune: "
+                  f"{phys_best_path}")
+            model.load_state_dict(
+                torch.load(str(phys_best_path), weights_only=True))
+        finetune_lr = max(scheduler.get_last_lr()[0] * 10, 1e-5)
+        print(f"[N3] AR finetune for {ar_finetune_epochs} epochs at "
+              f"lr={finetune_lr:.2e}, ss_ratio=1.0, criterion=MAELoss "
+              f"(no LDS during finetune)")
+        ft_optimizer = torch.optim.AdamW(
+            model.parameters(), lr=finetune_lr,
+            weight_decay=config.weight_decay)
+        ft_criterion = MAELoss()
+        # Build an unweighted loader for the finetune phase so the
+        # gradient signal reflects the actual MAE on AR-decoded
+        # outputs, not the LDS-reweighted MAE the TF phase used.
+        ft_train_loader = DataLoader(
+            train_ds, batch_size=batch_size, shuffle=True)
+        for ft_epoch in range(1, ar_finetune_epochs + 1):
+            t_losses = train_epoch_scheduled_bni(
+                model, ft_train_loader, ft_criterion, ft_optimizer,
+                device, ss_ratio=1.0,
+            )
+            v_losses = validate_epoch_bni(
+                model, val_loader, ft_criterion, device)
+            train_loss = t_losses["total"]
+            val_loss = v_losses["total"]
+            train_history.append(train_loss)
+            val_history.append(val_loss)
+
+            # Re-evaluate phys metrics so we can keep the best
+            # finetuned checkpoint if it improves on the TF phys-best.
+            pred_val_norm, true_val_norm = test_model(
+                model, val_loader, device)
+            if _reorder_active:
+                pred_val_norm = unreorder_outputs(pred_val_norm)
+                true_val_norm = unreorder_outputs(true_val_norm)
+            phys_metrics = compute_physical_metrics(
+                pred_val_norm, true_val_norm, normalizer)
+            nrmse_arr = np.array(
+                [m["NRMSE(%)"] for m in phys_metrics.values()],
+                dtype=np.float64)
+            r2_arr = np.array(
+                [m["R2"] for m in phys_metrics.values()],
+                dtype=np.float64)
+            nrmse_avg = float(np.nanmean(nrmse_arr))
+            r2_avg = float(np.nanmean(r2_arr))
+            phys_score = (
+                float("inf") if (np.isnan(nrmse_avg) or np.isnan(r2_avg))
+                else nrmse_avg + 0.1 * (1.0 - r2_avg))
+            phys_status = ""
+            if phys_score < best_phys_score:
+                best_phys_score = phys_score
+                best_phys_nrmse = nrmse_avg
+                best_phys_r2 = r2_avg
+                torch.save(model.state_dict(), str(phys_best_path))
+                phys_status = " *phys-best*"
+            print(f"  [FT {ft_epoch:3d}] train={train_loss:.5f} "
+                  f"val={val_loss:.5f} | nrmse={nrmse_avg:.3f}% "
+                  f"r2={r2_avg:.4f}{phys_status}")
 
     arch_config = {
         "input_dim": input_dim, "target_dim": output_dim,
