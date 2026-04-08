@@ -492,21 +492,44 @@ atol=1e-6`.
 
 **Verification (no accuracy impact).** Re-run the baseline AR-only
 inference to confirm that test-set NRMSE/MRE/R² match the published
-v2 baseline (0.419 % / 2.52 % / 0.9928) bit-for-bit (within float32
-noise). If they do, mark N2 as "wall-clock unlock landed" and move
-on. If they do not match, rewind.
+v2 baseline bit-for-bit. If they do, mark N2 as "wall-clock unlock
+landed". If they do not match, rewind.
 
-**Result.** TBD.
+**Decision: DEFERRED.**
 
-| Metric | v2 Medium Baseline | N2 (cached) | Δ |
-|---|---:|---:|---:|
-| NRMSE_phys % | 0.419 | _TBD_ | _TBD_ |
-| MRE_phys % | 2.52 | _TBD_ | _TBD_ |
-| R²_phys | 0.9928 | _TBD_ | _TBD_ |
-| AR-val pass time (s) | _TBD_ | _TBD_ | _TBD_ |
-| Per-epoch wall-clock (s) | 54.3 | _TBD_ | _TBD_ |
+The cost-benefit for N1 changed after seeing the N3 AR-finetune
+log. N3 phys-best was hit at FT epoch 5 (`nrmse=0.330 r2=0.9960
+*phys-best*`), and the next 10 FT epochs (6-15) never beat it:
 
-**Verdict.** TBD.
+```
+  [FT 1] nrmse=0.343%  *phys-best*
+  [FT 3] nrmse=0.342%  *phys-best*
+  [FT 5] nrmse=0.330%  *phys-best*
+  [FT 6..15] nrmse in 0.334-0.371, no new phys-best
+```
+
+So we can safely drop `--ar-finetune-epochs` from 15 to 5. That
+saves 10 × 170 s ≈ 28 min per run by pure schedule-tuning, which is
+more than what a bit-exact KV-cache would save (the TF phase stays
+at 5550 s for 150 epochs; KV-cache only touches AR forwards).
+
+Budget check for Step 7 without KV-cache and with
+`--ar-finetune-epochs 5`:
+- TF (150 ep) ≈ 150 × 37 s = 5550 s ≈ 92 min
+- FT (5 ep)  ≈ 5 × 170 s   = 850 s ≈ 14 min
+- Total ≈ 107 min ≈ **1.8 h** per run
+
+This is affordable without KV-cache. A true bit-exact KV-cache
+rewrite of `nn.TransformerEncoderLayer` (PyTorch does not expose
+per-layer K/V hooks — we would have to reimplement attention) is
+~200 LOC of high-risk code for a ~10 % wall-clock saving at this
+point. Not worth the implementation risk in this sprint.
+
+**Filed as future work.** If BSIMAR becomes the production
+checkpoint and 100-epoch finetune or 500-epoch training becomes
+routine, KV-cache at the encoder level is still the right long-
+term unlock. We have the forward_scheduled hook in place, so a
+later refactor can slot in cleanly.
 
 ---
 
