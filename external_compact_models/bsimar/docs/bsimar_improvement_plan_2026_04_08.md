@@ -97,16 +97,41 @@ CUDA_VISIBLE_DEVICES=2 conda run -n pycircuitsim --no-capture-output \
   --exp-name n6_huber_medium --overwrite
 ```
 
-**Result.** TBD.
+**Result.** Run `n6_huber_medium`, log:
+`results/improvement_2026_04_08/n6_huber_medium.log`. Phys-best
+checkpoint loaded for the test pass. Wall-clock 2389 s.
 
 | Metric | Baseline | N6 | Δ |
 |---|---:|---:|---:|
-| NRMSE_phys % | 0.419 | _TBD_ | _TBD_ |
-| MRE_phys % | 2.52 | _TBD_ | _TBD_ |
-| R²_phys | 0.9928 | _TBD_ | _TBD_ |
-| Wall-clock (s) | 2716 | _TBD_ | _TBD_ |
+| NRMSE_phys % | **0.419** | 0.538 | **+28 % (worse)** |
+| MRE_phys % | **2.52** | 3.64 | **+44 % (worse)** |
+| R²_phys | 0.9928 | 0.9906 | −0.0022 |
+| Wall-clock (s) | 2716 | 2389 | −12 % |
 
-**Verdict.** TBD.
+Per-target MRE % (the columns N6 was supposed to improve):
+
+| Target | Baseline | N6 | Δ |
+|---|---:|---:|---:|
+| id  | 2.45 | 4.32 | +76 % worse |
+| gm  | 5.21 | 9.15 | +76 % worse |
+| gds | 4.99 | 7.58 | +52 % worse |
+| gmb | 3.79 | 8.28 | +118 % worse |
+
+**Verdict: INFEASIBLE.** Rewound via `git reset --hard 50a3a71`.
+
+**Postmortem.** Huber's quadratic core (`|d| < δ=1.0`) gives
+gradient `d`, which → 0 as the residual → 0. So the optimizer cares
+*less* about small residuals than under pure MAE (whose gradient is
+constant ±1). MRE is dominated precisely by the small-magnitude tail,
+so dampening gradients there is exactly the wrong direction. The
+report's "MAE-like in the tail, MSE-like near zero residuals" framing
+is correct as a literal description of Huber, but the *intended*
+effect (focus on small residuals) is the opposite of what Huber
+actually does.
+
+If we wanted to fix this we would need a **reverse-Huber (BerHu) loss**:
+MAE near zero, MSE in the tail. That's a different change and is not
+in the report's recommendation. Marking N6 dead and moving on.
 
 ---
 
