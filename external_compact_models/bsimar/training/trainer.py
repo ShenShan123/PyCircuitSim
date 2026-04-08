@@ -30,7 +30,7 @@ from bsimar.config import (
 from bsimar.data.dataset import load_and_split, load_and_split_bsimar
 from bsimar.data.normalize import (
     Normalizer, BSIMARNormalizer,
-    inv_signed_log, reorder_outputs, unreorder_outputs, _UNREORDER_IDX,
+    reorder_outputs, unreorder_outputs, _UNREORDER_IDX,
 )
 from bsimar.models.direct_net import DirectNet
 from bsimar.models.transformer import TransformerEncoderModel
@@ -462,47 +462,21 @@ def test_model(
 # ══════════════════════════════════════════════════════════════════════════════
 
 @torch.no_grad()
-def _compute_directnet_physical_metrics(
+def _collect_directnet_predictions(
     model: DirectNet,
     loader: DataLoader,
-    normalizer: Normalizer,
     device: torch.device,
-) -> Dict[str, float]:
-    """Compute per-output metrics in physical units after denormalization."""
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Run the model on `loader` and return (pred_norm, true_norm)."""
     model.eval()
     all_pred, all_true = [], []
-
-    for x_batch, y_batch in loader:
-        x_batch = x_batch.to(device)
-        pred = model(x_batch)
-        all_pred.append(pred.cpu().numpy())
-        all_true.append(y_batch.numpy())
-
-    pred_norm = np.concatenate(all_pred)
-    true_norm = np.concatenate(all_true)
-
-    stats = normalizer.stats
-    metrics: Dict[str, float] = {}
-
-    id_pred_log = pred_norm[:, 0] * stats.output_std[0] + stats.output_mean[0]
-    id_true_log = true_norm[:, 0] * stats.output_std[0] + stats.output_mean[0]
-    id_pred_phys = inv_signed_log(id_pred_log, floor=stats.output_log_floors[0])
-    id_true_phys = inv_signed_log(id_true_log, floor=stats.output_log_floors[0])
-
-    id_range = id_true_phys.max() - id_true_phys.min()
-    if id_range > 0:
-        rmse = np.sqrt(np.mean((id_pred_phys - id_true_phys) ** 2))
-        metrics["id_nrmse_pct"] = rmse / id_range * 100
-    else:
-        metrics["id_nrmse_pct"] = 0.0
-
-    col_names_13 = ["id", "gm", "gds", "gmb", "qg", "qd", "qs", "qb",
-                    "cgg", "cgd", "cgs", "cdg", "cdd"]
-    for i in range(min(pred_norm.shape[1], 13)):
-        mae_norm = np.mean(np.abs(pred_norm[:, i] - true_norm[:, i]))
-        metrics[f"{col_names_13[i]}_mae_norm"] = mae_norm
-
-    return metrics
+    with torch.no_grad():
+        for x_batch, y_batch in loader:
+            x_batch = x_batch.to(device)
+            pred = model(x_batch)
+            all_pred.append(pred.cpu().numpy())
+            all_true.append(y_batch.numpy())
+    return np.concatenate(all_pred), np.concatenate(all_true)
 
 
 def train_directnet(
@@ -515,26 +489,53 @@ def train_directnet(
     use_charge_consistency: bool = False,
     w_consistency: float = 1.0,
     w_cond_consistency: float = 0.0,
-) -> Tuple[DirectNet, Normalizer]:
+    norm_mode: str = "legacy",
+    apply_filter: bool = False,
+):
     """Full DirectNet training pipeline.
 
     Mirrors the legacy `nn_model.train.train` entry point, adapted to the new
     `bsimar` package paths. Saves `<save_prefix>_best.pt` and
     `<save_prefix>_norm.npz` under `bsimar.config.CHECKPOINT_DIR`.
+
+    Args:
+        norm_mode: 'legacy' uses the signed-log + z-score `Normalizer`
+            (good for 14-decade dynamic range, but `inv_signed_log`
+            amplifies physical-space errors). 'zscore' uses
+            `BSIMARNormalizer(mode="zscore")` — same path as the
+            BSIM-AR Transformer, makes physical-space metrics directly
+            comparable across the two models.
+        apply_filter: only honored when `norm_mode='zscore'`. Drops
+            sub-floor cutoff samples (matches the BSIM-AR pipeline).
     """
     device = torch.device(device_str)
-    print(f"Training DirectNet on {device}, output_dim={output_dim}")
+    print(f"Training DirectNet on {device}, output_dim={output_dim}, "
+          f"norm_mode={norm_mode}")
     print(f"Loss weights: w_id={config.w_id}, w_charges={config.w_charges}, "
           f"w_caps={config.w_caps}")
     if use_charge_consistency:
         print(f"Charge consistency: w_consistency={w_consistency}, "
               f"w_cond_consistency={w_cond_consistency}")
 
-    train_ds, val_ds, test_ds, normalizer = load_and_split(
-        data_path,
-        train_ratio=config.train_ratio,
-        val_ratio=config.val_ratio,
-    )
+    if norm_mode == "zscore":
+        from bsimar.config import OUTPUT_COLUMNS
+        train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
+            data_path,
+            column_names=OUTPUT_COLUMNS,
+            norm_mode="zscore",
+            train_ratio=config.train_ratio,
+            val_ratio=config.val_ratio,
+            apply_filter=apply_filter,
+        )
+    elif norm_mode == "legacy":
+        train_ds, val_ds, test_ds, normalizer = load_and_split(
+            data_path,
+            train_ratio=config.train_ratio,
+            val_ratio=config.val_ratio,
+        )
+    else:
+        raise ValueError(
+            f"Unknown norm_mode '{norm_mode}'. Use 'legacy' or 'zscore'.")
 
     train_loader = DataLoader(train_ds, batch_size=config.batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=config.batch_size, shuffle=False)
@@ -640,13 +641,14 @@ def train_directnet(
     for k, v in sorted(test_losses.items()):
         print(f"  {k:>10s}: {v:.6f}")
 
-    phys = _compute_directnet_physical_metrics(model, test_loader, normalizer, device)
+    # Use the shared metrics path so DirectNet reports the same
+    # NRMSE / MRE / R² / R²_norm / MAE_n table as the BSIMAR Transformer.
+    from bsimar.eval.metrics import compute_physical_metrics, print_metrics
+    pred_norm, true_norm = _collect_directnet_predictions(
+        model, test_loader, device)
+    metrics = compute_physical_metrics(pred_norm, true_norm, normalizer)
     print(f"\nPhysical metrics (test set):")
-    print(f"  id NRMSE: {phys['id_nrmse_pct']:.2f}%")
-    for k, v in sorted(phys.items()):
-        if k.endswith("_mae_norm"):
-            name = k.replace("_mae_norm", "")
-            print(f"  {name:>6s} MAE(norm): {v:.4f}")
+    print_metrics(metrics)
 
     print(f"\nSaved: {best_path}")
     return model, normalizer

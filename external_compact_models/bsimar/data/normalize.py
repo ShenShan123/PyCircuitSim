@@ -314,16 +314,24 @@ class BSIMARNormalizer:
         if self.mode == "zscore":
             input_mean = combined.mean(axis=0)
             input_std = combined.std(axis=0)
+            # Inputs are voltages (~0.5V scale) and process params
+            # (~1e-3 to ~1 scale). 1e-12 safely catches truly constant
+            # columns without ever clipping a real std.
             input_std[input_std < 1e-12] = 1.0
 
             output_mean = outputs.mean(axis=0)
             output_std = outputs.std(axis=0)
-            # Match Normalizer / input_std clip threshold. The previous
-            # 1e-30 sentinel was a no-op for float64 std (lower bound
-            # ~1e-154); a borderline-constant column with std~1e-20 would
-            # blow up normalization. 1e-12 is the same threshold we use
-            # for input_std a few lines above.
-            output_std[output_std < 1e-12] = 1.0
+            # CRITICAL: Outputs span 14+ decades. Charges (~1e-19 C) and
+            # capacitances (~1e-20 F) have legitimate std values well
+            # below 1e-12. Clipping them to 1.0 leaves the "normalized"
+            # targets in physical units, breaks training (model can't
+            # output 1e-15), and produces astronomical NRMSE / negative
+            # R² on denormalization.
+            #
+            # Use a much smaller absolute floor — only truly degenerate
+            # (numerically zero) columns should be replaced. float64
+            # std for non-constant data is bounded well above 1e-300.
+            output_std[output_std < 1e-30] = 1.0
 
             self.stats = BSIMARNormStats(
                 mode="zscore",
@@ -345,6 +353,8 @@ class BSIMARNormalizer:
                     outputs[:, i], floor=output_log_floors[i])
             output_mean = outputs_log.mean(axis=0)
             output_std = outputs_log.std(axis=0)
+            # signed-log-space stds are O(1) for non-constant columns,
+            # so a generous floor is safe here.
             output_std[output_std < 1e-10] = 1.0
 
             self.stats = BSIMARNormStats(

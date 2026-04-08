@@ -93,6 +93,8 @@ def _run_direct(args: argparse.Namespace) -> None:
         use_charge_consistency=use_charge_consistency,
         w_consistency=args.w_consistency,
         w_cond_consistency=args.w_cond_consistency,
+        norm_mode=args.norm_mode,
+        apply_filter=args.apply_filter,
     )
 
 
@@ -208,9 +210,21 @@ def main() -> None:
     parser.add_argument("--w-cond-consistency", type=float, default=0.0,
                         help="[direct only] Weight for conductance autograd consistency")
 
-    # Transformer-specific
-    parser.add_argument("--norm-mode", choices=["zscore", "signedlog"], default="zscore",
-                        help="[transformer] Normalization mode")
+    # Normalization mode (shared semantics across both models, but
+    # different valid values per model — see _run_direct / _run_transformer
+    # for what each one accepts).
+    #   direct      : 'legacy' (signed-log + z-score) or 'zscore'
+    #   transformer : 'zscore' or 'signedlog'  ('zscore' is the default
+    #                  and the only stable AR mode)
+    parser.add_argument("--norm-mode",
+                        choices=["legacy", "zscore", "signedlog"],
+                        default="zscore",
+                        help="Normalization mode. direct: legacy|zscore. "
+                             "transformer: zscore|signedlog.")
+    parser.add_argument("--apply-filter", action="store_true",
+                        help="[direct + zscore] Drop sub-floor cutoff "
+                             "samples (matches BSIM-AR data path). "
+                             "Always on for transformer.")
     parser.add_argument("--no-filter", action="store_true",
                         help="[transformer] Skip small-value data filtering")
     parser.add_argument("--loss", choices=["direct", "mae", "bni"], default="mae",
