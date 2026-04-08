@@ -217,10 +217,10 @@ def main() -> None:
     #   transformer : 'zscore' or 'signedlog'  ('zscore' is the default
     #                  and the only stable AR mode)
     parser.add_argument("--norm-mode",
-                        choices=["legacy", "zscore", "signedlog"],
+                        choices=["legacy", "zscore", "signedlog", "asinh"],
                         default="zscore",
                         help="Normalization mode. direct: legacy|zscore. "
-                             "transformer: zscore|signedlog.")
+                             "transformer: zscore|signedlog|asinh.")
     parser.add_argument("--apply-filter", action="store_true",
                         help="[direct + zscore] Drop sub-floor cutoff "
                              "samples (matches BSIM-AR data path). "

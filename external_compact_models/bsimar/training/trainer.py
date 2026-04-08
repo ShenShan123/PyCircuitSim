@@ -753,6 +753,12 @@ def train_transformer(
         num_layers=config.num_layers,
         dim_feedforward=config.dim_feedforward,
         dropout=config.dropout,
+        # P4 — parallel C-block experiment.
+        parallel_caps=True,
+        # A2 — grouped input tokens (voltages / geometry / process
+        # params) collapse the 19 scalar context tokens into 3, dropping
+        # sequence length from 28 to 12 under parallel_caps=True.
+        grouped_inputs=True,
     ).to(device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model params: {n_params:,}")
@@ -843,6 +849,14 @@ def train_transformer(
     best_val_loss = float("inf")
     best_ar_val_loss = float("inf")
     ar_best_path = best_path.with_suffix(".ar.pt")
+    # T1: physical-space early-stopping tracker. Runs alongside the TF
+    # early-stopping on the same `ar_check_every` schedule. We keep a
+    # separate `*_best.phys.pt` checkpoint so the final test load can
+    # prefer the best physical-space model instead of the best TF-val.
+    best_phys_score = float("inf")
+    best_phys_nrmse = float("nan")
+    best_phys_r2 = float("nan")
+    phys_best_path = best_path.with_suffix(".phys.pt")
     # C1: how often to run a full AR-validation as a ground-truth sanity
     # check on the TF-driven early stopping. Cheap because val set is
     # only swept slowly.
@@ -902,6 +916,45 @@ def train_transformer(
                   f"ar={ar_loss:.5f} (tf={v_losses['total']:.5f})"
                   f"{ar_status}")
 
+            # T1: physical-space early-stopping probe. Reuse the existing
+            # AR-check cadence so we don't add extra cost beyond one extra
+            # teacher-forced pass over the val set. The score blends
+            # physical-space NRMSE and (1 - R2) so that a collapsed
+            # normalizer (R2 << 0) can never beat a healthy one even if
+            # NRMSE happens to look small.
+            pred_val_norm, true_val_norm = test_model(
+                model, val_loader, device)
+            if _reorder_active:
+                pred_val_norm = unreorder_outputs(pred_val_norm)
+                true_val_norm = unreorder_outputs(true_val_norm)
+            phys_metrics = compute_physical_metrics(
+                pred_val_norm, true_val_norm, normalizer)
+            nrmse_arr = np.array(
+                [m["NRMSE(%)"] for m in phys_metrics.values()],
+                dtype=np.float64,
+            )
+            r2_arr = np.array(
+                [m["R2"] for m in phys_metrics.values()],
+                dtype=np.float64,
+            )
+            nrmse_avg = float(np.nanmean(nrmse_arr))
+            r2_avg = float(np.nanmean(r2_arr))
+            # NaN guard: if every target is masked out we cannot score.
+            if np.isnan(nrmse_avg) or np.isnan(r2_avg):
+                phys_score = float("inf")
+            else:
+                phys_score = nrmse_avg + 0.1 * (1.0 - r2_avg)
+            phys_status = ""
+            if phys_score < best_phys_score:
+                best_phys_score = phys_score
+                best_phys_nrmse = nrmse_avg
+                best_phys_r2 = r2_avg
+                torch.save(model.state_dict(), str(phys_best_path))
+                phys_status = " *phys-best*"
+            print(f"  PHYS-val @ epoch {epoch}: "
+                  f"nrmse_avg={nrmse_avg:.3f} r2_avg={r2_avg:.4f} "
+                  f"score={phys_score:.3f}{phys_status}")
+
         train_loss = t_losses["total"]
         val_loss = v_losses["total"]
         train_history.append(train_loss)
@@ -938,6 +991,10 @@ def train_transformer(
     print(f"Best val loss (TF):  {best_val_loss:.6f}")
     if best_ar_val_loss < float("inf"):
         print(f"Best val loss (AR):  {best_ar_val_loss:.6f}  -> {ar_best_path}")
+    if best_phys_score < float("inf"):
+        print(f"Best phys score:   {best_phys_score:.6f}  "
+              f"(NRMSE={best_phys_nrmse:.3f}%, R2={best_phys_r2:.4f})  "
+              f"-> {phys_best_path}")
 
     arch_config = {
         "input_dim": input_dim, "target_dim": output_dim,
@@ -945,13 +1002,26 @@ def train_transformer(
         "num_layers": config.num_layers,
         "dim_feedforward": config.dim_feedforward,
         "dropout": config.dropout,
+        "parallel_caps": True,
+        # A2 — grouped input tokens. Persisted so checkpoint loaders
+        # can rebuild the architecture.
+        "grouped_inputs": True,
     }
     config_path = CHECKPOINT_DIR / f"{save_prefix}_config.npz"
     np.savez(str(config_path),
              **{k: np.array(v) for k, v in arch_config.items()})
     print(f"Arch config: {config_path}")
 
-    model.load_state_dict(torch.load(str(best_path), weights_only=True))
+    # T1: prefer the phys-space-best checkpoint for the final test if it
+    # exists. Falls back to the TF-val-best checkpoint otherwise, which
+    # matches the pre-T1 behaviour.
+    if phys_best_path.exists():
+        load_path = phys_best_path
+        print(f"Loading phys-best checkpoint for final test: {load_path}")
+    else:
+        load_path = best_path
+        print(f"Loading TF-val-best checkpoint for final test: {load_path}")
+    model.load_state_dict(torch.load(str(load_path), weights_only=True))
     pred_norm, true_norm = test_model(model, test_loader, device)
 
     if _reorder_active:

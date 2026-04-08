@@ -12,9 +12,11 @@ Two normalizers coexist for checkpoint compatibility:
   min-max input normalization. Used by the DirectNet baseline.
   Produces `NormStats` files.
 
-- `BSIMARNormalizer` — unified class supporting two modes:
-    * `'zscore'`   — z-score for inputs and outputs (paper's approach, default).
+- `BSIMARNormalizer` — unified class supporting three modes:
+    * `'zscore'`    — z-score for inputs and outputs (paper's approach, default).
     * `'signedlog'` — min-max inputs, signed-log+z-score outputs (Normalizer compat).
+    * `'asinh'`     — z-score inputs, per-target asinh(y/s_k) + z-score outputs,
+                       where `s_k` is a per-target geometric-mean scale.
   Produces `BSIMARNormStats` files (with explicit `mode` field).
 
 The signed-log helpers (`signed_log`, `inv_signed_log`, `OUTPUT_LOG_FLOORS`,
@@ -92,6 +94,22 @@ def inv_signed_log(y: np.ndarray, floor: float = 1e-18) -> np.ndarray:
     mask = np.abs(y) > 0
     result[mask] = np.sign(y[mask]) * floor * (10.0 ** np.abs(y[mask]))
     return result
+
+
+# ── asinh-scaled transform ───────────────────────────────────────────────────
+
+def asinh_scaled(x: np.ndarray, s: np.ndarray) -> np.ndarray:
+    """Per-target asinh(x / s).
+
+    `s` may be a scalar or a (K,) vector broadcastable against `x`'s last
+    axis. Sign-preserving and smooth through zero, unlike signed_log.
+    """
+    return np.arcsinh(x / s)
+
+
+def inv_asinh_scaled(y: np.ndarray, s: np.ndarray) -> np.ndarray:
+    """Inverse of asinh_scaled: s * sinh(y)."""
+    return s * np.sinh(y)
 
 
 # ── Input geometry unpacking (shared by both normalizers) ────────────────────
@@ -245,13 +263,13 @@ class Normalizer:
 @dataclass
 class BSIMARNormStats:
     """Normalization statistics for BSIMARNormalizer. Carries explicit mode."""
-    mode: str  # "zscore" or "signedlog"
+    mode: str  # "zscore", "signedlog", or "asinh"
 
     # Common output stats
     output_mean: np.ndarray
     output_std: np.ndarray
 
-    # zscore-mode input stats
+    # zscore-mode input stats (also used by asinh mode)
     input_mean: Optional[np.ndarray] = None
     input_std: Optional[np.ndarray] = None
 
@@ -261,6 +279,9 @@ class BSIMARNormStats:
 
     # signedlog-mode output floor values
     output_log_floors: Optional[np.ndarray] = None
+
+    # asinh-mode per-target geometric-mean scale
+    asinh_scale: Optional[np.ndarray] = None
 
     def save(self, path: str) -> None:
         data = {"mode": np.array(self.mode),
@@ -276,6 +297,8 @@ class BSIMARNormStats:
             data["input_max"] = self.input_max
         if self.output_log_floors is not None:
             data["output_log_floors"] = self.output_log_floors
+        if self.asinh_scale is not None:
+            data["asinh_scale"] = self.asinh_scale
         np.savez(path, **data)
 
     @classmethod
@@ -291,6 +314,7 @@ class BSIMARNormStats:
             input_min=d.get("input_min"),
             input_max=d.get("input_max"),
             output_log_floors=d.get("output_log_floors"),
+            asinh_scale=d.get("asinh_scale"),
         )
 
 
@@ -299,11 +323,16 @@ class BSIMARNormalizer:
 
     mode='zscore':    inputs -> z-score,  outputs -> z-score
     mode='signedlog': inputs -> min-max [0,1], outputs -> signed_log + z-score
+    mode='asinh':     inputs -> z-score,  outputs -> arcsinh(y/s_k) + z-score
+                       (per-target s_k is the geometric mean of |y| over the
+                       train split, masked at OUTPUT_LOG_FLOORS and clamped
+                       to the floor)
     """
 
     def __init__(self, mode: str = "zscore",
                  stats: Optional[BSIMARNormStats] = None) -> None:
-        assert mode in ("zscore", "signedlog"), f"Unknown mode: {mode}"
+        assert mode in ("zscore", "signedlog", "asinh"), \
+            f"Unknown mode: {mode}"
         self.mode = mode
         self.stats = stats
 
@@ -338,6 +367,43 @@ class BSIMARNormalizer:
                 output_mean=output_mean, output_std=output_std,
                 input_mean=input_mean, input_std=input_std,
             )
+        elif self.mode == "asinh":
+            # Inputs share the zscore branch — voltages and process params
+            # are well-conditioned for plain z-score.
+            input_mean = combined.mean(axis=0)
+            input_std = combined.std(axis=0)
+            input_std[input_std < 1e-12] = 1.0
+
+            # Per-target geometric-mean scale s_k from |y|, masked by
+            # OUTPUT_LOG_FLOORS and clamped at the floor.
+            floors = np.array(
+                [OUTPUT_LOG_FLOORS[c] for c in OUTPUT_COLUMN_ORDER],
+                dtype=np.float64)
+            abs_y = np.abs(outputs).astype(np.float64)
+            mask = abs_y > floors[None, :]
+            log_y = np.log(np.maximum(abs_y, floors[None, :]))
+            denom = np.maximum(mask.sum(axis=0), 1)
+            s_log = np.where(
+                mask.sum(axis=0) > 0,
+                np.sum(np.where(mask, log_y, 0.0), axis=0) / denom,
+                np.log(floors),
+            )
+            asinh_scale = np.maximum(np.exp(s_log), floors)
+
+            outputs_t = np.arcsinh(outputs.astype(np.float64)
+                                   / asinh_scale[None, :])
+            output_mean = outputs_t.mean(axis=0)
+            output_std = outputs_t.std(axis=0)
+            # asinh-space stds are O(1) for non-constant columns; a
+            # generous floor is safe here.
+            output_std[output_std < 1e-12] = 1.0
+
+            self.stats = BSIMARNormStats(
+                mode="asinh",
+                output_mean=output_mean, output_std=output_std,
+                input_mean=input_mean, input_std=input_std,
+                asinh_scale=asinh_scale,
+            )
         else:  # signedlog
             input_min = combined.min(axis=0)
             input_max = combined.max(axis=0)
@@ -369,7 +435,7 @@ class BSIMARNormalizer:
                          geometry: np.ndarray) -> np.ndarray:
         assert self.stats is not None, "Must call fit() first"
         combined = _build_combined_input(inputs, geometry)
-        if self.mode == "zscore":
+        if self.mode in ("zscore", "asinh"):
             return (combined - self.stats.input_mean) / self.stats.input_std
         else:
             input_range = self.stats.input_max - self.stats.input_min
@@ -380,6 +446,11 @@ class BSIMARNormalizer:
         assert self.stats is not None, "Must call fit() first"
         if self.mode == "zscore":
             return (outputs - self.stats.output_mean) / self.stats.output_std
+        elif self.mode == "asinh":
+            outputs_t = np.arcsinh(
+                outputs.astype(np.float64)
+                / self.stats.asinh_scale[None, :])
+            return (outputs_t - self.stats.output_mean) / self.stats.output_std
         else:
             outputs_log = np.zeros_like(outputs)
             for i in range(outputs.shape[1]):
@@ -393,6 +464,11 @@ class BSIMARNormalizer:
         if self.mode == "zscore":
             return (
                 outputs_norm * self.stats.output_std + self.stats.output_mean)
+        elif self.mode == "asinh":
+            outputs_t = (
+                outputs_norm.astype(np.float64) * self.stats.output_std
+                + self.stats.output_mean)
+            return self.stats.asinh_scale[None, :] * np.sinh(outputs_t)
         else:
             outputs_log = (
                 outputs_norm * self.stats.output_std + self.stats.output_mean)
