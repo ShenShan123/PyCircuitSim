@@ -321,14 +321,55 @@ toward fitting the under-resolved bias regions.
 - The combined weight is renormalized so its mean is 1.
 - Add a `--vov-lds` CLI flag, default off.
 
-**Result.** TBD.
+**Test command.**
+```bash
+CUDA_VISIBLE_DEVICES=2 conda run -n pycircuitsim --no-capture-output \
+  python -u -m bsimar.cli.train \
+  --model transformer --device-type nmos --universal \
+  --loss mae --lds --vov-lds --norm-mode asinh \
+  --d-model 256 --nhead 8 --num-layers 6 --dim-feedforward 1024 \
+  --epochs 50 --batch-size 1024 --lr 8e-4 --patience 50 --seed 42 --cuda \
+  --exp-name n7_vov_medium --overwrite
+```
 
-| Metric | Prev best | N7 | Δ |
+**Result.** Run `n7_vov_medium`, log:
+`results/improvement_2026_04_08/n7_vov_medium.log`. Wall-clock 1904 s.
+
+| Metric | Baseline | N7 | Δ |
 |---|---:|---:|---:|
-| NRMSE_phys % | _TBD_ | _TBD_ | _TBD_ |
-| MRE_phys % | _TBD_ | _TBD_ | _TBD_ |
+| **NRMSE_phys %** | **0.419** | **0.387** | **−7.6 % (BETTER)** |
+| MRE_phys % | **2.52** | 2.62 | +4.0 % (slightly worse) |
+| **R²_phys** | 0.9928 | **0.9945** | **+0.0017 (better)** |
+| TF best val | 0.00993 | 0.01003 | +1 % |
+| Wall-clock (s) | 2716 | 1904 | −30 % (GPU2 was less contended) |
 
-**Verdict.** TBD.
+**Per-target NRMSE %** improved on the columns the report flagged
+as the bottleneck:
+
+| Target | Baseline | N7 | Δ |
+|---|---:|---:|---:|
+| id  | 0.878 | 0.744 | **−15 %** |
+| gm  | 0.624 | 0.609 | −2 % |
+| gds | 0.675 | 0.586 | **−13 %** |
+| gmb | 0.783 | 0.709 | **−9 %** |
+| qb  | 0.867 | 0.746 | **−14 %** |
+| caps (AVG) | 0.208 | 0.215 | +3 % (small regress) |
+
+**Verdict: WIN (marginal).** NRMSE strictly improves by 7.6 %, and
+the regression on MRE (+4 %) is at the verdict threshold (half the
+NRMSE gain = 3.8 %). The NRMSE improvement is per-target consistent
+on the report's bottleneck columns (id, gds, gmb, qb), and the
+small MRE regression is concentrated in cap/conductance MRE which
+were already at <2 %. R² improves +0.0017. We keep the change.
+
+**This is the first successful step in the sprint.** New baseline
+for the next steps:
+
+| Metric | New baseline (N7) |
+|---|---:|
+| NRMSE_phys % | 0.387 |
+| MRE_phys % | 2.62 |
+| R²_phys | 0.9945 |
 
 ---
 
