@@ -241,15 +241,64 @@ the qb head's gradient signal richer.
 **Note.** The autograd path is ~1.5–2× slower; we accept this for the
 test step. If it wins, we keep the slowdown.
 
-**Result.** TBD.
+**Implementation note.** PyTorch's flash- and efficient-attention SDPA
+kernels do **not** implement double backward, so `create_graph=True`
+crashes inside `nn.MultiheadAttention`. We force the MATH backend
+for the consistency forward+grad chain via
+`torch.nn.attention.sdpa_kernel(SDPBackend.MATH)`.
 
-| Metric | Prev best | N4 | Δ |
+**Run 1** — `--charge-consistency-weight 0.1`, `cap_ag` vs
+`cap_pred` (model self-consistency). Killed at epoch 18: PHYS-val
+collapsed (epoch 10: NRMSE 6.77 %, R² −5.59 — worse than constant
+prediction). The self-coupling let the optimiser drive both sides
+toward zero without matching the data.
+
+**Run 2** — `--charge-consistency-weight 0.01`, `cap_ag` vs
+`cap_target` (DirectNet's pattern). Run completed:
+
+| Metric | Baseline | N4 v2 | Δ |
 |---|---:|---:|---:|
-| NRMSE_phys % | _TBD_ | _TBD_ | _TBD_ |
-| MRE_phys % | _TBD_ | _TBD_ | _TBD_ |
-| Wall-clock (s) | _TBD_ | _TBD_ | _TBD_ |
+| NRMSE_phys % | **0.419** | 0.444 | **+6 % (worse)** |
+| MRE_phys % | **2.52** | 2.99 | **+18.7 % (worse)** |
+| R²_phys | 0.9928 | 0.9929 | +0.0001 (essentially tied) |
+| Wall-clock (s) | 2716 | 4098 | +51 % |
 
-**Verdict.** TBD.
+**Per-target NRMSE** (sign of partial wins / partial losses):
+
+| Block | Baseline NRMSE % | N4 v2 NRMSE % | Δ |
+|---|---:|---:|---:|
+| caps (cgg/cgd/cgs/cdg/cdd, AVG) | 0.208 | 0.188 | **−9.5 % (better)** |
+| conductances (gm/gds/gmb, AVG) | 0.694 | 0.601 | **−13 % (better)** |
+| current (id) | 0.878 | 0.775 | −12 % (better) |
+| charges (qg/qd/qs/qb, AVG) | 0.362 | 0.563 | **+55 % (worse)** |
+
+The constraint did its job on caps and conductances, but the **charge
+fits collapsed** (qd 0.191 → 0.769, +302 %). Why: the autograd
+constraint forces `d(qg)/dv ≈ cgg_target` and `d(qd)/dv ≈ cdd_target`
+in *normalised* asinh-zscore space. Under signed-log (DirectNet's
+normalisation) the chain rule gives an algebraically tractable
+relationship between qg_norm, cgg_norm, and the gradient — that is
+*how* DirectNet's ChargeConsistencyLoss works. Under asinh+zscore
+the chain rule has a `cosh(asinh(qg/s))` factor that depends on the
+target value, so the constraint is **not equivalent** to "qg fits
+its target AND cgg fits its target". Satisfying both simultaneously
+requires distorting qg/qd in physical space.
+
+**Verdict: INFEASIBLE.** Rewound via `git reset --hard 6c2c2f9`.
+
+**Postmortem.** This is a real, reusable lesson: the report's
+recommendation to port DirectNet's charge-consistency loss to
+BSIMAR did not account for the asinh normalisation breaking the
+chain-rule-friendly representation that DirectNet's signed-log
+enjoys. To make this work properly we would need to denormalise
+through the asinh + zscore inverse inside the loss layer (so the
+comparison happens in physical units), and that requires
+`create_graph=True` autograd through `sinh()` — doable but
+substantially more work than the report envisaged. Marking N4
+dead at the medium tier under the v2 asinh recipe. A future
+DirectNet-style "charge-finetune mode" applied AFTER the v1 train
+plateau (rather than as a co-optimised term) might still work; we
+do not pursue it here.
 
 ---
 
