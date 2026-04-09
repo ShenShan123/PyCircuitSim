@@ -34,26 +34,26 @@ pycircuitsim/
 ├── visualizer.py       # Matplotlib plotting
 └── models/
     ├── __init__.py
-    ├── base.py            # Component abstract base class
-    ├── passive.py         # R, C, V, I sources (including PULSE)
-    ├── mosfet_cmg.py      # BSIM-CMG FinFET (LEVEL=72) via PyCMG — MOSFET_CMG base + NMOS/PMOS subclasses
-    ├── mosfet_nn.py       # DirectNet (LEVEL=73) via PyTorch — _MOSFETNNBase + NMOS/PMOS subclasses
-    └── mosfet_bsimar.py   # BSIM-AR Transformer (LEVEL=74) via PyTorch — _MOSFETBSIMARBase + NMOS/PMOS subclasses
+    ├── base.py               # Component abstract base class
+    ├── passive.py            # R, C, V, I sources (including PULSE)
+    ├── mosfet_cmg.py         # BSIM-CMG FinFET (LEVEL=72) via PyCMG — MOSFET_CMG + NMOS/PMOS
+    ├── mosfet_directnet.py   # DirectNet (LEVEL=73) via PyTorch — _MOSFETNNBase + NMOS_NN/PMOS_NN
+    └── mosfet_bsimar.py      # BSIMAR v3 Transformer (LEVEL=74) — _MOSFETBSIMARBase + NMOS_BSIMAR/PMOS_BSIMAR
 
 external_compact_models/
-├── bsimar/             # Unified NN-based compact model package — importable as `bsimar`
+├── bsimar/             # Unified NN compact model package — importable as `bsimar`
 │   ├── __init__.py
-│   ├── config.py                   # NNTechConfig + ProcessParams + DirectNetConfig + TransformerConfig, re-exports from pycmg.nn_config
+│   ├── config.py                   # NNTechConfig + ProcessParams + DirectNetConfig + TransformerConfig
 │   ├── data/
-│   │   ├── normalize.py            # Normalizer (signed-log) + BSIMARNormalizer (zscore/signedlog) + signed_log helpers
-│   │   ├── dataset.py              # MOSFETDataset + load_and_split{_bsimar} + filter_small_targets
+│   │   ├── normalize.py            # BSIMARNormalizer (asinh / zscore) + BSIMARNormStats
+│   │   ├── dataset.py              # MOSFETDataset + load_and_split_bsimar + filter_small_targets
 │   │   └── analyze.py              # Dataset analysis script (distribution, outliers, physical constraints)
 │   ├── models/
-│   │   ├── direct_net.py           # DirectNet MLP (baseline used for comparison)
-│   │   └── transformer.py          # TransformerEncoderModel (primary, autoregressive)
+│   │   ├── direct_net.py           # DirectNet MLP (baseline)
+│   │   └── transformer.py          # TransformerEncoderModel (BSIMAR v3, always parallel_caps + grouped_inputs)
 │   ├── losses/
-│   │   ├── direct_loss.py          # DirectLoss + ChargeConsistencyLoss
-│   │   └── bni_mae.py              # WeightedBNILoss + MAELoss + compute_lds_weights_per_target
+│   │   ├── direct_loss.py          # DirectLoss + ChargeConsistencyLoss (DirectNet)
+│   │   └── bni_mae.py              # MAELoss + compute_lds_weights_per_target (BSIMAR)
 │   ├── training/
 │   │   ├── early_stopping.py
 │   │   └── trainer.py              # train_directnet, train_transformer, per-epoch helpers
@@ -151,24 +151,28 @@ All phases (1-15) are complete. Key milestones:
 - **3-level DC+Transient test suites** — 3-layer infrastructure: `tests/common/base.py` (tech defs, generic helpers) -> `tests/common/bsimcmg_{dc,tran}.py` (analysis-specific) -> `verify_*.py` (test scripts). `tests/common/nn.py` consolidates the previously-duplicated NN scaffolding (nrmse, mre, checkpoint resolution, path bootstrap). NGSPICE reference netlists live in `tests/references/`. L1 regressions (OP, DC, transient) all pass against the refactored layout.
   - **Known-bad combos excluded:** TSMC5 SVT (pch PDIBL2_i<0), TSMC7 SVT/LVT (inverter garbage / pch PDIBL2_i<0), TSMC16 LNVT (nch PDIBL2_i<0), TSMC16 L=24nm (PDIBL2_i<0), NFIN=1 (NR divergence for tsmc5:ulvt / tsmc16:lnvt — ETA0_i/U0_i go negative, internal node drifts to 40V producing id=40kA + NaN derivatives; eval_dc now raises RuntimeError), P/N ratio where NFIN_P crosses NFIN group boundary (TSMC naive modelcards are NFIN-group-specific).
 - **PyCMG data generation migration** — NN training data generation moved from the old `nn_model.data.generate` into `external_compact_models/PyCMG/scripts/generate_nn_data.py`. Geometry format changed to 15-col `[NFIN, L, T, 12 process params]` (was 14-col). NN input dimension is now 19 features (was 18). Legal (L, NFIN) combos come from PDK bin boundaries (TSMC) or fallback list (ASAP7); process params extracted on-the-fly from modelcards (per-bin accurate). 954 total geometry combos across 5 techs, 21 variants. Existing checkpoints require retraining with the new data format.
-- **BSIMAR package refactor** — Consolidated the former `nn_model/` (DirectNet baseline) and `external_compact_models/BSIMAR/script/` (Transformer) into a single Python package at `external_compact_models/bsimar/` with clean subpackages (`config`, `data`, `models`, `losses`, `training`, `eval`, `utils`, `cli`). The outer `BSIMAR/` directory was collapsed so the package sits directly under `external_compact_models/`. DirectNet is now explicitly a baseline for comparison against the BSIM-AR Transformer. Unified CLI: `python -m bsimar.cli.train --model {direct,transformer} ...`. All downstream imports (pycircuitsim parser, mosfet_nn, mosfet_bsimar, tests/verify_nn_*) updated to the new `bsimar.*` namespace.
-- **BSIM-AR Quick Smoke Test (NMOS, 50 epochs, 67K params)** — End-to-end pipeline verified on universal_nmos.npz (951K samples, input_dim=18). Three runs trained successfully without crashes:
-  - **zscore + MAE+LDS:** best val loss 0.0606 @ epoch 32, AVG NRMSE 1.43%, MRE 12.79%, R2 0.968
-  - **zscore + MAE (no LDS):** best val loss 0.0613 @ epoch 41, identical test metrics (shared checkpoint path)
-  - **signedlog + MAE:** best val loss 0.1032 @ epoch 28, AVG NRMSE 7.14%, MRE 170.44%, **R2 -5.99 (collapsed)**
-  - **Key finding:** zscore dominates signedlog in physical-space metrics on every target. Signedlog R2_norm=0.91 looks fine but `inv_signed_log` denormalization amplifies AR-accumulated errors catastrophically (gds: R2_norm=0.81 → R2_phys=-74.09). This is a fundamental mismatch between log-compressed normalization and AR token-by-token error accumulation.
-  - **Bottleneck:** ~170-190s/epoch, dominated by sequential 13-step autoregressive validation on 60-95K samples (cannot be parallelized with current `forward()` impl).
-  - **Bug found:** concurrent runs sharing the same `--exp-name` overwrite each other's `_best.pt` checkpoints. Always use distinct exp-names for parallel experiments.
+- **BSIMAR package refactor** — Consolidated the former `nn_model/` (DirectNet baseline) and `external_compact_models/BSIMAR/script/` (Transformer) into a single Python package at `external_compact_models/bsimar/` with clean subpackages (`config`, `data`, `models`, `losses`, `training`, `eval`, `utils`, `cli`). Unified CLI: `python -m bsimar.cli.train --model {direct,transformer} ...`. All downstream imports (pycircuitsim parser, mosfet_directnet, mosfet_bsimar) use the new `bsimar.*` namespace.
+- **BSIMAR v3 production refactor (2026-04-08/09)** — After the medium-tier improvement sprint (see `external_compact_models/bsimar/docs/bsimar_improvement_plan_2026_04_08.md`) the winning recipe is **N7 (Vov-LDS) + N3 (AR finetune) + N1 (150-epoch cosine)**. All three are hard-wired as defaults. The refactor collapses the CLI (removes every experimental flag that either failed to beat baseline or was structural-always-on), deletes the signed-log normaliser entirely, and removes ~600 net lines of dead code.
+  - **Final metrics on `universal_nmos.npz` medium (5.15M params)**:
+    NRMSE_phys **0.223 %** (was 0.419, −46.8 %) /
+    MRE_phys **1.41 %** (was 2.52, −44.0 %) /
+    R² **0.9984** (was 0.9928). Wall-clock ~107 min on Blackwell GPU.
+  - **Removed code**: `Normalizer` / `NormStats` / `signed_log` / `inv_signed_log`, `BSIMARNormalizer.signedlog` mode, `load_and_split` (legacy loader), `WeightedBNILoss`, `forward_curriculum`, `train_epoch_direct_ar` / `curriculum` / `scheduled` helpers, and all of `--loss direct` / `--loss bni` / `--lds` / `--vov-lds` / `--no-filter` / `--reorder` / `--scheduled-sampling` / `--curriculum` / `--consistency-weight` / `--norm-mode` / `--charge-consistency-weight` / `--learnable-output-affine` CLI flags.
+  - **Hardwired knobs** (inside `train_transformer`): loss=MAE+LDS+VovLDS, norm=asinh+zscore, `parallel_caps=True`, `grouped_inputs=True`, BSIMAR column reorder, phys-best checkpoint tracker, AR finetune phase (default 5 epochs).
+  - **Known-infeasible explored options** (DO NOT retry without new structural argument): N6 Huber on I/V block (wrong gradient shape near zero), N5 learnable output affine (disrupts post-asinh zscore), N4 charge-consistency penalty (asinh chain rule has a `cosh(asinh(q/s))` factor that makes the constraint inequivalent to matching targets). Full postmortems in the plan file.
+  - **Deferred**: N2 KV-cache encoder. Empirical evidence that 5 AR-finetune epochs suffices means the ~10 min it would save on a 107 min run is not worth the ~200 LOC bit-exact rewrite of `nn.TransformerEncoderLayer`.
+  - **File renames**: `pycircuitsim/models/mosfet_nn.py` → `mosfet_directnet.py` (the class names `NMOS_NN` / `PMOS_NN` / `_MOSFETNNBase` are unchanged).
+  - **Checkpoint incompatibility**: existing v2 Transformer and legacy DirectNet checkpoints do NOT load with the refactored loaders. The normaliser file format changed (asinh/zscore-only, no `output_log_floors`) and the Transformer architecture dropped the `parallel_caps` / `grouped_inputs` flags (now structural). Retrain before running any LEVEL=73 or LEVEL=74 simulation.
+- **BSIMAR package refactor** (2026-03) — Consolidated the former `nn_model/` (DirectNet baseline) and `external_compact_models/BSIMAR/script/` (Transformer) into a single Python package at `external_compact_models/bsimar/`.
 
 ### Future Work
 - [ ] **Improve TSMC5 Transient** — 14.41% NRMSE (close to 15% threshold); try denser mid-supply data (`--n-dense-mid 30`) + retrain
 - [ ] **SRAM Validation (Phase 4)** — 6T bitcell DC+transient, 8-cell column, 64-bit array benchmark vs NGSPICE
 - [ ] **Adaptive Output Timestep** — Variable-length output array with true adaptive dt (full adaptive requires output grid changes)
-- [ ] **BSIM-AR — Default to zscore+MAE+LDS** — Document this as the recommended config in bsimar/README.md; deprecate signedlog mode for AR training (it remains valid for non-AR DirectNet).
-- [ ] **BSIM-AR — Speed up AR validation** — Implement KV-cache for the Transformer encoder so the 13 sequential steps reuse cached attention. Expected ~5-10x speedup on validation/test (currently 170-190s/epoch).
-- [ ] **BSIM-AR — Larger production model** — After the smoke test confirms the pipeline, retrain with paper-scale config (d_model=256, layers=6, ff=1024, ~110K params) for 500 epochs to get apples-to-apples comparison vs paper Table.
-- [ ] **BSIM-AR — Auto-disambiguate exp-names** — Add a guard in `main.py` that aborts (or appends a timestamp) if `<exp_name>_best.pt` already exists, to prevent silent checkpoint clobbering across parallel runs.
-- [ ] **BSIM-AR — Validate on PMOS + per-tech** — Smoke test only covered universal NMOS; need PMOS run + at least one per-tech run to confirm the pipeline handles all data shapes.
+- [ ] **Retrain all BSIMAR + DirectNet checkpoints** — The v3 refactor changed the normaliser file format and the Transformer architecture assumptions. Old checkpoints will not load; retrain universal nmos/pmos + per-tech as needed.
+- [ ] **BSIMAR v3 on PMOS + per-tech** — Sprint only covered universal NMOS. Need PMOS run + per-tech runs to confirm the v3 recipe generalises.
+- [ ] **LEVEL=73/74 end-to-end verification** — `tests/verify_nn_*.py` are broken per the old `tech.variants[v].get_process_params(device)` API note. Port them to the new `NNTechConfig.resolve_modelcard(...)` + `extract_process_params(...)` API once there is a v3 checkpoint to test against.
+- [ ] **N2 KV-cache encoder** (filed) — Only worth doing if 500-epoch training or 100+ AR-finetune epochs becomes routine. ~200 LOC bit-exact rewrite of `nn.TransformerEncoderLayer` attention.
 
 ---
 
@@ -211,7 +215,7 @@ Create a netlist (`.sp` file). Examples in `examples/`.
 conda run -n pycircuitsim python external_compact_models/PyCMG/scripts/generate_nn_data.py \
     --device both --universal
 
-# Train DirectNet (baseline) via unified CLI
+# Train DirectNet baseline (zscore norm, DirectLoss)
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
     --model direct --device-type nmos --universal --mode direct13 \
     --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048 --cuda
@@ -224,9 +228,17 @@ conda run -n pycircuitsim python -u -m bsimar.cli.train \
     --model direct --device-type nmos --universal --mode charge-finetune \
     --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048 --cuda --resume none
 
-# Train BSIM-AR Transformer (primary, autoregressive) — paper recommended config
+# Train BSIMAR v3 Transformer (production recipe, hard-wired)
+# The v3 recipe (MAE+LDS+VovLDS, asinh+zscore, parallel_caps,
+# grouped_inputs, BSIMAR reorder, AR finetune tail, phys-best ckpt) is
+# all hard-wired inside train_transformer. Only architecture and
+# schedule are user-tunable.
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
-    --model transformer --device-type nmos --universal --loss mae --lds --cuda
+    --model transformer --device-type nmos --universal --cuda
+
+# Same for PMOS
+conda run -n pycircuitsim python -u -m bsimar.cli.train \
+    --model transformer --device-type pmos --universal --cuda
 
 # Note: `bsimar` is importable because consumers add
 #       `external_compact_models/` to sys.path. Checkpoints live under
@@ -234,12 +246,12 @@ conda run -n pycircuitsim python -u -m bsimar.cli.train \
 ```
 Checkpoints (under `external_compact_models/bsimar/checkpoints/`):
 - DirectNet: `universal_{nmos,pmos}_best.pt` + `_norm.npz` (universal); `{tech}_{nmos,pmos}_best.pt` (per-tech).
-- Transformer: `ar_universal_{nmos,pmos}_best.pt` + `_norm.npz` + `_config.npz`.
+- Transformer: `ar_universal_{nmos,pmos}_{best,best.ar,best.phys}.pt` + `_norm.npz` + `_config.npz`. The `_best.phys.pt` variant is the phys-space-best checkpoint (the one the simulator should load).
 
 Netlist usage:
 - LEVEL=73 (DirectNet): `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`.
-- LEVEL=74 (BSIM-AR Transformer): `.model nmos_ar NMOS (LEVEL=74 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`.
-- Parser auto-resolves process params from TECH+VT and prefers universal checkpoint when available.
+- LEVEL=74 (BSIMAR v3 Transformer): `.model nmos_ar NMOS (LEVEL=74 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`.
+- Parser auto-resolves process params from TECH+VT and prefers the universal checkpoint when available.
 - Direct process params: `.model nmos_nn NMOS (LEVEL=73 PHIG=4.41 U0=0.033 VSAT=65370 EOT=1.06e-9 ETA0=0.005 CIT=-9.81e-4 RDSW=15)`.
 
 ### Output Files
@@ -362,23 +374,31 @@ When integrating new compact models, follow this checklist:
 6. **Update `_is_mosfet()`** in `solver.py` when adding new device types
 7. **Test both NMOS and PMOS** against NGSPICE: single OP, DC sweep, inverter VTC, inverter transient
 
-### NN Model Rules (LEVEL=73 DirectNet + LEVEL=74 BSIM-AR)
+### NN Model Rules (LEVEL=73 DirectNet + LEVEL=74 BSIMAR v3)
 
-Both NN compact models share the same data/normalization pipeline and
-the same inference-time rules. DirectNet is the baseline (single-shot MLP);
-BSIM-AR is the primary model (autoregressive Transformer).
+Both NN compact models share the same data pipeline and the same
+inference-time rules. DirectNet is the baseline (single-shot MLP);
+BSIMAR v3 is the primary model (autoregressive Transformer with
+parallel cap head).
 
-1. **Jacobian consistency is mandatory** — gm/gds MUST be `torch.autograd.grad(id, V)`, never independent predictions. Without this, NR diverges in multi-device circuits. This holds for both LEVEL=73 and LEVEL=74.
+1. **Jacobian consistency is mandatory** — gm/gds/gmb MUST be `torch.autograd.grad(id, V)`, never independent predictions. Without this, NR diverges in multi-device circuits. This holds for both LEVEL=73 and LEVEL=74.
 2. **PMOS source-relative frame** — Shift all voltages by -Vs before NN eval (`v_d_nn = v_d - v_s`). Training uses Vs=0; in CMOS, PMOS Vs=VDD.
-3. **Training range covers NR overshoot** — Margin of +/-VDD beyond operating range, not just +/-0.1V
-4. **Voltage clamping** — Clip inputs to training range to prevent extrapolation garbage
-5. **Signed-log normalization (DirectNet)** — `sign(x) * log10(|x|/floor)` preserves sign across 14-decade range. BSIM-AR Transformer defaults to plain z-score normalization (the paper's approach); `inv_signed_log` denormalization tends to amplify AR-accumulated errors catastrophically in physical space.
-6. **TSMC asymmetric L** — NMOS L=16nm, PMOS L=20nm; NNTechConfig uses `L_nmos`/`L_pmos`
-7. **ASAP7 modelcard name mapping** — Parser auto-maps netlist names to `nmos_rvt`/`pmos_rvt`
-8. **PyCMG integration** — `bsimar/config.py` re-exports the NN config from PyCMG's `pycmg.nn_config` (TECH_CONFIGS, ProcessParams, extract_process_params, OUTPUT_COLUMNS, INPUT_COLUMNS). Training VDD may differ from PyCMG (e.g., ASAP7: train=0.7V, PyCMG=0.9V). Backward-compat alias `TechConfig = NNTechConfig` exists for test files.
-9. **Data generation validates PyCMG output** — `eval_single_point` rejects NaN/Inf and `|id| > 1A`. PyCMG `eval_dc` raises `RuntimeError` on internal-node convergence failure. Default NFIN range is `[2, 3, 5, 10, 15, 20, 24]` (NFIN=1 excluded due to OSDI convergence failures).
-10. **Shared loss layer** — Both models use `bsimar.losses.DirectLoss` (13-output weighted MSE, optional zero-bias penalty). `bsimar.losses.ChargeConsistencyLoss` adds autograd-enforced dq/dV = C consistency for DirectNet (the primary knob for improving transient accuracy). The Transformer can also optionally use `MAELoss` with LDS reweighting — this is the recommended config from the BSIM-AR paper.
-11. **Unified CLI** — Training goes through `python -m bsimar.cli.train --model {direct,transformer} ...`. Both models read the same `.npz` produced by `external_compact_models/PyCMG/scripts/generate_nn_data.py` and write checkpoints under `external_compact_models/bsimar/checkpoints/`.
+3. **Training range covers NR overshoot** — Margin of +/-VDD beyond operating range, not just +/-0.1V.
+4. **Voltage clamping** — Clip inputs to the recorded training-domain `input_min`/`input_max` to prevent NN extrapolation garbage.
+5. **Normalisation — asinh (BSIMAR v3) or zscore (DirectNet)**. The v3 sprint removed the signed-log normaliser entirely. BSIMAR v3 uses asinh + z-score on outputs (`y_norm = (asinh(y/s_k) - m)/std`, `s_k` = per-target geometric-mean scale); DirectNet uses plain z-score on outputs. Both use z-score on inputs.
+6. **Chain-rule denormalisation** — Simulator consumers must apply the right chain rule per normaliser:
+   - **zscore** (DirectNet): `dy_phys/dv_phys = dy_norm/dv_norm * out_std / in_std` (linear, no `|phys_val|*ln(10)` factor).
+   - **asinh** (BSIMAR v3): `dy_phys/dv_phys = dy_norm/dv_norm * out_std * sqrt(asinh_scale² + y_phys²) / in_std`.
+7. **TSMC asymmetric L** — NMOS L=16nm, PMOS L=20nm; NNTechConfig uses `L_nmos`/`L_pmos`.
+8. **ASAP7 modelcard name mapping** — Parser auto-maps netlist names to `nmos_rvt`/`pmos_rvt`.
+9. **PyCMG integration** — `bsimar/config.py` re-exports the NN config from PyCMG's `pycmg.nn_config` (TECH_CONFIGS, ProcessParams, extract_process_params, OUTPUT_COLUMNS, INPUT_COLUMNS). Training VDD may differ from PyCMG (e.g., ASAP7: train=0.7V, PyCMG=0.9V). Backward-compat alias `TechConfig = NNTechConfig` exists for test files.
+10. **Data generation validates PyCMG output** — `eval_single_point` rejects NaN/Inf and `|id| > 1A`. PyCMG `eval_dc` raises `RuntimeError` on internal-node convergence failure. Default NFIN range is `[2, 3, 5, 10, 15, 20, 24]` (NFIN=1 excluded due to OSDI convergence failures).
+11. **Loss layer (per model)** — DirectNet uses `bsimar.losses.DirectLoss` (13-output weighted MSE) or `ChargeConsistencyLoss` (autograd dq/dV = C for charge-finetune). BSIMAR v3 uses `bsimar.losses.MAELoss` with per-target LDS + Vg-LDS (Vov proxy) weights, hard-wired inside `train_transformer`.
+12. **BSIMAR v3 output ordering** — The Transformer output is in `BSIMAR_COLUMN_ORDER` (`qg, qb, qd, qs, id, gm, gds, gmb, cgg, cgd, cgs, cdg, cdd`), not `OUTPUT_COLUMN_ORDER`. Consumer code (`mosfet_bsimar.py`) takes autograd derivatives at the right column indices.
+13. **Parallel cap head** — The BSIMAR v3 Transformer emits the 5 capacitance outputs in parallel from the gmb hidden state, not as sequential AR steps. The AR loop runs only 8 steps (charges + currents/conds). `parallel_caps` and `grouped_inputs` are structural and not configurable.
+14. **AR finetune phase** — After the cosine TF schedule, the trainer runs `ar_finetune_epochs` extra epochs at `ss_ratio=1.0` (pure AR rollout) with a fixed low LR. The phys-best checkpoint tracker picks the best model across both phases.
+15. **Unified CLI** — Training goes through `python -m bsimar.cli.train --model {direct,transformer} ...`. Both models read the same `.npz` produced by `external_compact_models/PyCMG/scripts/generate_nn_data.py` and write checkpoints under `external_compact_models/bsimar/checkpoints/`.
+16. **Checkpoint files per Transformer run** — `_best.pt` (TF val-best), `_best.ar.pt` (AR val-best), `_best.phys.pt` (physical-space val-best; **this is the one the simulator loads**), `_norm.npz` (BSIMARNormStats asinh), `_config.npz` (architecture).
 
 ---
 

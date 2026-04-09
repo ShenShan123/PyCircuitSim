@@ -49,24 +49,29 @@ BSIMAR is a unified package covering two complementary architectures:
 
 - **`DirectNet`** — baseline MLP predicting all 13 outputs in a single
   forward pass. Fast to train, used as the reference for comparison.
-- **`TransformerEncoderModel`** (BSIM-AR) — autoregressive Transformer
-  encoder that generates outputs one-by-one with teacher forcing during
-  training. Primary model, higher accuracy at higher inference cost.
+- **`TransformerEncoderModel`** (BSIMAR v3) — autoregressive Transformer
+  encoder with teacher forcing during training. Primary model, higher
+  accuracy at higher inference cost. The v3 architecture hard-wires the
+  winning recipe from the 2026-04-08 improvement sprint: `parallel_caps`
+  (5 cap outputs emit in one parallel head), `grouped_inputs` (19 input
+  scalars collapsed into 3 semantic group tokens), asinh + z-score
+  normalisation, MAE + per-target LDS + Vov-LDS loss, BSIMAR column
+  reorder, AR finetune tail, and the phys-best checkpoint tracker.
 
 ```
 BSIMAR/
 ├── bsimar/                          # Python package — importable as `bsimar`
 │   ├── config.py                    # TECH_CONFIGS + DirectNetConfig + TransformerConfig
 │   ├── data/
-│   │   ├── normalize.py             # Normalizer + BSIMARNormalizer (zscore / signedlog)
-│   │   ├── dataset.py               # MOSFETDataset + loaders + small-value filtering
+│   │   ├── normalize.py             # BSIMARNormalizer (asinh / zscore) + BSIMARNormStats
+│   │   ├── dataset.py               # MOSFETDataset + load_and_split_bsimar
 │   │   └── analyze.py               # Dataset quality analysis
 │   ├── models/
-│   │   ├── direct_net.py            # Baseline MLP
-│   │   └── transformer.py           # Autoregressive Transformer
+│   │   ├── direct_net.py            # Baseline MLP (DirectNet)
+│   │   └── transformer.py           # BSIMAR v3 Transformer (parallel_caps + grouped_inputs)
 │   ├── losses/
-│   │   ├── direct_loss.py           # DirectLoss + ChargeConsistencyLoss
-│   │   └── bni_mae.py               # WeightedBNILoss + MAELoss + LDS
+│   │   ├── direct_loss.py           # DirectLoss + ChargeConsistencyLoss (DirectNet)
+│   │   └── bni_mae.py               # MAELoss + compute_lds_weights_per_target (BSIMAR)
 │   ├── training/
 │   │   ├── early_stopping.py
 │   │   └── trainer.py               # train_directnet, train_transformer
@@ -77,7 +82,7 @@ BSIMAR/
 │   └── cli/train.py                 # `python -m bsimar.cli.train --model {direct,transformer}`
 ├── checkpoints/                     # Trained weights (.pt + _norm.npz + _config.npz) — gitignored
 ├── results/                         # Training plots — gitignored
-├── docs/                            # Reference paper, ablation notes
+├── docs/                            # Reference paper, improvement plan, sprint reports
 ├── imgs/                            # README imagery
 ├── requirments.txt                  # Python dependencies
 └── README.md
@@ -133,20 +138,63 @@ The offering includes a pre-trained model and a version fine-tuned for 7nm nch_s
 #### Basic usage
 
 ```bash
-# Train DirectNet (baseline MLP)
+# Train DirectNet (baseline MLP, zscore norm, DirectLoss)
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
     --model direct --device-type nmos --universal --mode direct13 \
     --epochs 800 --hidden 384 --layers 6 --batch-size 2048 --cuda
 
-# Train BSIM-AR Transformer (primary, recommended: zscore + MAE + LDS)
+# Train BSIMAR v3 Transformer (production recipe).
+# The winning recipe is hard-wired inside train_transformer:
+#   loss      = MAE + per-target LDS + Vov-LDS
+#   norm      = asinh + z-score
+#   arch      = parallel_caps + grouped_inputs
+#   reorder   = BSIMAR column order (Q → I-V → C)
+#   finetune  = AR-rollout fine-tune (default 5 epochs)
+#   ckpt sel  = phys-space-best tracker
+# Only architecture and schedule are user-tunable.
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
-    --model transformer --device-type nmos --universal \
-    --loss mae --lds --cuda
+    --model transformer --device-type nmos --universal --cuda
 ```
 
 Both commands read `external_compact_models/bsimar/data/datasets/*.npz`
 (or a path you pass via `--data`) and write checkpoints + plots under
 `external_compact_models/bsimar/{checkpoints,results}/`.
+
+#### BSIMAR v3 Medium results on `universal_nmos`
+
+| Metric | Value |
+|---|---:|
+| NRMSE_phys | **0.223 %** |
+| MRE_phys | **1.41 %** |
+| R²_phys | **0.9984** |
+| Params | 5,152,525 |
+| Wall-clock | ~107 min on one Blackwell GPU |
+
+Achieved by running the default recipe on the Medium configuration:
+
+```bash
+conda run -n pycircuitsim python -u -m bsimar.cli.train \
+    --model transformer --device-type nmos --universal \
+    --d-model 256 --nhead 8 --num-layers 6 --dim-feedforward 1024 \
+    --epochs 150 --batch-size 1024 --lr 8e-4 --patience 150 \
+    --ar-finetune-epochs 5 --seed 42 --cuda
+```
+
+For the full sprint narrative (which changes worked, which
+didn't, and why), see
+[`docs/bsimar_improvement_plan_2026_04_08.md`](docs/bsimar_improvement_plan_2026_04_08.md).
+
+#### Checkpoints
+
+A BSIMAR Transformer run produces five files per `--exp-name`:
+
+| File | Purpose |
+|---|---|
+| `<exp>_best.pt`       | TF-val-best checkpoint |
+| `<exp>_best.ar.pt`    | AR-val-best checkpoint |
+| `<exp>_best.phys.pt`  | **Phys-space-best** — load this for the simulator |
+| `<exp>_norm.npz`      | `BSIMARNormStats` (asinh mode) |
+| `<exp>_config.npz`    | Architecture config |
 
 
 ## 🧠 Framework Components
