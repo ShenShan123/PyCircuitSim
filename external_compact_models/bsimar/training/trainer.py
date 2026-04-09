@@ -532,6 +532,7 @@ def train_transformer(
     device_str: str = "cpu",
     ar_finetune_epochs: int = 5,
     overwrite: bool = False,
+    prebuilt_data: Optional[Tuple[object, object, object, BSIMARNormalizer]] = None,
 ) -> Tuple[nn.Module, BSIMARNormalizer]:
     """BSIMAR v3 Transformer training pipeline.
 
@@ -567,12 +568,19 @@ def train_transformer(
           f"(asinh+zscore, MAE+LDS+VovLDS, parallel_caps, grouped_inputs) | "
           f"Data: {Path(data_path).name}")
 
-    train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
-        str(data_path),
-        column_names=OUTPUT_COLUMNS,
-        norm_mode="asinh",
-        apply_filter=True,
-    )
+    if prebuilt_data is not None:
+        train_ds, val_ds, test_ds, normalizer = prebuilt_data
+        print(f"[prebuilt] Using caller-supplied datasets: "
+              f"train={len(train_ds)}, val={len(val_ds)}, "
+              f"test={len(test_ds)} "
+              f"(load_and_split_bsimar bypassed)")
+    else:
+        train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
+            str(data_path),
+            column_names=OUTPUT_COLUMNS,
+            norm_mode="asinh",
+            apply_filter=True,
+        )
     input_dim = train_ds.inputs.shape[1]
     output_dim = train_ds.outputs.shape[1]
     print(f"Input dim: {input_dim}, Output dim: {output_dim}")
