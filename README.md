@@ -110,10 +110,14 @@ git submodule update --init --recursive
 ls external_compact_models/PyCMG/build/osdi/bsimcmg.osdi
 ```
 
-Technology modelcards ship inside PyCMG at `external_compact_models/PyCMG/modelcards/`:
+Technology modelcards live under `external_compact_models/PyCMG/modelcards/`:
 
-- `ASAP7/` — ASAP7 7nm predictive PDK.
-- `TSMC5/`, `TSMC7/`, `TSMC12/`, `TSMC16/` — naive TSMC bins.
+- `ASAP7/` — committed ASAP7 7nm predictive PDK.
+- `TSMC{5,7,12,16}/cln*.l` — raw TSMC PDK files. These are IP-protected and
+  gitignored; supply them yourself to run any TSMC verification. Naive
+  modelcards used by NGSPICE tests are regenerated on-the-fly from the raw
+  PDK via `pycmg.tech.resolve_modelcard` and cached under
+  `external_compact_models/PyCMG/build/modelcards/`.
 
 ### NN Compact Model Setup (LEVEL=73 / LEVEL=74)
 

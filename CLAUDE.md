@@ -81,7 +81,7 @@ external_compact_models/
 │   ├── build/osdi/bsimcmg.osdi             # Compiled OSDI binary
 │   └── modelcards/                          # Technology modelcards
 │       ├── ASAP7/                           # ASAP7 7nm modelcards
-│       └── TSMC{5,7,12,16}/naive/           # Pre-baked TSMC naive modelcards
+│       └── TSMC{5,7,12,16}/                 # Raw TSMC PDKs (gitignored, IP-protected); naive modelcards regenerated on-the-fly via pycmg.tech.resolve_modelcard into build/modelcards/
 main.py                 # CLI entry point (single main entrance)
 examples/*.sp           # Example netlists
 results/                # Simulation output (.lis, .csv, .png)
@@ -415,7 +415,7 @@ parallel cap head).
 - **PyCMG Location**: `external_compact_models/PyCMG/` (git submodule, 21 device variants)
 - **PyCMG Submodule**: `external_compact_models/PyCMG/` (git submodule)
 - **BSIM-CMG OSDI Binary**: `build/osdi/bsimcmg.osdi` (relative to PyCMG root)
-- **Modelcards**: `modelcards/` (relative to PyCMG root; ASAP7: `ASAP7/`, TSMC: `TSMC{5,7,12,16}/naive/`)
+- **Modelcards**: `modelcards/` (relative to PyCMG root; ASAP7: `ASAP7/*.pm` committed; TSMC: raw PDK `TSMC{5,7,12,16}/cln*.l` is gitignored/IP-protected and naive modelcards are regenerated on-the-fly via `pycmg.tech.resolve_modelcard` into `build/modelcards/`)
 - **PyCMG Test Helpers**: `tests/helpers.py` (relative to PyCMG root; was `pycmg/testing.py`)
 - **Results Output**: `results/<circuit_name>/<analysis_type>/` (`.lis`, `.csv`, `.png`)
 - **Examples**: `examples/` (13 netlists)

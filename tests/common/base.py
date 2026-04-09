@@ -85,19 +85,37 @@ class TechProfile:
     def default_vt_pair(self) -> VtPair:
         return self.get_vt_pair(self.default_vt)
 
+    def _resolve_tsmc_modelcard(self, pdk_device: str, l_m: float) -> Path:
+        """Generate a TSMC naive modelcard on-the-fly via pycmg.tech.resolve_modelcard.
+
+        The committed ``modelcards/TSMC*/naive/*.l`` files were removed; they
+        are now regenerated from the raw PDK and cached under PyCMG's
+        ``build/modelcards/``. Uses ``NFIN=self.default_nfin`` so the correct
+        NFIN-group variant is selected.
+        """
+        from pycmg.tech import TECH_REGISTRY, resolve_modelcard
+        tech_config = TECH_REGISTRY[self.name]
+        # Map "nch_svt_mac" -> "nmos_svt", "pch_lvt_mac" -> "pmos_lvt"
+        prefix = pdk_device.split("_", 1)[0]
+        vt = pdk_device.split("_", 1)[1].replace("_mac", "")
+        canonical = ("nmos_" if prefix == "nch" else "pmos_") + vt
+        device_config = tech_config.get_device(canonical)
+        return Path(resolve_modelcard(
+            device_config, tech_config,
+            L=l_m, NFIN=float(self.default_nfin),
+        ))
+
     def get_nmos_modelcard(self, vt: VtPair, l_nmos: float) -> Path:
         """Return path to NMOS modelcard file for given VT and L."""
         if self.single_file:
             return MODELCARDS_DIR / self.modelcard_dir / self.single_file_name
-        l_nm = round(l_nmos * 1e9)
-        return MODELCARDS_DIR / self.modelcard_dir / f"{vt.nmos_model}_l{l_nm}nm.l"
+        return self._resolve_tsmc_modelcard(vt.nmos_model, l_nmos)
 
     def get_pmos_modelcard(self, vt: VtPair, l_pmos: float) -> Path:
         """Return path to PMOS modelcard file for given VT and L."""
         if self.single_file:
             return MODELCARDS_DIR / self.modelcard_dir / self.single_file_name
-        l_nm = round(l_pmos * 1e9)
-        return MODELCARDS_DIR / self.modelcard_dir / f"{vt.pmos_model}_l{l_nm}nm.l"
+        return self._resolve_tsmc_modelcard(vt.pmos_model, l_pmos)
 
     def is_combo_available(self, vt: VtPair, l_nmos: float, l_pmos: float) -> bool:
         """Check if modelcard files exist for this VT and L combination."""

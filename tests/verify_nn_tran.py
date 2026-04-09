@@ -158,18 +158,36 @@ def get_results_dir(tech: TechConfig) -> Path:
     return d
 
 
+def _resolve_tsmc_modelcard(tech: TechConfig, pdk_device: str, l_m: float) -> Path:
+    """Regenerate a TSMC naive modelcard on-the-fly via pycmg.tech.resolve_modelcard.
+
+    The committed ``modelcards/TSMC*/naive/*.l`` files were removed; they are
+    now regenerated from the raw PDK and cached under PyCMG's
+    ``build/modelcards/``.
+    """
+    from pycmg.tech import TECH_REGISTRY, resolve_modelcard
+    tech_config = TECH_REGISTRY[tech.name]
+    prefix, rest = pdk_device.split("_", 1)
+    vt = rest.replace("_mac", "")
+    canonical = ("nmos_" if prefix == "nch" else "pmos_") + vt
+    device_config = tech_config.get_device(canonical)
+    return Path(resolve_modelcard(
+        device_config, tech_config, L=l_m, NFIN=float(NFIN),
+    ))
+
+
 def create_merged_modelcard(tech: TechConfig) -> Path:
     """Create a single modelcard file containing both NMOS and PMOS."""
     if tech.single_file:
         return TECH_MODEL_CARDS / tech.tech_dir / tech.nmos_file
 
-    nmos_src = TECH_MODEL_CARDS / tech.tech_dir / tech.nmos_file
-    pmos_src = TECH_MODEL_CARDS / tech.tech_dir / tech.pmos_file
+    nmos_src = _resolve_tsmc_modelcard(tech, tech.nmos_model, tech.l_nmos)
+    pmos_src = _resolve_tsmc_modelcard(tech, tech.pmos_model, tech.l_pmos)
 
     if not nmos_src.exists():
-        raise FileNotFoundError(f"NMOS modelcard not found: {nmos_src}")
+        raise FileNotFoundError(f"NMOS modelcard not generated: {nmos_src}")
     if not pmos_src.exists():
-        raise FileNotFoundError(f"PMOS modelcard not found: {pmos_src}")
+        raise FileNotFoundError(f"PMOS modelcard not generated: {pmos_src}")
 
     merged = get_results_dir(tech) / "merged_modelcard.lib"
     content = nmos_src.read_text() + "\n" + pmos_src.read_text()
