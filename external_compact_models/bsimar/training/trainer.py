@@ -1,15 +1,24 @@
-"""Unified training loops for DirectNet (baseline) and Transformer (BSIM-AR).
+"""Training pipelines for DirectNet (baseline) and BSIMAR Transformer (v3).
 
 Two public entry points:
 
-- `train_directnet`  — full training pipeline for `DirectNet` using `DirectLoss`
-  or `ChargeConsistencyLoss`. Matches the old `nn_model.train.train`.
+- ``train_directnet``  — DirectNet MLP baseline. Uses ``DirectLoss`` or
+  ``ChargeConsistencyLoss`` (the latter for ``--mode charge-finetune``).
+  Normalization is ``BSIMARNormalizer(mode='zscore')``. The legacy
+  signed-log path was removed in the v3 sprint.
 
-- `train_transformer` — full training pipeline for `TransformerEncoderModel`.
-  Matches the old `external_compact_models.BSIMAR.script.main.main`, minus
-  argument parsing (which lives in `bsimar.cli.train`).
+- ``train_transformer`` — BSIMAR v3 Transformer. Hard-wires the winning
+  recipe from ``docs/bsimar_improvement_plan_2026_04_08.md``:
 
-Lower-level per-epoch helpers are exposed for tests or custom pipelines.
+    - loss      = MAE with per-target LDS + Vg(Vov-proxy) LDS (N7)
+    - norm      = asinh + z-score (v2 T2)
+    - arch      = parallel_caps + grouped_inputs (v2 P4 + A2, hard-wired)
+    - reorder   = BSIMAR_COLUMN_ORDER (paper's Q → I → C)
+    - finetune  = AR-rollout fine-tune for `ar_finetune_epochs` epochs
+                  after the cosine schedule (N3)
+    - ckpt sel  = phys-space-best tracker (T1)
+
+Lower-level per-epoch helpers are exposed for tests and custom pipelines.
 """
 
 import time
@@ -27,22 +36,20 @@ from bsimar.config import (
     DirectNetConfig, TransformerConfig,
     CHECKPOINT_DIR, RESULTS_DIR,
 )
-from bsimar.data.dataset import load_and_split, load_and_split_bsimar
+from bsimar.data.dataset import load_and_split_bsimar
 from bsimar.data.normalize import (
-    Normalizer, BSIMARNormalizer,
+    BSIMARNormalizer,
     reorder_outputs, unreorder_outputs, _UNREORDER_IDX,
 )
 from bsimar.models.direct_net import DirectNet
 from bsimar.models.transformer import TransformerEncoderModel
 from bsimar.losses.direct_loss import DirectLoss, ChargeConsistencyLoss
-from bsimar.losses.bni_mae import (
-    WeightedBNILoss, MAELoss, compute_lds_weights_per_target,
-)
+from bsimar.losses.bni_mae import MAELoss, compute_lds_weights_per_target
 from bsimar.training.early_stopping import EarlyStopping
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# DirectNet (baseline MLP) per-epoch helpers
+# DirectNet per-epoch helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
 def train_epoch_direct_mlp(
@@ -138,7 +145,7 @@ def validate_epoch_consistency(
     criterion: ChargeConsistencyLoss,
     device: torch.device,
 ) -> Dict[str, float]:
-    """Validate with charge-cap consistency loss (direct path for early stopping)."""
+    """Validate with charge-cap consistency loss."""
     model.eval()
     total_losses: Dict[str, float] = {}
     n_batches = 0
@@ -167,133 +174,21 @@ def validate_epoch_consistency(
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-# Transformer (BSIM-AR) per-epoch helpers
+# BSIMAR Transformer per-epoch helpers
 # ══════════════════════════════════════════════════════════════════════════════
 
-def train_epoch_direct_ar(
-    model: nn.Module,
-    loader: DataLoader,
-    criterion: DirectLoss,
-    optimizer: optim.Optimizer,
-    device: torch.device,
-    unreorder_fn=None,
-) -> Dict[str, float]:
-    """Train Transformer one epoch with DirectLoss + teacher forcing."""
-    model.train()
-    total_losses: Dict[str, float] = {}
-    n_batches = 0
-
-    for x_batch, y_batch in loader:
-        x_batch = x_batch.to(device)
-        y_batch = y_batch.to(device)
-
-        optimizer.zero_grad()
-        pred = model(x_batch, y_batch)
-
-        pred_loss = unreorder_fn(pred) if unreorder_fn else pred
-        y_loss = unreorder_fn(y_batch) if unreorder_fn else y_batch
-        losses = criterion(pred_loss, y_loss, x_batch)
-        losses["total"].backward()
-
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        optimizer.step()
-
-        for k, v in losses.items():
-            total_losses[k] = total_losses.get(k, 0.0) + v.item()
-        n_batches += 1
-
-    return {k: v / n_batches for k, v in total_losses.items()}
-
-
-@torch.no_grad()
-def validate_epoch_direct_ar(
-    model: nn.Module,
-    loader: DataLoader,
-    criterion: DirectLoss,
-    device: torch.device,
-    unreorder_fn=None,
-) -> Dict[str, float]:
-    """Validate Transformer with autoregressive inference + DirectLoss."""
-    model.eval()
-    total_losses: Dict[str, float] = {}
-    n_batches = 0
-
-    for x_batch, y_batch in loader:
-        x_batch = x_batch.to(device)
-        y_batch = y_batch.to(device)
-
-        pred = model(x_batch)
-
-        pred_loss = unreorder_fn(pred) if unreorder_fn else pred
-        y_loss = unreorder_fn(y_batch) if unreorder_fn else y_batch
-        losses = criterion(pred_loss, y_loss, x_batch)
-
-        for k, v in losses.items():
-            total_losses[k] = total_losses.get(k, 0.0) + v.item()
-        n_batches += 1
-
-    return {k: v / n_batches for k, v in total_losses.items()}
-
-
-def train_epoch_scheduled_bni(
-    model: nn.Module,
-    loader: DataLoader,
-    criterion: nn.Module,
-    optimizer: optim.Optimizer,
-    device: torch.device,
-    ss_ratio: float = 1.0,
-) -> Dict[str, float]:
-    """N3 fine-tune helper: scheduled-sampling AR step with MAE/BNI.
-
-    Identical to ``train_epoch_bni`` except the forward pass uses
-    ``model.forward_scheduled(x, y, ss_ratio=ss_ratio)`` so the model
-    is rolled out autoregressively (feeding its own detached
-    predictions instead of the ground truth) for the AR target
-    block. Caps still emit in parallel under parallel_caps.
-    """
-    model.train()
-    total_loss = 0.0
-    n_batches = 0
-
-    for batch in loader:
-        if len(batch) == 3:
-            x_batch, y_batch, w_batch = batch
-            w_batch = w_batch.to(device)
-        else:
-            x_batch, y_batch = batch
-            w_batch = None
-
-        x_batch = x_batch.to(device)
-        y_batch = y_batch.to(device)
-
-        optimizer.zero_grad()
-        pred = model.forward_scheduled(x_batch, y_batch, ss_ratio=ss_ratio)
-
-        if w_batch is not None:
-            loss = criterion(pred, y_batch, weights=w_batch)
-        else:
-            loss = criterion(pred, y_batch)
-
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        optimizer.step()
-
-        total_loss += loss.item()
-        n_batches += 1
-
-    return {"total": total_loss / n_batches}
-
-
-def train_epoch_bni(
+def train_epoch_mae(
     model: nn.Module,
     loader: DataLoader,
     criterion: nn.Module,
     optimizer: optim.Optimizer,
     device: torch.device,
 ) -> Dict[str, float]:
-    """Train Transformer one epoch with BNI/MAE + teacher forcing.
+    """Teacher-forced training epoch with MAE (+ optional LDS weights).
 
-    LDS weights, if present, are carried in the loader as a 3rd batch element.
+    LDS weights, if present, are carried in the loader as a 3rd batch
+    element of shape (B, 13). The criterion must accept a ``weights``
+    keyword argument.
     """
     model.train()
     total_loss = 0.0
@@ -329,13 +224,13 @@ def train_epoch_bni(
 
 
 @torch.no_grad()
-def validate_epoch_bni(
+def validate_epoch_ar(
     model: nn.Module,
     loader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
 ) -> Dict[str, float]:
-    """Validate Transformer with autoregressive inference + BNI/MAE loss."""
+    """Autoregressive validation: ``model(x)`` only (no teacher forcing)."""
     model.eval()
     total_loss = 0.0
     n_batches = 0
@@ -358,133 +253,71 @@ def validate_epoch_tf(
     loader: DataLoader,
     criterion: nn.Module,
     device: torch.device,
-    unreorder_fn=None,
-    use_direct_loss: bool = False,
 ) -> Dict[str, float]:
-    """Fast teacher-forced validation pass.
+    """Teacher-forced validation — one forward per batch, not 8.
 
-    Calls ``model(x, y)`` once instead of the AR loop's 13 sequential
-    forwards. Empirically TF and AR val losses correlate tightly once
-    the model clears R²_norm > 0.9 (the regime we care about), so we
-    use TF for early-stopping and only run a full AR-val every N
-    epochs as a sanity check.
-
-    Used as the per-epoch validation hook in `train_transformer`. The
-    full AR-val path is preserved as a periodic ground-truth check
-    inside the training loop.
+    Empirically TF and AR val losses correlate tightly once the model
+    clears R²_norm > 0.9, so TF drives early-stopping and we run the
+    full AR pass every ``ar_check_every`` epochs as a ground-truth check.
     """
     model.eval()
-    total: Dict[str, float] = {}
+    total = 0.0
     n_batches = 0
-    for batch in loader:
-        x = batch[0].to(device)
-        y = batch[1].to(device)
+    for x, y in loader:
+        x = x.to(device); y = y.to(device)
         pred = model(x, y)
-        if use_direct_loss:
-            pl = unreorder_fn(pred) if unreorder_fn else pred
-            yl = unreorder_fn(y) if unreorder_fn else y
-            losses = criterion(pl, yl, x)
-        else:
-            losses = {"total": criterion(pred, y)}
-        for k, v in losses.items():
-            total[k] = total.get(k, 0.0) + v.item()
+        total += criterion(pred, y).item()
         n_batches += 1
-    return {k: v / n_batches for k, v in total.items()}
+    return {"total": total / n_batches}
 
 
-def train_epoch_scheduled(
+def train_epoch_scheduled_mae(
     model: nn.Module,
     loader: DataLoader,
-    criterion: DirectLoss,
+    criterion: nn.Module,
     optimizer: optim.Optimizer,
     device: torch.device,
-    ss_ratio: float = 0.0,
-    unreorder_fn=None,
+    ss_ratio: float = 1.0,
 ) -> Dict[str, float]:
-    """Train Transformer one epoch with scheduled sampling."""
+    """N3 fine-tune helper: scheduled-sampling AR step with MAE.
+
+    Identical to ``train_epoch_mae`` except the forward pass uses
+    ``model.forward_scheduled(x, y, ss_ratio=ss_ratio)`` so the model
+    is rolled out autoregressively (feeding its own detached
+    predictions instead of ground truth) for the AR target block.
+    Caps still emit in parallel.
+    """
     model.train()
-    total_losses: Dict[str, float] = {}
+    total_loss = 0.0
     n_batches = 0
 
-    for x_batch, y_batch in loader:
+    for batch in loader:
+        if len(batch) == 3:
+            x_batch, y_batch, w_batch = batch
+            w_batch = w_batch.to(device)
+        else:
+            x_batch, y_batch = batch
+            w_batch = None
+
         x_batch = x_batch.to(device)
         y_batch = y_batch.to(device)
 
         optimizer.zero_grad()
         pred = model.forward_scheduled(x_batch, y_batch, ss_ratio=ss_ratio)
 
-        pred_loss = unreorder_fn(pred) if unreorder_fn else pred
-        y_loss = unreorder_fn(y_batch) if unreorder_fn else y_batch
-        losses = criterion(pred_loss, y_loss, x_batch)
-        losses["total"].backward()
-
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        optimizer.step()
-
-        for k, v in losses.items():
-            total_losses[k] = total_losses.get(k, 0.0) + v.item()
-        n_batches += 1
-
-    return {k: v / n_batches for k, v in total_losses.items()}
-
-
-def train_epoch_curriculum(
-    model: nn.Module,
-    loader: DataLoader,
-    criterion: DirectLoss,
-    optimizer: optim.Optimizer,
-    device: torch.device,
-    n_targets: int = 13,
-    ss_ratio: float = 0.0,
-    consistency_weight: float = 0.0,
-    unreorder_fn=None,
-) -> Dict[str, float]:
-    """Train with curriculum on output length + optional scheduled sampling."""
-    model.train()
-    total_losses: Dict[str, float] = {}
-    n_batches = 0
-    target_dim = None
-
-    for x_batch, y_batch in loader:
-        x_batch = x_batch.to(device)
-        y_batch = y_batch.to(device)
-        if target_dim is None:
-            target_dim = y_batch.shape[1]
-
-        optimizer.zero_grad()
-
-        pred = model.forward_curriculum(
-            x_batch, y_batch, n_targets=n_targets, ss_ratio=ss_ratio)
-
-        if n_targets < target_dim:
-            pred_masked = pred.clone()
-            pred_masked[:, n_targets:] = y_batch[:, n_targets:]
+        if w_batch is not None:
+            loss = criterion(pred, y_batch, weights=w_batch)
         else:
-            pred_masked = pred
+            loss = criterion(pred, y_batch)
 
-        pred_loss = unreorder_fn(pred_masked) if unreorder_fn else pred_masked
-        y_loss = unreorder_fn(y_batch) if unreorder_fn else y_batch
-        losses = criterion(pred_loss, y_loss, x_batch)
-
-        total_loss = losses["total"]
-
-        if consistency_weight > 0:
-            pred_tf = model(x_batch, y_batch)
-            with torch.no_grad():
-                pred_ar = model(x_batch)
-            loss_consist = torch.nn.functional.mse_loss(pred_tf, pred_ar)
-            total_loss = total_loss + consistency_weight * loss_consist
-            total_losses["consist"] = total_losses.get("consist", 0.0) + loss_consist.item()
-
-        total_loss.backward()
+        loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
-        for k, v in losses.items():
-            total_losses[k] = total_losses.get(k, 0.0) + v.item()
+        total_loss += loss.item()
         n_batches += 1
 
-    return {k: v / n_batches for k, v in total_losses.items()}
+    return {"total": total_loss / n_batches}
 
 
 @torch.no_grad()
@@ -493,7 +326,7 @@ def test_model(
     loader: DataLoader,
     device: torch.device,
 ) -> Tuple[np.ndarray, np.ndarray]:
-    """Run inference on the test loader, return (pred_norm, true_norm) arrays."""
+    """Run AR inference on the loader, return (pred_norm, true_norm)."""
     model.eval()
     all_pred, all_true = [], []
 
@@ -538,53 +371,38 @@ def train_directnet(
     use_charge_consistency: bool = False,
     w_consistency: float = 1.0,
     w_cond_consistency: float = 0.0,
-    norm_mode: str = "legacy",
     apply_filter: bool = False,
 ):
-    """Full DirectNet training pipeline.
+    """DirectNet baseline training pipeline.
 
-    Mirrors the legacy `nn_model.train.train` entry point, adapted to the new
-    `bsimar` package paths. Saves `<save_prefix>_best.pt` and
-    `<save_prefix>_norm.npz` under `bsimar.config.CHECKPOINT_DIR`.
+    Uses ``BSIMARNormalizer(mode='zscore')`` for normalisation — the
+    legacy signed-log path was removed in the v3 sprint. Saves
+    ``<save_prefix>_best.pt`` and ``<save_prefix>_norm.npz`` under
+    ``bsimar.config.CHECKPOINT_DIR``.
 
     Args:
-        norm_mode: 'legacy' uses the signed-log + z-score `Normalizer`
-            (good for 14-decade dynamic range, but `inv_signed_log`
-            amplifies physical-space errors). 'zscore' uses
-            `BSIMARNormalizer(mode="zscore")` — same path as the
-            BSIM-AR Transformer, makes physical-space metrics directly
-            comparable across the two models.
-        apply_filter: only honored when `norm_mode='zscore'`. Drops
-            sub-floor cutoff samples (matches the BSIM-AR pipeline).
+        apply_filter: Drop sub-floor cutoff samples (matches the BSIMAR
+            data path). Default False for DirectNet to preserve
+            baseline behaviour.
     """
+    from bsimar.config import OUTPUT_COLUMNS
+
     device = torch.device(device_str)
-    print(f"Training DirectNet on {device}, output_dim={output_dim}, "
-          f"norm_mode={norm_mode}")
+    print(f"Training DirectNet on {device}, output_dim={output_dim}")
     print(f"Loss weights: w_id={config.w_id}, w_charges={config.w_charges}, "
           f"w_caps={config.w_caps}")
     if use_charge_consistency:
         print(f"Charge consistency: w_consistency={w_consistency}, "
               f"w_cond_consistency={w_cond_consistency}")
 
-    if norm_mode == "zscore":
-        from bsimar.config import OUTPUT_COLUMNS
-        train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
-            data_path,
-            column_names=OUTPUT_COLUMNS,
-            norm_mode="zscore",
-            train_ratio=config.train_ratio,
-            val_ratio=config.val_ratio,
-            apply_filter=apply_filter,
-        )
-    elif norm_mode == "legacy":
-        train_ds, val_ds, test_ds, normalizer = load_and_split(
-            data_path,
-            train_ratio=config.train_ratio,
-            val_ratio=config.val_ratio,
-        )
-    else:
-        raise ValueError(
-            f"Unknown norm_mode '{norm_mode}'. Use 'legacy' or 'zscore'.")
+    train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
+        data_path,
+        column_names=OUTPUT_COLUMNS,
+        norm_mode="zscore",
+        train_ratio=config.train_ratio,
+        val_ratio=config.val_ratio,
+        apply_filter=apply_filter,
+    )
 
     train_loader = DataLoader(train_ds, batch_size=config.batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=config.batch_size, shuffle=False)
@@ -654,6 +472,7 @@ def train_directnet(
     norm_path = CHECKPOINT_DIR / f"{save_prefix}_norm.npz"
 
     t_start = time.time()
+    epoch = 0
 
     for epoch in range(1, config.max_epochs + 1):
         train_losses = _train_fn(model, train_loader, criterion, optimizer, device)
@@ -681,7 +500,8 @@ def train_directnet(
             break
 
     elapsed = time.time() - t_start
-    print(f"\nTraining completed in {elapsed:.0f}s ({elapsed / epoch:.1f}s/epoch)")
+    epochs_run = max(epoch, 1)
+    print(f"\nTraining completed in {elapsed:.0f}s ({elapsed / epochs_run:.1f}s/epoch)")
     print(f"Best val loss: {best_val_loss:.6f}")
 
     model.load_state_dict(torch.load(best_path, weights_only=True))
@@ -690,8 +510,6 @@ def train_directnet(
     for k, v in sorted(test_losses.items()):
         print(f"  {k:>10s}: {v:.6f}")
 
-    # Use the shared metrics path so DirectNet reports the same
-    # NRMSE / MRE / R² / R²_norm / MAE_n table as the BSIMAR Transformer.
     from bsimar.eval.metrics import compute_physical_metrics, print_metrics
     pred_norm, true_norm = _collect_directnet_predictions(
         model, test_loader, device)
@@ -706,34 +524,32 @@ def train_directnet(
 def train_transformer(
     data_path: str,
     save_prefix: str,
-    device_type: str,
-    loss_name: str = "mae",
-    norm_mode: str = "zscore",
-    apply_filter: bool = True,
-    use_lds: bool = False,
-    reorder: bool = True,
-    scheduled_sampling: bool = False,
-    ss_warmup: int = 100,
-    ss_max_ratio: float = 0.5,
-    consistency_weight: float = 0.0,
-    curriculum: bool = False,
-    curriculum_warmup: int = 50,
     config: TransformerConfig = TransformerConfig(),
     epochs: Optional[int] = None,
     batch_size: Optional[int] = None,
     patience: Optional[int] = None,
     lr: Optional[float] = None,
     device_str: str = "cpu",
-    column_names: Optional[list] = None,
+    ar_finetune_epochs: int = 5,
     overwrite: bool = False,
-    vov_lds: bool = False,
-    ar_finetune_epochs: int = 0,
 ) -> Tuple[nn.Module, BSIMARNormalizer]:
-    """Full BSIM-AR Transformer training pipeline.
+    """BSIMAR v3 Transformer training pipeline.
 
-    Mirrors the legacy `external_compact_models.BSIMAR.script.main.main`
-    flow, adapted to the new `bsimar` package. Saves `<save_prefix>_best.pt`,
-    `<save_prefix>_norm.npz`, and `<save_prefix>_config.npz`.
+    Hard-wires the winning recipe from the 2026-04-08 improvement
+    sprint. Caller-visible knobs are **architecture** (via ``config``)
+    and **schedule** (``epochs`` / ``batch_size`` / ``patience`` /
+    ``lr`` / ``ar_finetune_epochs``). The loss, normalisation, data
+    filtering, LDS weighting, Vov-LDS weighting, output reorder, and
+    phys-best checkpoint tracker are all fixed and not user-tunable.
+
+    Produces three files under ``CHECKPOINT_DIR``:
+
+    - ``<save_prefix>_best.pt``       — TF-val-best checkpoint
+    - ``<save_prefix>_best.ar.pt``    — AR-val-best checkpoint
+    - ``<save_prefix>_best.phys.pt``  — phys-space-best checkpoint
+                                        (loaded for the final test)
+    - ``<save_prefix>_norm.npz``      — ``BSIMARNormStats`` (asinh mode)
+    - ``<save_prefix>_config.npz``    — architecture config
     """
     from bsimar.config import OUTPUT_COLUMNS
     from bsimar.eval.metrics import compute_physical_metrics, print_metrics
@@ -741,60 +557,36 @@ def train_transformer(
         plot_scatter_comparison, plot_loss_curves,
     )
 
-    if column_names is None:
-        column_names = OUTPUT_COLUMNS
-
-    # A4: scheduled_sampling / curriculum / consistency_weight only have a
-    # code path under `loss_name == "direct"`. Under mae/bni they were
-    # silently ignored, which is a footgun (see CLAUDE.md memory note
-    # `bsimar_loss_routing.md`). Fail loudly instead.
-    if loss_name != "direct" and (
-        scheduled_sampling or curriculum or consistency_weight > 0
-    ):
-        raise ValueError(
-            "scheduled_sampling / curriculum / consistency_weight only "
-            "work under --loss direct. Either switch to --loss direct, "
-            "or remove these flags."
-        )
-
     epochs = epochs if epochs is not None else config.max_epochs
     batch_size = batch_size if batch_size is not None else config.batch_size
     patience = patience if patience is not None else config.patience
     lr = lr if lr is not None else config.lr
 
     device = torch.device(device_str)
-    print(f"Device: {device} | Norm: {norm_mode} | "
-          f"Loss: {loss_name}{'+lds' if use_lds else ''} | "
-          f"Filter: {apply_filter} | Data: {Path(data_path).name}")
+    print(f"Device: {device} | Recipe: BSIMAR v3 "
+          f"(asinh+zscore, MAE+LDS+VovLDS, parallel_caps, grouped_inputs) | "
+          f"Data: {Path(data_path).name}")
 
     train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
         str(data_path),
-        column_names=column_names,
-        norm_mode=norm_mode,
-        apply_filter=apply_filter,
+        column_names=OUTPUT_COLUMNS,
+        norm_mode="asinh",
+        apply_filter=True,
     )
     input_dim = train_ds.inputs.shape[1]
     output_dim = train_ds.outputs.shape[1]
     print(f"Input dim: {input_dim}, Output dim: {output_dim}")
 
-    _reorder_active = False
-    if reorder:
-        _reorder_active = True
-        train_ds.outputs = torch.tensor(
-            reorder_outputs(train_ds.outputs.numpy()), dtype=torch.float32)
-        val_ds.outputs = torch.tensor(
-            reorder_outputs(val_ds.outputs.numpy()), dtype=torch.float32)
-        test_ds.outputs = torch.tensor(
-            reorder_outputs(test_ds.outputs.numpy()), dtype=torch.float32)
-        print("Output columns reordered: charges->caps->cond->id")
+    # Reorder outputs to the BSIMAR paper AR order (charges → I-V → caps).
+    train_ds.outputs = torch.tensor(
+        reorder_outputs(train_ds.outputs.numpy()), dtype=torch.float32)
+    val_ds.outputs = torch.tensor(
+        reorder_outputs(val_ds.outputs.numpy()), dtype=torch.float32)
+    test_ds.outputs = torch.tensor(
+        reorder_outputs(test_ds.outputs.numpy()), dtype=torch.float32)
+    print("Output columns reordered: charges->caps->cond->id")
 
-    if _reorder_active:
-        _unreorder_idx_t = torch.tensor(_UNREORDER_IDX, dtype=torch.long)
-        def _unreorder_tensor(t: torch.Tensor) -> torch.Tensor:
-            return t[:, _unreorder_idx_t.to(t.device)]
-        unreorder_fn = _unreorder_tensor
-    else:
-        unreorder_fn = None
+    _unreorder_idx_t = torch.tensor(_UNREORDER_IDX, dtype=torch.long)
 
     model = TransformerEncoderModel(
         input_dim=input_dim,
@@ -804,94 +596,38 @@ def train_transformer(
         num_layers=config.num_layers,
         dim_feedforward=config.dim_feedforward,
         dropout=config.dropout,
-        # P4 — parallel C-block experiment.
-        parallel_caps=True,
-        # A2 — grouped input tokens (voltages / geometry / process
-        # params) collapse the 19 scalar context tokens into 3, dropping
-        # sequence length from 28 to 12 under parallel_caps=True.
-        grouped_inputs=True,
     ).to(device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model params: {n_params:,}")
 
-    # Loss + training function selection
-    if loss_name == "direct":
-        criterion = DirectLoss(
-            output_dim=output_dim,
-            w_curr=config.w_curr, w_cond=config.w_cond,
-            w_charges=config.w_charges, w_caps=config.w_caps,
-            w_zero_bias=config.w_zero_bias,
-        )
-        train_fn = train_epoch_direct_ar
-        val_fn = validate_epoch_direct_ar
-        train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
+    # MAE loss + per-target LDS + Vov(=Vg) LDS (N7).
+    criterion = MAELoss()
+    print("Computing LDS weights (per-target + Vov)...")
+    lds_weights_np = compute_lds_weights_per_target(
+        train_ds.outputs.numpy(), n_bins=100,
+        lds_kernel="gaussian", lds_ks=5, lds_sigma=0.8,
+    )
+    vg_col = train_ds.inputs[:, 1:2].numpy()
+    vg_weights_np = compute_lds_weights_per_target(
+        vg_col, n_bins=50,
+        lds_kernel="gaussian", lds_ks=5, lds_sigma=1.0,
+    )  # (N, 1)
+    lds_weights_np = lds_weights_np * vg_weights_np
+    col_means = lds_weights_np.mean(axis=0, keepdims=True)
+    col_means[col_means < 1e-12] = 1.0
+    lds_weights_np = lds_weights_np / col_means
 
-    elif loss_name == "mae":
-        criterion = MAELoss()
-        train_fn = train_epoch_bni
-        val_fn = validate_epoch_bni
-
-        if use_lds:
-            print("Computing LDS weights...")
-            lds_weights_np = compute_lds_weights_per_target(
-                train_ds.outputs.numpy(), n_bins=100,
-                lds_kernel="gaussian", lds_ks=5, lds_sigma=0.8,
-            )
-            # N7 — Vov-region LDS reweighting. The dataset has no Vth,
-            # so we use Vg (input column 1, normalized) as a proxy for
-            # Vov. compute_lds_weights_per_target on a single column
-            # returns shape (N, 1); we squeeze and broadcast across
-            # the per-target weights, then renormalize so the mean is 1.
-            if vov_lds:
-                print("Computing Vov(=Vg) LDS weights...")
-                vg_col = train_ds.inputs[:, 1:2].numpy()
-                vg_weights_np = compute_lds_weights_per_target(
-                    vg_col, n_bins=50,
-                    lds_kernel="gaussian", lds_ks=5, lds_sigma=1.0,
-                )  # (N, 1)
-                lds_weights_np = lds_weights_np * vg_weights_np  # broadcasts
-                # Renormalize per-column so each target's mean weight is 1.
-                col_means = lds_weights_np.mean(axis=0, keepdims=True)
-                col_means[col_means < 1e-12] = 1.0
-                lds_weights_np = lds_weights_np / col_means
-            train_ds_weighted = TensorDataset(
-                train_ds.inputs, train_ds.outputs,
-                torch.tensor(lds_weights_np, dtype=torch.float32),
-            )
-            train_loader = DataLoader(
-                train_ds_weighted, batch_size=batch_size, shuffle=True)
-        else:
-            train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
-
-    else:  # bni
-        criterion = WeightedBNILoss()
-        train_fn = train_epoch_bni
-        val_fn = validate_epoch_bni
-
-        if use_lds:
-            print("Computing LDS weights...")
-            lds_weights_np = compute_lds_weights_per_target(
-                train_ds.outputs.numpy(), n_bins=100,
-                lds_kernel="gaussian", lds_ks=5, lds_sigma=0.8,
-            )
-            train_ds_weighted = TensorDataset(
-                train_ds.inputs, train_ds.outputs,
-                torch.tensor(lds_weights_np, dtype=torch.float32),
-            )
-            train_loader = DataLoader(
-                train_ds_weighted, batch_size=batch_size, shuffle=True)
-        else:
-            train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
-
+    train_ds_weighted = TensorDataset(
+        train_ds.inputs, train_ds.outputs,
+        torch.tensor(lds_weights_np, dtype=torch.float32),
+    )
+    train_loader = DataLoader(
+        train_ds_weighted, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
     test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
 
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=lr, weight_decay=config.weight_decay)
-
-    # C2: Cosine LR decay. The DirectNet path already uses
-    # CosineAnnealingLR (line ~557); copy-paste it here so the
-    # transformer path stops training at flat AdamW.
     scheduler = CosineAnnealingLR(optimizer, T_max=epochs)
 
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
@@ -900,9 +636,8 @@ def train_transformer(
     norm_path = CHECKPOINT_DIR / f"{save_prefix}_norm.npz"
     results_subdir = str(RESULTS_DIR / save_prefix)
 
-    # A6: refuse to silently overwrite an existing checkpoint. Concurrent
-    # runs sharing --exp-name otherwise clobber each other (see CLAUDE.md
-    # smoke-test bug note). Pass --overwrite to allow.
+    # Refuse to silently overwrite an existing checkpoint. Concurrent
+    # runs sharing --exp-name otherwise clobber each other.
     if best_path.exists() and not overwrite:
         raise SystemExit(
             f"Refusing to overwrite {best_path}. Pass --overwrite or "
@@ -917,64 +652,31 @@ def train_transformer(
     best_val_loss = float("inf")
     best_ar_val_loss = float("inf")
     ar_best_path = best_path.with_suffix(".ar.pt")
-    # T1: physical-space early-stopping tracker. Runs alongside the TF
-    # early-stopping on the same `ar_check_every` schedule. We keep a
-    # separate `*_best.phys.pt` checkpoint so the final test load can
-    # prefer the best physical-space model instead of the best TF-val.
+    # T1: physical-space early-stopping tracker. Blends NRMSE + (1-R²)
+    # so that a collapsed denorm can never beat a healthy one even if
+    # NRMSE happens to look small.
     best_phys_score = float("inf")
     best_phys_nrmse = float("nan")
     best_phys_r2 = float("nan")
     phys_best_path = best_path.with_suffix(".phys.pt")
-    # C1: how often to run a full AR-validation as a ground-truth sanity
-    # check on the TF-driven early stopping. Cheap because val set is
-    # only swept slowly.
+    # How often to run a full AR-validation as a ground-truth sanity
+    # check on the TF-driven early stopping.
     ar_check_every = 10
     t_start = time.time()
     epoch = 0
 
     for epoch in range(1, epochs + 1):
-        ss_ratio = (min(epoch / ss_warmup, ss_max_ratio)
-                    if scheduled_sampling else 0.0)
-        n_targets = (max(1, int(output_dim * min(
-            epoch / curriculum_warmup, 1.0)))
-            if curriculum else output_dim)
-
-        if loss_name == "direct":
-            if curriculum or consistency_weight > 0 or scheduled_sampling:
-                t_losses = train_epoch_curriculum(
-                    model, train_loader, criterion, optimizer, device,
-                    n_targets=n_targets, ss_ratio=ss_ratio,
-                    consistency_weight=consistency_weight,
-                    unreorder_fn=unreorder_fn)
-            else:
-                t_losses = train_fn(
-                    model, train_loader, criterion, optimizer, device,
-                    unreorder_fn=unreorder_fn)
-        else:
-            t_losses = train_fn(model, train_loader, criterion, optimizer, device)
-
-        # C1: Fast TF-based validation drives early stopping every epoch.
-        # The AR validation is ~10x slower (sequential 13-step decode on
-        # the full val set) and is empirically tightly correlated with
-        # TF-val once the model has cleared R²_norm > 0.9. Run the full
-        # AR pass only every ar_check_every epochs as a ground-truth
-        # check, and keep a separate "AR best" checkpoint so we have an
-        # honest reference at the end of training.
+        t_losses = train_epoch_mae(
+            model, train_loader, criterion, optimizer, device)
+        # Fast TF-based validation drives early stopping every epoch.
         v_losses = validate_epoch_tf(
-            model, val_loader, criterion, device,
-            unreorder_fn=unreorder_fn,
-            use_direct_loss=(loss_name == "direct"),
-        )
+            model, val_loader, criterion, device)
 
         run_ar_check = (epoch % ar_check_every == 0) or (epoch == epochs)
         ar_status = ""
         if run_ar_check:
-            if loss_name == "direct":
-                ar_v = val_fn(
-                    model, val_loader, criterion, device,
-                    unreorder_fn=unreorder_fn)
-            else:
-                ar_v = val_fn(model, val_loader, criterion, device)
+            ar_v = validate_epoch_ar(
+                model, val_loader, criterion, device)
             ar_loss = ar_v["total"]
             if ar_loss < best_ar_val_loss:
                 best_ar_val_loss = ar_loss
@@ -984,30 +686,20 @@ def train_transformer(
                   f"ar={ar_loss:.5f} (tf={v_losses['total']:.5f})"
                   f"{ar_status}")
 
-            # T1: physical-space early-stopping probe. Reuse the existing
-            # AR-check cadence so we don't add extra cost beyond one extra
-            # teacher-forced pass over the val set. The score blends
-            # physical-space NRMSE and (1 - R2) so that a collapsed
-            # normalizer (R2 << 0) can never beat a healthy one even if
-            # NRMSE happens to look small.
             pred_val_norm, true_val_norm = test_model(
                 model, val_loader, device)
-            if _reorder_active:
-                pred_val_norm = unreorder_outputs(pred_val_norm)
-                true_val_norm = unreorder_outputs(true_val_norm)
+            pred_val_norm = unreorder_outputs(pred_val_norm)
+            true_val_norm = unreorder_outputs(true_val_norm)
             phys_metrics = compute_physical_metrics(
                 pred_val_norm, true_val_norm, normalizer)
             nrmse_arr = np.array(
                 [m["NRMSE(%)"] for m in phys_metrics.values()],
-                dtype=np.float64,
-            )
+                dtype=np.float64)
             r2_arr = np.array(
                 [m["R2"] for m in phys_metrics.values()],
-                dtype=np.float64,
-            )
+                dtype=np.float64)
             nrmse_avg = float(np.nanmean(nrmse_arr))
             r2_avg = float(np.nanmean(r2_arr))
-            # NaN guard: if every target is masked out we cannot score.
             if np.isnan(nrmse_avg) or np.isnan(r2_avg):
                 phys_score = float("inf")
             else:
@@ -1042,16 +734,8 @@ def train_transformer(
         lr_now = scheduler.get_last_lr()[0]
 
         if epoch % 20 == 0 or epoch <= 5 or status:
-            if loss_name == "direct":
-                print(f"  {epoch:4d} | train={train_loss:.5f} "
-                      f"val={val_loss:.5f} lr={lr_now:.2e} | "
-                      f"id={v_losses.get('id', 0):.5f} "
-                      f"gm={v_losses.get('gm', 0):.5f} "
-                      f"q={v_losses.get('charges', 0):.5f} "
-                      f"cap={v_losses.get('caps', 0):.5f}{status}")
-            else:
-                print(f"  {epoch:4d} | train={train_loss:.5f} "
-                      f"val={val_loss:.5f} lr={lr_now:.2e}{status}")
+            print(f"  {epoch:4d} | train={train_loss:.5f} "
+                  f"val={val_loss:.5f} lr={lr_now:.2e}{status}")
 
     elapsed = time.time() - t_start
     epochs_run = max(epoch, 1)
@@ -1064,14 +748,26 @@ def train_transformer(
               f"(NRMSE={best_phys_nrmse:.3f}%, R2={best_phys_r2:.4f})  "
               f"-> {phys_best_path}")
 
+    arch_config = {
+        "input_dim": input_dim, "target_dim": output_dim,
+        "d_model": config.d_model, "nhead": config.nhead,
+        "num_layers": config.num_layers,
+        "dim_feedforward": config.dim_feedforward,
+        "dropout": config.dropout,
+    }
+    config_path = CHECKPOINT_DIR / f"{save_prefix}_config.npz"
+    np.savez(str(config_path),
+             **{k: np.array(v) for k, v in arch_config.items()})
+    print(f"Arch config: {config_path}")
+
     # ── N3 — AR fine-tune phase ──────────────────────────────────────────
-    # After the cosine TF schedule completes, optionally run a short
-    # pure-AR fine-tune phase (ss_ratio = 1.0) so the model trains on
-    # its own decoded sequence and closes the residual TF↔AR gap.
-    # Loads the phys-best checkpoint as the starting point so we
-    # build on the strongest TF-trained model. Uses the same optimizer
-    # state shape but a fixed-low LR (default: final cosine LR / 10).
-    if ar_finetune_epochs > 0 and loss_name in ("mae", "huber-mae"):
+    # After the cosine TF schedule completes, run a short pure-AR
+    # fine-tune phase (ss_ratio = 1.0) so the model trains on its own
+    # decoded sequence and closes the residual TF↔AR gap. Loads the
+    # phys-best checkpoint as the starting point, uses a fixed-low LR
+    # (10× the final cosine LR, floored at 1e-5), and plain MAE (no
+    # LDS during finetune).
+    if ar_finetune_epochs > 0:
         if phys_best_path.exists():
             print(f"\n[N3] Loading phys-best checkpoint for AR finetune: "
                   f"{phys_best_path}")
@@ -1085,30 +781,24 @@ def train_transformer(
             model.parameters(), lr=finetune_lr,
             weight_decay=config.weight_decay)
         ft_criterion = MAELoss()
-        # Build an unweighted loader for the finetune phase so the
-        # gradient signal reflects the actual MAE on AR-decoded
-        # outputs, not the LDS-reweighted MAE the TF phase used.
         ft_train_loader = DataLoader(
             train_ds, batch_size=batch_size, shuffle=True)
         for ft_epoch in range(1, ar_finetune_epochs + 1):
-            t_losses = train_epoch_scheduled_bni(
+            t_losses = train_epoch_scheduled_mae(
                 model, ft_train_loader, ft_criterion, ft_optimizer,
                 device, ss_ratio=1.0,
             )
-            v_losses = validate_epoch_bni(
+            v_losses = validate_epoch_ar(
                 model, val_loader, ft_criterion, device)
             train_loss = t_losses["total"]
             val_loss = v_losses["total"]
             train_history.append(train_loss)
             val_history.append(val_loss)
 
-            # Re-evaluate phys metrics so we can keep the best
-            # finetuned checkpoint if it improves on the TF phys-best.
             pred_val_norm, true_val_norm = test_model(
                 model, val_loader, device)
-            if _reorder_active:
-                pred_val_norm = unreorder_outputs(pred_val_norm)
-                true_val_norm = unreorder_outputs(true_val_norm)
+            pred_val_norm = unreorder_outputs(pred_val_norm)
+            true_val_norm = unreorder_outputs(true_val_norm)
             phys_metrics = compute_physical_metrics(
                 pred_val_norm, true_val_norm, normalizer)
             nrmse_arr = np.array(
@@ -1133,25 +823,9 @@ def train_transformer(
                   f"val={val_loss:.5f} | nrmse={nrmse_avg:.3f}% "
                   f"r2={r2_avg:.4f}{phys_status}")
 
-    arch_config = {
-        "input_dim": input_dim, "target_dim": output_dim,
-        "d_model": config.d_model, "nhead": config.nhead,
-        "num_layers": config.num_layers,
-        "dim_feedforward": config.dim_feedforward,
-        "dropout": config.dropout,
-        "parallel_caps": True,
-        # A2 — grouped input tokens. Persisted so checkpoint loaders
-        # can rebuild the architecture.
-        "grouped_inputs": True,
-    }
-    config_path = CHECKPOINT_DIR / f"{save_prefix}_config.npz"
-    np.savez(str(config_path),
-             **{k: np.array(v) for k, v in arch_config.items()})
-    print(f"Arch config: {config_path}")
-
-    # T1: prefer the phys-space-best checkpoint for the final test if it
-    # exists. Falls back to the TF-val-best checkpoint otherwise, which
-    # matches the pre-T1 behaviour.
+    # ── Final test ────────────────────────────────────────────────────────
+    # Prefer the phys-space-best checkpoint for the final test if it
+    # exists. Falls back to the TF-val-best checkpoint otherwise.
     if phys_best_path.exists():
         load_path = phys_best_path
         print(f"Loading phys-best checkpoint for final test: {load_path}")
@@ -1161,9 +835,8 @@ def train_transformer(
     model.load_state_dict(torch.load(str(load_path), weights_only=True))
     pred_norm, true_norm = test_model(model, test_loader, device)
 
-    if _reorder_active:
-        pred_norm = unreorder_outputs(pred_norm)
-        true_norm = unreorder_outputs(true_norm)
+    pred_norm = unreorder_outputs(pred_norm)
+    true_norm = unreorder_outputs(true_norm)
 
     metrics = compute_physical_metrics(pred_norm, true_norm, normalizer)
     print_metrics(metrics)

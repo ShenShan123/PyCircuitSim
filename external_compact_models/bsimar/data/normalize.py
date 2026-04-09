@@ -6,22 +6,24 @@ Handles the extreme dynamic range of MOSFET data:
 - Charges: 1e-18 to 1e-15 C — 3 decades
 - Capacitances: 1e-20 to 1e-15 F — 5 decades
 
-Two normalizers coexist for checkpoint compatibility:
+One normalizer class: ``BSIMARNormalizer`` with two modes:
 
-- `Normalizer` — legacy signed-log + z-score output normalization with
-  min-max input normalization. Used by the DirectNet baseline.
-  Produces `NormStats` files.
+- ``'asinh'``  (recommended, BSIMAR v3 default) — per-target
+  ``arcsinh(y / s_k) + zscore``, where ``s_k`` is a per-target
+  geometric-mean scale clamped at the floor. Compresses the 14-decade
+  dynamic range without the error-amplification behaviour of
+  ``inv_signed_log`` that the earlier signed-log normaliser exhibited.
 
-- `BSIMARNormalizer` — unified class supporting three modes:
-    * `'zscore'`    — z-score for inputs and outputs (paper's approach, default).
-    * `'signedlog'` — min-max inputs, signed-log+z-score outputs (Normalizer compat).
-    * `'asinh'`     — z-score inputs, per-target asinh(y/s_k) + z-score outputs,
-                       where `s_k` is a per-target geometric-mean scale.
-  Produces `BSIMARNormStats` files (with explicit `mode` field).
+- ``'zscore'`` (DirectNet baseline path) — plain z-score over raw
+  outputs. Used by DirectNet; numerically stable because the DirectNet
+  MLP is not autoregressive and absolute residuals dominate its loss.
 
-The signed-log helpers (`signed_log`, `inv_signed_log`, `OUTPUT_LOG_FLOORS`,
-`OUTPUT_COLUMN_ORDER`, `BSIMAR_COLUMN_ORDER`, `reorder_outputs`,
-`unreorder_outputs`) are shared by both.
+The old signed-log normaliser and the DirectNet-specific ``Normalizer``
+class were removed in the v3 sprint: the signed-log chain rule
+amplified AR-accumulated errors catastrophically in physical space
+(see ``docs/bsimar_improvement_plan_2026_04_08.md`` for the removal
+rationale), and the legacy ``Normalizer`` was only used by the
+now-deleted ``load_and_split`` path.
 """
 
 from dataclasses import dataclass
@@ -32,7 +34,10 @@ import numpy as np
 
 # ── Floor values and column ordering ────────────────────────────────────────
 
-# Floor values for each output group (below floor → treated as zero)
+# Per-target floor magnitudes used by the asinh scale fit. Any sample
+# whose |y_k| falls below the corresponding floor contributes the floor
+# (not its true value) to the geometric-mean scale ``s_k``, so a noisy
+# near-zero sample cannot collapse the scale to zero.
 OUTPUT_LOG_FLOORS = {
     # Group A: Currents and conductances
     "id": 1e-18, "gm": 1e-18, "gds": 1e-18, "gmb": 1e-18,
@@ -73,36 +78,13 @@ def unreorder_outputs(arr: np.ndarray) -> np.ndarray:
     return arr[:, _UNREORDER_IDX]
 
 
-# ── Signed-log transform ─────────────────────────────────────────────────────
-
-def signed_log(x: np.ndarray, floor: float = 1e-18) -> np.ndarray:
-    """Map signed values to floor-relative log scale, preserving sign.
-
-    For |x| > floor: sign(x) * log10(|x| / floor)
-    For |x| <= floor: 0.0 (treat as zero)
-    """
-    abs_x = np.abs(x)
-    result = np.zeros_like(x, dtype=np.float64)
-    mask = abs_x > floor
-    result[mask] = np.sign(x[mask]) * np.log10(abs_x[mask] / floor)
-    return result
-
-
-def inv_signed_log(y: np.ndarray, floor: float = 1e-18) -> np.ndarray:
-    """Inverse of signed_log: recover original scale."""
-    result = np.zeros_like(y, dtype=np.float64)
-    mask = np.abs(y) > 0
-    result[mask] = np.sign(y[mask]) * floor * (10.0 ** np.abs(y[mask]))
-    return result
-
-
 # ── asinh-scaled transform ───────────────────────────────────────────────────
 
 def asinh_scaled(x: np.ndarray, s: np.ndarray) -> np.ndarray:
     """Per-target asinh(x / s).
 
     `s` may be a scalar or a (K,) vector broadcastable against `x`'s last
-    axis. Sign-preserving and smooth through zero, unlike signed_log.
+    axis. Sign-preserving and smooth through zero.
     """
     return np.arcsinh(x / s)
 
@@ -112,7 +94,7 @@ def inv_asinh_scaled(y: np.ndarray, s: np.ndarray) -> np.ndarray:
     return s * np.sinh(y)
 
 
-# ── Input geometry unpacking (shared by both normalizers) ────────────────────
+# ── Input geometry unpacking ─────────────────────────────────────────────────
 
 def _build_combined_input(
     inputs: np.ndarray,
@@ -149,154 +131,41 @@ def _build_combined_input(
     return np.column_stack([inputs, nfin_log, temperature])
 
 
-# ── Legacy Normalizer (signed-log + z-score outputs, min-max inputs) ─────────
-
-@dataclass
-class NormStats:
-    """Normalization statistics for the legacy Normalizer.
-
-    Used by DirectNet checkpoints. Persisted as `_norm.npz`.
-    """
-    input_min: np.ndarray
-    input_max: np.ndarray
-    output_log_floors: np.ndarray  # (13,) per-column floor
-    output_mean: np.ndarray        # (13,) mean in log-space
-    output_std: np.ndarray         # (13,) std in log-space (clamped > 0)
-
-    def save(self, path: str) -> None:
-        np.savez(
-            path,
-            input_min=self.input_min,
-            input_max=self.input_max,
-            output_log_floors=self.output_log_floors,
-            output_mean=self.output_mean,
-            output_std=self.output_std,
-        )
-
-    @classmethod
-    def load(cls, path: str) -> "NormStats":
-        data = np.load(path)
-        return cls(
-            input_min=data["input_min"],
-            input_max=data["input_max"],
-            output_log_floors=data["output_log_floors"],
-            output_mean=data["output_mean"],
-            output_std=data["output_std"],
-        )
-
-
-class Normalizer:
-    """DirectNet-style normalizer: min-max inputs + signed-log+z-score outputs."""
-
-    def __init__(self, stats: Optional[NormStats] = None):
-        self.stats = stats
-
-    def fit(
-        self,
-        inputs: np.ndarray,
-        geometry: np.ndarray,
-        outputs: np.ndarray,
-    ) -> "Normalizer":
-        combined_input = _build_combined_input(inputs, geometry)
-
-        input_min = combined_input.min(axis=0)
-        input_max = combined_input.max(axis=0)
-        range_vals = input_max - input_min
-        range_vals[range_vals < 1e-10] = 1.0
-
-        output_log_floors = np.array(
-            [OUTPUT_LOG_FLOORS[col] for col in OUTPUT_COLUMN_ORDER],
-            dtype=np.float64,
-        )
-        outputs_log = np.zeros_like(outputs)
-        for i in range(outputs.shape[1]):
-            outputs_log[:, i] = signed_log(
-                outputs[:, i], floor=output_log_floors[i])
-
-        output_mean = outputs_log.mean(axis=0)
-        output_std = outputs_log.std(axis=0)
-        output_std[output_std < 1e-10] = 1.0
-
-        self.stats = NormStats(
-            input_min=input_min,
-            input_max=input_max,
-            output_log_floors=output_log_floors,
-            output_mean=output_mean,
-            output_std=output_std,
-        )
-        return self
-
-    def normalize_inputs(
-        self,
-        inputs: np.ndarray,
-        geometry: np.ndarray,
-    ) -> np.ndarray:
-        assert self.stats is not None, "Must call fit() first"
-        combined = _build_combined_input(inputs, geometry)
-        range_vals = self.stats.input_max - self.stats.input_min
-        range_vals[range_vals < 1e-10] = 1.0
-        return (combined - self.stats.input_min) / range_vals
-
-    def normalize_outputs(self, outputs: np.ndarray) -> np.ndarray:
-        assert self.stats is not None, "Must call fit() first"
-        outputs_log = np.zeros_like(outputs)
-        for i in range(outputs.shape[1]):
-            outputs_log[:, i] = signed_log(
-                outputs[:, i], floor=self.stats.output_log_floors[i]
-            )
-        return (outputs_log - self.stats.output_mean) / self.stats.output_std
-
-    def denormalize_outputs(self, outputs_norm: np.ndarray) -> np.ndarray:
-        assert self.stats is not None, "Must call fit() first"
-        outputs_log = (
-            outputs_norm * self.stats.output_std + self.stats.output_mean)
-        outputs_phys = np.zeros_like(outputs_log)
-        for i in range(outputs_log.shape[1]):
-            outputs_phys[:, i] = inv_signed_log(
-                outputs_log[:, i], floor=self.stats.output_log_floors[i]
-            )
-        return outputs_phys
-
-
-# ── BSIMARNormalizer (unified zscore / signedlog) ────────────────────────────
+# ── BSIMARNormalizer ─────────────────────────────────────────────────────────
 
 @dataclass
 class BSIMARNormStats:
-    """Normalization statistics for BSIMARNormalizer. Carries explicit mode."""
-    mode: str  # "zscore", "signedlog", or "asinh"
+    """Normalization statistics for BSIMARNormalizer. Carries explicit mode.
 
-    # Common output stats
+    Persisted as ``<save_prefix>_norm.npz``. Always contains:
+    ``mode``, ``output_mean``, ``output_std``, ``input_mean``,
+    ``input_std``, and the training-set ``input_min`` / ``input_max``
+    (recorded as metadata so downstream simulators can clamp inference
+    inputs to the training domain; the normalisation math itself uses
+    the mean/std fields). In ``asinh`` mode ``asinh_scale`` is also
+    present.
+    """
+    mode: str  # "zscore" or "asinh"
     output_mean: np.ndarray
     output_std: np.ndarray
-
-    # zscore-mode input stats (also used by asinh mode)
-    input_mean: Optional[np.ndarray] = None
-    input_std: Optional[np.ndarray] = None
-
-    # signedlog-mode input stats
-    input_min: Optional[np.ndarray] = None
-    input_max: Optional[np.ndarray] = None
-
-    # signedlog-mode output floor values
-    output_log_floors: Optional[np.ndarray] = None
-
+    input_mean: np.ndarray
+    input_std: np.ndarray
+    # Training-domain min/max (metadata for input clamping only)
+    input_min: np.ndarray
+    input_max: np.ndarray
     # asinh-mode per-target geometric-mean scale
     asinh_scale: Optional[np.ndarray] = None
 
     def save(self, path: str) -> None:
-        data = {"mode": np.array(self.mode),
-                "output_mean": self.output_mean,
-                "output_std": self.output_std}
-        if self.input_mean is not None:
-            data["input_mean"] = self.input_mean
-        if self.input_std is not None:
-            data["input_std"] = self.input_std
-        if self.input_min is not None:
-            data["input_min"] = self.input_min
-        if self.input_max is not None:
-            data["input_max"] = self.input_max
-        if self.output_log_floors is not None:
-            data["output_log_floors"] = self.output_log_floors
+        data = {
+            "mode": np.array(self.mode),
+            "output_mean": self.output_mean,
+            "output_std": self.output_std,
+            "input_mean": self.input_mean,
+            "input_std": self.input_std,
+            "input_min": self.input_min,
+            "input_max": self.input_max,
+        }
         if self.asinh_scale is not None:
             data["asinh_scale"] = self.asinh_scale
         np.savez(path, **data)
@@ -309,30 +178,27 @@ class BSIMARNormStats:
             mode=mode,
             output_mean=d["output_mean"],
             output_std=d["output_std"],
-            input_mean=d.get("input_mean"),
-            input_std=d.get("input_std"),
-            input_min=d.get("input_min"),
-            input_max=d.get("input_max"),
-            output_log_floors=d.get("output_log_floors"),
-            asinh_scale=d.get("asinh_scale"),
+            input_mean=d["input_mean"],
+            input_std=d["input_std"],
+            input_min=d["input_min"],
+            input_max=d["input_max"],
+            asinh_scale=d["asinh_scale"] if "asinh_scale" in d.files else None,
         )
 
 
 class BSIMARNormalizer:
-    """Unified normalizer with mode switching.
+    """Unified normalizer with two modes.
 
-    mode='zscore':    inputs -> z-score,  outputs -> z-score
-    mode='signedlog': inputs -> min-max [0,1], outputs -> signed_log + z-score
-    mode='asinh':     inputs -> z-score,  outputs -> arcsinh(y/s_k) + z-score
-                       (per-target s_k is the geometric mean of |y| over the
-                       train split, masked at OUTPUT_LOG_FLOORS and clamped
-                       to the floor)
+    ``mode='zscore'``: inputs → z-score, outputs → z-score.
+    ``mode='asinh'`` : inputs → z-score, outputs → arcsinh(y/s_k) + z-score,
+    where per-target ``s_k`` is the geometric mean of ``|y|`` over the
+    train split, masked at ``OUTPUT_LOG_FLOORS`` and clamped to the
+    floor.
     """
 
-    def __init__(self, mode: str = "zscore",
+    def __init__(self, mode: str = "asinh",
                  stats: Optional[BSIMARNormStats] = None) -> None:
-        assert mode in ("zscore", "signedlog", "asinh"), \
-            f"Unknown mode: {mode}"
+        assert mode in ("zscore", "asinh"), f"Unknown mode: {mode}"
         self.mode = mode
         self.stats = stats
 
@@ -340,40 +206,39 @@ class BSIMARNormalizer:
             outputs: np.ndarray) -> "BSIMARNormalizer":
         combined = _build_combined_input(inputs, geometry)
 
-        if self.mode == "zscore":
-            input_mean = combined.mean(axis=0)
-            input_std = combined.std(axis=0)
-            # Inputs are voltages (~0.5V scale) and process params
-            # (~1e-3 to ~1 scale). 1e-12 safely catches truly constant
-            # columns without ever clipping a real std.
-            input_std[input_std < 1e-12] = 1.0
+        # Inputs are voltages (~0.5V scale) and process params
+        # (~1e-3 to ~1 scale). 1e-12 safely catches truly constant
+        # columns without ever clipping a real std.
+        input_mean = combined.mean(axis=0)
+        input_std = combined.std(axis=0)
+        input_std[input_std < 1e-12] = 1.0
 
+        # Record the training-domain min/max as metadata (used by
+        # downstream simulators to clamp inference-time inputs to the
+        # training domain; the normalisation math itself uses
+        # mean/std).
+        input_min = combined.min(axis=0)
+        input_max = combined.max(axis=0)
+
+        if self.mode == "zscore":
             output_mean = outputs.mean(axis=0)
             output_std = outputs.std(axis=0)
             # CRITICAL: Outputs span 14+ decades. Charges (~1e-19 C) and
             # capacitances (~1e-20 F) have legitimate std values well
             # below 1e-12. Clipping them to 1.0 leaves the "normalized"
-            # targets in physical units, breaks training (model can't
-            # output 1e-15), and produces astronomical NRMSE / negative
-            # R² on denormalization.
-            #
-            # Use a much smaller absolute floor — only truly degenerate
-            # (numerically zero) columns should be replaced. float64
-            # std for non-constant data is bounded well above 1e-300.
+            # targets in physical units, breaks training, and produces
+            # astronomical NRMSE / negative R² on denormalization. Use a
+            # much smaller absolute floor — only truly degenerate
+            # (numerically zero) columns should be replaced.
             output_std[output_std < 1e-30] = 1.0
 
             self.stats = BSIMARNormStats(
                 mode="zscore",
                 output_mean=output_mean, output_std=output_std,
                 input_mean=input_mean, input_std=input_std,
+                input_min=input_min, input_max=input_max,
             )
-        elif self.mode == "asinh":
-            # Inputs share the zscore branch — voltages and process params
-            # are well-conditioned for plain z-score.
-            input_mean = combined.mean(axis=0)
-            input_std = combined.std(axis=0)
-            input_std[input_std < 1e-12] = 1.0
-
+        else:  # asinh
             # Per-target geometric-mean scale s_k from |y|, masked by
             # OUTPUT_LOG_FLOORS and clamped at the floor.
             floors = np.array(
@@ -390,8 +255,8 @@ class BSIMARNormalizer:
             )
             asinh_scale = np.maximum(np.exp(s_log), floors)
 
-            outputs_t = np.arcsinh(outputs.astype(np.float64)
-                                   / asinh_scale[None, :])
+            outputs_t = np.arcsinh(
+                outputs.astype(np.float64) / asinh_scale[None, :])
             output_mean = outputs_t.mean(axis=0)
             output_std = outputs_t.std(axis=0)
             # asinh-space stds are O(1) for non-constant columns; a
@@ -402,32 +267,8 @@ class BSIMARNormalizer:
                 mode="asinh",
                 output_mean=output_mean, output_std=output_std,
                 input_mean=input_mean, input_std=input_std,
-                asinh_scale=asinh_scale,
-            )
-        else:  # signedlog
-            input_min = combined.min(axis=0)
-            input_max = combined.max(axis=0)
-            input_range = input_max - input_min
-            input_range[input_range < 1e-10] = 1.0
-
-            output_log_floors = np.array(
-                [OUTPUT_LOG_FLOORS[col] for col in OUTPUT_COLUMN_ORDER],
-                dtype=np.float64)
-            outputs_log = np.zeros_like(outputs)
-            for i in range(outputs.shape[1]):
-                outputs_log[:, i] = signed_log(
-                    outputs[:, i], floor=output_log_floors[i])
-            output_mean = outputs_log.mean(axis=0)
-            output_std = outputs_log.std(axis=0)
-            # signed-log-space stds are O(1) for non-constant columns,
-            # so a generous floor is safe here.
-            output_std[output_std < 1e-10] = 1.0
-
-            self.stats = BSIMARNormStats(
-                mode="signedlog",
-                output_mean=output_mean, output_std=output_std,
                 input_min=input_min, input_max=input_max,
-                output_log_floors=output_log_floors,
+                asinh_scale=asinh_scale,
             )
         return self
 
@@ -435,46 +276,25 @@ class BSIMARNormalizer:
                          geometry: np.ndarray) -> np.ndarray:
         assert self.stats is not None, "Must call fit() first"
         combined = _build_combined_input(inputs, geometry)
-        if self.mode in ("zscore", "asinh"):
-            return (combined - self.stats.input_mean) / self.stats.input_std
-        else:
-            input_range = self.stats.input_max - self.stats.input_min
-            input_range[input_range < 1e-10] = 1.0
-            return (combined - self.stats.input_min) / input_range
+        return (combined - self.stats.input_mean) / self.stats.input_std
 
     def normalize_outputs(self, outputs: np.ndarray) -> np.ndarray:
         assert self.stats is not None, "Must call fit() first"
-        if self.mode == "zscore":
+        if self.stats.mode == "zscore":
             return (outputs - self.stats.output_mean) / self.stats.output_std
-        elif self.mode == "asinh":
-            outputs_t = np.arcsinh(
-                outputs.astype(np.float64)
-                / self.stats.asinh_scale[None, :])
-            return (outputs_t - self.stats.output_mean) / self.stats.output_std
-        else:
-            outputs_log = np.zeros_like(outputs)
-            for i in range(outputs.shape[1]):
-                outputs_log[:, i] = signed_log(
-                    outputs[:, i], floor=self.stats.output_log_floors[i])
-            return (
-                outputs_log - self.stats.output_mean) / self.stats.output_std
+        # asinh
+        outputs_t = np.arcsinh(
+            outputs.astype(np.float64)
+            / self.stats.asinh_scale[None, :])
+        return (outputs_t - self.stats.output_mean) / self.stats.output_std
 
     def denormalize_outputs(self, outputs_norm: np.ndarray) -> np.ndarray:
         assert self.stats is not None, "Must call fit() first"
-        if self.mode == "zscore":
+        if self.stats.mode == "zscore":
             return (
                 outputs_norm * self.stats.output_std + self.stats.output_mean)
-        elif self.mode == "asinh":
-            outputs_t = (
-                outputs_norm.astype(np.float64) * self.stats.output_std
-                + self.stats.output_mean)
-            return self.stats.asinh_scale[None, :] * np.sinh(outputs_t)
-        else:
-            outputs_log = (
-                outputs_norm * self.stats.output_std + self.stats.output_mean)
-            outputs_phys = np.zeros_like(outputs_log)
-            for i in range(outputs_log.shape[1]):
-                outputs_phys[:, i] = inv_signed_log(
-                    outputs_log[:, i],
-                    floor=self.stats.output_log_floors[i])
-            return outputs_phys
+        # asinh
+        outputs_t = (
+            outputs_norm.astype(np.float64) * self.stats.output_std
+            + self.stats.output_mean)
+        return self.stats.asinh_scale[None, :] * np.sinh(outputs_t)

@@ -58,7 +58,7 @@ def _mosfet_types() -> tuple:
     except ImportError:
         pass
     try:
-        from pycircuitsim.models.mosfet_nn import NMOS_NN, PMOS_NN
+        from pycircuitsim.models.mosfet_directnet import NMOS_NN, PMOS_NN
         types.extend([NMOS_NN, PMOS_NN])
     except ImportError:
         pass
@@ -71,7 +71,7 @@ def _mosfet_types() -> tuple:
 
 
 def _pmos_types() -> tuple:
-    """Return tuple of all PMOS classes (BSIM-CMG, NN, BSIM-AR)."""
+    """Return tuple of all PMOS classes (BSIM-CMG, DirectNet, BSIM-AR)."""
     types = []
     try:
         from pycircuitsim.models.mosfet_cmg import PMOS_CMG
@@ -79,7 +79,7 @@ def _pmos_types() -> tuple:
     except ImportError:
         pass
     try:
-        from pycircuitsim.models.mosfet_nn import PMOS_NN
+        from pycircuitsim.models.mosfet_directnet import PMOS_NN
         types.append(PMOS_NN)
     except ImportError:
         pass

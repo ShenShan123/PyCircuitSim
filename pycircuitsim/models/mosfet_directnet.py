@@ -1,15 +1,20 @@
-"""NN-based MOSFET compact model (LEVEL=73).
+"""DirectNet MLP compact model (LEVEL=73).
 
-Drop-in replacement for NMOS_CMG/PMOS_CMG using a trained neural network
-instead of PyCMG physics evaluation. Implements the full Component interface
-required by the solver.
+Drop-in replacement for NMOS_CMG/PMOS_CMG using a trained DirectNet
+MLP instead of PyCMG physics evaluation. Implements the full
+Component interface required by the solver.
 
 Key design:
-- Autograd-derived conductances (gm, gds, gmb) guarantee Jacobian consistency
-  for Newton-Raphson convergence.
+- Autograd-derived conductances (gm, gds, gmb) guarantee Jacobian
+  consistency for Newton-Raphson convergence.
 - Charge conservation: qs = -(qg + qd + qb) enforced analytically.
 - Physical constraints: gds >= 0, cutoff clamping.
 - Same sign conventions as NMOS_CMG/PMOS_CMG.
+- Normalisation: ``BSIMARNormalizer(mode='zscore')`` (the legacy
+  signed-log ``Normalizer`` was removed in the v3 sprint). Input
+  clamping uses the ``input_min``/``input_max`` metadata stored in
+  the normaliser stats; input/output normalisation uses the
+  ``input_mean``/``input_std``/``output_mean``/``output_std`` fields.
 
 Terminal order: [drain, gate, source, bulk]
 """
@@ -35,7 +40,7 @@ if str(_BSIMAR_PARENT) not in sys.path:
 from pycircuitsim.models.base import Component
 from bsimar.models.direct_net import DirectNet
 from bsimar.config import PROCESS_PARAM_NAMES
-from bsimar.data.normalize import NormStats, inv_signed_log
+from bsimar.data.normalize import BSIMARNormStats
 
 
 class _MOSFETNNBase(Component):
@@ -104,29 +109,32 @@ class _MOSFETNNBase(Component):
         self._nn_model.eval()
         self._output_dim = output_dim
 
-        self._norm_stats = NormStats.load(str(norm_path))
+        self._norm_stats = BSIMARNormStats.load(str(norm_path))
+        assert self._norm_stats.mode == "zscore", (
+            f"DirectNet LEVEL=73 expects a zscore-mode normaliser, "
+            f"got mode={self._norm_stats.mode}"
+        )
 
-        # Pre-compute normalized geometry features (constant per device)
+        # Pre-compute normalized geometry features (constant per device).
         # Number of process params the model expects = input_dim - 6 (4V + NFIN + T)
         n_proc = input_dim - 6
         nfin_log = np.log2(max(self.NFIN, 1.0))
         if self.process_params is not None and n_proc > 1:
-            # Universal model: use exactly the number of process params the model expects
+            # Universal model: use exactly the number of process params
+            # the model expects.
             pp = self.process_params
             proc_names = PROCESS_PARAM_NAMES[:n_proc]
             proc_vals = [pp.get(p.lower(), 0.0) for p in proc_names]
             geo_raw = np.array([nfin_log, self.temperature] + proc_vals)
         elif n_proc == 1 and (self.phig is not None or
                                (self.process_params and "phig" in self.process_params)):
-            # Phase 13 model: [Vd, Vg, Vs, Vb, log2(NFIN), T, PHIG]
             phig_val = self.phig or self.process_params["phig"]
             geo_raw = np.array([nfin_log, self.temperature, phig_val])
         else:
-            # Legacy 6-dim model: [Vd, Vg, Vs, Vb, log2(NFIN), T]
             geo_raw = np.array([nfin_log, self.temperature])
-        geo_range = self._norm_stats.input_max[4:] - self._norm_stats.input_min[4:]
-        geo_range[geo_range < 1e-10] = 1.0
-        self._geo_norm = (geo_raw - self._norm_stats.input_min[4:]) / geo_range
+        geo_std = self._norm_stats.input_std[4:].copy()
+        geo_std[geo_std < 1e-12] = 1.0
+        self._geo_norm = (geo_raw - self._norm_stats.input_mean[4:]) / geo_std
 
         # Subclass sets this
         self._is_pmos = False
@@ -177,17 +185,18 @@ class _MOSFETNNBase(Component):
             v_s_nn = v_s
             v_b_nn = v_b
 
-        # Clamp voltages to training range to prevent NN extrapolation
-        # The NN returns garbage outside its training domain. Clamping ensures
-        # the solver always gets physically reasonable values even during
-        # Newton-Raphson overshoot.
+        # Clamp voltages to training range to prevent NN extrapolation.
+        # The NN returns garbage outside its training domain; clamping
+        # ensures the solver always gets physically reasonable values
+        # even during Newton-Raphson overshoot. Use the training-domain
+        # min/max recorded as metadata in the normaliser stats.
         v_raw = np.array([v_d_nn, v_g_nn, v_s_nn, v_b_nn])
         v_raw_clamped = np.clip(v_raw, stats.input_min[:4], stats.input_max[:4])
 
-        # Normalize voltage inputs
-        v_range = stats.input_max[:4] - stats.input_min[:4]
-        v_range[v_range < 1e-10] = 1.0
-        v_norm = (v_raw_clamped - stats.input_min[:4]) / v_range
+        # Z-score normalise voltage inputs.
+        v_std = stats.input_std[:4].copy()
+        v_std[v_std < 1e-12] = 1.0
+        v_norm = (v_raw_clamped - stats.input_mean[:4]) / v_std
 
         # Build full input tensor: [Vd, Vg, Vs, Vb, NFIN, T] or [Vd, Vg, Vs, Vb, NFIN, T, PHIG]
         x_np = np.concatenate([v_norm, self._geo_norm]).astype(np.float32)
@@ -322,46 +331,37 @@ class _MOSFETNNBase(Component):
         }
 
     def _denorm_scalar(self, val_norm: float, col_idx: int) -> float:
-        """Denormalize a single scalar output from z-score + signed_log space."""
+        """Denormalize a single scalar output from z-score space."""
         stats = self._norm_stats
-        val_log = val_norm * stats.output_std[col_idx] + stats.output_mean[col_idx]
-        floor = stats.output_log_floors[col_idx]
-        # inv_signed_log for scalar
-        if abs(val_log) < 1e-30:
-            return 0.0
-        sign = 1.0 if val_log >= 0 else -1.0
-        return sign * floor * (10.0 ** abs(val_log))
+        return float(
+            val_norm * stats.output_std[col_idx] + stats.output_mean[col_idx]
+        )
 
     def _denorm_full_derivative(
         self, deriv_norm: float, out_col: int, in_col: int, phys_val: float
     ) -> float:
         """Denormalize a derivative from normalized to physical space.
 
-        Chain rule for signed_log + z-score on output, min-max on input:
+        Chain rule under the z-score normaliser (linear transforms
+        both sides, so the derivative is a plain product of column
+        scales):
 
-            d(phys)/d(V_phys) = d(zscore)/d(V_norm)  [NN autograd output]
-                              * output_std            [z-score → log space]
-                              / input_range           [V_norm → V_phys]
-                              * |phys| * ln(10)       [log space → physical]
+            d(y_phys)/d(v_phys)
+                = d(y_zscore)/d(v_zscore)   [NN autograd output]
+                  * output_std              [y_zscore → y_phys]
+                  / input_std               [v_zscore → v_phys]
 
         Args:
-            deriv_norm: d(out_zscore)/d(in_minmax) from autograd.
-            out_col: Output column index (for std lookup).
-            in_col: Input column index (for range lookup).
-            phys_val: Current physical value of the output (id, qg, etc).
+            deriv_norm: d(out_zscore)/d(in_zscore) from autograd.
+            out_col: Output column index.
+            in_col: Input column index (voltage column 0..3).
+            phys_val: Unused under z-score (kept for signature compat).
         """
         stats = self._norm_stats
-
-        in_range = stats.input_max[in_col] - stats.input_min[in_col]
-        if abs(in_range) < 1e-10:
+        in_std = float(stats.input_std[in_col])
+        if in_std < 1e-12:
             return 0.0
-
-        out_std = stats.output_std[out_col]
-
-        if abs(phys_val) < 1e-30:
-            return 0.0
-
-        return deriv_norm * out_std / in_range * abs(phys_val) * np.log(10.0)
+        return float(deriv_norm) * float(stats.output_std[out_col]) / in_std
 
     def get_nodes(self) -> List[str]:
         return self.nodes

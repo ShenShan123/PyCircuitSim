@@ -3,34 +3,39 @@
 Architecture: causal Transformer encoder with teacher forcing during
 training and autoregressive inference at test time.
 
-Key paper-aligned design choices (`docs/main_V4.pdf` §4.2):
+Design choices (paper + v3 sprint findings):
 
-- **Scalar projection + learned token-type embedding.** Each input scalar
-  (Vg, Vd, Vs, Vbs, geometry, process params, AR targets) is projected to
-  d_model dimensions and added to a learned per-position token-type
-  embedding. The token-type embedding is the paper's core trick — a
-  pure scalar projection (which the previous version used) cannot
-  distinguish a Vg=0.5 token from an id=0.5 token, breaking
-  permutation invariance for self-attention.
+- **Grouped input tokens (A2)** — always on. The 19 raw scalars
+  (4 voltages + NFIN_log + L + T + 12 process params) are collapsed
+  into 3 semantic group tokens via small GELU MLPs. Drops the
+  encoder sequence length from 28 to 12 and cuts wall-clock 30–50 %
+  at medium/large tiers.
 
-- **Pre-LN encoder layers.** ``norm_first=True`` puts the LayerNorm
-  before each sub-layer (GPT-2 / LLaMA / ViT style). This trains
-  more stably at depth and is standard for ≥4-layer Transformers,
-  which the paper's ModelL (6 layers) is.
+- **Parallel cap head (P4)** — always on. The 5 capacitance outputs
+  emit in a single parallel projection from the gmb hidden state
+  instead of as 5 sequential AR steps. Shrinks the AR sequence from
+  13 to 8.
 
-- **GELU feed-forward activation.** PyTorch defaults to ReLU; the
-  paper and modern Transformer practice use GELU.
+- **Scalar projection + learned token-type embedding (B1)** — each
+  input scalar is projected to d_model dims and added to a per-
+  position token-type embedding. The embedding gives each scalar
+  an *identity* (Vg vs id vs qg) that the encoder can read;
+  sinusoidal PE only encodes order.
 
-- **Per-token output heads.** A separate ``nn.Linear(d_model, 1)`` per
-  AR target makes the heterogeneous regression problem (id vs cgg
-  differ by ~14 decades when un-normalized) easier to fit.
+- **Pre-LN encoder layers (B2)** — ``norm_first=True``. Standard for
+  ≥4-layer Transformers and removes the need for LR warmup.
 
-- **GPT-2 scaled residual init.** Output projections of attention and
-  the FFN are re-initialized with gain ``1/sqrt(2 * num_layers)`` to
-  control residual-stream variance compounding with depth.
+- **GELU feed-forward activation (B5)**.
 
-Input:  (B, input_dim)  — normalized features (voltages + geometry + proc params)
-Output: (B, target_dim) — outputs in the BSIMAR (paper) AR order.
+- **Per-token output heads (B3)** — one ``nn.Linear(d_model, 1)``
+  per target. Trivial param overhead, much better fit on
+  heterogeneous targets.
+
+- **GPT-2 scaled residual init (B4)** — attention and FFN output
+  projections use gain ``1/sqrt(2 * num_layers)``.
+
+Input:  (B, 19) — normalized features [V(4), NFIN_log, L, T, 12_proc_params]
+Output: (B, 13) — outputs in BSIMAR (paper) AR order.
 """
 
 import math
@@ -42,40 +47,28 @@ import torch.nn as nn
 class TransformerEncoderModel(nn.Module):
     """Autoregressive Transformer for MOSFET I-V / Q-V / C-V prediction.
 
+    The v3 architecture always runs with grouped inputs (A2) and the
+    parallel cap head (P4). These were flags during the sprint; they
+    are now structural. The constructor therefore expects
+    ``input_dim=19`` and ``target_dim=13`` — no other shapes make
+    sense under grouped_inputs + parallel_caps.
+
     Args:
-        input_dim:  Number of input features (default 18).
-        target_dim: Number of output targets (default 13).
+        input_dim:  Must be 19 (the canonical 19-column combined input
+            layout [V(4), NFIN_log, L, T, 12_proc_params]).
+        target_dim: Must be 13 (BSIMAR_COLUMN_ORDER).
         d_model:    Transformer hidden dimension.
         nhead:      Number of attention heads.
         num_layers: Number of Transformer encoder layers.
         dim_feedforward: Feedforward network dimension.
         dropout:    Dropout rate.
-        parallel_caps: P4 — if True, emit the 5 capacitance tokens in
-            parallel from a single encoder hidden state instead of as 5
-            sequential AR steps. The AR sequence shrinks from 13 to 8 +
-            1 parallel cap step. The output shape and column order are
-            unchanged. Defaults to False (baseline behavior).
-        grouped_inputs: A2 — if True, collapse the 19 scalar input
-            features into 3 semantic group tokens (voltages / geometry /
-            process params) via small group-MLPs. The 4 voltage scalars
-            (Vg, Vd, Vs, Vbs) become one voltage token, the 3 geometry
-            scalars (NFIN_log, L, T) become one geometry token, and the
-            12 process-parameter scalars become one process token. The
-            encoder input sequence drops from ``input_dim + 1 + K`` to
-            ``3 + 1 + K``, where ``K`` is the number of AR target tokens
-            (8 with ``parallel_caps=True``, otherwise ``target_dim``).
-            Assumes the canonical 19-column layout produced by
-            ``bsimar.data.normalize._build_combined_input`` for the
-            15-col geometry: ``[V(4), NFIN_log, L, T, 12_proc_params]``.
-            Defaults to False (baseline behavior).
     """
 
     # P4 — parallel C-block constants. The cap block in BSIMAR_COLUMN_ORDER
     # starts at index ``CAP_START`` and contains ``N_CAPS`` tokens
-    # (cgg, cgd, cgs, cdg, cdd). When ``parallel_caps=True`` we emit all
-    # 5 cap tokens in a single parallel head conditioned on the encoder
-    # state after the I-block (gmb), shrinking the AR sequence from 13 to
-    # 8 (charges + currents/conds) + 1 parallel cap step.
+    # (cgg, cgd, cgs, cdg, cdd). All 5 cap tokens emit in a single
+    # parallel head conditioned on the encoder state after the I-block
+    # (gmb). AR sequence length: 8 (charges + currents/conds).
     CAP_START: int = 8
     N_CAPS: int = 5
 
@@ -88,78 +81,64 @@ class TransformerEncoderModel(nn.Module):
 
     def __init__(
         self,
-        input_dim: int = 18,
+        input_dim: int = 19,
         target_dim: int = 13,
-        d_model: int = 32,
-        nhead: int = 4,
-        num_layers: int = 2,
-        dim_feedforward: int = 64,
-        dropout: float = 0.1,
-        parallel_caps: bool = False,
-        grouped_inputs: bool = False,
+        d_model: int = 256,
+        nhead: int = 8,
+        num_layers: int = 6,
+        dim_feedforward: int = 1024,
+        dropout: float = 0.2,
     ):
         super().__init__()
+        assert input_dim == 19, (
+            "BSIMAR v3 expects the canonical 19-column combined input "
+            "layout ([V(4), NFIN_log, L, T, 12_proc_params]), got "
+            f"input_dim={input_dim}"
+        )
+        assert target_dim == 13, (
+            f"BSIMAR v3 assumes BSIMAR_COLUMN_ORDER, got target_dim={target_dim}"
+        )
+
         self.raw_input_dim = input_dim
         self.target_dim = target_dim
         self.d_model = d_model
         self.nhead = nhead
         self.num_layers = num_layers
-        self.parallel_caps = parallel_caps
-        self.grouped_inputs = grouped_inputs
 
-        # A2 — when grouped_inputs is enabled, the encoder sees 3 context
-        # tokens (voltage / geometry / process) instead of ``input_dim``
-        # per-scalar tokens. ``self.input_dim`` is the number of context
-        # positions before the start token and is used throughout the
-        # rest of this module for AR bookkeeping.
-        if grouped_inputs:
-            assert input_dim == 19, (
-                "grouped_inputs=True expects the canonical 19-column "
-                "combined input layout ([V(4), NFIN_log, L, T, "
-                "12_proc_params]), got input_dim={}".format(input_dim)
-            )
-            self.input_dim = self.N_GROUPED_INPUT_TOKENS
-        else:
-            self.input_dim = input_dim
+        # A2 — the encoder sees 3 context tokens (voltage / geometry /
+        # process) instead of 19 per-scalar tokens. ``self.input_dim``
+        # is the number of context positions before the start token
+        # and is used throughout the rest of this module for AR
+        # bookkeeping.
+        self.input_dim = self.N_GROUPED_INPUT_TOKENS
 
-        # P4: when parallel_caps is enabled, the AR sequence only carries
-        # the first 8 targets (charges + currents/conds). The 5 cap tokens
-        # are emitted in parallel from a single hidden state.
-        if parallel_caps:
-            assert target_dim == 13, (
-                "parallel_caps=True assumes BSIMAR_COLUMN_ORDER (target_dim=13)"
-            )
-        self.ar_target_dim = (
-            self.CAP_START if parallel_caps else target_dim
-        )
+        # P4 — the AR sequence only carries the first 8 targets
+        # (charges + currents/conds). The 5 cap tokens emit in
+        # parallel from the gmb hidden state.
+        self.ar_target_dim = self.CAP_START
 
-        # Project each scalar feature to d_model. This remains in use
-        # for the start token and the AR target tokens in both modes; in
-        # the non-grouped mode it is also applied to every raw input
-        # scalar, and in the grouped mode the raw input scalars go
-        # through the group MLPs below instead.
+        # Project each scalar feature to d_model. Used for the start
+        # token and the AR target tokens; the raw input context
+        # scalars go through the group MLPs below instead.
         self.input_projection = nn.Linear(1, d_model)
 
         # A2 — grouped context tokenizers. Each group MLP collapses a
-        # semantic chunk of the raw input into a single d_model token,
-        # replacing the per-scalar ``input_projection`` pass for the
-        # context. The AR target tokens still use ``input_projection``.
-        if grouped_inputs:
-            self.voltage_group = nn.Sequential(
-                nn.Linear(4, d_model * 2),
-                nn.GELU(),
-                nn.Linear(d_model * 2, d_model),
-            )
-            self.geom_group = nn.Sequential(
-                nn.Linear(3, d_model * 2),
-                nn.GELU(),
-                nn.Linear(d_model * 2, d_model),
-            )
-            self.proc_group = nn.Sequential(
-                nn.Linear(12, d_model * 2),
-                nn.GELU(),
-                nn.Linear(d_model * 2, d_model),
-            )
+        # semantic chunk of the raw input into a single d_model token.
+        self.voltage_group = nn.Sequential(
+            nn.Linear(4, d_model * 2),
+            nn.GELU(),
+            nn.Linear(d_model * 2, d_model),
+        )
+        self.geom_group = nn.Sequential(
+            nn.Linear(3, d_model * 2),
+            nn.GELU(),
+            nn.Linear(d_model * 2, d_model),
+        )
+        self.proc_group = nn.Sequential(
+            nn.Linear(12, d_model * 2),
+            nn.GELU(),
+            nn.Linear(d_model * 2, d_model),
+        )
 
         # B1: Learned token-type embedding. One row per token position
         # in the full sequence: input features + start token + AR targets.
@@ -215,28 +194,22 @@ class TransformerEncoderModel(nn.Module):
             nn.init.xavier_uniform_(layer.linear2.weight, gain=scale)
 
     def _embed_context(self, x: torch.Tensor) -> torch.Tensor:
-        """Embed the raw input context as ``(B, n_context, d_model)``.
+        """Embed the raw input context as ``(B, 3, d_model)``.
 
-        - Baseline: project each of the ``raw_input_dim`` scalars via
-          ``input_projection`` to get ``(B, raw_input_dim, d_model)``.
-        - A2 (grouped_inputs): run three small MLPs over the voltage,
-          geometry, and process slices and stack to ``(B, 3, d_model)``.
+        Runs three small MLPs over the voltage, geometry, and process
+        slices of the 19-column combined input and stacks them into
+        three semantic tokens.
         """
-        if self.grouped_inputs:
-            v_tok = self.voltage_group(x[:, self.VOLTAGE_SLICE])  # (B, d_model)
-            g_tok = self.geom_group(x[:, self.GEOM_SLICE])        # (B, d_model)
-            p_tok = self.proc_group(x[:, self.PROC_SLICE])        # (B, d_model)
-            return torch.stack([v_tok, g_tok, p_tok], dim=1)      # (B, 3, d_model)
-        return self.input_projection(x.unsqueeze(-1))              # (B, raw_input_dim, d_model)
+        v_tok = self.voltage_group(x[:, self.VOLTAGE_SLICE])  # (B, d_model)
+        g_tok = self.geom_group(x[:, self.GEOM_SLICE])        # (B, d_model)
+        p_tok = self.proc_group(x[:, self.PROC_SLICE])        # (B, d_model)
+        return torch.stack([v_tok, g_tok, p_tok], dim=1)      # (B, 3, d_model)
 
     def _embed_ar_scalars(self, scalars: torch.Tensor) -> torch.Tensor:
         """Embed AR-side scalar tokens (start token + previous targets).
 
         ``scalars`` has shape ``(B, K)`` where K is the number of AR
         positions already materialized. Returns ``(B, K, d_model)``.
-        The AR scalars are *always* projected via ``input_projection``
-        regardless of ``grouped_inputs`` — the group MLPs only apply to
-        the raw input context.
         """
         return self.input_projection(scalars.unsqueeze(-1))
 
@@ -327,43 +300,16 @@ class TransformerEncoderModel(nn.Module):
             # Training: teacher forcing with start token
             context_emb = self._embed_context(x)  # (B, n_context, d_model)
 
-            if self.parallel_caps:
-                # Only feed the first ar_target_dim (= 8) AR tokens. The
-                # cap block is emitted in parallel after the encoder run,
-                # so it never appears as an input token. The shifted
-                # sequence is [start, qg, qb, qd, qs, id, gm, gds] (length
-                # ar_target_dim), and the corresponding 8 AR positions
-                # produce hidden states for [qg, qb, qd, qs, id, gm, gds,
-                # gmb].
-                start_token = torch.zeros(
-                    batch_size, 1, device=x.device, dtype=x.dtype)
-                # y[:, :ar_target_dim - 1] = first 7 charges + currents
-                y_shifted = torch.cat(
-                    [start_token, y[:, :self.ar_target_dim - 1]], dim=1)
-
-                ar_emb = self._embed_ar_scalars(y_shifted)
-                embedded = torch.cat([context_emb, ar_emb], dim=1)
-                embedded = self._add_token_type(embedded)
-
-                L = embedded.size(1)
-                causal_mask = self._generate_causal_mask(L).to(x.device)
-
-                encoder_out = self.transformer_encoder(
-                    embedded, mask=causal_mask)
-
-                # Last ar_target_dim positions = q+I-V hidden states.
-                qic_hidden = encoder_out[:, -self.ar_target_dim:]
-                pred_qic = self._project_outputs(qic_hidden, start_idx=0)
-
-                # Parallel cap head conditioned on the gmb hidden state
-                # (last position of the encoder output).
-                pred_caps = self._parallel_cap_head(encoder_out[:, -1, :])
-
-                return torch.cat([pred_qic, pred_caps], dim=1)
-
-            # Baseline TF path
-            start_token = torch.zeros(batch_size, 1, device=x.device, dtype=x.dtype)
-            y_shifted = torch.cat([start_token, y[:, :-1]], dim=1)
+            # Teacher-forced training path. Feed the first 7 ground-
+            # truth AR tokens (charges + first 3 currents/conds); the
+            # 8th AR position (gmb) is generated by the encoder and
+            # conditions the parallel cap head. The 5 cap tokens are
+            # never input tokens — they emit in parallel from gmb's
+            # hidden state.
+            start_token = torch.zeros(
+                batch_size, 1, device=x.device, dtype=x.dtype)
+            y_shifted = torch.cat(
+                [start_token, y[:, :self.ar_target_dim - 1]], dim=1)
 
             ar_emb = self._embed_ar_scalars(y_shifted)
             embedded = torch.cat([context_emb, ar_emb], dim=1)
@@ -372,27 +318,27 @@ class TransformerEncoderModel(nn.Module):
             L = embedded.size(1)
             causal_mask = self._generate_causal_mask(L).to(x.device)
 
-            encoder_out = self.transformer_encoder(embedded, mask=causal_mask)
+            encoder_out = self.transformer_encoder(
+                embedded, mask=causal_mask)
 
-            target_hidden = encoder_out[:, -self.target_dim:]
-            return self._project_outputs(target_hidden, start_idx=0)
+            # Last ar_target_dim (= 8) positions = q+I-V hidden states.
+            qic_hidden = encoder_out[:, -self.ar_target_dim:]
+            pred_qic = self._project_outputs(qic_hidden, start_idx=0)
 
-        # Inference: autoregressive generation
-        context_emb = self._embed_context(x)  # (B, n_context, d_model)
+            # Parallel cap head conditioned on the gmb hidden state.
+            pred_caps = self._parallel_cap_head(encoder_out[:, -1, :])
 
-        # Running buffer of AR-side scalars: starts with the start token
-        # and grows by one slot per AR step as predictions are appended.
+            return torch.cat([pred_qic, pred_caps], dim=1)
+
+        # Inference: autoregressive generation over the 8 q+I-V
+        # targets, then parallel cap emission.
+        context_emb = self._embed_context(x)  # (B, 3, d_model)
         start_token = torch.zeros(batch_size, 1, device=x.device, dtype=x.dtype)
-        ar_scalars = start_token  # (B, K)
+        ar_scalars = start_token
         predictions = []
         last_encoder_out: torch.Tensor | None = None
 
-        # Under parallel_caps the AR loop only runs for ar_target_dim (=8)
-        # steps; the 5 caps are emitted in one parallel head step after the
-        # loop using the final encoder hidden state.
-        ar_steps = self.ar_target_dim
-
-        for i in range(ar_steps):
+        for i in range(self.ar_target_dim):
             ar_emb = self._embed_ar_scalars(ar_scalars)
             embedded = torch.cat([context_emb, ar_emb], dim=1)
             embedded = self._add_token_type(embedded)
@@ -407,45 +353,34 @@ class TransformerEncoderModel(nn.Module):
             next_pred = head(out[:, -1, :]).squeeze(-1)
             predictions.append(next_pred)
 
-            if i < ar_steps - 1:
+            if i < self.ar_target_dim - 1:
                 ar_scalars = torch.cat(
-                    [ar_scalars, next_pred.unsqueeze(1)], dim=1
-                )
+                    [ar_scalars, next_pred.unsqueeze(1)], dim=1)
 
-        if self.parallel_caps:
-            # last_encoder_out is the encoder run from the final AR step
-            # (which fed gmb as the trailing input token? no — the loop
-            # appends a token only AFTER each step, so the final encoder
-            # run still corresponds to predicting gmb from the
-            # ar_target_dim-token sequence). The hidden state at -1
-            # encodes the gmb prediction context, which is what we want
-            # to condition the cap head on.
-            assert last_encoder_out is not None
-            pred_caps = self._parallel_cap_head(last_encoder_out[:, -1, :])
-            pred_qic = torch.stack(predictions, dim=1)
-            return torch.cat([pred_qic, pred_caps], dim=1)
-
-        return torch.stack(predictions, dim=1)
+        assert last_encoder_out is not None
+        pred_caps = self._parallel_cap_head(last_encoder_out[:, -1, :])
+        pred_qic = torch.stack(predictions, dim=1)
+        return torch.cat([pred_qic, pred_caps], dim=1)
 
     def forward_scheduled(
         self,
         x: torch.Tensor,
         y: torch.Tensor,
-        ss_ratio: float = 0.0,
+        ss_ratio: float = 1.0,
     ) -> torch.Tensor:
-        """Forward pass with scheduled sampling.
+        """AR fine-tune forward with scheduled sampling.
 
-        For each AR target position, with probability ``ss_ratio``,
-        feed the model's own previous prediction (detached) instead
-        of the ground-truth token. ``ss_ratio == 1.0`` is the pure-AR
-        finetune mode used by N3 (no teacher forcing).
+        For each AR target position (0..ar_target_dim-1), with
+        probability ``ss_ratio`` feed the model's own previous
+        prediction (detached) instead of the ground-truth token.
+        ``ss_ratio == 1.0`` is the pure-AR finetune mode used by the
+        N3 finetune phase; at 0.0 it is identical to teacher forcing
+        (and this helper short-circuits to ``forward(x, y)``).
 
-        Under ``parallel_caps``, the AR loop only walks the first 8
-        targets (charges + currents/conds); the 5 cap outputs are
-        emitted in parallel from the final encoder hidden state, the
-        same way ``forward()`` does it. Caps therefore see no
-        scheduled sampling, but they fully participate in the loss
-        because they depend on the AR-perturbed encoder context.
+        The 5 cap outputs emit in parallel from the gmb hidden state
+        the same way ``forward()`` does. Caps therefore see no
+        scheduled sampling but fully participate in the loss because
+        they depend on the AR-perturbed encoder context.
         """
         if ss_ratio <= 0.0:
             return self.forward(x, y)
@@ -455,11 +390,9 @@ class TransformerEncoderModel(nn.Module):
         start_token = torch.zeros(batch_size, 1, device=x.device, dtype=x.dtype)
         ar_scalars = start_token
         predictions = []
-
-        ar_steps = self.ar_target_dim
         last_encoder_out: torch.Tensor | None = None
 
-        for t in range(ar_steps):
+        for t in range(self.ar_target_dim):
             ar_emb = self._embed_ar_scalars(ar_scalars)
             embedded = torch.cat([context_emb, ar_emb], dim=1)
             embedded = self._add_token_type(embedded)
@@ -473,70 +406,14 @@ class TransformerEncoderModel(nn.Module):
             next_pred = head(out[:, -1, :]).squeeze(-1)
             predictions.append(next_pred)
 
-            if t < ar_steps - 1:
+            if t < self.ar_target_dim - 1:
                 use_pred = torch.rand(batch_size, device=x.device) < ss_ratio
                 next_token = torch.where(
-                    use_pred, next_pred.detach(), y[:, t]
-                )
+                    use_pred, next_pred.detach(), y[:, t])
                 ar_scalars = torch.cat(
-                    [ar_scalars, next_token.unsqueeze(1)], dim=1
-                )
+                    [ar_scalars, next_token.unsqueeze(1)], dim=1)
 
-        if self.parallel_caps:
-            assert last_encoder_out is not None
-            pred_caps = self._parallel_cap_head(last_encoder_out[:, -1, :])
-            pred_qic = torch.stack(predictions, dim=1)
-            return torch.cat([pred_qic, pred_caps], dim=1)
-
-        return torch.stack(predictions, dim=1)
-
-    def forward_curriculum(
-        self,
-        x: torch.Tensor,
-        y: torch.Tensor,
-        n_targets: int = -1,
-        ss_ratio: float = 0.0,
-    ) -> torch.Tensor:
-        """Forward pass predicting only the first n_targets outputs."""
-        if self.parallel_caps:
-            raise NotImplementedError(
-                "parallel_caps not supported under curriculum yet "
-                "(only used by --loss direct). Use the standard forward()."
-            )
-        if n_targets <= 0 or n_targets >= self.target_dim:
-            return self.forward_scheduled(x, y, ss_ratio=ss_ratio)
-
-        batch_size = x.size(0)
-        context_emb = self._embed_context(x)
-        start_token = torch.zeros(batch_size, 1, device=x.device, dtype=x.dtype)
-        ar_scalars = start_token
-        predictions = []
-
-        for t in range(self.target_dim):
-            ar_emb = self._embed_ar_scalars(ar_scalars)
-            embedded = torch.cat([context_emb, ar_emb], dim=1)
-            embedded = self._add_token_type(embedded)
-
-            L = embedded.size(1)
-            causal_mask = self._generate_causal_mask(L).to(x.device)
-
-            out = self.transformer_encoder(embedded, mask=causal_mask)
-            head = self.output_heads[t]
-            next_pred = head(out[:, -1, :]).squeeze(-1)
-
-            if t < n_targets:
-                predictions.append(next_pred)
-            else:
-                predictions.append(y[:, t])
-
-            if t < self.target_dim - 1:
-                if t < n_targets:
-                    use_pred = torch.rand(batch_size, device=x.device) < ss_ratio
-                    next_token = torch.where(use_pred, next_pred.detach(), y[:, t])
-                else:
-                    next_token = y[:, t]
-                ar_scalars = torch.cat(
-                    [ar_scalars, next_token.unsqueeze(1)], dim=1
-                )
-
-        return torch.stack(predictions, dim=1)
+        assert last_encoder_out is not None
+        pred_caps = self._parallel_cap_head(last_encoder_out[:, -1, :])
+        pred_qic = torch.stack(predictions, dim=1)
+        return torch.cat([pred_qic, pred_caps], dim=1)

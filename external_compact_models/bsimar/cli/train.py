@@ -1,19 +1,27 @@
-"""Unified CLI entry point for BSIMAR training.
+"""Unified CLI for BSIMAR training.
 
-Trains either the DirectNet baseline (MLP) or the BSIM-AR Transformer.
-Replaces the old `nn_model.train` and
-`external_compact_models.BSIMAR.script.main` entry points.
+Two models, one CLI:
+
+- ``--model direct``      — DirectNet MLP baseline
+- ``--model transformer`` — BSIMAR v3 Transformer (default)
+
+The v3 Transformer recipe is hard-wired inside ``train_transformer``
+(asinh+zscore norm, MAE + LDS + Vov-LDS, parallel_caps, grouped_inputs,
+AR finetune phase). The only caller-visible knobs are architecture
+(``--d-model``, ``--nhead``, ``--num-layers``, ``--dim-feedforward``,
+``--dropout``), schedule (``--epochs``, ``--batch-size``, ``--lr``,
+``--patience``, ``--ar-finetune-epochs``), and checkpoint naming
+(``--exp-name``, ``--overwrite``).
 
 Usage:
     # DirectNet baseline
-    conda run -n pycircuitsim python -m bsimar.cli.train \
-        --model direct --device-type nmos --universal --mode direct13 \
+    python -m bsimar.cli.train \\
+        --model direct --device-type nmos --universal --mode direct13 \\
         --epochs 800 --hidden 384 --layers 6 --batch-size 2048 --cuda
 
-    # BSIM-AR Transformer (paper config)
-    conda run -n pycircuitsim python -m bsimar.cli.train \
-        --model transformer --device-type nmos --universal \
-        --loss mae --lds --cuda
+    # BSIMAR v3 Transformer (production recipe)
+    python -m bsimar.cli.train \\
+        --model transformer --device-type nmos --universal --cuda
 """
 
 import sys
@@ -23,7 +31,7 @@ from pathlib import Path
 import torch
 
 from bsimar.config import (
-    TECH_CONFIGS, OUTPUT_COLUMNS,
+    TECH_CONFIGS,
     CHECKPOINT_DIR, DATA_DIR,
     DirectNetConfig, TransformerConfig,
 )
@@ -93,7 +101,6 @@ def _run_direct(args: argparse.Namespace) -> None:
         use_charge_consistency=use_charge_consistency,
         w_consistency=args.w_consistency,
         w_cond_consistency=args.w_cond_consistency,
-        norm_mode=args.norm_mode,
         apply_filter=args.apply_filter,
     )
 
@@ -101,14 +108,6 @@ def _run_direct(args: argparse.Namespace) -> None:
 # ── Transformer subcommand ───────────────────────────────────────────────────
 
 def _run_transformer(args: argparse.Namespace) -> None:
-    if args.norm_mode == "signedlog":
-        sys.exit(
-            "signedlog normalization is unstable for the autoregressive "
-            "transformer (inv_signed_log amplifies AR-accumulated errors "
-            "catastrophically — see CLAUDE.md smoke-test notes). Use "
-            "--norm-mode zscore."
-        )
-
     if args.universal:
         data_path = (Path(args.data) if args.data
                      else DATA_DIR / f"universal_{args.device_type}.npz")
@@ -136,11 +135,6 @@ def _run_transformer(args: argparse.Namespace) -> None:
         max_epochs=args.epochs,
         lr=args.lr,
         patience=args.patience,
-        w_curr=args.w_curr,
-        w_cond=args.w_cond,
-        w_charges=args.w_charges if args.w_charges is not None else 0.5,
-        w_caps=args.w_caps if args.w_caps is not None else 0.3,
-        w_zero_bias=args.w_zero_bias,
     )
 
     device_str = "cuda" if args.cuda and torch.cuda.is_available() else "cpu"
@@ -148,24 +142,10 @@ def _run_transformer(args: argparse.Namespace) -> None:
     train_transformer(
         str(data_path),
         save_prefix=save_prefix,
-        device_type=args.device_type,
-        loss_name=args.loss,
-        norm_mode=args.norm_mode,
-        apply_filter=not args.no_filter,
-        use_lds=args.lds,
-        reorder=args.reorder,
-        scheduled_sampling=args.scheduled_sampling,
-        ss_warmup=args.ss_warmup,
-        ss_max_ratio=args.ss_max_ratio,
-        consistency_weight=args.consistency_weight,
-        curriculum=args.curriculum,
-        curriculum_warmup=args.curriculum_warmup,
         config=config,
         device_str=device_str,
-        column_names=OUTPUT_COLUMNS,
-        overwrite=args.overwrite,
-        vov_lds=args.vov_lds,
         ar_finetune_epochs=args.ar_finetune_epochs,
+        overwrite=args.overwrite,
     )
 
 
@@ -174,11 +154,12 @@ def _run_transformer(args: argparse.Namespace) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="BSIMAR unified training CLI "
-                    "(DirectNet baseline or BSIM-AR Transformer)")
+                    "(DirectNet baseline or BSIMAR v3 Transformer)")
     parser.add_argument("--model", choices=["direct", "transformer"],
-                        default="direct",
+                        default="transformer",
                         help="Which architecture to train "
-                             "(direct=DirectNet baseline, transformer=BSIM-AR)")
+                             "(direct=DirectNet baseline, "
+                             "transformer=BSIMAR v3, default)")
 
     # Shared data args
     parser.add_argument("--device-type", choices=["nmos", "pmos"], default="nmos")
@@ -188,92 +169,67 @@ def main() -> None:
     parser.add_argument("--universal", action="store_true",
                         help="Train a single universal model across all techs/variants")
 
-    # Shared optimization args
-    parser.add_argument("--epochs", type=int, default=500)
+    # Shared optimization args. Defaults reflect the v3 Transformer
+    # production recipe (150 epochs, bs 1024, lr 8e-4, patience 150).
+    # DirectNet typically overrides --epochs and --batch-size.
+    parser.add_argument("--epochs", type=int, default=150)
     parser.add_argument("--batch-size", type=int, default=1024)
-    parser.add_argument("--lr", type=float, default=1e-3)
-    parser.add_argument("--patience", type=int, default=10)
+    parser.add_argument("--lr", type=float, default=8e-4)
+    parser.add_argument("--patience", type=int, default=150)
     parser.add_argument("--cuda", action="store_true")
     parser.add_argument("--seed", type=int, default=42)
 
     # DirectNet-specific
-    parser.add_argument("--mode", choices=["direct4", "direct13", "finetune",
-                                           "charge-finetune"],
+    parser.add_argument("--mode",
+                        choices=["direct4", "direct13", "finetune", "charge-finetune"],
                         default="direct13",
                         help="[direct only] Training mode")
-    parser.add_argument("--hidden", type=int, default=256,
+    parser.add_argument("--hidden", type=int, default=384,
                         help="[direct only] MLP hidden layer dimension")
-    parser.add_argument("--layers", type=int, default=5,
+    parser.add_argument("--layers", type=int, default=6,
                         help="[direct only] MLP hidden layers")
     parser.add_argument("--resume", type=str, default=None,
                         help="[direct only] Checkpoint to resume from")
     parser.add_argument("--w-consistency", type=float, default=1.0,
-                        help="[direct only] Weight for charge-cap autograd consistency")
+                        help="[direct charge-finetune] autograd charge-cap "
+                             "consistency weight")
     parser.add_argument("--w-cond-consistency", type=float, default=0.0,
-                        help="[direct only] Weight for conductance autograd consistency")
-
-    # Normalization mode (shared semantics across both models, but
-    # different valid values per model — see _run_direct / _run_transformer
-    # for what each one accepts).
-    #   direct      : 'legacy' (signed-log + z-score) or 'zscore'
-    #   transformer : 'zscore' or 'signedlog'  ('zscore' is the default
-    #                  and the only stable AR mode)
-    parser.add_argument("--norm-mode",
-                        choices=["legacy", "zscore", "signedlog", "asinh"],
-                        default="zscore",
-                        help="Normalization mode. direct: legacy|zscore. "
-                             "transformer: zscore|signedlog|asinh.")
+                        help="[direct charge-finetune] autograd conductance "
+                             "consistency weight (0=off)")
     parser.add_argument("--apply-filter", action="store_true",
-                        help="[direct + zscore] Drop sub-floor cutoff "
-                             "samples (matches BSIM-AR data path). "
-                             "Always on for transformer.")
-    parser.add_argument("--no-filter", action="store_true",
-                        help="[transformer] Skip small-value data filtering")
-    parser.add_argument("--loss", choices=["direct", "mae", "bni"], default="mae",
-                        help="[transformer] Loss function")
-    parser.add_argument("--lds", action="store_true",
-                        help="[transformer] Enable LDS reweighting")
-    parser.add_argument("--d-model", type=int, default=256)
-    parser.add_argument("--nhead", type=int, default=8)
-    parser.add_argument("--num-layers", type=int, default=6)
-    parser.add_argument("--dim-feedforward", type=int, default=1024)
+                        help="[direct only] Drop sub-floor cutoff samples "
+                             "(transformer always filters).")
+
+    # Transformer-specific: architecture only. The v3 recipe is hard-
+    # wired inside train_transformer -- no --loss, --norm-mode, --lds,
+    # --vov-lds, --no-filter, --scheduled-sampling, --curriculum, or
+    # --consistency-weight flags anymore. They either always-on or
+    # removed as INFEASIBLE in the v3 sprint.
+    parser.add_argument("--d-model", type=int, default=256,
+                        help="[transformer] Encoder hidden dimension")
+    parser.add_argument("--nhead", type=int, default=8,
+                        help="[transformer] Number of attention heads")
+    parser.add_argument("--num-layers", type=int, default=6,
+                        help="[transformer] Number of encoder layers")
+    parser.add_argument("--dim-feedforward", type=int, default=1024,
+                        help="[transformer] FFN hidden dimension")
     parser.add_argument("--dropout", type=float, default=0.2)
-    parser.add_argument("--reorder", dest="reorder", action="store_true",
-                        default=True,
-                        help="[transformer] Reorder outputs to paper's "
-                             "Q-V → I-V → C-V order (default: on)")
-    parser.add_argument("--no-reorder", dest="reorder", action="store_false",
-                        help="[transformer] Disable output reordering "
-                             "(falls back to OUTPUT_COLUMN_ORDER)")
-    parser.add_argument("--scheduled-sampling", action="store_true")
-    parser.add_argument("--ss-warmup", type=int, default=100)
-    parser.add_argument("--ss-max-ratio", type=float, default=0.5)
-    parser.add_argument("--consistency-weight", type=float, default=0.0)
-    parser.add_argument("--curriculum", action="store_true")
-    parser.add_argument("--curriculum-warmup", type=int, default=50)
-    parser.add_argument("--exp-name", type=str, default=None)
+    parser.add_argument("--exp-name", type=str, default=None,
+                        help="[transformer] Experiment name; overrides "
+                             "the default save_prefix")
     parser.add_argument("--overwrite", action="store_true",
                         help="[transformer] Allow overwriting an existing "
                              "<save_prefix>_best.pt checkpoint")
-    parser.add_argument("--vov-lds", action="store_true",
-                        help="[transformer mae+lds] N7 -- additional LDS "
-                             "weighting on Vg (Vov proxy) bins, multiplied "
-                             "into the per-target LDS weights.")
-    parser.add_argument("--ar-finetune-epochs", type=int, default=0,
-                        help="[transformer mae] N3 -- after the cosine TF "
-                             "schedule completes, run N additional epochs "
-                             "with forward_scheduled(ss_ratio=1.0) and a "
-                             "fixed-low LR. Closes the residual TF<->AR "
-                             "exposure-bias gap.")
+    parser.add_argument("--ar-finetune-epochs", type=int, default=5,
+                        help="[transformer] N3 AR-rollout fine-tune epochs "
+                             "after the cosine schedule. Default 5 "
+                             "(empirically sufficient).")
 
-    # Loss weights (shared semantics, used only by their respective models)
-    parser.add_argument("--w-curr", type=float, default=1.0,
-                        help="[transformer DirectLoss] current weight")
-    parser.add_argument("--w-cond", type=float, default=1.0,
-                        help="[transformer DirectLoss] conductance weight")
-    parser.add_argument("--w-charges", type=float, default=None)
-    parser.add_argument("--w-caps", type=float, default=None)
-    parser.add_argument("--w-zero-bias", type=float, default=5.0)
+    # DirectNet loss weights (transformer uses the hard-wired v3 recipe)
+    parser.add_argument("--w-charges", type=float, default=None,
+                        help="[direct] charges group weight")
+    parser.add_argument("--w-caps", type=float, default=None,
+                        help="[direct] caps group weight")
 
     args = parser.parse_args()
     set_seed(args.seed)

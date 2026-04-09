@@ -1,35 +1,31 @@
-"""PyTorch Dataset wrappers and loader functions for BSIMAR.
+"""PyTorch Dataset wrapper and loader for BSIMAR + DirectNet training.
 
-Provides two loader flavors that coexist for checkpoint compatibility:
+Both models now share the same loader (``load_and_split_bsimar``) and the
+same normalizer (``BSIMARNormalizer``). BSIMAR trains under ``'asinh'``
+mode; DirectNet trains under ``'zscore'`` mode.
 
-- `load_and_split` — legacy DirectNet path. Uses `Normalizer` (signed-log+z-score
-  outputs, min-max inputs). Returns `MOSFETDataset` objects.
-
-- `load_and_split_bsimar` — Transformer path. Uses `BSIMARNormalizer` (zscore or
-  signedlog modes), optionally filters tiny-magnitude samples before fitting.
-  Returns `BSIMARDataset` objects.
-
-Both loaders read the same .npz format produced by PyCMG's `generate_nn_data.py`.
+The legacy DirectNet path (``load_and_split`` + ``Normalizer`` with
+signed-log + z-score outputs) was removed in the v3 sprint alongside
+the signed-log normaliser itself.
 """
 
-from pathlib import Path
 from typing import Tuple, Optional, Dict, List
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from bsimar.data.normalize import Normalizer, BSIMARNormalizer
+from bsimar.data.normalize import BSIMARNormalizer
 
 
-# ── MOSFETDataset (DirectNet, legacy) ────────────────────────────────────────
+# ── Dataset ──────────────────────────────────────────────────────────────────
 
 class MOSFETDataset(Dataset):
     """PyTorch Dataset wrapping normalized MOSFET I-V/Q-V data.
 
     Each sample provides:
         - inputs: (D,) tensor, D in {6, 7, 13, 18, 19}, normalized
-        - outputs: (13,) tensor in signed_log + z-score normalized space
+        - outputs: (13,) tensor in normalized space
     """
 
     def __init__(
@@ -52,54 +48,7 @@ class MOSFETDataset(Dataset):
 BSIMARDataset = MOSFETDataset
 
 
-# ── Loader: DirectNet path (legacy) ──────────────────────────────────────────
-
-def load_and_split(
-    data_path: str,
-    train_ratio: float = 0.8,
-    val_ratio: float = 0.1,
-    seed: int = 42,
-    normalizer: Optional[Normalizer] = None,
-) -> Tuple[MOSFETDataset, MOSFETDataset, MOSFETDataset, Normalizer]:
-    """Load .npz dataset, normalize with `Normalizer`, and split."""
-    data = np.load(data_path, allow_pickle=True)
-    inputs = data["inputs"]      # (N, 4)
-    geometry = data["geometry"]  # (N, 2+)
-    outputs = data["outputs"]    # (N, 13)
-
-    N = len(inputs)
-    rng = np.random.default_rng(seed)
-    indices = rng.permutation(N)
-
-    n_train = int(N * train_ratio)
-    n_val = int(N * val_ratio)
-
-    train_idx = indices[:n_train]
-    val_idx = indices[n_train:n_train + n_val]
-    test_idx = indices[n_train + n_val:]
-
-    if normalizer is None:
-        normalizer = Normalizer()
-        normalizer.fit(inputs[train_idx], geometry[train_idx], outputs[train_idx])
-
-    train_in = normalizer.normalize_inputs(inputs[train_idx], geometry[train_idx])
-    val_in = normalizer.normalize_inputs(inputs[val_idx], geometry[val_idx])
-    test_in = normalizer.normalize_inputs(inputs[test_idx], geometry[test_idx])
-
-    train_out = normalizer.normalize_outputs(outputs[train_idx])
-    val_out = normalizer.normalize_outputs(outputs[val_idx])
-    test_out = normalizer.normalize_outputs(outputs[test_idx])
-
-    train_ds = MOSFETDataset(train_in, train_out)
-    val_ds = MOSFETDataset(val_in, val_out)
-    test_ds = MOSFETDataset(test_in, test_out)
-
-    print(f"Dataset split: train={len(train_ds)}, val={len(val_ds)}, test={len(test_ds)}")
-
-    return train_ds, val_ds, test_ds, normalizer
-
-
-# ── Loader: Transformer / BSIMAR path ────────────────────────────────────────
+# ── Loader ───────────────────────────────────────────────────────────────────
 
 # Per-output filtering thresholds (physical units).
 # Samples where ANY target falls below its group threshold are removed.
@@ -128,14 +77,22 @@ def filter_small_targets(
 def load_and_split_bsimar(
     data_path: str,
     column_names: List[str],
-    norm_mode: str = "zscore",
+    norm_mode: str = "asinh",
     train_ratio: float = 0.8,
     val_ratio: float = 0.1,
     seed: int = 42,
     apply_filter: bool = True,
     filter_thresholds: Optional[Dict[str, float]] = None,
 ) -> Tuple[MOSFETDataset, MOSFETDataset, MOSFETDataset, BSIMARNormalizer]:
-    """Load .npz, optionally filter tiny targets, split, normalize."""
+    """Load .npz, optionally filter tiny targets, split, normalize.
+
+    Args:
+        norm_mode: ``'asinh'`` (BSIMAR default) or ``'zscore'`` (DirectNet).
+        apply_filter: Drop samples where any target falls below its floor.
+    """
+    assert norm_mode in ("asinh", "zscore"), \
+        f"Unknown norm_mode: {norm_mode!r}"
+
     data = np.load(data_path, allow_pickle=True)
     inputs = data["inputs"]
     geometry = data["geometry"]

@@ -576,7 +576,9 @@ class Parser:
                 raise ValueError(f"NN MOSFET (LEVEL=73) missing NFIN parameter: {line}")
 
             try:
-                from pycircuitsim.models.mosfet_nn import NMOS_NN, PMOS_NN
+                from pycircuitsim.models.mosfet_directnet import (
+                    NMOS_NN, PMOS_NN,
+                )
             except ImportError:
                 raise ImportError(
                     "NN MOSFET model requires PyTorch. "

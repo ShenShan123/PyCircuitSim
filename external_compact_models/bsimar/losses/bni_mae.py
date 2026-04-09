@@ -1,8 +1,16 @@
-"""BNI, MAE, and LDS-weighted loss functions for BSIMAR training.
+"""MAE and LDS-weighted loss for BSIMAR training.
 
-- `WeightedBNILoss`: Batch-Normalized Interpolation loss.
-- `MAELoss`: Plain / LDS-weighted MAE loss.
-- `compute_lds_weights_per_target`: Label Distribution Smoothing weights.
+- ``MAELoss``: Plain / LDS-weighted MAE loss. Combined with per-target
+  LDS weights this is the paper's MAE+LDS loss and the BSIMAR v3
+  production loss.
+- ``compute_lds_weights_per_target``: Label Distribution Smoothing
+  weights (Yang et al., ICML 2021) computed on any 1D+ target
+  distribution. BSIMAR v3 uses this on both per-target outputs and on
+  ``Vg`` (as a proxy for ``Vov``) to form a two-axis sample weight.
+
+The ``WeightedBNILoss`` (Batch-Normalized Interpolation) was removed in
+the v3 sprint: it was never the winning loss and kept ``--loss bni``
+alive as a stale CLI option.
 """
 
 import numpy as np
@@ -83,52 +91,6 @@ def compute_lds_weights_per_target(
         weights_all[:, d] = weights
 
     return weights_all
-
-
-class WeightedBNILoss(nn.Module):
-    """Batch-Normalized Interpolation loss with optional per-sample weights.
-
-    Normalizes predictions and targets by batch statistics before computing
-    a weighted combination of normalized absolute error (NAE) and normalized
-    squared error (NSE).
-    """
-
-    def __init__(self, epsilon: float = 1e-8):
-        super().__init__()
-        self.epsilon = epsilon
-
-    def forward(
-        self,
-        y_pred: torch.Tensor,
-        y_true: torch.Tensor,
-        weights: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        if y_true.shape[0] <= 1:
-            base_loss = torch.mean((y_pred - y_true) ** 2)
-            if weights is not None:
-                if weights.dim() == 1:
-                    weights = weights.unsqueeze(1)
-                base_loss = torch.mean((y_pred - y_true) ** 2 * weights)
-            return base_loss
-
-        mean_true = y_true.mean(dim=0, keepdim=True)
-        std_true = y_true.std(dim=0, keepdim=True) + self.epsilon
-
-        y_true_norm = (y_true - mean_true) / std_true
-        y_pred_norm = (y_pred - mean_true) / std_true
-
-        abs_err = torch.abs(y_pred_norm - y_true_norm)
-        sq_err = (y_pred_norm - y_true_norm) ** 2
-
-        if weights is not None:
-            if weights.dim() == 1:
-                weights = weights.unsqueeze(1)
-            abs_err = abs_err * weights
-            sq_err = sq_err * weights
-
-        nae = torch.mean(abs_err)
-        nse = torch.mean(sq_err)
-        return 0.7 * nae + 0.3 * nse
 
 
 class MAELoss(nn.Module):
