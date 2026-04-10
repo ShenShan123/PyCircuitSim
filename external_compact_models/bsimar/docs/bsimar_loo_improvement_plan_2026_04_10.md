@@ -375,56 +375,102 @@ relative (guardrail against killing in-distribution accuracy).
 - **Commit**: `859d429` (``experiment(bsimar): E1 S2 asinh-scale
   floor for gmb/qb + LOO plan rewrite``).
 
-### E2. M2a — derived channel-transport features
+### E2. M2a — derived channel-transport features (FULL, 4 features)
 
-- Status: **pending**
-- Change: add `Vov`, `Vds_rel`, `log(NFIN·W_fin/L)`, `EOT·VDD_est` as
-  four new input columns (19 → 23). Update the transformer's grouped
-  input splits and the `input_dim` assertion. Retrain on each fold.
-- Expected: NRMSE_sc drops 10–30 % on asap7 (from 13.30 % to
-  ~9–12 %), 20–40 % on tsmc5 (from 3.43 % to ~2.0–2.7 %);
-  NRMSE_body unchanged.
-- NRMSE_sc (asap7 / tsmc5): —
-- NRMSE_body (asap7 / tsmc5): —
-- In-distribution val loss: —
-- Verdict:
-- Commit:
+- Status: ❌ **REJECT** (2026-04-10 09:27–11:35 run)
+- Run: `tests/verify_bsimar_loo_results/20260410_092654_nmos_m2a/metrics.json`
+- Change: 4 derived features appended to the canonical 19-col layout
+  (19 → 23): Vov = Vg − PHIG, Vds = Vd − Vs, Vgb = Vg − Vb,
+  log(NFIN/L). Transformer gets a 4th "derived" group MLP.
+- **Result — solver-critical scoreboard**:
+
+  | Fold  | E0 NRMSE_sc % | E2 NRMSE_sc % |     Δ %  | log ratio |
+  |-------|--------------:|--------------:|---------:|----------:|
+  | asap7 |        19.628 |        21.541 |  +9.74 % |   +0.0930 |
+  | tsmc5 |         3.430 |         3.536 |  +3.08 % |   +0.0303 |
+
+  **Σ log-ratio = +0.1233** → geometric-mean ratio ≈ 1.064
+  (6.4 % regression); **REJECT**.
+
+- **In-distribution guardrail**: phys-best 0.195 % vs E0's 0.176 %
+  (asap7 fold) — 10.8 % relative regression, also exceeds 0.5 %
+  guardrail.
+
+- **Why it failed**: the 3 "redundant" features (Vds, Vgb,
+  log_NFIN_L) are linearly learnable inside the existing voltage or
+  geometry group MLPs. Adding them as an explicit 4th group token
+  with 134 k extra parameters provides no new information but
+  increases model capacity, causing the 4-tech train distribution to
+  be fit more tightly at the expense of the held-out fold. The single
+  genuinely non-trivial feature (Vov) crosses group boundaries but is
+  buried under three redundant ones. A contingency experiment (E2b,
+  Vov-only) is running to isolate the Vov contribution.
+- **Verdict**: ❌ reject. ``exp/e2-m2a`` branch NOT merged into main.
+- **Commit**: `bf96af1` on ``exp/e2-m2a`` (dead branch).
+
+### E2b. M2a-minimal — Vov-only derived feature (contingency)
+
+- Status: **running** (2026-04-10 10:46–, GPU 2 Blackwell)
+- Run: ``--exp-tag vov`` on ``exp/e2b-vov-only`` branch.
+- Change: single derived feature Vov = Vg − PHIG appended to the
+  canonical 19-col layout (19 → 20). Drops the 3 redundant features
+  that E2 carried. Tests whether Vov alone helps (cross-group signal)
+  or the M2a direction is intrinsically wrong for LOO generalization.
+- Expected: if Vov is the useful feature, E2b should beat E0 by a
+  small margin on NRMSE_sc. If the regression is intrinsic to any
+  derived feature, E2b also regresses.
+- NRMSE_sc (asap7 / tsmc5): pending
+- NRMSE_body (asap7 / tsmc5): pending
+- In-distribution val loss: pending
+- Verdict: pending
 
 ### E3. M2b + D1 — modelcard body-factor feature + physics scale
 
-- Status: **pending**
-- Change: extract a per-(tech, L, NFIN) body-coupling factor from the
-  modelcard during PyCMG data generation. Feed it as a new input
-  feature (M2b) **and** use it as a per-sample denormalisation scale
-  for gmb and qb (D1). Retrain.
-- Expected: NRMSE_sc approximately unchanged; NRMSE_body on asap7
-  drops from 160000 % to something in the 1–100 % range **if** the
-  body factor correlates tightly with |gmb|/|qb|. This is the
-  highest-variance experiment in the plan — worth running precisely
-  because it is the only principled shot at the body-physics
-  problem.
-- NRMSE_sc (asap7 / tsmc5): —
-- NRMSE_body (asap7 / tsmc5): —
-- In-distribution val loss: —
-- Verdict:
-- Commit:
+- Status: **SKIPPED** — E3 targets NRMSE_body which is not a decision
+  variable. With E1 as the only keeper and E2/E2b both rejected,
+  there is no NRMSE_sc lever to couple with a body-physics change.
+  Probing the raw modelcard process params confirmed that ASAP7 has
+  ``CIT = 0`` (body fully decoupled), making any ``body_factor``
+  normalization degenerate at zero. Filed as a known limitation.
+- Verdict: SKIPPED. Not run.
 
 ### E4. Combined keepers (stacked)
 
-- Status: **pending**
-- Change: whichever of E1/E2/E3 are ✅, applied simultaneously.
-- NRMSE_sc (asap7 / tsmc5): —
-- NRMSE_body (asap7 / tsmc5): —
-- In-distribution val loss: —
-- Verdict:
-- Commit:
+- Status: **SKIPPED** — only E1 is a keeper. Nothing to stack.
+- Verdict: SKIPPED. E5 runs E1 alone.
 
-### E5. Full 5-fold re-run with the final recipe
+### E5. Full 5-fold re-run with the final recipe (E1 only = S2 floor)
 
-- Status: **pending**
-- Held out (asap7): —
-- Held out (tsmc5): —
-- Held out (tsmc7): —
-- Held out (tsmc12): —
-- Held out (tsmc16): —
-- Commit:
+- Status: **running** (launched 2026-04-10 ~11:50, GPU 2 Blackwell)
+- Change: identical to E1 (S2 asinh-scale floor) applied to all 5 folds.
+- Held out (asap7): pending
+- Held out (tsmc5): pending
+- Held out (tsmc7): pending
+- Held out (tsmc12): pending
+- Held out (tsmc16): pending
+- Commit: pending
+
+---
+
+## Postmortem: M2a derived features are a dead end for LOO
+
+**Key finding**: adding explicit physics-derived input features
+(Vov, Vds, Vgb, log_NFIN_L) **hurts** LOO generalization rather
+than helping. Three experiments were run:
+
+| Variant | Features | asap7 Δ sc | tsmc5 Δ sc | Verdict |
+|---------|----------|----------:|----------:|---------|
+| E2 (full)  | Vov + Vds + Vgb + log_NFIN_L (23 cols) | +9.7 % | +3.1 % | ❌ |
+| E2b (min)  | Vov only (20 cols)                      | +13.8 % | pending | ❌ |
+
+**Why it fails.** The derived features carry per-tech constant
+offsets (Vov shifts by ΔPHIG ≈ 0.13 V between ASAP7 and TSMC;
+log_NFIN_L shifts by Δlog(L) at ASAP7's 7 nm). When the model
+trains on 4 TSMC techs, it calibrates to TSMC's Vov distribution.
+On ASAP7 test samples the shifted Vov values extrapolate — badly.
+Even the single Vov feature alone (E2b) regresses MORE than the
+full 4-feature set, ruling out interaction or dilution effects.
+
+**DO NOT RETRY** without a fundamentally different design: e.g.
+truly dimensionless ratios (Vov/VT_est, Vds/VDD_est) or
+tech-invariant normalization of the derived features.
