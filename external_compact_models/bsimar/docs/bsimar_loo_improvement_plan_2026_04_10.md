@@ -16,157 +16,281 @@ R² 0.9984. The **LOO baseline** (hold out one tech entirely) is:
 | tsmc12   |     0.98 |      8.02 | 0.9828 |      4.4×  |
 | tsmc16   |     0.84 |      7.81 | 0.9791 |      3.8×  |
 
-Two failure modes:
+Two failure modes, which need to be diagnosed and treated **separately**:
 
-1. **ASAP7 catastrophe (gmb/qb body physics).** ASAP7 gmb is ~1e-9 S
-   and qb is ~1e-18 C, 4+ orders of magnitude smaller than TSMC.
-   The training asinh scales are TSMC-dominated (~1e-6 S for gmb,
-   ~1e-16 C for qb), so tiny normalized errors amplify catastrophically
-   on ASAP7. Excluding gmb/qb, the ASAP7 fold drops from 24678 % →
-   11.7 %, putting it in the same order as TSMC5/7.
+1. **ASAP7 body-physics catastrophe.** ASAP7 gmb is ~1e-9 S and qb is
+   ~1e-18 C, 3–4 orders of magnitude smaller than TSMC. The ASAP7
+   FinFET modelcard has essentially decoupled the body from the
+   channel. Excluding gmb/qb, the ASAP7 fold drops from 24,678 % →
+   **11.7 %**, putting it in the same order as TSMC5/7. The headline
+   blow-up is *metric sensitivity* on two specific outputs, not a
+   100,000× predictive failure across the board.
 
 2. **TSMC intra-family covariate shift.** TSMC5/7/12/16 interpolate at
-   2–10× the in-distribution baseline. Not a catastrophe, but there
-   is headroom: most of the TSMC error lives in `id / gm / gds / gmb`
-   (the solver-critical current+conductance group).
+   2–10× the in-distribution baseline. Not a catastrophe. Most of the
+   TSMC error lives in `id / gm / gds / gmb` (the solver-critical
+   current+conductance group), with capacitances close behind.
+
+## The real scoreboard: solver-critical vs. body-physics
+
+The 13-output average NRMSE is a misleading headline for this
+problem because it mixes two physically and statistically unrelated
+regimes. From here on this plan tracks **two scoreboards**, reported
+separately per fold:
+
+- **Solver-critical NRMSE_sc** = mean of `{id, gm, gds, cgg}`. These
+  drive the NR solver and circuit-level delay. Circuit simulation
+  cares about this and nothing else.
+- **Body-physics NRMSE_body** = mean of `{gmb, qb}`. These are where
+  the ASAP7 catastrophe lives and where cross-family transfer is a
+  pure data problem (4-decade scale gap between ASAP7 and TSMC).
+
+For context we also report the old 13-output average NRMSE_all, but
+it is no longer the decision variable.
+
+Baseline restated on the new scoreboard (from the 2026-04-09 report):
+
+| Held out | NRMSE_sc % | NRMSE_body % | NRMSE_all % |
+|----------|-----------:|-------------:|------------:|
+| asap7    |      13.30 |    160345.31 |   24678.41  |
+| tsmc5    |       3.43 |         1.88 |       2.17  |
+| tsmc7    |       3.76 |         1.76 |       2.18  |
+| tsmc12   |       1.10 |         1.01 |       0.98  |
+| tsmc16   |       0.94 |         1.24 |       0.84  |
+
+(NRMSE_sc computed from the per-output table in the report:
+`(id + gm + gds + cgg)/4`; NRMSE_body = `(gmb + qb)/2`.)
+
+The real ASAP7 problem is the 13.3 % solver-critical number, not the
+160000 % body number. No normaliser trick will rescue a 4-decade body
+extrapolation from TSMC-only training data; what we can plausibly
+move is the solver-critical number via better features and a better
+normaliser. The body column is a **data-bottleneck problem**, parked
+as a known limitation and called out explicitly in every result.
 
 ## Guiding principles
 
-- **Quick, high-impact first.** The highest-leverage fix targets the
-  ASAP7 gmb/qb amplification (structural normaliser issue), not
-  covariate shift in general.
-- **Preserve the v3 production recipe outside of the specific lever
-  being tested.** The N1/N3/N7 winners stay.
-- **Budget: ~8-12 hours.** Each fold is ~50 min on the Blackwell GPU.
+- **Fix what's fixable.** Solver-critical error on all 5 folds is
+  addressable via features + normalisation. Body-physics error on
+  ASAP7 is a data problem; do not spend sprint budget pretending
+  otherwise.
+- **Preserve the v3 production recipe outside of the lever being
+  tested.** N1/N3/N7 winners stay.
+- **Budget: ~10 hours.** Each fold is ~50 min on the Blackwell GPU.
   Per experiment we run **2 folds** as a quick signal (asap7 always,
   tsmc5 as the worst "normal" fold). Only the winners get a full
   5-fold re-run.
-- **Decision rule.** If the experiment improves the *sum* of
-  NRMSE(asap7) + 10 × NRMSE(tsmc5) — so the asap7 blowup dominates
-  — keep it and integrate. Otherwise `git restore` the change and
-  mark it infeasible.
+- **Decision rule (new).** An experiment is kept iff it improves
+  *both* `log(NRMSE_sc_asap7 / baseline) + log(NRMSE_sc_tsmc5 / baseline)`
+  **and** does not regress the in-distribution random-split val loss
+  by more than 0.5 % relative. The log-ratio form stops any single
+  fold from dominating by orders of magnitude, and the
+  in-distribution guard stops us from trading away the v3 win.
+  `NRMSE_body` is reported but **not** part of the decision rule.
 
 ## Strategy list (ranked)
 
-### S1. Input-noise augmentation on process-param dimensions (QUICK)
+### S2. Per-target asinh-scale floor for gmb/qb (ALREADY CODED)
 
-Add Gaussian noise to the 12 normalized process-param input features
-during training (voltages + NFIN/L/T stay clean). Intuition: smear
-the 4 discrete training-tech clusters into Gaussian blobs so the
-Transformer is forced to learn a smooth function of process params
-rather than memorize per-tech clusters.
+`external_compact_models/bsimar/data/normalize.py` already carries
+the S2 floor (uncommitted):
 
-- **Engineering cost**: ~10 lines in `train_epoch_mae`.
-- **Expected impact**: TSMC5/7 2.2 % → 1.3–1.6 %, TSMC12/16 unchanged,
-  ASAP7 largely unaffected (the gmb/qb issue is structural, not
-  smoothness-related).
-- **Risk**: too much noise hurts the in-distribution val loss.
-  Mitigate by using σ = 0.1–0.3 × inter-tech std, applied only to the
-  12 proc-param dims.
+```python
+OUTPUT_ASINH_SCALE_MIN = {
+    "gmb": 1e-5,   # TSMC gmb max ≈ 1.07e-4; asinh(y/1e-5) ∈ [0, ~3.1]
+    "qb":  1e-15,  # TSMC qb  max ≈ 5.15e-15; asinh(y/1e-15) ∈ [0, ~2.4]
+}
+```
 
-### S2. Per-target asinh-scale floor for gmb/qb (QUICK, HIGHEST IMPACT)
+applied in `BSIMARNormalizer.fit(mode='asinh')` after the geomean
+computation. This is run as a **sanity signal only**, not a headline
+fix. The mechanism is that with a larger floor the asinh transform
+becomes approximately linear for gmb/qb and the denormalisation
+sensitivity `d(y_phys)/d(z)` no longer passes through `sinh(large)`;
+this capps how badly an OOD prediction can blow up in physical space.
 
-Raise the asinh-scale floor for `gmb` and `qb` in
-`BSIMARNormalizer.fit(mode='asinh')`. Currently `s_k` is
-`max(geomean|y_k|, OUTPUT_LOG_FLOORS[k])` with floors 1e-18
-(conductances) and 1e-19 (charges). On the TSMC-dominated train
-pool, `s_gmb ≈ 1e-6` and `s_qb ≈ 1e-16`. On ASAP7, gmb/qb live at
-1e-9 / 1e-18, so they normalise to ~1e-3 (essentially zero); tiny
-normalized errors amplify thousand-fold on denormalisation.
+**Honest expected impact.** S2 cannot lower the solver-critical
+error on any fold — it does not touch id/gm/gds/cgg at all. On the
+body scoreboard the best-case outcome is a reduction in NRMSE_body
+of perhaps 10–100× on ASAP7 (still 1,000–10,000 %). It is run only
+to confirm the mechanism is what we think and to de-risk whether the
+floor hurts TSMC in-distribution accuracy.
 
-Fix: enforce a larger per-target floor for just `gmb` and `qb`,
-e.g. `s_gmb ≥ 1e-4` and `s_qb ≥ 1e-15`. This makes the asinh
-transform roughly linear (z-score-like) for those two targets,
-trading away a bit of heavy-tail compression in exchange for
-cross-tech scale equivariance. The other 11 outputs still use the
-geomean scale; nothing else changes.
+**Previous plan-doc claim** of "single-digit NRMSE" and "under 15 %"
+has been retracted: the analysis conflated the metric blow-up with
+predictive error, and the 11.7 % floor on ASAP7 (excluding gmb/qb) is
+mechanically unreachable for this lever because S2 does nothing for
+id/gm/cgg.
 
-- **Engineering cost**: ~5 lines in `normalize.py`.
-- **Expected impact**: **ASAP7 NRMSE 24678 % → well under 15 %**,
-  potentially into single digits. TSMC folds roughly neutral
-  (possibly +0.1–0.3 % on gmb because asinh compression helps
-  within-tech).
-- **Risk**: The BSIMAR AR chain conditions later targets on earlier
-  ones, including qb at position 1 and gmb at position 7 (terminal
-  before the parallel cap head). Because the `asinh_scale` is used
-  end-to-end (fit, train, test all reference the same `s_k`), the
-  normalisation is consistent through the chain — there is no
-  conditioning-vs-loss split. Verify during the first smoke run.
-- **Why not earlier**: The v3 sprint did not see this because the
-  in-distribution random split had TSMC samples in the test set so
-  gmb never escaped its training scale.
+- **Engineering cost**: 0 (code is already in normalize.py).
+- **Tracked in**: experiment E1.
 
-### S3. ~~Stronger regularization (weight_decay, longer schedule)~~ — INFEASIBLE (precluded by review)
+### S1. ~~Input-noise augmentation on process-param dimensions~~ — DROPPED
+
+Original idea: add Gaussian noise to the 12 normalised process-param
+input features so the 4 discrete tech clusters smear into overlapping
+blobs.
+
+**Why dropped.** The LOO report's OOD table shows ASAP7, TSMC5, and
+TSMC16 all have **100 % of held-out samples outside the training
+input box** on the process-param dims (discrete per-tech clusters →
+any held-out tech is trivially out-of-box). Noise *inside* the
+training blob does not move points *outside* it. Expected impact on
+ASAP7 is ≈ 0; possible marginal help on tsmc7/tsmc12 which are the
+only folds with meaningful in-box coverage (5.5 %, 1.3 %). Not worth
+a 100-min experiment slot when physics features (M2) attack the same
+generalisation axis with better leverage.
+
+### S3. ~~Stronger regularization (weight_decay, longer schedule)~~ — INFEASIBLE
 
 The in-distribution NRMSE is 0.223 %. We are not overfitting; the
 LOO gap is a **covariate-shift** gap, not a capacity gap. Weight
 decay 1e-4 → 1e-3 + 150 → 200 epochs costs in-distribution accuracy
-for ~0 generalization gain. Dropped before running.
+for ~0 generalisation gain. Dropped before running.
 
-### S4. ~~Cross-tech process-param mixup~~ — INFEASIBLE (precluded by review)
+### S4. ~~Cross-tech process-param mixup~~ — INFEASIBLE
 
 The 5 techs have disjoint (V, NFIN, L) sweep grids. Linear
 interpolation between sample A's process params and sample B's
-process params at different voltages/geometries produces
-synthetic "techs" that don't live on any real data manifold. The
-only sound mixup would be nearest-neighbour-paired in normalised
-(V, NFIN, L) space, which is another day of engineering — not in
-scope for this sprint. Dropped before running.
+process params at different voltages/geometries produces synthetic
+"techs" that don't live on any real data manifold. The only sound
+mixup would be nearest-neighbour-paired in normalised (V, NFIN, L)
+space, which is another day of engineering — not in scope for this
+sprint. Dropped before running.
 
-### M1. Learned per-tech output-scale head (MEDIUM)
+### M1. ~~Learned per-tech output-scale head~~ — DROPPED
 
-Add a small MLP `f: proc_params → R^{13}` whose output is a
-per-target multiplicative correction to the asinh-scale. At inference
-the effective scale becomes `s_k * exp(f_k(proc))`, so the model can
-learn from the 4 TSMC clusters that "as oxide shrinks and VDD drops,
-gmb shrinks" and extrapolate that gradient to ASAP7. Terminates the
-scale extrapolation in a physically smooth parameter space.
+A small MLP `f: proc_params → R^{13}` producing per-target log-scale
+corrections was proposed to "learn the gradient of the scale across
+techs."
 
-- **Engineering cost**: ~30 lines. Need a `ScaleHead` module in
-  `transformer.py` that reads the `proc_group` token output and
-  produces 13 log-scale offsets. Plumbing through the training
-  loop and the final denorm.
-- **Expected impact**: Complementary to S2. S2 fixes the *absolute*
-  scale mismatch for gmb/qb; M1 fixes the *gradient* of the scale
-  across all 13 outputs.
-- **Risk**: Overfitting the head to the 4 training techs. Mitigate
-  with weight decay on the head and clamping `|f_k| ≤ log(10)` so
-  the correction is at most 10×.
+**Why dropped.** The head is still a function of `proc_params` and
+is still trained only on the 4 TSMC techs. On ASAP7 proc_params it
+extrapolates in exactly the same way the base model does — the
+scale-correction output is undefined for OOD inputs. Adding capacity
+does not introduce new information; it just moves the OOD failure to
+a different layer. The physically grounded variant of the same idea
+is D1 below (derive the scale from modelcard physics instead of
+learning it).
 
-### M2. Physics-motivated derived features (MEDIUM)
+### M2a. Physics-informed derived features — CHANNEL TRANSPORT (PROMOTED, HIGHEST LEVERAGE)
 
 Add a small handful of derived inputs the Transformer currently has
-to reinvent: `Vgs - PHIG` (Vov proxy), `Vds / VDD_est` (relative
-drain bias), `log(NFIN) + log(L)` (total channel width proxy),
-`EOT * VDD_est` (oxide field proxy). Cheap, but medium leverage for
-id/gm error on the TSMC folds.
+to reinvent from scalars:
 
-- **Engineering cost**: ~1 hour.
-- **Expected impact**: 10–30 % relative reduction in TSMC fold
-  id/gm error. Zero impact on the ASAP7 gmb/qb catastrophe.
-- **Dependency**: The current input layout is hardwired at 19
-  columns; need to update the grouped-input splits and the
-  transformer assertion.
+- `Vov = Vgs - PHIG` (Vov proxy — already used for Vov-LDS loss
+  weighting, now fed as an input feature too)
+- `Vds_rel = Vds / VDD_est` where `VDD_est` is extracted from the
+  process-param block (upper end of the per-tech voltage sweep)
+- `log(NFIN · W_fin / L)` (total W/L ratio) — a single dimensional
+  group instead of `log(NFIN)` and `L` as independent scalars
+- `EOT * VDD_est` (oxide field proxy)
+
+This is the only lever in the plan that can plausibly move the
+**solver-critical** scoreboard on all 5 folds. Intuition: id/gm/gds
+depend on dimensionless groups (Vov/VT, Vds/VDD, W/L, oxide field)
+that the current 19-column layout forces the Transformer to compose
+from raw scalars across tech boundaries. Handing it the groups
+directly makes the function smoother in process-param space.
+
+- **Engineering cost**: ~3 hours. Touches:
+  - `normalize._build_combined_input` (needs to emit an expanded
+    column layout).
+  - `models/transformer.py:93` — the `input_dim=19` assertion and the
+    grouped-input slices `VOLTAGE_SLICE / GEOM_SLICE / PROC_SLICE`
+    (`transformer.py:77-79`) have to change. Probably 23-column input
+    (19 + 4 derived) with a 4-token geometry group or a new `derived`
+    group.
+  - `bsimar/eval/loo_labels.py` and the dataset loaders (so the LOO
+    harness sees the same layout).
+- **Expected impact**: 10–30 % relative reduction in
+  NRMSE_sc on ASAP7 (driven by id/gm smoother in Vov/EOT space) and
+  probably 20–40 % on TSMC5/TSMC7. Zero impact on NRMSE_body.
+- **Tracked in**: experiment E2.
+
+### M2b. Modelcard-derived body-factor feature (BODY-PHYSICS LEVER)
+
+**The** physically principled way to address the ASAP7 body
+catastrophe without adding ASAP7 data. The PyCMG modelcard exposes
+bulk-charge and body-bias coefficients (e.g. `ETA0`, `CIT`, and the
+body-factor derivatives). From them we can extract a scalar
+`body_coupling_factor` per (tech, L, NFIN) that correlates
+monotonically with |gmb|, |qb|.
+
+Feed this factor as a 20th input feature and as the **physics
+scale** for gmb/qb denormalisation (see D1 below, which is the same
+lever used a different way).
+
+- **Engineering cost**: ~2 hours, mostly in
+  `external_compact_models/PyCMG/scripts/generate_nn_data.py` to emit
+  the body factor alongside the existing 12 process params, and the
+  input-dim plumbing in `normalize.py` / `transformer.py`.
+- **Expected impact on the solver-critical scoreboard**: small
+  (body-factor does not drive id/gm).
+- **Expected impact on body scoreboard**: the interesting one. If
+  ASAP7 gmb really is ~1e-9 because the modelcard body-coupling
+  coefficients are ~1000× smaller than TSMC, then handing that ratio
+  to the model as an input + scale makes `gmb / body_factor`
+  approximately tech-invariant. This is the only plausible path to
+  single-digit NRMSE_body on ASAP7 without ASAP7 training samples.
+  High variance on the expected outcome — worth a 2-fold probe.
+- **Risk**: the body coefficients may not correlate tightly enough
+  with gmb/qb to be a useful normaliser scale. Reported honestly in
+  the experiment writeup.
+- **Tracked in**: experiment E3.
+
+### D1. Physics-scale normalisation for gmb/qb (STRUCTURAL, pairs with M2b)
+
+Instead of (or as well as) S2's hand-picked floor, normalise gmb and
+qb by a **physics-derived scale** extracted from the modelcard:
+`y_norm = y / (body_factor · id_scale)` for gmb and
+`y_norm = y / (body_factor · q_scale)` for qb. Both `body_factor` and
+the reference `id_scale / q_scale` come from the same modelcard
+metadata generation step that feeds M2b.
+
+This is the principled form of what S2 is trying to do by clamping a
+constant floor. With a per-sample physics scale the normalised
+gmb/qb distribution is **tech-invariant by construction** — ASAP7
+and TSMC map to the same normalised box, and the model no longer has
+to extrapolate 4 decades in target space.
+
+- **Engineering cost**: ~2 hours in `normalize.py` (new mode or
+  per-sample scale tensor threaded through `normalize_outputs` and
+  `denormalize_outputs`).
+- **Expected impact**: the upper bound of what's achievable on
+  NRMSE_body from a normaliser change; complementary to M2b as an
+  *input* feature. Runs coupled with M2b (same data-gen change), so
+  only one extra training run.
+- **Risk**: same as M2b — assumes the body factor correlates tightly
+  with |gmb|, |qb|. If it doesn't, D1 is a wash and we fall back to
+  S2's constant floor.
+- **Tracked in**: experiment E3 (coupled with M2b).
 
 ## Sequencing
 
 | Step | Experiment | Folds | Wall-clock | Cumulative |
 |------|------------|------:|-----------:|-----------:|
-| 0    | Baseline reproduced from 2026-04-09 report | — | 0 | 0 |
-| 1    | **S2** (gmb/qb asinh floor) | asap7, tsmc5 | 100 min | 100 min |
-| 2    | **S1** (proc-param input noise) | asap7, tsmc5 | 100 min | 200 min |
-| 3    | **M1** (learned scale head) | asap7, tsmc5 | 100 min | 300 min |
-| 4    | **M2** (derived features, if budget) | asap7, tsmc5 | 100 min | 400 min |
-| 5    | Full 5-fold run with all keepers | all 5 | 250 min | 650 min |
+| 0    | Re-score 2026-04-09 baseline on NRMSE_sc / NRMSE_body | — | 10 min | 10 min |
+| 1    | **E1: S2 sanity run** (asinh floor, already coded) | asap7, tsmc5 | 100 min | 110 min |
+| 2    | **E2: M2a derived features** (Vov, Vds_rel, W/L, EOT·VDD) | asap7, tsmc5 | 120 min | 230 min |
+| 3    | **E3: M2b body-factor feature + D1 physics scale** | asap7, tsmc5 | 120 min | 350 min |
+| 4    | **E4: combined keepers** (best of E2 ∪ E3, stacked) | asap7, tsmc5 | 100 min | 450 min |
+| 5    | **Full 5-fold** re-run with the final recipe | all 5 | 250 min | 700 min |
+
+Total ~11.7 h, within budget assuming at most one experiment needs a
+re-run. If one of E2/E3 is a clear loser the slot becomes free for a
+re-run of the winner with a different hyper-param.
 
 ## Tracking
 
-Each experiment is tracked in this file below. On completion fill in:
+Each experiment is tracked in this file below. On completion fill
+in, **per scoreboard**:
 
 - **Change summary** (1 line)
-- **asap7 NRMSE before → after**
-- **tsmc5 NRMSE before → after**
-- **Verdict**: ✅ keep / ❌ reject
+- **NRMSE_sc**: asap7 before → after, tsmc5 before → after
+- **NRMSE_body**: asap7 before → after, tsmc5 before → after
+- **In-distribution val loss**: before → after (guard rail)
+- **Verdict**: ✅ keep / ❌ reject (per decision rule)
 - **Commit hash** (if kept)
 
 ---
@@ -175,43 +299,83 @@ Each experiment is tracked in this file below. On completion fill in:
 
 ### E0. Baseline (from 2026-04-09 LOO run)
 
-- asap7 NRMSE = 24678.405 %
-- tsmc5 NRMSE = 2.174 %
-- tsmc7 NRMSE = 2.180 %
-- tsmc12 NRMSE = 0.983 %
-- tsmc16 NRMSE = 0.842 %
-- Report: `tests/verify_bsimar_loo_results/20260409_130630_nmos/report.md`
+All figures from `tests/verify_bsimar_loo_results/20260409_130630_nmos/report.md`.
 
-### E1. S2 — gmb/qb asinh-scale floor raise
+| Held out | NRMSE_sc % | NRMSE_body % | NRMSE_all % |
+|----------|-----------:|-------------:|------------:|
+| asap7    |      13.30 |    160345.31 |   24678.41  |
+| tsmc5    |       3.43 |         1.88 |       2.17  |
+| tsmc7    |       3.76 |         1.76 |       2.18  |
+| tsmc12   |       1.10 |         1.01 |       0.98  |
+| tsmc16   |       0.94 |         1.24 |       0.84  |
+
+In-distribution random-split val reference (v3 production): NRMSE 0.223 %.
+
+### E1. S2 — gmb/qb asinh-scale floor (sanity run)
 
 - Status: **pending**
-- Change: add a per-target floor override `{"gmb": 1e-4, "qb": 1e-15}`
-  applied *after* the geomean computation in `BSIMARNormalizer.fit`.
-- Result:
+- Change: `OUTPUT_ASINH_SCALE_MIN = {"gmb": 1e-5, "qb": 1e-15}` in
+  `normalize.py`, applied after the geomean fit (already in the
+  working tree, not yet committed).
+- Expected: NRMSE_sc unchanged on both folds; NRMSE_body on asap7
+  drops maybe 10–100× (still 1000–10000 %); in-distribution val loss
+  within 0.5 % of baseline.
+- NRMSE_sc (asap7 / tsmc5): —
+- NRMSE_body (asap7 / tsmc5): —
+- In-distribution val loss: —
 - Verdict:
 - Commit:
 
-### E2. S1 — process-param input-noise augmentation
+### E2. M2a — derived channel-transport features
 
 - Status: **pending**
-- Change: in `train_epoch_mae`, add
-  `x_batch[:, 7:19] += σ · randn_like(...)` with
-  `σ = 0.15` (in z-score units — the proc-param dims are already
-  standardised so this is directly in "fractional std" units).
-- Result:
+- Change: add `Vov`, `Vds_rel`, `log(NFIN·W_fin/L)`, `EOT·VDD_est` as
+  four new input columns (19 → 23). Update the transformer's grouped
+  input splits and the `input_dim` assertion. Retrain on each fold.
+- Expected: NRMSE_sc drops 10–30 % on asap7 (from 13.30 % to
+  ~9–12 %), 20–40 % on tsmc5 (from 3.43 % to ~2.0–2.7 %);
+  NRMSE_body unchanged.
+- NRMSE_sc (asap7 / tsmc5): —
+- NRMSE_body (asap7 / tsmc5): —
+- In-distribution val loss: —
 - Verdict:
 - Commit:
 
-### E3. M1 — learned per-tech output-scale head
+### E3. M2b + D1 — modelcard body-factor feature + physics scale
 
 - Status: **pending**
-- Result:
+- Change: extract a per-(tech, L, NFIN) body-coupling factor from the
+  modelcard during PyCMG data generation. Feed it as a new input
+  feature (M2b) **and** use it as a per-sample denormalisation scale
+  for gmb and qb (D1). Retrain.
+- Expected: NRMSE_sc approximately unchanged; NRMSE_body on asap7
+  drops from 160000 % to something in the 1–100 % range **if** the
+  body factor correlates tightly with |gmb|/|qb|. This is the
+  highest-variance experiment in the plan — worth running precisely
+  because it is the only principled shot at the body-physics
+  problem.
+- NRMSE_sc (asap7 / tsmc5): —
+- NRMSE_body (asap7 / tsmc5): —
+- In-distribution val loss: —
 - Verdict:
 - Commit:
 
-### E4. M2 — physics-motivated derived features
+### E4. Combined keepers (stacked)
 
 - Status: **pending**
-- Result:
+- Change: whichever of E1/E2/E3 are ✅, applied simultaneously.
+- NRMSE_sc (asap7 / tsmc5): —
+- NRMSE_body (asap7 / tsmc5): —
+- In-distribution val loss: —
 - Verdict:
+- Commit:
+
+### E5. Full 5-fold re-run with the final recipe
+
+- Status: **pending**
+- Held out (asap7): —
+- Held out (tsmc5): —
+- Held out (tsmc7): —
+- Held out (tsmc12): —
+- Held out (tsmc16): —
 - Commit:

@@ -47,6 +47,24 @@ OUTPUT_LOG_FLOORS = {
     "cgg": 1e-20, "cgd": 1e-20, "cgs": 1e-20, "cdg": 1e-20, "cdd": 1e-20,
 }
 
+# S2 — per-target asinh_scale lower bounds (2026-04-10 LOO sprint).
+# The geometric-mean scale ``s_k`` fit on the training pool can be
+# dramatically smaller for gmb / qb than the magnitudes seen in other
+# techs: the ASAP7 FinFET modelcard decouples the body from the channel,
+# so gmb and qb are 3-4 orders of magnitude smaller than the TSMC family
+# (see ``docs/bsimar_loo_improvement_plan_2026_04_10.md``). Without a
+# floor the resulting normalized scale is TSMC-dominated and ASAP7 gmb/qb
+# map to asinh-space values far outside the training mean±std, producing
+# astronomical relative errors on denormalisation. These per-target lower
+# bounds pin gmb/qb to roughly linear z-score-like behaviour so the LOO
+# error no longer blows up via scale mismatch. They are harmless on
+# the in-distribution random split because the train pool still sees
+# the full TSMC gmb/qb range.
+OUTPUT_ASINH_SCALE_MIN = {
+    "gmb": 1e-5,   # TSMC gmb max ≈ 1.07e-4, asinh(y/1e-5) gives [0, ~3.1].
+    "qb":  1e-15,  # TSMC qb  max ≈ 5.15e-15, asinh(y/1e-15) gives [0, ~2.4].
+}
+
 OUTPUT_COLUMN_ORDER = [
     "id", "gm", "gds", "gmb",
     "qg", "qd", "qs", "qb",
@@ -254,6 +272,14 @@ class BSIMARNormalizer:
                 np.log(floors),
             )
             asinh_scale = np.maximum(np.exp(s_log), floors)
+
+            # S2 — apply per-target scale lower bounds so gmb/qb cannot
+            # be over-compressed on a TSMC-dominated train pool (see
+            # ``OUTPUT_ASINH_SCALE_MIN`` and the 2026-04-10 LOO plan).
+            for col_name, lower in OUTPUT_ASINH_SCALE_MIN.items():
+                col_idx = OUTPUT_COLUMN_ORDER.index(col_name)
+                if asinh_scale[col_idx] < lower:
+                    asinh_scale[col_idx] = lower
 
             outputs_t = np.arcsinh(
                 outputs.astype(np.float64) / asinh_scale[None, :])
