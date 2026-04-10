@@ -441,14 +441,25 @@ relative (guardrail against killing in-distribution accuracy).
 
 ### E5. Full 5-fold re-run with the final recipe (E1 only = S2 floor)
 
-- Status: **running** (launched 2026-04-10 ~11:50, GPU 2 Blackwell)
+- Status: ✅ **COMPLETE** (2026-04-10 11:48–17:25, 336 min, GPU 2 Blackwell)
+- Run: `tests/verify_bsimar_loo_results/20260410_114829_nmos/`
 - Change: identical to E1 (S2 asinh-scale floor) applied to all 5 folds.
-- Held out (asap7): pending
-- Held out (tsmc5): pending
-- Held out (tsmc7): pending
-- Held out (tsmc12): pending
-- Held out (tsmc16): pending
-- Commit: pending
+
+  | Fold   | E0 sc % | E5 sc % |     Δ  | log ratio |
+  |--------|--------:|--------:|-------:|----------:|
+  | asap7  |  19.628 |  18.402 | −6.25% |   −0.0645 |
+  | tsmc5  |   3.430 |   3.459 | +0.85% |   +0.0085 |
+  | tsmc7  |   3.614 |   3.567 | −1.29% |   −0.0130 |
+  | tsmc12 |   1.506 |   1.474 | −2.09% |   −0.0212 |
+  | tsmc16 |   1.192 |   1.222 | +2.55% |   +0.0251 |
+  | **Σ**  |         |         |        | **−0.0651** |
+
+  Geometric-mean NRMSE_sc ratio: 0.968 (−3.2% improvement).
+  3/5 folds improved, 2/5 had small regressions.
+  All 5 in-distribution phys-best values improved or held.
+
+- Commit: `0a63362` (docs) + `859d429` (code)
+- Full report: `external_compact_models/bsimar/results/loo_cross_technology_report.md`
 
 ---
 
