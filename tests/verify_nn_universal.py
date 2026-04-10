@@ -27,7 +27,10 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG"))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 
-from bsimar.config import TECH_CONFIGS, TechConfig, CHECKPOINT_DIR, OSDI_PATH
+from tests.common.nn import (
+    TECH_CONFIGS, TechConfig, CHECKPOINT_DIR, OSDI_PATH,
+    default_L, get_process_params, directnet_checkpoint,
+)
 from pycmg import Model, Instance
 
 
@@ -48,13 +51,14 @@ def create_pycmg_instance(
     variant: Optional[str] = None,
 ) -> Instance:
     """Create PyCMG instance for ground-truth evaluation."""
-    model_name = tech.get_model_name(device_type, variant)
-    modelcard_path = tech.get_modelcard_path(device_type, variant)
-    L = tech.get_L(device_type)
+    vname = variant or tech.default_variant
+    L = default_L(tech.name, device_type)
+    model_name = tech.get_model_name(device_type, vname)
+    modelcard_path = tech.resolve_modelcard(device_type, vname, L=L, NFIN=nfin)
 
     model = Model(
-        osdi_path=OSDI_PATH,
-        modelcard_path=modelcard_path,
+        osdi_path=str(OSDI_PATH),
+        modelcard_path=str(modelcard_path),
         model_name=model_name,
         model_card_name=model_name,
     )
@@ -67,29 +71,15 @@ def create_nn_instance(
     variant: Optional[str] = None,
 ) -> object:
     """Create NN MOSFET instance with process params for the given variant."""
-    from pycircuitsim.models.mosfet_nn import NMOS_NN, PMOS_NN
+    from pycircuitsim.models.mosfet_directnet import NMOS_NN, PMOS_NN
 
-    # Prefer universal checkpoint
-    universal_path = CHECKPOINT_DIR / f"universal_{device_type}_best.pt"
-    if universal_path.exists():
-        model_path = str(universal_path)
-    else:
-        tech_name = tech.name.lower()
-        if tech_name == "asap7":
-            model_path = str(CHECKPOINT_DIR / f"{device_type}_best.pt")
-        else:
-            model_path = str(CHECKPOINT_DIR / f"{tech_name}_{device_type}_best.pt")
-
-    L = tech.get_L(device_type)
+    model_path = str(directnet_checkpoint(device_type, tech.name))
+    L = default_L(tech.name, device_type)
 
     # Get process params for the variant
     vname = variant or tech.default_variant
-    process_params = None
-    phig = None
-    if vname and vname in tech.variants:
-        pp = tech.variants[vname].get_process_params(device_type)
-        process_params = pp.as_dict()
-        phig = pp.phig
+    process_params = get_process_params(tech, device_type, vname, L=L, NFIN=nfin)
+    phig = process_params.get("phig")
 
     nodes = ["drain", "gate", "source", "bulk"]
     if device_type == "nmos":
@@ -298,7 +288,7 @@ def run_all_tests() -> List[TestResult]:
                 continue
 
         # Test each variant
-        for variant_name in tech.variants:
+        for variant_name in tech.variant_names:
             print(f"\n{'='*60}")
             print(f"  {tech_name} / {variant_name.upper()} (VDD={tech.vdd}V)")
             print(f"{'='*60}")
@@ -390,5 +380,5 @@ if __name__ == "__main__":
         print_summary(results)
     else:
         print("\nNo tests were run. Make sure checkpoints exist.")
-        print("Generate data: python -m nn_model.data.generate --device both --universal")
-        print("Train: python -m nn_model.train --device-type nmos --universal")
+        print("Generate data: python external_compact_models/PyCMG/scripts/generate_nn_data.py --device both --universal")
+        print("Train: python -m bsimar.cli.train --model direct --device-type nmos --universal --mode direct13")

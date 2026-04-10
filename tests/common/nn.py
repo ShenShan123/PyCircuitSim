@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Tuple
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 
@@ -48,7 +48,9 @@ from bsimar.config import (  # noqa: E402
     TECH_CONFIGS, NNTechConfig, TechConfig,  # TechConfig = backward-compat alias
     CHECKPOINT_DIR, DATA_DIR, OSDI_PATH,
     PROCESS_PARAM_NAMES,
+    extract_process_params,
 )
+from pycmg import Model  # noqa: E402
 
 
 # ── Metrics ──────────────────────────────────────────────────────────────────
@@ -117,10 +119,55 @@ def transformer_checkpoint(device_type: str, tech_name: str | None = None) -> Pa
     return CHECKPOINT_DIR / f"ar_{device_type}_best.pt"
 
 
+# ── Default L per tech/device (matches TSMC asymmetric L + ASAP7) ───────────
+
+_DEFAULT_L: Dict[Tuple[str, str], float] = {
+    ("asap7", "nmos"): 7e-9,  ("asap7", "pmos"): 7e-9,
+    ("tsmc5", "nmos"): 16e-9, ("tsmc5", "pmos"): 20e-9,
+    ("tsmc7", "nmos"): 16e-9, ("tsmc7", "pmos"): 20e-9,
+    ("tsmc12", "nmos"): 16e-9, ("tsmc12", "pmos"): 20e-9,
+    ("tsmc16", "nmos"): 16e-9, ("tsmc16", "pmos"): 20e-9,
+}
+
+
+def default_L(tech_name: str, device_type: str) -> float:
+    """Default channel length for a given tech/device (matches training data)."""
+    return _DEFAULT_L[(tech_name.lower(), device_type.lower())]
+
+
+def get_process_params(
+    tech: NNTechConfig, device_type: str, variant: str,
+    L: Optional[float] = None, NFIN: Optional[float] = None,
+) -> Dict[str, float]:
+    """Extract NN process params by resolving a PyCMG modelcard.
+
+    Resolves the modelcard for the given tech/device/variant/L/NFIN,
+    creates a PyCMG Model to parse it, and extracts the 12 NN-relevant
+    process parameters.
+
+    Returns:
+        Dict with keys matching ``PROCESS_PARAM_NAMES`` (phig, u0, ...).
+    """
+    if L is None:
+        L = default_L(tech.name, device_type)
+    modelcard_path = tech.resolve_modelcard(device_type, variant, L=L, NFIN=NFIN)
+    model_name = tech.get_model_name(device_type, variant)
+    model = Model(
+        osdi_path=str(OSDI_PATH),
+        modelcard_path=str(modelcard_path),
+        model_name=model_name,
+        model_card_name=model_name,
+    )
+    pp = extract_process_params(model.modelcard_params)
+    return pp.as_dict()
+
+
 __all__ = [
     "PROJECT_ROOT",
     "TECH_CONFIGS", "NNTechConfig", "TechConfig",
     "CHECKPOINT_DIR", "DATA_DIR", "OSDI_PATH", "PROCESS_PARAM_NAMES",
+    "extract_process_params",
     "nrmse", "mre",
     "directnet_checkpoint", "transformer_checkpoint",
+    "default_L", "get_process_params",
 ]
