@@ -36,7 +36,7 @@ from bsimar.config import (
     DirectNetConfig, TransformerConfig,
 )
 from bsimar.utils.seed import set_seed
-from bsimar.training.trainer import train_directnet, train_transformer
+from bsimar.training.trainer import train_directnet, train_transformer, train_transformer_v4
 
 
 # ── DirectNet subcommand ─────────────────────────────────────────────────────
@@ -149,17 +149,63 @@ def _run_transformer(args: argparse.Namespace) -> None:
     )
 
 
+# ── Transformer v4 subcommand ────────────────────────────────────────────────
+
+def _run_transformer_v4(args: argparse.Namespace) -> None:
+    data_path = (Path(args.data) if args.data
+                 else DATA_DIR / f"universal_{args.device_type}.npz")
+    save_prefix = f"v4_universal_{args.device_type}"
+    if args.exp_name:
+        save_prefix = f"{args.exp_name}_{args.device_type}"
+
+    if not data_path.exists():
+        print(f"Dataset not found: {data_path}")
+        sys.exit(1)
+
+    config = TransformerConfig(
+        d_model=args.d_model,
+        nhead=args.nhead,
+        num_layers=args.num_layers,
+        dim_feedforward=args.dim_feedforward,
+        dropout=args.dropout,
+        batch_size=args.batch_size,
+        max_epochs=args.epochs,
+        lr=args.lr,
+        patience=args.patience,
+    )
+
+    device_str = "cuda" if args.cuda and torch.cuda.is_available() else "cpu"
+
+    held_out = None
+    if args.held_out_techs:
+        held_out = set(t.strip().lower() for t in args.held_out_techs.split(","))
+
+    train_transformer_v4(
+        str(data_path),
+        save_prefix=save_prefix,
+        device_type=args.device_type,
+        config=config,
+        device_str=device_str,
+        ar_finetune_epochs=args.ar_finetune_epochs,
+        overwrite=args.overwrite,
+        held_out_techs=held_out,
+        num_tech_codes=args.num_tech_codes,
+        p_unknown=args.p_unknown,
+    )
+
+
 # ── Argparse ─────────────────────────────────────────────────────────────────
 
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="BSIMAR unified training CLI "
                     "(DirectNet baseline or BSIMAR v3 Transformer)")
-    parser.add_argument("--model", choices=["direct", "transformer"],
+    parser.add_argument("--model", choices=["direct", "transformer", "transformer-v4"],
                         default="transformer",
                         help="Which architecture to train "
                              "(direct=DirectNet baseline, "
-                             "transformer=BSIMAR v3, default)")
+                             "transformer=BSIMAR v3, "
+                             "transformer-v4=BSIMAR v4 tech-code)")
 
     # Shared data args
     parser.add_argument("--device-type", choices=["nmos", "pmos"], default="nmos")
@@ -225,6 +271,17 @@ def main() -> None:
                              "after the cosine schedule. Default 5 "
                              "(empirically sufficient).")
 
+    # v4-specific flags
+    parser.add_argument("--held-out-techs", type=str, default=None,
+                        help="[transformer-v4] Comma-separated tech names "
+                             "to hold out as test (e.g., 'asap7')")
+    parser.add_argument("--num-tech-codes", type=int, default=18,
+                        help="[transformer-v4] Tech embedding vocabulary size "
+                             "(default 18 = 17 TSMC + 1 UNKNOWN)")
+    parser.add_argument("--p-unknown", type=float, default=0.1,
+                        help="[transformer-v4] Prob of replacing tech code "
+                             "with UNKNOWN during training (default 0.1)")
+
     # DirectNet loss weights (transformer uses the hard-wired v3 recipe)
     parser.add_argument("--w-charges", type=float, default=None,
                         help="[direct] charges group weight")
@@ -236,6 +293,8 @@ def main() -> None:
 
     if args.model == "direct":
         _run_direct(args)
+    elif args.model == "transformer-v4":
+        _run_transformer_v4(args)
     else:
         _run_transformer(args)
 

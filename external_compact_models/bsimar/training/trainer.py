@@ -1,29 +1,18 @@
-"""Training pipelines for DirectNet (baseline) and BSIMAR Transformer (v3).
+"""Training pipelines for DirectNet (baseline), BSIMAR Transformer (v3), and
+BSIMAR v4 (tech-code embedding).
 
-Two public entry points:
+Three public entry points:
 
-- ``train_directnet``  — DirectNet MLP baseline. Uses ``DirectLoss`` or
-  ``ChargeConsistencyLoss`` (the latter for ``--mode charge-finetune``).
-  Normalization is ``BSIMARNormalizer(mode='zscore')``. The legacy
-  signed-log path was removed in the v3 sprint.
-
-- ``train_transformer`` — BSIMAR v3 Transformer. Hard-wires the winning
-  recipe from ``docs/bsimar_improvement_plan_2026_04_08.md``:
-
-    - loss      = MAE with per-target LDS + Vg(Vov-proxy) LDS (N7)
-    - norm      = asinh + z-score (v2 T2)
-    - arch      = parallel_caps + grouped_inputs (v2 P4 + A2, hard-wired)
-    - reorder   = BSIMAR_COLUMN_ORDER (paper's Q → I → C)
-    - finetune  = AR-rollout fine-tune for `ar_finetune_epochs` epochs
-                  after the cosine schedule (N3)
-    - ckpt sel  = phys-space-best tracker (T1)
+- ``train_directnet``  — DirectNet MLP baseline.
+- ``train_transformer`` — BSIMAR v3 Transformer (19-dim input with process params).
+- ``train_transformer_v4`` — BSIMAR v4 Transformer (7-dim input + discrete tech codes).
 
 Lower-level per-epoch helpers are exposed for tests and custom pipelines.
 """
 
 import time
 from pathlib import Path
-from typing import Dict, Optional, Tuple
+from typing import Dict, Optional, Set, Tuple
 
 import numpy as np
 import torch
@@ -35,6 +24,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from bsimar.config import (
     DirectNetConfig, TransformerConfig,
     CHECKPOINT_DIR, RESULTS_DIR,
+    NUM_TSMC_CODES_WITH_UNKNOWN,
 )
 from bsimar.data.dataset import load_and_split_bsimar
 from bsimar.data.normalize import (
@@ -846,6 +836,470 @@ def train_transformer(
     plot_scatter_comparison(true_phys, pred_phys, results_subdir)
     plot_loss_curves(train_history, val_history, results_subdir,
                      title_prefix=f"BSIM-AR {save_prefix} ")
+
+    print(f"\nCheckpoint: {best_path}")
+    print(f"Norm stats: {norm_path}")
+    print(f"Results:    {results_subdir}/")
+
+    return model, normalizer
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# BSIMAR v4 per-epoch helpers (tech-code-aware batches)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _train_epoch_mae_v4(
+    model: nn.Module,
+    loader: DataLoader,
+    criterion: nn.Module,
+    optimizer: optim.Optimizer,
+    device: torch.device,
+) -> Dict[str, float]:
+    """Teacher-forced training epoch for v4 (batches carry tech codes).
+
+    Batch layout: (x, y, tech_codes) or (x, y, tech_codes, lds_weights).
+    """
+    model.train()
+    total_loss = 0.0
+    n_batches = 0
+
+    for batch in loader:
+        if len(batch) == 4:
+            x, y, tc, w = batch
+            w = w.to(device)
+        else:
+            x, y, tc = batch
+            w = None
+
+        x = x.to(device)
+        y = y.to(device)
+        tc = tc.to(device)
+
+        optimizer.zero_grad()
+        pred = model(x, y, tech_codes=tc)
+
+        loss = criterion(pred, y, weights=w) if w is not None else criterion(pred, y)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+
+        total_loss += loss.item()
+        n_batches += 1
+
+    return {"total": total_loss / n_batches}
+
+
+@torch.no_grad()
+def _validate_epoch_tf_v4(
+    model: nn.Module,
+    loader: DataLoader,
+    criterion: nn.Module,
+    device: torch.device,
+) -> Dict[str, float]:
+    """Teacher-forced validation for v4."""
+    model.eval()
+    total = 0.0
+    n = 0
+    for x, y, tc in loader:
+        x, y, tc = x.to(device), y.to(device), tc.to(device)
+        pred = model(x, y, tech_codes=tc)
+        total += criterion(pred, y).item()
+        n += 1
+    return {"total": total / n}
+
+
+@torch.no_grad()
+def _validate_epoch_ar_v4(
+    model: nn.Module,
+    loader: DataLoader,
+    criterion: nn.Module,
+    device: torch.device,
+) -> Dict[str, float]:
+    """Autoregressive validation for v4."""
+    model.eval()
+    total = 0.0
+    n = 0
+    for x, y, tc in loader:
+        x, y, tc = x.to(device), y.to(device), tc.to(device)
+        pred = model(x, tech_codes=tc)
+        total += criterion(pred, y).item()
+        n += 1
+    return {"total": total / n}
+
+
+def _train_epoch_scheduled_mae_v4(
+    model: nn.Module,
+    loader: DataLoader,
+    criterion: nn.Module,
+    optimizer: optim.Optimizer,
+    device: torch.device,
+    ss_ratio: float = 1.0,
+) -> Dict[str, float]:
+    """N3 AR fine-tune helper for v4."""
+    model.train()
+    total_loss = 0.0
+    n = 0
+
+    for batch in loader:
+        if len(batch) == 4:
+            x, y, tc, w = batch
+            w = w.to(device)
+        else:
+            x, y, tc = batch
+            w = None
+
+        x, y, tc = x.to(device), y.to(device), tc.to(device)
+
+        optimizer.zero_grad()
+        pred = model.forward_scheduled(x, y, ss_ratio=ss_ratio, tech_codes=tc)
+        loss = criterion(pred, y, weights=w) if w is not None else criterion(pred, y)
+        loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+        optimizer.step()
+
+        total_loss += loss.item()
+        n += 1
+
+    return {"total": total_loss / n}
+
+
+@torch.no_grad()
+def _test_model_v4(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Run AR inference for v4, return (pred_norm, true_norm)."""
+    model.eval()
+    all_pred, all_true = [], []
+    for x, y, tc in loader:
+        x, tc = x.to(device), tc.to(device)
+        pred = model(x, tech_codes=tc)
+        all_pred.append(pred.cpu().numpy())
+        all_true.append(y.numpy())
+    return np.concatenate(all_pred), np.concatenate(all_true)
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# v4 High-level pipeline
+# ══════════════════════════════════════════════════════════════════════════════
+
+def train_transformer_v4(
+    data_path: str,
+    save_prefix: str,
+    device_type: str = "nmos",
+    config: TransformerConfig = TransformerConfig(),
+    epochs: Optional[int] = None,
+    batch_size: Optional[int] = None,
+    patience: Optional[int] = None,
+    lr: Optional[float] = None,
+    device_str: str = "cpu",
+    ar_finetune_epochs: int = 5,
+    overwrite: bool = False,
+    held_out_techs: Optional[Set[str]] = None,
+    num_tech_codes: int = NUM_TSMC_CODES_WITH_UNKNOWN,
+    p_unknown: float = 0.1,
+) -> Tuple[nn.Module, BSIMARNormalizer]:
+    """BSIMAR v4 Transformer training pipeline.
+
+    Same v3 recipe (MAE+LDS+VovLDS, asinh, reorder, AR finetune,
+    phys-best ckpt), but input is 7-dim continuous + discrete tech codes.
+
+    Args:
+        data_path: Path to universal .npz dataset.
+        save_prefix: Prefix for checkpoint files.
+        device_type: "nmos" or "pmos" (for tech labeling).
+        held_out_techs: Tech names to hold out as test (e.g., {"asap7"}).
+        num_tech_codes: Embedding vocabulary size.
+        p_unknown: Prob of replacing tech code with UNKNOWN during training.
+    """
+    from bsimar.config import OUTPUT_COLUMNS, INPUT_DIM_V4
+    from bsimar.data.dataset import load_and_split_bsimar_v4
+    from bsimar.eval.metrics import compute_physical_metrics, print_metrics
+    from bsimar.eval.visualization import (
+        plot_scatter_comparison, plot_loss_curves,
+    )
+
+    epochs = epochs if epochs is not None else config.max_epochs
+    batch_size = batch_size if batch_size is not None else config.batch_size
+    patience = patience if patience is not None else config.patience
+    lr = lr if lr is not None else config.lr
+
+    device = torch.device(device_str)
+    print(f"Device: {device} | Recipe: BSIMAR v4 "
+          f"(tech-code embedding, {num_tech_codes} codes, "
+          f"p_unknown={p_unknown}) | Data: {Path(data_path).name}")
+    if held_out_techs:
+        print(f"Held-out techs: {held_out_techs}")
+
+    train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar_v4(
+        str(data_path),
+        column_names=OUTPUT_COLUMNS,
+        device_type=device_type,
+        apply_filter=True,
+        held_out_techs=held_out_techs,
+    )
+    input_dim = train_ds.inputs.shape[1]
+    output_dim = train_ds.outputs.shape[1]
+    assert input_dim == INPUT_DIM_V4, (
+        f"Expected v4 input dim {INPUT_DIM_V4}, got {input_dim}")
+    print(f"Input dim: {input_dim}, Output dim: {output_dim}")
+
+    # Reorder outputs to BSIMAR paper AR order.
+    train_ds.outputs = torch.tensor(
+        reorder_outputs(train_ds.outputs.numpy()), dtype=torch.float32)
+    val_ds.outputs = torch.tensor(
+        reorder_outputs(val_ds.outputs.numpy()), dtype=torch.float32)
+    test_ds.outputs = torch.tensor(
+        reorder_outputs(test_ds.outputs.numpy()), dtype=torch.float32)
+    print("Output columns reordered: charges->caps->cond->id")
+
+    model = TransformerEncoderModel(
+        input_dim=input_dim,
+        target_dim=output_dim,
+        d_model=config.d_model,
+        nhead=config.nhead,
+        num_layers=config.num_layers,
+        dim_feedforward=config.dim_feedforward,
+        dropout=config.dropout,
+        use_tech_codes=True,
+        num_tech_codes=num_tech_codes,
+        tech_embed_dropout=p_unknown,
+    ).to(device)
+    n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    print(f"Model params: {n_params:,}")
+
+    # MAE loss + per-target LDS + Vov(=Vg) LDS.
+    criterion = MAELoss()
+    print("Computing LDS weights (per-target + Vov)...")
+    lds_weights_np = compute_lds_weights_per_target(
+        train_ds.outputs.numpy(), n_bins=100,
+        lds_kernel="gaussian", lds_ks=5, lds_sigma=0.8,
+    )
+    vg_col = train_ds.inputs[:, 1:2].numpy()
+    vg_weights_np = compute_lds_weights_per_target(
+        vg_col, n_bins=50,
+        lds_kernel="gaussian", lds_ks=5, lds_sigma=1.0,
+    )
+    lds_weights_np = lds_weights_np * vg_weights_np
+    col_means = lds_weights_np.mean(axis=0, keepdims=True)
+    col_means[col_means < 1e-12] = 1.0
+    lds_weights_np = lds_weights_np / col_means
+
+    # Build weighted TensorDataset: (x, y, tech_codes, lds_weights).
+    train_ds_weighted = TensorDataset(
+        train_ds.inputs, train_ds.outputs, train_ds.tech_codes,
+        torch.tensor(lds_weights_np, dtype=torch.float32),
+    )
+    train_loader = DataLoader(
+        train_ds_weighted, batch_size=batch_size, shuffle=True)
+    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
+    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(), lr=lr, weight_decay=config.weight_decay)
+    scheduler = CosineAnnealingLR(optimizer, T_max=epochs)
+
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    best_path = CHECKPOINT_DIR / f"{save_prefix}_best.pt"
+    norm_path = CHECKPOINT_DIR / f"{save_prefix}_norm.npz"
+    results_subdir = str(RESULTS_DIR / save_prefix)
+
+    if best_path.exists() and not overwrite:
+        raise SystemExit(
+            f"Refusing to overwrite {best_path}. Pass --overwrite or "
+            "choose a unique --exp-name.")
+
+    early_stopping = EarlyStopping(
+        patience=patience, min_delta=1e-5, save_path=str(best_path))
+
+    print(f"\nTraining {save_prefix} for {epochs} epochs (patience={patience})")
+    train_history, val_history = [], []
+    best_val_loss = float("inf")
+    best_ar_val_loss = float("inf")
+    ar_best_path = best_path.with_suffix(".ar.pt")
+    best_phys_score = float("inf")
+    best_phys_nrmse = float("nan")
+    best_phys_r2 = float("nan")
+    phys_best_path = best_path.with_suffix(".phys.pt")
+    ar_check_every = 10
+    t_start = time.time()
+    epoch = 0
+
+    for epoch in range(1, epochs + 1):
+        t_losses = _train_epoch_mae_v4(
+            model, train_loader, criterion, optimizer, device)
+        v_losses = _validate_epoch_tf_v4(
+            model, val_loader, criterion, device)
+
+        run_ar_check = (epoch % ar_check_every == 0) or (epoch == epochs)
+        ar_status = ""
+        if run_ar_check:
+            ar_v = _validate_epoch_ar_v4(
+                model, val_loader, criterion, device)
+            ar_loss = ar_v["total"]
+            if ar_loss < best_ar_val_loss:
+                best_ar_val_loss = ar_loss
+                torch.save(model.state_dict(), str(ar_best_path))
+                ar_status = " *ar-best*"
+            print(f"  AR-val check @ epoch {epoch}: "
+                  f"ar={ar_loss:.5f} (tf={v_losses['total']:.5f})"
+                  f"{ar_status}")
+
+            pred_val_norm, true_val_norm = _test_model_v4(
+                model, val_loader, device)
+            pred_val_norm = unreorder_outputs(pred_val_norm)
+            true_val_norm = unreorder_outputs(true_val_norm)
+            phys_metrics = compute_physical_metrics(
+                pred_val_norm, true_val_norm, normalizer)
+            nrmse_arr = np.array(
+                [m["NRMSE(%)"] for m in phys_metrics.values()],
+                dtype=np.float64)
+            r2_arr = np.array(
+                [m["R2"] for m in phys_metrics.values()],
+                dtype=np.float64)
+            nrmse_avg = float(np.nanmean(nrmse_arr))
+            r2_avg = float(np.nanmean(r2_arr))
+            phys_score = (
+                float("inf") if (np.isnan(nrmse_avg) or np.isnan(r2_avg))
+                else nrmse_avg + 0.1 * (1.0 - r2_avg))
+            phys_status = ""
+            if phys_score < best_phys_score:
+                best_phys_score = phys_score
+                best_phys_nrmse = nrmse_avg
+                best_phys_r2 = r2_avg
+                torch.save(model.state_dict(), str(phys_best_path))
+                phys_status = " *phys-best*"
+            print(f"  PHYS-val @ epoch {epoch}: "
+                  f"nrmse_avg={nrmse_avg:.3f} r2_avg={r2_avg:.4f} "
+                  f"score={phys_score:.3f}{phys_status}")
+
+        train_loss = t_losses["total"]
+        val_loss = v_losses["total"]
+        train_history.append(train_loss)
+        val_history.append(val_loss)
+
+        status = ""
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            normalizer.stats.save(str(norm_path))
+            status = " *best*"
+
+        if early_stopping(val_loss, model):
+            print(f"Early stopping at epoch {epoch}")
+            break
+
+        scheduler.step()
+        lr_now = scheduler.get_last_lr()[0]
+
+        if epoch % 20 == 0 or epoch <= 5 or status:
+            print(f"  {epoch:4d} | train={train_loss:.5f} "
+                  f"val={val_loss:.5f} lr={lr_now:.2e}{status}")
+
+    elapsed = time.time() - t_start
+    epochs_run = max(epoch, 1)
+    print(f"\nDone in {elapsed:.0f}s ({elapsed / epochs_run:.1f}s/epoch)")
+    print(f"Best val loss (TF):  {best_val_loss:.6f}")
+    if best_ar_val_loss < float("inf"):
+        print(f"Best val loss (AR):  {best_ar_val_loss:.6f}  -> {ar_best_path}")
+    if best_phys_score < float("inf"):
+        print(f"Best phys score:   {best_phys_score:.6f}  "
+              f"(NRMSE={best_phys_nrmse:.3f}%, R2={best_phys_r2:.4f})  "
+              f"-> {phys_best_path}")
+
+    # Save arch config with v4 metadata.
+    arch_config = {
+        "input_dim": input_dim, "target_dim": output_dim,
+        "d_model": config.d_model, "nhead": config.nhead,
+        "num_layers": config.num_layers,
+        "dim_feedforward": config.dim_feedforward,
+        "dropout": config.dropout,
+        "use_tech_codes": True,
+        "num_tech_codes": num_tech_codes,
+    }
+    config_path = CHECKPOINT_DIR / f"{save_prefix}_config.npz"
+    np.savez(str(config_path),
+             **{k: np.array(v) for k, v in arch_config.items()})
+    print(f"Arch config: {config_path}")
+
+    # ── N3 — AR fine-tune phase ──────────────────────────────────────────
+    if ar_finetune_epochs > 0:
+        if phys_best_path.exists():
+            print(f"\n[N3] Loading phys-best checkpoint for AR finetune: "
+                  f"{phys_best_path}")
+            model.load_state_dict(
+                torch.load(str(phys_best_path), weights_only=True))
+        finetune_lr = max(scheduler.get_last_lr()[0] * 10, 1e-5)
+        print(f"[N3] AR finetune for {ar_finetune_epochs} epochs at "
+              f"lr={finetune_lr:.2e}, ss_ratio=1.0")
+        ft_optimizer = torch.optim.AdamW(
+            model.parameters(), lr=finetune_lr,
+            weight_decay=config.weight_decay)
+        ft_criterion = MAELoss()
+        ft_train_loader = DataLoader(
+            train_ds, batch_size=batch_size, shuffle=True)
+        for ft_epoch in range(1, ar_finetune_epochs + 1):
+            t_losses = _train_epoch_scheduled_mae_v4(
+                model, ft_train_loader, ft_criterion, ft_optimizer,
+                device, ss_ratio=1.0,
+            )
+            v_losses = _validate_epoch_ar_v4(
+                model, val_loader, ft_criterion, device)
+            train_loss = t_losses["total"]
+            val_loss = v_losses["total"]
+            train_history.append(train_loss)
+            val_history.append(val_loss)
+
+            pred_val_norm, true_val_norm = _test_model_v4(
+                model, val_loader, device)
+            pred_val_norm = unreorder_outputs(pred_val_norm)
+            true_val_norm = unreorder_outputs(true_val_norm)
+            phys_metrics = compute_physical_metrics(
+                pred_val_norm, true_val_norm, normalizer)
+            nrmse_arr = np.array(
+                [m["NRMSE(%)"] for m in phys_metrics.values()],
+                dtype=np.float64)
+            r2_arr = np.array(
+                [m["R2"] for m in phys_metrics.values()],
+                dtype=np.float64)
+            nrmse_avg = float(np.nanmean(nrmse_arr))
+            r2_avg = float(np.nanmean(r2_arr))
+            phys_score = (
+                float("inf") if (np.isnan(nrmse_avg) or np.isnan(r2_avg))
+                else nrmse_avg + 0.1 * (1.0 - r2_avg))
+            phys_status = ""
+            if phys_score < best_phys_score:
+                best_phys_score = phys_score
+                best_phys_nrmse = nrmse_avg
+                best_phys_r2 = r2_avg
+                torch.save(model.state_dict(), str(phys_best_path))
+                phys_status = " *phys-best*"
+            print(f"  [FT {ft_epoch:3d}] train={train_loss:.5f} "
+                  f"val={val_loss:.5f} | nrmse={nrmse_avg:.3f}% "
+                  f"r2={r2_avg:.4f}{phys_status}")
+
+    # ── Final test ────────────────────────────────────────────────────────
+    if phys_best_path.exists():
+        load_path = phys_best_path
+        print(f"Loading phys-best checkpoint for final test: {load_path}")
+    else:
+        load_path = best_path
+        print(f"Loading TF-val-best checkpoint for final test: {load_path}")
+    model.load_state_dict(torch.load(str(load_path), weights_only=True))
+    pred_norm, true_norm = _test_model_v4(model, test_loader, device)
+
+    pred_norm = unreorder_outputs(pred_norm)
+    true_norm = unreorder_outputs(true_norm)
+
+    metrics = compute_physical_metrics(pred_norm, true_norm, normalizer)
+    print_metrics(metrics)
+
+    pred_phys = normalizer.denormalize_outputs(pred_norm)
+    true_phys = normalizer.denormalize_outputs(true_norm)
+    plot_scatter_comparison(true_phys, pred_phys, results_subdir)
+    plot_loss_curves(train_history, val_history, results_subdir,
+                     title_prefix=f"BSIM-AR v4 {save_prefix} ")
 
     print(f"\nCheckpoint: {best_path}")
     print(f"Norm stats: {norm_path}")

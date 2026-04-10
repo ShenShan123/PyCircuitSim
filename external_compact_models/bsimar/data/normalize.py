@@ -100,7 +100,7 @@ def _build_combined_input(
     inputs: np.ndarray,
     geometry: np.ndarray,
 ) -> np.ndarray:
-    """Combine voltage inputs with geometry features.
+    """Combine voltage inputs with geometry features (v3: includes process params).
 
     Geometry column layouts (backward-compatible):
       (N,  2): [NFIN, T]                         — legacy
@@ -129,6 +129,27 @@ def _build_combined_input(
         phig = geometry[:, 2]
         return np.column_stack([inputs, nfin_log, temperature, phig])
     return np.column_stack([inputs, nfin_log, temperature])
+
+
+def _build_combined_input_v4(
+    inputs: np.ndarray,
+    geometry: np.ndarray,
+) -> np.ndarray:
+    """Combine voltage inputs with geometry features (v4: no process params).
+
+    Returns (N, 7): [V(4), NFIN_log, L, T]. Process parameters in
+    geometry columns 3:15 are ignored — the tech identity is carried
+    by a discrete tech code, not by continuous process params.
+
+    Expects geometry shape (N, 15): [NFIN, L, T, <12 proc params>].
+    """
+    assert geometry.shape[1] == 15, (
+        f"v4 expects 15-col geometry [NFIN, L, T, 12_proc], "
+        f"got {geometry.shape[1]}")
+    nfin_log = np.log2(np.clip(geometry[:, 0], 1.0, None))
+    L_col = geometry[:, 1]
+    temperature = geometry[:, 2]
+    return np.column_stack([inputs, nfin_log, L_col, temperature])
 
 
 # ── BSIMARNormalizer ─────────────────────────────────────────────────────────
@@ -194,17 +215,30 @@ class BSIMARNormalizer:
     where per-target ``s_k`` is the geometric mean of ``|y|`` over the
     train split, masked at ``OUTPUT_LOG_FLOORS`` and clamped to the
     floor.
+
+    When ``include_proc_params=False`` (v4 mode), the input builder
+    produces a 7-dim feature vector [V(4), NFIN_log, L, T] instead of
+    the 19-dim v3 layout. Process params are omitted — tech identity
+    is carried by a discrete code outside the normalizer.
     """
 
     def __init__(self, mode: str = "asinh",
-                 stats: Optional[BSIMARNormStats] = None) -> None:
+                 stats: Optional[BSIMARNormStats] = None,
+                 include_proc_params: bool = True) -> None:
         assert mode in ("zscore", "asinh"), f"Unknown mode: {mode}"
         self.mode = mode
         self.stats = stats
+        self.include_proc_params = include_proc_params
+
+    def _combined(self, inputs: np.ndarray,
+                  geometry: np.ndarray) -> np.ndarray:
+        if self.include_proc_params:
+            return _build_combined_input(inputs, geometry)
+        return _build_combined_input_v4(inputs, geometry)
 
     def fit(self, inputs: np.ndarray, geometry: np.ndarray,
             outputs: np.ndarray) -> "BSIMARNormalizer":
-        combined = _build_combined_input(inputs, geometry)
+        combined = self._combined(inputs, geometry)
 
         # Inputs are voltages (~0.5V scale) and process params
         # (~1e-3 to ~1 scale). 1e-12 safely catches truly constant
@@ -275,7 +309,7 @@ class BSIMARNormalizer:
     def normalize_inputs(self, inputs: np.ndarray,
                          geometry: np.ndarray) -> np.ndarray:
         assert self.stats is not None, "Must call fit() first"
-        combined = _build_combined_input(inputs, geometry)
+        combined = self._combined(inputs, geometry)
         return (combined - self.stats.input_mean) / self.stats.input_std
 
     def normalize_outputs(self, outputs: np.ndarray) -> np.ndarray:
