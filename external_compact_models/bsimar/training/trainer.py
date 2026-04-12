@@ -534,21 +534,29 @@ def _train_epoch_direct_v4(
     optimizer: optim.Optimizer,
     device: torch.device,
 ) -> Dict[str, float]:
-    """Training epoch for DirectNetV4 (batches carry tech codes)."""
+    """Training epoch for DirectNetV4 (MAE + LDS weights).
+
+    Batch layout: (x, y, tech_codes, lds_weights).
+    """
     model.train()
-    totals: Dict[str, float] = {}
+    total_loss = 0.0
     n = 0
-    for x, y, tc in loader:
+    for batch in loader:
+        if len(batch) == 4:
+            x, y, tc, w = batch
+            w = w.to(device)
+        else:
+            x, y, tc = batch
+            w = None
         x, y, tc = x.to(device), y.to(device), tc.to(device)
         optimizer.zero_grad()
         pred = model(x, tech_codes=tc)
-        losses = criterion(pred, y, x)
-        losses["total"].backward()
+        loss = criterion(pred, y, weights=w) if w is not None else criterion(pred, y)
+        loss.backward()
         optimizer.step()
-        for k, v in losses.items():
-            totals[k] = totals.get(k, 0.0) + v.item()
+        total_loss += loss.item()
         n += 1
-    return {k: v / n for k, v in totals.items()}
+    return {"total": total_loss / n}
 
 
 @torch.no_grad()
@@ -558,18 +566,16 @@ def _validate_epoch_direct_v4(
     criterion: nn.Module,
     device: torch.device,
 ) -> Dict[str, float]:
-    """Validation epoch for DirectNetV4."""
+    """Validation epoch for DirectNetV4 (unweighted MAE)."""
     model.eval()
-    totals: Dict[str, float] = {}
+    total = 0.0
     n = 0
     for x, y, tc in loader:
         x, y, tc = x.to(device), y.to(device), tc.to(device)
         pred = model(x, tech_codes=tc)
-        losses = criterion(pred, y, x)
-        for k, v in losses.items():
-            totals[k] = totals.get(k, 0.0) + v.item()
+        total += criterion(pred, y).item()
         n += 1
-    return {k: v / n for k, v in totals.items()}
+    return {"total": total / n}
 
 
 @torch.no_grad()
@@ -628,16 +634,37 @@ def train_directnet_v4(
         exclude_techs=exclude_techs,
     )
 
-    train_loader = DataLoader(train_ds, batch_size=config.batch_size,
-                              shuffle=True)
+    input_dim = train_ds.inputs.shape[1]
+    output_dim = train_ds.outputs.shape[1]
+    print(f"Input dim: {input_dim} (7-dim + tech code), Output dim: {output_dim}")
+
+    # MAE loss + per-target LDS + Vov(=Vg) LDS (same recipe as BSIMAR v4).
+    criterion = MAELoss()
+    print("Computing LDS weights (per-target + Vov)...")
+    lds_weights_np = compute_lds_weights_per_target(
+        train_ds.outputs.numpy(), n_bins=100,
+        lds_kernel="gaussian", lds_ks=5, lds_sigma=0.8,
+    )
+    vg_col = train_ds.inputs[:, 1:2].numpy()
+    vg_weights_np = compute_lds_weights_per_target(
+        vg_col, n_bins=50,
+        lds_kernel="gaussian", lds_ks=5, lds_sigma=1.0,
+    )  # (N, 1)
+    lds_weights_np = lds_weights_np * vg_weights_np
+    col_means = lds_weights_np.mean(axis=0, keepdims=True)
+    col_means[col_means < 1e-12] = 1.0
+    lds_weights_np = lds_weights_np / col_means
+
+    train_ds_weighted = TensorDataset(
+        train_ds.inputs, train_ds.outputs, train_ds.tech_codes,
+        torch.tensor(lds_weights_np, dtype=torch.float32),
+    )
+    train_loader = DataLoader(train_ds_weighted,
+                              batch_size=config.batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=config.batch_size,
                             shuffle=False)
     test_loader = DataLoader(test_ds, batch_size=config.batch_size,
                              shuffle=False)
-
-    input_dim = train_ds.inputs.shape[1]
-    output_dim = train_ds.outputs.shape[1]
-    print(f"Input dim: {input_dim} (7-dim + tech code), Output dim: {output_dim}")
 
     model = DirectNetV4(
         input_dim=input_dim,
@@ -649,15 +676,6 @@ def train_directnet_v4(
         tech_embed_dropout=p_unknown,
     ).to(device)
     print(f"Model parameters: {model.count_parameters()}")
-
-    criterion = DirectLoss(
-        output_dim=output_dim,
-        w_zero_bias=config.w_zero_bias,
-        w_curr=config.w_id,
-        w_cond=(config.w_gm + config.w_gds + config.w_gmb) / 3.0,
-        w_charges=config.w_charges,
-        w_caps=config.w_caps,
-    )
 
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
