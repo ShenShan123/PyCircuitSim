@@ -174,11 +174,11 @@ def _run_transformer_v4(args: argparse.Namespace) -> None:
         patience=args.patience,
     )
 
-    device_str = "cuda" if args.cuda and torch.cuda.is_available() else "cpu"
+    device_str = "cuda" if torch.cuda.is_available() else "cpu"
 
-    held_out = None
-    if args.held_out_techs:
-        held_out = set(t.strip().lower() for t in args.held_out_techs.split(","))
+    exclude = None
+    if args.exclude_techs:
+        exclude = set(t.strip().lower() for t in args.exclude_techs.split(","))
 
     train_transformer_v4(
         str(data_path),
@@ -188,7 +188,7 @@ def _run_transformer_v4(args: argparse.Namespace) -> None:
         device_str=device_str,
         ar_finetune_epochs=args.ar_finetune_epochs,
         overwrite=args.overwrite,
-        held_out_techs=held_out,
+        exclude_techs=exclude,
         num_tech_codes=args.num_tech_codes,
         p_unknown=args.p_unknown,
     )
@@ -272,9 +272,9 @@ def main() -> None:
                              "(empirically sufficient).")
 
     # v4-specific flags
-    parser.add_argument("--held-out-techs", type=str, default=None,
+    parser.add_argument("--exclude-techs", type=str, default=None,
                         help="[transformer-v4] Comma-separated tech names "
-                             "to hold out as test (e.g., 'asap7')")
+                             "to exclude entirely (e.g., 'asap7')")
     parser.add_argument("--num-tech-codes", type=int, default=18,
                         help="[transformer-v4] Tech embedding vocabulary size "
                              "(default 18 = 17 TSMC + 1 UNKNOWN)")

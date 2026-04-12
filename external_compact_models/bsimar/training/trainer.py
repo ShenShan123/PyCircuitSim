@@ -963,6 +963,43 @@ def _train_epoch_scheduled_mae_v4(
     return {"total": total_loss / n}
 
 
+def _print_per_tech_metrics(
+    pred_norm: np.ndarray,
+    true_norm: np.ndarray,
+    tech_codes: np.ndarray,
+    normalizer,
+) -> None:
+    """Print per-tech-variant physical metrics (NRMSE, R²) on test set."""
+    from bsimar.config import CODE_TO_TECH_VARIANT
+    from bsimar.eval.metrics import compute_physical_metrics
+
+    unique_codes = np.unique(tech_codes)
+    print(f"\n{'Tech':>15s} | {'n_test':>6s} | {'NRMSE%':>8s} | {'R2':>8s}")
+    print("-" * 50)
+    all_nrmse, all_r2 = [], []
+    for code in sorted(unique_codes):
+        mask = tech_codes == code
+        tech_name, variant = CODE_TO_TECH_VARIANT.get(
+            int(code), ("unk", "unk"))
+        label = f"{tech_name}:{variant}"
+        m = compute_physical_metrics(
+            pred_norm[mask], true_norm[mask], normalizer)
+        nrmse_vals = [v["NRMSE(%)"] for v in m.values()
+                      if not np.isnan(v["NRMSE(%)"])]
+        r2_vals = [v["R2"] for v in m.values()
+                   if not np.isnan(v["R2"])]
+        avg_nrmse = float(np.mean(nrmse_vals)) if nrmse_vals else float("nan")
+        avg_r2 = float(np.mean(r2_vals)) if r2_vals else float("nan")
+        print(f"{label:>15s} | {mask.sum():6d} | {avg_nrmse:8.3f} | {avg_r2:8.4f}")
+        if not np.isnan(avg_nrmse):
+            all_nrmse.append(avg_nrmse)
+        if not np.isnan(avg_r2):
+            all_r2.append(avg_r2)
+    print("-" * 50)
+    print(f"{'OVERALL':>15s} | {len(tech_codes):6d} | "
+          f"{np.mean(all_nrmse):8.3f} | {np.mean(all_r2):8.4f}")
+
+
 @torch.no_grad()
 def _test_model_v4(
     model: nn.Module,
@@ -996,7 +1033,7 @@ def train_transformer_v4(
     device_str: str = "cpu",
     ar_finetune_epochs: int = 5,
     overwrite: bool = False,
-    held_out_techs: Optional[Set[str]] = None,
+    exclude_techs: Optional[Set[str]] = None,
     num_tech_codes: int = NUM_TSMC_CODES_WITH_UNKNOWN,
     p_unknown: float = 0.1,
 ) -> Tuple[nn.Module, BSIMARNormalizer]:
@@ -1009,7 +1046,7 @@ def train_transformer_v4(
         data_path: Path to universal .npz dataset.
         save_prefix: Prefix for checkpoint files.
         device_type: "nmos" or "pmos" (for tech labeling).
-        held_out_techs: Tech names to hold out as test (e.g., {"asap7"}).
+        exclude_techs: Tech names to exclude entirely (e.g., {"asap7"}).
         num_tech_codes: Embedding vocabulary size.
         p_unknown: Prob of replacing tech code with UNKNOWN during training.
     """
@@ -1029,15 +1066,15 @@ def train_transformer_v4(
     print(f"Device: {device} | Recipe: BSIMAR v4 "
           f"(tech-code embedding, {num_tech_codes} codes, "
           f"p_unknown={p_unknown}) | Data: {Path(data_path).name}")
-    if held_out_techs:
-        print(f"Held-out techs: {held_out_techs}")
+    if exclude_techs:
+        print(f"Excluded techs: {exclude_techs}")
 
     train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar_v4(
         str(data_path),
         column_names=OUTPUT_COLUMNS,
         device_type=device_type,
         apply_filter=True,
-        held_out_techs=held_out_techs,
+        exclude_techs=exclude_techs,
     )
     input_dim = train_ds.inputs.shape[1]
     output_dim = train_ds.outputs.shape[1]
@@ -1294,6 +1331,10 @@ def train_transformer_v4(
 
     metrics = compute_physical_metrics(pred_norm, true_norm, normalizer)
     print_metrics(metrics)
+
+    # Per-tech breakdown
+    test_tc = test_ds.tech_codes.numpy()
+    _print_per_tech_metrics(pred_norm, true_norm, test_tc, normalizer)
 
     pred_phys = normalizer.denormalize_outputs(pred_norm)
     true_phys = normalizer.denormalize_outputs(true_norm)

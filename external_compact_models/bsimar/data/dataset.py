@@ -176,7 +176,7 @@ def load_and_split_bsimar_v4(
     seed: int = 42,
     apply_filter: bool = True,
     filter_thresholds: Optional[Dict[str, float]] = None,
-    held_out_techs: Optional[Set[str]] = None,
+    exclude_techs: Optional[Set[str]] = None,
 ) -> Tuple[MOSFETDatasetV4, MOSFETDatasetV4, MOSFETDatasetV4, BSIMARNormalizer]:
     """Load .npz, compute tech-variant codes, split, normalize (v4 mode).
 
@@ -184,14 +184,14 @@ def load_and_split_bsimar_v4(
     - Input features are 7-dim [V(4), NFIN_log, L, T] (no process params).
     - Returns ``MOSFETDatasetV4`` with per-sample tech codes.
     - Normalizer is ``BSIMARNormalizer(mode='asinh', include_proc_params=False)``.
-    - When ``held_out_techs`` is given (e.g., {"asap7"}), those techs'
-      samples go entirely to the test set (LOO-style).
+    - When ``exclude_techs`` is given (e.g., {"asap7"}), those techs'
+      samples are dropped entirely before the train/val/test split.
 
     Args:
         data_path: Path to universal .npz dataset.
         column_names: Output column names for filtering.
         device_type: "nmos" or "pmos" (for tech labeling).
-        held_out_techs: Tech names to hold out entirely as test.
+        exclude_techs: Tech names to exclude entirely from the dataset.
         Other args: same as ``load_and_split_bsimar``.
     """
     from bsimar.eval.loo_labels import get_or_build_tech_variant_labels
@@ -221,33 +221,30 @@ def load_and_split_bsimar_v4(
 
     rng = np.random.default_rng(seed)
 
-    if held_out_techs:
-        # LOO-style: held-out techs go entirely to test set.
+    if exclude_techs:
+        # Drop excluded techs entirely before splitting.
         from bsimar.config import TECH_VARIANT_CODES
-        held_out_code_set = {
+        exclude_code_set = {
             code for (tech, _), code in TECH_VARIANT_CODES.items()
-            if tech in held_out_techs
+            if tech in exclude_techs
         }
-        is_held_out = np.array(
-            [int(c) in held_out_code_set for c in tech_codes], dtype=bool)
-        train_pool_idx = np.nonzero(~is_held_out)[0]
-        test_idx = np.nonzero(is_held_out)[0]
+        keep_mask = np.array(
+            [int(c) not in exclude_code_set for c in tech_codes], dtype=bool)
+        n_total = len(keep_mask)
+        inputs = inputs[keep_mask]
+        geometry = geometry[keep_mask]
+        outputs = outputs[keep_mask]
+        tech_codes = tech_codes[keep_mask]
+        print(f"  Excluded techs {exclude_techs}: "
+              f"{keep_mask.sum()}/{n_total} samples kept")
 
-        rng.shuffle(train_pool_idx)
-        n_val = max(1, int(round(len(train_pool_idx) * val_ratio)))
-        val_idx = train_pool_idx[:n_val]
-        train_idx = train_pool_idx[n_val:]
-
-        print(f"  LOO split: held_out={held_out_techs}, "
-              f"train={len(train_idx)}, val={len(val_idx)}, "
-              f"test={len(test_idx)}")
-    else:
-        idx = rng.permutation(len(outputs))
-        n_train = int(len(idx) * train_ratio)
-        n_val = int(len(idx) * val_ratio)
-        train_idx = idx[:n_train]
-        val_idx = idx[n_train:n_train + n_val]
-        test_idx = idx[n_train + n_val:]
+    # Standard 80/10/10 random split.
+    idx = rng.permutation(len(outputs))
+    n_train = int(len(idx) * train_ratio)
+    n_val = int(len(idx) * val_ratio)
+    train_idx = idx[:n_train]
+    val_idx = idx[n_train:n_train + n_val]
+    test_idx = idx[n_train + n_val:]
 
     # Fit normalizer on train split (7-dim, no process params).
     normalizer = BSIMARNormalizer(mode="asinh", include_proc_params=False)
