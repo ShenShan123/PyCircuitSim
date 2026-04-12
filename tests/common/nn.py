@@ -108,7 +108,20 @@ def directnet_checkpoint(device_type: str, tech_name: str | None = None) -> Path
 
 
 def transformer_checkpoint(device_type: str, tech_name: str | None = None) -> Path:
-    """Resolve the BSIM-AR Transformer `_best.pt` checkpoint."""
+    """Resolve the BSIM-AR Transformer `_best.pt` checkpoint.
+
+    Prefers v4 universal (tech-code) > v3 universal > per-tech > bare.
+    For v4, uses the phys-best variant (``_best.phys.pt``); for v3, uses
+    the plain ``_best.pt``.
+    """
+    # v4 universal (tech-code embedding)
+    v4_phys = CHECKPOINT_DIR / f"v4_universal_{device_type}_best.phys.pt"
+    if v4_phys.exists():
+        return v4_phys
+    v4_plain = CHECKPOINT_DIR / f"v4_universal_{device_type}_best.pt"
+    if v4_plain.exists():
+        return v4_plain
+    # v3 universal (process params)
     universal = CHECKPOINT_DIR / f"ar_universal_{device_type}_best.pt"
     if universal.exists():
         return universal

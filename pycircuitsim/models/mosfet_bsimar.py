@@ -85,11 +85,19 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
         if not model_path.exists():
             raise FileNotFoundError(f"BSIM-AR model not found: {model_path}")
 
-        norm_path = model_path.parent / (model_path.stem.replace("_best", "_norm") + ".npz")
+        # Strip .phys / .ar suffixes from stem before deriving norm/config paths
+        # e.g. "v4_universal_nmos_best.phys" -> "v4_universal_nmos_best"
+        base_stem = model_path.stem
+        for _sfx in (".phys", ".ar"):
+            if base_stem.endswith(_sfx):
+                base_stem = base_stem[: -len(_sfx)]
+                break
+
+        norm_path = model_path.parent / (base_stem.replace("_best", "_norm") + ".npz")
         if not norm_path.exists():
             raise FileNotFoundError(f"Normalization stats not found: {norm_path}")
 
-        config_path = model_path.parent / (model_path.stem.replace("_best", "_config") + ".npz")
+        config_path = model_path.parent / (base_stem.replace("_best", "_config") + ".npz")
         if not config_path.exists():
             raise FileNotFoundError(f"Architecture config not found: {config_path}")
 
