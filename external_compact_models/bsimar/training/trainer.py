@@ -362,6 +362,8 @@ def train_directnet(
     w_consistency: float = 1.0,
     w_cond_consistency: float = 0.0,
     apply_filter: bool = False,
+    exclude_techs: Optional[Set[str]] = None,
+    device_type: Optional[str] = None,
 ):
     """DirectNet baseline training pipeline.
 
@@ -374,6 +376,8 @@ def train_directnet(
         apply_filter: Drop sub-floor cutoff samples (matches the BSIMAR
             data path). Default False for DirectNet to preserve
             baseline behaviour.
+        exclude_techs: Tech names to exclude entirely (e.g., {"asap7"}).
+        device_type: "nmos" or "pmos" (needed for tech labeling).
     """
     from bsimar.config import OUTPUT_COLUMNS
 
@@ -384,14 +388,18 @@ def train_directnet(
     if use_charge_consistency:
         print(f"Charge consistency: w_consistency={w_consistency}, "
               f"w_cond_consistency={w_cond_consistency}")
+    if exclude_techs:
+        print(f"Excluding techs: {exclude_techs}")
 
-    train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
+    train_ds, val_ds, test_ds, normalizer, test_tech_codes = load_and_split_bsimar(
         data_path,
         column_names=OUTPUT_COLUMNS,
         norm_mode="zscore",
         train_ratio=config.train_ratio,
         val_ratio=config.val_ratio,
         apply_filter=apply_filter,
+        exclude_techs=exclude_techs,
+        device_type=device_type,
     )
 
     train_loader = DataLoader(train_ds, batch_size=config.batch_size, shuffle=True)
@@ -507,6 +515,216 @@ def train_directnet(
     print(f"\nPhysical metrics (test set):")
     print_metrics(metrics)
 
+    if test_tech_codes is not None:
+        _print_per_tech_metrics(
+            pred_norm, true_norm, test_tech_codes, normalizer)
+
+    print(f"\nSaved: {best_path}")
+    return model, normalizer
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# DirectNet v4 (7-dim + tech codes)
+# ══════════════════════════════════════════════════════════════════════════════
+
+def _train_epoch_direct_v4(
+    model: nn.Module,
+    loader: DataLoader,
+    criterion: nn.Module,
+    optimizer: optim.Optimizer,
+    device: torch.device,
+) -> Dict[str, float]:
+    """Training epoch for DirectNetV4 (batches carry tech codes)."""
+    model.train()
+    totals: Dict[str, float] = {}
+    n = 0
+    for x, y, tc in loader:
+        x, y, tc = x.to(device), y.to(device), tc.to(device)
+        optimizer.zero_grad()
+        pred = model(x, tech_codes=tc)
+        losses = criterion(pred, y, x)
+        losses["total"].backward()
+        optimizer.step()
+        for k, v in losses.items():
+            totals[k] = totals.get(k, 0.0) + v.item()
+        n += 1
+    return {k: v / n for k, v in totals.items()}
+
+
+@torch.no_grad()
+def _validate_epoch_direct_v4(
+    model: nn.Module,
+    loader: DataLoader,
+    criterion: nn.Module,
+    device: torch.device,
+) -> Dict[str, float]:
+    """Validation epoch for DirectNetV4."""
+    model.eval()
+    totals: Dict[str, float] = {}
+    n = 0
+    for x, y, tc in loader:
+        x, y, tc = x.to(device), y.to(device), tc.to(device)
+        pred = model(x, tech_codes=tc)
+        losses = criterion(pred, y, x)
+        for k, v in losses.items():
+            totals[k] = totals.get(k, 0.0) + v.item()
+        n += 1
+    return {k: v / n for k, v in totals.items()}
+
+
+@torch.no_grad()
+def _collect_directnet_v4_predictions(
+    model: nn.Module,
+    loader: DataLoader,
+    device: torch.device,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Run DirectNetV4 on loader, return (pred_norm, true_norm, tech_codes)."""
+    model.eval()
+    all_pred, all_true, all_tc = [], [], []
+    for x, y, tc in loader:
+        x, tc = x.to(device), tc.to(device)
+        pred = model(x, tech_codes=tc)
+        all_pred.append(pred.cpu().numpy())
+        all_true.append(y.numpy())
+        all_tc.append(tc.cpu().numpy())
+    return (np.concatenate(all_pred),
+            np.concatenate(all_true),
+            np.concatenate(all_tc))
+
+
+def train_directnet_v4(
+    data_path: str,
+    device_type: str = "nmos",
+    config: DirectNetConfig = DirectNetConfig(),
+    device_str: str = "cpu",
+    save_prefix: str = "v4_dn_universal_nmos",
+    exclude_techs: Optional[Set[str]] = None,
+    num_tech_codes: int = NUM_TSMC_CODES_WITH_UNKNOWN,
+    p_unknown: float = 0.1,
+) -> Tuple[nn.Module, BSIMARNormalizer]:
+    """DirectNet v4 training pipeline (7-dim input + tech-code embedding).
+
+    Uses the v4 data loader (``load_and_split_bsimar_v4``) and
+    ``DirectNetV4`` model with discrete tech-code embedding, making it
+    directly comparable to the BSIMAR v4 Transformer.
+    """
+    from bsimar.config import OUTPUT_COLUMNS
+    from bsimar.data.dataset import load_and_split_bsimar_v4
+    from bsimar.models.direct_net import DirectNetV4
+
+    device = torch.device(device_str)
+    print(f"Training DirectNetV4 on {device}")
+    print(f"Tech codes: {num_tech_codes} codes, p_unknown={p_unknown}")
+    if exclude_techs:
+        print(f"Excluding techs: {exclude_techs}")
+
+    train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar_v4(
+        data_path,
+        column_names=OUTPUT_COLUMNS,
+        device_type=device_type,
+        train_ratio=config.train_ratio,
+        val_ratio=config.val_ratio,
+        apply_filter=True,
+        exclude_techs=exclude_techs,
+    )
+
+    train_loader = DataLoader(train_ds, batch_size=config.batch_size,
+                              shuffle=True)
+    val_loader = DataLoader(val_ds, batch_size=config.batch_size,
+                            shuffle=False)
+    test_loader = DataLoader(test_ds, batch_size=config.batch_size,
+                             shuffle=False)
+
+    input_dim = train_ds.inputs.shape[1]
+    output_dim = train_ds.outputs.shape[1]
+    print(f"Input dim: {input_dim} (7-dim + tech code), Output dim: {output_dim}")
+
+    model = DirectNetV4(
+        input_dim=input_dim,
+        hidden_dim=config.trunk_hidden,
+        n_layers=config.trunk_layers + 1,
+        output_dim=output_dim,
+        num_tech_codes=num_tech_codes,
+        tech_embed_dim=32,
+        tech_embed_dropout=p_unknown,
+    ).to(device)
+    print(f"Model parameters: {model.count_parameters()}")
+
+    criterion = DirectLoss(
+        output_dim=output_dim,
+        w_zero_bias=config.w_zero_bias,
+        w_curr=config.w_id,
+        w_cond=(config.w_gm + config.w_gds + config.w_gmb) / 3.0,
+        w_charges=config.w_charges,
+        w_caps=config.w_caps,
+    )
+
+    optimizer = torch.optim.AdamW(
+        model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
+    scheduler = CosineAnnealingLR(optimizer, T_max=config.max_epochs)
+
+    best_val_loss = float("inf")
+    patience_counter = 0
+
+    CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
+    best_path = CHECKPOINT_DIR / f"{save_prefix}_best.pt"
+    norm_path = CHECKPOINT_DIR / f"{save_prefix}_norm.npz"
+
+    t_start = time.time()
+    epoch = 0
+
+    for epoch in range(1, config.max_epochs + 1):
+        train_losses = _train_epoch_direct_v4(
+            model, train_loader, criterion, optimizer, device)
+        val_losses = _validate_epoch_direct_v4(
+            model, val_loader, criterion, device)
+        scheduler.step()
+        lr = scheduler.get_last_lr()[0]
+
+        status = ""
+        if val_losses["total"] < best_val_loss:
+            best_val_loss = val_losses["total"]
+            patience_counter = 0
+            torch.save(model.state_dict(), best_path)
+            normalizer.stats.save(str(norm_path))
+            status = " *best*"
+        else:
+            patience_counter += 1
+
+        should_print = (epoch % 20 == 0 or epoch <= 5 or bool(status))
+        if should_print:
+            print(f"{epoch:4d} | train={train_losses['total']:.5f} "
+                  f"val={val_losses['total']:.5f} lr={lr:.2e}{status}")
+
+        if patience_counter >= config.patience:
+            print(f"\nEarly stopping at epoch {epoch} "
+                  f"(patience={config.patience})")
+            break
+
+    elapsed = time.time() - t_start
+    epochs_run = max(epoch, 1)
+    print(f"\nTraining completed in {elapsed:.0f}s "
+          f"({elapsed / epochs_run:.1f}s/epoch)")
+    print(f"Best val loss: {best_val_loss:.6f}")
+
+    # Test evaluation.
+    model.load_state_dict(torch.load(best_path, weights_only=True))
+    test_losses = _validate_epoch_direct_v4(
+        model, test_loader, criterion, device)
+    print(f"\nTest set losses:")
+    for k, v in sorted(test_losses.items()):
+        print(f"  {k:>10s}: {v:.6f}")
+
+    from bsimar.eval.metrics import compute_physical_metrics, print_metrics
+    pred_norm, true_norm, test_tech_codes = _collect_directnet_v4_predictions(
+        model, test_loader, device)
+    metrics = compute_physical_metrics(pred_norm, true_norm, normalizer)
+    print(f"\nPhysical metrics (test set):")
+    print_metrics(metrics)
+
+    _print_per_tech_metrics(
+        pred_norm, true_norm, test_tech_codes, normalizer)
+
     print(f"\nSaved: {best_path}")
     return model, normalizer
 
@@ -557,7 +775,7 @@ def train_transformer(
           f"(asinh+zscore, MAE+LDS+VovLDS, parallel_caps, grouped_inputs) | "
           f"Data: {Path(data_path).name}")
 
-    train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
+    train_ds, val_ds, test_ds, normalizer, _ = load_and_split_bsimar(
         str(data_path),
         column_names=OUTPUT_COLUMNS,
         norm_mode="asinh",

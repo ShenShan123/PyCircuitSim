@@ -83,12 +83,24 @@ def load_and_split_bsimar(
     seed: int = 42,
     apply_filter: bool = True,
     filter_thresholds: Optional[Dict[str, float]] = None,
-) -> Tuple[MOSFETDataset, MOSFETDataset, MOSFETDataset, BSIMARNormalizer]:
+    exclude_techs: Optional[Set[str]] = None,
+    device_type: Optional[str] = None,
+) -> Tuple[MOSFETDataset, MOSFETDataset, MOSFETDataset, BSIMARNormalizer,
+           Optional[np.ndarray]]:
     """Load .npz, optionally filter tiny targets, split, normalize.
 
     Args:
         norm_mode: ``'asinh'`` (BSIMAR default) or ``'zscore'`` (DirectNet).
         apply_filter: Drop samples where any target falls below its floor.
+        exclude_techs: Tech names to exclude entirely (e.g., {"asap7"}).
+            Requires ``device_type`` to be set.
+        device_type: "nmos" or "pmos" (needed for tech labeling when
+            ``exclude_techs`` is set).
+
+    Returns:
+        (train_ds, val_ds, test_ds, normalizer, test_tech_codes).
+        ``test_tech_codes`` is non-None only when ``exclude_techs`` is set
+        or ``device_type`` is provided (used for per-tech reporting).
     """
     assert norm_mode in ("asinh", "zscore"), \
         f"Unknown norm_mode: {norm_mode!r}"
@@ -109,6 +121,31 @@ def load_and_split_bsimar(
         pct = 100 * (n_before - n_after) / n_before if n_before > 0 else 0
         print(f"  Data filtering: {n_before} -> {n_after} "
               f"({n_before - n_after} removed, {pct:.1f}%)")
+
+    # Tech-variant labeling (for exclude_techs and per-tech reporting).
+    tech_codes: Optional[np.ndarray] = None
+    if device_type is not None:
+        from bsimar.eval.loo_labels import get_or_build_tech_variant_labels
+        tech_codes = get_or_build_tech_variant_labels(
+            data_path, device_type, verbose=True)
+        if apply_filter:
+            tech_codes = tech_codes[keep]
+
+    if exclude_techs and tech_codes is not None:
+        from bsimar.config import TECH_VARIANT_CODES
+        exclude_code_set = {
+            code for (tech, _), code in TECH_VARIANT_CODES.items()
+            if tech in exclude_techs
+        }
+        keep_mask = np.array(
+            [int(c) not in exclude_code_set for c in tech_codes], dtype=bool)
+        n_total = len(keep_mask)
+        inputs = inputs[keep_mask]
+        geometry = geometry[keep_mask]
+        outputs = outputs[keep_mask]
+        tech_codes = tech_codes[keep_mask]
+        print(f"  Excluded techs {exclude_techs}: "
+              f"{keep_mask.sum()}/{n_total} samples kept")
 
     rng = np.random.default_rng(seed)
     idx = rng.permutation(len(outputs))
@@ -131,10 +168,12 @@ def load_and_split_bsimar(
     val_ds = _make_ds(val_idx)
     test_ds = _make_ds(test_idx)
 
+    test_tech_codes = tech_codes[test_idx] if tech_codes is not None else None
+
     print(f"  Dataset split: train={len(train_ds)}, "
           f"val={len(val_ds)}, test={len(test_ds)}")
 
-    return train_ds, val_ds, test_ds, normalizer
+    return train_ds, val_ds, test_ds, normalizer, test_tech_codes
 
 
 # ── v4 Dataset (with tech codes) ────────────────────────────────────────────

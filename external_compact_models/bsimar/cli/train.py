@@ -36,7 +36,10 @@ from bsimar.config import (
     DirectNetConfig, TransformerConfig,
 )
 from bsimar.utils.seed import set_seed
-from bsimar.training.trainer import train_directnet, train_transformer, train_transformer_v4
+from bsimar.training.trainer import (
+    train_directnet, train_directnet_v4,
+    train_transformer, train_transformer_v4,
+)
 
 
 # ── DirectNet subcommand ─────────────────────────────────────────────────────
@@ -93,6 +96,11 @@ def _run_direct(args: argparse.Namespace) -> None:
         resume = args.resume
 
     device_str = "cuda" if args.cuda and torch.cuda.is_available() else "cpu"
+
+    exclude = None
+    if args.exclude_techs:
+        exclude = set(t.strip().lower() for t in args.exclude_techs.split(","))
+
     train_directnet(
         str(data_path), config, device_str,
         save_prefix=save_prefix,
@@ -102,6 +110,48 @@ def _run_direct(args: argparse.Namespace) -> None:
         w_consistency=args.w_consistency,
         w_cond_consistency=args.w_cond_consistency,
         apply_filter=args.apply_filter,
+        exclude_techs=exclude,
+        device_type=args.device_type,
+    )
+
+
+# ── DirectNet v4 subcommand ──────────────────────────────────────────────────
+
+def _run_direct_v4(args: argparse.Namespace) -> None:
+    data_path = (Path(args.data) if args.data
+                 else DATA_DIR / f"universal_{args.device_type}.npz")
+    save_prefix = f"v4_dn_universal_{args.device_type}"
+    if args.exp_name:
+        save_prefix = f"{args.exp_name}_{args.device_type}"
+
+    if not data_path.exists():
+        print(f"Dataset not found: {data_path}")
+        sys.exit(1)
+
+    config = DirectNetConfig(
+        max_epochs=args.epochs,
+        batch_size=args.batch_size,
+        lr=args.lr,
+        trunk_hidden=args.hidden,
+        trunk_layers=args.layers,
+        patience=args.patience,
+    )
+
+    device_str = "cuda" if torch.cuda.is_available() else "cpu"
+
+    exclude = None
+    if args.exclude_techs:
+        exclude = set(t.strip().lower() for t in args.exclude_techs.split(","))
+
+    train_directnet_v4(
+        str(data_path),
+        device_type=args.device_type,
+        config=config,
+        device_str=device_str,
+        save_prefix=save_prefix,
+        exclude_techs=exclude,
+        num_tech_codes=args.num_tech_codes,
+        p_unknown=args.p_unknown,
     )
 
 
@@ -200,10 +250,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(
         description="BSIMAR unified training CLI "
                     "(DirectNet baseline or BSIMAR v3 Transformer)")
-    parser.add_argument("--model", choices=["direct", "transformer", "transformer-v4"],
+    parser.add_argument("--model",
+                        choices=["direct", "direct-v4",
+                                 "transformer", "transformer-v4"],
                         default="transformer",
                         help="Which architecture to train "
                              "(direct=DirectNet baseline, "
+                             "direct-v4=DirectNet v4 tech-code, "
                              "transformer=BSIMAR v3, "
                              "transformer-v4=BSIMAR v4 tech-code)")
 
@@ -271,10 +324,12 @@ def main() -> None:
                              "after the cosine schedule. Default 5 "
                              "(empirically sufficient).")
 
-    # v4-specific flags
+    # Shared data exclusion flag (used by both DirectNet and v4 Transformer)
     parser.add_argument("--exclude-techs", type=str, default=None,
-                        help="[transformer-v4] Comma-separated tech names "
-                             "to exclude entirely (e.g., 'asap7')")
+                        help="Comma-separated tech names to exclude "
+                             "entirely (e.g., 'asap7')")
+
+    # v4-specific flags
     parser.add_argument("--num-tech-codes", type=int, default=18,
                         help="[transformer-v4] Tech embedding vocabulary size "
                              "(default 18 = 17 TSMC + 1 UNKNOWN)")
@@ -293,6 +348,8 @@ def main() -> None:
 
     if args.model == "direct":
         _run_direct(args)
+    elif args.model == "direct-v4":
+        _run_direct_v4(args)
     elif args.model == "transformer-v4":
         _run_transformer_v4(args)
     else:
