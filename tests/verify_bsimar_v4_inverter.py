@@ -25,10 +25,12 @@ import matplotlib.pyplot as plt
 
 # ── Path bootstrap ──────────────────────────────────────────────────────────
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
-sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG"))
+# PyCMG paths first (will be pushed down), then PROJECT_ROOT last (stays at [0])
+# so PROJECT_ROOT/tests/ is found before PyCMG/tests/
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tests"))
+sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG"))
+sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
+sys.path.insert(0, str(PROJECT_ROOT))
 
 from bsimar.config import (
     TECH_CONFIGS, NNTechConfig, CHECKPOINT_DIR, OSDI_PATH as _OSDI_PATH,
@@ -106,16 +108,12 @@ def create_pycmg_instance(
     L = tech.l_nmos if device_type == "nmos" else tech.l_pmos
 
     modelcard_path = _resolve_tsmc_modelcard(tech, pdk_device, L)
-    # Derive model_name from PDK device name
-    prefix, rest = pdk_device.split("_", 1)
-    vt = rest.replace("_mac", "")
-    model_name = ("nmos_" if prefix == "nch" else "pmos_") + vt
-
+    # Naive modelcards use the PDK device name (e.g. nch_svt_mac) as model name
     pycmg_model = Model(
         osdi_path=str(OSDI_PATH),
         modelcard_path=str(modelcard_path),
-        model_name=model_name,
-        model_card_name=model_name,
+        model_name=pdk_device,
+        model_card_name=pdk_device,
     )
     return Instance(
         model=pycmg_model,
@@ -155,20 +153,46 @@ def create_bsimar_instance(
     )
 
 
+# ── DirectNet v4 helpers ──────────────────────────────────────────────────
+
+def create_directnet_instance(
+    tech: TestTechConfig, device_type: str,
+) -> Any:
+    """Create DirectNet v4 MOSFET instance for inference."""
+    from pycircuitsim.models.mosfet_directnet import NMOS_NN, PMOS_NN
+
+    model_path = CHECKPOINT_DIR / f"v4_dn_universal_{device_type}_best.pt"
+    if not model_path.exists():
+        raise FileNotFoundError(
+            f"No DirectNet v4 checkpoint for {device_type}: {model_path.name}")
+
+    L = tech.l_nmos if device_type == "nmos" else tech.l_pmos
+    tech_code = tech_variant_to_code(tech.tech_key, tech.variant)
+
+    nodes = ["drain", "gate", "source", "bulk"]
+    cls = NMOS_NN if device_type == "nmos" else PMOS_NN
+    return cls(
+        name=f"m_{device_type}_dn", nodes=nodes, model_path=str(model_path),
+        L=L, NFIN=float(tech.nfin), tech_code=tech_code,
+    )
+
+
 # ── Test 1 & 2: Single-device DC sweep ─────────────────────────────────────
 
 def test_dc_sweep(
     tech: TestTechConfig,
     device_type: str,
     n_points: int = 71,
-) -> Tuple[float, np.ndarray, np.ndarray, np.ndarray]:
-    """Compare BSIMAR v4 vs PyCMG for a single-device DC sweep.
+) -> Tuple[float, float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Compare BSIMAR v4 + DirectNet v4 vs PyCMG for a single-device DC sweep.
 
-    Returns: (nrmse_pct, vgs_arr, id_cmg_arr, id_bsimar_arr)
+    Returns: (nrmse_ar_pct, nrmse_dn_pct, vgs_arr, id_cmg_arr,
+              id_bsimar_arr, id_directnet_arr)
     """
     vdd = tech.vdd
     cmg = create_pycmg_instance(tech, device_type)
     bsimar = create_bsimar_instance(tech, device_type)
+    directnet = create_directnet_instance(tech, device_type)
 
     if device_type == "nmos":
         vgs_sweep = np.linspace(0, vdd, n_points)
@@ -180,6 +204,7 @@ def test_dc_sweep(
     vgs_ok: List[float] = []
     id_cmg: List[float] = []
     id_bsimar: List[float] = []
+    id_dn: List[float] = []
 
     for vgs in vgs_sweep:
         try:
@@ -189,21 +214,31 @@ def test_dc_sweep(
             continue
 
         voltages = {"drain": vds, "gate": vgs, "source": 0.0, "bulk": 0.0}
+
         bsimar.clear_cache()
         if device_type == "nmos":
             i_bsimar = -bsimar.calculate_current(voltages)
         else:
             i_bsimar = bsimar.calculate_current(voltages)
 
+        directnet.clear_cache()
+        if device_type == "nmos":
+            i_directnet = -directnet.calculate_current(voltages)
+        else:
+            i_directnet = directnet.calculate_current(voltages)
+
         vgs_ok.append(vgs)
         id_cmg.append(i_cmg)
         id_bsimar.append(i_bsimar)
+        id_dn.append(i_directnet)
 
     vgs_arr = np.array(vgs_ok)
     cmg_arr = np.array(id_cmg)
     bsimar_arr = np.array(id_bsimar)
+    dn_arr = np.array(id_dn)
 
-    return nrmse(bsimar_arr, cmg_arr), vgs_arr, cmg_arr, bsimar_arr
+    return (nrmse(bsimar_arr, cmg_arr), nrmse(dn_arr, cmg_arr),
+            vgs_arr, cmg_arr, bsimar_arr, dn_arr)
 
 
 # ── Test 3: Inverter VTC ───────────────────────────────────────────────────
@@ -249,10 +284,11 @@ def _solve_inverter(
 
 def test_inverter_vtc(
     tech: TestTechConfig, n_points: int = 71,
-) -> Tuple[float, np.ndarray, np.ndarray, np.ndarray]:
-    """Compare BSIMAR v4 vs PyCMG inverter VTC.
+) -> Tuple[float, float, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Compare BSIMAR v4 + DirectNet v4 vs PyCMG inverter VTC.
 
-    Returns: (nrmse_pct, vin_arr, vout_cmg_arr, vout_bsimar_arr)
+    Returns: (nrmse_ar_pct, nrmse_dn_pct, vin_arr, vout_cmg_arr,
+              vout_bsimar_arr, vout_dn_arr)
     """
     vdd = tech.vdd
     vin_sweep = np.linspace(0, vdd, n_points)
@@ -261,25 +297,32 @@ def test_inverter_vtc(
     pmos_cmg = create_pycmg_instance(tech, "pmos")
     nmos_bs = create_bsimar_instance(tech, "nmos")
     pmos_bs = create_bsimar_instance(tech, "pmos")
+    nmos_dn = create_directnet_instance(tech, "nmos")
+    pmos_dn = create_directnet_instance(tech, "pmos")
 
     vin_ok: List[float] = []
     vout_cmg: List[float] = []
     vout_bs: List[float] = []
+    vout_dn: List[float] = []
 
     for vin in vin_sweep:
         vc = _solve_inverter(nmos_cmg, pmos_cmg, vin, vdd, is_pycmg=True)
         vb = _solve_inverter(nmos_bs, pmos_bs, vin, vdd, is_pycmg=False)
-        if vc is None or vb is None:
+        vd = _solve_inverter(nmos_dn, pmos_dn, vin, vdd, is_pycmg=False)
+        if vc is None or vb is None or vd is None:
             continue
         vin_ok.append(vin)
         vout_cmg.append(vc)
         vout_bs.append(vb)
+        vout_dn.append(vd)
 
     vin_arr = np.array(vin_ok)
     cmg_arr = np.array(vout_cmg)
     bs_arr = np.array(vout_bs)
+    dn_arr = np.array(vout_dn)
 
-    return nrmse(bs_arr, cmg_arr), vin_arr, cmg_arr, bs_arr
+    return (nrmse(bs_arr, cmg_arr), nrmse(dn_arr, cmg_arr),
+            vin_arr, cmg_arr, bs_arr, dn_arr)
 
 
 # ── Test 4: Inverter transient ─────────────────────────────────────────────
@@ -295,15 +338,11 @@ def _create_baked_modelcard(tech: TestTechConfig) -> Path:
     merged = results_dir / "merged_modelcard.lib"
     merged.write_text(nmos_mc.read_text() + "\n" + pmos_mc.read_text())
 
-    prefix_n, rest_n = tech.nmos_pdk.split("_", 1)
-    nmos_model_name = ("nmos_" if prefix_n == "nch" else "pmos_") + rest_n.replace("_mac", "")
-    prefix_p, rest_p = tech.pmos_pdk.split("_", 1)
-    pmos_model_name = ("nmos_" if prefix_p == "nch" else "pmos_") + rest_p.replace("_mac", "")
-
+    # Naive modelcards use PDK device names (nch_svt_mac, pch_svt_mac)
     baked = results_dir / "baked_modelcard.lib"
-    bake_inst_params(merged, baked, nmos_model_name,
+    bake_inst_params(merged, baked, tech.nmos_pdk,
                      {"L": tech.l_nmos, "NFIN": float(tech.nfin), "DEVTYPE": 1})
-    bake_inst_params(baked, baked, pmos_model_name,
+    bake_inst_params(baked, baked, tech.pmos_pdk,
                      {"L": tech.l_pmos, "NFIN": float(tech.nfin), "DEVTYPE": 0})
     return baked
 
@@ -314,10 +353,9 @@ def run_ngspice_tran(tech: TestTechConfig) -> Dict[str, np.ndarray]:
     results_dir.mkdir(parents=True, exist_ok=True)
     baked = _create_baked_modelcard(tech)
 
-    prefix_n, rest_n = tech.nmos_pdk.split("_", 1)
-    nmos_model = ("nmos_" if prefix_n == "nch" else "pmos_") + rest_n.replace("_mac", "")
-    prefix_p, rest_p = tech.pmos_pdk.split("_", 1)
-    pmos_model = ("nmos_" if prefix_p == "nch" else "pmos_") + rest_p.replace("_mac", "")
+    # Use PDK device names for NGSPICE (matches baked modelcard)
+    nmos_model = tech.nmos_pdk
+    pmos_model = tech.pmos_pdk
 
     per = TR + PW + TF + max(PW, 1e-9)
     netlist = results_dir / "ngspice_tran.cir"
@@ -365,8 +403,8 @@ wrdata {csv_path} v(out) v(in)
     return {"time": data[:, 0], "v(out)": data[:, 1], "v(in)": data[:, 3]}
 
 
-def run_bsimar_tran(tech: TestTechConfig) -> Dict[str, np.ndarray]:
-    """Run PyCircuitSim transient with LEVEL=74 (BSIMAR v4)."""
+def _run_nn_tran(tech: TestTechConfig, level: int) -> Dict[str, np.ndarray]:
+    """Run PyCircuitSim transient with LEVEL=73 or 74."""
     import logging
     from pycircuitsim.parser import Parser
     from pycircuitsim.solver import DCSolver, TransientSolver
@@ -377,23 +415,25 @@ def run_bsimar_tran(tech: TestTechConfig) -> Dict[str, np.ndarray]:
     l_nmos_nm = tech.l_nmos * 1e9
     l_pmos_nm = tech.l_pmos * 1e9
     per = TR + PW + TF + max(PW, 1e-9)
+    label = "directnet_v4" if level == 73 else "bsimar_v4"
 
-    netlist_path = results_dir / "bsimar_v4_tran.sp"
+    netlist_path = results_dir / f"{label}_tran.sp"
     netlist_path.write_text(f"""\
-* BSIMAR v4 Inverter Transient ({tech.name}, LEVEL=74)
+* {label.upper()} Inverter Transient ({tech.name}, LEVEL={level})
 Vdd 1 0 {tech.vdd}
 Vin 2 0 PULSE 0 {tech.vdd} {TD} {TR} {TF} {PW} {per}
 Mp1 3 2 1 1 pmos1 L={l_pmos_nm:.0f}n NFIN={tech.nfin}
 Mn1 3 2 0 0 nmos1 L={l_nmos_nm:.0f}n NFIN={tech.nfin}
 Cload 3 0 {CLOAD}
 .ic V(3)={tech.vdd}
-.model nmos1 NMOS (LEVEL=74 TECH={tech.tech_key} VT={tech.variant})
-.model pmos1 PMOS (LEVEL=74 TECH={tech.tech_key} VT={tech.variant})
+.model nmos1 NMOS (LEVEL={level} TECH={tech.tech_key} VT={tech.variant})
+.model pmos1 PMOS (LEVEL={level} TECH={tech.tech_key} VT={tech.variant})
 .tran {TSTEP} {TSTOP}
 .end
 """)
 
-    print(f"  [BSIMAR] Running {tech.name} transient...")
+    label = "DirectNet" if level == 73 else "BSIMAR"
+    print(f"  [{label}] Running {tech.name} transient...")
     logging.disable(logging.CRITICAL)
     try:
         parser = Parser()
@@ -427,28 +467,52 @@ Cload 3 0 {CLOAD}
         logging.disable(logging.NOTSET)
 
     r = {"time": results["time"], "v(out)": results["3"], "v(in)": results["2"]}
-    print(f"  [BSIMAR] {len(r['time'])} pts, V(out) [{r['v(out)'].min():.4f}, {r['v(out)'].max():.4f}]V")
+    print(f"  [{label}] {len(r['time'])} pts, V(out) [{r['v(out)'].min():.4f}, {r['v(out)'].max():.4f}]V")
     return r
+
+
+def run_bsimar_tran(tech: TestTechConfig) -> Dict[str, np.ndarray]:
+    """Run PyCircuitSim transient with LEVEL=74 (BSIMAR v4)."""
+    return _run_nn_tran(tech, level=74)
+
+
+def run_directnet_tran(tech: TestTechConfig) -> Dict[str, np.ndarray]:
+    """Run PyCircuitSim transient with LEVEL=73 (DirectNet v4)."""
+    return _run_nn_tran(tech, level=73)
+
+
+def _compute_tran_nrmse(
+    ng: Dict[str, np.ndarray], nn: Dict[str, np.ndarray],
+) -> float:
+    """Compute NRMSE between NGSPICE and NN transient waveforms."""
+    t_max = min(ng["time"][-1], nn["time"][-1])
+    t_common = np.arange(STARTUP_EXCLUSION, t_max, TSTEP)
+    ng_vout = np.interp(t_common, ng["time"], ng["v(out)"])
+    nn_vout = np.interp(t_common, nn["time"], nn["v(out)"])
+    return nrmse(nn_vout, ng_vout)
 
 
 def test_transient(
     tech: TestTechConfig,
-) -> Tuple[float, Dict[str, np.ndarray], Dict[str, np.ndarray]]:
-    """Compare BSIMAR v4 vs NGSPICE transient.
+) -> Tuple[float, float, Dict[str, np.ndarray], Dict[str, np.ndarray], Optional[Dict[str, np.ndarray]]]:
+    """Compare BSIMAR v4 + DirectNet v4 vs NGSPICE transient.
 
-    Returns: (nrmse_pct, ng_data, bs_data)
+    Returns: (nrmse_ar_pct, nrmse_dn_pct, ng_data, bs_data, dn_data)
     """
     ng = run_ngspice_tran(tech)
     bs = run_bsimar_tran(tech)
+    err_ar = _compute_tran_nrmse(ng, bs)
 
-    # Interpolate to common grid (post-settling)
-    t_max = min(ng["time"][-1], bs["time"][-1])
-    t_common = np.arange(STARTUP_EXCLUSION, t_max, TSTEP)
-    ng_vout = np.interp(t_common, ng["time"], ng["v(out)"])
-    bs_vout = np.interp(t_common, bs["time"], bs["v(out)"])
+    # DirectNet v4 transient (may fail if model quality is insufficient)
+    dn_data: Optional[Dict[str, np.ndarray]] = None
+    err_dn = float("nan")
+    try:
+        dn_data = run_directnet_tran(tech)
+        err_dn = _compute_tran_nrmse(ng, dn_data)
+    except Exception as e:
+        print(f"  [DirectNet] Transient FAILED: {e}")
 
-    err = nrmse(bs_vout, ng_vout)
-    return err, ng, bs
+    return err_ar, err_dn, ng, bs, dn_data
 
 
 # ── Plotting ────────────────────────────────────────────────────────────────
@@ -562,16 +626,20 @@ def main() -> int:
     tech_dir = RESULTS_DIR / tech.name
     tech_dir.mkdir(parents=True, exist_ok=True)
 
-    # Check v4 checkpoints
+    # Check v4 checkpoints (both models)
     for dt in ("nmos", "pmos"):
         v4_phys = CHECKPOINT_DIR / f"v4_universal_{dt}_best.phys.pt"
         v4_plain = CHECKPOINT_DIR / f"v4_universal_{dt}_best.pt"
         if not v4_phys.exists() and not v4_plain.exists():
-            print(f"ERROR: No v4 checkpoint for {dt}: {v4_phys.name} / {v4_plain.name}")
+            print(f"ERROR: No BSIMAR v4 checkpoint for {dt}: {v4_phys.name} / {v4_plain.name}")
             return 1
+        dn_ckpt = CHECKPOINT_DIR / f"v4_dn_universal_{dt}_best.pt"
+        if not dn_ckpt.exists():
+            print(f"WARNING: No DirectNet v4 checkpoint for {dt}: {dn_ckpt.name}")
 
     print("=" * 72)
-    print(f"BSIMAR v4 Inverter Verification: {tech.name} {tech.variant.upper()}")
+    print(f"v4 Inverter Verification: {tech.name} {tech.variant.upper()}")
+    print(f"  BSIMAR v4 (LEVEL=74) + DirectNet v4 (LEVEL=73)")
     print(f"  VDD={tech.vdd}V  L_n={tech.l_nmos*1e9:.0f}nm  L_p={tech.l_pmos*1e9:.0f}nm  NFIN={tech.nfin}")
     tech_code_n = tech_variant_to_code(tech.tech_key, tech.variant)
     print(f"  Tech code: {tech_code_n}")
@@ -582,42 +650,43 @@ def main() -> int:
     # Test 1: NMOS DC
     print(f"\n--- Test 1: NMOS DC Sweep ---")
     t0 = time.time()
-    nrmse_n, vgs_n, id_cmg_n, id_bs_n = test_dc_sweep(tech, "nmos")
+    nrmse_ar_n, nrmse_dn_n, vgs_n, id_cmg_n, id_bs_n, id_dn_n = test_dc_sweep(tech, "nmos")
     dt = time.time() - t0
-    status = "PASS" if nrmse_n < DC_NRMSE_THRESHOLD else "FAIL"
-    print(f"  NRMSE={nrmse_n:.2f}%  [{dt:.1f}s]  {status}")
-    results.append(TestResult("NMOS DC", nrmse_n, DC_NRMSE_THRESHOLD, dt))
-    plot_dc(tech, "nmos", vgs_n, id_cmg_n, id_bs_n, nrmse_n, tech_dir / "nmos_dc.png")
+    print(f"  AR NRMSE={nrmse_ar_n:.2f}%  DN NRMSE={nrmse_dn_n:.2f}%  [{dt:.1f}s]")
+    results.append(TestResult("NMOS DC (AR)", nrmse_ar_n, DC_NRMSE_THRESHOLD, dt))
+    results.append(TestResult("NMOS DC (DN)", nrmse_dn_n, DC_NRMSE_THRESHOLD, dt))
+    plot_dc(tech, "nmos", vgs_n, id_cmg_n, id_bs_n, nrmse_ar_n, tech_dir / "nmos_dc.png")
 
     # Test 2: PMOS DC
     print(f"\n--- Test 2: PMOS DC Sweep ---")
     t0 = time.time()
-    nrmse_p, vgs_p, id_cmg_p, id_bs_p = test_dc_sweep(tech, "pmos")
+    nrmse_ar_p, nrmse_dn_p, vgs_p, id_cmg_p, id_bs_p, id_dn_p = test_dc_sweep(tech, "pmos")
     dt = time.time() - t0
-    status = "PASS" if nrmse_p < DC_NRMSE_THRESHOLD else "FAIL"
-    print(f"  NRMSE={nrmse_p:.2f}%  [{dt:.1f}s]  {status}")
-    results.append(TestResult("PMOS DC", nrmse_p, DC_NRMSE_THRESHOLD, dt))
-    plot_dc(tech, "pmos", vgs_p, id_cmg_p, id_bs_p, nrmse_p, tech_dir / "pmos_dc.png")
+    print(f"  AR NRMSE={nrmse_ar_p:.2f}%  DN NRMSE={nrmse_dn_p:.2f}%  [{dt:.1f}s]")
+    results.append(TestResult("PMOS DC (AR)", nrmse_ar_p, DC_NRMSE_THRESHOLD, dt))
+    results.append(TestResult("PMOS DC (DN)", nrmse_dn_p, DC_NRMSE_THRESHOLD, dt))
+    plot_dc(tech, "pmos", vgs_p, id_cmg_p, id_bs_p, nrmse_ar_p, tech_dir / "pmos_dc.png")
 
     # Test 3: Inverter VTC
     print(f"\n--- Test 3: Inverter VTC ---")
     t0 = time.time()
-    nrmse_vtc, vin_vtc, vout_cmg, vout_bs = test_inverter_vtc(tech)
+    nrmse_ar_vtc, nrmse_dn_vtc, vin_vtc, vout_cmg, vout_bs, vout_dn = test_inverter_vtc(tech)
     dt = time.time() - t0
-    status = "PASS" if nrmse_vtc < VTC_NRMSE_THRESHOLD else "FAIL"
-    print(f"  NRMSE={nrmse_vtc:.2f}%  [{dt:.1f}s]  {status}")
-    results.append(TestResult("Inverter VTC", nrmse_vtc, VTC_NRMSE_THRESHOLD, dt))
-    plot_vtc(tech, vin_vtc, vout_cmg, vout_bs, nrmse_vtc, tech_dir / "inverter_vtc.png")
+    print(f"  AR NRMSE={nrmse_ar_vtc:.2f}%  DN NRMSE={nrmse_dn_vtc:.2f}%  [{dt:.1f}s]")
+    results.append(TestResult("VTC (AR)", nrmse_ar_vtc, VTC_NRMSE_THRESHOLD, dt))
+    results.append(TestResult("VTC (DN)", nrmse_dn_vtc, VTC_NRMSE_THRESHOLD, dt))
+    plot_vtc(tech, vin_vtc, vout_cmg, vout_bs, nrmse_ar_vtc, tech_dir / "inverter_vtc.png")
 
     # Test 4: Inverter transient
     print(f"\n--- Test 4: Inverter Transient ---")
     t0 = time.time()
-    nrmse_tran, ng_data, bs_data = test_transient(tech)
+    nrmse_ar_tran, nrmse_dn_tran, ng_data, bs_data, dn_data = test_transient(tech)
     dt = time.time() - t0
-    status = "PASS" if nrmse_tran < TRAN_NRMSE_THRESHOLD else "FAIL"
-    print(f"  NRMSE={nrmse_tran:.2f}%  [{dt:.1f}s]  {status}")
-    results.append(TestResult("Transient", nrmse_tran, TRAN_NRMSE_THRESHOLD, dt))
-    plot_transient(tech, ng_data, bs_data, nrmse_tran, tech_dir / "transient.png")
+    print(f"  AR NRMSE={nrmse_ar_tran:.2f}%  DN NRMSE={nrmse_dn_tran:.2f}%  [{dt:.1f}s]")
+    results.append(TestResult("Transient (AR)", nrmse_ar_tran, TRAN_NRMSE_THRESHOLD, dt))
+    if not np.isnan(nrmse_dn_tran):
+        results.append(TestResult("Transient (DN)", nrmse_dn_tran, TRAN_NRMSE_THRESHOLD, dt))
+    plot_transient(tech, ng_data, bs_data, nrmse_ar_tran, tech_dir / "transient.png")
 
     # Summary
     print(f"\n{'='*72}")

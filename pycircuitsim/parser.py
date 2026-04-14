@@ -571,7 +571,7 @@ class Parser:
                 raise ValueError(f"Unknown MOSFET model type: {model_type}")
 
         elif level == 73:
-            # NN-based compact model
+            # NN-based compact model (v3 or v4)
             if NFIN is None:
                 raise ValueError(f"NN MOSFET (LEVEL=73) missing NFIN parameter: {line}")
 
@@ -588,76 +588,82 @@ class Parser:
             # Resolve model path and process params from .model params
             from bsimar.config import (
                 CHECKPOINT_DIR, TECH_CONFIGS, PROCESS_PARAM_NAMES,
+                tech_variant_to_code, UNKNOWN_CODE_ID,
             )
             nn_model_path = model_params.get('MODEL_PATH', None)
             nn_tech = model_params.get('TECH', None)
             nn_vt = model_params.get('VT', None)  # Device variant: svt, lvt, rvt
 
-            # Resolve process parameters (7 params for universal model)
-            # Priority: direct params in netlist > TECH+VT lookup > default variant
             tech_key = (nn_tech or "asap7").lower()
             device_key = model_type.lower()
-            nn_process_params = None
-            nn_phig = None
 
-            # Check for direct process param values in netlist
-            direct_params = {}
-            for pname in PROCESS_PARAM_NAMES:
-                val_str = model_params.get(pname, None)
-                if val_str is not None:
-                    direct_params[pname.lower()] = float(val_str)
-
-            if direct_params:
-                # Direct params specified — use them (may be partial)
-                nn_process_params = direct_params
-                nn_phig = direct_params.get("phig", None)
-            elif tech_key in TECH_CONFIGS:
-                tech_cfg = TECH_CONFIGS[tech_key]
-                if nn_vt is not None:
-                    vt_lower = nn_vt.lower()
-                    if vt_lower in tech_cfg.variants:
-                        pp = tech_cfg.variants[vt_lower].get_process_params(device_key)
-                        nn_process_params = pp.as_dict()
-                        nn_phig = pp.phig
-                    else:
-                        raise ValueError(
-                            f"Unknown VT={nn_vt} for {tech_key}. "
-                            f"Available: {list(tech_cfg.variants.keys())}")
-                elif tech_cfg.default_variant and tech_cfg.variants:
-                    pp = tech_cfg.variants[tech_cfg.default_variant].get_process_params(device_key)
-                    nn_process_params = pp.as_dict()
-                    nn_phig = pp.phig
-
-            # Resolve model path: prefer universal > per-tech > default
+            # Resolve model path: v4 universal > v3 universal > per-tech
             if nn_model_path is None:
-                universal_path = CHECKPOINT_DIR / f"universal_{device_key}_best.pt"
-                if universal_path.exists():
-                    nn_model_path = str(universal_path)
+                v4_path = CHECKPOINT_DIR / f"v4_dn_universal_{device_key}_best.pt"
+                v3_path = CHECKPOINT_DIR / f"universal_{device_key}_best.pt"
+                if v4_path.exists():
+                    nn_model_path = str(v4_path)
+                elif v3_path.exists():
+                    nn_model_path = str(v3_path)
                 elif nn_tech and nn_tech.lower() != 'asap7':
                     nn_model_path = str(CHECKPOINT_DIR / f"{nn_tech.lower()}_{device_key}_best.pt")
                 else:
                     nn_model_path = str(CHECKPOINT_DIR / f"{device_key}_best.pt")
 
+            # Detect v4 from checkpoint (tech_embedding.weight present)
+            import torch as _torch
+            _state = _torch.load(
+                nn_model_path, weights_only=True, map_location="cpu")
+            _is_v4 = "tech_embedding.weight" in _state
+            del _state
+
+            nn_tech_code = None
+            nn_process_params = None
+            nn_phig = None
+
+            if _is_v4:
+                # v4: resolve tech code from TECH+VT, no process params
+                nn_tech_code = tech_variant_to_code(
+                    tech_key, (nn_vt or "svt").lower())
+            else:
+                # v3: resolve process parameters
+                direct_params = {}
+                for pname in PROCESS_PARAM_NAMES:
+                    val_str = model_params.get(pname, None)
+                    if val_str is not None:
+                        direct_params[pname.lower()] = float(val_str)
+
+                if direct_params:
+                    nn_process_params = direct_params
+                    nn_phig = direct_params.get("phig", None)
+                elif tech_key in TECH_CONFIGS:
+                    tech_cfg = TECH_CONFIGS[tech_key]
+                    if nn_vt is not None:
+                        vt_lower = nn_vt.lower()
+                        if vt_lower in tech_cfg.variants:
+                            pp = tech_cfg.variants[vt_lower].get_process_params(device_key)
+                            nn_process_params = pp.as_dict()
+                            nn_phig = pp.phig
+                        else:
+                            raise ValueError(
+                                f"Unknown VT={nn_vt} for {tech_key}. "
+                                f"Available: {list(tech_cfg.variants.keys())}")
+                    elif tech_cfg.default_variant and tech_cfg.variants:
+                        pp = tech_cfg.variants[tech_cfg.default_variant].get_process_params(device_key)
+                        nn_process_params = pp.as_dict()
+                        nn_phig = pp.phig
+
+            nn_kwargs = dict(
+                name=name, nodes=nodes, model_path=nn_model_path,
+                L=L, NFIN=NFIN, phig=nn_phig,
+                process_params=nn_process_params,
+                tech_code=nn_tech_code,
+            )
+
             if model_type.upper() == 'NMOS':
-                mosfet = NMOS_NN(
-                    name=name,
-                    nodes=nodes,
-                    model_path=nn_model_path,
-                    L=L,
-                    NFIN=NFIN,
-                    phig=nn_phig,
-                    process_params=nn_process_params,
-                )
+                mosfet = NMOS_NN(**nn_kwargs)
             elif model_type.upper() == 'PMOS':
-                mosfet = PMOS_NN(
-                    name=name,
-                    nodes=nodes,
-                    model_path=nn_model_path,
-                    L=L,
-                    NFIN=NFIN,
-                    phig=nn_phig,
-                    process_params=nn_process_params,
-                )
+                mosfet = PMOS_NN(**nn_kwargs)
             else:
                 raise ValueError(f"Unknown MOSFET model type: {model_type}")
 
@@ -891,18 +897,24 @@ class Parser:
         model_type = parts[1].upper()
 
         # Parse parameters (supports key=value format)
+        # String-valued params (TECH, VT, MODEL_PATH) are stored as-is;
+        # numeric params are converted via _parse_value.
+        _STRING_PARAMS = {"TECH", "VT", "MODEL_PATH"}
         params = {}
         for part in parts[2:]:
             if '=' in part:
                 key, value = part.split('=', 1)
-                key = key.strip()
+                key = key.strip().upper()
                 value = value.strip()
-                if key and value:  # Skip empty keys or values
-                    try:
-                        params[key.upper()] = self._parse_value(value)
-                    except ValueError:
-                        # Skip parameters that can't be parsed (e.g., empty values)
-                        pass
+                if key and value:
+                    if key in _STRING_PARAMS:
+                        params[key] = value
+                    else:
+                        try:
+                            params[key] = self._parse_value(value)
+                        except ValueError:
+                            # Store as string for unknown params
+                            params[key] = value
 
         # Store model definition
         self.models[model_name] = {

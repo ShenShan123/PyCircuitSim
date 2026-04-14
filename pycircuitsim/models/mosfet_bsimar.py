@@ -28,7 +28,7 @@ _BSIMAR_PARENT = PROJECT_ROOT / "external_compact_models"
 if str(_BSIMAR_PARENT) not in sys.path:
     sys.path.insert(0, str(_BSIMAR_PARENT))
 
-from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase
+from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase, _get_nn_device
 from bsimar.models.transformer import TransformerEncoderModel
 from bsimar.config import PROCESS_PARAM_NAMES, UNKNOWN_CODE_ID
 from bsimar.data.normalize import BSIMARNormStats, BSIMAR_COLUMN_ORDER, OUTPUT_COLUMN_ORDER
@@ -153,14 +153,19 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
             self._geo_norm = (geo_raw - self._norm_stats.input_mean[4:7]) / geo_std
         else:
             # v3: geometry + process params
+            # 19-dim models include L as explicit feature; older models don't.
             self._tech_code = None
             self._tech_code_tensor = None
-            n_proc = input_dim - 6
+            has_L = input_dim >= 19
+            n_proc = input_dim - (7 if has_L else 6)
             if self.process_params is not None and n_proc > 1:
                 pp = self.process_params
                 proc_names = PROCESS_PARAM_NAMES[:n_proc]
                 proc_vals = [pp.get(p.lower(), 0.0) for p in proc_names]
-                geo_raw = np.array([nfin_log, self.temperature] + proc_vals)
+                if has_L:
+                    geo_raw = np.array([nfin_log, self.L, self.temperature] + proc_vals)
+                else:
+                    geo_raw = np.array([nfin_log, self.temperature] + proc_vals)
             elif n_proc == 1 and (self.phig is not None or
                                    (self.process_params and "phig" in self.process_params)):
                 phig_val = self.phig or self.process_params["phig"]
@@ -181,6 +186,9 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
         self._v_prev_tran: Optional[Dict[str, float]] = None
         self._i_prev_gate: float = 0.0
         self._i_prev_drain: float = 0.0
+
+        # Move model + constants to GPU (reuse parent's _setup_gpu)
+        self._setup_gpu()
 
     # ── asinh denormalisation ────────────────────────────────────────────
 
@@ -216,8 +224,6 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
         if self._cache_voltages == v_tuple and self._eval_cache is not None:
             return self._eval_cache
 
-        stats = self._norm_stats
-
         # PMOS source-shift
         if self._is_pmos:
             v_shift = v_s
@@ -228,19 +234,14 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
         else:
             v_d_nn, v_g_nn, v_s_nn, v_b_nn = v_d, v_g, v_s, v_b
 
-        # Clamp voltages to training range
-        v_raw = np.array([v_d_nn, v_g_nn, v_s_nn, v_b_nn])
-        v_raw_clamped = np.clip(
-            v_raw, stats.input_min[:4], stats.input_max[:4])
-
-        # Z-score normalise voltage inputs
-        v_std = stats.input_std[:4].copy()
-        v_std[v_std < 1e-12] = 1.0
-        v_norm = (v_raw_clamped - stats.input_mean[:4]) / v_std
-
-        # Assemble input tensor (v3: 19-dim, v4: 7-dim)
-        x_np = np.concatenate([v_norm, self._geo_norm]).astype(np.float32)
-        x = torch.tensor(x_np, dtype=torch.float32).unsqueeze(0)
+        # Clamp & normalise voltages directly on device (GPU if available).
+        v_raw = torch.tensor(
+            [v_d_nn, v_g_nn, v_s_nn, v_b_nn],
+            dtype=torch.float32, device=self._device,
+        )
+        v_clamped = torch.clamp(v_raw, self._v_min, self._v_max)
+        v_norm = (v_clamped - self._v_mean) / self._v_std_t
+        x = torch.cat([v_norm, self._geo_norm_t]).unsqueeze(0)  # (1, input_dim)
 
         # Forward with first-order autograd on voltage slice
         x_v = x[:, :4].requires_grad_(True)
@@ -271,12 +272,14 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
         qs_phys = self._denorm_scalar(out[0, _BSIMAR_IDX_QS].item(), "qs")
         qb_phys = self._denorm_scalar(out[0, _BSIMAR_IDX_QB].item(), "qb")
 
-        # Denormalise autograd conductances
-        gm_phys = self._denorm_derivative(
+        # Denormalise autograd conductances.
+        # Negate gm/gmb: d(id)/d(V) → d(-id)/d(V) = d(i_leaving)/d(V)
+        # to match PyCMG's always-positive gm convention used by the solver.
+        gm_phys = -self._denorm_derivative(
             grad_id[0, 1].item(), "id", in_col=1, phys_val=id_phys)
         gds_phys = self._denorm_derivative(
             grad_id[0, 0].item(), "id", in_col=0, phys_val=id_phys)
-        gmb_phys = self._denorm_derivative(
+        gmb_phys = -self._denorm_derivative(
             grad_id[0, 3].item(), "id", in_col=3, phys_val=id_phys)
 
         # Denormalise autograd capacitances

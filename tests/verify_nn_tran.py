@@ -1,18 +1,23 @@
 #!/usr/bin/env python3
 """
-NN compact model (LEVEL=73) transient verification: PyCircuitSim vs NGSPICE.
+NN compact model (LEVEL=73 DirectNet v4 + LEVEL=74 BSIMAR v4) transient
+verification: PyCircuitSim vs NGSPICE.
 
-Validates NN-based MOSFET transient simulation across 5 FinFET technologies
-(ASAP7, TSMC5, TSMC7, TSMC12, TSMC16) by comparing CMOS inverter transient
-waveforms against NGSPICE (using BSIM-CMG OSDI as ground truth).
+Validates NN-based MOSFET transient simulation across 4 TSMC FinFET
+technologies by comparing CMOS inverter transient waveforms against
+NGSPICE (using BSIM-CMG OSDI as ground truth).
 
 Strategy:
   1. Baseline transient test per tech (nominal VDD, NFIN=10, Cload=10fF)
-  2. Ground truth = NGSPICE with BSIM-CMG OSDI (same as Phase 7-10)
-  3. PyCircuitSim uses LEVEL=73 (NN) instead of LEVEL=72 (BSIM-CMG)
+  2. Ground truth = NGSPICE with BSIM-CMG OSDI
+  3. PyCircuitSim uses LEVEL=73 (DirectNet v4) and LEVEL=74 (BSIMAR v4)
 
 Acceptance: NRMSE < 15% of Vdd (post-settling).
-  NN DC accuracy is 1-7%, so transient will be worse than BSIM-CMG's 0.2%.
+
+Usage:
+    conda run -n pycircuitsim python tests/verify_nn_tran.py
+    conda run -n pycircuitsim python tests/verify_nn_tran.py --level 73
+    conda run -n pycircuitsim python tests/verify_nn_tran.py --level 74
 """
 from __future__ import annotations
 
@@ -138,15 +143,22 @@ TSTOP = 5e-9         # 5ns total
 # ---------------------------------------------------------------------------
 # Checkpoint existence check
 # ---------------------------------------------------------------------------
-def check_checkpoints(tech: TechConfig) -> bool:
-    """Check if NN checkpoints exist for this technology."""
-    if tech.tech_key == "asap7":
-        nmos_ckpt = CHECKPOINT_DIR / "nmos_best.pt"
-        pmos_ckpt = CHECKPOINT_DIR / "pmos_best.pt"
-    else:
-        nmos_ckpt = CHECKPOINT_DIR / f"{tech.tech_key}_nmos_best.pt"
-        pmos_ckpt = CHECKPOINT_DIR / f"{tech.tech_key}_pmos_best.pt"
-    return nmos_ckpt.exists() and pmos_ckpt.exists()
+def check_checkpoints(level: int = 73) -> bool:
+    """Check if universal NN checkpoints exist for the given LEVEL.
+
+    Args:
+        level: 73 = DirectNet v4, 74 = BSIMAR v4
+    """
+    if level == 73:
+        return ((CHECKPOINT_DIR / "v4_dn_universal_nmos_best.pt").exists() and
+                (CHECKPOINT_DIR / "v4_dn_universal_pmos_best.pt").exists())
+    else:  # 74
+        # Phys-best preferred, plain fallback
+        n_ok = ((CHECKPOINT_DIR / "v4_universal_nmos_best.phys.pt").exists() or
+                (CHECKPOINT_DIR / "v4_universal_nmos_best.pt").exists())
+        p_ok = ((CHECKPOINT_DIR / "v4_universal_pmos_best.phys.pt").exists() or
+                (CHECKPOINT_DIR / "v4_universal_pmos_best.pt").exists())
+        return n_ok and p_ok
 
 
 # ---------------------------------------------------------------------------
@@ -302,61 +314,48 @@ wrdata {csv_path} v(out) v(in)
 # ---------------------------------------------------------------------------
 # PyCircuitSim with LEVEL=73 (NN)
 # ---------------------------------------------------------------------------
-def create_nn_netlist(tech: TechConfig) -> Path:
-    """Create PyCircuitSim inverter transient netlist using LEVEL=73."""
+def create_nn_netlist(tech: TechConfig, level: int = 73) -> Path:
+    """Create PyCircuitSim inverter transient netlist using LEVEL=73 or 74."""
     results_dir = get_results_dir(tech)
-    netlist_path = results_dir / "nn_inverter_tran.sp"
+    label = "directnet" if level == 73 else "bsimar"
+    netlist_path = results_dir / f"{label}_inverter_tran.sp"
 
     l_nmos_nm = tech.l_nmos * 1e9
     l_pmos_nm = tech.l_pmos * 1e9
 
     per = TR + PW + TF + max(PW, 1.0e-9)
 
-    # TECH parameter: omit for ASAP7 (default), include for TSMC
-    tech_param = "" if tech.tech_key == "asap7" else f" TECH={tech.tech_key}"
+    # TECH+VT params for TSMC, default for ASAP7
+    if tech.tech_key == "asap7":
+        tech_param = ""
+    else:
+        tech_param = f" TECH={tech.tech_key} VT=svt"
 
     content = f"""\
-* NN CMOS Inverter Transient - PyCircuitSim ({tech.name}, LEVEL=73)
-* Tech={tech.name}, VDD={tech.vdd}V, L_n={l_nmos_nm:.0f}nm, L_p={l_pmos_nm:.0f}nm, NFIN={NFIN}
-
-* Power supply
+* NN CMOS Inverter Transient - PyCircuitSim ({tech.name}, LEVEL={level})
 Vdd 1 0 {tech.vdd}
-
-* Input pulse: 0 -> {tech.vdd}V
 Vin 2 0 PULSE 0 {tech.vdd} {TD} {TR} {TF} {PW} {per}
-
-* PMOS (drain=out, gate=in, source=Vdd, bulk=Vdd)
 Mp1 3 2 1 1 pmos1 L={l_pmos_nm:.0f}n NFIN={NFIN}
-
-* NMOS (drain=out, gate=in, source=GND, bulk=GND)
 Mn1 3 2 0 0 nmos1 L={l_nmos_nm:.0f}n NFIN={NFIN}
-
-* Load capacitance
 Cload 3 0 {CLOAD}
-
-* Initial condition: output starts high
 .ic V(3)={tech.vdd}
-
-* Model definitions (LEVEL=73 NN)
-.model nmos1 NMOS (LEVEL=73{tech_param})
-.model pmos1 PMOS (LEVEL=73{tech_param})
-
-* Transient: {TSTEP*1e12:.0f}ps step, {TSTOP*1e9:.0f}ns total
+.model nmos1 NMOS (LEVEL={level}{tech_param})
+.model pmos1 PMOS (LEVEL={level}{tech_param})
 .tran {TSTEP} {TSTOP}
-
 .end
 """
     netlist_path.write_text(content)
     return netlist_path
 
 
-def run_pycircuitsim_nn(tech: TechConfig) -> Dict[str, np.ndarray]:
-    """Run PyCircuitSim transient simulation with LEVEL=73 (NN)."""
+def run_pycircuitsim_nn(tech: TechConfig, level: int = 73) -> Dict[str, np.ndarray]:
+    """Run PyCircuitSim transient simulation with LEVEL=73 or 74."""
     import logging
     from pycircuitsim.parser import Parser
     from pycircuitsim.solver import DCSolver, TransientSolver
 
-    netlist_path = create_nn_netlist(tech)
+    netlist_path = create_nn_netlist(tech, level=level)
+    label = "DirectNet" if level == 73 else "BSIMAR"
 
     logging.disable(logging.CRITICAL)
     try:
@@ -398,7 +397,7 @@ def run_pycircuitsim_nn(tech: TechConfig) -> Dict[str, np.ndarray]:
         "v(out)": results["3"],
         "v(in)": results["2"],
     }
-    print(f"  [NN-Sim] Done: {len(result['time'])} pts, "
+    print(f"  [{label}] Done: {len(result['time'])} pts, "
           f"V(out) [{result['v(out)'].min():.4f}, {result['v(out)'].max():.4f}]V")
     return result
 
@@ -578,13 +577,17 @@ def plot_summary(results: List[Dict[str, Any]], save_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-def run_single_tech(tech: TechConfig) -> Dict[str, Any]:
+def run_single_tech(
+    tech: TechConfig, level: int = 73,
+) -> Dict[str, Any]:
     """Run NGSPICE + NN transient for one tech and return metrics."""
+    label = "DirectNet" if level == 73 else "BSIMAR"
+
     # 1. NGSPICE reference (BSIM-CMG OSDI)
     ng_data = run_ngspice(tech)
 
-    # 2. PyCircuitSim with LEVEL=73 (NN)
-    nn_data = run_pycircuitsim_nn(tech)
+    # 2. PyCircuitSim with LEVEL=73 or 74
+    nn_data = run_pycircuitsim_nn(tech, level=level)
 
     # 3. Metrics — full range
     _, ng_vout_full, nn_vout_full, _, _ = interpolate_to_common_time(
@@ -605,11 +608,13 @@ def run_single_tech(tech: TechConfig) -> Dict[str, Any]:
 
     # 5. Plot
     results_dir = get_results_dir(tech)
-    plot_path = results_dir / "comparison_tran.png"
+    plot_path = results_dir / f"comparison_tran_L{level}.png"
     plot_comparison(tech, ng_data, nn_data, metrics_full, metrics_post, plot_path)
 
     return {
         "tech": tech,
+        "level": level,
+        "label": label,
         "nrmse_post": nrmse_post,
         "nrmse_full": nrmse_full,
         "max_err_mV": max_err_mV,
@@ -619,13 +624,22 @@ def run_single_tech(tech: TechConfig) -> Dict[str, Any]:
 
 def main() -> int:
     """Run NN transient verification across all technologies."""
+    import argparse
+    parser_cli = argparse.ArgumentParser(description="NN transient verification")
+    parser_cli.add_argument(
+        "--level", type=int, default=0, choices=[0, 73, 74],
+        help="MOSFET level: 73=DirectNet v4, 74=BSIMAR v4, 0=both (default)")
+    args = parser_cli.parse_args()
+
+    levels = [73, 74] if args.level == 0 else [args.level]
+
     RESULTS_BASE.mkdir(parents=True, exist_ok=True)
 
     print("=" * 72)
-    print("NN Compact Model (LEVEL=73) Transient Verification")
+    print("NN Compact Model Transient Verification (v4)")
+    print(f"  Levels: {levels}")
     print(f"  Ground truth: NGSPICE with BSIM-CMG OSDI")
     print(f"  Circuit: CMOS inverter, NFIN={NFIN}, Cload={CLOAD*1e15:.0f}fF")
-    print(f"  Transient: tstep={TSTEP*1e12:.0f}ps, tstop={TSTOP*1e9:.0f}ns")
     print(f"  Acceptance: NRMSE < {NRMSE_THRESHOLD*100:.0f}% of Vdd (post-settling)")
     print("=" * 72)
 
@@ -635,51 +649,58 @@ def main() -> int:
     n_skip = 0
     n_error = 0
 
-    for tech in ALL_TECHS:
-        print(f"\n{'='*60}")
-        print(f"  {tech.name} (VDD={tech.vdd}V, L_n={tech.l_nmos*1e9:.0f}nm, "
-              f"L_p={tech.l_pmos*1e9:.0f}nm)")
-        print(f"{'='*60}")
-
-        # Check checkpoints
-        if not check_checkpoints(tech):
-            print(f"  SKIP: NN checkpoints not found for {tech.name}")
+    for level in levels:
+        label = "DirectNet v4 (LEVEL=73)" if level == 73 else "BSIMAR v4 (LEVEL=74)"
+        if not check_checkpoints(level):
+            print(f"\n  SKIP: {label} checkpoints not found")
             n_skip += 1
             continue
 
-        try:
-            result = run_single_tech(tech)
-            all_results.append(result)
+        for tech in ALL_TECHS:
+            print(f"\n{'='*60}")
+            print(f"  {tech.name} / {label}")
+            print(f"  VDD={tech.vdd}V, L_n={tech.l_nmos*1e9:.0f}nm, "
+                  f"L_p={tech.l_pmos*1e9:.0f}nm")
+            print(f"{'='*60}")
 
-            nrmse_pct = result["nrmse_post"] * 100
-            if result["passed"]:
-                print(f"\n  PASS: NRMSE={nrmse_pct:.2f}% < {NRMSE_THRESHOLD*100:.0f}%, "
-                      f"Max|err|={result['max_err_mV']:.1f}mV")
-                n_pass += 1
-            else:
-                print(f"\n  FAIL: NRMSE={nrmse_pct:.2f}% >= {NRMSE_THRESHOLD*100:.0f}%")
-                n_fail += 1
-        except Exception as exc:
-            print(f"\n  ERROR: {exc}")
-            import traceback
-            traceback.print_exc()
-            all_results.append({"tech": tech, "error": str(exc), "passed": False})
-            n_error += 1
+            try:
+                result = run_single_tech(tech, level=level)
+                all_results.append(result)
+
+                nrmse_pct = result["nrmse_post"] * 100
+                if result["passed"]:
+                    print(f"\n  PASS: NRMSE={nrmse_pct:.2f}% < {NRMSE_THRESHOLD*100:.0f}%, "
+                          f"Max|err|={result['max_err_mV']:.1f}mV")
+                    n_pass += 1
+                else:
+                    print(f"\n  FAIL: NRMSE={nrmse_pct:.2f}% >= {NRMSE_THRESHOLD*100:.0f}%")
+                    n_fail += 1
+            except Exception as exc:
+                print(f"\n  ERROR: {exc}")
+                import traceback
+                traceback.print_exc()
+                all_results.append({
+                    "tech": tech, "level": level,
+                    "label": "DirectNet" if level == 73 else "BSIMAR",
+                    "error": str(exc), "passed": False,
+                })
+                n_error += 1
 
     # Summary
     print(f"\n{'='*72}")
     print("SUMMARY")
     print(f"{'='*72}")
-    print(f"  {'Tech':<8s} | {'VDD':>5s} | {'NRMSE(%)':>10s} | {'MaxErr(mV)':>10s} | {'Status':>6s}")
-    print(f"  {'-'*8} | {'-'*5} | {'-'*10} | {'-'*10} | {'-'*6}")
+    print(f"  {'Model':<12s} {'Tech':<8s} | {'NRMSE(%)':>10s} | {'MaxErr(mV)':>10s} | {'Status':>6s}")
+    print(f"  {'-'*12} {'-'*8} | {'-'*10} | {'-'*10} | {'-'*6}")
 
     for r in all_results:
         tech = r["tech"]
+        label = r.get("label", "NN")
         if "error" in r:
-            print(f"  {tech.name:<8s} | {tech.vdd:>5.2f} | {'ERROR':>10s} | {'---':>10s} | {'FAIL':>6s}")
+            print(f"  {label:<12s} {tech.name:<8s} | {'ERROR':>10s} | {'---':>10s} | {'FAIL':>6s}")
         else:
             status = "PASS" if r["passed"] else "FAIL"
-            print(f"  {tech.name:<8s} | {tech.vdd:>5.2f} | "
+            print(f"  {label:<12s} {tech.name:<8s} | "
                   f"{r['nrmse_post']*100:>10.2f} | {r['max_err_mV']:>10.1f} | {status:>6s}")
 
     total = n_pass + n_fail + n_error
@@ -690,8 +711,6 @@ def main() -> int:
         plot_summary(all_results, RESULTS_BASE / "nn_tran_summary.png")
 
     if n_fail + n_error > 0:
-        print(f"\nSome tests FAILED. Consider retraining with charge-emphasized weights:")
-        print(f"  python -m nn_model.train --mode finetune --w-charges 1.5 --w-caps 1.0")
         return 1
     elif n_pass == 0:
         print("\nNo tests were run. Make sure NN checkpoints exist.")
