@@ -1,14 +1,11 @@
 """BSIM-AR: Autoregressive Transformer compact model (LEVEL=74).
 
-Supports two model versions:
+Uses v4 architecture: 7-dim continuous input [V(4), NFIN_log, L, T] +
+discrete tech-variant code embedding.  No process params needed at
+inference time.
 
-- **v3** (``use_tech_codes=False`` in config): 19-dim input with 12
-  continuous process parameters.
-- **v4** (``use_tech_codes=True`` in config): 7-dim input + discrete
-  tech-variant code. No process params needed at inference time.
-
-Both versions use the asinh + z-score normaliser and the same autograd
-Jacobian extraction.
+The asinh + z-score normaliser is used for both inputs and outputs, with
+autograd Jacobian extraction for conductances and capacitances.
 
 Terminal order: [drain, gate, source, bulk]
 """
@@ -16,6 +13,8 @@ Terminal order: [drain, gate, source, bulk]
 from typing import List, Dict, Tuple, Optional
 from pathlib import Path
 import sys
+
+import math
 
 import numpy as np
 import torch
@@ -30,7 +29,7 @@ if str(_BSIMAR_PARENT) not in sys.path:
 
 from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase, _get_nn_device
 from bsimar.models.transformer import TransformerEncoderModel
-from bsimar.config import PROCESS_PARAM_NAMES, UNKNOWN_CODE_ID
+from bsimar.config import UNKNOWN_CODE_ID
 from bsimar.data.normalize import BSIMARNormStats, BSIMAR_COLUMN_ORDER, OUTPUT_COLUMN_ORDER
 
 
@@ -49,7 +48,7 @@ _OUT_IDX = {name: i for i, name in enumerate(OUTPUT_COLUMN_ORDER)}
 class _MOSFETBSIMARBase(_MOSFETNNBase):
     """Base class for BSIM-AR Transformer MOSFET models (LEVEL=74).
 
-    Supports both v3 (process params) and v4 (tech codes).
+    Uses v4 architecture with discrete tech-code embedding.
     """
 
     def __init__(
@@ -60,8 +59,6 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
         L: float,
         NFIN: float,
         temperature: float = 300.15,
-        phig: Optional[float] = None,
-        process_params: Optional[Dict[str, float]] = None,
         tech_code: Optional[int] = None,
     ):
         from pycircuitsim.models.base import Component
@@ -77,8 +74,6 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
         self.L = float(L)
         self.NFIN = float(NFIN)
         self.temperature = float(temperature)
-        self.phig = float(phig) if phig is not None else None
-        self.process_params = process_params
 
         # Load model + normalisation + architecture config
         model_path = Path(model_path)
@@ -109,9 +104,6 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
         num_layers = int(cfg["num_layers"])
         dim_feedforward = int(cfg["dim_feedforward"])
         dropout = float(cfg["dropout"])
-
-        # Detect v4 mode from config
-        self._use_tech_codes = bool(cfg.get("use_tech_codes", False))
         num_tech_codes = int(cfg["num_tech_codes"]) if "num_tech_codes" in cfg else 22
 
         self._input_dim = input_dim
@@ -125,7 +117,6 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
             num_layers=num_layers,
             dim_feedforward=dim_feedforward,
             dropout=dropout,
-            use_tech_codes=self._use_tech_codes,
             num_tech_codes=num_tech_codes,
         )
         state = torch.load(str(model_path), weights_only=True, map_location="cpu")
@@ -139,42 +130,18 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
             f"got mode={self._norm_stats.mode}")
 
         # Pre-compute normalised geometry features (constant per device).
+        # v4: 3 geometry features [NFIN_log, L, T]; tech code is a
+        # separate integer passed to the embedding layer.
         nfin_log = np.log2(max(self.NFIN, 1.0))
 
-        if self._use_tech_codes:
-            # v4: 3 geometry features [NFIN_log, L, T], no process params.
-            # Tech code is handled as a separate integer.
-            self._tech_code = tech_code if tech_code is not None else UNKNOWN_CODE_ID
-            self._tech_code_tensor = torch.tensor(
-                [self._tech_code], dtype=torch.long)
-            geo_raw = np.array([nfin_log, self.L, self.temperature])
-            geo_std = self._norm_stats.input_std[4:7].copy()
-            geo_std[geo_std < 1e-12] = 1.0
-            self._geo_norm = (geo_raw - self._norm_stats.input_mean[4:7]) / geo_std
-        else:
-            # v3: geometry + process params
-            # 19-dim models include L as explicit feature; older models don't.
-            self._tech_code = None
-            self._tech_code_tensor = None
-            has_L = input_dim >= 19
-            n_proc = input_dim - (7 if has_L else 6)
-            if self.process_params is not None and n_proc > 1:
-                pp = self.process_params
-                proc_names = PROCESS_PARAM_NAMES[:n_proc]
-                proc_vals = [pp.get(p.lower(), 0.0) for p in proc_names]
-                if has_L:
-                    geo_raw = np.array([nfin_log, self.L, self.temperature] + proc_vals)
-                else:
-                    geo_raw = np.array([nfin_log, self.temperature] + proc_vals)
-            elif n_proc == 1 and (self.phig is not None or
-                                   (self.process_params and "phig" in self.process_params)):
-                phig_val = self.phig or self.process_params["phig"]
-                geo_raw = np.array([nfin_log, self.temperature, phig_val])
-            else:
-                geo_raw = np.array([nfin_log, self.temperature])
-            geo_std = self._norm_stats.input_std[4:].copy()
-            geo_std[geo_std < 1e-12] = 1.0
-            self._geo_norm = (geo_raw - self._norm_stats.input_mean[4:]) / geo_std
+        self._tech_code = tech_code if tech_code is not None else UNKNOWN_CODE_ID
+        self._tech_code_tensor = torch.tensor(
+            [self._tech_code], dtype=torch.long)
+
+        geo_raw = np.array([nfin_log, self.L, self.temperature])
+        geo_std = self._norm_stats.input_std[4:7].copy()
+        geo_std[geo_std < 1e-12] = 1.0
+        self._geo_norm = (geo_raw - self._norm_stats.input_mean[4:7]) / geo_std
 
         self._is_pmos = False
 
@@ -234,12 +201,20 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
         else:
             v_d_nn, v_g_nn, v_s_nn, v_b_nn = v_d, v_g, v_s, v_b
 
-        # Clamp & normalise voltages directly on device (GPU if available).
+        # Smooth-clamp & normalise voltages directly on device (GPU if available).
         v_raw = torch.tensor(
             [v_d_nn, v_g_nn, v_s_nn, v_b_nn],
             dtype=torch.float32, device=self._device,
         )
-        v_clamped = torch.clamp(v_raw, self._v_min, self._v_max)
+        # Manual softplus: (1/beta) * log(1 + exp(beta * x))  (per-element beta)
+        bx_lo = self._clamp_beta * (v_raw - self._v_min)
+        v_clamped = self._v_min + torch.where(
+            bx_lo > 20.0, v_raw - self._v_min,
+            torch.log1p(torch.exp(bx_lo)) / self._clamp_beta)
+        bx_hi = self._clamp_beta * (self._v_max - v_clamped)
+        v_clamped = self._v_max - torch.where(
+            bx_hi > 20.0, self._v_max - v_clamped,
+            torch.log1p(torch.exp(bx_hi)) / self._clamp_beta)
         v_norm = (v_clamped - self._v_mean) / self._v_std_t
         x = torch.cat([v_norm, self._geo_norm_t]).unsqueeze(0)  # (1, input_dim)
 
@@ -269,8 +244,9 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
         id_phys = self._denorm_scalar(out[0, _BSIMAR_IDX_ID].item(), "id")
         qg_phys = self._denorm_scalar(out[0, _BSIMAR_IDX_QG].item(), "qg")
         qd_phys = self._denorm_scalar(out[0, _BSIMAR_IDX_QD].item(), "qd")
-        qs_phys = self._denorm_scalar(out[0, _BSIMAR_IDX_QS].item(), "qs")
         qb_phys = self._denorm_scalar(out[0, _BSIMAR_IDX_QB].item(), "qb")
+        # Enforce charge conservation: qs = -(qg + qd + qb)
+        qs_phys = -(qg_phys + qd_phys + qb_phys)
 
         # Denormalise autograd conductances.
         # Negate gm/gmb: d(id)/d(V) → d(-id)/d(V) = d(i_leaving)/d(V)
@@ -294,7 +270,19 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
         cdd_phys = self._denorm_derivative(
             grad_qd[0, 0].item(), "qd", in_col=0, phys_val=qd_phys)
 
-        gds_phys = max(abs(gds_phys), 1e-12)
+        # Physics-based gds floor: gds >= |id| * lambda_min.
+        # NN learns near-flat Id-Vds in saturation, so autograd gds ≈ 0.
+        # Without a reasonable floor, inverter gain → ∞ and NR diverges.
+        # At FinFET 16nm, BSIM-CMG lambda = 0.3-1.2 V⁻¹ (strong DIBL+CLM).
+        # The floor only affects the NR Jacobian, not the converged current,
+        # so a generous value is safe for accuracy.
+        gds_floor = max(abs(id_phys) * 0.5, 1e-12)
+        if gds_phys < gds_floor:
+            import logging
+            logging.getLogger(__name__).debug(
+                "gds=%.3e below floor=%.3e (|id|=%.3e) — clamped",
+                gds_phys, gds_floor, abs(id_phys))
+        gds_phys = max(gds_phys, gds_floor)
 
         result = {
             "id": id_phys, "gm": gm_phys, "gds": gds_phys, "gmb": gmb_phys,
@@ -302,6 +290,11 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
             "cgg": cgg_phys, "cgd": cgd_phys, "cgs": cgs_phys,
             "cdg": cdg_phys, "cdd": cdd_phys,
         }
+
+        # Enforce Id(Vds=0) = 0 via analytical Vds correction
+        vds = v_d_nn - v_s_nn
+        result = self._apply_vds_correction(result, vds)
+
         self._eval_cache = result
         self._cache_voltages = v_tuple
         return result

@@ -151,10 +151,19 @@ def _stamp_mosfet_dc(
     if source != "0" and source in node_map:
         mna_matrix[node_map[source], node_map[source]] += g_m
 
-    # g_mb bulk transconductance (BSIM-CMG / NN)
+    # g_mb bulk transconductance: i_d = gmb * (v_b - v_s)
+    # Full 4-entry VCCS stamp (matching AC solver pattern at lines 2002-2023).
     if abs(g_mb) > 1e-12 and bulk != source:
+        # Stamp for drain equation
         if bulk != "0" and bulk in node_map and drain != "0" and drain in node_map:
             mna_matrix[node_map[drain], node_map[bulk]] += g_mb
+        if source != "0" and source in node_map and drain != "0" and drain in node_map:
+            mna_matrix[node_map[drain], node_map[source]] -= g_mb
+        # Stamp for source equation
+        if bulk != "0" and bulk in node_map and source != "0" and source in node_map:
+            mna_matrix[node_map[source], node_map[bulk]] -= g_mb
+        if source != "0" and source in node_map:
+            mna_matrix[node_map[source], node_map[source]] += g_mb
 
     # --- Stamp NR equivalent current source to RHS ---
     v_d, v_g = voltages.get(drain, 0.0), voltages.get(gate, 0.0)

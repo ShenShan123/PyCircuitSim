@@ -3,21 +3,14 @@
 Architecture: causal Transformer encoder with teacher forcing during
 training and autoregressive inference at test time.
 
-Supports two input modes:
+Input: 7-dim continuous [V(4), NFIN_log, L, T] plus a discrete integer
+``tech_code`` per sample. The tech code is looked up in an ``nn.Embedding``
+table, providing a learned representation of the technology variant.
+This supports a reserved UNKNOWN code for zero-shot inference on unseen
+technologies.
 
-- **v3** (``use_tech_codes=False``, default): 19-dim continuous input
-  [V(4), NFIN_log, L, T, 12_proc_params]. The 12 process params are
-  compressed into a ``proc_group`` MLP token.
-
-- **v4** (``use_tech_codes=True``): 7-dim continuous input
-  [V(4), NFIN_log, L, T] plus a discrete integer ``tech_code`` per sample.
-  The tech code is looked up in an ``nn.Embedding`` table, replacing the
-  ``proc_group`` MLP entirely. This mode supports a reserved UNKNOWN code
-  for zero-shot inference on unseen technologies.
-
-Both modes produce 3 context tokens (voltage / geometry / tech-or-proc),
-so the entire AR machinery, causal masking, token-type embeddings, and
-parallel cap head are shared unchanged.
+Three context tokens (voltage / geometry / tech-embedding) feed into the
+Transformer, followed by AR target tokens with causal masking.
 
 Design choices (paper + v3 sprint findings):
 
@@ -29,8 +22,7 @@ Design choices (paper + v3 sprint findings):
 - **Per-token output heads (B3)**.
 - **GPT-2 scaled residual init (B4)**.
 
-v3 Input:  (B, 19) — normalized features [V(4), NFIN_log, L, T, 12_proc]
-v4 Input:  (B, 7) continuous + (B,) integer tech codes
+Input:  (B, 7) continuous + (B,) integer tech codes
 Output: (B, 13) — outputs in BSIMAR (paper) AR order.
 """
 
@@ -44,20 +36,17 @@ class TransformerEncoderModel(nn.Module):
     """Autoregressive Transformer for MOSFET I-V / Q-V / C-V prediction.
 
     Args:
-        input_dim:  19 for v3 (process params as continuous input),
-            7 for v4 (tech codes as discrete embedding).
+        input_dim:  7 — continuous features [V(4), NFIN_log, L, T].
         target_dim: Must be 13 (BSIMAR_COLUMN_ORDER).
         d_model:    Transformer hidden dimension.
         nhead:      Number of attention heads.
         num_layers: Number of Transformer encoder layers.
         dim_feedforward: Feedforward network dimension.
         dropout:    Dropout rate.
-        use_tech_codes: If True, use v4 discrete tech embedding instead
-            of the v3 continuous process-param MLP.
-        num_tech_codes: Vocabulary size for the tech embedding (v4 only).
+        num_tech_codes: Vocabulary size for the tech embedding.
         tech_embed_dropout: During training, probability of replacing the
-            real tech code with UNKNOWN_CODE_ID (v4 only). Trains the
-            UNKNOWN embedding to serve as a generic-device representation
+            real tech code with UNKNOWN_CODE_ID. Trains the UNKNOWN
+            embedding to serve as a generic-device representation
             for zero-shot inference.
     """
 
@@ -67,14 +56,12 @@ class TransformerEncoderModel(nn.Module):
 
     # A2 — grouped input layout.
     VOLTAGE_SLICE = slice(0, 4)
-    GEOM_SLICE_V3 = slice(4, 7)
-    PROC_SLICE = slice(7, 19)
-    GEOM_SLICE_V4 = slice(4, 7)
+    GEOM_SLICE = slice(4, 7)
     N_GROUPED_INPUT_TOKENS = 3
 
     def __init__(
         self,
-        input_dim: int = 19,
+        input_dim: int = 7,
         target_dim: int = 13,
         d_model: int = 256,
         nhead: int = 8,
@@ -82,25 +69,16 @@ class TransformerEncoderModel(nn.Module):
         dim_feedforward: int = 1024,
         dropout: float = 0.2,
         *,
-        use_tech_codes: bool = False,
         num_tech_codes: int = 22,
         tech_embed_dropout: float = 0.0,
     ):
         super().__init__()
-        self.use_tech_codes = use_tech_codes
 
-        if use_tech_codes:
-            assert input_dim == 7, (
-                "BSIMAR v4 expects 7-column continuous input "
-                "[V(4), NFIN_log, L, T], got "
-                f"input_dim={input_dim}"
-            )
-        else:
-            assert input_dim == 19, (
-                "BSIMAR v3 expects the canonical 19-column combined input "
-                "layout ([V(4), NFIN_log, L, T, 12_proc_params]), got "
-                f"input_dim={input_dim}"
-            )
+        assert input_dim == 7, (
+            "BSIMAR expects 7-column continuous input "
+            "[V(4), NFIN_log, L, T], got "
+            f"input_dim={input_dim}"
+        )
         assert target_dim == 13, (
             f"BSIMAR assumes BSIMAR_COLUMN_ORDER, got target_dim={target_dim}"
         )
@@ -111,7 +89,7 @@ class TransformerEncoderModel(nn.Module):
         self.nhead = nhead
         self.num_layers = num_layers
 
-        # A2 — 3 context tokens in both v3 and v4.
+        # A2 — 3 context tokens.
         self.input_dim = self.N_GROUPED_INPUT_TOKENS
 
         # P4 — AR sequence = first 8 targets (charges + currents/conds).
@@ -132,19 +110,11 @@ class TransformerEncoderModel(nn.Module):
             nn.Linear(d_model * 2, d_model),
         )
 
-        if use_tech_codes:
-            # v4: discrete tech-variant embedding replaces proc_group MLP.
-            self.tech_embedding = nn.Embedding(num_tech_codes, d_model)
-            self.num_tech_codes = num_tech_codes
-            self._tech_embed_dropout = tech_embed_dropout
-            self._unknown_code_id = 17  # matches bsimar.config.UNKNOWN_CODE_ID
-        else:
-            # v3: continuous process-param MLP.
-            self.proc_group = nn.Sequential(
-                nn.Linear(12, d_model * 2),
-                nn.GELU(),
-                nn.Linear(d_model * 2, d_model),
-            )
+        # Discrete tech-variant embedding.
+        self.tech_embedding = nn.Embedding(num_tech_codes, d_model)
+        self.num_tech_codes = num_tech_codes
+        self._tech_embed_dropout = tech_embed_dropout
+        self._unknown_code_id = 17  # matches bsimar.config.UNKNOWN_CODE_ID
 
         # B1: Learned token-type embedding.
         self.n_tokens = self.input_dim + 1 + target_dim
@@ -187,34 +157,26 @@ class TransformerEncoderModel(nn.Module):
     def _embed_context(
         self,
         x: torch.Tensor,
-        tech_codes: torch.Tensor | None = None,
+        tech_codes: torch.Tensor,
     ) -> torch.Tensor:
         """Embed the raw input context as ``(B, 3, d_model)``.
 
-        v3: three MLPs over voltage, geometry, and process slices.
-        v4: two MLPs (voltage, geometry) + one embedding lookup (tech code).
+        Two MLPs (voltage, geometry) + one embedding lookup (tech code).
         """
-        if self.use_tech_codes:
-            assert tech_codes is not None, (
-                "v4 mode requires tech_codes tensor")
-            v_tok = self.voltage_group(x[:, self.VOLTAGE_SLICE])   # (B, d)
-            g_tok = self.geom_group(x[:, self.GEOM_SLICE_V4])     # (B, d)
+        v_tok = self.voltage_group(x[:, self.VOLTAGE_SLICE])   # (B, d)
+        g_tok = self.geom_group(x[:, self.GEOM_SLICE])         # (B, d)
 
-            # Embedding dropout: during training, randomly replace codes
-            # with UNKNOWN_CODE_ID to train the generic representation.
-            if self.training and self._tech_embed_dropout > 0.0:
-                mask = (torch.rand(tech_codes.size(0), device=tech_codes.device)
-                        < self._tech_embed_dropout)
-                tech_codes = tech_codes.clone()
-                tech_codes[mask] = self._unknown_code_id
+        # Embedding dropout: during training, randomly replace codes
+        # with UNKNOWN_CODE_ID to train the generic representation.
+        if self.training and self._tech_embed_dropout > 0.0:
+            mask = (torch.rand(tech_codes.size(0), device=tech_codes.device)
+                    < self._tech_embed_dropout)
+            tech_codes = tech_codes.clone()
+            tech_codes[mask] = self._unknown_code_id
 
-            p_tok = self.tech_embedding(tech_codes)                # (B, d)
-        else:
-            v_tok = self.voltage_group(x[:, self.VOLTAGE_SLICE])   # (B, d)
-            g_tok = self.geom_group(x[:, self.GEOM_SLICE_V3])     # (B, d)
-            p_tok = self.proc_group(x[:, self.PROC_SLICE])         # (B, d)
+        p_tok = self.tech_embedding(tech_codes)                # (B, d)
 
-        return torch.stack([v_tok, g_tok, p_tok], dim=1)           # (B, 3, d)
+        return torch.stack([v_tok, g_tok, p_tok], dim=1)       # (B, 3, d)
 
     def _embed_ar_scalars(self, scalars: torch.Tensor) -> torch.Tensor:
         """Embed AR-side scalar tokens (start token + previous targets)."""
@@ -266,14 +228,15 @@ class TransformerEncoderModel(nn.Module):
         """Forward pass with optional teacher forcing.
 
         Args:
-            x: (B, raw_input_dim) input features (19 for v3, 7 for v4).
+            x: (B, 7) input features.
             y: (B, target_dim) ground-truth targets for teacher forcing.
                If None, uses autoregressive inference.
-            tech_codes: (B,) integer tech-variant codes (v4 only).
+            tech_codes: (B,) integer tech-variant codes (required).
 
         Returns:
             (B, target_dim) predicted outputs in BSIMAR_COLUMN_ORDER.
         """
+        assert tech_codes is not None, "tech_codes is required"
         batch_size = x.size(0)
 
         if y is not None:
@@ -349,6 +312,7 @@ class TransformerEncoderModel(nn.Module):
         if ss_ratio <= 0.0:
             return self.forward(x, y, tech_codes=tech_codes)
 
+        assert tech_codes is not None, "tech_codes is required"
         batch_size = x.size(0)
         context_emb = self._embed_context(x, tech_codes)
         start_token = torch.zeros(batch_size, 1, device=x.device, dtype=x.dtype)

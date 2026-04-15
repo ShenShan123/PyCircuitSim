@@ -100,42 +100,7 @@ def _build_combined_input(
     inputs: np.ndarray,
     geometry: np.ndarray,
 ) -> np.ndarray:
-    """Combine voltage inputs with geometry features (v3: includes process params).
-
-    Geometry column layouts (backward-compatible):
-      (N,  2): [NFIN, T]                         — legacy
-      (N,  3): [NFIN, T, PHIG]                   — Phase 13
-      (N,  9): [NFIN, T, PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW]  — 7-param
-      (N, 14): [NFIN, T, <12 process params>]     — 12-param (old universal)
-      (N, 15): [NFIN, L, T, <12 process params>]  — 12-param + L (current)
-
-    Returns combined feature matrix of shape (N, 4+k).
-    """
-    nfin_log = np.log2(np.clip(geometry[:, 0], 1.0, None))
-
-    if geometry.shape[1] == 15:
-        L_col = geometry[:, 1]
-        temperature = geometry[:, 2]
-        proc_params = geometry[:, 3:]
-        return np.column_stack(
-            [inputs, nfin_log, L_col, temperature, proc_params])
-
-    temperature = geometry[:, 1]
-    if geometry.shape[1] >= 9:
-        proc_params = geometry[:, 2:]
-        return np.column_stack(
-            [inputs, nfin_log, temperature, proc_params])
-    elif geometry.shape[1] >= 3:
-        phig = geometry[:, 2]
-        return np.column_stack([inputs, nfin_log, temperature, phig])
-    return np.column_stack([inputs, nfin_log, temperature])
-
-
-def _build_combined_input_v4(
-    inputs: np.ndarray,
-    geometry: np.ndarray,
-) -> np.ndarray:
-    """Combine voltage inputs with geometry features (v4: no process params).
+    """Combine voltage inputs with geometry features (no process params).
 
     Returns (N, 7): [V(4), NFIN_log, L, T]. Process parameters in
     geometry columns 3:15 are ignored — the tech identity is carried
@@ -144,7 +109,7 @@ def _build_combined_input_v4(
     Expects geometry shape (N, 15): [NFIN, L, T, <12 proc params>].
     """
     assert geometry.shape[1] == 15, (
-        f"v4 expects 15-col geometry [NFIN, L, T, 12_proc], "
+        f"Expected 15-col geometry [NFIN, L, T, 12_proc], "
         f"got {geometry.shape[1]}")
     nfin_log = np.log2(np.clip(geometry[:, 0], 1.0, None))
     L_col = geometry[:, 1]
@@ -216,25 +181,20 @@ class BSIMARNormalizer:
     train split, masked at ``OUTPUT_LOG_FLOORS`` and clamped to the
     floor.
 
-    When ``include_proc_params=False`` (v4 mode), the input builder
-    produces a 7-dim feature vector [V(4), NFIN_log, L, T] instead of
-    the 19-dim v3 layout. Process params are omitted — tech identity
-    is carried by a discrete code outside the normalizer.
+    Input: 7-dim feature vector [V(4), NFIN_log, L, T]. Process params
+    are not included — tech identity is carried by a discrete code
+    outside the normalizer.
     """
 
     def __init__(self, mode: str = "asinh",
-                 stats: Optional[BSIMARNormStats] = None,
-                 include_proc_params: bool = True) -> None:
+                 stats: Optional[BSIMARNormStats] = None) -> None:
         assert mode in ("zscore", "asinh"), f"Unknown mode: {mode}"
         self.mode = mode
         self.stats = stats
-        self.include_proc_params = include_proc_params
 
     def _combined(self, inputs: np.ndarray,
                   geometry: np.ndarray) -> np.ndarray:
-        if self.include_proc_params:
-            return _build_combined_input(inputs, geometry)
-        return _build_combined_input_v4(inputs, geometry)
+        return _build_combined_input(inputs, geometry)
 
     def fit(self, inputs: np.ndarray, geometry: np.ndarray,
             outputs: np.ndarray) -> "BSIMARNormalizer":

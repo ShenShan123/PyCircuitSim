@@ -27,13 +27,13 @@ import numpy as np
 from bsimar.config import (
     DATA_DIR,
     TECH_CONFIGS,
-    extract_process_params,
     TECH_VARIANT_CODES,
     tech_variant_to_code,
 )
 from bsimar.data.dataset import MOSFETDataset, filter_small_targets
 from bsimar.data.normalize import BSIMARNormalizer
 
+from pycmg.nn_config import extract_process_params  # noqa: E402
 from pycmg.parser import parse_modelcard  # noqa: E402
 
 

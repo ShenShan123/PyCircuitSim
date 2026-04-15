@@ -4,14 +4,9 @@ Drop-in replacement for NMOS_CMG/PMOS_CMG using a trained DirectNet
 MLP instead of PyCMG physics evaluation. Implements the full
 Component interface required by the solver.
 
-Supports two model versions:
-
-- **v3** (no ``tech_embedding`` in checkpoint): 19-dim input with 12
-  continuous process parameters. Uses zscore normalisation.
-- **v4** (``tech_embedding.weight`` in checkpoint): 7-dim input + discrete
-  tech-variant code via ``nn.Embedding``. Uses asinh + zscore normalisation.
-
-Both versions are auto-detected from the checkpoint at load time.
+Uses DirectNet with tech-code embedding: 7-dim continuous input
+[Vd, Vg, Vs, Vb, NFIN_log, L, T] + discrete tech-variant code via
+``nn.Embedding``. Uses asinh + zscore normalisation.
 
 Key design:
 - Autograd-derived conductances (gm, gds, gmb) guarantee Jacobian
@@ -19,8 +14,7 @@ Key design:
 - Charge conservation: qs = -(qg + qd + qb) enforced analytically.
 - Physical constraints: gds >= 0, cutoff clamping.
 - Same sign conventions as NMOS_CMG/PMOS_CMG.
-- Normalisation: ``BSIMARNormStats(mode='zscore')`` for v3,
-  ``BSIMARNormStats(mode='asinh')`` for v4. Input clamping uses
+- Normalisation: ``BSIMARNormStats(mode='asinh')``. Input clamping uses
   the ``input_min``/``input_max`` metadata stored in the normaliser
   stats.
 
@@ -31,9 +25,10 @@ from typing import List, Dict, Tuple, Optional
 from pathlib import Path
 import sys
 
+import math
+
 import numpy as np
 import torch
-import torch.nn as nn
 
 # Project imports
 PROJECT_ROOT = Path(__file__).parent.parent.parent
@@ -46,10 +41,14 @@ if str(_BSIMAR_PARENT) not in sys.path:
     sys.path.insert(0, str(_BSIMAR_PARENT))
 
 from pycircuitsim.models.base import Component
-from bsimar.models.direct_net import DirectNet, DirectNetV4
-from bsimar.config import PROCESS_PARAM_NAMES, UNKNOWN_CODE_ID
+from bsimar.models.direct_net import DirectNet
+from bsimar.config import UNKNOWN_CODE_ID
 from bsimar.data.normalize import BSIMARNormStats
 
+
+import logging
+
+_logger = logging.getLogger(__name__)
 
 _NN_DEVICE: Optional[torch.device] = None
 
@@ -81,8 +80,6 @@ class _MOSFETNNBase(Component):
         L: float,
         NFIN: float,
         temperature: float = 300.15,
-        phig: Optional[float] = None,
-        process_params: Optional[Dict[str, float]] = None,
         tech_code: Optional[int] = None,
     ):
         super().__init__(name, nodes, None)
@@ -97,8 +94,6 @@ class _MOSFETNNBase(Component):
         self.L = float(L)
         self.NFIN = float(NFIN)
         self.temperature = float(temperature)
-        self.phig = float(phig) if phig is not None else None
-        self.process_params = process_params  # Dict with 12 process param keys
 
         # Load model and normalization stats
         model_path = Path(model_path)
@@ -109,13 +104,9 @@ class _MOSFETNNBase(Component):
         if not norm_path.exists():
             raise FileNotFoundError(f"Normalization stats not found: {norm_path}")
 
-        # Auto-detect v3 vs v4 from checkpoint
+        # Load checkpoint and infer architecture from weight shapes
         state = torch.load(str(model_path), weights_only=True, map_location="cpu")
-        has_tech_embed = "tech_embedding.weight" in state
-        self._use_tech_codes = has_tech_embed
 
-        # Infer architecture from weight shapes
-        # Filter to net.*.weight keys (MLP trunk), excluding tech_embedding
         net_weight_keys = [k for k in state.keys()
                            if k.startswith("net.") and k.endswith(".weight")]
         first_key = net_weight_keys[0]
@@ -124,76 +115,36 @@ class _MOSFETNNBase(Component):
         hidden_dim = state[last_key].shape[1]
         n_layers = len(net_weight_keys) - 1  # -1 for output layer
 
-        if has_tech_embed:
-            # v4: DirectNetV4 with tech-code embedding
-            num_tech_codes = state["tech_embedding.weight"].shape[0]
-            tech_embed_dim = state["tech_embedding.weight"].shape[1]
-            # First layer input = continuous_dim + tech_embed_dim
-            input_dim = state[first_key].shape[1] - tech_embed_dim
-            self._input_dim = input_dim
+        num_tech_codes = state["tech_embedding.weight"].shape[0]
+        tech_embed_dim = state["tech_embedding.weight"].shape[1]
+        # First layer input = continuous_dim + tech_embed_dim
+        input_dim = state[first_key].shape[1] - tech_embed_dim
+        self._input_dim = input_dim
 
-            self._nn_model = DirectNetV4(
-                input_dim=input_dim, hidden_dim=hidden_dim,
-                n_layers=n_layers, output_dim=output_dim,
-                num_tech_codes=num_tech_codes, tech_embed_dim=tech_embed_dim,
-            )
-            self._nn_model.load_state_dict(state)
-            self._nn_model.eval()
+        self._nn_model = DirectNet(
+            input_dim=input_dim, hidden_dim=hidden_dim,
+            n_layers=n_layers, output_dim=output_dim,
+            num_tech_codes=num_tech_codes, tech_embed_dim=tech_embed_dim,
+        )
+        self._nn_model.load_state_dict(state)
+        self._nn_model.eval()
 
-            # Store tech code
-            self._tech_code = tech_code if tech_code is not None else UNKNOWN_CODE_ID
-            self._tech_code_tensor = torch.tensor(
-                [self._tech_code], dtype=torch.long)
-        else:
-            # v3: plain DirectNet MLP
-            input_dim = state[first_key].shape[1]
-            self._input_dim = input_dim
-
-            self._nn_model = DirectNet(
-                input_dim=input_dim, hidden_dim=hidden_dim,
-                n_layers=n_layers, output_dim=output_dim,
-            )
-            self._nn_model.load_state_dict(state)
-            self._nn_model.eval()
-
-            self._tech_code = None
-            self._tech_code_tensor = None
+        # Store tech code
+        self._tech_code = tech_code if tech_code is not None else UNKNOWN_CODE_ID
+        self._tech_code_tensor = torch.tensor(
+            [self._tech_code], dtype=torch.long)
 
         self._output_dim = output_dim
 
         self._norm_stats = BSIMARNormStats.load(str(norm_path))
 
         # Pre-compute normalized geometry features (constant per device).
+        # 3 geometry features [NFIN_log, L, T] at indices [4:7]
         nfin_log = np.log2(max(self.NFIN, 1.0))
-
-        if self._use_tech_codes:
-            # v4: 3 geometry features [NFIN_log, L, T] at indices [4:7]
-            geo_raw = np.array([nfin_log, self.L, self.temperature])
-            geo_std = self._norm_stats.input_std[4:7].copy()
-            geo_std[geo_std < 1e-12] = 1.0
-            self._geo_norm = (geo_raw - self._norm_stats.input_mean[4:7]) / geo_std
-        else:
-            # v3: [NFIN_log, (L), T, ...process_params] at indices [4:]
-            # 19-dim models include L as explicit feature; older models don't.
-            has_L = input_dim >= 19
-            n_proc = input_dim - (7 if has_L else 6)  # 4V + NFIN + (L) + T
-            if self.process_params is not None and n_proc > 1:
-                pp = self.process_params
-                proc_names = PROCESS_PARAM_NAMES[:n_proc]
-                proc_vals = [pp.get(p.lower(), 0.0) for p in proc_names]
-                if has_L:
-                    geo_raw = np.array([nfin_log, self.L, self.temperature] + proc_vals)
-                else:
-                    geo_raw = np.array([nfin_log, self.temperature] + proc_vals)
-            elif n_proc == 1 and (self.phig is not None or
-                                   (self.process_params and "phig" in self.process_params)):
-                phig_val = self.phig or self.process_params["phig"]
-                geo_raw = np.array([nfin_log, self.temperature, phig_val])
-            else:
-                geo_raw = np.array([nfin_log, self.temperature])
-            geo_std = self._norm_stats.input_std[4:].copy()
-            geo_std[geo_std < 1e-12] = 1.0
-            self._geo_norm = (geo_raw - self._norm_stats.input_mean[4:]) / geo_std
+        geo_raw = np.array([nfin_log, self.L, self.temperature])
+        geo_std = self._norm_stats.input_std[4:7].copy()
+        geo_std[geo_std < 1e-12] = 1.0
+        self._geo_norm = (geo_raw - self._norm_stats.input_mean[4:7]) / geo_std
 
         # Subclass sets this
         self._is_pmos = False
@@ -216,8 +167,7 @@ class _MOSFETNNBase(Component):
         """Move model and pre-computed constants to the best available device."""
         self._device = _get_nn_device()
         self._nn_model.to(self._device)
-        if self._tech_code_tensor is not None:
-            self._tech_code_tensor = self._tech_code_tensor.to(self._device)
+        self._tech_code_tensor = self._tech_code_tensor.to(self._device)
 
         stats = self._norm_stats
         self._geo_norm_t = torch.tensor(
@@ -229,6 +179,10 @@ class _MOSFETNNBase(Component):
         self._v_std_t = torch.tensor(v_std, dtype=torch.float32, device=self._device)
         self._v_min = torch.tensor(stats.input_min[:4], dtype=torch.float32, device=self._device)
         self._v_max = torch.tensor(stats.input_max[:4], dtype=torch.float32, device=self._device)
+        # Smooth clamp sharpness: beta = 1/margin where margin = 5% of per-dim range
+        v_range = self._v_max - self._v_min
+        v_range = torch.clamp(v_range, min=0.01)  # guard against zero-range dims
+        self._clamp_beta = (1.0 / (0.05 * v_range)).to(self._device)  # (4,)
 
     def _eval(self, voltages: Dict[str, float]) -> Dict[str, float]:
         """Evaluate NN model at given voltages.
@@ -261,12 +215,22 @@ class _MOSFETNNBase(Component):
             v_s_nn = v_s
             v_b_nn = v_b
 
-        # Clamp & normalise voltages directly on device (GPU if available).
+        # Smooth-clamp & normalise voltages directly on device (GPU if available).
+        # Per-element softplus clamp: C1-continuous, avoids zero-gradient cliff
+        # at training domain boundaries that stalls NR convergence.
         v_raw = torch.tensor(
             [v_d_nn, v_g_nn, v_s_nn, v_b_nn],
             dtype=torch.float32, device=self._device,
         )
-        v_clamped = torch.clamp(v_raw, self._v_min, self._v_max)
+        # Manual softplus: (1/beta) * log(1 + exp(beta * x))  (per-element beta)
+        bx_lo = self._clamp_beta * (v_raw - self._v_min)
+        v_clamped = self._v_min + torch.where(
+            bx_lo > 20.0, v_raw - self._v_min,  # linear for large x (avoid overflow)
+            torch.log1p(torch.exp(bx_lo)) / self._clamp_beta)
+        bx_hi = self._clamp_beta * (self._v_max - v_clamped)
+        v_clamped = self._v_max - torch.where(
+            bx_hi > 20.0, self._v_max - v_clamped,
+            torch.log1p(torch.exp(bx_hi)) / self._clamp_beta)
         v_norm = (v_clamped - self._v_mean) / self._v_std_t
         x = torch.cat([v_norm, self._geo_norm_t]).unsqueeze(0)  # (1, input_dim)
 
@@ -277,6 +241,10 @@ class _MOSFETNNBase(Component):
             result = self._eval_hybrid13(x)
         else:
             result = self._eval_autograd4(x)
+
+        # Enforce Id(Vds=0) = 0 via analytical Vds correction
+        vds = v_d_nn - v_s_nn
+        result = self._apply_vds_correction(result, vds)
 
         self._eval_cache = result
         self._cache_voltages = v_tuple
@@ -294,10 +262,7 @@ class _MOSFETNNBase(Component):
         x_full = torch.cat([x_v, x_g], dim=1)
 
         with torch.enable_grad():
-            if self._use_tech_codes:
-                out = self._nn_model(x_full, tech_codes=self._tech_code_tensor)
-            else:
-                out = self._nn_model(x_full)  # (1, 13)
+            out = self._nn_model(x_full, tech_codes=self._tech_code_tensor)
 
             # Autograd: conductances from id (col 0)
             grad_id = torch.autograd.grad(
@@ -318,8 +283,9 @@ class _MOSFETNNBase(Component):
         id_phys = self._denorm_scalar(out[0, 0].item(), col_idx=0)
         qg_phys = self._denorm_scalar(out[0, 4].item(), col_idx=4)
         qd_phys = self._denorm_scalar(out[0, 5].item(), col_idx=5)
-        qs_phys = self._denorm_scalar(out[0, 6].item(), col_idx=6)
         qb_phys = self._denorm_scalar(out[0, 7].item(), col_idx=7)
+        # Enforce charge conservation: qs = -(qg + qd + qb)
+        qs_phys = -(qg_phys + qd_phys + qb_phys)
 
         # Denormalize autograd conductances (exact derivatives of id).
         # The NN predicts id in PyCMG terminal-current convention (negative
@@ -345,7 +311,17 @@ class _MOSFETNNBase(Component):
         cdd_phys = self._denorm_full_derivative(
             grad_qd[0, 0].item(), out_col=5, in_col=0, phys_val=qd_phys)
 
-        gds_phys = max(abs(gds_phys), 1e-12)
+        # Physics-based gds floor: gds >= |id| * lambda_min.
+        # NN learns near-flat Id-Vds in saturation, so autograd gds ≈ 0.
+        # Without a reasonable floor, inverter gain → ∞ and NR diverges.
+        # At FinFET 16nm, BSIM-CMG lambda = 0.3-1.2 V⁻¹ (strong DIBL+CLM).
+        # The floor only affects the NR Jacobian, not the converged current,
+        # so a generous value is safe for accuracy.
+        gds_floor = max(abs(id_phys) * 0.5, 1e-12)
+        if gds_phys < gds_floor:
+            _logger.debug("gds=%.3e below floor=%.3e (|id|=%.3e) — clamped",
+                          gds_phys, gds_floor, abs(id_phys))
+        gds_phys = max(gds_phys, gds_floor)
 
         return {
             "id": id_phys, "gm": gm_phys, "gds": gds_phys, "gmb": gmb_phys,
@@ -361,10 +337,7 @@ class _MOSFETNNBase(Component):
         x_full = torch.cat([x_v, x_g], dim=1)
 
         with torch.enable_grad():
-            if self._use_tech_codes:
-                out = self._nn_model(x_full, tech_codes=self._tech_code_tensor)
-            else:
-                out = self._nn_model(x_full)  # (1, 4) = [id, qg, qd, qb]
+            out = self._nn_model(x_full, tech_codes=self._tech_code_tensor)
 
             grad_id = torch.autograd.grad(
                 out[:, 0].sum(), x_v, create_graph=False, retain_graph=True
@@ -400,7 +373,12 @@ class _MOSFETNNBase(Component):
         cdd_phys = self._denorm_full_derivative(
             grad_qd[0, 0].item(), out_col=5, in_col=0, phys_val=qd_phys)
 
-        gds_phys = max(abs(gds_phys), 1e-12)
+        # Physics-based gds floor (same as _eval_hybrid13 path)
+        gds_floor = max(abs(id_phys) * 0.02, 1e-12)
+        if gds_phys < gds_floor:
+            _logger.debug("gds=%.3e below floor=%.3e (|id|=%.3e, autograd4) — clamped",
+                          gds_phys, gds_floor, abs(id_phys))
+        gds_phys = max(gds_phys, gds_floor)
 
         return {
             "id": id_phys, "gm": gm_phys, "gds": gds_phys, "gmb": gmb_phys,
@@ -453,6 +431,98 @@ class _MOSFETNNBase(Component):
                 asinh_scale * asinh_scale + phys_val * phys_val)
             return float(deriv_norm) * dy_phys_dy_zscore / in_std
         return float(deriv_norm) * out_std / in_std
+
+    def _apply_vds_correction(
+        self, result: Dict[str, float], vds: float,
+    ) -> Dict[str, float]:
+        """Enforce Id=0 at Vds=0 AND for reverse-direction Vds.
+
+        Two-part analytical correction applied to the NN-predicted
+        drain current:
+
+        1. **Normal direction** (NMOS Vds>0, PMOS Vds<0):
+           ``Id_corr = Id_nn * (1 - exp(-|Vds|/Vt))``
+           Goes to 0 at Vds=0 and ≈Id_nn for |Vds| >> Vt.
+
+        2. **Reverse direction** (NMOS Vds<0, PMOS Vds>0):
+           ``Id_corr = 0``
+           The NN has no training data for reverse-bias operation;
+           any prediction is extrapolation noise.  Forcing Id=0
+           prevents NR overshoot from driving the output beyond
+           the supply rails.
+
+        The gds correction uses the **symmetric** ``1-exp(-|Vds|/Vt)``
+        in both directions so that the NR Jacobian always has a
+        reasonable linear-region conductance entry (≈ |Id_nn|/Vt at
+        Vds=0), even when Id itself is forced to zero.  This
+        prevents floating-node singularities.
+        """
+        # Use 2×kT/q as the transition width.  Physical motivation:
+        # the subthreshold slope factor n ≈ 1.3 for FinFETs, but the
+        # NN's Vds=0 residual requires extra suppression to prevent
+        # wrong-sign leakage from destabilising inverter rail states.
+        # n=2 gives a comfortable margin: at Vds = 0.24 V (minimum
+        # in the NMOS pulse test), f ≈ 0.99 — negligible accuracy
+        # impact — while at Vds = 0.05 V, f ≈ 0.62 (vs 0.85 for
+        # Vt = 0.026), providing stronger suppression of the NN's
+        # spurious leakage near Vds ≈ 0.
+        VT = 0.052  # 2 × kT/q at 300 K
+        abs_vds = abs(vds)
+
+        # Is Vds in the physically normal direction for this device?
+        # NMOS: current flows when Vds > 0 (drain above source)
+        # PMOS: current flows when Vds < 0 (drain below source, NN frame)
+        if self._is_pmos:
+            normal_dir = vds < 0.0
+        else:
+            normal_dir = vds > 0.0
+
+        # Fast path: normal direction with large |Vds| → correction ≈ 1
+        if normal_dir and abs_vds > 20.0 * VT:
+            return result
+
+        # Symmetric correction factor (always used for gds)
+        exp_sym = math.exp(-abs_vds / VT) if abs_vds <= 20.0 * VT else 0.0
+        f_sym = 1.0 - exp_sym
+
+        # One-sided correction factor for Id/gm/gmb:
+        # 0 for reverse direction, same as f_sym for normal
+        f_id = f_sym if normal_dir else 0.0
+
+        id_raw = result["id"]
+
+        # Scale current and transconductances (one-sided)
+        result["id"] = id_raw * f_id
+        result["gm"] = result["gm"] * f_id
+        result["gmb"] = result["gmb"] * f_id
+
+        # gds: symmetric scaling + linear-region conductance term.
+        # The term |id_raw| · exp(-|Vds|/Vt) / Vt comes from the
+        # product rule and provides the physically correct linear-
+        # region gds (≈ |id_raw|/Vt at Vds=0).  Using the symmetric
+        # form ensures gds is large at the rail states (Vds≈0) even
+        # when Id is forced to zero by the one-sided correction.
+        gds_linear = abs(id_raw) * exp_sym / VT
+        result["gds"] = result["gds"] * f_sym + gds_linear
+
+        # Re-apply gds floor on corrected values
+        gds_floor = max(abs(result["id"]) * 0.5, 1e-12)
+        result["gds"] = max(result["gds"], gds_floor)
+
+        # Sign enforcement: NMOS id must be ≤ 0 (current into drain),
+        # PMOS id must be ≥ 0 (current into drain in PMOS convention).
+        # Wrong-sign predictions are NN extrapolation artefacts that
+        # destabilise feedback circuits (inverter rail states).
+        wrong_sign = (
+            (self._is_pmos and result["id"] < 0.0) or
+            (not self._is_pmos and result["id"] > 0.0)
+        )
+        if wrong_sign:
+            result["id"] = 0.0
+            result["gm"] = 0.0
+            result["gmb"] = 0.0
+
+        return result
 
     def get_nodes(self) -> List[str]:
         return self.nodes

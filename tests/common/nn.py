@@ -47,7 +47,6 @@ for _p in (PROJECT_ROOT, _EXTERNAL_DIR, _PYCMG_DIR, _PYCMG_TESTS):
 from bsimar.config import (  # noqa: E402
     TECH_CONFIGS, NNTechConfig, TechConfig,  # TechConfig = backward-compat alias
     CHECKPOINT_DIR, DATA_DIR, OSDI_PATH,
-    PROCESS_PARAM_NAMES,
 )
 
 
@@ -94,25 +93,23 @@ def mre(pred: np.ndarray, true: np.ndarray,
 # ── Checkpoint path helpers ──────────────────────────────────────────────────
 
 def directnet_checkpoint(device_type: str, tech_name: str | None = None) -> Path:
-    """Resolve the DirectNet `_best.pt` checkpoint.
+    """Resolve the DirectNet v4 `_best.pt` checkpoint.
 
-    Prefers the universal checkpoint if it exists; otherwise falls back to a
+    Prefers the v4 universal checkpoint; otherwise falls back to a
     per-tech checkpoint. Caller is responsible for checking `path.exists()`.
     """
-    universal = CHECKPOINT_DIR / f"universal_{device_type}_best.pt"
-    if universal.exists():
-        return universal
+    v4_universal = CHECKPOINT_DIR / f"v4_dn_universal_{device_type}_best.pt"
+    if v4_universal.exists():
+        return v4_universal
     if tech_name and tech_name.lower() != "asap7":
         return CHECKPOINT_DIR / f"{tech_name.lower()}_{device_type}_best.pt"
     return CHECKPOINT_DIR / f"{device_type}_best.pt"
 
 
 def transformer_checkpoint(device_type: str, tech_name: str | None = None) -> Path:
-    """Resolve the BSIM-AR Transformer `_best.pt` checkpoint.
+    """Resolve the BSIM-AR Transformer v4 `_best.pt` checkpoint.
 
-    Prefers v4 universal (tech-code) > v3 universal > per-tech > bare.
-    For v4, uses the phys-best variant (``_best.phys.pt``); for v3, uses
-    the plain ``_best.pt``.
+    Prefers v4 universal phys-best > v4 universal plain > per-tech > bare.
     """
     # v4 universal (tech-code embedding)
     v4_phys = CHECKPOINT_DIR / f"v4_universal_{device_type}_best.phys.pt"
@@ -121,19 +118,109 @@ def transformer_checkpoint(device_type: str, tech_name: str | None = None) -> Pa
     v4_plain = CHECKPOINT_DIR / f"v4_universal_{device_type}_best.pt"
     if v4_plain.exists():
         return v4_plain
-    # v3 universal (process params)
-    universal = CHECKPOINT_DIR / f"ar_universal_{device_type}_best.pt"
-    if universal.exists():
-        return universal
     if tech_name and tech_name.lower() != "asap7":
-        return CHECKPOINT_DIR / f"ar_{tech_name.lower()}_{device_type}_best.pt"
-    return CHECKPOINT_DIR / f"ar_{device_type}_best.pt"
+        phys = CHECKPOINT_DIR / f"v4_{tech_name.lower()}_{device_type}_best.phys.pt"
+        if phys.exists():
+            return phys
+        return CHECKPOINT_DIR / f"v4_{tech_name.lower()}_{device_type}_best.pt"
+    return CHECKPOINT_DIR / f"v4_{device_type}_best.pt"
+
+
+
+# ── NN Checkpoint availability ─────────────────────────────────────────────
+
+def get_available_nn_checkpoints(
+    device_type: str = "nmos",
+) -> dict[str, Path | None]:
+    """Check which v4 NN checkpoints exist for *device_type*.
+
+    Returns dict with keys ``'bsimar_v4'``, ``'directnet_v4'``.
+    Value is the checkpoint ``Path`` if found, else ``None``.
+    """
+    from bsimar.config import CHECKPOINT_DIR as _CKPT
+
+    result: dict[str, Path | None] = {}
+
+    # BSIMAR v4 (phys-best > plain)
+    for suffix in ("best.phys.pt", "best.pt"):
+        p = _CKPT / f"v4_universal_{device_type}_{suffix}"
+        if p.exists():
+            result["bsimar_v4"] = p
+            break
+    else:
+        result["bsimar_v4"] = None
+
+    # DirectNet v4
+    p = _CKPT / f"v4_dn_universal_{device_type}_best.pt"
+    result["directnet_v4"] = p if p.exists() else None
+
+    return result
+
+
+# ── NGSPICE runner helpers ─────────────────────────────────────────────────
+
+NGSPICE_BIN = "/usr/local/ngspice-45.2/bin/ngspice"
+_OSDI_PATH_STR = str(OSDI_PATH)
+
+
+def _parse_ngspice_wrdata(csv_path: Path) -> np.ndarray:
+    """Parse NGSPICE ``wrdata`` ASCII output into a numpy array."""
+    with csv_path.open() as f:
+        lines = f.readlines()
+    rows = []
+    for line in lines[1:]:
+        s = line.strip()
+        if s:
+            rows.append([float(x) for x in s.split()])
+    data = np.array(rows)
+    if not np.all(np.isfinite(data)):
+        raise RuntimeError(f"NGSPICE output contains NaN/Inf in {csv_path}")
+    return data
+
+
+def run_ngspice_script(
+    runner_path: Path,
+    log_path: Path,
+    csv_path: Path,
+    label: str = "",
+) -> np.ndarray:
+    """Execute an NGSPICE runner script and return parsed wrdata."""
+    import subprocess
+    res = subprocess.run(
+        [NGSPICE_BIN, "-b", "-o", str(log_path), str(runner_path)],
+        capture_output=True, text=True,
+    )
+    if log_path.exists() and "Fatal:" in log_path.read_text():
+        raise RuntimeError(f"NGSPICE OSDI fatal error ({label})")
+    if not csv_path.exists():
+        tail = log_path.read_text()[-500:] if log_path.exists() else "(no log)"
+        raise RuntimeError(
+            f"NGSPICE produced no output ({label}): RC={res.returncode}, "
+            f"log tail: ...{tail}"
+        )
+    return _parse_ngspice_wrdata(csv_path)
+
+
+# ── ASAP7 tech-code guard ─────────────────────────────────────────────────
+
+def tech_code_in_vocab(tech_key: str, vt_key: str, num_codes: int = 18) -> bool:
+    """Return True if the (tech, vt) pair maps to a code inside the embedding.
+
+    v4 universal models are trained with ``--num-tech-codes 18`` (indices 0-17).
+    ASAP7 codes (18-21) are out-of-range and will crash the embedding layer.
+    """
+    from bsimar.config import tech_variant_to_code
+    code = tech_variant_to_code(tech_key, vt_key)
+    return code < num_codes
 
 
 __all__ = [
     "PROJECT_ROOT",
     "TECH_CONFIGS", "NNTechConfig", "TechConfig",
-    "CHECKPOINT_DIR", "DATA_DIR", "OSDI_PATH", "PROCESS_PARAM_NAMES",
+    "CHECKPOINT_DIR", "DATA_DIR", "OSDI_PATH",
     "nrmse", "mre",
     "directnet_checkpoint", "transformer_checkpoint",
+    "get_available_nn_checkpoints",
+    "NGSPICE_BIN", "run_ngspice_script",
+    "tech_code_in_vocab",
 ]

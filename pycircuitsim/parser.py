@@ -571,7 +571,7 @@ class Parser:
                 raise ValueError(f"Unknown MOSFET model type: {model_type}")
 
         elif level == 73:
-            # NN-based compact model (v3 or v4)
+            # NN-based compact model (v4 tech-code embedding)
             if NFIN is None:
                 raise ValueError(f"NN MOSFET (LEVEL=73) missing NFIN parameter: {line}")
 
@@ -585,79 +585,41 @@ class Parser:
                     "Install: pip install torch"
                 )
 
-            # Resolve model path and process params from .model params
             from bsimar.config import (
-                CHECKPOINT_DIR, TECH_CONFIGS, PROCESS_PARAM_NAMES,
-                tech_variant_to_code, UNKNOWN_CODE_ID,
+                CHECKPOINT_DIR, tech_variant_to_code, UNKNOWN_CODE_ID,
             )
             nn_model_path = model_params.get('MODEL_PATH', None)
             nn_tech = model_params.get('TECH', None)
-            nn_vt = model_params.get('VT', None)  # Device variant: svt, lvt, rvt
+            nn_vt = model_params.get('VT', None)
 
             tech_key = (nn_tech or "asap7").lower()
             device_key = model_type.lower()
 
-            # Resolve model path: v4 universal > v3 universal > per-tech
+            # Resolve model path: v4 universal > per-tech > bare
             if nn_model_path is None:
                 v4_path = CHECKPOINT_DIR / f"v4_dn_universal_{device_key}_best.pt"
-                v3_path = CHECKPOINT_DIR / f"universal_{device_key}_best.pt"
+                per_tech_path = CHECKPOINT_DIR / f"{tech_key}_{device_key}_best.pt"
+                bare_path = CHECKPOINT_DIR / f"{device_key}_best.pt"
                 if v4_path.exists():
                     nn_model_path = str(v4_path)
-                elif v3_path.exists():
-                    nn_model_path = str(v3_path)
-                elif nn_tech and nn_tech.lower() != 'asap7':
-                    nn_model_path = str(CHECKPOINT_DIR / f"{nn_tech.lower()}_{device_key}_best.pt")
+                elif per_tech_path.exists():
+                    nn_model_path = str(per_tech_path)
                 else:
-                    nn_model_path = str(CHECKPOINT_DIR / f"{device_key}_best.pt")
+                    nn_model_path = str(bare_path)
 
-            # Detect v4 from checkpoint (tech_embedding.weight present)
-            import torch as _torch
-            _state = _torch.load(
-                nn_model_path, weights_only=True, map_location="cpu")
-            _is_v4 = "tech_embedding.weight" in _state
-            del _state
-
-            nn_tech_code = None
-            nn_process_params = None
-            nn_phig = None
-
-            if _is_v4:
-                # v4: resolve tech code from TECH+VT, no process params
-                nn_tech_code = tech_variant_to_code(
-                    tech_key, (nn_vt or "svt").lower())
-            else:
-                # v3: resolve process parameters
-                direct_params = {}
-                for pname in PROCESS_PARAM_NAMES:
-                    val_str = model_params.get(pname, None)
-                    if val_str is not None:
-                        direct_params[pname.lower()] = float(val_str)
-
-                if direct_params:
-                    nn_process_params = direct_params
-                    nn_phig = direct_params.get("phig", None)
-                elif tech_key in TECH_CONFIGS:
-                    tech_cfg = TECH_CONFIGS[tech_key]
-                    if nn_vt is not None:
-                        vt_lower = nn_vt.lower()
-                        if vt_lower in tech_cfg.variants:
-                            pp = tech_cfg.variants[vt_lower].get_process_params(device_key)
-                            nn_process_params = pp.as_dict()
-                            nn_phig = pp.phig
-                        else:
-                            raise ValueError(
-                                f"Unknown VT={nn_vt} for {tech_key}. "
-                                f"Available: {list(tech_cfg.variants.keys())}")
-                    elif tech_cfg.default_variant and tech_cfg.variants:
-                        pp = tech_cfg.variants[tech_cfg.default_variant].get_process_params(device_key)
-                        nn_process_params = pp.as_dict()
-                        nn_phig = pp.phig
+            # Resolve tech code from TECH+VT
+            nn_tech_code = tech_variant_to_code(
+                tech_key, (nn_vt or "svt").lower())
+            if nn_tech_code == UNKNOWN_CODE_ID:
+                import warnings
+                warnings.warn(
+                    f"MOSFET {name}: TECH={tech_key} VT={nn_vt} maps to UNKNOWN "
+                    f"tech code ({UNKNOWN_CODE_ID}). Predictions may be less accurate."
+                )
 
             nn_kwargs = dict(
                 name=name, nodes=nodes, model_path=nn_model_path,
-                L=L, NFIN=NFIN, phig=nn_phig,
-                process_params=nn_process_params,
-                tech_code=nn_tech_code,
+                L=L, NFIN=NFIN, tech_code=nn_tech_code,
             )
 
             if model_type.upper() == 'NMOS':
@@ -668,7 +630,7 @@ class Parser:
                 raise ValueError(f"Unknown MOSFET model type: {model_type}")
 
         elif level == 74:
-            # BSIM-AR Transformer compact model (v3 or v4)
+            # BSIM-AR Transformer compact model (v4 tech-code embedding)
             if NFIN is None:
                 raise ValueError(f"BSIM-AR (LEVEL=74) MOSFET missing NFIN parameter: {line}")
 
@@ -681,7 +643,6 @@ class Parser:
                 )
 
             from bsimar.config import (
-                TECH_CONFIGS, PROCESS_PARAM_NAMES,
                 CHECKPOINT_DIR as AR_CHECKPOINT_DIR,
                 tech_variant_to_code, UNKNOWN_CODE_ID,
             )
@@ -693,63 +654,35 @@ class Parser:
             tech_key = (nn_tech or "asap7").lower()
             device_key = model_type.lower()
 
-            # Resolve model path: prefer v4 universal > v3 universal > per-tech
+            # Resolve model path: v4 universal (.phys > plain) > per-tech > bare
             if ar_model_path is None:
+                v4_phys_path = AR_CHECKPOINT_DIR / f"v4_universal_{device_key}_best.phys.pt"
                 v4_path = AR_CHECKPOINT_DIR / f"v4_universal_{device_key}_best.pt"
-                v3_path = AR_CHECKPOINT_DIR / f"ar_universal_{device_key}_best.pt"
-                if v4_path.exists():
+                per_tech_path = AR_CHECKPOINT_DIR / f"ar_{tech_key}_{device_key}_best.pt"
+                bare_path = AR_CHECKPOINT_DIR / f"ar_{device_key}_best.pt"
+                if v4_phys_path.exists():
+                    ar_model_path = str(v4_phys_path)
+                elif v4_path.exists():
                     ar_model_path = str(v4_path)
-                elif v3_path.exists():
-                    ar_model_path = str(v3_path)
-                elif nn_tech:
-                    ar_model_path = str(AR_CHECKPOINT_DIR / f"ar_{nn_tech.lower()}_{device_key}_best.pt")
+                elif per_tech_path.exists():
+                    ar_model_path = str(per_tech_path)
                 else:
-                    ar_model_path = str(AR_CHECKPOINT_DIR / f"ar_{device_key}_best.pt")
+                    ar_model_path = str(bare_path)
 
-            # Detect v4 from config file
-            import numpy as _np
-            _cfg_path = Path(ar_model_path).parent / (
-                Path(ar_model_path).stem.replace("_best", "_config") + ".npz")
-            _is_v4 = False
-            if _cfg_path.exists():
-                _cfg = _np.load(str(_cfg_path))
-                _is_v4 = bool(_cfg.get("use_tech_codes", False))
-
-            if _is_v4:
-                # v4: resolve tech code from TECH+VT, no process params
-                nn_tech_code = tech_variant_to_code(
-                    tech_key, (nn_vt or "svt").lower())
-                bsimar_kwargs = dict(
-                    name=name, nodes=nodes, model_path=ar_model_path,
-                    L=L, NFIN=NFIN, tech_code=nn_tech_code,
+            # Resolve tech code from TECH+VT
+            nn_tech_code = tech_variant_to_code(
+                tech_key, (nn_vt or "svt").lower())
+            if nn_tech_code == UNKNOWN_CODE_ID:
+                import warnings
+                warnings.warn(
+                    f"MOSFET {name}: TECH={tech_key} VT={nn_vt} maps to UNKNOWN "
+                    f"tech code ({UNKNOWN_CODE_ID}). Predictions may be less accurate."
                 )
-            else:
-                # v3: resolve process params (legacy path)
-                nn_process_params = None
-                nn_phig = None
-                direct_params = {}
-                for pname in PROCESS_PARAM_NAMES:
-                    val_str = model_params.get(pname, None)
-                    if val_str is not None:
-                        direct_params[pname.lower()] = float(val_str)
 
-                if direct_params:
-                    nn_process_params = direct_params
-                    nn_phig = direct_params.get("phig", None)
-                elif tech_key in TECH_CONFIGS:
-                    tech_cfg = TECH_CONFIGS[tech_key]
-                    if nn_vt is not None:
-                        vt_lower = nn_vt.lower()
-                        if vt_lower in tech_cfg.variants:
-                            pp = tech_cfg.variants[vt_lower].get_process_params(device_key)
-                            nn_process_params = pp.as_dict()
-                            nn_phig = pp.phig
-
-                bsimar_kwargs = dict(
-                    name=name, nodes=nodes, model_path=ar_model_path,
-                    L=L, NFIN=NFIN, phig=nn_phig,
-                    process_params=nn_process_params,
-                )
+            bsimar_kwargs = dict(
+                name=name, nodes=nodes, model_path=ar_model_path,
+                L=L, NFIN=NFIN, tech_code=nn_tech_code,
+            )
 
             if model_type.upper() == 'NMOS':
                 mosfet = NMOS_BSIMAR(**bsimar_kwargs)

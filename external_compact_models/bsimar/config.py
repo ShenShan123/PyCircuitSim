@@ -1,12 +1,11 @@
 """Configuration for BSIMAR training and inference.
 
-- Re-exports PyCMG's `nn_config` (tech registry, process params, columns).
+- Re-exports PyCMG's `nn_config` (tech registry, output columns).
 - Defines project paths: checkpoints, results, data.
 - Defines training hyperparameter dataclasses for both architectures.
-- Defines the v4 tech-variant code registry (discrete tech embedding).
+- Defines the tech-variant code registry (discrete tech embedding).
 
-Replaces the old `nn_model.config` + `external_compact_models.BSIMAR.script.config`
-split. Downstream consumers (pycircuitsim parser, mosfet_nn, mosfet_bsimar,
+Downstream consumers (pycircuitsim parser, mosfet_directnet, mosfet_bsimar,
 tests) should import from here.
 """
 
@@ -36,13 +35,9 @@ if _PYCMG_PYPATH not in sys.path:
 from pycmg.nn_config import (  # noqa: E402
     OSDI_PATH,
     DEFAULT_TEMPERATURE,
-    PROCESS_PARAM_NAMES,
-    ProcessParams,
     NNTechConfig,
     TECH_CONFIGS,
     OUTPUT_COLUMNS,
-    INPUT_COLUMNS,
-    extract_process_params,
     DEFAULT_NFIN_VALUES,
 )
 
@@ -50,7 +45,7 @@ from pycmg.nn_config import (  # noqa: E402
 TechConfig = NNTechConfig
 
 
-# ── v4 Tech-Variant Code Registry ───────────────────────────────────────────
+# ── Tech-Variant Code Registry ──────────────────────────────────────────────
 # Each (tech, variant) pair gets a stable integer ID for the tech embedding.
 # TSMC codes occupy 0-16, UNKNOWN is 17, ASAP7 codes are 18-21.
 # Total vocabulary size: 22.
@@ -102,12 +97,12 @@ NUM_TSMC_CODES: int = 17           # codes 0-16
 NUM_TSMC_CODES_WITH_UNKNOWN: int = 18  # codes 0-17 (pre-train vocab)
 NUM_TOTAL_CODES: int = 22          # codes 0-21 (full vocab after fine-tune)
 
-# v4 input layout: 7 continuous features (no process params)
-INPUT_COLUMNS_V4: List[str] = [
+# Input layout: 7 continuous features (no process params)
+INPUT_COLUMNS: List[str] = [
     "Vd", "Vg", "Vs", "Vb",   # 4 terminal voltages
     "NFIN", "L", "T",          # 3 geometry / operating-condition scalars
 ]
-INPUT_DIM_V4: int = 7
+INPUT_DIM: int = 7
 
 
 def tech_variant_to_code(tech: str, variant: str) -> int:

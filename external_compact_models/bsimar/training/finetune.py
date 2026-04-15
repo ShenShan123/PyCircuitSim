@@ -74,11 +74,11 @@ def finetune_v4(
     """
     import time
     from bsimar.config import OUTPUT_COLUMNS
-    from bsimar.data.dataset import load_and_split_bsimar_v4
+    from bsimar.data.dataset import load_and_split_bsimar
     from bsimar.eval.metrics import compute_physical_metrics, print_metrics
     from bsimar.training.trainer import (
-        _train_epoch_mae_v4, _validate_epoch_ar_v4,
-        _train_epoch_scheduled_mae_v4, _test_model_v4,
+        _train_epoch_mae, _validate_epoch_ar,
+        _train_epoch_scheduled_mae, test_model,
     )
 
     device = torch.device(device_str)
@@ -117,7 +117,6 @@ def finetune_v4(
         num_layers=num_layers,
         dim_feedforward=dim_feedforward,
         dropout=dropout,
-        use_tech_codes=True,
         num_tech_codes=old_num_codes,
         tech_embed_dropout=0.0,  # no dropout during fine-tuning
     )
@@ -147,7 +146,6 @@ def finetune_v4(
     normalizer = BSIMARNormalizer(
         mode="asinh",
         stats=BSIMARNormStats.load(str(norm_path)),
-        include_proc_params=False,
     )
 
     # Load finetune data — only the finetune techs
@@ -165,7 +163,7 @@ def finetune_v4(
 
     # Load full dataset
     from bsimar.eval.loo_labels import get_or_build_tech_variant_labels
-    from bsimar.data.dataset import filter_small_targets, MOSFETDatasetV4
+    from bsimar.data.dataset import filter_small_targets, MOSFETDataset
 
     raw = np.load(data_path, allow_pickle=True)
     inputs = raw["inputs"]
@@ -196,10 +194,10 @@ def finetune_v4(
           f"test(regression)={len(test_idx)}")
 
     # Normalize using the pretrained normalizer
-    def _make_ds(idx: np.ndarray) -> MOSFETDatasetV4:
+    def _make_ds(idx: np.ndarray) -> MOSFETDataset:
         x = normalizer.normalize_inputs(inputs[idx], geometry[idx])
         y = normalizer.normalize_outputs(outputs[idx])
-        return MOSFETDatasetV4(x, y, tech_codes[idx])
+        return MOSFETDataset(x, y, tech_codes[idx])
 
     train_ds = _make_ds(train_idx)
     val_ds = _make_ds(val_idx)
@@ -235,9 +233,9 @@ def finetune_v4(
 
     print(f"\nFine-tuning {save_prefix} for {epochs} epochs (lr={lr:.1e})")
     for epoch in range(1, epochs + 1):
-        t_losses = _train_epoch_mae_v4(
+        t_losses = _train_epoch_mae(
             model, train_loader, criterion, optimizer, device)
-        v_losses = _validate_epoch_ar_v4(
+        v_losses = _validate_epoch_ar(
             model, val_loader, criterion, device)
 
         train_loss = t_losses["total"]
@@ -251,7 +249,7 @@ def finetune_v4(
 
         # Phys-space check every 5 epochs
         if epoch % 5 == 0 or epoch == epochs:
-            pred_val, true_val = _test_model_v4(model, val_loader, device)
+            pred_val, true_val = test_model(model, val_loader, device)
             pred_val = unreorder_outputs(pred_val)
             true_val = unreorder_outputs(true_val)
             phys_m = compute_physical_metrics(pred_val, true_val, normalizer)
@@ -278,10 +276,10 @@ def finetune_v4(
         print(f"\n[FT-AR] {ar_finetune_epochs} epochs at lr={ft_lr:.1e}")
         ft_opt = optim.AdamW(model.parameters(), lr=ft_lr, weight_decay=1e-4)
         for ft_ep in range(1, ar_finetune_epochs + 1):
-            t = _train_epoch_scheduled_mae_v4(
+            t = _train_epoch_scheduled_mae(
                 model, train_loader, criterion, ft_opt, device, ss_ratio=1.0)
-            v = _validate_epoch_ar_v4(model, val_loader, criterion, device)
-            pred_val, true_val = _test_model_v4(model, val_loader, device)
+            v = _validate_epoch_ar(model, val_loader, criterion, device)
+            pred_val, true_val = test_model(model, val_loader, device)
             pred_val = unreorder_outputs(pred_val)
             true_val = unreorder_outputs(true_val)
             phys_m = compute_physical_metrics(pred_val, true_val, normalizer)
@@ -309,7 +307,6 @@ def finetune_v4(
              num_layers=np.array(num_layers),
              dim_feedforward=np.array(dim_feedforward),
              dropout=np.array(dropout),
-             use_tech_codes=np.array(True),
              num_tech_codes=np.array(new_num_tech_codes))
 
     # Copy normalizer
@@ -320,7 +317,7 @@ def finetune_v4(
     if phys_best_path.exists():
         model.load_state_dict(
             torch.load(str(phys_best_path), weights_only=True))
-    pred_norm, true_norm = _test_model_v4(model, val_loader, device)
+    pred_norm, true_norm = test_model(model, val_loader, device)
     pred_norm = unreorder_outputs(pred_norm)
     true_norm = unreorder_outputs(true_norm)
     metrics = compute_physical_metrics(pred_norm, true_norm, normalizer)

@@ -7,7 +7,7 @@ from bsimar.data.normalize import (
     BSIMARNormStats, BSIMARNormalizer,
 )
 from bsimar.data.dataset import (
-    MOSFETDataset, BSIMARDataset,
+    MOSFETDataset,
     load_and_split_bsimar,
     filter_small_targets, DEFAULT_FILTER_THRESHOLDS,
 )
@@ -17,7 +17,7 @@ __all__ = [
     "reorder_outputs", "unreorder_outputs",
     "asinh_scaled", "inv_asinh_scaled",
     "BSIMARNormStats", "BSIMARNormalizer",
-    "MOSFETDataset", "BSIMARDataset",
+    "MOSFETDataset",
     "load_and_split_bsimar",
     "filter_small_targets", "DEFAULT_FILTER_THRESHOLDS",
 ]
