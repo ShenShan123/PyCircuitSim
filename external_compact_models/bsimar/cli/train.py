@@ -81,6 +81,8 @@ def _run_direct(args: argparse.Namespace) -> None:
         exclude_techs=exclude,
         num_tech_codes=args.num_tech_codes,
         p_unknown=args.p_unknown,
+        sign_weight=args.sign_weight,
+        boundary_weight=args.boundary_weight,
     )
 
 
@@ -126,6 +128,8 @@ def _run_transformer(args: argparse.Namespace) -> None:
         exclude_techs=exclude,
         num_tech_codes=args.num_tech_codes,
         p_unknown=args.p_unknown,
+        sign_weight=args.sign_weight,
+        boundary_weight=args.boundary_weight,
     )
 
 
@@ -193,6 +197,13 @@ def main() -> None:
     parser.add_argument("--p-unknown", type=float, default=0.1,
                         help="Prob of replacing tech code with UNKNOWN "
                              "during training (default 0.1)")
+
+    # Physics constraint losses
+    parser.add_argument("--sign-weight", type=float, default=5.0,
+                        help="Weight for sign-consistency loss "
+                             "(NMOS id<=0, PMOS id>=0). 0 to disable.")
+    parser.add_argument("--boundary-weight", type=float, default=2.0,
+                        help="Weight for Vds=0 boundary loss. 0 to disable.")
 
     args = parser.parse_args()
     set_seed(args.seed)

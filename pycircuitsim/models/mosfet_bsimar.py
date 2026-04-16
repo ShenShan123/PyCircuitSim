@@ -143,6 +143,11 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
         geo_std[geo_std < 1e-12] = 1.0
         self._geo_norm = (geo_raw - self._norm_stats.input_mean[4:7]) / geo_std
 
+        # Estimate VDD from training domain bounds for adaptive Vds correction.
+        vd_range = max(abs(float(self._norm_stats.input_max[0])),
+                       abs(float(self._norm_stats.input_min[0])))
+        self._vdd_estimate = vd_range / 2.0
+
         self._is_pmos = False
 
         # Cache and charge state

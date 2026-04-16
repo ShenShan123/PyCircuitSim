@@ -1294,6 +1294,48 @@ def compare_inverter_tran_waveforms(
     }
 
 
+def compute_region_errors(
+    ref_data: Dict[str, np.ndarray],
+    test_data: Dict[str, np.ndarray],
+    vdd: float,
+    t_start: float = 0.0,
+) -> Dict[str, float]:
+    """Decompose inverter transient NRMSE into high-rail / low-rail / transition.
+
+    Regions are defined by the input voltage at each time point:
+      - high_rail: Vin < 0.1*VDD  (output should be ~VDD)
+      - low_rail:  Vin > 0.9*VDD  (output should be ~0)
+      - transition: everything else (rising/falling edges)
+
+    Returns dict with keys 'nrmse_high', 'nrmse_low', 'nrmse_trans',
+    and 'n_high', 'n_low', 'n_trans' (sample counts).
+    """
+    t_max = min(ref_data["time"][-1], test_data["time"][-1])
+    t_common = np.arange(max(t_start, ref_data["time"][0]), t_max, INV_TRAN_TSTEP)
+
+    ref_v = np.interp(t_common, ref_data["time"], ref_data["v(out)"])
+    test_v = np.interp(t_common, test_data["time"], test_data["v(out)"])
+    vin = np.interp(t_common, ref_data["time"], ref_data["v(in)"])
+
+    diff = test_v - ref_v
+
+    high_mask = vin < 0.1 * vdd
+    low_mask = vin > 0.9 * vdd
+    trans_mask = ~high_mask & ~low_mask
+
+    result: Dict[str, float] = {}
+    for tag, mask in [("high", high_mask), ("low", low_mask), ("trans", trans_mask)]:
+        n = int(mask.sum())
+        result[f"n_{tag}"] = float(n)
+        if n > 0:
+            rmse_val = float(np.sqrt(np.mean(diff[mask] ** 2)))
+            result[f"nrmse_{tag}"] = rmse_val / vdd * 100.0
+        else:
+            result[f"nrmse_{tag}"] = float("nan")
+
+    return result
+
+
 def plot_inverter_tran_comparison_multi(
     ref_data: Dict[str, np.ndarray],
     model_results: Dict[str, Tuple[Dict[str, np.ndarray], Dict[str, float]]],
@@ -2115,13 +2157,30 @@ def run_inverter_tran_tests(
                     print(f"    Full NRMSE={full_metrics['nrmse_vdd']:.2f}%  "
                           f"Post-startup NRMSE={post_metrics['nrmse_vdd']:.2f}%"
                           f" -> {status}")
+
+                    # Per-region error breakdown
+                    region = compute_region_errors(
+                        ng_tran, nn_tran, tech.vdd,
+                        t_start=TRAN_STARTUP_EXCL,
+                    )
+                    print(f"    Region breakdown:  "
+                          f"High-rail={region['nrmse_high']:.2f}% "
+                          f"({int(region['n_high'])}pts)  "
+                          f"Low-rail={region['nrmse_low']:.2f}% "
+                          f"({int(region['n_low'])}pts)  "
+                          f"Transition={region['nrmse_trans']:.2f}% "
+                          f"({int(region['n_trans'])}pts)")
+
                     results.append(TestResult(
                         tech=tech.name, model=f"{model_tag}_inv_tran",
                         analysis="inv_tran",
                         nrmse_pct=post_metrics["nrmse_vdd"],
                         passed=passed,
                         extra={"full_nrmse": full_metrics["nrmse_vdd"],
-                               "max_err_mv": post_metrics["max_err_v"] * 1e3},
+                               "max_err_mv": post_metrics["max_err_v"] * 1e3,
+                               "nrmse_high": region["nrmse_high"],
+                               "nrmse_low": region["nrmse_low"],
+                               "nrmse_trans": region["nrmse_trans"]},
                     ))
                 model_results_for_plot[model_tag] = (nn_tran, post_metrics)
             except Exception as e:
@@ -2394,6 +2453,445 @@ def save_summary_csv(
 
 
 # ---------------------------------------------------------------------------
+# Sign pre-screen diagnostic
+# ---------------------------------------------------------------------------
+def _eval_nn_single_op(
+    tech: TestTechConfig,
+    work_dir: Path,
+    level: int,
+    model_name: str,
+    vgs: float,
+    vds: float,
+    is_pmos: bool = False,
+    model_path: Optional[Path] = None,
+) -> float:
+    """Evaluate a single NN MOSFET at one bias point. Returns raw id (A).
+
+    Uses a 1-point DC sweep (.dc Vds vds vds 1) to extract the current.
+    """
+    from pycircuitsim.parser import Parser
+    from pycircuitsim.simulation import run_dc_sweep
+    from pycircuitsim.visualizer import Visualizer
+
+    if is_pmos:
+        l_nm = tech.effective_l_pmos * 1e9
+        vt_key = tech.effective_pmos_vt
+        dev_name = "Mp1"
+        dev_type = "PMOS"
+        inst_line = f"Mp1 1 2 0 0 nn_model L={l_nm:.0f}n NFIN={tech.nfin}"
+    else:
+        l_nm = tech.l_nmos * 1e9
+        vt_key = tech.nn_vt
+        dev_name = "Mn1"
+        dev_type = "NMOS"
+        inst_line = f"Mn1 1 2 0 0 nn_model L={l_nm:.0f}n NFIN={tech.nfin}"
+
+    params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={vt_key}"
+    if model_path is not None:
+        params += f" MODEL_PATH={model_path}"
+
+    # Single-point sweep: sweep Vds over [vds, vds] to get one operating point
+    netlist_path = work_dir / f"sign_{model_name}_{dev_type}_{vgs:.3f}_{vds:.3f}.sp"
+    content = (
+        f"* Sign diagnostic ({model_name}, {tech.name})\n"
+        f"Vds 1 0 {vds}\n"
+        f"Vgs 2 0 {vgs}\n"
+        f"{inst_line}\n"
+        f".model nn_model {dev_type} ({params})\n"
+        f".dc Vds {vds} {vds} 1\n"
+        f".end\n"
+    )
+    netlist_path.write_text(content)
+
+    logging.disable(logging.CRITICAL)
+    try:
+        parser = Parser()
+        parser.parse_file(str(netlist_path))
+        circuit = parser.circuit
+        vis = Visualizer()
+        out_dir = work_dir / f"sign_{model_name}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        results = run_dc_sweep(
+            circuit, parser.analysis_params, vis, out_dir,
+            f"sign_{model_name}",
+        )
+    finally:
+        logging.disable(logging.NOTSET)
+
+    current_key = f"i({dev_name})"
+    id_val = float(results[current_key][0])
+    return id_val
+
+
+def run_sign_diagnostic(
+    tech_names: List[str],
+    checkpoints: Dict[str, Optional[Path]],
+) -> List[TestResult]:
+    """Run sign pre-screen: evaluate NN models at subthreshold bias points.
+
+    Checks that NMOS id <= 0 and PMOS id >= 0 at Vgs=0 for various Vds.
+    Fast diagnostic to run before expensive inverter transient tests.
+    """
+    results: List[TestResult] = []
+
+    print(f"\n{'='*70}")
+    print("  SIGN PRE-SCREEN DIAGNOSTIC")
+    print(f"{'='*70}")
+
+    for tech_name in tech_names:
+        tech = ALL_TEST_TECHS[tech_name]
+        if not _tech_code_in_vocab(tech.nn_tech_key, tech.nn_vt):
+            print(f"\n  {tech.name} -- SKIPPED (tech code out of vocab)")
+            continue
+
+        work_dir = RESULTS_BASE / "sign_diagnostic" / tech.name
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        # Define test points: (vgs, vds, is_pmos, expected_sign_label)
+        nmos_points = [
+            (0.0, 0.0,            False, "~0"),
+            (0.0, 0.02,           False, "<=0"),
+            (0.0, 0.05,           False, "<=0"),
+            (0.0, tech.vdd * 0.5, False, "<=0"),
+        ]
+        pmos_points: List[Tuple[float, float, bool, str]] = []
+        if tech.pmos_model and _tech_code_in_vocab(
+            tech.nn_tech_key, tech.effective_pmos_vt
+        ):
+            pmos_points = [
+                (0.0, 0.0,             True, "~0"),
+                (0.0, -0.02,           True, ">=0"),
+                (0.0, -tech.vdd * 0.5, True, ">=0"),
+            ]
+
+        for model_tag, level in [("bsimar_v4", 74), ("directnet_v4", 73)]:
+            nmos_key = f"{model_tag}_nmos" if f"{model_tag}_nmos" in checkpoints else model_tag
+            pmos_key = f"{model_tag}_pmos"
+            nmos_ckpt = checkpoints.get(nmos_key) or checkpoints.get(model_tag)
+            pmos_ckpt = checkpoints.get(pmos_key)
+
+            if nmos_ckpt is None:
+                continue
+
+            print(f"\n  {tech.name} / {model_tag} (LEVEL={level}):")
+            print(f"    {'Device':6s} {'Vgs':>6s} {'Vds':>8s} {'Id (A)':>12s} "
+                  f"{'Expected':>8s} {'Status':>8s}")
+            print(f"    {'-'*54}")
+
+            n_sign_fail = 0
+
+            for vgs, vds, is_pmos, expected in nmos_points:
+                try:
+                    id_val = _eval_nn_single_op(
+                        tech, work_dir, level, model_tag,
+                        vgs, vds, is_pmos=False, model_path=nmos_ckpt,
+                    )
+                    # NMOS: id should be <= 0 (current into drain)
+                    if expected == "~0":
+                        ok = abs(id_val) < 1e-6
+                    else:
+                        ok = id_val <= 1e-10  # allow tiny positive noise
+                    status = "OK" if ok else "FAIL"
+                    if not ok:
+                        n_sign_fail += 1
+                    print(f"    {'NMOS':6s} {vgs:6.3f} {vds:8.4f} {id_val:12.4e} "
+                          f"{expected:>8s} {status:>8s}")
+                except Exception as e:
+                    print(f"    {'NMOS':6s} {vgs:6.3f} {vds:8.4f} {'ERROR':>12s} "
+                          f"{expected:>8s} {'ERROR':>8s}  ({e})")
+                    n_sign_fail += 1
+
+            if pmos_ckpt is not None:
+                for vgs, vds, is_pmos, expected in pmos_points:
+                    try:
+                        id_val = _eval_nn_single_op(
+                            tech, work_dir, level, model_tag,
+                            vgs, vds, is_pmos=True, model_path=pmos_ckpt,
+                        )
+                        # PMOS: id should be >= 0 (current into drain)
+                        if expected == "~0":
+                            ok = abs(id_val) < 1e-6
+                        else:
+                            ok = id_val >= -1e-10
+                        status = "OK" if ok else "FAIL"
+                        if not ok:
+                            n_sign_fail += 1
+                        print(f"    {'PMOS':6s} {vgs:6.3f} {vds:8.4f} {id_val:12.4e} "
+                              f"{expected:>8s} {status:>8s}")
+                    except Exception as e:
+                        print(f"    {'PMOS':6s} {vgs:6.3f} {vds:8.4f} {'ERROR':>12s} "
+                              f"{expected:>8s} {'ERROR':>8s}  ({e})")
+                        n_sign_fail += 1
+
+            passed = n_sign_fail == 0
+            results.append(TestResult(
+                tech=tech.name, model=f"{model_tag}_sign",
+                analysis="sign",
+                nrmse_pct=0.0 if passed else 100.0,
+                passed=passed,
+                error="" if passed else f"{n_sign_fail} sign violation(s)",
+            ))
+
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Id-Vds curve diagnostic at Vgs=0
+# ---------------------------------------------------------------------------
+def run_ngspice_nmos_idvds(
+    tech: TestTechConfig, work_dir: Path,
+) -> Dict[str, np.ndarray]:
+    """Run NGSPICE NMOS Id-Vds sweep at Vgs=0. Returns {sweep, id}."""
+    baked = create_baked_modelcard(tech, work_dir)
+
+    netlist_path = work_dir / f"ngspice_nmos_idvds_{tech.name}.cir"
+    content = (
+        f"* NMOS Id-Vds at Vgs=0 (NGSPICE, {tech.name})\n"
+        f'.include "{baked}"\n'
+        f".temp 27\n"
+        f"Vds d 0 0.0\n"
+        f"Vgs g 0 0.0\n"
+        f"N1 d g 0 0 {tech.nmos_model}\n"
+        f".dc Vds -0.1 {tech.vdd} 0.005\n"
+        f".end\n"
+    )
+    netlist_path.write_text(content)
+
+    csv_path = work_dir / f"ngspice_nmos_idvds_{tech.name}.csv"
+    log_path = work_dir / f"ngspice_nmos_idvds_{tech.name}.log"
+    runner_path = work_dir / f"ngspice_nmos_idvds_{tech.name}_runner.cir"
+    runner_content = (
+        f"* NGSPICE Id-Vds runner ({tech.name})\n"
+        f".control\n"
+        f"osdi {OSDI_PATH}\n"
+        f"source {netlist_path}\n"
+        f"set filetype=ascii\n"
+        f"set wr_vecnames\n"
+        f"run\n"
+        f"wrdata {csv_path} i(Vds)\n"
+        f".endc\n"
+        f".end\n"
+    )
+    runner_path.write_text(runner_content)
+
+    res = subprocess.run(
+        [NGSPICE_BIN, "-b", "-o", str(log_path), str(runner_path)],
+        capture_output=True, text=True,
+    )
+    if log_path.exists() and "Fatal:" in log_path.read_text():
+        raise RuntimeError(f"NGSPICE OSDI fatal error in Id-Vds {tech.name}")
+    if not csv_path.exists():
+        log_text = log_path.read_text() if log_path.exists() else "(no log)"
+        raise RuntimeError(f"NGSPICE Id-Vds no output: {log_text[-300:]}")
+
+    with csv_path.open() as f:
+        lines = f.readlines()
+    data_rows = []
+    for line in lines[1:]:
+        s = line.strip()
+        if s:
+            data_rows.append([float(x) for x in s.split()])
+    data = np.array(data_rows)
+    return {"sweep": data[:, 0], "id": data[:, 1]}
+
+
+def run_pycircuitsim_nn_nmos_idvds(
+    tech: TestTechConfig,
+    work_dir: Path,
+    level: int,
+    model_name: str,
+    model_path: Optional[Path] = None,
+) -> Dict[str, np.ndarray]:
+    """Run PyCircuitSim NN NMOS Id-Vds at Vgs=0. Returns {sweep, id}."""
+    from pycircuitsim.parser import Parser
+    from pycircuitsim.simulation import run_dc_sweep
+    from pycircuitsim.visualizer import Visualizer
+
+    l_nm = tech.l_nmos * 1e9
+    model_params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={tech.nn_vt}"
+    if model_path is not None:
+        model_params += f" MODEL_PATH={model_path}"
+
+    netlist_path = work_dir / f"nn_{model_name}_nmos_idvds_{tech.name}.sp"
+    content = (
+        f"* NN NMOS Id-Vds at Vgs=0 ({model_name}, {tech.name})\n"
+        f"Vds 1 0 0.0\n"
+        f"Vgs 2 0 0.0\n"
+        f"Mn1 1 2 0 0 nmos_nn L={l_nm:.0f}n NFIN={tech.nfin}\n"
+        f".model nmos_nn NMOS ({model_params})\n"
+        f".dc Vds -0.1 {tech.vdd} 0.005\n"
+        f".end\n"
+    )
+    netlist_path.write_text(content)
+
+    logging.disable(logging.CRITICAL)
+    try:
+        parser = Parser()
+        parser.parse_file(str(netlist_path))
+        circuit = parser.circuit
+        vis = Visualizer()
+        out_dir = work_dir / f"{model_name}_idvds_{tech.name}"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        results = run_dc_sweep(
+            circuit, parser.analysis_params, vis, out_dir,
+            f"{model_name}_idvds_{tech.name}",
+        )
+    finally:
+        logging.disable(logging.NOTSET)
+
+    sweep = np.array(results["1"])
+    signal = np.array(results["i(Mn1)"])
+    return {"sweep": sweep, "id": signal}
+
+
+def plot_idvds_diagnostic(
+    ref_data: Dict[str, np.ndarray],
+    model_results: Dict[str, Dict[str, np.ndarray]],
+    tech: TestTechConfig,
+    save_path: Path,
+) -> None:
+    """Plot Id-Vds at Vgs=0 for BSIM-CMG vs NN models."""
+    fig, axes = plt.subplots(2, 1, figsize=(12, 8))
+
+    colors = {"bsimar_v4": "red", "directnet_v4": "purple"}
+
+    # Linear scale
+    ax1 = axes[0]
+    ax1.plot(ref_data["sweep"], ref_data["id"], "b-", lw=2,
+             label="NGSPICE BSIM-CMG")
+    for mname, mdata in model_results.items():
+        ax1.plot(mdata["sweep"], mdata["id"],
+                 color=colors.get(mname, "gray"), linestyle="--", lw=1.5,
+                 label=mname)
+    ax1.axhline(y=0, color="k", lw=0.5, ls=":")
+    ax1.axvline(x=0, color="k", lw=0.5, ls=":")
+    ax1.set_xlabel("Vds (V)")
+    ax1.set_ylabel("Id (A)  [raw, with sign]")
+    ax1.set_title(
+        f"NMOS Id-Vds at Vgs=0: {tech.name}  "
+        f"L={tech.l_nmos*1e9:.0f}nm  NFIN={tech.nfin}"
+    )
+    ax1.legend(fontsize=8)
+    ax1.grid(True, alpha=0.3)
+
+    # Zoomed near Vds=0
+    ax2 = axes[1]
+    zoom_range = 0.15
+    ax2.plot(ref_data["sweep"], ref_data["id"], "b-", lw=2,
+             label="NGSPICE BSIM-CMG")
+    for mname, mdata in model_results.items():
+        ax2.plot(mdata["sweep"], mdata["id"],
+                 color=colors.get(mname, "gray"), linestyle="--", lw=1.5,
+                 label=mname)
+    ax2.axhline(y=0, color="k", lw=0.5, ls=":")
+    ax2.axvline(x=0, color="k", lw=0.5, ls=":")
+    ax2.set_xlim(-zoom_range, zoom_range)
+    ax2.set_xlabel("Vds (V)")
+    ax2.set_ylabel("Id (A)  [raw, with sign]")
+    ax2.set_title("Zoomed near Vds=0 (boundary behavior)")
+    ax2.legend(fontsize=8)
+    ax2.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    fig.savefig(save_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def run_idvds_diagnostic(
+    tech_names: List[str],
+    checkpoints: Dict[str, Optional[Path]],
+) -> List[TestResult]:
+    """Run Id-Vds sweep at Vgs=0 to visualize Vds=0 boundary and wrong-sign.
+
+    For each tech: NGSPICE ground truth + available NN models.
+    Generates comparison plots.
+    """
+    results: List[TestResult] = []
+
+    print(f"\n{'='*70}")
+    print("  Id-Vds DIAGNOSTIC (Vgs=0, subthreshold)")
+    print(f"{'='*70}")
+
+    for tech_name in tech_names:
+        tech = ALL_TEST_TECHS[tech_name]
+        if not _tech_code_in_vocab(tech.nn_tech_key, tech.nn_vt):
+            print(f"\n  {tech.name} -- SKIPPED (tech code out of vocab)")
+            continue
+
+        work_dir = RESULTS_BASE / "idvds_diagnostic" / tech.name
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        print(f"\n  {tech.name}: NMOS Id-Vds at Vgs=0  "
+              f"L={tech.l_nmos*1e9:.0f}nm  NFIN={tech.nfin}")
+
+        # 1. NGSPICE ground truth
+        print(f"    Running NGSPICE ground truth...")
+        try:
+            ng_data = run_ngspice_nmos_idvds(tech, work_dir)
+            print(f"    NGSPICE: {len(ng_data['sweep'])} pts, "
+                  f"Id range [{ng_data['id'].min():.4e}, "
+                  f"{ng_data['id'].max():.4e}]")
+        except Exception as e:
+            print(f"    NGSPICE ERROR: {e}")
+            continue
+
+        nn_results: Dict[str, Dict[str, np.ndarray]] = {}
+
+        for model_tag, level in [("bsimar_v4", 74), ("directnet_v4", 73)]:
+            nmos_key = (f"{model_tag}_nmos"
+                        if f"{model_tag}_nmos" in checkpoints
+                        else model_tag)
+            ckpt = checkpoints.get(nmos_key) or checkpoints.get(model_tag)
+            if ckpt is None:
+                continue
+
+            print(f"    Running {model_tag} (LEVEL={level})...")
+            try:
+                nn_data = run_pycircuitsim_nn_nmos_idvds(
+                    tech, work_dir, level, model_tag, model_path=ckpt,
+                )
+                nn_results[model_tag] = nn_data
+
+                # Check for wrong-sign: positive Id at positive Vds
+                pos_vds_mask = nn_data["sweep"] > 0.01
+                if pos_vds_mask.any():
+                    wrong_sign_count = int(
+                        (nn_data["id"][pos_vds_mask] > 1e-10).sum()
+                    )
+                    total_pos = int(pos_vds_mask.sum())
+                    print(f"    {model_tag}: Id range "
+                          f"[{nn_data['id'].min():.4e}, "
+                          f"{nn_data['id'].max():.4e}], "
+                          f"wrong-sign={wrong_sign_count}/{total_pos}")
+                    passed = wrong_sign_count == 0
+                else:
+                    passed = True
+
+                results.append(TestResult(
+                    tech=tech.name, model=f"{model_tag}_idvds",
+                    analysis="idvds",
+                    nrmse_pct=0.0 if passed else 100.0,
+                    passed=passed,
+                    error="" if passed else "wrong-sign Id at Vds>0",
+                ))
+            except Exception as e:
+                print(f"    {model_tag} ERROR: {e}")
+                results.append(TestResult(
+                    tech=tech.name, model=f"{model_tag}_idvds",
+                    analysis="idvds",
+                    nrmse_pct=float("nan"), error=str(e),
+                ))
+
+        # Plot
+        if nn_results:
+            plot_path = work_dir / f"idvds_diagnostic_{tech.name}.png"
+            plot_idvds_diagnostic(ng_data, nn_results, tech, plot_path)
+            print(f"    [Plot] Saved: {plot_path}")
+
+    return results
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 def main() -> int:
@@ -2420,6 +2918,14 @@ def main() -> int:
         "--inverter-only", action="store_true",
         help="Run inverter tests only (VTC + transient)",
     )
+    parser.add_argument(
+        "--sign-diagnostic", action="store_true",
+        help="Run sign pre-screen diagnostic (Vgs=0 bias points)",
+    )
+    parser.add_argument(
+        "--idvds-diagnostic", action="store_true",
+        help="Run Id-Vds curve diagnostic at Vgs=0",
+    )
     args = parser.parse_args()
 
     tech_names = [t.strip() for t in args.tech.split(",")]
@@ -2431,12 +2937,15 @@ def main() -> int:
 
     # Determine which test suites to run
     explicit_filter = (args.dc_only or args.tran_only or
-                       args.pmos_only or args.inverter_only)
+                       args.pmos_only or args.inverter_only or
+                       args.sign_diagnostic or args.idvds_diagnostic)
     run_nmos_dc = args.dc_only or not explicit_filter
     run_nmos_tran = args.tran_only or not explicit_filter
     run_pmos_dc = args.pmos_only or not explicit_filter
     run_inverter_vtc = args.inverter_only or not explicit_filter
     run_inverter_tran = args.inverter_only or not explicit_filter
+    run_sign_diag = args.sign_diagnostic
+    run_idvds_diag = args.idvds_diagnostic
 
     # Create results directory
     RESULTS_BASE.mkdir(parents=True, exist_ok=True)
@@ -2451,7 +2960,8 @@ def main() -> int:
     print(f"\n  Technologies: {', '.join(tech_names)}")
     print(f"  Suites: NMOS_DC={run_nmos_dc}  PMOS_DC={run_pmos_dc}  "
           f"INV_VTC={run_inverter_vtc}  NMOS_TRAN={run_nmos_tran}  "
-          f"INV_TRAN={run_inverter_tran}")
+          f"INV_TRAN={run_inverter_tran}  "
+          f"SIGN_DIAG={run_sign_diag}  IDVDS_DIAG={run_idvds_diag}")
     print(f"\n  Checkpoint availability:")
     # Show non-alias keys only
     for name, path in checkpoints.items():
@@ -2490,12 +3000,22 @@ def main() -> int:
     if run_inverter_tran:
         tran_results.extend(run_inverter_tran_tests(tech_names, checkpoints))
 
-    # Summary
-    n_pass, n_fail, n_error = print_summary(dc_results, tran_results)
+    # Diagnostics
+    diag_results: List[TestResult] = []
+
+    if run_sign_diag:
+        diag_results.extend(run_sign_diagnostic(tech_names, checkpoints))
+
+    if run_idvds_diag:
+        diag_results.extend(run_idvds_diagnostic(tech_names, checkpoints))
+
+    # Summary (include diagnostics in tran_results for display)
+    all_tran_and_diag = tran_results + diag_results
+    n_pass, n_fail, n_error = print_summary(dc_results, all_tran_and_diag)
 
     # Save CSV
     csv_path = RESULTS_BASE / "summary.csv"
-    save_summary_csv(dc_results, tran_results, csv_path)
+    save_summary_csv(dc_results, all_tran_and_diag, csv_path)
 
     # Final verdict
     total = n_pass + n_fail + n_error

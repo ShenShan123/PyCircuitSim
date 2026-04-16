@@ -146,6 +146,12 @@ class _MOSFETNNBase(Component):
         geo_std[geo_std < 1e-12] = 1.0
         self._geo_norm = (geo_raw - self._norm_stats.input_mean[4:7]) / geo_std
 
+        # Estimate VDD from training domain bounds for adaptive Vds correction.
+        # Training box = [0, 2*VDD] for NMOS, [-2*VDD, 0] for PMOS.
+        vd_range = max(abs(float(self._norm_stats.input_max[0])),
+                       abs(float(self._norm_stats.input_min[0])))
+        self._vdd_estimate = vd_range / 2.0
+
         # Subclass sets this
         self._is_pmos = False
 
@@ -457,16 +463,13 @@ class _MOSFETNNBase(Component):
         Vds=0), even when Id itself is forced to zero.  This
         prevents floating-node singularities.
         """
-        # Use 2×kT/q as the transition width.  Physical motivation:
-        # the subthreshold slope factor n ≈ 1.3 for FinFETs, but the
-        # NN's Vds=0 residual requires extra suppression to prevent
-        # wrong-sign leakage from destabilising inverter rail states.
-        # n=2 gives a comfortable margin: at Vds = 0.24 V (minimum
-        # in the NMOS pulse test), f ≈ 0.99 — negligible accuracy
-        # impact — while at Vds = 0.05 V, f ≈ 0.62 (vs 0.85 for
-        # Vt = 0.026), providing stronger suppression of the NN's
-        # spurious leakage near Vds ≈ 0.
-        VT = 0.052  # 2 × kT/q at 300 K
+        # VDD-proportional transition width: 6% of VDD, floored at
+        # kT/q = 0.026 V.  At TSMC5 (VDD=0.65 V) this gives VT=0.039 V
+        # (was 0.052 V fixed), reducing the correction's reach relative
+        # to VDD and fixing the ~30 mV high-rail offset.  At TSMC12/16
+        # (VDD=0.80 V) VT=0.048 V, close to the previous value.  The
+        # correction is negligible at |Vds| > 5×VT (always < 0.24 V).
+        VT = max(0.06 * self._vdd_estimate, 0.026)
         abs_vds = abs(vds)
 
         # Is Vds in the physically normal direction for this device?

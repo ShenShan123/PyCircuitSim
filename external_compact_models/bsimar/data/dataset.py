@@ -53,7 +53,7 @@ class MOSFETDataset(Dataset):
 # Per-output filtering thresholds (physical units).
 # Samples where ANY target falls below its group threshold are removed.
 DEFAULT_FILTER_THRESHOLDS: Dict[str, float] = {
-    "id": 1e-12, "gm": 1e-12, "gds": 1e-12, "gmb": 1e-12,
+    "id": 1e-15, "gm": 1e-12, "gds": 1e-12, "gmb": 1e-12,
     "qg": 1e-19, "qd": 1e-19, "qs": 1e-19, "qb": 1e-19,
     "cgg": 1e-19, "cgd": 1e-19, "cgs": 1e-19, "cdg": 1e-19, "cdd": 1e-19,
 }
