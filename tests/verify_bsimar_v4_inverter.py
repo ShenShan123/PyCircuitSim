@@ -11,6 +11,8 @@ Default target: TSMC5 SVT (VDD=0.65V, NMOS L=16nm, PMOS L=20nm, NFIN=10).
 """
 from __future__ import annotations
 
+import argparse
+import os
 import subprocess
 import sys
 import time
@@ -83,6 +85,29 @@ TSMC5_SVT = TestTechConfig(
     nmos_pdk="nch_svt_mac", pmos_pdk="pch_svt_mac",
 )
 
+TSMC7_SVT = TestTechConfig(
+    name="TSMC7", tech_key="tsmc7", variant="svt", vdd=0.75,
+    l_nmos=16e-9, l_pmos=20e-9,
+    nmos_pdk="nch_svt_mac", pmos_pdk="pch_svt_mac",
+)
+
+TSMC12_SVT = TestTechConfig(
+    name="TSMC12", tech_key="tsmc12", variant="svt", vdd=0.80,
+    l_nmos=16e-9, l_pmos=20e-9,
+    nmos_pdk="nch_svt_mac", pmos_pdk="pch_svt_mac",
+)
+
+TSMC16_SVT = TestTechConfig(
+    name="TSMC16", tech_key="tsmc16", variant="svt", vdd=0.80,
+    l_nmos=16e-9, l_pmos=20e-9,
+    nmos_pdk="nch_svt_mac", pmos_pdk="pch_svt_mac",
+)
+
+TECH_BY_NAME = {
+    "tsmc5": TSMC5_SVT, "tsmc7": TSMC7_SVT,
+    "tsmc12": TSMC12_SVT, "tsmc16": TSMC16_SVT,
+}
+
 
 # ── PyCMG ground-truth helpers ──────────────────────────────────────────────
 
@@ -130,9 +155,10 @@ def create_bsimar_instance(
     """Create BSIMAR v4 MOSFET instance for inference."""
     from pycircuitsim.models.mosfet_bsimar import NMOS_BSIMAR, PMOS_BSIMAR
 
-    # Resolve v4 checkpoint (phys-best preferred)
-    v4_phys = CHECKPOINT_DIR / f"v4_universal_{device_type}_best.phys.pt"
-    v4_plain = CHECKPOINT_DIR / f"v4_universal_{device_type}_best.pt"
+    # Resolve v4 checkpoint (phys-best preferred). Prefix overridable via env.
+    prefix = os.environ.get("BSIMAR_PREFIX", "v4_universal")
+    v4_phys = CHECKPOINT_DIR / f"{prefix}_{device_type}_best.phys.pt"
+    v4_plain = CHECKPOINT_DIR / f"{prefix}_{device_type}_best.pt"
     if v4_phys.exists():
         model_path = str(v4_phys)
     elif v4_plain.exists():
@@ -377,6 +403,7 @@ Cload out 0 {CLOAD}
     log_path = results_dir / "ngspice_tran.log"
     runner = results_dir / "ngspice_tran_runner.cir"
     runner.write_text(f"""\
+* {tech.name} inverter transient runner
 .control
 osdi {OSDI_PATH}
 source {netlist}
@@ -418,6 +445,22 @@ def _run_nn_tran(tech: TestTechConfig, level: int) -> Dict[str, np.ndarray]:
     label = "directnet_v4" if level == 73 else "bsimar_v4"
 
     netlist_path = results_dir / f"{label}_tran.sp"
+
+    # If a custom BSIMAR prefix was requested for tests 1-3, also override
+    # the LEVEL=74 checkpoint paths in the transient netlist (parser
+    # supports MODEL_PATH=... override per .model directive).
+    extra_n = extra_p = ""
+    if level == 74:
+        prefix = os.environ.get("BSIMAR_PREFIX")
+        if prefix:
+            from bsimar.config import CHECKPOINT_DIR as _CKPT_DIR
+            n_phys = _CKPT_DIR / f"{prefix}_nmos_best.phys.pt"
+            n_path = n_phys if n_phys.exists() else _CKPT_DIR / f"{prefix}_nmos_best.pt"
+            p_phys = _CKPT_DIR / f"{prefix}_pmos_best.phys.pt"
+            p_path = p_phys if p_phys.exists() else _CKPT_DIR / f"{prefix}_pmos_best.pt"
+            extra_n = f" MODEL_PATH={n_path}"
+            extra_p = f" MODEL_PATH={p_path}"
+
     netlist_path.write_text(f"""\
 * {label.upper()} Inverter Transient ({tech.name}, LEVEL={level})
 Vdd 1 0 {tech.vdd}
@@ -426,8 +469,8 @@ Mp1 3 2 1 1 pmos1 L={l_pmos_nm:.0f}n NFIN={tech.nfin}
 Mn1 3 2 0 0 nmos1 L={l_nmos_nm:.0f}n NFIN={tech.nfin}
 Cload 3 0 {CLOAD}
 .ic V(3)={tech.vdd}
-.model nmos1 NMOS (LEVEL={level} TECH={tech.tech_key} VT={tech.variant})
-.model pmos1 PMOS (LEVEL={level} TECH={tech.tech_key} VT={tech.variant})
+.model nmos1 NMOS (LEVEL={level} TECH={tech.tech_key} VT={tech.variant}{extra_n})
+.model pmos1 PMOS (LEVEL={level} TECH={tech.tech_key} VT={tech.variant}{extra_p})
 .tran {TSTEP} {TSTOP}
 .end
 """)
@@ -621,15 +664,27 @@ class TestResult:
 
 
 def main() -> int:
-    tech = TSMC5_SVT
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--bsimar-prefix", default=None,
+                        help="BSIMAR checkpoint prefix (default: v4_universal). "
+                             "Probe: v4_probe_signfix")
+    parser.add_argument("--tech", default="tsmc5",
+                        choices=list(TECH_BY_NAME.keys()),
+                        help="Technology to verify (default: tsmc5)")
+    args = parser.parse_args()
+    if args.bsimar_prefix:
+        os.environ["BSIMAR_PREFIX"] = args.bsimar_prefix
+
+    tech = TECH_BY_NAME[args.tech]
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     tech_dir = RESULTS_DIR / tech.name
     tech_dir.mkdir(parents=True, exist_ok=True)
 
     # Check v4 checkpoints (both models)
+    prefix = os.environ.get("BSIMAR_PREFIX", "v4_universal")
     for dt in ("nmos", "pmos"):
-        v4_phys = CHECKPOINT_DIR / f"v4_universal_{dt}_best.phys.pt"
-        v4_plain = CHECKPOINT_DIR / f"v4_universal_{dt}_best.pt"
+        v4_phys = CHECKPOINT_DIR / f"{prefix}_{dt}_best.phys.pt"
+        v4_plain = CHECKPOINT_DIR / f"{prefix}_{dt}_best.pt"
         if not v4_phys.exists() and not v4_plain.exists():
             print(f"ERROR: No BSIMAR v4 checkpoint for {dt}: {v4_phys.name} / {v4_plain.name}")
             return 1

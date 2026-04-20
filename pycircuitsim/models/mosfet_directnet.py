@@ -464,11 +464,8 @@ class _MOSFETNNBase(Component):
         prevents floating-node singularities.
         """
         # VDD-proportional transition width: 6% of VDD, floored at
-        # kT/q = 0.026 V.  At TSMC5 (VDD=0.65 V) this gives VT=0.039 V
-        # (was 0.052 V fixed), reducing the correction's reach relative
-        # to VDD and fixing the ~30 mV high-rail offset.  At TSMC12/16
-        # (VDD=0.80 V) VT=0.048 V, close to the previous value.  The
-        # correction is negligible at |Vds| > 5×VT (always < 0.24 V).
+        # kT/q = 0.026 V.  At TSMC5 (VDD=0.65 V) this gives VT=0.039 V,
+        # at TSMC12/16 (VDD=0.80 V) VT=0.048 V.
         VT = max(0.06 * self._vdd_estimate, 0.026)
         abs_vds = abs(vds)
 
@@ -479,6 +476,42 @@ class _MOSFETNNBase(Component):
             normal_dir = vds < 0.0
         else:
             normal_dir = vds > 0.0
+
+        # Rail-restoring extrapolation outside the training Vds range.
+        # Must run BEFORE any early returns (the fast-path below would
+        # otherwise skip this for the very out-of-range cases that need it).
+        # The NN was trained on Vds ∈ [-VDD, VDD] and extrapolates flat-
+        # near-zero outside, making the KCL residual a false plateau the
+        # DCSolver mistakes for an equilibrium (e.g. inverter transient OP
+        # locking at V(out)=4.4V instead of VDD). PyCMG predicts |Id|~mA at
+        # out-of-range Vds (impact ionization, leakage); we replicate that.
+        #
+        # Use a *quadratic* ramp so both Id and gds extras start at zero
+        # with zero slope at the boundary.  A linear ramp (1 mS jump at
+        # threshold) caused NR oscillation in techs whose operating range
+        # sits right at the training boundary (TSMC12/16, VDD≈VDD_train).
+        # Quadratic ramp:
+        #   I_extra(x) = ½ · g_max · x² / x_ref      x = |Vds|−VDD_train
+        #   g_extra(x) = dI_extra/dx = g_max · x / x_ref
+        # → both 0 with 0 slope at x=0; both grow smoothly for x>0.
+        # x_ref controls how quickly we ramp into the full restoring force.
+        VDD_train = self._vdd_estimate
+        if abs_vds > VDD_train:
+            overshoot = abs_vds - VDD_train
+            g_max = 1.0e-3   # 1 mS — full restoring conductance asymptote
+            x_ref = 0.5 * VDD_train  # ramp distance: ~half VDD past boundary
+            # Quadratic Id extra (sign for normal direction overshoot only).
+            id_extra = 0.5 * g_max * overshoot * overshoot / x_ref
+            # Linear-rising gds extra (derivative of the quadratic Id).
+            g_extra = g_max * overshoot / x_ref
+            if normal_dir:
+                if self._is_pmos:
+                    result["id"] = result["id"] - id_extra
+                else:
+                    result["id"] = result["id"] + id_extra
+            # gds extra applies in both directions (give NR a slope even
+            # when reverse-Vds id is forced to zero by Part 1 below).
+            result["gds"] = max(result["gds"], g_extra)
 
         # Fast path: normal direction with large |Vds| → correction ≈ 1
         if normal_dir and abs_vds > 20.0 * VT:
