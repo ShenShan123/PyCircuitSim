@@ -587,7 +587,38 @@ code changes, no new checkpoints.
 Else if BSIMAR TSMC5 transient drops by > 1 pp and all other cells stay
 within ± 1 pp, keep and mark E1 WORKING. Else mark E1 NEUTRAL and revert.
 
-**Measured result:** *(filled after run)*
+**Measured result (2026-04-22):** **E1 NEUTRAL → REVERT**.
+
+Full report: `results/v5_e1_vt_bump_2026_04_22.md`. 76 min wall-clock.
+
+- **Primary target (BSIMAR TSMC5 Transient)**: 12.13 % → 12.16 %
+  (Δ +0.03 pp, flat). Hypothesis invalidated.
+- **Worst regression (DC):** +0.37 pp (TSMC5 DN NMOS DC). Within the
+  1 pp tolerance — does not trigger the hard-revert rule.
+- **Best secondary improvement:** TSMC16 DN Transient 7.86 % → 3.78 %
+  (Δ −4.08 pp). This is a genuine but unexpected win on the secondary
+  cell, driven by wider VT helping the TSMC16 high-rail approach.
+- **PASS count:** 22/32 → 22/32 (one FAIL→PASS on TSMC5 DN VTC,
+  one PASS→FAIL on TSMC12 BSIMAR NMOS DC — both ≤ 0.2 pp from
+  threshold, neither a real accuracy change).
+
+**Verdict:** change reverted. Keeping it would shift all DC cells
+~0.2 pp in the wrong direction to buy a secondary improvement on
+exactly one cell (TSMC16 DN tran) while the primary target stays flat.
+Marked **INFEASIBLE for primary target** (BSIMAR TSMC5 Transient); the
+BSIMAR subthreshold wrong-sign diagnosis still stands but requires
+retraining, not runtime VT gating.
+
+**Lessons:**
+1. BSIMAR TSMC5 transient at 12 % is NOT dominated by near-rail
+   subthreshold leakage (|Vds| < VT range). Most error lives at mid-
+   range switching (|Vds| ∈ [0.1, 0.5] V) where VT bump is a no-op.
+2. Inference-time `f_id = 1 - exp(-|Vds|/VT)` tuning is at its ceiling;
+   any further gains require retraining.
+3. TSMC16 DN transient result (-4 pp) suggests that for high-VDD techs
+   the wider VT genuinely helps the high-rail approach. Potential
+   future micro-optimisation: per-tech VT coefficient. Filed but not
+   blocking.
 
 
 
