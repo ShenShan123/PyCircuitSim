@@ -1,0 +1,47 @@
+osdi[osdi_host] lvl=1 Warning: PTWG_i = -1.325033e+00 is negative, setting it to 0.
+
+osdi[osdi_host] lvl=1 Warning: PTWG_i = -1.325033e+00 is negative, setting it to 0.
+
+
+ERROR conda.cli.main_run:execute(127): `conda run python tests/verify_bsimar_v4_inverter.py --tech tsmc5` failed. (See above for error)
+========================================================================
+v4 Inverter Verification: TSMC5 SVT
+  BSIMAR v4 (LEVEL=74) + DirectNet v4 (LEVEL=73)
+  VDD=0.65V  L_n=16nm  L_p=20nm  NFIN=10
+  Tech code: 0
+========================================================================
+
+--- Test 1: NMOS DC Sweep ---
+  AR NRMSE=4.59%  DN NRMSE=6.20%  [34.0s]
+
+--- Test 2: PMOS DC Sweep ---
+  AR NRMSE=5.97%  DN NRMSE=7.74%  [31.6s]
+
+--- Test 3: Inverter VTC ---
+  AR NRMSE=13.96%  DN NRMSE=10.73%  [309.8s]
+
+--- Test 4: Inverter Transient ---
+  [NGSPICE] Running TSMC5 transient...
+  [NGSPICE] 541 pts, V(out) [-0.0047, 0.6550]V
+  [BSIMAR] Running TSMC5 transient...
+  [BSIMAR] 502 pts, V(out) [-0.0115, 0.8937]V
+  [DirectNet] Running TSMC5 transient...
+  [DirectNet] 502 pts, V(out) [-0.0117, 0.6928]V
+  AR NRMSE=12.13%  DN NRMSE=3.75%  [503.6s]
+
+========================================================================
+SUMMARY
+========================================================================
+  Test                 |   NRMSE(%) |  Threshold |  Time(s) | Status
+  -------------------- | ---------- | ---------- | -------- | ------
+  NMOS DC (AR)         |       4.59 |       10.0 |     34.0 |   PASS
+  NMOS DC (DN)         |       6.20 |       10.0 |     34.0 |   PASS
+  PMOS DC (AR)         |       5.97 |       10.0 |     31.6 |   PASS
+  PMOS DC (DN)         |       7.74 |       10.0 |     31.6 |   PASS
+  VTC (AR)             |      13.96 |       10.0 |    309.8 |   FAIL
+  VTC (DN)             |      10.73 |       10.0 |    309.8 |   FAIL
+  Transient (AR)       |      12.13 |       15.0 |    503.6 |   PASS
+  Transient (DN)       |       3.75 |       15.0 |    503.6 |   PASS
+
+  Result: 6/8 PASS
+

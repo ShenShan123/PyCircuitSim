@@ -1,0 +1,42 @@
+ERROR conda.cli.main_run:execute(127): `conda run python tests/verify_bsimar_v4_inverter.py --tech tsmc12` failed. (See above for error)
+========================================================================
+v4 Inverter Verification: TSMC12 SVT
+  BSIMAR v4 (LEVEL=74) + DirectNet v4 (LEVEL=73)
+  VDD=0.8V  L_n=16nm  L_p=20nm  NFIN=10
+  Tech code: 7
+========================================================================
+
+--- Test 1: NMOS DC Sweep ---
+  AR NRMSE=9.95%  DN NRMSE=3.71%  [35.2s]
+
+--- Test 2: PMOS DC Sweep ---
+  AR NRMSE=13.72%  DN NRMSE=12.17%  [31.9s]
+
+--- Test 3: Inverter VTC ---
+  AR NRMSE=4.10%  DN NRMSE=4.86%  [534.6s]
+
+--- Test 4: Inverter Transient ---
+  [NGSPICE] Running TSMC12 transient...
+  [NGSPICE] 542 pts, V(out) [-0.0044, 0.8025]V
+  [BSIMAR] Running TSMC12 transient...
+  [BSIMAR] 502 pts, V(out) [-0.0400, 0.9163]V
+  [DirectNet] Running TSMC12 transient...
+  [DirectNet] 502 pts, V(out) [-0.0551, 0.8146]V
+  AR NRMSE=6.78%  DN NRMSE=4.86%  [567.4s]
+
+========================================================================
+SUMMARY
+========================================================================
+  Test                 |   NRMSE(%) |  Threshold |  Time(s) | Status
+  -------------------- | ---------- | ---------- | -------- | ------
+  NMOS DC (AR)         |       9.95 |       10.0 |     35.2 |   PASS
+  NMOS DC (DN)         |       3.71 |       10.0 |     35.2 |   PASS
+  PMOS DC (AR)         |      13.72 |       10.0 |     31.9 |   FAIL
+  PMOS DC (DN)         |      12.17 |       10.0 |     31.9 |   FAIL
+  VTC (AR)             |       4.10 |       10.0 |    534.6 |   PASS
+  VTC (DN)             |       4.86 |       10.0 |    534.6 |   PASS
+  Transient (AR)       |       6.78 |       15.0 |    567.4 |   PASS
+  Transient (DN)       |       4.86 |       15.0 |    567.4 |   PASS
+
+  Result: 6/8 PASS
+
