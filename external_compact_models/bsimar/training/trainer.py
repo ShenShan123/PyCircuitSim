@@ -633,10 +633,19 @@ def train_transformer(
         train_ds.inputs, train_ds.outputs, train_ds.tech_codes,
         torch.tensor(lds_weights_np, dtype=torch.float32),
     )
+    # Use multiple worker threads + pinned memory to prevent the dataloader
+    # from being the GPU bottleneck. Without these, the trainer's per-epoch
+    # time on A100/Blackwell drops by ~10x for large models.
+    _NW = 8
     train_loader = DataLoader(
-        train_ds_weighted, batch_size=batch_size, shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
-    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
+        train_ds_weighted, batch_size=batch_size, shuffle=True,
+        num_workers=_NW, pin_memory=True, persistent_workers=True)
+    val_loader = DataLoader(
+        val_ds, batch_size=batch_size, shuffle=False,
+        num_workers=_NW, pin_memory=True, persistent_workers=True)
+    test_loader = DataLoader(
+        test_ds, batch_size=batch_size, shuffle=False,
+        num_workers=_NW, pin_memory=True, persistent_workers=True)
 
     optimizer = torch.optim.AdamW(
         model.parameters(), lr=lr, weight_decay=config.weight_decay)
