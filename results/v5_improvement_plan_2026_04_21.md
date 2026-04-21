@@ -1,30 +1,65 @@
 # NN Compact Model v5 — Inverter Transient Improvement Plan
 
 **Date:** 2026-04-21
-**Revision:** v1.1 (after adversarial review — see §10)
+**Revision:** v1.2 (after measuring real baseline — see §11)
 **Branch target:** `feat/bsimar-v5`
 **Author:** Claude (Opus 4.7) + subagent team (inference / training / architecture / reviewer)
-**Status:** PROPOSAL — awaiting approval before implementation
+**Status:** EXECUTING — Experiment E1 next
 
 ---
 
 ## 1. Executive Summary
 
-Shipping-state (commit `381bbfc`) is:
+*Updated 2026-04-22 with real measured baseline from commit `706bcdd`
+(see `results/v5_baseline_2026_04_22.md`). Previous edition's numbers
+were stale.*
 
-| Tech  | VDD   | DirectNet inv. transient | BSIMAR inv. transient | Inv. VTC (AR) |
-|-------|-------|--------------------------|-----------------------|---------------|
-| TSMC5 | 0.65V | 17.20 % (marginal FAIL)  | 12.13 % PASS          | 13.96 %       |
-| TSMC7 | 0.75V | 8.87  % PASS             | 9.14  % PASS          | 19.15 % (FAIL)|
-| TSMC12| 0.80V | 11.65 % PASS             | 6.78  % PASS          | 4.10  % PASS  |
-| TSMC16| 0.80V | 10.59 % PASS             | 7.51  % PASS          | 3.40  % PASS  |
+Shipping-state measured baseline:
 
-Plus single-device NMOS pulse 8/8 PASS (avg ~1.3 % BSIMAR, ~2.3 % DirectNet).
-The two remaining problems:
+| Tech   | Model      | NMOS DC | PMOS DC | VTC      | Transient |
+|--------|------------|---------|---------|----------|-----------|
+| TSMC5  | DirectNet  |  6.20   |  7.74   | 10.73 ⚠ |  3.75     |
+| TSMC5  | BSIMAR     |  4.59   |  5.97   | 13.96 ⚠ | 12.13 ⚠   |
+| TSMC7  | DirectNet  | 15.79 ✖ |  6.53   | 18.14 ✖ |  6.80     |
+| TSMC7  | BSIMAR     | 14.72 ✖ |  3.06   | 19.15 ✖ |  9.14     |
+| TSMC12 | DirectNet  |  3.71   | 12.17 ⚠ |  4.86   |  4.86     |
+| TSMC12 | BSIMAR     |  9.95   | 13.72 ⚠ |  4.10   |  6.78     |
+| TSMC16 | DirectNet  |  3.11   | 12.40 ⚠ |  5.67   |  7.86     |
+| TSMC16 | BSIMAR     |  8.96   | 13.48 ⚠ |  3.40   |  7.51     |
 
-- **TSMC5 DirectNet transient** sits just above the 15 % threshold.
-- **TSMC5 + TSMC7 VTC** are 13–19 % — DC accuracy at low-VDD technologies is
-  the weakest link and propagates into all feedback-circuit errors.
+(✖ = FAIL 10 % DC threshold; ⚠ = marginal). All transient cells PASS the
+15 % threshold — the plan's previous claim that DirectNet TSMC5 transient
+was 17.20 % was stale; the rail-restoring fix in commit `381bbfc` already
+brought it to 3.75 %.
+
+**Revised v5 priorities based on actual failures:**
+
+- **P1 — TSMC7 NMOS DC (15-16 %, both models)** is the root cause of both
+  DirectNet + BSIMAR VTC TSMC7 FAIL at 18-19 %. Fixing DC here propagates
+  to VTC. This is a pure **training accuracy** problem at saturation
+  bias — no inference patch can close the gap.
+- **P2 — PMOS DC TSMC12/16 (12-14 %, both models)** is the second systemic
+  training weakness.
+- **P3 — BSIMAR TSMC5 transient 12.13 %** marginal-pass, only 3 pp from
+  threshold. Rail-state cleanliness matters — **this is where §4.1 tanh
+  gate is actually load-bearing**.
+- **P4 — TSMC5 VTC (10-14 %)** marginal, likely improves for free once
+  BSIMAR subthreshold is cleaner.
+
+Impact ranking vs §4 levers:
+
+| v5 lever       | Helps P1 (TSMC7 DC) | P2 (PMOS DC) | P3 (BSIMAR TSMC5 tran) | P4 (TSMC5 VTC) |
+|----------------|:-------------------:|:------------:|:----------------------:|:--------------:|
+| §4.1 tanh gate |        ❌           |      ❌      |        ✅ primary      |      ✅        |
+| §4.2 drop qs   |        ⚠ marginal  |   ⚠ marginal |       ⚠ marginal       |     ⚠ marginal |
+| §4.3 charge-consistency | ❌           |      ❌      |          ⚠             |       ⚠        |
+| §4.4 inverter overlay |  ⚠           |      ⚠       |          ✅            |      ✅        |
+| §4.5 simplify inference | ❌          |      ❌      |          ⚠             |       ⚠        |
+| **NEW §4.6 per-tech fine-tune** | ✅ primary | ✅ primary | ⚠             |      ⚠        |
+
+The §4.6 (per-tech fine-tune) addition is new to v1.2: it was Priority 4
+in `v4_inverter_fix_report_2026_04_19.md` but is now the highest-impact
+intervention for the *actual* failure modes. Details in §4.6 below.
 
 The v3 post-mortem (`v3_wider_voltage_retrain_report_2026_04_21.md`) ruled out
 widening the training voltage box at fixed capacity. The v4 fix report
@@ -264,6 +299,38 @@ into a targeted density boost.
 dataset (~4 GB). Generation time ~45 min (parallel with 12 workers). No
 net training-time increase because we raise batch size proportionally.
 
+### 4.6 Per-tech fine-tune (new in v1.2 — was Priority 4 deferred)
+
+**Change:** after v4 universal training, run a short fine-tune on each
+failing tech (TSMC7 primary; TSMC12/16 PMOS secondary). Load the
+universal `.best.phys.pt`, filter training data to the target tech,
+fine-tune at `1e-4` LR for 30–50 epochs with LDS rebuilt on the filtered
+subset. Save as `v4_tsmc7_ft_{nmos,pmos}_best.pt` etc.
+
+**Why it's now P1:** the measured baseline says TSMC7 DC NRMSE is 15 %
+for both models. Universal training spreads capacity across 4 techs ×
+5–6 variants; at TSMC7 (0.75 V VDD, smaller than TSMC12/16's 0.80 V) the
+model loses resolution on the linear→saturation transition. A short
+fine-tune recovers it without touching the other techs.
+
+**Operational plan:** because fine-tune reads existing data + starts from
+existing weights, per-model runtime is ~1–2 hr instead of the 6–12 hr
+full-training cycle. 4 models × 1–2 hr = 4–8 hr background workload,
+achievable in a single GPU-day.
+
+**Risks:**
+- Universal generalisation loss: after TSMC7 fine-tune, the checkpoint may
+  regress on TSMC5/12/16. Mitigation: ship TSMC7-fine-tuned model only
+  for TSMC7 netlists, keep universal for others. Parser picks the right
+  checkpoint by tech.
+- This is pure "fit the bug" — doesn't change the underlying architecture.
+  If the v4 model is structurally limited for TSMC7 (e.g., tech-code
+  embedding dimension insufficient), fine-tune won't fully close the gap.
+  Expected best case: 15 % → 4–6 %.
+
+**Cost:** +40 LOC in `bsimar/cli/train.py` for `--resume-from-checkpoint`
+and `--filter-techs`; +20 LOC in parser tech-code→checkpoint resolution.
+
 ### 4.5 Unify and simplify the inference layer
 
 **Change:** three tidy-ups to `_MOSFETNNBase`:
@@ -450,4 +517,77 @@ Two challenges *not* resolved (documented risks, not blockers):
 
 Full adversarial-review text is preserved in the agent transcript (not
 copied into this plan to keep it focused on the revised decisions).
+
+---
+
+## 11. Real baseline measurement (2026-04-22) — what changed vs v1.1
+
+Measured at commit `706bcdd`; see `results/v5_baseline_2026_04_22.md`.
+
+**Plan-claim vs reality deltas:**
+- DN TSMC5 transient: plan claimed 17.20 %, actually 3.75 %. The plan's
+  §1 table mis-captured the state of the rail-restoring fix and its
+  effect on DN TSMC5. Corrected in v1.2 §1.
+- BSIMAR transient + AR VTC numbers reproduce plan claims to the digit.
+- New findings not in plan v1.1:
+  - TSMC7 NMOS DC 15-16 % for BOTH models is a hard FAIL (10 % threshold),
+    not just a VTC issue. Root cause of TSMC7 VTC fail.
+  - PMOS DC TSMC12/16 is 12-14 % across both models — persistent weakness
+    at high VDD that plan v1.1 did not flag.
+
+**Priority shifts in v1.2:**
+- §4.1 (tanh gate) lower priority: only helps P3 (BSIMAR TSMC5 transient
+  12.13 % marginal) — DN transient is already ≤ 7.86 %, doesn't need it.
+- **NEW §4.6 (per-tech fine-tune)** elevated to P1 — it's the only lever
+  in the plan that *directly* addresses TSMC7 DC, the load-bearing failure
+  mode.
+- §4.4 (inverter overlay) still relevant for P3 + P4, stays in Sprint B.
+
+**Updated sprint staging (supersedes §5 A/B/C):**
+
+| Sprint | Target metric | Experiments |
+|--------|---------------|-------------|
+| S1 (new) | P3 BSIMAR TSMC5 transient 12.13 % → <10 % | **E1** inference-only Vds-correction VT bump (this file §12) |
+| S2 (was A) | P3 + P4 via structural gate | §4.1 tanh gate retrain for BSIMAR + DN |
+| **S3 (new, highest ROI)** | P1 + P2 via per-tech fine-tune | §4.6: fine-tune DN+BSIMAR {N,P}MOS on TSMC7; separate fine-tune on TSMC12/16 PMOS |
+| S4 (was B) | P4 + secondary P3 | §4.3 charge consistency + §4.4 inverter overlay |
+| S5 (was C) | Inference cleanup | §4.5 |
+
+S1 is runnable in-session (inference-only, no training). S3 is the biggest
+projected win but needs retraining infra (+40 LOC `--resume-from-checkpoint`
+and `--filter-techs` in the CLI). S2 still requires full-scratch retraining.
+
+---
+
+## 12. Experiment E1 — VT bump in `_apply_vds_correction`
+
+**Hypothesis:** the BSIMAR TSMC5 transient at 12.13 % is driven by residual
+wrong-sign subthreshold current leaking through `f_id = 1 - exp(-|Vds|/VT)`
+at small |Vds|. The current `VT = max(0.06·VDD, 0.026)` gives VT = 0.039 V
+at TSMC5. At `|Vds| = 10 mV` (typical near-rail), f_id = 0.226 — **22.6 %
+of the NN's raw (possibly wrong-sign) current passes through**. Bumping VT
+to `0.10·VDD` = 0.065 V at TSMC5 reduces f_id(10 mV) to 0.143 — 37 % less
+leakage.
+
+**Change:** 1-line edit to `pycircuitsim/models/mosfet_directnet.py` line
+469: `VT = max(0.06 * self._vdd_estimate, 0.026)` →
+`VT = max(0.10 * self._vdd_estimate, 0.026)`. No retraining, no other
+code changes, no new checkpoints.
+
+**Expected effects:**
+- ✅ BSIMAR TSMC5 transient improves (primary target).
+- ⚠ DN + BSIMAR transients may regress slightly on TSMC7/12/16 where
+  wider VT over-suppresses legitimate small-Vds current. The rail-
+  restoring quadratic plus the gds `|id|·exp(-|Vds|/VT)/VT` term should
+  compensate most of it, but verify.
+- ⚠ Inverter VTC may shift at low-VDD techs; verify TSMC5/7 VTC didn't
+  regress past current baseline.
+
+**Acceptance:** if ANY baseline cell regresses by > 1 pp NRMSE, revert.
+Else if BSIMAR TSMC5 transient drops by > 1 pp and all other cells stay
+within ± 1 pp, keep and mark E1 WORKING. Else mark E1 NEUTRAL and revert.
+
+**Measured result:** *(filled after run)*
+
+
 
