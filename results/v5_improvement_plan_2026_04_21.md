@@ -792,7 +792,90 @@ succeeds, extend to PMOS + DirectNet + other techs in E5/E6/E7.
 **Runtime:** ~20-30 min data gen + ~60-90 min fine-tune + ~20 min
 verify = ~2-3 hr total background.
 
-**Measured result:** *(filled after run)*
+**Measured result (2026-04-22): E4 REVERT**
+
+Full report: `results/v5_e4_tsmc7_overlay_2026_04_22.md`.
+
+- **Data-gen:** 27 s (30 000 rows produced, 0 PyCMG failures, 8 workers
+  with OPENBLAS=1/OMP=1).
+- **Fine-tune:** 102.65 min on A100 (30 TF + 3 AR epochs).
+  Final phys NRMSE 0.462 % / R² 0.9922 on TSMC7 val set. **Nearly
+  identical to E3's 0.454 %** — adding 30 K hot-box samples did not
+  move the averaged training-space metric.
+
+| TSMC7 metric | Baseline | E4    | Δ (pp) |
+|--------------|---------:|------:|-------:|
+| NMOS DC      |  14.72 % | 17.40 %| **+2.68** (regressed) |
+| PMOS DC      |   3.06 % |  3.06 %| 0.00 (symlinked) |
+| VTC          |  19.15 % | 19.34 %| +0.19 |
+| Transient    |   9.14 % |  9.17 %| +0.03 |
+
+TSMC12 cross-tech sanity: NMOS DC +0.76 pp, **VTC +4.13 pp** (regressed),
+Transient +0.34 pp. All three E4 hard gates failed.
+
+### Why E4 failed (the load-bearing realisation)
+
+The 30 K overlay samples are only **1.6 % of the TSMC7 training
+partition** (and ~0.25 % of the full universal dataset). Under the
+default MAE+LDS training recipe, LDS re-weights samples by per-target
+inverse-density. The overlay samples landed in a region that was
+already partially covered (18 226 existing samples in the hot box);
+LDS saw higher density and **down-weighted the contribution per
+sample**, cancelling the densification's effect on the gradient.
+
+This is exactly the **adversarial-review R4 risk** (plan §10) that
+was supposed to be mitigated by an `is_overlay` LDS-bypass flag. E4's
+quick-win implementation skipped the bypass, so the overlay did not
+translate into effective gradient weight on the hot region.
+
+Retry path (not yet run): implement the `is_overlay` flag in
+`bsimar/data/dataset.py`, route it through `trainer.py` so overlay rows
+keep fixed weight (e.g. priority 2.0) instead of LDS-derived weight,
+then re-run E4. ~1-2 hr of code work plus another ~2 hr run.
+Alternative cheaper test: overlay-only fine-tune (use
+`tsmc7_overlay_nmos.npz` *alone* as the data path, not concatenated
+with universal) — tests whether the overlay region alone is
+learnable without the LDS competition. If even overlay-only fails,
+the densification hypothesis itself is wrong.
+
+Checkpoints + augmented dataset deleted; baseline restored. Kept:
+`tsmc7_overlay_nmos.npz` (30 K rows of PyCMG ground truth in the hot
+box) and `PyCMG/scripts/generate_tsmc7_overlay.py` — reusable for E5.
+
+## 16. Status after four experiments
+
+| Exp | Hypothesis | Outcome |
+|-----|------------|---------|
+| E1 | Wider inference VT suppresses wrong-sign near-rail leakage | **NEUTRAL** (primary target flat, minor secondary wins) |
+| E3 | Per-tech fine-tune (same distribution) closes inference gap | **REVERT** (training metric improved; inference didn't) |
+| D1 | TSMC7 error localised to strong-inversion + saturation, 16× undersampled | **confirmed** |
+| E4 | Dense overlay in hot box closes inference gap | **REVERT** (LDS cancels the densification) |
+
+**Three hypotheses ruled out; one confirmed.** The training↔inference
+29× gap is real and reproducible; distribution changes alone (whether
+by filter or by overlay without bypass) do not close it.
+
+### Remaining paths, ranked by prior likelihood
+
+1. **E5 — overlay WITH LDS bypass** (plan §4.4 as v1.1 specified).
+   Needs `is_overlay` plumbing (~1–2 h code) + ~2 h run. Directly
+   tests whether the overlay works once LDS is neutralised. Highest
+   prior probability of closing the gap.
+2. **E5-Alt — overlay-only fine-tune** (use only `tsmc7_overlay_nmos.npz`
+   as data_path). No code change; ~2 h run. Harsh test — if the
+   model can fit 30 K hot-box samples without LDS competition and
+   still show inference gains, the densification thesis is validated.
+3. **§4.1 tanh-gated retrain from scratch** (plan S2). 24–48 h of GPU,
+   structural change to the model forward. Lower prior of closing
+   the TSMC7 DC gap (the gate targets rail states, not mid-Vds
+   saturation), but safest if the distribution thesis turns out
+   wrong.
+4. **Give up on v5 for TSMC7 DC**. Ship the rest of v5 (tanh gate + inference
+   cleanup) with known TSMC7 DC limitation. Document TSMC7 NMOS as
+   "needs per-tech training" in CLAUDE.md. Smallest deliverable.
+
+My recommendation: **E5 (LDS bypass)** before touching §4.1. If E5
+also fails, move to §4.1. If §4.1 fails, accept path 4.
 
 
 

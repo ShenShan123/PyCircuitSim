@@ -1,0 +1,58 @@
+Pretrained model: external_compact_models/bsimar/checkpoints/v4_universal_nmos_best.phys.pt
+Config: external_compact_models/bsimar/checkpoints/v4_universal_nmos_config.npz
+Norm: external_compact_models/bsimar/checkpoints/v4_universal_nmos_norm.npz
+Old embedding size: 18, expanding to: 18
+Model params: 5,019,149
+Fine-tuning on techs: {'tsmc7'}, codes: [4, 5, 6]
+  loaded cached tech-variant labels from universal_nmos_plus_tsmc7_overlay_tech_variant_labels.npy
+Fine-tune split: train=1476678, val=164075, test(regression)=7362390
+
+Fine-tuning v4_ft_tsmc7_overlay_nmos for 30 epochs (lr=1.0e-04)
+     1 | train=0.02785 val=0.01694 *best*
+     2 | train=0.02257 val=0.01606 *best*
+     3 | train=0.02167 val=0.01606 *best*
+     4 | train=0.02115 val=0.01528 *best*
+     5 | train=0.02075 val=0.01530 nrmse=0.542% r2=0.9863 *phys-best*
+     6 | train=0.02042 val=0.01510 *best*
+     8 | train=0.01993 val=0.01487 *best*
+    10 | train=0.01958 val=0.01489 nrmse=0.479% r2=0.9911 *phys-best*
+    13 | train=0.01917 val=0.01456 *best*
+    14 | train=0.01907 val=0.01426 *best*
+    15 | train=0.01897 val=0.01449 nrmse=0.481% r2=0.9910
+    17 | train=0.01881 val=0.01416 *best*
+    19 | train=0.01870 val=0.01406 *best*
+    20 | train=0.01863 val=0.01363 nrmse=0.469% r2=0.9919 *best* *phys-best*
+    25 | train=0.01848 val=0.01397 nrmse=0.477% r2=0.9914
+    30 | train=0.01845 val=0.01381 nrmse=0.465% r2=0.9920 *phys-best*
+
+[FT-AR] 3 epochs at lr=1.0e-05
+  [FT-AR 1] train=0.01860 val=0.01381 nrmse=0.472%
+  [FT-AR 2] train=0.01857 val=0.01359 nrmse=0.462% *phys-best*
+  [FT-AR 3] train=0.01855 val=0.01374 nrmse=0.466%
+
+Done in 6159s
+
+Final metrics on {'tsmc7'} val set:
+
+  Target |   NRMSE% |     MRE% |       R2 |  NRMSE_n% |     R2_n |    MAE_n |    n_val/n_tot
+--------------------------------------------------------------------------------------------
+      id |    0.634 |     3.32 |   0.9558 |     0.407 |   0.9992 |   0.0153 |  112533/164075
+      gm |    0.495 |     5.49 |   0.9989 |     0.619 |   0.9988 |   0.0213 |  145403/164075
+     gds |    0.728 |     7.04 |   0.9792 |     1.327 |   0.9904 |   0.0269 |   44431/164075
+     gmb |    0.609 |     3.79 |   0.9972 |     0.639 |   0.9995 |   0.0141 |  106686/164075
+      qg |    0.292 |     3.13 |   0.9973 |     0.302 |   0.9996 |   0.0119 |  153228/164075
+      qd |    0.420 |     3.43 |   0.9971 |     0.338 |   0.9997 |   0.0116 |  151995/164075
+      qs |    0.438 |     3.13 |   0.9981 |     0.313 |   0.9998 |   0.0114 |  147148/164075
+      qb |    0.763 |     5.16 |   0.9795 |     0.372 |   0.9995 |   0.0154 |   68485/164075
+     cgg |    0.339 |     1.60 |   0.9989 |     0.359 |   0.9997 |   0.0103 |  164075/164075
+     cgd |    0.287 |     1.38 |   0.9985 |     0.301 |   0.9997 |   0.0088 |  164075/164075
+     cgs |    0.423 |     2.10 |   0.9993 |     0.454 |   0.9996 |   0.0118 |  164075/164075
+     cdg |    0.342 |     1.84 |   0.9994 |     0.362 |   0.9998 |   0.0100 |  164075/164075
+     cdd |    0.235 |     1.31 |   0.9991 |     0.258 |   0.9998 |   0.0079 |  164075/164075
+--------------------------------------------------------------------------------------------
+     AVG |    0.462 |     3.29 |   0.9922 |     0.466 |   0.9988 |          |
+
+Checkpoint: /home/shenshan/NN_SPICE/external_compact_models/bsimar/checkpoints/v4_ft_tsmc7_overlay_nmos_best.pt
+Phys-best: /home/shenshan/NN_SPICE/external_compact_models/bsimar/checkpoints/v4_ft_tsmc7_overlay_nmos_best.phys.pt
+Config: /home/shenshan/NN_SPICE/external_compact_models/bsimar/checkpoints/v4_ft_tsmc7_overlay_nmos_config.npz
+
