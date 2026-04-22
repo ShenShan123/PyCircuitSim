@@ -620,5 +620,102 @@ retraining, not runtime VT gating.
    future micro-optimisation: per-tech VT coefficient. Filed but not
    blocking.
 
+---
+
+## 13. Experiment E3 — BSIMAR NMOS TSMC7 fine-tune (§4.6)
+
+**Hypothesis:** TSMC7 NMOS DC 14.72 % is caused by under-training on
+TSMC7 in the universal model. A 30-epoch fine-tune at low LR, filtering
+the dataset to TSMC7 only, should lift TSMC7 accuracy without requiring
+the full v5 retrain.
+
+**Change:** call `finetune_v4(pretrained='v4_universal_nmos_best.phys.pt',
+finetune_techs={'tsmc7'}, epochs=30, lr=1e-4, ar_finetune_epochs=3)`.
+68 min wall-clock on A100. PMOS checkpoint symlinked from v4_universal
+(not fine-tuned).
+
+**Measured result (2026-04-22): E3 REVERT**.
+
+Full report: `results/v5_e3_tsmc7_ft_2026_04_22.md`.
+
+### Training-space: excellent
+
+Phys-space val metrics on TSMC7 after fine-tune:
+NRMSE_avg **0.454 %** (down from ~2 % zone), R² **0.9924** across all
+13 outputs, per-target NRMSE ≤ 0.73 %. The model genuinely learned
+TSMC7 better.
+
+### Inference-space (inverter verifier): flat
+
+BSIMAR TSMC7 inverter numbers (Vds=VDD/2, NFIN=10, L=16 nm, Vbs=0):
+
+| Metric    | Baseline | E3    | Δ        |
+|-----------|---------:|------:|----------|
+| NMOS DC   |  14.72 % | 14.74 %| +0.02 pp |
+| VTC       |  19.15 % | 19.14 %| −0.01 pp |
+| Transient |   9.14 % |  8.92 %| −0.22 pp |
+
+### Cross-tech regression (TSMC12)
+
+| Metric    | Baseline | E3 (ft-nmos, univ-pmos) | Δ        |
+|-----------|---------:|------------------------:|----------|
+| NMOS DC   |   9.95 % |  7.59 %                 | −2.36 pp (improved) |
+| VTC       |   4.10 % |  7.71 %                 | +3.61 pp (regressed) |
+| Transient |   6.78 % |  8.05 %                 | +1.27 pp (regressed) |
+
+### Verdict: REVERT (both hard gates failed)
+
+- TSMC7 NMOS DC drop > 5 pp: **fails** (Δ = +0.02 pp).
+- TSMC7 VTC drop > 5 pp: **fails** (Δ = −0.01 pp).
+- Cross-tech regression > 3 pp: **fails** (TSMC12 VTC +3.61 pp).
+
+Checkpoints deleted; baseline restored.
+
+### Load-bearing lesson (important)
+
+**Training-space NRMSE 0.454 % → inference-time NMOS DC 14.74 %.** This
+29× gap is not a training failure — it's a **distribution mismatch**
+between the training sample density and the verifier's specific bias
+points. The NN can fit the averaged training distribution almost
+perfectly while being systematically wrong at the handful of
+(Vd, Vg, NFIN, L) triples the inverter VTC/DC test actually uses.
+
+This reframes the entire v5 plan:
+
+- §4.6 (per-tech fine-tune) **alone is insufficient**. Filtering to
+  TSMC7 and retraining does not close the training↔inference gap;
+  the gap is about WHERE samples are placed, not HOW MANY there are
+  per tech.
+- §4.4 (inverter-trajectory overlay) becomes **load-bearing** — it's
+  the only lever in the plan that targets the specific bias points
+  the verifier uses. The combination "inverter-trajectory overlay +
+  per-tech LDS priority" now matters more than any per-tech fine-tune.
+- §4.1 (tanh gate) unchanged — still helps rail states but won't close
+  the TSMC7 DC gap alone.
+- **New candidate §4.7:** custom validation metric during training
+  that measures NRMSE on the inverter-trajectory slice (not just
+  LHS-averaged training distribution). Without this, we're optimising
+  the wrong metric.
+
+### Updated sprint order (supersedes §11 v1.2 S3)
+
+| Sprint | Target | Experiments |
+|--------|--------|-------------|
+| S1 (done) | P3 rail state | E1 VT bump — NEUTRAL, reverted |
+| ~~S3 (done)~~ | ~~P1 TSMC7 DC~~ | E3 per-tech fine-tune — REVERT |
+| **S4 (new P1)** | P1 TSMC7 DC + P3 BSIMAR TSMC5 tran | §4.4 inverter overlay retrain (full scratch + overlay, LDS bypass) |
+| S2 (unchanged) | P3 + P4 | §4.1 tanh gate retrain |
+| S5 (unchanged) | Inference | §4.5 cleanup |
+
+§4.4 is now the next experiment. Requires:
+1. Data regeneration with `--inverter-overlay` (~45 min per device).
+2. Full retrain from scratch (~6–12 hr per model on A100).
+
+S4 is a 1–2 day background task. If it fails (Gate: TSMC7 NMOS DC drops
+< 5 pp), the plan exhausts cheap options and v5's final fallback is S2
+(tanh gate) plus hand-tuned per-tech inference — the plan writes itself
+down to a smaller deliverable.
+
+
 
 
