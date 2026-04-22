@@ -716,6 +716,84 @@ S4 is a 1–2 day background task. If it fails (Gate: TSMC7 NMOS DC drops
 (tanh gate) plus hand-tuned per-tech inference — the plan writes itself
 down to a smaller deliverable.
 
+---
+
+## 14. Diagnostic D1 — TSMC7 NMOS error landscape (2026-04-22)
+
+Before committing to a multi-day S4, ran D1 to localise WHERE the
+NN ↔ PyCMG disagreement lives for TSMC7 SVT NMOS. Full report +
+heatmaps in `results/v5_d1_tsmc7_nmos_errors/`.
+
+**Findings:**
+
+1. Max |rel err| across the (Vgs, Vds) grid: **27.96 % corrected /
+   28.48 % raw**. Grid-mean: 9.17 % / 9.09 %. Correction changes very
+   little — the error is real NN-model error, not a correction
+   artefact.
+2. **Hot error region = strong-inversion + saturation:
+   `Vgs ∈ [0.519, 0.731] V × Vds ∈ [0.404, 0.750] V`.** NOT
+   subthreshold, NOT triode — the NN mis-shapes the high-current
+   saturation plateau. 160 of 1600 grid pts (top decile) live here.
+3. The Id-Vgs-at-Vds=VDD/2 slice has **NRMSE 14.73 %**, reproducing the
+   verifier's 14.72 % figure. The verifier's bias sweep passes exactly
+   through the hot region.
+4. **TSMC7-SVT has 592 812 LHS training samples but only 18 226 (3.07 %)
+   land in the hot box.** The LHS sampler concentrates mass in low-Vgs
+   / low-Vds where |Id| is small; the high-|Id| saturation plateau
+   (which dominates NRMSE because it sets the denominator) is
+   under-sampled by ~16× relative to where it's needed.
+
+**Smoking gun:** the 29× training↔inference NRMSE gap from E3 is
+explained by the 16× sampling sparsity in the NRMSE-denominating
+region. Per-tech fine-tune (E3) fixed the data volume at fixed
+distribution, which changed nothing. The fix must be a
+**distribution change**.
+
+**Concrete sampling recommendation from D1 (for E4):**
+
+Add ≥ 400 new PyCMG samples per TSMC7 variant, at:
+- `Vgs ∈ [0.444, 0.750] V` (wider than the hot box, so gradient covers
+  the boundary),
+- `Vds ∈ [0.329, 0.750] V` (same),
+- `Vbs = 0`, `T = 300.15 K`,
+- `NFIN ∈ {3, 5, 10, 15, 20}`, `L ∈ {14, 16, 18, 20} nm`.
+
+Covers `tsmc7 svt, lvt, ulvt` (codes 4, 5, 6).
+
+## 15. Experiment E4 — hot-box overlay + BSIMAR NMOS fine-tune (next)
+
+**Hypothesis (now quantitative):** adding ~500 hot-box samples per TSMC7
+variant (total ~1 500 rows) to the BSIMAR NMOS training partition and
+fine-tuning at low LR will lift TSMC7 NMOS DC accuracy from 14.72 %
+toward < 5 %, because the NN will see ~30× more samples in the
+NRMSE-dominating saturation plateau.
+
+**Scope (tightened from plan v1.2 §4.4):** TSMC7 NMOS only. If E4
+succeeds, extend to PMOS + DirectNet + other techs in E5/E6/E7.
+
+**Method:**
+1. Generate ~1 500 PyCMG samples in D1's recommended box across
+   tsmc7:{svt, lvt, ulvt} × 5 NFINs × 4 Ls. Reuse
+   `PyCMG/pycmg/nn_generate.py::generate_for_variant` with a restricted
+   LHS box. Output: `tsmc7_overlay_nmos.npz`.
+2. Concat with `universal_nmos.npz` into
+   `universal_nmos_plus_tsmc7_overlay.npz`.
+3. Call `finetune_v4(pretrained='v4_universal_nmos_best.phys.pt',
+   data_path=<augmented>, finetune_techs={'tsmc7'}, epochs=30,
+   lr=1e-4, ar_finetune_epochs=3)`.
+4. Verify: `verify_bsimar_v4_inverter.py --tech tsmc7 --bsimar-prefix
+   v4_ft_tsmc7_overlay`.
+
+**Acceptance (same as E3):**
+- TSMC7 NMOS DC drops > 5 pp AND VTC drops > 5 pp AND no other-tech
+  NMOS DC regresses > 3 pp → **KEEP**, extend.
+- Otherwise → **REVERT**, E4 overlay approach judged infeasible.
+
+**Runtime:** ~20-30 min data gen + ~60-90 min fine-tune + ~20 min
+verify = ~2-3 hr total background.
+
+**Measured result:** *(filled after run)*
+
 
 
 
