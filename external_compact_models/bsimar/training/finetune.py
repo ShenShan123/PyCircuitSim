@@ -201,19 +201,28 @@ def finetune_v4(
 
     train_ds = _make_ds(train_idx)
     val_ds = _make_ds(val_idx)
-    test_ds = _make_ds(test_idx)
 
     # Reorder outputs
     train_ds.outputs = torch.tensor(
         reorder_outputs(train_ds.outputs.numpy()), dtype=torch.float32)
     val_ds.outputs = torch.tensor(
         reorder_outputs(val_ds.outputs.numpy()), dtype=torch.float32)
-    test_ds.outputs = torch.tensor(
-        reorder_outputs(test_ds.outputs.numpy()), dtype=torch.float32)
 
     train_loader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
     val_loader = DataLoader(val_ds, batch_size=batch_size, shuffle=False)
-    test_loader = DataLoader(test_ds, batch_size=batch_size, shuffle=False)
+
+    # Regression-check set only built if there's non-finetune data available
+    if len(test_idx) > 0:
+        test_ds = _make_ds(test_idx)
+        test_ds.outputs = torch.tensor(
+            reorder_outputs(test_ds.outputs.numpy()), dtype=torch.float32)
+        test_loader = DataLoader(
+            test_ds, batch_size=batch_size, shuffle=False)
+    else:
+        test_ds = None
+        test_loader = None
+        print("No non-finetune samples in this dataset — skipping "
+              "regression-check split (test_loader=None).")
 
     criterion = MAELoss()
     optimizer = optim.AdamW(model.parameters(), lr=lr, weight_decay=1e-4)

@@ -877,6 +877,151 @@ by filter or by overlay without bypass) do not close it.
 My recommendation: **E5 (LDS bypass)** before touching §4.1. If E5
 also fails, move to §4.1. If §4.1 fails, accept path 4.
 
+---
+
+## 17. Experiment E5 — overlay-only fine-tune (path 1 in §16)
+
+**Hypothesis:** E4 regressed because LDS re-normalised the overlay's
+density gain back to zero. E5 removes the LDS-competition variable by
+fine-tuning *only* on `tsmc7_overlay_nmos.npz` (30 K rows, all
+in-box) — no universal-set background. If the densification thesis
+is alive, inference-time TSMC7 NMOS DC should drop meaningfully.
+
+**Method:** `finetune_v4(pretrained='v4_universal_nmos_best.phys.pt',
+data_path='tsmc7_overlay_nmos.npz', finetune_techs={'tsmc7'},
+epochs=30, lr=1e-4, ar_finetune_epochs=3)`. No code change to the
+trainer or loss. One minor bug-fix patch to `finetune.py`: guard the
+regression-test-split builder against empty `other_idx`
+(unavoidable when all rows are in `finetune_techs`) — kept as a
+legitimate edge-case fix.
+
+**Measured result (2026-04-23): E5 REVERT**
+
+Full report: `results/v5_e5_overlayonly_2026_04_22.md`.
+
+Fine-tune: 5.7 min + 3 AR epochs. Final phys-space NRMSE on TSMC7
+val **0.692 %** (MRE 3.18 %, R² 0.9984) — genuinely learned the
+overlay distribution to the 13-output floor.
+
+| TSMC7 metric | Baseline | E5     | Δ (pp) |
+|--------------|---------:|-------:|-------:|
+| NMOS DC      |  14.72 % | 17.47 %| **+2.75** (regressed) |
+| PMOS DC      |   3.06 % |  3.06 %| 0.00 (symlinked) |
+| VTC          |  19.15 % | 18.35 %| −0.80 (improved) |
+| Transient    |   9.14 % |  6.50 %| −2.64 (improved) |
+
+TSMC12 cross-tech sanity (all < 3 pp — cleaner than E4):
+NMOS DC +2.07, VTC +0.80, Transient −1.42.
+
+**Verdict:** gates 1 (NMOS DC > 5 pp drop) and 2 (VTC > 5 pp drop)
+both fail → REVERT. VTC improved for the first time across
+E3/E4/E5 but only 0.80 pp, 6 pp short of the gate. Transient
+improved 2.64 pp. **NMOS DC regressed exactly the same ~2.7 pp as
+in E4** — identical magnitude in two structurally different runs
+means the overlay data itself is pulling the Id-Vgs curve at
+Vds=VDD/2 away from the verifier's reference. The LDS-competition
+hypothesis is disconfirmed as the primary driver.
+
+### The real failure mode (after 5 experiments + 1 diagnostic)
+
+The 30 K hot-box overlay samples are PyCMG ground truth in the
+saturation region at arbitrary (Vgs, Vds). The verifier's NMOS DC
+test sweeps Id-Vgs along `Vds = VDD/2 = 0.375 V` — **exactly on
+the boundary of the hot box** (D1: Vds_lo = 0.329 V, hot_box_lo =
+0.404 V). The overlay samples near that boundary are LHS, not
+uniformly ordered; the NN learns saturation-plateau shape but at
+a slightly different Vgs basis than the verifier's uniform sweep.
+This basis mismatch is why both E4 and E5 regress DC by +2.7 pp
+regardless of whether LDS competes.
+
+In other words: **the error E3/E4/E5 all tried to close isn't
+really a data-density problem, it's a sampling-basis problem.
+The verifier uses a dense uniform Id-Vgs sweep; the trainer sees
+LHS.** Closing that would require either training-time losses
+shaped to match the verifier's uniform-sweep Jacobian, or an
+architecture change that enforces Id-Vgs monotonicity + shape,
+neither of which the current plan proposes.
+
+---
+
+## 18. Final v5 session status (2026-04-23)
+
+Per user instruction after E5 REVERT: **accept TSMC7 NMOS DC as a
+known v4 limitation; do not proceed to §4.1 tanh-gate retrain
+(structural change, 24-48 h, low prior of closing this specific
+gap)**. Close the v5 sprint.
+
+### Summary of experiments
+
+| Exp | Hypothesis | Outcome | Commit |
+|-----|-----------|---------|--------|
+| v4 baseline | (measure) | confirmed 8-cell table, exposed stale plan v1.1 numbers | `a9837a5` |
+| E1 | Wider inference VT (0.06 → 0.10 × VDD) | NEUTRAL, revert | `11f8999` |
+| E3 | Per-tech fine-tune on same distribution | REVERT (29× training↔inference gap) | `c750a65` |
+| D1 | Map NN-vs-PyCMG error landscape | **confirmed** hot region + 16× under-sampling | `b9d35ce` |
+| E4 | Dense hot-box overlay (no LDS bypass) | REVERT (+2.68 pp regression) | `e583ec2` |
+| E5 | Overlay-only (no LDS competition) | REVERT (+2.75 pp regression) | *(this commit)* |
+
+### What actually shipped from v5 work
+
+Even though all four retraining experiments were reverted, the
+session produced non-trivial value that *did* ship:
+
+1. **Real measured baseline** (`results/v5_baseline_2026_04_22.md`,
+   `a9837a5`). Previous plan (v1.0/v1.1) had stale DirectNet TSMC5
+   transient numbers (17.20 % claimed vs 3.75 % measured). This
+   matters for any future v-bump work.
+2. **TSMC7 NMOS error landscape heatmaps** (D1,
+   `results/v5_d1_tsmc7_nmos_errors/` + `tests/diag_d1_tsmc7_nmos_errors.py`).
+   Permanently useful debugging tool for future NN-accuracy
+   investigations across any tech.
+3. **`finetune.py` edge-case patch** — guard empty `test_idx`
+   when all rows are in `finetune_techs`. Kept.
+4. **Knowledge that three structural hypotheses are dead** (plan
+   §16): per-tech fine-tune, overlay-with-LDS, overlay-without-LDS.
+   Future v5 or v6 attempts should not rediscover these.
+5. **Sampling-basis hypothesis** (plan §17): the verifier's uniform
+   Id-Vgs sweep vs LHS training set is a new hypothesis worth
+   testing in future work — not a path for the current v5.
+
+### TSMC7 NMOS DC as documented limitation
+
+Add to CLAUDE.md:
+
+```
+### Known v4 limitation: TSMC7 NMOS DC 14.72%
+TSMC7 NMOS DC NRMSE is 14.72% (BSIMAR) / 15.79% (DirectNet) against
+PyCMG ground truth at Vds=VDD/2, NFIN=10, L=16nm. This propagates
+to inverter VTC (19.15% BSIMAR). Four v5 retraining attempts (per-tech
+fine-tune, dense overlay, overlay-only, wider VT) did not close the
+gap. Root cause (v5 §17): the LHS training distribution under-samples
+the strong-inversion + saturation plateau by ~16× relative to where
+the verifier's uniform Id-Vgs sweep concentrates its NRMSE weight.
+Closing this would require either uniform-sweep training sampling
+or a shape-enforcing architecture change; neither was attempted in
+v4/v5. Inverter transient at TSMC7 still PASSES (6.80 % DN / 9.14 %
+BSIMAR, well under the 15 % threshold), so circuit-simulation
+usability is preserved. VTC comparison to BSIM-CMG ground truth at
+TSMC7 should be reported with this 14-19 % NRMSE caveat.
+```
+
+### Final v5 deliverable
+
+- Shipping code state: commit parent of this wrap-up (v4 behaviour
+  unchanged, no retraining).
+- Shipping research state: `results/v5_baseline_2026_04_22.md`,
+  `results/v5_e{1,3,4,5}_*.md`, `results/v5_d1_tsmc7_nmos_errors/`,
+  this plan document.
+- Reusable code: `tests/diag_d1_tsmc7_nmos_errors.py` (D1 heatmapper),
+  `finetune.py` empty-test-idx guard, `PyCMG/scripts/generate_tsmc7_overlay.py`
+  (submodule) — overlay generator if future work wants to retry with
+  a different sampling scheme.
+- v5 sprint itself: CLOSED. Next work on NN accuracy should either
+  (a) address the sampling-basis hypothesis from §17 with a
+  uniform-sweep-augmented training loss, (b) invest in the §4.1
+  tanh-gate structural change, or (c) live with the v4 baseline for
+  the foreseeable future.
+
 
 
 
