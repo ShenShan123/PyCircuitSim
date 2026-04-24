@@ -331,29 +331,13 @@ def train_directnet(
     output_dim = train_ds.outputs.shape[1]
     print(f"Input dim: {input_dim} (7-dim + tech code), Output dim: {output_dim}")
 
-    # MAE loss + per-target LDS + Vov(=Vg) LDS (same recipe as BSIMAR).
+    # MAE loss + per-target LDS (paper recipe).
     criterion = MAELoss()
-    print("Computing LDS weights (per-target + Vov)...")
+    print("Computing LDS weights (per-target)...")
     lds_weights_np = compute_lds_weights_per_target(
         train_ds.outputs.numpy(), n_bins=100,
         lds_kernel="gaussian", lds_ks=5, lds_sigma=0.8,
     )
-    vg_col = train_ds.inputs[:, 1:2].numpy()
-    vg_weights_np = compute_lds_weights_per_target(
-        vg_col, n_bins=50,
-        lds_kernel="gaussian", lds_ks=5, lds_sigma=1.0,
-    )  # (N, 1)
-    lds_weights_np = lds_weights_np * vg_weights_np
-    # Subthreshold LDS: upweight samples where both Vd and Vg are small.
-    subthresh_indicator = np.minimum(
-        np.abs(train_ds.inputs[:, 0:1].numpy()),
-        np.abs(train_ds.inputs[:, 1:2].numpy()),
-    )
-    subthresh_w = compute_lds_weights_per_target(
-        subthresh_indicator, n_bins=50,
-        lds_kernel="gaussian", lds_ks=5, lds_sigma=1.0,
-    )
-    lds_weights_np = lds_weights_np * subthresh_w
     col_means = lds_weights_np.mean(axis=0, keepdims=True)
     col_means[col_means < 1e-12] = 1.0
     lds_weights_np = lds_weights_np / col_means
@@ -534,29 +518,13 @@ def train_transformer(
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"Model params: {n_params:,}")
 
-    # MAE loss + per-target LDS + Vov(=Vg) LDS.
+    # MAE loss + per-target LDS (paper recipe).
     criterion = MAELoss()
-    print("Computing LDS weights (per-target + Vov)...")
+    print("Computing LDS weights (per-target)...")
     lds_weights_np = compute_lds_weights_per_target(
         train_ds.outputs.numpy(), n_bins=100,
         lds_kernel="gaussian", lds_ks=5, lds_sigma=0.8,
     )
-    vg_col = train_ds.inputs[:, 1:2].numpy()
-    vg_weights_np = compute_lds_weights_per_target(
-        vg_col, n_bins=50,
-        lds_kernel="gaussian", lds_ks=5, lds_sigma=1.0,
-    )
-    lds_weights_np = lds_weights_np * vg_weights_np
-    # Subthreshold LDS: upweight samples where both Vd and Vg are small.
-    subthresh_indicator = np.minimum(
-        np.abs(train_ds.inputs[:, 0:1].numpy()),
-        np.abs(train_ds.inputs[:, 1:2].numpy()),
-    )
-    subthresh_w = compute_lds_weights_per_target(
-        subthresh_indicator, n_bins=50,
-        lds_kernel="gaussian", lds_ks=5, lds_sigma=1.0,
-    )
-    lds_weights_np = lds_weights_np * subthresh_w
     col_means = lds_weights_np.mean(axis=0, keepdims=True)
     col_means[col_means < 1e-12] = 1.0
     lds_weights_np = lds_weights_np / col_means
