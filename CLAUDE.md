@@ -52,8 +52,7 @@ external_compact_models/
 │   │   ├── direct_net.py           # DirectNetV4 MLP with nn.Embedding tech-code (baseline)
 │   │   └── transformer.py          # TransformerEncoderModel with nn.Embedding tech-code (parallel_caps + grouped_inputs)
 │   ├── losses/
-│   │   ├── direct_loss.py          # DirectLoss + ChargeConsistencyLoss (DirectNet)
-│   │   └── bni_mae.py              # MAELoss + compute_lds_weights_per_target (BSIMAR)
+│   │   └── bni_mae.py              # MAELoss + compute_lds_weights_per_target (shared by DirectNet + BSIMAR)
 │   ├── training/
 │   │   ├── early_stopping.py
 │   │   └── trainer.py              # train_directnet, train_transformer, per-epoch helpers
@@ -235,10 +234,11 @@ conda run -n pycircuitsim python -u -m bsimar.cli.train \
     --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048 --cuda
 
 # Train BSIMAR v4 Transformer (production recipe, hard-wired)
-# The v4 recipe (MAE+LDS+VovLDS, asinh+zscore, parallel_caps,
+# The v4 recipe (MAE + per-target LDS, asinh+zscore, parallel_caps,
 # grouped_inputs, BSIMAR reorder, AR finetune tail, phys-best ckpt,
 # nn.Embedding tech-code) is all hard-wired inside train_transformer.
-# Only architecture and schedule are user-tunable.
+# Only architecture and schedule are user-tunable. (3-axis LDS stack
+# and Sign/Boundary physics losses were trimmed in v5 Phase A.)
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
     --model transformer --device-type nmos --universal \
     --exclude-techs asap7 --num-tech-codes 18 --cuda
@@ -415,7 +415,7 @@ instead of 19-dim continuous process parameters.
 9. **ASAP7 modelcard name mapping** — Parser auto-maps netlist names to `nmos_rvt`/`pmos_rvt`.
 10. **PyCMG integration** — `bsimar/config.py` re-exports `NNTechConfig` and `TECH_CONFIGS` from PyCMG's `pycmg.nn_config`, plus `TECH_CODE_MAP` (maps `"tech:vt"` strings to integer codes) and `OUTPUT_COLUMNS`. Process params (`ProcessParams`, `extract_process_params`, `INPUT_COLUMNS`) are no longer re-exported -- v4 uses discrete tech-code embedding instead. Training VDD may differ from PyCMG (e.g., ASAP7: train=0.7V, PyCMG=0.9V). Backward-compat alias `TechConfig = NNTechConfig` exists for test files.
 10. **Data generation validates PyCMG output** — `eval_single_point` rejects NaN/Inf and `|id| > 1A`. PyCMG `eval_dc` raises `RuntimeError` on internal-node convergence failure. Default NFIN range is `[2, 3, 5, 10, 15, 20, 24]` (NFIN=1 excluded due to OSDI convergence failures).
-11. **Loss layer (per model)** — DirectNet uses `bsimar.losses.DirectLoss` (13-output weighted MSE) or `ChargeConsistencyLoss` (autograd dq/dV = C for charge-finetune). Transformer uses `bsimar.losses.MAELoss` with per-target LDS + Vg-LDS (Vov proxy) weights, hard-wired inside `train_transformer`.
+11. **Loss layer (per model)** — Both DirectNet and Transformer use `bsimar.losses.MAELoss` with per-target LDS weights, hard-wired inside `train_directnet` / `train_transformer`. The earlier `DirectLoss` (13-output weighted MSE), `ChargeConsistencyLoss`, `SignConsistencyLoss`, `BoundaryLoss`, and the 3-axis LDS stack (per-target × Vov × subthreshold) were trimmed in v5 Phase A — none beat baseline in A/B and the rail-restoring extrapolation patch (rule #19) supplanted SignConsistency/Boundary at inference time.
 12. **BSIMAR output ordering** — The Transformer output is in `BSIMAR_COLUMN_ORDER` (`qg, qb, qd, qs, id, gm, gds, gmb, cgg, cgd, cgs, cdg, cdd`), not `OUTPUT_COLUMN_ORDER`. Consumer code (`mosfet_bsimar.py`) takes autograd derivatives at the right column indices.
 13. **Parallel cap head** — The Transformer emits the 5 capacitance outputs in parallel from the gmb hidden state, not as sequential AR steps. The AR loop runs only 8 steps (charges + currents/conds). `parallel_caps` and `grouped_inputs` are structural and not configurable.
 14. **AR finetune phase** — After the cosine TF schedule, the trainer runs `ar_finetune_epochs` extra epochs at `ss_ratio=1.0` (pure AR rollout) with a fixed low LR. The phys-best checkpoint tracker picks the best model across both phases.
