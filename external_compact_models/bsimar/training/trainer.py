@@ -31,7 +31,6 @@ from bsimar.data.normalize import (
 from bsimar.models.transformer import TransformerEncoderModel
 from bsimar.losses.bni_mae import (
     MAELoss, compute_lds_weights_per_target,
-    SignConsistencyLoss, BoundaryLoss,
 )
 from bsimar.training.early_stopping import EarlyStopping
 
@@ -46,13 +45,8 @@ def _train_epoch_direct(
     criterion: nn.Module,
     optimizer: optim.Optimizer,
     device: torch.device,
-    sign_loss_fn: Optional[SignConsistencyLoss] = None,
-    boundary_loss_fn: Optional[BoundaryLoss] = None,
-    id_col: int = 0,
-    id_zero_norm: float = 0.0,
-    is_nmos: bool = True,
 ) -> Dict[str, float]:
-    """Training epoch for DirectNet (MAE + LDS weights + sign/boundary).
+    """Training epoch for DirectNet (MAE + LDS weights).
 
     Batch layout: (x, y, tech_codes, lds_weights).
     """
@@ -70,10 +64,6 @@ def _train_epoch_direct(
         optimizer.zero_grad()
         pred = model(x, tech_codes=tc)
         loss = criterion(pred, y, weights=w) if w is not None else criterion(pred, y)
-        if sign_loss_fn is not None:
-            loss = loss + sign_loss_fn(pred, id_col, id_zero_norm, is_nmos)
-        if boundary_loss_fn is not None:
-            loss = loss + boundary_loss_fn(pred, y, x, id_col)
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
@@ -130,11 +120,6 @@ def _train_epoch_mae(
     criterion: nn.Module,
     optimizer: optim.Optimizer,
     device: torch.device,
-    sign_loss_fn: Optional[SignConsistencyLoss] = None,
-    boundary_loss_fn: Optional[BoundaryLoss] = None,
-    id_col: int = 0,
-    id_zero_norm: float = 0.0,
-    is_nmos: bool = True,
 ) -> Dict[str, float]:
     """Teacher-forced training epoch (batches carry tech codes).
 
@@ -160,10 +145,6 @@ def _train_epoch_mae(
         pred = model(x, y, tech_codes=tc)
 
         loss = criterion(pred, y, weights=w) if w is not None else criterion(pred, y)
-        if sign_loss_fn is not None:
-            loss = loss + sign_loss_fn(pred, id_col, id_zero_norm, is_nmos)
-        if boundary_loss_fn is not None:
-            loss = loss + boundary_loss_fn(pred, y, x, id_col)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
@@ -219,11 +200,6 @@ def _train_epoch_scheduled_mae(
     optimizer: optim.Optimizer,
     device: torch.device,
     ss_ratio: float = 1.0,
-    sign_loss_fn: Optional[SignConsistencyLoss] = None,
-    boundary_loss_fn: Optional[BoundaryLoss] = None,
-    id_col: int = 0,
-    id_zero_norm: float = 0.0,
-    is_nmos: bool = True,
 ) -> Dict[str, float]:
     """N3 AR fine-tune helper."""
     model.train()
@@ -243,10 +219,6 @@ def _train_epoch_scheduled_mae(
         optimizer.zero_grad()
         pred = model.forward_scheduled(x, y, ss_ratio=ss_ratio, tech_codes=tc)
         loss = criterion(pred, y, weights=w) if w is not None else criterion(pred, y)
-        if sign_loss_fn is not None:
-            loss = loss + sign_loss_fn(pred, id_col, id_zero_norm, is_nmos)
-        if boundary_loss_fn is not None:
-            loss = loss + boundary_loss_fn(pred, y, x, id_col)
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
@@ -328,8 +300,6 @@ def train_directnet(
     exclude_techs: Optional[Set[str]] = None,
     num_tech_codes: int = NUM_TSMC_CODES_WITH_UNKNOWN,
     p_unknown: float = 0.1,
-    sign_weight: float = 5.0,
-    boundary_weight: float = 2.0,
 ) -> Tuple[nn.Module, BSIMARNormalizer]:
     """DirectNet training pipeline (7-dim input + tech-code embedding).
 
@@ -388,19 +358,6 @@ def train_directnet(
     col_means[col_means < 1e-12] = 1.0
     lds_weights_np = lds_weights_np / col_means
 
-    # Sign-consistency and boundary losses.
-    id_col = 0  # id is column 0 in OUTPUT_COLUMNS
-    is_nmos = (device_type == "nmos")
-    id_zero_norm = float(
-        -normalizer.stats.output_mean[id_col] / normalizer.stats.output_std[id_col]
-    )
-    sign_loss_fn = SignConsistencyLoss(weight=sign_weight).to(device) if sign_weight > 0 else None
-    boundary_loss_fn = BoundaryLoss(weight=boundary_weight).to(device) if boundary_weight > 0 else None
-    if sign_loss_fn:
-        print(f"Sign loss: weight={sign_weight}, id_zero_norm={id_zero_norm:.4f}, is_nmos={is_nmos}")
-    if boundary_loss_fn:
-        print(f"Boundary loss: weight={boundary_weight}")
-
     train_ds_weighted = TensorDataset(
         train_ds.inputs, train_ds.outputs, train_ds.tech_codes,
         torch.tensor(lds_weights_np, dtype=torch.float32),
@@ -439,9 +396,7 @@ def train_directnet(
 
     for epoch in range(1, config.max_epochs + 1):
         train_losses = _train_epoch_direct(
-            model, train_loader, criterion, optimizer, device,
-            sign_loss_fn=sign_loss_fn, boundary_loss_fn=boundary_loss_fn,
-            id_col=id_col, id_zero_norm=id_zero_norm, is_nmos=is_nmos)
+            model, train_loader, criterion, optimizer, device)
         val_losses = _validate_epoch_direct(
             model, val_loader, criterion, device)
         scheduler.step()
@@ -510,8 +465,6 @@ def train_transformer(
     exclude_techs: Optional[Set[str]] = None,
     num_tech_codes: int = NUM_TSMC_CODES_WITH_UNKNOWN,
     p_unknown: float = 0.1,
-    sign_weight: float = 5.0,
-    boundary_weight: float = 2.0,
 ) -> Tuple[nn.Module, BSIMARNormalizer]:
     """BSIMAR Transformer training pipeline.
 
@@ -525,8 +478,6 @@ def train_transformer(
         exclude_techs: Tech names to exclude entirely (e.g., {"asap7"}).
         num_tech_codes: Embedding vocabulary size.
         p_unknown: Prob of replacing tech code with UNKNOWN during training.
-        sign_weight: Weight for sign-consistency loss (0 to disable).
-        boundary_weight: Weight for Vds=0 boundary loss (0 to disable).
     """
     from bsimar.config import OUTPUT_COLUMNS, INPUT_DIM
     from bsimar.data.dataset import load_and_split_bsimar
@@ -610,23 +561,6 @@ def train_transformer(
     col_means[col_means < 1e-12] = 1.0
     lds_weights_np = lds_weights_np / col_means
 
-    # Sign-consistency and boundary losses.
-    # In BSIMAR column order: id is at index 4 (qg,qb,qd,qs,id,...).
-    # Normalizer stats are in OUTPUT_COLUMN_ORDER where id is index 0.
-    id_col_reordered = 4  # id position in BSIMAR_COLUMN_ORDER
-    id_col_original = 0   # id position in OUTPUT_COLUMN_ORDER
-    is_nmos = (device_type == "nmos")
-    id_zero_norm = float(
-        -normalizer.stats.output_mean[id_col_original]
-        / normalizer.stats.output_std[id_col_original]
-    )
-    sign_loss_fn = SignConsistencyLoss(weight=sign_weight).to(device) if sign_weight > 0 else None
-    boundary_loss_fn = BoundaryLoss(weight=boundary_weight).to(device) if boundary_weight > 0 else None
-    if sign_loss_fn:
-        print(f"Sign loss: weight={sign_weight}, id_zero_norm={id_zero_norm:.4f}, is_nmos={is_nmos}")
-    if boundary_loss_fn:
-        print(f"Boundary loss: weight={boundary_weight}")
-
     # Build weighted TensorDataset: (x, y, tech_codes, lds_weights).
     train_ds_weighted = TensorDataset(
         train_ds.inputs, train_ds.outputs, train_ds.tech_codes,
@@ -679,9 +613,7 @@ def train_transformer(
 
     for epoch in range(1, epochs + 1):
         t_losses = _train_epoch_mae(
-            model, train_loader, criterion, optimizer, device,
-            sign_loss_fn=sign_loss_fn, boundary_loss_fn=boundary_loss_fn,
-            id_col=id_col_reordered, id_zero_norm=id_zero_norm, is_nmos=is_nmos)
+            model, train_loader, criterion, optimizer, device)
         v_losses = _validate_epoch_tf(
             model, val_loader, criterion, device)
 
@@ -794,8 +726,6 @@ def train_transformer(
             t_losses = _train_epoch_scheduled_mae(
                 model, ft_train_loader, ft_criterion, ft_optimizer,
                 device, ss_ratio=1.0,
-                sign_loss_fn=sign_loss_fn, boundary_loss_fn=boundary_loss_fn,
-                id_col=id_col_reordered, id_zero_norm=id_zero_norm, is_nmos=is_nmos,
             )
             v_losses = _validate_epoch_ar(
                 model, val_loader, ft_criterion, device)
