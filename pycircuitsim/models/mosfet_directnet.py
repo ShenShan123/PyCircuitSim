@@ -134,6 +134,10 @@ class _MOSFETNNBase(Component):
         self._tech_code_tensor = torch.tensor(
             [self._tech_code], dtype=torch.long)
 
+        assert output_dim == 13, (
+            f"Only 13-output checkpoints are supported in v4/v5 "
+            f"(got output_dim={output_dim}); the 4-output path has been removed."
+        )
         self._output_dim = output_dim
 
         self._norm_stats = BSIMARNormStats.load(str(norm_path))
@@ -196,8 +200,8 @@ class _MOSFETNNBase(Component):
         Returns dict with keys: id, gm, gds, gmb, qg, qd, qs, qb,
         cgg, cgd, cgs, cdg, cdd (all in physical units).
 
-        For 13-output models: all values are directly predicted (fast, no autograd).
-        For 4-output models: id/qg/qd/qb predicted, derivatives via autograd.
+        Uses the 13-output hybrid path: id/qg/qd/qb predicted directly,
+        conductances and capacitances via autograd for Jacobian consistency.
         """
         v_d = voltages.get(self.nodes[0], 0.0)
         v_g = voltages.get(self.nodes[1], 0.0)
@@ -243,10 +247,7 @@ class _MOSFETNNBase(Component):
         # Always use autograd for conductances (Jacobian consistency for NR).
         # Direct prediction of gm/gds is NOT consistent with id, causing NR
         # divergence. Autograd guarantees gm = did/dVg exactly.
-        if self._output_dim == 13:
-            result = self._eval_hybrid13(x)
-        else:
-            result = self._eval_autograd4(x)
+        result = self._eval_hybrid13(x)
 
         # Enforce Id(Vds=0) = 0 via analytical Vds correction
         vds = v_d_nn - v_s_nn
@@ -326,63 +327,6 @@ class _MOSFETNNBase(Component):
         gds_floor = max(abs(id_phys) * 0.5, 1e-12)
         if gds_phys < gds_floor:
             _logger.debug("gds=%.3e below floor=%.3e (|id|=%.3e) — clamped",
-                          gds_phys, gds_floor, abs(id_phys))
-        gds_phys = max(gds_phys, gds_floor)
-
-        return {
-            "id": id_phys, "gm": gm_phys, "gds": gds_phys, "gmb": gmb_phys,
-            "qg": qg_phys, "qd": qd_phys, "qs": qs_phys, "qb": qb_phys,
-            "cgg": cgg_phys, "cgd": cgd_phys, "cgs": cgs_phys,
-            "cdg": cdg_phys, "cdd": cdd_phys,
-        }
-
-    def _eval_autograd4(self, x: torch.Tensor) -> Dict[str, float]:
-        """Slow path: 4-output model with autograd derivatives."""
-        x_v = x[:, :4].requires_grad_(True)
-        x_g = x[:, 4:]
-        x_full = torch.cat([x_v, x_g], dim=1)
-
-        with torch.enable_grad():
-            out = self._nn_model(x_full, tech_codes=self._tech_code_tensor)
-
-            grad_id = torch.autograd.grad(
-                out[:, 0].sum(), x_v, create_graph=False, retain_graph=True
-            )[0]
-            grad_qg = torch.autograd.grad(
-                out[:, 1].sum(), x_v, create_graph=False, retain_graph=True
-            )[0]
-            grad_qd = torch.autograd.grad(
-                out[:, 2].sum(), x_v, create_graph=False, retain_graph=False
-            )[0]
-
-        id_phys = self._denorm_scalar(out[0, 0].item(), col_idx=0)
-        qg_phys = self._denorm_scalar(out[0, 1].item(), col_idx=4)
-        qd_phys = self._denorm_scalar(out[0, 2].item(), col_idx=5)
-        qb_phys = self._denorm_scalar(out[0, 3].item(), col_idx=7)
-        qs_phys = -(qg_phys + qd_phys + qb_phys)
-
-        # Negate gm/gmb: d(id)/d(V) → d(-id)/d(V) = d(i_leaving)/d(V)
-        gm_phys = -self._denorm_full_derivative(
-            grad_id[0, 1].item(), out_col=0, in_col=1, phys_val=id_phys)
-        gds_phys = self._denorm_full_derivative(
-            grad_id[0, 0].item(), out_col=0, in_col=0, phys_val=id_phys)
-        gmb_phys = -self._denorm_full_derivative(
-            grad_id[0, 3].item(), out_col=0, in_col=3, phys_val=id_phys)
-        cgg_phys = self._denorm_full_derivative(
-            grad_qg[0, 1].item(), out_col=4, in_col=1, phys_val=qg_phys)
-        cgd_phys = self._denorm_full_derivative(
-            grad_qg[0, 0].item(), out_col=4, in_col=0, phys_val=qg_phys)
-        cgs_phys = self._denorm_full_derivative(
-            grad_qg[0, 2].item(), out_col=4, in_col=2, phys_val=qg_phys)
-        cdg_phys = self._denorm_full_derivative(
-            grad_qd[0, 1].item(), out_col=5, in_col=1, phys_val=qd_phys)
-        cdd_phys = self._denorm_full_derivative(
-            grad_qd[0, 0].item(), out_col=5, in_col=0, phys_val=qd_phys)
-
-        # Physics-based gds floor (same as _eval_hybrid13 path)
-        gds_floor = max(abs(id_phys) * 0.02, 1e-12)
-        if gds_phys < gds_floor:
-            _logger.debug("gds=%.3e below floor=%.3e (|id|=%.3e, autograd4) — clamped",
                           gds_phys, gds_floor, abs(id_phys))
         gds_phys = max(gds_phys, gds_floor)
 
