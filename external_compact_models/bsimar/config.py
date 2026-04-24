@@ -132,14 +132,6 @@ class DirectNetConfig:
     weight_decay: float = 1e-5
     max_epochs: int = 500
     patience: int = 50
-    # DirectLoss group weights
-    w_id: float = 1.0
-    w_gm: float = 0.5
-    w_gds: float = 0.5
-    w_gmb: float = 0.3
-    w_charges: float = 0.5
-    w_caps: float = 0.3
-    w_zero_bias: float = 5.0
 
 
 @dataclass
@@ -159,21 +151,3 @@ class TransformerConfig:
     # Early stopping
     patience: int = 30
     delta: float = 1e-5
-    # DirectLoss group weights (only used with --loss direct)
-    w_curr: float = 1.0
-    w_cond: float = 1.0
-    w_charges: float = 0.5
-    w_caps: float = 0.3
-    w_zero_bias: float = 5.0
-    # Scheduled sampling
-    ss_warmup_epochs: int = 100
-    ss_max_ratio: float = 0.5
-    # Hybrid consistency
-    consistency_weight: float = 0.1
-    # Curriculum
-    curriculum_warmup: int = 50
-
-
-# Legacy alias — some downstream code still references TrainConfig
-TrainConfig = DirectNetConfig
-BSIMARConfig = TransformerConfig

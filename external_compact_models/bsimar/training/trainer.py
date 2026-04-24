@@ -29,7 +29,6 @@ from bsimar.data.normalize import (
     reorder_outputs, unreorder_outputs, _UNREORDER_IDX,
 )
 from bsimar.models.transformer import TransformerEncoderModel
-from bsimar.losses.direct_loss import DirectLoss
 from bsimar.losses.bni_mae import (
     MAELoss, compute_lds_weights_per_target,
     SignConsistencyLoss, BoundaryLoss,
