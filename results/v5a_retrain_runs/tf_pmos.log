@@ -1,0 +1,143 @@
+Device: cuda | Recipe: BSIMAR (tech-code embedding, 18 codes, p_unknown=0.1) | Data: universal_pmos.npz
+Excluded techs: {'asap7'}
+  Data filtering: 12152298 -> 9029547 (3122751 removed, 25.7%)
+  loaded cached tech-variant labels from universal_pmos_tech_variant_labels.npy
+  Excluded techs {'asap7'}: 7864482/9029547 samples kept
+  Dataset split: train=6291585, val=786448, test=786449
+Input dim: 7, Output dim: 13
+Output columns reordered: charges->caps->cond->id
+Model params: 5,019,149
+Computing LDS weights (per-target)...
+
+Training v5a_universal_pmos for 150 epochs (patience=150)
+     1 | train=0.08799 val=0.03776 lr=8.00e-04 *best*
+     2 | train=0.04088 val=0.02497 lr=8.00e-04 *best*
+     3 | train=0.03014 val=0.02076 lr=7.99e-04 *best*
+     4 | train=0.02471 val=0.01722 lr=7.99e-04 *best*
+     5 | train=0.02137 val=0.01632 lr=7.98e-04 *best*
+     6 | train=0.01915 val=0.01524 lr=7.97e-04 *best*
+     7 | train=0.01755 val=0.01373 lr=7.96e-04 *best*
+     8 | train=0.01638 val=0.01031 lr=7.94e-04 *best*
+     9 | train=0.01557 val=0.00906 lr=7.93e-04 *best*
+  AR-val check @ epoch 10: ar=0.00958 (tf=0.00916) *ar-best*
+  PHYS-val @ epoch 10: nrmse_avg=0.238 r2_avg=0.9973 score=0.238 *phys-best*
+    13 | train=0.01323 val=0.00869 lr=7.85e-04 *best*
+    14 | train=0.01283 val=0.00796 lr=7.83e-04 *best*
+    15 | train=0.01246 val=0.00792 lr=7.80e-04 *best*
+    17 | train=0.01193 val=0.00686 lr=7.75e-04 *best*
+  AR-val check @ epoch 20: ar=0.00699 (tf=0.00672) *ar-best*
+  PHYS-val @ epoch 20: nrmse_avg=0.161 r2_avg=0.9980 score=0.161 *phys-best*
+    20 | train=0.01129 val=0.00672 lr=7.65e-04 *best*
+    23 | train=0.01076 val=0.00556 lr=7.54e-04 *best*
+    27 | train=0.01033 val=0.00534 lr=7.38e-04 *best*
+  AR-val check @ epoch 30: ar=0.00570 (tf=0.00551) *ar-best*
+  PHYS-val @ epoch 30: nrmse_avg=0.140 r2_avg=0.9988 score=0.141 *phys-best*
+    34 | train=0.00949 val=0.00531 lr=7.03e-04 *best*
+    35 | train=0.00941 val=0.00498 lr=6.97e-04 *best*
+  AR-val check @ epoch 40: ar=0.00616 (tf=0.00593)
+  PHYS-val @ epoch 40: nrmse_avg=0.157 r2_avg=0.9988 score=0.157
+    40 | train=0.00903 val=0.00593 lr=6.68e-04
+    42 | train=0.00888 val=0.00455 lr=6.55e-04 *best*
+    45 | train=0.00866 val=0.00427 lr=6.35e-04 *best*
+  AR-val check @ epoch 50: ar=0.00515 (tf=0.00498) *ar-best*
+  PHYS-val @ epoch 50: nrmse_avg=0.123 r2_avg=0.9995 score=0.123 *phys-best*
+    58 | train=0.00797 val=0.00404 lr=5.39e-04 *best*
+  AR-val check @ epoch 60: ar=0.00449 (tf=0.00437) *ar-best*
+  PHYS-val @ epoch 60: nrmse_avg=0.105 r2_avg=0.9997 score=0.105 *phys-best*
+    60 | train=0.00787 val=0.00437 lr=5.24e-04
+    62 | train=0.00779 val=0.00388 lr=5.08e-04 *best*
+    65 | train=0.00766 val=0.00380 lr=4.83e-04 *best*
+  AR-val check @ epoch 70: ar=0.00372 (tf=0.00362) *ar-best*
+  PHYS-val @ epoch 70: nrmse_avg=0.073 r2_avg=0.9996 score=0.073 *phys-best*
+    70 | train=0.00745 val=0.00362 lr=4.42e-04 *best*
+    79 | train=0.00712 val=0.00338 lr=3.67e-04 *best*
+  AR-val check @ epoch 80: ar=0.00336 (tf=0.00328) *ar-best*
+  PHYS-val @ epoch 80: nrmse_avg=0.071 r2_avg=0.9996 score=0.071 *phys-best*
+    80 | train=0.00709 val=0.00328 lr=3.58e-04 *best*
+  AR-val check @ epoch 90: ar=0.00353 (tf=0.00341)
+  PHYS-val @ epoch 90: nrmse_avg=0.081 r2_avg=0.9996 score=0.081
+    92 | train=0.00672 val=0.00310 lr=2.61e-04 *best*
+    96 | train=0.00660 val=0.00299 lr=2.30e-04 *best*
+    97 | train=0.00657 val=0.00294 lr=2.22e-04 *best*
+  AR-val check @ epoch 100: ar=0.00362 (tf=0.00353)
+  PHYS-val @ epoch 100: nrmse_avg=0.094 r2_avg=0.9996 score=0.094
+   100 | train=0.00650 val=0.00353 lr=2.00e-04
+   105 | train=0.00638 val=0.00279 lr=1.65e-04 *best*
+  AR-val check @ epoch 110: ar=0.00296 (tf=0.00288) *ar-best*
+  PHYS-val @ epoch 110: nrmse_avg=0.072 r2_avg=0.9996 score=0.072
+   115 | train=0.00616 val=0.00271 lr=1.03e-04 *best*
+   117 | train=0.00613 val=0.00267 lr=9.18e-05 *best*
+  AR-val check @ epoch 120: ar=0.00290 (tf=0.00280) *ar-best*
+  PHYS-val @ epoch 120: nrmse_avg=0.070 r2_avg=0.9997 score=0.070 *phys-best*
+   120 | train=0.00607 val=0.00280 lr=7.64e-05
+   129 | train=0.00594 val=0.00259 lr=3.81e-05 *best*
+  AR-val check @ epoch 130: ar=0.00285 (tf=0.00276) *ar-best*
+  PHYS-val @ epoch 130: nrmse_avg=0.070 r2_avg=0.9997 score=0.070 *phys-best*
+   139 | train=0.00586 val=0.00257 lr=1.06e-05 *best*
+  AR-val check @ epoch 140: ar=0.00274 (tf=0.00265) *ar-best*
+  PHYS-val @ epoch 140: nrmse_avg=0.066 r2_avg=0.9998 score=0.066 *phys-best*
+   140 | train=0.00585 val=0.00265 lr=8.74e-06
+   142 | train=0.00584 val=0.00255 lr=5.60e-06 *best*
+  AR-val check @ epoch 150: ar=0.00266 (tf=0.00257) *ar-best*
+  PHYS-val @ epoch 150: nrmse_avg=0.065 r2_avg=0.9998 score=0.065 *phys-best*
+
+Done in 91685s (611.2s/epoch)
+Best val loss (TF):  0.002548
+Best val loss (AR):  0.002662  -> /home/shenshan/NN_SPICE/external_compact_models/bsimar/checkpoints/v5a_universal_pmos_best.ar.pt
+Best phys score:   0.064783  (NRMSE=0.065%, R2=0.9998)  -> /home/shenshan/NN_SPICE/external_compact_models/bsimar/checkpoints/v5a_universal_pmos_best.phys.pt
+Arch config: /home/shenshan/NN_SPICE/external_compact_models/bsimar/checkpoints/v5a_universal_pmos_config.npz
+
+[N3] Loading phys-best checkpoint for AR finetune: /home/shenshan/NN_SPICE/external_compact_models/bsimar/checkpoints/v5a_universal_pmos_best.phys.pt
+[N3] AR finetune for 5 epochs at lr=1.00e-05, ss_ratio=1.0
+  [FT   1] train=0.01528 val=0.00267 | nrmse=0.066% r2=0.9998
+  [FT   2] train=0.01509 val=0.00274 | nrmse=0.067% r2=0.9998
+  [FT   3] train=0.01507 val=0.00275 | nrmse=0.064% r2=0.9998 *phys-best*
+  [FT   4] train=0.01504 val=0.00265 | nrmse=0.062% r2=0.9998 *phys-best*
+  [FT   5] train=0.01502 val=0.00263 | nrmse=0.063% r2=0.9998
+Loading phys-best checkpoint for final test: /home/shenshan/NN_SPICE/external_compact_models/bsimar/checkpoints/v5a_universal_pmos_best.phys.pt
+
+  Target |   NRMSE% |     MRE% |       R2 |  NRMSE_n% |     R2_n |    MAE_n |    n_val/n_tot
+--------------------------------------------------------------------------------------------
+      id |    0.093 |     1.17 |   0.9988 |     0.062 |   1.0000 |   0.0030 |  113478/786449
+      gm |    0.184 |     1.43 |   0.9997 |     0.195 |   0.9998 |   0.0069 |  697641/786449
+     gds |    0.132 |     1.84 |   0.9994 |     0.182 |   0.9998 |   0.0063 |  326741/786449
+     gmb |    0.057 |     0.71 |   0.9999 |     0.122 |   1.0000 |   0.0027 |  427553/786449
+      qg |    0.024 |     0.49 |   1.0000 |     0.042 |   1.0000 |   0.0020 |  736555/786449
+      qd |    0.041 |     0.59 |   1.0000 |     0.049 |   1.0000 |   0.0023 |  730725/786449
+      qs |    0.059 |     0.57 |   1.0000 |     0.058 |   1.0000 |   0.0027 |  710580/786449
+      qb |    0.071 |     0.59 |   0.9998 |     0.045 |   1.0000 |   0.0017 |  302329/786449
+     cgg |    0.025 |     0.20 |   1.0000 |     0.039 |   1.0000 |   0.0011 |  786372/786449
+     cgd |    0.032 |     0.31 |   1.0000 |     0.046 |   1.0000 |   0.0016 |  784259/786449
+     cgs |    0.029 |     0.27 |   1.0000 |     0.046 |   1.0000 |   0.0013 |  786324/786449
+     cdg |    0.025 |     0.27 |   1.0000 |     0.037 |   1.0000 |   0.0012 |  785916/786449
+     cdd |    0.031 |     0.28 |   1.0000 |     0.042 |   1.0000 |   0.0015 |  786449/786449
+--------------------------------------------------------------------------------------------
+     AVG |    0.062 |     0.67 |   0.9998 |     0.074 |   1.0000 |          |
+
+           Tech | n_test |   NRMSE% |       R2
+--------------------------------------------------
+      tsmc5:svt |  39363 |    0.099 |   0.9998
+      tsmc5:lvt |  42093 |    0.087 |   0.9998
+     tsmc5:ulvt |  44154 |    0.081 |   0.9998
+     tsmc5:elvt |  45279 |    0.085 |   0.9998
+      tsmc7:svt |  58786 |    0.081 |   0.9998
+      tsmc7:lvt |  61505 |    0.099 |   0.9998
+     tsmc7:ulvt |  62699 |    0.084 |   0.9998
+     tsmc12:svt |  41200 |    0.067 |   0.9999
+     tsmc12:lvt |  43849 |    0.067 |   0.9999
+    tsmc12:ulvt |  45260 |    0.070 |   0.9999
+     tsmc12:hvt |  40279 |    0.076 |   0.9999
+    tsmc12:lnvt |  46255 |    0.075 |   0.9999
+     tsmc16:svt |  41122 |    0.066 |   0.9999
+     tsmc16:lvt |  43647 |    0.068 |   0.9999
+    tsmc16:ulvt |  45048 |    0.070 |   0.9999
+     tsmc16:hvt |  39490 |    0.077 |   0.9999
+    tsmc16:lnvt |  46420 |    0.073 |   0.9999
+--------------------------------------------------
+        OVERALL | 786449 |    0.078 |   0.9998
+Scatter plot saved: /home/shenshan/NN_SPICE/external_compact_models/bsimar/results/v5a_universal_pmos/scatter_comparison.png
+Loss curves saved: /home/shenshan/NN_SPICE/external_compact_models/bsimar/results/v5a_universal_pmos/loss_curves.png
+
+Checkpoint: /home/shenshan/NN_SPICE/external_compact_models/bsimar/checkpoints/v5a_universal_pmos_best.pt
+Norm stats: /home/shenshan/NN_SPICE/external_compact_models/bsimar/checkpoints/v5a_universal_pmos_norm.npz
+Results:    /home/shenshan/NN_SPICE/external_compact_models/bsimar/results/v5a_universal_pmos/

@@ -187,10 +187,11 @@ def create_directnet_instance(
     """Create DirectNet v4 MOSFET instance for inference."""
     from pycircuitsim.models.mosfet_directnet import NMOS_NN, PMOS_NN
 
-    model_path = CHECKPOINT_DIR / f"v4_dn_universal_{device_type}_best.pt"
+    dn_prefix = os.environ.get("DIRECTNET_PREFIX", "v4_dn_universal")
+    model_path = CHECKPOINT_DIR / f"{dn_prefix}_{device_type}_best.pt"
     if not model_path.exists():
         raise FileNotFoundError(
-            f"No DirectNet v4 checkpoint for {device_type}: {model_path.name}")
+            f"No DirectNet checkpoint for {device_type}: {model_path.name}")
 
     L = tech.l_nmos if device_type == "nmos" else tech.l_pmos
     tech_code = tech_variant_to_code(tech.tech_key, tech.variant)
@@ -446,8 +447,8 @@ def _run_nn_tran(tech: TestTechConfig, level: int) -> Dict[str, np.ndarray]:
 
     netlist_path = results_dir / f"{label}_tran.sp"
 
-    # If a custom BSIMAR prefix was requested for tests 1-3, also override
-    # the LEVEL=74 checkpoint paths in the transient netlist (parser
+    # If a custom checkpoint prefix was requested for tests 1-3, also
+    # override the netlist's LEVEL=73/74 checkpoint paths (parser
     # supports MODEL_PATH=... override per .model directive).
     extra_n = extra_p = ""
     if level == 74:
@@ -458,6 +459,14 @@ def _run_nn_tran(tech: TestTechConfig, level: int) -> Dict[str, np.ndarray]:
             n_path = n_phys if n_phys.exists() else _CKPT_DIR / f"{prefix}_nmos_best.pt"
             p_phys = _CKPT_DIR / f"{prefix}_pmos_best.phys.pt"
             p_path = p_phys if p_phys.exists() else _CKPT_DIR / f"{prefix}_pmos_best.pt"
+            extra_n = f" MODEL_PATH={n_path}"
+            extra_p = f" MODEL_PATH={p_path}"
+    elif level == 73:
+        dn_prefix = os.environ.get("DIRECTNET_PREFIX")
+        if dn_prefix:
+            from bsimar.config import CHECKPOINT_DIR as _CKPT_DIR
+            n_path = _CKPT_DIR / f"{dn_prefix}_nmos_best.pt"
+            p_path = _CKPT_DIR / f"{dn_prefix}_pmos_best.pt"
             extra_n = f" MODEL_PATH={n_path}"
             extra_p = f" MODEL_PATH={p_path}"
 
@@ -665,15 +674,21 @@ class TestResult:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--bsimar-prefix", default=None,
+    parser.add_argument("--bsimar-prefix", "--checkpoint-prefix",
+                        dest="bsimar_prefix", default=None,
                         help="BSIMAR checkpoint prefix (default: v4_universal). "
                              "Probe: v4_probe_signfix")
+    parser.add_argument("--directnet-prefix", default=None,
+                        help="DirectNet checkpoint prefix "
+                             "(default: v4_dn_universal)")
     parser.add_argument("--tech", default="tsmc5",
                         choices=list(TECH_BY_NAME.keys()),
                         help="Technology to verify (default: tsmc5)")
     args = parser.parse_args()
     if args.bsimar_prefix:
         os.environ["BSIMAR_PREFIX"] = args.bsimar_prefix
+    if args.directnet_prefix:
+        os.environ["DIRECTNET_PREFIX"] = args.directnet_prefix
 
     tech = TECH_BY_NAME[args.tech]
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -722,15 +737,18 @@ def main() -> int:
     results.append(TestResult("PMOS DC (DN)", nrmse_dn_p, DC_NRMSE_THRESHOLD, dt))
     plot_dc(tech, "pmos", vgs_p, id_cmg_p, id_bs_p, nrmse_ar_p, tech_dir / "pmos_dc.png")
 
-    # Test 3: Inverter VTC
-    print(f"\n--- Test 3: Inverter VTC ---")
-    t0 = time.time()
-    nrmse_ar_vtc, nrmse_dn_vtc, vin_vtc, vout_cmg, vout_bs, vout_dn = test_inverter_vtc(tech)
-    dt = time.time() - t0
-    print(f"  AR NRMSE={nrmse_ar_vtc:.2f}%  DN NRMSE={nrmse_dn_vtc:.2f}%  [{dt:.1f}s]")
-    results.append(TestResult("VTC (AR)", nrmse_ar_vtc, VTC_NRMSE_THRESHOLD, dt))
-    results.append(TestResult("VTC (DN)", nrmse_dn_vtc, VTC_NRMSE_THRESHOLD, dt))
-    plot_vtc(tech, vin_vtc, vout_cmg, vout_bs, nrmse_ar_vtc, tech_dir / "inverter_vtc.png")
+    # Test 3: Inverter VTC (skippable via SKIP_VTC=1)
+    if os.environ.get("SKIP_VTC", "0") != "1":
+        print(f"\n--- Test 3: Inverter VTC ---")
+        t0 = time.time()
+        nrmse_ar_vtc, nrmse_dn_vtc, vin_vtc, vout_cmg, vout_bs, vout_dn = test_inverter_vtc(tech)
+        dt = time.time() - t0
+        print(f"  AR NRMSE={nrmse_ar_vtc:.2f}%  DN NRMSE={nrmse_dn_vtc:.2f}%  [{dt:.1f}s]")
+        results.append(TestResult("VTC (AR)", nrmse_ar_vtc, VTC_NRMSE_THRESHOLD, dt))
+        results.append(TestResult("VTC (DN)", nrmse_dn_vtc, VTC_NRMSE_THRESHOLD, dt))
+        plot_vtc(tech, vin_vtc, vout_cmg, vout_bs, nrmse_ar_vtc, tech_dir / "inverter_vtc.png")
+    else:
+        print(f"\n--- Test 3: Inverter VTC --- SKIPPED (SKIP_VTC=1)")
 
     # Test 4: Inverter transient
     print(f"\n--- Test 4: Inverter Transient ---")

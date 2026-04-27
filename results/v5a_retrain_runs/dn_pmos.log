@@ -1,0 +1,258 @@
+Training DirectNet on cuda
+Tech codes: 18 codes, p_unknown=0.1
+Excluding techs: {'asap7'}
+  Data filtering: 12152298 -> 9029547 (3122751 removed, 25.7%)
+  loaded cached tech-variant labels from universal_pmos_tech_variant_labels.npy
+  Excluded techs {'asap7'}: 7864482/9029547 samples kept
+  Dataset split: train=6291585, val=786448, test=786449
+Input dim: 7 (7-dim + tech code), Output dim: 13
+Computing LDS weights (per-target)...
+Model parameters: 907981
+   1 | train=0.07254 val=0.03152 lr=8.00e-04 *best*
+   2 | train=0.03984 val=0.03089 lr=8.00e-04 *best*
+   3 | train=0.03358 val=0.02143 lr=8.00e-04 *best*
+   4 | train=0.03048 val=0.02302 lr=8.00e-04
+   5 | train=0.02755 val=0.01662 lr=8.00e-04 *best*
+   6 | train=0.02575 val=0.01488 lr=8.00e-04 *best*
+   7 | train=0.02406 val=0.01349 lr=8.00e-04 *best*
+   8 | train=0.02272 val=0.01331 lr=8.00e-04 *best*
+  10 | train=0.02131 val=0.01060 lr=8.00e-04 *best*
+  12 | train=0.02036 val=0.01048 lr=8.00e-04 *best*
+  14 | train=0.01968 val=0.00924 lr=7.99e-04 *best*
+  17 | train=0.01898 val=0.00861 lr=7.99e-04 *best*
+  20 | train=0.01851 val=0.00886 lr=7.99e-04
+  25 | train=0.01779 val=0.00798 lr=7.98e-04 *best*
+  28 | train=0.01814 val=0.00723 lr=7.98e-04 *best*
+  30 | train=0.01731 val=0.00712 lr=7.97e-04 *best*
+  35 | train=0.01688 val=0.00683 lr=7.96e-04 *best*
+  40 | train=0.01659 val=0.00668 lr=7.95e-04 *best*
+  47 | train=0.01624 val=0.00587 lr=7.93e-04 *best*
+  51 | train=0.01608 val=0.00586 lr=7.92e-04 *best*
+  54 | train=0.01589 val=0.00568 lr=7.91e-04 *best*
+  59 | train=0.01573 val=0.00542 lr=7.89e-04 *best*
+  60 | train=0.01568 val=0.00681 lr=7.89e-04
+  63 | train=0.01567 val=0.00542 lr=7.88e-04 *best*
+  69 | train=0.01553 val=0.00534 lr=7.85e-04 *best*
+  70 | train=0.01544 val=0.00523 lr=7.85e-04 *best*
+  71 | train=0.01543 val=0.00499 lr=7.85e-04 *best*
+  72 | train=0.01539 val=0.00493 lr=7.84e-04 *best*
+  73 | train=0.01535 val=0.00473 lr=7.84e-04 *best*
+  74 | train=0.01533 val=0.00463 lr=7.83e-04 *best*
+  80 | train=0.01522 val=0.00519 lr=7.80e-04
+  88 | train=0.01507 val=0.00450 lr=7.76e-04 *best*
+  95 | train=0.01493 val=0.00443 lr=7.72e-04 *best*
+ 100 | train=0.01489 val=0.00479 lr=7.70e-04
+ 101 | train=0.01487 val=0.00434 lr=7.69e-04 *best*
+ 107 | train=0.01477 val=0.00422 lr=7.65e-04 *best*
+ 118 | train=0.01466 val=0.00373 lr=7.58e-04 *best*
+ 120 | train=0.01461 val=0.00408 lr=7.56e-04
+ 124 | train=0.01455 val=0.00368 lr=7.54e-04 *best*
+ 140 | train=0.01444 val=0.00405 lr=7.41e-04
+ 145 | train=0.01437 val=0.00348 lr=7.37e-04 *best*
+ 155 | train=0.01430 val=0.00343 lr=7.28e-04 *best*
+ 160 | train=0.01424 val=0.00378 lr=7.24e-04
+ 161 | train=0.01421 val=0.00343 lr=7.23e-04 *best*
+ 180 | train=0.01408 val=0.00339 lr=7.04e-04 *best*
+ 185 | train=0.01406 val=0.00336 lr=6.99e-04 *best*
+ 188 | train=0.01402 val=0.00319 lr=6.96e-04 *best*
+ 198 | train=0.01395 val=0.00292 lr=6.85e-04 *best*
+ 200 | train=0.01391 val=0.00343 lr=6.83e-04
+ 208 | train=0.01388 val=0.00289 lr=6.74e-04 *best*
+ 220 | train=0.01382 val=0.00271 lr=6.60e-04 *best*
+ 240 | train=0.01366 val=0.00383 lr=6.35e-04
+ 255 | train=0.01355 val=0.00266 lr=6.16e-04 *best*
+ 260 | train=0.01351 val=0.00310 lr=6.09e-04
+ 268 | train=0.01344 val=0.00245 lr=5.98e-04 *best*
+ 280 | train=0.01342 val=0.00250 lr=5.82e-04
+ 281 | train=0.01340 val=0.00233 lr=5.80e-04 *best*
+ 300 | train=0.01328 val=0.00240 lr=5.53e-04
+ 311 | train=0.01323 val=0.00231 lr=5.37e-04 *best*
+ 312 | train=0.01318 val=0.00231 lr=5.35e-04 *best*
+ 313 | train=0.01321 val=0.00227 lr=5.34e-04 *best*
+ 319 | train=0.01318 val=0.00224 lr=5.25e-04 *best*
+ 320 | train=0.01317 val=0.00238 lr=5.24e-04
+ 321 | train=0.01319 val=0.00223 lr=5.22e-04 *best*
+ 330 | train=0.01314 val=0.00212 lr=5.09e-04 *best*
+ 340 | train=0.01306 val=0.00215 lr=4.93e-04
+ 352 | train=0.01298 val=0.00206 lr=4.75e-04 *best*
+ 356 | train=0.01298 val=0.00199 lr=4.69e-04 *best*
+ 360 | train=0.01292 val=0.00227 lr=4.63e-04
+ 374 | train=0.01287 val=0.00192 lr=4.41e-04 *best*
+ 380 | train=0.01281 val=0.00211 lr=4.31e-04
+ 386 | train=0.01284 val=0.00175 lr=4.22e-04 *best*
+ 400 | train=0.01272 val=0.00195 lr=4.00e-04
+ 407 | train=0.01266 val=0.00167 lr=3.89e-04 *best*
+ 413 | train=0.01267 val=0.00161 lr=3.80e-04 *best*
+ 417 | train=0.01262 val=0.00161 lr=3.73e-04 *best*
+ 420 | train=0.01261 val=0.00155 lr=3.69e-04 *best*
+ 429 | train=0.01259 val=0.00150 lr=3.55e-04 *best*
+ 440 | train=0.01254 val=0.00171 lr=3.37e-04
+ 448 | train=0.01248 val=0.00139 lr=3.25e-04 *best*
+ 454 | train=0.01243 val=0.00138 lr=3.16e-04 *best*
+ 459 | train=0.01243 val=0.00136 lr=3.08e-04 *best*
+ 460 | train=0.01242 val=0.00134 lr=3.07e-04 *best*
+ 468 | train=0.01239 val=0.00131 lr=2.94e-04 *best*
+ 476 | train=0.01233 val=0.00131 lr=2.82e-04 *best*
+ 477 | train=0.01233 val=0.00125 lr=2.81e-04 *best*
+ 478 | train=0.01233 val=0.00120 lr=2.79e-04 *best*
+ 480 | train=0.01233 val=0.00129 lr=2.76e-04
+ 489 | train=0.01228 val=0.00119 lr=2.63e-04 *best*
+ 499 | train=0.01223 val=0.00116 lr=2.48e-04 *best*
+ 500 | train=0.01222 val=0.00122 lr=2.47e-04
+ 501 | train=0.01220 val=0.00107 lr=2.45e-04 *best*
+ 520 | train=0.01214 val=0.00100 lr=2.18e-04 *best*
+ 522 | train=0.01214 val=0.00098 lr=2.16e-04 *best*
+ 532 | train=0.01208 val=0.00096 lr=2.02e-04 *best*
+ 536 | train=0.01211 val=0.00095 lr=1.96e-04 *best*
+ 539 | train=0.01206 val=0.00090 lr=1.92e-04 *best*
+ 540 | train=0.01208 val=0.00102 lr=1.91e-04
+ 550 | train=0.01200 val=0.00087 lr=1.78e-04 *best*
+ 560 | train=0.01196 val=0.00090 lr=1.65e-04
+ 561 | train=0.01196 val=0.00087 lr=1.64e-04 *best*
+ 563 | train=0.01194 val=0.00087 lr=1.61e-04 *best*
+ 564 | train=0.01195 val=0.00085 lr=1.60e-04 *best*
+ 565 | train=0.01191 val=0.00084 lr=1.59e-04 *best*
+ 567 | train=0.01196 val=0.00084 lr=1.56e-04 *best*
+ 568 | train=0.01193 val=0.00082 lr=1.55e-04 *best*
+ 570 | train=0.01196 val=0.00078 lr=1.52e-04 *best*
+ 575 | train=0.01190 val=0.00076 lr=1.46e-04 *best*
+ 580 | train=0.01190 val=0.00084 lr=1.40e-04
+ 581 | train=0.01189 val=0.00075 lr=1.39e-04 *best*
+ 586 | train=0.01189 val=0.00074 lr=1.33e-04 *best*
+ 591 | train=0.01183 val=0.00071 lr=1.27e-04 *best*
+ 598 | train=0.01183 val=0.00070 lr=1.19e-04 *best*
+ 599 | train=0.01180 val=0.00067 lr=1.18e-04 *best*
+ 600 | train=0.01183 val=0.00072 lr=1.17e-04
+ 601 | train=0.01183 val=0.00063 lr=1.16e-04 *best*
+ 606 | train=0.01179 val=0.00062 lr=1.11e-04 *best*
+ 612 | train=0.01180 val=0.00060 lr=1.04e-04 *best*
+ 620 | train=0.01181 val=0.00065 lr=9.58e-05
+ 624 | train=0.01174 val=0.00058 lr=9.18e-05 *best*
+ 627 | train=0.01173 val=0.00056 lr=8.88e-05 *best*
+ 629 | train=0.01176 val=0.00055 lr=8.68e-05 *best*
+ 636 | train=0.01172 val=0.00054 lr=8.01e-05 *best*
+ 639 | train=0.01173 val=0.00053 lr=7.73e-05 *best*
+ 640 | train=0.01170 val=0.00050 lr=7.64e-05 *best*
+ 652 | train=0.01168 val=0.00049 lr=6.57e-05 *best*
+ 654 | train=0.01170 val=0.00046 lr=6.40e-05 *best*
+ 660 | train=0.01167 val=0.00047 lr=5.89e-05
+ 666 | train=0.01166 val=0.00044 lr=5.41e-05 *best*
+ 672 | train=0.01163 val=0.00044 lr=4.95e-05 *best*
+ 673 | train=0.01168 val=0.00042 lr=4.87e-05 *best*
+ 679 | train=0.01163 val=0.00041 lr=4.43e-05 *best*
+ 680 | train=0.01163 val=0.00041 lr=4.36e-05 *best*
+ 683 | train=0.01161 val=0.00041 lr=4.15e-05 *best*
+ 690 | train=0.01162 val=0.00040 lr=3.67e-05 *best*
+ 691 | train=0.01163 val=0.00039 lr=3.61e-05 *best*
+ 693 | train=0.01158 val=0.00039 lr=3.48e-05 *best*
+ 696 | train=0.01160 val=0.00038 lr=3.29e-05 *best*
+ 700 | train=0.01162 val=0.00037 lr=3.04e-05 *best*
+ 701 | train=0.01159 val=0.00037 lr=2.98e-05 *best*
+ 707 | train=0.01162 val=0.00036 lr=2.64e-05 *best*
+ 711 | train=0.01163 val=0.00036 lr=2.42e-05 *best*
+ 712 | train=0.01159 val=0.00035 lr=2.36e-05 *best*
+ 713 | train=0.01160 val=0.00035 lr=2.31e-05 *best*
+ 716 | train=0.01159 val=0.00035 lr=2.16e-05 *best*
+ 719 | train=0.01157 val=0.00034 lr=2.01e-05 *best*
+ 720 | train=0.01159 val=0.00035 lr=1.96e-05
+ 724 | train=0.01152 val=0.00033 lr=1.77e-05 *best*
+ 728 | train=0.01157 val=0.00032 lr=1.59e-05 *best*
+ 731 | train=0.01156 val=0.00032 lr=1.46e-05 *best*
+ 734 | train=0.01159 val=0.00032 lr=1.34e-05 *best*
+ 735 | train=0.01160 val=0.00032 lr=1.30e-05 *best*
+ 738 | train=0.01157 val=0.00032 lr=1.18e-05 *best*
+ 739 | train=0.01156 val=0.00031 lr=1.14e-05 *best*
+ 740 | train=0.01154 val=0.00031 lr=1.11e-05 *best*
+ 741 | train=0.01155 val=0.00031 lr=1.07e-05 *best*
+ 745 | train=0.01152 val=0.00030 lr=9.29e-06 *best*
+ 746 | train=0.01154 val=0.00030 lr=8.96e-06 *best*
+ 751 | train=0.01154 val=0.00030 lr=7.38e-06 *best*
+ 753 | train=0.01158 val=0.00030 lr=6.79e-06 *best*
+ 754 | train=0.01156 val=0.00029 lr=6.51e-06 *best*
+ 757 | train=0.01156 val=0.00029 lr=5.69e-06 *best*
+ 758 | train=0.01155 val=0.00029 lr=5.43e-06 *best*
+ 759 | train=0.01154 val=0.00029 lr=5.17e-06 *best*
+ 760 | train=0.01153 val=0.00029 lr=4.92e-06
+ 761 | train=0.01155 val=0.00029 lr=4.68e-06 *best*
+ 762 | train=0.01157 val=0.00029 lr=4.45e-06 *best*
+ 763 | train=0.01156 val=0.00029 lr=4.21e-06 *best*
+ 764 | train=0.01156 val=0.00029 lr=3.99e-06 *best*
+ 765 | train=0.01157 val=0.00029 lr=3.77e-06 *best*
+ 767 | train=0.01155 val=0.00029 lr=3.35e-06 *best*
+ 768 | train=0.01155 val=0.00028 lr=3.15e-06 *best*
+ 769 | train=0.01157 val=0.00028 lr=2.96e-06 *best*
+ 771 | train=0.01153 val=0.00028 lr=2.59e-06 *best*
+ 773 | train=0.01153 val=0.00028 lr=2.25e-06 *best*
+ 775 | train=0.01156 val=0.00028 lr=1.93e-06 *best*
+ 776 | train=0.01152 val=0.00028 lr=1.78e-06 *best*
+ 777 | train=0.01153 val=0.00028 lr=1.63e-06 *best*
+ 779 | train=0.01155 val=0.00028 lr=1.36e-06 *best*
+ 780 | train=0.01155 val=0.00028 lr=1.23e-06 *best*
+ 781 | train=0.01154 val=0.00028 lr=1.11e-06 *best*
+ 784 | train=0.01155 val=0.00028 lr=7.89e-07 *best*
+ 785 | train=0.01152 val=0.00028 lr=6.94e-07 *best*
+ 786 | train=0.01158 val=0.00028 lr=6.04e-07 *best*
+ 787 | train=0.01155 val=0.00028 lr=5.21e-07 *best*
+ 788 | train=0.01153 val=0.00028 lr=4.44e-07 *best*
+ 789 | train=0.01154 val=0.00028 lr=3.73e-07 *best*
+ 790 | train=0.01154 val=0.00028 lr=3.08e-07 *best*
+ 791 | train=0.01153 val=0.00028 lr=2.50e-07 *best*
+ 792 | train=0.01152 val=0.00028 lr=1.97e-07 *best*
+ 793 | train=0.01155 val=0.00028 lr=1.51e-07 *best*
+ 794 | train=0.01152 val=0.00028 lr=1.11e-07 *best*
+ 795 | train=0.01155 val=0.00028 lr=7.71e-08 *best*
+ 796 | train=0.01156 val=0.00028 lr=4.93e-08 *best*
+ 797 | train=0.01155 val=0.00028 lr=2.78e-08 *best*
+ 798 | train=0.01154 val=0.00028 lr=1.23e-08 *best*
+ 799 | train=0.01154 val=0.00028 lr=3.08e-09 *best*
+ 800 | train=0.01153 val=0.00028 lr=0.00e+00 *best*
+
+Training completed in 181404s (226.8s/epoch)
+Best val loss: 0.000276
+
+Test set losses:
+       total: 0.000276
+
+Physical metrics (test set):
+
+  Target |   NRMSE% |     MRE% |       R2 |  NRMSE_n% |     R2_n |    MAE_n |    n_val/n_tot
+--------------------------------------------------------------------------------------------
+      id |    0.011 |     0.11 |   1.0000 |     0.014 |   1.0000 |   0.0004 |  113478/786449
+      gm |    0.008 |     0.11 |   1.0000 |     0.012 |   1.0000 |   0.0004 |  697641/786449
+     gds |    0.012 |     0.11 |   1.0000 |     0.020 |   1.0000 |   0.0005 |  326741/786449
+     gmb |    0.011 |     0.12 |   1.0000 |     0.025 |   1.0000 |   0.0005 |  427553/786449
+      qg |    0.003 |     0.07 |   1.0000 |     0.008 |   1.0000 |   0.0002 |  736555/786449
+      qd |    0.003 |     0.06 |   1.0000 |     0.005 |   1.0000 |   0.0002 |  730725/786449
+      qs |    0.004 |     0.05 |   1.0000 |     0.005 |   1.0000 |   0.0002 |  710580/786449
+      qb |    0.007 |     0.07 |   1.0000 |     0.008 |   1.0000 |   0.0003 |  302329/786449
+     cgg |    0.007 |     0.03 |   1.0000 |     0.008 |   1.0000 |   0.0002 |  786372/786449
+     cgd |    0.004 |     0.03 |   1.0000 |     0.006 |   1.0000 |   0.0002 |  784259/786449
+     cgs |    0.005 |     0.04 |   1.0000 |     0.006 |   1.0000 |   0.0002 |  786324/786449
+     cdg |    0.004 |     0.03 |   1.0000 |     0.006 |   1.0000 |   0.0002 |  785916/786449
+     cdd |    0.004 |     0.03 |   1.0000 |     0.006 |   1.0000 |   0.0002 |  786449/786449
+--------------------------------------------------------------------------------------------
+     AVG |    0.006 |     0.07 |   1.0000 |     0.010 |   1.0000 |          |
+
+           Tech | n_test |   NRMSE% |       R2
+--------------------------------------------------
+      tsmc5:svt |  39363 |    0.010 |   1.0000
+      tsmc5:lvt |  42093 |    0.008 |   1.0000
+     tsmc5:ulvt |  44154 |    0.007 |   1.0000
+     tsmc5:elvt |  45279 |    0.008 |   1.0000
+      tsmc7:svt |  58786 |    0.009 |   1.0000
+      tsmc7:lvt |  61505 |    0.010 |   1.0000
+     tsmc7:ulvt |  62699 |    0.008 |   1.0000
+     tsmc12:svt |  41200 |    0.008 |   1.0000
+     tsmc12:lvt |  43849 |    0.008 |   1.0000
+    tsmc12:ulvt |  45260 |    0.008 |   1.0000
+     tsmc12:hvt |  40279 |    0.009 |   1.0000
+    tsmc12:lnvt |  46255 |    0.008 |   1.0000
+     tsmc16:svt |  41122 |    0.008 |   1.0000
+     tsmc16:lvt |  43647 |    0.008 |   1.0000
+    tsmc16:ulvt |  45048 |    0.009 |   1.0000
+     tsmc16:hvt |  39490 |    0.009 |   1.0000
+    tsmc16:lnvt |  46420 |    0.008 |   1.0000
+--------------------------------------------------
+        OVERALL | 786449 |    0.008 |   1.0000
+
+Saved: /home/shenshan/NN_SPICE/external_compact_models/bsimar/checkpoints/v5a_dn_universal_pmos_best.pt
