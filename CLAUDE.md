@@ -50,9 +50,11 @@ external_compact_models/
 │   │   └── analyze.py              # Dataset analysis script (distribution, outliers, physical constraints)
 │   ├── models/
 │   │   ├── direct_net.py           # DirectNetV4 MLP with nn.Embedding tech-code (baseline)
-│   │   └── transformer.py          # TransformerEncoderModel with nn.Embedding tech-code (parallel_caps + grouped_inputs)
+│   │   ├── transformer.py          # TransformerEncoderModel with nn.Embedding tech-code (parallel_caps + grouped_inputs)
+│   │   └── id_gate.py              # apply_id_gate() — structural tanh(Vds/VT_arch) gate on id output (B3, v5 Phase B)
 │   ├── losses/
-│   │   └── bni_mae.py              # MAELoss + compute_lds_weights_per_target (shared by DirectNet + BSIMAR)
+│   │   ├── bni_mae.py              # MAELoss + compute_lds_weights_per_target (shared by DirectNet + BSIMAR)
+│   │   └── slope_loss.py           # SlopeMatchLoss — dId/dVg penalty on grid-class rows (B2, v5 Phase B)
 │   ├── training/
 │   │   ├── early_stopping.py
 │   │   └── trainer.py              # train_directnet, train_transformer, per-epoch helpers
@@ -93,6 +95,8 @@ tests/
 │   ├── bsimcmg_tran.py               # Transient-specific: TestConfig, runners, metrics, plots
 │   └── nn.py                        # NN-specific: nrmse, mre, directnet_checkpoint, transformer_checkpoint, path bootstrap
 ├── references/                      # NGSPICE reference netlists (ngspice_*.cir)
+├── test_nn_id_gate.py               # Unit tests for apply_id_gate (B3): Id(Vds=0)=0, monotone gate, formula check
+├── test_slope_loss.py               # Smoke tests for SlopeMatchLoss (B2): zero loss on exact slope, non-grid batch
 └── verify_*.py                      # 3-level test scripts (L1/L2/L3 for DC + transient, plus NN verification)
 ```
 
@@ -167,18 +171,31 @@ All phases (1-15) are complete. Key milestones:
 - **Analytical Vds correction for inverter transient (2026-04-15)** — Implemented `_apply_vds_correction()` in `_MOSFETNNBase` to enforce Id(Vds=0)=0 and Id=0 for reverse-Vds at inference time. Three-part correction: one-sided Vds factor (VT=0.052V), symmetric gds with linear-region conductance, sign enforcement (NMOS id≤0, PMOS id≥0). DirectNet inverter transient: **3/4 PASS** (TSMC7 8.87%, TSMC12 11.65%, TSMC16 10.59%; TSMC5 17.20% marginal FAIL). BSIMAR inverter: 0/4 PASS due to wrong-sign subthreshold predictions in Transformer (requires retraining). NMOS pulse: 8/8 PASS, zero regression. Full report: `results/v4_vds_correction_report_2026_04_15.md`.
 - **Rail-restoring extrapolation fixes BSIMAR inverter transient (2026-04-20)** — Diagnosed the real root cause of BSIMAR inverter transient explosion (V(out)→+4.4V on TSMC12/16): both NN models (BSIMAR and DirectNet) predict Id≈0 outside the `[-VDD_train, VDD_train]` training range, creating a flat-zero KCL plateau the DCSolver mistakes for an equilibrium. The earlier sign+boundary loss hypothesis was incomplete. Fixed by adding rail-restoring extrapolation to `_apply_vds_correction()`: quadratic Id ramp + linear gds ramp past `VDD_train`, smooth-joined at the boundary (a linear ramp was tried first and caused NR oscillation for TSMC12/16 whose operating points sit at the boundary). Verified on probe (670K) and production (5.15M) checkpoints across all 4 TSMC techs: **inverter transient drops from 18-300% NRMSE (FAIL) to 6-12% NRMSE (PASS)** on TSMC5/7/12/16. Production: TSMC5 12.13%, TSMC7 9.14%, TSMC12 6.78%, TSMC16 7.51%. The fix is inference-time only — no retraining required to ship. Diagnostic + multi-tech verify infrastructure added under `tests/diag_bsimar_kcl_landscape.py` and `tests/verify_bsimar_v4_inverter.py --tech <tsmc5|tsmc7|tsmc12|tsmc16>`.
 - **v5 inverter-transient sprint (2026-04-22/23) — closed, no production change.** Five-experiment sweep attempting to lift the worst-case TSMC7 NMOS DC (14.72 %) and drive BSIMAR inverter VTC TSMC7 (19.15 %) below 10 %. E1 (wider Vds-correction VT), E3 (per-tech fine-tune on same distribution), E4 (dense hot-box overlay + universal set), E5 (overlay-only fine-tune) all reverted on inverter acceptance gates. D1 diagnostic (`results/v5_d1_tsmc7_nmos_errors/`) isolated the TSMC7 NMOS error to the strong-inversion + saturation plateau (Vgs ∈ [0.52, 0.73] V × Vds ∈ [0.40, 0.75] V) and showed it is 16× under-sampled by LHS, but both densification approaches regressed NMOS DC by identically +2.7 pp, ruling out the straight density thesis. Retained shipping changes: (a) `tests/diag_d1_tsmc7_nmos_errors.py` heatmap diagnostic, reusable for any tech/device accuracy investigation; (b) `external_compact_models/bsimar/training/finetune.py` edge-case patch to guard empty `test_idx` when all rows belong to `finetune_techs`. Full history: `results/v5_improvement_plan_2026_04_21.md` §11-§18 and `results/v5_e{1,3,4,5}_*.md`.
+- **v5 Phase A — Trim (2026-04-24, branch `feat/bsimar-v5-phase-a`).** Deleted all unjustified and dead loss code before Phase B work. Plan: `docs/superpowers/plans/2026-04-24-v5-inverter-accuracy.md`.
+  - **A1:** Deleted `DirectLoss`, `ChargeConsistencyLoss` (never instantiated in production), legacy `BSIMARConfig`/`TrainConfig` aliases, and dead `TransformerConfig` fields (`ss_warmup_epochs`, `w_curr`, etc.).
+  - **A2:** Deleted `SignConsistencyLoss`, `BoundaryLoss` — no A/B benefit; superseded by rail-restoring extrapolation at inference and the structural B3 gate.
+  - **A3:** Collapsed 3-axis LDS weight stack (per-target × Vov × subthreshold) to **per-target only** — the only axis with published evidence; the other two were tied to the wrong-sign-Id sprint.
+  - **A5:** Deleted `_eval_autograd4` dead fast-path in `mosfet_directnet.py`; added 13-output assertion at load time.
+  - **A4 control retrain — GATE FAIL.** Retrain with trimmed pipeline (A1–A3) on existing `universal_*.npz` regressed TSMC7 NMOS DC past the ±1 pp gate. Root cause confirmed: the LHS dataset that Phase A trains on is insufficient — Phase B B1's hybrid uniform-grid data is required. Phase A code changes are correct and retained; the gate failure is a data issue, not a code regression.
+- **v5 Phase B — Fix the real failure mode (2026-04-24+, branch `feat/bsimar-v5-phase-a`).** Addresses the confirmed sampling-basis mismatch at TSMC7 with three complementary levers.
+  - **B1 (S-DATA, committed):** PyCMG submodule bumped to hybrid uniform-grid + LHS jitter sampler. Replaces pure LHS with 30×30×5 uniform grid per bin (4500 samples) + hot-box densification in the D1 saturation plateau region. Adds `sample_class` column to datasets (`anchor`, `vds_zero`, `hot`, `grid`, `jitter`). Gate: D1 hot-box mean |rel err| drops to ≤5 % and TSMC7 NMOS DC ≤ 8 %.
+  - **B2 (S-LOSS, implemented):** `SlopeMatchLoss` added at `bsimar/losses/slope_loss.py`. Penalises `|d(pred_id_norm)/d(vg_norm) − d(target_id_norm)/d(vg_norm)|` on grid-class rows (sample_class==4), using `torch.autograd.grad` on the normalised id w.r.t. normalised Vg. Target slope derived analytically from the `gm` column (already in training data). Active only in the last 30% of training epochs (`--slope-warmup-frac 0.7`). New CLI flags: `--slope-weight` (default 0.0=disabled), `--slope-warmup-frac`. Mathematically clean: both sides absorb the asinh chain-rule — the N4 dead-end applied in physical space.
+  - **B3 (S-ARCH-A, implemented):** `apply_id_gate()` added at `bsimar/models/id_gate.py`. Multiplies post-denorm `id_phys` by `tanh(Vds_phys / 0.04V)` and re-normalises, structurally enforcing Id(Vds=0)=0 at training time for both zscore and asinh modes. Dual-head: AR conditioning sees `id_raw`; loss and simulator see `id_gated`. Enabled by default (`--no-id-gate` to disable). Unit tests in `tests/test_nn_id_gate.py`. Replaces the inference-time one-sided `f_id` factor + sign clip in `_apply_vds_correction` (B5 will simplify that once v5b checkpoints ship).
 
-### Known v4 limitation: TSMC7 NMOS DC 14.72 %
-TSMC7 NMOS DC NRMSE is 14.72 % (BSIMAR) / 15.79 % (DirectNet) against PyCMG ground truth at Vds=VDD/2, NFIN=10, L=16 nm. This propagates to inverter VTC (19.15 % BSIMAR / 18.14 % DirectNet). Four v5 retraining attempts (per-tech fine-tune, dense overlay, overlay-only, wider Vds-correction VT) did not close the gap. Probable root cause (v5 plan §17): the LHS training distribution under-samples the strong-inversion + saturation plateau by ~16× relative to where the verifier's uniform Id-Vgs sweep concentrates its NRMSE weight. Closing this would require either uniform-sweep training sampling or a shape-enforcing architecture change; neither was attempted in v4/v5. Inverter transient at TSMC7 still PASSES (6.80 % DN / 9.14 % BSIMAR, well under the 15 % threshold), so circuit-simulation usability is preserved. VTC comparison to BSIM-CMG ground truth at TSMC7 should be reported with this 14-19 % NRMSE caveat.
+### Known v4 limitation: TSMC7 NMOS DC 14.72 % (v5 Phase B actively addressing)
+TSMC7 NMOS DC NRMSE is 14.72 % (BSIMAR) / 15.79 % (DirectNet) against PyCMG ground truth at Vds=VDD/2, NFIN=10, L=16 nm. This propagates to inverter VTC (19.15 % BSIMAR / 18.14 % DirectNet). Root cause confirmed by D1 diagnostic: the LHS training distribution under-samples the strong-inversion + saturation plateau by ~16× relative to the verifier's uniform Id-Vgs sweep. Four v5 retraining attempts (E1–E5 sprint) did not close the gap; v5 Phase A control retrain on the same LHS data also FAILED the ±1 pp gate. v5 Phase B (B1+B2+B3) is now implementing the fix via hybrid uniform-grid sampling, slope-match loss, and structural tanh-gate on Id. Inverter transient at TSMC7 PASSES (6.80 % DN / 9.14 % BSIMAR). VTC should be reported with the 14-19 % NRMSE caveat until v5 Phase B checkpoints ship.
 
 ### Future Work
-- [ ] **Improve TSMC5 inverter transient** — DirectNet 17.20% NRMSE (just above 15% threshold). Try per-tech fine-tuning or denser Vds=0 training data.
-- [ ] **Fix BSIMAR wrong-sign subthreshold** — Retrain Transformer with sign-consistency loss `L_sign = w * mean(relu(id_nmos)^2)` and boundary penalty `L_boundary = w * mean(Id(Vds=0)^2)`. Required for BSIMAR inverter/feedback circuits.
+- [ ] **v5 Phase B: run B1+B2+B3 retrains** — Infrastructure committed; need to regenerate `universal_*.npz` with hybrid-grid sampler (B1), then retrain 4 models with slope loss (B2) + structural id-gate (B3). Gate: TSMC7 NMOS DC ≤ 8 %, VTC ≤ 12 %, all transients ≤ 15 %. Per the plan, B2 can run in parallel with B1 data generation; B3 requires a full retrain.
+- [ ] **v5 Phase B gate: PMOS DC TSMC12/16** — 12-14 % NRMSE (both models); same class of sampling-basis bug as TSMC7 NMOS. Run D1-style heatmap diagnostic on TSMC12 PMOS before committing to B1 hot-region list.
+- [ ] **v5 B5 (S-SOLVER): simplify `_apply_vds_correction`** — Once v5b checkpoints with structural tanh-gate (B3) ship, delete the one-sided `f_id` factor and sign clip from `_apply_vds_correction`; keep only the rail-restoring quadratic ramp. Add C∞ continuity unit test.
+- [ ] **v5 B4 (S-ARCH-B): trim parallel cap head** — Deferred until B1+B2+B3 prove accuracy holds without it. Only ship if all §2 acceptance metrics hold under the smaller architecture.
+- [ ] **Improve TSMC5 inverter transient** — DirectNet 17.20% NRMSE (just above 15% threshold). B3 tanh-gate is the structural lever cited in the plan; B1 uniform-grid data may also help. Gate on v5b results.
 - [ ] **SRAM Validation (Phase 4)** — 6T bitcell DC+transient, 8-cell column, 64-bit array benchmark vs NGSPICE
 - [ ] **Adaptive Output Timestep** — Variable-length output array with true adaptive dt (full adaptive requires output grid changes)
 - [ ] ~~**BSIMAR v4 per-tech runs** — v4 universal covers all 4 TSMC techs. Per-tech runs may improve accuracy for individual techs.~~ **DEAD**: v5 E3 showed training-space NRMSE 0.454 % on TSMC7 → inference-space NMOS DC 14.74 % (29× gap). Per-tech fine-tuning alone does not close the gap.
-- [ ] **Uniform-sweep training augmentation** — new hypothesis from v5 §17: the training-vs-inference accuracy gap at TSMC7 is a **sampling-basis** mismatch between LHS training and the verifier's uniform Id-Vgs sweep. Test by adding a dense uniform-Vgs sweep per (tech, NFIN, L, Vds) bin as a training distribution, with or without LDS bypass. Not attempted in v5.
-- [ ] **§4.1 tanh-gated Id forward (v5 plan)** — architectural change: multiply NN Id output by `tanh(Vds/VT_arch)` in forward pass, structurally enforces Id(Vds=0)=0 and removes the inference-time Vds correction's one-sided factor + sign clip. Requires full retrain of 4 models (~24-48 h). Not attempted in v5; details in `results/v5_improvement_plan_2026_04_21.md` §4.1.
+- [ ] ~~**Fix BSIMAR wrong-sign subthreshold**~~ — **SUPERSEDED by B3 structural tanh-gate.** The gate enforces Id(Vds=0)=0 structurally at training time, eliminating the need for sign-consistency/boundary losses that had no A/B benefit.
+- [ ] ~~**Uniform-sweep training augmentation**~~ — **BEING ADDRESSED by B1 hybrid-grid sampler** (committed to PyCMG submodule). Not a separate future item anymore.
 - [ ] **N2 KV-cache encoder** (filed) — Only worth doing if 500-epoch training or 100+ AR-finetune epochs becomes routine. ~200 LOC bit-exact rewrite of `nn.TransformerEncoderLayer` attention.
 
 ---
@@ -222,39 +239,48 @@ Create a netlist (`.sp` file). Examples in `examples/`.
 conda run -n pycircuitsim python external_compact_models/PyCMG/scripts/generate_nn_data.py \
     --device both --universal
 
-# Train DirectNet v4 baseline (tech-code embedding, zscore norm, DirectLoss)
+# Train DirectNet v5b (v5 Phase B: MAE + per-target LDS + structural id-gate + slope loss)
 # ASAP7 excluded from training; 18 tech-codes for 4 TSMC techs x variants
+# Requires B1-regenerated universal_*.npz (hybrid-grid sampler, sample_class column)
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
     --model direct --device-type nmos --universal \
     --exclude-techs asap7 --num-tech-codes 18 \
-    --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048 --cuda
+    --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048 --cuda \
+    --slope-weight 0.05 --slope-warmup-frac 0.7
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
     --model direct --device-type pmos --universal \
     --exclude-techs asap7 --num-tech-codes 18 \
-    --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048 --cuda
+    --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048 --cuda \
+    --slope-weight 0.05 --slope-warmup-frac 0.7
 
-# Train BSIMAR v4 Transformer (production recipe, hard-wired)
-# The v4 recipe (MAE + per-target LDS, asinh+zscore, parallel_caps,
-# grouped_inputs, BSIMAR reorder, AR finetune tail, phys-best ckpt,
-# nn.Embedding tech-code) is all hard-wired inside train_transformer.
-# Only architecture and schedule are user-tunable. (3-axis LDS stack
-# and Sign/Boundary physics losses were trimmed in v5 Phase A.)
+# Train BSIMAR v5b Transformer (production recipe + Phase B additions)
+# v4 recipe hard-wired (MAE + per-target LDS, asinh+zscore, parallel_caps,
+# grouped_inputs, BSIMAR reorder, AR finetune, phys-best ckpt, nn.Embedding
+# tech-code). v5 Phase B adds: structural id-gate (--no-id-gate to disable)
+# + slope-match loss (--slope-weight 0.05).
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
     --model transformer --device-type nmos --universal \
-    --exclude-techs asap7 --num-tech-codes 18 --cuda
+    --exclude-techs asap7 --num-tech-codes 18 --cuda \
+    --slope-weight 0.05 --slope-warmup-frac 0.7
 
 # Same for PMOS
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
     --model transformer --device-type pmos --universal \
-    --exclude-techs asap7 --num-tech-codes 18 --cuda
+    --exclude-techs asap7 --num-tech-codes 18 --cuda \
+    --slope-weight 0.05 --slope-warmup-frac 0.7
+
+# Legacy v4 recipe (no gate, no slope loss) — for ablation/comparison:
+#   add --no-id-gate --slope-weight 0.0
 
 # Note: `bsimar` is importable because consumers add
 #       `external_compact_models/` to sys.path. Checkpoints live under
 #       `external_compact_models/bsimar/checkpoints/` for both models.
 ```
 Checkpoints (under `external_compact_models/bsimar/checkpoints/`):
-- DirectNet v4: `v4_dn_universal_{nmos,pmos}_best.pt` + `_norm.npz` (universal).
-- Transformer v4: `v4_universal_{nmos,pmos}_{best,best.ar,best.phys}.pt` + `_norm.npz` + `_config.npz`. The `_best.phys.pt` variant is the phys-space-best checkpoint (the one the simulator should load).
+- DirectNet v4: `v4_dn_universal_{nmos,pmos}_best.pt` + `_norm.npz` (current production).
+- Transformer v4: `v4_universal_{nmos,pmos}_best.phys.pt` + `_norm.npz` + `_config.npz` (**simulator loads `_best.phys.pt`**).
+- DirectNet v5b: `v5b_dn_universal_{nmos,pmos}_best.pt` + `_norm.npz` (target: Phase B gate pass).
+- Transformer v5b: `v5b_universal_{nmos,pmos}_best.phys.pt` + `_norm.npz` + `_config.npz`.
 
 Netlist usage:
 - LEVEL=73 (DirectNet): `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`.
@@ -415,12 +441,12 @@ instead of 19-dim continuous process parameters.
 9. **ASAP7 modelcard name mapping** — Parser auto-maps netlist names to `nmos_rvt`/`pmos_rvt`.
 10. **PyCMG integration** — `bsimar/config.py` re-exports `NNTechConfig` and `TECH_CONFIGS` from PyCMG's `pycmg.nn_config`, plus `TECH_CODE_MAP` (maps `"tech:vt"` strings to integer codes) and `OUTPUT_COLUMNS`. Process params (`ProcessParams`, `extract_process_params`, `INPUT_COLUMNS`) are no longer re-exported -- v4 uses discrete tech-code embedding instead. Training VDD may differ from PyCMG (e.g., ASAP7: train=0.7V, PyCMG=0.9V). Backward-compat alias `TechConfig = NNTechConfig` exists for test files.
 10. **Data generation validates PyCMG output** — `eval_single_point` rejects NaN/Inf and `|id| > 1A`. PyCMG `eval_dc` raises `RuntimeError` on internal-node convergence failure. Default NFIN range is `[2, 3, 5, 10, 15, 20, 24]` (NFIN=1 excluded due to OSDI convergence failures).
-11. **Loss layer (per model)** — Both DirectNet and Transformer use `bsimar.losses.MAELoss` with per-target LDS weights, hard-wired inside `train_directnet` / `train_transformer`. The earlier `DirectLoss` (13-output weighted MSE), `ChargeConsistencyLoss`, `SignConsistencyLoss`, `BoundaryLoss`, and the 3-axis LDS stack (per-target × Vov × subthreshold) were trimmed in v5 Phase A — none beat baseline in A/B and the rail-restoring extrapolation patch (rule #19) supplanted SignConsistency/Boundary at inference time.
+11. **Loss layer (per model)** — Both DirectNet and Transformer use `bsimar.losses.MAELoss` with **per-target LDS weights only** (3-axis stack collapsed to 1-axis in v5 Phase A). Hard-wired inside `train_directnet` / `train_transformer`. Optional auxiliary: `SlopeMatchLoss` (B2) — penalises `|d(id_norm)/d(vg_norm)|` mismatch on grid-class rows; enabled via `--slope-weight > 0` and active only in the last `(1 - slope_warmup_frac)` fraction of training epochs. Structural id-gate (B3, `apply_id_gate`) wraps the model output before the loss when `--no-id-gate` is not set. Deleted code (DO NOT re-add): `DirectLoss`, `ChargeConsistencyLoss`, `SignConsistencyLoss`, `BoundaryLoss`, Vov-LDS and subthreshold-LDS axes.
 12. **BSIMAR output ordering** — The Transformer output is in `BSIMAR_COLUMN_ORDER` (`qg, qb, qd, qs, id, gm, gds, gmb, cgg, cgd, cgs, cdg, cdd`), not `OUTPUT_COLUMN_ORDER`. Consumer code (`mosfet_bsimar.py`) takes autograd derivatives at the right column indices.
 13. **Parallel cap head** — The Transformer emits the 5 capacitance outputs in parallel from the gmb hidden state, not as sequential AR steps. The AR loop runs only 8 steps (charges + currents/conds). `parallel_caps` and `grouped_inputs` are structural and not configurable.
 14. **AR finetune phase** — After the cosine TF schedule, the trainer runs `ar_finetune_epochs` extra epochs at `ss_ratio=1.0` (pure AR rollout) with a fixed low LR. The phys-best checkpoint tracker picks the best model across both phases.
 15. **Unified CLI** — Training goes through `python -m bsimar.cli.train --model {direct,transformer} ...`. Both models read the same `.npz` produced by `external_compact_models/PyCMG/scripts/generate_nn_data.py` and write checkpoints under `external_compact_models/bsimar/checkpoints/`.
-16. **Checkpoint files** — DirectNet v4: `v4_dn_universal_{nmos,pmos}_best.pt` + `_norm.npz`. Transformer v4: `v4_universal_{nmos,pmos}_best.pt` (TF val-best), `_best.ar.pt` (AR val-best), `_best.phys.pt` (physical-space val-best; **this is the one the simulator loads**), `_norm.npz` (BSIMARNormStats asinh), `_config.npz` (architecture).
+16. **Checkpoint files** — DirectNet v4: `v4_dn_universal_{nmos,pmos}_best.pt` + `_norm.npz`. Transformer v4: `v4_universal_{nmos,pmos}_best.pt` (TF val-best), `_best.ar.pt` (AR val-best), `_best.phys.pt` (physical-space val-best; **simulator loads this**), `_norm.npz` (BSIMARNormStats asinh), `_config.npz` (architecture). v5b adds `v5b_` prefix to the same naming scheme; v5b checkpoints incorporate the structural id-gate (B3) and slope loss (B2) and require the B1-regenerated dataset.
 17. **Charge conservation enforcement** — Simulator always computes `qs = -(qg + qd + qb)` analytically, even for 13-output models that directly predict `qs`. This guarantees Kirchhoff current conservation at every transient timestep.
 18. **ASAP7 tech-code exclusion** — ASAP7 tech codes (18-21) exceed the v4 training vocabulary (18 codes, indices 0-17). Running ASAP7 with v4 universal models will crash with an embedding index-out-of-range error. ASAP7 requires separate fine-tuning.
 19. **Analytical Vds correction** — `_MOSFETNNBase._apply_vds_correction()` enforces Id(Vds=0)=0 and Id=0 for reverse-direction Vds at inference time. Four-part correction (the order matters):
@@ -431,6 +457,7 @@ instead of 19-dim continuous process parameters.
    
    The rail-restoring step (a) is what fixed the BSIMAR transient bug: the trained NN extrapolates flat-near-zero outside `[-VDD_train, VDD_train]`, creating a false KCL plateau the DCSolver mistakes for an equilibrium (inverter transient OP locking at V(out)=4.4V instead of VDD). Step (a) replicates PyCMG's restoring leakage/impact-ionization physics so NR converges to the true rail.
 20. **BSIMAR inverter circuits** — With rule 19 step (a), both BSIMAR (LEVEL=74) and DirectNet (LEVEL=73) work on inverter and feedback circuits. Verified across all 4 TSMC techs with both probe (670K) and production (5.15M) checkpoints — transients drop from 18-300% NRMSE (FAIL/explosion) to 6-12% NRMSE (PASS). The earlier "wrong-sign subthreshold" diagnosis was incomplete: while sign+boundary loss helps DC stability, the structural bug was extrapolation past the training Vds range, not subthreshold sign errors. The rail-restoring fix unblocks production checkpoints without retraining.
+21. **Structural Vds gate (v5 Phase B, B3)** — `bsimar.models.id_gate.apply_id_gate()` wraps a model's output tensor to enforce Id(Vds=0)=0 structurally: multiplies post-denorm `id_phys` by `tanh(Vds_phys / 0.04V)` and re-normalises through the same normaliser pipeline. Works for both zscore (DirectNet) and asinh (Transformer) modes. Used in training (both `_train_epoch_direct` and the Transformer epoch) when `id_gate=True` (default with v5b checkpoints). AR conditioning always sees `id_raw` (un-gated); only the loss and simulator see `id_gated`. On v5b retrains, this structurally removes the need for the one-sided `f_id` / sign-clip steps in `_apply_vds_correction` (pending B5 cleanup). `id_idx_in_output` must be set correctly: **0 for DirectNet (OUTPUT_COLUMN_ORDER), 4 for BSIMAR (BSIMAR_COLUMN_ORDER)**.
 
 ---
 

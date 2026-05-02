@@ -42,8 +42,9 @@ if str(_BSIMAR_PARENT) not in sys.path:
 
 from pycircuitsim.models.base import Component
 from bsimar.models.direct_net import DirectNet
+from bsimar.models.id_gate import apply_id_gate
 from bsimar.config import UNKNOWN_CODE_ID
-from bsimar.data.normalize import BSIMARNormStats
+from bsimar.data.normalize import BSIMARNormStats, BSIMARNormalizer
 
 
 import logging
@@ -141,6 +142,12 @@ class _MOSFETNNBase(Component):
         self._output_dim = output_dim
 
         self._norm_stats = BSIMARNormStats.load(str(norm_path))
+        # Build a BSIMARNormalizer wrapper around the stats so we can
+        # call apply_id_gate (B3). The gate is applied at inference
+        # only when the checkpoint was trained with id_gate=True.
+        self._normalizer = BSIMARNormalizer(
+            mode=self._norm_stats.mode, stats=self._norm_stats)
+        self._id_gate_active = bool(self._norm_stats.id_gate)
 
         # Pre-compute normalized geometry features (constant per device).
         # 3 geometry features [NFIN_log, L, T] at indices [4:7]
@@ -270,6 +277,18 @@ class _MOSFETNNBase(Component):
 
         with torch.enable_grad():
             out = self._nn_model(x_full, tech_codes=self._tech_code_tensor)
+
+            # Sprint S-ARCH-A (B3): if the checkpoint was trained with
+            # the structural Vds gate, apply it here before any autograd
+            # derivatives are extracted. The gate replaces id_raw_norm
+            # with id_gated_norm = norm(denorm(id_raw_norm) * tanh(Vds/VT_arch)).
+            # gm/gds extracted via autograd then correspond to the gated id,
+            # which is what the simulator and the loss saw at training time.
+            if self._id_gate_active:
+                out = apply_id_gate(
+                    x_full, out, self._normalizer,
+                    id_idx_in_output=0, vt_arch=0.04,
+                )
 
             # Autograd: conductances from id (col 0)
             grad_id = torch.autograd.grad(

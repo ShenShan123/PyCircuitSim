@@ -81,6 +81,9 @@ def _run_direct(args: argparse.Namespace) -> None:
         exclude_techs=exclude,
         num_tech_codes=args.num_tech_codes,
         p_unknown=args.p_unknown,
+        slope_weight=args.slope_weight,
+        slope_warmup_frac=args.slope_warmup_frac,
+        id_gate=not args.no_id_gate,
     )
 
 
@@ -126,6 +129,9 @@ def _run_transformer(args: argparse.Namespace) -> None:
         exclude_techs=exclude,
         num_tech_codes=args.num_tech_codes,
         p_unknown=args.p_unknown,
+        slope_weight=args.slope_weight,
+        slope_warmup_frac=args.slope_warmup_frac,
+        id_gate=not args.no_id_gate,
     )
 
 
@@ -193,6 +199,26 @@ def main() -> None:
     parser.add_argument("--p-unknown", type=float, default=0.1,
                         help="Prob of replacing tech code with UNKNOWN "
                              "during training (default 0.1)")
+
+    # B3 — Structural Vds gate on the Id output (Sprint S-ARCH-A)
+    parser.add_argument("--no-id-gate", action="store_true",
+                        help="[B3] Disable the structural Vds gate on the "
+                             "id output. By default the gate is ON: model "
+                             "id_phys is multiplied by tanh(Vds/0.04 V) "
+                             "and re-normalised before the loss, so "
+                             "Id(Vds=0)=0 holds structurally. "
+                             "Disable for legacy v4/v5b-style training.")
+
+    # Slope-loss (B2) args (shared by both models)
+    parser.add_argument("--slope-weight", type=float, default=0.0,
+                        help="[B2] Weight on the slope-match auxiliary "
+                             "loss (dId/dVg in normalised space). "
+                             "Default 0 = disabled. Only active on "
+                             "datasets that carry a sample_class column.")
+    parser.add_argument("--slope-warmup-frac", type=float, default=0.7,
+                        help="[B2] Fraction of total epochs to wait "
+                             "before activating slope loss (default "
+                             "0.7 = last 30%% of training).")
 
     args = parser.parse_args()
     set_seed(args.seed)

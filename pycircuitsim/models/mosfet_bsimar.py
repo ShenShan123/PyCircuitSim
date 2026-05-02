@@ -29,8 +29,12 @@ if str(_BSIMAR_PARENT) not in sys.path:
 
 from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase, _get_nn_device
 from bsimar.models.transformer import TransformerEncoderModel
+from bsimar.models.id_gate import apply_id_gate
 from bsimar.config import UNKNOWN_CODE_ID
-from bsimar.data.normalize import BSIMARNormStats, BSIMAR_COLUMN_ORDER, OUTPUT_COLUMN_ORDER
+from bsimar.data.normalize import (
+    BSIMARNormStats, BSIMARNormalizer,
+    BSIMAR_COLUMN_ORDER, OUTPUT_COLUMN_ORDER,
+)
 
 
 # Column indices for BSIMAR's AR output order
@@ -128,6 +132,10 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
         assert self._norm_stats.mode == "asinh", (
             f"BSIMAR LEVEL=74 expects an asinh-mode normaliser, "
             f"got mode={self._norm_stats.mode}")
+        # B3: build a BSIMARNormalizer wrapper for apply_id_gate.
+        self._normalizer = BSIMARNormalizer(
+            mode=self._norm_stats.mode, stats=self._norm_stats)
+        self._id_gate_active = bool(self._norm_stats.id_gate)
 
         # Pre-compute normalised geometry features (constant per device).
         # v4: 3 geometry features [NFIN_log, L, T]; tech code is a
@@ -231,6 +239,17 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
         with torch.enable_grad():
             out = self._nn_model(
                 x_full, tech_codes=self._tech_code_tensor)
+
+            # B3 structural Vds gate (Sprint S-ARCH-A). When active,
+            # replace the id slot in BSIMAR_COLUMN_ORDER (index 4) with
+            # the gated value before extracting derivatives. gm/gds will
+            # then be derivatives of id_gated, matching the training-time
+            # loss target.
+            if self._id_gate_active:
+                out = apply_id_gate(
+                    x_full, out, self._normalizer,
+                    id_idx_in_output=_BSIMAR_IDX_ID, vt_arch=0.04,
+                )
 
             grad_id = torch.autograd.grad(
                 out[:, _BSIMAR_IDX_ID].sum(), x_v,

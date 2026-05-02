@@ -27,6 +27,14 @@ class MOSFETDataset(Dataset):
         - inputs: (7,) tensor [V(4), NFIN_log, L, T], normalized
         - outputs: (13,) tensor in normalized space
         - tech_code: scalar int64 tensor
+        - sample_class: scalar int8 tensor (only when ``sample_class``
+          is supplied at construction; see B1 sprint dataset schema).
+
+    When ``sample_class`` is None (legacy datasets), ``__getitem__``
+    returns the original 3-tuple ``(inputs, outputs, tech_code)``.
+    When supplied, ``__getitem__`` returns the 4-tuple
+    ``(inputs, outputs, tech_code, sample_class)``. Trainers that opt
+    into the slope-loss path must request the 4-tuple form.
     """
 
     def __init__(
@@ -34,18 +42,24 @@ class MOSFETDataset(Dataset):
         inputs_norm: np.ndarray,
         outputs_norm: np.ndarray,
         tech_codes: np.ndarray,
+        sample_class: Optional[np.ndarray] = None,
     ):
         self.inputs = torch.tensor(inputs_norm, dtype=torch.float32)
         self.outputs = torch.tensor(outputs_norm, dtype=torch.float32)
         self.tech_codes = torch.tensor(tech_codes, dtype=torch.long)
+        if sample_class is not None:
+            self.sample_class = torch.tensor(sample_class, dtype=torch.int8)
+        else:
+            self.sample_class = None
 
     def __len__(self) -> int:
         return len(self.inputs)
 
-    def __getitem__(
-        self, idx: int
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-        return self.inputs[idx], self.outputs[idx], self.tech_codes[idx]
+    def __getitem__(self, idx: int):
+        if self.sample_class is None:
+            return self.inputs[idx], self.outputs[idx], self.tech_codes[idx]
+        return (self.inputs[idx], self.outputs[idx],
+                self.tech_codes[idx], self.sample_class[idx])
 
 
 # ── Loader ───────────────────────────────────────────────────────────────────
@@ -94,6 +108,14 @@ def load_and_split_bsimar(
     When ``exclude_techs`` is given (e.g., {"asap7"}), those techs'
     samples are dropped entirely before the train/val/test split.
 
+    If the npz contains a ``sample_class`` column (B1-regenerated
+    datasets onward, see ``meta_sample_class_names``), it is carried
+    through filtering / exclusion / splitting and attached to each
+    ``MOSFETDataset``. The sample class codes are needed by the slope
+    loss (``SlopeMatchLoss``) to filter to grid-class rows. Old
+    datasets without this column work as before; ``Dataset.sample_class``
+    will be ``None`` and the 3-tuple ``__getitem__`` form is used.
+
     Args:
         data_path: Path to universal .npz dataset.
         column_names: Output column names for filtering.
@@ -110,6 +132,7 @@ def load_and_split_bsimar(
     inputs = data["inputs"]
     geometry = data["geometry"]
     outputs = data["outputs"]
+    sample_class = data["sample_class"] if "sample_class" in data.files else None
 
     n_before = len(outputs)
 
@@ -118,6 +141,8 @@ def load_and_split_bsimar(
         inputs = inputs[keep]
         geometry = geometry[keep]
         outputs = outputs[keep]
+        if sample_class is not None:
+            sample_class = sample_class[keep]
         n_after = len(outputs)
         pct = 100 * (n_before - n_after) / n_before if n_before > 0 else 0
         print(f"  Data filtering: {n_before} -> {n_after} "
@@ -145,6 +170,8 @@ def load_and_split_bsimar(
         geometry = geometry[keep_mask]
         outputs = outputs[keep_mask]
         tech_codes = tech_codes[keep_mask]
+        if sample_class is not None:
+            sample_class = sample_class[keep_mask]
         print(f"  Excluded techs {exclude_techs}: "
               f"{keep_mask.sum()}/{n_total} samples kept")
 
@@ -163,7 +190,8 @@ def load_and_split_bsimar(
     def _make_ds(idxs: np.ndarray) -> MOSFETDataset:
         x = normalizer.normalize_inputs(inputs[idxs], geometry[idxs])
         y = normalizer.normalize_outputs(outputs[idxs])
-        return MOSFETDataset(x, y, tech_codes[idxs])
+        sc = sample_class[idxs] if sample_class is not None else None
+        return MOSFETDataset(x, y, tech_codes[idxs], sample_class=sc)
 
     train_ds = _make_ds(train_idx)
     val_ds = _make_ds(val_idx)
