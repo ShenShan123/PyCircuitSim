@@ -48,7 +48,7 @@ from bsimar.training.trainer import (
 def _run_direct(args: argparse.Namespace) -> None:
     data_path = (Path(args.data) if args.data
                  else DATA_DIR / f"universal_{args.device_type}.npz")
-    save_prefix = f"v4_dn_universal_{args.device_type}"
+    save_prefix = f"v4_re_dn_universal_{args.device_type}"
     if args.exp_name:
         save_prefix = f"{args.exp_name}_{args.device_type}"
 
@@ -88,7 +88,7 @@ def _run_direct(args: argparse.Namespace) -> None:
 def _run_transformer(args: argparse.Namespace) -> None:
     data_path = (Path(args.data) if args.data
                  else DATA_DIR / f"universal_{args.device_type}.npz")
-    save_prefix = f"v4_universal_{args.device_type}"
+    save_prefix = f"v4_re_universal_{args.device_type}"
     if args.exp_name:
         save_prefix = f"{args.exp_name}_{args.device_type}"
 

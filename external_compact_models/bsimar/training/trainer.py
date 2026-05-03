@@ -265,7 +265,7 @@ def train_directnet(
     device_type: str = "nmos",
     config: DirectNetConfig = DirectNetConfig(),
     device_str: str = "cpu",
-    save_prefix: str = "v4_dn_universal_nmos",
+    save_prefix: str = "v4_re_dn_universal_nmos",
     exclude_techs: Optional[Set[str]] = None,
     num_tech_codes: int = NUM_TSMC_CODES_WITH_UNKNOWN,
     p_unknown: float = 0.1,

@@ -278,9 +278,11 @@ Mn1 out in 0 0 nmos_nn L=16n NFIN=10
 Mp1 out in vdd vdd pmos_nn L=16n NFIN=10
 ```
 
-Checkpoints are resolved automatically:
-`external_compact_models/bsimar/checkpoints/universal_{nmos,pmos}_best.pt`
-(preferred if present) or per-tech `{tech}_{nmos,pmos}_best.pt`.
+Checkpoints are resolved automatically through the cascade
+`v4_re_dn_universal_*` (current revision) → `v4_dn_universal_*` (legacy)
+→ `{tech}_{nmos,pmos}_best.pt` (per-tech) → bare `{nmos,pmos}_best.pt`.
+The `v4_re_*` checkpoints are produced by the post-2026-05-03 trimmed
+training pipeline (see CLAUDE.md Status / "v4-re").
 
 #### Level 74 (BSIM-AR — autoregressive Transformer compact model)
 
@@ -293,8 +295,13 @@ Mn1 out in 0 0 nmos_ar L=16n NFIN=10
 Mp1 out in vdd vdd pmos_ar L=16n NFIN=10
 ```
 
-BSIM-AR checkpoints: `ar_universal_{nmos,pmos}_best.pt` + `_norm.npz` +
-`_config.npz` under `external_compact_models/bsimar/checkpoints/`.
+BSIM-AR checkpoints (current revision **v4-re**):
+`v4_re_universal_{nmos,pmos}_best.pt` (TF val-best),
+`v4_re_universal_{nmos,pmos}_best.phys.pt` (physical-space val-best,
+preferred when `phys_best_metric == "median"`),
+`_norm.npz`, `_config.npz` — all under
+`external_compact_models/bsimar/checkpoints/`. The legacy `v4_universal_*`
+files still load if no `v4_re_*` is present.
 
 Both LEVEL=73 and LEVEL=74 expose autograd-derived conductances (gm, gds,
 gmb) so Newton-Raphson stays consistent in multi-device circuits. See
@@ -431,13 +438,16 @@ Vin (V),V(1),V(2),V(3),i(Vdd),i(Vin)
 
 ---
 
-## NN Compact Models (LEVEL=73 & LEVEL=74)
+## NN Compact Models (LEVEL=73 & LEVEL=74) — current revision: **v4-re**
 
 Both NN compact-model families live in the unified `bsimar` package at
 `external_compact_models/bsimar/`. DirectNet is the baseline; BSIM-AR
 is the primary Transformer model; they share every layer below the
 model architecture itself (data, normalization, losses, training, eval).
-See [Architecture](#architecture) for the package layout.
+See [Architecture](#architecture) for the package layout. The current
+shipping revision is **v4-re** (v4 reissue): same v4 7-dim + tech-code
+architecture, but with all unvalidated v5 Phase B levers and the
+AR-finetune phase removed (see CLAUDE.md Status / `docs/superpowers/plans/2026-05-03-nn-stack-trim.md`).
 
 ### Data Generation
 
@@ -450,44 +460,44 @@ conda run -n pycircuitsim python \
 ```
 
 This walks 954 `(L, NFIN)` combinations across 5 techs and 21 threshold
-variants (legal bin boundaries for TSMC, a fallback list for ASAP7),
-extracts process parameters on-the-fly from the modelcards, and writes
-one `.npz` per device under
+variants (legal bin boundaries for TSMC, a fallback list for ASAP7) and
+writes one `.npz` per device under
 `external_compact_models/bsimar/data/datasets/`. Each sample is a
-`19`-feature input (`Vd, Vg, Vs, Vb, log2(NFIN), L, T, <12 process params>`)
-and a `13`-column output (`id, gm, gds, gmb, qg, qd, qs, qb, cgg, cgd, cgs, cdg, cdd`).
+**7-dim** input (`Vd, Vg, Vs, Vb, log2(NFIN), L, T`) plus a discrete
+tech-variant code consumed by `nn.Embedding`, and a 13-column output
+(`id, gm, gds, gmb, qg, qd, qs, qb, cgg, cgd, cgs, cdg, cdd`).
 
-### Training
+### Training (v4-re recipe)
 
-Training is driven by a single CLI. The `--model` flag picks the architecture;
-every other flag is shared between the two:
+Training is driven by a single CLI. The `--model` flag picks the
+architecture; every other flag is shared. The recipe is hard-wired:
+MAE + per-target LDS, asinh+zscore (Transformer) or zscore (DirectNet),
+parallel cap head, BSIMAR column reorder, phys-best checkpoint tracker.
+Phase B levers (slope loss, structural id-gate) and the AR-finetune
+phase have been removed.
 
 ```bash
-# DirectNet (baseline MLP, ~2 s/epoch on a modern GPU)
+# DirectNet v4-re (baseline MLP)
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
-    --model direct --device-type nmos --universal --mode direct13 \
+    --model direct --device-type nmos \
+    --exclude-techs asap7 --num-tech-codes 18 \
     --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048 --cuda
 
-# DirectNet charge-finetune (autograd dq/dV = C consistency, ~5-10x slower,
-# improves transient accuracy)
+# BSIM-AR v4-re Transformer
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
-    --model direct --device-type nmos --universal --mode charge-finetune \
-    --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048 \
-    --cuda --resume none
-
-# BSIM-AR Transformer (paper recommended: zscore + MAE + LDS)
-conda run -n pycircuitsim python -u -m bsimar.cli.train \
-    --model transformer --device-type nmos --universal \
-    --loss mae --lds --cuda
+    --model transformer --device-type nmos \
+    --exclude-techs asap7 --num-tech-codes 18 --cuda
 ```
 
 Checkpoints land under `external_compact_models/bsimar/checkpoints/`:
 
 | File | Model | Notes |
 |------|-------|-------|
-| `universal_{nmos,pmos}_best.pt` + `_norm.npz` | DirectNet universal | Preferred by the parser |
-| `{tech}_{nmos,pmos}_best.pt` + `_norm.npz` | DirectNet per-tech | Fallback |
-| `ar_universal_{nmos,pmos}_best.pt` + `_norm.npz` + `_config.npz` | BSIM-AR universal | Transformer |
+| `v4_re_dn_universal_{nmos,pmos}_best.pt` + `_norm.npz` | DirectNet v4-re | **Preferred by the parser** |
+| `v4_dn_universal_{nmos,pmos}_best.pt` + `_norm.npz` | DirectNet v4 (legacy) | Falls back if no v4-re on disk |
+| `{tech}_{nmos,pmos}_best.pt` + `_norm.npz` | DirectNet per-tech | Last fallback |
+| `v4_re_universal_{nmos,pmos}_best.{pt,phys.pt,ar.pt}` + `_norm.npz` + `_config.npz` | BSIM-AR v4-re | Transformer; loader prefers `.phys.pt` only when `phys_best_metric == "median"` |
+| `v4_universal_{nmos,pmos}_*` | BSIM-AR v4 (legacy) | Falls back if no v4-re on disk |
 
 ### Inference (LEVEL=73 vs LEVEL=74)
 

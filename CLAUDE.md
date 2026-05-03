@@ -178,15 +178,16 @@ All phases (1-15) are complete. Key milestones:
   - **B1 (data, retained in PyCMG submodule):** hybrid uniform-grid + LHS jitter sampler with `sample_class` column. Datasets regenerated under this sampler are still consumed by the loader.
   - **B2 (`SlopeMatchLoss`) and B3 (`apply_id_gate`) — DELETED 2026-05-03** under `docs/superpowers/plans/2026-05-03-nn-stack-trim.md`. Neither lever was validated against a v4 baseline before B3's `id_idx_in_stats` bug corrupted the v5b/v5c TF runs. Inference-time `_apply_vds_correction` (rule 19) already enforces Id(Vds=0)=0; rail-restoring extrapolation (rule 19a) is the load-bearing piece.
   - **AR-finetune phase / `forward_scheduled` — DELETED 2026-05-03** in the same trim. The 5/150 final-phase rollout was carrying ~160 LOC of separate optimizer + loader + tracker + checkpoint plumbing for a marginal benefit over the cosine schedule.
-- **NN-stack trim (2026-05-03, branch `chore/nn-stack-trim`).** Plan: `docs/superpowers/plans/2026-05-03-nn-stack-trim.md`.
+- **v4-re — NN-stack trim (2026-05-03, branch `chore/nn-stack-trim`).** Plan: `docs/superpowers/plans/2026-05-03-nn-stack-trim.md`. The current shipping NN stack is now labeled **v4-re** (v4 reissue): same v4 7-dim + tech-code architecture, but with all unvalidated Phase B levers and AR-finetune plumbing removed. Re-trained checkpoints land under the `v4_re_` prefix; legacy `v4_` checkpoints continue to load via the resolver fallback.
   - **PR-1:** Removed 11 broken/superseded test scripts (~3.9 KLOC) — all v3-era APIs (`Normalizer`, `inv_signed_log`, `DirectLoss`, `MOSFETDatasetV4`, `PROCESS_PARAM_NAMES`).
-  - **PR-2:** Deleted `bsimar/losses/slope_loss.py`, `bsimar/models/id_gate.py`, `forward_scheduled` on the Transformer, `_train_epoch_scheduled_mae`, the trainer's AR-finetune block, `BSIMARNormStats.id_gate` field, and the matching CLI flags (`--slope-weight`, `--slope-warmup-frac`, `--no-id-gate`, `--ar-finetune-epochs`). Inference glue deduped: `_resolve_nn_checkpoint(level, ...)` collapses LEVEL=73/74 path resolution; `_floor_gds(id, gds)` replaces 4 stamp sites; `_MOSFETBSIMARBase` reuses parent `_denorm_scalar` / `_denorm_full_derivative` via column-index lookup. v4 checkpoints continue to load unchanged (the deleted Phase B fields were optional). v5b checkpoints are discard-only per Bug A.
+  - **PR-2:** Deleted `bsimar/losses/slope_loss.py`, `bsimar/models/id_gate.py`, `forward_scheduled` on the Transformer, `_train_epoch_scheduled_mae`, the trainer's AR-finetune block, `BSIMARNormStats.id_gate` field, and the matching CLI flags (`--slope-weight`, `--slope-warmup-frac`, `--no-id-gate`, `--ar-finetune-epochs`). Inference glue deduped: `_resolve_nn_checkpoint(level, ...)` collapses LEVEL=73/74 path resolution and prefers `v4_re_*` over legacy `v4_*`; `_floor_gds(id, gds)` replaces 4 stamp sites; `_MOSFETBSIMARBase` reuses parent `_denorm_scalar` / `_denorm_full_derivative` via column-index lookup. v4 checkpoints continue to load unchanged (the deleted Phase B fields were optional). v5b checkpoints are discard-only per Bug A.
+  - **Default save_prefix:** `train_directnet` → `v4_re_dn_universal_<dev>`; `train_transformer` → `v4_re_universal_<dev>`. Override with `--exp-name`.
 
-### Known v4 limitation: TSMC7 NMOS DC 14.72 %
-TSMC7 NMOS DC NRMSE is 14.72 % (BSIMAR) / 15.79 % (DirectNet) against PyCMG ground truth at Vds=VDD/2, NFIN=10, L=16 nm. This propagates to inverter VTC (19.15 % BSIMAR / 18.14 % DirectNet). Root cause confirmed by D1 diagnostic: the LHS training distribution under-samples the strong-inversion + saturation plateau by ~16× relative to the verifier's uniform Id-Vgs sweep. Inverter transient at TSMC7 PASSES (6.80 % DN / 9.14 % BSIMAR). VTC should be reported with the 14-19 % NRMSE caveat. Mitigation will go through B1-style data densification + retrain on the trimmed (post-2026-05-03) pipeline.
+### Known v4 limitation (carried into v4-re until retrain): TSMC7 NMOS DC 14.72 %
+TSMC7 NMOS DC NRMSE is 14.72 % (BSIMAR v4) / 15.79 % (DirectNet v4) against PyCMG ground truth at Vds=VDD/2, NFIN=10, L=16 nm. This propagates to inverter VTC (19.15 % BSIMAR / 18.14 % DirectNet). Root cause confirmed by D1 diagnostic: the LHS training distribution under-samples the strong-inversion + saturation plateau by ~16× relative to the verifier's uniform Id-Vgs sweep. Inverter transient at TSMC7 PASSES (6.80 % DN / 9.14 % BSIMAR). VTC should be reported with the 14-19 % NRMSE caveat. The mitigation lives in v4-re: retrain on B1 hybrid-grid data with the trimmed pipeline, save under `v4_re_*` prefix, expect TSMC7 NMOS DC ≤ 8 % per the trim plan's gate.
 
 ### Future Work
-- [ ] **Retrain v4 universals on B1 hybrid-grid data** — Infrastructure committed in PyCMG. Acceptance gate: TSMC7 NMOS DC ≤ 8 %, VTC ≤ 12 %, all transients ≤ 15 %.
+- [ ] **v4-re retrain on B1 hybrid-grid data** — Infrastructure committed in PyCMG. Acceptance gate: TSMC7 NMOS DC ≤ 8 %, VTC ≤ 12 %, all transients ≤ 15 %. Saves under `v4_re_dn_universal_*` / `v4_re_universal_*`.
 - [ ] **PMOS DC TSMC12/16** — 12-14 % NRMSE (both models); same class of sampling-basis bug as TSMC7 NMOS. Run D1-style heatmap diagnostic on TSMC12 PMOS before committing to B1 hot-region list.
 - [ ] **PR-3 of the trim plan: phys-best A/B + base-class collapse** — A/B one DirectNet run with phys-best disabled; if Δ < 5 % NRMSE, delete the tracker. Then collapse `_MOSFETBSIMARBase` into `_MOSFETNNBase(model_factory, column_indices)`.
 - [ ] **Improve TSMC5 inverter transient** — DirectNet 17.20% NRMSE (just above 15% threshold). Likely also a B1 data densification target.
@@ -227,7 +228,7 @@ Create a netlist (`.sp` file). Examples in `examples/`.
 
 **BSIM-CMG Geometric Parameters:** `L` (channel length), `NFIN` (fin count), `TFIN`/`HFIN`/`FPITCH` (optional, uses modelcard defaults).
 
-### NN Model (LEVEL=73 DirectNet baseline + LEVEL=74 BSIM-AR Transformer)
+### NN Model (LEVEL=73 DirectNet baseline + LEVEL=74 BSIM-AR Transformer) — current revision: **v4-re**
 ```bash
 # Generate universal data (PyCMG is the canonical data generator)
 # Uses PDK-defined (L, NFIN) bins (TSMC bin boundaries, ASAP7 fallback list)
@@ -236,8 +237,9 @@ Create a netlist (`.sp` file). Examples in `examples/`.
 conda run -n pycircuitsim python external_compact_models/PyCMG/scripts/generate_nn_data.py \
     --device both --universal
 
-# Train DirectNet (MAE + per-target LDS, hard-wired recipe).
+# Train DirectNet v4-re (MAE + per-target LDS, hard-wired recipe).
 # ASAP7 excluded from training; 18 tech-codes for 4 TSMC techs x variants.
+# Saves to `v4_re_dn_universal_<dev>_best.pt` by default.
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
     --model direct --device-type nmos \
     --exclude-techs asap7 --num-tech-codes 18 \
@@ -247,9 +249,10 @@ conda run -n pycircuitsim python -u -m bsimar.cli.train \
     --exclude-techs asap7 --num-tech-codes 18 \
     --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048 --cuda
 
-# Train BSIMAR Transformer (production recipe).
+# Train BSIMAR v4-re Transformer (production recipe).
 # Hard-wired: MAE + per-target LDS, asinh+zscore, parallel_caps,
 # grouped_inputs, BSIMAR reorder, phys-best ckpt, nn.Embedding tech-code.
+# Saves to `v4_re_universal_<dev>_best.pt` (+ `.ar.pt`, `.phys.pt`).
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
     --model transformer --device-type nmos \
     --exclude-techs asap7 --num-tech-codes 18 --cuda
@@ -262,8 +265,9 @@ conda run -n pycircuitsim python -u -m bsimar.cli.train \
 #       `external_compact_models/bsimar/checkpoints/` for both models.
 ```
 Checkpoints (under `external_compact_models/bsimar/checkpoints/`):
-- DirectNet v4: `v4_dn_universal_{nmos,pmos}_best.pt` + `_norm.npz` (current production).
-- Transformer v4: `v4_universal_{nmos,pmos}_best.phys.pt` + `_norm.npz` + `_config.npz` (**simulator loads `_best.phys.pt`** when norm.npz declares `phys_best_metric == "median"`; otherwise falls back to `_best.pt`).
+- **v4-re DirectNet**: `v4_re_dn_universal_{nmos,pmos}_best.pt` + `_norm.npz` (target: post-trim retrain).
+- **v4-re Transformer**: `v4_re_universal_{nmos,pmos}_best.phys.pt` + `_best.pt` + `_best.ar.pt` + `_norm.npz` + `_config.npz` (**simulator prefers `_best.phys.pt`** when norm.npz declares `phys_best_metric == "median"`; otherwise falls back to `_best.pt`).
+- **Legacy v4** (`v4_dn_universal_*`, `v4_universal_*`): still on disk; resolver picks them only when no `v4_re_*` exists. Kept for reproducibility while v4-re retrains land.
 
 Netlist usage:
 - LEVEL=73 (DirectNet): `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`.
@@ -429,7 +433,7 @@ instead of 19-dim continuous process parameters.
 13. **Parallel cap head** — The Transformer emits the 5 capacitance outputs in parallel from the gmb hidden state, not as sequential AR steps. The AR loop runs only 8 steps (charges + currents/conds). `parallel_caps` and `grouped_inputs` are structural and not configurable.
 14. **(removed)** — The AR-finetune phase / `forward_scheduled` was deleted on 2026-05-03; the cosine TF schedule alone produces the production checkpoint. The phys-best checkpoint tracker still selects the best model across the schedule.
 15. **Unified CLI** — Training goes through `python -m bsimar.cli.train --model {direct,transformer} ...`. Both models read the same `.npz` produced by `external_compact_models/PyCMG/scripts/generate_nn_data.py` and write checkpoints under `external_compact_models/bsimar/checkpoints/`.
-16. **Checkpoint files** — DirectNet v4: `v4_dn_universal_{nmos,pmos}_best.pt` + `_norm.npz`. Transformer v4: `v4_universal_{nmos,pmos}_best.pt` (TF val-best), `_best.ar.pt` (AR val-best), `_best.phys.pt` (physical-space val-best), `_norm.npz` (BSIMARNormStats asinh), `_config.npz` (architecture). **Post-2026-05-03 phys-best fix**: `_best.phys.pt` is only trustworthy when the trainer's `BSIMARNormStats.phys_best_metric == "median"`. Pre-fix files were corrupted by the mean-aggregated phys-score (plan §2B) and have been renamed to `*best.phys.bug.pt`; the simulator loader (`pycircuitsim/parser.py`) checks the flag and falls back to `_best.pt` for legacy norm.npz files lacking the key. v5b/v5c TF Transformer runs additionally hit the now-deleted `apply_id_gate` index-mismatch bug — discard-only.
+16. **Checkpoint files** — Current revision is **v4-re**. DirectNet: `v4_re_dn_universal_{nmos,pmos}_best.pt` + `_norm.npz`. Transformer: `v4_re_universal_{nmos,pmos}_best.pt` (TF val-best), `_best.ar.pt` (AR val-best), `_best.phys.pt` (physical-space val-best), `_norm.npz` (BSIMARNormStats asinh), `_config.npz` (architecture). The simulator's `_resolve_nn_checkpoint` cascade is **v4_re_universal > v4_universal > per-tech > bare**, so legacy `v4_*` checkpoints keep working until v4-re replacements ship. **Post-2026-05-03 phys-best fix**: `_best.phys.pt` is only trustworthy when the trainer's `BSIMARNormStats.phys_best_metric == "median"`. Pre-fix files were corrupted by the mean-aggregated phys-score (plan §2B) and have been renamed to `*best.phys.bug.pt`; the simulator loader checks the flag and falls back to `_best.pt` for legacy norm.npz files lacking the key. v5b/v5c TF Transformer runs additionally hit the now-deleted `apply_id_gate` index-mismatch bug — discard-only.
 17. **Charge conservation enforcement** — Simulator always computes `qs = -(qg + qd + qb)` analytically, even for 13-output models that directly predict `qs`. This guarantees Kirchhoff current conservation at every transient timestep.
 18. **ASAP7 tech-code exclusion** — ASAP7 tech codes (18-21) exceed the v4 training vocabulary (18 codes, indices 0-17). Running ASAP7 with v4 universal models will crash with an embedding index-out-of-range error. ASAP7 requires separate fine-tuning.
 19. **Analytical Vds correction** — `_MOSFETNNBase._apply_vds_correction()` enforces Id(Vds=0)=0 and Id=0 for reverse-direction Vds at inference time. Four-part correction (the order matters):

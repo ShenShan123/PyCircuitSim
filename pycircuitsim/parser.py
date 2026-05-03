@@ -74,44 +74,55 @@ def _resolve_nn_checkpoint(
     if explicit_path is not None:
         path = explicit_path
     elif level == 73:
+        # Cascade: v4-re universal > legacy v4 universal > per-tech > bare.
+        re_path = CHECKPOINT_DIR / f"v4_re_dn_universal_{device_key}_best.pt"
         v4_path = CHECKPOINT_DIR / f"v4_dn_universal_{device_key}_best.pt"
         per_tech_path = CHECKPOINT_DIR / f"{tech_key}_{device_key}_best.pt"
         bare_path = CHECKPOINT_DIR / f"{device_key}_best.pt"
-        if v4_path.exists():
+        if re_path.exists():
+            path = str(re_path)
+        elif v4_path.exists():
             path = str(v4_path)
         elif per_tech_path.exists():
             path = str(per_tech_path)
         else:
             path = str(bare_path)
     else:  # level == 74
-        v4_phys_path = CHECKPOINT_DIR / f"v4_universal_{device_key}_best.phys.pt"
-        v4_path = CHECKPOINT_DIR / f"v4_universal_{device_key}_best.pt"
-        v4_norm_path = CHECKPOINT_DIR / f"v4_universal_{device_key}_norm.npz"
+        # Cascade: v4-re universal > legacy v4 universal > per-tech > bare.
+        # For each universal candidate prefer `_best.phys.pt` only when the
+        # norm.npz declares `phys_best_metric == "median"` (post-2026-05-03 fix).
+        def _select(prefix: str) -> Optional[str]:
+            phys_path = CHECKPOINT_DIR / f"{prefix}_{device_key}_best.phys.pt"
+            plain_path = CHECKPOINT_DIR / f"{prefix}_{device_key}_best.pt"
+            norm_path = CHECKPOINT_DIR / f"{prefix}_{device_key}_norm.npz"
+            phys_trustworthy = False
+            if phys_path.exists() and norm_path.exists():
+                try:
+                    from bsimar.data.normalize import BSIMARNormStats
+                    _ns = BSIMARNormStats.load(str(norm_path))
+                    phys_trustworthy = (
+                        getattr(_ns, "phys_best_metric", "legacy_mean")
+                        == "median")
+                except Exception:
+                    phys_trustworthy = False
+            if phys_trustworthy:
+                return str(phys_path)
+            if plain_path.exists():
+                return str(plain_path)
+            if phys_path.exists():
+                # Last-resort fallback when no plain best.pt is on disk.
+                return str(phys_path)
+            return None
+
         per_tech_path = CHECKPOINT_DIR / f"ar_{tech_key}_{device_key}_best.pt"
         bare_path = CHECKPOINT_DIR / f"ar_{device_key}_best.pt"
 
-        phys_trustworthy = False
-        if v4_phys_path.exists() and v4_norm_path.exists():
-            try:
-                from bsimar.data.normalize import BSIMARNormStats
-                _ns = BSIMARNormStats.load(str(v4_norm_path))
-                phys_trustworthy = (
-                    getattr(_ns, "phys_best_metric", "legacy_mean")
-                    == "median")
-            except Exception:
-                phys_trustworthy = False
-
-        if phys_trustworthy:
-            path = str(v4_phys_path)
-        elif v4_path.exists():
-            path = str(v4_path)
-        elif v4_phys_path.exists():
-            # Last-resort fallback when no plain best.pt is on disk.
-            path = str(v4_phys_path)
-        elif per_tech_path.exists():
-            path = str(per_tech_path)
-        else:
-            path = str(bare_path)
+        path = _select("v4_re_universal") or _select("v4_universal")
+        if path is None:
+            if per_tech_path.exists():
+                path = str(per_tech_path)
+            else:
+                path = str(bare_path)
 
     tech_code = tech_variant_to_code(tech_key, vt_key)
     if tech_code == UNKNOWN_CODE_ID:
