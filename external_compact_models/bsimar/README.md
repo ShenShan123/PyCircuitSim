@@ -49,14 +49,17 @@ BSIMAR is a unified package covering two complementary architectures:
 
 - **`DirectNet`** — baseline MLP predicting all 13 outputs in a single
   forward pass. Fast to train, used as the reference for comparison.
-- **`TransformerEncoderModel`** (BSIMAR v3) — autoregressive Transformer
-  encoder with teacher forcing during training. Primary model, higher
-  accuracy at higher inference cost. The v3 architecture hard-wires the
-  winning recipe from the 2026-04-08 improvement sprint: `parallel_caps`
-  (5 cap outputs emit in one parallel head), `grouped_inputs` (19 input
-  scalars collapsed into 3 semantic group tokens), asinh + z-score
-  normalisation, MAE + per-target LDS + Vov-LDS loss, BSIMAR column
-  reorder, AR finetune tail, and the phys-best checkpoint tracker.
+- **`TransformerEncoderModel`** (BSIMAR, current revision **v4-re**) —
+  autoregressive Transformer encoder with teacher forcing during
+  training. Primary model, higher accuracy at higher inference cost.
+  The v4-re recipe hard-wires the trimmed pipeline shipped on
+  2026-05-03 (see `docs/superpowers/plans/2026-05-03-nn-stack-trim.md`):
+  `parallel_caps` (5 cap outputs emit in one parallel head),
+  `grouped_inputs`, asinh + z-score normalisation, MAE + per-target
+  LDS loss, BSIMAR column reorder, and the phys-best checkpoint
+  tracker. The earlier v3 Vov-LDS axis, the v5 Phase B slope-match
+  loss / structural Vds gate, and the AR-finetune tail were all
+  removed in the trim.
 
 ```
 BSIMAR/
@@ -68,10 +71,9 @@ BSIMAR/
 │   │   └── analyze.py               # Dataset quality analysis
 │   ├── models/
 │   │   ├── direct_net.py            # Baseline MLP (DirectNet)
-│   │   └── transformer.py           # BSIMAR v3 Transformer (parallel_caps + grouped_inputs)
+│   │   └── transformer.py           # BSIMAR Transformer v4-re (parallel_caps + grouped_inputs)
 │   ├── losses/
-│   │   ├── direct_loss.py           # DirectLoss + ChargeConsistencyLoss (DirectNet)
-│   │   └── bni_mae.py               # MAELoss + compute_lds_weights_per_target (BSIMAR)
+│   │   └── bni_mae.py               # MAELoss + compute_lds_weights_per_target (shared)
 │   ├── training/
 │   │   ├── early_stopping.py
 │   │   └── trainer.py               # train_directnet, train_transformer
@@ -138,29 +140,33 @@ The offering includes a pre-trained model and a version fine-tuned for 7nm nch_s
 #### Basic usage
 
 ```bash
-# Train DirectNet (baseline MLP, zscore norm, DirectLoss)
+# Train DirectNet v4-re (baseline MLP, zscore output norm, MAE + per-target LDS)
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
-    --model direct --device-type nmos --universal --mode direct13 \
+    --model direct --device-type nmos \
+    --exclude-techs asap7 --num-tech-codes 18 \
     --epochs 800 --hidden 384 --layers 6 --batch-size 2048 --cuda
 
-# Train BSIMAR v3 Transformer (production recipe).
-# The winning recipe is hard-wired inside train_transformer:
-#   loss      = MAE + per-target LDS + Vov-LDS
-#   norm      = asinh + z-score
-#   arch      = parallel_caps + grouped_inputs
-#   reorder   = BSIMAR column order (Q → I-V → C)
-#   finetune  = AR-rollout fine-tune (default 5 epochs)
-#   ckpt sel  = phys-space-best tracker
+# Train BSIMAR v4-re Transformer (production recipe).
+# Hard-wired inside train_transformer:
+#   loss     = MAE + per-target LDS
+#   norm     = asinh outputs + z-score inputs
+#   arch     = parallel_caps + grouped_inputs
+#   reorder  = BSIMAR column order (Q → I-V → C)
+#   ckpt sel = phys-space-best tracker (median aggregator)
 # Only architecture and schedule are user-tunable.
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
-    --model transformer --device-type nmos --universal --cuda
+    --model transformer --device-type nmos \
+    --exclude-techs asap7 --num-tech-codes 18 --cuda
 ```
 
 Both commands read `external_compact_models/bsimar/data/datasets/*.npz`
 (or a path you pass via `--data`) and write checkpoints + plots under
 `external_compact_models/bsimar/{checkpoints,results}/`.
 
-#### BSIMAR v3 Medium results on `universal_nmos`
+#### BSIMAR v3 Medium results on `universal_nmos` (legacy reference)
+
+The pre-trim BSIMAR v3 medium configuration achieved (kept here for
+historical context — it was the basis the v4 / v4-re trims preserve):
 
 | Metric | Value |
 |---|---:|
@@ -170,19 +176,19 @@ Both commands read `external_compact_models/bsimar/data/datasets/*.npz`
 | Params | 5,152,525 |
 | Wall-clock | ~107 min on one Blackwell GPU |
 
-Achieved by running the default recipe on the Medium configuration:
-
 ```bash
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
-    --model transformer --device-type nmos --universal \
+    --model transformer --device-type nmos \
+    --exclude-techs asap7 --num-tech-codes 18 \
     --d-model 256 --nhead 8 --num-layers 6 --dim-feedforward 1024 \
     --epochs 150 --batch-size 1024 --lr 8e-4 --patience 150 \
-    --ar-finetune-epochs 5 --seed 42 --cuda
+    --seed 42 --cuda
 ```
 
 For the full sprint narrative (which changes worked, which
 didn't, and why), see
-[`docs/bsimar_improvement_plan_2026_04_08.md`](docs/bsimar_improvement_plan_2026_04_08.md).
+[`docs/bsimar_improvement_plan_2026_04_08.md`](docs/bsimar_improvement_plan_2026_04_08.md)
+and `docs/superpowers/plans/2026-05-03-nn-stack-trim.md`.
 
 #### Checkpoints
 

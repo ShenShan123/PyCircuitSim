@@ -56,3 +56,12 @@ exp_queue.log
 # Claude Code
 .claude_statusline_exec.sh
 nn_model/data/datasets/*.npz
+
+# BSIMAR training datasets (large binaries, regenerable via PyCMG)
+external_compact_models/bsimar/data/datasets/
+external_compact_models/bsimar/data/datasets_v3/
+external_compact_models/bsimar/data/datasets_v4_lhs/
+external_compact_models/bsimar/data/datasets_tmp_for_d1/
+
+# Local Claude tool config
+.claude/

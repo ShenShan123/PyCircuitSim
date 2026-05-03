@@ -49,6 +49,92 @@ from pycircuitsim.models import (
 from pycircuitsim.config import BSIMCMG_OSDI_PATH, GENERIC_MODELCARD_DIR, ASAP7_MODELCARD_DIR
 
 
+def _resolve_nn_checkpoint(
+    *,
+    level: int,
+    device_key: str,
+    tech_key: str,
+    vt_key: str,
+    explicit_path: Optional[str],
+    netlist_name: str,
+) -> Tuple[str, int]:
+    """Resolve checkpoint path and tech code for LEVEL=73 / LEVEL=74.
+
+    Cascade: explicit ``MODEL_PATH`` > v4 universal > per-tech > bare.
+    For LEVEL=74 (BSIMAR) the universal cascade prefers ``_best.phys.pt``
+    over ``_best.pt`` only when the matching ``_norm.npz`` was saved with
+    the median-aggregated phys-score (post-2026-05-03 fix); pre-fix
+    files default to ``_best.pt`` to avoid the AR-rollout id-column
+    blowup.
+    """
+    from bsimar.config import (
+        CHECKPOINT_DIR, tech_variant_to_code, UNKNOWN_CODE_ID,
+    )
+
+    if explicit_path is not None:
+        path = explicit_path
+    elif level == 73:
+        # Cascade: v4-re universal > legacy v4 universal > per-tech > bare.
+        re_path = CHECKPOINT_DIR / f"v4_re_dn_universal_{device_key}_best.pt"
+        v4_path = CHECKPOINT_DIR / f"v4_dn_universal_{device_key}_best.pt"
+        per_tech_path = CHECKPOINT_DIR / f"{tech_key}_{device_key}_best.pt"
+        bare_path = CHECKPOINT_DIR / f"{device_key}_best.pt"
+        if re_path.exists():
+            path = str(re_path)
+        elif v4_path.exists():
+            path = str(v4_path)
+        elif per_tech_path.exists():
+            path = str(per_tech_path)
+        else:
+            path = str(bare_path)
+    else:  # level == 74
+        # Cascade: v4-re universal > legacy v4 universal > per-tech > bare.
+        # For each universal candidate prefer `_best.phys.pt` only when the
+        # norm.npz declares `phys_best_metric == "median"` (post-2026-05-03 fix).
+        def _select(prefix: str) -> Optional[str]:
+            phys_path = CHECKPOINT_DIR / f"{prefix}_{device_key}_best.phys.pt"
+            plain_path = CHECKPOINT_DIR / f"{prefix}_{device_key}_best.pt"
+            norm_path = CHECKPOINT_DIR / f"{prefix}_{device_key}_norm.npz"
+            phys_trustworthy = False
+            if phys_path.exists() and norm_path.exists():
+                try:
+                    from bsimar.data.normalize import BSIMARNormStats
+                    _ns = BSIMARNormStats.load(str(norm_path))
+                    phys_trustworthy = (
+                        getattr(_ns, "phys_best_metric", "legacy_mean")
+                        == "median")
+                except Exception:
+                    phys_trustworthy = False
+            if phys_trustworthy:
+                return str(phys_path)
+            if plain_path.exists():
+                return str(plain_path)
+            if phys_path.exists():
+                # Last-resort fallback when no plain best.pt is on disk.
+                return str(phys_path)
+            return None
+
+        per_tech_path = CHECKPOINT_DIR / f"ar_{tech_key}_{device_key}_best.pt"
+        bare_path = CHECKPOINT_DIR / f"ar_{device_key}_best.pt"
+
+        path = _select("v4_re_universal") or _select("v4_universal")
+        if path is None:
+            if per_tech_path.exists():
+                path = str(per_tech_path)
+            else:
+                path = str(bare_path)
+
+    tech_code = tech_variant_to_code(tech_key, vt_key)
+    if tech_code == UNKNOWN_CODE_ID:
+        import warnings
+        warnings.warn(
+            f"MOSFET {netlist_name}: TECH={tech_key} VT={vt_key} maps to "
+            f"UNKNOWN tech code ({UNKNOWN_CODE_ID}). "
+            "Predictions may be less accurate."
+        )
+    return path, tech_code
+
+
 class Parser:
     """
     HSPICE-like netlist parser.
@@ -570,182 +656,50 @@ class Parser:
             else:
                 raise ValueError(f"Unknown MOSFET model type: {model_type}")
 
-        elif level == 73:
-            # NN-based compact model
+        elif level in (73, 74):
+            # NN compact model: LEVEL=73 (DirectNet) or LEVEL=74 (BSIMAR Transformer).
+            label = "NN" if level == 73 else "BSIM-AR"
             if NFIN is None:
-                raise ValueError(f"NN MOSFET (LEVEL=73) missing NFIN parameter: {line}")
+                raise ValueError(
+                    f"{label} (LEVEL={level}) MOSFET missing NFIN parameter: {line}")
 
             try:
-                from pycircuitsim.models.mosfet_directnet import (
-                    NMOS_NN, PMOS_NN,
-                )
+                if level == 73:
+                    from pycircuitsim.models.mosfet_directnet import (
+                        NMOS_NN as _NMOS, PMOS_NN as _PMOS,
+                    )
+                else:
+                    from pycircuitsim.models.mosfet_bsimar import (
+                        NMOS_BSIMAR as _NMOS, PMOS_BSIMAR as _PMOS,
+                    )
             except ImportError:
                 raise ImportError(
-                    "NN MOSFET model requires PyTorch. "
+                    f"{label} MOSFET model requires PyTorch. "
                     "Install: pip install torch"
                 )
 
-            # Resolve model path and process params from .model params
-            from bsimar.config import (
-                CHECKPOINT_DIR, TECH_CONFIGS, PROCESS_PARAM_NAMES,
-            )
-            nn_model_path = model_params.get('MODEL_PATH', None)
-            nn_tech = model_params.get('TECH', None)
-            nn_vt = model_params.get('VT', None)  # Device variant: svt, lvt, rvt
-
-            # Resolve process parameters (7 params for universal model)
-            # Priority: direct params in netlist > TECH+VT lookup > default variant
-            tech_key = (nn_tech or "asap7").lower()
+            tech_key = (model_params.get('TECH') or "asap7").lower()
+            vt_key = (model_params.get('VT') or "svt").lower()
             device_key = model_type.lower()
-            nn_process_params = None
-            nn_phig = None
 
-            # Check for direct process param values in netlist
-            direct_params = {}
-            for pname in PROCESS_PARAM_NAMES:
-                val_str = model_params.get(pname, None)
-                if val_str is not None:
-                    direct_params[pname.lower()] = float(val_str)
-
-            if direct_params:
-                # Direct params specified — use them (may be partial)
-                nn_process_params = direct_params
-                nn_phig = direct_params.get("phig", None)
-            elif tech_key in TECH_CONFIGS:
-                tech_cfg = TECH_CONFIGS[tech_key]
-                if nn_vt is not None:
-                    vt_lower = nn_vt.lower()
-                    if vt_lower in tech_cfg.variants:
-                        pp = tech_cfg.variants[vt_lower].get_process_params(device_key)
-                        nn_process_params = pp.as_dict()
-                        nn_phig = pp.phig
-                    else:
-                        raise ValueError(
-                            f"Unknown VT={nn_vt} for {tech_key}. "
-                            f"Available: {list(tech_cfg.variants.keys())}")
-                elif tech_cfg.default_variant and tech_cfg.variants:
-                    pp = tech_cfg.variants[tech_cfg.default_variant].get_process_params(device_key)
-                    nn_process_params = pp.as_dict()
-                    nn_phig = pp.phig
-
-            # Resolve model path: prefer universal > per-tech > default
-            if nn_model_path is None:
-                universal_path = CHECKPOINT_DIR / f"universal_{device_key}_best.pt"
-                if universal_path.exists():
-                    nn_model_path = str(universal_path)
-                elif nn_tech and nn_tech.lower() != 'asap7':
-                    nn_model_path = str(CHECKPOINT_DIR / f"{nn_tech.lower()}_{device_key}_best.pt")
-                else:
-                    nn_model_path = str(CHECKPOINT_DIR / f"{device_key}_best.pt")
-
-            if model_type.upper() == 'NMOS':
-                mosfet = NMOS_NN(
-                    name=name,
-                    nodes=nodes,
-                    model_path=nn_model_path,
-                    L=L,
-                    NFIN=NFIN,
-                    phig=nn_phig,
-                    process_params=nn_process_params,
-                )
-            elif model_type.upper() == 'PMOS':
-                mosfet = PMOS_NN(
-                    name=name,
-                    nodes=nodes,
-                    model_path=nn_model_path,
-                    L=L,
-                    NFIN=NFIN,
-                    phig=nn_phig,
-                    process_params=nn_process_params,
-                )
-            else:
-                raise ValueError(f"Unknown MOSFET model type: {model_type}")
-
-        elif level == 74:
-            # BSIM-AR Transformer compact model
-            if NFIN is None:
-                raise ValueError(f"BSIM-AR (LEVEL=74) MOSFET missing NFIN parameter: {line}")
-
-            try:
-                from pycircuitsim.models.mosfet_bsimar import NMOS_BSIMAR, PMOS_BSIMAR
-            except ImportError:
-                raise ImportError(
-                    "BSIM-AR model requires PyTorch and BSIM-AR package. "
-                    "Install: pip install torch"
-                )
-
-            # Resolve model path and process params (same logic as LEVEL=73)
-            from bsimar.config import (
-                TECH_CONFIGS, PROCESS_PARAM_NAMES,
-                CHECKPOINT_DIR as AR_CHECKPOINT_DIR,
+            nn_model_path, nn_tech_code = _resolve_nn_checkpoint(
+                level=level,
+                device_key=device_key,
+                tech_key=tech_key,
+                vt_key=vt_key,
+                explicit_path=model_params.get('MODEL_PATH'),
+                netlist_name=name,
             )
 
-            nn_tech = model_params.get('TECH', None)
-            nn_vt = model_params.get('VT', None)
-            ar_model_path = model_params.get('MODEL_PATH', None)
-
-            tech_key = (nn_tech or "asap7").lower()
-            device_key = model_type.lower()
-            nn_process_params = None
-            nn_phig = None
-
-            # Check for direct process param values in netlist
-            direct_params = {}
-            for pname in PROCESS_PARAM_NAMES:
-                val_str = model_params.get(pname, None)
-                if val_str is not None:
-                    direct_params[pname.lower()] = float(val_str)
-
-            if direct_params:
-                nn_process_params = direct_params
-                nn_phig = direct_params.get("phig", None)
-            elif tech_key in TECH_CONFIGS:
-                tech_cfg = TECH_CONFIGS[tech_key]
-                if nn_vt is not None:
-                    vt_lower = nn_vt.lower()
-                    if vt_lower in tech_cfg.variants:
-                        pp = tech_cfg.variants[vt_lower].get_process_params(device_key)
-                        nn_process_params = pp.as_dict()
-                        nn_phig = pp.phig
-                    else:
-                        raise ValueError(
-                            f"Unknown VT={nn_vt} for {tech_key}. "
-                            f"Available: {list(tech_cfg.variants.keys())}")
-                elif tech_cfg.default_variant and tech_cfg.variants:
-                    pp = tech_cfg.variants[tech_cfg.default_variant].get_process_params(device_key)
-                    nn_process_params = pp.as_dict()
-                    nn_phig = pp.phig
-
-            # Resolve model path: prefer universal > per-tech > default
-            if ar_model_path is None:
-                universal_path = AR_CHECKPOINT_DIR / f"ar_universal_{device_key}_best.pt"
-                if universal_path.exists():
-                    ar_model_path = str(universal_path)
-                elif nn_tech:
-                    ar_model_path = str(AR_CHECKPOINT_DIR / f"ar_{nn_tech.lower()}_{device_key}_best.pt")
-                else:
-                    ar_model_path = str(AR_CHECKPOINT_DIR / f"ar_{device_key}_best.pt")
+            nn_kwargs = dict(
+                name=name, nodes=nodes, model_path=nn_model_path,
+                L=L, NFIN=NFIN, tech_code=nn_tech_code,
+            )
 
             if model_type.upper() == 'NMOS':
-                mosfet = NMOS_BSIMAR(
-                    name=name,
-                    nodes=nodes,
-                    model_path=ar_model_path,
-                    L=L,
-                    NFIN=NFIN,
-                    phig=nn_phig,
-                    process_params=nn_process_params,
-                )
+                mosfet = _NMOS(**nn_kwargs)
             elif model_type.upper() == 'PMOS':
-                mosfet = PMOS_BSIMAR(
-                    name=name,
-                    nodes=nodes,
-                    model_path=ar_model_path,
-                    L=L,
-                    NFIN=NFIN,
-                    phig=nn_phig,
-                    process_params=nn_process_params,
-                )
+                mosfet = _PMOS(**nn_kwargs)
             else:
                 raise ValueError(f"Unknown MOSFET model type: {model_type}")
 
@@ -888,18 +842,24 @@ class Parser:
         model_type = parts[1].upper()
 
         # Parse parameters (supports key=value format)
+        # String-valued params (TECH, VT, MODEL_PATH) are stored as-is;
+        # numeric params are converted via _parse_value.
+        _STRING_PARAMS = {"TECH", "VT", "MODEL_PATH"}
         params = {}
         for part in parts[2:]:
             if '=' in part:
                 key, value = part.split('=', 1)
-                key = key.strip()
+                key = key.strip().upper()
                 value = value.strip()
-                if key and value:  # Skip empty keys or values
-                    try:
-                        params[key.upper()] = self._parse_value(value)
-                    except ValueError:
-                        # Skip parameters that can't be parsed (e.g., empty values)
-                        pass
+                if key and value:
+                    if key in _STRING_PARAMS:
+                        params[key] = value
+                    else:
+                        try:
+                            params[key] = self._parse_value(value)
+                        except ValueError:
+                            # Store as string for unknown params
+                            params[key] = value
 
         # Store model definition
         self.models[model_name] = {

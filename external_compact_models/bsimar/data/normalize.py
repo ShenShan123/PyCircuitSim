@@ -118,35 +118,21 @@ def _build_combined_input(
     inputs: np.ndarray,
     geometry: np.ndarray,
 ) -> np.ndarray:
-    """Combine voltage inputs with geometry features.
+    """Combine voltage inputs with geometry features (no process params).
 
-    Geometry column layouts (backward-compatible):
-      (N,  2): [NFIN, T]                         — legacy
-      (N,  3): [NFIN, T, PHIG]                   — Phase 13
-      (N,  9): [NFIN, T, PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW]  — 7-param
-      (N, 14): [NFIN, T, <12 process params>]     — 12-param (old universal)
-      (N, 15): [NFIN, L, T, <12 process params>]  — 12-param + L (current)
+    Returns (N, 7): [V(4), NFIN_log, L, T]. Process parameters in
+    geometry columns 3:15 are ignored — the tech identity is carried
+    by a discrete tech code, not by continuous process params.
 
-    Returns combined feature matrix of shape (N, 4+k).
+    Expects geometry shape (N, 15): [NFIN, L, T, <12 proc params>].
     """
+    assert geometry.shape[1] == 15, (
+        f"Expected 15-col geometry [NFIN, L, T, 12_proc], "
+        f"got {geometry.shape[1]}")
     nfin_log = np.log2(np.clip(geometry[:, 0], 1.0, None))
-
-    if geometry.shape[1] == 15:
-        L_col = geometry[:, 1]
-        temperature = geometry[:, 2]
-        proc_params = geometry[:, 3:]
-        return np.column_stack(
-            [inputs, nfin_log, L_col, temperature, proc_params])
-
-    temperature = geometry[:, 1]
-    if geometry.shape[1] >= 9:
-        proc_params = geometry[:, 2:]
-        return np.column_stack(
-            [inputs, nfin_log, temperature, proc_params])
-    elif geometry.shape[1] >= 3:
-        phig = geometry[:, 2]
-        return np.column_stack([inputs, nfin_log, temperature, phig])
-    return np.column_stack([inputs, nfin_log, temperature])
+    L_col = geometry[:, 1]
+    temperature = geometry[:, 2]
+    return np.column_stack([inputs, nfin_log, L_col, temperature])
 
 
 # ── BSIMARNormalizer ─────────────────────────────────────────────────────────
@@ -173,6 +159,12 @@ class BSIMARNormStats:
     input_max: np.ndarray
     # asinh-mode per-target geometric-mean scale
     asinh_scale: Optional[np.ndarray] = None
+    # Which aggregator was used by the trainer's phys-best tracker. The
+    # legacy `np.nanmean` is fragile under AR-rollout id-column blowup
+    # (see 2026-05-03 phys-best-tracker bug plan §2B); fixed runs use
+    # `np.nanmedian` and tag stats accordingly so the simulator-side
+    # loader can refuse to load `_best.phys.pt` from legacy runs.
+    phys_best_metric: str = "legacy_mean"
 
     def save(self, path: str) -> None:
         data = {
@@ -183,6 +175,7 @@ class BSIMARNormStats:
             "input_std": self.input_std,
             "input_min": self.input_min,
             "input_max": self.input_max,
+            "phys_best_metric": np.array(str(self.phys_best_metric)),
         }
         if self.asinh_scale is not None:
             data["asinh_scale"] = self.asinh_scale
@@ -192,6 +185,11 @@ class BSIMARNormStats:
     def load(cls, path: str) -> "BSIMARNormStats":
         d = np.load(path, allow_pickle=True)
         mode = str(d["mode"])
+        # Backward-compat: legacy norm.npz files lack `phys_best_metric`;
+        # default to `"legacy_mean"` to flag the suspect aggregator.
+        phys_best_metric = (
+            str(d["phys_best_metric"]) if "phys_best_metric" in d.files
+            else "legacy_mean")
         return cls(
             mode=mode,
             output_mean=d["output_mean"],
@@ -201,6 +199,7 @@ class BSIMARNormStats:
             input_min=d["input_min"],
             input_max=d["input_max"],
             asinh_scale=d["asinh_scale"] if "asinh_scale" in d.files else None,
+            phys_best_metric=phys_best_metric,
         )
 
 
@@ -212,6 +211,10 @@ class BSIMARNormalizer:
     where per-target ``s_k`` is the geometric mean of ``|y|`` over the
     train split, masked at ``OUTPUT_LOG_FLOORS`` and clamped to the
     floor.
+
+    Input: 7-dim feature vector [V(4), NFIN_log, L, T]. Process params
+    are not included — tech identity is carried by a discrete code
+    outside the normalizer.
     """
 
     def __init__(self, mode: str = "asinh",
@@ -220,9 +223,13 @@ class BSIMARNormalizer:
         self.mode = mode
         self.stats = stats
 
+    def _combined(self, inputs: np.ndarray,
+                  geometry: np.ndarray) -> np.ndarray:
+        return _build_combined_input(inputs, geometry)
+
     def fit(self, inputs: np.ndarray, geometry: np.ndarray,
             outputs: np.ndarray) -> "BSIMARNormalizer":
-        combined = _build_combined_input(inputs, geometry)
+        combined = self._combined(inputs, geometry)
 
         # Inputs are voltages (~0.5V scale) and process params
         # (~1e-3 to ~1 scale). 1e-12 safely catches truly constant
@@ -301,7 +308,7 @@ class BSIMARNormalizer:
     def normalize_inputs(self, inputs: np.ndarray,
                          geometry: np.ndarray) -> np.ndarray:
         assert self.stats is not None, "Must call fit() first"
-        combined = _build_combined_input(inputs, geometry)
+        combined = self._combined(inputs, geometry)
         return (combined - self.stats.input_mean) / self.stats.input_std
 
     def normalize_outputs(self, outputs: np.ndarray) -> np.ndarray:
