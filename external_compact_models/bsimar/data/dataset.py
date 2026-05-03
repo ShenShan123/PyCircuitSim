@@ -111,10 +111,9 @@ def load_and_split_bsimar(
     If the npz contains a ``sample_class`` column (B1-regenerated
     datasets onward, see ``meta_sample_class_names``), it is carried
     through filtering / exclusion / splitting and attached to each
-    ``MOSFETDataset``. The sample class codes are needed by the slope
-    loss (``SlopeMatchLoss``) to filter to grid-class rows. Old
-    datasets without this column work as before; ``Dataset.sample_class``
-    will be ``None`` and the 3-tuple ``__getitem__`` form is used.
+    ``MOSFETDataset``. Old datasets without this column work as before;
+    ``Dataset.sample_class`` will be ``None`` and the 3-tuple
+    ``__getitem__`` form is used.
 
     Args:
         data_path: Path to universal .npz dataset.

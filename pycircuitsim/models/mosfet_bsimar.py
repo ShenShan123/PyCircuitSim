@@ -29,10 +29,9 @@ if str(_BSIMAR_PARENT) not in sys.path:
 
 from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase, _get_nn_device
 from bsimar.models.transformer import TransformerEncoderModel
-from bsimar.models.id_gate import apply_id_gate
 from bsimar.config import UNKNOWN_CODE_ID
 from bsimar.data.normalize import (
-    BSIMARNormStats, BSIMARNormalizer,
+    BSIMARNormStats,
     BSIMAR_COLUMN_ORDER, OUTPUT_COLUMN_ORDER,
 )
 
@@ -132,10 +131,6 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
         assert self._norm_stats.mode == "asinh", (
             f"BSIMAR LEVEL=74 expects an asinh-mode normaliser, "
             f"got mode={self._norm_stats.mode}")
-        # B3: build a BSIMARNormalizer wrapper for apply_id_gate.
-        self._normalizer = BSIMARNormalizer(
-            mode=self._norm_stats.mode, stats=self._norm_stats)
-        self._id_gate_active = bool(self._norm_stats.id_gate)
 
         # Pre-compute normalised geometry features (constant per device).
         # v4: 3 geometry features [NFIN_log, L, T]; tech code is a
@@ -169,28 +164,6 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
 
         # Move model + constants to GPU (reuse parent's _setup_gpu)
         self._setup_gpu()
-
-    # ── asinh denormalisation ────────────────────────────────────────────
-
-    def _denorm_scalar(self, val_norm: float, out_name: str) -> float:
-        stats = self._norm_stats
-        col = _OUT_IDX[out_name]
-        u = val_norm * float(stats.output_std[col]) + float(stats.output_mean[col])
-        return float(stats.asinh_scale[col]) * float(np.sinh(u))
-
-    def _denorm_derivative(
-        self, deriv_norm: float, out_name: str, in_col: int, phys_val: float,
-    ) -> float:
-        stats = self._norm_stats
-        col = _OUT_IDX[out_name]
-        in_std = float(stats.input_std[in_col])
-        if in_std < 1e-12:
-            return 0.0
-        asinh_scale = float(stats.asinh_scale[col])
-        out_std = float(stats.output_std[col])
-        dy_phys_dy_zscore = out_std * np.sqrt(
-            asinh_scale * asinh_scale + phys_val * phys_val)
-        return float(deriv_norm) * float(dy_phys_dy_zscore) / in_std
 
     # ── Evaluation ───────────────────────────────────────────────────────
 
@@ -240,17 +213,6 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
             out = self._nn_model(
                 x_full, tech_codes=self._tech_code_tensor)
 
-            # B3 structural Vds gate (Sprint S-ARCH-A). When active,
-            # replace the id slot in BSIMAR_COLUMN_ORDER (index 4) with
-            # the gated value before extracting derivatives. gm/gds will
-            # then be derivatives of id_gated, matching the training-time
-            # loss target.
-            if self._id_gate_active:
-                out = apply_id_gate(
-                    x_full, out, self._normalizer,
-                    id_idx_in_output=_BSIMAR_IDX_ID, vt_arch=0.04,
-                )
-
             grad_id = torch.autograd.grad(
                 out[:, _BSIMAR_IDX_ID].sum(), x_v,
                 create_graph=False, retain_graph=True,
@@ -264,49 +226,43 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
                 create_graph=False, retain_graph=False,
             )[0]
 
-        # Denormalise scalar predictions
-        id_phys = self._denorm_scalar(out[0, _BSIMAR_IDX_ID].item(), "id")
-        qg_phys = self._denorm_scalar(out[0, _BSIMAR_IDX_QG].item(), "qg")
-        qd_phys = self._denorm_scalar(out[0, _BSIMAR_IDX_QD].item(), "qd")
-        qb_phys = self._denorm_scalar(out[0, _BSIMAR_IDX_QB].item(), "qb")
+        # Column indices for normaliser stats (always OUTPUT_COLUMN_ORDER).
+        id_col = _OUT_IDX["id"]
+        qg_col = _OUT_IDX["qg"]
+        qd_col = _OUT_IDX["qd"]
+        qb_col = _OUT_IDX["qb"]
+
+        # Denormalise scalar predictions (parent methods handle asinh chain rule).
+        id_phys = self._denorm_scalar(out[0, _BSIMAR_IDX_ID].item(), id_col)
+        qg_phys = self._denorm_scalar(out[0, _BSIMAR_IDX_QG].item(), qg_col)
+        qd_phys = self._denorm_scalar(out[0, _BSIMAR_IDX_QD].item(), qd_col)
+        qb_phys = self._denorm_scalar(out[0, _BSIMAR_IDX_QB].item(), qb_col)
         # Enforce charge conservation: qs = -(qg + qd + qb)
         qs_phys = -(qg_phys + qd_phys + qb_phys)
 
         # Denormalise autograd conductances.
         # Negate gm/gmb: d(id)/d(V) → d(-id)/d(V) = d(i_leaving)/d(V)
         # to match PyCMG's always-positive gm convention used by the solver.
-        gm_phys = -self._denorm_derivative(
-            grad_id[0, 1].item(), "id", in_col=1, phys_val=id_phys)
-        gds_phys = self._denorm_derivative(
-            grad_id[0, 0].item(), "id", in_col=0, phys_val=id_phys)
-        gmb_phys = -self._denorm_derivative(
-            grad_id[0, 3].item(), "id", in_col=3, phys_val=id_phys)
+        gm_phys = -self._denorm_full_derivative(
+            grad_id[0, 1].item(), out_col=id_col, in_col=1, phys_val=id_phys)
+        gds_phys = self._denorm_full_derivative(
+            grad_id[0, 0].item(), out_col=id_col, in_col=0, phys_val=id_phys)
+        gmb_phys = -self._denorm_full_derivative(
+            grad_id[0, 3].item(), out_col=id_col, in_col=3, phys_val=id_phys)
 
         # Denormalise autograd capacitances
-        cgg_phys = self._denorm_derivative(
-            grad_qg[0, 1].item(), "qg", in_col=1, phys_val=qg_phys)
-        cgd_phys = self._denorm_derivative(
-            grad_qg[0, 0].item(), "qg", in_col=0, phys_val=qg_phys)
-        cgs_phys = self._denorm_derivative(
-            grad_qg[0, 2].item(), "qg", in_col=2, phys_val=qg_phys)
-        cdg_phys = self._denorm_derivative(
-            grad_qd[0, 1].item(), "qd", in_col=1, phys_val=qd_phys)
-        cdd_phys = self._denorm_derivative(
-            grad_qd[0, 0].item(), "qd", in_col=0, phys_val=qd_phys)
+        cgg_phys = self._denorm_full_derivative(
+            grad_qg[0, 1].item(), out_col=qg_col, in_col=1, phys_val=qg_phys)
+        cgd_phys = self._denorm_full_derivative(
+            grad_qg[0, 0].item(), out_col=qg_col, in_col=0, phys_val=qg_phys)
+        cgs_phys = self._denorm_full_derivative(
+            grad_qg[0, 2].item(), out_col=qg_col, in_col=2, phys_val=qg_phys)
+        cdg_phys = self._denorm_full_derivative(
+            grad_qd[0, 1].item(), out_col=qd_col, in_col=1, phys_val=qd_phys)
+        cdd_phys = self._denorm_full_derivative(
+            grad_qd[0, 0].item(), out_col=qd_col, in_col=0, phys_val=qd_phys)
 
-        # Physics-based gds floor: gds >= |id| * lambda_min.
-        # NN learns near-flat Id-Vds in saturation, so autograd gds ≈ 0.
-        # Without a reasonable floor, inverter gain → ∞ and NR diverges.
-        # At FinFET 16nm, BSIM-CMG lambda = 0.3-1.2 V⁻¹ (strong DIBL+CLM).
-        # The floor only affects the NR Jacobian, not the converged current,
-        # so a generous value is safe for accuracy.
-        gds_floor = max(abs(id_phys) * 0.5, 1e-12)
-        if gds_phys < gds_floor:
-            import logging
-            logging.getLogger(__name__).debug(
-                "gds=%.3e below floor=%.3e (|id|=%.3e) — clamped",
-                gds_phys, gds_floor, abs(id_phys))
-        gds_phys = max(gds_phys, gds_floor)
+        gds_phys = self._floor_gds(id_phys, gds_phys)
 
         result = {
             "id": id_phys, "gm": gm_phys, "gds": gds_phys, "gmb": gmb_phys,

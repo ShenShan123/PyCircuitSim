@@ -6,7 +6,6 @@ from bsimar.training.trainer import (
     train_transformer,
     _train_epoch_direct, _validate_epoch_direct,
     _train_epoch_mae, _validate_epoch_ar, _validate_epoch_tf,
-    _train_epoch_scheduled_mae,
     test_model,
 )
 
@@ -15,6 +14,5 @@ __all__ = [
     "train_directnet", "train_transformer",
     "_train_epoch_direct", "_validate_epoch_direct",
     "_train_epoch_mae", "_validate_epoch_ar", "_validate_epoch_tf",
-    "_train_epoch_scheduled_mae",
     "test_model",
 ]

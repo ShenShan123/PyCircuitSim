@@ -42,9 +42,8 @@ if str(_BSIMAR_PARENT) not in sys.path:
 
 from pycircuitsim.models.base import Component
 from bsimar.models.direct_net import DirectNet
-from bsimar.models.id_gate import apply_id_gate
 from bsimar.config import UNKNOWN_CODE_ID
-from bsimar.data.normalize import BSIMARNormStats, BSIMARNormalizer
+from bsimar.data.normalize import BSIMARNormStats
 
 
 import logging
@@ -142,12 +141,6 @@ class _MOSFETNNBase(Component):
         self._output_dim = output_dim
 
         self._norm_stats = BSIMARNormStats.load(str(norm_path))
-        # Build a BSIMARNormalizer wrapper around the stats so we can
-        # call apply_id_gate (B3). The gate is applied at inference
-        # only when the checkpoint was trained with id_gate=True.
-        self._normalizer = BSIMARNormalizer(
-            mode=self._norm_stats.mode, stats=self._norm_stats)
-        self._id_gate_active = bool(self._norm_stats.id_gate)
 
         # Pre-compute normalized geometry features (constant per device).
         # 3 geometry features [NFIN_log, L, T] at indices [4:7]
@@ -278,18 +271,6 @@ class _MOSFETNNBase(Component):
         with torch.enable_grad():
             out = self._nn_model(x_full, tech_codes=self._tech_code_tensor)
 
-            # Sprint S-ARCH-A (B3): if the checkpoint was trained with
-            # the structural Vds gate, apply it here before any autograd
-            # derivatives are extracted. The gate replaces id_raw_norm
-            # with id_gated_norm = norm(denorm(id_raw_norm) * tanh(Vds/VT_arch)).
-            # gm/gds extracted via autograd then correspond to the gated id,
-            # which is what the simulator and the loss saw at training time.
-            if self._id_gate_active:
-                out = apply_id_gate(
-                    x_full, out, self._normalizer,
-                    id_idx_in_output=0, vt_arch=0.04,
-                )
-
             # Autograd: conductances from id (col 0)
             grad_id = torch.autograd.grad(
                 out[:, 0].sum(), x_v, create_graph=False, retain_graph=True
@@ -337,17 +318,7 @@ class _MOSFETNNBase(Component):
         cdd_phys = self._denorm_full_derivative(
             grad_qd[0, 0].item(), out_col=5, in_col=0, phys_val=qd_phys)
 
-        # Physics-based gds floor: gds >= |id| * lambda_min.
-        # NN learns near-flat Id-Vds in saturation, so autograd gds ≈ 0.
-        # Without a reasonable floor, inverter gain → ∞ and NR diverges.
-        # At FinFET 16nm, BSIM-CMG lambda = 0.3-1.2 V⁻¹ (strong DIBL+CLM).
-        # The floor only affects the NR Jacobian, not the converged current,
-        # so a generous value is safe for accuracy.
-        gds_floor = max(abs(id_phys) * 0.5, 1e-12)
-        if gds_phys < gds_floor:
-            _logger.debug("gds=%.3e below floor=%.3e (|id|=%.3e) — clamped",
-                          gds_phys, gds_floor, abs(id_phys))
-        gds_phys = max(gds_phys, gds_floor)
+        gds_phys = self._floor_gds(id_phys, gds_phys)
 
         return {
             "id": id_phys, "gm": gm_phys, "gds": gds_phys, "gmb": gmb_phys,
@@ -355,6 +326,23 @@ class _MOSFETNNBase(Component):
             "cgg": cgg_phys, "cgd": cgd_phys, "cgs": cgs_phys,
             "cdg": cdg_phys, "cdd": cdd_phys,
         }
+
+    @staticmethod
+    def _floor_gds(id_phys: float, gds_phys: float) -> float:
+        """Physics-based gds floor: gds >= max(|id|·λ_min, 1e-12).
+
+        NN learns near-flat Id-Vds in saturation, so autograd gds ≈ 0.
+        Without a reasonable floor, inverter gain → ∞ and NR diverges.
+        At FinFET 16nm, BSIM-CMG λ = 0.3-1.2 V⁻¹ (strong DIBL+CLM).
+        The floor only affects the NR Jacobian, not the converged
+        current, so a generous value is safe for accuracy.
+        """
+        floor = max(abs(id_phys) * 0.5, 1e-12)
+        if gds_phys < floor:
+            _logger.debug(
+                "gds=%.3e below floor=%.3e (|id|=%.3e) — clamped",
+                gds_phys, floor, abs(id_phys))
+        return max(gds_phys, floor)
 
     def _denorm_scalar(self, val_norm: float, col_idx: int) -> float:
         """Denormalize a single scalar output from normalized space.
@@ -505,8 +493,7 @@ class _MOSFETNNBase(Component):
         result["gds"] = result["gds"] * f_sym + gds_linear
 
         # Re-apply gds floor on corrected values
-        gds_floor = max(abs(result["id"]) * 0.5, 1e-12)
-        result["gds"] = max(result["gds"], gds_floor)
+        result["gds"] = self._floor_gds(result["id"], result["gds"])
 
         # Sign enforcement: NMOS id must be ≤ 0 (current into drain),
         # PMOS id must be ≥ 0 (current into drain in PMOS convention).

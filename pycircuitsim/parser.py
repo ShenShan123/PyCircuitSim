@@ -49,6 +49,81 @@ from pycircuitsim.models import (
 from pycircuitsim.config import BSIMCMG_OSDI_PATH, GENERIC_MODELCARD_DIR, ASAP7_MODELCARD_DIR
 
 
+def _resolve_nn_checkpoint(
+    *,
+    level: int,
+    device_key: str,
+    tech_key: str,
+    vt_key: str,
+    explicit_path: Optional[str],
+    netlist_name: str,
+) -> Tuple[str, int]:
+    """Resolve checkpoint path and tech code for LEVEL=73 / LEVEL=74.
+
+    Cascade: explicit ``MODEL_PATH`` > v4 universal > per-tech > bare.
+    For LEVEL=74 (BSIMAR) the universal cascade prefers ``_best.phys.pt``
+    over ``_best.pt`` only when the matching ``_norm.npz`` was saved with
+    the median-aggregated phys-score (post-2026-05-03 fix); pre-fix
+    files default to ``_best.pt`` to avoid the AR-rollout id-column
+    blowup.
+    """
+    from bsimar.config import (
+        CHECKPOINT_DIR, tech_variant_to_code, UNKNOWN_CODE_ID,
+    )
+
+    if explicit_path is not None:
+        path = explicit_path
+    elif level == 73:
+        v4_path = CHECKPOINT_DIR / f"v4_dn_universal_{device_key}_best.pt"
+        per_tech_path = CHECKPOINT_DIR / f"{tech_key}_{device_key}_best.pt"
+        bare_path = CHECKPOINT_DIR / f"{device_key}_best.pt"
+        if v4_path.exists():
+            path = str(v4_path)
+        elif per_tech_path.exists():
+            path = str(per_tech_path)
+        else:
+            path = str(bare_path)
+    else:  # level == 74
+        v4_phys_path = CHECKPOINT_DIR / f"v4_universal_{device_key}_best.phys.pt"
+        v4_path = CHECKPOINT_DIR / f"v4_universal_{device_key}_best.pt"
+        v4_norm_path = CHECKPOINT_DIR / f"v4_universal_{device_key}_norm.npz"
+        per_tech_path = CHECKPOINT_DIR / f"ar_{tech_key}_{device_key}_best.pt"
+        bare_path = CHECKPOINT_DIR / f"ar_{device_key}_best.pt"
+
+        phys_trustworthy = False
+        if v4_phys_path.exists() and v4_norm_path.exists():
+            try:
+                from bsimar.data.normalize import BSIMARNormStats
+                _ns = BSIMARNormStats.load(str(v4_norm_path))
+                phys_trustworthy = (
+                    getattr(_ns, "phys_best_metric", "legacy_mean")
+                    == "median")
+            except Exception:
+                phys_trustworthy = False
+
+        if phys_trustworthy:
+            path = str(v4_phys_path)
+        elif v4_path.exists():
+            path = str(v4_path)
+        elif v4_phys_path.exists():
+            # Last-resort fallback when no plain best.pt is on disk.
+            path = str(v4_phys_path)
+        elif per_tech_path.exists():
+            path = str(per_tech_path)
+        else:
+            path = str(bare_path)
+
+    tech_code = tech_variant_to_code(tech_key, vt_key)
+    if tech_code == UNKNOWN_CODE_ID:
+        import warnings
+        warnings.warn(
+            f"MOSFET {netlist_name}: TECH={tech_key} VT={vt_key} maps to "
+            f"UNKNOWN tech code ({UNKNOWN_CODE_ID}). "
+            "Predictions may be less accurate."
+        )
+    return path, tech_code
+
+
 class Parser:
     """
     HSPICE-like netlist parser.
@@ -570,52 +645,40 @@ class Parser:
             else:
                 raise ValueError(f"Unknown MOSFET model type: {model_type}")
 
-        elif level == 73:
-            # NN-based compact model (v4 tech-code embedding)
+        elif level in (73, 74):
+            # NN compact model: LEVEL=73 (DirectNet) or LEVEL=74 (BSIMAR Transformer).
+            label = "NN" if level == 73 else "BSIM-AR"
             if NFIN is None:
-                raise ValueError(f"NN MOSFET (LEVEL=73) missing NFIN parameter: {line}")
+                raise ValueError(
+                    f"{label} (LEVEL={level}) MOSFET missing NFIN parameter: {line}")
 
             try:
-                from pycircuitsim.models.mosfet_directnet import (
-                    NMOS_NN, PMOS_NN,
-                )
+                if level == 73:
+                    from pycircuitsim.models.mosfet_directnet import (
+                        NMOS_NN as _NMOS, PMOS_NN as _PMOS,
+                    )
+                else:
+                    from pycircuitsim.models.mosfet_bsimar import (
+                        NMOS_BSIMAR as _NMOS, PMOS_BSIMAR as _PMOS,
+                    )
             except ImportError:
                 raise ImportError(
-                    "NN MOSFET model requires PyTorch. "
+                    f"{label} MOSFET model requires PyTorch. "
                     "Install: pip install torch"
                 )
 
-            from bsimar.config import (
-                CHECKPOINT_DIR, tech_variant_to_code, UNKNOWN_CODE_ID,
-            )
-            nn_model_path = model_params.get('MODEL_PATH', None)
-            nn_tech = model_params.get('TECH', None)
-            nn_vt = model_params.get('VT', None)
-
-            tech_key = (nn_tech or "asap7").lower()
+            tech_key = (model_params.get('TECH') or "asap7").lower()
+            vt_key = (model_params.get('VT') or "svt").lower()
             device_key = model_type.lower()
 
-            # Resolve model path: v4 universal > per-tech > bare
-            if nn_model_path is None:
-                v4_path = CHECKPOINT_DIR / f"v4_dn_universal_{device_key}_best.pt"
-                per_tech_path = CHECKPOINT_DIR / f"{tech_key}_{device_key}_best.pt"
-                bare_path = CHECKPOINT_DIR / f"{device_key}_best.pt"
-                if v4_path.exists():
-                    nn_model_path = str(v4_path)
-                elif per_tech_path.exists():
-                    nn_model_path = str(per_tech_path)
-                else:
-                    nn_model_path = str(bare_path)
-
-            # Resolve tech code from TECH+VT
-            nn_tech_code = tech_variant_to_code(
-                tech_key, (nn_vt or "svt").lower())
-            if nn_tech_code == UNKNOWN_CODE_ID:
-                import warnings
-                warnings.warn(
-                    f"MOSFET {name}: TECH={tech_key} VT={nn_vt} maps to UNKNOWN "
-                    f"tech code ({UNKNOWN_CODE_ID}). Predictions may be less accurate."
-                )
+            nn_model_path, nn_tech_code = _resolve_nn_checkpoint(
+                level=level,
+                device_key=device_key,
+                tech_key=tech_key,
+                vt_key=vt_key,
+                explicit_path=model_params.get('MODEL_PATH'),
+                netlist_name=name,
+            )
 
             nn_kwargs = dict(
                 name=name, nodes=nodes, model_path=nn_model_path,
@@ -623,95 +686,9 @@ class Parser:
             )
 
             if model_type.upper() == 'NMOS':
-                mosfet = NMOS_NN(**nn_kwargs)
+                mosfet = _NMOS(**nn_kwargs)
             elif model_type.upper() == 'PMOS':
-                mosfet = PMOS_NN(**nn_kwargs)
-            else:
-                raise ValueError(f"Unknown MOSFET model type: {model_type}")
-
-        elif level == 74:
-            # BSIM-AR Transformer compact model (v4 tech-code embedding)
-            if NFIN is None:
-                raise ValueError(f"BSIM-AR (LEVEL=74) MOSFET missing NFIN parameter: {line}")
-
-            try:
-                from pycircuitsim.models.mosfet_bsimar import NMOS_BSIMAR, PMOS_BSIMAR
-            except ImportError:
-                raise ImportError(
-                    "BSIM-AR model requires PyTorch and BSIM-AR package. "
-                    "Install: pip install torch"
-                )
-
-            from bsimar.config import (
-                CHECKPOINT_DIR as AR_CHECKPOINT_DIR,
-                tech_variant_to_code, UNKNOWN_CODE_ID,
-            )
-
-            nn_tech = model_params.get('TECH', None)
-            nn_vt = model_params.get('VT', None)
-            ar_model_path = model_params.get('MODEL_PATH', None)
-
-            tech_key = (nn_tech or "asap7").lower()
-            device_key = model_type.lower()
-
-            # Resolve model path: v4 universal (.phys > plain) > per-tech > bare
-            #
-            # `_best.phys.pt` is only trustworthy when the trainer's
-            # phys-best tracker used the median aggregator (post-fix
-            # 2026-05-03). Pre-fix v4/v5a/v5b/v5c phys-best files were
-            # corrupted by the mean-over-outputs blowup on AR rollout
-            # (plan §2B); the corresponding norm.npz lacks
-            # `phys_best_metric == "median"` so we fall back to
-            # `_best.pt` for those.
-            if ar_model_path is None:
-                v4_phys_path = AR_CHECKPOINT_DIR / f"v4_universal_{device_key}_best.phys.pt"
-                v4_path = AR_CHECKPOINT_DIR / f"v4_universal_{device_key}_best.pt"
-                v4_norm_path = AR_CHECKPOINT_DIR / f"v4_universal_{device_key}_norm.npz"
-                per_tech_path = AR_CHECKPOINT_DIR / f"ar_{tech_key}_{device_key}_best.pt"
-                bare_path = AR_CHECKPOINT_DIR / f"ar_{device_key}_best.pt"
-
-                phys_trustworthy = False
-                if v4_phys_path.exists() and v4_norm_path.exists():
-                    try:
-                        from bsimar.data.normalize import BSIMARNormStats
-                        _ns = BSIMARNormStats.load(str(v4_norm_path))
-                        phys_trustworthy = (
-                            getattr(_ns, "phys_best_metric", "legacy_mean")
-                            == "median")
-                    except Exception:
-                        phys_trustworthy = False
-
-                if phys_trustworthy:
-                    ar_model_path = str(v4_phys_path)
-                elif v4_path.exists():
-                    ar_model_path = str(v4_path)
-                elif v4_phys_path.exists():
-                    # Last-resort fallback (no plain best.pt on disk).
-                    ar_model_path = str(v4_phys_path)
-                elif per_tech_path.exists():
-                    ar_model_path = str(per_tech_path)
-                else:
-                    ar_model_path = str(bare_path)
-
-            # Resolve tech code from TECH+VT
-            nn_tech_code = tech_variant_to_code(
-                tech_key, (nn_vt or "svt").lower())
-            if nn_tech_code == UNKNOWN_CODE_ID:
-                import warnings
-                warnings.warn(
-                    f"MOSFET {name}: TECH={tech_key} VT={nn_vt} maps to UNKNOWN "
-                    f"tech code ({UNKNOWN_CODE_ID}). Predictions may be less accurate."
-                )
-
-            bsimar_kwargs = dict(
-                name=name, nodes=nodes, model_path=ar_model_path,
-                L=L, NFIN=NFIN, tech_code=nn_tech_code,
-            )
-
-            if model_type.upper() == 'NMOS':
-                mosfet = NMOS_BSIMAR(**bsimar_kwargs)
-            elif model_type.upper() == 'PMOS':
-                mosfet = PMOS_BSIMAR(**bsimar_kwargs)
+                mosfet = _PMOS(**nn_kwargs)
             else:
                 raise ValueError(f"Unknown MOSFET model type: {model_type}")
 

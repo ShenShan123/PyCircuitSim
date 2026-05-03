@@ -7,13 +7,12 @@ Two models, one CLI:
 
 Both models use a 7-dim continuous input plus a discrete tech-code
 embedding.  The Transformer recipe is hard-wired inside
-``train_transformer`` (asinh+zscore norm, MAE + LDS + Vov-LDS,
-parallel_caps, grouped_inputs, AR finetune phase).  The only
-caller-visible knobs are architecture (``--d-model``, ``--nhead``,
-``--num-layers``, ``--dim-feedforward``, ``--dropout``), schedule
-(``--epochs``, ``--batch-size``, ``--lr``, ``--patience``,
-``--ar-finetune-epochs``), and checkpoint naming (``--exp-name``,
-``--overwrite``).
+``train_transformer`` (asinh+zscore norm, MAE + LDS,
+parallel_caps, grouped_inputs).  The only caller-visible knobs are
+architecture (``--d-model``, ``--nhead``, ``--num-layers``,
+``--dim-feedforward``, ``--dropout``), schedule (``--epochs``,
+``--batch-size``, ``--lr``, ``--patience``), and checkpoint naming
+(``--exp-name``, ``--overwrite``).
 
 Usage:
     # DirectNet with tech-code embedding
@@ -81,9 +80,6 @@ def _run_direct(args: argparse.Namespace) -> None:
         exclude_techs=exclude,
         num_tech_codes=args.num_tech_codes,
         p_unknown=args.p_unknown,
-        slope_weight=args.slope_weight,
-        slope_warmup_frac=args.slope_warmup_frac,
-        id_gate=not args.no_id_gate,
     )
 
 
@@ -124,14 +120,10 @@ def _run_transformer(args: argparse.Namespace) -> None:
         device_type=args.device_type,
         config=config,
         device_str=device_str,
-        ar_finetune_epochs=args.ar_finetune_epochs,
         overwrite=args.overwrite,
         exclude_techs=exclude,
         num_tech_codes=args.num_tech_codes,
         p_unknown=args.p_unknown,
-        slope_weight=args.slope_weight,
-        slope_warmup_frac=args.slope_warmup_frac,
-        id_gate=not args.no_id_gate,
     )
 
 
@@ -184,10 +176,6 @@ def main() -> None:
     parser.add_argument("--overwrite", action="store_true",
                         help="[transformer] Allow overwriting an existing "
                              "<save_prefix>_best.pt checkpoint")
-    parser.add_argument("--ar-finetune-epochs", type=int, default=5,
-                        help="[transformer] AR-rollout fine-tune epochs "
-                             "after the cosine schedule. Default 5 "
-                             "(empirically sufficient).")
 
     # Tech-code embedding args (shared by both models)
     parser.add_argument("--exclude-techs", type=str, default=None,
@@ -199,26 +187,6 @@ def main() -> None:
     parser.add_argument("--p-unknown", type=float, default=0.1,
                         help="Prob of replacing tech code with UNKNOWN "
                              "during training (default 0.1)")
-
-    # B3 — Structural Vds gate on the Id output (Sprint S-ARCH-A)
-    parser.add_argument("--no-id-gate", action="store_true",
-                        help="[B3] Disable the structural Vds gate on the "
-                             "id output. By default the gate is ON: model "
-                             "id_phys is multiplied by tanh(Vds/0.04 V) "
-                             "and re-normalised before the loss, so "
-                             "Id(Vds=0)=0 holds structurally. "
-                             "Disable for legacy v4/v5b-style training.")
-
-    # Slope-loss (B2) args (shared by both models)
-    parser.add_argument("--slope-weight", type=float, default=0.0,
-                        help="[B2] Weight on the slope-match auxiliary "
-                             "loss (dId/dVg in normalised space). "
-                             "Default 0 = disabled. Only active on "
-                             "datasets that carry a sample_class column.")
-    parser.add_argument("--slope-warmup-frac", type=float, default=0.7,
-                        help="[B2] Fraction of total epochs to wait "
-                             "before activating slope loss (default "
-                             "0.7 = last 30%% of training).")
 
     args = parser.parse_args()
     set_seed(args.seed)

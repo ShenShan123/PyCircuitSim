@@ -50,7 +50,6 @@ def finetune_v4(
     epochs: int = 50,
     batch_size: int = 1024,
     lr: float = 1e-4,
-    ar_finetune_epochs: int = 3,
     device_str: str = "cpu",
     overwrite: bool = False,
 ) -> Tuple[nn.Module, BSIMARNormalizer]:
@@ -77,8 +76,7 @@ def finetune_v4(
     from bsimar.data.dataset import load_and_split_bsimar
     from bsimar.eval.metrics import compute_physical_metrics, print_metrics
     from bsimar.training.trainer import (
-        _train_epoch_mae, _validate_epoch_ar,
-        _train_epoch_scheduled_mae, test_model,
+        _train_epoch_mae, _validate_epoch_ar, test_model,
     )
 
     device = torch.device(device_str)
@@ -276,32 +274,6 @@ def finetune_v4(
                   f"val={val_loss:.5f}{status}")
 
         scheduler.step()
-
-    # AR fine-tune
-    if ar_finetune_epochs > 0 and phys_best_path.exists():
-        model.load_state_dict(
-            torch.load(str(phys_best_path), weights_only=True))
-        ft_lr = max(lr * 0.1, 1e-5)
-        print(f"\n[FT-AR] {ar_finetune_epochs} epochs at lr={ft_lr:.1e}")
-        ft_opt = optim.AdamW(model.parameters(), lr=ft_lr, weight_decay=1e-4)
-        for ft_ep in range(1, ar_finetune_epochs + 1):
-            t = _train_epoch_scheduled_mae(
-                model, train_loader, criterion, ft_opt, device, ss_ratio=1.0)
-            v = _validate_epoch_ar(model, val_loader, criterion, device)
-            pred_val, true_val = test_model(model, val_loader, device)
-            pred_val = unreorder_outputs(pred_val)
-            true_val = unreorder_outputs(true_val)
-            phys_m = compute_physical_metrics(pred_val, true_val, normalizer)
-            nrmse_avg = float(np.nanmean([m["NRMSE(%)"] for m in phys_m.values()]))
-            r2_avg = float(np.nanmean([m["R2"] for m in phys_m.values()]))
-            phys_score = nrmse_avg + 0.1 * (1.0 - r2_avg)
-            ps = ""
-            if phys_score < best_phys_score:
-                best_phys_score = phys_score
-                torch.save(model.state_dict(), str(phys_best_path))
-                ps = " *phys-best*"
-            print(f"  [FT-AR {ft_ep}] train={t['total']:.5f} "
-                  f"val={v['total']:.5f} nrmse={nrmse_avg:.3f}%{ps}")
 
     elapsed = time.time() - t_start
     print(f"\nDone in {elapsed:.0f}s")

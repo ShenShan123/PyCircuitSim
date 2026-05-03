@@ -84,7 +84,7 @@ def test_median_ranks_v5c_pmos_plain_below_phys_bug():
     from bsimar.config import OUTPUT_COLUMNS
     from bsimar.data.dataset import load_and_split_bsimar
     from bsimar.data.normalize import (
-        BSIMARNormStats, reorder_outputs, unreorder_outputs,
+        reorder_outputs, unreorder_outputs,
     )
     from bsimar.eval.metrics import compute_physical_metrics
     from bsimar.models.transformer import TransformerEncoderModel
@@ -108,8 +108,6 @@ def test_median_ranks_v5c_pmos_plain_below_phys_bug():
     test_loader = DataLoader(test_ds, batch_size=2048, shuffle=False)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    stats = BSIMARNormStats.load(str(norm))
-    id_gate_flag = bool(getattr(stats, "id_gate", False))
 
     def _score_for(ckpt_path: Path) -> float:
         model = TransformerEncoderModel(
@@ -126,9 +124,7 @@ def test_median_ranks_v5c_pmos_plain_below_phys_bug():
             str(ckpt_path), weights_only=True, map_location="cpu")
         model.load_state_dict(state)
         model.to(device).eval()
-        pred_norm, true_norm = test_model(
-            model, test_loader, device,
-            id_gate=id_gate_flag, normalizer=normalizer)
+        pred_norm, true_norm = test_model(model, test_loader, device)
         pred_norm = unreorder_outputs(pred_norm)
         true_norm = unreorder_outputs(true_norm)
         m = compute_physical_metrics(pred_norm, true_norm, normalizer)
