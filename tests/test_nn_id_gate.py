@@ -250,13 +250,18 @@ def test_formula_asinh_one_row():
     vds = vd_phys - vs_phys
     gate = np.tanh(vds / VT_ARCH)
     id_idx = ID_IDX_BSIMAR
-    s_id = stats.asinh_scale[id_idx]
-    u = out_row[id_idx] * stats.output_std[id_idx] + stats.output_mean[id_idx]
+    # With the post-fix default `id_idx_in_stats=0`, the gate must read
+    # id's stats from the OUTPUT_COLUMN_ORDER index 0 — independent of
+    # ID_IDX_BSIMAR=4.
+    stats_idx = 0
+    s_id = stats.asinh_scale[stats_idx]
+    u = (out_row[id_idx] * stats.output_std[stats_idx]
+         + stats.output_mean[stats_idx])
     id_raw_phys = s_id * np.sinh(u)
     id_gated_phys_expected = id_raw_phys * gate
     id_gated_norm_expected = (
-        np.arcsinh(id_gated_phys_expected / s_id) - stats.output_mean[id_idx]
-    ) / stats.output_std[id_idx]
+        np.arcsinh(id_gated_phys_expected / s_id) - stats.output_mean[stats_idx]
+    ) / stats.output_std[stats_idx]
 
     actual = float(out_gated[0, id_idx].item())
     np.testing.assert_allclose(actual, id_gated_norm_expected, atol=1e-5, rtol=1e-5)
@@ -266,6 +271,112 @@ def test_formula_asinh_one_row():
         if j == id_idx:
             continue
         assert float(out_gated[0, j].item()) == pytest.approx(float(out_row[j]))
+
+
+# ── (e) BSIMAR layout: stats lookup must NOT use the model-output index ─────
+
+def _bsimar_layout_stats(seed: int = 7) -> BSIMARNormStats:
+    """asinh stats with id-like scale at index 0 and qg-like at index 4.
+
+    Mirrors the real `v5c_universal_pmos_norm.npz` shape that triggered
+    Bug A in the 2026-05-03 plan:
+      [0] id : asinh_scale ~5.5e-5  (current scale)
+      [4] qg : asinh_scale ~1.1e-16 (charge scale)
+    Other indices get arbitrary middle-of-the-road values.
+    """
+    rng = np.random.default_rng(seed)
+    in_mean = rng.normal(size=7).astype(np.float64) * 0.1
+    in_std = (rng.uniform(0.5, 2.0, size=7)).astype(np.float64)
+    in_min = in_mean - 3.0 * in_std
+    in_max = in_mean + 3.0 * in_std
+    asinh_scale = np.full(N_OUTPUTS, 1e-10, dtype=np.float64)
+    asinh_scale[0] = 5.5e-5    # id (current scale)
+    asinh_scale[4] = 1.1e-16   # qg (charge scale, ~10⁹× smaller)
+    out_mean = np.zeros(N_OUTPUTS, dtype=np.float64)
+    out_mean[0] = 1.213
+    out_mean[4] = -1.030
+    out_std = np.ones(N_OUTPUTS, dtype=np.float64)
+    out_std[0] = 2.076
+    out_std[4] = 1.287
+    return BSIMARNormStats(
+        mode="asinh",
+        output_mean=out_mean, output_std=out_std,
+        input_mean=in_mean, input_std=in_std,
+        input_min=in_min, input_max=in_max,
+        asinh_scale=asinh_scale,
+    )
+
+
+def test_bsimar_gate_uses_stats_index_zero_for_id():
+    """Fixed form: id_idx_in_output=4, id_idx_in_stats=0 — gated id must
+    land in the current-scale (~5.5e-5 A range), not the charge-scale.
+    """
+    stats = _bsimar_layout_stats(seed=7)
+    norm = BSIMARNormalizer(mode="asinh", stats=stats)
+
+    rng = np.random.default_rng(11)
+    B = 64
+    # Pick Vds_phys ≈ -0.6V (PMOS-like) and a non-trivial out_norm.
+    x_np = rng.standard_normal((B, 7)).astype(np.float64)
+    # Force Vds_phys = -0.6 deterministically: Vd_phys = -0.6, Vs_phys = 0.
+    x_np[:, 0] = (-0.6 - stats.input_mean[0]) / stats.input_std[0]
+    x_np[:, 2] = (0.0 - stats.input_mean[2]) / stats.input_std[2]
+    # Use moderate id_raw_norm at slot 4 (BSIMAR layout).
+    out_norm = np.zeros((B, N_OUTPUTS), dtype=np.float64)
+    out_norm[:, 4] = 0.5  # id slot in BSIMAR_COLUMN_ORDER
+
+    x = torch.from_numpy(x_np)
+    o = torch.from_numpy(out_norm)
+    out_gated_fixed = apply_id_gate(
+        x, o, norm,
+        id_idx_in_output=4, id_idx_in_stats=0, vt_arch=VT_ARCH,
+    )
+    id_norm_out = (
+        out_gated_fixed[:, 4].detach().cpu().numpy().astype(np.float64))
+    # Denormalise via index 0 (the right stats slot).
+    u = id_norm_out * stats.output_std[0] + stats.output_mean[0]
+    id_phys = stats.asinh_scale[0] * np.sinh(u)
+    # Magnitude must be in current scale (~ 1e-7 .. 1e-3 A range).
+    max_abs = float(np.max(np.abs(id_phys)))
+    assert max_abs > 1e-7, (
+        f"fixed gate produced max|id|={max_abs:e}, expected current scale")
+    assert max_abs < 1e-2, (
+        f"fixed gate produced max|id|={max_abs:e}, expected current scale")
+
+
+def test_bsimar_gate_buggy_form_lands_in_charge_scale():
+    """Regression guard: the *buggy* call form (id_idx_in_stats=4, the
+    qg slot) reconstructs id with the charge-scale ~1.1e-16, ~10⁹×
+    smaller than the true current scale. This test asserts the bug
+    would be caught if anyone re-introduces it.
+    """
+    stats = _bsimar_layout_stats(seed=7)
+    norm = BSIMARNormalizer(mode="asinh", stats=stats)
+
+    rng = np.random.default_rng(11)
+    B = 64
+    x_np = rng.standard_normal((B, 7)).astype(np.float64)
+    x_np[:, 0] = (-0.6 - stats.input_mean[0]) / stats.input_std[0]
+    x_np[:, 2] = (0.0 - stats.input_mean[2]) / stats.input_std[2]
+    out_norm = np.zeros((B, N_OUTPUTS), dtype=np.float64)
+    out_norm[:, 4] = 0.5
+
+    x = torch.from_numpy(x_np)
+    o = torch.from_numpy(out_norm)
+    out_gated_bug = apply_id_gate(
+        x, o, norm,
+        id_idx_in_output=4, id_idx_in_stats=4,  # buggy: qg slot
+        vt_arch=VT_ARCH,
+    )
+    id_norm_out = (
+        out_gated_bug[:, 4].detach().cpu().numpy().astype(np.float64))
+    # Denormalise via index 4 (the slot the buggy call used).
+    u = id_norm_out * stats.output_std[4] + stats.output_mean[4]
+    id_phys_charge = stats.asinh_scale[4] * np.sinh(u)
+    max_abs = float(np.max(np.abs(id_phys_charge)))
+    # Must be in charge-scale (~1e-19 .. 1e-13 C range).
+    assert max_abs < 1e-12, (
+        f"buggy gate produced max|id|={max_abs:e}, expected charge scale")
 
 
 # ── Smoke: gate works end-to-end with DirectNet random model ────────────────

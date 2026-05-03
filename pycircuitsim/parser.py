@@ -655,15 +655,39 @@ class Parser:
             device_key = model_type.lower()
 
             # Resolve model path: v4 universal (.phys > plain) > per-tech > bare
+            #
+            # `_best.phys.pt` is only trustworthy when the trainer's
+            # phys-best tracker used the median aggregator (post-fix
+            # 2026-05-03). Pre-fix v4/v5a/v5b/v5c phys-best files were
+            # corrupted by the mean-over-outputs blowup on AR rollout
+            # (plan §2B); the corresponding norm.npz lacks
+            # `phys_best_metric == "median"` so we fall back to
+            # `_best.pt` for those.
             if ar_model_path is None:
                 v4_phys_path = AR_CHECKPOINT_DIR / f"v4_universal_{device_key}_best.phys.pt"
                 v4_path = AR_CHECKPOINT_DIR / f"v4_universal_{device_key}_best.pt"
+                v4_norm_path = AR_CHECKPOINT_DIR / f"v4_universal_{device_key}_norm.npz"
                 per_tech_path = AR_CHECKPOINT_DIR / f"ar_{tech_key}_{device_key}_best.pt"
                 bare_path = AR_CHECKPOINT_DIR / f"ar_{device_key}_best.pt"
-                if v4_phys_path.exists():
+
+                phys_trustworthy = False
+                if v4_phys_path.exists() and v4_norm_path.exists():
+                    try:
+                        from bsimar.data.normalize import BSIMARNormStats
+                        _ns = BSIMARNormStats.load(str(v4_norm_path))
+                        phys_trustworthy = (
+                            getattr(_ns, "phys_best_metric", "legacy_mean")
+                            == "median")
+                    except Exception:
+                        phys_trustworthy = False
+
+                if phys_trustworthy:
                     ar_model_path = str(v4_phys_path)
                 elif v4_path.exists():
                     ar_model_path = str(v4_path)
+                elif v4_phys_path.exists():
+                    # Last-resort fallback (no plain best.pt on disk).
+                    ar_model_path = str(v4_phys_path)
                 elif per_tech_path.exists():
                     ar_model_path = str(per_tech_path)
                 else:

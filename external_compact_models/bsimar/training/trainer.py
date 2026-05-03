@@ -246,7 +246,8 @@ def _train_epoch_mae(
         if id_gate:
             pred = apply_id_gate(
                 x, pred, normalizer,
-                id_idx_in_output=_TF_ID_IDX, vt_arch=_VT_ARCH,
+                id_idx_in_output=_TF_ID_IDX, id_idx_in_stats=0,
+                vt_arch=_VT_ARCH,
             )
 
         loss = criterion(pred, y, weights=w) if w is not None else criterion(pred, y)
@@ -288,7 +289,8 @@ def _validate_epoch_tf(
         if id_gate:
             pred = apply_id_gate(
                 x, pred, normalizer,
-                id_idx_in_output=_TF_ID_IDX, vt_arch=_VT_ARCH,
+                id_idx_in_output=_TF_ID_IDX, id_idx_in_stats=0,
+                vt_arch=_VT_ARCH,
             )
         total += criterion(pred, y).item()
         n += 1
@@ -316,7 +318,8 @@ def _validate_epoch_ar(
         if id_gate:
             pred = apply_id_gate(
                 x, pred, normalizer,
-                id_idx_in_output=_TF_ID_IDX, vt_arch=_VT_ARCH,
+                id_idx_in_output=_TF_ID_IDX, id_idx_in_stats=0,
+                vt_arch=_VT_ARCH,
             )
         total += criterion(pred, y).item()
         n += 1
@@ -361,7 +364,8 @@ def _train_epoch_scheduled_mae(
         if id_gate:
             pred = apply_id_gate(
                 x, pred, normalizer,
-                id_idx_in_output=_TF_ID_IDX, vt_arch=_VT_ARCH,
+                id_idx_in_output=_TF_ID_IDX, id_idx_in_stats=0,
+                vt_arch=_VT_ARCH,
             )
         loss = criterion(pred, y, weights=w) if w is not None else criterion(pred, y)
         loss.backward()
@@ -397,7 +401,8 @@ def test_model(
         if id_gate:
             pred = apply_id_gate(
                 x, pred, normalizer,
-                id_idx_in_output=_TF_ID_IDX, vt_arch=_VT_ARCH,
+                id_idx_in_output=_TF_ID_IDX, id_idx_in_stats=0,
+                vt_arch=_VT_ARCH,
             )
         all_pred.append(pred.cpu().numpy())
         all_true.append(y.numpy())
@@ -487,6 +492,7 @@ def train_directnet(
         val_ratio=config.val_ratio,
         apply_filter=True,
         exclude_techs=exclude_techs,
+        norm_mode="zscore",
     )
 
     input_dim = train_ds.inputs.shape[1]
@@ -795,6 +801,9 @@ def train_transformer(
 
     # Stash the id_gate flag onto normalizer.stats so save() persists it.
     normalizer.stats.id_gate = bool(id_gate)
+    # Median-based phys-score (post-fix); flags _best.phys.pt as trustworthy
+    # so the simulator loader will prefer it over _best.pt.
+    normalizer.stats.phys_best_metric = "median"
 
     early_stopping = EarlyStopping(
         patience=patience, min_delta=1e-5, save_path=str(best_path))
@@ -884,20 +893,22 @@ def train_transformer(
             r2_arr = np.array(
                 [m["R2"] for m in phys_metrics.values()],
                 dtype=np.float64)
-            nrmse_avg = float(np.nanmean(nrmse_arr))
-            r2_avg = float(np.nanmean(r2_arr))
+            # Median over outputs is robust to a single-column blowup
+            # (e.g. id under AR-rollout sinh overflow, see plan §2B).
+            nrmse_med = float(np.nanmedian(nrmse_arr))
+            r2_med = float(np.nanmedian(r2_arr))
             phys_score = (
-                float("inf") if (np.isnan(nrmse_avg) or np.isnan(r2_avg))
-                else nrmse_avg + 0.1 * (1.0 - r2_avg))
+                float("inf") if (np.isnan(nrmse_med) or np.isnan(r2_med))
+                else nrmse_med + 0.1 * (1.0 - r2_med))
             phys_status = ""
             if phys_score < best_phys_score:
                 best_phys_score = phys_score
-                best_phys_nrmse = nrmse_avg
-                best_phys_r2 = r2_avg
+                best_phys_nrmse = nrmse_med
+                best_phys_r2 = r2_med
                 torch.save(model.state_dict(), str(phys_best_path))
                 phys_status = " *phys-best*"
             print(f"  PHYS-val @ epoch {epoch}: "
-                  f"nrmse_avg={nrmse_avg:.3f} r2_avg={r2_avg:.4f} "
+                  f"nrmse_med={nrmse_med:.3f} r2_med={r2_med:.4f} "
                   f"score={phys_score:.3f}{phys_status}")
 
         train_loss = t_losses["total"]
@@ -993,21 +1004,23 @@ def train_transformer(
             r2_arr = np.array(
                 [m["R2"] for m in phys_metrics.values()],
                 dtype=np.float64)
-            nrmse_avg = float(np.nanmean(nrmse_arr))
-            r2_avg = float(np.nanmean(r2_arr))
+            # Median over outputs is robust to a single-column blowup
+            # (e.g. id under AR-rollout sinh overflow, see plan §2B).
+            nrmse_med = float(np.nanmedian(nrmse_arr))
+            r2_med = float(np.nanmedian(r2_arr))
             phys_score = (
-                float("inf") if (np.isnan(nrmse_avg) or np.isnan(r2_avg))
-                else nrmse_avg + 0.1 * (1.0 - r2_avg))
+                float("inf") if (np.isnan(nrmse_med) or np.isnan(r2_med))
+                else nrmse_med + 0.1 * (1.0 - r2_med))
             phys_status = ""
             if phys_score < best_phys_score:
                 best_phys_score = phys_score
-                best_phys_nrmse = nrmse_avg
-                best_phys_r2 = r2_avg
+                best_phys_nrmse = nrmse_med
+                best_phys_r2 = r2_med
                 torch.save(model.state_dict(), str(phys_best_path))
                 phys_status = " *phys-best*"
             print(f"  [FT {ft_epoch:3d}] train={train_loss:.5f} "
-                  f"val={val_loss:.5f} | nrmse={nrmse_avg:.3f}% "
-                  f"r2={r2_avg:.4f}{phys_status}")
+                  f"val={val_loss:.5f} | nrmse={nrmse_med:.3f}% "
+                  f"r2={r2_med:.4f}{phys_status}")
 
     # ── Final test ────────────────────────────────────────────────────────
     if phys_best_path.exists():

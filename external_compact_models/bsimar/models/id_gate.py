@@ -60,6 +60,7 @@ def apply_id_gate(
     normalizer: "BSIMARNormalizer",
     *,
     id_idx_in_output: int,
+    id_idx_in_stats: int = 0,
     vd_idx_in_input: int = 0,
     vs_idx_in_input: int = 2,
     vt_arch: float = 0.04,
@@ -71,15 +72,31 @@ def apply_id_gate(
     ``id_idx_in_output`` is identical to the corresponding column of
     ``out_norm``; the id slot is replaced by the gated normalised value.
 
+    The function distinguishes two indices that refer to *different* column
+    orderings:
+
+    * ``id_idx_in_output`` slices the model's output tensor — DirectNet uses
+      ``OUTPUT_COLUMN_ORDER`` (id at 0); the BSIMAR Transformer uses
+      ``BSIMAR_COLUMN_ORDER`` (id at 4).
+    * ``id_idx_in_stats`` reads id's normalisation stats out of
+      ``BSIMARNormStats``. **The stats always live in
+      ``OUTPUT_COLUMN_ORDER``** regardless of the model's layout, so the
+      correct value is **always 0**. The default of 0 reflects this
+      invariant; passing anything else silently denormalises id with the
+      wrong column's scale (e.g. qg's ~1e-16 asinh_scale, a ~10⁹× error).
+
     Args:
         x_norm: ``(B, F)`` normalised input tensor (autograd-friendly).
         out_norm: ``(B, K)`` model output in either OUTPUT_COLUMN_ORDER
-            (DirectNet, K=13, id_idx=0) or BSIMAR_COLUMN_ORDER
-            (Transformer, K=13, id_idx=4).
+            (DirectNet, K=13, id_idx_in_output=0) or BSIMAR_COLUMN_ORDER
+            (Transformer, K=13, id_idx_in_output=4).
         normalizer: a fitted ``BSIMARNormalizer``. Must have
             ``normalizer.stats`` populated.
         id_idx_in_output: column index of id in ``out_norm``.
             **0 for DirectNet, 4 for BSIMAR.**
+        id_idx_in_stats: column index of id in ``normalizer.stats``.
+            **Always 0** because ``BSIMARNormStats`` always lives in
+            ``OUTPUT_COLUMN_ORDER`` (default).
         vd_idx_in_input: column index of Vd in ``x_norm`` (default 0).
         vs_idx_in_input: column index of Vs in ``x_norm`` (default 2).
         vt_arch: thermal-voltage-like gate width in volts. ``0.04 V``
@@ -110,8 +127,8 @@ def apply_id_gate(
     in_std_vd = float(normalizer.stats.input_std[vd_idx_in_input])
     in_mean_vs = float(normalizer.stats.input_mean[vs_idx_in_input])
     in_std_vs = float(normalizer.stats.input_std[vs_idx_in_input])
-    out_mean_id = float(normalizer.stats.output_mean[id_idx_in_output])
-    out_std_id = float(normalizer.stats.output_std[id_idx_in_output])
+    out_mean_id = float(normalizer.stats.output_mean[id_idx_in_stats])
+    out_std_id = float(normalizer.stats.output_std[id_idx_in_stats])
 
     # Vds in physical units, autograd-friendly.
     vd_phys = (x_norm[:, vd_idx_in_input] * in_std_vd) + in_mean_vd
@@ -128,7 +145,7 @@ def apply_id_gate(
         id_gated_norm = (id_gated_phys - out_mean_id) / out_std_id
     else:
         # asinh + zscore: out_norm is in asinh+zscore space.
-        s_id = float(normalizer.stats.asinh_scale[id_idx_in_output])
+        s_id = float(normalizer.stats.asinh_scale[id_idx_in_stats])
         u = id_raw_norm * out_std_id + out_mean_id  # asinh-space
         id_raw_phys = s_id * torch.sinh(u)
         id_gated_phys = id_raw_phys * gate

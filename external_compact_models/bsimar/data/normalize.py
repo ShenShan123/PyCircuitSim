@@ -145,6 +145,12 @@ class BSIMARNormStats:
     # (Sprint S-ARCH-A / B3). Defaults to False so legacy v4/v5a/v5b
     # checkpoints (which predate the gate) load unchanged.
     id_gate: bool = False
+    # Which aggregator was used by the trainer's phys-best tracker. The
+    # legacy `np.nanmean` is fragile under AR-rollout id-column blowup
+    # (see 2026-05-03 phys-best-tracker bug plan §2B); fixed runs use
+    # `np.nanmedian` and tag stats accordingly so the simulator-side
+    # loader can refuse to load `_best.phys.pt` from legacy runs.
+    phys_best_metric: str = "legacy_mean"
 
     def save(self, path: str) -> None:
         data = {
@@ -156,6 +162,7 @@ class BSIMARNormStats:
             "input_min": self.input_min,
             "input_max": self.input_max,
             "id_gate": np.array(bool(self.id_gate)),
+            "phys_best_metric": np.array(str(self.phys_best_metric)),
         }
         if self.asinh_scale is not None:
             data["asinh_scale"] = self.asinh_scale
@@ -169,6 +176,11 @@ class BSIMARNormStats:
         # `id_gate` key; default to False so legacy checkpoints load
         # unchanged with no structural gate at inference.
         id_gate = bool(d["id_gate"]) if "id_gate" in d.files else False
+        # Backward-compat: legacy norm.npz files lack `phys_best_metric`;
+        # default to `"legacy_mean"` to flag the suspect aggregator.
+        phys_best_metric = (
+            str(d["phys_best_metric"]) if "phys_best_metric" in d.files
+            else "legacy_mean")
         return cls(
             mode=mode,
             output_mean=d["output_mean"],
@@ -179,6 +191,7 @@ class BSIMARNormStats:
             input_max=d["input_max"],
             asinh_scale=d["asinh_scale"] if "asinh_scale" in d.files else None,
             id_gate=id_gate,
+            phys_best_metric=phys_best_metric,
         )
 
 
