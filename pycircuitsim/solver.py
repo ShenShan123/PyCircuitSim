@@ -954,9 +954,27 @@ class TransientSolver:
         # Store pseudo-capacitor references for cleanup
         self._pseudo_capacitors: List = []
 
+        # V5 Phase A — A3: dt-halve fallback event log. Each entry is a
+        # dict with {step, sub_idx, sim_time, halve_num, dt_before, dt_after,
+        # error_msg}. Read by verification scripts after a transient run
+        # to flag cells that needed >1 halving.
+        self._dt_halve_events: List[Dict] = []
+
     def _has_non_linear_components(self) -> bool:
         """Check if circuit contains non-linear components (MOSFETs)."""
         return _has_non_linear(self.circuit)
+
+    def _has_nn_devices(self) -> bool:
+        """Return True if the circuit contains any NN compact-model device
+        (LEVEL >= 73). Used to gate the V5 Phase A dt-halve fallback so
+        BSIM-CMG (LEVEL=72) transients keep their existing behaviour.
+        """
+        # Local import to avoid a top-level circular dependency.
+        from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase
+        for comp in self.circuit.components:
+            if isinstance(comp, _MOSFETNNBase):
+                return True
+        return False
 
     def _add_pseudo_capacitors(self) -> None:
         """Add pseudo-capacitors scaled to circuit capacitance for initialization."""
@@ -1471,8 +1489,12 @@ class TransientSolver:
             self._add_pseudo_capacitors()
 
         # Step 3: Adaptive time-stepping with LTE-based sub-stepping
-        max_dt_reductions = 5  # Maximum NR convergence retries per sub-step
+        # V5 Phase A — A3: NN circuits use a 4-halve cap (16x sub-resolution)
+        # with explicit event logging. BSIM-CMG keeps the original 5-halve
+        # behaviour to preserve byte-identical verify_bsimcmg_* output.
         has_non_linear = self._has_non_linear_components()
+        is_nn_circuit = self._has_nn_devices()
+        max_dt_reductions = 4 if is_nn_circuit else 5
 
         # LTE-adaptive sub-stepping: uses constructor parameters
         adaptive_substeps = 1
@@ -1612,7 +1634,21 @@ class TransientSolver:
                                 f"Failed to converge at t={sub_time:.2e}s even with minimum dt. "
                                 f"Original error: {e}"
                             ) from e
+                        dt_before = current_sub_dt
                         current_sub_dt = sub_dt / (2 ** dt_reduction_count)
+                        # V5 Phase A — A3: log every dt-halve event so
+                        # verification scripts can flag cells that needed
+                        # >1 halving (escalates as a model-fit issue).
+                        self._dt_halve_events.append({
+                            "step": step,
+                            "sub_idx": sub_idx,
+                            "sim_time": float(sub_time),
+                            "halve_num": dt_reduction_count,
+                            "dt_before": float(dt_before),
+                            "dt_after": float(current_sub_dt),
+                            "is_nn_circuit": bool(is_nn_circuit),
+                            "error_msg": str(e),
+                        })
                         if self.debug:
                             print(f"  WARNING: Convergence failed at t={sub_time:.2e}s, reducing dt to {current_sub_dt:.2e}")
 
