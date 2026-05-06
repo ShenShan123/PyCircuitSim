@@ -437,24 +437,29 @@ class _MOSFETNNBase(Component):
         # locking at V(out)=4.4V instead of VDD). PyCMG predicts |Id|~mA at
         # out-of-range Vds (impact ionization, leakage); we replicate that.
         #
-        # Use a *quadratic* ramp so both Id and gds extras start at zero
-        # with zero slope at the boundary.  A linear ramp (1 mS jump at
-        # threshold) caused NR oscillation in techs whose operating range
-        # sits right at the training boundary (TSMC12/16, VDD≈VDD_train).
-        # Quadratic ramp:
-        #   I_extra(x) = ½ · g_max · x² / x_ref      x = |Vds|−VDD_train
-        #   g_extra(x) = dI_extra/dx = g_max · x / x_ref
-        # → both 0 with 0 slope at x=0; both grow smoothly for x>0.
-        # x_ref controls how quickly we ramp into the full restoring force.
+        # Use a *tanh-saturated* ramp so the restoring current and
+        # conductance asymptote to a hard cap, preventing the 1e150
+        # runaway seen on TSMC5 BSIMAR-M VTC under deep NR overshoot.
+        # The previous quadratic ramp grew without bound (½·g_max·x²/x_ref),
+        # which is fine for moderate overshoot but explodes when the NR
+        # iterate transiently lands far past the rail.
+        # Tanh / sech² ramp (V5 Phase A — A1):
+        #   I_extra(x) = g_max · x_ref · tanh(x/x_ref)        x = |Vds|−VDD_train
+        #   g_extra(x) = dI_extra/dx = g_max · sech²(x/x_ref)
+        # → both bounded: I_extra → ±g_max·x_ref, g_extra → 0 as x → ∞.
+        # x_ref controls how quickly we approach the asymptote.
         VDD_train = self._vdd_estimate
         if abs_vds > VDD_train:
             overshoot = abs_vds - VDD_train
-            g_max = 1.0e-3   # 1 mS — full restoring conductance asymptote
-            x_ref = 0.5 * VDD_train  # ramp distance: ~half VDD past boundary
-            # Quadratic Id extra (sign for normal direction overshoot only).
-            id_extra = 0.5 * g_max * overshoot * overshoot / x_ref
-            # Linear-rising gds extra (derivative of the quadratic Id).
-            g_extra = g_max * overshoot / x_ref
+            g_max = 1.0e-3   # 1 mS — peak restoring conductance at boundary
+            x_ref = 0.5 * VDD_train  # ramp scale: ~half VDD
+            # Saturating Id extra and matching gds (sech² = derivative of tanh).
+            arg = overshoot / x_ref
+            tanh_arg = math.tanh(arg)
+            # sech²(arg) = 1 - tanh²(arg). Numerically stable for large arg.
+            sech2_arg = 1.0 - tanh_arg * tanh_arg
+            id_extra = g_max * x_ref * tanh_arg
+            g_extra = g_max * sech2_arg
             if normal_dir:
                 if self._is_pmos:
                     result["id"] = result["id"] - id_extra
