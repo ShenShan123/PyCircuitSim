@@ -1405,6 +1405,14 @@ class TransientSolver:
         time = np.zeros(num_steps)
         voltages_over_time = {node: np.zeros(num_steps) for node in nodes}
 
+        # V5 Phase A — A3.2: track the highest committed step so the
+        # verify_nn_dc_tran inverter-tran runner can recover a partial
+        # waveform when NR exhausts mid-transient (turns ERROR row into
+        # numeric FAIL row).
+        self._last_committed_step = 0
+        self._partial_time = time
+        self._partial_voltages = voltages_over_time
+
         # Step 1: Initial conditions from capacitor voltages
         # For transient analysis, we use the capacitor's initial voltage (v_prev)
         # instead of doing a DC solve (which would give steady-state, not transient)
@@ -1655,6 +1663,8 @@ class TransientSolver:
             # Store at output point
             for node in nodes:
                 voltages_over_time[node][step] = current_voltages[node]
+            # V5 Phase A — A3.2: track committed step for partial-recovery.
+            self._last_committed_step = step
 
             # Stiffness detection: if NR took > 20 iterations, switch to BDF-2
             if (not _stiff_switched and has_non_linear and step > 2

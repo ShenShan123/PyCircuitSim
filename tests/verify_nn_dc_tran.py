@@ -1222,6 +1222,9 @@ def run_pycircuitsim_nn_inverter_tran(
     netlist_path.write_text(content)
 
     logging.disable(logging.CRITICAL)
+    solver: Optional[TransientSolver] = None
+    nr_failed = False
+    nr_error_msg = ""
     try:
         parser = Parser()
         parser.parse_file(str(netlist_path))
@@ -1232,8 +1235,11 @@ def run_pycircuitsim_nn_inverter_tran(
 
         # Stage 1: DC OP
         initial_guess = circuit.initial_conditions if circuit.initial_conditions else None
+        # V5 Phase A — A2: NN-aware GMIN stepping default-on (we know
+        # this is an NN circuit, so set explicitly).
         op_solver = DCSolver(
             circuit, initial_guess=initial_guess, use_source_stepping=True,
+            use_gmin_stepping=True,
         )
         op_solution = op_solver.solve()
 
@@ -1253,16 +1259,41 @@ def run_pycircuitsim_nn_inverter_tran(
             debug=False,
             nr_tolerance=1e-7,
         )
-        results = solver.solve()
+        try:
+            results = solver.solve()
+        except RuntimeError as e:
+            # V5 Phase A — A3.2: partial-result fallback. If NR exhausts
+            # mid-transient, recover the committed waveform up to the
+            # last successful step so the test reports a numeric FAIL
+            # row instead of an ERROR row.
+            nr_failed = True
+            nr_error_msg = str(e)
+            last_step = getattr(solver, "_last_committed_step", 0)
+            if last_step >= 2:
+                truncated_n = last_step + 1
+                results = {
+                    "time": solver._partial_time[:truncated_n].copy(),
+                }
+                for node, arr in solver._partial_voltages.items():
+                    results[node] = arr[:truncated_n].copy()
+            else:
+                # No usable partial data — re-raise.
+                raise
     finally:
         logging.disable(logging.NOTSET)
 
-    # Node mapping: '1'=Vdd, '2'=Vin, '3'=Vout
-    return {
+    out = {
         "time": results["time"],
         "v(out)": results["3"],
         "v(in)": results["2"],
     }
+    if nr_failed:
+        out["_nr_partial"] = True
+        out["_nr_error_msg"] = nr_error_msg
+    # Surface dt-halve event log if any (Phase A diagnostic).
+    if solver is not None:
+        out["_dt_halve_events"] = list(solver._dt_halve_events)
+    return out
 
 
 # ---------------------------------------------------------------------------
