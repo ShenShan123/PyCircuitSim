@@ -15,6 +15,27 @@ from pycircuitsim.circuit import Circuit
 from pycircuitsim.visualizer import Visualizer
 
 
+def _circuit_has_nn(circuit: Circuit) -> bool:
+    """Return True if the circuit contains any NN compact-model device
+    (LEVEL >= 73, i.e. DirectNet LEVEL=73 or BSIMAR LEVEL=74).
+
+    Used by the DC orchestration to default-enable GMIN stepping for
+    NN circuits, where the rail-restoring extrapolation creates a soft
+    KCL plateau that benefits from GMIN homotopy. BSIM-CMG (LEVEL=72)
+    keeps the original codepath (use_gmin_stepping=False) so its
+    verification suites stay byte-identical.
+
+    Detection is by isinstance against the NN base class
+    (`_MOSFETNNBase`), which both DirectNet and BSIMAR inherit from.
+    """
+    # Local import to avoid a top-level circular import via models.
+    from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase
+    for comp in circuit.components:
+        if isinstance(comp, _MOSFETNNBase):
+            return True
+    return False
+
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -166,7 +187,11 @@ def run_dc_sweep(
     logger.info("Stage 1: Computing DC operating point...")
     # Use .ic initial conditions if provided, otherwise None (solver will use 0V guess)
     initial_guess = circuit.initial_conditions if circuit.initial_conditions else None
-    op_solver = DCSolver(circuit, output_file=output_file, initial_guess=initial_guess, use_source_stepping=True)
+    # V5 Phase A — A2: NN circuits default to GMIN stepping for robust
+    # convergence past the rail-restoring extrapolation plateau.
+    nn_gmin = _circuit_has_nn(circuit)
+    op_solver = DCSolver(circuit, output_file=output_file, initial_guess=initial_guess,
+                         use_source_stepping=True, use_gmin_stepping=nn_gmin)
     with op_solver:
         op_solution = op_solver.solve()
     logger.info(f"DC operating point computed: {len(op_solution)} nodes")
@@ -197,7 +222,9 @@ def run_dc_sweep(
 
     # Use context manager to enable logging for sweep
     # Disable source stepping during sweep (use continuation method instead)
-    with DCSolver(circuit, output_file=output_file, use_source_stepping=False) as solver:
+    # V5 Phase A — A2: NN circuits default to GMIN stepping.
+    with DCSolver(circuit, output_file=output_file, use_source_stepping=False,
+                  use_gmin_stepping=nn_gmin) as solver:
         # Log header with sweep parameters
         if solver.logger:
             solver.logger.log_header("DC Sweep Analysis", analysis_params)
@@ -226,11 +253,13 @@ def run_dc_sweep(
             if point_num == 0:
                 # First point: use OP solution
                 point_solver = DCSolver(circuit, initial_guess=op_solution, logger=solver.logger,
-                                       use_source_stepping=True, source_stepping_steps=5)
+                                       use_source_stepping=True, source_stepping_steps=5,
+                                       use_gmin_stepping=nn_gmin)
             else:
                 # Subsequent points: use previous solution (continuation method)
                 point_solver = DCSolver(circuit, initial_guess=prev_solution, logger=solver.logger,
-                                       use_source_stepping=True, source_stepping_steps=5)
+                                       use_source_stepping=True, source_stepping_steps=5,
+                                       use_gmin_stepping=nn_gmin)
 
             # Solve at this point
             solution = point_solver.solve(skip_header=True)
@@ -329,7 +358,10 @@ def run_transient(
     logger.info("Stage 1: Computing DC operating point for transient initialization...")
     # Use .ic initial conditions if provided, otherwise None (solver will use 0V guess)
     initial_guess = circuit.initial_conditions if circuit.initial_conditions else None
-    op_solver = DCSolver(circuit, initial_guess=initial_guess, use_source_stepping=True)
+    # V5 Phase A — A2: NN circuits default to GMIN stepping in DC OP too.
+    nn_gmin = _circuit_has_nn(circuit)
+    op_solver = DCSolver(circuit, initial_guess=initial_guess, use_source_stepping=True,
+                         use_gmin_stepping=nn_gmin)
     op_solution = op_solver.solve()
     logger.info(f"DC operating point computed: {len(op_solution)} nodes")
 
@@ -383,7 +415,9 @@ def run_dc_op_point(
 
     # Use .ic initial conditions if provided, otherwise None (solver will use 0V guess)
     initial_guess = circuit.initial_conditions if circuit.initial_conditions else None
-    solver = DCSolver(circuit, initial_guess=initial_guess)
+    # V5 Phase A — A2: NN circuits default to GMIN stepping.
+    nn_gmin = _circuit_has_nn(circuit)
+    solver = DCSolver(circuit, initial_guess=initial_guess, use_gmin_stepping=nn_gmin)
     solution = solver.solve()
 
     # Save results to text file
@@ -439,7 +473,9 @@ def run_ac_sweep(
     dc_logger = Logger(circuit_name, dc_log_file)
 
     with dc_logger:
-        dc_solver = DCSolver(circuit, logger=dc_logger)
+        # V5 Phase A — A2: NN circuits default to GMIN stepping.
+        nn_gmin = _circuit_has_nn(circuit)
+        dc_solver = DCSolver(circuit, logger=dc_logger, use_gmin_stepping=nn_gmin)
         with dc_solver:
             dc_solution = dc_solver.solve()
 
