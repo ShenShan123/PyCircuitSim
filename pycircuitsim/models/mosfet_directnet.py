@@ -437,24 +437,48 @@ class _MOSFETNNBase(Component):
         # locking at V(out)=4.4V instead of VDD). PyCMG predicts |Id|~mA at
         # out-of-range Vds (impact ionization, leakage); we replicate that.
         #
-        # Use a *quadratic* ramp so both Id and gds extras start at zero
-        # with zero slope at the boundary.  A linear ramp (1 mS jump at
-        # threshold) caused NR oscillation in techs whose operating range
-        # sits right at the training boundary (TSMC12/16, VDD≈VDD_train).
-        # Quadratic ramp:
-        #   I_extra(x) = ½ · g_max · x² / x_ref      x = |Vds|−VDD_train
-        #   g_extra(x) = dI_extra/dx = g_max · x / x_ref
-        # → both 0 with 0 slope at x=0; both grow smoothly for x>0.
-        # x_ref controls how quickly we ramp into the full restoring force.
+        # Piecewise quadratic-then-linear ramp (V5 Phase A, 2026-05-07).
+        # Below x_cap: quadratic (matches V4 baseline behaviour exactly).
+        # Above x_cap: linear continuation with constant gds = g_at_cap.
+        # This preserves the V4 transient pass-rate (TSMC12/16 inverter
+        # tran 4-10 % NRMSE) while bounding the DC-overshoot runaway
+        # that drove TSMC5 BSIMAR-M VTC to 1e150 in V4.
+        #
+        # Why piecewise (vs. tanh-bounded saturation):
+        #   • A pure tanh / saturating-quadratic Id makes g_extra → 0 at
+        #     large overshoot. With g≈0 the NR Jacobian has no restoring
+        #     force, so transient time-steps where Vds transiently
+        #     exceeds VDD_train converge to the wrong operating point
+        #     (TSMC7/12/16 inverter_tran regressed to 70 K % NRMSE).
+        #   • Piecewise linear past x_cap keeps gds = constant non-zero
+        #     past the cap, so NR always feels the restoring force.
+        #
+        # Concrete shape:
+        #   x_ref = ½·VDD_train        (matches V4)
+        #   x_cap = 5·x_ref            (= 2.5·VDD_train; "extreme overshoot")
+        #   x ≤ x_cap → I = ½·g_max·x²/x_ref,        g = g_max·x/x_ref
+        #   x > x_cap → I = I(x_cap) + g(x_cap)·(x−x_cap),  g = g(x_cap)
+        # All C¹ continuous. At x = x_cap = 2.5·VDD_train, g = 5·g_max
+        # (= 5 mS). Past that, id grows linearly at 5 mS per volt — fast
+        # enough to keep id finite even at NR overshoots of 10s of volts
+        # (id stays ≪ 1e9 A, no overflow), but gds is now bounded so the
+        # Jacobian stays well-conditioned.
         VDD_train = self._vdd_estimate
         if abs_vds > VDD_train:
             overshoot = abs_vds - VDD_train
-            g_max = 1.0e-3   # 1 mS — full restoring conductance asymptote
-            x_ref = 0.5 * VDD_train  # ramp distance: ~half VDD past boundary
-            # Quadratic Id extra (sign for normal direction overshoot only).
-            id_extra = 0.5 * g_max * overshoot * overshoot / x_ref
-            # Linear-rising gds extra (derivative of the quadratic Id).
-            g_extra = g_max * overshoot / x_ref
+            g_max = 1.0e-3   # 1 mS — base conductance scale
+            x_ref = 0.5 * VDD_train  # quadratic ramp scale
+            x_cap = 5.0 * x_ref      # transition to linear at 5·x_ref
+            if overshoot <= x_cap:
+                # Quadratic regime — exact V4 baseline behaviour.
+                id_extra = 0.5 * g_max * overshoot * overshoot / x_ref
+                g_extra = g_max * overshoot / x_ref
+            else:
+                # Linear continuation past x_cap with constant gds.
+                id_at_cap = 0.5 * g_max * x_cap * x_cap / x_ref
+                g_at_cap = g_max * x_cap / x_ref
+                id_extra = id_at_cap + g_at_cap * (overshoot - x_cap)
+                g_extra = g_at_cap
             if normal_dir:
                 if self._is_pmos:
                     result["id"] = result["id"] - id_extra

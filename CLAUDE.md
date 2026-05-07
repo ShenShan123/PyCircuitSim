@@ -363,7 +363,7 @@ python tests/verify_bsimcmg_op.py && python tests/verify_bsimcmg_dc.py && python
 ### Key Numerical Techniques
 - **Sparse MNA solver**: `scipy.sparse.lil_matrix` for assembly, CSR + `spsolve` for linear solve. O(n) memory, O(n·log n) solve.
 - **SPICE-standard convergence**: `|ΔV| < VNTOL + RELTOL × max(|V_old|, |V_new|)` (RELTOL=1e-4, VNTOL=1e-7)
-- **GMIN conductance** (1e-12 S) prevents singular matrices. DC GMIN stepping (opt-in via `use_gmin_stepping=True`): schedule [1e-6, 1e-8, 1e-10, 1e-12] for bistable circuits.
+- **GMIN conductance** (1e-12 S) prevents singular matrices. DC GMIN stepping (opt-in via `use_gmin_stepping=True`): 2-level schedule [1e-8, 1e-12] (V5 Phase A 2026-05-07: trimmed from 4 levels to halve slow-path cost). For NN circuits the simulation orchestrator calls `_solve_dc_with_retry` — fast-path solve first, retry with GMIN only on `_last_solve_converged=False`. BSIM-CMG never enters the retry branch.
 - **BE→Trap→BDF-2 switching**: Backward Euler (step 1), Trapezoidal (step 2+), BDF-2 (auto on stiffness, NR>20 iters). One-way switch: once BDF-2 activated, stays on BDF-2.
 - Source stepping (20 steps) improves convergence
 - Adaptive damping with supply-relative thresholds and stuck-counter detection

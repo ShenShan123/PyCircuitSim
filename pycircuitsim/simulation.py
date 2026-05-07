@@ -15,6 +15,73 @@ from pycircuitsim.circuit import Circuit
 from pycircuitsim.visualizer import Visualizer
 
 
+def _circuit_has_nn(circuit: Circuit) -> bool:
+    """Return True if the circuit contains any NN compact-model device
+    (LEVEL >= 73, i.e. DirectNet LEVEL=73 or BSIMAR LEVEL=74).
+
+    Used by the DC orchestration to *retry* with GMIN stepping when a
+    fast-path NN solve fails. BSIM-CMG (LEVEL=72) circuits never enter
+    the retry path so their verification suites stay byte-identical.
+
+    Detection is by isinstance against the NN base class
+    (`_MOSFETNNBase`), which both DirectNet and BSIMAR inherit from.
+    """
+    # Local import to avoid a top-level circular import via models.
+    from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase
+    for comp in circuit.components:
+        if isinstance(comp, _MOSFETNNBase):
+            return True
+    return False
+
+
+def _solve_dc_with_retry(
+    circuit: Circuit,
+    has_nn: bool,
+    solve_fn,
+    *,
+    skip_header: bool = False,
+):
+    """Run a DC solve with NN-aware GMIN-stepping retry.
+
+    V5 Phase A retry-design (2026-05-07). The fast path runs the
+    DCSolver with `use_gmin_stepping=False`. If that path either raises
+    (LinAlgError / RuntimeError) or completes with the solver's
+    `_last_solve_converged` flag False (NR exhausted, garbage voltages
+    >1e10, NaN/Inf), and the circuit contains an NN compact-model
+    device, the orchestrator retries the same DC point with
+    `use_gmin_stepping=True` (2-level homotopy [1e-8, gmin]).
+
+    BSIM-CMG-only circuits never retry — `has_nn=False` propagates the
+    fast-path failure as-is, preserving byte-identical behaviour for
+    `verify_bsimcmg_*`.
+
+    `solve_fn` is a callable that takes one keyword arg `use_gmin` (bool)
+    and returns ``(solver, solution)``. The orchestrator constructs a
+    fresh DCSolver inside `solve_fn` so retry uses the same
+    initial_guess / source-stepping / logger configuration as the fast
+    path. Returning the solver object lets the caller inspect it (e.g.
+    for the dt-halve event log on the transient OP solver, or for
+    voltage-source current bookkeeping).
+    """
+    try:
+        solver, solution = solve_fn(use_gmin=False)
+    except (np.linalg.LinAlgError, RuntimeError):
+        if not has_nn:
+            raise
+        # NN path: retry with GMIN homotopy.
+        logger.info("DC fast-path raised; retrying with GMIN stepping (NN circuit).")
+        solver, solution = solve_fn(use_gmin=True)
+        return solver, solution
+
+    # Fast path returned without raising — check convergence flag.
+    converged = getattr(solver, "_last_solve_converged", True)
+    if converged or not has_nn:
+        return solver, solution
+    logger.info("DC fast-path did not converge; retrying with GMIN stepping (NN circuit).")
+    solver, solution = solve_fn(use_gmin=True)
+    return solver, solution
+
+
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
@@ -166,9 +233,19 @@ def run_dc_sweep(
     logger.info("Stage 1: Computing DC operating point...")
     # Use .ic initial conditions if provided, otherwise None (solver will use 0V guess)
     initial_guess = circuit.initial_conditions if circuit.initial_conditions else None
-    op_solver = DCSolver(circuit, output_file=output_file, initial_guess=initial_guess, use_source_stepping=True)
-    with op_solver:
-        op_solution = op_solver.solve()
+    # V5 Phase A retry-design: NN circuits use the GMIN-on solver as a
+    # *fallback* on fast-path failure, not by default. BSIM-CMG circuits
+    # never enter the retry branch.
+    has_nn = _circuit_has_nn(circuit)
+
+    def _op_solve(use_gmin: bool):
+        s = DCSolver(circuit, output_file=output_file, initial_guess=initial_guess,
+                     use_source_stepping=True, use_gmin_stepping=use_gmin)
+        with s:
+            sol = s.solve()
+        return s, sol
+
+    op_solver, op_solution = _solve_dc_with_retry(circuit, has_nn, _op_solve)
     logger.info(f"DC operating point computed: {len(op_solution)} nodes")
 
     # STAGE 2: Use OP solution as initial guess for sweep
@@ -197,6 +274,9 @@ def run_dc_sweep(
 
     # Use context manager to enable logging for sweep
     # Disable source stepping during sweep (use continuation method instead)
+    # The outer solver only owns the logger; per-point solves go through
+    # `_solve_dc_with_retry` so GMIN is engaged only on fast-path failure
+    # for NN circuits.
     with DCSolver(circuit, output_file=output_file, use_source_stepping=False) as solver:
         # Log header with sweep parameters
         if solver.logger:
@@ -223,17 +303,18 @@ def run_dc_sweep(
             # Create solver with appropriate initial guess
             # Use reduced source stepping (5 steps) for faster convergence during sweep
             # This balances performance (fewer steps than Stage 1's 20) with convergence stability
-            if point_num == 0:
-                # First point: use OP solution
-                point_solver = DCSolver(circuit, initial_guess=op_solution, logger=solver.logger,
-                                       use_source_stepping=True, source_stepping_steps=5)
-            else:
-                # Subsequent points: use previous solution (continuation method)
-                point_solver = DCSolver(circuit, initial_guess=prev_solution, logger=solver.logger,
-                                       use_source_stepping=True, source_stepping_steps=5)
+            guess = op_solution if point_num == 0 else prev_solution
 
-            # Solve at this point
-            solution = point_solver.solve(skip_header=True)
+            def _point_solve(use_gmin: bool, _guess=guess):
+                s = DCSolver(circuit, initial_guess=_guess, logger=solver.logger,
+                             use_source_stepping=True, source_stepping_steps=5,
+                             use_gmin_stepping=use_gmin)
+                sol = s.solve(skip_header=True)
+                return s, sol
+
+            point_solver, solution = _solve_dc_with_retry(
+                circuit, has_nn, _point_solve, skip_header=True,
+            )
 
             # Store this solution for next point's initial guess
             prev_solution = solution.copy()
@@ -329,8 +410,17 @@ def run_transient(
     logger.info("Stage 1: Computing DC operating point for transient initialization...")
     # Use .ic initial conditions if provided, otherwise None (solver will use 0V guess)
     initial_guess = circuit.initial_conditions if circuit.initial_conditions else None
-    op_solver = DCSolver(circuit, initial_guess=initial_guess, use_source_stepping=True)
-    op_solution = op_solver.solve()
+    # V5 Phase A retry-design: GMIN stepping is a retry fallback, not
+    # default-on. NN circuits engage it only when the fast path fails.
+    has_nn = _circuit_has_nn(circuit)
+
+    def _tran_op_solve(use_gmin: bool):
+        s = DCSolver(circuit, initial_guess=initial_guess, use_source_stepping=True,
+                     use_gmin_stepping=use_gmin)
+        sol = s.solve()
+        return s, sol
+
+    op_solver, op_solution = _solve_dc_with_retry(circuit, has_nn, _tran_op_solve)
     logger.info(f"DC operating point computed: {len(op_solution)} nodes")
 
     # STAGE 2: Use OP solution as initial guess for transient
@@ -383,8 +473,15 @@ def run_dc_op_point(
 
     # Use .ic initial conditions if provided, otherwise None (solver will use 0V guess)
     initial_guess = circuit.initial_conditions if circuit.initial_conditions else None
-    solver = DCSolver(circuit, initial_guess=initial_guess)
-    solution = solver.solve()
+    # V5 Phase A retry-design: GMIN stepping is a fallback, not default-on.
+    has_nn = _circuit_has_nn(circuit)
+
+    def _op_only_solve(use_gmin: bool):
+        s = DCSolver(circuit, initial_guess=initial_guess, use_gmin_stepping=use_gmin)
+        sol = s.solve()
+        return s, sol
+
+    solver, solution = _solve_dc_with_retry(circuit, has_nn, _op_only_solve)
 
     # Save results to text file
     result_file = output_path / f"{circuit_name}_dc_op_point.txt"
@@ -439,9 +536,16 @@ def run_ac_sweep(
     dc_logger = Logger(circuit_name, dc_log_file)
 
     with dc_logger:
-        dc_solver = DCSolver(circuit, logger=dc_logger)
-        with dc_solver:
-            dc_solution = dc_solver.solve()
+        # V5 Phase A retry-design: GMIN stepping is a retry fallback.
+        has_nn = _circuit_has_nn(circuit)
+
+        def _ac_op_solve(use_gmin: bool):
+            s = DCSolver(circuit, logger=dc_logger, use_gmin_stepping=use_gmin)
+            with s:
+                sol = s.solve()
+            return s, sol
+
+        dc_solver, dc_solution = _solve_dc_with_retry(circuit, has_nn, _ac_op_solve)
 
     logger.info("DC operating point computed")
     for node, voltage in dc_solution.items():

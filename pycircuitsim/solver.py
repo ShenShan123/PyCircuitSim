@@ -238,6 +238,11 @@ class DCSolver:
         self.force_ic = force_ic
         self.last_solution: Optional[Dict[str, float]] = None
         self._owns_logger = False  # Track if we created the logger (for cleanup)
+        # V5 Phase A retry-design: True if the last `solve()` reached
+        # SPICE convergence AND the returned voltage vector is finite.
+        # The simulation orchestrator inspects this to decide whether
+        # to retry with GMIN stepping enabled.
+        self._last_solve_converged: bool = False
 
     def __enter__(self):
         """
@@ -307,6 +312,9 @@ class DCSolver:
         else:
             # Direct solve for linear circuits
             solution = self._solve_linear()
+            # Linear solve either succeeds or raises — if we got here,
+            # converged.
+            self._last_solve_converged = True
 
         # Store the solution for potential reuse
         self.last_solution = solution.copy()
@@ -458,8 +466,16 @@ class DCSolver:
         max_vs_voltage = max((abs(v) for v in original_voltages), default=1.0) or 1.0
 
         # --- GMIN stepping schedule ---
+        # V5 Phase A retry-design (2026-05-07): reduced from the 4-level
+        # schedule [1e-6, 1e-8, 1e-10, self.gmin] to a 2-level schedule
+        # [1e-8, self.gmin] when retry is invoked. Source stepping is
+        # tried once per level, so 4 levels x 5 steps = 20 NR sweeps per
+        # GMIN-on solve, which dominated the verify wall-time when GMIN
+        # was default-on. 2 levels keeps the homotopy useful for the
+        # cells that need it (TSMC5 BSIMAR-M VTC trip-point overflow)
+        # while halving the slow-path cost.
         if self.use_gmin_stepping:
-            gmin_schedule = [1e-6, 1e-8, 1e-10, self.gmin]
+            gmin_schedule = [1e-8, self.gmin]
         else:
             gmin_schedule = [self.gmin]
 
@@ -706,6 +722,18 @@ class DCSolver:
             self._store_source_currents(solution_final, nodes)
         except (np.linalg.LinAlgError, RuntimeError):
             pass
+
+        # V5 Phase A retry-design: surface convergence + finite-output
+        # status so the simulation orchestrator can decide whether to
+        # retry with GMIN homotopy on. Bad outputs (NaN / Inf / >1e10)
+        # also count as failures because the DC solver does not raise
+        # on NR exhaustion — it just returns the last (possibly garbage)
+        # voltage vector.
+        finite_voltages = all(
+            (np.isfinite(v) and abs(v) < 1.0e10)
+            for v in voltages.values()
+        )
+        self._last_solve_converged = bool(final_converged and finite_voltages)
 
         return voltages
 
@@ -954,9 +982,27 @@ class TransientSolver:
         # Store pseudo-capacitor references for cleanup
         self._pseudo_capacitors: List = []
 
+        # V5 Phase A — A3: dt-halve fallback event log. Each entry is a
+        # dict with {step, sub_idx, sim_time, halve_num, dt_before, dt_after,
+        # error_msg}. Read by verification scripts after a transient run
+        # to flag cells that needed >1 halving.
+        self._dt_halve_events: List[Dict] = []
+
     def _has_non_linear_components(self) -> bool:
         """Check if circuit contains non-linear components (MOSFETs)."""
         return _has_non_linear(self.circuit)
+
+    def _has_nn_devices(self) -> bool:
+        """Return True if the circuit contains any NN compact-model device
+        (LEVEL >= 73). Used to gate the V5 Phase A dt-halve fallback so
+        BSIM-CMG (LEVEL=72) transients keep their existing behaviour.
+        """
+        # Local import to avoid a top-level circular dependency.
+        from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase
+        for comp in self.circuit.components:
+            if isinstance(comp, _MOSFETNNBase):
+                return True
+        return False
 
     def _add_pseudo_capacitors(self) -> None:
         """Add pseudo-capacitors scaled to circuit capacitance for initialization."""
@@ -1387,6 +1433,14 @@ class TransientSolver:
         time = np.zeros(num_steps)
         voltages_over_time = {node: np.zeros(num_steps) for node in nodes}
 
+        # V5 Phase A — A3.2: track the highest committed step so the
+        # verify_nn_dc_tran inverter-tran runner can recover a partial
+        # waveform when NR exhausts mid-transient (turns ERROR row into
+        # numeric FAIL row).
+        self._last_committed_step = 0
+        self._partial_time = time
+        self._partial_voltages = voltages_over_time
+
         # Step 1: Initial conditions from capacitor voltages
         # For transient analysis, we use the capacitor's initial voltage (v_prev)
         # instead of doing a DC solve (which would give steady-state, not transient)
@@ -1471,8 +1525,12 @@ class TransientSolver:
             self._add_pseudo_capacitors()
 
         # Step 3: Adaptive time-stepping with LTE-based sub-stepping
-        max_dt_reductions = 5  # Maximum NR convergence retries per sub-step
+        # V5 Phase A — A3: NN circuits use a 4-halve cap (16x sub-resolution)
+        # with explicit event logging. BSIM-CMG keeps the original 5-halve
+        # behaviour to preserve byte-identical verify_bsimcmg_* output.
         has_non_linear = self._has_non_linear_components()
+        is_nn_circuit = self._has_nn_devices()
+        max_dt_reductions = 4 if is_nn_circuit else 5
 
         # LTE-adaptive sub-stepping: uses constructor parameters
         adaptive_substeps = 1
@@ -1612,13 +1670,29 @@ class TransientSolver:
                                 f"Failed to converge at t={sub_time:.2e}s even with minimum dt. "
                                 f"Original error: {e}"
                             ) from e
+                        dt_before = current_sub_dt
                         current_sub_dt = sub_dt / (2 ** dt_reduction_count)
+                        # V5 Phase A — A3: log every dt-halve event so
+                        # verification scripts can flag cells that needed
+                        # >1 halving (escalates as a model-fit issue).
+                        self._dt_halve_events.append({
+                            "step": step,
+                            "sub_idx": sub_idx,
+                            "sim_time": float(sub_time),
+                            "halve_num": dt_reduction_count,
+                            "dt_before": float(dt_before),
+                            "dt_after": float(current_sub_dt),
+                            "is_nn_circuit": bool(is_nn_circuit),
+                            "error_msg": str(e),
+                        })
                         if self.debug:
                             print(f"  WARNING: Convergence failed at t={sub_time:.2e}s, reducing dt to {current_sub_dt:.2e}")
 
             # Store at output point
             for node in nodes:
                 voltages_over_time[node][step] = current_voltages[node]
+            # V5 Phase A — A3.2: track committed step for partial-recovery.
+            self._last_committed_step = step
 
             # Stiffness detection: if NR took > 20 iterations, switch to BDF-2
             if (not _stiff_switched and has_non_linear and step > 2
