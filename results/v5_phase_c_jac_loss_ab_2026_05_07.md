@@ -292,3 +292,97 @@ attribution table, then re-issue the report.
   if the TF JAC at d_model=64 reaches the same, then JAC + smaller
   arch is at least as good as MAE + bigger arch — a useful Pareto
   finding.
+
+---
+
+## 11. Addendum (2026-05-08) — Circuit-level verify caveat for the DN-MAE arm
+
+A verify-chain run completed at 22:47–23:12 on 2026-05-07 (after the
+report was first written) and produced
+`tests/verify_nn_dc_tran_results/summary.csv`. The summary corresponds
+to the **DN-MAE arm** (DirectNet env vars set to `v5_dn_s_*_mae_*`,
+TF env vars unset so the v4 production TF acts as control). Numbers
+read off the summary against V4-baseline-post-Phase-A:
+
+| Cell | V4 prod + Phase A solver | V5 DN-MAE + Phase A solver | Δ |
+|---|---|---|---|
+| TSMC5 NMOS DC NRMSE | 0.98 % | **1.76 %** | +0.78 pp |
+| TSMC7 NMOS DC NRMSE | 3.22 % | **6.31 %** | +3.09 pp |
+| TSMC12 NMOS DC NRMSE | 0.18 % | 0.41 % | +0.23 pp |
+| TSMC16 NMOS DC NRMSE | 0.19 % | 0.06 % | −0.13 pp |
+| TSMC5 PMOS DC NRMSE | 0.12 % | **2.83 %** | +2.71 pp |
+| TSMC7 PMOS DC NRMSE | 0.08 % | **1.72 %** | +1.64 pp |
+| TSMC5 DN inv_tran | 16.90 FAIL | **NR_FAIL** (max-Δ 1.15e+05 V) | converged → unconverged |
+| TSMC7 DN inv_tran | 9.68 PASS | **NR_FAIL** (max-Δ 3.13e+12 V) | PASS → NR_FAIL |
+| TSMC12 DN inv_tran | 3.98 PASS | **NR_FAIL** (max-Δ 4.43e+12 V) | PASS → NR_FAIL |
+| TSMC16 DN inv_tran | 9.06 PASS | **NR_FAIL** (max-Δ 4.30e+12 V) | PASS → NR_FAIL |
+| Inv VTC DN PASS-rate | 2/4 (TSMC12, TSMC16 PASS) | **0/4 PASS** | regression |
+
+**Finding.** Despite the §1 C0 diagnostic showing V5 DN-MAE has 3-5×
+better autograd-vs-FD Jacobian consistency than V4 prod on the
+training-distribution operating-point grid, the V5 DN-MAE checkpoint
+**regresses circuit-level inverter convergence universally** — all 4
+inverter_tran cells go from converged in V4 to NR_FAIL with absurd
+voltage deltas (up to 4 × 10¹² V on TSMC12/16, classic NN-extrapolation
+runaway), and inverter VTC pass-rate drops from 2/4 to 0/4.
+
+This contradicts the §1 headline claim that V5 data overlay alone is
+sufficient. **The C0 diagnostic and the circuit-level verify disagree**:
+the C0 grid checks Jacobian consistency at fixed (Vgs, Vds, Vbs, NFIN,
+L) points well within the training distribution; circuit-level NR
+steps navigate transient excursions and Vout overshoots far outside
+that grid, where the V5 DN-MAE checkpoint behaves much worse than V4
+prod. The Phase A piecewise rail-restoring + dt-halve fallback that
+worked for V4 prod is overwhelmed by the V5 DN-MAE checkpoint's
+out-of-grid extrapolation.
+
+**Possible structural causes (not yet diagnosed):**
+1. **Smaller architecture (S = 159 K params) cannot generalise the V5
+   training distribution as well as V4 prod's M = ~5 M params.** The
+   on-grid C0 NRMSE is excellent (0.083 %) precisely because the model
+   over-fits the training distribution; circuit-level NR steps go
+   off-grid and fall off a cliff.
+2. **Phase B's `inv_trip` overlay densifies the trip-point band but
+   does not extend the (Vgs, Vds) extrapolation envelope past
+   ±VDD_train**, where the simulator's NR step eventually goes during
+   transient. Combined with #1, the model has no signal in the
+   extrapolation regime.
+3. **Phase B's filter relaxation (Id-only instead of all-13-output
+   AND-gate) may have admitted noisy charge/cap rows** that pulled the
+   small-arch model away from a clean physics fit.
+
+**Revised recommendation (overrides §1's "ship V5 MAE to production"):**
+
+* **Do NOT ship V5 DN-S MAE to production.** It regresses circuit-
+  level inverter convergence universally despite its on-grid C0 win.
+* The §1 conclusion that "V5 data overlay alone closes the V4
+  Jacobian-consistency gap" is correct on the **C0 diagnostic** alone
+  but is **insufficient** to recommend production deployment.
+* A follow-up sprint should:
+  1. **Re-train at M-scale (≥ 1 M params) on V5 data** before deciding
+     whether the data overlay is genuinely production-shippable.
+  2. **Run a circuit-level verify on the M-scale V5 MAE checkpoint** to
+     determine whether the small-arch regression is a capacity issue
+     (#1 above) or a data-distribution issue (#2/#3).
+  3. **Diagnose extrapolation behaviour** via a TSMC12 inverter_tran
+     trace + per-step Vds excursion histogram on V4 prod vs V5 DN-MAE.
+     The 4 × 10¹² V max-delta strongly suggests V5 DN-MAE explodes
+     past ±VDD_train where V4 prod stays bounded — likely a capacity
+     or boundary-loss issue.
+
+* The §1 finding that **JAC loss is harmful at S-scale on V5 data**
+  remains correct independent of this addendum: JAC arm is worse than
+  MAE arm even on the on-grid C0 metric. JAC is a confirmed dead-end
+  at this scale.
+
+* The final §1.3 Phase C gate decision is **JAC FAIL on C0 (correct)
+  AND MAE-arm circuit-level FAIL (newly observed)**. The plan's exit
+  criterion (JAC must beat MAE on (a) inv VTC pass-rate AND (b) TSMC5
+  inv-tran) is technically met by MAE in the sense that JAC's
+  circuit-level numbers can only be worse — but neither arm is
+  ship-ready at S-scale on V5 data.
+
+**Open question for Phase D (or a follow-up):** is the V5 dataset
+itself fit-for-purpose, or did Phase B over-trim the row filter (B4)
+and create the extrapolation cliff? An A/B between V5 and V4 B1
+datasets at the SAME small architecture would isolate that.
