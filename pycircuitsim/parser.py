@@ -72,28 +72,23 @@ def _resolve_nn_checkpoint(
     )
 
     # ── Env-var override (V5 Phase C): force a specific exp prefix ──────
-    # When ``PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE`` is set, both LEVEL=73
-    # and LEVEL=74 lookups use the override prefix as the universal base
-    # (e.g. ``v5_dn_s_nmos_mae`` resolves to
-    # ``CHECKPOINT_DIR/v5_dn_s_nmos_mae_best.pt``).  The ``{device_key}``
-    # suffix the legacy resolver appends is NOT added — the override is
-    # treated as the full <save_prefix> the trainer wrote, so it must
-    # already encode the device polarity.  This matches the v4-re
-    # convention where save_prefix already ends in "_nmos" / "_pmos".
+    # Three env vars in priority order:
+    #   PYCIRCUITSIM_NN_CHECKPOINT_NMOS / _PMOS — per-polarity prefix
+    #   PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE    — single prefix for both
+    # The override prefix is treated as the trainer save_prefix; when it
+    # ends in "_nmos"/"_pmos" the polarity is honoured (the other polarity
+    # falls through to the default cascade).  Otherwise "_<dev>" is
+    # appended so a polarity-agnostic base like "v5_dn_s" still resolves.
     import os
-    _override = os.environ.get("PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE")
+    per_polarity_env = (
+        f"PYCIRCUITSIM_NN_CHECKPOINT_{device_key.upper()}")
+    _override = (os.environ.get(per_polarity_env)
+                 or os.environ.get("PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE"))
     if _override and explicit_path is None:
-        # Only the matching polarity should pick up the override.  The
-        # caller passes device_key explicitly; if the override prefix
-        # ends in "_nmos" / "_pmos", honour that.  Otherwise treat the
-        # override as a polarity-agnostic prefix and append "_<dev>".
         ovr = _override.strip()
         if ovr.endswith(f"_{device_key}"):
             base = ovr
         elif ovr.endswith("_nmos") or ovr.endswith("_pmos"):
-            # Wrong polarity for this device — fall through to the
-            # default cascade so e.g. an NMOS-override still leaves PMOS
-            # devices using their default checkpoint.
             base = None
         else:
             base = f"{ovr}_{device_key}"
