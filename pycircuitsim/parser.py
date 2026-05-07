@@ -88,7 +88,9 @@ def _resolve_nn_checkpoint(
     _override = (os.environ.get(level_polarity_env)
                  or os.environ.get(per_polarity_env)
                  or os.environ.get("PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE"))
-    if _override and explicit_path is None:
+    # The env var takes priority over explicit_path (MODEL_PATH= in netlist)
+    # so V5 Phase C verify can swap checkpoints without re-generating netlists.
+    if _override:
         ovr = _override.strip()
         if ovr.endswith(f"_{device_key}"):
             base = ovr
