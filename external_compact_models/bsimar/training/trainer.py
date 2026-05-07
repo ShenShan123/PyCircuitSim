@@ -159,6 +159,12 @@ def _train_epoch_mae(
     When ``jac_loss`` is provided, ``λ_jac · L_jac`` is added to the
     main MAE term; targets are in BSIMAR_COLUMN_ORDER (the JAC loss is
     constructed with that column order so indexing is correct).
+
+    Note: when JAC is on, we wrap the body in a context that disables
+    flash and memory-efficient SDPA attention, since neither's backward
+    supports second-order derivatives (PyTorch 2.x).  Falls back to the
+    math-kernel path which supports double-backward at the cost of
+    ~30 % slower attention.
     """
     model.train()
     total_loss = 0.0
@@ -166,44 +172,55 @@ def _train_epoch_mae(
     total_jac = 0.0
     n_batches = 0
 
-    for batch in loader:
-        if len(batch) == 4:
-            x, y, tc, w = batch
-            w = w.to(device)
-        else:
-            x, y, tc = batch
-            w = None
+    # Disable flash + memory-efficient attention for the JAC path; both
+    # break under double-backward.
+    if jac_loss is not None:
+        from torch.nn.attention import sdpa_kernel, SDPBackend
+        sdp_ctx = sdpa_kernel([SDPBackend.MATH])
+    else:
+        from contextlib import nullcontext
+        sdp_ctx = nullcontext()
 
-        x = x.to(device)
-        y = y.to(device)
-        tc = tc.to(device)
+    with sdp_ctx:
+        for batch in loader:
+            if len(batch) == 4:
+                x, y, tc, w = batch
+                w = w.to(device)
+            else:
+                x, y, tc = batch
+                w = None
 
-        optimizer.zero_grad()
-        if jac_loss is not None:
-            x = x.requires_grad_(True)
-        pred = model(x, y, tech_codes=tc)
+            x = x.to(device)
+            y = y.to(device)
+            tc = tc.to(device)
 
-        mae = criterion(pred, y, weights=w) if w is not None else criterion(pred, y)
-        if jac_loss is not None:
-            jac_term = jac_loss(
-                x_norm=x, y_pred_norm=pred, y_true_norm=y,
-                in_std=jac_norm_tensors["in_std"],
-                out_std=jac_norm_tensors["out_std"],
-                out_mean=jac_norm_tensors["out_mean"],
-                asinh_scale=jac_norm_tensors.get("asinh_scale"),
-                weights=w,
-            )
-            loss = mae + jac_term
-            total_jac += jac_term.item()
-        else:
-            loss = mae
-        loss.backward()
-        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-        optimizer.step()
+            optimizer.zero_grad()
+            if jac_loss is not None:
+                x = x.requires_grad_(True)
+            pred = model(x, y, tech_codes=tc)
 
-        total_loss += loss.item()
-        total_mae += mae.item()
-        n_batches += 1
+            mae = (criterion(pred, y, weights=w)
+                   if w is not None else criterion(pred, y))
+            if jac_loss is not None:
+                jac_term = jac_loss(
+                    x_norm=x, y_pred_norm=pred, y_true_norm=y,
+                    in_std=jac_norm_tensors["in_std"],
+                    out_std=jac_norm_tensors["out_std"],
+                    out_mean=jac_norm_tensors["out_mean"],
+                    asinh_scale=jac_norm_tensors.get("asinh_scale"),
+                    weights=w,
+                )
+                loss = mae + jac_term
+                total_jac += jac_term.item()
+            else:
+                loss = mae
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+            optimizer.step()
+
+            total_loss += loss.item()
+            total_mae += mae.item()
+            n_batches += 1
 
     return {
         "total": total_loss / n_batches,
