@@ -72,17 +72,21 @@ def _resolve_nn_checkpoint(
     )
 
     # ── Env-var override (V5 Phase C): force a specific exp prefix ──────
-    # Three env vars in priority order:
-    #   PYCIRCUITSIM_NN_CHECKPOINT_NMOS / _PMOS — per-polarity prefix
-    #   PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE    — single prefix for both
+    # Per-(level, polarity) env vars, then per-polarity, then global:
+    #   PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS / _DN_PMOS  — LEVEL=73, polarity
+    #   PYCIRCUITSIM_NN_CHECKPOINT_TF_NMOS / _TF_PMOS  — LEVEL=74, polarity
+    #   PYCIRCUITSIM_NN_CHECKPOINT_NMOS / _PMOS        — both levels, polarity
+    #   PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE            — both levels, both polarities
     # The override prefix is treated as the trainer save_prefix; when it
-    # ends in "_nmos"/"_pmos" the polarity is honoured (the other polarity
-    # falls through to the default cascade).  Otherwise "_<dev>" is
-    # appended so a polarity-agnostic base like "v5_dn_s" still resolves.
+    # ends in "_nmos"/"_pmos" the polarity is honoured.
     import os
+    level_tag = "DN" if level == 73 else "TF"
+    level_polarity_env = (
+        f"PYCIRCUITSIM_NN_CHECKPOINT_{level_tag}_{device_key.upper()}")
     per_polarity_env = (
         f"PYCIRCUITSIM_NN_CHECKPOINT_{device_key.upper()}")
-    _override = (os.environ.get(per_polarity_env)
+    _override = (os.environ.get(level_polarity_env)
+                 or os.environ.get(per_polarity_env)
                  or os.environ.get("PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE"))
     if _override and explicit_path is None:
         ovr = _override.strip()
