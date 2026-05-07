@@ -80,6 +80,8 @@ def _run_direct(args: argparse.Namespace) -> None:
         exclude_techs=exclude,
         num_tech_codes=args.num_tech_codes,
         p_unknown=args.p_unknown,
+        jacobian_consistency=args.jacobian_consistency,
+        lam_jac=args.lam_jac,
     )
 
 
@@ -124,6 +126,8 @@ def _run_transformer(args: argparse.Namespace) -> None:
         exclude_techs=exclude,
         num_tech_codes=args.num_tech_codes,
         p_unknown=args.p_unknown,
+        jacobian_consistency=args.jacobian_consistency,
+        lam_jac=args.lam_jac,
     )
 
 
@@ -187,6 +191,15 @@ def main() -> None:
     parser.add_argument("--p-unknown", type=float, default=0.1,
                         help="Prob of replacing tech code with UNKNOWN "
                              "during training (default 0.1)")
+
+    # Jacobian-consistency loss (V5 Phase C)
+    parser.add_argument("--jacobian-consistency", action="store_true",
+                        help="Add λ_jac · L_jac auxiliary loss enforcing "
+                             "autograd(out) ≈ supervised target for the "
+                             "8 Jacobian channels (gm/gds/gmb + 5 caps).")
+    parser.add_argument("--lam-jac", type=float, default=0.1,
+                        help="λ_jac weight for the Jacobian-consistency "
+                             "term (default 0.1)")
 
     args = parser.parse_args()
     set_seed(args.seed)

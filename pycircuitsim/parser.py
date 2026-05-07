@@ -71,6 +71,60 @@ def _resolve_nn_checkpoint(
         CHECKPOINT_DIR, tech_variant_to_code, UNKNOWN_CODE_ID,
     )
 
+    # ── Env-var override (V5 Phase C): force a specific exp prefix ──────
+    # Per-(level, polarity) env vars, then per-polarity, then global:
+    #   PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS / _DN_PMOS  — LEVEL=73, polarity
+    #   PYCIRCUITSIM_NN_CHECKPOINT_TF_NMOS / _TF_PMOS  — LEVEL=74, polarity
+    #   PYCIRCUITSIM_NN_CHECKPOINT_NMOS / _PMOS        — both levels, polarity
+    #   PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE            — both levels, both polarities
+    # The override prefix is treated as the trainer save_prefix; when it
+    # ends in "_nmos"/"_pmos" the polarity is honoured.
+    import os
+    level_tag = "DN" if level == 73 else "TF"
+    level_polarity_env = (
+        f"PYCIRCUITSIM_NN_CHECKPOINT_{level_tag}_{device_key.upper()}")
+    per_polarity_env = (
+        f"PYCIRCUITSIM_NN_CHECKPOINT_{device_key.upper()}")
+    _override = (os.environ.get(level_polarity_env)
+                 or os.environ.get(per_polarity_env)
+                 or os.environ.get("PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE"))
+    # The env var takes priority over explicit_path (MODEL_PATH= in netlist)
+    # so V5 Phase C verify can swap checkpoints without re-generating netlists.
+    if _override:
+        ovr = _override.strip()
+        if ovr.endswith(f"_{device_key}"):
+            base = ovr
+        elif ovr.endswith("_nmos") or ovr.endswith("_pmos"):
+            base = None
+        else:
+            base = f"{ovr}_{device_key}"
+
+        if base is not None:
+            if level == 73:
+                ovr_path = CHECKPOINT_DIR / f"{base}_best.pt"
+                if ovr_path.exists():
+                    explicit_path = str(ovr_path)
+            else:  # level == 74
+                phys_path = CHECKPOINT_DIR / f"{base}_best.phys.pt"
+                plain_path = CHECKPOINT_DIR / f"{base}_best.pt"
+                norm_path = CHECKPOINT_DIR / f"{base}_norm.npz"
+                phys_trustworthy = False
+                if phys_path.exists() and norm_path.exists():
+                    try:
+                        from bsimar.data.normalize import BSIMARNormStats
+                        _ns = BSIMARNormStats.load(str(norm_path))
+                        phys_trustworthy = (
+                            getattr(_ns, "phys_best_metric", "legacy_mean")
+                            == "median")
+                    except Exception:
+                        phys_trustworthy = False
+                if phys_trustworthy:
+                    explicit_path = str(phys_path)
+                elif plain_path.exists():
+                    explicit_path = str(plain_path)
+                elif phys_path.exists():
+                    explicit_path = str(phys_path)
+
     if explicit_path is not None:
         path = explicit_path
     elif level == 73:
