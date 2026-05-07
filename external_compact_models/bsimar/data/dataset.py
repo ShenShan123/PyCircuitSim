@@ -64,12 +64,19 @@ class MOSFETDataset(Dataset):
 
 # ── Loader ───────────────────────────────────────────────────────────────────
 
-# Per-output filtering thresholds (physical units).
-# Samples where ANY target falls below its group threshold are removed.
+# v5 plan §4-B4: collapsed to an Id-only gate.
+#
+# The previous AND-of-13 gate (require every target above its group
+# threshold) was over-aggressive: legitimate deep-cutoff rows where Id
+# is well above 1e-15 A but a charge happens to be below 1e-19 C were
+# being dropped. The asinh-scale floor in BSIMARNormalizer absorbs the
+# small-charge / small-cap dynamic range during normalization, so the
+# only row we actually want to drop is one with effectively no current
+# (which the dataset generator caps at |id| < 1 A in eval_single_point
+# already, but rows where Id underflows the modelcard noise floor are
+# still possible).
 DEFAULT_FILTER_THRESHOLDS: Dict[str, float] = {
-    "id": 1e-15, "gm": 1e-12, "gds": 1e-12, "gmb": 1e-12,
-    "qg": 1e-19, "qd": 1e-19, "qs": 1e-19, "qb": 1e-19,
-    "cgg": 1e-19, "cgd": 1e-19, "cgs": 1e-19, "cdg": 1e-19, "cdd": 1e-19,
+    "id": 1e-15,
 }
 
 
@@ -78,7 +85,15 @@ def filter_small_targets(
     column_names: List[str],
     thresholds: Optional[Dict[str, float]] = None,
 ) -> np.ndarray:
-    """Boolean mask: True for samples where ALL targets exceed their threshold."""
+    """Boolean mask: True for samples whose Id exceeds the threshold.
+
+    v5 plan §4-B4 changed this from an AND-gate over all 13 outputs to
+    an Id-only gate. Per-target asinh floor handles small charges/caps
+    during normalization (see ``DEFAULT_FILTER_THRESHOLDS`` docstring).
+    The ``thresholds`` argument is still respected for backward compat
+    so callers may pass an explicit per-target dict if they need the
+    legacy AND semantics; the new default is Id-only.
+    """
     if thresholds is None:
         thresholds = DEFAULT_FILTER_THRESHOLDS
     mask = np.ones(len(outputs), dtype=bool)
