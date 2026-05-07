@@ -30,7 +30,7 @@ from bsimar.data.normalize import (
 )
 from bsimar.models.transformer import TransformerEncoderModel
 from bsimar.losses.bni_mae import (
-    MAELoss, compute_lds_weights_per_target,
+    MAELoss, JacobianConsistencyLoss, compute_lds_weights_per_target,
 )
 from bsimar.training.early_stopping import EarlyStopping
 
@@ -45,13 +45,21 @@ def _train_epoch_direct(
     criterion: nn.Module,
     optimizer: optim.Optimizer,
     device: torch.device,
+    jac_loss: JacobianConsistencyLoss | None = None,
+    jac_norm_tensors: dict | None = None,
 ) -> Dict[str, float]:
     """Training epoch for DirectNet (MAE + LDS weights).
 
     Batch layout: (x, y, tech_codes) or (x, y, tech_codes, lds_weights).
+    When ``jac_loss`` is provided, ``λ_jac · L_jac`` is added to the
+    main MAE term; ``jac_norm_tensors`` must contain ``in_std``,
+    ``out_std``, ``out_mean`` (and optionally ``asinh_scale``) for
+    the chain-rule conversion.
     """
     model.train()
     total_loss = 0.0
+    total_mae = 0.0
+    total_jac = 0.0
     n = 0
     for batch in loader:
         if len(batch) == 4:
@@ -62,13 +70,33 @@ def _train_epoch_direct(
             w = None
         x, y, tc = x.to(device), y.to(device), tc.to(device)
         optimizer.zero_grad()
+        if jac_loss is not None:
+            x = x.requires_grad_(True)
         pred = model(x, tech_codes=tc)
-        loss = criterion(pred, y, weights=w) if w is not None else criterion(pred, y)
+        mae = criterion(pred, y, weights=w) if w is not None else criterion(pred, y)
+        if jac_loss is not None:
+            jac_term = jac_loss(
+                x_norm=x, y_pred_norm=pred, y_true_norm=y,
+                in_std=jac_norm_tensors["in_std"],
+                out_std=jac_norm_tensors["out_std"],
+                out_mean=jac_norm_tensors["out_mean"],
+                asinh_scale=jac_norm_tensors.get("asinh_scale"),
+                weights=w,
+            )
+            loss = mae + jac_term
+            total_jac += jac_term.item()
+        else:
+            loss = mae
         loss.backward()
         optimizer.step()
         total_loss += loss.item()
+        total_mae += mae.item()
         n += 1
-    return {"total": total_loss / n}
+    return {
+        "total": total_loss / n,
+        "mae": total_mae / n,
+        "jac": total_jac / n,
+    }
 
 
 @torch.no_grad()
@@ -122,13 +150,20 @@ def _train_epoch_mae(
     criterion: nn.Module,
     optimizer: optim.Optimizer,
     device: torch.device,
+    jac_loss: JacobianConsistencyLoss | None = None,
+    jac_norm_tensors: dict | None = None,
 ) -> Dict[str, float]:
     """Teacher-forced training epoch (batches carry tech codes).
 
     Batch layout: (x, y, tech_codes) or (x, y, tech_codes, lds_weights).
+    When ``jac_loss`` is provided, ``λ_jac · L_jac`` is added to the
+    main MAE term; targets are in BSIMAR_COLUMN_ORDER (the JAC loss is
+    constructed with that column order so indexing is correct).
     """
     model.train()
     total_loss = 0.0
+    total_mae = 0.0
+    total_jac = 0.0
     n_batches = 0
 
     for batch in loader:
@@ -144,17 +179,37 @@ def _train_epoch_mae(
         tc = tc.to(device)
 
         optimizer.zero_grad()
+        if jac_loss is not None:
+            x = x.requires_grad_(True)
         pred = model(x, y, tech_codes=tc)
 
-        loss = criterion(pred, y, weights=w) if w is not None else criterion(pred, y)
+        mae = criterion(pred, y, weights=w) if w is not None else criterion(pred, y)
+        if jac_loss is not None:
+            jac_term = jac_loss(
+                x_norm=x, y_pred_norm=pred, y_true_norm=y,
+                in_std=jac_norm_tensors["in_std"],
+                out_std=jac_norm_tensors["out_std"],
+                out_mean=jac_norm_tensors["out_mean"],
+                asinh_scale=jac_norm_tensors.get("asinh_scale"),
+                weights=w,
+            )
+            loss = mae + jac_term
+            total_jac += jac_term.item()
+        else:
+            loss = mae
         loss.backward()
         torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
         total_loss += loss.item()
+        total_mae += mae.item()
         n_batches += 1
 
-    return {"total": total_loss / n_batches}
+    return {
+        "total": total_loss / n_batches,
+        "mae": total_mae / n_batches,
+        "jac": total_jac / n_batches,
+    }
 
 
 @torch.no_grad()
@@ -269,6 +324,8 @@ def train_directnet(
     exclude_techs: Optional[Set[str]] = None,
     num_tech_codes: int = NUM_TSMC_CODES_WITH_UNKNOWN,
     p_unknown: float = 0.1,
+    jacobian_consistency: bool = False,
+    lam_jac: float = 0.1,
 ) -> Tuple[nn.Module, BSIMARNormalizer]:
     """DirectNet training pipeline (7-dim input + tech-code embedding).
 
@@ -345,12 +402,37 @@ def train_directnet(
     best_path = CHECKPOINT_DIR / f"{save_prefix}_best.pt"
     norm_path = CHECKPOINT_DIR / f"{save_prefix}_norm.npz"
 
+    # ── Optional Jacobian-consistency aux loss (V5 Phase C) ─────────────
+    jac_loss: JacobianConsistencyLoss | None = None
+    jac_norm_tensors: dict | None = None
+    if jacobian_consistency:
+        jac_loss = JacobianConsistencyLoss(
+            lam=lam_jac, norm_mode=normalizer.stats.mode,
+            column_order=OUTPUT_COLUMNS,
+        )
+        in_std_t = torch.tensor(
+            normalizer.stats.input_std, dtype=torch.float32, device=device)
+        out_std_t = torch.tensor(
+            normalizer.stats.output_std, dtype=torch.float32, device=device)
+        out_mean_t = torch.tensor(
+            normalizer.stats.output_mean, dtype=torch.float32, device=device)
+        # zscore for DirectNet — no asinh_scale needed
+        jac_norm_tensors = {
+            "in_std": in_std_t, "out_std": out_std_t, "out_mean": out_mean_t,
+        }
+        if normalizer.stats.mode == "asinh":
+            jac_norm_tensors["asinh_scale"] = torch.tensor(
+                normalizer.stats.asinh_scale, dtype=torch.float32,
+                device=device)
+        print(f"Jacobian-consistency loss enabled (λ_jac={lam_jac})")
+
     t_start = time.time()
     epoch = 0
 
     for epoch in range(1, config.max_epochs + 1):
         train_losses = _train_epoch_direct(
-            model, train_loader, criterion, optimizer, device)
+            model, train_loader, criterion, optimizer, device,
+            jac_loss=jac_loss, jac_norm_tensors=jac_norm_tensors)
         val_losses = _validate_epoch_direct(
             model, val_loader, criterion, device)
         scheduler.step()
@@ -368,7 +450,11 @@ def train_directnet(
 
         should_print = (epoch % 20 == 0 or epoch <= 5 or bool(status))
         if should_print:
-            print(f"{epoch:4d} | train={train_losses['total']:.5f} "
+            extra = ""
+            if jac_loss is not None:
+                extra = (f" mae={train_losses['mae']:.5f} "
+                         f"jac={train_losses['jac']:.5f}")
+            print(f"{epoch:4d} | train={train_losses['total']:.5f}{extra} "
                   f"val={val_losses['total']:.5f} lr={lr:.2e}{status}")
 
         if patience_counter >= config.patience:
@@ -419,6 +505,8 @@ def train_transformer(
     num_tech_codes: int = NUM_TSMC_CODES_WITH_UNKNOWN,
     p_unknown: float = 0.1,
     prebuilt_data: Optional[Tuple[object, object, object, BSIMARNormalizer]] = None,
+    jacobian_consistency: bool = False,
+    lam_jac: float = 0.1,
 ) -> Tuple[nn.Module, BSIMARNormalizer]:
     """BSIMAR Transformer training pipeline.
 
@@ -556,12 +644,43 @@ def train_transformer(
     best_phys_r2 = float("nan")
     phys_best_path = best_path.with_suffix(".phys.pt")
     ar_check_every = 10
+
+    # ── Optional Jacobian-consistency aux loss (V5 Phase C) ─────────────
+    # Targets are in BSIMAR_COLUMN_ORDER (post reorder_outputs), so the
+    # JAC loss must use that column order for indexing.
+    jac_loss: JacobianConsistencyLoss | None = None
+    jac_norm_tensors: dict | None = None
+    if jacobian_consistency:
+        from bsimar.data.normalize import BSIMAR_COLUMN_ORDER
+        # The norm stats live in OUTPUT_COLUMN_ORDER; we need them
+        # permuted to BSIMAR_COLUMN_ORDER to match the target tensor.
+        from bsimar.data.normalize import OUTPUT_COLUMN_ORDER
+        perm = [OUTPUT_COLUMN_ORDER.index(c) for c in BSIMAR_COLUMN_ORDER]
+        jac_loss = JacobianConsistencyLoss(
+            lam=lam_jac, norm_mode=normalizer.stats.mode,
+            column_order=BSIMAR_COLUMN_ORDER,
+        )
+        in_std_t = torch.tensor(
+            normalizer.stats.input_std, dtype=torch.float32, device=device)
+        out_std_t = torch.tensor(
+            normalizer.stats.output_std[perm], dtype=torch.float32, device=device)
+        out_mean_t = torch.tensor(
+            normalizer.stats.output_mean[perm], dtype=torch.float32, device=device)
+        jac_norm_tensors = {
+            "in_std": in_std_t, "out_std": out_std_t, "out_mean": out_mean_t,
+        }
+        if normalizer.stats.mode == "asinh":
+            jac_norm_tensors["asinh_scale"] = torch.tensor(
+                normalizer.stats.asinh_scale[perm], dtype=torch.float32,
+                device=device)
+        print(f"Jacobian-consistency loss enabled (λ_jac={lam_jac})")
     t_start = time.time()
     epoch = 0
 
     for epoch in range(1, epochs + 1):
         t_losses = _train_epoch_mae(
-            model, train_loader, criterion, optimizer, device)
+            model, train_loader, criterion, optimizer, device,
+            jac_loss=jac_loss, jac_norm_tensors=jac_norm_tensors)
         v_losses = _validate_epoch_tf(
             model, val_loader, criterion, device)
 
@@ -628,7 +747,11 @@ def train_transformer(
         lr_now = scheduler.get_last_lr()[0]
 
         if epoch % 20 == 0 or epoch <= 5 or status:
-            print(f"  {epoch:4d} | train={train_loss:.5f} "
+            extra = ""
+            if jac_loss is not None:
+                extra = (f" mae={t_losses['mae']:.5f} "
+                         f"jac={t_losses['jac']:.5f}")
+            print(f"  {epoch:4d} | train={train_loss:.5f}{extra} "
                   f"val={val_loss:.5f} lr={lr_now:.2e}{status}")
 
     elapsed = time.time() - t_start
