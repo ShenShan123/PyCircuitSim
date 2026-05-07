@@ -1235,13 +1235,23 @@ def run_pycircuitsim_nn_inverter_tran(
 
         # Stage 1: DC OP
         initial_guess = circuit.initial_conditions if circuit.initial_conditions else None
-        # V5 Phase A — A2: NN-aware GMIN stepping default-on (we know
-        # this is an NN circuit, so set explicitly).
+        # V5 Phase A retry-design: try fast-path first, retry with GMIN
+        # only on convergence failure. Mirrors `_solve_dc_with_retry`
+        # in simulation.py.
         op_solver = DCSolver(
             circuit, initial_guess=initial_guess, use_source_stepping=True,
-            use_gmin_stepping=True,
+            use_gmin_stepping=False,
         )
-        op_solution = op_solver.solve()
+        try:
+            op_solution = op_solver.solve()
+            if not getattr(op_solver, "_last_solve_converged", True):
+                raise RuntimeError("fast-path NR did not converge for NN inverter DC OP")
+        except (RuntimeError, np.linalg.LinAlgError):
+            op_solver = DCSolver(
+                circuit, initial_guess=initial_guess, use_source_stepping=True,
+                use_gmin_stepping=True,
+            )
+            op_solution = op_solver.solve()
 
         # Stage 2: Transient
         solver = TransientSolver(

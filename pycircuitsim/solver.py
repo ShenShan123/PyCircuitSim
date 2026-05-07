@@ -238,6 +238,11 @@ class DCSolver:
         self.force_ic = force_ic
         self.last_solution: Optional[Dict[str, float]] = None
         self._owns_logger = False  # Track if we created the logger (for cleanup)
+        # V5 Phase A retry-design: True if the last `solve()` reached
+        # SPICE convergence AND the returned voltage vector is finite.
+        # The simulation orchestrator inspects this to decide whether
+        # to retry with GMIN stepping enabled.
+        self._last_solve_converged: bool = False
 
     def __enter__(self):
         """
@@ -307,6 +312,9 @@ class DCSolver:
         else:
             # Direct solve for linear circuits
             solution = self._solve_linear()
+            # Linear solve either succeeds or raises — if we got here,
+            # converged.
+            self._last_solve_converged = True
 
         # Store the solution for potential reuse
         self.last_solution = solution.copy()
@@ -458,8 +466,16 @@ class DCSolver:
         max_vs_voltage = max((abs(v) for v in original_voltages), default=1.0) or 1.0
 
         # --- GMIN stepping schedule ---
+        # V5 Phase A retry-design (2026-05-07): reduced from the 4-level
+        # schedule [1e-6, 1e-8, 1e-10, self.gmin] to a 2-level schedule
+        # [1e-8, self.gmin] when retry is invoked. Source stepping is
+        # tried once per level, so 4 levels x 5 steps = 20 NR sweeps per
+        # GMIN-on solve, which dominated the verify wall-time when GMIN
+        # was default-on. 2 levels keeps the homotopy useful for the
+        # cells that need it (TSMC5 BSIMAR-M VTC trip-point overflow)
+        # while halving the slow-path cost.
         if self.use_gmin_stepping:
-            gmin_schedule = [1e-6, 1e-8, 1e-10, self.gmin]
+            gmin_schedule = [1e-8, self.gmin]
         else:
             gmin_schedule = [self.gmin]
 
@@ -706,6 +722,18 @@ class DCSolver:
             self._store_source_currents(solution_final, nodes)
         except (np.linalg.LinAlgError, RuntimeError):
             pass
+
+        # V5 Phase A retry-design: surface convergence + finite-output
+        # status so the simulation orchestrator can decide whether to
+        # retry with GMIN homotopy on. Bad outputs (NaN / Inf / >1e10)
+        # also count as failures because the DC solver does not raise
+        # on NR exhaustion — it just returns the last (possibly garbage)
+        # voltage vector.
+        finite_voltages = all(
+            (np.isfinite(v) and abs(v) < 1.0e10)
+            for v in voltages.values()
+        )
+        self._last_solve_converged = bool(final_converged and finite_voltages)
 
         return voltages
 
