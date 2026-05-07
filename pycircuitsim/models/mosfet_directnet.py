@@ -437,29 +437,48 @@ class _MOSFETNNBase(Component):
         # locking at V(out)=4.4V instead of VDD). PyCMG predicts |Id|~mA at
         # out-of-range Vds (impact ionization, leakage); we replicate that.
         #
-        # Use a *tanh-saturated* ramp so the restoring current and
-        # conductance asymptote to a hard cap, preventing the 1e150
-        # runaway seen on TSMC5 BSIMAR-M VTC under deep NR overshoot.
-        # The previous quadratic ramp grew without bound (½·g_max·x²/x_ref),
-        # which is fine for moderate overshoot but explodes when the NR
-        # iterate transiently lands far past the rail.
-        # Tanh / sech² ramp (V5 Phase A — A1):
-        #   I_extra(x) = g_max · x_ref · tanh(x/x_ref)        x = |Vds|−VDD_train
-        #   g_extra(x) = dI_extra/dx = g_max · sech²(x/x_ref)
-        # → both bounded: I_extra → ±g_max·x_ref, g_extra → 0 as x → ∞.
-        # x_ref controls how quickly we approach the asymptote.
+        # Saturating-quadratic ramp (V5 Phase A — A1, 2026-05-07):
+        #   q(x)         = ½ · g_max · x² / x_ref         x = |Vds|−VDD_train
+        #   I_extra(x)   = id_cap · tanh(q(x) / id_cap)   id_cap = g_max · x_ref
+        #   g_extra(x)   = dI_extra/dx
+        #                = sech²(q/id_cap) · (g_max · x / x_ref)
+        #
+        # Properties (all required so we don't regress the converged
+        # in-distribution operating points):
+        #   • I_extra(0) = 0,  I_extra'(0) = 0,  I_extra''(0) = g_max/x_ref
+        #     — matches the prior unbounded quadratic to second order at
+        #     the boundary, so converged points where |Vds| ≈ VDD_train
+        #     see no Jacobian discontinuity.
+        #   • g_extra(0) = 0 (smooth join — old quadratic property).
+        #   • |I_extra| ≤ id_cap = g_max·x_ref (~0.2 mA at VDD=0.4V) —
+        #     prevents the 1e150 runaway seen on TSMC5 BSIMAR-M VTC
+        #     under deep NR overshoot, which the prior unbounded
+        #     quadratic could not bound.
+        #   • g_extra → 0 as x → ∞ — consistent with bounded I_extra.
+        #
+        # The plan's plain `tanh(x/x_ref)` form was rejected during
+        # in-circuit testing because its slope at x=0 is g_max (not 0),
+        # which jumps gds from the NN value to 1 mS the moment |Vds|
+        # crosses VDD_train. For TSMC12 inverter circuits where the
+        # operating Vds sits near VDD_train, this discontinuity drove
+        # the inverter VTC NRMSE from 13% PASS to 80%+ FAIL. Wrapping
+        # the *old* quadratic argument in tanh recovers both the
+        # saturation and the smooth-join.
         VDD_train = self._vdd_estimate
         if abs_vds > VDD_train:
             overshoot = abs_vds - VDD_train
-            g_max = 1.0e-3   # 1 mS — peak restoring conductance at boundary
+            g_max = 1.0e-3   # 1 mS — peak restoring conductance scale
             x_ref = 0.5 * VDD_train  # ramp scale: ~half VDD
-            # Saturating Id extra and matching gds (sech² = derivative of tanh).
-            arg = overshoot / x_ref
-            tanh_arg = math.tanh(arg)
-            # sech²(arg) = 1 - tanh²(arg). Numerically stable for large arg.
+            id_cap = g_max * x_ref
+            # Quadratic argument (matches the pre-V5 Phase A behavior at
+            # small overshoot).
+            q = 0.5 * g_max * overshoot * overshoot / x_ref
+            tanh_arg = math.tanh(q / id_cap) if id_cap > 0 else 0.0
             sech2_arg = 1.0 - tanh_arg * tanh_arg
-            id_extra = g_max * x_ref * tanh_arg
-            g_extra = g_max * sech2_arg
+            id_extra = id_cap * tanh_arg
+            # g_extra = sech²(q/id_cap) · (g_max · x / x_ref) — derivative
+            # of id_extra w.r.t. overshoot via chain rule.
+            g_extra = sech2_arg * (g_max * overshoot / x_ref)
             if normal_dir:
                 if self._is_pmos:
                     result["id"] = result["id"] - id_extra
