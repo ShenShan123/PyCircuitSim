@@ -373,12 +373,18 @@ def train_directnet(
         train_ds.inputs, train_ds.outputs, train_ds.tech_codes,
         torch.tensor(lds_weights_np, dtype=torch.float32),
     )
-    train_loader = DataLoader(train_ds_weighted,
-                              batch_size=config.batch_size, shuffle=True)
-    val_loader = DataLoader(val_ds, batch_size=config.batch_size,
-                            shuffle=False)
-    test_loader = DataLoader(test_ds, batch_size=config.batch_size,
-                             shuffle=False)
+    # 8 worker threads + pinned memory: prevents the dataloader from
+    # being the GPU bottleneck on 10M+ row datasets (V5 Phase C).
+    _NW = 8
+    train_loader = DataLoader(
+        train_ds_weighted, batch_size=config.batch_size, shuffle=True,
+        num_workers=_NW, pin_memory=True, persistent_workers=True)
+    val_loader = DataLoader(
+        val_ds, batch_size=config.batch_size, shuffle=False,
+        num_workers=_NW, pin_memory=True, persistent_workers=True)
+    test_loader = DataLoader(
+        test_ds, batch_size=config.batch_size, shuffle=False,
+        num_workers=_NW, pin_memory=True, persistent_workers=True)
 
     model = DirectNet(
         input_dim=input_dim,
