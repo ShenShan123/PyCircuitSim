@@ -327,24 +327,54 @@ def get_available_checkpoints() -> Dict[str, Optional[Path]]:
       'bsimar_v4_nmos', 'directnet_v4_nmos',
       'bsimar_v4_pmos', 'directnet_v4_pmos'.
     Value is the checkpoint path if available, None otherwise.
+
+    Env-var overrides (per V5'/V6 A/B workflow):
+      PYCIRCUITSIM_NN_CHECKPOINT_TF_{NMOS,PMOS}  — Transformer override
+      PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}  — DirectNet override
+      PYCIRCUITSIM_NN_CHECKPOINT_{NMOS,PMOS}     — both arms (per polarity)
+      PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE        — both arms, both polarities
+    Value should be the checkpoint stem without _best.pt; e.g. ``v6_dn_small_e2_asinh_nmos``.
     """
+    import os
     checkpoints: Dict[str, Optional[Path]] = {}
 
     for dev in ("nmos", "pmos"):
         suffix = f"_{dev}"
-        # BSIMAR v4 (tech-code embedding, phys-best)
-        bsimar_phys = CHECKPOINT_DIR / f"v4_universal_{dev}_best.phys.pt"
-        bsimar_plain = CHECKPOINT_DIR / f"v4_universal_{dev}_best.pt"
-        if bsimar_phys.exists():
-            checkpoints[f"bsimar_v4{suffix}"] = bsimar_phys
-        elif bsimar_plain.exists():
-            checkpoints[f"bsimar_v4{suffix}"] = bsimar_plain
-        else:
-            checkpoints[f"bsimar_v4{suffix}"] = None
+        DEV = dev.upper()
 
-        # DirectNet v4 (tech-code embedding)
-        dn_v4 = CHECKPOINT_DIR / f"v4_dn_universal_{dev}_best.pt"
-        checkpoints[f"directnet_v4{suffix}"] = dn_v4 if dn_v4.exists() else None
+        tf_ovr = (os.environ.get(f"PYCIRCUITSIM_NN_CHECKPOINT_TF_{DEV}")
+                  or os.environ.get(f"PYCIRCUITSIM_NN_CHECKPOINT_{DEV}")
+                  or os.environ.get("PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE"))
+        dn_ovr = (os.environ.get(f"PYCIRCUITSIM_NN_CHECKPOINT_DN_{DEV}")
+                  or os.environ.get(f"PYCIRCUITSIM_NN_CHECKPOINT_{DEV}")
+                  or os.environ.get("PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE"))
+
+        # BSIMAR v4 (tech-code embedding, phys-best) or env override
+        if tf_ovr:
+            tf_phys = CHECKPOINT_DIR / f"{tf_ovr}_best.phys.pt"
+            tf_plain = CHECKPOINT_DIR / f"{tf_ovr}_best.pt"
+            checkpoints[f"bsimar_v4{suffix}"] = (
+                tf_phys if tf_phys.exists()
+                else (tf_plain if tf_plain.exists() else None))
+        else:
+            bsimar_phys = CHECKPOINT_DIR / f"v4_universal_{dev}_best.phys.pt"
+            bsimar_plain = CHECKPOINT_DIR / f"v4_universal_{dev}_best.pt"
+            if bsimar_phys.exists():
+                checkpoints[f"bsimar_v4{suffix}"] = bsimar_phys
+            elif bsimar_plain.exists():
+                checkpoints[f"bsimar_v4{suffix}"] = bsimar_plain
+            else:
+                checkpoints[f"bsimar_v4{suffix}"] = None
+
+        # DirectNet v4 (tech-code embedding) or env override
+        if dn_ovr:
+            dn_path = CHECKPOINT_DIR / f"{dn_ovr}_best.pt"
+            checkpoints[f"directnet_v4{suffix}"] = (
+                dn_path if dn_path.exists() else None)
+        else:
+            dn_v4 = CHECKPOINT_DIR / f"v4_dn_universal_{dev}_best.pt"
+            checkpoints[f"directnet_v4{suffix}"] = (
+                dn_v4 if dn_v4.exists() else None)
 
     # Backward-compat aliases (NMOS only, used by existing run_dc_tests/run_tran_tests)
     checkpoints["bsimar_v4"] = checkpoints["bsimar_v4_nmos"]
