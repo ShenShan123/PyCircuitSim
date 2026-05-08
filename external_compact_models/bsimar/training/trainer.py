@@ -76,8 +76,12 @@ class ArchAdapter:
 
 
 _ADAPTERS = {
+    # V6 Tier 2 (2026-05-09): DirectNet flipped from "zscore" to "asinh"
+    # outputs. Concentrates loss on the small-Id band that dominates
+    # inverter trip-point NRMSE; matches the Transformer's normaliser.
+    # Chain rule already correct via AsinhNormalizer.denormalize_derivative.
     "direct": ArchAdapter(
-        name="direct", norm_mode="zscore",
+        name="direct", norm_mode="asinh",
         reorder_outputs=False, save_arch_config=False, needs_ar_eval=False),
     "transformer": ArchAdapter(
         name="transformer", norm_mode="asinh",
