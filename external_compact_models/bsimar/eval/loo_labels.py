@@ -389,7 +389,12 @@ def build_loo_splits(
     def _make_ds(idx: np.ndarray) -> MOSFETDataset:
         x = normalizer.normalize_inputs(inputs[idx], geometry[idx])
         y = normalizer.normalize_outputs(outputs[idx])
-        return MOSFETDataset(x, y)
+        # Tech codes are not used in the LOO experiments (they evaluate on
+        # an unseen tech), but the new MOSFETDataset signature requires them;
+        # use UNKNOWN as a safe placeholder.
+        from bsimar.config import UNKNOWN_CODE_ID
+        codes = np.full(len(idx), UNKNOWN_CODE_ID, dtype=np.int64)
+        return MOSFETDataset(x, y, codes)
 
     train_ds = _make_ds(train_idx)
     val_ds = _make_ds(val_idx)

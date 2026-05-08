@@ -1,213 +1,144 @@
-"""Unified CLI for BSIMAR training.
+"""Unified training CLI for DirectNet and BSIMAR Transformer.
 
-Two models, one CLI:
+Quick presets for fast verification:
 
-- ``--model direct``      — DirectNet MLP with tech-code embedding
-- ``--model transformer`` — BSIMAR Transformer with tech-code embedding (default)
+    python -m bsimar.cli.train --model direct      --size small  --device-type nmos --cuda
+    python -m bsimar.cli.train --model transformer --size medium --device-type nmos --cuda
 
-Both models use a 7-dim continuous input plus a discrete tech-code
-embedding.  The Transformer recipe is hard-wired inside
-``train_transformer`` (asinh+zscore norm, MAE + LDS,
-parallel_caps, grouped_inputs).  The only caller-visible knobs are
-architecture (``--d-model``, ``--nhead``, ``--num-layers``,
-``--dim-feedforward``, ``--dropout``), schedule (``--epochs``,
-``--batch-size``, ``--lr``, ``--patience``), and checkpoint naming
-(``--exp-name``, ``--overwrite``).
-
-Usage:
-    # DirectNet with tech-code embedding
-    python -m bsimar.cli.train \\
-        --model direct --device-type nmos \\
-        --epochs 800 --hidden 384 --layers 6 --batch-size 2048 --cuda
-
-    # BSIMAR Transformer (production recipe)
-    python -m bsimar.cli.train \\
-        --model transformer --device-type nmos --cuda
+Override individual knobs (``--epochs``, ``--batch-size``, …) to tune
+beyond the preset.
 """
 
-import sys
+from __future__ import annotations
+
 import argparse
+import sys
 from pathlib import Path
 
 import torch
 
 from bsimar.config import (
-    TECH_CONFIGS,
     CHECKPOINT_DIR, DATA_DIR,
     DirectNetConfig, TransformerConfig,
 )
+from bsimar.training.trainer import train_directnet, train_transformer
 from bsimar.utils.seed import set_seed
-from bsimar.training.trainer import (
-    train_directnet,
-    train_transformer,
-)
 
 
-# ── DirectNet subcommand ────────────────────────────────────────────────────
+# (model, size) → (config dict, default save_prefix tag)
+SIZE_PRESETS = {
+    ("direct", "small"): dict(
+        trunk_hidden=128, trunk_layers=3, batch_size=2048,
+        max_epochs=80, patience=25, lr=1e-3),
+    ("direct", "medium"): dict(
+        trunk_hidden=256, trunk_layers=5, batch_size=2048,
+        max_epochs=200, patience=40, lr=1e-3),
+    ("direct", "large"): dict(
+        trunk_hidden=384, trunk_layers=6, batch_size=2048,
+        max_epochs=800, patience=150, lr=1e-3),
+    ("transformer", "small"): dict(
+        d_model=128, nhead=4, num_layers=3, dim_feedforward=512,
+        dropout=0.1, batch_size=1024, max_epochs=60,
+        patience=20, lr=8e-4),
+    ("transformer", "medium"): dict(
+        d_model=192, nhead=6, num_layers=4, dim_feedforward=768,
+        dropout=0.15, batch_size=1024, max_epochs=150,
+        patience=40, lr=8e-4),
+    ("transformer", "large"): dict(
+        d_model=256, nhead=8, num_layers=6, dim_feedforward=1024,
+        dropout=0.2, batch_size=1024, max_epochs=300,
+        patience=80, lr=8e-4),
+}
 
-def _run_direct(args: argparse.Namespace) -> None:
-    data_path = (Path(args.data) if args.data
-                 else DATA_DIR / f"universal_{args.device_type}.npz")
-    save_prefix = f"v4_re_dn_universal_{args.device_type}"
+
+def _resolve_data_path(args: argparse.Namespace) -> Path:
+    if args.data:
+        return Path(args.data)
+    return DATA_DIR / f"universal_{args.device_type}.npz"
+
+
+def _make_save_prefix(args: argparse.Namespace) -> str:
     if args.exp_name:
-        save_prefix = f"{args.exp_name}_{args.device_type}"
+        return f"{args.exp_name}_{args.device_type}"
+    tag = "dn" if args.model == "direct" else "tf"
+    return f"refac_{tag}_{args.size}_{args.device_type}"
 
+
+def _run(args: argparse.Namespace) -> None:
+    data_path = _resolve_data_path(args)
     if not data_path.exists():
         print(f"Dataset not found: {data_path}")
         sys.exit(1)
 
-    config = DirectNetConfig(
-        max_epochs=args.epochs,
-        batch_size=args.batch_size,
-        lr=args.lr,
-        trunk_hidden=args.hidden,
-        trunk_layers=args.layers,
-        patience=args.patience,
+    save_prefix = _make_save_prefix(args)
+    device_str = "cuda" if (args.cuda and torch.cuda.is_available()) else "cpu"
+    exclude = (
+        {t.strip().lower() for t in args.exclude_techs.split(",")}
+        if args.exclude_techs else None)
+
+    preset = dict(SIZE_PRESETS[(args.model, args.size)])
+    # Per-flag overrides
+    if args.epochs is not None:
+        preset["max_epochs"] = args.epochs
+    if args.batch_size is not None:
+        preset["batch_size"] = args.batch_size
+    if args.lr is not None:
+        preset["lr"] = args.lr
+    if args.patience is not None:
+        preset["patience"] = args.patience
+
+    common = dict(
+        device_type=args.device_type, device_str=device_str,
+        save_prefix=save_prefix, exclude_techs=exclude,
+        num_tech_codes=args.num_tech_codes, p_unknown=args.p_unknown,
+        max_rows=args.max_rows, overwrite=args.overwrite,
     )
 
-    device_str = "cuda" if torch.cuda.is_available() else "cpu"
+    print(f"\n=== Training {args.model} ({args.size}) → {save_prefix} ===")
+    if args.model == "direct":
+        cfg = DirectNetConfig(**preset)
+        train_directnet(str(data_path), config=cfg, **common)
+    else:
+        cfg = TransformerConfig(**preset)
+        train_transformer(str(data_path), config=cfg, **common)
 
-    exclude = None
-    if args.exclude_techs:
-        exclude = set(t.strip().lower() for t in args.exclude_techs.split(","))
-
-    train_directnet(
-        str(data_path),
-        device_type=args.device_type,
-        config=config,
-        device_str=device_str,
-        save_prefix=save_prefix,
-        exclude_techs=exclude,
-        num_tech_codes=args.num_tech_codes,
-        p_unknown=args.p_unknown,
-        jacobian_consistency=args.jacobian_consistency,
-        lam_jac=args.lam_jac,
-    )
-
-
-# ── Transformer subcommand ──────────────────────────────────────────────────
-
-def _run_transformer(args: argparse.Namespace) -> None:
-    data_path = (Path(args.data) if args.data
-                 else DATA_DIR / f"universal_{args.device_type}.npz")
-    save_prefix = f"v4_re_universal_{args.device_type}"
-    if args.exp_name:
-        save_prefix = f"{args.exp_name}_{args.device_type}"
-
-    if not data_path.exists():
-        print(f"Dataset not found: {data_path}")
-        sys.exit(1)
-
-    config = TransformerConfig(
-        d_model=args.d_model,
-        nhead=args.nhead,
-        num_layers=args.num_layers,
-        dim_feedforward=args.dim_feedforward,
-        dropout=args.dropout,
-        batch_size=args.batch_size,
-        max_epochs=args.epochs,
-        lr=args.lr,
-        patience=args.patience,
-    )
-
-    device_str = "cuda" if torch.cuda.is_available() else "cpu"
-
-    exclude = None
-    if args.exclude_techs:
-        exclude = set(t.strip().lower() for t in args.exclude_techs.split(","))
-
-    train_transformer(
-        str(data_path),
-        save_prefix=save_prefix,
-        device_type=args.device_type,
-        config=config,
-        device_str=device_str,
-        overwrite=args.overwrite,
-        exclude_techs=exclude,
-        num_tech_codes=args.num_tech_codes,
-        p_unknown=args.p_unknown,
-        jacobian_consistency=args.jacobian_consistency,
-        lam_jac=args.lam_jac,
-    )
-
-
-# ── Argparse ────────────────────────────────────────────────────────────────
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="BSIMAR unified training CLI "
-                    "(DirectNet MLP or BSIMAR Transformer, "
-                    "both with tech-code embedding)")
-    parser.add_argument("--model",
-                        choices=["direct", "transformer"],
-                        default="transformer",
-                        help="Which architecture to train "
-                             "(direct=DirectNet MLP, "
-                             "transformer=BSIMAR Transformer)")
+    p = argparse.ArgumentParser(
+        description="Unified BSIMAR / DirectNet training CLI")
+    p.add_argument("--model", choices=["direct", "transformer"],
+                   default="direct")
+    p.add_argument("--size", choices=["small", "medium", "large"],
+                   default="medium",
+                   help="Architecture-size preset (overridable below)")
+    p.add_argument("--device-type", choices=["nmos", "pmos"], default="nmos")
+    p.add_argument("--data", type=str, default=None,
+                   help="Path to .npz dataset (auto-resolved if omitted)")
 
-    # Shared data args
-    parser.add_argument("--device-type", choices=["nmos", "pmos"], default="nmos")
-    parser.add_argument("--data", type=str, default=None,
-                        help="Path to .npz dataset (auto-resolved if omitted)")
+    # Per-flag overrides (None means: use the size-preset default)
+    p.add_argument("--epochs", type=int, default=None)
+    p.add_argument("--batch-size", type=int, default=None)
+    p.add_argument("--lr", type=float, default=None)
+    p.add_argument("--patience", type=int, default=None)
+    p.add_argument("--max-rows", type=int, default=None,
+                   help="Cap dataset rows (after filter / exclude) for "
+                        "fast smoke runs")
 
-    # Shared optimization args
-    parser.add_argument("--epochs", type=int, default=150)
-    parser.add_argument("--batch-size", type=int, default=1024)
-    parser.add_argument("--lr", type=float, default=8e-4)
-    parser.add_argument("--patience", type=int, default=150)
-    parser.add_argument("--cuda", action="store_true")
-    parser.add_argument("--seed", type=int, default=42)
+    p.add_argument("--cuda", action="store_true")
+    p.add_argument("--seed", type=int, default=42)
 
-    # DirectNet-specific
-    parser.add_argument("--hidden", type=int, default=384,
-                        help="[direct only] MLP hidden layer dimension")
-    parser.add_argument("--layers", type=int, default=6,
-                        help="[direct only] MLP hidden layers")
+    # Tech-code embedding (shared by both models)
+    p.add_argument("--exclude-techs", type=str, default=None)
+    p.add_argument("--num-tech-codes", type=int, default=18)
+    p.add_argument("--p-unknown", type=float, default=0.1)
 
-    # Transformer-specific: architecture only
-    parser.add_argument("--d-model", type=int, default=256,
-                        help="[transformer] Encoder hidden dimension")
-    parser.add_argument("--nhead", type=int, default=8,
-                        help="[transformer] Number of attention heads")
-    parser.add_argument("--num-layers", type=int, default=6,
-                        help="[transformer] Number of encoder layers")
-    parser.add_argument("--dim-feedforward", type=int, default=1024,
-                        help="[transformer] FFN hidden dimension")
-    parser.add_argument("--dropout", type=float, default=0.2)
-    parser.add_argument("--exp-name", type=str, default=None,
-                        help="Experiment name; overrides the default "
-                             "save_prefix")
-    parser.add_argument("--overwrite", action="store_true",
-                        help="[transformer] Allow overwriting an existing "
-                             "<save_prefix>_best.pt checkpoint")
+    p.add_argument("--exp-name", type=str, default=None,
+                   help="Override the auto-generated save_prefix")
+    p.add_argument("--overwrite", action="store_true")
 
-    # Tech-code embedding args (shared by both models)
-    parser.add_argument("--exclude-techs", type=str, default=None,
-                        help="Comma-separated tech names to exclude "
-                             "entirely (e.g., 'asap7')")
-    parser.add_argument("--num-tech-codes", type=int, default=18,
-                        help="Tech embedding vocabulary size "
-                             "(default 18 = 17 TSMC + 1 UNKNOWN)")
-    parser.add_argument("--p-unknown", type=float, default=0.1,
-                        help="Prob of replacing tech code with UNKNOWN "
-                             "during training (default 0.1)")
-
-    # Jacobian-consistency loss (V5 Phase C)
-    parser.add_argument("--jacobian-consistency", action="store_true",
-                        help="Add λ_jac · L_jac auxiliary loss enforcing "
-                             "autograd(out) ≈ supervised target for the "
-                             "8 Jacobian channels (gm/gds/gmb + 5 caps).")
-    parser.add_argument("--lam-jac", type=float, default=0.1,
-                        help="λ_jac weight for the Jacobian-consistency "
-                             "term (default 0.1)")
-
-    args = parser.parse_args()
+    args = p.parse_args()
     set_seed(args.seed)
-
-    if args.model == "direct":
-        _run_direct(args)
-    else:
-        _run_transformer(args)
+    _run(args)
 
 
 if __name__ == "__main__":
