@@ -106,6 +106,12 @@ def _has_non_linear(circuit: Circuit) -> bool:
     return any(_is_mosfet(c) for c in circuit.components)
 
 
+def _has_nn_device(circuit: Circuit) -> bool:
+    """Check if circuit contains any NN compact-model device (LEVEL>=73)."""
+    from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase
+    return any(isinstance(c, _MOSFETNNBase) for c in circuit.components)
+
+
 def _stamp_mosfet_dc(
     mosfet,
     mna_matrix: np.ndarray,
@@ -546,6 +552,15 @@ class DCSolver:
                             f"Circuit matrix is singular at source step {step + 1}, iteration {iteration + 1}. "
                             f"Check circuit topology or initial guess."
                         ) from e
+
+                    # V5' trust-region: cap NN per-iteration |ΔV| at one supply rail to kill NR runaway.
+                    if _has_nn_device(self.circuit):
+                        for idx, node in enumerate(nodes):
+                            d = solution[idx] - voltages[node]
+                            if d > max_vs_voltage:
+                                solution[idx] = voltages[node] + max_vs_voltage
+                            elif d < -max_vs_voltage:
+                                solution[idx] = voltages[node] - max_vs_voltage
 
                     # Calculate deltas
                     max_delta = 0.0
@@ -997,12 +1012,7 @@ class TransientSolver:
         (LEVEL >= 73). Used to gate the V5 Phase A dt-halve fallback so
         BSIM-CMG (LEVEL=72) transients keep their existing behaviour.
         """
-        # Local import to avoid a top-level circular dependency.
-        from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase
-        for comp in self.circuit.components:
-            if isinstance(comp, _MOSFETNNBase):
-                return True
-        return False
+        return _has_nn_device(self.circuit)
 
     def _add_pseudo_capacitors(self) -> None:
         """Add pseudo-capacitors scaled to circuit capacitance for initialization."""
@@ -1148,6 +1158,19 @@ class TransientSolver:
                     f"Circuit matrix is singular at t={time:.6e}s during Newton-Raphson iteration {iteration+1}"
                 )
 
+            # V5' trust-region: cap NN per-iteration |ΔV| at one supply rail to kill NR runaway.
+            if _has_nn_device(self.circuit):
+                vdd_cap = max(
+                    (abs(c.voltage) for c in self.circuit.components if isinstance(c, VoltageSource)),
+                    default=1.0,
+                ) or 1.0
+                for idx, node in enumerate(nodes):
+                    d = solution[idx] - voltages[node]
+                    if d > vdd_cap:
+                        solution[idx] = voltages[node] + vdd_cap
+                    elif d < -vdd_cap:
+                        solution[idx] = voltages[node] - vdd_cap
+
             # Extract voltages from solution (matches DC solver approach)
             # Solution contains NEW voltages, not deltas (due to MNA formulation)
             max_delta = 0.0
@@ -1155,7 +1178,6 @@ class TransientSolver:
 
             # Identify voltage-source-constrained nodes (exempt from damping)
             vs_constrained_nodes = set()
-            from pycircuitsim.models.passive import VoltageSource
             for component in self.circuit.components:
                 if isinstance(component, VoltageSource):
                     pos_node = component.nodes[0]
