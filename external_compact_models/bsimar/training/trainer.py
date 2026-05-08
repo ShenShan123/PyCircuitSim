@@ -191,6 +191,7 @@ def _train_loop(
     device: torch.device,
     overwrite: bool,
     arch_config: Optional[dict] = None,
+    column_weights: Optional[np.ndarray] = None,
 ) -> Tuple[nn.Module, _NormalizerBase]:
     if adapter.reorder_outputs:
         train_ds.outputs = torch.tensor(
@@ -208,6 +209,17 @@ def _train_loop(
     means = lds.mean(axis=0, keepdims=True)
     means[means < 1e-12] = 1.0
     lds = lds / means
+
+    # Multiply by per-column loss preset (rule 1: simulator only reads
+    # id/qg/qd/qb at inference; everything else is a smoothness prior).
+    if column_weights is not None:
+        cw = np.asarray(column_weights, dtype=np.float32)
+        if cw.shape != (lds.shape[1],):
+            raise ValueError(
+                f"column_weights shape {cw.shape} does not match "
+                f"output dim {lds.shape[1]}")
+        lds = lds * cw[None, :]
+        print(f"  Column-weight preset: {cw.tolist()}")
 
     train_w = TensorDataset(
         train_ds.inputs, train_ds.outputs, train_ds.tech_codes,
@@ -320,9 +332,22 @@ def train_directnet(
     p_unknown: float = 0.1,
     max_rows: Optional[int] = None,
     overwrite: bool = False,
-    **_: object,  # swallow legacy kwargs (jacobian_consistency, lam_jac, …)
+    column_weights: Optional[np.ndarray] = None,
+    output_subset: Optional[list[str]] = None,
+    **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
-    """DirectNet MLP training pipeline."""
+    """DirectNet MLP training pipeline.
+
+    ``column_weights`` (length = output dim): per-target multiplier on the
+    loss (combined with LDS). Use to down-weight or zero out targets the
+    simulator does not consume — e.g. ``qs`` (always replaced by KCL),
+    ``gm/gds/gmb``, ``c*`` (all autograd-derived at inference).
+
+    ``output_subset`` (list of column names): if given, train only on this
+    subset of the 13 outputs (E2 4-output head). The model's ``output_dim``
+    becomes ``len(output_subset)`` and the saved norm stats record which
+    columns were kept so the simulator can rebuild the column-name map.
+    """
     from bsimar.models.direct_net import DirectNet
 
     adapter = _ADAPTERS["direct"]
@@ -337,9 +362,12 @@ def train_directnet(
         train_ratio=config.train_ratio, val_ratio=config.val_ratio,
         apply_filter=True, exclude_techs=exclude_techs,
         norm_mode=adapter.norm_mode, max_rows=max_rows,
+        output_subset=output_subset,
     )
     in_dim = train_ds.inputs.shape[1]
     out_dim = train_ds.outputs.shape[1]
+    if output_subset is not None:
+        print(f"  Output subset: {output_subset} (output_dim={out_dim})")
 
     model = DirectNet(
         input_dim=in_dim, hidden_dim=config.trunk_hidden,
@@ -357,6 +385,7 @@ def train_directnet(
         lr=config.lr, weight_decay=config.weight_decay,
         patience=config.patience, save_prefix=save_prefix,
         device=device, overwrite=overwrite,
+        column_weights=column_weights,
     )
 
 

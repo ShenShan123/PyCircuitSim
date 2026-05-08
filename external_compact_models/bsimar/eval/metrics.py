@@ -48,7 +48,15 @@ def compute_physical_metrics(
     pred_phys = normalizer.denormalize_outputs(pred_norm)
     true_phys = normalizer.denormalize_outputs(true_norm)
 
-    for i, name in enumerate(OUTPUT_COLUMN_ORDER):
+    # Use the normalizer's own column list when available (E2 4-output
+    # head); fall back to the canonical 13-column order.
+    column_names = (
+        normalizer.stats.output_columns
+        if (normalizer.stats is not None
+            and normalizer.stats.output_columns is not None)
+        else OUTPUT_COLUMN_ORDER)
+
+    for i, name in enumerate(column_names):
         y_t = true_phys[:, i]
         y_p = pred_phys[:, i]
 
@@ -127,7 +135,7 @@ def print_metrics(metrics: Dict[str, Dict[str, float]]) -> None:
               f"{'MAE_n':>8s} | {'n_val/n_tot':>14s}")
     print(header)
     print("-" * len(header.lstrip("\n")))
-    for name in OUTPUT_COLUMN_ORDER:
+    for name in metrics.keys():
         m = metrics[name]
         n_str = f"{m['n_valid']}/{m['n_total']}"
         print(

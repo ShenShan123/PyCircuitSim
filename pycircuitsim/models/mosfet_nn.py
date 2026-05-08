@@ -147,10 +147,17 @@ class _MOSFETNNBase(Component):
         self._geo_norm = (
             (geo_raw - self._norm_stats.input_mean[4:7]) / geo_std)
 
-        # Derive the BSIMAR-output → OUTPUT_COLUMN_ORDER permutation
-        # once. For "standard" layouts we still build the identity
-        # mapping so the eval path is uniform.
-        if self._output_layout == "bsimar":
+        # Derive the model-output → column-name lookup. Three cases:
+        #
+        # (1) E2 4-output head: norm.npz declares ``output_columns``
+        #     (e.g. ["id", "qg", "qd", "qb"]). Map names to that
+        #     subset's indices; missing names are unavailable.
+        # (2) Transformer (BSIMAR layout): outputs in BSIMAR_COLUMN_ORDER.
+        # (3) Standard 13-output DirectNet: OUTPUT_COLUMN_ORDER.
+        if self._norm_stats.output_columns is not None:
+            cols = self._norm_stats.output_columns
+            self._out_col = {n: cols.index(n) for n in cols}
+        elif self._output_layout == "bsimar":
             self._out_col = {
                 n: BSIMAR_COLUMN_ORDER.index(n) for n in OUTPUT_COLUMN_ORDER
             }
@@ -330,9 +337,14 @@ class _MOSFETNNBase(Component):
         """Model-output column index for ``name``."""
         return self._out_col[name]
 
+    def _stats_col(self, name: str) -> int:
+        """Index of column ``name`` in the normalizer's stats arrays."""
+        cols = self._norm_stats.output_columns or OUTPUT_COLUMN_ORDER
+        return cols.index(name)
+
     def _denorm(self, name: str, val_norm: float) -> float:
         """Physical value of a single scalar output column."""
-        i = OUTPUT_COLUMN_ORDER.index(name)
+        i = self._stats_col(name)
         s = self._norm_stats
         u = float(val_norm) * float(s.output_std[i]) + float(s.output_mean[i])
         if s.mode == "asinh":
@@ -343,7 +355,7 @@ class _MOSFETNNBase(Component):
         self, out_name: str, in_col: int, deriv_norm: float, phys_val: float,
     ) -> float:
         """Chain-rule denormalise a derivative via the normalizer."""
-        i = OUTPUT_COLUMN_ORDER.index(out_name)
+        i = self._stats_col(out_name)
         return self._normalizer.denormalize_derivative(
             deriv_norm=deriv_norm,
             out_idx=i, in_idx=in_col, y_phys=phys_val)

@@ -93,15 +93,17 @@ def _build_combined_input(
 class NormStats:
     """Persisted normalisation statistics.
 
-    ``mode``           — "zscore" | "asinh"
-    ``input_mean/std`` — z-score over the 7-col continuous input.
-    ``input_min/max``  — training-domain bounds (metadata only;
-                         used by the simulator to clamp inference inputs).
-    ``output_mean/std``— in raw space (zscore) or asinh-space (asinh).
-    ``asinh_scale``    — per-target s_k (asinh mode only).
-    ``phys_best_metric`` — which aggregator the trainer's phys-best
-                         tracker used. ``"median"`` = trustworthy;
-                         ``"legacy_mean"`` = bug-prone (see plan §2B).
+    ``mode``            — "zscore" | "asinh"
+    ``input_mean/std``  — z-score over the 7-col continuous input.
+    ``input_min/max``   — training-domain bounds (metadata only;
+                          used by the simulator to clamp inference inputs).
+    ``output_mean/std`` — in raw space (zscore) or asinh-space (asinh).
+    ``asinh_scale``     — per-target s_k (asinh mode only).
+    ``output_columns``  — names of the output columns this normalizer
+                          was fit on, in model-output order. Defaults to
+                          the full 13-column ``OUTPUT_COLUMN_ORDER``;
+                          E2 4-output head saves a 4-name list.
+    ``phys_best_metric`` — phys-best aggregator (``"median"`` trustworthy).
     """
     mode: str
     input_mean: np.ndarray
@@ -111,6 +113,7 @@ class NormStats:
     output_mean: np.ndarray
     output_std: np.ndarray
     asinh_scale: Optional[np.ndarray] = None
+    output_columns: Optional[list[str]] = None
     phys_best_metric: str = "median"
 
     def save(self, path: str) -> None:
@@ -126,14 +129,16 @@ class NormStats:
         }
         if self.asinh_scale is not None:
             data["asinh_scale"] = self.asinh_scale
+        if self.output_columns is not None:
+            data["output_columns"] = np.array(
+                self.output_columns, dtype=object)
         np.savez(path, **data)
 
     @classmethod
     def load(cls, path: str) -> "NormStats":
         d = np.load(path, allow_pickle=True)
-        mode = str(d["mode"])
         return cls(
-            mode=mode,
+            mode=str(d["mode"]),
             input_mean=d["input_mean"],
             input_std=d["input_std"],
             input_min=d["input_min"],
@@ -141,6 +146,9 @@ class NormStats:
             output_mean=d["output_mean"],
             output_std=d["output_std"],
             asinh_scale=d["asinh_scale"] if "asinh_scale" in d.files else None,
+            output_columns=(
+                [str(c) for c in d["output_columns"]]
+                if "output_columns" in d.files else None),
             phys_best_metric=(
                 str(d["phys_best_metric"]) if "phys_best_metric" in d.files
                 else "legacy_mean"),
@@ -168,6 +176,7 @@ class _NormalizerBase:
         inputs: np.ndarray,
         geometry: np.ndarray,
         outputs: np.ndarray,
+        output_columns: Optional[list[str]] = None,
     ) -> "_NormalizerBase":
         combined = _build_combined_input(inputs, geometry)
         in_mean = combined.mean(axis=0)
@@ -175,13 +184,17 @@ class _NormalizerBase:
         in_std[in_std < 1e-12] = 1.0
         in_min = combined.min(axis=0)
         in_max = combined.max(axis=0)
-        out_mean, out_std, asinh_scale = self._fit_outputs(outputs)
+        out_mean, out_std, asinh_scale = self._fit_outputs(
+            outputs, output_columns)
         self.stats = NormStats(
             mode=self.mode,
             input_mean=in_mean, input_std=in_std,
             input_min=in_min, input_max=in_max,
             output_mean=out_mean, output_std=out_std,
             asinh_scale=asinh_scale,
+            output_columns=(
+                list(output_columns) if output_columns is not None
+                else list(OUTPUT_COLUMN_ORDER)),
         )
         return self
 
@@ -226,6 +239,7 @@ class _NormalizerBase:
 
     def _fit_outputs(
         self, outputs: np.ndarray,
+        output_columns: Optional[list[str]] = None,
     ) -> tuple[np.ndarray, np.ndarray, Optional[np.ndarray]]:
         raise NotImplementedError
 
@@ -253,7 +267,7 @@ class _NormalizerBase:
 class ZScoreNormalizer(_NormalizerBase):
     mode = "zscore"
 
-    def _fit_outputs(self, outputs):
+    def _fit_outputs(self, outputs, output_columns=None):
         out_mean = outputs.mean(axis=0)
         out_std = outputs.std(axis=0)
         # Charges and caps have legitimate std as low as 1e-20; only pure
@@ -276,9 +290,10 @@ class ZScoreNormalizer(_NormalizerBase):
 class AsinhNormalizer(_NormalizerBase):
     mode = "asinh"
 
-    def _fit_outputs(self, outputs):
+    def _fit_outputs(self, outputs, output_columns=None):
+        cols = output_columns if output_columns is not None else OUTPUT_COLUMN_ORDER
         floors = np.array(
-            [_OUTPUT_LOG_FLOORS[c] for c in OUTPUT_COLUMN_ORDER],
+            [_OUTPUT_LOG_FLOORS[c] for c in cols],
             dtype=np.float64)
         abs_y = np.abs(outputs).astype(np.float64)
         mask = abs_y > floors[None, :]
@@ -291,7 +306,9 @@ class AsinhNormalizer(_NormalizerBase):
         )
         asinh_scale = np.maximum(np.exp(s_log), floors)
         for col_name, lower in _OUTPUT_ASINH_SCALE_MIN.items():
-            i = OUTPUT_COLUMN_ORDER.index(col_name)
+            if col_name not in cols:
+                continue
+            i = cols.index(col_name)
             if asinh_scale[i] < lower:
                 asinh_scale[i] = lower
 

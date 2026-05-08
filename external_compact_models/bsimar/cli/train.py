@@ -24,6 +24,36 @@ from bsimar.config import (
 from bsimar.training.trainer import train_directnet, train_transformer
 from bsimar.utils.seed import set_seed
 
+import numpy as np
+
+
+# ── Loss presets (per docs/superpowers/plans/2026-05-08-…) ─────────────
+# OUTPUT_COLUMN_ORDER = [id, gm, gds, gmb, qg, qd, qs, qb,
+#                       cgg, cgd, cgs, cdg, cdd]
+#
+# B0 — uniform (baseline already shipped)
+# E1 — drop qs supervision (KCL is enforced analytically anyway)
+# E2 — 4-output head: only [id, qg, qd, qb] in the model output
+# E3 — keep 13 outputs but down-weight non-load-bearing targets
+LOSS_PRESETS = {
+    "default": {"column_weights": None, "output_subset": None},
+    "e1": {
+        "column_weights": np.array(
+            [1, 1, 1, 1, 1, 1, 0, 1, 1, 1, 1, 1, 1], dtype=np.float32),
+        "output_subset": None,
+    },
+    "e2": {
+        "column_weights": None,
+        "output_subset": ["id", "qg", "qd", "qb"],
+    },
+    "e3": {
+        "column_weights": np.array(
+            [1.0, 0.1, 0.1, 0.1, 1.0, 1.0, 0.0, 1.0,
+             0.01, 0.01, 0.01, 0.01, 0.01], dtype=np.float32),
+        "output_subset": None,
+    },
+}
+
 
 # (model, size) → (config dict, default save_prefix tag)
 SIZE_PRESETS = {
@@ -61,7 +91,10 @@ def _make_save_prefix(args: argparse.Namespace) -> str:
     if args.exp_name:
         return f"{args.exp_name}_{args.device_type}"
     tag = "dn" if args.model == "direct" else "tf"
-    return f"refac_{tag}_{args.size}_{args.device_type}"
+    suffix = ""
+    if args.loss_preset != "default":
+        suffix = f"_{args.loss_preset}"
+    return f"refac_{tag}_{args.size}{suffix}_{args.device_type}"
 
 
 def _run(args: argparse.Namespace) -> None:
@@ -87,6 +120,8 @@ def _run(args: argparse.Namespace) -> None:
     if args.patience is not None:
         preset["patience"] = args.patience
 
+    loss_preset = LOSS_PRESETS[args.loss_preset]
+
     common = dict(
         device_type=args.device_type, device_str=device_str,
         save_prefix=save_prefix, exclude_techs=exclude,
@@ -94,11 +129,21 @@ def _run(args: argparse.Namespace) -> None:
         max_rows=args.max_rows, overwrite=args.overwrite,
     )
 
-    print(f"\n=== Training {args.model} ({args.size}) → {save_prefix} ===")
+    print(f"\n=== Training {args.model} ({args.size}, "
+          f"loss-preset={args.loss_preset}) → {save_prefix} ===")
     if args.model == "direct":
         cfg = DirectNetConfig(**preset)
-        train_directnet(str(data_path), config=cfg, **common)
+        train_directnet(
+            str(data_path), config=cfg,
+            column_weights=loss_preset["column_weights"],
+            output_subset=loss_preset["output_subset"],
+            **common,
+        )
     else:
+        if (loss_preset["output_subset"] is not None
+                or loss_preset["column_weights"] is not None):
+            print("[warn] loss presets are DirectNet-only; "
+                  "Transformer ignores them")
         cfg = TransformerConfig(**preset)
         train_transformer(str(data_path), config=cfg, **common)
 
@@ -135,6 +180,13 @@ def main() -> None:
     p.add_argument("--exp-name", type=str, default=None,
                    help="Override the auto-generated save_prefix")
     p.add_argument("--overwrite", action="store_true")
+    p.add_argument("--loss-preset",
+                   choices=sorted(LOSS_PRESETS.keys()),
+                   default="default",
+                   help="DirectNet loss preset (per "
+                        "2026-05-08-directnet-target-trim plan): "
+                        "default=B0, e1=drop-qs, e2=4-output head, "
+                        "e3=down-weight non-load-bearing targets")
 
     args = p.parse_args()
     set_seed(args.seed)

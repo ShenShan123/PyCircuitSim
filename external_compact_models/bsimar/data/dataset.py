@@ -64,8 +64,14 @@ def load_and_split_bsimar(
     filter_thresholds: Optional[Dict[str, float]] = None,
     exclude_techs: Optional[Set[str]] = None,
     max_rows: Optional[int] = None,
+    output_subset: Optional[List[str]] = None,
 ) -> Tuple[MOSFETDataset, MOSFETDataset, MOSFETDataset, _NormalizerBase]:
-    """Load .npz, label, optionally filter / exclude techs / cap, split, normalise."""
+    """Load .npz, label, optionally filter / exclude techs / cap, split, normalise.
+
+    ``output_subset``: optional list of column names from
+    ``OUTPUT_COLUMN_ORDER``. If given, only those columns are kept on
+    every split, and the normalizer's stats are sized to the subset.
+    """
     from bsimar.eval.loo_labels import get_or_build_tech_variant_labels
 
     data = np.load(data_path, allow_pickle=True)
@@ -101,6 +107,17 @@ def load_and_split_bsimar(
         tech_codes = tech_codes[idx]
         print(f"  Capped to {max_rows} rows")
 
+    if output_subset is not None:
+        from bsimar.data.normalize import OUTPUT_COLUMN_ORDER
+        for c in output_subset:
+            if c not in OUTPUT_COLUMN_ORDER:
+                raise ValueError(
+                    f"output_subset column {c!r} not in OUTPUT_COLUMN_ORDER")
+        col_idx = [OUTPUT_COLUMN_ORDER.index(c) for c in output_subset]
+        outputs = outputs[:, col_idx]
+        print(f"  Output subset: kept {len(output_subset)} cols "
+              f"{output_subset}")
+
     rng = np.random.default_rng(seed)
     perm = rng.permutation(len(outputs))
     n_train = int(len(perm) * train_ratio)
@@ -111,7 +128,9 @@ def load_and_split_bsimar(
 
     normalizer = normalizer_for(norm_mode)
     normalizer.fit(
-        inputs[train_idx], geometry[train_idx], outputs[train_idx])
+        inputs[train_idx], geometry[train_idx], outputs[train_idx],
+        output_columns=output_subset,
+    )
 
     def _make(idxs: np.ndarray) -> MOSFETDataset:
         x = normalizer.normalize_inputs(inputs[idxs], geometry[idxs])
