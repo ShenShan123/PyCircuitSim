@@ -201,6 +201,46 @@ conda run -n pycircuitsim python tests/verify_nn_dc_tran.py \
 Without env vars set, the simulator continues to load v4-prod / refac-medium
 DN ckpts via the resolver cascade — no breaking change to existing behaviour.
 
+## V6p data-swap probe — REJECTED (2026-05-09 post-V6)
+
+After V6 was committed, ran a parallel experiment swapping the V4-base
+universal datasets for V5'-prime (`universal_v5p_{nmos,pmos}.npz`,
+9.3 / 9.6 M rows including the TSMC5 `inv_trip` overlay) while keeping
+the rest of the Tier 2 recipe identical (asinh-zscore, E2 head, small
+preset, 80 epochs, asap7 excluded).
+
+**Training:** clean. NMOS val=0.00255 → 0.00239; PMOS val=0.00250 → 0.00239
+(both slightly better than V4-base test loss). Per-tech NRMSE on test
+set was within ±20 % of V4-base across all 4 TSMC techs. Checkpoints
+saved as `v6p_dn_small_e2_asinh_{nmos,pmos}_best.pt`.
+
+**Verification:** hung. The 4-tech inverter verify ran for **1 h 01 min
+without finishing**, with the Python process pinned at 1 781 % CPU
+(~17 cores) and no file writes for the trailing hour. Last activity:
+TSMC16 inverter transient. V6's Tier 2 verify on the same code path
+with V4-base ckpts finished in ~25 min.
+
+**Verdict: discard.** The hang signature is identical to the V5 sprint
+Phase A+B postmortem (`results/v5_v4_vs_phaseA_vs_phaseAB_2026_05_08.md`
+§5.2): V5'/V5 trip-region densified data + small-arch model →
+NR-extrapolation runaway in inverter transient that the trust-region
+clamp does not break out of (it bounds per-iteration ΔV but does not
+detect the iteration is making no global progress). V6 stays on the V4-
+base universal datasets (`universal_{nmos,pmos}.npz`).
+
+`v6p_dn_small_e2_asinh_*.pt` were deleted from disk after the verify
+hung. To reproduce the experiment:
+
+```bash
+# Train (~25 min on A100)
+python -m bsimar.cli.train --model direct --size small --loss-preset e2 \
+    --device-type nmos --exclude-techs asap7 --num-tech-codes 18 --cuda \
+    --exp-name v6p_dn_small_e2_asinh --overwrite \
+    --data external_compact_models/bsimar/data/datasets/universal_v5p_nmos.npz
+# (same for pmos)
+# Verify will hang on TSMC16 transient — kill after 30 min.
+```
+
 ## Open follow-ups (not in V6 scope)
 
 - **TSMC5 inverter VTC (model-fit floor).** Both probe-asinh and zscore-baseline
