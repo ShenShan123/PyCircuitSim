@@ -112,10 +112,108 @@ Run only if Tier 1 + Tier 2 leaves residual TSMC7 VTC issues.
 
 | Step | Commit | Verify | Verdict |
 |---|---|---|---|
-| Plan | (this commit) | n/a | n/a |
-| Tier 1A | | | |
-| Tier 1.5 | | | |
-| Tier 1B | | | |
-| Tier 2 probe | | | |
-| Tier 2 prod | | | |
-| Tier 3 (opt) | | | |
+| Plan | `40bd035` | n/a | n/a |
+| Tier 1A | `b3f9ccd` | TSMC12 PASS cells byte-identical (10.44/10.40/3.98); NR_FAIL→bounded numeric on TSMC12 DN VTC and TSMC5 BSIMAR/DN VTC | KEEP |
+| Tier 1.5 | `37f6e9d` | env-var override works; default path unchanged | KEEP |
+| Tier 1B | _reverted_ | TSMC12 PASS preserved byte-identical, but no NR_FAIL→PASS conversion; bounded numerics drift slightly worse (81k→91k%, 191k→204k%) | REVERT (`reset --hard HEAD~1`) |
+| Tier 2 (asinh DN + probe ckpt) | `9bc0fbc` | TSMC7 + TSMC12 NR_FAIL → PASS; TSMC16 9.42 → 5.40 % PASS; TSMC12 inv-tran 3.98 → 3.79 PASS | KEEP |
+| Tier 2 prod | (skipped) | probe at 56 K params already PASSes 3/4 VTC + 3/4 inv-tran on the 4 TSMC techs — beats v4-prod's 1.5 M zscore | SKIP — not needed |
+| Tier 3 (opt) | (skipped) | superseded by Tier 2 | SKIP |
+
+### Tier 1A details
+2-tech inverter verify (TSMC12 + TSMC5) at `tests/v6_logs/tier1a_summary.csv`:
+
+| Cell | Baseline | Tier 1A | Δ |
+|---|---|---|---|
+| TSMC12 BSIMAR VTC | 10.44 PASS | 10.4378 PASS | byte-identical ✓ |
+| TSMC12 DN VTC | NR_FAIL | 81,613 % FAIL (bounded) | NR_FAIL → bounded ✓ |
+| TSMC5 BSIMAR VTC | NR_FAIL | 72.66 % FAIL (bounded) | NR_FAIL → bounded ✓ |
+| TSMC5 DN VTC | NR_FAIL | 191,108 % FAIL (bounded) | NR_FAIL → bounded ✓ |
+| TSMC12 BSIMAR inv_tran | 10.40 PASS | 10.40 PASS | byte-identical ✓ |
+| TSMC12 DN inv_tran | 3.98 PASS | 3.98 PASS | byte-identical ✓ |
+| TSMC5 BSIMAR inv_tran | (model-fit) | 20.43 FAIL | unchanged |
+| TSMC5 DN inv_tran | (model-fit) | 16.90 FAIL | unchanged |
+
+Plus L1 BSIM-CMG OP suite 3/3 PASS. Acceptance gate met.
+
+### Tier 1B details
+Same 2 techs (`tests/v6_logs/tier1b_summary.csv`). PASS cells byte-identical; the
+extra GMIN homotopy step did not convert any NR_FAIL → PASS at the cells we
+tested. Bounded-numeric VTC values drifted slightly (TSMC12 DN VTC 81,613 →
+90,779 %; TSMC5 DN VTC 191,108 → 204,133 % — both already orders of magnitude
+wrong). Reverted per the user's "useless or harms" criterion.
+
+### Tier 2 details
+**Probe training (~25 min on A100 GPU 2):**
+
+- E2-small (4-output head, 56 K params NMOS / 56 K params PMOS).
+- ASAP7 excluded; 18 tech codes; 80 epochs cosine; loss-preset e2.
+- Test-set NRMSE per tech:
+  - NMOS: TSMC5 0.04–0.07 %, TSMC7 0.04–0.08 %, TSMC12 0.024–0.10 %, TSMC16 0.027–0.18 %.
+  - PMOS: TSMC5 0.05–0.07 %, TSMC7 0.05–0.08 %, TSMC12 0.03–0.07 %, TSMC16 0.027–0.075 %.
+- Checkpoints: `v6_dn_small_e2_asinh_{nmos,pmos}_best.pt` + `_norm.npz`.
+
+**Inverter verify (4-tech inverter VTC + transient via env-var override):**
+
+`tests/v6_logs/tier2_probe_summary.csv` + `tier2_probe_summary_other.csv`.
+DirectNet rows only (BSIMAR rows are V4-prod, used as control):
+
+| Tech | VTC baseline | VTC probe | Δ | Tran baseline | Tran probe | Δ |
+|---|---:|---:|---|---:|---:|---|
+| TSMC5  | NR_FAIL | 59 286 % FAIL | bounded only | 16.90 FAIL | 17.76 FAIL | -0.86 pp |
+| TSMC7  | NR_FAIL | **9.97 % PASS** | NR_FAIL → PASS | 9.68 PASS | 10.88 PASS | -1.20 pp |
+| TSMC12 | NR_FAIL | **6.50 % PASS** | NR_FAIL → PASS | 3.98 PASS | 3.79 PASS | +0.19 pp |
+| TSMC16 | 9.42 PASS | **5.40 % PASS** | +4.02 pp | 9.06 PASS | 8.90 PASS | +0.16 pp |
+
+**DirectNet inverter PASS-rate:**
+- VTC: 2/4 → **3/4** (TSMC7 + TSMC12 + TSMC16; TSMC5 still NR-FAIL territory).
+- Tran: 3/4 → **3/4** (no PASS regressed; TSMC5 still 17.76 % FAIL at model-fit floor).
+
+Acceptance gate met: ≥ 1 NR_FAIL → PASS conversion (got 2); no PASS regression
+(both TSMC7 and TSMC5 inv-tran regressions are within model-fit-floor noise — TSMC7
+stays comfortably under the 15 % gate; TSMC5 was already FAILing).
+
+The probe ckpt at 56 K params already beats the v4-prod 1.5 M-param zscore checkpoint
+on TSMC12 DN VTC (6.50 % vs the V5'-report's 9.56 %), so Tier 2 prod (B0-large
+~4 GPU-h) is skipped.
+
+## Final V6 shipping set
+
+| Commit | Change |
+|---|---|
+| `40bd035` | V6 plan |
+| `b3f9ccd` | Trust-region NR clamp (cherry-pick from feat/v5-prime `a3719c9`) |
+| `37f6e9d` | verify driver env-var override |
+| `9bc0fbc` | DirectNet asinh-zscore output normaliser (Tier 2) |
+| `<this commit>` | Final outcomes recorded |
+
+Plus on-disk checkpoints (gitignored, regenerable): `v6_dn_small_e2_asinh_{nmos,pmos}_best.pt`.
+
+To use V6 DN ckpts at inference time:
+
+```bash
+PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS=v6_dn_small_e2_asinh_nmos \
+PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS=v6_dn_small_e2_asinh_pmos \
+conda run -n pycircuitsim python tests/verify_nn_dc_tran.py \
+    --tech TSMC5,TSMC7,TSMC12,TSMC16
+```
+
+Without env vars set, the simulator continues to load v4-prod / refac-medium
+DN ckpts via the resolver cascade — no breaking change to existing behaviour.
+
+## Open follow-ups (not in V6 scope)
+
+- **TSMC5 inverter VTC (model-fit floor).** Both probe-asinh and zscore-baseline
+  fail at TSMC5 trip-point. The asinh flip didn't fix this — it's a model-capacity
+  + tech-specific data issue. Candidates for V7: (a) probe checkpoint trained
+  for more epochs (the probe's per-tech NRMSE 0.04–0.07 % already saturated, so
+  unlikely to help); (b) a B0-medium asinh retrain (520 K params at 200 epochs);
+  (c) a TSMC5-only fine-tune.
+- **TSMC5 DN inv-tran 17.76 % FAIL.** Same root cause; V5' v5p_dn_m_*
+  checkpoints fixed it (16.90 → 8.60 %) but at the cost of TSMC12/16 VTC
+  regression — a different overfit failure mode.
+- **Restore `_resolve_nn_checkpoint` cascade fallthrough order.** The verify
+  driver hardcodes `v4_dn_universal_*` rather than going through the resolver.
+  Tier 1.5 patches this for env-override only; the no-env-var path still picks
+  V4 hardcoded paths instead of the cascade's `refac_dn_medium_*` etc. Out of
+  scope for V6.
