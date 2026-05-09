@@ -55,20 +55,17 @@ if "PYTHONUNBUFFERED" not in os.environ:
     print = functools.partial(print, flush=True)  # type: ignore[assignment]
 
 # ---------------------------------------------------------------------------
-# Path bootstrap
+# Path bootstrap — script-mode needs PROJECT_ROOT on sys.path so the
+# ``tests.common.nn`` import below resolves; ``tests.common.nn`` itself
+# appends the bsimar / pycmg directories.
 # ---------------------------------------------------------------------------
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
-sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG"))
-sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tests"))
+if str(PROJECT_ROOT) not in sys.path:
+    sys.path.insert(0, str(PROJECT_ROOT))
 
+from tests.common.nn import nrmse, mre, tech_code_in_vocab  # noqa: E402
 from helpers import bake_inst_params  # noqa: E402
-from bsimar.config import (  # noqa: E402
-    CHECKPOINT_DIR, TECH_CONFIGS,
-    NNTechConfig, OSDI_PATH,
-    tech_variant_to_code, UNKNOWN_CODE_ID,
-)
+from bsimar.config import CHECKPOINT_DIR, OSDI_PATH  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -107,16 +104,6 @@ INV_TRAN_TR = 50e-12       # 50ps rise
 INV_TRAN_TF = 50e-12       # 50ps fall
 INV_TRAN_PW = 1e-9         # 1ns pulse width
 INV_TRAN_TD = 0.2e-9       # 200ps delay
-
-
-def _tech_code_in_vocab(tech_key: str, vt_key: str, num_codes: int = 18) -> bool:
-    """Check if (tech, vt) maps to a code inside the embedding vocabulary.
-
-    v4 universal models are trained with --num-tech-codes 18.
-    ASAP7 codes (18-21) are out-of-range.
-    """
-    code = tech_variant_to_code(tech_key, vt_key)
-    return code < num_codes
 
 
 # ---------------------------------------------------------------------------
@@ -206,34 +193,6 @@ TECH_COLORS: Dict[str, str] = {
     "TSMC12": "tab:purple",
     "TSMC16": "tab:red",
 }
-
-
-# ---------------------------------------------------------------------------
-# Metrics
-# ---------------------------------------------------------------------------
-def nrmse(pred: np.ndarray, true: np.ndarray) -> float:
-    """Normalized RMSE as percentage of peak-to-peak range."""
-    pred = np.asarray(pred, dtype=float)
-    true = np.asarray(true, dtype=float)
-    ptp = float(true.max() - true.min())
-    if ptp < 1e-30:
-        return 0.0
-    rmse_val = float(np.sqrt(np.mean((pred - true) ** 2)))
-    return rmse_val / ptp * 100.0
-
-
-def mre(pred: np.ndarray, true: np.ndarray,
-        threshold_rel: float = 0.01) -> float:
-    """Mean relative error (percent), excluding near-zero samples."""
-    pred = np.asarray(pred, dtype=float)
-    true = np.asarray(true, dtype=float)
-    max_abs = float(np.abs(true).max())
-    if max_abs == 0:
-        return 0.0
-    mask = np.abs(true) > max_abs * threshold_rel
-    if mask.sum() == 0:
-        return float("nan")
-    return float(np.mean(np.abs((true[mask] - pred[mask]) / true[mask]))) * 100.0
 
 
 # ---------------------------------------------------------------------------
@@ -1894,7 +1853,7 @@ def run_pmos_dc_tests(
             continue
 
         # Skip ASAP7 if tech code is out of vocabulary
-        if not _tech_code_in_vocab(tech.nn_tech_key, tech.effective_pmos_vt):
+        if not tech_code_in_vocab(tech.nn_tech_key, tech.effective_pmos_vt):
             print(f"\n  PMOS DC {tech.name} -- SKIPPED (tech code out of vocab)")
             continue
 
@@ -2045,7 +2004,7 @@ def run_inverter_vtc_tests(
             continue
 
         # Skip ASAP7 if tech code is out of vocabulary
-        if not _tech_code_in_vocab(tech.nn_tech_key, tech.nn_vt):
+        if not tech_code_in_vocab(tech.nn_tech_key, tech.nn_vt):
             print(f"\n  Inverter VTC {tech.name} -- SKIPPED (tech code out of vocab)")
             continue
 
@@ -2147,7 +2106,7 @@ def run_inverter_tran_tests(
             continue
 
         # Skip ASAP7 if tech code is out of vocabulary
-        if not _tech_code_in_vocab(tech.nn_tech_key, tech.nn_vt):
+        if not tech_code_in_vocab(tech.nn_tech_key, tech.nn_vt):
             print(f"\n  Inverter tran {tech.name} -- SKIPPED (tech code out of vocab)")
             continue
 
@@ -2611,7 +2570,7 @@ def run_sign_diagnostic(
 
     for tech_name in tech_names:
         tech = ALL_TEST_TECHS[tech_name]
-        if not _tech_code_in_vocab(tech.nn_tech_key, tech.nn_vt):
+        if not tech_code_in_vocab(tech.nn_tech_key, tech.nn_vt):
             print(f"\n  {tech.name} -- SKIPPED (tech code out of vocab)")
             continue
 
@@ -2626,7 +2585,7 @@ def run_sign_diagnostic(
             (0.0, tech.vdd * 0.5, False, "<=0"),
         ]
         pmos_points: List[Tuple[float, float, bool, str]] = []
-        if tech.pmos_model and _tech_code_in_vocab(
+        if tech.pmos_model and tech_code_in_vocab(
             tech.nn_tech_key, tech.effective_pmos_vt
         ):
             pmos_points = [
@@ -2885,7 +2844,7 @@ def run_idvds_diagnostic(
 
     for tech_name in tech_names:
         tech = ALL_TEST_TECHS[tech_name]
-        if not _tech_code_in_vocab(tech.nn_tech_key, tech.nn_vt):
+        if not tech_code_in_vocab(tech.nn_tech_key, tech.nn_vt):
             print(f"\n  {tech.name} -- SKIPPED (tech code out of vocab)")
             continue
 

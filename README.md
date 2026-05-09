@@ -626,19 +626,20 @@ Cload=1fF.** Representative rows:
 | `tests/verify_bsimcmg_tran.py` | Transient L1: single inverter baseline |
 | `tests/verify_bsimcmg_tran_comprehensive.py` | Transient L2: 37-config VT/L/NFIN sweep |
 | `tests/verify_multi_tech_tran.py` | Transient L3: 72-config multi-tech parametric |
-| `tests/verify_nn_tran.py` | NN transient: 5 technologies vs NGSPICE (<15% NRMSE) |
-| `tests/verify_nn_universal_v2.py` | NN universal: 21 variants × 3 tests (DC + VTC) |
-| `tests/verify_nn_leave_one_out.py` | NN zero-shot transferability experiment |
+| `tests/verify_nn_dc.py` | NN L1: NMOS DC + PMOS DC + inverter VTC (single tech, LEVEL=73/74) |
+| `tests/verify_nn_tran_v4.py` | NN L1: NMOS pulse + inverter transient (single tech, LEVEL=73/74) |
+| `tests/verify_nn_dc_tran.py` | NN comprehensive: DC + VTC + transient across all 4 TSMC techs (`--dc-only`, `--pmos-only`, `--inverter-only`, `--tran-only`) |
+| `tests/verify_bsimar_v4_inverter.py` | BSIMAR v4 inverter rail-restoring sanity sweep across 4 TSMC techs |
+
+Diagnostics (not part of CI):
+
+| Script | Purpose |
+|--------|---------|
+| `tests/diag_d1_tsmc7_nmos_errors.py` | Heatmap of TSMC7 NMOS error vs (Vgs, Vds) |
+| `tests/diag_bsimar_kcl_landscape.py` | KCL landscape probe for BSIMAR inverter convergence |
+| `tests/diag_nn_jacobian_consistency.py` | FD-vs-autograd Jacobian consistency check |
 
 Each script generates comparison plots and detailed metrics in `tests/verify_*_results/`.
-
-> **Note:** The `verify_nn_*.py` scripts still reference the old
-> `tech.variants[v].get_process_params(device)` API that was removed
-> when `nn_model.config` was folded into `bsimar.config`. They need to
-> be ported to the new `NNTechConfig` API
-> (`tech.resolve_modelcard(...)` + `extract_process_params(...)`)
-> before they can run end-to-end. The BSIM-CMG scripts above are
-> unaffected and exercise the refactored `tests/common/` subpackage.
 
 ---
 
