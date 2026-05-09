@@ -77,14 +77,3 @@ class MAELoss(nn.Module):
                 weights = weights.unsqueeze(1)
             ae = ae * weights
         return ae.mean()
-
-
-# Back-compat: a no-op stand-in so any stray import does not break.
-# The Jacobian-consistency loss was filed as a v5 Phase C dead-end
-# (see plan: docs/2026-04-24-v5-inverter-accuracy.md).
-class JacobianConsistencyLoss(nn.Module):  # pragma: no cover - deprecated
-    def __init__(self, *args, **kwargs):
-        super().__init__()
-
-    def forward(self, *args, **kwargs):
-        return torch.tensor(0.0)

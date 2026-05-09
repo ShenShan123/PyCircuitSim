@@ -1,26 +1,21 @@
 """Single training loop for DirectNet (MLP) and BSIMAR (Transformer).
 
-Both architectures share 95% of the scaffolding (load → compute LDS →
-build dataloaders → cosine + early-stop → eval per-tech). The only
-differences are:
+Both architectures share the same data, normaliser, LDS-MAE loss, cosine
+schedule, and early-stop pattern. The only differences:
 
-* forward signature (Transformer takes teacher-forced ``y`` during train)
-* AR validation (Transformer only)
-* output column reorder (Transformer trains in BSIMAR_COLUMN_ORDER)
+* the Transformer's ``forward`` takes a teacher-forced ``y`` argument
+  during training and runs autoregressively at eval time;
+* the Transformer trains in ``BSIMAR_COLUMN_ORDER`` and saves an
+  architecture sidecar so the simulator can rebuild the model.
 
-Those go through a small ``ArchAdapter`` so the rest of the loop is
-arch-agnostic.
-
-Public entry points (back-compat with the old CLI):
-
-    train_directnet(data_path, ...)      → DirectNet
-    train_transformer(data_path, ...)    → BSIMAR
+Both differences are gated on a single ``is_transformer`` flag inside
+``_train_loop``. Public entry points: ``train_directnet`` and
+``train_transformer``.
 """
 
 from __future__ import annotations
 
 import time
-from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional, Set, Tuple
 
@@ -38,55 +33,16 @@ from bsimar.config import (
 )
 from bsimar.data.dataset import load_and_split_bsimar
 from bsimar.data.normalize import (
-    OUTPUT_COLUMN_ORDER, BSIMAR_COLUMN_ORDER,
-    reorder_outputs, unreorder_outputs,
+    OUTPUT_COLUMN_ORDER, reorder_outputs, unreorder_outputs,
     _NormalizerBase,
 )
 from bsimar.losses.bni_mae import MAELoss, compute_lds_weights_per_target
 
-
-# ── Arch adapters ──────────────────────────────────────────────────────────
-
-@dataclass
-class ArchAdapter:
-    """Bridge between the generic loop and the model-specific forward."""
-    name: str                    # "direct" | "transformer"
-    norm_mode: str               # "zscore" | "asinh"
-    reorder_outputs: bool        # True for transformer
-    save_arch_config: bool       # True for transformer
-    needs_ar_eval: bool          # True for transformer
-
-    def forward_train(
-        self, model: nn.Module, x: torch.Tensor, y: torch.Tensor,
-        tc: torch.Tensor,
-    ) -> torch.Tensor:
-        if self.name == "transformer":
-            return model(x, y, tech_codes=tc)
-        return model(x, tech_codes=tc)
-
-    def forward_eval(
-        self, model: nn.Module, x: torch.Tensor, tc: torch.Tensor,
-        y: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        # AR Transformer inference is y=None; teacher-forced eval passes y.
-        if self.name == "transformer":
-            return model(x, y, tech_codes=tc) if y is not None else \
-                   model(x, tech_codes=tc)
-        return model(x, tech_codes=tc)
-
-
-_ADAPTERS = {
-    # V6 Tier 2 (2026-05-09): DirectNet flipped from "zscore" to "asinh"
-    # outputs. Concentrates loss on the small-Id band that dominates
-    # inverter trip-point NRMSE; matches the Transformer's normaliser.
-    # Chain rule already correct via AsinhNormalizer.denormalize_derivative.
-    "direct": ArchAdapter(
-        name="direct", norm_mode="asinh",
-        reorder_outputs=False, save_arch_config=False, needs_ar_eval=False),
-    "transformer": ArchAdapter(
-        name="transformer", norm_mode="asinh",
-        reorder_outputs=True, save_arch_config=True, needs_ar_eval=True),
-}
+# V6 Tier 2 (2026-05-09): both DirectNet and the Transformer train with
+# asinh + z-score outputs. Concentrates loss on the small-Id band that
+# dominates inverter trip-point NRMSE.
+_NORM_MODE = "asinh"
+_NUM_WORKERS = 8
 
 
 # ── Per-epoch helpers ──────────────────────────────────────────────────────
@@ -94,21 +50,20 @@ _ADAPTERS = {
 def _epoch_train(
     model: nn.Module, loader: DataLoader,
     criterion: MAELoss, optimizer: optim.Optimizer,
-    device: torch.device, adapter: ArchAdapter,
-    clip_grad: bool,
+    device: torch.device, is_transformer: bool,
 ) -> float:
     model.train()
     total = 0.0
     n = 0
-    for batch in loader:
-        x, y, tc, w = batch
-        x, y, tc, w = (
-            x.to(device), y.to(device), tc.to(device), w.to(device))
+    for x, y, tc, w in loader:
+        x, y, tc, w = (x.to(device), y.to(device),
+                       tc.to(device), w.to(device))
         optimizer.zero_grad()
-        pred = adapter.forward_train(model, x, y, tc)
+        pred = (model(x, y, tech_codes=tc) if is_transformer
+                else model(x, tech_codes=tc))
         loss = criterion(pred, y, weights=w)
         loss.backward()
-        if clip_grad:
+        if is_transformer:
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         total += loss.item()
@@ -119,32 +74,32 @@ def _epoch_train(
 @torch.no_grad()
 def _epoch_eval(
     model: nn.Module, loader: DataLoader, criterion: MAELoss,
-    device: torch.device, adapter: ArchAdapter,
-    teacher_forced: bool,
+    device: torch.device, is_transformer: bool,
 ) -> float:
     model.eval()
     total = 0.0
     n = 0
     for x, y, tc in loader:
         x, y, tc = x.to(device), y.to(device), tc.to(device)
-        pred = adapter.forward_eval(
-            model, x, tc, y if teacher_forced else None)
+        # Teacher-forced eval for the Transformer (val loss aligned with train).
+        pred = (model(x, y, tech_codes=tc) if is_transformer
+                else model(x, tech_codes=tc))
         total += criterion(pred, y).item()
         n += 1
     return total / max(n, 1)
 
 
 @torch.no_grad()
-def _collect(
+def _collect_predictions(
     model: nn.Module, loader: DataLoader, device: torch.device,
-    adapter: ArchAdapter,
+    is_transformer: bool,
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-    """Collect (pred_norm, true_norm, tech_codes) on a loader."""
+    """Collect (pred_norm, true_norm, tech_codes) on a loader (AR for TF)."""
     model.eval()
     all_pred, all_true, all_tc = [], [], []
     for x, y, tc in loader:
         x, tc = x.to(device), tc.to(device)
-        pred = adapter.forward_eval(model, x, tc)
+        pred = model(x, tech_codes=tc)  # AR inference for the Transformer
         all_pred.append(pred.cpu().numpy())
         all_true.append(y.numpy())
         all_tc.append(tc.cpu().numpy())
@@ -152,8 +107,6 @@ def _collect(
             np.concatenate(all_true),
             np.concatenate(all_tc))
 
-
-# ── Reporting helpers ──────────────────────────────────────────────────────
 
 def _per_tech_report(
     pred_norm: np.ndarray, true_norm: np.ndarray,
@@ -183,7 +136,6 @@ def _per_tech_report(
 def _train_loop(
     *,
     model: nn.Module,
-    adapter: ArchAdapter,
     train_ds, val_ds, test_ds,
     normalizer: _NormalizerBase,
     epochs: int,
@@ -194,19 +146,17 @@ def _train_loop(
     save_prefix: str,
     device: torch.device,
     overwrite: bool,
+    is_transformer: bool,
     arch_config: Optional[dict] = None,
     column_weights: Optional[np.ndarray] = None,
 ) -> Tuple[nn.Module, _NormalizerBase]:
-    if adapter.reorder_outputs:
-        train_ds.outputs = torch.tensor(
-            reorder_outputs(train_ds.outputs.numpy()), dtype=torch.float32)
-        val_ds.outputs = torch.tensor(
-            reorder_outputs(val_ds.outputs.numpy()), dtype=torch.float32)
-        test_ds.outputs = torch.tensor(
-            reorder_outputs(test_ds.outputs.numpy()), dtype=torch.float32)
+    if is_transformer:
+        for ds in (train_ds, val_ds, test_ds):
+            ds.outputs = torch.tensor(
+                reorder_outputs(ds.outputs.numpy()), dtype=torch.float32)
         print("  Outputs reordered to BSIMAR_COLUMN_ORDER")
 
-    print(f"  Computing LDS weights …")
+    print("  Computing LDS weights …")
     lds = compute_lds_weights_per_target(
         train_ds.outputs.numpy(), n_bins=100,
         lds_kernel="gaussian", lds_ks=5, lds_sigma=0.8)
@@ -214,8 +164,6 @@ def _train_loop(
     means[means < 1e-12] = 1.0
     lds = lds / means
 
-    # Multiply by per-column loss preset (rule 1: simulator only reads
-    # id/qg/qd/qb at inference; everything else is a smoothness prior).
     if column_weights is not None:
         cw = np.asarray(column_weights, dtype=np.float32)
         if cw.shape != (lds.shape[1],):
@@ -228,16 +176,18 @@ def _train_loop(
     train_w = TensorDataset(
         train_ds.inputs, train_ds.outputs, train_ds.tech_codes,
         torch.tensor(lds, dtype=torch.float32))
-    nw = 8
     train_loader = DataLoader(
         train_w, batch_size=batch_size, shuffle=True,
-        num_workers=nw, pin_memory=True, persistent_workers=True)
+        num_workers=_NUM_WORKERS, pin_memory=True,
+        persistent_workers=True)
     val_loader = DataLoader(
         val_ds, batch_size=batch_size, shuffle=False,
-        num_workers=nw, pin_memory=True, persistent_workers=True)
+        num_workers=_NUM_WORKERS, pin_memory=True,
+        persistent_workers=True)
     test_loader = DataLoader(
         test_ds, batch_size=batch_size, shuffle=False,
-        num_workers=nw, pin_memory=True, persistent_workers=True)
+        num_workers=_NUM_WORKERS, pin_memory=True,
+        persistent_workers=True)
 
     optimizer = optim.AdamW(
         model.parameters(), lr=lr, weight_decay=weight_decay)
@@ -262,19 +212,15 @@ def _train_loop(
     print(f"  Training {save_prefix} for {epochs} epochs "
           f"(patience={patience})")
     t0 = time.time()
-    history: list[Tuple[float, float]] = []
     epoch = 0
 
     for epoch in range(1, epochs + 1):
         train_loss = _epoch_train(
-            model, train_loader, criterion, optimizer, device,
-            adapter, clip_grad=(adapter.name == "transformer"))
+            model, train_loader, criterion, optimizer, device, is_transformer)
         val_loss = _epoch_eval(
-            model, val_loader, criterion, device, adapter,
-            teacher_forced=(adapter.name == "transformer"))
+            model, val_loader, criterion, device, is_transformer)
         scheduler.step()
         lr_now = scheduler.get_last_lr()[0]
-        history.append((train_loss, val_loss))
 
         marker = ""
         if val_loss < best_val - 1e-5:
@@ -298,18 +244,16 @@ def _train_loop(
     print(f"  Done in {elapsed:.0f}s "
           f"({elapsed / max(epoch, 1):.1f}s/epoch). Best val={best_val:.6f}")
 
-    if adapter.save_arch_config and arch_config is not None:
+    if is_transformer and arch_config is not None:
         np.savez(
             str(CHECKPOINT_DIR / f"{save_prefix}_config.npz"),
             **{k: np.array(v) for k, v in arch_config.items()})
 
-    # Final test eval
-    model.load_state_dict(
-        torch.load(str(best_path), weights_only=True))
-
-    pred_norm, true_norm, test_tc = _collect(
-        model, test_loader, device, adapter)
-    if adapter.reorder_outputs:
+    # Final test eval — use AR inference for the Transformer.
+    model.load_state_dict(torch.load(str(best_path), weights_only=True))
+    pred_norm, true_norm, test_tc = _collect_predictions(
+        model, test_loader, device, is_transformer)
+    if is_transformer:
         pred_norm = unreorder_outputs(pred_norm)
         true_norm = unreorder_outputs(true_norm)
 
@@ -323,7 +267,7 @@ def _train_loop(
     return model, normalizer
 
 
-# ── Public entry points (kept for back-compat with old CLI) ────────────────
+# ── Public entry points ────────────────────────────────────────────────────
 
 def train_directnet(
     data_path: str,
@@ -342,19 +286,17 @@ def train_directnet(
 ) -> Tuple[nn.Module, _NormalizerBase]:
     """DirectNet MLP training pipeline.
 
-    ``column_weights`` (length = output dim): per-target multiplier on the
-    loss (combined with LDS). Use to down-weight or zero out targets the
-    simulator does not consume — e.g. ``qs`` (always replaced by KCL),
-    ``gm/gds/gmb``, ``c*`` (all autograd-derived at inference).
+    ``column_weights`` (length = output dim): per-target multiplier on
+    the loss (combined with LDS). Use to down-weight or zero out targets
+    the simulator does not consume — e.g. ``qs`` (always replaced by KCL).
 
-    ``output_subset`` (list of column names): if given, train only on this
-    subset of the 13 outputs (E2 4-output head). The model's ``output_dim``
-    becomes ``len(output_subset)`` and the saved norm stats record which
-    columns were kept so the simulator can rebuild the column-name map.
+    ``output_subset`` (list of column names): if given, train only on
+    this subset of the 13 outputs (E2 4-output head). The model's
+    ``output_dim`` becomes ``len(output_subset)`` and the saved norm
+    stats record which columns were kept.
     """
     from bsimar.models.direct_net import DirectNet
 
-    adapter = _ADAPTERS["direct"]
     device = torch.device(device_str)
     print(f"DirectNet on {device}; tech codes={num_tech_codes}, "
           f"p_unknown={p_unknown}")
@@ -365,7 +307,7 @@ def train_directnet(
         data_path, OUTPUT_COLUMN_ORDER, device_type=device_type,
         train_ratio=config.train_ratio, val_ratio=config.val_ratio,
         apply_filter=True, exclude_techs=exclude_techs,
-        norm_mode=adapter.norm_mode, max_rows=max_rows,
+        norm_mode=_NORM_MODE, max_rows=max_rows,
         output_subset=output_subset,
     )
     in_dim = train_ds.inputs.shape[1]
@@ -382,7 +324,7 @@ def train_directnet(
     print(f"  Params: {model.count_parameters():,}")
 
     return _train_loop(
-        model=model, adapter=adapter,
+        model=model, is_transformer=False,
         train_ds=train_ds, val_ds=val_ds, test_ds=test_ds,
         normalizer=normalizer,
         epochs=config.max_epochs, batch_size=config.batch_size,
@@ -413,7 +355,6 @@ def train_transformer(
     """BSIMAR Transformer training pipeline."""
     from bsimar.models.transformer import TransformerEncoderModel
 
-    adapter = _ADAPTERS["transformer"]
     epochs = epochs if epochs is not None else config.max_epochs
     batch_size = batch_size if batch_size is not None else config.batch_size
     patience = patience if patience is not None else config.patience
@@ -428,7 +369,7 @@ def train_transformer(
     train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
         data_path, OUTPUT_COLUMN_ORDER, device_type=device_type,
         apply_filter=True, exclude_techs=exclude_techs,
-        norm_mode=adapter.norm_mode, max_rows=max_rows,
+        norm_mode=_NORM_MODE, max_rows=max_rows,
     )
     in_dim = train_ds.inputs.shape[1]
     out_dim = train_ds.outputs.shape[1]
@@ -454,7 +395,7 @@ def train_transformer(
         "num_tech_codes": num_tech_codes,
     }
     return _train_loop(
-        model=model, adapter=adapter,
+        model=model, is_transformer=True,
         train_ds=train_ds, val_ds=val_ds, test_ds=test_ds,
         normalizer=normalizer,
         epochs=epochs, batch_size=batch_size,

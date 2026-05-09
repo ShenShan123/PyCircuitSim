@@ -15,18 +15,14 @@ def compute_physical_metrics(
 ) -> Dict[str, Dict[str, float]]:
     """Compute per-output metrics after denormalization.
 
-    Works with both `BSIMARNormalizer` (z-score; physical-space metrics
-    are well-conditioned) and legacy `Normalizer` (signed-log + z-score;
-    physical-space metrics are sensitive to sub-floor outliers because
-    `inv_signed_log` exponentiates log-space errors).
+    Accepts any ``_NormalizerBase`` instance (``ZScoreNormalizer`` or
+    ``AsinhNormalizer``); both expose ``denormalize_outputs``.
 
-    The same per-target valid mask is applied to **NRMSE, MRE, and R²**.
-    The mask drops samples where ``|y_true| < mre_threshold_pct * peak``
-    (default 0.1% of peak |y|, the PyCMG numerical-noise floor). Without
-    this mask the signed-log path produces astronomical NRMSE / negative
-    R² because a tiny normalized-space error at a sub-floor sample
-    becomes a multi-decade physical-space error after exponentiation.
-    For the z-score path the mask is essentially a no-op.
+    The same per-target valid mask is applied to **NRMSE, MRE, and R²**:
+    samples where ``|y_true| < mre_threshold_pct * peak`` (default 0.1%
+    of peak |y|, the PyCMG numerical-noise floor) are dropped so a sub-
+    floor sample with a small normalised error cannot blow up the
+    physical-space NRMSE / R².
 
     `NRMSE_norm` and `R2_norm` are also reported. They are computed in
     the trainer's normalized space (no denormalization, no mask) and are

@@ -349,15 +349,3 @@ def normalizer_from_stats(stats: NormStats) -> _NormalizerBase:
     n = normalizer_for(stats.mode)
     n.stats = stats
     return n
-
-
-class BSIMARNormalizer:
-    """Back-compat shim: ``BSIMARNormalizer(mode="asinh")`` returns a
-    fitted ``AsinhNormalizer`` / ``ZScoreNormalizer`` instance.
-    """
-
-    def __new__(cls, mode: str = "asinh", stats: Optional[NormStats] = None):
-        n = normalizer_for(mode)
-        if stats is not None:
-            n.stats = stats
-        return n
