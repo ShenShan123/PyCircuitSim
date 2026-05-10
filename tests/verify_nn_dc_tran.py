@@ -127,6 +127,17 @@ class TestTechConfig:
     pmos_model: str = ""   # NGSPICE PMOS model name
     nn_pmos_vt: str = ""   # VT= for PMOS (empty = same as NMOS)
 
+    # Inverter-specific geometry. 0 = fall back to single-device l_nmos / effective_l_pmos / nfin.
+    # Use these to align the inverter test point with the per-tech NN training bins
+    # so the verifier doesn't ask the model to extrapolate. Per-tech V4 NMOS L bins:
+    #   TSMC5  : {6, 20, 36, 54, 86} nm
+    #   TSMC7  : {8, 11, 20, 36, 72, 120} nm
+    #   TSMC12 : {16, 20, 36, 72, 120} nm
+    #   TSMC16 : {16, 20, 36, 72, 120} nm
+    inv_l_nmos: float = 0.0
+    inv_l_pmos: float = 0.0
+    inv_nfin: int = 0
+
     @property
     def effective_l_pmos(self) -> float:
         """PMOS L, defaulting to l_nmos if not set."""
@@ -136,6 +147,18 @@ class TestTechConfig:
     def effective_pmos_vt(self) -> str:
         """PMOS VT, defaulting to NMOS VT if not set."""
         return self.nn_pmos_vt if self.nn_pmos_vt else self.nn_vt
+
+    @property
+    def effective_inv_l_nmos(self) -> float:
+        return self.inv_l_nmos if self.inv_l_nmos > 0 else self.l_nmos
+
+    @property
+    def effective_inv_l_pmos(self) -> float:
+        return self.inv_l_pmos if self.inv_l_pmos > 0 else self.effective_l_pmos
+
+    @property
+    def effective_inv_nfin(self) -> int:
+        return self.inv_nfin if self.inv_nfin > 0 else self.nfin
 
 
 ALL_TEST_TECHS: Dict[str, TestTechConfig] = {
@@ -160,6 +183,7 @@ ALL_TEST_TECHS: Dict[str, TestTechConfig] = {
         single_file=False, modelcard_dir="TSMC5",
         modelcard_file="",
         l_pmos=20e-9, pmos_model="pch_lvt_mac",
+        inv_l_nmos=20e-9, inv_l_pmos=20e-9, inv_nfin=2,
     ),
     "TSMC7": TestTechConfig(
         name="TSMC7", vdd=0.75, l_nmos=16e-9, nfin=2, tfin=6e-9,
@@ -167,6 +191,7 @@ ALL_TEST_TECHS: Dict[str, TestTechConfig] = {
         single_file=False, modelcard_dir="TSMC7",
         modelcard_file="",
         l_pmos=20e-9, pmos_model="pch_ulvt_mac",
+        inv_l_nmos=20e-9, inv_l_pmos=20e-9, inv_nfin=2,
     ),
     "TSMC12": TestTechConfig(
         name="TSMC12", vdd=0.80, l_nmos=16e-9, nfin=2, tfin=6e-9,
@@ -255,6 +280,74 @@ def create_baked_modelcard(tech: TestTechConfig, work_dir: Path) -> Path:
         "NFIN": float(tech.nfin),
         "TFIN": tech.tfin,
         "DEVTYPE": 1,
+    })
+    return baked
+
+
+def resolve_nmos_inv_modelcard(tech: TestTechConfig) -> Path:
+    """Resolve the NMOS modelcard path for the inverter geometry."""
+    if tech.single_file:
+        return MODELCARDS_DIR / tech.modelcard_dir / tech.modelcard_file
+
+    from pycmg.tech import TECH_REGISTRY, resolve_modelcard
+    tech_config = TECH_REGISTRY[_registry_name(tech)]
+    prefix = tech.nmos_model.split("_", 1)[0]
+    vt = tech.nmos_model.split("_", 1)[1].replace("_mac", "")
+    canonical = ("nmos_" if prefix == "nch" else "pmos_") + vt
+    device_config = tech_config.get_device(canonical)
+    return Path(resolve_modelcard(
+        device_config, tech_config,
+        L=tech.effective_inv_l_nmos, NFIN=float(tech.effective_inv_nfin),
+    ))
+
+
+def resolve_pmos_inv_modelcard(tech: TestTechConfig) -> Path:
+    """Resolve the PMOS modelcard path for the inverter geometry."""
+    if tech.single_file:
+        return MODELCARDS_DIR / tech.modelcard_dir / tech.modelcard_file
+
+    from pycmg.tech import TECH_REGISTRY, resolve_modelcard
+    tech_config = TECH_REGISTRY[_registry_name(tech)]
+    prefix = tech.pmos_model.split("_", 1)[0]
+    vt = tech.pmos_model.split("_", 1)[1].replace("_mac", "")
+    canonical = ("pmos_" if prefix == "pch" else "nmos_") + vt
+    device_config = tech_config.get_device(canonical)
+    return Path(resolve_modelcard(
+        device_config, tech_config,
+        L=tech.effective_inv_l_pmos, NFIN=float(tech.effective_inv_nfin),
+    ))
+
+
+def create_baked_inv_nmos_modelcard(tech: TestTechConfig, work_dir: Path) -> Path:
+    """Create baked NMOS modelcard with inverter L/NFIN/TFIN/DEVTYPE for NGSPICE."""
+    src = resolve_nmos_inv_modelcard(tech)
+    if not src.exists():
+        raise FileNotFoundError(f"NMOS modelcard not found: {src}")
+
+    baked = work_dir / f"baked_inv_nmos_{tech.name}.lib"
+    baked.write_text(src.read_text())
+    bake_inst_params(baked, baked, tech.nmos_model, {
+        "L": tech.effective_inv_l_nmos,
+        "NFIN": float(tech.effective_inv_nfin),
+        "TFIN": tech.tfin,
+        "DEVTYPE": 1,
+    })
+    return baked
+
+
+def create_baked_inv_pmos_modelcard(tech: TestTechConfig, work_dir: Path) -> Path:
+    """Create baked PMOS modelcard with inverter L/NFIN/TFIN/DEVTYPE for NGSPICE."""
+    src = resolve_pmos_inv_modelcard(tech)
+    if not src.exists():
+        raise FileNotFoundError(f"PMOS modelcard not found: {src}")
+
+    baked = work_dir / f"baked_inv_pmos_{tech.name}.lib"
+    baked.write_text(src.read_text())
+    bake_inst_params(baked, baked, tech.pmos_model, {
+        "L": tech.effective_inv_l_pmos,
+        "NFIN": float(tech.effective_inv_nfin),
+        "TFIN": tech.tfin,
+        "DEVTYPE": 0,
     })
     return baked
 
@@ -853,8 +946,8 @@ def run_ngspice_inverter_vtc(
     tech: TestTechConfig, work_dir: Path,
 ) -> Dict[str, np.ndarray]:
     """Run NGSPICE CMOS inverter VTC DC sweep. Returns {sweep, vout}."""
-    baked_nmos = create_baked_modelcard(tech, work_dir)
-    baked_pmos = create_baked_pmos_modelcard(tech, work_dir)
+    baked_nmos = create_baked_inv_nmos_modelcard(tech, work_dir)
+    baked_pmos = create_baked_inv_pmos_modelcard(tech, work_dir)
 
     netlist_path = work_dir / f"ngspice_inverter_vtc_{tech.name}.cir"
     netlist_content = (
@@ -936,8 +1029,9 @@ def run_pycircuitsim_nn_inverter_vtc(
     from pycircuitsim.simulation import run_dc_sweep
     from pycircuitsim.visualizer import Visualizer
 
-    l_nmos_nm = tech.l_nmos * 1e9
-    l_pmos_nm = tech.effective_l_pmos * 1e9
+    l_nmos_nm = tech.effective_inv_l_nmos * 1e9
+    l_pmos_nm = tech.effective_inv_l_pmos * 1e9
+    nfin = tech.effective_inv_nfin
 
     netlist_path = work_dir / f"nn_{model_name}_inverter_vtc_{tech.name}.sp"
 
@@ -953,8 +1047,8 @@ def run_pycircuitsim_nn_inverter_vtc(
         f"* NN CMOS Inverter VTC ({model_name}, {tech.name})\n"
         f"Vdd 1 0 {tech.vdd}\n"
         f"Vin 2 0 0.0\n"
-        f"Mn1 3 2 0 0 nmos_nn L={l_nmos_nm:.0f}n NFIN={tech.nfin}\n"
-        f"Mp1 3 2 1 1 pmos_nn L={l_pmos_nm:.0f}n NFIN={tech.nfin}\n"
+        f"Mn1 3 2 0 0 nmos_nn L={l_nmos_nm:.0f}n NFIN={nfin}\n"
+        f"Mp1 3 2 1 1 pmos_nn L={l_pmos_nm:.0f}n NFIN={nfin}\n"
         f".model nmos_nn NMOS ({nmos_params})\n"
         f".model pmos_nn PMOS ({pmos_params})\n"
         f".dc Vin 0 {tech.vdd} 0.005\n"
@@ -1049,8 +1143,9 @@ def plot_vtc_comparison_multi(
     ax1.set_ylabel("Vout (V)")
     ax1.set_title(
         f"Inverter VTC: {tech.name}  "
-        f"L_n={tech.l_nmos*1e9:.0f}nm  L_p={tech.effective_l_pmos*1e9:.0f}nm  "
-        f"NFIN={tech.nfin}"
+        f"L_n={tech.effective_inv_l_nmos*1e9:.0f}nm  "
+        f"L_p={tech.effective_inv_l_pmos*1e9:.0f}nm  "
+        f"NFIN={tech.effective_inv_nfin}"
     )
     ax1.legend(loc="upper right", fontsize=8)
     ax1.grid(True, alpha=0.3)
@@ -1092,8 +1187,8 @@ def run_ngspice_inverter_tran(
 
     Returns {time, v(out), v(in)}.
     """
-    baked_nmos = create_baked_modelcard(tech, work_dir)
-    baked_pmos = create_baked_pmos_modelcard(tech, work_dir)
+    baked_nmos = create_baked_inv_nmos_modelcard(tech, work_dir)
+    baked_pmos = create_baked_inv_pmos_modelcard(tech, work_dir)
     per = INV_TRAN_TR + INV_TRAN_PW + INV_TRAN_TF + max(INV_TRAN_PW, 1.0e-9)
 
     netlist_path = work_dir / f"ngspice_inverter_tran_{tech.name}.cir"
@@ -1181,8 +1276,9 @@ def run_pycircuitsim_nn_inverter_tran(
     from pycircuitsim.parser import Parser
     from pycircuitsim.solver import DCSolver, TransientSolver
 
-    l_nmos_nm = tech.l_nmos * 1e9
-    l_pmos_nm = tech.effective_l_pmos * 1e9
+    l_nmos_nm = tech.effective_inv_l_nmos * 1e9
+    l_pmos_nm = tech.effective_inv_l_pmos * 1e9
+    nfin = tech.effective_inv_nfin
     per = INV_TRAN_TR + INV_TRAN_PW + INV_TRAN_TF + max(INV_TRAN_PW, 1.0e-9)
 
     nmos_params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={tech.nn_vt}"
@@ -1199,8 +1295,8 @@ def run_pycircuitsim_nn_inverter_tran(
         f"Vdd 1 0 {tech.vdd}\n"
         f"Vin 2 0 PULSE 0 {tech.vdd} {INV_TRAN_TD} {INV_TRAN_TR}"
         f" {INV_TRAN_TF} {INV_TRAN_PW} {per}\n"
-        f"Mn1 3 2 0 0 nmos_nn L={l_nmos_nm:.0f}n NFIN={tech.nfin}\n"
-        f"Mp1 3 2 1 1 pmos_nn L={l_pmos_nm:.0f}n NFIN={tech.nfin}\n"
+        f"Mn1 3 2 0 0 nmos_nn L={l_nmos_nm:.0f}n NFIN={nfin}\n"
+        f"Mp1 3 2 1 1 pmos_nn L={l_pmos_nm:.0f}n NFIN={nfin}\n"
         f"Cload 3 0 {INV_CLOAD}\n"
         f".model nmos_nn NMOS ({nmos_params})\n"
         f".model pmos_nn PMOS ({pmos_params})\n"
@@ -1390,8 +1486,9 @@ def plot_inverter_tran_comparison_multi(
     ax1.set_ylabel("V(in) [V]")
     ax1.set_title(
         f"Inverter Transient: {tech.name}  "
-        f"L_n={tech.l_nmos*1e9:.0f}nm  L_p={tech.effective_l_pmos*1e9:.0f}nm  "
-        f"NFIN={tech.nfin}  Cload={INV_CLOAD*1e15:.0f}fF"
+        f"L_n={tech.effective_inv_l_nmos*1e9:.0f}nm  "
+        f"L_p={tech.effective_inv_l_pmos*1e9:.0f}nm  "
+        f"NFIN={tech.effective_inv_nfin}  Cload={INV_CLOAD*1e15:.0f}fF"
     )
     ax1.grid(True, alpha=0.3)
     ax1.set_ylim(-0.1, tech.vdd + 0.1)
@@ -2013,8 +2110,9 @@ def run_inverter_vtc_tests(
 
         print(f"\n{'='*70}")
         print(f"  Inverter VTC Test: {tech.name}  "
-              f"L_n={tech.l_nmos*1e9:.0f}nm  L_p={tech.effective_l_pmos*1e9:.0f}nm  "
-              f"NFIN={tech.nfin}  VDD={tech.vdd:.2f}V")
+              f"L_n={tech.effective_inv_l_nmos*1e9:.0f}nm  "
+              f"L_p={tech.effective_inv_l_pmos*1e9:.0f}nm  "
+              f"NFIN={tech.effective_inv_nfin}  VDD={tech.vdd:.2f}V")
         print(f"{'='*70}")
 
         # 1. NGSPICE ground truth
@@ -2115,8 +2213,9 @@ def run_inverter_tran_tests(
 
         print(f"\n{'='*70}")
         print(f"  Inverter Transient Test: {tech.name}  "
-              f"L_n={tech.l_nmos*1e9:.0f}nm  L_p={tech.effective_l_pmos*1e9:.0f}nm  "
-              f"NFIN={tech.nfin}  Cload={INV_CLOAD*1e15:.0f}fF")
+              f"L_n={tech.effective_inv_l_nmos*1e9:.0f}nm  "
+              f"L_p={tech.effective_inv_l_pmos*1e9:.0f}nm  "
+              f"NFIN={tech.effective_inv_nfin}  Cload={INV_CLOAD*1e15:.0f}fF")
         print(f"{'='*70}")
 
         # 1. NGSPICE ground truth
