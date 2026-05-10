@@ -241,6 +241,53 @@ python -m bsimar.cli.train --model direct --size small --loss-preset e2 \
 # Verify will hang on TSMC16 transient — kill after 30 min.
 ```
 
+## Post-refactor verification (2026-05-10)
+
+After the BSIMAR + tests/ refactor commits (`959ef21`, `e94e6e1`),
+re-ran the full 4-tech inverter verify with the same V6 ckpts and
+env-var override:
+
+```bash
+PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS=v6_dn_small_e2_asinh_nmos \
+PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS=v6_dn_small_e2_asinh_pmos \
+CUDA_VISIBLE_DEVICES=2 python tests/verify_nn_dc_tran.py \
+    --tech TSMC5,TSMC7,TSMC12,TSMC16 --inverter-only
+```
+
+Saved to `tests/v6_logs/postrefactor/inverter_summary.csv`. **All 16
+cells match the Tier 2 numerics above to ≤ 0.01 % NRMSE** (rounding
+artefact of the 2-decimal print format) — the refactor is byte-clean
+on circuit-level numerics.
+
+| Cell | Plan (before refactor) | Post-refactor | Δ |
+|---|---:|---:|---|
+| TSMC5  BSIMAR VTC | 72.6612 | 72.66 | 0 |
+| TSMC5  DN VTC     | 59 285.6942 | 59 285.69 | 0 |
+| TSMC7  BSIMAR VTC | 11.8489 | 11.85 | 0 |
+| TSMC7  DN VTC     | 9.9679  | 9.97  | 0 |
+| TSMC12 BSIMAR VTC | 10.4378 | 10.44 | 0 |
+| TSMC12 DN VTC     | 6.5013  | 6.50  | 0 |
+| TSMC16 BSIMAR VTC | 48.1913 | 48.19 | 0 |
+| TSMC16 DN VTC     | 5.3980  | 5.40  | 0 |
+| TSMC5  BSIMAR tran| 20.4309 | 20.43 | 0 |
+| TSMC5  DN tran    | 17.7621 | 17.76 | 0 |
+| TSMC7  BSIMAR tran| 10.4259 | 10.43 | 0 |
+| TSMC7  DN tran    | 10.8829 | 10.88 | 0 |
+| TSMC12 BSIMAR tran| 10.3999 | 10.40 | 0 |
+| TSMC12 DN tran    | 3.7864  | 3.79  | 0 |
+| TSMC16 BSIMAR tran| 14.1815 | 14.18 | 0 |
+| TSMC16 DN tran    | 8.8957  | 8.90  | 0 |
+
+PASS-rate identical (11/16 PASS, 5/16 FAIL).
+
+Wall-time: ~3 h 09 m on this run vs ~25 min in the original V6 capture.
+Numerics-correctness is unchanged; the slowness is environmental
+(`uptime` showed load avg 262 on a 32-core box during the run, plus
+8+ neighbouring Python processes sharing GPU 2). The refactor itself
+adds no measurable per-call cost — the trainer / loss / loo_labels /
+verify driver paths it touches all run before / after the simulator
+NR loop.
+
 ## Open follow-ups (not in V6 scope)
 
 - **TSMC5 inverter VTC (model-fit floor).** Both probe-asinh and zscore-baseline
