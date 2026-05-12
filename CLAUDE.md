@@ -222,27 +222,25 @@ Both share the same data pipeline and inference-time rules. DirectNet is the bas
 3. **Training range covers NR overshoot** — margin ±VDD beyond operating range, not ±0.1V.
 4. **Smooth voltage clamping** — softplus-based, NOT `torch.clamp`. Hard clamp creates zero-gradient cliffs that stall NR. Margin = 5% of per-dim training range.
 5. **Physics-based gds floor** — `gds = max(gds, |id|*0.5, 1e-12)`. NN autograd gds ≈ 0 in saturation; without the floor inverter gain → ∞ and NR diverges. At FinFET 16nm BSIM-CMG λ=0.3-1.2 V⁻¹. Floor only affects the NR Jacobian, not the converged solution.
-6. **Normalisation** — Transformer: asinh + zscore on outputs (`y_norm = (asinh(y/s_k) - m)/std`, `s_k` = per-target geometric-mean scale). DirectNet: plain zscore on outputs. Both: zscore on the 6 continuous inputs; tech-code goes directly into `nn.Embedding`, not normalised. `train_directnet` passes `norm_mode="zscore"` explicitly post-2026-05-03.
-7. **Chain-rule denormalisation** —
-   - zscore (DirectNet): `dy_phys/dv_phys = dy_norm/dv_norm * out_std / in_std` (linear).
-   - asinh (Transformer): `dy_phys/dv_phys = dy_norm/dv_norm * out_std * sqrt(asinh_scale² + y_phys²) / in_std`.
-8. **TSMC asymmetric L** — NMOS L=16nm, PMOS L=20nm; NNTechConfig uses `L_nmos`/`L_pmos`.
-9. **ASAP7 modelcard name mapping** — parser auto-maps netlist names to `nmos_rvt` / `pmos_rvt`.
-10. **PyCMG integration** — `bsimar/config.py` re-exports `NNTechConfig`, `TECH_CONFIGS`, `TECH_CODE_MAP`, `OUTPUT_COLUMNS` from `pycmg.nn_config`. v3 process-param exports (`ProcessParams`, `extract_process_params`, `INPUT_COLUMNS`) removed. Backward-compat alias `TechConfig = NNTechConfig`. Training VDD may differ from PyCMG (ASAP7 train=0.7V, PyCMG=0.9V).
-11. **Data validation** — `eval_single_point` rejects NaN/Inf and `|id| > 1A`. PyCMG `eval_dc` raises `RuntimeError` on internal-node convergence failure. Default NFIN range `[2, 3, 5, 10, 15, 20, 24]` (NFIN=1 excluded).
-12. **Loss layer** — both models use `bsimar.losses.MAELoss` with **per-target LDS weights only** (3-axis stack collapsed to 1 in v5 Phase A). Hard-wired in `train_directnet` / `train_transformer`. DO NOT re-add: `DirectLoss`, `ChargeConsistencyLoss`, `SignConsistencyLoss`, `BoundaryLoss`, `SlopeMatchLoss`, Vov-LDS / subthreshold-LDS axes. Structural Vds gate (`apply_id_gate`) and slope-match loss deleted 2026-05-03 — rule 18's inference-time correction already enforces Id(Vds=0)=0.
-13. **BSIMAR output ordering** — Transformer output in `BSIMAR_COLUMN_ORDER` (`qg, qb, qd, qs, id, gm, gds, gmb, cgg, cgd, cgs, cdg, cdd`), not `OUTPUT_COLUMN_ORDER`. Consumer code (`mosfet_bsimar.py`) takes autograd derivatives at the right column indices.
-14. **Parallel cap head** — Transformer emits 5 capacitances in parallel from gmb hidden state, not sequential AR steps. AR loop runs 8 steps (charges + currents/conds). `parallel_caps` and `grouped_inputs` structural, not configurable.
-15. **Unified CLI** — `python -m bsimar.cli.train --model {direct,transformer} ...`. Same `.npz` from PyCMG; checkpoints under `external_compact_models/bsimar/checkpoints/`.
-16. **Checkpoint files (v4-re)** — DirectNet: `v4_re_dn_universal_{nmos,pmos}_best.pt` + `_norm.npz`. Transformer: `v4_re_universal_{nmos,pmos}_best.pt` (TF val-best), `_best.ar.pt`, `_best.phys.pt`, `_norm.npz` (BSIMARNormStats asinh), `_config.npz`. Resolver cascade: `v4_re_universal > v4_universal > per-tech > bare`. `_best.phys.pt` is trustworthy only when `BSIMARNormStats.phys_best_metric == "median"`; pre-fix files renamed `*best.phys.bug.pt`, loader falls back to `_best.pt` for legacy norm.npz lacking the key. v5b/v5c TF checkpoints discard-only (deleted `apply_id_gate` bug).
-17. **Charge conservation** — simulator always computes `qs = -(qg + qd + qb)` analytically, even for 13-output models that directly predict `qs`. Guarantees Kirchhoff conservation at every transient timestep.
-18. **Analytical Vds correction** — `_MOSFETNNBase._apply_vds_correction()` enforces Id(Vds=0)=0 and Id=0 for reverse-Vds at inference. Four-part (order matters):
+6. **TSMC asymmetric L** — NMOS L=16nm, PMOS L=20nm; NNTechConfig uses `L_nmos`/`L_pmos`.
+7. **ASAP7 modelcard name mapping** — parser auto-maps netlist names to `nmos_rvt` / `pmos_rvt`.
+8. **PyCMG integration** — `bsimar/config.py` re-exports `NNTechConfig`, `TECH_CONFIGS`, `TECH_CODE_MAP`, `OUTPUT_COLUMNS` from `pycmg.nn_config`. v3 process-param exports (`ProcessParams`, `extract_process_params`, `INPUT_COLUMNS`) removed. Backward-compat alias `TechConfig = NNTechConfig`. Training VDD may differ from PyCMG (ASAP7 train=0.7V, PyCMG=0.9V).
+9. **Data validation** — `eval_single_point` rejects NaN/Inf and `|id| > 1A`. PyCMG `eval_dc` raises `RuntimeError` on internal-node convergence failure. Default NFIN range `[2, 3, 5, 10, 15, 20, 24]` (NFIN=1 excluded).
+10. **Loss layer** — both models use `bsimar.losses.MAELoss` with **per-target LDS weights only** (3-axis stack collapsed to 1 in v5 Phase A). Hard-wired in `train_directnet` / `train_transformer`. DO NOT re-add: `DirectLoss`, `ChargeConsistencyLoss`, `SignConsistencyLoss`, `BoundaryLoss`, `SlopeMatchLoss`, Vov-LDS / subthreshold-LDS axes. Structural Vds gate (`apply_id_gate`) and slope-match loss deleted 2026-05-03 — rule 15's inference-time correction already enforces Id(Vds=0)=0.
+11. **BSIMAR output ordering** — Transformer output in `BSIMAR_COLUMN_ORDER` (`qg, qb, qd, qs, id, gm, gds, gmb, cgg, cgd, cgs, cdg, cdd`), not `OUTPUT_COLUMN_ORDER`. Consumer code (`mosfet_bsimar.py`) takes autograd derivatives at the right column indices.
+12. **Parallel cap head** — Transformer emits 5 capacitances in parallel from gmb hidden state, not sequential AR steps. AR loop runs 8 steps (charges + currents/conds). `parallel_caps` and `grouped_inputs` structural, not configurable.
+13. **Unified CLI** — `python -m bsimar.cli.train --model {direct,transformer} ...`. Same `.npz` from PyCMG; checkpoints under `external_compact_models/bsimar/checkpoints/`.
+14. **Charge conservation** — simulator always computes `qs = -(qg + qd + qb)` analytically, even for 13-output models that directly predict `qs`. Guarantees Kirchhoff conservation at every transient timestep.
+15. **Analytical Vds correction** — `_MOSFETNNBase._apply_vds_correction()` enforces Id(Vds=0)=0 and Id=0 for reverse-Vds at inference. Four-part (order matters):
    - (a) **Rail-restoring extrapolation** when `|Vds| > VDD_train` (= `self._vdd_estimate`, from training norm stats): quadratic Id ramp `½·g_max·overshoot² / x_ref` and linear gds ramp `g_max·overshoot / x_ref` (g_max=1mS, x_ref=½·VDD_train). Both zero-valued zero-sloped at the boundary so NR sees a smooth join (linear ramp tried first, caused NR oscillation for TSMC12/16 with ops at the boundary). Must run BEFORE the fast-path early-return.
    - (b) one-sided `1-exp(-|Vds|/VT)` with VDD-proportional `VT = max(0.06·VDD, 0.026)V` for Id/gm/gmb.
    - (c) symmetric gds with linear-region conductance `|Id_raw|·exp(-|Vds|/VT)/VT`.
    - (d) sign enforcement (NMOS id≤0, PMOS id≥0).
 
    Step (a) fixed the BSIMAR transient bug: NN extrapolates flat-near-zero outside `[-VDD_train, VDD_train]`, creating a false KCL plateau the DCSolver mistakes for equilibrium (inverter OP locking at V(out)=4.4V instead of VDD). Step (a) replicates PyCMG's restoring leakage/impact-ionization physics so NR converges to the true rail. Verified across all 4 TSMC techs on probe (670K) and production (5.15M) checkpoints — inverter transient drops from 18-300% (FAIL) to 6-12% NRMSE (PASS) without retraining.
+
+16. Always report MRE (%) metric.
+17. Exclude ASAP7 tech at the current stage.
 
 ---
 
@@ -263,7 +261,9 @@ Both share the same data pipeline and inference-time rules. DirectNet is the bas
 
 ## Other Tips
 * **Start every complex task in plan mode** — pour energy into the plan for 1-shot implementation. Re-plan the moment something goes sideways; enter plan mode for verification steps too.
+* If the plan has several solutions or stages, implemente them in sequence. Use git commit first before you modify anything, keep the useful one that make progress and revert the solutions that were proven no help with git reset.
 * **Update CLAUDE.md after every correction** so the mistake doesn't recur.
 * **Never be lazy** — never simplify code or skip tests. **NEVER** use simplified equations or self-defined CMG models as reference; ALWAYS use simulation results as ground truth.
 * **Use subagents** — second agent for staff-engineer plan review; multiple subagents on separate branches to try multiple solutions; roll back to main when a subagent hits a dead end.
 * Enable "Explanatory" / "Learning" output style in `/config` to see *why* behind changes.
+
