@@ -19,9 +19,6 @@ htmlcov/
 results/
 tests/verify_*_results/
 
-# Generated plans (session artifacts)
-docs/plans/
-
 # NGSPICE output files
 *.lis
 *.csv

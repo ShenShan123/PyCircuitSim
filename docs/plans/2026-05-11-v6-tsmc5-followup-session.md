@@ -4,7 +4,7 @@
 **Branch:** `feat/v6` (no new branches needed; one commit landed on `feat/v6`)
 **Scope:** TSMC5 inverter accuracy. DirectNet (LEVEL=73) only;
 BSIMAR Transformer treated as control. ASAP7 excluded.
-**Predecessor:** `docs/superpowers/plans/2026-05-09-v6-accuracy-plan.md` —
+**Predecessor:** `docs/plans/2026-05-09-v6-accuracy-plan.md` —
 "Open follow-ups" §1 (TSMC5 inverter at model-fit floor).
 
 ## Starting state — V6-prod on `feat/v6` tip

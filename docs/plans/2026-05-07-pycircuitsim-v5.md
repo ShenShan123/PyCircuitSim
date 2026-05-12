@@ -22,7 +22,7 @@ A/B between the original MAE+LDS loss and a new Jacobian-consistency loss.
 > | DirectNet checkpoints | `v5_dn_s_{nmos,pmos}_{mae,jac}_*` |
 > | BSIMAR checkpoints | `v5_tf_s_{nmos,pmos}_{mae,jac}_*` |
 > | Reports | `results/v5_*.md` |
-> | Plan files | `docs/superpowers/plans/2026-05-07-pycircuitsim-v5.md` (this file) |
+> | Plan files | `docs/plans/2026-05-07-pycircuitsim-v5.md` (this file) |
 >
 > **ASAP7 is excluded everywhere.** Training: `--exclude-techs asap7`.
 > Data generation: drop ASAP7 from the tech list. Verification: never

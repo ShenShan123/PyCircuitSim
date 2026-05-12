@@ -210,6 +210,6 @@ checkpoints still load), then simulator-side.
   ce-code-simplicity-reviewer agent.
 * `tests/` reviewed by a third ce-code-simplicity-reviewer agent.
 * CLAUDE.md "v5 Phase B" + Critical Design Rules 19–21.
-* `docs/superpowers/plans/2026-05-03-phys-best-tracker-bug.md` (Bug A
+* `docs/plans/2026-05-03-phys-best-tracker-bug.md` (Bug A
   is the load-bearing reason to delete `apply_id_gate` rather than fix
   it).

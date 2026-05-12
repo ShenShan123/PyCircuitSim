@@ -351,7 +351,7 @@ but the design intent and the inference-time chain rule comment in
 | 2 | The phys-best score rewards the **late-trained** v5c PMOS weights, not epoch-10 | B | Re-run the diagnostic in §1B; new score on `_best.pt` < new score on `_best.phys.pt` (TODO P2) |
 | 3 | A 5-epoch BSIMAR retrain on the existing data produces a `_best.phys.pt` whose val MAE is monotonically below the eventual `_best.pt`'s val MAE | A+B | Smoke test (TODO C0) |
 | 4 | All four v5c checkpoints retrain under both fixes, and `_best.phys.pt` agrees with `_best.pt` on which run is "best" within 1 % NRMSE on the validation slice | A+B | Full v5c retrain (TODO C1) |
-| 5 | Inverter verifier on the **fixed** v5c checkpoints meets §2 of `docs/superpowers/plans/2026-04-24-v5-inverter-accuracy.md` | A+B | TODO C2 |
+| 5 | Inverter verifier on the **fixed** v5c checkpoints meets §2 of `docs/plans/2026-04-24-v5-inverter-accuracy.md` | A+B | TODO C2 |
 | 6 | A re-baseline of v4 against the **fixed** simulator-side loader (force `_best.pt`) produces a TSMC5/7/12/16 table that we can audit against the existing `v5_baseline_2026_04_22.md` to scope how much of the v5b "B1 failure" was actually the bug class | B | TODO D1 |
 | 7 | DirectNet v5c retrain with `norm_mode="zscore"` matches or beats the asinh-defaulted v5b DirectNet on per-tech NRMSE on the same data | side | TODO C3 |
 
@@ -513,7 +513,7 @@ File: `external_compact_models/bsimar/training/trainer.py:482-490`.
       (verified empirically 2026-05-02).
 - [ ] **C2.** When all four v5c retrains finish, run the inverter
       verifier on TSMC5/7/12/16 (`SKIP_VTC=1` for tsmc7) per
-      `docs/superpowers/plans/2026-04-24-v5-inverter-accuracy.md` §2,
+      `docs/plans/2026-04-24-v5-inverter-accuracy.md` §2,
       using `--checkpoint-prefix v5c_universal --directnet-prefix
       v5c_dn_universal`. Compare to v4 baseline and v5b in
       `results/v5c_b2b3_gate_report.md` (NEW).
