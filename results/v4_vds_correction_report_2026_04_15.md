@@ -5,10 +5,7 @@
 
 ## Summary
 
-Implemented a three-part analytical Vds correction to enforce the physical
-constraint Id(Vds=0) = 0 in both NN compact models (LEVEL=73 DirectNet,
-LEVEL=74 BSIMAR). This was the blocking issue for all inverter and feedback
-circuit simulations.
+Implemented a three-part analytical Vds correction to enforce Id(Vds=0) = 0 in both NN compact models (LEVEL=73 DirectNet, LEVEL=74 BSIMAR). Blocking issue for inverter and feedback circuits.
 
 **Key results:**
 - **DirectNet inverter transient: 3/4 PASS** (was 0/4, all stalled or 468%+)
@@ -20,46 +17,36 @@ circuit simulations.
 
 ## The Correction: Three-Part Analytical Vds Fix
 
-Applied in `_MOSFETNNBase._apply_vds_correction()`, called from both
-`mosfet_directnet.py` and `mosfet_bsimar.py` after NN forward pass +
-denormalization.
+Applied in `_MOSFETNNBase._apply_vds_correction()`, called from both `mosfet_directnet.py` and `mosfet_bsimar.py` after NN forward pass + denormalization.
 
 ### Part 1: One-Sided Vds Correction
 
 Multiplies Id by `f(Vds) = 1 - exp(-|Vds|/VT)` with VT = 0.052V (2x kT/q):
 
-- **Normal direction** (NMOS Vds>0, PMOS Vds<0): f transitions from 0 at
-  Vds=0 to ~1 at |Vds| >> VT. Enforces Id(Vds=0) = 0.
-- **Reverse direction** (NMOS Vds<0, PMOS Vds>0): f = 0. Kills all current
-  from unreliable NN extrapolation in the reverse-bias region.
+- **Normal direction** (NMOS Vds>0, PMOS Vds<0): f transitions 0→1, enforces Id(Vds=0)=0.
+- **Reverse direction** (NMOS Vds<0, PMOS Vds>0): f = 0. Kills current from unreliable NN extrapolation.
 
-gm and gmb are scaled by the same factor f.
+gm and gmb scaled by the same factor f.
 
 ### Part 2: Symmetric gds for NR Jacobian
 
-The gds correction uses the symmetric `1-exp(-|Vds|/VT)` in BOTH directions,
-plus a linear-region conductance term `|Id_raw| * exp(-|Vds|/VT) / VT`:
+Symmetric `1-exp(-|Vds|/VT)` in BOTH directions plus linear-region term `|Id_raw| * exp(-|Vds|/VT) / VT`:
 
 - At Vds=0: gds = |Id_raw|/VT (large linear-region conductance)
-- At large |Vds|: gds = gds_raw (unchanged from NN prediction + floor)
+- At large |Vds|: gds = gds_raw (unchanged)
 
-This prevents floating-node singularities at rail states where Id is forced
-to zero by Part 1 or Part 3.
+Prevents floating-node singularities at rail states where Id is forced to zero.
 
 ### Part 3: Sign Enforcement
 
-After the Vds correction, wrong-sign predictions are clamped:
 - NMOS: if Id > 0, force Id = gm = gmb = 0
 - PMOS: if Id < 0, force Id = gm = gmb = 0
 
-This catches NN extrapolation artefacts where the Transformer predicts
-current in the wrong direction (e.g., NMOS at Vgs=0 predicting positive
-Id instead of ~0).
+Catches NN extrapolation artefacts (e.g., NMOS at Vgs=0 predicting positive Id).
 
 ### Why VT = 0.052V (2x thermal voltage)
 
-The physical thermal voltage is kT/q = 0.026V at 300K. Using 2x provides
-stronger suppression of the NN's spurious leakage near Vds = 0:
+Physical thermal voltage is kT/q = 0.026V at 300K. 2x provides stronger suppression of NN spurious leakage near Vds=0:
 
 | Vds | f (VT=0.026) | f (VT=0.052) |
 |-----|-------------|-------------|
@@ -68,9 +55,7 @@ stronger suppression of the NN's spurious leakage near Vds = 0:
 | 0.10V | 0.979 | 0.854 |
 | 0.24V | 1.000 | 0.990 |
 
-At the minimum Vds in the NMOS pulse test (~0.24V), the impact is <1%.
-At Vds = 0.05V, the suppression is 38% stronger, which prevents wrong-sign
-leakage from destabilising inverter rail states.
+At min Vds in NMOS pulse (~0.24V), impact <1%. At Vds=0.05V, suppression 38% stronger — prevents wrong-sign leakage from destabilising inverter rail states.
 
 ---
 
@@ -109,9 +94,7 @@ Zero regression. Three techs improved, one slightly worse (within noise).
 | TSMC12 | 0.80V | 468.88% | **11.65%** | **PASS** |
 | TSMC16 | 0.80V | stalled | **10.59%** | **PASS** |
 
-TSMC5 is marginal at 17.20% (2.2% above the 15% threshold). The waveform
-shape is correct; the error comes from a ~30mV DC offset at the high rail
-(NN predicts 0.68V vs NGSPICE 0.65V) and small ringing at transitions.
+TSMC5 marginal at 17.20% (2.2% above 15% threshold). Waveform shape correct; error from ~30mV DC offset at high rail (NN 0.68V vs NGSPICE 0.65V) and small ringing at transitions.
 
 ### DirectNet Inverter DC Operating Point
 
@@ -148,9 +131,7 @@ Zero regression. BSIMAR still has better single-device accuracy than DirectNet.
 | TSMC12 | 0.80V | 353.85% | **300.01%** | FAIL |
 | TSMC16 | 0.80V | stalled | **293.25%** | FAIL |
 
-TSMC5 is close to passing (18.70%). TSMC7/12/16 still diverge due to
-wrong-sign subthreshold currents in the Transformer model (see Root Cause
-Analysis below).
+TSMC5 close to passing (18.70%). TSMC7/12/16 diverge due to wrong-sign subthreshold currents in the Transformer (see Root Cause below).
 
 ### BSIMAR Inverter DC Operating Point
 
@@ -160,8 +141,7 @@ Analysis below).
 | 0.4V | +0.367V | ~0.38V | OK |
 | 0.8V | -0.078V | ~0.00V | FAIL (-78mV offset) |
 
-Two of three rail states converge correctly. Vin=0.8V gives -78mV due to
-wrong-sign NMOS subthreshold current (see below).
+Two of three rail states converge. Vin=0.8V gives -78mV due to wrong-sign NMOS subthreshold current.
 
 ---
 
@@ -169,26 +149,20 @@ wrong-sign NMOS subthreshold current (see below).
 
 ### Symptom
 
-BSIMAR inverter diverges at rail states (V(out) = +10V or -15V for
-TSMC7/12/16), despite the Vds correction being applied correctly.
+BSIMAR inverter diverges at rail states (V(out) = +10V or -15V for TSMC7/12/16) despite Vds correction.
 
 ### Root Cause: Wrong-Sign Subthreshold Current
 
-Diagnostic tracing revealed that the BSIMAR Transformer predicts
-**wrong-sign drain current** in the subthreshold regime:
+Diagnostic tracing: BSIMAR Transformer predicts **wrong-sign drain current** in subthreshold:
 
 | Condition | BSIMAR NMOS id_raw | DirectNet NMOS id_raw | Physical |
 |-----------|-------------------|----------------------|----------|
 | Vgs=0, Vds=0 | **+2.06e-7** (wrong!) | -7.17e-8 (correct) | ~0 |
 | Vgs=0, Vds=+0.02V | **+2.11e-7** (wrong!) | -7.10e-8 (correct) | ~0 (neg) |
 
-For NMOS, id should be <= 0 (current into drain terminal). BSIMAR predicts
-positive id (current OUT of drain), which pushes the inverter output beyond
-the supply rails.
+NMOS id should be <= 0 (current into drain). BSIMAR predicts positive id, pushing inverter output beyond rails.
 
-The sign enforcement (Part 3) catches this at Vds=0 and reverse Vds, but at
-small positive Vds (normal direction), the one-sided correction allows
-partial current through:
+Sign enforcement (Part 3) catches Vds=0 and reverse Vds, but at small positive Vds the one-sided correction allows partial current through:
 
 ```
 At Vds=+0.02V: f_id = 1 - exp(-0.02/0.052) = 0.32
@@ -196,27 +170,19 @@ Id_corrected = +2.11e-7 * 0.32 = +6.8e-8 (still wrong sign!)
 Sign enforcement catches it -> Id = 0
 ```
 
-The sign enforcement catches most wrong-sign cases, but the NR convergence
-path occasionally visits states where the wrong-sign current leaks through,
-causing gradual divergence over multiple source-stepping stages.
+Sign enforcement catches most cases, but NR convergence occasionally visits states where wrong-sign current leaks through, causing gradual divergence over multiple source-stepping stages.
 
 ### Why DirectNet Works
 
-DirectNet MLP predicts the correct sign for subthreshold current (negative
-id for NMOS at Vgs=0). The small negative leakage provides a natural
-restoring force at the rail states, enabling stable convergence.
+DirectNet MLP predicts correct sign for subthreshold (negative id for NMOS at Vgs=0). Small negative leakage provides natural restoring force at rail states.
 
 ### Fix for BSIMAR (Requires Retraining)
 
-The wrong-sign prediction is a model training artefact, not fixable at
-inference time. Recommended training changes:
+Wrong-sign prediction is a training artefact, not fixable at inference. Recommended:
 
-1. **Sign-consistency loss**: add penalty `L_sign = w * mean(relu(id_nmos)^2)`
-   to enforce NMOS id <= 0 across all operating points.
-2. **Boundary penalty**: add `L_boundary = w * mean(Id(Vds=0)^2)` with
-   explicit Vds=0 training samples.
-3. **Denser subthreshold data**: add samples at Vgs = 0, +/-0.05V, +/-0.1V
-   near the threshold voltage.
+1. **Sign-consistency loss**: `L_sign = w * mean(relu(id_nmos)^2)`.
+2. **Boundary penalty**: `L_boundary = w * mean(Id(Vds=0)^2)` with explicit Vds=0 samples.
+3. **Denser subthreshold data**: samples at Vgs = 0, +/-0.05V, +/-0.1V near threshold.
 
 ---
 
@@ -262,29 +228,19 @@ Already updated in previous session. No change.
 
 ### Updated Rule #19 (Id boundary)
 
-Previous: "NN models do NOT enforce Id(Vds=0)=0. Inverter and feedback
-circuits will fail."
+Previous: "NN models do NOT enforce Id(Vds=0)=0. Inverter and feedback circuits will fail."
 
-Updated: The analytical Vds correction in `_apply_vds_correction()` now
-enforces Id(Vds=0)=0 and Id=0 for reverse-direction Vds. DirectNet inverter
-transient works (3/4 PASS). BSIMAR inverter still fails due to wrong-sign
-subthreshold predictions that require retraining.
+Updated: `_apply_vds_correction()` enforces Id(Vds=0)=0 and Id=0 for reverse-direction Vds. DirectNet inverter 3/4 PASS. BSIMAR inverter still fails (wrong-sign subthreshold; requires retraining).
 
 ### New Rule #20 (Vds correction)
 
-The `_apply_vds_correction()` method in `_MOSFETNNBase` applies three
-corrections at inference time:
-1. One-sided `1-exp(-|Vds|/VT)` factor (VT=0.052V) for Id/gm/gmb
+`_apply_vds_correction()` in `_MOSFETNNBase`:
+1. One-sided `1-exp(-|Vds|/VT)` (VT=0.052V) for Id/gm/gmb
 2. Symmetric gds with linear-region conductance term
 3. Sign enforcement: NMOS id <= 0, PMOS id >= 0
 
-The correction is applied AFTER denormalization and the physics-based gds
-floor, and BEFORE caching. It uses `self._is_pmos` to determine the normal
-Vds direction.
+Applied AFTER denormalization and gds floor, BEFORE caching. Uses `self._is_pmos` for normal Vds direction.
 
 ### New Rule #21 (BSIMAR wrong-sign subthreshold)
 
-The BSIMAR Transformer predicts wrong-sign drain current in the subthreshold
-regime (NMOS id > 0 at Vgs=0). This is not fixable at inference time.
-BSIMAR (LEVEL=74) should NOT be used for inverter or feedback circuits until
-retrained with sign-consistency loss. Use DirectNet (LEVEL=73) instead.
+BSIMAR Transformer predicts wrong-sign id in subthreshold (NMOS id > 0 at Vgs=0). Not fixable at inference. BSIMAR (LEVEL=74) should NOT be used for inverter/feedback circuits until retrained with sign-consistency loss. Use DirectNet (LEVEL=73).

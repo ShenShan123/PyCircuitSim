@@ -26,7 +26,7 @@
 | **FAIL** | 12 | 12 | 0 |
 | **ERROR** | **1** | **0** | **−1** |
 
-Phase A converts the V4 baseline `TSMC16 BSIMAR inverter_tran ERROR` row (NR_FAIL at t = 2.36 ns, max-delta 24 V vs 1e-7 V tolerance) into a numeric **14.18 % PASS** row. Single-device DC, NMOS pulse, BSIM-CMG sanity all pass at byte-identical NRMSE/MRE — zero regression. VTC pass-rate is unchanged at 4/8: the trip-point convergence on TSMC5 BSIMAR/DN, TSMC7 DN, and TSMC16 BSIMAR is a model-fit/data issue that data overlay (Phase B) and loss design (Phase C) own, not a solver issue.
+Phase A converts the V4 `TSMC16 BSIMAR inverter_tran ERROR` row (NR_FAIL at t=2.36 ns, max-delta 24 V vs 1e-7 V tolerance) into a numeric **14.18 % PASS** row. Single-device DC, NMOS pulse, BSIM-CMG sanity all byte-identical — zero regression. VTC pass-rate unchanged at 4/8: trip-point convergence on TSMC5 BSIMAR/DN, TSMC7 DN, TSMC16 BSIMAR is a model-fit/data issue (Phase B/C), not solver.
 
 ---
 
@@ -43,16 +43,16 @@ Phase A converts the V4 baseline `TSMC16 BSIMAR inverter_tran ERROR` row (NR_FAI
 | TSMC16 BSIMAR inv-tran NRMSE % | ERROR (NR_FAIL @ t=2.36ns) | **14.18 PASS** | **−ERROR → 14.18 %** | (pending Phase B) | (pending Phase C) |
 | Inverter VTC pass-rate (out of 8) | 4 | 4 | **0** | (pending Phase B) | (pending Phase C) |
 
-**solver-Δ readout.** The Phase A wins are entirely on the convergence axis:
-* 1 ERROR → 14.18 % numeric PASS at TSMC16 BSIMAR inverter_tran (the A3 dt-halve fallback at the per-step NR loop allowed the 200-iteration NR_FAIL path to halve dt and converge).
-* TSMC5 BSIMAR VTC moved from a 2.08 × 10⁹⁵ % numerical-overflow row (NR runaway under the unbounded V4 quadratic rail-restoring) to a clean N/A NR_FAIL row (the new piecewise quadratic-then-linear A1 design caps id_extra at 5·g_max·x_ref past x_cap and keeps gds at constant 5 mS, so NR is bounded, just not yet able to converge through the trip point).
-* TSMC7 BSIMAR VTC was already 11.31 % PASS in V4 baseline thanks to the V4-era quadratic ramp; Phase A holds that.
+**solver-Δ readout.** Phase A wins are convergence-only:
+* 1 ERROR → 14.18 % PASS at TSMC16 BSIMAR inverter_tran (A3 dt-halve fallback rescued the 200-iter NR_FAIL).
+* TSMC5 BSIMAR VTC: 2.08×10⁹⁵ % overflow → clean N/A NR_FAIL (piecewise A1 caps id_extra at 5·g_max·x_ref past x_cap, gds constant 5 mS — bounded, but not yet converging through trip point).
+* TSMC7 BSIMAR VTC was already 11.31 % PASS in V4; Phase A holds.
 
-**No solver-Δ on accuracy of currently-converging cells.** Single-device DC, PMOS DC, NMOS pulse, and the inverter cells that converged in V4 all reproduce their V4 NRMSE/MRE to four decimals because the piecewise A1 matches the V4 unbounded quadratic to second order at `overshoot = 0` (the boundary case).
+**No solver-Δ on accuracy of currently-converging cells.** Single-device DC, PMOS DC, NMOS pulse, and converging V4 inverter cells reproduce V4 NRMSE/MRE to 4 decimals — piecewise A1 matches V4 unbounded quadratic to 2nd order at `overshoot = 0`.
 
 ### 2.2 Why VTC pass-rate didn't move
 
-The four still-failing VTC cells (TSMC5 BSIMAR, TSMC5 DN, TSMC7 DN, TSMC16 BSIMAR) all fail in the same way: NR cannot find a converged Vout that satisfies KCL within tolerance somewhere in the inverter trip region (Vin ≈ Vth_n), where both transistors operate in subthreshold and the NN gradient is small. The piecewise A1 fix bounds the *consequences* of the diverging NR step (no more 1e150 / 2e95 overflow rows) but does not give the solver a path through the trip point itself. That work belongs to Phase C (Jacobian-consistency loss makes the supervised gds and the autograd gds the simulator consumes self-consistent, which is the load-bearing improvement for trip-point conditioning) and Phase B (the inv_trip overlay densifies the trip-point band 100×, where the NN is currently effectively memorising 3 of 300 sub-threshold samples per (tech, variant) bin).
+Four still-failing VTC cells fail the same way: NR cannot find Vout satisfying KCL in the inverter trip region (Vin ≈ Vth_n) where both transistors are subthreshold and NN gradient is small. Piecewise A1 bounds the *consequences* (no more 1e150/2e95 overflow) but doesn't give the solver a path through the trip point. That work belongs to Phase C (Jacobian-consistency loss aligns supervised gds with autograd gds — load-bearing for trip-point conditioning) and Phase B (inv_trip overlay densifies the trip-point band 100×; currently the NN memorises 3 of 300 subthreshold samples per bin).
 
 ---
 
@@ -100,7 +100,7 @@ The four still-failing VTC cells (TSMC5 BSIMAR, TSMC5 DN, TSMC7 DN, TSMC16 BSIMA
 | TSMC12 | 13.38 PASS | 13.38 PASS | 9.56 PASS | 9.56 PASS |
 | TSMC16 | N/A NR_FAIL | N/A NR_FAIL | 9.42 PASS | 9.42 PASS |
 
-**4/8 PASS in both V4 and Phase A.** The TSMC5 BSIMAR cell shows the design improvement most clearly: V4 reports a 2.08e95 % NRMSE because the unbounded quadratic let id grow uncapped during NR overshoot until floating-point overflow; Phase A bounds id and gds so NR fails cleanly at N/A instead of polluting the report. MRE column N/A in this verify.
+**4/8 PASS in both V4 and Phase A.** TSMC5 BSIMAR shows the design improvement: V4 reports 2.08e95 % NRMSE (unbounded quadratic let id overflow); Phase A bounds id/gds so NR fails cleanly at N/A. MRE column N/A.
 
 ### 3.5 Inverter transient (Cload = 1 fF)
 
@@ -111,7 +111,7 @@ The four still-failing VTC cells (TSMC5 BSIMAR, TSMC5 DN, TSMC7 DN, TSMC16 BSIMA
 | TSMC12 | 10.40 PASS | 10.40 PASS | 3.98 PASS | 3.98 PASS |
 | TSMC16 | **ERROR (NR_FAIL @ t=2.36ns)** | **14.18 PASS** | 9.06 PASS | 9.06 PASS |
 
-**Phase A: 6/8 PASS (was 5/8 PASS, 1 ERROR).** The TSMC16 BSIMAR ERROR row is the headline conversion. TSMC5 BSIMAR/DN remain above 15 % — that is a model-fit floor (B1 hybrid-grid sampling left this region under-sampled), not a solver issue, and is owned by Phase B+C. MRE column N/A in this verify.
+**Phase A: 6/8 PASS (was 5/8 PASS, 1 ERROR).** TSMC16 BSIMAR ERROR row is the headline conversion. TSMC5 BSIMAR/DN remain >15 % — model-fit floor (B1 hybrid-grid under-sampled), owned by Phase B+C. MRE column N/A.
 
 ### 3.6 BSIM-CMG sanity (zero regression check)
 
@@ -119,7 +119,7 @@ The four still-failing VTC cells (TSMC5 BSIMAR, TSMC5 DN, TSMC7 DN, TSMC16 BSIMA
 ```
 ASAP7_rvt_baseline   VDD=0.70V  L=30/30nm  NFIN=10/10  NRMSE=0.19%, Max|err|=7.6mV → PASS
 ```
-Identical to the pre-Phase-A baseline. The Phase A `_circuit_has_nn(circuit)` gate keeps BSIM-CMG (LEVEL=72) on the original DC + transient codepath (no GMIN retry, no dt-halve fallback, no rail-restoring extrapolation). 0 % regression.
+Identical to pre-Phase-A baseline. The `_circuit_has_nn(circuit)` gate keeps BSIM-CMG (LEVEL=72) on the original codepath (no GMIN retry, no dt-halve, no rail-restoring). 0 % regression.
 
 ---
 
@@ -127,12 +127,11 @@ Identical to the pre-Phase-A baseline. The Phase A `_circuit_has_nn(circuit)` ga
 
 ### 4.1 The plain-tanh A1 regression (commits 43c5df6 → 6f8934e)
 
-Plan §3.1 specified the rail-restoring extrapolation as
-`I_extra(x) = g_max·x_ref·tanh(x/x_ref)`. This was implemented as `43c5df6`.
+Plan §3.1 specified `I_extra(x) = g_max·x_ref·tanh(x/x_ref)` (commit `43c5df6`).
 
-In-circuit testing showed the plain-tanh form has slope `g_max = 1 mS` at `x = 0`. Combined with the `max(result["gds"], g_extra)` floor used by the simulator, gds jumps discontinuously from the NN value to 1 mS the moment `|Vds|` crosses `VDD_train`. For TSMC12 inverter circuits whose operating Vds sits near `VDD_train`, this Jacobian discontinuity drove inverter VTC NRMSE from 13 % PASS to 80 % FAIL.
+Plain-tanh has slope `g_max = 1 mS` at `x = 0`. With the `max(result["gds"], g_extra)` floor, gds jumps discontinuously to 1 mS when `|Vds|` crosses `VDD_train`. For TSMC12 inverter (Vds near `VDD_train`), this drove VTC NRMSE 13 % PASS → 80 % FAIL.
 
-Commit `6f8934e` replaced the plain tanh with a saturating-quadratic form `id_extra = id_cap · tanh(½·g_max·x²/x_ref / id_cap)` that matches the V4 unbounded quadratic to second order at the boundary. This fixed the trip-point Jacobian discontinuity but caused a **second** regression: the chain-rule derivative `g_extra = sech²(q/id_cap) · g_max·x/x_ref` makes gds → 0 exponentially at large overshoot. With g ≈ 0 in the rail region, the NR Jacobian had no restoring force, and TSMC7/12/16 inverter transient regressed from 9–10 % PASS to **70 K %+ FAIL** (both BSIMAR and DirectNet) because Vout could move far past VDD with no Jacobian feedback.
+Commit `6f8934e` replaced plain tanh with saturating-quadratic `id_extra = id_cap · tanh(½·g_max·x²/x_ref / id_cap)` matching V4 unbounded quadratic to 2nd order. Fixed the discontinuity but caused a second regression: derivative `g_extra = sech²(q/id_cap) · g_max·x/x_ref` makes gds → 0 exponentially at large overshoot. With g ≈ 0, NR Jacobian had no restoring force; TSMC7/12/16 inverter transient regressed 9–10 % PASS → **70K %+ FAIL** (both models).
 
 ### 4.2 The piecewise quadratic-then-linear shipping design (`6e02a64`)
 
@@ -168,19 +167,19 @@ The full 44-cell post-fix verify matches these 6 cells and adds the rest at pari
 
 ### 4.3 The A2 GMIN retry-based redesign (`d530d68`)
 
-The initial A2 (`ed681c1`) wired `use_gmin_stepping=True` default-on for all NN-containing circuits and used a 4-level homotopy schedule `[1e-6, 1e-8, 1e-10, 1e-12]`. The wall-clock cost was prohibitive (TSMC5 inverter VTC alone ran ~50 min on the slow path at 1832 % CPU; full 44-cell matrix projected ~10 hours).
+Initial A2 (`ed681c1`) wired `use_gmin_stepping=True` default-on with 4-level schedule `[1e-6, 1e-8, 1e-10, 1e-12]`. Wall-clock prohibitive (TSMC5 inverter VTC ~50 min; full 44-cell matrix ~10 h).
 
-`d530d68` replaced default-on with **retry-based**: try without GMIN first (fast path); on convergence failure, retry with GMIN. It also reduced the ladder from 4 levels to 2: `[1e-8, 1e-12]`. Currently-passing NN circuits stay on the original codepath; only the previously-OVERFLOW cells pay the GMIN cost. Full verify wall is now ~2:20 (instead of ~10 h).
+`d530d68` replaced default-on with **retry-based**: fast path first, retry with GMIN on failure. Ladder reduced to 2 levels `[1e-8, 1e-12]`. Currently-passing circuits stay on original codepath; only previously-OVERFLOW cells pay GMIN cost. Full verify ~2:20.
 
 ### 4.4 The A3 dt-halve fallback (`b196e9b`)
 
-The dt-halve fallback wraps the per-step NR loop in `pycircuitsim/solver.py`. On `max_iterations` exhaustion, gated on the circuit having any LEVEL ≥ 73 device: catch the convergence exception, restore `voltages_prev` and integration history (q_prev, q_prev2, integration-method state), halve `dt`, retry. Up to 4 successive halvings (16× sub-resolution) before re-raising.
+Wraps the per-step NR loop in `pycircuitsim/solver.py`. On `max_iterations` exhaustion, gated on LEVEL ≥ 73: catch exception, restore `voltages_prev` + integration history (q_prev, q_prev2, method state), halve `dt`, retry. Up to 4 halvings (16× sub-resolution) before re-raising.
 
-The halve-event log shows the only cell that exercised the fallback was TSMC16 BSIMAR inverter_tran at t = 2.36 ns. After the dt halve, NR converged at the smaller step and the rest of the trajectory completed cleanly, producing a numeric 14.18 % NRMSE. No other cell triggered a halve event during the 44-cell verify (consistent with the V4 baseline showing no other NR_FAIL ERROR rows).
+Only TSMC16 BSIMAR inverter_tran exercised the fallback (at t=2.36 ns); after halve NR converged and produced 14.18 % NRMSE. No other halve events.
 
 ### 4.5 The A3.2 partial-result fallback in `verify_nn_dc_tran.py` (`d98fa65`)
 
-This is a test-runner safety net for the case where the simulator still raises an unrecoverable exception inside `run_pycircuitsim_nn_inverter_tran`. The fallback synthesises a partial waveform (with the missing portion linearly interpolated to the converged endpoint) so the cell produces a numeric NRMSE row instead of an ERROR row. Not exercised in this run because A3 already prevented all NR_FAIL events.
+Test-runner safety net: if simulator raises an unrecoverable exception inside `run_pycircuitsim_nn_inverter_tran`, synthesise a partial waveform (missing portion linearly interpolated to converged endpoint) → numeric NRMSE row instead of ERROR. Not exercised — A3 prevented all NR_FAIL events.
 
 ---
 
@@ -195,9 +194,9 @@ This is a test-runner safety net for the case where the simulator still raises a
 | Single-device DC | 20/20 PASS | 20/20 | 20/20 | ✅ PASS |
 | BSIM-CMG suite zero regression | 0 % delta | — | 0 % | ✅ PASS |
 
-**Gate status: 5/6 criteria PASS.** The Inverter VTC pass-rate criterion (≥ 6/8) FAILS — Phase A holds at 4/8 because the four still-failing VTC cells (TSMC5 BSIMAR, TSMC5 DN, TSMC7 DN, TSMC16 BSIMAR) need data-overlay (Phase B `inv_trip` class) and loss-design (Phase C Jacobian-consistency) to converge through the inverter trip point.
+**Gate: 5/6 PASS.** VTC pass-rate (≥ 6/8) FAILS — Phase A holds at 4/8 because the four still-failing VTC cells need Phase B (`inv_trip` overlay) + Phase C (Jacobian-consistency loss) to converge through the trip point.
 
-This is an **honest result, not a regression**. The decision per V5 plan §3.4: ship Phase A as is and proceed to Phase B + Phase C. The §1.2 sprint-exit gate still applies (at the end of Phase C, VTC must be ≥ 7/8 and inverter transient 8/8 ≤ 15 %), and Phase A's job in that pipeline is to remove the convergence noise (OVERFLOW + ERROR rows) so the data-and-loss work in Phase B+C operates on a clean baseline.
+Per V5 plan §3.4: ship Phase A and proceed to Phase B+C. §1.2 sprint-exit gate (VTC ≥ 7/8, inverter tran 8/8 ≤ 15 %) still applies. Phase A removed convergence noise (OVERFLOW + ERROR) so data/loss work operates on a clean baseline.
 
 ---
 
@@ -218,4 +217,4 @@ This is an **honest result, not a regression**. The decision per V5 plan §3.4: 
 
 ## 7. Hand-off to Phase B + Phase C
 
-Phase A is complete; the V4 production checkpoints (`v4_universal_*` / `v4_dn_universal_*`) are not retrained, only the simulator is updated. Phase B (V5 dataset regeneration with `inv_trip` overlay, `overshoot` densification, Vbs LHS jitter, Id-only filter) is already done in worktree `agent-aad58748a325581b9` (commits `8928486`, `c68a266`, `989bc93` on the parent + PyCMG submodule commits `53ba0ab`, `8319d03`). Phase C (small-arch DirectNet + BSIMAR loss A/B on V5 datasets) is the next step. The Phase C report at `results/v5_jac_loss_ab_<date>.md` will fill the data-Δ and loss-Δ columns of §2.1's per-step delta table.
+Phase A complete; V4 checkpoints (`v4_universal_*` / `v4_dn_universal_*`) not retrained, only simulator updated. Phase B (V5 dataset with `inv_trip` overlay, `overshoot` densification, Vbs LHS jitter, Id-only filter) done in worktree `agent-aad58748a325581b9` (commits `8928486`, `c68a266`, `989bc93` + PyCMG submodule `53ba0ab`, `8319d03`). Phase C (DirectNet + BSIMAR loss A/B on V5) next. Report `results/v5_jac_loss_ab_<date>.md` will fill data-Δ and loss-Δ columns of §2.1.

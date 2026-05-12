@@ -33,23 +33,20 @@ A/B between the original MAE+LDS loss and a new Jacobian-consistency loss.
 
 ## 0. One-paragraph summary
 
-`results/sml_report_2026_05_06.md` shows three categories of remaining
-failure for the V4 production NN compact-model stack: solver-class
-(4 VTC OVERFLOWs and a TSMC16 BSIMAR mid-transient NR_FAIL), data
-coverage (TSMC5 inverter-transient 17–20 % NRMSE floor, TSMC7 NMOS DC
-3.27 % residual), and loss decoupling (`gds_supervised ≠ ∂id/∂Vds`).
-Three parallel review agents triaged each category. The user-approved
-sequencing is:
-**(A)** fix the solver first and re-run the existing V4 production
-checkpoints to confirm the convergence-class failures fall away;
-**(B)** regenerate the dataset as V5 with trip-point and Vbs-jitter
-overlays;
-**(C)** train *small*-arch DirectNet and BSIMAR on the V5 data under
-two loss variants — MAE+LDS (control) vs MAE+LDS+Jacobian-consistency
-(treatment) — and produce a comparison report in `results/`.
-Each phase has its own gate. The accuracy axis is **both NRMSE % and
-MRE %**, reported per-tech. Reports must explicitly attribute each
-accuracy delta to the responsible phase (solver / data sampling / loss).
+`results/sml_report_2026_05_06.md` shows three categories of remaining failure
+for V4 production: solver-class (4 VTC OVERFLOWs and a TSMC16 BSIMAR
+mid-transient NR_FAIL), data coverage (TSMC5 inverter-transient 17–20 %
+NRMSE floor, TSMC7 NMOS DC 3.27 % residual), and loss decoupling
+(`gds_supervised ≠ ∂id/∂Vds`). User-approved sequencing:
+**(A)** fix the solver first and re-run existing V4 checkpoints to confirm
+convergence-class failures fall away;
+**(B)** regenerate the dataset as V5 with trip-point and Vbs-jitter overlays;
+**(C)** train *small*-arch DirectNet and BSIMAR on V5 data under two loss
+variants — MAE+LDS (control) vs MAE+LDS+Jacobian-consistency (treatment) —
+and produce a comparison report in `results/`.
+Each phase has its own gate. Accuracy axis is **both NRMSE % and MRE %**,
+reported per-tech. Reports must attribute each accuracy delta to the
+responsible phase (solver / data sampling / loss).
 
 ---
 
@@ -87,12 +84,11 @@ phase. The structure is:
 
 **Phase A solver-Δ readout (now populated; see `results/v5_phase_a_solver_2026_05_07.md`).** The solver delivered: TSMC16 BSIMAR inverter_tran ERROR (NR_FAIL @ t = 2.36 ns) → 14.18 % numeric PASS via the A3 dt-halve fallback; TSMC5 BSIMAR VTC 2.08 × 10⁹⁵ % numerical-overflow row → clean N/A NR_FAIL via the piecewise A1 ramp's bounded id (cap at 5 · g_max · x_ref past x_cap = 2.5 · VDD_train) and bounded gds (constant 5 mS past x_cap). Single-device DC, PMOS DC, NMOS pulse, BSIM-CMG sanity all reproduce V4 baseline byte-identical. **VTC pass-rate did not move** because the four still-failing VTC cells fail in the inverter trip region where NR cannot find a Vout satisfying KCL — that is a model-quality issue at the trip point (Phase B/C), not a solver issue.
 
-Phase A's report fills the first two delta columns once (solver delta
-against baseline; data + loss columns are blank). Phase C's report
-fills all three columns by re-running the prior-phase artefacts on the
-post-Phase-C simulator so all numbers are apples-to-apples (same
-solver, swapping only data and/or loss). This makes "what got us this
-improvement" explicit.
+Phase A's report fills the first two delta columns once (solver delta;
+data + loss blank). Phase C's report fills all three by re-running prior-phase
+artefacts on the post-Phase-C simulator so numbers are apples-to-apples (same
+solver, swapping only data and/or loss). Makes "what got us this improvement"
+explicit.
 
 ### 1.3 Phase gates
 
@@ -141,37 +137,33 @@ improvement" explicit.
 
 ### 1.4 ASAP7 policy
 
-ASAP7 is **never** in the dataset, the training set, or the verification
-matrix in V5. The 18-code TSMC vocabulary is preserved. Any future
-ASAP7 readmission is a separate vocab-extension project and not in
-scope here. In `verify_nn_dc_tran.py`, `--tech` always reads
-`TSMC5,TSMC7,TSMC12,TSMC16`.
+ASAP7 is **never** in the dataset, training set, or verification matrix in V5.
+The 18-code TSMC vocabulary is preserved. ASAP7 readmission is a separate
+vocab-extension project, not in scope. `verify_nn_dc_tran.py --tech` always
+reads `TSMC5,TSMC7,TSMC12,TSMC16`.
 
 ---
 
 ## 2. Reviewers' compressed input
 
 * **Data agent.** Bundle B (inverter-trip-point overlay + NR-overshoot
-  densification + Vbs LHS jitter + drop the AND-gate row filter) is
-  the production data recommendation. ~9 eng-h + ~4 GPU-h to retrain on
-  the same architecture. Expected: TSMC5 inv-tran 17 → 8–10 %, TSMC7
-  NMOS DC 3.3 → 1.5 %, VTC overflow 4 → 0–1 cells.
-* **Model/training agent.** Highest-leverage single proposal across all
-  three agents is the **Jacobian-consistency loss** (∂id/∂V → gds,
-  ∂qg/∂V → cgg, etc.) at `λ_jac ≈ 0.1`. The supervised gds and the
-  autograd gds the simulator's NR Jacobian consumes are decoupled
-  today; even a perfect MAE-only retrain leaves that decoupling.
-* **Solver/inference agent.** Three solver fixes total ~8 eng-h, no
-  retrain: tanh+sech² rail-restoring extrapolation (replaces rule-19a
-  quadratic that runs away under NR overshoot), NN-aware GMIN stepping
-  default-on for LEVEL=73/74, and a mid-transient dt-halve fallback
-  for NR exhaustion. Together expected to take §10.2 from
-  `4/8 VTC PASS, 6/8 inv-tran PASS, 1 ERROR` to roughly
-  `7/8 VTC PASS, 6/8 inv-tran PASS, 0 ERROR`.
+  densification + Vbs LHS jitter + drop AND-gate row filter) is the
+  production data recommendation. ~9 eng-h + ~4 GPU-h to retrain.
+  Expected: TSMC5 inv-tran 17 → 8–10 %, TSMC7 NMOS DC 3.3 → 1.5 %, VTC
+  overflow 4 → 0–1 cells.
+* **Model/training agent.** Highest-leverage proposal is the
+  **Jacobian-consistency loss** (∂id/∂V → gds, ∂qg/∂V → cgg, etc.) at
+  `λ_jac ≈ 0.1`. Supervised gds and autograd gds (NR Jacobian) are decoupled
+  today; even a perfect MAE-only retrain leaves the decoupling.
+* **Solver/inference agent.** Three solver fixes total ~8 eng-h, no retrain:
+  tanh+sech² rail-restoring extrapolation (replaces rule-19a quadratic that
+  runs away under NR overshoot), NN-aware GMIN stepping default-on for
+  LEVEL=73/74, and mid-transient dt-halve fallback for NR exhaustion.
+  Expected to take §10.2 from `4/8 VTC PASS, 6/8 inv-tran PASS, 1 ERROR` to
+  ~`7/8 VTC PASS, 6/8 inv-tran PASS, 0 ERROR`.
 
-The user-approved sequencing puts solver fixes first, regenerates the
-dataset in parallel, then runs the loss A/B at small architecture for
-fast iteration.
+Sequencing puts solver fixes first, regenerates dataset in parallel, then
+runs the loss A/B at small architecture for fast iteration.
 
 ---
 
@@ -349,12 +341,10 @@ GPU window.
 | DirectNet | hidden=192, layers=4 (~159 k params) | 300-epoch run fits in ~20 min on a Blackwell GPU; fast A/B iteration. |
 | BSIMAR Transformer | d_model=128, nhead=4, layers=4, ff=512 (~868 k params) | 100-epoch run fits in ~30 min; large enough to actually have a Jacobian to constrain. |
 
-We deliberately do **not** run M or L scale here — the SML report
-already showed M is the price/performance sweet-spot, and the goal of
-Phase C is to isolate the **loss-function** effect, not retrain the
-production stack. If the Jacobian-consistency loss wins at S, the
-follow-up plan retrains M (and possibly L with warm-start) under the
-winner.
+We deliberately do **not** run M or L scale here — SML already showed M is
+the price/performance sweet-spot. Phase C isolates the **loss-function**
+effect, not a production retrain. If JAC wins at S, follow-up retrains M
+(possibly L warm-start) under the winner.
 
 ### 5.2 C0 — Pre-flight: autograd-vs-FD Jacobian diagnostic
 
@@ -624,10 +614,9 @@ Aggregate the matrices into the consolidated report:
 
 ## 9. Source agents
 
-This plan synthesises three parallel review agents launched 2026-05-07
-(data/sampling, model/training, solver/inference) and follows the
-user-approved sequencing: solver-fix-then-verify first, V5 dataset in
-parallel, small-arch A/B comparison of the loss-function change last,
-with NRMSE % **and** MRE % reported per-tech everywhere, ASAP7 excluded
-throughout, and **per-step accuracy attribution mandatory in every
-report** (solver / data sampling / loss).
+Plan synthesises three parallel review agents launched 2026-05-07
+(data/sampling, model/training, solver/inference). User-approved sequencing:
+solver-fix-then-verify first, V5 dataset in parallel, small-arch A/B last,
+with NRMSE % **and** MRE % reported per-tech, ASAP7 excluded throughout, and
+**per-step accuracy attribution mandatory in every report** (solver / data /
+loss).

@@ -29,58 +29,26 @@ ASAP7 excluded.
 ## Diagnostic ground (three parallel agents, 2026-05-11)
 
 ### Code-path agent — *what specifically diverges*
-- `pycircuitsim/models/mosfet_nn.py:170` — `_vdd_estimate` (rule 19a's
-  `VDD_train`) is computed **universal-wide** from `input_min/max` of
-  the Vd dimension. Single per-model, not per-tech. At TSMC5 VDD =
-  0.65 V, the rail-restoring step (a) sits right at the threshold.
-- `pycircuitsim/solver.py:556-563` — Tier-1A trust-region clamp pins
-  per-iteration `|ΔV| ≤ max_vs_voltage ≈ VDD`. NR can oscillate at the
-  ceiling.
-- `pycircuitsim/solver.py:581-590` — only "stuck" detector is
-  `improvement_ratio > 0.9` for 2 consecutive iters → damping ×= 0.8.
-  **No "no global progress over N iters" watchdog.** No hard escape.
-- `pycircuitsim/solver.py:670-688` — after ~150 NR iters,
-  oscillation-detection averages the last 3 voltage snapshots if
-  variance < 10 × tolerance and **accepts** as the solution. This is
-  why TSMC5 DN VTC returns a smoothed 59 286 % bounded number instead
-  of a clean NR_FAIL.
-- `pycircuitsim/simulation.py:306,320` — DC sweep already uses warm
-  starts (`prev_solution` as initial guess at each Vin step). The
-  catastrophic VTC is *not* a missing-warm-start issue.
+- `pycircuitsim/models/mosfet_nn.py:170` — `_vdd_estimate` (rule 19a's `VDD_train`) computed **universal-wide** from `input_min/max` of Vd. Single per-model, not per-tech. At TSMC5 VDD=0.65 V, rail-restoring step (a) sits at the threshold.
+- `pycircuitsim/solver.py:556-563` — Tier-1A trust-region clamp pins per-iter `|ΔV| ≤ max_vs_voltage ≈ VDD`. NR can oscillate at the ceiling.
+- `pycircuitsim/solver.py:581-590` — only "stuck" detector is `improvement_ratio > 0.9` for 2 consecutive iters → damping ×= 0.8. **No "no global progress over N iters" watchdog.** No hard escape.
+- `pycircuitsim/solver.py:670-688` — after ~150 NR iters, oscillation-detection averages last 3 voltage snapshots if variance < 10× tolerance and **accepts**. Why TSMC5 DN VTC returns smoothed 59 286 % bounded instead of clean NR_FAIL.
+- `pycircuitsim/simulation.py:306,320` — DC sweep already uses warm starts. Catastrophic VTC is *not* a missing-warm-start issue.
 
 ### Dataset agent — TSMC5 is NOT under-sampled (off Vgs×Vds)
 Over `universal_nmos.npz`, 12.33 M rows, TSMC-only:
-- Row counts within 1.1 × of mean; TSMC7 is the actual minority tech.
+- Row counts within 1.1× of mean; TSMC7 is actual minority.
 - Identical 3-point T grid across techs.
-- Narrower Vbs / L / NFIN absolute ranges are mechanically tied to
-  PDK constraints (TSMC5 has smaller VDD, smaller NFIN_max=12, etc.),
-  not a sampling defect.
-- **Zero starved cells** in the joint `(L, NFIN, T, Vbs-sign)` 4-tuple
-  for any tech.
-- **Conclusion: this is not a data-coverage problem.** Whatever drives
-  TSMC5's poor circuit-level metrics is a fixed-point / Jacobian
-  smoothness problem at TSMC5's specific operating point.
+- Narrower Vbs / L / NFIN ranges mechanically tied to PDK constraints (TSMC5 smaller VDD, NFIN_max=12), not a sampling defect.
+- **Zero starved cells** in joint `(L, NFIN, T, Vbs-sign)` 4-tuple for any tech.
+- **Not a data-coverage problem.** TSMC5's poor circuit metrics are a fixed-point / Jacobian smoothness problem at TSMC5's operating point.
 
 ### Web-research agent — relevant prior art (post-dead-end filter)
-- **MSH arclength continuation (DATE 2024)** — for HiZ nodes (the
-  inverter trip-point output node is exactly this in the failure
-  regime — autograd gds ≈ 0 in saturation), path-following replaces
-  "step Vin → NR from previous" so the solver cannot stall at a
-  turning point. ~200 LOC in `solver.py`, no retrain.
-- **ATANSH (Roychowdhury TCAD 2006)** — per-device homotopy
-  `Id_homo = λ·Id_NN + (1−λ)·Id_linear`. Solver-side, orthogonal to
-  GMIN.
-- **Levenberg-Marquardt damping** — adaptive μ on the MNA diagonal,
-  μ reduced on residual decrease, raised otherwise. Pairs with Armijo.
-- **AutoPINN structural Vds transform (Micromachines 2023)** —
-  `Vds_new = sign(Vds)·(√(Vds²+γ²)−γ)` enforces `Id(Vds=0)=0`
-  *structurally* at the input. Their derivative loss uses *finite
-  differences from training data*, sidestepping the asinh chain-rule
-  mismatch that killed N4/B2.
-- **KAN paper (Novkin 2025)** — NR convergence is dominated by
-  **second-derivative smoothness**, not Id NRMSE. Confirms our
-  empirical V6 finding: 56 K-param probe beats 1.5 M-param zscore on
-  circuit cells.
+- **MSH arclength continuation (DATE 2024)** — for HiZ nodes (inverter trip-point output in failure regime — autograd gds ≈ 0 in saturation), path-following replaces "step Vin → NR from previous" so solver cannot stall at a turning point. ~200 LOC in `solver.py`, no retrain.
+- **ATANSH (Roychowdhury TCAD 2006)** — per-device homotopy `Id_homo = λ·Id_NN + (1−λ)·Id_linear`. Solver-side, orthogonal to GMIN.
+- **Levenberg-Marquardt damping** — adaptive μ on MNA diagonal, μ reduced on residual decrease, raised otherwise. Pairs with Armijo.
+- **AutoPINN structural Vds transform (Micromachines 2023)** — `Vds_new = sign(Vds)·(√(Vds²+γ²)−γ)` enforces `Id(Vds=0)=0` *structurally* at input. Their derivative loss uses *finite differences from training data*, sidestepping asinh chain-rule mismatch that killed N4/B2.
+- **KAN paper (Novkin 2025)** — NR convergence dominated by **second-derivative smoothness**, not Id NRMSE. Confirms V6 finding: 56 K-param probe beats 1.5 M-param zscore on circuit cells.
 
 ## Plan: three orthogonal levers, ordered by simplicity × impact
 
@@ -92,25 +60,11 @@ needs a new branch.
 **No retrain.** Pure solver patch.
 
 Three hunks in `pycircuitsim/solver.py`:
-1. **Progress watchdog.** Track `min_residual_norm` over the last
-   N = 20 iters. If the running min hasn't decreased by
-   ≥ 1e-3 × max_vs_voltage over N iters, declare *stuck-without-
-   progress* (distinct from "stuck improving slowly"). Return
-   `_last_solve_converged = False` so the simulator's
-   `_solve_dc_with_retry` escalates GMIN / source-stepping.
-2. **Bounded-numeric kill.** In the oscillation-acceptance path
-   (`solver.py:670-688`), additionally check
-   `|V_node| ≤ 5 × max_vs_voltage` for every node. If any node is
-   bounded but absurd (the 59 286 % case is V_out ≈ 1.1 V at
-   Vin = 0.325 V getting reported as a converged DC point), reject
-   the average and return `_last_solve_converged = False`.
-3. **GMIN-retry escalation.** Add one extra escalation step
-   (source-stepping with 50 steps instead of 20) at the end of
-   `_solve_dc_with_retry` for NN circuits.
+1. **Progress watchdog.** Track `min_residual_norm` over last N=20 iters. If running min hasn't decreased by ≥ 1e-3 × max_vs_voltage over N iters, declare *stuck-without-progress*. Return `_last_solve_converged = False` so `_solve_dc_with_retry` escalates GMIN / source-stepping.
+2. **Bounded-numeric kill.** In oscillation-acceptance path (`solver.py:670-688`), additionally check `|V_node| ≤ 5 × max_vs_voltage`. If any node is bounded but absurd (59 286 % case: V_out ≈ 1.1 V at Vin = 0.325 V reported as converged), reject the average and return `_last_solve_converged = False`.
+3. **GMIN-retry escalation.** Add one extra step (source-stepping 50 steps instead of 20) at end of `_solve_dc_with_retry` for NN circuits.
 
-**Expected outcome.** TSMC5 DN VTC: 59 286 % → clean NR_FAIL (worst
-case) or PASS (best case). All 14 PASS cells: byte-identical numerics
-(watchdog never fires when the existing path converges).
+**Expected outcome.** TSMC5 DN VTC: 59 286 % → clean NR_FAIL or PASS. All 14 PASS cells: byte-identical (watchdog never fires when existing path converges).
 
 **Gate.**
 - L1 BSIM-CMG byte-identical.
@@ -126,16 +80,9 @@ case) or PASS (best case). All 14 PASS cells: byte-identical numerics
 **No retrain.** Triggered only on per-step solve failure for an NN
 circuit. Touches only the DC sweep loop in `pycircuitsim/simulation.py`.
 
-Patch. When the per-step solve fails for an NN circuit at Vin = Vk,
-bisect: retry at Vin = (Vk−1 + Vk) / 2 with `prev_solution` as the
-guess, then re-solve at Vk from that intermediate. Allow up to 4
-bisections. Cheapest "real continuation" we can deploy without writing
-arclength.
+Patch. When per-step solve fails for an NN circuit at Vin = Vk, bisect: retry at Vin = (Vk−1 + Vk)/2 with `prev_solution` as guess, then re-solve Vk from that intermediate. Up to 4 bisections. Cheapest "real continuation" without writing arclength.
 
-**Expected outcome.** Cleanly traces VTC across the trip cone even
-when one Vin step alone is too aggressive a jump. Targets TSMC5 VTC
-where current 5 mV steps + trust-region clamp cannot accommodate the
-trip-region Δ.
+**Expected outcome.** Cleanly traces VTC across the trip cone when one Vin step is too aggressive. Targets TSMC5 VTC where 5 mV steps + trust-region clamp cannot accommodate trip-region Δ.
 
 **Gate.** Same as S1.
 
@@ -171,19 +118,11 @@ new exp-name.
 
 ### Tier M2 — TSMC5-only residual head (frozen backbone + LoRA)
 
-**Retrain (scoped).** Add ~2 K-param residual MLP head conditioned on
-`tech_code ∈ {0,1,2,3}` (TSMC5's four variants). Frozen backbone.
-Trained for 30 min on TSMC5 rows only. Inference: residual added to
-backbone output before denormalisation. Autograd flows through both
-heads.
+**Retrain (scoped).** Add ~2 K-param residual MLP head conditioned on `tech_code ∈ {0,1,2,3}` (TSMC5's four variants). Frozen backbone. Trained 30 min on TSMC5 rows only. Inference: residual added to backbone output before denormalisation. Autograd flows through both heads.
 
-**Risk.** Per the H1/H4 dead-end log, anything that touches per-tech
-output behaviour can shift Jacobian shape. Must be A/B'd at *circuit
-level*, not training-NRMSE level (which has a 29× train→inverter gap
-per V5 E3 evidence).
+**Risk.** Per H1/H4 dead-end log, anything touching per-tech output behaviour can shift Jacobian shape. Must be A/B'd at *circuit level*, not training-NRMSE (29× train→inverter gap per V5 E3).
 
-**Gate.** TSMC5 inverter PASS. Zero regression > 0.3 pp on
-TSMC7/12/16. STOP here per user instruction.
+**Gate.** TSMC5 inverter PASS. Zero regression > 0.3 pp on TSMC7/12/16. STOP here per user instruction.
 
 **Revert if:** any non-TSMC5 cell regresses.
 
@@ -234,32 +173,13 @@ TSMC7/12/16. STOP here per user instruction.
 
 ### Tier M2 diagnostic — backbone wrong-attractor is structural
 
-A residual head trained only on in-distribution data cannot fix the
-wrong attractor at V_out ≈ 1.3×VDD because:
+A residual head trained only on in-distribution data cannot fix the wrong attractor at V_out ≈ 1.3×VDD because:
 
-1. **Training data doesn't cover the wrong attractor.** The dataset
-   samples currents at physically-valid (Vgs, Vds) — V_out > VDD is
-   out-of-distribution at training time. The residual head has no
-   gradient signal pointing toward "make Id non-zero at V_out > VDD
-   to restore the rail."
-2. **In-distribution fit is already saturated.** V6 small probe's
-   training val loss is 0.00238; the residual moves it to 0.00237 —
-   a 0.4% relative reduction. Per-tech training-space NRMSE is
-   already at the 0.04-0.08% floor. The wrong-attractor failure is
-   *NOT* a training-NRMSE problem.
-3. **Tran improves marginally because mid-rail transitions ARE in-
-   distribution.** The 2 pp tran improvement is real but bounded by
-   what in-distribution gradient can achieve.
+1. **Training data doesn't cover the wrong attractor.** Dataset samples currents at physically-valid (Vgs, Vds) — V_out > VDD is out-of-distribution. Residual head has no gradient signal toward "make Id non-zero at V_out > VDD to restore rail."
+2. **In-distribution fit already saturated.** V6 small probe training val loss 0.00238; residual moves it to 0.00237 — 0.4 % relative reduction. Per-tech training-space NRMSE at 0.04-0.08 % floor. Wrong-attractor failure is *NOT* a training-NRMSE problem.
+3. **Tran improves marginally because mid-rail transitions ARE in-distribution.** 2 pp tran improvement is real but bounded by in-distribution gradient.
 
-**Implication for any future tiered work:** the TSMC5 VTC catastrophic
-NR_FAIL requires either (a) a structural input transform that
-*forbids* the wrong attractor at V_out > VDD (e.g. AutoPINN-style
-sign(Vds)·(√(Vds²+γ²)−γ), or learning rule 19a's rail-restoring
-constants as model parameters), or (b) **training data that includes
-out-of-distribution rail-overshoot rows with the correct restoring-
-current label**. Both are bigger work than the 2026-05-09 plan
-anticipated; this plan should not chase them without a fresh
-diagnostic budget.
+**Implication for future tiered work:** TSMC5 VTC catastrophic NR_FAIL requires either (a) structural input transform that *forbids* wrong attractor at V_out > VDD (AutoPINN-style sign(Vds)·(√(Vds²+γ²)−γ), or learning rule 19a's rail-restoring constants as model params), or (b) **training data with out-of-distribution rail-overshoot rows with correct restoring-current label**. Both bigger work than the 2026-05-09 plan anticipated.
 
 ## Final session summary
 
@@ -271,66 +191,33 @@ diagnostic budget.
 | M1 | reverted | 50.48% (gross improvement, still FAIL) | 16.38 (still FAIL) | TSMC7 VTC 9.97→2.85 win; **TSMC16 VTC 5.40 PASS→16.10 FAIL** (hard regression) |
 | M2 | reverted | 59,266% (unchanged) | 15.69 (still FAIL, +2 pp) | TSMC7 VTC +4.55 win (gating leak); TSMC7 tran −3.5 regression |
 
-**Net for `feat/v6`:** zero shipping commits beyond the saved plan.
-The 4 attempts converged on a structural finding: **TSMC5 inverter
-VTC's catastrophic failure is not fixable by solver tweaks, capacity
-bumps, or in-distribution residual heads.** The wrong attractor lives
-in extrapolated territory that no in-distribution training signal
-touches. The right next class of fix is structural — AutoPINN-style
-input transform or rail-overshoot data labels — and is out of this
-plan's scope.
+**Net for `feat/v6`:** zero shipping commits beyond saved plan. 4 attempts converged on a structural finding: **TSMC5 inverter VTC's catastrophic failure is not fixable by solver tweaks, capacity bumps, or in-distribution residual heads.** The wrong attractor lives in extrapolated territory no in-distribution training signal touches. Right next class of fix is structural — AutoPINN-style input transform or rail-overshoot data labels — out of this plan's scope.
 
-**On-disk artefacts left after revert:**
+**On-disk artefacts after revert:**
 - `tests/v6_logs/m1b_summary.csv` — M1 16-cell numbers.
 - `tests/v6_logs/m2_summary.csv` — M2 16-cell numbers.
-- `tests/v6_logs/m1b_nmos.log`, `m1b_pmos.log`, `m1b_verify.log`,
-  `m2_train_nmos.log`, `m2_train_pmos.log`, `m2_verify.log` — training
-  + verify transcripts for forensic re-runs.
-- `external_compact_models/bsimar/models/tsmc5_residual.py`,
-  `external_compact_models/bsimar/training/tsmc5_residual_train.py`
-  — M2 implementation, untracked, kept for reproducibility.
+- `tests/v6_logs/m1b_nmos.log`, `m1b_pmos.log`, `m1b_verify.log`, `m2_train_nmos.log`, `m2_train_pmos.log`, `m2_verify.log` — training + verify transcripts.
+- `external_compact_models/bsimar/models/tsmc5_residual.py`, `external_compact_models/bsimar/training/tsmc5_residual_train.py` — M2 impl, untracked.
 
-V6 shipping set remains:
-`v6_dn_small_e2_asinh_{nmos,pmos}_best.pt` (Tier 2 from
-`2026-05-09-v6-accuracy-plan.md`). No code on `feat/v6` changed
-during this session.
+V6 shipping set remains: `v6_dn_small_e2_asinh_{nmos,pmos}_best.pt` (Tier 2 from `2026-05-09-v6-accuracy-plan.md`). No code on `feat/v6` changed during this session.
 
 ### Tier M1 diagnostic — capacity does not remove the wrong attractor
 
-The medium retrain (6× the V6 small probe's params, same recipe) genuinely
-fixed TSMC5 VTC's catastrophic 59,286% blow-up (down to 50.48% — graceful
-failure now), and gave a huge win on TSMC7 VTC (9.97→2.85%). But it
-shifted the failure pattern: TSMC16 VTC went from 5.40 PASS to 16.10 FAIL.
-This is consistent with KAN paper's finding that NR convergence is
-governed by *second-derivative smoothness*, not Id NRMSE: the medium
-model has lower training NRMSE but a different Jacobian shape that puts
-TSMC16's trip cone into a wrong-attractor basin.
+Medium retrain (6× V6 small probe params, same recipe) fixed TSMC5 VTC's 59,286% blow-up (→ 50.48% graceful failure), huge TSMC7 VTC win (9.97→2.85%). But shifted the failure: TSMC16 VTC went 5.40 PASS → 16.10 FAIL. Consistent with KAN paper: NR convergence governed by *second-derivative smoothness*, not Id NRMSE — medium model has lower training NRMSE but different Jacobian shape putting TSMC16's trip cone in a wrong-attractor basin.
 
-**Implication for any future capacity bump:** B0-large or further capacity
-work is NOT a free win. It needs structural Jacobian regularization
-(AutoPINN-style derivative loss, or per-tech LoRA after the backbone
-is fixed — see Tier M2) to prevent the failure pattern from
-shape-shifting between techs.
+**Implication for future capacity bump:** B0-large is NOT a free win. Needs structural Jacobian regularization (AutoPINN derivative loss, or per-tech LoRA after backbone fix — Tier M2) to prevent the failure shape-shifting between techs.
 
-### Tier S2 diagnostic (worth keeping in mind for any future solver work)
+### Tier S2 diagnostic (for future solver work)
 
-The bounded-Vout watchdog with `factor = 1.2 × max_vs_voltage` is the
-right detector. The bisection retry is the wrong recovery action *for
-TSMC5 specifically* because the wrong attractor (V_out ≈ 0.80–0.91 V at
-VDD = 0.65 V) exists at every Vin in the sweep — there is no
-"known-good prev_solution" to bootstrap from. For TSMC7/12 it works
-because their wrong attractor is local to the trip cone. If a future
-solver tier ships, the wall-time budget per Vin step should be ≤ 1 s
-and the retry should fall back to clean NR_FAIL on TSMC5-class
-failures rather than burning the full budget.
+Bounded-Vout watchdog with `factor = 1.2 × max_vs_voltage` is the right detector. Bisection retry is the wrong recovery *for TSMC5 specifically* because the wrong attractor (V_out ≈ 0.80–0.91 V at VDD=0.65 V) exists at every Vin — no "known-good prev_solution" to bootstrap. For TSMC7/12 it works (wrong attractor local to trip cone). Future solver tier: ≤ 1 s/Vin step wall-time, retry falls back to clean NR_FAIL on TSMC5-class failures.
 
-### Tier S1 failure notes (for the next attempt)
+### Tier S1 failure notes (for next attempt)
 
-1. **L1 BSIM-CMG was untouched.** All three legacy tests passed bit-identical (`_has_nn_device(circuit)` guards on the new code paths held).
-2. **Watchdog + bounded-numeric kill alone are not enough.** With those firing on every failing TSMC5 sweep point, the retry cascade (fast → GMIN → 50-step source-stepping) was repeatedly entered, each call burning through a 50-step source-stepping pass that itself didn't converge. The verify took >10 min per tech (was <1 min before).
-3. **TSMC5 DN VTC actually got worse-shaped, not better.** Instead of the prior 59 286 % bounded artifact (smoothed oscillation accepted by `voltage_history` averaging), the patched solver returned a *consistent* V(out) ≈ 0.80–0.91 V across the full Vin sweep — a real fixed point at ~1.3× VDD. The 5× VDD bounded-numeric kill threshold (3.25 V at TSMC5) was too loose to catch this. Per-step retry escalations could not escape that basin.
+1. **L1 BSIM-CMG untouched.** All 3 legacy tests bit-identical (`_has_nn_device(circuit)` guards held).
+2. **Watchdog + bounded-numeric kill alone insufficient.** Firing on every failing TSMC5 sweep point, retry cascade (fast → GMIN → 50-step source-stepping) repeatedly entered, each burning a non-converging 50-step pass. Verify >10 min/tech (was <1 min).
+3. **TSMC5 DN VTC worse-shaped, not better.** Instead of 59 286 % bounded artifact, patched solver returned *consistent* V(out) ≈ 0.80–0.91 V across full Vin sweep — real fixed point at ~1.3× VDD. The 5× VDD kill threshold (3.25 V) was too loose. Per-step retries couldn't escape.
 4. **Plausible next attempt.**
-   - Tighten the bounded-numeric kill to `|V_node| ≤ 1.5 × max_vs_voltage` (or `≤ VDD + 0.2 V`).
-   - Cap the 50-step source-stepping escalation to a single point-level attempt with a hard iteration budget, not a fresh retry of the full DC sweep.
-   - Consider running Tier S2 (Vin-homotopy bisection) directly, since the issue is per-step jump size at the trip-cone, not solver-level homotopy depth.
-   - The watchdog itself is correct in concept; the failure is that the retry path it triggers does not have enough escape velocity. One variant: when the watchdog fires, return *the most-recent low-residual snapshot* (not the average) so the sweep keeps a sane warm-start.
+   - Tighten bounded-numeric kill to `|V_node| ≤ 1.5 × max_vs_voltage` (or `≤ VDD + 0.2 V`).
+   - Cap 50-step source-stepping escalation to a single point-level attempt with hard iteration budget, not fresh retry of full DC sweep.
+   - Run Tier S2 (Vin-homotopy bisection) directly — issue is per-step jump size at trip-cone, not solver-level homotopy depth.
+   - Watchdog concept is correct; failure is retry path lacks escape velocity. Variant: when watchdog fires, return *most-recent low-residual snapshot* (not average) so sweep keeps sane warm-start.

@@ -22,36 +22,22 @@ Goal: lift inverter VTC from 2/4 PASS and inverter transient from 3/4 PASS.
 ### Tier 1A — Trust-region NR clamp  *(merge from `feat/v5-prime` `a3719c9`)*
 Cap per-iteration `|ΔV| ≤ max_vs_voltage` for NN circuits (LEVEL ≥ 73) in both
 `DCSolver` and `TransientSolver`. Replaces the rejected per-tech λ-floor lever
-because the failure mode is NR runaway, not Jacobian shape. BSIM-CMG path
-unchanged.
+because the failure mode is NR runaway, not Jacobian shape. BSIM-CMG path unchanged.
 
-- **Verification (fast):** L1 BSIM-CMG (`verify_bsimcmg_op.py + _dc.py + _tran.py`)
-  must remain byte-identical. NN inverter VTC at TSMC12 must remain at 9.56 %
-  ± 0.05 pp.
-- **Verification (full):** `verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16`
-  after Tier 1B is layered on top. No PASS-cell regression on the 6 currently
-  passing inverter cells.
+- **Verification (fast):** L1 BSIM-CMG (`verify_bsimcmg_op.py + _dc.py + _tran.py`) byte-identical. NN inverter VTC at TSMC12 must remain at 9.56 % ± 0.05 pp.
+- **Verification (full):** `verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16` after Tier 1B. No PASS-cell regression on the 6 currently passing inverter cells.
 - **Revert if:** any TSMC12/16 inverter cell regresses or BSIM-CMG L1 drifts.
 
 ### Tier 1.5 — verify driver env-var override  *(merge subset of `dd7816a`)*
-Patch only `tests/verify_nn_dc_tran.py` so it honors
-`PYCIRCUITSIM_NN_CHECKPOINT_{DN,TF}_{NMOS,PMOS}`. Required for the Tier 2
-A/B probe to compare new-norm vs old-norm checkpoints without renaming files.
-The accuracy report and V5' DN checkpoints from `dd7816a` are NOT merged.
+Patch only `tests/verify_nn_dc_tran.py` so it honors `PYCIRCUITSIM_NN_CHECKPOINT_{DN,TF}_{NMOS,PMOS}`. Required for the Tier 2 A/B probe to compare new-norm vs old-norm checkpoints without renaming files. The accuracy report and V5' DN checkpoints from `dd7816a` are NOT merged.
 
-- **Verification:** spot-run a default verify call on TSMC12 — checkpoint
-  resolution must still pick `v4_re_dn_universal_*` when no env var is set.
+- **Verification:** spot-run default verify on TSMC12 — checkpoint resolution must still pick `v4_re_dn_universal_*` when no env var is set.
 
 ### Tier 1B — Restore GMIN homotopy level 1e-10
-Phase A trimmed the GMIN retry schedule from 4 levels to `[1e-8, 1e-12]` for
-wall-time, not accuracy. Restore one bridging level 1e-10. Only fires on the
-slow-path retry, so PASS cells cannot regress in correctness — only wall-time.
+Phase A trimmed the GMIN retry schedule from 4 levels to `[1e-8, 1e-12]` for wall-time, not accuracy. Restore one bridging level 1e-10. Only fires on slow-path retry, so PASS cells cannot regress in correctness — only wall-time.
 
-- **Verification:** `verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16`.
-  Acceptance: ≥ 1 NR_FAIL → PASS conversion on TSMC5 or TSMC7 inverter VTC,
-  AND wall-time regression < 2× on the slow path, AND no PASS-cell regression.
-- **Revert if:** no NR_FAIL converts AND wall-time grows > 2×, OR any
-  PASS-cell regresses.
+- **Verification:** `verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16`. Acceptance: ≥ 1 NR_FAIL → PASS conversion on TSMC5 or TSMC7 inverter VTC, AND wall-time regression < 2× on slow path, AND no PASS-cell regression.
+- **Revert if:** no NR_FAIL converts AND wall-time grows > 2×, OR any PASS-cell regresses.
 
 ### Tier 2 — DirectNet output asinh-zscore  *(retrain)*
 Flip `_ADAPTERS["direct"].norm_mode` from `"zscore"` to `"asinh"` in
@@ -137,11 +123,7 @@ Run only if Tier 1 + Tier 2 leaves residual TSMC7 VTC issues.
 Plus L1 BSIM-CMG OP suite 3/3 PASS. Acceptance gate met.
 
 ### Tier 1B details
-Same 2 techs (`tests/v6_logs/tier1b_summary.csv`). PASS cells byte-identical; the
-extra GMIN homotopy step did not convert any NR_FAIL → PASS at the cells we
-tested. Bounded-numeric VTC values drifted slightly (TSMC12 DN VTC 81,613 →
-90,779 %; TSMC5 DN VTC 191,108 → 204,133 % — both already orders of magnitude
-wrong). Reverted per the user's "useless or harms" criterion.
+Same 2 techs (`tests/v6_logs/tier1b_summary.csv`). PASS cells byte-identical; the extra GMIN homotopy step did not convert any NR_FAIL → PASS. Bounded-numeric VTC values drifted slightly (TSMC12 DN VTC 81,613 → 90,779 %; TSMC5 DN VTC 191,108 → 204,133 % — both already orders of magnitude wrong). Reverted per "useless or harms" criterion.
 
 ### Tier 2 details
 **Probe training (~25 min on A100 GPU 2):**
@@ -203,33 +185,15 @@ DN ckpts via the resolver cascade — no breaking change to existing behaviour.
 
 ## V6p data-swap probe — REJECTED (2026-05-09 post-V6)
 
-After V6 was committed, ran a parallel experiment swapping the V4-base
-universal datasets for V5'-prime (`universal_v5p_{nmos,pmos}.npz`,
-9.3 / 9.6 M rows including the TSMC5 `inv_trip` overlay) while keeping
-the rest of the Tier 2 recipe identical (asinh-zscore, E2 head, small
-preset, 80 epochs, asap7 excluded).
+After V6 was committed, ran a parallel experiment swapping the V4-base universal datasets for V5'-prime (`universal_v5p_{nmos,pmos}.npz`, 9.3 / 9.6 M rows including the TSMC5 `inv_trip` overlay) while keeping the rest of the Tier 2 recipe identical (asinh-zscore, E2 head, small preset, 80 epochs, asap7 excluded).
 
-**Training:** clean. NMOS val=0.00255 → 0.00239; PMOS val=0.00250 → 0.00239
-(both slightly better than V4-base test loss). Per-tech NRMSE on test
-set was within ±20 % of V4-base across all 4 TSMC techs. Checkpoints
-saved as `v6p_dn_small_e2_asinh_{nmos,pmos}_best.pt`.
+**Training:** clean. NMOS val=0.00255 → 0.00239; PMOS val=0.00250 → 0.00239 (both slightly better than V4-base test loss). Per-tech NRMSE within ±20 % of V4-base across all 4 TSMC techs. Checkpoints saved as `v6p_dn_small_e2_asinh_{nmos,pmos}_best.pt`.
 
-**Verification:** hung. The 4-tech inverter verify ran for **1 h 01 min
-without finishing**, with the Python process pinned at 1 781 % CPU
-(~17 cores) and no file writes for the trailing hour. Last activity:
-TSMC16 inverter transient. V6's Tier 2 verify on the same code path
-with V4-base ckpts finished in ~25 min.
+**Verification:** hung. 4-tech inverter verify ran **1 h 01 min without finishing**, Python process pinned at 1 781 % CPU (~17 cores), no file writes for the trailing hour. Last activity: TSMC16 inverter transient. V6's Tier 2 verify on the same code path with V4-base ckpts finished in ~25 min.
 
-**Verdict: discard.** The hang signature is identical to the V5 sprint
-Phase A+B postmortem (`results/v5_v4_vs_phaseA_vs_phaseAB_2026_05_08.md`
-§5.2): V5'/V5 trip-region densified data + small-arch model →
-NR-extrapolation runaway in inverter transient that the trust-region
-clamp does not break out of (it bounds per-iteration ΔV but does not
-detect the iteration is making no global progress). V6 stays on the V4-
-base universal datasets (`universal_{nmos,pmos}.npz`).
+**Verdict: discard.** Hang signature identical to V5 sprint Phase A+B postmortem (`results/v5_v4_vs_phaseA_vs_phaseAB_2026_05_08.md` §5.2): V5'/V5 trip-region densified data + small-arch model → NR-extrapolation runaway in inverter transient that the trust-region clamp does not break out of (it bounds per-iteration ΔV but does not detect the iteration is making no global progress). V6 stays on V4-base universal datasets (`universal_{nmos,pmos}.npz`).
 
-`v6p_dn_small_e2_asinh_*.pt` were deleted from disk after the verify
-hung. To reproduce the experiment:
+`v6p_dn_small_e2_asinh_*.pt` were deleted from disk after the verify hung. To reproduce:
 
 ```bash
 # Train (~25 min on A100)
@@ -243,9 +207,7 @@ python -m bsimar.cli.train --model direct --size small --loss-preset e2 \
 
 ## Post-refactor verification (2026-05-10)
 
-After the BSIMAR + tests/ refactor commits (`959ef21`, `e94e6e1`),
-re-ran the full 4-tech inverter verify with the same V6 ckpts and
-env-var override:
+After BSIMAR + tests/ refactor commits (`959ef21`, `e94e6e1`), re-ran the full 4-tech inverter verify with the same V6 ckpts and env-var override:
 
 ```bash
 PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS=v6_dn_small_e2_asinh_nmos \
@@ -254,10 +216,7 @@ CUDA_VISIBLE_DEVICES=2 python tests/verify_nn_dc_tran.py \
     --tech TSMC5,TSMC7,TSMC12,TSMC16 --inverter-only
 ```
 
-Saved to `tests/v6_logs/postrefactor/inverter_summary.csv`. **All 16
-cells match the Tier 2 numerics above to ≤ 0.01 % NRMSE** (rounding
-artefact of the 2-decimal print format) — the refactor is byte-clean
-on circuit-level numerics.
+Saved to `tests/v6_logs/postrefactor/inverter_summary.csv`. **All 16 cells match the Tier 2 numerics to ≤ 0.01 % NRMSE** (rounding artefact of 2-decimal print) — refactor is byte-clean on circuit-level numerics.
 
 | Cell | Plan (before refactor) | Post-refactor | Δ |
 |---|---:|---:|---|
@@ -280,27 +239,10 @@ on circuit-level numerics.
 
 PASS-rate identical (11/16 PASS, 5/16 FAIL).
 
-Wall-time: ~3 h 09 m on this run vs ~25 min in the original V6 capture.
-Numerics-correctness is unchanged; the slowness is environmental
-(`uptime` showed load avg 262 on a 32-core box during the run, plus
-8+ neighbouring Python processes sharing GPU 2). The refactor itself
-adds no measurable per-call cost — the trainer / loss / loo_labels /
-verify driver paths it touches all run before / after the simulator
-NR loop.
+Wall-time: ~3 h 09 m vs ~25 min original V6 capture. Numerics-correctness unchanged; slowness is environmental (`uptime` showed load avg 262 on 32-core box, plus 8+ neighbouring Python processes sharing GPU 2). The refactor adds no measurable per-call cost — trainer / loss / loo_labels / verify driver paths all run before / after the simulator NR loop.
 
 ## Open follow-ups (not in V6 scope)
 
-- **TSMC5 inverter VTC (model-fit floor).** Both probe-asinh and zscore-baseline
-  fail at TSMC5 trip-point. The asinh flip didn't fix this — it's a model-capacity
-  + tech-specific data issue. Candidates for V7: (a) probe checkpoint trained
-  for more epochs (the probe's per-tech NRMSE 0.04–0.07 % already saturated, so
-  unlikely to help); (b) a B0-medium asinh retrain (520 K params at 200 epochs);
-  (c) a TSMC5-only fine-tune.
-- **TSMC5 DN inv-tran 17.76 % FAIL.** Same root cause; V5' v5p_dn_m_*
-  checkpoints fixed it (16.90 → 8.60 %) but at the cost of TSMC12/16 VTC
-  regression — a different overfit failure mode.
-- **Restore `_resolve_nn_checkpoint` cascade fallthrough order.** The verify
-  driver hardcodes `v4_dn_universal_*` rather than going through the resolver.
-  Tier 1.5 patches this for env-override only; the no-env-var path still picks
-  V4 hardcoded paths instead of the cascade's `refac_dn_medium_*` etc. Out of
-  scope for V6.
+- **TSMC5 inverter VTC (model-fit floor).** Both probe-asinh and zscore-baseline fail at TSMC5 trip-point. Asinh flip didn't fix it — model-capacity + tech-specific data issue. Candidates for V7: (a) more probe epochs (per-tech NRMSE 0.04–0.07 % already saturated, unlikely); (b) B0-medium asinh retrain (520 K params at 200 epochs); (c) TSMC5-only fine-tune.
+- **TSMC5 DN inv-tran 17.76 % FAIL.** Same root cause; V5' v5p_dn_m_* checkpoints fixed it (16.90 → 8.60 %) but regressed TSMC12/16 VTC — different overfit failure mode.
+- **Restore `_resolve_nn_checkpoint` cascade fallthrough order.** Verify driver hardcodes `v4_dn_universal_*` rather than going through the resolver. Tier 1.5 patches this for env-override only; no-env-var path still picks V4 hardcoded paths instead of cascade's `refac_dn_medium_*` etc. Out of scope for V6.

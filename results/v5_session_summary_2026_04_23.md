@@ -8,14 +8,13 @@ value accrued.
 
 ## Goal
 
-Improve the v4 NN compact-model inverter simulation accuracy, in
-particular the worst-case inverter VTC TSMC7 (19.15 % NRMSE, hard
-FAIL). Four-model ship (DirectNet {N,P}MOS + BSIMAR {N,P}MOS).
+Improve v4 NN inverter simulation accuracy, especially worst-case VTC
+TSMC7 (19.15 % NRMSE, hard FAIL). Four-model ship (DirectNet + BSIMAR
+{N,P}MOS).
 
 ## What ran
 
-Five cycles executed under the user's strict commit / experiment /
-revert discipline:
+Five cycles under strict commit/experiment/revert discipline:
 
 | Step | Artifact | Outcome |
 |------|----------|---------|
@@ -50,19 +49,15 @@ revert discipline:
 
 ### New hypotheses raised
 
-1. **Sampling-basis mismatch** (v5 plan §17). The verifier sweeps
-   uniform Id-Vgs at fixed Vds=VDD/2. The training set is LHS over
-   the full (Vgs, Vds) box. Even when the NN nails the LHS
-   distribution, a uniform Id-Vgs sweep's NRMSE is dominated by the
-   point where |Id| is largest — and the LHS sampler under-weighs
-   that region relative to its NRMSE contribution.
-2. The E4/E5 **+2.7 pp NMOS DC regression** appears in both runs at
-   identical magnitude despite structurally different training
-   setups. This is consistent with the overlay samples shifting the
-   Id-Vgs curve's *shape* at Vds=0.375 V away from the verifier's
-   sweep basis, not merely its magnitude.
+1. **Sampling-basis mismatch** (v5 plan §17). Verifier sweeps uniform
+   Id-Vgs at fixed Vds=VDD/2; training is LHS over full (Vgs, Vds) box.
+   Uniform-sweep NRMSE is dominated by max-|Id| point, which LHS
+   under-weighs relative to its NRMSE contribution.
+2. E4/E5 **+2.7 pp NMOS DC regression** appears at identical magnitude
+   despite structurally different setups — consistent with overlay
+   shifting Id-Vgs *shape* at Vds=0.375 V, not magnitude.
 
-Neither hypothesis was tested.
+Neither hypothesis tested.
 
 ## Decisions taken
 
@@ -91,24 +86,18 @@ Neither hypothesis was tested.
 
 ## Recommendations for future work
 
-If the TSMC7 NMOS DC gap becomes blocking (e.g. for SRAM validation
-or other NMOS-critical circuits), try in this order:
+If TSMC7 NMOS DC gap becomes blocking (e.g. SRAM validation), try:
 
-1. **Uniform-sweep augmentation.** Generate a dense uniform
-   (Vgs × Vds) grid per (tech, NFIN, L) bin using PyCMG; add as an
-   LDS-bypass overlay. This directly tests the sampling-basis
-   hypothesis (v5 plan §17) that no current experiment has.
-2. **Shape-enforcing loss.** Add a first-derivative penalty on
-   Id-Vgs (e.g. `(∂Id/∂Vgs)_nn ≈ (∂Id/∂Vgs)_pycmg`) at uniformly
-   spaced Vgs samples. Addresses "the shape is wrong" hypothesis
-   directly.
-3. **§4.1 tanh-gated Id head** (full retrain). Only justified if
-   rail-state accuracy regresses in some downstream workload, since
-   v4's rail-restoring patch already handles that failure mode.
-4. **Accept the v4 baseline** as sufficient for inverter-transient
-   work (all 8 cells PASS 15 % threshold at TSMC5/7/12/16). VTC
-   accuracy at TSMC5/7 can be reported with the 14-19 % NRMSE
-   caveat documented in CLAUDE.md.
+1. **Uniform-sweep augmentation.** Dense uniform (Vgs × Vds) grid per
+   (tech, NFIN, L) bin via PyCMG, as LDS-bypass overlay. Directly tests
+   sampling-basis hypothesis (v5 plan §17).
+2. **Shape-enforcing loss.** First-derivative penalty on Id-Vgs at
+   uniformly spaced Vgs. Addresses "shape is wrong" hypothesis.
+3. **§4.1 tanh-gated Id head** (full retrain). Only if rail-state
+   accuracy regresses downstream — v4's rail-restoring patch already
+   handles that failure mode.
+4. **Accept v4 baseline** for inverter-transient work (all 8 cells PASS
+   15 % at TSMC5/7/12/16). Report VTC at TSMC5/7 with 14-19 % caveat.
 
 ## Experiment count vs production change
 

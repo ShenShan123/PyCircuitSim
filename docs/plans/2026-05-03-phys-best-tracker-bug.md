@@ -39,13 +39,11 @@ wrong checkpoint", and they compound on v5b/v5c.
 
 Both bugs are real and both need fixing. Bug A explains why v5c PMOS's
 phys-best plateaued at epoch ~10 even though Bug B alone would *also*
-cause that plateau. The fixes are independent and both small. The
-post-fix story:
+cause that plateau. Fixes are independent and both small. Post-fix story:
 
-* **v4/v5a** — only Bug B applies (no id-gate). Rename `.phys.pt`
-  aside, let the simulator load `_best.pt`. No retraining required.
-* **v5b** — both bugs apply. v5b checkpoints discarded; either retrain
-  or roll back.
+* **v4/v5a** — only Bug B applies (no id-gate). Rename `.phys.pt` aside, let
+  simulator load `_best.pt`. No retraining required.
+* **v5b** — both bugs apply. Checkpoints discarded; retrain or roll back.
 * **v5c** — both bugs apply. Retrain with both fixes after C1.
 
 ---
@@ -79,10 +77,10 @@ out_std_id  = float(normalizer.stats.output_std[id_idx_in_output])   # = qg's st
 s_id        = float(normalizer.stats.asinh_scale[id_idx_in_output])  # = qg's scale
 ```
 
-A ~10⁹× magnitude error. PMOS data confirms id has the opposite
-sign of Vds in the conducting regime (Vds ∈ [−1.6, 0]V, ~90% of
-samples have id > 0), so the gate's `tanh(Vds/0.04)` factor
-(approaches −1) compounds with the wrong-stats reconstruction.
+A ~10⁹× magnitude error. PMOS data confirms id has the opposite sign of Vds
+in the conducting regime (Vds ∈ [−1.6, 0]V, ~90% of samples have id > 0), so
+the gate's `tanh(Vds/0.04)` factor (approaches −1) compounds with the
+wrong-stats reconstruction.
 
 Symptom in checkpoint timestamps (`v5c_universal_pmos_*`):
 
@@ -92,16 +90,15 @@ Symptom in checkpoint timestamps (`v5c_universal_pmos_*`):
 | `_best.ar.pt`     | May 3 01:55         | AR-best kept advancing        |
 | `_best.pt`        | May 3 01:57         | TF-best kept advancing        |
 
-The TF MAE in normalised space kept improving on the 12 well-formed
-columns while the gate-corrupted id slot was structurally driven into
-junk, so the phys score (which depends on the id column) plateaued.
-DirectNet was unaffected (`_DN_ID_IDX = 0` matches both orderings by
-coincidence).
+TF MAE in normalised space kept improving on the 12 well-formed columns while
+the gate-corrupted id slot was structurally driven into junk, so the phys
+score (which depends on id) plateaued. DirectNet was unaffected
+(`_DN_ID_IDX = 0` matches both orderings by coincidence).
 
-Unit tests in `tests/test_nn_id_gate.py` did not catch this because
-the synthetic stats use arbitrary values at every index — the
-test-stats `[0]` and `[4]` are uncorrelated with real id/qg semantics,
-so swapping them produces a numerically valid (just wrong) result.
+Unit tests in `tests/test_nn_id_gate.py` did not catch this because synthetic
+stats use arbitrary values at every index — test-stats `[0]` and `[4]` are
+uncorrelated with real id/qg semantics, so swapping them produces a
+numerically valid (just wrong) result.
 
 ### 1B. Bug B (mean-aggregated phys-score) — diagnostic captured 2026-05-03 12:30
 
@@ -121,12 +118,11 @@ Diagnostic captured against `v5c_universal_pmos` checkpoints:
 | **phys_score** | **3.46 × 10⁸** | **1.45 × 10¹¹** |
 | **TF val MAE (norm)** | 0.01194 | **0.00362** |
 
-`val MAE` improved 3× during training (genuine convergence in
-normalised space), but `phys_score` got 420× **worse** because the id
-NRMSE blew up under AR rollout. Note the late-checkpoint id NRMSE is
-**still catastrophic** (13 M %) — that is Bug A's footprint: even the
-TF-best id slot is contaminated. The 12 non-id columns improve as
-expected.
+`val MAE` improved 3× during training (genuine convergence in normalised
+space), but `phys_score` got 420× **worse** because id NRMSE blew up under AR
+rollout. The late-checkpoint id NRMSE is **still catastrophic** (13 M %) —
+Bug A's footprint: even the TF-best id slot is contaminated. The 12 non-id
+columns improve as expected.
 
 Diagnostic script (kept for re-runs): `tests/diag_phys_best_explosion.py` (TODO — see step P1).
 
@@ -138,16 +134,14 @@ Diagnostic script (kept for re-runs): `tests/diag_phys_best_explosion.py` (TODO 
 
 File: `external_compact_models/bsimar/models/id_gate.py:113-131`.
 
-The function takes a single `id_idx_in_output` argument and uses it
-*twice*: once to slice the model output (`out_norm[:, id_idx_in_output]`)
-and once to look up id's normalisation stats from `normalizer.stats`.
-This is correct only when both indices coincide. For DirectNet they
-do (id is at 0 in both orderings, since DirectNet's output is in
-`OUTPUT_COLUMN_ORDER`). For the BSIMAR Transformer they do not — the
-output is in `BSIMAR_COLUMN_ORDER` (id at 4), but `normalizer.stats`
-were fit on `OUTPUT_COLUMN_ORDER`-ordered targets and never
-re-permuted. The trainer applies `reorder_outputs` to the *targets*
-(`trainer.py:714-719`) but does not re-permute the stats.
+The function takes a single `id_idx_in_output` argument and uses it *twice*:
+once to slice the model output (`out_norm[:, id_idx_in_output]`) and once to
+look up id's normalisation stats. Correct only when both indices coincide.
+For DirectNet they do (id at 0 in both orderings). For BSIMAR Transformer they
+do not — output is in `BSIMAR_COLUMN_ORDER` (id at 4), but `normalizer.stats`
+were fit on `OUTPUT_COLUMN_ORDER`-ordered targets and never re-permuted. The
+trainer applies `reorder_outputs` to *targets* (`trainer.py:714-719`) but does
+not re-permute the stats.
 
 Mathematical effect for the Transformer's asinh path:
 
@@ -157,22 +151,19 @@ actual:    id_raw_phys = s_qg · sinh(σ_qg · id_raw_norm + μ_qg)         # s�
 ```
 
 with `σ_qg ≈ 1.29`, `μ_qg ≈ −1.03`, `s_qg ≈ 1.13e-16`. For typical
-post-asinh-zscore range `id_raw_norm ∈ [−2, 2]`, the actual
-reconstruction lands in `[1e-16 · sinh(−3.6), 1e-16 · sinh(1.55)] ≈
-[−1.8e-15, 2.4e-16]` — i.e. a charge-like magnitude. The gate then
-multiplies by `tanh(Vds/0.04) ∈ [−1, 1]`, asinh-re-encodes through
-`asinh(value/s_qg)`, and the loss compares this junk to the true id
-target. The model adapts by emitting weird id_raw_norm values, but
-the AR-conditioning chain (rule 21: AR sees `id_raw`) propagates the
-junk into downstream tokens and stalls phys-best.
+post-asinh-zscore range `id_raw_norm ∈ [−2, 2]`, actual reconstruction lands
+in `[1e-16 · sinh(−3.6), 1e-16 · sinh(1.55)] ≈ [−1.8e-15, 2.4e-16]` — a
+charge-like magnitude. The gate multiplies by `tanh(Vds/0.04) ∈ [−1, 1]`,
+asinh-re-encodes through `asinh(value/s_qg)`, and the loss compares junk to
+the true id target. The model adapts by emitting weird id_raw_norm values,
+but AR-conditioning (rule 21: AR sees `id_raw`) propagates junk downstream
+and stalls phys-best.
 
-Why PMOS is hit harder than NMOS: PMOS qg's mean is signed
-(`μ_qg ≈ −1.03`) while NMOS qg's mean is comparable in magnitude but
-opposite sign. PMOS's id distribution (mostly positive, since
-Vds<0 and the convention here makes id>0 in conduction) interacts
-adversely with the `tanh(Vds/0.04) ≈ −1` factor: the gate forces the
-model to learn an opposite-sign id_raw_norm AND that target lives in
-a regime where `sinh(σ_qg · …)` is already saturating.
+Why PMOS is hit harder than NMOS: PMOS qg's mean is signed (`μ_qg ≈ −1.03`);
+PMOS's id distribution (mostly positive, Vds<0, id>0 in conduction) interacts
+adversely with `tanh(Vds/0.04) ≈ −1`: the gate forces the model to learn an
+opposite-sign id_raw_norm AND that target lives in a regime where
+`sinh(σ_qg · …)` is already saturating.
 
 ### 2B. Bug B — mean-aggregated phys-score under AR-rollout
 
@@ -193,76 +184,65 @@ amplifies as
        ≈ |id_phys| · σ · Δ_norm                 (for |id_phys/s| ≫ 1)
 ```
 
-For PMOS where `|id_phys|` reaches ~1 mA in the saturation plateau,
-`Δ_norm = 0.01` (well within trained accuracy) becomes
-`Δ_phys = 0.02 mA = 2 × 10⁻⁵ A`. That is benign. **The pathology
-appears when the AR rollout occasionally emits an extreme `id_norm`**:
-if the autoregressive chain produces `id_norm = 50` (well outside the
-training distribution), then
+For PMOS where `|id_phys|` reaches ~1 mA in saturation, `Δ_norm = 0.01`
+becomes `Δ_phys = 0.02 mA`. Benign. **Pathology appears when AR rollout
+emits an extreme `id_norm`**: if the autoregressive chain produces
+`id_norm = 50` (outside training distribution), then
 
 ```
 id_phys = s_id · sinh(σ · 50 + μ)
 ```
 
-`sinh(100) ≈ 1.3 × 10⁴³`. Multiplied by any non-zero `s_id`, the
-prediction is plain numerical overflow on the order of 10³⁴ A.
-NRMSE = `RMSE / data_range` divides by a finite range (~mA), so a
-single overflow row drives NRMSE per output to millions of percent.
+`sinh(100) ≈ 1.3 × 10⁴³`. Multiplied by any non-zero `s_id`, the prediction
+overflows to ~10³⁴ A. NRMSE = `RMSE / data_range` divides by a finite range
+(~mA), so a single overflow row drives per-output NRMSE to millions of percent.
 
 #### 2B.2 Why AR exposes it but TF does not
 
-`test_model()` in `bsimar/training/trainer.py:233` uses **AR mode**
-(no teacher forcing). The id token sits at index 4 in
-`BSIMAR_COLUMN_ORDER`, conditioned on the model's own predictions
-for `qg, qb, qd, qs`. Tiny errors in those four upstream tokens
-compound: by the time the id head fires, the conditioning context is
-out-of-distribution, and the head emits an extreme `id_norm`.
+`test_model()` (`bsimar/training/trainer.py:233`) uses **AR mode** (no teacher
+forcing). The id token at index 4 is conditioned on the model's own
+predictions for `qg, qb, qd, qs`. Tiny errors in those upstream tokens
+compound: by the time the id head fires, the conditioning context is OOD and
+the head emits an extreme `id_norm`.
 
-`_validate_epoch_tf()` uses TF mode with ground-truth conditioning
-tokens. It never sees the AR drift — which is why the TF-val MAE
-keeps improving while the phys metric explodes.
+`_validate_epoch_tf()` uses TF mode with ground-truth conditioning. Never sees
+the AR drift — TF-val MAE keeps improving while phys metric explodes.
 
 #### 2B.3 Why mean-over-outputs is the fragile part
 
-`phys_score = mean(NRMSE) + 0.1 · (1 − mean(R²))` averages across all
-13 outputs. **A single outlier output with NRMSE = 10⁷ % destroys the
-average.** The 12 well-behaved outputs (sub-1 % NRMSE, R² ≥ 0.99)
-contribute negligibly. The 0.1 weight on `(1 − R²)` is supposed to
-discourage huge negative R², but the negative R² on id (−10¹³) makes
-that term *also* dominate. So both terms point the same wrong way.
+`phys_score = mean(NRMSE) + 0.1 · (1 − mean(R²))` averages 13 outputs.
+**A single outlier with NRMSE = 10⁷ % destroys the average.** The 12
+well-behaved outputs (sub-1 % NRMSE, R² ≥ 0.99) contribute negligibly. The 0.1
+weight on `(1 − R²)` is supposed to discourage huge negative R², but negative
+R² on id (−10¹³) makes that term *also* dominate. Both terms point the same
+wrong way.
 
 #### 2B.4 Why id and not the other outputs
 
-The 12 non-id outputs (qg, qb, qd, qs, gm, gds, gmb, cgg, cgd, cgs,
-cdg, cdd) all sit in saturation regimes where their physical
-magnitudes are bounded and their asinh scales are tighter relative to
-data range. The id column has the widest dynamic range
-(subthreshold 10⁻¹⁵ A → saturation 10⁻³ A spans 12 decades) and the
-asinh scale `s_id` sits at the geometric mean. This combination
-makes id the most exposed to sinh overflow on any AR drift.
+The 12 non-id outputs (qg, qb, qd, qs, gm, gds, gmb, cgg, cgd, cgs, cdg, cdd)
+sit in saturation regimes with bounded physical magnitudes and tighter asinh
+scales relative to data range. id has the widest dynamic range (subthreshold
+10⁻¹⁵ A → saturation 10⁻³ A spans 12 decades) and `s_id` sits at the
+geometric mean. Makes id the most exposed to sinh overflow on AR drift.
 
 #### 2B.5 Why PMOS gets stuck and NMOS recovers
 
-Empirically v5c TF NMOS phys-best advanced after B2 slope warmup
-(`08:33 today`), PMOS did not. The B2 slope-match loss penalises
-∂Id/∂Vg shape — for NMOS the AR rollout must respect a smooth
-shape, so the upstream tokens stabilise. PMOS' source-relative
-frame and wider current range mean the same penalty did not stabilise
-the AR rollout enough to push PMOS out of the epoch-10 minimum. The
-mean-over-outputs phys-score then locked PMOS in place. **Note:**
-With Bug A also in play, the PMOS plateau has *two* reinforcing
-causes; Bug A alone suffices to cause the plateau because it
-structurally corrupts the id slot regardless of AR drift.
+Empirically v5c TF NMOS phys-best advanced after B2 slope warmup, PMOS did
+not. B2 slope-match loss penalises ∂Id/∂Vg shape — for NMOS the AR rollout
+must respect a smooth shape, so upstream tokens stabilise. PMOS' source-
+relative frame and wider current range mean the same penalty did not
+stabilise AR rollout enough to push out of the epoch-10 minimum. The
+mean-over-outputs phys-score then locked PMOS in place. **Note:** With Bug A
+in play, the PMOS plateau has *two* reinforcing causes; Bug A alone suffices
+because it structurally corrupts the id slot regardless of AR drift.
 
 ### 2C. How the two bugs interact
 
-Bug A makes the trained id slot itself bad (the model learns weights
-that are best-effort against a corrupted gate target). Bug B makes
-the *selection* metric pick the wrong checkpoint among the (already
-bad) candidates. v5b/v5c suffer both: the candidates are bad and the
-ranker is broken. v4/v5a only suffer Bug B: the candidates are
-intrinsically OK but the ranker still picks an early one. This split
-shapes the re-train scope in §5.
+Bug A makes the trained id slot itself bad (model learns best-effort weights
+against a corrupted gate target). Bug B makes the *selection* metric pick the
+wrong checkpoint among the bad candidates. v5b/v5c suffer both. v4/v5a only
+suffer Bug B: candidates are intrinsically OK but the ranker still picks an
+early one. This split shapes the re-train scope in §5.
 
 ---
 
@@ -270,20 +250,18 @@ shapes the re-train scope in §5.
 
 ### 3A. Bug A — version scope
 
-Bug A entered the codebase with v5 Phase B B3 (`feat(v5): Phase B
-B2+B3 — SlopeMatchLoss + structural Vds id-gate`,
-commit `a1aa fc`-class). Affected:
+Bug A entered with v5 Phase B B3 (`feat(v5): Phase B B2+B3 — SlopeMatchLoss
++ structural Vds id-gate`, commit `a1aa fc`-class). Affected:
 
 * **v5b** — `external_compact_models/bsimar/checkpoints/v5b_universal_*`.
-  All four BSIMAR Transformer checkpoints (NMOS+PMOS) trained with
-  the gate active and therefore against a corrupted id target.
-  DirectNet v5b checkpoints (`v5b_dn_universal_*`) are unaffected
-  (DirectNet's index-0 lookup happens to match).
+  All four BSIMAR Transformer checkpoints (NMOS+PMOS) trained with the gate
+  active against a corrupted id target. DirectNet v5b (`v5b_dn_universal_*`)
+  unaffected (index-0 lookup happens to match).
 * **v5c** — same as v5b. All four BSIMAR Transformer runs corrupted.
   DirectNet v5c unaffected.
 
-Pre-B3 versions (v4, v5a) **never used `apply_id_gate`** and are
-therefore Bug-A-clean. They still suffer Bug B.
+Pre-B3 versions (v4, v5a) **never used `apply_id_gate`** and are Bug-A-clean.
+They still suffer Bug B.
 
 ### 3B. Bug B — version scope
 
@@ -295,51 +273,44 @@ v4_plain = CHECKPOINT_DIR / f"{prefix}_{device_type}_best.pt"
 # loads v4_phys preferentially when it exists
 ```
 
-The simulator has loaded `_best.phys.pt` for every BSIMAR
-verification since v4 (`feat(train+sim): sign/boundary losses + …`,
-2026-04-13). Implication:
+The simulator has loaded `_best.phys.pt` for every BSIMAR verification since
+v4 (`feat(train+sim): sign/boundary losses + …`, 2026-04-13). Implication:
 
-- **v4 BSIMAR baseline** (CLAUDE.md "Phase A4 control retrain… AR side
-  has wins") used the bug-affected `.phys.pt` weights. Numbers in
-  `results/v5_baseline_2026_04_22.md` may understate v4 BSIMAR's
-  intrinsic capability.
-- **v5a control retrain** (`a1ba677`) was gated against the same
-  contaminated baseline. Its "FAIL" verdict on §A4 stands, but the
-  per-cell deltas should be re-read with the caveat that both sides
-  used `.phys.pt`.
-- **v5b** (`results/v5b_sdata_gate_2026_05_02.md`) compared
-  `.phys.pt` to `.phys.pt`. The B1 sampler verdict (FAIL) is robust
-  *as a relative comparison* because both arms had the same Bug B,
-  but **both arms also had Bug A**, so the absolute numbers are
-  doubly contaminated.
+- **v4 BSIMAR baseline** (CLAUDE.md "Phase A4 control retrain… AR side has
+  wins") used bug-affected `.phys.pt` weights. Numbers in
+  `results/v5_baseline_2026_04_22.md` may understate v4's intrinsic capability.
+- **v5a control retrain** (`a1ba677`) was gated against the same contaminated
+  baseline. "FAIL" verdict on §A4 stands, but per-cell deltas should be re-read
+  with the caveat that both sides used `.phys.pt`.
+- **v5b** (`results/v5b_sdata_gate_2026_05_02.md`) compared `.phys.pt` to
+  `.phys.pt`. B1 sampler verdict (FAIL) is robust *as a relative comparison*
+  because both arms had Bug B, but **both arms also had Bug A**, so absolute
+  numbers are doubly contaminated.
 - **v5c** (just killed) — same as v5b.
 
-This is potentially the most expensive bug class in this codebase's
-history — it gates the entire compact-model accuracy story and may
-have caused us to chase phantom failures (e.g., the TSMC7 NMOS
-"sampling-basis" thesis in v5 §17).
+Potentially the most expensive bug class in this codebase's history — gates
+the entire compact-model accuracy story and may have caused chasing phantom
+failures (e.g., TSMC7 NMOS "sampling-basis" thesis in v5 §17).
 
 ### 3C. DirectNet (LEVEL=73) is fully unaffected
 
-* DirectNet is single-shot (no AR rollout) → no Bug B exposure (no
-  phys-best tracker; the trainer uses TF-only val loss).
-* DirectNet's `_DN_ID_IDX = 0` matches both `OUTPUT_COLUMN_ORDER` and
-  the model output order → no Bug A exposure.
+* DirectNet is single-shot (no AR rollout) → no Bug B exposure (no phys-best
+  tracker; trainer uses TF-only val loss).
+* `_DN_ID_IDX = 0` matches both `OUTPUT_COLUMN_ORDER` and model output order
+  → no Bug A exposure.
 
-DirectNet v4/v5a/v5b/v5c checkpoints can be trusted; only the
-simulator-side "prefer phys.pt" loader logic is a no-op for DirectNet.
+DirectNet v4/v5a/v5b/v5c checkpoints can be trusted; the simulator-side
+"prefer phys.pt" loader is a no-op for DirectNet.
 
-### 3D. Side issue (separate, smaller) — DirectNet `norm_mode` default
+### 3D. Side issue — DirectNet `norm_mode` default
 
 `train_directnet` (`bsimar/training/trainer.py:482-490`) calls
-`load_and_split_bsimar` without `norm_mode="zscore"`, so DirectNet
-trains under `asinh+zscore` outputs even though CLAUDE.md rule 6
-specifies plain zscore for DirectNet. Not a cause of the phys-best
-plateau, but a separate drift to fix while we're in the file. Adds a
-single keyword argument; no retraining strictly required (existing
-checkpoints are still consistent — they use asinh stats end-to-end —
-but the design intent and the inference-time chain rule comment in
-`mosfet_directnet.py` need to align).
+`load_and_split_bsimar` without `norm_mode="zscore"`, so DirectNet trains under
+`asinh+zscore` outputs even though CLAUDE.md rule 6 specifies plain zscore.
+Not a cause of the phys-best plateau, but a drift to fix while in the file.
+Single keyword argument; no retraining required (existing checkpoints are
+end-to-end consistent under asinh), but design intent and the inference-time
+chain rule comment in `mosfet_directnet.py` need to align.
 
 ---
 
@@ -609,31 +580,25 @@ because it determines whether the v5b "B1 failed" verdict survives.
 
 ## 9. What this plan deliberately does NOT propose
 
-- **No re-training of v4/v5a.** Their Transformer training never
-  touched `apply_id_gate` (Bug A absent). Just rename their
-  `.phys.pt` aside (B-B3) and let the simulator use `_best.pt`,
-  which is the TF-best checkpoint and intrinsically usable. D1 verifies.
-- **No retraining of v5b/v5c DirectNet** — DirectNet is unaffected by
-  both bugs. The B-side change is forward-only.
-- **No model architecture change.** The id AR-rollout instability is
-  real but addressing it (e.g., clamping id_norm during AR) is a
-  separate sprint. The Bug-A fix removes the structural id corruption;
-  the Bug-B fix removes the metric-side amplifier. That is sufficient
-  for the immediate gating problem.
-- **No replacement of `compute_physical_metrics`.** It is correct
-  per-output. Only the aggregation logic in the trainer needs
-  changing.
-- **No removal of the `_best.phys.pt` checkpoint** in the long run.
-  Once B-B1 ships, phys-best is meaningful and should keep being
-  saved alongside `_best.pt` and `_best.ar.pt`.
-- **No migration of `BSIMARNormStats` to `BSIMAR_COLUMN_ORDER`.**
-  Keeping stats in `OUTPUT_COLUMN_ORDER` is the more stable choice —
-  it's the canonical column order shared by DirectNet, the dataset
-  on disk, the analysis scripts, and the simulator's autograd-
-  derivative indexing. The Transformer's `BSIMAR_COLUMN_ORDER` is a
-  model-internal AR convenience; reordering stats to match it would
-  ripple through every consumer. The B-A1 kwarg is the right
-  abstraction boundary.
+- **No re-training of v4/v5a.** Transformer training never touched
+  `apply_id_gate` (Bug A absent). Rename `.phys.pt` aside (B-B3) and let the
+  simulator use `_best.pt` (TF-best, intrinsically usable). D1 verifies.
+- **No retraining of v5b/v5c DirectNet** — DirectNet unaffected by both bugs.
+  The B-side change is forward-only.
+- **No model architecture change.** The id AR-rollout instability is real but
+  addressing it (e.g., clamping id_norm during AR) is a separate sprint. The
+  Bug-A fix removes structural id corruption; Bug-B fix removes the metric-
+  side amplifier. Sufficient for the immediate gating problem.
+- **No replacement of `compute_physical_metrics`.** Correct per-output. Only
+  the aggregation logic in the trainer needs changing.
+- **No removal of `_best.phys.pt`** in the long run. Once B-B1 ships, phys-best
+  is meaningful and should keep being saved alongside `_best.pt`/`_best.ar.pt`.
+- **No migration of `BSIMARNormStats` to `BSIMAR_COLUMN_ORDER`.** Keeping
+  stats in `OUTPUT_COLUMN_ORDER` is more stable — canonical column order
+  shared by DirectNet, dataset on disk, analysis scripts, and simulator's
+  autograd-derivative indexing. Transformer's `BSIMAR_COLUMN_ORDER` is a
+  model-internal AR convenience; reordering stats would ripple through every
+  consumer. The B-A1 kwarg is the right abstraction boundary.
 
 ---
 
@@ -653,23 +618,20 @@ because it determines whether the v5b "B1 failed" verdict survives.
 
 ## 11. Operational note: conda-run stdout buffering
 
-While monitoring the v5c training over ~23 h, every training log
-file under `results/v5c_train_logs/` stayed at 0 bytes. Root cause:
-`conda run -n env python …` captures stdout/stderr of the wrapped
-python process and only flushes on conda-run exit. The shell `>` redirect
-catches conda-run's output, not python's. When the processes were
-killed, conda-run's buffer was discarded — so we never recovered the
+While monitoring v5c training over ~23 h, every log under
+`results/v5c_train_logs/` stayed at 0 bytes. Root cause: `conda run -n env
+python …` captures stdout/stderr and only flushes on conda-run exit. When
+processes were killed, conda-run's buffer was discarded — we never recovered
 training logs for forensic inspection.
 
-For future training launches use:
+Future training launches use:
 
 ```bash
 conda run --no-capture-output -n pycircuitsim python -u -m bsimar.cli.train ...
 ```
 
-The `--no-capture-output` flag was the missing piece. This is
-unrelated to either phys-best bug but caused real diagnostic pain
-during this session and should be the new default in any
+`--no-capture-output` was the missing piece. Unrelated to either phys-best
+bug but caused real diagnostic pain; should be the new default in any
 training-launch helper.
 
 ---

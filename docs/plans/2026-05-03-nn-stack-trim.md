@@ -18,10 +18,10 @@ The NN compact-model stack accumulated ~5500 LOC of marginal-value or
 dead code across three sprints (v3 medium-tier, v4 tech-code migration,
 v5 Phase A/B). Three parallel review agents triaged
 `external_compact_models/bsimar/`, `pycircuitsim/models/`, and `tests/`
-and produced a deletion list. This plan groups the deletions into two
-mechanical PRs (tests cleanup, bsimar Phase B rollback + inference
-dedup) and one experimental PR (phys-best A/B). PR-1 and PR-2 are
-behavior-preserving for currently shipping v4 checkpoints.
+and produced a deletion list. This plan groups deletions into two
+mechanical PRs (tests cleanup; bsimar Phase B rollback + inference
+dedup) and one experimental PR (phys-best A/B). PR-1 and PR-2 preserve
+behavior for currently shipping v4 checkpoints.
 
 ---
 
@@ -105,8 +105,7 @@ load-bearing.
 
 ## 3. Execution sequence (DO NOT START WITHOUT APPROVAL)
 
-Three PRs, ordered to keep each review surface small and each rollback
-trivial.
+Three PRs, ordered to keep each review surface small and each rollback trivial.
 
 ### PR-1 — Tests cleanup (zero production-code risk)
 

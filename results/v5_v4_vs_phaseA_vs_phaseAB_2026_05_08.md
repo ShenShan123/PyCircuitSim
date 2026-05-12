@@ -10,19 +10,13 @@
 
 ## 0. Scope
 
-Per the user's request, this report compares the three lineages on
-**inverter DC (VTC) and inverter transient** for **DirectNet
-(LEVEL=73)** and **BSIMAR Transformer (LEVEL=74)** across the four
-production TSMC nodes (TSMC5, TSMC7, TSMC12, TSMC16). All Phase A+B
-runs use the small-arch V5 MAE checkpoints from Phase C
-(`v5_dn_s_*_mae_*` and `v5_tf_s_*_mae_*`); these are the data-only
-checkpoints, not the JAC arm.
+Compares three lineages on **inverter DC (VTC) and inverter transient**
+for **DirectNet (LEVEL=73)** and **BSIMAR Transformer (LEVEL=74)** across
+TSMC5/7/12/16. Phase A+B uses small-arch V5 MAE checkpoints from Phase
+C (`v5_dn_s_*_mae_*` and `v5_tf_s_*_mae_*`), data-only (not JAC).
 
-The PyCircuitSim test runner emits NRMSE for inverter VTC and inverter
-transient and MRE only for single-device DC sweeps; **MRE is not
-computed for inverter cells** in the current verify infrastructure, so
-this report uses NRMSE % as the quality metric for both inverter VTC
-and inverter transient.
+MRE is not computed for inverter cells in verify infrastructure; this
+report uses NRMSE % for both VTC and transient.
 
 ## 1. Headline result
 
@@ -37,25 +31,21 @@ and inverter transient.
 
 **Two clean takeaways:**
 
-1. **Phase A holds its weight.** Compared to V4, Phase A converted the
-   single TSMC16 BSIMAR ERROR row into a 14.18 % PASS (A3 dt-halve
-   fallback) and replaced the TSMC5 BSIMAR overflow (2 × 10⁹⁵ %) with
-   a clean N/A NR_FAIL (piecewise A1 cap on id and gds). VTC pass-rate
-   unchanged at 4/8 — the four still-failing cells fail at the trip
-   point, which Phase A's solver-only scope cannot reach.
+1. **Phase A holds its weight.** Converted TSMC16 BSIMAR ERROR row to
+   14.18 % PASS (A3 dt-halve fallback) and replaced TSMC5 BSIMAR
+   overflow (2 × 10⁹⁵ %) with clean N/A NR_FAIL (piecewise A1 cap on id
+   and gds). VTC pass-rate unchanged at 4/8 — failing cells fail at the
+   trip point, beyond Phase A's solver-only scope.
 
-2. **Phase A+B is mixed: TSMC5 transient is fixed, TSMC7/12/16
-   transient is broken.** The V5 data overlay clearly accomplishes
-   what it was scoped for at TSMC5 — DN-MAE inverter transient drops
-   from 16.90 % FAIL to **0.92 % PASS** (an 18× improvement); BSIMAR
-   inverter transient drops from 20.43 % FAIL to **8.92 % PASS** (a
-   2.3× improvement). Both clear the 15 % threshold for the first
-   time in this sprint. **But TSMC7/12/16 transient regresses to
-   NR_FAIL with NN-extrapolation runaway** (max-Δ 3 × 10¹² to 5 × 10¹²
-   V) on both DN and BSIMAR, and inverter VTC fails universally
-   (0/8 PASS). The S-scale 159 K-param DirectNet and 380 K-param
-   BSIMAR Transformer were not large enough to transfer the per-tech
-   improvements from TSMC5 to the other nodes simultaneously.
+2. **Phase A+B mixed: TSMC5 transient fixed, TSMC7/12/16 broken.** V5
+   data overlay does what it was scoped for at TSMC5 — DN-MAE inverter
+   transient 16.90 → **0.92 % PASS** (18×); BSIMAR 20.43 → **8.92 %
+   PASS** (2.3×). First time clearing 15 % threshold this sprint. **But
+   TSMC7/12/16 transient regresses to NR_FAIL with NN-extrapolation
+   runaway** (max-Δ 3-5 × 10¹² V) on both DN and BSIMAR; inverter VTC
+   fails universally (0/8 PASS). S-scale 159 K DN and 380 K BSIMAR were
+   not large enough to transfer per-tech improvements from TSMC5
+   simultaneously.
 
 ## 2. Inverter VTC NRMSE % per tech
 
@@ -140,11 +130,10 @@ should not regress. NRMSE / MRE both reported.
 | TSMC12 | 0.65 / 2.99  | 0.65 / 2.99  | 0.65 / 2.99 |
 | TSMC16 | 0.69 / 3.21  | 0.69 / 3.21  | 0.69 / 3.21 |
 
-V4 BSIMAR DC is unchanged across all three lineages because BSIMAR
-DC ran without the V5 override picking up (the per-level env var
-`PYCIRCUITSIM_NN_CHECKPOINT_TF_*` was set, but the DC test harness
-appears to have used the V4 path resolver for these particular runs;
-documented as a verify-driver caveat).
+V4 BSIMAR DC unchanged across all three lineages because BSIMAR DC ran
+without V5 override picking up (per-level env var
+`PYCIRCUITSIM_NN_CHECKPOINT_TF_*` was set, but DC test harness used V4
+path resolver — verify-driver caveat).
 
 ### 4.2 DirectNet (LEVEL=73)
 
@@ -155,10 +144,9 @@ documented as a verify-driver caveat).
 | TSMC12 | 0.18 / 0.86 | 0.18 / 0.86 | 0.41 / 1.95  | NRMSE +0.23 pp, MRE +1.09 pp |
 | TSMC16 | 0.19 / 1.09 | 0.19 / 1.09 | **0.06** / 1.13 | NRMSE −0.13 pp, MRE +0.04 pp |
 
-V5 MAE DN DC regresses on TSMC5/TSMC7 by +0.8 to +3 pp NRMSE and +8 to
-+17 pp MRE. TSMC16 NRMSE actually improves slightly. Even at the
-single-device DC level — well within the training distribution — the
-V5 MAE S-scale checkpoint is not uniformly better than V4-prod-M-scale.
+V5 MAE DN DC regresses TSMC5/7 by +0.8-3 pp NRMSE and +8-17 pp MRE.
+TSMC16 NRMSE slightly improves. Even at in-distribution DC, V5 MAE
+S-scale is not uniformly better than V4-prod-M-scale.
 
 ### 4.3 NMOS pulse transient on resistive load
 
@@ -169,76 +157,64 @@ V5 MAE S-scale checkpoint is not uniformly better than V4-prod-M-scale.
 | TSMC12 | 1.43 / 0.46 | 1.43 / 0.46 | NR_FAIL on DN (max-Δ 7.91e+16 V) |
 | TSMC16 | 1.35 / 0.46 | 1.35 / 0.46 | NR_FAIL on DN (max-Δ 7.03e+16 V) |
 
-NMOS pulse on a resistive load is the simplest possible NN-circuit
-test (no inverter, no feedback). Phase A+B regresses DN-NMOS even
-here on TSMC12/TSMC16 — the 7 × 10¹⁶ V max-delta is the same NR-runaway
-signature seen in inverter circuits.
+NMOS pulse on resistive load is the simplest NN-circuit test (no
+feedback). Phase A+B regresses DN-NMOS even here on TSMC12/16 — the
+7 × 10¹⁶ V max-delta is the same NR-runaway signature seen in inverter.
 
 ## 5. Diagnosis
 
 ### 5.1 Phase A: solver-only fixes deliver as scoped
 
-Phase A converted 1 ERROR + 1 OVERFLOW row into clean numerics or
-PASSes, with zero regression on currently-passing cells. The piecewise
-quadratic-then-linear A1 + retry-based GMIN A2 + dt-halve A3 stack is
-production-shippable on top of V4 production checkpoints.
+Phase A converted 1 ERROR + 1 OVERFLOW into clean numerics or PASSes,
+zero regression on currently-passing cells. Piecewise quadratic-then-
+linear A1 + retry-based GMIN A2 + dt-halve A3 stack is production-
+shippable on top of V4 production checkpoints.
 
 ### 5.2 Phase A+B: V5 MAE S-scale is not production-shippable
 
-The V5 MAE small-arch checkpoint shows the canonical "tunnel vision"
-failure mode: the model nails its training-distribution operating
-points (test-set NRMSE 0.083 % NMOS, 0.097 % PMOS — see Phase C report
-§3.1) and lifts the TSMC5 inverter-transient model-fit floor that
-none of V4 + Phase A could reach (16-20 % → < 10 %). But it
-catastrophically fails on circuit cells where NR steps go off the
-training distribution.
+V5 MAE small-arch shows canonical "tunnel vision": nails training
+operating points (test-set NRMSE 0.083 % NMOS, 0.097 % PMOS — Phase C
+§3.1), lifts TSMC5 inverter-transient model-fit floor unreachable by V4
++ Phase A (16-20 % → < 10 %). But catastrophically fails on cells where
+NR steps go off training distribution.
 
-Three structural hypotheses, ordered by likelihood (none yet verified
-in this sprint):
+Three structural hypotheses, ordered by likelihood (unverified):
 
-1. **S-scale capacity is insufficient for V5 distribution.** V5 has
-   2.0× the rows of V4 B1 (23.79 M vs 12.3 M); a 159 K-param model
-   that matched V4 prod's M-scale 5.15 M-param model on training-set
-   NRMSE has effectively over-fit a denser distribution while leaving
-   no capacity for extrapolation past ±VDD_train. The Phase A
-   piecewise rail-restoring (cap g_max = 5 mS past x_cap =
-   2.5·VDD_train) was tuned for V4 prod's natural extrapolation
-   behaviour and is overwhelmed when the NN's trained-region output
-   itself is large.
-2. **Phase B's `inv_trip` overlay densifies the trip-point band but
-   does not extend the (Vgs, Vds) extrapolation envelope past
-   ±VDD_train**, where the NR step eventually goes during transient.
-   Combined with #1, the model has no signal in the extrapolation
-   regime.
-3. **Phase B's filter relaxation (Id-only instead of all-13-output
-   AND-gate) may have admitted noisy charge/cap rows** that pulled the
-   small-arch model's charge / capacitance head away from a clean
-   physics fit. This would explain why NMOS pulse — which depends on
-   capacitive charging through R — also regresses on TSMC12/16.
+1. **S-scale capacity insufficient for V5 distribution.** V5 has 2.0×
+   the rows of V4 B1 (23.79 M vs 12.3 M); 159 K-param model matched V4
+   prod's 5.15 M-param model on training NRMSE but over-fit a denser
+   distribution, leaving no capacity for ±VDD_train extrapolation.
+   Phase A piecewise rail-restoring (g_max = 5 mS past 2.5·VDD_train)
+   was tuned for V4 prod's natural extrapolation and is overwhelmed
+   when NN's trained-region output is large.
+2. **Phase B's `inv_trip` overlay densifies trip-point band but does
+   not extend (Vgs, Vds) extrapolation envelope past ±VDD_train**,
+   where NR step goes during transient. Combined with #1, no signal in
+   extrapolation regime.
+3. **Phase B's filter relaxation (Id-only instead of 13-output
+   AND-gate) may have admitted noisy charge/cap rows** pulling small-
+   arch charge/cap head away from physics fit. Explains why NMOS pulse
+   — capacitive charging through R — regresses on TSMC12/16.
 
-The single TSMC5 transient win (16.90 → 0.92 % on DN) is the data
-overlay's *intended* contribution: that's exactly the cell the
-`inv_trip` overlay was sized to fix. The same overlay does not
+TSMC5 transient win (16.90 → 0.92 %) is the overlay's *intended*
+contribution — exactly the cell `inv_trip` was sized to fix. Does not
 generalise.
 
 ### 5.3 Recommendation
 
-* **Ship Phase A as production.** The post-Phase-A simulator + V4
-  production checkpoints is strictly better than V4-baseline on every
-  cell that converged in V4 (no regression) and recovers 1 ERROR and
-  1 OVERFLOW row.
-* **Do NOT ship Phase A+B (V5 MAE S-scale) to production.** The
-  TSMC5 transient win is real but isolated; circuit-level convergence
-  on TSMC7/12/16 is broken.
-* **Phase D (next sprint) should:**
+* **Ship Phase A.** Post-Phase-A simulator + V4 checkpoints strictly
+  better than V4-baseline on every V4-converged cell (no regression);
+  recovers 1 ERROR and 1 OVERFLOW.
+* **Do NOT ship Phase A+B (V5 MAE S-scale).** TSMC5 transient win real
+  but isolated; circuit-level convergence on TSMC7/12/16 broken.
+* **Phase D should:**
   - **Retrain V5 at M-scale** (~5 M params, matching V4 prod) to
     isolate hypothesis #1 from #2/#3.
-  - **A/B V5 vs V4 B1 datasets at the same architecture** to isolate
-    hypothesis #2/#3 from the data-distribution change.
-  - **Investigate the ±VDD_train extrapolation envelope** — possibly
-    add a synthetic far-field training signal (linear ramp past rail
-    matching the simulator's piecewise A1 stamping) so the NN's
-    extrapolation matches the simulator's expectation.
+  - **A/B V5 vs V4 B1 datasets at same arch** to isolate #2/#3 from
+    data-distribution change.
+  - **Investigate ±VDD_train extrapolation** — possibly add synthetic
+    far-field training signal (linear ramp past rail matching piecewise
+    A1 stamping).
 
 ## 6. Reproduce
 
@@ -262,6 +238,5 @@ conda run -n pycircuitsim python tests/verify_nn_dc_tran.py \
     --tech TSMC5,TSMC7,TSMC12,TSMC16
 ```
 
-Wall-clock per run on Blackwell + 32-core CPU: V4 baseline ~2:00,
-Phase A ~2:20, Phase A+B ~1:40 (faster because most failures fire fast
-NR_FAIL before the GMIN-retry slow path engages).
+Wall-clock on Blackwell + 32-core CPU: V4 ~2:00, Phase A ~2:20, Phase
+A+B ~1:40 (faster — most failures fast NR_FAIL before GMIN-retry).

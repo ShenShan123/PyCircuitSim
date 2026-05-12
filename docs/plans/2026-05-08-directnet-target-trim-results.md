@@ -70,14 +70,9 @@ above.)
 
 ## Follow-ups
 
-- E2-medium with stronger regularisation (higher dropout, weight
-  decay) might recover the small-scale win at medium scale. Untested.
-- Multi-seed E2-medium would distinguish "regression" from "variance"
-  — current run is single-seed.
-- The legacy 1.5 M-param model at 6.57 % NRMSE remains the best
-  result. Re-running it on the post-refactor pipeline at "large"
-  preset would be the next data point if a higher-quality production
-  ckpt is wanted.
+- E2-medium with stronger regularisation (dropout, weight decay) might recover the small-scale win at medium scale. Untested.
+- Multi-seed E2-medium would distinguish "regression" from "variance" — current run is single-seed.
+- The legacy 1.5 M-param model at 6.57 % NRMSE remains the best result. Re-running at "large" preset would be the next data point.
 
 ## Plumbing landed
 

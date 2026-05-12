@@ -3,7 +3,7 @@
 **Date:** 2026-05-04
 **Branch:** `feat/bsimar-v5-phase-a`
 **Plan reference:** `docs/superpowers/plans/2026-05-03-phys-best-tracker-bug.md` §5 D1
-**Trigger:** Two independent bugs (Bug A — `apply_id_gate` index mismatch; Bug B — mean phys-score AR-rollout blowup) were fixed and the simulator-side loader updated to fall back to `_best.pt` for legacy checkpoints whose `phys_best_metric` flag is `legacy_mean`. v4 has only Bug B (Bug A entered with v5b's structural id-gate, never touched v4). This rebaseline captures the v4 numbers under the corrected loader so subsequent v5/v6 retrains have a correct anchor.
+**Trigger:** Two bugs fixed (Bug A — `apply_id_gate` index mismatch; Bug B — mean phys-score AR-rollout blowup) and the simulator loader updated to fall back to `_best.pt` for legacy checkpoints whose `phys_best_metric` flag is `legacy_mean`. v4 has only Bug B (Bug A entered with v5b's structural id-gate). This rebaseline captures v4 numbers under the corrected loader as the anchor for v5/v6 retrains.
 
 ## Loader state
 
@@ -38,7 +38,7 @@ Run: `tests/diag_phys_best_explosion.py --prefix v4_universal --device-type {nmo
 | **median** | 0.73 % | 0.989 | 0.95 % | 0.989 |
 | **mean**   | 2.09 % | 0.802 | 1.78 % | 0.798 |
 
-**Interpretation:** id is well-predicted under AR rollout (1.2 %–2.5 % NRMSE). Mean and median phys-scores are within 5 % of each other — Bug B's mean-aggregator never catastrophically misranked v4 because v4's id slot did not blow up under AR rollout (no Bug A → no AR drift catastrophe). The two notable outliers (gmb at 7.6–12.8 %, cgg at 4.9–5.1 %) are pre-existing v4 limitations, not bug-induced.
+**Interpretation:** id well-predicted under AR rollout (1.2–2.5 % NRMSE). Mean and median phys-scores within 5 % of each other — Bug B's mean-aggregator never catastrophically misranked v4 because v4's id slot did not blow up under AR rollout (no Bug A → no AR drift catastrophe). Outliers (gmb 7.6–12.8 %, cgg 4.9–5.1 %) are pre-existing v4 limitations, not bug-induced.
 
 ## Inverter verification (full simulator path, NGSPICE ground truth)
 
@@ -101,42 +101,29 @@ Per-tech, BSIMAR (LEVEL=74, AR) and DirectNet (LEVEL=73, DN). Thresholds: DC ≤
 | TSMC7 NMOS DC AR      | 14.72 % | 14.52 % | −0.20 |
 | TSMC7 VTC AR          | 19.15 % | 20.03 % | +0.88 |
 
-All deltas are within sampling noise (±1 pp). Confirms:
+All deltas within sampling noise (±1 pp). Confirms:
 
-* The loader fix correctly switched v4 from `.phys.bug.pt` → `_best.pt`.
-* v4's TF-best and phys-best (mean-tracked) checkpoints were essentially equivalent in inverter-level NRMSE — Bug B did not catastrophically misrank for v4. This is consistent with the test-split diagnostic above (mean 1.78 % vs median 0.95 % — a factor-of-2 gap, not a 10⁹× gap as on v5c).
-* v5b's "B1 sampler FAIL" verdict (`results/v5b_sdata_gate_2026_05_02.md`) likely *cannot* be blamed primarily on Bug B — v4's mean-tracker happened to land near the right checkpoint. v5b's failure was driven by the combined Bug A (gate corrupted id training) + Bug B (mean-tracker exposed to the corrupted id), and on v5b both bugs were active simultaneously. Plan §5 D2's question — *"if v4 (rebased) ≈ v5b on TSMC7 NMOS DC → B1 sampler still didn't help"* — resolves to: v4 rebased ≈ v4 prior numbers ≈ 14.5 % TSMC7 NMOS DC; v5b's number is meaningless because v5b checkpoints are Bug-A-corrupted. **The B1 sampler hypothesis is neither confirmed nor rejected by this rebaseline** — it requires a clean Bug-A-fixed v6 retrain to evaluate.
+* Loader fix correctly switched v4 from `.phys.bug.pt` → `_best.pt`.
+* v4's TF-best and phys-best (mean-tracked) checkpoints were essentially equivalent in inverter-level NRMSE — Bug B did not catastrophically misrank for v4 (test-split mean 1.78 % vs median 0.95 % — factor-of-2 gap, not 10⁹× as on v5c).
+* v5b's "B1 sampler FAIL" verdict (`results/v5b_sdata_gate_2026_05_02.md`) cannot be primarily blamed on Bug B — v5b's failure was Bug A (gate corrupted id training) + Bug B (mean-tracker exposed to the corrupted id) simultaneously. Plan §5 D2 resolves to: v4 rebased ≈ v4 prior ≈ 14.5 % TSMC7 NMOS DC; v5b's number is meaningless because v5b checkpoints are Bug-A-corrupted. **The B1 sampler hypothesis is neither confirmed nor rejected** — it requires a clean Bug-A-fixed v6 retrain to evaluate.
 
 ## Persistent limitations (carried over from v4, NOT bug-induced)
 
-1. **TSMC7 NMOS DC + VTC (14–20 % NRMSE).** D1 diagnostic
-   (`results/v5_d1_tsmc7_nmos_errors/`) attributed this to LHS
-   under-sampling of the strong-inversion + saturation plateau
-   (~16× under-represented vs the verifier's uniform Vgs sweep).
-   Both BSIMAR and DirectNet hit the same wall, suggesting a
-   data-coverage problem rather than an architecture-specific one.
-2. **TSMC12/16 PMOS DC (12–14 %).** Same sampling-basis class.
-   Affects both BSIMAR and DirectNet symmetrically.
-3. **TSMC5 inverter VTC (10.0/10.7 %).** Borderline — at the gate
-   threshold. AR is 0.01 pp over, DN is 0.7 pp over. Sensitive to
-   the verifier's NRMSE definition; could pass or fail run-to-run.
-4. **gmb predictions are weak universally** (NMOS 12.8 % R²
-   −0.23; PMOS 7.6 % R² −0.10). Has been like this since v4
-   shipped. Inverter-level numbers don't surface this because gmb
-   contributes weakly to the I-V solution at the inverter
-   operating point. Worth investigating if SRAM benchmarks are
-   added.
+1. **TSMC7 NMOS DC + VTC (14–20 % NRMSE).** D1 diagnostic (`results/v5_d1_tsmc7_nmos_errors/`) attributed this to LHS under-sampling of the strong-inversion + saturation plateau (~16× under-represented vs verifier's uniform Vgs sweep). Both BSIMAR and DirectNet hit the same wall — data-coverage problem, not architecture-specific.
+2. **TSMC12/16 PMOS DC (12–14 %).** Same sampling-basis class. Affects both models symmetrically.
+3. **TSMC5 inverter VTC (10.0/10.7 %).** Borderline — at the gate threshold. AR 0.01 pp over, DN 0.7 pp over. Sensitive to NRMSE definition; could pass or fail run-to-run.
+4. **gmb predictions universally weak** (NMOS 12.8 % R² −0.23; PMOS 7.6 % R² −0.10). Pre-existing v4 issue. Inverter-level numbers don't surface this (gmb contributes weakly at the inverter operating point). Worth investigating if SRAM benchmarks are added.
 
 ## Conclusion
 
-**v4 with the corrected loader is the right "rewind" target for production.** id NRMSE 1.2 % (NMOS) / 2.5 % (PMOS) on the test split, all 8 inverter transients PASS, DC pass-rate consistent with the documented v4 limitations (TSMC7 NMOS / TSMC12-16 PMOS).
+**v4 with the corrected loader is the right "rewind" target for production.** id NRMSE 1.2 % (NMOS) / 2.5 % (PMOS) on the test split, all 8 inverter transients PASS, DC pass-rate consistent with documented v4 limitations (TSMC7 NMOS / TSMC12-16 PMOS).
 
-The two newly-identified bugs were:
+The two bugs:
 
 * **Bug A** — corrupts only v5b/v5c TF-trained Transformer weights (gate denormalised id using qg's stats). v4/v5a never used the gate.
-* **Bug B** — would mis-pick `_best.phys.pt` over `_best.pt` whenever a single output's AR-rollout NRMSE blew up. v4 never produced such a blowup; v5b/v5c did (because Bug A primed it).
+* **Bug B** — would mis-pick `_best.phys.pt` over `_best.pt` whenever a single output's AR-rollout NRMSE blew up. v4 never produced such a blowup; v5b/v5c did (Bug A primed it).
 
-Therefore: shipping v4 under the fixed loader has no behaviour regression vs the pre-fix shipped numbers. The v5b/v5c checkpoints are discarded; the path to a v6 retrain (with both bug fixes + B1 hybrid-grid data + B2 slope loss + B3 gate) is unchanged but should now be evaluated against this v4 rebaseline rather than against v5_baseline_2026_04_22.md (which used the buggy loader, even though for v4 the difference was sub-1-pp).
+Shipping v4 under the fixed loader has no behaviour regression vs pre-fix numbers. v5b/v5c checkpoints discarded. v6 retrain path (both bug fixes + B1 hybrid-grid data + B2 slope loss + B3 gate) is unchanged but should be evaluated against this v4 rebaseline rather than `v5_baseline_2026_04_22.md`.
 
 ## Reproduce
 

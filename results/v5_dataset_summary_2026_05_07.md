@@ -4,9 +4,7 @@
 > Branch (parent): `worktree-agent-aad58748a325581b9`.
 > Branch (PyCMG submodule): `worktree-agent-aad58748a325581b9`.
 
-This report is the gate evidence for §1.3 Phase B of the V5 plan. It
-covers the six required sections from the Phase B prompt, plus an
-honest sign-off against the four gate criteria.
+Gate evidence for §1.3 Phase B of the V5 plan: six required sections plus sign-off against the four gate criteria.
 
 ---
 
@@ -59,13 +57,9 @@ Sample-class enum (PyCMG `SAMPLE_CLASS_NAMES`):
 | PMOS | 12,094,908 |
 | **Sum** | **23,791,164** |
 
-V4 B1 baseline (per the SML report referenced in the Phase B prompt):
-**~12,300,000 rows** total across both polarities.
+V4 B1 baseline: **~12,300,000 rows** across both polarities.
 
-**Δ = +93.4 %**, i.e. roughly 1.93× the V4 B1 row count. This **exceeds
-the ±20 % ceiling** in the Phase B gate (§1.3). Section 8 documents
-this explicitly and explains the cause; the production gate cannot be
-declared satisfied on row count alone.
+**Δ = +93.4 %** (~1.93× V4 B1). **Exceeds the ±20 % ceiling** in Phase B gate (§1.3). §8 explains the cause.
 
 ---
 
@@ -84,9 +78,7 @@ declared satisfied on row count alone.
 | **`overshoot` (NEW)** | **633,600** | **655,200** | **1,288,800** |
 | **`vbs_lhs` (NEW)** | **950,400** | **982,800** | **1,933,200** |
 
-All three new V5 classes (`inv_trip`, `overshoot`, `vbs_lhs`) are
-present and well-populated in both polarities. The `lhs` class is
-correctly empty (legacy sampler is off by default in V5).
+All three new V5 classes well-populated in both polarities. `lhs` correctly empty (legacy sampler off).
 
 ---
 
@@ -100,13 +92,9 @@ correctly empty (legacy sampler is off by default in V5).
 | TSMC12 | 3,322,800 | 3,322,800 |
 | TSMC16 | 3,322,800 | 3,322,800 |
 
-**ASAP7 leakage check: PASS.** The cached tech-variant labels do not
-contain any ASAP7 codes (codes 18-21 from `bsimar.config.TECH_VARIANT_CODES`).
-Zero `UNLABELLED` rows in either polarity.
+**ASAP7 leakage check: PASS.** No ASAP7 codes (18-21) in cached labels. Zero `UNLABELLED` rows.
 
-The TSMC7 NMOS/PMOS asymmetry (2.39M nmos vs 2.79M pmos) reflects PDK
-bin-count differences between the polarities. TSMC5/12/16 are
-symmetric.
+TSMC7 NMOS/PMOS asymmetry (2.39M vs 2.79M) reflects PDK bin-count differences. TSMC5/12/16 symmetric.
 
 ---
 
@@ -156,53 +144,34 @@ PMOS — 17 tech-variants, all populated:
 | tsmc16:hvt | 664,560 |
 | tsmc16:lnvt | 664,560 |
 
-Sanity check: **no variant is starved** (minimum is 664,548 — well
-within an order of magnitude of the maximum 930,372). The TSMC7 PMOS
-variants are larger because their PDK exposes more (L, NFIN) combos.
+**No variant starved** (min 664,548, max 930,372 — within order of magnitude). TSMC7 PMOS variants larger because the PDK exposes more (L, NFIN) combos.
 
 ---
 
 ## 6. (Vgs, Vds) coverage histogram + trip-band density
 
-The Vgs/Vds box now spans `[0, 1.5·VDD]` (B2 box-factor reduction)
-plus the dedicated `[VDD, 1.6·VDD]²` overshoot densification.
+Vgs/Vds box spans `[0, 1.5·VDD]` (B2 box-factor reduction) plus dedicated `[VDD, 1.6·VDD]²` overshoot densification.
 
-NMOS observed range:
-- Vgs ∈ [0.000, 1.600] V
-- Vds ∈ [0.000, 1.280] V
+NMOS range: Vgs ∈ [0.000, 1.600] V, Vds ∈ [0.000, 1.280] V. PMOS same (sign-flipped).
 
-PMOS observed range (sign-flipped to NMOS-positive convention for
-display): same as NMOS within ε.
-
-Maximum is 1.6 V on Vgs (matches `1.6·VDD_TSMC12 = 1.28` — the
-overshoot region on TSMC12/16; with TSMC5 VDD=0.65 the ceiling is
-1.04 V; the pooled max is 1.6 V from TSMC12/16 overshoot rows).
+Max 1.6 V on Vgs comes from TSMC12/16 overshoot rows (`1.6·VDD_TSMC12 = 1.28`; TSMC5 ceiling 1.04 V).
 
 ### 6.1 Trip-band density gain
 
-The `inv_trip` overlay puts 25×9×3 = 675 deterministic samples per
-bin inside the inverter switching band
-`(Vgs ∈ [Vth−0.10, Vth+0.15], Vds ∈ [0.30·VDD, 0.70·VDD])`.
+`inv_trip` overlay places 25×9×3 = 675 deterministic samples/bin inside `(Vgs ∈ [Vth−0.10, Vth+0.15], Vds ∈ [0.30·VDD, 0.70·VDD])`.
 
-Computing the fraction of samples landing in a coarse approximation
-of that band — `Vgs ∈ [0.20·VDD, 0.70·VDD] × Vds ∈ [0.30·VDD, 0.70·VDD]`
-with `VDD=0.75` — gives:
+Coarse band check `Vgs ∈ [0.20·VDD, 0.70·VDD] × Vds ∈ [0.30·VDD, 0.70·VDD]` (VDD=0.75):
 
 | Polarity | trip-band rows | trip-band fraction |
 |---|---:|---:|
 | NMOS | 1,070,918 | **9.16 %** |
 | PMOS | 1,096,913 | **9.07 %** |
 
-This is consistent with the design budget: `inv_trip` contributes
-675 rows / bin out of 7384 total = **9.14 %** of the per-bin row
-volume — which is exactly what the trip-band fraction reads back. The
-1M-row inv_trip overlay landed.
+Matches design budget: `inv_trip` is 675/7384 = **9.14 %** per-bin. The 1M-row inv_trip overlay landed.
 
 ### 6.2 16×16 (|Vgs|, |Vds|) histogram on NMOS
 
-Bin edges: `np.linspace(0, 1.28 V, 17)`, so each bin is 80 mV wide.
-Counts (×1000) below — the rows are |Vgs| bins (low → high), columns
-are |Vds| bins:
+Bin edges: `np.linspace(0, 1.28 V, 17)`, 80 mV wide. Counts ×1000, rows = |Vgs| bins, cols = |Vds| bins:
 
 ```
         Vds bin (V)
@@ -213,11 +182,7 @@ Vgs:
 ...
 ```
 
-Full numerics (16 × 16 = 256 cells per polarity) live in
-`/tmp/v5_summary.json` under `nmos.hist2d_vg_vd` and
-`pmos.hist2d_vg_vd`. Coverage is bimodal: mass concentrated in the
-core `[0, VDD]²` box (grid + hot + inv_trip + small_vds) plus a
-tail that spans the overshoot box up to 1.6·VDD.
+Full 16×16 numerics live in `/tmp/v5_summary.json` under `nmos.hist2d_vg_vd` and `pmos.hist2d_vg_vd`. Coverage bimodal: core `[0, VDD]²` box (grid + hot + inv_trip + small_vds) plus tail spanning the overshoot box up to 1.6·VDD.
 
 ---
 
@@ -228,15 +193,11 @@ tail that spans the overshoot box up to 1.6·VDD.
 | NMOS | 10,764,258 | 8.0 % | 8,611,406 | 1,076,425 | 1,076,427 |
 | PMOS | 10,904,620 | 9.8 % | 8,723,696 | 1,090,462 | 1,090,462 |
 
-* `filter_small_targets` (B4 Id-only gate) drops 8-10 % of rows. The
-  bulk of the drops are deep-cutoff `inv_trip` rows where Vgs sits
-  ~100 mV below Vth and Id underflows below 1e-15 A.
-* `exclude_techs={"asap7"}` keeps **all** post-filter rows in both
-  polarities, confirming there is no ASAP7 leakage.
-* The standard 80/10/10 split lands cleanly.
+* `filter_small_targets` (B4 Id-only) drops 8-10 % — mostly deep-cutoff `inv_trip` rows where Id < 1e-15 A.
+* `exclude_techs={"asap7"}` keeps **all** post-filter rows (no ASAP7 leakage).
+* Standard 80/10/10 split lands cleanly.
 
-The round-trip uses the unchanged public API — the V5 `.npz` files
-load through `load_and_split_bsimar` with no schema changes required.
+Round-trip uses unchanged public API — no schema changes required.
 
 ---
 
@@ -253,48 +214,24 @@ load through `load_and_split_bsimar` with no schema changes required.
 
 ### Why the row-count gate fails
 
-The V5 sampler is strictly a **superset** of the V4 B1 sampler:
+V5 sampler is strictly a **superset** of V4 B1:
 
-* V4 B1 base bulk = `grid` (4500/bin) + `hot` (720/bin) + targeted
-  classes (anchor 9 + vds_zero 60 + subthresh 300 + small_vds 120 = 489)
-  ≈ **5709 rows / bin**.
-* V5 adds three new sample classes for the inverter-trip-point and
-  rail-restoring concerns — `inv_trip` (675/bin) + `overshoot`
-  (400/bin) + `vbs_lhs` (600/bin) = **+1675 rows / bin**.
-* The B2 box-factor reduction (2.0 → 1.5) does not reduce per-bin
-  count — it only changes the coverage span for the existing `grid`
-  class, which is still 30×30×5 cells regardless of box width.
+* V4 B1 base bulk = `grid` (4500/bin) + `hot` (720/bin) + targeted (anchor 9 + vds_zero 60 + subthresh 300 + small_vds 120 = 489) ≈ **5709 rows/bin**.
+* V5 adds `inv_trip` (675/bin) + `overshoot` (400/bin) + `vbs_lhs` (600/bin) = **+1675 rows/bin**.
+* B2 box-factor reduction (2.0 → 1.5) does not reduce per-bin count — only changes span of existing `grid`.
 
-So the V5 dataset is roughly `(5709 + 1675) / 5709 ≈ 1.29×` per bin,
-and ~1.93× total, which matches §2's +93.4 % observation given that
-V4 B1 was generated against a smaller variant set on the same bin
-schedule.
+V5 ≈ `(5709 + 1675) / 5709 ≈ 1.29×` per bin, ~1.93× total — matches §2's +93.4 %.
 
-The +93.4 % overshoot is **a known consequence of layering three new
-sample classes onto the existing B1 grid+hot bulk**, not a sampler
-bug. The V5 plan §4 specified each class explicitly and did not call
-for compensating reductions in `grid` or `hot`. Two paths forward if
-the user wants to enforce the ±20 % gate strictly:
+Known consequence of layering new classes onto B1 bulk, not a bug. V5 plan §4 specified each class and did not call for compensating reductions. If ±20 % gate must be enforced:
 
-1. Lower `grid_per_axis` from 30 → 22 (saves ~52 % of the 4500/bin
-   bulk, brings total close to V4 B1).
-2. Drop `vbs_lhs` (saves 600/bin, brings the delta to roughly +60 %)
-   or trim `inv_trip` to 15×7×3 = 315/bin.
+1. Lower `grid_per_axis` 30 → 22 (saves ~52 % of 4500/bin bulk).
+2. Drop `vbs_lhs` (saves 600/bin → +60 %) or trim `inv_trip` to 15×7×3 = 315/bin.
 
-Both are one-line changes in the new V5 defaults. The decision
-belongs to Phase C — the larger row count is, *prima facie*, more
-training signal, and the existing TSMC7 NMOS DC sampling deficit
-that motivated this work was about *coverage* in a specific region
-(strong-inversion + saturation), not total row volume.
+Decision belongs to Phase C — larger row count is more training signal, and the TSMC7 NMOS DC deficit was about *coverage* in strong-inversion + saturation, not volume.
 
 ### Net assessment
 
-**5/6 gate criteria pass; the row-count criterion is over by a factor
-of ~5×.** All structural V5 changes (new sample classes, ASAP7
-exclusion, schema-stable round-trip) verify correctly. The
-oversampled total is fully attributable to the additive nature of the
-B1+B2+B3 plan and is not a regression in any measured Phase B
-behaviour.
+**5/6 gate criteria pass; row-count criterion over by ~5×.** All structural V5 changes (new sample classes, ASAP7 exclusion, schema-stable round-trip) verify correctly. Oversample is additive consequence of B1+B2+B3, not a regression.
 
 ---
 
@@ -310,8 +247,7 @@ behaviour.
 
 ## 10. Submodule pointer
 
-PyCMG submodule sits at `worktree-agent-aad58748a325581b9` HEAD with
-two new commits:
+PyCMG submodule at `worktree-agent-aad58748a325581b9` HEAD with two new commits:
 
 ```
 8319d03 feat(scripts): v5 plan §4-B5 --version + --exclude-techs flags

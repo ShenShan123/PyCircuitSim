@@ -12,7 +12,7 @@ blow-up and TSMC5 DN inverter transient below the 15 % gate (was
 
 Four orthogonal levers tried (solver progress watchdog, Vin-bisection,
 medium-capacity retrain, TSMC5-only residual head). **All four
-reverted.** The session converged on a structural diagnosis:
+reverted.** Structural diagnosis:
 
 > TSMC5 DN inverter VTC's catastrophic failure is a **stable wrong
 > fixed point at V_out ≈ 1.3 × VDD** — extrapolated territory that no
@@ -33,23 +33,20 @@ V6 shipping set unchanged.
 
 ## Diagnostic ground (three parallel agents, session start)
 
-1. **Code-path agent** — identified that `_vdd_estimate` (rule 19a) is
-   computed universal-wide, not per-tech; the Tier-1A trust-region
-   clamp pins per-iteration `|ΔV| ≤ VDD` so NR oscillates at the
-   ceiling; there is **no "no global progress over N iters" watchdog**;
-   the oscillation-acceptance path averages the last 3 snapshots and
-   accepts them — explains why TSMC5 VTC returns a smoothed-but-wrong
-   59,286 % bounded number instead of a clean NR_FAIL.
+1. **Code-path agent** — `_vdd_estimate` (rule 19a) is universal-wide,
+   not per-tech; Tier-1A trust-region clamp pins `|ΔV| ≤ VDD` so NR
+   oscillates at ceiling; **no global-progress watchdog**; oscillation-
+   acceptance averages last 3 snapshots — explains why TSMC5 VTC
+   returns smoothed-but-wrong 59,286 % bounded instead of clean NR_FAIL.
 2. **Dataset agent** — over `universal_nmos.npz` (12.33 M TSMC rows),
-   TSMC5 is **not** under-sampled on any off-(Vgs, Vds) axis. Row
-   counts within 1.1× of mean; identical T-grid; zero starved cells
-   in the joint `(L, NFIN, T, Vbs-sign)` 4-tuple. **Not a coverage
-   problem.**
+   TSMC5 is **not** under-sampled. Row counts within 1.1× of mean;
+   identical T-grid; zero starved cells in `(L, NFIN, T, Vbs-sign)`.
+   **Not a coverage problem.**
 3. **Web research** — surfaced MSH arclength continuation (DATE 2024),
    ATANSH homotopy (Roychowdhury 2006), Levenberg-Marquardt damping,
    AutoPINN structural Vds transform (Micromachines 2023), KAN paper
-   (Novkin 2025) finding that NR convergence is dominated by
-   second-derivative smoothness rather than per-point Id NRMSE.
+   (Novkin 2025): NR convergence dominated by second-derivative
+   smoothness, not per-point Id NRMSE.
 
 ## Results (every cell, every tier)
 
@@ -70,90 +67,75 @@ burned per-step budget at TSMC5.)
 ### Tier S1 — Solver progress watchdog + bounded-numeric kill — REVERTED
 - Three hunks added to `pycircuitsim/solver.py`: (a) min-residual
   progress watchdog over 20 iters; (b) 5×VDD bounded-numeric kill in
-  the oscillation-acceptance path; (c) 50-step source-stepping retry
-  in `_solve_dc_with_retry` for NN circuits.
-- **TSMC5 DN VTC: 59,286 % → 68.22 %**, but the value moved because
-  the failure mode *changed shape* — from smoothed oscillation around
-  a wrong attractor to a stable wrong fixed point at V_out ≈
-  0.80–0.91 V (1.3×VDD). The 5×VDD threshold was too lax to catch a
-  1.3×VDD attractor.
-- **Wall-time exploded.** The 50-step source-stepping retry burned
-  uncapped wall-time per Vin step. 16-cell verify timed out before
-  reaching TSMC16 VTC + any transient.
-- **Diagnostic value:** revealed the true failure mode (stable wrong
+  oscillation-acceptance path; (c) 50-step source-stepping retry in
+  `_solve_dc_with_retry` for NN circuits.
+- **TSMC5 DN VTC: 59,286 % → 68.22 %** — but failure mode *changed
+  shape* from smoothed oscillation to stable wrong fixed point at
+  V_out ≈ 0.80–0.91 V (1.3×VDD). 5×VDD threshold too lax for 1.3×VDD.
+- **Wall-time exploded.** 50-step source-stepping retry burned uncapped
+  per-Vin time. 16-cell verify timed out before TSMC16 VTC.
+- **Diagnostic value:** revealed true failure mode (stable wrong
   attractor above rail, not NR oscillation).
 
 ### Tier S2 — Bounded-Vout watchdog + Vin-bisection — REVERTED
-- Replaced S1's 5×VDD threshold with a tighter 1.2×VDD bounded-Vout
-  watchdog at the sweep-step level. Added Vin-bisection retry (up to
-  4 levels, 5 s wall-time cap per step).
-- **TSMC5 DN VTC unchanged at 59,286 %** because the wrong attractor
-  exists at *every* Vin in the sweep — bisection has no
-  "known-good" previous solution to bootstrap from.
-- **TSMC7 VTC 9.97→5.39 %, TSMC12 VTC 6.50→4.55 %** were genuine
-  improvements: bisection helped on cells where the wrong attractor
-  is localized to the trip cone.
-- **Wall-time still exceeded the 40-min cap** because the 5 s × 130
-  sweep points × 4 techs of bisection budget = unbounded total.
+- Replaced S1's 5×VDD with tighter 1.2×VDD bounded-Vout watchdog at
+  sweep-step level. Added Vin-bisection retry (up to 4 levels, 5 s
+  per-step cap).
+- **TSMC5 DN VTC unchanged at 59,286 %** — wrong attractor exists at
+  *every* Vin; bisection has no "known-good" previous solution.
+- **TSMC7 VTC 9.97→5.39 %, TSMC12 VTC 6.50→4.55 %** — genuine wins
+  where wrong attractor is localized to trip cone.
+- **Wall-time exceeded 40-min cap** — 5 s × 130 points × 4 techs.
 
 ### Tier M1 — B0-medium asinh DN retrain — REVERTED
 - Trained `v6_dn_medium_e2_asinh_{nmos,pmos}` with 340 K params (6×
-  the V6 small probe), 200 epochs, same recipe.
-- **First attempt corrupted by disk-pressure / process kill** at
-  ~80 min in. `torch.save` truncated mid-write, checkpoint zip missing
-  central directory. Re-ran cleanly without `conda run` (direct python
-  invocation with `PYTHONUNBUFFERED=1`); both runs completed in ~140
-  minutes total.
-- **TSMC5 DN VTC: 59,286 → 50.48 %** (catastrophic → graceful, still
-  FAIL). **TSMC7 DN VTC: 9.97 → 2.85 %** big win.
-- **TSMC16 DN VTC: 5.40 PASS → 16.10 FAIL** — hard regression. The
-  capacity bump shifted the wrong-attractor problem from TSMC5 to
-  TSMC16 rather than removing it.
-- Consistent with the KAN paper finding: NR convergence is governed
-  by second-derivative smoothness, not Id NRMSE. The medium model has
-  lower training NRMSE but a different Jacobian shape that puts
-  TSMC16's trip cone into a wrong-attractor basin.
+  V6 small probe), 200 epochs, same recipe.
+- **First attempt corrupted** by disk-pressure / process kill at ~80
+  min. `torch.save` truncated; missing zip central directory. Re-ran
+  without `conda run` (direct python, `PYTHONUNBUFFERED=1`); ~140 min
+  total.
+- **TSMC5 DN VTC: 59,286 → 50.48 %** (catastrophic → graceful FAIL).
+  **TSMC7 DN VTC: 9.97 → 2.85 %** big win.
+- **TSMC16 DN VTC: 5.40 PASS → 16.10 FAIL** — hard regression. Capacity
+  bump shifted wrong-attractor from TSMC5 to TSMC16, not removed.
+- Consistent with KAN paper: NR convergence governed by second-
+  derivative smoothness, not Id NRMSE. Medium model has lower training
+  NRMSE but different Jacobian shape putting TSMC16 trip cone into
+  wrong-attractor basin.
 
 ### Tier M2 — TSMC5-only residual head — REVERTED
-- 1,844-param residual MLP head on the frozen V6 small-probe backbone,
-  conditioned on `tech_code ∈ {0,1,2,3}`. Final linear init to zero so
-  residual starts as additive identity.
-- Trained NMOS+PMOS for 30 epochs on TSMC5-only rows (1.9 M / 2.0 M).
-  Training-space val improvement: **0.17 % / 0.31 %** — backbone
-  already saturates the in-distribution fit; the residual has no
-  significant gradient signal.
+- 1,844-param residual MLP head on frozen V6 small-probe backbone,
+  conditioned on `tech_code ∈ {0,1,2,3}`. Final linear init zero
+  (additive identity).
+- Trained NMOS+PMOS 30 epochs on TSMC5-only rows (1.9 M / 2.0 M).
+  Training val improvement: **0.17 % / 0.31 %** — backbone already
+  saturates in-distribution fit; residual has no gradient signal.
 - **TSMC5 DN VTC: 59,286 → 59,266 %** (unchanged catastrophic).
-  **TSMC5 DN tran: 17.76 → 15.69 %** (+2.07 pp, still FAIL marginally).
-- TSMC7 VTC 9.97 → 5.42 % (unexpected, gating-by-tech-code leakage);
-  TSMC7 tran 10.88 → 14.38 % (−3.5 pp regression violating the 0.3 pp
-  gate). TSMC12/16 byte-identical ✓.
-- **The residual cannot fix the wrong attractor** because the wrong
-  attractor lives at V_out > VDD — out-of-distribution at training
-  time, no gradient signal points the residual head toward "make Id
-  non-zero at V_out > VDD to restore the rail."
+  **TSMC5 DN tran: 17.76 → 15.69 %** (+2.07 pp, still marginal FAIL).
+- TSMC7 VTC 9.97 → 5.42 % (gating-by-tech-code leakage); TSMC7 tran
+  10.88 → 14.38 % (−3.5 pp, violates 0.3 pp gate). TSMC12/16
+  byte-identical.
+- **Residual cannot fix wrong attractor** — it lives at V_out > VDD,
+  out-of-distribution at train time, no gradient signal toward "make
+  Id non-zero at V_out > VDD to restore the rail."
 
 ## Final structural diagnosis
 
-The four tiers collectively prove a structural property of the
-TSMC5 DN inverter:
+Four tiers collectively prove:
 
-1. **It is not a solver problem.** S1 (progress watchdog +
-   bounded-numeric kill + retry escalation) and S2 (Vin-bisection)
-   both leave the wrong fixed point intact. Bisection finds the same
-   basin from every starting Vin.
-2. **It is not a model-capacity problem.** M1 (6× capacity) only
-   shape-shifts the wrong-attractor pattern across techs.
-3. **It is not an in-distribution training problem.** M2 (TSMC5-only
-   residual head, frozen backbone) saturates the in-distribution val
-   improvement at 0.17 % while the VTC catastrophic value is
-   unchanged.
-4. **It is not a data-coverage problem on standard axes.** TSMC5 row
-   counts and joint cell coverage match peers within 1.1×.
+1. **Not a solver problem.** S1 (watchdog + bounded-numeric kill +
+   retry) and S2 (Vin-bisection) both leave wrong fixed point intact.
+   Bisection finds the same basin from every starting Vin.
+2. **Not a model-capacity problem.** M1 (6× capacity) shape-shifts
+   wrong-attractor pattern across techs.
+3. **Not an in-distribution training problem.** M2 saturates val
+   improvement at 0.17 % while VTC catastrophic value unchanged.
+4. **Not a data-coverage problem on standard axes.** TSMC5 row counts
+   match peers within 1.1×.
 
-The remaining hypothesis: the wrong attractor lives in **extrapolated
-territory** (V_out > VDD) where rule 19a's rail-restoring
-extrapolation provides the only "physics" — and at TSMC5's specific
-operating point, it is not strong enough.
+Remaining hypothesis: wrong attractor lives in **extrapolated territory**
+(V_out > VDD) where rule 19a rail-restoring is the only "physics" — and
+at TSMC5's operating point, not strong enough.
 
 ## Recommendations for the next session (out of this plan's scope)
 

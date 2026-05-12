@@ -6,13 +6,7 @@
 **Strategy:** Three composable levers, one retrain per lever, gated revert.
 The shipping set is whichever subset survives the inverter acceptance gate.
 
-> **Premise:** The v6 sprint closed the solver-side levers (Tier 1A NR clamp,
-> Tier 1.5 env override, Tier 2). The remaining inverter accuracy gap is a
-> **data + selection** problem, not a solver or loss-architecture problem.
-> All loss-side derivative-consistency knobs (ChargeConsistencyLoss N4,
-> SlopeMatchLoss B2, SignConsistencyLoss, BoundaryLoss) have been tried and
-> rejected on principle (asinh chain rule) or on A/B (no benefit). They are
-> **out of scope** for this plan. See §6.
+> **Premise:** v6 sprint closed solver-side levers (Tier 1A NR clamp, Tier 1.5 env override, Tier 2). The remaining inverter accuracy gap is a **data + selection** problem, not solver or loss-architecture. All loss-side derivative-consistency knobs (ChargeConsistencyLoss N4, SlopeMatchLoss B2, SignConsistencyLoss, BoundaryLoss) have been rejected on principle (asinh chain rule) or A/B (no benefit). **Out of scope.** See §6.
 
 ---
 
@@ -36,20 +30,11 @@ transients ≤ 15 %, TSMC5 inverter transient ≤ 10 %.
 
 ## 2. Failure-mode map (for context)
 
-D1 diagnostic (`tests/diag_d1_tsmc7_nmos_errors.py` + results dir) and the
-v5 session summary established:
+D1 diagnostic (`tests/diag_d1_tsmc7_nmos_errors.py`) and v5 session summary established:
 
-1. **TSMC7 NMOS DC error concentrates in the saturation plateau**
-   `Vgs ∈ [0.52, 0.73] V × Vds ∈ [0.40, 0.75] V` — the inverter trip-point cone.
-   The B1 hybrid sampler under-covers this band by ~16× relative to the
-   uniform `Id-Vgs` verifier weighting.
-2. **Train→inverter gap is ~29×** (E3 evidence: 0.45 % training NRMSE →
-   14.74 % inverter NMOS DC). Loss-best and phys-best checkpoints are
-   selecting the wrong models for inverter purposes.
-3. **Inverter transient holds via rule 19a** (rail-restoring quadratic
-   extrapolation). Don't try to learn the rail in training — the v5 overshoot
-   overlay caused TSMC7/12/16 NR runaway. Inference correction is the right
-   layer.
+1. **TSMC7 NMOS DC error concentrates in the saturation plateau** `Vgs ∈ [0.52, 0.73] V × Vds ∈ [0.40, 0.75] V` — the inverter trip-point cone. B1 hybrid sampler under-covers this band ~16× relative to the uniform `Id-Vgs` verifier weighting.
+2. **Train→inverter gap is ~29×** (E3 evidence: 0.45 % training NRMSE → 14.74 % inverter NMOS DC). Loss-best and phys-best checkpoints select the wrong models for inverter purposes.
+3. **Inverter transient holds via rule 19a** (rail-restoring quadratic extrapolation). Don't learn the rail in training — v5 overshoot overlay caused TSMC7/12/16 NR runaway. Inference correction is the right layer.
 
 ---
 
@@ -80,18 +65,11 @@ if spec.enable_inv_trip and spec.tech_name in {"tsmc5", "tsmc7", "tsmc12", "tsmc
     ...
 ```
 
-Plus: in `_inv_trip_points`, replace the peak-gm Vth derivation with a
-**fixed cone centered at VDD/2** for non-TSMC5 techs. Rationale: the v5 D1
-diagnostic showed the verifier metric is dominated by the saturation
-plateau at `Vgs ≈ Vds ≈ VDD/2`, not at Vth. Keep the existing Vth-centered
-overlay for TSMC5 (where it produced the 18× transient gain).
+Plus: in `_inv_trip_points`, replace peak-gm Vth derivation with a **fixed cone centered at VDD/2** for non-TSMC5 techs. Rationale: D1 diagnostic showed the verifier metric is dominated by the saturation plateau at `Vgs ≈ Vds ≈ VDD/2`, not Vth. Keep Vth-centered overlay for TSMC5 (where it produced the 18× transient gain).
 
-**Data regen:** rerun `external_compact_models/PyCMG/scripts/generate_nn_data.py
---device both --universal` with `--enable-inv-trip` (the current default).
-Expect ~7–10 % more rows per non-TSMC5 tech.
+**Data regen:** rerun `external_compact_models/PyCMG/scripts/generate_nn_data.py --device both --universal` with `--enable-inv-trip` (current default). Expect ~7–10 % more rows per non-TSMC5 tech.
 
-**Retrain:** DirectNet NMOS+PMOS only for this tier. Skip Transformer until
-Tier 1 alone is validated (saves ~80 min GPU).
+**Retrain:** DirectNet NMOS+PMOS only this tier. Skip Transformer until Tier 1 validated (saves ~80 min GPU).
 
 ```bash
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
@@ -103,13 +81,9 @@ conda run -n pycircuitsim python -u -m bsimar.cli.train \
 (Same for PMOS.)
 
 **Verification gate (Tier 1):**
-- `verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16` against the new
-  `v6_t1_dn_*` checkpoints via `PYCIRCUITSIM_NN_CHECKPOINT_DN_*` env vars.
-- **PASS criteria:** TSMC7 NMOS DC ≤ 11 % (≥3 pp absolute improvement),
-  no PASS-cell regression on TSMC12/16 (±0.5 pp tolerance on already-passing
-  cells), TSMC5 inverter transient does not regress past 13 %.
-- **REVERT if:** any TSMC12/16 inverter cell flips PASS→FAIL, or TSMC7
-  NMOS DC stays above 12 %, or TSMC5 transient regresses past 13 %.
+- `verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16` against new `v6_t1_dn_*` checkpoints via `PYCIRCUITSIM_NN_CHECKPOINT_DN_*` env vars.
+- **PASS criteria:** TSMC7 NMOS DC ≤ 11 % (≥3 pp improvement), no PASS-cell regression on TSMC12/16 (±0.5 pp tolerance), TSMC5 inverter transient ≤ 13 %.
+- **REVERT if:** any TSMC12/16 inverter flips PASS→FAIL, or TSMC7 NMOS DC stays >12 %, or TSMC5 transient regresses past 13 %.
 
 ---
 
@@ -147,16 +121,13 @@ def apply_class_weights(per_sample_weights, sample_class):
     return per_sample_weights * cls_w.unsqueeze(-1)
 ```
 
-Backward compatibility: if the loaded `.npz` lacks `sample_class` (legacy v4
-data), default all weights to 1.0 — no change in behavior.
+Backward compat: if `.npz` lacks `sample_class` (legacy v4 data), default all weights to 1.0 — no behavior change.
 
-**Retrain:** DirectNet NMOS+PMOS using **the Tier 1 dataset** (so this is a
-clean A/B against Tier 1 alone). Save under `v6_t2_dn_*`.
+**Retrain:** DirectNet NMOS+PMOS on **Tier 1 dataset** (clean A/B vs Tier 1). Save under `v6_t2_dn_*`.
 
 **Verification gate (Tier 2):**
-- Same 16-cell verify as Tier 1.
-- **PASS criteria:** ≥1 pp inverter VTC improvement on TSMC7 vs Tier 1
-  alone, no regression elsewhere.
+- Same 16-cell verify.
+- **PASS criteria:** ≥1 pp inverter VTC improvement on TSMC7 vs Tier 1 alone, no regression elsewhere.
 - **REVERT if:** Tier 2 underperforms Tier 1 on any cell by >1 pp.
 
 ---
@@ -167,45 +138,30 @@ clean A/B against Tier 1 alone). Save under `v6_t2_dn_*`.
 - `external_compact_models/bsimar/training/trainer.py` — replace
   `phys_best_metric` selection with a per-N-epoch mini-VTC eval.
 
-**Mini-VTC harness:** every 25 epochs (configurable), instantiate a DC
-solve of one inverter per tech (4 inverters total) using the in-training
-checkpoint, compute mean inverter VTC NRMSE vs PyCMG. Cost: ~10 s per
-eval × 32 evals over 800 epochs = ~5 min added to a 100-min run.
+**Mini-VTC harness:** every 25 epochs (configurable), DC-solve one inverter per tech (4 total) using the in-training checkpoint, compute mean inverter VTC NRMSE vs PyCMG. Cost: ~10 s × 32 evals over 800 epochs = ~5 min added to a 100-min run.
 
-The mini-VTC harness lives in `bsimar/training/inverter_eval.py` (new file).
-It must:
-1. Accept the live model + norm stats (no checkpoint round-trip).
-2. Build the 4 inverters via the existing `pycircuitsim` parser using a
-   tiny netlist string (no file I/O).
-3. Sweep Vin from 0 to VDD at 21 points, compute Vout, compare to a cached
-   PyCMG reference VTC (precomputed once at trainer startup).
-4. Return mean NRMSE_phys across the 4 techs.
+Lives in `bsimar/training/inverter_eval.py` (new file). It must:
+1. Accept live model + norm stats (no checkpoint round-trip).
+2. Build 4 inverters via existing `pycircuitsim` parser, tiny netlist string (no file I/O).
+3. Sweep Vin 0→VDD at 21 points, compute Vout, compare to cached PyCMG reference VTC (precomputed once at trainer startup).
+4. Return mean NRMSE_phys across 4 techs.
 
-Selection rule: `model_best_inverter = argmin(mean inverter VTC NRMSE)`.
-Persist as `*_best.inv.pt` alongside the existing `_best.pt` and
-`_best.phys.pt`. The simulator's `_resolve_nn_checkpoint` cascade picks
-`_best.inv.pt` when present.
+Selection rule: `model_best_inverter = argmin(mean inverter VTC NRMSE)`. Persist as `*_best.inv.pt` alongside `_best.pt` and `_best.phys.pt`. The simulator's `_resolve_nn_checkpoint` cascade picks `_best.inv.pt` when present.
 
-**Retrain:** DirectNet NMOS+PMOS using the Tier 1+2 dataset and class
-weights. Save under `v6_t3_dn_*`.
+**Retrain:** DirectNet NMOS+PMOS using Tier 1+2 dataset and class weights. Save under `v6_t3_dn_*`.
 
 **Verification gate (Tier 3):**
-- Same 16-cell verify, but using `*_best.inv.pt`.
-- **PASS criteria:** mean inverter VTC NRMSE strictly better than
-  `*_best.pt` selection from Tier 2; no inverter cell regresses by >1 pp.
-- **REVERT if:** the inverter-best checkpoint is meaningfully worse than
-  loss-best on any cell, or the mini-VTC harness adds >15 % wall-time.
+- Same 16-cell verify, using `*_best.inv.pt`.
+- **PASS criteria:** mean inverter VTC NRMSE strictly better than `*_best.pt` from Tier 2; no inverter cell regresses by >1 pp.
+- **REVERT if:** inverter-best worse than loss-best on any cell, or mini-VTC harness adds >15 % wall-time.
 
 ---
 
 ### Tier 4 (conditional) — Promote winners to BSIMAR Transformer
 
-Only triggered if Tiers 1–3 ship with a measurable inverter improvement on
-DirectNet. Apply the same dataset (Tier 1) + same class weights (Tier 2)
-+ same selector (Tier 3) to the Transformer. ~3 h GPU per device.
+Only if Tiers 1–3 ship measurable DirectNet inverter improvement. Apply same dataset (Tier 1) + class weights (Tier 2) + selector (Tier 3) to Transformer. ~3 h GPU per device.
 
-Save under `v6_universal_{nmos,pmos}_*`. Use the same verification gate as
-DirectNet.
+Save under `v6_universal_{nmos,pmos}_*`. Same verification gate as DirectNet.
 
 ---
 
@@ -222,53 +178,29 @@ Final shipping set must clear:
 | BSIM-CMG L1 byte-identical | exact | regression guard |
 | 6 currently-PASSing inverter cells | no regression >0.5 pp | regression guard |
 
-If only Tier 1 ships, that's still a win — dataset improvement compounds
-into future trainings. Tier 2 and Tier 3 are independent and can ship
-separately.
+Tier 1 shipping alone is still a win — dataset improvement compounds. Tier 2 and Tier 3 are independent.
 
 ---
 
 ## 5. Diagnostic logging (always on, all tiers)
 
-Add to `bsimar/training/trainer.py` regardless of tier:
+Add to `bsimar/training/trainer.py`:
 
-1. Per-epoch: log mean `|autograd_gds|` vs mean `|gds_label|` over a fixed
-   trip-point validation slice (Vgs, Vds ∈ trip cone, NMOS only). If the
-   ratio diverges by >5× by epoch 200, flag for §6 follow-up.
-2. Per-epoch: log mean `|autograd_cgg|` and `cgd-cdg` symmetry residual on
-   the same slice. If symmetry residual >10 %, flag.
+1. Per-epoch: log mean `|autograd_gds|` vs mean `|gds_label|` over a fixed trip-point validation slice (Vgs, Vds ∈ trip cone, NMOS only). Ratio divergence >5× by epoch 200 → flag for §6.
+2. Per-epoch: log mean `|autograd_cgg|` and `cgd-cdg` symmetry residual on same slice. Residual >10 % → flag.
 
-These logs answer the open question from the prior turn: **do we need a
-derivative-consistency loss?** The current evidence says no, but the trip-cone
-data starvation may have been hiding the answer. After Tier 1 retrain, the
-diagnostic will tell us cleanly.
+These logs answer: **do we need a derivative-consistency loss?** Current evidence says no, but trip-cone data starvation may have hidden the answer. Post Tier 1 retrain, diagnostic will tell cleanly.
 
 ---
 
 ## 6. Out of scope (do NOT attempt in this plan)
 
-- **Derivative-consistency loss on Id (∂Id/∂V vs gm/gds/gmb labels).**
-  Inference uses `torch.autograd.grad(Id, V)` and discards the predicted
-  gm/gds/gmb columns — adding such a loss tightens consistency between
-  two unused outputs. Prior attempts (SlopeMatchLoss B2) were deleted
-  unvalidated; the related ChargeConsistencyLoss N4 was killed by the
-  asinh chain-rule mismatch. Revisit only if the Tier 1 diagnostic
-  (§5.1) shows a >5× autograd-vs-label gap in the trip cone.
-- **Charge-consistency loss on Q (∂q/∂V vs c\*\* labels).** Same reasoning;
-  the asinh chain rule carries a `cosh(asinh(q/s))` factor that breaks
-  label equivalence. If transient KCL drift becomes a problem after
-  Tier 1, the right fix is a *targeted* Maxwell-symmetry penalty
-  (`MSE(cgd_autograd, cdg_autograd)` — no labels, no normalization issues),
-  not a full ∂q/∂V supervised loss.
-- **Per-tech checkpoints.** Breaks portability and storage; D1 evidence
-  says the gap is universal-vs-data, not universal-vs-per-tech.
-- **Overshoot overlay reactivation.** Rule 19a (rail-restoring
-  extrapolation) handles `|Vds| > VDD_train` at inference. Supervised
-  labels in that region caused TSMC7/12/16 NR runaway in v5.
-- **AR-finetune phase / `forward_scheduled`.** Deleted in 2026-05-03
-  trim plan. Cosine schedule alone is sufficient.
-- **SignConsistencyLoss / BoundaryLoss / id_gate.** All deleted, all
-  superseded by rule 19's inference-time correction.
+- **Derivative-consistency loss on Id (∂Id/∂V vs gm/gds/gmb labels).** Inference uses `torch.autograd.grad(Id, V)` and discards predicted gm/gds/gmb columns — such a loss tightens consistency between two unused outputs. Prior attempts (SlopeMatchLoss B2) deleted unvalidated; ChargeConsistencyLoss N4 killed by asinh chain-rule mismatch. Revisit only if Tier 1 diagnostic (§5.1) shows >5× autograd-vs-label gap in trip cone.
+- **Charge-consistency loss on Q (∂q/∂V vs c\*\* labels).** Same reasoning; asinh chain rule carries `cosh(asinh(q/s))` factor breaking label equivalence. If transient KCL drift becomes a problem post Tier 1, the right fix is a *targeted* Maxwell-symmetry penalty (`MSE(cgd_autograd, cdg_autograd)` — no labels, no normalization issues), not full ∂q/∂V supervised loss.
+- **Per-tech checkpoints.** Breaks portability/storage; D1 evidence says gap is universal-vs-data, not universal-vs-per-tech.
+- **Overshoot overlay reactivation.** Rule 19a handles `|Vds| > VDD_train` at inference. Supervised labels there caused TSMC7/12/16 NR runaway in v5.
+- **AR-finetune phase / `forward_scheduled`.** Deleted 2026-05-03 trim. Cosine schedule sufficient.
+- **SignConsistencyLoss / BoundaryLoss / id_gate.** All deleted, superseded by rule 19.
 
 ---
 
@@ -276,21 +208,17 @@ diagnostic will tell us cleanly.
 
 | Risk | Likelihood | Mitigation |
 |---|---|---|
-| Tier 1 cone definition wrong for TSMC7 (Vth offset from VDD/2) | Medium | The cone is defined at VDD/2, not Vth. D1 evidence shows the saturation plateau, not the Vth band, is the under-sampled region. |
-| Tier 2 class weights de-emphasize a critical region | Low-Medium | Reverting the weights table is a 5-line change; class weights are a runtime knob. |
-| Tier 3 mini-VTC eval is too noisy to be a reliable selector | Medium | Use mean of 4 inverters, not single. If still noisy, raise eval interval to 50 epochs and average over 3 evals. |
-| Retrain breaks BSIM-CMG L1 numerics (path crossing) | Very low | NN training touches no BSIM-CMG path; explicit byte-identical guard. |
-| Tier 1 dataset regen takes >1 h and blocks experiments | Medium | Generate in parallel with Tier 2 implementation; use `--workers 32`. |
+| Tier 1 cone wrong for TSMC7 (Vth offset from VDD/2) | Medium | Cone defined at VDD/2, not Vth. D1 shows saturation plateau is under-sampled, not Vth band. |
+| Tier 2 class weights de-emphasize critical region | Low-Med | Weights table is a 5-line revert; runtime knob. |
+| Tier 3 mini-VTC eval too noisy | Medium | Mean of 4 inverters; if noisy, raise interval to 50 epochs and average over 3 evals. |
+| Retrain breaks BSIM-CMG L1 numerics | Very low | NN training touches no BSIM-CMG path; explicit byte-identical guard. |
+| Tier 1 dataset regen >1 h | Medium | Parallel with Tier 2 impl; `--workers 32`. |
 
 ---
 
 ## 8. Rollback plan
 
-Each tier is one commit. Branch state at end of plan is whichever
-combination of `git revert` / no-op leaves the verification gate green.
-If all tiers fail the gate, the branch ends at `c8a783b` (post-refactor
-verified) with this plan archived as a closed dead-end and a postmortem
-entry added to `Future Work` in CLAUDE.md.
+Each tier is one commit. Final branch state is whichever `git revert` / no-op combo leaves verification gate green. If all tiers fail, branch ends at `c8a783b` (post-refactor verified), plan archived as closed dead-end, postmortem added to `Future Work` in CLAUDE.md.
 
 ---
 

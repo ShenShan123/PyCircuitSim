@@ -7,11 +7,10 @@ results land.
 
 ## TL;DR
 
-Of the 13 supervised targets, only 4 are actually consumed by the
-circuit simulator. Drop the noisy / redundant ones, and reweight the
-loss to emphasise the load-bearing channels. Validate against
-NGSPICE/PyCMG on the TSMC12 inverter (DC + transient). Three
-experiments, ~30 minutes of GPU time apiece.
+Of the 13 supervised targets, only 4 are consumed by the simulator. Drop
+noisy/redundant ones and reweight the loss to emphasise load-bearing channels.
+Validate against NGSPICE/PyCMG on the TSMC12 inverter (DC + transient). Three
+experiments, ~30 min GPU each.
 
 ## Problem framing
 
@@ -27,21 +26,19 @@ Looking at `pycircuitsim/models/mosfet_nn.py::_MOSFETNNBase._eval`:
 | `gm`, `gds`, `gmb` | Solver Jacobian, but rule 1 mandates **autograd ∂id/∂V**, never the supervised target | **unused at inference; only acts as a smoothness prior on `id`** |
 | `cgg`, `cgd`, `cgs`, `cdg`, `cdd` | Same story — autograd ∂q/∂V is what gets stamped | **unused at inference; smoothness prior on `q*`** |
 
-So the supervised gm/gds/gmb/c\* targets earn their keep only as
-implicit regularisers on the surfaces of `id`, `qg`, `qd`. That is a
-real but second-order benefit, paid for with a 13-dim output head, a
-13-axis LDS computation, and 9 MAE terms competing with the 4 we
-actually need.
+Supervised gm/gds/gmb/c\* targets earn their keep only as implicit
+regularisers on surfaces of `id`, `qg`, `qd`. Second-order benefit paid for
+with a 13-dim output head, 13-axis LDS computation, and 9 MAE terms competing
+with the 4 we need.
 
 ### Why this is now an interesting trade
 
-The post-refactor pipeline (this branch) makes the loss boundary clean:
+The post-refactor pipeline makes the loss boundary clean:
 `MAELoss(weights=lds_per_target_per_sample)` is the one place where any
-target's contribution is decided. Adding a per-target mask is a 5-line
-change. Output-head shrinkage is another 5-line change in
-`bsimar/models/direct_net.py` and the simulator reads outputs by *name*
-through `_MOSFETNNBase._mcol`, so a 4-output checkpoint just works on
-the inference side — no new branch in the eval glue.
+target's contribution is decided. Per-target mask is a 5-line change.
+Output-head shrinkage is another 5 lines in `bsimar/models/direct_net.py`
+and the simulator reads outputs by *name* through `_MOSFETNNBase._mcol`, so
+a 4-output checkpoint works on the inference side — no new branch in eval glue.
 
 ## Hypothesis
 
@@ -81,9 +78,8 @@ batch=2048, epochs=80`), single-seed. Each run ≈4 min on one A100.
 | **E2 — id+q only (4-output)** | predict only `[id, qg, qd, qb]` | **4** | tests H2+H3 jointly; is the 9-target smoothness worth it? |
 | **E3 — reweight 13** | weight = `[1.0, 0.1, 0.1, 0.1, 1.0, 1.0, 0, 1.0, 0.01×5]` | 13 | tests H4; same architecture, same checkpoint format |
 
-E0 is the sentinel — same trainer, same data, no change. We need it on
-the post-refactor pipeline so the comparison isolates the loss change
-from any drift the refactor introduced.
+E0 is the sentinel — same trainer, same data, no change. Needed on the
+post-refactor pipeline so comparison isolates the loss change from any drift.
 
 ### Implementation deltas
 
@@ -110,17 +106,16 @@ from any drift the refactor introduced.
 5. **`bsimar/cli/train.py`** — `--output-dim {4,13}` and
    `--column-weights "id=1,gm=0.1,…"`. Tiny.
 
-6. **Simulator side, `_MOSFETNNBase`** — already reads outputs by name
-   via `_mcol`. For the 4-output case, the model only emits
-   `[id, qg, qd, qb]`; for the unused names (gm, gds, gmb, c\*), the
-   autograd path inside `_eval` already handles them. The only thing
-   that needs to change is the `_out_col` map: a 4-output checkpoint
-   should map `id→0, qg→1, qd→2, qb→3` and skip the rest. Detect via
-   the loaded state's last linear weight shape.
+6. **Simulator side, `_MOSFETNNBase`** — already reads outputs by name via
+   `_mcol`. For 4-output, model emits `[id, qg, qd, qb]`; unused names
+   (gm, gds, gmb, c\*) are already handled by the autograd path inside
+   `_eval`. Only `_out_col` map needs to change: 4-output maps
+   `id→0, qg→1, qd→2, qb→3` and skips the rest. Detect via loaded state's
+   last linear weight shape.
 
-   For (gm, gds, gmb, c\*) we'd lose them as "predicted scalars" — but
-   they were never used as scalars anyway; they're already reconstructed
-   from autograd. Cleanly drops 9 columns of dead code.
+   For (gm, gds, gmb, c\*) we lose them as "predicted scalars" — never used
+   as scalars; already reconstructed from autograd. Cleanly drops 9 columns
+   of dead code.
 
 ### Acceptance gate
 

@@ -15,36 +15,35 @@
 The closed v5 sprint (E1/E3/D1/E4/E5) ran four retraining/inference experiments and
 reverted all four.  The session summary
 (`results/v5_session_summary_2026_04_23.md`) and the D1 diagnostic
-(`results/v5_d1_tsmc7_nmos_errors/v5_d1_tsmc7_nmos_report.md`) leave us with one
+(`results/v5_d1_tsmc7_nmos_errors/v5_d1_tsmc7_nmos_report.md`) leave one
 load-bearing finding and one production-ready hypothesis:
 
-1. **The TSMC7 NMOS DC error (14.72 % BSIMAR / 15.79 % DirectNet) is a
+1. **TSMC7 NMOS DC error (14.72 % BSIMAR / 15.79 % DirectNet) is a
    sampling-basis mismatch, not a data-volume problem.**  The verifier sweeps
    uniform `Id-Vgs` at `Vds = VDD/2`; LHS training under-samples that
    high-current saturation plateau by ~16× relative to the region the verifier
    metric weighs.  Per-tech fine-tune (E3) lifted training NRMSE to 0.45 % and
    left inference NMOS DC at 14.74 % — a 29× gap.
-2. **The PMOS DC weakness on TSMC12/16 (12-14 % both models) is the same
+2. **PMOS DC weakness on TSMC12/16 (12-14 % both models) is the same
    class of bug** — wide universal-LHS coverage with the same uniform-sweep
-   verifier metric.  Same root cause is highly likely; not yet diagnosed.
+   verifier metric.  Same root cause highly likely; not yet diagnosed.
 
-In parallel, the production code accumulated complexity that did not pay off:
+Production code accumulated complexity that did not pay off:
 
-- `DirectLoss` is imported by the trainer but never instantiated.  Both models
+- `DirectLoss` imported by trainer but never instantiated.  Both models
   hard-wire `MAELoss` + LDS.  Dead.
-- `SignConsistencyLoss` and `BoundaryLoss` were added in the v4-fix sprint and
-  remained in the v4 production training path.  The v5 baseline (with them on)
-  still has 14-19 % VTC failures, and the v4-fix report itself documents 1/8
-  PASS for sign/boundary alone.  No quantified marginal benefit to keep.
-- `compute_lds_weights_per_target` is invoked **three times** (per-target,
-  Vov/Vg, subthreshold) and the products multiplied.  The third axis was added
+- `SignConsistencyLoss` and `BoundaryLoss` added in v4-fix sprint, remained in
+  v4 production. v5 baseline (with them on) still has 14-19 % VTC failures;
+  v4-fix report documents 1/8 PASS for sign/boundary alone.  No quantified marginal benefit.
+- `compute_lds_weights_per_target` invoked **three times** (per-target,
+  Vov/Vg, subthreshold), products multiplied.  Third axis added
   to fix a wrong-sign subthreshold bug that the rail-restoring extrapolation
   patch (commit `381bbfc`) already neutralized at inference time.  No A/B
   evidence the third axis still helps.
 - `BSIMARTransformer` carries seven optional knobs (parallel cap head, AR
   finetune, scheduled sampling, GPT-2 init, token-type embedding, grouped
   inputs, scalar projection).  Five are structural-always-on; the other two
-  (scheduled sampling and AR finetune) only matter for the AR rollout path.
+  (scheduled sampling, AR finetune) only matter for the AR rollout path.
 - `_eval_autograd4` in `pycircuitsim/models/mosfet_directnet.py` is a dead
   fast-path: every shipping checkpoint is 13-output.
 - `TransformerConfig` has six dataclass fields (`w_curr` … `consistency_weight`)
@@ -52,16 +51,14 @@ In parallel, the production code accumulated complexity that did not pay off:
 
 The v5 plan therefore has **two phases**:
 
-- **Phase A — Trim.**  Delete the dead and unjustified code.  No accuracy
-  change expected; we measure to confirm no regression.  This is required
-  before Phase B because every change in Phase B has to be A/B tested against
-  a clean, comprehensible baseline.
+- **Phase A — Trim.**  Delete dead and unjustified code.  No accuracy
+  change expected; measure to confirm no regression.  Required before Phase B
+  so each Phase B change can be A/B tested against a clean baseline.
 - **Phase B — Fix the real failure mode.**  Address the sampling-basis
   mismatch with a *training-distribution* change, a *shape-aware* loss, and a
-  *structural* boundary gate.  Each lever ships behind its own gate so we can
-  isolate failures.
+  *structural* boundary gate.  Each lever ships behind its own gate.
 
-Non-goals of this plan, called out so reviewers do not redirect scope:
+Non-goals (called out so reviewers do not redirect scope):
 
 - ASAP7 retraining (separate vocabulary expansion task).
 - SRAM bitcell verification (separate phase).
@@ -91,11 +88,10 @@ Three failure clusters:
 - **F1.** TSMC7 NMOS DC + VTC (both models) — confirmed sampling-basis bug.
 - **F2.** PMOS DC at TSMC12/16 (both models) — same class, not yet
   diagnosed; D1-style heatmap should run before any retrain.
-- **F3.** BSIMAR TSMC5 transient at 12.13 % — only ~3 pp from the gate; this
-  is the lone lever where the §4.1 tanh-gate from the closed v5 plan would
-  actually load-bear.
+- **F3.** BSIMAR TSMC5 transient at 12.13 % — ~3 pp from the gate; the lone
+  lever where the §4.1 tanh-gate from the closed v5 plan would load-bear.
 
-Everything else is cleanly inside its threshold and needs no change.
+Everything else is inside its threshold and needs no change.
 
 ---
 
@@ -112,18 +108,17 @@ Everything else is cleanly inside its threshold and needs no change.
 | BSIM-CMG regression suite             | all PASS              | all PASS            | zero regression     |
 | Codebase line delta after Phase A     | n/a                   | ≥ −600 net LOC      | not blocking        |
 
-Charge-conservation (the v4.1 plan's new metric) is nice-to-have but not a
-gate; transient NRMSE already catches a charge-conservation failure
-indirectly.  Keep `tests/diag_d1_tsmc7_nmos_errors.py` and add a PMOS-DC
-variant; both are read-only diagnostics, not gates.
+Charge-conservation (v4.1 plan's new metric) is nice-to-have but not a gate;
+transient NRMSE already catches it indirectly.  Keep
+`tests/diag_d1_tsmc7_nmos_errors.py` and add a PMOS-DC variant; both are
+read-only diagnostics, not gates.
 
 ---
 
 ## 3. Phase A — Trim (no model change, no retrain)
 
-The objective is to reduce the surface area that Phase B has to argue
-against.  Each step is a small, reversible PR that lands behind a green
-NN regression run on the v4 checkpoints.
+Reduce the surface area Phase B has to argue against.  Each step is a small,
+reversible PR landing behind a green NN regression run on v4 checkpoints.
 
 ### A1.  Delete dead loss code
 
@@ -243,11 +238,9 @@ baseline numbers ±0.05 pp.
 
 ## 4. Phase B — Fix the real failure mode
 
-Phase B has five levers, ordered by *prior probability of fixing the
-identified failure modes (F1/F2/F3)* divided by *implementation
-risk*.  Each lever ships in its own sprint with its own gate; if the
-gate fails, we stop and decide whether to keep the change or revert
-before stacking the next lever.
+Five levers ordered by *prior probability of fixing F1/F2/F3* divided by
+*implementation risk*.  Each lever ships in its own sprint with its own gate;
+if a gate fails, stop and decide keep-or-revert before stacking the next.
 
 ### B1. (Sprint S-DATA) — Replace LHS with a hybrid uniform-grid sampler
 
@@ -455,23 +448,19 @@ This is purely a refactor; no metric should move.
 
 ### B6. (Sprint S-FINETUNE) — REMOVED per §7 decision #3
 
-The user-confirmed constraint is **universal-only checkpoints**.  B6's
-per-tech inverter-trajectory finetune would have produced
-`v5_universal_*_tsmc7.pt` style outputs and required a parser-level
-tech→checkpoint dispatcher; that violates the universal-only rule.
+User-confirmed constraint: **universal-only checkpoints**.  B6's
+per-tech inverter-trajectory finetune would produce
+`v5_universal_*_tsmc7.pt` style outputs and require a parser-level
+tech→checkpoint dispatcher; violates the universal-only rule.
 
-If, after B1+B2+B3, any tech still fails the §2 gate, the failure ships
-as a documented limitation in CLAUDE.md.  The
-`PyCMG/scripts/generate_tsmc7_overlay.py` script and the `is_overlay`
-LDS-bypass design are kept on the bench as future-work seeds, not as
-v5-release work.
+If after B1+B2+B3 any tech fails §2, the failure ships as a documented
+limitation in CLAUDE.md.  `PyCMG/scripts/generate_tsmc7_overlay.py` and the
+`is_overlay` LDS-bypass design kept on the bench as future-work seeds.
 
-**Replacement universal-overlay idea (optional, deferred):** if B1+B2
-underperform across multiple techs, an inverter-trajectory overlay can
-still be added — but it must be **all-tech overlay** (4 techs × 21
-variants × ~2k samples ≈ 170k extra rows, ~3 % of the dataset),
-trained as part of B1's universal recipe with a global LDS-bypass
-flag.  This stays universal.  Not in scope unless B1+B2 close < 50 %
+**Replacement universal-overlay (optional, deferred):** if B1+B2 underperform
+across multiple techs, add **all-tech overlay** (4 techs × 21 variants × ~2k
+samples ≈ 170k rows, ~3 % of dataset), trained as part of B1's universal
+recipe with a global LDS-bypass flag.  Not in scope unless B1+B2 close < 50 %
 of the residual gap.
 
 ---
@@ -489,13 +478,12 @@ of the residual gap.
 | S-ARCH-B  | B     | 0.5 d code + 0.5 d retrain | B4 transformer trim if accuracy holds |
 | ~~S-FINETUNE~~ | ~~B~~ | — | **REMOVED** — universal-only constraint (§7 #3) |
 
-Total ≤ 9 days wall-clock if every sprint runs sequentially; 6 days if
-S-DATA and S-LOSS run in parallel (they touch different files) and
-S-ARCH-A starts as soon as S-DATA's checkpoints converge.
+Total ≤ 9 days sequential; 6 days if S-DATA and S-LOSS run in parallel
+(different files) and S-ARCH-A starts as soon as S-DATA converges.
 
 Each sprint commits its own checkpoint with prefix
-`v5{a,b,c,d,...}_{dn,ar}_universal_{nmos,pmos}` so a bisect can
-attribute behaviour to one sprint.
+`v5{a,b,c,d,...}_{dn,ar}_universal_{nmos,pmos}` so bisect can attribute
+behaviour to one sprint.
 
 ---
 
@@ -566,23 +554,17 @@ User-confirmed constraints that this plan now treats as fixed:
 
 ## 9. What this plan deliberately does **not** propose
 
-- **No new normalisation mode.**  The asinh + zscore normaliser is
-  fine.  We learned that twice (signed-log was retired, and the v5 N4
-  postmortem confirmed the asinh chain rule is the trap to avoid, not
-  the normalisation itself).
-- **No widening of the voltage box.**  v3 settled this: more box +
-  same model is strictly worse.  Phase B keeps `voltage_box_factor =
-  2.0`.
-- **No reintroduction of `SignConsistencyLoss` / `BoundaryLoss`.**
-  Their job is done structurally by B3's tanh gate.  If B3 is
-  rejected, we still do not reintroduce these — they failed
-  empirically and there is no new evidence.
-- **No `torch.compile` perf work.**  Until accuracy lands; kept as
-  follow-up.
-- **No charge-consistency loss in physical space.**  N4 dead end;
-  documented.
-- **No per-tech checkpoints by default.**  Only B6 (last-resort
-  finetune) ships per-tech, and only for the tech that needs it.
+- **No new normalisation mode.**  asinh + zscore is fine.  Learned twice
+  (signed-log retired; v5 N4 postmortem confirmed asinh chain rule is the trap,
+  not the normalisation itself).
+- **No widening of the voltage box.**  v3 settled: more box + same model is
+  strictly worse.  Phase B keeps `voltage_box_factor = 2.0`.
+- **No reintroduction of `SignConsistencyLoss` / `BoundaryLoss`.**  Their job
+  is done structurally by B3's tanh gate.  Failed empirically; no new evidence.
+- **No `torch.compile` perf work.**  Until accuracy lands; follow-up.
+- **No charge-consistency loss in physical space.**  N4 dead end; documented.
+- **No per-tech checkpoints by default.**  Only B6 (last-resort finetune) ships
+  per-tech, and only for the tech that needs it.
 
 ---
 
@@ -605,36 +587,29 @@ User-confirmed constraints that this plan now treats as fixed:
 
 ## 11. Adversarial-review hooks (for the staff-engineer subagent)
 
-The reviewer should challenge at least:
+Reviewer should challenge at least:
 
-- **R1.** *Is the uniform-grid sampler actually uniform under the
-  asinh-transformed loss?*  Asinh compresses high-|Id| samples; the
-  loss may still be dominated by the same high-|Id| corner even with
-  uniform Vgs samples.  If true, B1 is necessary but not sufficient
-  and B2 (slope loss) becomes load-bearing rather than complementary.
-- **R2.** *Does the dual-head Id gate (B3) interact with the LDS
-  weights computed on the gated Id?*  The LDS bins on `id` after
-  reorder; if `id_gated` is what gets binned, near-Vds=0 samples all
+- **R1.** *Is the uniform-grid sampler actually uniform under the asinh-transformed loss?*
+  Asinh compresses high-|Id| samples; loss may still be dominated by the same
+  high-|Id| corner even with uniform Vgs samples.  If true, B1 is necessary but
+  not sufficient and B2 (slope loss) becomes load-bearing.
+- **R2.** *Does the dual-head Id gate (B3) interact with LDS weights computed on gated Id?*
+  LDS bins on `id` after reorder; if `id_gated` is binned, near-Vds=0 samples
   collapse into one bin and dominate the inverse-density weight.
   Decide: bin on `id_raw`, train on `id_gated`.
-- **R3.** *Is the slope loss (B2) computable on the BSIMAR Transformer
-  without breaking AR teacher-forcing?*  The forward graph at the time
-  of the AR loss already detaches step-`t` predictions from the y-side
-  inputs.  Confirm `torch.autograd.grad(id_norm.sum(), x_v_norm)` is
-  defined under TF and under AR; if not, restrict B2 to DirectNet.
-- **R4.** *PMOS DC TSMC12/16 — is it the same hot-region story?*  The
-  plan assumes yes.  Run D1 on TSMC12 PMOS first (read-only, ~2 hr) to
-  confirm before committing to B1's hot-region list.  If the hot
-  region is elsewhere (e.g., low-Vgs/mid-Vds), update the densification
-  rule.
-- **R5.** *Is the §B6 `is_overlay` LDS bypass implementable without a
-  full trainer rewrite?*  The current LDS pipeline is a numpy
-  pre-compute; bypassing per-row needs the trainer to read a per-row
-  mask.  Estimate ~50 LOC; confirm before promising B6.
+- **R3.** *Is the slope loss (B2) computable on the BSIMAR Transformer without breaking AR teacher-forcing?*
+  The AR forward graph already detaches step-`t` predictions from y-side
+  inputs.  Confirm `torch.autograd.grad(id_norm.sum(), x_v_norm)` is defined
+  under TF and AR; if not, restrict B2 to DirectNet.
+- **R4.** *PMOS DC TSMC12/16 — same hot-region story?*  Plan assumes yes.  Run
+  D1 on TSMC12 PMOS first (read-only, ~2 hr) before committing to B1's
+  hot-region list.  If hot region is elsewhere, update the densification rule.
+- **R5.** *Is the §B6 `is_overlay` LDS bypass implementable without a full trainer rewrite?*
+  Current LDS pipeline is numpy pre-compute; per-row bypass needs trainer to
+  read a per-row mask.  ~50 LOC; confirm before promising B6.
 
-If any reviewer-flagged challenge is rated "valid, blocking," the
-relevant sprint pauses and the plan's sprint table updates before any
-code change.
+If any challenge is rated "valid, blocking," the relevant sprint pauses and
+the sprint table updates before any code change.
 
 ---
 
