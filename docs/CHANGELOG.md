@@ -207,5 +207,20 @@ Full TSMC5/7 NN sweep — 12/12 PASS:
 ### Risk / scope
 
 - Re-validation required before resurrecting TSMC12/TSMC16 or LEVEL=74 BSIMAR. Those code paths used the *old* sign and may have been silently relying on the wrong-sign clamp's `id=0` fallback as their effective rail behaviour.
-- Rule 15(a) docstring in CLAUDE.md updated. Rule 20 marked CLOSED with the corrected root cause.
+- Rule 15(a) docstring in CLAUDE.md updated. Rule 20 collapsed to a one-line resurrection guard.
 - No regression observed on the full 12/12 TSMC5/7 NN gate, but ring oscillator / SRAM / other circuits have not been re-validated as part of this sprint.
+
+### Docs trim (same release boundary)
+
+CLAUDE.md was pruned of stale rules and tricks now obsoleted by V6.2 shipping and BSIMAR being parked. No code or test changes — CLAUDE.md only.
+
+- **Status block** retargeted V6.1 → V6.2 with the corrected NRMSE numbers.
+- **Module structure** dropped the unshipped `tsmc5_residual.py` / `tsmc5_residual_train.py` references (V6 Tier M2 experiment, no checkpoints, never resurrected).
+- **Resolver cascade** clarified that only `tsmc{5,7}_dn_{medium,small}` checkpoints exist on disk; the `refac_*` / `v4_*` universal fallback chain is wired in `parser.py` but unreachable until someone retrains a universal stack.
+- **Testing & Verification** dropped the stale "verify_nn_universal*.py / verify_nn_multi_tech.py need porting" note — those scripts were deleted in v4-re PR-1. Also removed mention of TSMC12-SVT-only entry points (`verify_nn_dc.py`, `verify_nn_tran_v4.py`) since TSMC12 has no V6.2 checkpoint.
+- **Rule 8 (PyCMG integration)** dropped the ASAP7-specific train-VDD parenthetical (ASAP7 excluded per Rule 17) and the long-removed `ProcessParams` / `extract_process_params` / `INPUT_COLUMNS` re-export note.
+- **Rule 13 (Unified CLI)** retargeted from `refac_{dn,tf}_<size>` defaults to the V6.2 per-tech `tsmc{X}_dn_<size>_<device>` default; dropped the deleted `tsmc5_residual_train` entry.
+- **Rule 15(a)** condensed: kept the operative sign-convention rule, deleted the duplicated V6.2 NRMSE numerics (already in this CHANGELOG entry).
+- **Rule 19 (per-tech local vocab)** dropped the now-irrelevant universal-training convention (vocab=18, unknown=17) since no universal training is being done.
+- **Rule 20** collapsed from a long CLOSED-issue block to a one-line guard noting the sign convention is load-bearing for parked code paths (TSMC12/16, LEVEL=74) and needs re-validation when those are resurrected.
+- **Supported Features** retagged LEVEL=74 BSIMAR from "primary" (stale since V4-re) to "parked".

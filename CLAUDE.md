@@ -32,19 +32,20 @@ pycircuitsim/
     ├── base.py               # Component abstract base
     ├── passive.py            # R, C, V, I sources (PULSE)
     ├── mosfet_cmg.py         # BSIM-CMG (LEVEL=72) via PyCMG
-    ├── mosfet_directnet.py   # DirectNet V6 (LEVEL=73) — tech-code embedding, _MOSFETNNBase + NMOS_NN/PMOS_NN
-    └── mosfet_bsimar.py      # BSIMAR V6 (LEVEL=74) — tech-code embedding, _MOSFETBSIMARBase + NMOS_BSIMAR/PMOS_BSIMAR
+    ├── mosfet_nn.py          # Shared _MOSFETNNBase (LEVEL=73/74) — voltage prep, autograd, Vds correction
+    ├── mosfet_directnet.py   # DirectNet (LEVEL=73, primary)
+    └── mosfet_bsimar.py      # BSIMAR Transformer (LEVEL=74, parked — see Rule 18)
 
 external_compact_models/
 ├── bsimar/             # Unified NN compact model package (importable as `bsimar`)
-│   ├── config.py                   # NNTechConfig + Direct/TransformerConfig + TECH_CODE_MAP
+│   ├── config.py                   # NNTechConfig + TECH_CODE_MAP + local-vocab helpers
 │   ├── data/{normalize,dataset,analyze}.py
-│   ├── models/{direct_net,transformer,tsmc5_residual}.py    # nn.Embedding tech-code; tsmc5_residual = V6 Tier M2 residual head on frozen DN backbone
+│   ├── models/{direct_net,transformer}.py    # nn.Embedding tech-code
 │   ├── losses/bni_mae.py           # MAELoss + per-target LDS weights
-│   ├── training/{trainer,tsmc5_residual_train}.py
+│   ├── training/trainer.py
 │   ├── eval/{metrics,visualization}.py
-│   ├── cli/train.py                # `python -m bsimar.cli.train --model {direct,transformer} ...`
-│   └── checkpoints/                # *.pt + _norm.npz + _config.npz (gitignored)
+│   ├── cli/train.py                # `python -m bsimar.cli.train --model direct ...`
+│   └── checkpoints/                # *.pt + _norm.npz (gitignored)
 └── PyCMG/              # BSIM-CMG OSDI wrapper (git submodule)
     ├── pycmg/{core,model,parser,osdi_types,tech}.py
     ├── build/osdi/bsimcmg.osdi
@@ -73,7 +74,7 @@ tests/
 
 ## Supported Features
 
-* **Devices:** R, C; NMOS/PMOS LEVEL=72 (BSIM-CMG, ground truth), LEVEL=73 (DirectNet, baseline), LEVEL=74 (BSIMAR, primary); DC voltage/current sources, PULSE.
+* **Devices:** R, C; NMOS/PMOS LEVEL=72 (BSIM-CMG, ground truth), LEVEL=73 (DirectNet, primary NN), LEVEL=74 (BSIMAR, parked); DC voltage/current sources, PULSE.
 * **Analyses:** `.op`, `.dc`, `.tran`.
 * **Directives:** `.model` (LEVEL=72/73/74), `.include`, `.ic`.
 * Legacy LEVEL=1 (Shichman-Hodges) removed.
@@ -115,7 +116,7 @@ git submodule update --init --recursive
 
 Create a `.sp` netlist (examples in `examples/`). BSIM-CMG geometric params: `L`, `NFIN`, optional `TFIN`/`HFIN`/`FPITCH`.
 
-### NN training (V6.1 — per-tech dedicated)
+### NN training (V6.2 — per-tech dedicated)
 
 ```bash
 # Generate per-tech data. --enable-inv-trip overlay is gated to TSMC5/TSMC7
@@ -139,9 +140,8 @@ bash scripts/train_per_tech_8cells.sh
 
 **Checkpoints** (in `external_compact_models/bsimar/checkpoints/`):
 
-- V6.1 DirectNet per-tech: `tsmc{5,7}_dn_{small,medium}_{nmos,pmos}_best.pt` + `_norm.npz`. Embedding vocab shrunk to per-tech variant count + 1 UNKNOWN slot (TSMC5: 5, TSMC7: 4). Production size is `medium`.
-- Resolver cascade (`pycircuitsim/parser.py`): for TSMC5/TSMC7 netlists, per-tech preempts the universal slot:
-  `tsmc{X}_dn_medium > tsmc{X}_dn_small > tsmc{X}_dn_large > refac_dn_medium > refac_dn_small > refac_dn_large > v4_re_dn_universal > v4_dn_universal > per-tech > bare`. Each resolution is logged at parse time as `[NN-resolver] L73 <name> TECH=<x> VT=<y> -> <chk> (scope=<s>, tech_code=<c>)`. Override via `--exp-name` at train time or `PYCIRCUITSIM_NN_CHECKPOINT_*` env vars at runtime.
+- V6.2 DirectNet per-tech: `tsmc{5,7}_dn_{small,medium}_{nmos,pmos}_best.pt` + `_norm.npz`. Embedding vocab shrunk to per-tech variant count + 1 UNKNOWN slot (TSMC5: 5, TSMC7: 4). Production size is `medium`. No other checkpoints are present — universal `refac_dn_*` / `v4_*` artifacts were deleted on 2026-05-12.
+- Resolver cascade (`pycircuitsim/parser.py`): for TSMC5/TSMC7 netlists, the per-tech slot `tsmc{X}_dn_{medium,small,large}` preempts the universal fallback chain (`refac_dn_* > v4_re_dn_universal > v4_dn_universal`). At V6.2 only `tsmc{5,7}_dn_medium_{nmos,pmos}` exist on disk; the universal fallbacks are unreachable until someone retrains a universal stack. Resolutions are logged at parse time as `[NN-resolver] L73 <name> TECH=<x> VT=<y> -> <chk> (scope=<s>, tech_code=<c>)`. Override via `--exp-name` at train time or `PYCIRCUITSIM_NN_CHECKPOINT_*` env vars at runtime.
 
 **Netlist usage:** `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`. Parser auto-resolves the per-tech checkpoint and the local-vocab tech_code via `bsimar.config.local_variant_code(scope, tech, variant)`.
 
@@ -157,17 +157,14 @@ All tests require `conda activate pycircuitsim`.
 
 **BSIM-CMG DC:** L1 `verify_bsimcmg_dc.py` (2) · L2 `verify_bsimcmg_dc_comprehensive.py` (67) · L3 `verify_multi_tech_dc.py` (44).
 **BSIM-CMG Transient:** L1 `verify_bsimcmg_tran.py` (1) · L2 `verify_bsimcmg_tran_comprehensive.py` (37) · L3 `verify_multi_tech_tran.py` (72).
-**NN V6 DC:** L1 `verify_nn_dc.py` (~6, TSMC12 SVT) · all-tech sweeps via `verify_nn_dc_tran.py --{dc,pmos,inverter}-only`.
-**NN V6 Transient:** L1 `verify_nn_tran_v4.py` (~4, filename historical) · all-tech via `verify_nn_dc_tran.py --tran-only`.
-**Other:** `verify_bsimcmg_op.py` (OP <0.02% vs NGSPICE), `verify_nn_leave_one_out.py` (zero-shot transfer).
+**NN V6.2 gate:** `verify_nn_dc_tran.py --tech TSMC5,TSMC7 --inverter-only` (12/12 PASS on the full TSMC5/7 sweep without `--inverter-only`). The `verify_nn_dc.py` / `verify_nn_tran_v4.py` legacy entry points target TSMC12 SVT which has no V6.2 checkpoint.
+**Other:** `verify_bsimcmg_op.py` (OP <0.02% vs NGSPICE).
 
 Quick sanity:
 
 ```bash
 python tests/verify_bsimcmg_op.py && python tests/verify_bsimcmg_dc.py && python tests/verify_bsimcmg_tran.py
 ```
-
-Note: `verify_nn_universal*.py` / `verify_nn_multi_tech.py` need porting to the V6 tech-code API (use `TECH_CODE_MAP` lookup instead of `extract_process_params`).
 
 ---
 
@@ -218,9 +215,9 @@ These rules were learned from bugs. Violating them causes NR divergence or wrong
 5. **Update `_is_mosfet()`** in `solver.py` when adding new device types.
 6. **Test both NMOS and PMOS** vs NGSPICE: single OP, DC sweep, inverter VTC, inverter transient.
 
-### NN Model Rules (LEVEL=73 DirectNet V6 + LEVEL=74 BSIMAR V6)
+### NN Model Rules (LEVEL=73 DirectNet V6.2; LEVEL=74 BSIMAR rules retained for resurrection)
 
-Both share the same data pipeline and inference-time rules. DirectNet is the V6 primary (single-shot MLP); BSIMAR (autoregressive Transformer with parallel cap head) is deprioritized at the current stage per Rule 18. Both use `nn.Embedding` for tech-code identity (7-dim input: Vgs, Vds, Vbs, NFIN, L, T, tech_code).
+Both LEVEL=73 (single-shot MLP, primary) and LEVEL=74 (autoregressive Transformer, parked per Rule 18) share the same data pipeline and inference-time rules. Both use `nn.Embedding` for tech-code identity (7-dim input: Vgs, Vds, Vbs, NFIN, L, T, tech_code). Rules 11–13 below describe BSIMAR-specific structure; they are not live at V6.2 but must be honoured if BSIMAR is resurrected.
 
 1. **Jacobian consistency is mandatory** — gm/gds/gmb MUST be `torch.autograd.grad(id, V)`, never independent predictions. Holds for LEVEL=73 and LEVEL=74.
 2. **PMOS source-relative frame** — shift voltages by -Vs before NN eval (`v_d_nn = v_d - v_s`). Training uses Vs=0; in CMOS PMOS Vs=VDD.
@@ -229,27 +226,27 @@ Both share the same data pipeline and inference-time rules. DirectNet is the V6 
 5. **Physics-based gds floor** — `gds = max(gds, |id|*0.5, 1e-12)`. NN autograd gds ≈ 0 in saturation; without the floor inverter gain → ∞ and NR diverges. At FinFET 16nm BSIM-CMG λ=0.3-1.2 V⁻¹. Floor only affects the NR Jacobian, not the converged solution.
 6. **TSMC asymmetric L** — NMOS L=16nm, PMOS L=20nm; NNTechConfig uses `L_nmos`/`L_pmos`.
 7. **ASAP7 modelcard name mapping** — parser auto-maps netlist names to `nmos_rvt` / `pmos_rvt`.
-8. **PyCMG integration** — `bsimar/config.py` re-exports `NNTechConfig`, `TECH_CONFIGS`, `TECH_CODE_MAP`, `OUTPUT_COLUMNS` from `pycmg.nn_config`. v3 process-param exports (`ProcessParams`, `extract_process_params`, `INPUT_COLUMNS`) removed. Backward-compat alias `TechConfig = NNTechConfig`. Training VDD may differ from PyCMG (ASAP7 train=0.7V, PyCMG=0.9V).
+8. **PyCMG integration** — `bsimar/config.py` re-exports `NNTechConfig`, `TECH_CONFIGS`, `TECH_CODE_MAP`, `OUTPUT_COLUMNS` from `pycmg.nn_config`. Backward-compat alias `TechConfig = NNTechConfig`. Training VDD may differ from PyCMG's runtime VDD; check `NNTechConfig.VDD` per tech.
 9. **Data validation** — `eval_single_point` rejects NaN/Inf and `|id| > 1A`. PyCMG `eval_dc` raises `RuntimeError` on internal-node convergence failure. Default NFIN range `[2, 3, 5, 10, 15, 20, 24]` (NFIN=1 excluded).
 10. **Loss layer** — both models use `bsimar.losses.MAELoss` with **per-target LDS weights only** (3-axis stack collapsed to 1 in v5 Phase A). Hard-wired in `train_directnet` / `train_transformer`. DO NOT re-add: `DirectLoss`, `ChargeConsistencyLoss`, `SignConsistencyLoss`, `BoundaryLoss`, `SlopeMatchLoss`, Vov-LDS / subthreshold-LDS axes. Structural Vds gate (`apply_id_gate`) and slope-match loss deleted 2026-05-03 — rule 15's inference-time correction already enforces Id(Vds=0)=0.
 11. **BSIMAR output ordering** — Transformer output in `BSIMAR_COLUMN_ORDER` (`qg, qb, qd, qs, id, gm, gds, gmb, cgg, cgd, cgs, cdg, cdd`), not `OUTPUT_COLUMN_ORDER`. Consumer code (`mosfet_bsimar.py`) takes autograd derivatives at the right column indices.
 12. **Parallel cap head** — Transformer emits 5 capacitances in parallel from gmb hidden state, not sequential AR steps. AR loop runs 8 steps (charges + currents/conds). `parallel_caps` and `grouped_inputs` structural, not configurable.
-13. **Unified CLI** — `python -m bsimar.cli.train --model {direct,transformer} --size {small,medium,large} [--loss-preset {default,e1,e2,e3}] ...` (default save_prefix `refac_{dn,tf}_<size>[_<preset>]_<device>`). TSMC5 residual head trained via the separate `bsimar.training.tsmc5_residual_train` entry. Same `.npz` from PyCMG; checkpoints under `external_compact_models/bsimar/checkpoints/`.
+13. **Unified CLI** — `python -m bsimar.cli.train --model direct --size {small,medium,large} --device-type {nmos,pmos} --tech-scope {tsmc5,tsmc7,universal} ...`. With `--tech-scope tsmc{5,7}` the default save_prefix is `tsmc{X}_dn_<size>_<device>` (recognized by the parser preempt cascade). Same `.npz` from PyCMG; checkpoints under `external_compact_models/bsimar/checkpoints/`.
 14. **Charge conservation** — simulator always computes `qs = -(qg + qd + qb)` analytically, even for 13-output models that directly predict `qs`. Guarantees Kirchhoff conservation at every transient timestep.
 15. **Analytical Vds correction** — `_MOSFETNNBase._apply_vds_correction()` enforces Id(Vds=0)=0 and Id=0 for reverse-Vds at inference. Four-part (order matters):
 
-- (a) **Rail-restoring extrapolation** when `|Vds| > VDD_train` (= `self._vdd_estimate`, from training norm stats): quadratic Id ramp `½·g_max·overshoot² / x_ref` and linear gds ramp `g_max·overshoot / x_ref` (g_max=1mS, x_ref=½·VDD_train). Both zero-valued zero-sloped at the boundary so NR sees a smooth join (linear ramp tried first, caused NR oscillation for TSMC12/16 with ops at the boundary). Must run BEFORE the fast-path early-return. **V6.2 sign fix:** the injected `id_extra` adds in the *same* direction as the conducting-current sign (NMOS `id -= id_extra` makes id more negative; PMOS `id += id_extra` makes id more positive) — i.e. the restoring leakage strengthens the device's natural pull toward the source rail. The original V4-re ship used the opposite sign and the wrong-sign clamp at (d) wiped the contribution inside the band `VDD_train < |Vds| < 20·VT`, leaving a current-free dead-band where V(out) settled ~±100 mV outside the rails (closed Rule 20).
+- (a) **Rail-restoring extrapolation** when `|Vds| > VDD_train` (= `self._vdd_estimate`, from training norm stats): quadratic Id ramp `½·g_max·overshoot² / x_ref` and linear gds ramp `g_max·overshoot / x_ref` (g_max=1mS, x_ref=½·VDD_train). Both zero-valued zero-sloped at the boundary so NR sees a smooth join. Must run BEFORE the fast-path early-return. **The injected `id_extra` adds in the same direction as the conducting-current sign** (NMOS `id -= id_extra`, PMOS `id += id_extra`) — restoring leakage strengthens the device's pull toward the source rail. The opposite sign creates a current-free dead-band inside `VDD_train < |Vds| < 20·VT` (the V6.1 bug; see CHANGELOG "V6.2 — Rule 15(a) sign fix").
 - (b) one-sided `1-exp(-|Vds|/VT)` with VDD-proportional `VT = max(0.06·VDD, 0.026)V` for Id/gm/gmb.
 - (c) symmetric gds with linear-region conductance `|Id_raw|·exp(-|Vds|/VT)/VT`.
 - (d) sign enforcement (NMOS id≤0, PMOS id≥0).
 
-  Step (a) fixed the BSIMAR transient bug: NN extrapolates flat-near-zero outside `[-VDD_train, VDD_train]`, creating a false KCL plateau the DCSolver mistakes for equilibrium (inverter OP locking at V(out)=4.4V instead of VDD). Step (a) replicates PyCMG's restoring leakage/impact-ionization physics so NR converges to the true rail. Verified across all 4 TSMC techs on probe (670K) and production (5.15M) checkpoints — inverter transient drops from 18-300% (FAIL) to 6-12% NRMSE (PASS) without retraining. V6.2 sign fix lifted this further: TSMC5 inv-tran 8.23% → 1.23%, TSMC7 inv-tran 13.49% → 1.67%, TSMC5 VTC 7.96% → 3.08%, TSMC7 VTC 1.69% → 1.00%.
+  Step (a) replicates PyCMG's restoring leakage/impact-ionization physics so NR converges to the true rail instead of locking on the NN's flat-zero plateau outside `[-VDD_train, VDD_train]`. Inference-time only — no retraining required.
 
 16. Always report MRE (%) metric.
 17. Exclude ASAP7 tech at the current stage.
 18. Do NOT train/eval BSIMAR Transformer model at this stage. Only care about DirectNet model.
-19. **Per-tech models use a LOCAL embedding vocab.** When `--tech-scope` is `tsmc5` or `tsmc7`, the dataset loader remaps universal tech codes to a 0-indexed per-tech vocab and the trainer instantiates `DirectNet(num_tech_codes=N, unknown_code_id=N-1)` where N is variants+1. The training-time `p_unknown` dropout writes `unknown_code_id` into the embedding, so misaligned UNKNOWN id → CUDA assert. Trainer derives `unknown_code_id = num_tech_codes - 1`; do NOT hardcode 17. Universal training keeps the existing convention (vocab=18, unknown=17). Parser uses `bsimar.config.local_variant_code(scope, tech, variant)` to remap at inference; the scope is read from the resolved checkpoint stem (`tsmc{5,7}_dn_*` → local; everything else → universal).
-20. **(CLOSED in V6.2)** ~~TSMC7 transient ~13.5% NRMSE rail-overshoot dead-band.~~ Root cause was a sign flip in Rule 15(a)'s `id_extra` injection, NOT a missing two-sided Vds box. The original code drove `id` in the *opposite* direction of conducting; the wrong-sign clamp at step (d) then wiped the contribution inside the band `VDD_train < |Vds| < 20·VT`, leaving a current-free dead-band where V(out) settled ~±100 mV outside the rails. Flipping the two signs in `_apply_vds_correction` lifted TSMC5/7 inverter transient by 6.7–8× with no regression on VTC, NMOS DC, PMOS DC, or NMOS pulse. See `docs/CHANGELOG.md` "V6.2 — Rule 15(a) sign fix" for the full diff and validation. Re-validation required before resurrecting TSMC12/16 or LEVEL=74 BSIMAR, since the original `+`/`-` was load-bearing under the wrong-sign clamp for those code paths.
+19. **Per-tech models use a LOCAL embedding vocab.** When `--tech-scope` is `tsmc5` or `tsmc7`, the dataset loader remaps universal tech codes to a 0-indexed per-tech vocab and the trainer instantiates `DirectNet(num_tech_codes=N, unknown_code_id=N-1)`, where N = variants+1 (TSMC5: 5, TSMC7: 4). The training-time `p_unknown` dropout writes `unknown_code_id` into the embedding, so a misaligned UNKNOWN id → CUDA assert. **Derive `unknown_code_id` from `num_tech_codes`; do NOT hardcode the universal value (17).** Parser uses `bsimar.config.local_variant_code(scope, tech, variant)` to remap at inference; the scope is read from the resolved checkpoint stem (`tsmc{5,7}_dn_*` → local; everything else → universal).
+20. **Re-validate Rule 15(a) when resurrecting TSMC12/16 or LEVEL=74 BSIMAR.** The V6.2 sign fix changed which sign convention is shipped; the original sign was load-bearing under the wrong-sign clamp for unshipped code paths and they have not been re-tested.
 
 ---
 
