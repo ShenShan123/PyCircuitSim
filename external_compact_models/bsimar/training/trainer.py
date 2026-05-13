@@ -282,6 +282,7 @@ def train_directnet(
     overwrite: bool = False,
     column_weights: Optional[np.ndarray] = None,
     output_subset: Optional[list[str]] = None,
+    tech_scope: str = "universal",
     **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
     """DirectNet MLP training pipeline.
@@ -309,17 +310,24 @@ def train_directnet(
         apply_filter=True, exclude_techs=exclude_techs,
         norm_mode=_NORM_MODE, max_rows=max_rows,
         output_subset=output_subset,
+        tech_scope=tech_scope,
     )
     in_dim = train_ds.inputs.shape[1]
     out_dim = train_ds.outputs.shape[1]
     if output_subset is not None:
         print(f"  Output subset: {output_subset} (output_dim={out_dim})")
 
+    # Place UNKNOWN at the last slot of whatever vocab we have. Universal
+    # vocab=18 keeps unknown=17 (existing convention); per-tech vocab=5
+    # (TSMC5) → unknown=4 / vocab=4 (TSMC7) → unknown=3. Without this,
+    # `p_unknown` training-time dropout would write code 17 into a 5-row
+    # embedding and trigger a CUDA assert.
     model = DirectNet(
         input_dim=in_dim, hidden_dim=config.trunk_hidden,
         n_layers=config.trunk_layers + 1, output_dim=out_dim,
         num_tech_codes=num_tech_codes,
         tech_embed_dim=32, tech_embed_dropout=p_unknown,
+        unknown_code_id=num_tech_codes - 1,
     ).to(device)
     print(f"  Params: {model.count_parameters():,}")
 
@@ -350,6 +358,7 @@ def train_transformer(
     num_tech_codes: int = NUM_TSMC_CODES_WITH_UNKNOWN,
     p_unknown: float = 0.1,
     max_rows: Optional[int] = None,
+    tech_scope: str = "universal",
     **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
     """BSIMAR Transformer training pipeline."""
@@ -370,6 +379,7 @@ def train_transformer(
         data_path, OUTPUT_COLUMN_ORDER, device_type=device_type,
         apply_filter=True, exclude_techs=exclude_techs,
         norm_mode=_NORM_MODE, max_rows=max_rows,
+        tech_scope=tech_scope,
     )
     in_dim = train_ds.inputs.shape[1]
     out_dim = train_ds.outputs.shape[1]

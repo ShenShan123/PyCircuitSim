@@ -69,6 +69,7 @@ def _resolve_nn_checkpoint(
     """
     from bsimar.config import (
         CHECKPOINT_DIR, tech_variant_to_code, UNKNOWN_CODE_ID,
+        LOCAL_VARIANT_CODES, local_variant_code,
     )
 
     # ── Env-var override (V5 Phase C): force a specific exp prefix ──────
@@ -128,10 +129,21 @@ def _resolve_nn_checkpoint(
     if explicit_path is not None:
         path = explicit_path
     elif level == 73:
-        # Cascade: refactor presets > v4-re universal > legacy v4 universal
-        # > per-tech > bare.  Refactor presets (refac_dn_<size>_<dev>) are
-        # the small/medium/large quick-verification checkpoints.
-        candidates = [
+        # Cascade: per-tech dedicated > refactor universal presets >
+        # v4-re universal > legacy v4 universal > per-tech-bare > bare.
+        #
+        # Per-tech dedicated slots (`tsmc{5,7}_dn_{size}_{dev}_best.pt`)
+        # preempt the universal cascade when the netlist's tech matches.
+        # The trained model uses a SHRUNK local-vocab embedding; the
+        # tech_code remap below keys off the file's `tsmc{5,7}_dn_` prefix.
+        per_tech_preempt: list = []
+        if tech_key in LOCAL_VARIANT_CODES:
+            per_tech_preempt = [
+                CHECKPOINT_DIR / f"{tech_key}_dn_medium_{device_key}_best.pt",
+                CHECKPOINT_DIR / f"{tech_key}_dn_small_{device_key}_best.pt",
+                CHECKPOINT_DIR / f"{tech_key}_dn_large_{device_key}_best.pt",
+            ]
+        candidates = per_tech_preempt + [
             CHECKPOINT_DIR / f"refac_dn_medium_{device_key}_best.pt",
             CHECKPOINT_DIR / f"refac_dn_small_{device_key}_best.pt",
             CHECKPOINT_DIR / f"refac_dn_large_{device_key}_best.pt",
@@ -186,8 +198,22 @@ def _resolve_nn_checkpoint(
             else:
                 path = str(bare_path)
 
-    tech_code = tech_variant_to_code(tech_key, vt_key)
-    if tech_code == UNKNOWN_CODE_ID:
+    # Determine vocab scope from the resolved checkpoint name.
+    # `tsmc{5,7}_dn_*` => local per-tech vocab; everything else => universal.
+    chk_name = Path(path).name
+    scope = "universal"
+    for s in LOCAL_VARIANT_CODES:
+        if chk_name.startswith(f"{s}_dn_"):
+            scope = s
+            break
+    tech_code = local_variant_code(scope, tech_key, vt_key)
+
+    # Rule 12 (fail loud): log every NN checkpoint resolution so the .lis /
+    # stdout makes the universal-vs-per-tech choice and tech_code visible.
+    print(f"[NN-resolver] L{level} {netlist_name} TECH={tech_key} VT={vt_key} "
+          f"-> {chk_name} (scope={scope}, tech_code={tech_code})")
+
+    if scope == "universal" and tech_code == UNKNOWN_CODE_ID:
         import warnings
         warnings.warn(
             f"MOSFET {netlist_name}: TECH={tech_key} VT={vt_key} maps to "

@@ -100,3 +100,64 @@ Plan: `docs/plans/2026-05-03-nn-stack-trim.md`. Current shipping NN stack is lab
 ### Known v4 limitation carried into v4-re: TSMC7 NMOS DC 14.72%
 
 TSMC7 NMOS DC NRMSE is 14.72% (BSIMAR v4) / 15.79% (DirectNet v4) against PyCMG ground truth at Vds=VDD/2, NFIN=10, L=16 nm. Propagates to inverter VTC (19.15% BSIMAR / 18.14% DirectNet). Root cause: LHS training distribution under-samples strong-inversion + saturation plateau by ~16× vs verifier's uniform Id-Vgs sweep. Inverter transient at TSMC7 PASSES (6.80% DN / 9.14% BSIMAR). Mitigation: retrain on B1 hybrid-grid data with the trimmed pipeline, save under `v4_re_*` prefix, expect TSMC7 NMOS DC ≤ 8% per trim plan's gate.
+
+## V6.1 — Per-tech dedicated DirectNet for TSMC5/TSMC7 (2026-05-12 / 2026-05-13)
+
+Sprint goal: improve inverter DC/Tran accuracy on TSMC5 and TSMC7 by training **dedicated** per-tech DirectNet models at small + medium scales. Triggered by baseline measurement on `refac_dn_medium` (V6 universal): TSMC5 inv VTC 9.58% PASS, **TSMC7 inv VTC 163383.88% FAIL** (catastrophic OP lock), TSMC5 inv tran 14.33% PASS, TSMC7 inv tran 14.48% PASS.
+
+### Scope and destructive cleanup
+- Wiped `external_compact_models/bsimar/checkpoints/` (refac_dn_*, refac_tf_*, v6_dn_*, v4_* symlinks), `checkpoints_legacy/` symlink, and the originals at `/home/shenshan/NN_SPICE/external_compact_models/bsimar/checkpoints/` + `data/datasets/` (~12 GB total). All universal V6 + V4 + legacy artifacts deleted; **no checkpoints remain for TSMC12/16/ASAP7 or LEVEL=74 BSIMAR** (out-of-scope for this sprint per user direction).
+- Regenerated per-tech datasets via `generate_nn_data.py --device both --tech {tsmc5,tsmc7} --enable-inv-trip` into `tsmc{5,7}_{nmos,pmos}.npz`. Sizes after V6.1 final regen: TSMC5 nmos 2.30M rows / pmos 2.30M; TSMC7 nmos 2.07M / pmos 2.41M. Inv_trip overlay adds ~218K-255K samples per device.
+
+### Code changes
+- `bsimar/config.py`: added `LOCAL_VARIANT_CODES`, `LOCAL_UNKNOWN_CODE_ID`, `LOCAL_VOCAB_SIZE`, `local_variant_code(scope, tech, variant)`, `tech_scope_vocab_size(scope)`, and `VALID_TECH_SCOPES = ("universal", "tsmc5", "tsmc7")`. Per-tech vocab: TSMC5 = 5 (4 variants + UNKNOWN), TSMC7 = 4 (3 variants + UNKNOWN).
+- `bsimar/data/dataset.py`: `load_and_split_bsimar` accepts `tech_scope`; when non-universal, remaps tech_codes from universal → 0-indexed local vocab after `exclude_techs` filter.
+- `bsimar/cli/train.py`: added `--tech-scope` flag. When non-universal, auto-sets exclude-techs (all other techs), num-tech-codes (per-tech vocab size), default data path (`<scope>_<dev>.npz`), and save_prefix (`<scope>_dn_<size>[_<preset>]_<dev>`).
+- `bsimar/training/trainer.py`: passes `tech_scope` through to dataset loader; instantiates `DirectNet(unknown_code_id = num_tech_codes - 1)` so per-tech UNKNOWN is at the LAST embedding row instead of hardcoded 17. **Without this fix, training-time `p_unknown` dropout writes code 17 into a 5-row embedding → CUDA assert.** (Universal training keeps the existing convention since vocab=18 → unknown=17.)
+- `pycircuitsim/parser.py`: per-tech preempt slot inserted ABOVE the universal cascade for TSMC5/TSMC7. Resolver decodes vocab scope from the resolved checkpoint stem (`tsmc{5,7}_dn_*` → local; everything else → universal) and uses `local_variant_code` to map the netlist's TECH+VT to the right embedding index. Every resolution prints `[NN-resolver] L73 ... -> <chk> (scope=<s>, tech_code=<c>)` per Rule 12.
+- `tests/verify_nn_dc_tran.py`: extended the directnet_v4 checkpoint resolver to also accept `refac_dn_medium`, `refac_dn_small`, and `tsmc{5,7}_dn_{medium,small}` as fallbacks (the path is now an *existence sentinel*). Added `_cascade_handles_stem(path)` and stopped stamping `MODEL_PATH=` for stems that the parser preempt cascade can route — so a single inverter test invocation picks TSMC5 medium for TSMC5 netlists and TSMC7 medium for TSMC7 netlists automatically.
+- `external_compact_models/PyCMG/pycmg/nn_generate.py`: widened the inv_trip overlay gate from `tech_name == "tsmc5"` to `tech_name in ("tsmc5", "tsmc7")`. Same lever that took TSMC5 DN inv-tran from 16.90% → 0.92% in V5'.
+
+### Training (8 cells, GPU 2)
+S+M × {NMOS, PMOS} × {TSMC5, TSMC7} via `scripts/train_per_tech_8cells.sh`. Best val losses (asinh+zscore + per-target LDS-MAE):
+
+| Cell                    | Best val loss |
+|-------------------------|--------------:|
+| tsmc5 small  nmos       | 0.00742       |
+| tsmc5 small  pmos       | 0.00913       |
+| tsmc5 medium nmos       | 0.00103       |
+| tsmc5 medium pmos       | 0.00084       |
+| tsmc7 small  nmos       | 0.01171       |
+| tsmc7 small  pmos       | 0.00861       |
+| tsmc7 medium nmos       | 0.00114 (after inv-trip retrain; was 0.00130) |
+| tsmc7 medium pmos       | 0.00096 (after inv-trip retrain; was 0.00109) |
+
+Medium val loss is **7-10× lower** than small for every (tech, polarity); medium is the production size and small is retained as a parser cascade fallback only for TSMC5 (TSMC7 small was deleted on the inv-trip regen, since it would be inconsistent with the new dataset and is never selected when medium is present).
+
+### Validation (parser per-tech preempt active)
+
+| Test                       | Baseline `refac_dn_medium` | V6.1 per-tech medium | Δ |
+|----------------------------|-------------------------:|---------------------:|---:|
+| TSMC5 inv VTC              | 9.58%   PASS             | 7.96%   PASS         | −1.62 pp |
+| TSMC7 inv VTC              | 163383.88% **FAIL**      | **1.69%** PASS       | catastrophe fixed |
+| TSMC5 inv transient (post-startup) | 14.33% PASS      | **8.23%** PASS       | **−6.10 pp** |
+| TSMC7 inv transient (post-startup) | 14.48% PASS      | 13.49% PASS          | −0.99 pp |
+
+Locked success criterion was ≥ 2 pp transient reduction on the worse-of-two (TSMC7). Final TSMC7 transient is **−0.99 pp** — strictly under the gate. Inv-trip overlay (added in the second pass) sharpened TSMC7 VTC further (3.22% → 1.69%) but **did not move TSMC7 transient**. Diagnosis from the comparison plot: TSMC7 transient settles at a **second stable equilibrium ~±100 mV outside the rails** because the PMOS forward-Vds region (V(out) > VDD in source-relative frame) is extrapolated outside the `[0, 2·VDD]` training box and produces non-zero leakage, balanced against Rule 15(a)'s NMOS pull-down. Documented as Rule 20 in CLAUDE.md; fix is out-of-scope for V6.1.
+
+### Net result
+- Catastrophic TSMC7 VTC failure fixed (163383% → 1.69%).
+- Average DC NRMSE across TSMC5/7 inverter VTC: was unmeaningful (1 catastrophic FAIL); now 4.82%.
+- 4/4 inverter tests PASS (was 2/4 PASS, 2/4 FAIL).
+- TSMC12/16 / ASAP7 / LEVEL=74 simulations have no checkpoints and will fail until a separate retrain.
+
+### Logs and artifacts
+- Baseline measurement: `training_logs/baseline_tsmc57_v6medium/`
+- Data-gen logs: `training_logs/data_gen/{tsmc5.log, tsmc7.log, tsmc7_invtrip.log}`
+- 8-cell training logs: `training_logs/per_tech/`
+- TSMC7 medium inv-trip retrain logs: `training_logs/per_tech_v2/`
+- Validation: `training_logs/validation_pertech_medium/` and `training_logs/validation_pertech_v2/`
+
+### Rule 20 fix attempt — closed, no production change
+
+Three variants of an inference-time fix to the Rule 20 forward-Vds rail-overshoot finding were prototyped against `pycircuitsim/models/mosfet_nn.py:_apply_vds_correction` and all reverted: (1) widen the fast-path early-return to skip the wrong-sign clamp whenever `abs_vds > VDD_train`; (2) defer part-(a)'s id injection until after the part-(d) clamp; (3) defer + add an `|NN_raw| < 0.5·|id_a|` off-state detector. Each variant catastrophically regressed TSMC5/7 inverter VTC (>200000% NRMSE), because the wrong-sign clamp also catches NN-error overshoot during DC OP NR iterations at modest Vgs values where NN_raw is a real subthreshold current — not "off". Distinguishing genuine off-state from NR-intermediate subthreshold needs Vgs context, which the function doesn't currently receive. Variant 3 did improve TSMC5 transient (8.23% → 6.81%) but the trade was unacceptable. Recorded for future revisit: Path B (Vgs-aware refactor) and Path C (regenerate with two-sided Vds box + retrain).

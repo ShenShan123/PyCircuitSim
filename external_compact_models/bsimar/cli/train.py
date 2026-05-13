@@ -20,11 +20,16 @@ import torch
 from bsimar.config import (
     CHECKPOINT_DIR, DATA_DIR,
     DirectNetConfig, TransformerConfig,
+    LOCAL_VARIANT_CODES, VALID_TECH_SCOPES, tech_scope_vocab_size,
 )
 from bsimar.training.trainer import train_directnet, train_transformer
 from bsimar.utils.seed import set_seed
 
 import numpy as np
+
+
+# All TSMC + ASAP7 tech names for the per-tech `--tech-scope` auto-exclude.
+_ALL_TECH_NAMES = ("tsmc5", "tsmc7", "tsmc12", "tsmc16", "asap7")
 
 
 # ── Loss presets (per docs/superpowers/plans/2026-05-08-…) ─────────────
@@ -84,6 +89,8 @@ SIZE_PRESETS = {
 def _resolve_data_path(args: argparse.Namespace) -> Path:
     if args.data:
         return Path(args.data)
+    if args.tech_scope != "universal":
+        return DATA_DIR / f"{args.tech_scope}_{args.device_type}.npz"
     return DATA_DIR / f"universal_{args.device_type}.npz"
 
 
@@ -94,6 +101,10 @@ def _make_save_prefix(args: argparse.Namespace) -> str:
     suffix = ""
     if args.loss_preset != "default":
         suffix = f"_{args.loss_preset}"
+    if args.tech_scope != "universal":
+        # Per-tech dedicated checkpoint: tsmc{5,7}_dn_<size>[_<preset>]_<dev>.
+        # The parser's preempt cascade keys off the `tsmc{5,7}_dn_` prefix.
+        return f"{args.tech_scope}_{tag}_{args.size}{suffix}_{args.device_type}"
     return f"refac_{tag}_{args.size}{suffix}_{args.device_type}"
 
 
@@ -105,9 +116,24 @@ def _run(args: argparse.Namespace) -> None:
 
     save_prefix = _make_save_prefix(args)
     device_str = "cuda" if (args.cuda and torch.cuda.is_available()) else "cpu"
-    exclude = (
-        {t.strip().lower() for t in args.exclude_techs.split(",")}
-        if args.exclude_techs else None)
+
+    # Per-tech scope auto-derives the exclude set + the embedding vocab.
+    # Explicit --exclude-techs / --num-tech-codes still win if both are set.
+    if args.tech_scope != "universal":
+        auto_excl = {t for t in _ALL_TECH_NAMES if t != args.tech_scope}
+        explicit_excl = (
+            {t.strip().lower() for t in args.exclude_techs.split(",")}
+            if args.exclude_techs else set())
+        exclude = explicit_excl | auto_excl
+        # Vocab = #variants(scope) + 1 UNKNOWN slot.
+        if args.num_tech_codes == 18:  # untouched default
+            args.num_tech_codes = tech_scope_vocab_size(args.tech_scope)
+        print(f"  [tech-scope={args.tech_scope}] auto exclude={sorted(exclude)} "
+              f"num_tech_codes={args.num_tech_codes}")
+    else:
+        exclude = (
+            {t.strip().lower() for t in args.exclude_techs.split(",")}
+            if args.exclude_techs else None)
 
     preset = dict(SIZE_PRESETS[(args.model, args.size)])
     # Per-flag overrides
@@ -127,6 +153,7 @@ def _run(args: argparse.Namespace) -> None:
         save_prefix=save_prefix, exclude_techs=exclude,
         num_tech_codes=args.num_tech_codes, p_unknown=args.p_unknown,
         max_rows=args.max_rows, overwrite=args.overwrite,
+        tech_scope=args.tech_scope,
     )
 
     print(f"\n=== Training {args.model} ({args.size}, "
@@ -177,6 +204,15 @@ def main() -> None:
     p.add_argument("--num-tech-codes", type=int, default=18)
     p.add_argument("--p-unknown", type=float, default=0.1)
 
+    p.add_argument("--tech-scope",
+                   choices=list(VALID_TECH_SCOPES),
+                   default="universal",
+                   help="Per-tech dedicated training. 'tsmc5' / 'tsmc7' "
+                        "auto-set --exclude-techs (all other techs), "
+                        "--num-tech-codes (per-tech vocab + UNKNOWN), "
+                        "default --data path, and the save_prefix "
+                        "(tsmc{5,7}_dn_<size>_<dev>) recognized by the "
+                        "parser preempt cascade.")
     p.add_argument("--exp-name", type=str, default=None,
                    help="Override the auto-generated save_prefix")
     p.add_argument("--overwrite", action="store_true")

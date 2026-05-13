@@ -115,6 +115,60 @@ def tech_variant_to_code(tech: str, variant: str) -> int:
     )
 
 
+# ── Per-tech-scope local variant code maps (V6 dedicated per-tech models) ────
+# When training a dedicated TSMC5 (or TSMC7) model the embedding vocabulary
+# collapses to that tech's variants, with one extra UNKNOWN slot at the tail.
+# Codes are 0-indexed local to the scope and saved into the per-tech
+# checkpoint. The parser must remap (tech, variant) through
+# ``local_variant_code(scope, ...)`` before passing tech_code to the loaded
+# model — the universal code would index out-of-range or pick the wrong row.
+
+VALID_TECH_SCOPES: Tuple[str, ...] = ("universal", "tsmc5", "tsmc7")
+
+
+def _build_local_codes(tech_name: str) -> Dict[Tuple[str, str], int]:
+    cfg = TECH_CONFIGS[tech_name]
+    return {(tech_name, v.lower()): i for i, v in enumerate(cfg.variant_names)}
+
+
+LOCAL_VARIANT_CODES: Dict[str, Dict[Tuple[str, str], int]] = {
+    "tsmc5": _build_local_codes("tsmc5"),
+    "tsmc7": _build_local_codes("tsmc7"),
+}
+LOCAL_UNKNOWN_CODE_ID: Dict[str, int] = {
+    scope: len(table) for scope, table in LOCAL_VARIANT_CODES.items()
+}
+LOCAL_VOCAB_SIZE: Dict[str, int] = {
+    scope: len(table) + 1 for scope, table in LOCAL_VARIANT_CODES.items()
+}
+
+
+def local_variant_code(scope: str, tech: str, variant: str) -> int:
+    """Look up the local-vocab tech code for a per-tech model.
+
+    For ``scope == "universal"`` falls through to ``tech_variant_to_code``.
+    """
+    if scope == "universal":
+        return tech_variant_to_code(tech, variant)
+    if scope not in LOCAL_VARIANT_CODES:
+        raise ValueError(
+            f"Unknown tech_scope: {scope!r} (valid: {VALID_TECH_SCOPES})")
+    return LOCAL_VARIANT_CODES[scope].get(
+        (tech.lower(), variant.lower()),
+        LOCAL_UNKNOWN_CODE_ID[scope],
+    )
+
+
+def tech_scope_vocab_size(scope: str) -> int:
+    """Embedding vocabulary size required for a given tech_scope."""
+    if scope == "universal":
+        return NUM_TSMC_CODES_WITH_UNKNOWN
+    if scope not in LOCAL_VOCAB_SIZE:
+        raise ValueError(
+            f"Unknown tech_scope: {scope!r} (valid: {VALID_TECH_SCOPES})")
+    return LOCAL_VOCAB_SIZE[scope]
+
+
 # ── Training hyperparameters ─────────────────────────────────────────────────
 @dataclass
 class DirectNetConfig:

@@ -65,12 +65,20 @@ def load_and_split_bsimar(
     exclude_techs: Optional[Set[str]] = None,
     max_rows: Optional[int] = None,
     output_subset: Optional[List[str]] = None,
+    tech_scope: str = "universal",
 ) -> Tuple[MOSFETDataset, MOSFETDataset, MOSFETDataset, _NormalizerBase]:
     """Load .npz, label, optionally filter / exclude techs / cap, split, normalise.
 
     ``output_subset``: optional list of column names from
     ``OUTPUT_COLUMN_ORDER``. If given, only those columns are kept on
     every split, and the normalizer's stats are sized to the subset.
+
+    ``tech_scope``: one of ``"universal"`` (no remap; default) or a
+    per-tech scope name (``"tsmc5"`` / ``"tsmc7"``). When non-universal,
+    each row's tech_code is remapped from the universal vocab to a
+    0-indexed local vocab whose size matches the trained per-tech
+    embedding. Rows outside the scope (which should already be removed
+    by ``exclude_techs``) collapse to the local UNKNOWN slot at the tail.
     """
     from bsimar.eval.loo_labels import get_or_build_tech_variant_labels
 
@@ -106,6 +114,34 @@ def load_and_split_bsimar(
         inputs, geometry, outputs = inputs[idx], geometry[idx], outputs[idx]
         tech_codes = tech_codes[idx]
         print(f"  Capped to {max_rows} rows")
+
+    if tech_scope != "universal":
+        from bsimar.config import (
+            CODE_TO_TECH_VARIANT,
+            LOCAL_VARIANT_CODES,
+            LOCAL_UNKNOWN_CODE_ID,
+            VALID_TECH_SCOPES,
+        )
+        if tech_scope not in LOCAL_VARIANT_CODES:
+            raise ValueError(
+                f"tech_scope {tech_scope!r} not in {VALID_TECH_SCOPES}")
+        local_table = LOCAL_VARIANT_CODES[tech_scope]
+        unk = LOCAL_UNKNOWN_CODE_ID[tech_scope]
+        remapped = np.empty_like(tech_codes)
+        n_outside = 0
+        for i, c in enumerate(tech_codes):
+            tv = CODE_TO_TECH_VARIANT.get(int(c))
+            if tv is None or tv[0] != tech_scope:
+                remapped[i] = unk
+                n_outside += 1
+            else:
+                remapped[i] = local_table.get(tv, unk)
+        tech_codes = remapped
+        if n_outside:
+            print(f"  tech_scope={tech_scope}: {n_outside} rows fell to "
+                  f"UNKNOWN (expected 0 if exclude_techs is set correctly)")
+        print(f"  tech_scope={tech_scope}: remapped to local vocab "
+              f"(size={len(local_table) + 1})")
 
     if output_subset is not None:
         from bsimar.data.normalize import OUTPUT_COLUMN_ORDER

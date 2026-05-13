@@ -62,3 +62,6 @@ external_compact_models/bsimar/data/datasets_tmp_for_d1/
 
 # Local Claude tool config
 .claude/
+
+# Training / data-gen / validation logs (regenerable; can be very large)
+training_logs/

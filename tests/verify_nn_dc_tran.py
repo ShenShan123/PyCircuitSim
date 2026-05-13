@@ -418,15 +418,29 @@ def get_available_checkpoints() -> Dict[str, Optional[Path]]:
             else:
                 checkpoints[f"bsimar_v4{suffix}"] = None
 
-        # DirectNet v4 (tech-code embedding) or env override
+        # DirectNet v4 (tech-code embedding) or env override.
+        # When neither env nor `v4_dn_universal_*` is available, fall back
+        # to any present per-tech (`tsmc{5,7}_dn_medium_*`) or refactor
+        # universal (`refac_dn_medium_*`) checkpoint — the path is only a
+        # *existence sentinel*: the netlist builders for the inverter
+        # tests omit MODEL_PATH for per-tech/refac stems so the parser's
+        # preempt cascade selects the right checkpoint for each tech.
         if dn_ovr:
             dn_path = CHECKPOINT_DIR / f"{dn_ovr}_best.pt"
             checkpoints[f"directnet_v4{suffix}"] = (
                 dn_path if dn_path.exists() else None)
         else:
-            dn_v4 = CHECKPOINT_DIR / f"v4_dn_universal_{dev}_best.pt"
-            checkpoints[f"directnet_v4{suffix}"] = (
-                dn_v4 if dn_v4.exists() else None)
+            fallbacks = [
+                CHECKPOINT_DIR / f"v4_dn_universal_{dev}_best.pt",
+                CHECKPOINT_DIR / f"refac_dn_medium_{dev}_best.pt",
+                CHECKPOINT_DIR / f"refac_dn_small_{dev}_best.pt",
+                CHECKPOINT_DIR / f"tsmc5_dn_medium_{dev}_best.pt",
+                CHECKPOINT_DIR / f"tsmc7_dn_medium_{dev}_best.pt",
+                CHECKPOINT_DIR / f"tsmc5_dn_small_{dev}_best.pt",
+                CHECKPOINT_DIR / f"tsmc7_dn_small_{dev}_best.pt",
+            ]
+            checkpoints[f"directnet_v4{suffix}"] = next(
+                (p for p in fallbacks if p.exists()), None)
 
     # Backward-compat aliases (NMOS only, used by existing run_dc_tests/run_tran_tests)
     checkpoints["bsimar_v4"] = checkpoints["bsimar_v4_nmos"]
@@ -1016,6 +1030,21 @@ def run_ngspice_inverter_vtc(
 # ---------------------------------------------------------------------------
 # PyCircuitSim NN Inverter VTC
 # ---------------------------------------------------------------------------
+def _cascade_handles_stem(path: Optional[Path]) -> bool:
+    """True if the path stem is one the parser's per-tech preempt cascade
+    can route to the right checkpoint based on the netlist's TECH=.
+
+    For these stems we deliberately omit MODEL_PATH in the netlist so a
+    single inverter test invocation can pick TSMC5 medium for TSMC5
+    netlists and TSMC7 medium for TSMC7 netlists, etc.
+    """
+    if path is None:
+        return False
+    stem = path.name
+    return any(stem.startswith(p) for p in (
+        "tsmc5_dn_", "tsmc7_dn_", "refac_dn_"))
+
+
 def run_pycircuitsim_nn_inverter_vtc(
     tech: TestTechConfig,
     work_dir: Path,
@@ -1036,11 +1065,11 @@ def run_pycircuitsim_nn_inverter_vtc(
     netlist_path = work_dir / f"nn_{model_name}_inverter_vtc_{tech.name}.sp"
 
     nmos_params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={tech.nn_vt}"
-    if nmos_model_path is not None:
+    if nmos_model_path is not None and not _cascade_handles_stem(nmos_model_path):
         nmos_params += f" MODEL_PATH={nmos_model_path}"
 
     pmos_params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={tech.effective_pmos_vt}"
-    if pmos_model_path is not None:
+    if pmos_model_path is not None and not _cascade_handles_stem(pmos_model_path):
         pmos_params += f" MODEL_PATH={pmos_model_path}"
 
     content = (
@@ -1282,11 +1311,11 @@ def run_pycircuitsim_nn_inverter_tran(
     per = INV_TRAN_TR + INV_TRAN_PW + INV_TRAN_TF + max(INV_TRAN_PW, 1.0e-9)
 
     nmos_params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={tech.nn_vt}"
-    if nmos_model_path is not None:
+    if nmos_model_path is not None and not _cascade_handles_stem(nmos_model_path):
         nmos_params += f" MODEL_PATH={nmos_model_path}"
 
     pmos_params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={tech.effective_pmos_vt}"
-    if pmos_model_path is not None:
+    if pmos_model_path is not None and not _cascade_handles_stem(pmos_model_path):
         pmos_params += f" MODEL_PATH={pmos_model_path}"
 
     netlist_path = work_dir / f"nn_{model_name}_inverter_tran_{tech.name}.sp"

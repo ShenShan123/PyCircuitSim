@@ -84,14 +84,14 @@ Inverter circuit must PASS Transient Analysis against NGSPICE ground truth withi
 
 ## Status
 
-Current shipping revision is **V6** (7-dim + tech-code embedding architecture, asinh+zscore output norm for both DirectNet and Transformer, B1 hybrid-grid training data, `refac_*` checkpoint prefix). V4/V5 history in `docs/CHANGELOG.md`.
+Current shipping revision is **V6.1** (per-tech dedicated DirectNet for TSMC5 + TSMC7, with shrunk per-tech embedding vocab; same 7-dim continuous input + asinh+zscore norm + B1 hybrid-grid training data as V6). V4/V5/V6 history in `docs/CHANGELOG.md`.
 
 - **BSIM-CMG (LEVEL=72):** all 5 techs (ASAP7, TSMC5/7/12/16), DC <0.1% NRMSE, transient ~0.20% NRMSE vs NGSPICE.
-- **DirectNet V6 (LEVEL=73, primary):** universal NMOS/PMOS checkpoints under `refac_dn_{small,medium,large}_*` (production size: `medium`); `e1`/`e2`/`e3` loss-preset variants on disk. Legacy `v4_*` checkpoints loadable via resolver fallback.
-- **BSIMAR V6 (LEVEL=74, deprioritized per Rule 18):** `refac_tf_small_*` checkpoints exist; medium/large not yet trained. Inverter transient 6-12% NRMSE (legacy V4-re probe).
-- **Test infrastructure:** 3-level DC + transient suites (BSIM-CMG: 2+67+44 DC, 1+37+72 tran; NN V6: ~6 DC + ~4 tran in `verify_nn_dc.py`/`verify_nn_tran_v4.py` plus all-tech sweeps via `verify_nn_dc_tran.py`).
+- **DirectNet V6.1 (LEVEL=73, primary):** dedicated per-tech NMOS/PMOS checkpoints `tsmc{5,7}_dn_{small,medium}_*` (production size `medium`). Inverter VTC: TSMC5 7.96% PASS, TSMC7 1.69% PASS. Inverter transient (post-startup): TSMC5 8.23% PASS, TSMC7 13.49% PASS (rail-overshoot dominated; see Rule 19).
+- **NO checkpoints for TSMC12 / TSMC16 / ASAP7 / LEVEL=74 BSIMAR.** All universal `refac_dn_*`, `refac_tf_*`, `v4_*`, and `checkpoints_legacy/` artifacts deleted on 2026-05-12 to make room for the per-tech retrain. Simulating those techs (or LEVEL=74) requires a separate retrain — out of scope for V6.1.
+- **Test infrastructure:** 3-level DC + transient suites (BSIM-CMG: 2+67+44 DC, 1+37+72 tran; NN V6.1: `verify_nn_dc_tran.py --tech TSMC5,TSMC7 --inverter-only` for the gate; per-tech routing via parser preempt cascade).
 - **Solver upgrades shipped:** sparse MNA (lil→CSR+spsolve), 2-level GMIN stepping [1e-8, 1e-12] with retry, BE→Trap→BDF-2, LTE sub-stepping, oscillation detection, hard `.ic` mode.
-- **ASAP7 exclusion:** ASAP7 tech codes (18-21) exceed the trained embedding vocabulary (18 codes). Running ASAP7 with universal checkpoints crashes the embedding. Requires separate fine-tuning.
+- **ASAP7 exclusion:** unchanged — would also need a dedicated per-tech checkpoint or fresh universal training.
 
 ## Setup
 
@@ -115,35 +115,35 @@ git submodule update --init --recursive
 
 Create a `.sp` netlist (examples in `examples/`). BSIM-CMG geometric params: `L`, `NFIN`, optional `TFIN`/`HFIN`/`FPITCH`.
 
-### NN training (V6)
+### NN training (V6.1 — per-tech dedicated)
 
 ```bash
-# Generate universal data (954 geometry combos across 5 techs/21 variants)
+# Generate per-tech data. --enable-inv-trip overlay is gated to TSMC5/TSMC7
+# inside pycmg/nn_generate.py and adds ~10-12% inverter trip-region samples.
 conda run -n pycircuitsim python external_compact_models/PyCMG/scripts/generate_nn_data.py \
-    --device both --universal
+    --device both --tech tsmc5 --enable-inv-trip --n-workers 8
+conda run -n pycircuitsim python external_compact_models/PyCMG/scripts/generate_nn_data.py \
+    --device both --tech tsmc7 --enable-inv-trip --n-workers 8
 
-# Train DirectNet — asinh+zscore outputs, MAE + per-target LDS, ASAP7 excluded.
-# --size {small,medium,large} selects the SIZE_PRESETS architecture+epochs+batch.
-# --loss-preset {default,e1,e2,e3} controls column-weight / output-subset variants.
-# Default save_prefix: refac_dn_<size>[_<loss-preset>]_<device>.
+# Train dedicated per-tech DirectNet. --tech-scope auto-sets:
+#   --exclude-techs (all other techs), --num-tech-codes (per-tech vocab + UNKNOWN),
+#   default --data path (datasets/<scope>_<dev>.npz), and the save_prefix
+#   (`tsmc{5,7}_dn_<size>_<dev>`) recognized by the parser preempt cascade.
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
-    --model direct --size medium --device-type {nmos,pmos} \
-    --exclude-techs asap7 --num-tech-codes 18 --cuda
+    --model direct --size {small,medium} \
+    --device-type {nmos,pmos} --tech-scope {tsmc5,tsmc7} --cuda --overwrite
 
-# Optional: TSMC5-only residual head on a frozen DirectNet backbone (V6 Tier M2).
-# Separate trainer (not under bsimar.cli.train); reuses backbone norm.npz.
-conda run -n pycircuitsim python -u -m bsimar.training.tsmc5_residual_train \
-    --device-type {nmos,pmos} --epochs 30 --cuda
+# Convenience: full 8-cell sweep (S+M × NMOS/PMOS × TSMC5/TSMC7) at GPU 2.
+bash scripts/train_per_tech_8cells.sh
 ```
 
 **Checkpoints** (in `external_compact_models/bsimar/checkpoints/`):
 
-- V6 DirectNet: `refac_dn_{small,medium,large}_{nmos,pmos}_best.pt` + `_norm.npz`. Production size is `medium`.
-- V6 Transformer: `refac_tf_{small,medium,large}_{nmos,pmos}_best.pt` + `_norm.npz` + `_config.npz`.
-- Resolver cascade (`pycircuitsim/parser.py`): `refac_dn_medium > refac_dn_small > refac_dn_large > v4_re_dn_universal > v4_dn_universal > per-tech > bare` for LEVEL=73; analogous `refac_tf_*` cascade for LEVEL=74. Override via `--exp-name` at train time or `PYCIRCUITSIM_NN_CHECKPOINT_*` env vars at runtime.
-- Legacy `v4_*` checkpoints still load via the tail of the cascade.
+- V6.1 DirectNet per-tech: `tsmc{5,7}_dn_{small,medium}_{nmos,pmos}_best.pt` + `_norm.npz`. Embedding vocab shrunk to per-tech variant count + 1 UNKNOWN slot (TSMC5: 5, TSMC7: 4). Production size is `medium`.
+- Resolver cascade (`pycircuitsim/parser.py`): for TSMC5/TSMC7 netlists, per-tech preempts the universal slot:
+  `tsmc{X}_dn_medium > tsmc{X}_dn_small > tsmc{X}_dn_large > refac_dn_medium > refac_dn_small > refac_dn_large > v4_re_dn_universal > v4_dn_universal > per-tech > bare`. Each resolution is logged at parse time as `[NN-resolver] L73 <name> TECH=<x> VT=<y> -> <chk> (scope=<s>, tech_code=<c>)`. Override via `--exp-name` at train time or `PYCIRCUITSIM_NN_CHECKPOINT_*` env vars at runtime.
 
-**Netlist usage:** `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10` (LEVEL=74 for BSIMAR). Parser auto-resolves tech-code from TECH+VT.
+**Netlist usage:** `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`. Parser auto-resolves the per-tech checkpoint and the local-vocab tech_code via `bsimar.config.local_variant_code(scope, tech, variant)`.
 
 ### Output files
 
@@ -248,6 +248,8 @@ Both share the same data pipeline and inference-time rules. DirectNet is the V6 
 16. Always report MRE (%) metric.
 17. Exclude ASAP7 tech at the current stage.
 18. Do NOT train/eval BSIMAR Transformer model at this stage. Only care about DirectNet model.
+19. **Per-tech models use a LOCAL embedding vocab.** When `--tech-scope` is `tsmc5` or `tsmc7`, the dataset loader remaps universal tech codes to a 0-indexed per-tech vocab and the trainer instantiates `DirectNet(num_tech_codes=N, unknown_code_id=N-1)` where N is variants+1. The training-time `p_unknown` dropout writes `unknown_code_id` into the embedding, so misaligned UNKNOWN id → CUDA assert. Trainer derives `unknown_code_id = num_tech_codes - 1`; do NOT hardcode 17. Universal training keeps the existing convention (vocab=18, unknown=17). Parser uses `bsimar.config.local_variant_code(scope, tech, variant)` to remap at inference; the scope is read from the resolved checkpoint stem (`tsmc{5,7}_dn_*` → local; everything else → universal).
+20. **TSMC7 transient ~13.5% NRMSE post-startup is rail-overshoot dominated, not edge-timing.** DirectNet per-tech medium settles at ~±100 mV outside the rails because the model produces non-zero leakage in the forward-Vds-in-source-relative-frame region (V(out) > VDD for PMOS, or V(out) < 0 for NMOS) which is OUTSIDE the training Vds box `[0, 2·VDD]`. Rule 15(a) only ramps when `|Vds| > VDD_train`, so the small-magnitude forward-Vds leakage is unhandled and creates a second stable equilibrium. DC (VTC 1.69%) is unaffected. Future fix: extend Rule 15 with sign-aware suppression, or regenerate data with two-sided Vds box.
 
 ---
 
@@ -271,7 +273,7 @@ Both share the same data pipeline and inference-time rules. DirectNet is the V6 
 ## Other Tips
 
 * **Start every complex task in plan mode** — pour energy into the plan for 1-shot implementation. Re-plan the moment something goes sideways; enter plan mode for verification steps too.
-* If the plan has several solutions or stages, implemente them in sequence. Use git commit first before you modify anything, keep the useful one that make progress and incorperate it. Otherwise, revert the solutions that were proven no help with git reset.
+* If the plan has several solutions or stages, implement them in sequence. Use git commit first before you modify anything, keep the useful one that make progress and incorperate it. Otherwise, revert the solutions that were proven to be no help with git reset.
 * **Update CLAUDE.md before every git commit**.
 * Whenever there is a version update, update the `docs/CHANGELOG.md`.
 * Always record the dead end proposal (the one being reverted), they are as important as the successful ones.
