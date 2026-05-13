@@ -161,3 +161,51 @@ Locked success criterion was ≥ 2 pp transient reduction on the worse-of-two (T
 ### Rule 20 fix attempt — closed, no production change
 
 Three variants of an inference-time fix to the Rule 20 forward-Vds rail-overshoot finding were prototyped against `pycircuitsim/models/mosfet_nn.py:_apply_vds_correction` and all reverted: (1) widen the fast-path early-return to skip the wrong-sign clamp whenever `abs_vds > VDD_train`; (2) defer part-(a)'s id injection until after the part-(d) clamp; (3) defer + add an `|NN_raw| < 0.5·|id_a|` off-state detector. Each variant catastrophically regressed TSMC5/7 inverter VTC (>200000% NRMSE), because the wrong-sign clamp also catches NN-error overshoot during DC OP NR iterations at modest Vgs values where NN_raw is a real subthreshold current — not "off". Distinguishing genuine off-state from NR-intermediate subthreshold needs Vgs context, which the function doesn't currently receive. Variant 3 did improve TSMC5 transient (8.23% → 6.81%) but the trade was unacceptable. Recorded for future revisit: Path B (Vgs-aware refactor) and Path C (regenerate with two-sided Vds box + retrain).
+
+## V6.2 — Rule 15(a) sign fix, Rule 20 dead-band closed (2026-05-13)
+
+**Two-line sign flip in `pycircuitsim/models/mosfet_nn.py:_apply_vds_correction`.** No retraining, no dataset regen, no checkpoint changes. Same V6.1 per-tech DirectNet medium artefacts; the only diff is in the rail-restoring extrapolation step (a).
+
+### Diagnosis (rebuts Rule 20's earlier "missing two-sided Vds box" thesis)
+
+V6.1 left TSMC7 inverter transient at 13.49% NRMSE with a stable equilibrium ~±100 mV outside the rails. Rule 20 hypothesised the NN was producing unhandled leakage in a region between `0` and `VDD_train`. **Wrong root cause.** Three Rule-15 variants from V6.1's "Rule 20 fix attempt" all catastrophically regressed VTC (>200000% NRMSE) by deferring or weakening the wrong-sign clamp.
+
+Probing the dead-band directly revealed the actual mechanism: Rule 15(a)'s `id_extra` injection was using the *opposite* sign from physical restoring leakage. In PyCMG convention an NMOS in conduction has `id < 0`; the restoring leakage of an OFF NMOS at high-rail overshoot should also drive `id < 0` (more negative, pulling drain back toward source). The original V4-re ship had `result["id"] += id_extra` for NMOS (positive, wrong direction) and `result["id"] -= id_extra` for PMOS (negative, also wrong). The wrong-sign clamp at step (d) then wiped any contribution that exceeded |id_raw| inside the band `VDD_train < |Vds| < 20·VT`, leaving a current-free dead-band where Vout could settle at any value in ~±0.15 V.
+
+### Fix
+
+```python
+if normal_dir:
+    if self._is_pmos:
+        result["id"] += id_extra      # was: -=
+    else:
+        result["id"] -= id_extra      # was: +=
+```
+
+Two character swap; the existing magnitude/ramp formulae for `id_extra` and `g_extra` are unchanged.
+
+### Validation (parser per-tech preempt active, V6.1 checkpoints unchanged)
+
+| Test                       | V6.1                  | V6.2                  | Δ |
+|----------------------------|----------------------:|----------------------:|---:|
+| TSMC5 inv VTC              | 7.96%   PASS          | **3.08%** PASS        | −4.88 pp |
+| TSMC7 inv VTC              | 1.69%   PASS          | **1.00%** PASS        | −0.69 pp |
+| TSMC5 inv tran (post-startup) | 8.23% PASS         | **1.23%** PASS        | −7.00 pp / 6.7× |
+| TSMC7 inv tran (post-startup) | 13.49% PASS        | **1.67%** PASS        | −11.82 pp / 8.1× |
+
+Full TSMC5/7 NN sweep — 12/12 PASS:
+
+- TSMC5 NMOS DC 0.81%, TSMC7 NMOS DC 7.44%
+- TSMC5 PMOS DC 0.35%, TSMC7 PMOS DC 1.81%
+- TSMC5 NMOS pulse tran 1.10%, TSMC7 NMOS pulse tran 8.36%
+
+### Process notes
+
+- The three dead-end V6.1 variants ("widen fast-path / defer id-injection / Vgs-aware off-state detector") all assumed the V4-re ship was correct and the rail-overshoot was an unhandled NN-leakage region. Each tried to extend Rule 15 with new state (Vgs context, deferred clamps, smoothsteps), none worked, because the actual bug was a sign convention in a single conditional that's been live since V4-re's 2026-04-20 rail-restoring extrapolation patch.
+- The 2-line diff dispatched to an agent team (3 isolated worktrees, parallel proposals). Agent 2 (originally tasked with "sharper reverse-Vds VT") probed the dead-band before patching and found the sign error. The other two agents (Vgs-aware off-state, solver-level rail clamp) cancelled — the simpler fix dominated.
+
+### Risk / scope
+
+- Re-validation required before resurrecting TSMC12/TSMC16 or LEVEL=74 BSIMAR. Those code paths used the *old* sign and may have been silently relying on the wrong-sign clamp's `id=0` fallback as their effective rail behaviour.
+- Rule 15(a) docstring in CLAUDE.md updated. Rule 20 marked CLOSED with the corrected root cause.
+- No regression observed on the full 12/12 TSMC5/7 NN gate, but ring oscillator / SRAM / other circuits have not been re-validated as part of this sprint.

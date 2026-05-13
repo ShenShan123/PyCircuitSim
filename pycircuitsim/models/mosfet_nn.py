@@ -403,11 +403,22 @@ class _MOSFETNNBase(Component):
                 g_at_cap = g_max * x_cap / x_ref
                 id_extra = id_at_cap + g_at_cap * (overshoot - x_cap)
                 g_extra = g_at_cap
+            # Sign convention for restoring leakage (Rule 20 fix, V6.2):
+            # In PyCMG sign convention, NMOS conducting id < 0 (current
+            # leaving drain in CMG's frame) and PMOS conducting id > 0. At
+            # rail-overshoot, the physical restoring leakage drives id in
+            # the *same* direction as conducting (more |id|), pulling the
+            # drain node back toward the source rail via the device. The
+            # original V4-re ship used the opposite sign here; the
+            # wrong-sign clamp at (d) then wiped the contribution inside
+            # the band VDD_train < |Vds| < 20·VT, creating a current-free
+            # dead-band where V(out) could settle at ~±100 mV outside the
+            # rails (the V6.1 TSMC7 transient bottleneck — see Rule 20).
             if normal_dir:
                 if self._is_pmos:
-                    result["id"] -= id_extra
+                    result["id"] += id_extra      # PMOS: id more positive
                 else:
-                    result["id"] += id_extra
+                    result["id"] -= id_extra      # NMOS: id more negative
             result["gds"] = max(result["gds"], g_extra)
 
         # Fast path: well into the normal-direction regime.
