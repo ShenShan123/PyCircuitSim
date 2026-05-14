@@ -85,12 +85,12 @@ Inverter circuit must PASS Transient Analysis against NGSPICE ground truth withi
 
 ## Status
 
-Current shipping revision is **V6.2** (V6.1 per-tech dedicated DirectNet + a 2-line sign fix in Rule 15(a)'s rail-restoring extrapolation). Same checkpoints, no retraining. V4/V5/V6/V6.1 history in `docs/CHANGELOG.md`.
+Current shipping revision is **V6.2.1** (V6.2 + per-tech TSMC12/TSMC16 DirectNet extension on 2026-05-14, same V6.2 recipe and Rule 15(a) sign fix). V4/V5/V6/V6.1/V6.2 history in `docs/CHANGELOG.md`.
 
 - **BSIM-CMG (LEVEL=72):** all 5 techs (ASAP7, TSMC5/7/12/16), DC <0.1% NRMSE, transient ~0.20% NRMSE vs NGSPICE.
-- **DirectNet V6.2 (LEVEL=73, primary):** dedicated per-tech NMOS/PMOS checkpoints `tsmc{5,7}_dn_{small,medium}_*` (production size `medium`). Inverter VTC: **TSMC5 3.08% PASS, TSMC7 1.00% PASS**. Inverter transient (post-startup): **TSMC5 1.23% PASS, TSMC7 1.67% PASS** (6.7×–8× improvement vs V6.1 from the Rule 15(a) sign fix; Rule 20 dead-band closed).
-- **NO checkpoints for TSMC12 / TSMC16 / ASAP7 / LEVEL=74 BSIMAR.** All universal `refac_dn_*`, `refac_tf_*`, `v4_*`, and `checkpoints_legacy/` artifacts deleted on 2026-05-12 to make room for the per-tech retrain. Simulating those techs (or LEVEL=74) requires a separate retrain — out of scope for V6.2.
-- **Test infrastructure:** 3-level DC + transient suites (BSIM-CMG: 2+67+44 DC, 1+37+72 tran; NN V6.2: `verify_nn_dc_tran.py --tech TSMC5,TSMC7 --inverter-only` for the gate, 12/12 PASS on the full TSMC5/7 sweep; per-tech routing via parser preempt cascade).
+- **DirectNet V6.2.1 (LEVEL=73, primary):** dedicated per-tech NMOS/PMOS checkpoints `tsmc{5,7,12,16}_dn_{small,medium}_*` (production size `medium`). Inverter VTC: **TSMC5 3.08%, TSMC7 1.00%, TSMC12 1.61%, TSMC16 0.91% — all PASS**. Inverter transient (post-startup): **TSMC5 1.23%, TSMC7 1.67%, TSMC12 1.51%, TSMC16 1.66% — all PASS**. TSMC12/16 embedding vocab = 6 per scope (5 variants + UNKNOWN).
+- **NO checkpoints for ASAP7 / LEVEL=74 BSIMAR.** Universal `refac_dn_*`, `refac_tf_*`, `v4_*`, and `checkpoints_legacy/` artifacts deleted on 2026-05-12. Simulating ASAP7 (or LEVEL=74) requires a separate retrain — out of scope for V6.2.1.
+- **Test infrastructure:** 3-level DC + transient suites (BSIM-CMG: 2+67+44 DC, 1+37+72 tran; NN V6.2.1: `verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16 --inverter-only` for the gate, 4/4 PASS for the new TSMC12/16 cells; per-tech routing via parser preempt cascade).
 - **Solver upgrades shipped:** sparse MNA (lil→CSR+spsolve), 2-level GMIN stepping [1e-8, 1e-12] with retry, BE→Trap→BDF-2, LTE sub-stepping, oscillation detection, hard `.ic` mode.
 - **ASAP7 exclusion:** unchanged — would also need a dedicated per-tech checkpoint or fresh universal training.
 

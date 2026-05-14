@@ -224,3 +224,34 @@ CLAUDE.md was pruned of stale rules and tricks now obsoleted by V6.2 shipping an
 - **Rule 19 (per-tech local vocab)** dropped the now-irrelevant universal-training convention (vocab=18, unknown=17) since no universal training is being done.
 - **Rule 20** collapsed from a long CLOSED-issue block to a one-line guard noting the sign convention is load-bearing for parked code paths (TSMC12/16, LEVEL=74) and needs re-validation when those are resurrected.
 - **Supported Features** retagged LEVEL=74 BSIMAR from "primary" (stale since V4-re) to "parked".
+
+## V6.2.1 — Per-tech TSMC12/TSMC16 DirectNet extension (2026-05-14)
+
+Reusing the V6.2 recipe end-to-end (data → train → verify) for the two unshipped TSMC nodes. Rule 20 explicitly called out re-validation of Rule 15(a)'s sign convention at the new VDD=0.80 V; the inverter gate passes without further changes.
+
+### Code changes (3 small registry edits)
+
+- `external_compact_models/bsimar/config.py`: extended `VALID_TECH_SCOPES` and `LOCAL_VARIANT_CODES` to include `tsmc12` and `tsmc16` (vocab = 5 variants + 1 UNKNOWN = 6 per scope).
+- `external_compact_models/PyCMG/pycmg/nn_generate.py`: extended the inv-trip overlay gate from `("tsmc5", "tsmc7")` to `("tsmc5", "tsmc7", "tsmc12", "tsmc16")`. Overlay is VDD-relative (Vd ∈ [0.30·VDD, 0.70·VDD]) so it is safe at the new vdd_train=0.80 V.
+- The rest of the pipeline (`bsimar/cli/train.py`, `bsimar/data/dataset.py`, `pycircuitsim/parser.py`, `tests/verify_nn_dc_tran.py`) already generalised on scope — no edits needed.
+
+### Data + training
+
+- Datasets generated with `--enable-inv-trip --n-workers 8`: `bsimar/data/datasets/tsmc{12,16}_{nmos,pmos}.npz`, 2,872,800 samples each.
+- 8 training cells on the A100 (GPU 2 visible-index, run sequentially per `logs/train_8cells.sh`): `tsmc{12,16}_dn_{small,medium}_{nmos,pmos}_best.pt` + `_norm.npz`. Medium runs ~38 min/cell (200 epochs), small ~14 min/cell (80 epochs). All 8 cells `rc=0`; total wall ~3h31m.
+- Local vocab `unknown_code_id=5` for both scopes — derived from `LOCAL_VOCAB_SIZE`, not hardcoded.
+
+### Validation (parser per-tech preempt active)
+
+| Test                           | TSMC12     | TSMC16     |
+|--------------------------------|-----------:|-----------:|
+| Inverter VTC NRMSE             | **1.61%** PASS | **0.91%** PASS |
+| Inverter transient post-startup | **1.51%** PASS | **1.66%** PASS |
+| Inv-tran high-rail / low-rail / transition | 1.29% / 1.47% / 3.16% | 1.06% / 1.67% / 4.21% |
+
+Resolver logs confirm scope routing — `[NN-resolver] L73.0 Mn1 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)`. Quality is on par with V6.2 TSMC5/7 (TSMC5 3.08% / 1.23%, TSMC7 1.00% / 1.67%). Rule 15(a)'s sign convention transfers cleanly to VDD=0.80 V — no dead-band reappears.
+
+### Risk / scope
+
+- ASAP7 / LEVEL=74 BSIMAR still parked — would still need a dedicated retrain.
+- The full DC sweep (without `--inverter-only`) was not run as part of this sprint; the inverter gate was the user-stated success criterion. Rule 20 remains for LEVEL=74 only.

@@ -123,7 +123,9 @@ def tech_variant_to_code(tech: str, variant: str) -> int:
 # ``local_variant_code(scope, ...)`` before passing tech_code to the loaded
 # model — the universal code would index out-of-range or pick the wrong row.
 
-VALID_TECH_SCOPES: Tuple[str, ...] = ("universal", "tsmc5", "tsmc7")
+VALID_TECH_SCOPES: Tuple[str, ...] = (
+    "universal", "tsmc5", "tsmc7", "tsmc12", "tsmc16",
+)
 
 
 def _build_local_codes(tech_name: str) -> Dict[Tuple[str, str], int]:
@@ -132,8 +134,10 @@ def _build_local_codes(tech_name: str) -> Dict[Tuple[str, str], int]:
 
 
 LOCAL_VARIANT_CODES: Dict[str, Dict[Tuple[str, str], int]] = {
-    "tsmc5": _build_local_codes("tsmc5"),
-    "tsmc7": _build_local_codes("tsmc7"),
+    "tsmc5":  _build_local_codes("tsmc5"),
+    "tsmc7":  _build_local_codes("tsmc7"),
+    "tsmc12": _build_local_codes("tsmc12"),
+    "tsmc16": _build_local_codes("tsmc16"),
 }
 LOCAL_UNKNOWN_CODE_ID: Dict[str, int] = {
     scope: len(table) for scope, table in LOCAL_VARIANT_CODES.items()
