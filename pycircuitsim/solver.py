@@ -26,6 +26,7 @@ The solver handles:
 - Non-linear MOSFETs (Newton-Raphson iteration)
 - Capacitors (Backward Euler companion model for transient analysis)
 """
+import os
 from typing import Dict, List, Tuple, Optional
 from pathlib import Path
 import numpy as np
@@ -1376,6 +1377,19 @@ class TransientSolver:
             csg = -(cgg + cdg)
             csd = -(cgd + cdd)
             css = -(cgs + cds)
+
+            # Optional C-stamp symmetrization (Phase 2a, gated by env var).
+            # cgd vs cdg (and cgs/csg, cds/csd) are independent MLP outputs
+            # that can drift asymmetric; under BDF-2 that seeds spurious
+            # damping/growth on oscillators. Replacing each conjugate pair
+            # with its mean restores reciprocity. Default off → bit-identical.
+            if os.environ.get("NN_SYMMETRIC_CAPS", "0") == "1":
+                cgd = cdg = 0.5 * (cgd + cdg)
+                cgs = csg = 0.5 * (cgs + csg)
+                cds = csd = 0.5 * (cds + csd)
+                # Keep the source self-term charge-conserving after the
+                # off-diagonal source entries were replaced.
+                css = -(cgs + cds)
 
             scale = coeff
 
