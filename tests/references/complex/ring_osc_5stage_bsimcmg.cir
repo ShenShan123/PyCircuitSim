@@ -1,0 +1,46 @@
+* 5-stage CMOS ring oscillator -- NGSPICE BSIM-CMG (LEVEL=72) GROUND TRUTH
+* Benchmark 3a reference (docs/plans/2026-05-15-directnet-complex-circuits.md)
+*
+* Ground-truth topology for tests/verify_complex_ring_osc.py. The harness
+* (tests/common/complex.py :: run_ngspice_wrdata) regenerates a per-tech
+* deck from this exact topology with:
+*   - <BAKED_LIB>  : merged NMOS+PMOS modelcard, L/NFIN/TFIN/DEVTYPE baked
+*   - <VDD>        : per-tech supply (TSMC5 0.65 / TSMC7 0.75 / 12,16 0.80)
+*   - <NMOS><PMOS> : per-tech BSIM-CMG model names (e.g. nch_svt_mac)
+* OSDI devices use the N prefix; the osdi binary is loaded in the runner.
+*
+* This file is documentation of the ground-truth topology -- the harness
+* never .include's a stale baked lib from here. NEVER replace NGSPICE with a
+* simplified/self-defined model (CLAUDE.md Validation rule).
+
+.include "<BAKED_LIB>"
+.temp 27
+
+Vdd vdd 0 <VDD>
+
+Np1 n1 n5 vdd vdd <PMOS>
+Nn1 n1 n5 0   0   <NMOS>
+Cl1 n1 0 0.5f
+
+Np2 n2 n1 vdd vdd <PMOS>
+Nn2 n2 n1 0   0   <NMOS>
+Cl2 n2 0 0.5f
+
+Np3 n3 n2 vdd vdd <PMOS>
+Nn3 n3 n2 0   0   <NMOS>
+Cl3 n3 0 0.5f
+
+Np4 n4 n3 vdd vdd <PMOS>
+Nn4 n4 n3 0   0   <NMOS>
+Cl4 n4 0 0.5f
+
+Np5 n5 n4 vdd vdd <PMOS>
+Nn5 n5 n4 0   0   <NMOS>
+Cl5 n5 0 0.5f
+
+* alternating seed kicks the loop out of its unstable DC point
+.ic v(n1)=0 v(n2)=<VDD> v(n3)=0 v(n4)=<VDD> v(n5)=0
+
+* analysis statement supplied by the runner: tran 1p 5n uic
+
+.end

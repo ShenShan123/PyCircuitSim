@@ -1,0 +1,40 @@
+* Two-stage Miller opamp -- NGSPICE BSIM-CMG (LEVEL=72) GROUND TRUTH
+* Benchmark 3b reference (docs/plans/2026-05-15-directnet-complex-circuits.md)
+*
+* Ground-truth topology for tests/verify_complex_opamp.py. The harness
+* regenerates a per-tech deck from this exact topology, substituting
+* <BAKED_LIB> / <VDD> / <NMOS> / <PMOS> / <VCM> (input common mode) and the
+* bias rails <VBN>/<VBP>. OSDI devices use the N prefix.
+*
+* NEVER replace NGSPICE with a simplified/self-defined model
+* (CLAUDE.md Validation rule).
+
+.include "<BAKED_LIB>"
+.temp 27
+
+Vdd vdd 0 <VDD>
+Vbn vbn 0 <VBN>
+Vbp vbp 0 <VBP>
+Vinn inn 0 <VCM>
+Vinp inp 0 <VCM>
+
+* --- stage 1: NMOS diff pair + PMOS mirror load + NMOS tail ---
+Nn1 n1   inp vtail 0   <NMOS>
+Nn2 vo1i inn vtail 0   <NMOS>
+Np3 n1   n1  vdd   vdd <PMOS>
+Np4 vo1i n1  vdd   vdd <PMOS>
+Nn5 vtail vbn 0    0   <NMOS>
+
+* --- stage 2: CS PMOS gain stage + NMOS current-source load ---
+Np6 vout vo1i vdd vdd <PMOS>
+Nn7 vout vbn  0   0   <NMOS>
+
+* --- compensation + load ---
+Cc vo1i vout 20f
+CL vout 0 50f
+
+* analysis statements supplied by the runner:
+*   op
+*   dc Vinp <VCM-0.15> <VCM+0.15> 0.002
+
+.end

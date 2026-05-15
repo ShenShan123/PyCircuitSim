@@ -1,0 +1,35 @@
+* 6T SRAM read-SNM butterfly -- NGSPICE BSIM-CMG (LEVEL=72) GROUND TRUTH
+* Benchmark 3c reference (docs/plans/2026-05-15-directnet-complex-circuits.md)
+*
+* Ground-truth topology for tests/verify_complex_sram_snm.py. The read-SNM
+* butterfly is a pair of voltage-transfer curves of the two half-cells under
+* read bias (WL=VDD, both bit lines held at VDD). The harness regenerates a
+* per-tech *half-cell* deck from this topology and sweeps the driven storage
+* node, substituting <BAKED_LIB> / <VDD> / <NMOS> / <PMOS> / <NFIN>.
+*
+* Half-cell (one of two; the mirror swaps q<->qb):
+*   storage inverter q -> qb, plus the access transistor bl<->qb gated by WL.
+* OSDI devices use the N prefix.
+*
+* NEVER replace NGSPICE with a simplified/self-defined model
+* (CLAUDE.md Validation rule).
+
+.include "<BAKED_LIB>"
+.temp 27
+
+Vdd vdd 0 <VDD>
+Vwl wl 0 <VDD>          $ word line asserted (read)
+Vbl bl 0 <VDD>          $ bit line precharged high
+Vq  q  0 0.0            $ swept storage-node driver (feedback broken)
+
+* storage inverter q -> qb
+Npl qb q vdd vdd <PMOS>
+Nnl qb q 0   0   <NMOS>
+* access transistor bl <-> qb, gate = WL
+Nna bl wl qb 0 <NMOS>
+
+* analysis statement supplied by the runner:
+*   dc Vq 0 <VDD> 0.005
+* SNM is read off the two butterfly lobes after mirroring.
+
+.end
