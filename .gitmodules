@@ -1,5 +1,5 @@
 [submodule "models/PyCMG"]
 	path = external_compact_models/PyCMG
 	url = https://github.com/ShenShan123/PyCMG.git
-	branch = main
+	branch = feat/v6
 	update = merge
