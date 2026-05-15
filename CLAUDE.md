@@ -85,12 +85,14 @@ Inverter circuit must PASS Transient Analysis against NGSPICE ground truth withi
 
 ## Status
 
-Current shipping revision is **V6.2.1** (V6.2 + per-tech TSMC12/TSMC16 DirectNet extension on 2026-05-14, same V6.2 recipe and Rule 15(a) sign fix). V4/V5/V6/V6.1/V6.2 history in `docs/CHANGELOG.md`.
+Current shipping revision is **V6.3.1** (V6.2.1 + inverter spike-removal sprint on 2026-05-15: re-centered `inv_trip` overlay + new `reverse_vds` dataset class, then a Phase-C overlay-weight reduction). V4/V5/V6/V6.1/V6.2/V6.2.1 history in `docs/CHANGELOG.md`; sprint detail in `docs/plans/2026-05-14-v6.3-spike-removal.md`.
 
 - **BSIM-CMG (LEVEL=72):** all 5 techs (ASAP7, TSMC5/7/12/16), DC <0.1% NRMSE, transient ~0.20% NRMSE vs NGSPICE.
-- **DirectNet V6.2.1 (LEVEL=73, primary):** dedicated per-tech NMOS/PMOS checkpoints `tsmc{5,7,12,16}_dn_{small,medium}_*` (production size `medium`). Inverter VTC: **TSMC5 3.08%, TSMC7 1.00%, TSMC12 1.61%, TSMC16 0.91% — all PASS**. Inverter transient (post-startup): **TSMC5 1.23%, TSMC7 1.67%, TSMC12 1.51%, TSMC16 1.66% — all PASS**. TSMC12/16 embedding vocab = 6 per scope (5 variants + UNKNOWN).
-- **NO checkpoints for ASAP7 / LEVEL=74 BSIMAR.** Universal `refac_dn_*`, `refac_tf_*`, `v4_*`, and `checkpoints_legacy/` artifacts deleted on 2026-05-12. Simulating ASAP7 (or LEVEL=74) requires a separate retrain — out of scope for V6.2.1.
-- **Test infrastructure:** 3-level DC + transient suites (BSIM-CMG: 2+67+44 DC, 1+37+72 tran; NN V6.2.1: `verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16 --inverter-only` for the gate, 4/4 PASS for the new TSMC12/16 cells; per-tech routing via parser preempt cascade).
+- **DirectNet V6.3.1 (LEVEL=73, primary):** dedicated per-tech NMOS/PMOS checkpoints `tsmc{5,7,12,16}_dn_medium_*` (production size `medium`). Inverter vs NGSPICE BSIM-CMG — VTC MaxErr: **TSMC5 66.4, TSMC7 65.8, TSMC12 78.3, TSMC16 45.4 mV** (NRMSE 1.52–1.77%); transient post-startup MaxErr: **TSMC5 39.5, TSMC7 50.3, TSMC12 58.2, TSMC16 55.3 mV** (NRMSE 1.22–1.51%); ΔVtrip ≤0.6 mV; R² ≥ 0.9987. TSMC12/16 embedding vocab = 6 per scope (5 variants + UNKNOWN).
+- **V6.3.1 wins vs V6.2.1:** transient pull-low spikes cut ~43% (TSMC12/16 99→58 mV) via the new `reverse_vds` class; TSMC5 VTC catastrophe cut 3.1× (206→66 mV) via VDD/2-centered `inv_trip`.
+- **Open gate (deferred 2026-05-15):** inverter VTC MaxErr ≤25 mV and transient post-startup ≤30 mV NOT met (V6.3.1 at 45–78 / 39–58 mV). Root cause is gain amplification at the inverter trip (gain ≈ −15 to −30 multiplies ~0.05% Id NRMSE ~20× into Vout), not a data-coverage gap — needs a gm/gds-fidelity lever (trip-weighted gm-matching loss), not more `inv_trip` samples. See CHANGELOG "V6.3 / V6.3.1" Outcome.
+- **NO checkpoints for ASAP7 / LEVEL=74 BSIMAR.** Universal `refac_dn_*`, `refac_tf_*`, `v4_*`, and `checkpoints_legacy/` artifacts deleted on 2026-05-12. Simulating ASAP7 (or LEVEL=74) requires a separate retrain — out of scope.
+- **Test infrastructure:** 3-level DC + transient suites (BSIM-CMG: 2+67+44 DC, 1+37+72 tran; NN: `verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16 --inverter-only` for the gate; per-tech routing via parser preempt cascade). Inverter metrics report: `scripts/eval_v6_3_1_inverter.py` → `results/v6_3_1_metrics_report/`.
 - **Solver upgrades shipped:** sparse MNA (lil→CSR+spsolve), 2-level GMIN stepping [1e-8, 1e-12] with retry, BE→Trap→BDF-2, LTE sub-stepping, oscillation detection, hard `.ic` mode.
 - **ASAP7 exclusion:** unchanged — would also need a dedicated per-tech checkpoint or fresh universal training.
 
@@ -119,8 +121,10 @@ Create a `.sp` netlist (examples in `examples/`). BSIM-CMG geometric params: `L`
 ### NN training (V6.2 — per-tech dedicated)
 
 ```bash
-# Generate per-tech data. --enable-inv-trip overlay is gated to TSMC5/TSMC7
-# inside pycmg/nn_generate.py and adds ~10-12% inverter trip-region samples.
+# Generate per-tech data. --enable-inv-trip overlay covers all 4 TSMC techs
+# inside pycmg/nn_generate.py. V6.3 re-centered it on VDD/2; V6.3.1 dropped the
+# ±0.25·VDD Vbs sweep, so the overlay is ~3.5% of rows (was ~9.8% pre-V6.3.1).
+# V6.3 also added the reverse_vds corridor class (~7.5% of rows, always on).
 conda run -n pycircuitsim python external_compact_models/PyCMG/scripts/generate_nn_data.py \
     --device both --tech tsmc5 --enable-inv-trip --n-workers 8
 conda run -n pycircuitsim python external_compact_models/PyCMG/scripts/generate_nn_data.py \
@@ -242,7 +246,7 @@ Both LEVEL=73 (single-shot MLP, primary) and LEVEL=74 (autoregressive Transforme
 
   Step (a) replicates PyCMG's restoring leakage/impact-ionization physics so NR converges to the true rail instead of locking on the NN's flat-zero plateau outside `[-VDD_train, VDD_train]`. Inference-time only — no retraining required.
 
-16. Always report MRE (%) metric.
+16. Always report MRE (%), R^2, NRMSE, Max error (mV) metrics.
 17. Exclude ASAP7 tech at the current stage.
 18. Do NOT train/eval BSIMAR Transformer model at this stage. Only care about DirectNet model.
 19. **Per-tech models use a LOCAL embedding vocab.** When `--tech-scope` is `tsmc5` or `tsmc7`, the dataset loader remaps universal tech codes to a 0-indexed per-tech vocab and the trainer instantiates `DirectNet(num_tech_codes=N, unknown_code_id=N-1)`, where N = variants+1 (TSMC5: 5, TSMC7: 4). The training-time `p_unknown` dropout writes `unknown_code_id` into the embedding, so a misaligned UNKNOWN id → CUDA assert. **Derive `unknown_code_id` from `num_tech_codes`; do NOT hardcode the universal value (17).** Parser uses `bsimar.config.local_variant_code(scope, tech, variant)` to remap at inference; the scope is read from the resolved checkpoint stem (`tsmc{5,7}_dn_*` → local; everything else → universal).

@@ -255,3 +255,88 @@ Resolver logs confirm scope routing — `[NN-resolver] L73.0 Mn1 TECH=tsmc12 VT=
 
 - ASAP7 / LEVEL=74 BSIMAR still parked — would still need a dedicated retrain.
 - The full DC sweep (without `--inverter-only`) was not run as part of this sprint; the inverter gate was the user-stated success criterion. Rule 20 remains for LEVEL=74 only.
+
+## V6.3 / V6.3.1 — Inverter spike-removal sprint (2026-05-15)
+
+Goal: remove the inverter VTC + transient error spikes documented in
+`results/v6_2_1_metrics_report/`. Agent-team diagnosis found three root
+causes; the sprint ran in three phases (A discarded, B + C shipped).
+Full plan + dead-end record: `docs/plans/2026-05-14-v6.3-spike-removal.md`.
+
+### Root causes (agent-team diagnostic)
+
+- **RC1 — reverse-Vds Id clamp** (`pycircuitsim/models/mosfet_nn.py:430`):
+  the `f_id = 0` branch zeroes Id for reverse Vds, so when an inverter's
+  load cap rings past a rail the NMOS produces no restoring current and the
+  output undershoots ~99 mV (TSMC12/16).
+- **RC2 — `inv_trip` overlay mis-centered**: pre-V6.3 the overlay centered
+  Vg on the transistor peak-gm Vth, not the inverter Vtrip ≈ VDD/2. TSMC12/16
+  had zero overlay rows in the switching band; TSMC5 only 0.24 %.
+- **RC3 — zero reverse-Vds training coverage**: the main grid swept Vd ≥ 0
+  (NMOS) only, so reverse conduction was never learned.
+
+### Phase A — inference-only `gds`-bump gate (DISCARDED)
+
+Gating the unconditional `gds = max(gds, g_extra)` bump on `normal_dir`
+produced **bit-identical** eval traces — the reverse branch with
+`|Vds|>VDD_train` is never hit on converged operating points. Reverted.
+The real RC1 driver is the Id clamp, not the gds bump.
+
+### Phase B — dataset regen (`_inv_trip_points` recenter + `_reverse_vds_points`)
+
+`nn_generate.py`: re-centered `_inv_trip_points` on VDD/2 with a
+`[0.30,0.70]·VDD` Vg/Vd box; added `_reverse_vds_points` (480 samples/bin,
+new `sample_class="reverse_vds"` code 10). Regenerated all 8 datasets,
+retrained 8 medium cells.
+
+Result: transient pull-low spikes fixed across all 4 techs (TSMC12/16
+99→58 mV) and TSMC5 VTC catastrophe fixed (206→58 mV) — **but TSMC7/12/16
+VTC regressed** (+87/+24/+20 mV) because the wider, denser `inv_trip`
+overlay (9.83 % of rows) over-fit a too-steep Id-Vg slope at the trip.
+
+### Phase C — `_inv_trip_points` Vbs reduction (V6.3.1, SHIPPED)
+
+`_inv_trip_points` dropped the `±0.25·VDD` Vbs sweep (the inverter runs at
+Vbs=0 always; the `grid` class already covers Vbs). Overlay cut 25×9×3 →
+25×9×1, from 9.83 % → 3.51 % of rows. Regenerated 8 datasets, retrained 8
+medium cells (3-way multi-GPU parallel, ~2 h).
+
+### V6.3.1 inverter results vs V6.2.1 (NGSPICE BSIM-CMG ground truth)
+
+| Tech | VTC MaxErr V6.2.1→V6.3.1 | Tran post-startup MaxErr V6.2.1→V6.3.1 |
+|------|--------------------------|-----------------------------------------|
+| TSMC5  | 206.6 → **66.4 mV** | 79.1 → **39.5 mV** |
+| TSMC7  | 55.9 → **65.8 mV**  | 55.5 → **50.3 mV** |
+| TSMC12 | 39.2 → **78.3 mV**  | 99.2 → **58.2 mV** |
+| TSMC16 | 30.9 → **45.4 mV**  | 97.8 → **55.3 mV** |
+
+VTC NRMSE 1.52–1.77 %, transient post-startup NRMSE 1.22–1.51 %, ΔVtrip
+≤0.6 mV, R² ≥ 0.9987 everywhere. Reports in `results/v6_3_1_metrics_report/`;
+intermediate V6.3 (pre-Phase-C) in `results/v6_3_metrics_report/`.
+
+### Outcome — shipped with one open gate
+
+V6.3.1 is the new shipping revision. **Wins:** transient pull-low spikes
+cut ~43 % (99→58 mV); TSMC5 VTC catastrophe cut 3.1× (206→66 mV); the
+Phase-B TSMC7 VTC regression (143 mV) fully recovered (66 mV). Worst-case
+VTC 143→78 mV, average VTC 79→64 mV vs the Phase-B intermediate.
+
+**Open gate (deferred per user, 2026-05-15):** VTC MaxErr ≤ 25 mV not met
+— V6.3.1 sits at 45–78 mV. Three dataset revisions moved the trip error
+around but never below ~45 mV. Diagnosis: this is **not** a coverage gap
+but gain amplification — inverter gain ≈ −15 to −30 at the trip multiplies
+the NN's residual Id error (~0.05 % test-split NRMSE) ~20× into Vout. The
+fix needs a gm/gds-fidelity lever (e.g. trip-weighted gm-matching loss),
+not more `inv_trip` samples. Transient post-startup ≤ 30 mV also unmet
+(39–58 mV), same root cause at the t=0 DC OP.
+
+### Infra notes
+
+- `/home/shenshan/NN_SPICE/` (this worktree's parent `.git` + the PyCMG
+  submodule + dataset `.npz` targets) was moved to `/tmp/NN_SPICE/` mid-sprint
+  to free a 98 %-full `/home`. Symlinks `external_compact_models/PyCMG` and
+  `bsimar/data/datasets/*.npz` were repointed to `/tmp/NN_SPICE/`.
+- V6.3 (pre-Phase-C) datasets preserved as `*.v6_3.npz`; V6.3 checkpoints
+  backed up to `/tmp/v6_3_checkpoints_backup/`.
+- New scripts: `scripts/regen_v6_3_1.sh`, `scripts/train_v6_3_1_parallel.sh`
+  (3-way multi-GPU), `scripts/eval_v6_3_1_inverter.py`.
