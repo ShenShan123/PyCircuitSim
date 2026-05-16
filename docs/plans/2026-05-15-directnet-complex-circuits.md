@@ -84,6 +84,17 @@ Every phase is validated against the existing TSMC5/7/12/16 inverter gate (`test
 
 ### Phase 1 — gm/gds-fidelity training lift *(retrain — the V6.3.1 open-gate closer)*
 
+> **Status (2026-05-16) — SUPERSEDED by best-of-N seed selection.** Execution
+> proved the 1a–1e levers below are noise next to a far larger effect: DirectNet
+> retraining is a **seed lottery**. A clean stock-recipe retrain gives TSMC5
+> inverter VTC MaxErr 218 mV at seed 42 vs 79 mV at seed 123 — a 139 mV swing —
+> while transient stays stable (~38 mV) regardless. V6.3.1's shipped 66 mV
+> checkpoints were a lucky draw. The 1b Sobolev term LOST its bake-off decisively
+> (7–8× worse VTC) and is a dead end; 1e is a confirmed no-op; the 1a slices are
+> a broken proxy (near-zero `gds` denominators). **Phase 1 is redefined as a
+> best-of-N seed sweep** — see "Execution log" below. The original text is kept
+> for the record.
+
 **Goal:** raise autograd-`gm/gds` fidelity at the inverter trip and in saturation — the documented V6.3.1 cap (D0) and the critical-path quantity for opamp gain. All sub-steps are ≤1-day code changes; one 8-cell medium retrain (~2-3 h, `scripts/train_v6_3_1_parallel.sh`) validates the stack.
 
 - **1a — Validation harness FIRST.** Before any retrain, add DC/Tran-aware slices to `_per_tech_report` (`trainer.py:111`) and drive early-stop on a weighted slice sum, not raw uniform-split val loss (`trainer.py:226`) — this is the D6 fix. Three deterministic slices:
@@ -208,6 +219,37 @@ Only if Phases 1-7 leave a measurable gap on the phase-3 opamp gain benchmark.
 - **Scalable Monotonic Neural Networks, ICLR 2024** — soft monotonicity via weight clipping / residual constructions. Input for Phase 7a.
 - **Input-Convex Lipschitz layers, arXiv:2401.07494, 2024** — bounds the autograd Jacobian per head. Input for Phase 7b.
 - **Physics-Enhanced NN Compact Model preprint, May 2025** — first external NN compact model to pass SRAM SNM and LDO DC. Establishes phase-3c as the right complex-circuit gate.
+
+## Execution log (V6.4 sprint, 2026-05-15 .. 16)
+
+V6.4 work runs on branch `feat/v6.4`. Phases were dispatched to parallel agents.
+
+### Phase 2 — SHIPPED (commit `a9761a4`)
+
+C-stamp symmetrization behind `NN_SYMMETRIC_CAPS` (default off) + a conducting-branch `gm/gmb` floor. Finding: the floor is in practice a **Jacobian sign-corrector** — over the 4-tech inverter gate it snapped 22,720 wrong-sign `gm` entries (magnitudes to 2.7e-4 S); zero magnitude-only hits. Inverter gate 8/8 PASS, transient bit-identical. 2a has zero effect on the inverter (expected — D2 is oscillator-only); its real validation is the Phase-3 ring oscillator.
+
+### Phase 3 — SHIPPED (commit `6dff82a`)
+
+Four complex-circuit benchmarks (RO / Miller opamp / 6T SRAM SNM / switched-cap) vs NGSPICE BSIM-CMG, harness in `tests/common/complex.py` + `tests/verify_complex_*.py`. Baseline V6.3.1: ring-osc 2/4, **opamp 0/4** (gain error 10–135 % — confirms D0), SRAM-SNM 4/4, switched-cap 1/4. Harness notes: DirectNet transient is slow without Phase-5 batching (a full RO window timed out); the switched-cap droop gate needs an absolute-mV threshold.
+
+### Phase 1 — original 1a–1e levers, all dropped (dead-end record)
+
+- **1b Sobolev term — DEAD END.** Implemented (`autograd(id)` vs gm/gds labels, trip-weighted) and bake-off'd against the stock recipe on 8 TSMC5/7 cells. Sobolev was **7–8× worse on VTC and 4–7× worse on transient**; it destabilized the primary `id` fit (val loss 0.011–0.027 vs 0.001–0.002). Reverted. **Rule 10 stays unamended.** Distinct from the 2026-05-03 `SlopeMatchLoss` deletion: that one was deleted unvalidated; this one *was* validated and *was* proven harmful.
+- **1e gds asinh floor — NO-OP.** The `gds` asinh scale is ≈2.2e-6 for all TSMC datasets, far above any sane 1e-9 floor; it never engages. Dropped.
+- **1a validation slices — BROKEN PROXY.** The gain slice's `|gm/gds|` ratio and the autograd-`gm` MRE are dominated by near-zero-denominator artifacts (`gds → 0` in saturation), giving MRE figures of ~50–200 % that do not track inverter VTC. Not a usable early-stop signal.
+- **1c/1d** — never independently validated; subsumed by the finding below.
+
+### The decisive finding — retraining is a seed lottery
+
+A clean, verified-stock-code, seeded re-run of the exact V6.3.1 recipe (`train_v6_3_1_parallel.sh`, `--seed 42`) regressed to **TSMC5 218 mV / TSMC7 242 mV** inverter VTC MaxErr (vs V6.3.1's 66 / 66 mV). Seed 123 on the same cell gave **79 mV** — a 139 mV seed-driven swing. Transient post-startup MaxErr reproduced cleanly (~38–49 mV) at every seed. The instability is VTC-specific and is the D0 gain-amplification mechanism: the inverter trip multiplies tiny seed-driven `Id`-fidelity differences ~20× into Vout.
+
+Corrected diagnosis of a false lead: an agent claimed the training datasets had "drifted" from V6.3.1 and recommended restoring `*.v6_3.npz`. **Verified false** — the current datasets carry a 3.51 % `inv_trip` overlay, an exact match to the V6.3.1 CHANGELOG spec, and the V6.3.1 checkpoints' mtime is later than the datasets'. The `*.v6_3.npz` files are the *V6.3* (9.83 %) data; restoring them would re-introduce the V6.3 TSMC7 VTC regression. **Do not restore them.**
+
+### Phase 1 redefined — best-of-N seed sweep (in progress)
+
+Stock recipe, **N=8 seeds × 8 cells**, each tech's (nmos, pmos) pair selected on the **real inverter VTC sim** (`eval_v6_3_1_inverter.py`) with transient as a constraint and Phase-3 opamp gain as a tiebreak — never on val loss (D6). Winners promoted to the canonical `tsmc{X}_dn_medium_*` names only if they beat V6.3.1; V6.3.1 kept per-tech otherwise. V6.3.1 checkpoints backed up at `/tmp/v6_3_1_checkpoints_backup/`. This is the "simple but effective" closer: seed 123 already reached 79 mV untried, so best-of-8 is expected to land ≤ V6.3.1 and may sample the deferred ≤25 mV tail.
+
+**Consequence for later phases:** every retrain-bearing phase (4, 7) must also use best-of-N selection on real-circuit metrics — a single seeded run is not a valid result. The plan's reliance on val-loss / slice early-stop is retired.
 
 ## Definition of done
 
