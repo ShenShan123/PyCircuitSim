@@ -113,6 +113,8 @@ Every phase is validated against the existing TSMC5/7/12/16 inverter gate (`test
 
 ### Phase 2 — Solver correctness fixes *(no retrain — independent of Phase 1, can run in parallel)*
 
+> **Status (V6.4): SHIPPED PARTIAL — `a9761a4` then `c962d63`.** 2a (env-gated C-stamp symmetrization) shipped as dormant code. 2b (conducting-branch `gm/gmb` floor) shipped then **reverted as unsound** — its effect is checkpoint-dependent and breaks TSMC7/TSMC12 on neutral checkpoints. See Execution log.
+
 Touches `solver.py` / `mosfet_nn.py` only — disjoint from Phase 1's `bsimar` package edits, so the two phases parallelize.
 
 - **2a — Symmetrize C-stamps.** In `_stamp_mosfet_transient` (`solver.py:1370-1415`) replace `cgd, cdg` with `c_sym = ½(cgd+cdg)` stamped both ways; same for `cgs/csg`, `cds/csd`. Lifted from Berkeley BSIM-NN's symmetrized-capacitance convention. Gate behind `NN_SYMMETRIC_CAPS=1`, default-off until phase-3 benchmarks accept.
@@ -120,6 +122,8 @@ Touches `solver.py` / `mosfet_nn.py` only — disjoint from Phase 1's `bsimar` p
 - **Success gate:** TSMC5/7/12/16 inverter transient NRMSE within ±5 % of V6.3.1 (1.22-1.51 %); with `NN_SYMMETRIC_CAPS=1` the phase-3 ring oscillator reaches steady oscillation without dt-halve runaway.
 
 ### Phase 3 — Benchmark harness *(no retrain, no model change — promoted from last to third)*
+
+> **Status (V6.4): SHIPPED — `6dff82a`.** Harness + 4 benchmarks built; V6.3.1 baseline measured (opamp 0/4 confirms D0). Not yet re-measured on the V6.4 checkpoints — that is the immediate next step.
 
 The original plan buried these at Phase 8, yet every complex-circuit claim in Phases 4-8 is unmeasurable without them. Building the netlists + NGSPICE references is pure test infra and has no dependency on the model — so it lands early.
 
@@ -178,6 +182,8 @@ Only if Phases 1-7 leave a measurable gap on the phase-3 opamp gain benchmark.
 - **Success gate:** opamp DC gain MRE improves ≥ 20 % vs the Phase-7 baseline without regressing inverter metrics.
 
 ## Suggested order of attack (TL;DR)
+
+*V6.4 sprint status: Phases 1–3 executed — Phase 1 = best-of-N retrain (the 1a–1e levers were dropped; see Execution log), Phase 2 = 2a only (2b reverted), Phase 3 = harness. Phases 4–8 deferred. Any future retrain phase (4, 7) MUST use best-of-N selection on real-circuit metrics.*
 
 | # | Phase | Layer | Retrain? | Why it's where it is | Touches |
 |---|---|---|---|---|---|
