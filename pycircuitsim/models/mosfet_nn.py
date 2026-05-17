@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import logging
 import math
-import os
 import sys
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -366,42 +365,6 @@ class _MOSFETNNBase(Component):
         """Physics-based gds floor (rule 5): max(|id|·0.5, 1e-12)."""
         return max(gds_phys, max(abs(id_phys) * 0.5, 1e-12))
 
-    # Conducting-branch gm/gmb saturation floor (Phase 2b). Mirrors
-    # Rule 5's _floor_gds: keeps |gm| away from a near-zero Jacobian
-    # entry on the *conducting* branch only. Sign convention (solver
-    # frame, see _eval lines ~288-298): NMOS gm/gmb ≥ 0, PMOS ≤ 0.
-    # _GM_FLOOR is intentionally tiny (1e-12 S, == the solver's gmb
-    # stamp threshold) — a no-op-safe guard, not a physical lever:
-    # real conducting-branch gm is O(1e-5..1e-3) and never approaches
-    # it (see Phase-2b report). Instrumentation counts gm vs gmb lifts
-    # separately so a guard-only floor can be reported as such.
-    _GM_FLOOR: float = 1.0e-12
-    _gm_eval_count: int = 0       # conducting-branch corrections
-    _gm_floor_hits: int = 0       # times the gm value was lifted
-    _gmb_floor_hits: int = 0      # times the gmb value was lifted
-
-    @staticmethod
-    def _floor_gm(g_phys: float, is_pmos: bool, is_gmb: bool = False) -> float:
-        """Sign-correct, away-from-zero floor for conducting-branch gm/gmb.
-
-        NMOS expects ``g ≥ +floor``; PMOS expects ``g ≤ -floor``. A value
-        that already has the wrong sign is snapped to the floor magnitude
-        with the correct sign — this is a guard, not a sign flip of a
-        large physical value (those do not occur on the conducting branch
-        in practice; see Phase-2b report).
-        """
-        if is_pmos:
-            floored = min(g_phys, -_MOSFETNNBase._GM_FLOOR)
-        else:
-            floored = max(g_phys, _MOSFETNNBase._GM_FLOOR)
-        if floored != g_phys:
-            # Count on the base class so all subclasses aggregate.
-            if is_gmb:
-                _MOSFETNNBase._gmb_floor_hits += 1
-            else:
-                _MOSFETNNBase._gm_floor_hits += 1
-        return floored
-
     # ── Vds correction (rule 19) ─────────────────────────────────────
 
     def _apply_vds_correction(
@@ -457,29 +420,6 @@ class _MOSFETNNBase(Component):
                 else:
                     result["id"] -= id_extra      # NMOS: id more negative
             result["gds"] = max(result["gds"], g_extra)
-
-        # Conducting-branch gm/gmb saturation floor (Phase 2b). Runs on
-        # the normal-direction (conducting) branch only, and BEFORE the
-        # fast-path early-return so it also covers deep saturation
-        # (|Vds| > 20·VT). The reverse / wrong-sign branches below (which
-        # zero gm/gmb) are left untouched.
-        #
-        # Validated 2026-05-15 on the TSMC5/7/12/16 inverter gate: the
-        # conducting-branch |gm| is NEVER near-zero by magnitude (TSMC5
-        # min ≈ 3.4e-8 S, four orders above _GM_FLOOR). Every floor lift
-        # observed (22.7k over the 4-tech gate) was a *wrong-sign* snap —
-        # the autograd gm being locally sign-incorrect (NMOS gm<0 / PMOS
-        # gm>0), magnitudes up to ~2.7e-4 S. So in practice this is a
-        # sign-corrector for NR Jacobian stability, not a magnitude
-        # floor; it honours Rule 5's "preserve sign, never abs()" by
-        # snapping to the floor with the *correct* sign, never flipping a
-        # magnitude. Inverter transient NRMSE is bit-identical with it
-        # active, so it is a no-op-safe guard on the shipped circuits.
-        if normal_dir:
-            _MOSFETNNBase._gm_eval_count += 1
-            result["gm"] = self._floor_gm(result["gm"], self._is_pmos)
-            result["gmb"] = self._floor_gm(
-                result["gmb"], self._is_pmos, is_gmb=True)
 
         # Fast path: well into the normal-direction regime.
         if normal_dir and abs_vds > 20.0 * VT:
