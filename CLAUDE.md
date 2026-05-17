@@ -85,7 +85,7 @@ Inverter circuit must PASS Transient Analysis against NGSPICE ground truth withi
 
 ## Status
 
-Current shipping revision is **V6.3.1** (V6.2.1 + inverter spike-removal sprint on 2026-05-15: re-centered `inv_trip` overlay + new `reverse_vds` dataset class, then a Phase-C overlay-weight reduction). V4/V5/V6/V6.1/V6.2/V6.2.1 history in `docs/CHANGELOG.md`; sprint detail in `docs/plans/2026-05-14-v6.3-spike-removal.md`.
+Current shipping revision is **V6.3.2** (V6.3.1 + parametric NN test harness, 2026-05-17 — no model/checkpoint change; ships the PyCMG L3 parametric sweeps to DirectNet, see "Test infrastructure" below and CHANGELOG "V6.3.2"). V6.3.1 (the shipping checkpoints) = V6.2.1 + inverter spike-removal sprint on 2026-05-15: re-centered `inv_trip` overlay + new `reverse_vds` dataset class, then a Phase-C overlay-weight reduction. V4/V5/V6/V6.1/V6.2/V6.2.1 history in `docs/CHANGELOG.md`; sprint detail in `docs/plans/2026-05-14-v6.3-spike-removal.md`.
 
 - **BSIM-CMG (LEVEL=72):** all 5 techs (ASAP7, TSMC5/7/12/16), DC <0.1% NRMSE, transient ~0.20% NRMSE vs NGSPICE.
 - **DirectNet V6.3.1 (LEVEL=73, primary):** dedicated per-tech NMOS/PMOS checkpoints `tsmc{5,7,12,16}_dn_medium_*` (production size `medium`). Inverter vs NGSPICE BSIM-CMG — VTC MaxErr: **TSMC5 66.4, TSMC7 65.8, TSMC12 78.3, TSMC16 45.4 mV** (NRMSE 1.52–1.77%); transient post-startup MaxErr: **TSMC5 39.5, TSMC7 50.3, TSMC12 58.2, TSMC16 55.3 mV** (NRMSE 1.22–1.51%); ΔVtrip ≤0.6 mV; R² ≥ 0.9987. TSMC12/16 embedding vocab = 6 per scope (5 variants + UNKNOWN).
@@ -93,6 +93,7 @@ Current shipping revision is **V6.3.1** (V6.2.1 + inverter spike-removal sprint 
 - **Open gate (deferred 2026-05-15):** inverter VTC MaxErr ≤25 mV and transient post-startup ≤30 mV NOT met (V6.3.1 at 45–78 / 39–58 mV). Root cause is gain amplification at the inverter trip (gain ≈ −15 to −30 multiplies ~0.05% Id NRMSE ~20× into Vout), not a data-coverage gap — needs a gm/gds-fidelity lever (trip-weighted gm-matching loss), not more `inv_trip` samples. See CHANGELOG "V6.3 / V6.3.1" Outcome.
 - **NO checkpoints for ASAP7 / LEVEL=74 BSIMAR.** Universal `refac_dn_*`, `refac_tf_*`, `v4_*`, and `checkpoints_legacy/` artifacts deleted on 2026-05-12. Simulating ASAP7 (or LEVEL=74) requires a separate retrain — out of scope.
 - **Test infrastructure:** 3-level DC + transient suites (BSIM-CMG: 2+67+44 DC, 1+37+72 tran; NN: `verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16 --inverter-only` for the gate; per-tech routing via parser preempt cascade). Inverter metrics report: `scripts/eval_v6_3_1_inverter.py` → `results/v6_3_1_metrics_report/`.
+- **V6.3.2 NN parametric harness:** `verify_nn_multi_tech_dc.py` (single-device L/NFIN/VT, 55 configs) + `verify_nn_multi_tech_tran.py` (inverter VTC+transient over P/N-ratio/VDD/Cload/slew/PW, 64 configs) port the PyCMG L3 sweeps to DirectNet via `tests/common/nn_sweep.py`. Stress-test gates: DC NRMSE <10%, inverter <15%. **V6.3.1 checkpoint results: DC 55/55 PASS; inverter 63/64 PASS** — sole FAIL `TSMC5_vtc_vdd_0p55` (16.8%, VDD−0.1V). Off-bin L/NFIN and VDD±0.1V are the stressors (baseline configs stay on-bin/nominal and pass cleanly). Reproducibility: keep `bsimar/checkpoints/` pointed at a *stable* copy — VTC trip gain ~20× amplifies any mid-run weight change; run with `OMP_NUM_THREADS=1`.
 - **Solver upgrades shipped:** sparse MNA (lil→CSR+spsolve), 2-level GMIN stepping [1e-8, 1e-12] with retry, BE→Trap→BDF-2, LTE sub-stepping, oscillation detection, hard `.ic` mode.
 - **ASAP7 exclusion:** unchanged — would also need a dedicated per-tech checkpoint or fresh universal training.
 
@@ -157,11 +158,12 @@ Results in `results/<circuit_name>/<analysis_type>/`: `*_simulation.lis`, `*_dc_
 
 All tests require `conda activate pycircuitsim`.
 
-**Shared infra:** `tests/common/{base,bsimcmg_dc,bsimcmg_tran,nn}.py` and `tests/references/`.
+**Shared infra:** `tests/common/{base,bsimcmg_dc,bsimcmg_tran,nn,nn_sweep}.py` and `tests/references/`.
 
 **BSIM-CMG DC:** L1 `verify_bsimcmg_dc.py` (2) · L2 `verify_bsimcmg_dc_comprehensive.py` (67) · L3 `verify_multi_tech_dc.py` (44).
 **BSIM-CMG Transient:** L1 `verify_bsimcmg_tran.py` (1) · L2 `verify_bsimcmg_tran_comprehensive.py` (37) · L3 `verify_multi_tech_tran.py` (72).
 **NN V6.2 gate:** `verify_nn_dc_tran.py --tech TSMC5,TSMC7 --inverter-only` (12/12 PASS on the full TSMC5/7 sweep without `--inverter-only`). The `verify_nn_dc.py` / `verify_nn_tran_v4.py` legacy entry points target TSMC12 SVT which has no V6.2 checkpoint.
+**NN parametric harness (V6.3.2):** the PyCMG L3 parametric sweeps ported to DirectNet (LEVEL=73) via `tests/common/nn_sweep.py`. `verify_nn_multi_tech_dc.py` — single-device NMOS/PMOS Id-Vgs over L/NFIN/VT (55 configs, 4 TSMC techs). `verify_nn_multi_tech_tran.py` — inverter VTC + transient over P/N ratio, VDD, Cload, input slew, pulse width. Baseline-gated: the parametric sweep runs only for techs that pass baseline. Geometry/VT/VDD ride on `dataclasses.replace(TestTechConfig)`; only the inverter-transient circuit knobs needed a (behaviour-preserving) refactor of `verify_nn_dc_tran.py` (`InvCircuitParams`). Run with `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1` — the NN inverter VTC has ~±1% NRMSE run-to-run scatter (high-gain trip point; harness pins `torch` to 1 thread).
 **Other:** `verify_bsimcmg_op.py` (OP <0.02% vs NGSPICE).
 
 Quick sanity:
