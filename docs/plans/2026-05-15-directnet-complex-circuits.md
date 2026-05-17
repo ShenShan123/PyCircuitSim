@@ -251,6 +251,14 @@ Stock recipe, **N=8 seeds × 8 cells**, each tech's (nmos, pmos) pair selected o
 
 **Consequence for later phases:** every retrain-bearing phase (4, 7) must also use best-of-N selection on real-circuit metrics — a single seeded run is not a valid result. The plan's reliance on val-loss / slice early-stop is retired.
 
+### Phase 2 — 2b reverted (dead-end record)
+
+The Phase-2 `2b` conducting-branch `gm/gmb` sign-floor was reverted as unsound. It first *appeared* to halve inverter VTC error on TSMC5/12/16, but that was circular: best-of-N had been scored on the 2b solver and merely selected seeds tolerant of the gm hack. On neutral ground (V6.3.1 checkpoints) the `gm`-floor breaks TSMC7 (66→215 mV) and TSMC12 (78→261 mV); the `gmb`-floor is fully inert; a `reflect` variant breaks 3/4 techs. Zeroing/altering an autograd wrong-sign `gm` is a checkpoint-dependent coin-flip — no `_floor_gm` parameterisation is universally safe. The principled fix for wrong-sign `gm` is Phase 6 (monotonicity / spectral-norm network constraints), not a solver hack. `2a` (env-gated C-stamp symmetrization) was kept as dormant code.
+
+### V6.4 shipped outcome
+
+Best-of-N re-selected on the clean (2b-reverted) solver. All 4 techs beat V6.3.1 inverter VTC MaxErr — TSMC5 66.4→62.0, TSMC7 65.8→60.1, TSMC12 78.3→32.3, TSMC16 45.4→29.7 mV; transient holds. TSMC12/16 approach the deferred ≤25 mV stretch gate; TSMC5/7 gains are modest (their clean-solver lottery surfaced no strongly better N=8 draw). Phases 4–8 deferred. Full record: `docs/CHANGELOG.md` "V6.4".
+
 ## Definition of done
 
 DirectNet is "complex-circuit ready" when:

@@ -340,3 +340,93 @@ not more `inv_trip` samples. Transient post-startup ≤ 30 mV also unmet
   backed up to `/tmp/v6_3_checkpoints_backup/`.
 - New scripts: `scripts/regen_v6_3_1.sh`, `scripts/train_v6_3_1_parallel.sh`
   (3-way multi-GPU), `scripts/eval_v6_3_1_inverter.py`.
+
+## V6.4 — Best-of-N retrain + complex-circuit benchmark harness (2026-05-15 .. 17)
+
+Plan: `docs/plans/2026-05-15-directnet-complex-circuits.md` (re-prioritized
+2026-05-15). V6.4 executed Phases 1–3; Phases 4–8 deferred.
+
+### Phase 3 — complex-circuit benchmark harness (shipped)
+
+Four benchmarks vs NGSPICE BSIM-CMG ground truth: 5-stage ring oscillator,
+two-stage Miller opamp, 6T SRAM read SNM, switched-cap unit cell. Harness in
+`tests/common/complex.py` + `tests/verify_complex_*.py`; netlists in
+`examples/complex/` + `tests/references/complex/`. Baseline V6.3.1: ring-osc
+2/4, opamp 0/4 (gain error 10–135 % — confirms plan blocker D0, gain
+amplification of DirectNet's Id residual), SRAM-SNM 4/4, switched-cap 1/4.
+
+### Phase 1 — DirectNet retraining is a seed lottery; best-of-N selection
+
+The plan's original 1a–1e levers were all dropped: the 1b Sobolev term lost
+its bake-off decisively (7–8× worse VTC — a *validated* dead end, distinct
+from the 2026-05-03 unvalidated `SlopeMatchLoss`; Rule 10 unchanged); 1e
+(`gds` asinh floor) is a confirmed no-op; the 1a validation slices are a
+broken near-zero-denominator proxy.
+
+Decisive finding: a clean, verified stock-recipe DirectNet retrain (`--seed
+42`) regressed TSMC5 inverter VTC MaxErr to 218 mV vs V6.3.1's 66 mV; seed
+123 gave 79 mV — a **139 mV seed-driven swing**. Transient is seed-stable
+(~38 mV at every seed). V6.3.1's shipped checkpoints were a lucky draw. So
+V6.4 produces checkpoints by **best-of-N**: 8 seeds × 8 cells
+(tsmc{5,7,12,16} × {nmos,pmos}), each tech's (nmos,pmos) pair selected on the
+real inverter VTC sim — never on val loss (the D6 decoupling).
+
+Corrected false lead: an agent claimed the datasets had drifted from V6.3.1
+and recommended restoring `*.v6_3.npz`. Verified false — the current datasets
+carry a 3.51 % `inv_trip` overlay, an exact match to the V6.3.1 spec; the
+`*.v6_3.npz` files are the *older V6.3* (9.83 %) data and must not be restored.
+
+### Phase 2 — 2a kept, 2b reverted (unsound)
+
+2a (transient C-stamp symmetrization, env-gated `NN_SYMMETRIC_CAPS`, default
+off) is kept as dormant infrastructure for the Phase-3 ring oscillator.
+
+**2b (always-on conducting-branch `gm/gmb` sign-floor) was reverted.** It
+appeared to halve inverter VTC error on TSMC5/12/16 — but that was an artifact
+of *circular selection*: best-of-N had been scored on the 2b solver, so it
+merely picked seeds compatible with the gm hack. On neutral ground (V6.3.1
+checkpoints) the `gm`-floor breaks TSMC7 (66→215 mV) and TSMC12 (78→261 mV);
+the `gmb`-floor is completely inert; a `reflect` variant (wrong-sign `gm` →
+correct sign, magnitude kept) breaks 3/4 techs (TSMC12 354 mV). Zeroing or
+altering an autograd wrong-sign `gm` is a checkpoint-dependent coin-flip —
+there is no sound `_floor_gm` fix. The principled fix for wrong-sign `gm` is a
+network constraint (plan Phase 6 monotonicity / spectral norm), not a solver
+hack. `mosfet_nn.py` reverted to its pre-Phase-2 state.
+
+### V6.4 final — clean-solver best-of-N, inverter vs NGSPICE BSIM-CMG
+
+Selection re-run on the clean (2b-reverted) solver. All 4 techs beat V6.3.1
+inverter VTC MaxErr; transient holds (TSMC7 +1.2 mV, within noise):
+
+| Tech   | seeds n/p   | VTC MaxErr V6.3.1→V6.4 | Tran post-startup V6.3.1→V6.4 |
+|--------|-------------|------------------------|-------------------------------|
+| TSMC5  | 17 / 42     | 66.4 → **62.0** (−7 %)  | 39.5 → 37.9 mV |
+| TSMC7  | 31337 / 42  | 65.8 → **60.1** (−9 %)  | 50.3 → 51.5 mV |
+| TSMC12 | 123 / 123   | 78.3 → **32.3** (−59 %) | 58.2 → 57.6 mV |
+| TSMC16 | 42 / 123    | 45.4 → **29.7** (−35 %) | 55.3 → 54.9 mV |
+
+VTC NRMSE 1.20–2.13 %, R² ≥ 0.9981, ΔVtrip ≤ 0.3 mV. TSMC16 (29.7 mV) and
+TSMC12 (32.3 mV) approach the deferred ≤25 mV stretch gate. TSMC5/7 gains are
+modest — their clean-solver seed lottery surfaced no strongly better draw
+within N=8.
+
+### Open / deferred
+
+- Inverter VTC ≤25 mV still unmet (V6.4 at 29.7–62.0). TSMC5/7 are the
+  laggards; a larger seed sweep or the plan's Phase 6 structural levers are
+  the next step.
+- Plan Phases 4–8 (data overlays, batched NN forward, NR convergence, soft
+  physics constraints, per-target heads) deferred.
+- Complex-circuit benchmarks not yet re-measured on the V6.4 checkpoints —
+  harness is in place; pass/fail TBD.
+
+### Process notes / dead ends
+
+- Three sub-agents died to a 600 s no-progress watchdog while waiting on long
+  jobs; orchestration was redone as plain background scripts (no watchdog).
+- The retrain pool was once killed one batch early; 8 tsmc16-pmos cells were
+  re-trained cleanly.
+- Artifacts: 64 best-of-N candidate checkpoints `v6_4_bof_*` / `v6_4_repro_*`
+  in `checkpoints/` (gitignored); V6.3.1 backup at
+  `/tmp/v6_3_1_checkpoints_backup/`. Best-of-N pair evaluator:
+  `scripts/eval_v6_4_pair.py`.
