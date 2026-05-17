@@ -502,3 +502,53 @@ within N=8.
   in `checkpoints/` (gitignored); V6.3.1 backup at
   `/tmp/v6_3_1_checkpoints_backup/`. Best-of-N pair evaluator:
   `scripts/eval_v6_4_pair.py`.
+
+## V6.4.1 — harness merge + single-seed retrain (2026-05-17)
+
+Branch `feat/v6.4.1`. Two changes: (1) merged the V6.3.2 parametric NN test
+harness into the V6.4 line (`tests/common/nn_sweep.py` +
+`verify_nn_multi_tech_{dc,tran}.py`); (2) re-trained all 8 DirectNet medium
+cells from a **single seed (42)** — not best-of-N — and re-ran the full
+extended harness against the fresh checkpoints.
+
+### Retrain
+
+`scripts/run_v6_4_1_retrain.sh`: 8 medium cells (tsmc{5,7,12,16} ×
+{nmos,pmos}), `--seed 42`, across 3 GPUs (GPU1 Blackwell + GPU0/GPU2 A100).
+The entire `checkpoints/` directory was wiped first (107 MB of V6.4 best-of-N
+production + candidate artifacts); a copy was preserved at
+`/tmp/v6_4_checkpoints_backup_20260517/`. New checkpoints land in the canonical
+`tsmc{X}_dn_medium_{nmos,pmos}` parser-cascade slots. Per-tech test R²
+0.997–1.000.
+
+### Extended harness results (V6.4.1 seed-42 checkpoints)
+
+- **`verify_nn_multi_tech_dc.py` — 55/55 PASS** (gate NRMSE < 10%). Unchanged
+  vs the V6.3.1 harness run.
+- **`verify_nn_multi_tech_tran.py` — 64/64 PASS** (gate NRMSE < 15%), VTC +
+  transient. This *clears* the V6.3.1 harness's sole FAIL `TSMC5_vtc_vdd_0p55`
+  (16.8% → 14.08%).
+
+### Seed lottery confirmed — VTC regressed vs V6.4 best-of-N
+
+Single-seed retrain lost the lottery on inverter VTC MaxErr, exactly as the
+V6.4 finding predicted. Inverter VTC baseline MaxErr vs NGSPICE BSIM-CMG:
+
+| Tech   | V6.4 best-of-N | V6.4.1 seed-42 |
+|--------|----------------|----------------|
+| TSMC5  | 62.0 mV        | **128.0 mV**   |
+| TSMC7  | 60.1 mV        | **174.7 mV**   |
+| TSMC12 | 32.3 mV        | **41.6 mV**    |
+| TSMC16 | 29.7 mV        | **33.6 mV**    |
+
+All 4 techs regressed (TSMC7 ~3×). Transient is seed-stable as documented —
+baseline transient MaxErr TSMC5 61.1 / TSMC7 49.2 / TSMC12 64.2 / TSMC16
+69.0 mV, in line with V6.4. The harness NRMSE gates (10% / 15%) still pass
+because they are looser than the VTC-MaxErr program gate; the seed-42 draw is
+**not** an improvement over the shipped V6.4 best-of-N checkpoints.
+
+**Recommendation:** the better V6.4 best-of-N checkpoints are preserved at
+`/tmp/v6_4_checkpoints_backup_20260517/`; restore them, or run a full
+best-of-N (`scripts/run_v6_4_bestof.sh`) on `feat/v6.4.1`, before treating
+V6.4.1 as a shippable model. V6.4.1 currently ships the harness merge, not a
+model improvement.
