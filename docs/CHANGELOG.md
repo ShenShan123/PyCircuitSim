@@ -341,6 +341,78 @@ not more `inv_trip` samples. Transient post-startup ≤ 30 mV also unmet
 - New scripts: `scripts/regen_v6_3_1.sh`, `scripts/train_v6_3_1_parallel.sh`
   (3-way multi-GPU), `scripts/eval_v6_3_1_inverter.py`.
 
+## V6.3.2 — NN parametric test harness (2026-05-17)
+
+Branched `feat/v6.3.2` from the pre-V6.4-finalize HEAD (`beac301`). No model
+or checkpoint change — this release **ports the BSIM-CMG L3 parametric test
+harness to the DirectNet (LEVEL=73) NN models** and runs the V6.3.1
+checkpoints through it. (The `feat/v6.4` branch independently advanced the
+checkpoints; V6.3.2 is a test-infrastructure point release on the V6.3.1
+model. Its harness was merged into `feat/v6.4` on 2026-05-17.)
+
+### Motivation
+
+The BSIM-CMG harness (`verify_multi_tech_{dc,tran}.py`) sweeps device geometry
+and inverter circuit parameters; the NN harness (`verify_nn_dc_tran.py`) only
+ran fixed-geometry points. The V6.3.1 DirectNet checkpoints had never been
+stress-tested across the parametric space the BSIM-CMG reference covers.
+
+### What shipped
+
+- **`tests/common/nn_sweep.py`** — shared parametric harness: sweep-config
+  dataclasses, builders, single-test orchestrators, a baseline-gated
+  multi-tech loop, and summary/CSV/bar-plot helpers. Reuses the existing
+  `verify_nn_dc_tran.py` runners; geometry/VT/VDD sweeps ride on
+  `dataclasses.replace(TestTechConfig, ...)` (zero DC-runner refactor).
+- **`tests/verify_nn_multi_tech_dc.py`** — single-device NMOS/PMOS Id-Vgs over
+  L / NFIN / VT.
+- **`tests/verify_nn_multi_tech_tran.py`** — inverter VTC + transient over P/N
+  ratio, VDD, Cload, input slew, pulse width.
+- **`verify_nn_dc_tran.py` refactor (behaviour-preserving)** — added
+  `InvCircuitParams` (frozen dataclass; Cload/tr/tf/pw/td/tstop, defaults =
+  legacy globals) threaded through the two inverter-transient runners, and an
+  `inv_nfin_p` field + `effective_inv_nfin_p` property on `TestTechConfig` for
+  the P/N-ratio NFIN split. `circuit=None` / `inv_nfin_p=0` reproduce the
+  legacy fixed point exactly — verified by netlist-string audit (a value-match
+  regression guard was infeasible, see "checkpoint contamination" below).
+
+### V6.3.1 results
+
+- **Single-device DC — 55/55 PASS** (gate NRMSE < 10%). Baselines ≤ 0.2%
+  except TSMC7 NMOS 6.5%. Stressors elevate as expected: off-bin L (TSMC5 nmos
+  L=24nm 2.6%), NFIN=10 (TSMC12 pmos 7.6% / MRE 25%), TSMC5 NMOS VT variants
+  (ulvt 6.3%). VT sweeps on TSMC12/16 near-perfect (< 0.25%).
+- **Inverter VTC + transient — 63/64 PASS** (gate NRMSE < 15%). All baselines
+  pass (VTC 1.4–4.1%, transient 1.3–1.8%). Sole **FAIL: `TSMC5_vtc_vdd_0p55`**
+  16.8% — VDD−0.1V drops the trip below the per-tech NN's accurate band.
+  VDD−0.1V is the dominant stressor across techs (TSMC7/TSMC16 VTC 11.7/12.2%,
+  near the gate); fast slew (10 ps) elevates to 4–6%; Cload, pulse-width,
+  slew=500 ps and the single P/N-ratio point (`nfin_p=3`) all stay < 3%.
+- Finding: V6.3.1 DirectNet is **VDD-specific** — it degrades sharply ~0.1 V
+  off the training VDD. A VDD-robustness lever (train-time VDD jitter) is the
+  natural follow-up.
+
+### Harness design notes
+
+- **P/N ratio is one point.** The TSMC naive-modelcard NFIN-group rule
+  (`nfin_p > nfin+1` skipped) with `default_nfin=2` admits only `nfin_p=3` —
+  exact parity with the BSIM-CMG harness; the limiter is the modelcard.
+- Off-bin L/NFIN points exercise NN extrapolation beyond the per-tech training
+  bins; elevated NRMSE there is expected model behaviour, not a harness fault.
+
+### Dead end recorded — checkpoint contamination (cost ~1 h)
+
+The first full runs were **invalid**: `bsimar/checkpoints/` was symlinked into
+the shared checkout, and the concurrent `feat/v6.4` best-of-N work **overwrote
+the `tsmc*_dn_medium_*` slots at 07:46:58** mid-run. This produced ~±1 % VTC
+NRMSE run-to-run scatter (7 TSMC12 readings spanning 1.7–3.8 %) — chased
+fruitlessly against PyTorch threading and `PYTHONHASHSEED` before the moving
+checkpoint files were identified as the cause. Fix: a worktree-local copy of
+`/tmp/v6_3_1_checkpoints_backup/` (md5-verified V6.3.1), plus an isolated
+`PyCMG/build/modelcards/` (the v6.4 eval jobs also raced the shared naive
+modelcards). Lesson: a verification harness must own immutable copies of its
+inputs; never point it at a directory under active training.
+
 ## V6.4 — Best-of-N retrain + complex-circuit benchmark harness (2026-05-15 .. 17)
 
 Plan: `docs/plans/2026-05-15-directnet-complex-circuits.md` (re-prioritized

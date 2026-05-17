@@ -106,6 +106,25 @@ INV_TRAN_PW = 1e-9         # 1ns pulse width
 INV_TRAN_TD = 0.2e-9       # 200ps delay
 
 
+@dataclass(frozen=True)
+class InvCircuitParams:
+    """Per-config circuit/timing overrides for the inverter transient runners.
+
+    Every field defaults to the module-level inverter-transient constant, so
+    ``circuit=None`` (or a bare ``InvCircuitParams()``) reproduces the legacy
+    fixed-point behaviour byte-for-byte. The V6.3.2 parametric harness
+    (``tests/common/nn_sweep.py``) populates these for the Cload / input-slew /
+    pulse-width sweeps; device geometry, VDD and VT instead ride on
+    ``dataclasses.replace(tech, ...)`` of ``TestTechConfig``.
+    """
+    cload: float = INV_CLOAD
+    tr: float = INV_TRAN_TR
+    tf: float = INV_TRAN_TF
+    pw: float = INV_TRAN_PW
+    td: float = INV_TRAN_TD
+    tstop: float = INV_TRAN_TSTOP
+
+
 # ---------------------------------------------------------------------------
 # Technology configurations
 # ---------------------------------------------------------------------------
@@ -137,6 +156,10 @@ class TestTechConfig:
     inv_l_nmos: float = 0.0
     inv_l_pmos: float = 0.0
     inv_nfin: int = 0
+    # P-side inverter fin count. 0 = symmetric (fall back to inv_nfin). The
+    # V6.3.2 P/N-ratio sweep sets this so the PMOS pull-up can differ from the
+    # NMOS pull-down without disturbing inv_nfin (the NMOS fin count).
+    inv_nfin_p: int = 0
 
     @property
     def effective_l_pmos(self) -> float:
@@ -159,6 +182,11 @@ class TestTechConfig:
     @property
     def effective_inv_nfin(self) -> int:
         return self.inv_nfin if self.inv_nfin > 0 else self.nfin
+
+    @property
+    def effective_inv_nfin_p(self) -> int:
+        """PMOS inverter fin count, defaulting to the symmetric inverter NFIN."""
+        return self.inv_nfin_p if self.inv_nfin_p > 0 else self.effective_inv_nfin
 
 
 ALL_TEST_TECHS: Dict[str, TestTechConfig] = {
@@ -314,7 +342,7 @@ def resolve_pmos_inv_modelcard(tech: TestTechConfig) -> Path:
     device_config = tech_config.get_device(canonical)
     return Path(resolve_modelcard(
         device_config, tech_config,
-        L=tech.effective_inv_l_pmos, NFIN=float(tech.effective_inv_nfin),
+        L=tech.effective_inv_l_pmos, NFIN=float(tech.effective_inv_nfin_p),
     ))
 
 
@@ -345,7 +373,7 @@ def create_baked_inv_pmos_modelcard(tech: TestTechConfig, work_dir: Path) -> Pat
     baked.write_text(src.read_text())
     bake_inst_params(baked, baked, tech.pmos_model, {
         "L": tech.effective_inv_l_pmos,
-        "NFIN": float(tech.effective_inv_nfin),
+        "NFIN": float(tech.effective_inv_nfin_p),
         "TFIN": tech.tfin,
         "DEVTYPE": 0,
     })
@@ -1061,6 +1089,7 @@ def run_pycircuitsim_nn_inverter_vtc(
     l_nmos_nm = tech.effective_inv_l_nmos * 1e9
     l_pmos_nm = tech.effective_inv_l_pmos * 1e9
     nfin = tech.effective_inv_nfin
+    nfin_p = tech.effective_inv_nfin_p
 
     netlist_path = work_dir / f"nn_{model_name}_inverter_vtc_{tech.name}.sp"
 
@@ -1077,7 +1106,7 @@ def run_pycircuitsim_nn_inverter_vtc(
         f"Vdd 1 0 {tech.vdd}\n"
         f"Vin 2 0 0.0\n"
         f"Mn1 3 2 0 0 nmos_nn L={l_nmos_nm:.0f}n NFIN={nfin}\n"
-        f"Mp1 3 2 1 1 pmos_nn L={l_pmos_nm:.0f}n NFIN={nfin}\n"
+        f"Mp1 3 2 1 1 pmos_nn L={l_pmos_nm:.0f}n NFIN={nfin_p}\n"
         f".model nmos_nn NMOS ({nmos_params})\n"
         f".model pmos_nn PMOS ({pmos_params})\n"
         f".dc Vin 0 {tech.vdd} 0.005\n"
@@ -1211,14 +1240,19 @@ def plot_vtc_comparison_multi(
 # ---------------------------------------------------------------------------
 def run_ngspice_inverter_tran(
     tech: TestTechConfig, work_dir: Path,
+    circuit: Optional[InvCircuitParams] = None,
 ) -> Dict[str, np.ndarray]:
     """Run NGSPICE CMOS inverter transient with load capacitor.
 
+    ``circuit`` overrides Cload / input slew / pulse width / delay / tstop;
+    ``circuit=None`` uses the legacy module-global fixed point.
+
     Returns {time, v(out), v(in)}.
     """
+    cp = circuit or InvCircuitParams()
     baked_nmos = create_baked_inv_nmos_modelcard(tech, work_dir)
     baked_pmos = create_baked_inv_pmos_modelcard(tech, work_dir)
-    per = INV_TRAN_TR + INV_TRAN_PW + INV_TRAN_TF + max(INV_TRAN_PW, 1.0e-9)
+    per = cp.tr + cp.pw + cp.tf + max(cp.pw, 1.0e-9)
 
     netlist_path = work_dir / f"ngspice_inverter_tran_{tech.name}.cir"
     content = (
@@ -1227,13 +1261,13 @@ def run_ngspice_inverter_tran(
         f'.include "{baked_pmos}"\n'
         f".temp 27\n"
         f"Vdd vdd 0 {tech.vdd}\n"
-        f"Vin in 0 PULSE(0 {tech.vdd} {INV_TRAN_TD} {INV_TRAN_TR}"
-        f" {INV_TRAN_TF} {INV_TRAN_PW} {per})\n"
+        f"Vin in 0 PULSE(0 {tech.vdd} {cp.td} {cp.tr}"
+        f" {cp.tf} {cp.pw} {per})\n"
         f"Nn out in 0 0 {tech.nmos_model}\n"
         f"Np out in vdd vdd {tech.pmos_model}\n"
-        f"Cload out 0 {INV_CLOAD}\n"
+        f"Cload out 0 {cp.cload}\n"
         f".ic V(out)={tech.vdd}\n"
-        f".tran {INV_TRAN_TSTEP} {INV_TRAN_TSTOP} uic\n"
+        f".tran {INV_TRAN_TSTEP} {cp.tstop} uic\n"
         f".end\n"
     )
     netlist_path.write_text(content)
@@ -1300,15 +1334,22 @@ def run_pycircuitsim_nn_inverter_tran(
     model_name: str,
     nmos_model_path: Optional[Path] = None,
     pmos_model_path: Optional[Path] = None,
+    circuit: Optional[InvCircuitParams] = None,
 ) -> Dict[str, np.ndarray]:
-    """Run PyCircuitSim NN inverter transient. Returns {time, v(out), v(in)}."""
+    """Run PyCircuitSim NN inverter transient. Returns {time, v(out), v(in)}.
+
+    ``circuit`` overrides Cload / input slew / pulse width / delay / tstop;
+    ``circuit=None`` uses the legacy module-global fixed point.
+    """
     from pycircuitsim.parser import Parser
     from pycircuitsim.solver import DCSolver, TransientSolver
 
+    cp = circuit or InvCircuitParams()
     l_nmos_nm = tech.effective_inv_l_nmos * 1e9
     l_pmos_nm = tech.effective_inv_l_pmos * 1e9
     nfin = tech.effective_inv_nfin
-    per = INV_TRAN_TR + INV_TRAN_PW + INV_TRAN_TF + max(INV_TRAN_PW, 1.0e-9)
+    nfin_p = tech.effective_inv_nfin_p
+    per = cp.tr + cp.pw + cp.tf + max(cp.pw, 1.0e-9)
 
     nmos_params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={tech.nn_vt}"
     if nmos_model_path is not None and not _cascade_handles_stem(nmos_model_path):
@@ -1322,15 +1363,15 @@ def run_pycircuitsim_nn_inverter_tran(
     content = (
         f"* NN Inverter Transient ({model_name}, {tech.name})\n"
         f"Vdd 1 0 {tech.vdd}\n"
-        f"Vin 2 0 PULSE 0 {tech.vdd} {INV_TRAN_TD} {INV_TRAN_TR}"
-        f" {INV_TRAN_TF} {INV_TRAN_PW} {per}\n"
+        f"Vin 2 0 PULSE 0 {tech.vdd} {cp.td} {cp.tr}"
+        f" {cp.tf} {cp.pw} {per}\n"
         f"Mn1 3 2 0 0 nmos_nn L={l_nmos_nm:.0f}n NFIN={nfin}\n"
-        f"Mp1 3 2 1 1 pmos_nn L={l_pmos_nm:.0f}n NFIN={nfin}\n"
-        f"Cload 3 0 {INV_CLOAD}\n"
+        f"Mp1 3 2 1 1 pmos_nn L={l_pmos_nm:.0f}n NFIN={nfin_p}\n"
+        f"Cload 3 0 {cp.cload}\n"
         f".model nmos_nn NMOS ({nmos_params})\n"
         f".model pmos_nn PMOS ({pmos_params})\n"
         f".ic V(3)={tech.vdd}\n"
-        f".tran {INV_TRAN_TSTEP} {INV_TRAN_TSTOP}\n"
+        f".tran {INV_TRAN_TSTEP} {cp.tstop}\n"
         f".end\n"
     )
     netlist_path.write_text(content)
