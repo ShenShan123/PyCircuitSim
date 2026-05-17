@@ -48,6 +48,70 @@ def _solve_mna(mna_matrix, rhs: np.ndarray) -> np.ndarray:
         return spsolve(mna_matrix.tocsr(), rhs)
     return np.linalg.solve(mna_matrix, rhs)
 
+
+# Phase 6b — absolute KCL-residual floor for the residual-norm
+# acceptance gate. A non-physical fixed point (no DC equilibrium) has a
+# residual on the order of a device current (µA–mA); a SPICE-converged
+# iterate's residual is orders of magnitude smaller. 1e-6 A sits in the
+# gap: well above any converged inverter point, well below a stalled one.
+_RESID_ABS_FLOOR: float = 1e-6
+
+
+def _mna_residual_inf(mna_matrix, rhs: np.ndarray, x: np.ndarray) -> float:
+    """Return ‖rhs − A·x‖∞ — the MNA residual at iterate ``x``.
+
+    V6.4 Phase 6b. The NR fixed point of this solver satisfies A·x = rhs
+    (full re-stamp formulation: the solve returns absolute voltages, not
+    deltas). A small `Δv` between iterations does NOT by itself prove a
+    physical solution — a stalled / oscillating iterate can have tiny
+    `Δv` yet a large residual. This infinity-norm residual is used as an
+    OR-gate in the convergence test and to guard averaged-solution
+    acceptance, so a non-physical fixed point is rejected.
+
+    Args:
+        mna_matrix: assembled MNA matrix A (sparse LIL or dense).
+        rhs: assembled RHS vector b.
+        x: candidate solution vector (absolute node/branch values).
+
+    Returns:
+        ‖rhs − A·x‖∞ as a finite float; ``inf`` if the product is not finite.
+    """
+    if issparse(mna_matrix):
+        ax = mna_matrix.tocsr().dot(x)
+    else:
+        ax = mna_matrix.dot(x)
+    resid = rhs - ax
+    if not np.all(np.isfinite(resid)):
+        return float("inf")
+    return float(np.max(np.abs(resid)))
+
+
+def _lm_augment(mna_matrix, lam: float):
+    """Return a copy of ``mna_matrix`` with λ added to its diagonal.
+
+    V6.4 Phase 6a — Levenberg-Marquardt damping. Adding ``λ·I`` to the
+    MNA Jacobian biases the Newton step toward steepest-descent, which
+    re-establishes descent in ‖F(x)‖ when a pure Newton step overshoots.
+    The fixed point is unchanged: at convergence the step → 0 so the
+    ``λ·I`` term contributes nothing to the accepted solution — LM only
+    changes the *path*, never the converged answer.
+
+    Args:
+        mna_matrix: assembled MNA matrix (sparse LIL or dense). Not mutated.
+        lam: non-negative damping parameter λ.
+
+    Returns:
+        A new matrix equal to ``mna_matrix + λ·I``, same type as input.
+    """
+    if issparse(mna_matrix):
+        augmented = mna_matrix.tocsr().copy()
+        augmented.setdiag(augmented.diagonal() + lam)
+        return augmented
+    augmented = mna_matrix.copy()
+    n = augmented.shape[0]
+    augmented[np.diag_indices(n)] += lam
+    return augmented
+
 # --- Module-level MOSFET helpers (used by both DCSolver and TransientSolver) ---
 
 def _mosfet_types() -> tuple:
@@ -576,6 +640,13 @@ class DCSolver:
                 stuck_counter = 0
                 voltage_history: List[Dict[str, float]] = []
 
+                # --- Levenberg-Marquardt damping state (Phase 6a) ---
+                # lm_lambda is the current λ; prev_residual is ‖F(x)‖∞ at
+                # the last accepted iterate. LM only engages when a Newton
+                # step fails to reduce the residual.
+                lm_lambda = 0.0
+                prev_residual = float('inf')
+
                 # Newton-Raphson iteration for this source step
                 nr_converged = False
                 max_change = 0.0
@@ -609,6 +680,18 @@ class DCSolver:
                     if gmin_level > self.gmin:
                         self._apply_gmin_stepping(mna_matrix, node_map, gmin_level)
 
+                    # Current iterate as a full MNA vector (node voltages in
+                    # the leading slots; branch-current slots left at 0 —
+                    # they only scale the residual, not the descent test).
+                    current_iterate = np.zeros(matrix_size)
+                    for idx, node in enumerate(nodes):
+                        current_iterate[idx] = voltages[node]
+
+                    # MNA residual ‖b − A·v‖∞ at the current iterate
+                    # (Phase 6b): the nonlinear KCL mismatch before the
+                    # Newton step. LM uses this to detect overshoot.
+                    iter_residual = _mna_residual_inf(mna_matrix, rhs, current_iterate)
+
                     # Solve the MNA system
                     try:
                         solution = _solve_mna(mna_matrix, rhs)
@@ -617,6 +700,39 @@ class DCSolver:
                             f"Circuit matrix is singular at source step {step + 1}, iteration {iteration + 1}. "
                             f"Check circuit topology or initial guess."
                         ) from e
+
+                    # --- Levenberg-Marquardt damping (Phase 6a) ---
+                    # If the residual did not decrease vs the previous
+                    # accepted iterate, the pure Newton step overshot.
+                    # Add λ·I to the Jacobian and re-solve, scaling λ ×10
+                    # (Nielsen rule) until the candidate's residual
+                    # improves; shrink λ ÷3 on acceptance. Sits ALONGSIDE
+                    # the trust-region rail cap below — it does not
+                    # replace it. The fixed point is unchanged: λ only
+                    # reshapes the step direction, never the converged
+                    # answer.
+                    if (_has_nn_device(self.circuit)
+                            and np.isfinite(prev_residual)
+                            and iter_residual > prev_residual + 1e-30):
+                        lm_lambda = lm_lambda if lm_lambda > 0.0 else 1e-9
+                        for _ in range(8):
+                            try:
+                                cand = _solve_mna(_lm_augment(mna_matrix, lm_lambda), rhs)
+                            except (np.linalg.LinAlgError, RuntimeError):
+                                lm_lambda *= 10.0
+                                continue
+                            cand_residual = _mna_residual_inf(mna_matrix, rhs, cand)
+                            if cand_residual < iter_residual:
+                                solution = cand
+                                break
+                            lm_lambda *= 10.0
+                        else:
+                            # No λ in the ladder helped — keep the plain
+                            # Newton step and let damping handle it.
+                            lm_lambda = 0.0
+                    else:
+                        # Step accepted on its own merit — relax λ.
+                        lm_lambda = lm_lambda / 3.0 if lm_lambda > 1e-12 else 0.0
 
                     # V5' trust-region: cap NN per-iteration |ΔV| at one supply rail to kill NR runaway.
                     if _has_nn_device(self.circuit):
@@ -661,6 +777,9 @@ class DCSolver:
                         damping = min(1.0, damping * 1.2)
 
                     prev_max_delta = max_delta
+                    # Record this iterate's residual for the next LM
+                    # descent test (Phase 6a).
+                    prev_residual = iter_residual
 
                     # Identify voltage-source-constrained nodes
                     vs_constrained_nodes = set()
@@ -726,6 +845,34 @@ class DCSolver:
                             all_converged = False
                             break
 
+                    # --- Residual-norm acceptance OR-gate (Phase 6b) ---
+                    # The SPICE |ΔV| test alone can declare a stalled
+                    # iterate "converged" — small step, but the KCL
+                    # residual is still large (a non-physical fixed
+                    # point with no DC equilibrium — ring oscillator,
+                    # saddle latch). Require the MNA residual to also be
+                    # small. iter_residual is ‖b−A·v‖∞ at the pre-step
+                    # iterate; when |ΔV| is tiny the post-step voltages
+                    # equal that iterate, so it is a valid residual at
+                    # the accepted point. This ADDS a gate; it never
+                    # relaxes the SPICE criterion.
+                    #
+                    # The threshold is deliberately generous. A genuine
+                    # non-physical fixed point has a residual comparable
+                    # to a full device current (µA–mA). A converged
+                    # iterate's residual is ‖A·Δ‖ which, at the high-gain
+                    # inverter trip, is the tiny step Δ amplified by the
+                    # ~20× MNA gain — still far below a device current.
+                    # Gating on max(_RESID_ABS_FLOOR, 100·reltol·‖b‖∞)
+                    # cleanly separates the two and never misfires on a
+                    # SPICE-converged inverter point.
+                    if all_converged and _has_nn_device(self.circuit):
+                        rhs_scale = float(np.max(np.abs(rhs))) if rhs.size else 0.0
+                        resid_threshold = max(_RESID_ABS_FLOOR,
+                                              100.0 * self.reltol * rhs_scale)
+                        if iter_residual > resid_threshold:
+                            all_converged = False
+
                     if all_converged:
                         if self.logger:
                             self.logger.log_convergence(
@@ -750,12 +897,29 @@ class DCSolver:
                         max_rel_variance = max(max_rel_variance, variance / (threshold + 1e-30))
 
                     if max_rel_variance < 10.0:
-                        # Oscillating within tolerance — accept averaged solution
-                        for node in nodes:
-                            voltages[node] = avg_voltages[node]
-                        voltages["0"] = 0.0
-                        voltages["GND"] = 0.0
-                        nr_converged = True
+                        # Oscillating within tolerance — but only accept
+                        # the averaged solution if it also satisfies the
+                        # MNA residual test (Phase 6b). A small inter-
+                        # iteration variance does not prove the average
+                        # is a physical fixed point; an oscillator with
+                        # no DC equilibrium can satisfy the variance test
+                        # while ‖b−A·v‖ stays large. Re-stamp at the
+                        # average and check the residual.
+                        avg_residual = self._dc_residual_at(
+                            avg_voltages, node_map, nodes, num_nodes,
+                            matrix_size, gmin_level,
+                        )
+                        rhs_scale = avg_residual[1]
+                        resid_threshold = max(_RESID_ABS_FLOOR, 100.0 * self.reltol * rhs_scale)
+                        residual_ok = (not _has_nn_device(self.circuit)
+                                       or avg_residual[0] <= resid_threshold)
+                        if residual_ok:
+                            # Oscillating within tolerance — accept averaged solution
+                            for node in nodes:
+                                voltages[node] = avg_voltages[node]
+                            voltages["0"] = 0.0
+                            voltages["GND"] = 0.0
+                            nr_converged = True
 
                 if nr_converged:
                     final_converged = True
@@ -835,6 +999,53 @@ class DCSolver:
     ) -> None:
         """Stamp MOSFET conductance and NR current source to MNA matrix (DC)."""
         _stamp_mosfet_dc(mosfet, mna_matrix, rhs, node_map, voltages, self.gmin)
+
+    def _dc_residual_at(
+        self,
+        voltages: Dict[str, float],
+        node_map: Dict[str, int],
+        nodes: List[str],
+        num_nodes: int,
+        matrix_size: int,
+        gmin_level: float,
+    ) -> tuple:
+        """Re-stamp the DC MNA system at ``voltages`` and return its residual.
+
+        Phase 6b. Used to validate the oscillation-detection averaged
+        solution: a small inter-iteration variance does not prove the
+        averaged voltages are a physical fixed point. This re-stamps the
+        full MNA system (linear + MOSFET + voltage sources) at the
+        candidate voltages and reports the infinity-norm KCL residual.
+
+        Args:
+            voltages: candidate node-voltage dict.
+            node_map: node-name → matrix-index map.
+            nodes: ordered non-ground node names.
+            num_nodes: number of non-ground nodes.
+            matrix_size: full MNA dimension (nodes + voltage sources).
+            gmin_level: GMIN level to stamp (matches the active homotopy step).
+
+        Returns:
+            ``(residual_inf, rhs_scale)`` — the residual ‖b−A·v‖∞ and the
+            RHS infinity-norm used to scale the acceptance threshold.
+        """
+        mna = _create_mna_matrix(matrix_size)
+        rhs = np.zeros(matrix_size)
+        for component in self.circuit.components:
+            if not _is_mosfet(component):
+                component.stamp_conductance(mna, node_map)
+                component.stamp_rhs(rhs, node_map)
+        for component in self.circuit.components:
+            if _is_mosfet(component):
+                self._stamp_mosfet(component, mna, rhs, node_map, voltages)
+        self._stamp_voltage_sources(mna, rhs, node_map, num_nodes, voltages=voltages)
+        if gmin_level > self.gmin:
+            self._apply_gmin_stepping(mna, node_map, gmin_level)
+        iterate = np.zeros(matrix_size)
+        for idx, node in enumerate(nodes):
+            iterate[idx] = voltages[node]
+        rhs_scale = float(np.max(np.abs(rhs))) if rhs.size else 0.0
+        return _mna_residual_inf(mna, rhs, iterate), rhs_scale
 
     def _stamp_voltage_sources(
         self,
@@ -1194,6 +1405,10 @@ class TransientSolver:
         prev_max_delta = float('inf')
         stuck_counter = 0  # Count iterations with minimal improvement
 
+        # --- Levenberg-Marquardt damping state (Phase 6a) ---
+        lm_lambda = 0.0
+        prev_residual = float('inf')
+
         # Track recent voltages for oscillation detection
         voltage_history = []
 
@@ -1229,6 +1444,14 @@ class TransientSolver:
             if gmin > self.gmin_final:
                 self._apply_gmin_stepping(mna_matrix, node_map, gmin)
 
+            # Current iterate as a full MNA vector (Phase 6a/6b).
+            current_iterate = np.zeros(matrix_size)
+            for idx, node in enumerate(nodes):
+                current_iterate[idx] = voltages[node]
+
+            # MNA residual ‖b−A·v‖∞ at the current iterate (Phase 6b).
+            iter_residual = _mna_residual_inf(mna_matrix, rhs, current_iterate)
+
             # Solve for voltage updates
             try:
                 solution = _solve_mna(mna_matrix, rhs)
@@ -1236,6 +1459,32 @@ class TransientSolver:
                 raise RuntimeError(
                     f"Circuit matrix is singular at t={time:.6e}s during Newton-Raphson iteration {iteration+1}"
                 )
+
+            # --- Levenberg-Marquardt damping (Phase 6a) ---
+            # When the residual fails to decrease, the Newton step
+            # overshot — add λ·I to the Jacobian and re-solve, scaling λ
+            # ×10 (Nielsen rule) until the candidate residual improves,
+            # ÷3 on acceptance. Sits alongside the trust-region rail cap
+            # below; the fixed point is unchanged.
+            if (_has_nn_device(self.circuit)
+                    and np.isfinite(prev_residual)
+                    and iter_residual > prev_residual + 1e-30):
+                lm_lambda = lm_lambda if lm_lambda > 0.0 else 1e-9
+                for _ in range(8):
+                    try:
+                        cand = _solve_mna(_lm_augment(mna_matrix, lm_lambda), rhs)
+                    except (np.linalg.LinAlgError, RuntimeError):
+                        lm_lambda *= 10.0
+                        continue
+                    cand_residual = _mna_residual_inf(mna_matrix, rhs, cand)
+                    if cand_residual < iter_residual:
+                        solution = cand
+                        break
+                    lm_lambda *= 10.0
+                else:
+                    lm_lambda = 0.0
+            else:
+                lm_lambda = lm_lambda / 3.0 if lm_lambda > 1e-12 else 0.0
 
             # V5' trust-region: cap NN per-iteration |ΔV| at one supply rail to kill NR runaway.
             if _has_nn_device(self.circuit):
@@ -1297,6 +1546,18 @@ class TransientSolver:
                     all_converged = False
                     break
 
+            # --- Residual-norm acceptance OR-gate (Phase 6b) ---
+            # Reject a stalled iterate: small |ΔV| but large KCL
+            # residual is a non-physical fixed point. Adds a gate on top
+            # of the SPICE |ΔV| test, never relaxes it. The threshold is
+            # generous (see the DC analog) so it never misfires on a
+            # SPICE-converged timestep.
+            if all_converged and _has_nn_device(self.circuit):
+                rhs_scale = float(np.max(np.abs(rhs))) if rhs.size else 0.0
+                resid_threshold = max(_RESID_ABS_FLOOR, 100.0 * self.reltol * rhs_scale)
+                if iter_residual > resid_threshold:
+                    all_converged = False
+
             if all_converged:
                 # Converged! Use new voltages directly
                 for idx, node in enumerate(nodes):
@@ -1330,6 +1591,8 @@ class TransientSolver:
                 damping = 1.0  # No damping needed for small deltas
 
             prev_max_delta = max_delta
+            # Record residual for the next LM descent test (Phase 6a).
+            prev_residual = iter_residual
 
             # Update voltages with damping (match DC solver approach)
             for idx, node in enumerate(nodes):
@@ -1364,8 +1627,20 @@ class TransientSolver:
                     threshold = self.vntol + self.reltol * v_abs
                     max_rel_variance = max(max_rel_variance, variance / (threshold + 1e-30))
 
-                # Accept if oscillation is within 10x convergence tolerance
-                if max_rel_variance < 10.0:
+                # Accept if oscillation is within 10x convergence
+                # tolerance AND the averaged solution also passes the
+                # MNA residual test (Phase 6b) — a small variance does
+                # not prove the average is a physical fixed point.
+                residual_ok = True
+                if max_rel_variance < 10.0 and _has_nn_device(self.circuit):
+                    avg_resid, rhs_scale = self._transient_residual_at(
+                        avg_voltages, node_map, nodes, num_nodes,
+                        matrix_size, gmin, time,
+                    )
+                    resid_threshold = max(_RESID_ABS_FLOOR, 100.0 * self.reltol * rhs_scale)
+                    residual_ok = avg_resid <= resid_threshold
+
+                if max_rel_variance < 10.0 and residual_ok:
                     if self.debug:
                         print(f"  WARNING: Newton-Raphson oscillating at t={time:.6e}s")
                         print(f"  Max variance = {max_rel_variance:.2e} (accepting averaged solution)")
@@ -1514,6 +1789,55 @@ class TransientSolver:
             if s_idx is not None:
                 rhs[s_idx] -= e_s
 
+    def _transient_residual_at(
+        self,
+        voltages: Dict[str, float],
+        node_map: Dict[str, int],
+        nodes: List[str],
+        num_nodes: int,
+        matrix_size: int,
+        gmin: float,
+        time: float,
+    ) -> tuple:
+        """Re-stamp the transient MNA system at ``voltages``; return its residual.
+
+        Phase 6b. Validates the oscillation-detection averaged solution
+        in the transient NR loop: small inter-iteration variance does
+        not prove the averaged voltages satisfy KCL (an oscillator with
+        no DC equilibrium can fool the variance test). Re-stamps the
+        full transient system — linear components, voltage sources at
+        ``time``, and charge-based MOSFET stamps — at the candidate
+        voltages and reports the infinity-norm residual.
+
+        Args:
+            voltages: candidate node-voltage dict.
+            node_map: node-name → matrix-index map.
+            nodes: ordered non-ground node names.
+            num_nodes: number of non-ground nodes.
+            matrix_size: full MNA dimension.
+            gmin: GMIN level to stamp (matches the active stepping level).
+            time: simulation time for time-varying voltage sources.
+
+        Returns:
+            ``(residual_inf, rhs_scale)``.
+        """
+        mna = _create_mna_matrix(matrix_size)
+        rhs = np.zeros(matrix_size)
+        for component in self.circuit.components:
+            if not _is_mosfet(component):
+                component.stamp_conductance(mna, node_map)
+                component.stamp_rhs(rhs, node_map)
+        self._stamp_voltage_sources(mna, rhs, node_map, num_nodes, time, voltages)
+        for component in self.circuit.components:
+            if _is_mosfet(component):
+                self._stamp_mosfet_transient(component, mna, rhs, node_map, voltages)
+        if gmin > self.gmin_final:
+            self._apply_gmin_stepping(mna, node_map, gmin)
+        iterate = np.zeros(matrix_size)
+        for idx, node in enumerate(nodes):
+            iterate[idx] = voltages[node]
+        rhs_scale = float(np.max(np.abs(rhs))) if rhs.size else 0.0
+        return _mna_residual_inf(mna, rhs, iterate), rhs_scale
 
     def solve(self) -> Dict[str, np.ndarray]:
         """

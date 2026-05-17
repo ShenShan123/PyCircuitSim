@@ -34,6 +34,109 @@ def _circuit_has_nn(circuit: Circuit) -> bool:
     return False
 
 
+def _pseudo_transient_dc(circuit: Circuit):
+    """Pseudo-transient DC continuation fallback (V6.4 Phase 6c).
+
+    Last-resort DC fallback for circuits with no reachable DC
+    equilibrium under Newton-Raphson — ring oscillators, hard-startup
+    latches. Runs a short transient with `TransientSolver`'s
+    pseudo-transient initialization (artificial node capacitors,
+    `solver._add_pseudo_capacitors`) so the integrator walks the
+    circuit to a self-consistent state, then takes the final settled
+    timestep as the DC operating point.
+
+    The pseudo-caps damp the trajectory; for a circuit with a true DC
+    equilibrium the transient relaxes onto it, for an oscillator it
+    lands on a consistent point of the limit cycle — either is a valid,
+    physically-grounded operating point and far better than the garbage
+    vector a diverged Newton solve returns.
+
+    The settled voltages are then handed to a fresh `DCSolver` (with
+    GMIN stepping) as `initial_guess` for one polishing solve. Whether
+    or not that final solve converges, the returned solver carries the
+    best available voltages and an honest `_last_solve_converged` flag.
+
+    The artificial `_pseudo_*` capacitors that `TransientSolver` injects
+    into ``circuit.components`` are stripped unconditionally before the
+    function returns — a leaked pseudo-cap would corrupt every later DC
+    sweep point and the result CSV.
+
+    Args:
+        circuit: the circuit to solve.
+
+    Returns:
+        ``(DCSolver, solution)`` — same contract as `solve_fn`.
+    """
+    from pycircuitsim.solver import DCSolver, TransientSolver
+
+    def _strip_pseudo_caps() -> None:
+        """Remove any leaked `_pseudo_*` components from the circuit."""
+        circuit.components[:] = [
+            c for c in circuit.components
+            if not getattr(c, "name", "").startswith("_pseudo_")
+        ]
+
+    # Settling window: a few RC constants of the pseudo-caps against a
+    # ~kΩ-scale node resistance. dt small enough for NR stability; the
+    # window is short — this is a convergence aid, not an analysis.
+    pt_cap = 1e-12
+    dt = 1e-12
+    t_stop = 200 * dt  # 200 settling steps
+
+    settled: dict = {}
+    try:
+        tran = TransientSolver(
+            circuit, t_stop=t_stop, dt=dt,
+            initial_guess=circuit.initial_conditions or None,
+            use_gmin_stepping=True,
+            use_pseudo_transient=True,
+            pseudo_transient_steps=max(2, int(0.5 * t_stop / dt)),
+            pseudo_transient_cap=pt_cap,
+            debug=False,
+        )
+        results = tran.solve()
+        # Final committed timestep = settled operating point.
+        last = getattr(tran, "_last_committed_step", None)
+        for node, series in results.items():
+            if node == "time":
+                continue
+            arr = np.asarray(series)
+            if arr.size == 0:
+                continue
+            idx = last if (last is not None and 0 <= last < arr.size) else arr.size - 1
+            settled[node] = float(arr[idx])
+    except (np.linalg.LinAlgError, RuntimeError) as exc:
+        logger.info("Pseudo-transient DC continuation transient stage failed: %s", exc)
+    finally:
+        # Guarantee no pseudo-cap survives the transient stage — it
+        # would otherwise pollute the polishing solve and every later
+        # DC sweep point sharing this circuit object.
+        _strip_pseudo_caps()
+
+    settled.setdefault("0", 0.0)
+    settled.setdefault("GND", 0.0)
+
+    # Polishing DC solve seeded with the settled voltages.
+    polish = DCSolver(
+        circuit,
+        initial_guess=settled or None,
+        use_source_stepping=True,
+        use_gmin_stepping=True,
+    )
+    try:
+        sol = polish.solve(skip_header=True)
+        return polish, sol
+    except (np.linalg.LinAlgError, RuntimeError) as exc:
+        logger.info("Pseudo-transient polishing DC solve failed: %s", exc)
+        # No DC fixed point reachable (e.g. a true oscillator). Return
+        # the settled voltages as the operating point — a valid
+        # transient seed. Flag honestly so callers do not over-trust it.
+        polish._last_solve_converged = False
+        if settled:
+            return polish, {k: v for k, v in settled.items()}
+        raise
+
+
 def _solve_dc_with_retry(
     circuit: Circuit,
     has_nn: bool,
@@ -50,6 +153,13 @@ def _solve_dc_with_retry(
     >1e10, NaN/Inf), and the circuit contains an NN compact-model
     device, the orchestrator retries the same DC point with
     `use_gmin_stepping=True` (2-level homotopy [1e-8, gmin]).
+
+    V6.4 Phase 6c — if the GMIN retry also fails, a final
+    pseudo-transient DC continuation fallback (`_pseudo_transient_dc`)
+    walks the circuit to a settled state via an artificial-capacitor
+    transient. This recovers DC points for circuits with no
+    Newton-reachable equilibrium (ring oscillators, hard-startup
+    latches). It fires ONLY after fast-path + GMIN-retry both fail.
 
     BSIM-CMG-only circuits never retry — `has_nn=False` propagates the
     fast-path failure as-is, preserving byte-identical behaviour for
@@ -70,16 +180,30 @@ def _solve_dc_with_retry(
             raise
         # NN path: retry with GMIN homotopy.
         logger.info("DC fast-path raised; retrying with GMIN stepping (NN circuit).")
-        solver, solution = solve_fn(use_gmin=True)
-        return solver, solution
+        try:
+            solver, solution = solve_fn(use_gmin=True)
+        except (np.linalg.LinAlgError, RuntimeError):
+            logger.info("GMIN retry raised; falling back to pseudo-transient DC continuation.")
+            return _pseudo_transient_dc(circuit)
+        if getattr(solver, "_last_solve_converged", True):
+            return solver, solution
+        logger.info("GMIN retry did not converge; falling back to pseudo-transient DC continuation.")
+        return _pseudo_transient_dc(circuit)
 
     # Fast path returned without raising — check convergence flag.
     converged = getattr(solver, "_last_solve_converged", True)
     if converged or not has_nn:
         return solver, solution
     logger.info("DC fast-path did not converge; retrying with GMIN stepping (NN circuit).")
-    solver, solution = solve_fn(use_gmin=True)
-    return solver, solution
+    try:
+        solver, solution = solve_fn(use_gmin=True)
+    except (np.linalg.LinAlgError, RuntimeError):
+        logger.info("GMIN retry raised; falling back to pseudo-transient DC continuation.")
+        return _pseudo_transient_dc(circuit)
+    if getattr(solver, "_last_solve_converged", True):
+        return solver, solution
+    logger.info("GMIN retry did not converge; falling back to pseudo-transient DC continuation.")
+    return _pseudo_transient_dc(circuit)
 
 
 # Configure logging
