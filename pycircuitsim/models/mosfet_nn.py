@@ -46,6 +46,15 @@ from bsimar.data.normalize import (
 _logger = logging.getLogger(__name__)
 _NN_DEVICE: Optional[torch.device] = None
 
+# Process-level shared-module cache. Devices that load the *same*
+# checkpoint file share one ``nn.Module`` instance so the Phase-5
+# batched path (``batch_eval``) can group them into a single stacked
+# forward. The module is held in ``eval()`` mode and its forward is
+# purely functional — weights are immutable — so sharing is safe and
+# bit-identical to per-device instantiation. Keyed on (abs path, mtime,
+# size) so a re-trained checkpoint at the same path is not aliased.
+_SHARED_NN_MODULES: Dict[Tuple[str, int, int], torch.nn.Module] = {}
+
 
 def _get_nn_device() -> torch.device:
     """Return the best available device (singleton)."""
@@ -122,11 +131,22 @@ class _MOSFETNNBase(Component):
             str(model_path_obj), weights_only=True, map_location="cpu")
 
         # ── Build the model (subclass-supplied) and load weights ──────
+        # Reuse a shared module for identical checkpoints so the Phase-5
+        # batched path can stack devices that load the same .pt into one
+        # forward. The module is stateless in eval() mode → safe to share.
         assert model_factory is not None, (
             "_MOSFETNNBase requires model_factory")
-        self._nn_model = model_factory(state)
-        self._nn_model.load_state_dict(state)
-        self._nn_model.eval()
+        st = model_path_obj.stat()
+        self._model_key: Tuple[str, int, int] = (
+            str(model_path_obj.resolve()), int(st.st_mtime_ns), int(st.st_size))
+        cached = _SHARED_NN_MODULES.get(self._model_key)
+        if cached is not None:
+            self._nn_model = cached
+        else:
+            self._nn_model = model_factory(state)
+            self._nn_model.load_state_dict(state)
+            self._nn_model.eval()
+            _SHARED_NN_MODULES[self._model_key] = self._nn_model
 
         # ── Norm stats + normalizer ───────────────────────────────────
         self._norm_stats: NormStats = NormStats.load(str(norm_path))
@@ -209,29 +229,26 @@ class _MOSFETNNBase(Component):
 
     # ── Voltage prep: PMOS shift + smooth clamp + z-score ────────────
 
-    def _prep_voltages(
+    def _raw_voltages(
         self, voltages: Dict[str, float],
-    ) -> Tuple[torch.Tensor, float, float]:
-        """Returns (x_full normalised, v_d_nn, v_s_nn)."""
+    ) -> Tuple[float, float, float, float]:
+        """Terminal voltages in the NN frame (PMOS source-shifted)."""
         v_d = voltages.get(self.nodes[0], 0.0)
         v_g = voltages.get(self.nodes[1], 0.0)
         v_s = voltages.get(self.nodes[2], 0.0)
         v_b = voltages.get(self.nodes[3], 0.0)
 
         if self._is_pmos:
-            v_d_nn = v_d - v_s
-            v_g_nn = v_g - v_s
-            v_s_nn = 0.0
-            v_b_nn = v_b - v_s
-        else:
-            v_d_nn, v_g_nn, v_s_nn, v_b_nn = v_d, v_g, v_s, v_b
+            return v_d - v_s, v_g - v_s, 0.0, v_b - v_s
+        return v_d, v_g, v_s, v_b
 
-        v_raw = torch.tensor(
-            [v_d_nn, v_g_nn, v_s_nn, v_b_nn],
-            dtype=torch.float32, device=self._device)
+    def _clamp_norm_voltages(self, v_raw: torch.Tensor) -> torch.Tensor:
+        """Softplus-clamp ``v_raw`` to [v_min, v_max] then z-score.
 
-        # Per-element softplus clamp to [v_min, v_max]:
-        # softplus(beta*x)/beta with linear branch for large arg.
+        Fully elementwise — broadcasts over any leading batch dim, so a
+        stacked ``(N, 4)`` input yields rows bit-identical to N separate
+        ``(1, 4)`` calls.
+        """
         beta = self._clamp_beta
         bx_lo = beta * (v_raw - self._v_min)
         v_clamped = self._v_min + torch.where(
@@ -241,20 +258,97 @@ class _MOSFETNNBase(Component):
         v_clamped = self._v_max - torch.where(
             bx_hi > 20.0, self._v_max - v_clamped,
             torch.log1p(torch.exp(bx_hi)) / beta)
+        return (v_clamped - self._v_mean) / self._v_std_t
 
-        v_norm = (v_clamped - self._v_mean) / self._v_std_t
+    def _prep_voltages(
+        self, voltages: Dict[str, float],
+    ) -> Tuple[torch.Tensor, float, float]:
+        """Returns (x_full normalised, v_d_nn, v_s_nn)."""
+        v_d_nn, v_g_nn, v_s_nn, v_b_nn = self._raw_voltages(voltages)
+        v_raw = torch.tensor(
+            [v_d_nn, v_g_nn, v_s_nn, v_b_nn],
+            dtype=torch.float32, device=self._device)
+        v_norm = self._clamp_norm_voltages(v_raw)
         x = torch.cat([v_norm, self._geo_norm_t]).unsqueeze(0)
         return x, v_d_nn, v_s_nn
 
     # ── Core eval: forward + autograd + denorm ───────────────────────
 
-    def _eval(self, voltages: Dict[str, float]) -> Dict[str, float]:
-        v_tuple = (
+    def _v_tuple(self, voltages: Dict[str, float]) -> Tuple[float, ...]:
+        """Cache key: the 4 terminal voltages in (d, g, s, b) order."""
+        return (
             voltages.get(self.nodes[0], 0.0),
             voltages.get(self.nodes[1], 0.0),
             voltages.get(self.nodes[2], 0.0),
             voltages.get(self.nodes[3], 0.0),
         )
+
+    def _unpack_eval(
+        self,
+        out_row: torch.Tensor,
+        grad_id_row: torch.Tensor,
+        grad_qg_row: torch.Tensor,
+        grad_qd_row: torch.Tensor,
+        v_d_nn: float,
+        v_s_nn: float,
+    ) -> Dict[str, float]:
+        """Denormalise one forward+autograd result into the physical
+        result dict and apply the Vds correction (rule 15).
+
+        ``out_row`` is a 1-D tensor of model outputs; ``grad_*_row`` are
+        the 1-D autograd derivatives of the named output w.r.t. the 4
+        voltage inputs. Shared verbatim by the per-device ``_eval`` and
+        the batched ``batch_eval`` path so both produce identical numbers.
+        """
+        # One ``.tolist()`` per tensor instead of per-element ``.item()``
+        # — same float32 values, far fewer host/device syncs.
+        out = out_row.tolist()
+        gi = grad_id_row.tolist()
+        gqg = grad_qg_row.tolist()
+        gqd = grad_qd_row.tolist()
+
+        # Scalar predictions → physical units. The normalizer's stats
+        # are stored in OUTPUT_COLUMN_ORDER, so look up by name.
+        id_phys = self._denorm("id", out[self._mcol("id")])
+        qg_phys = self._denorm("qg", out[self._mcol("qg")])
+        qd_phys = self._denorm("qd", out[self._mcol("qd")])
+        qb_phys = self._denorm("qb", out[self._mcol("qb")])
+        qs_phys = -(qg_phys + qd_phys + qb_phys)  # charge conservation
+
+        # Conductances from autograd. The NN predicts id in PyCMG sign
+        # convention (negative for NMOS ON), so d(id)/dV is negative;
+        # negate gm/gmb so the solver's "current leaving drain" frame
+        # gets always-positive transconductance.
+        gm_phys = -self._denorm_deriv(
+            "id", in_col=1, deriv_norm=gi[1], phys_val=id_phys)
+        gds_phys = self._denorm_deriv(
+            "id", in_col=0, deriv_norm=gi[0], phys_val=id_phys)
+        gmb_phys = -self._denorm_deriv(
+            "id", in_col=3, deriv_norm=gi[3], phys_val=id_phys)
+
+        cgg_phys = self._denorm_deriv(
+            "qg", in_col=1, deriv_norm=gqg[1], phys_val=qg_phys)
+        cgd_phys = self._denorm_deriv(
+            "qg", in_col=0, deriv_norm=gqg[0], phys_val=qg_phys)
+        cgs_phys = self._denorm_deriv(
+            "qg", in_col=2, deriv_norm=gqg[2], phys_val=qg_phys)
+        cdg_phys = self._denorm_deriv(
+            "qd", in_col=1, deriv_norm=gqd[1], phys_val=qd_phys)
+        cdd_phys = self._denorm_deriv(
+            "qd", in_col=0, deriv_norm=gqd[0], phys_val=qd_phys)
+
+        gds_phys = self._floor_gds(id_phys, gds_phys)
+
+        result = {
+            "id": id_phys, "gm": gm_phys, "gds": gds_phys, "gmb": gmb_phys,
+            "qg": qg_phys, "qd": qd_phys, "qs": qs_phys, "qb": qb_phys,
+            "cgg": cgg_phys, "cgd": cgd_phys, "cgs": cgs_phys,
+            "cdg": cdg_phys, "cdd": cdd_phys,
+        }
+        return self._apply_vds_correction(result, vds=v_d_nn - v_s_nn)
+
+    def _eval(self, voltages: Dict[str, float]) -> Dict[str, float]:
+        v_tuple = self._v_tuple(voltages)
         if self._cache_voltages == v_tuple and self._eval_cache is not None:
             return self._eval_cache
 
@@ -275,57 +369,102 @@ class _MOSFETNNBase(Component):
                 out[:, self._mcol("qd")].sum(), x_v,
                 create_graph=False, retain_graph=False)[0]
 
-        # Scalar predictions → physical units. The normalizer's stats
-        # are stored in OUTPUT_COLUMN_ORDER, so look up by name.
-        id_phys = self._denorm("id", out[0, self._mcol("id")].item())
-        qg_phys = self._denorm("qg", out[0, self._mcol("qg")].item())
-        qd_phys = self._denorm("qd", out[0, self._mcol("qd")].item())
-        qb_phys = self._denorm("qb", out[0, self._mcol("qb")].item())
-        qs_phys = -(qg_phys + qd_phys + qb_phys)  # charge conservation
-
-        # Conductances from autograd. The NN predicts id in PyCMG sign
-        # convention (negative for NMOS ON), so d(id)/dV is negative;
-        # negate gm/gmb so the solver's "current leaving drain" frame
-        # gets always-positive transconductance.
-        gm_phys = -self._denorm_deriv(
-            "id", in_col=1, deriv_norm=grad_id[0, 1].item(),
-            phys_val=id_phys)
-        gds_phys = self._denorm_deriv(
-            "id", in_col=0, deriv_norm=grad_id[0, 0].item(),
-            phys_val=id_phys)
-        gmb_phys = -self._denorm_deriv(
-            "id", in_col=3, deriv_norm=grad_id[0, 3].item(),
-            phys_val=id_phys)
-
-        cgg_phys = self._denorm_deriv(
-            "qg", in_col=1, deriv_norm=grad_qg[0, 1].item(),
-            phys_val=qg_phys)
-        cgd_phys = self._denorm_deriv(
-            "qg", in_col=0, deriv_norm=grad_qg[0, 0].item(),
-            phys_val=qg_phys)
-        cgs_phys = self._denorm_deriv(
-            "qg", in_col=2, deriv_norm=grad_qg[0, 2].item(),
-            phys_val=qg_phys)
-        cdg_phys = self._denorm_deriv(
-            "qd", in_col=1, deriv_norm=grad_qd[0, 1].item(),
-            phys_val=qd_phys)
-        cdd_phys = self._denorm_deriv(
-            "qd", in_col=0, deriv_norm=grad_qd[0, 0].item(),
-            phys_val=qd_phys)
-
-        gds_phys = self._floor_gds(id_phys, gds_phys)
-
-        result = {
-            "id": id_phys, "gm": gm_phys, "gds": gds_phys, "gmb": gmb_phys,
-            "qg": qg_phys, "qd": qd_phys, "qs": qs_phys, "qb": qb_phys,
-            "cgg": cgg_phys, "cgd": cgd_phys, "cgs": cgs_phys,
-            "cdg": cdg_phys, "cdd": cdd_phys,
-        }
-        result = self._apply_vds_correction(result, vds=v_d_nn - v_s_nn)
+        result = self._unpack_eval(
+            out[0], grad_id[0], grad_qg[0], grad_qd[0], v_d_nn, v_s_nn)
 
         self._eval_cache = result
         self._cache_voltages = v_tuple
         return result
+
+    @staticmethod
+    def batch_eval(
+        mosfets: List["_MOSFETNNBase"],
+        voltages: Dict[str, float],
+    ) -> None:
+        """Pre-populate every NN MOSFET's ``_eval_cache`` with one stacked
+        forward + autograd call per distinct checkpoint (perf, plan
+        Phase 5).
+
+        DirectNet's MLP is row-independent, so a single forward over a
+        stacked input and a single ``autograd.grad`` of the column-sum
+        give per-row gradients with no cross-device coupling. Devices are
+        grouped by their ``_nn_model`` identity because each per-tech /
+        per-device-type checkpoint is a separate ``nn.Module``; the
+        process-level ``_SHARED_NN_MODULES`` cache makes devices loading
+        the same checkpoint share one module so they group together.
+
+        After this call, the subsequent per-device ``_stamp_mosfet_dc``
+        path hits a warm cache (``_eval`` returns ``_eval_cache``), so the
+        stamping code is unchanged. Devices already holding a valid cache
+        for ``voltages`` are skipped; the per-device ``_eval`` remains a
+        correct fallback for anything not pre-computed here.
+
+        Accuracy: a group of ONE device is exactly bit-identical to the
+        per-device path (same GEMV, same autograd). A group of N>1 runs a
+        stacked GEMM whose accumulation order differs from N separate
+        GEMVs at the last bit (~1e-8 in the NN output) — pure float
+        noise on its own, but a high-gain circuit can amplify it; see
+        the ``_batch_eval_nn_mosfets`` note and the ``NN_BATCHED_EVAL``
+        opt-out in ``solver.py``.
+        """
+        # Group devices that still need an eval by shared model identity.
+        # Devices in one group share a checkpoint → identical voltage
+        # clamp/norm params, so their inputs are normalised in one
+        # batched op (the per-device geometry rows still differ).
+        groups: Dict[int, List["_MOSFETNNBase"]] = {}
+        raw_v: Dict[int, List[Tuple[float, float, float, float]]] = {}
+        v_tuples: Dict[int, List[Tuple[float, ...]]] = {}
+        for m in mosfets:
+            v_tuple = m._v_tuple(voltages)
+            if m._cache_voltages == v_tuple and m._eval_cache is not None:
+                continue  # already warm
+            key = id(m._nn_model)
+            groups.setdefault(key, []).append(m)
+            raw_v.setdefault(key, []).append(m._raw_voltages(voltages))
+            v_tuples.setdefault(key, []).append(v_tuple)
+
+        for key, devs in groups.items():
+            ref = devs[0]
+            # One stacked (N,4) tensor build for the whole group, then a
+            # batched clamp+z-score with the group-shared norm params.
+            v_raw = torch.tensor(
+                raw_v[key], dtype=torch.float32, device=ref._device)
+            v_norm = ref._clamp_norm_voltages(v_raw)
+            x_v = v_norm.detach().requires_grad_(True)
+            x_g = torch.stack([m._geo_norm_t for m in devs], dim=0)
+            x_full = torch.cat([x_v, x_g], dim=1)
+            tech_codes = torch.cat(
+                [m._tech_code_tensor for m in devs], dim=0)
+
+            with torch.enable_grad():
+                out = ref._nn_model(x_full, tech_codes=tech_codes)
+                id_col = ref._mcol("id")
+                qg_col = ref._mcol("qg")
+                qd_col = ref._mcol("qd")
+                # Three separate backward sweeps — one per output
+                # column. NOT collapsed via ``is_grads_batched``: that
+                # vmap path changes the reduction order and is not
+                # bit-identical to the per-device autograd (verified —
+                # it shifted the inverter VTC by up to 0.25 V). The
+                # accuracy-neutral gate outranks the extra speedup.
+                grad_id = torch.autograd.grad(
+                    out[:, id_col].sum(), x_v,
+                    create_graph=False, retain_graph=True)[0]
+                grad_qg = torch.autograd.grad(
+                    out[:, qg_col].sum(), x_v,
+                    create_graph=False, retain_graph=True)[0]
+                grad_qd = torch.autograd.grad(
+                    out[:, qd_col].sum(), x_v,
+                    create_graph=False, retain_graph=False)[0]
+
+            rows = raw_v[key]
+            tuples = v_tuples[key]
+            for i, m in enumerate(devs):
+                v_d_nn, _, v_s_nn, _ = rows[i]
+                m._eval_cache = m._unpack_eval(
+                    out[i], grad_id[i], grad_qg[i], grad_qd[i],
+                    v_d_nn, v_s_nn)
+                m._cache_voltages = tuples[i]
 
     # — small helpers —
 

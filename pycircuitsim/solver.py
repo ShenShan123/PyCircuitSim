@@ -92,9 +92,33 @@ def _pmos_types() -> tuple:
     return tuple(types)
 
 
+def _nn_mosfet_types() -> tuple:
+    """Return tuple of LEVEL=73 DirectNet MOSFET classes only.
+
+    LEVEL=72 BSIM-CMG and LEVEL=74 BSIMAR are intentionally excluded:
+    only DirectNet is eligible for the batched forward+Jacobian path
+    (plan Phase 5). BSIMAR overrides ``_forward_model`` for AR inference
+    and is parked (Rule 18).
+    """
+    try:
+        from pycircuitsim.models.mosfet_directnet import NMOS_NN, PMOS_NN
+        return (NMOS_NN, PMOS_NN)
+    except ImportError:
+        return tuple()
+
+
 def _is_mosfet(component) -> bool:
     """Check if component is any MOSFET variant."""
     return isinstance(component, _mosfet_types())
+
+
+def _is_nn_mosfet(component) -> bool:
+    """Check if component is a LEVEL=73 DirectNet MOSFET.
+
+    R / C / BSIM-CMG (LEVEL=72) stay on the per-device stamping path;
+    only DirectNet devices are collected into the batched eval.
+    """
+    return isinstance(component, _nn_mosfet_types())
 
 
 def _is_pmos(component) -> bool:
@@ -111,6 +135,39 @@ def _has_nn_device(circuit: Circuit) -> bool:
     """Check if circuit contains any NN compact-model device (LEVEL>=73)."""
     from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase
     return any(isinstance(c, _MOSFETNNBase) for c in circuit.components)
+
+
+def _batch_eval_nn_mosfets(
+    circuit: Circuit, voltages: Dict[str, float],
+) -> None:
+    """Pre-warm every DirectNet MOSFET's eval cache with one stacked
+    forward+Jacobian call per checkpoint (plan Phase 5).
+
+    Collects all LEVEL=73 DirectNet devices and hands them to
+    ``_MOSFETNNBase.batch_eval``, which groups by checkpoint and issues a
+    single batched NN forward + ``autograd.grad`` per group. The
+    subsequent per-device ``_stamp_mosfet_dc`` then hits the warm cache.
+    A no-op when the circuit has no DirectNet device.
+
+    Accuracy note: for a group of ONE device the batched path is exactly
+    bit-identical to the per-device path (it is the same GEMV). For a
+    group of N>1 the stacked GEMM accumulates in a different order than N
+    separate GEMVs — a ~1e-8 last-bit difference in the NN output. On a
+    plain device that is pure floating-point noise; in a high-gain
+    circuit (opamp, ring oscillator) the gain can amplify it into a
+    visible node-voltage / startup-phase shift, though the engineering
+    metrics (DC gain, oscillation period/amplitude) are preserved. Set
+    ``NN_BATCHED_EVAL=0`` to force the per-device path when exact
+    multi-device bit-identity is required. The inverter (always 1 NMOS +
+    1 PMOS → group-of-one) is bit-identical either way.
+    """
+    if os.environ.get("NN_BATCHED_EVAL", "1") == "0":
+        return  # opt out → per-device _eval fallback (bit-identical)
+    nn_mosfets = [c for c in circuit.components if _is_nn_mosfet(c)]
+    if not nn_mosfets:
+        return
+    from pycircuitsim.models.mosfet_nn import _MOSFETNNBase
+    _MOSFETNNBase.batch_eval(nn_mosfets, voltages)
 
 
 def _stamp_mosfet_dc(
@@ -533,6 +590,13 @@ class DCSolver:
                             component.stamp_conductance(mna_matrix, node_map)
                             component.stamp_rhs(rhs, node_map)
 
+                    # Batched DirectNet (LEVEL=73) forward+Jacobian: one
+                    # stacked NN call per checkpoint pre-warms the eval
+                    # cache so the per-device stamps below hit it. Perf
+                    # only — see _batch_eval_nn_mosfets for the accuracy
+                    # note (exact for group-of-one, e.g. the inverter).
+                    _batch_eval_nn_mosfets(self.circuit, voltages)
+
                     # Stamp MOSFET conductances and currents
                     for component in self.circuit.components:
                         if _is_mosfet(component):
@@ -628,6 +692,11 @@ class DCSolver:
                     if self.logger:
                         currents = {}
                         conductances = {}
+                        # Pre-warm the batched NN cache for the post-update
+                        # voltages so the per-device current/conductance
+                        # reads below hit it (perf — the logger block
+                        # re-evaluates every MOSFET at the damped iterate).
+                        _batch_eval_nn_mosfets(self.circuit, voltages)
                         for comp in self.circuit.components:
                             try:
                                 current = comp.calculate_current(voltages)
@@ -726,6 +795,9 @@ class DCSolver:
             if not _is_mosfet(component):
                 component.stamp_conductance(mna_matrix_final, node_map)
                 component.stamp_rhs(rhs_final, node_map)
+
+        # Batched DirectNet pre-warm for the final operating-point restamp.
+        _batch_eval_nn_mosfets(self.circuit, voltages)
 
         for component in self.circuit.components:
             if _is_mosfet(component):
@@ -1141,6 +1213,12 @@ class TransientSolver:
 
             # Stamp voltage sources (with time-varying support)
             self._stamp_voltage_sources(mna_matrix, rhs, node_map, num_nodes, time, voltages)
+
+            # Batched DirectNet (LEVEL=73) forward+Jacobian: one stacked
+            # NN call per checkpoint pre-warms the eval cache so the
+            # per-device transient stamps below hit it. Perf only — see
+            # _batch_eval_nn_mosfets for the accuracy note.
+            _batch_eval_nn_mosfets(self.circuit, voltages)
 
             # Stamp MOSFETs at current voltage estimate
             for component in self.circuit.components:
