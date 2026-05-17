@@ -160,10 +160,12 @@ def _run(args: argparse.Namespace) -> None:
           f"loss-preset={args.loss_preset}) → {save_prefix} ===")
     if args.model == "direct":
         cfg = DirectNetConfig(**preset)
+        # Plan §4e: --keep-offstate is DirectNet-only.
         train_directnet(
             str(data_path), config=cfg,
             column_weights=loss_preset["column_weights"],
             output_subset=loss_preset["output_subset"],
+            keep_offstate=args.keep_offstate,
             **common,
         )
     else:
@@ -195,6 +197,11 @@ def main() -> None:
     p.add_argument("--max-rows", type=int, default=None,
                    help="Cap dataset rows (after filter / exclude) for "
                         "fast smoke runs")
+    p.add_argument("--keep-offstate", action="store_true", default=False,
+                   help="Plan §4e: disable the id>1e-15 off-state "
+                        "ingestion filter so sub-threshold / hold-leakage "
+                        "rows (switched-cap, SRAM hold) reach training. "
+                        "DirectNet-only.")
 
     p.add_argument("--cuda", action="store_true")
     p.add_argument("--seed", type=int, default=42)
