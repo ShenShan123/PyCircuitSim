@@ -283,14 +283,9 @@ def train_directnet(
     column_weights: Optional[np.ndarray] = None,
     output_subset: Optional[list[str]] = None,
     tech_scope: str = "universal",
-    keep_offstate: bool = False,
     **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
     """DirectNet MLP training pipeline.
-
-    ``keep_offstate`` (plan §4e): when True, the ``id>1e-15`` off-state
-    ingestion filter is disabled so sub-threshold / hold-leakage rows
-    (switched-cap, SRAM hold) survive into training.
 
     ``column_weights`` (length = output dim): per-target multiplier on
     the loss (combined with LDS). Use to down-weight or zero out targets
@@ -309,13 +304,10 @@ def train_directnet(
     if exclude_techs:
         print(f"  Excluding techs: {exclude_techs}")
 
-    if keep_offstate:
-        print("  [keep-offstate] Id>1e-15 filter DISABLED — "
-              "off-state rows retained")
     train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
         data_path, OUTPUT_COLUMN_ORDER, device_type=device_type,
         train_ratio=config.train_ratio, val_ratio=config.val_ratio,
-        apply_filter=not keep_offstate, exclude_techs=exclude_techs,
+        apply_filter=True, exclude_techs=exclude_techs,
         norm_mode=_NORM_MODE, max_rows=max_rows,
         output_subset=output_subset,
         tech_scope=tech_scope,

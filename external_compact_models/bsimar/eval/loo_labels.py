@@ -55,16 +55,8 @@ def _fingerprint(
 
 def _build_fingerprint_map(
     device_type: str, verbose: bool = False,
-    extra_nfin: Tuple[int, ...] = (),
 ) -> Dict[Tuple[float, ...], Tuple[str, str]]:
-    """Return ``{fingerprint: (tech, variant)}`` for every known bin.
-
-    ``extra_nfin`` (plan §4d): the data generator can add NFIN values
-    beyond the PDK bins (``nn_generate.enumerate_bins``). Those rows
-    carry an off-PDK NFIN in the fingerprint, so the same augmentation
-    must be replayed here per distinct L — otherwise the labeller
-    misses every extra-NFIN sample.
-    """
+    """Return ``{fingerprint: (tech, variant)}`` for every known bin."""
     t0 = time.time()
     out: Dict[Tuple[float, ...], Tuple[str, str]] = {}
 
@@ -72,21 +64,12 @@ def _build_fingerprint_map(
         tech = TECH_CONFIGS[tech_name]
         for variant in tech.variant_names:
             try:
-                combos = list(tech.get_geometry_combos(device_type, variant))
+                combos = tech.get_geometry_combos(device_type, variant)
             except Exception as exc:
                 if verbose:
                     print(f"  skip {tech_name}:{variant} "
                           f"(get_geometry_combos: {exc})")
                 continue
-            # §4d: replay the extra-NFIN augmentation per distinct L.
-            if extra_nfin:
-                l_to_nfins: Dict[float, set] = {}
-                for L, NFIN in combos:
-                    l_to_nfins.setdefault(float(L), set()).add(float(NFIN))
-                for L, present in l_to_nfins.items():
-                    for nf in extra_nfin:
-                        if float(nf) not in present:
-                            combos.append((L, float(nf)))
             model_name = tech.get_model_name(device_type, variant)
             for L, NFIN in combos:
                 try:
@@ -107,14 +90,12 @@ def _build_fingerprint_map(
 
 def _label_samples(
     geometry: np.ndarray, device_type: str, verbose: bool = False,
-    extra_nfin: Tuple[int, ...] = (),
 ) -> np.ndarray:
     """Return a ``(N,)`` int array of tech-variant codes."""
     assert geometry.ndim == 2 and geometry.shape[1] == 15, (
         f"Expected (N, 15) geometry, got {geometry.shape}")
 
-    fp_map = _build_fingerprint_map(
-        device_type, verbose=verbose, extra_nfin=extra_nfin)
+    fp_map = _build_fingerprint_map(device_type, verbose=verbose)
     n = geometry.shape[0]
     codes = np.empty(n, dtype=np.int64)
     misses: List[int] = []
@@ -157,15 +138,7 @@ def get_or_build_tech_variant_labels(
                       f"{cache_path.name}")
             return cached
 
-    # §4d: the dataset records the extra-NFIN augmentation in its
-    # metadata (``meta_extra_nfin``); replay it so off-PDK NFIN rows
-    # get a fingerprint match.
-    extra_nfin: Tuple[int, ...] = ()
-    if "meta_extra_nfin" in data.files:
-        extra_nfin = tuple(int(x) for x in np.atleast_1d(
-            data["meta_extra_nfin"]))
-    codes = _label_samples(
-        geometry, device_type, verbose=verbose, extra_nfin=extra_nfin)
+    codes = _label_samples(geometry, device_type, verbose=verbose)
     np.save(cache_path, codes)
     if verbose:
         print(f"  cached tech-variant labels to {cache_path.name}")
