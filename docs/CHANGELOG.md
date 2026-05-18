@@ -552,3 +552,91 @@ because they are looser than the VTC-MaxErr program gate; the seed-42 draw is
 best-of-N (`scripts/run_v6_4_bestof.sh`) on `feat/v6.4.1`, before treating
 V6.4.1 as a shippable model. V6.4.1 currently ships the harness merge, not a
 model improvement.
+
+## V6.4.2 — complex-circuits sprint: solver Phases 5–6, Phase 4 dead end (2026-05-18)
+
+Branch `feat/v6.4.1`. Continuation of the deferred phases of
+`docs/plans/2026-05-15-directnet-complex-circuits.md`. Solver Phases 5 & 6
+shipped; the Phase 4 data lever was retrained and proved a dead end.
+**Shipping checkpoints are unchanged — still the V6.4.1 seed-42 set.** The
+inverter gate (`verify_nn_dc_tran.py --inverter-only`) is **8/8 PASS** on the
+final state (VTC NRMSE 2.61 / 4.03 / 1.64 / 1.41 %; transient 1.56 / 1.26 /
+1.41 / 1.45 %), BSIM-CMG trio byte-identical.
+
+### Phase 5 — Batched DirectNet forward + Jacobian — SHIPPED (`d1fe87a`)
+
+`_is_nn_mosfet()` + `_MOSFETNNBase.batch_eval()` collect every LEVEL=73 device
+into one stacked forward + one `autograd.grad` per NR iteration (was one call
+per device per iter). Inverter (1 NMOS + 1 PMOS, group-of-one) is
+**bit-identical** to the per-device path; BSIM-CMG (LEVEL=72) untouched. Opamp
+DC OP **3.4× faster** (`run_backward` 272k→37k calls). The plan's ≥5× target
+was specced against a hypothetical 30-device opamp; the real Phase-3 opamp is
+7 devices. **Known limitation:** with N>1 devices on a shared checkpoint, a
+stacked GEMM differs from N separate GEMVs by ~1e-8 (a hard BLAS fact) —
+measured metrics (opamp gain, RO period) are preserved but node voltages are
+not bit-identical. `NN_BATCHED_EVAL=0` forces the exact per-device path;
+default-on.
+
+### Phase 6 — NR convergence upgrades — SHIPPED (`35e9a16`)
+
+- **6a** Levenberg-Marquardt damping alongside the rail cap in both NR loops
+  (DC + transient): when the MNA residual fails to decrease, re-solve with
+  `λ·I`, Nielsen ×10 escalation / ÷3 on acceptance.
+- **6b** Residual-norm `‖rhs−A·v‖∞` OR-gate on the SPICE `|ΔV|` convergence
+  test, and a guard on the averaged-solution acceptance in DC oscillation
+  detection + its transient analog — a stalled iterate with small `Δv` but
+  large residual is now rejected.
+- **6c** Pseudo-transient DC continuation as a fallback in
+  `_solve_dc_with_retry` (after fast-path + GMIN-retry both fail).
+
+Non-regressing: inverter 8/8, BSIM-CMG byte-identical, helpers unit-tested.
+**The Phase-6 RO/SRAM success gate was NOT closed — and Phase 6 alone cannot
+close it.** Verified root cause: the ring-oscillator TSMC5/7 period errors and
+the SRAM `force_ic` failures are **model-accuracy gaps in the seed-42 V6.4.1
+checkpoints**, not NR-convergence failures. The RO transient already converges
+to a bit-identical inaccurate period; the SRAM `force_ic` re-solve converges to
+a consistent non-rail NN fixed point. Phase 6 improves *how robustly* a fixed
+point is reached — it cannot move a fixed point a converging solve already
+reaches. Closing those gates needs a better model.
+
+### Phase 4 — data overlays + non-uniform sampling — DEAD END, reverted (`565de40`)
+
+Implemented §4a–4e (overlays `diff_pair_sat` / `ring_osc_trip` /
+`bistable_static` / `switched_cap_offstate`, sinh-spaced Vgs/Vds sampling, LHS
+Vbs, NFIN∈{4,6,8,12}, `--keep-offstate`), regenerated all 4 TSMC datasets, and
+ran the full best-of-N grid (8 seeds × 8 cells = 64 cells). A greedy
+~19-eval/tech pair search (`scripts/v6_4_1_phase4_search.py`, swap-eval-restore
+via `eval_v6_4_1_pair.py`) found **no pair beating the V6.4.1 baseline on any
+tech**:
+
+| Tech   | V6.4.1 baseline (VTC / tran MaxErr) | P4 best-VTC pair | P4 best-tran pair |
+|--------|-------------------------------------|------------------|-------------------|
+| TSMC5  | 134.6 / 39.6 mV                     | 66.5 / **98.4**  | **96.5** / 247.0  |
+| TSMC7  | 210.5 / 49.4 mV                     | 104.2 / **87.0** | **83.7** / 372.9  |
+| TSMC12 | 63.1 / 58.6 mV                      | 90.8 / **112.3** | **112.0** / 387.5 |
+| TSMC16 | 50.8 / 55.1 mV                      | 142.8 / **54.5** | **54.2** / 378.8  |
+
+The Phase-4 data forces a hard **VTC↔transient tradeoff** — every candidate
+that improves one metric wrecks the other (best-transient pairs carry 247–388
+mV VTC). Same failure family as the V6.3 9.83%-overlay TSMC7 regression and the
+Phase-1b Sobolev dead end: heavier overlay data destabilizes the joint fit.
+Verdict for all 4 techs: **KEEP V6.4.1**.
+
+The data-pipeline commits were reverted: `e605319` (overlays / sinh /
+`--keep-offstate` + PyCMG submodule bump `7e7d06c`→`8794624`) and `ff8037f`
+(its §4d extra-NFIN labeller fix). Default sampling returns to `np.linspace`.
+The best-of-N harness (`b62b326`: `v6_4_1_phase4_search.py`,
+`eval_v6_4_1_pair.py`, `run_v6_4_1_phase4_bestof.sh`) is kept as recorded
+dead-end evidence; per-tech search logs in `logs/v6_4_1_phase4/`, candidate
+checkpoints `v6_4_1_p4_*` in `checkpoints/` (gitignored). The "larger data
+lever" is exhausted at this overlay/sampling design; the remaining accuracy
+path is Phase 7 (network-structural constraints), not more data.
+
+### Dead-end record
+
+- **Phase 4 data overlays + sinh sampling** — full best-of-N retrain, no pair
+  beats V6.4.1; hard VTC↔transient tradeoff. Reverted. Do not re-propose more
+  operating-region overlay data without a structural argument for why the
+  joint fit would not destabilize.
+- **Phase 6 for RO/SRAM** — convergence upgrades cannot fix what is a model
+  fidelity gap. RO/SRAM accuracy is gated on the model, not the solver.

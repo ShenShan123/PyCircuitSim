@@ -265,6 +265,72 @@ The Phase-2 `2b` conducting-branch `gm/gmb` sign-floor was reverted as unsound. 
 
 Best-of-N re-selected on the clean (2b-reverted) solver. All 4 techs beat V6.3.1 inverter VTC MaxErr — TSMC5 66.4→62.0, TSMC7 65.8→60.1, TSMC12 78.3→32.3, TSMC16 45.4→29.7 mV; transient holds. TSMC12/16 approach the deferred ≤25 mV stretch gate; TSMC5/7 gains are modest (their clean-solver lottery surfaced no strongly better N=8 draw). Phases 4–8 deferred. Full record: `docs/CHANGELOG.md` "V6.4".
 
+## Execution log (V6.4.2 sprint, 2026-05-18) — deferred Phases 5, 6, 4
+
+Continuation on branch `feat/v6.4.1`. The deferred solver phases were run first
+(per the user's "5, 6, then 4" ordering), validated against the on-disk
+**v6.4.1 seed-42** checkpoints (the regressed single-seed set — chosen as the
+comparison baseline). Phases 5 & 6 ran in parallel on isolated worktrees.
+
+### Phase 5 — SHIPPED (commit `d1fe87a`)
+
+Batched DirectNet forward + Jacobian. `_is_nn_mosfet()` gate + `batch_eval()`
+collect every LEVEL=73 device into one stacked forward + one `autograd.grad`
+per NR iteration. Inverter (1 NMOS + 1 PMOS → group-of-one) is **bit-identical**
+to the per-device path; BSIM-CMG (LEVEL=72) untouched. Opamp DC OP **3.4×**
+faster (the plan's ≥5× target was specced against a hypothetical 30-device
+opamp; the real Phase-3 opamp is 7 devices). **Known limitation:** for circuits
+with N>1 devices on a shared checkpoint, a stacked GEMM differs from N separate
+GEMVs by ~1e-8 (a hard BLAS fact) — measured metrics (opamp gain, RO period)
+are preserved, but node voltages are not bit-identical. `NN_BATCHED_EVAL=0`
+forces the exact per-device path. Env-gated, default-on.
+
+### Phase 6 — SHIPPED (commit `35e9a16`)
+
+NR convergence upgrades: 6a Levenberg-Marquardt damping alongside the rail cap
+(DC + transient NR loops), 6b residual-norm `‖rhs−A·v‖∞` OR-gate guarding the
+SPICE `|ΔV|` test *and* the averaged-solution acceptance in oscillation
+detection, 6c pseudo-transient DC continuation as a fallback in
+`_solve_dc_with_retry`. Non-regressing: inverter 8/8, BSIM-CMG byte-identical.
+**The Phase-6 RO/SRAM success gate was NOT closed** — and Phase 6 alone cannot
+close it. Root cause (verified): the RO TSMC5/7 period errors and the SRAM
+`force_ic` failures are **model-accuracy gaps in the seed-42 v6.4.1
+checkpoints**, not NR-convergence failures. The RO transient already converges
+to a bit-identical inaccurate period; the SRAM `force_ic` re-solve converges to
+a consistent non-rail NN fixed point. Phase 6 improves *how robustly* a fixed
+point is reached — it cannot move a fixed point a converging solve already
+reaches. Closing those gates needs a better model (Phase 4/7).
+
+### Phase 4 — DEAD END, reverted (commit `565de40`)
+
+Implemented §4a-4e (overlays `diff_pair_sat`/`ring_osc_trip`/`bistable_static`/
+`switched_cap_offstate`, sinh-spaced sampling, LHS Vbs, NFIN∈{4,6,8,12},
+`--keep-offstate`), regenerated all 4 TSMC datasets, and ran the full best-of-N
+grid (8 seeds × 8 cells = 64 cells). A greedy ~19-eval/tech pair search
+(`scripts/v6_4_1_phase4_search.py`) found **no pair beating v6.4.1 on any
+tech**:
+
+| Tech   | v6.4.1 (VTC / tran) | P4 best-VTC pair | P4 best-tran pair |
+|--------|---------------------|------------------|-------------------|
+| TSMC5  | 134.6 / 39.6 mV     | 66.5 / **98.4**  | **96.5** / 247.0  |
+| TSMC7  | 210.5 / 49.4 mV     | 104.2 / **87.0** | **83.7** / 372.9  |
+| TSMC12 | 63.1 / 58.6 mV      | 90.8 / **112.3** | **112.0** / 387.5 |
+| TSMC16 | 50.8 / 55.1 mV      | 142.8 / **54.5** | **54.2** / 378.8  |
+
+The Phase-4 data forces a hard **VTC↔transient tradeoff** — every candidate
+that improves one metric wrecks the other. Same failure family as the V6.3
+9.83%-overlay TSMC7 regression and the Phase-1b Sobolev dead end: heavier
+overlay data destabilizes the joint fit. Verdict for all 4 techs: **KEEP
+V6.4.1**. The data-pipeline commits (`e605319` overlays/sinh/keep-offstate +
+PyCMG submodule bump, `ff8037f` §4d labeller fix) were reverted; default
+sampling returns to `np.linspace`. The best-of-N harness (`b62b326`:
+`v6_4_1_phase4_search.py`, `eval_v6_4_1_pair.py`) is kept as recorded dead-end
+evidence; per-tech search logs in `logs/v6_4_1_phase4/`.
+
+**Consequence:** the "larger data lever" is exhausted at this overlay/sampling
+design. The remaining accuracy path is Phase 7 (network-structural constraints
+— monotonicity / spectral norm), not more data. Phases 7–8 stay deferred.
+
 ## Definition of done
 
 DirectNet is "complex-circuit ready" when:
