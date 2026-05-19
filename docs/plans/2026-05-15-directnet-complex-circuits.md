@@ -331,6 +331,57 @@ evidence; per-tech search logs in `logs/v6_4_1_phase4/`.
 design. The remaining accuracy path is Phase 7 (network-structural constraints
 — monotonicity / spectral norm), not more data. Phases 7–8 stay deferred.
 
+### Phase 7 — DEAD END, reverted (2026-05-19)
+
+Implemented 7a and assessed 7b:
+
+* **7a — monotonicity** (`--monotonic`). A residual sub-network monotone in
+  normalised `Vg` (sign-constrained first/output projections + monotone
+  `Softplus`, Sill 1997 / Scalable-Monotonic-NN ICLR 2024) added to the `id`
+  output column. Shapes the network, never the loss (Rule 10). Base trunk
+  untouched; extra `mono.*` keys auto-detected by the simulator loader.
+* **7b — spectral-norm gds** (`--spectral-gds`). The CLI **rejects** this flag:
+  Rule 1 consumes `autograd(id)`, never the predicted `gds` head, so spectral-
+  norming the head is a no-op; faithfully bounding the Vds-Lipschitz behaviour
+  of `autograd(id)` means spectral-norming the *shared trunk*, which equally
+  caps `gm` (the trip gain we need). No shape-preserving way to spectral-norm
+  only the Vds path of a shared-trunk MLP — that needs a per-axis trunk split
+  (Phase 8 territory). Refused rather than shipped as a no-op.
+
+Scoped bake-off on the laggard techs TSMC5/TSMC7, 4 seeds {42,123,7,17} ×
+{nmos,pmos}, recipe ∈ {stock, mono}, greedy 8-eval/tech pair search
+(`scripts/v6_4_2_phase7_search.py`), selection = min VTC MaxErr s.t. transient
+post-startup ≤ V6.4.1 baseline:
+
+| Tech  | V6.4.1 VTC/tran | stock best-of-4 | mono (7a) best-of-4 |
+|-------|-----------------|-----------------|---------------------|
+| TSMC5 | 134.6 / 39.6 mV | **43.7** / 39.4 | 121.1 / 39.0         |
+| TSMC7 | 210.5 / 49.4 mV | **99.6** / 49.0 | 149.3 / 48.9         |
+
+**7a loses on every tech** — the monotone-in-Vg residual biases the `id`
+surface in a way that worsens the high-gain VTC trip, and the mono grid is
+riddled with transient-gate violations (mono pairs at Tran 84–98 mV). Verdict:
+**7a is a dead end.** Phase 7 ships nothing; the four touched files
+(`direct_net.py`, `cli/train.py`, `trainer.py`, `mosfet_directnet.py`) were
+reverted to `dea120d`. Harness (`run_v6_4_2_phase7_bakeoff.sh`,
+`v6_4_2_phase7_{search,collect}.py`) kept as dead-end evidence; full grid in
+`logs/v6_4_2_phase7/`.
+
+**Side finding (not shipped).** The bake-off's `stock` *control* arm — a plain
+best-of-4 retrain on clean V6.3.1-recipe data — beats the V6.4.1 single-seed
+checkpoints by ~90–110 mV VTC on both laggard techs (transient gates held).
+This is consistent with the standing "DirectNet retraining is a seed lottery"
+finding: V6.4.1's single-seed-42 set was a known regression, and a fresh
+best-of-N recovers it. **Decision (user, 2026-05-19): keep V6.4.1, do not
+promote** — promoting is a model release outside this sprint's scope, and the
+sprint baseline was pinned to "V6.4.1 as-is". Recorded as a V6.4.3 candidate.
+
+**Consequence:** all three accuracy levers explored this sprint — solver
+(Phase 6), data (Phase 4), network structure (Phase 7) — are exhausted without
+closing the inverter VTC ≤25 mV gate or the RO/SRAM complex gates. The only
+remaining lever is a clean best-of-N model release (the recorded V6.4.3
+candidate) or Phase 8 (per-axis trunk split). Phase 8 stays deferred.
+
 ## Definition of done
 
 DirectNet is "complex-circuit ready" when:
