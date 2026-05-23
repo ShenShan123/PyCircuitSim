@@ -464,8 +464,12 @@ def get_available_checkpoints() -> Dict[str, Optional[Path]]:
                 CHECKPOINT_DIR / f"refac_dn_small_{dev}_best.pt",
                 CHECKPOINT_DIR / f"tsmc5_dn_medium_{dev}_best.pt",
                 CHECKPOINT_DIR / f"tsmc7_dn_medium_{dev}_best.pt",
+                CHECKPOINT_DIR / f"tsmc12_dn_medium_{dev}_best.pt",
+                CHECKPOINT_DIR / f"tsmc16_dn_medium_{dev}_best.pt",
                 CHECKPOINT_DIR / f"tsmc5_dn_small_{dev}_best.pt",
                 CHECKPOINT_DIR / f"tsmc7_dn_small_{dev}_best.pt",
+                CHECKPOINT_DIR / f"tsmc12_dn_small_{dev}_best.pt",
+                CHECKPOINT_DIR / f"tsmc16_dn_small_{dev}_best.pt",
             ]
             checkpoints[f"directnet_v4{suffix}"] = next(
                 (p for p in fallbacks if p.exists()), None)

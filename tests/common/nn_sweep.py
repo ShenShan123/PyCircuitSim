@@ -24,9 +24,10 @@ pins ``torch`` to one thread; driver scripts should be invoked with
 from __future__ import annotations
 
 import csv
+import hashlib
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Callable, Dict, List, Optional
+from typing import Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -380,6 +381,49 @@ def run_single_nn_inv(
 
 
 # ---------------------------------------------------------------------------
+# Checkpoint-contamination guard
+# ---------------------------------------------------------------------------
+# The V6.3.2 dead-end record (CHANGELOG) cost ~1 h to root-cause when a
+# concurrent retrain overwrote ``tsmc*_dn_medium_*`` mid-run; the inverter
+# trip's ~20× gain turned the moving weights into ±1% NRMSE scatter that
+# looked like a PyTorch threading bug. The guard below records every
+# *_best.pt / *_norm.npz file that could feed a DirectNet checkpoint
+# resolution at run start, then re-hashes them at end. Any drift raises —
+# the run's numbers are not trustworthy if a checkpoint moved.
+def _checkpoint_dir_hashes() -> Dict[str, str]:
+    """md5 of every ``*_best.pt`` / ``*_norm.npz`` under bsimar/checkpoints/."""
+    try:
+        from bsimar.config import CHECKPOINT_DIR  # noqa: WPS433
+    except ImportError:  # pragma: no cover — guard if package not on path
+        return {}
+    ckpt_dir = Path(CHECKPOINT_DIR)
+    if not ckpt_dir.exists():
+        return {}
+    hashes: Dict[str, str] = {}
+    for p in sorted(ckpt_dir.iterdir()):
+        if not p.is_file():
+            continue
+        if not (p.name.endswith("_best.pt") or p.name.endswith("_norm.npz")):
+            continue
+        h = hashlib.md5()
+        with p.open("rb") as fh:
+            for chunk in iter(lambda: fh.read(1 << 20), b""):
+                h.update(chunk)
+        hashes[p.name] = h.hexdigest()
+    return hashes
+
+
+def _diff_hashes(
+    pre: Dict[str, str], post: Dict[str, str],
+) -> Tuple[List[str], List[str], List[str]]:
+    """Return (changed, added, removed) checkpoint filenames."""
+    changed = [k for k in pre.keys() & post.keys() if pre[k] != post[k]]
+    added = sorted(post.keys() - pre.keys())
+    removed = sorted(pre.keys() - post.keys())
+    return sorted(changed), added, removed
+
+
+# ---------------------------------------------------------------------------
 # Baseline-gated multi-tech driver loop
 # ---------------------------------------------------------------------------
 def run_nn_multi_tech(
@@ -389,9 +433,19 @@ def run_nn_multi_tech(
     make_baseline_fn: Callable,
     build_param_fn: Callable,
     run_single_fn: Callable,
+    pre_hashes: Optional[Dict[str, str]] = None,
 ) -> List[Dict[str, object]]:
     """Run baseline per tech, then the parametric sweep only for techs that
-    pass baseline (mirrors ``base.run_multi_tech_main``)."""
+    pass baseline (mirrors ``base.run_multi_tech_main``).
+
+    If ``pre_hashes`` is None, this function captures + verifies checkpoint
+    md5s itself. Callers running multiple dimensions back-to-back (e.g. the
+    DC harness loops NMOS + PMOS) should hash once at top-level and pass the
+    same dict to each call.
+    """
+    own_hash_lifecycle = pre_hashes is None
+    if own_hash_lifecycle:
+        pre_hashes = _checkpoint_dir_hashes()
     checkpoints = get_available_checkpoints()
     results: List[Dict[str, object]] = []
     for tk in tech_keys:
@@ -409,7 +463,37 @@ def run_nn_multi_tech(
             res = run_single_fn(cfg, wd, checkpoints)
             results.append(res)
             _print_result_line(res)
+    if own_hash_lifecycle:
+        verify_checkpoints_unchanged(pre_hashes)
     return results
+
+
+def verify_checkpoints_unchanged(pre_hashes: Dict[str, str]) -> None:
+    """Re-hash bsimar/checkpoints/ and raise if any file changed or moved.
+
+    Per the V6.3.2 dead-end record: a concurrent retrain overwriting
+    ``tsmc*_dn_medium_*`` mid-run is silent unless we look. The inverter
+    trip's ~20× gain makes that bug look like PyTorch nondeterminism.
+    """
+    post = _checkpoint_dir_hashes()
+    changed, added, removed = _diff_hashes(pre_hashes, post)
+    if not (changed or added or removed):
+        return
+    msg_parts = []
+    if changed:
+        msg_parts.append(f"changed={changed}")
+    if added:
+        msg_parts.append(f"added={added}")
+    if removed:
+        msg_parts.append(f"removed={removed}")
+    raise RuntimeError(
+        "Checkpoint files under bsimar/checkpoints/ moved during the run "
+        "— results are not trustworthy (the inverter trip's ~20x gain "
+        "amplifies any weight perturbation into the VTC NRMSE). "
+        f"Affected files: {'; '.join(msg_parts)}. "
+        "Either point bsimar/checkpoints/ at a frozen copy "
+        "(/tmp/v6_4_checkpoints_backup_20260517/ for V6.4) or stop the "
+        "concurrent retrain and re-run.")
 
 
 def _print_result_line(res: Dict[str, object]) -> None:

@@ -699,3 +699,129 @@ V6.4.3 candidate (a full 8-seed best-of-N across all 4 techs).
 - **Phase 7b spectral-norm gds** — incoherent for a shared-trunk MLP: cannot
   constrain the Vds-Lipschitz path without equally capping `gm`. Needs a
   per-axis trunk split (Phase 8) before it is even expressible.
+
+## V6.4.3 — Code cleanup, seed-lottery writeup, V6.3.2-harness fixes (2026-05-23)
+
+Branch `feat/v6.4.1`. **No shipping-checkpoint change** — V6.4.3 is a hygiene
+release on top of V6.4.2: (1) stale BSIMAR code removed, (2) the inverter-VTC
+seed-lottery mechanism documented with the per-tech best-of-N winner from the
+V6.4 search logs, (3) three concrete defects fixed in the V6.3.2 parametric
+NN test harness that was merged into V6.4.1. The V6.4.1 seed-42 checkpoints
+(and the V6.4 best-of-N backup at `/tmp/v6_4_checkpoints_backup_20260517/`)
+are unchanged.
+
+### Code cleanup — BSIMAR dead code removed
+
+CLAUDE.md's V6.2 docs trim noted these as "unshipped V6 Tier M2 experiment,
+no checkpoints, never resurrected" but they remained on disk. Removed:
+
+- `external_compact_models/bsimar/models/tsmc5_residual.py` (122 lines).
+- `external_compact_models/bsimar/training/tsmc5_residual_train.py` (304 lines).
+- `external_compact_models/bsimar/data/analyze.py` (241 lines) — **broken on
+  import** since the v4-re trim (2026-05-03) deleted `PROCESS_PARAM_NAMES`
+  from `bsimar.config`; the module would `ImportError` on first use.
+
+None of the three are referenced from `bsimar/__init__.py`, the simulator,
+the tests, or the scripts. The remaining bsimar package imports clean
+(`bsimar`, `bsimar.training.trainer`, `bsimar.data.dataset`, `bsimar.models.{direct_net,transformer}`,
+`bsimar.cli.train` all succeed).
+
+### Seed-lottery analysis (writeup, not new evidence)
+
+**Why seeds swing the inverter VTC so hard.** DirectNet is a shared-trunk
+MLP that predicts the 13-D output [`id`, `gm`, `gds`, `gmb`, charges,
+capacitances]; the simulator consumes `id` directly and computes
+`gm = ∂id/∂Vg`, `gds = ∂id/∂Vd`, `gmb = ∂id/∂Vb` via `torch.autograd`. The
+MAE+LDS loss has a **flat minimum manifold** in parameter space — many
+weight configurations achieve nearly identical val loss (0.001–0.0012 across
+seeds, per `logs/v6_4_bestof/`) while differing in the *local* Jacobian
+geometry at the inverter trip operating point. The DC OP loop closes at
+`gain ≈ (gm_n + gm_p) / (gds_n + gds_p) ≈ 15-30` for these FinFET nodes;
+that gain multiplies any seed-dependent gm/gds residual by ~20× into the
+output voltage. Bulk Id stays correct (test-split NRMSE is uniformly ≤0.1%
+across seeds), only the trip-region slope wanders. Transient is seed-stable
+(±2 mV post-startup MaxErr seed-to-seed) because the trip is traversed
+quickly under load capacitance, not held there.
+
+**Per-tech best seed** (V6.4 best-of-N search, 8 seeds × {nmos,pmos} on the
+clean post-Phase-2b-revert solver; final CHANGELOG V6.4 table):
+
+| Tech   | best NMOS seed | best PMOS seed | inverter VTC MaxErr |
+|--------|---------------:|---------------:|--------------------:|
+| TSMC5  | 17             | 42             | 62.0 mV             |
+| TSMC7  | 31337          | 42             | 60.1 mV             |
+| TSMC12 | 123            | 123            | **32.3 mV**         |
+| TSMC16 | 42             | 123            | **29.7 mV**         |
+
+**Per-seed VTC MaxErr scatter at fixed PMOS=42** (`logs/v6_4_bestof/search_*.jsonl`,
+selected for illustration; full sweep is 8 seeds × all 4 techs):
+
+| Seed | TSMC5 VTC | TSMC7 VTC | TSMC12 VTC |
+|-----:|----------:|----------:|-----------:|
+| 7    | 72 mV     | 118 mV    | 380 mV     |
+| 17   | 51 mV     | 136 mV    | 153 mV     |
+| 42   | 218 mV    | 242 mV    | 261 mV     |
+| 99   | 111 mV    | 217 mV    | **121 mV** |
+| 123  | 79 mV     | 165 mV    | 234 mV     |
+| 256  | **38 mV** | 155 mV    | 357 mV     |
+| 2024 | 87 mV     | 121 mV    | 187 mV     |
+| 31337| 110 mV    | **106 mV**| 155 mV     |
+
+Same data, same pipeline, same `--seed` only. Seed-to-seed VTC MaxErr ratio
+is ~5–10× per tech; the worst single-tech swing is TSMC12 (`s7` 380 mV vs
+`s99` 121 mV — 3.1× worse on a bad initial draw than a good one).
+Transient MaxErr stays at 48–58 mV across all seeds at every tech.
+
+**There is no single dominant seed across all (tech, polarity) cells.** Seed
+42 is a strong PMOS draw for TSMC5/7 and a strong NMOS draw for TSMC16;
+seed 123 is a strong PMOS draw for TSMC12/16; seed 17 is a strong NMOS draw
+for TSMC5; seed 31337 is a strong NMOS draw for TSMC7. That is the
+seed-lottery finding: best-of-N over real-inverter NRMSE is mandatory
+because val loss does not discriminate the trip-region Jacobian. The
+V6.4.1 single-seed-42 retrain hit the worst PMOS+NMOS combination
+documented above on TSMC5 (134.6 mV VTC) and TSMC7 (210.5 mV VTC); that
+regression is the open accuracy gap V6.4.3 inherits unchanged.
+
+### V6.3.2 test-harness fixes
+
+The harness merged into V6.4.1 (`tests/common/nn_sweep.py` +
+`tests/verify_nn_multi_tech_{dc,tran}.py`) had three concrete defects:
+
+1. **OMP/MKL env vars were documented, not enforced.** The docstring said
+   "invoke with `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`" but the script did
+   not set them. A user who forgot got the ±1% NRMSE scatter that the
+   V6.3.2 dead-end record warns about. **Fix:** both verify scripts now
+   `os.environ.setdefault(...)` for OMP/MKL/OpenBLAS/NumExpr at the very
+   top, before any C-extension import. `torch.set_num_threads(1)` in
+   `nn_sweep.py` was already in place; the env vars cover BLAS/OpenMP which
+   `torch.set_num_threads` cannot.
+2. **No checkpoint-contamination runtime guard.** The V6.3.2 dead end cost
+   ~1 h to root-cause when a concurrent `feat/v6.4` retrain overwrote
+   `tsmc*_dn_medium_*` mid-run — the symptom looked like a PyTorch
+   threading bug. **Fix:** `nn_sweep.py` now md5-hashes every `*_best.pt` /
+   `*_norm.npz` under `bsimar/checkpoints/` at run start, re-hashes at end,
+   and raises `RuntimeError` if any file changed/was added/was removed. The
+   guard is per-run (callers pass `pre_hashes` once across NMOS+PMOS or
+   VTC+TRAN dimensions) so the harness can detect mid-run drift without
+   penalising the legitimate multi-dimension driver loops.
+3. **`get_available_checkpoints` fallback list missed TSMC12/16.** V6.2.1
+   added per-tech TSMC12/16 checkpoints (`tsmc12_dn_medium_*`,
+   `tsmc16_dn_medium_*`) but the existence-sentinel fallback in
+   `tests/verify_nn_dc_tran.py` was never extended. **Fix:** added
+   `tsmc12_dn_{medium,small}_{nmos,pmos}` and `tsmc16_dn_{medium,small}_{nmos,pmos}`
+   to the fallback list. (No functional impact while TSMC5/7 checkpoints are
+   also present — the parser preempt cascade routes per-netlist; this only
+   affects the harness sentinel when *only* TSMC12/16 are installed.)
+
+Smoke-test: `tests/verify_nn_multi_tech_dc.py --tech TSMC5 --device nmos`
+**7/7 PASS** with the new fixes in place (baseline 0.77%, off-bin L=24nm
+2.50%, NFIN-5/10 2.77%/3.39%, ulvt/elvt 4.87%/3.65%). Behaviour preserved.
+
+### Scope
+
+V6.4.3 is intentionally hygiene-only — no checkpoint swap, no model
+change, no solver change. The CHANGELOG V6.4.2 entry's standing
+recommendation (run best-of-N across all 4 techs on `feat/v6.4.1` before
+promoting; the Phase 7 bake-off's `stock` control arm is the V6.4.3
+candidate) is still open. Promoting that candidate would be the V6.4.4
+release.

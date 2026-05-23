@@ -27,6 +27,15 @@ Usage:
 """
 from __future__ import annotations
 
+# Pin BLAS/OpenMP to one thread BEFORE any C-extension import (torch, numpy,
+# scipy). The inverter trip's ~20× gain amplifies any thread-nondeterminism
+# into ±1% NRMSE scatter — see the V6.3.2 dead-end record. Setting these env
+# vars from Python after torch loads is a no-op; this block must run first.
+import os
+for _v in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS",
+           "NUMEXPR_NUM_THREADS"):
+    os.environ.setdefault(_v, "1")
+
 import argparse
 import sys
 from pathlib import Path
@@ -37,6 +46,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from tests.common.nn_sweep import (  # noqa: E402
     NN_TECHS,
+    _checkpoint_dir_hashes,
     build_inv_parametric,
     make_inv_baseline,
     plot_nn_summary_bar,
@@ -44,6 +54,7 @@ from tests.common.nn_sweep import (  # noqa: E402
     run_nn_multi_tech,
     run_single_nn_inv,
     save_nn_summary_csv,
+    verify_checkpoints_unchanged,
 )
 
 RESULTS_DIR = PROJECT_ROOT / "tests" / "verify_nn_multi_tech_tran_results"
@@ -79,12 +90,15 @@ def main() -> int:
     print(f"  Analyses: {analyses}")
     print(f"  Inverter acceptance: NRMSE < 15%")
 
+    pre_hashes = _checkpoint_dir_hashes()
     results = []
     for analysis in analyses:
         results.extend(run_nn_multi_tech(
             tech_keys, analysis, RESULTS_DIR,
             make_inv_baseline, build_inv_parametric, run_single_nn_inv,
+            pre_hashes=pre_hashes,
         ))
+    verify_checkpoints_unchanged(pre_hashes)
 
     counts = print_nn_summary_table(results, kind="inv")
     save_nn_summary_csv(
