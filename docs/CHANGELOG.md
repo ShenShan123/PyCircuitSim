@@ -825,3 +825,80 @@ recommendation (run best-of-N across all 4 techs on `feat/v6.4.1` before
 promoting; the Phase 7 bake-off's `stock` control arm is the V6.4.3
 candidate) is still open. Promoting that candidate would be the V6.4.4
 release.
+
+### Single-shot stabilizer bake-off — DEAD END, all 4 recipes reverted (2026-05-24)
+
+Sprint goal: cut the V6.4.1 seed-lottery VTC variance **without** training
+extra seeds or extra epochs, so new users (without `/tmp/v6_4_*_backup/`
+checkpoints) get a stable model from a single training run. Four
+single-shot stabilizers tested in parallel against the V6.4.1 worst-case
+cell (TSMC7 NMOS, seed=42, 174.7 mV VTC MaxErr), each in an isolated git
+worktree on its own GPU:
+
+| Recipe | Implementation | Val loss | VTC MaxErr | NRMSE | Δ vs 175 mV baseline |
+|--------|----------------|---------:|-----------:|------:|---------------------:|
+| A — EMA (decay=0.999)            | Polyak EMA on trunk weights, save EMA model as `_best.pt`                 | 0.00125 | **193.0 mV** | 4.43% | **+10.5%** |
+| B — SWA (last 20% epochs, const LR) | `torch.optim.swa_utils.AveragedModel`, freeze cosine at epoch 160, average final 40 | 0.00128 | **239.6 mV** | 3.75% | **+37.2%** |
+| C — Lookahead (k=5, α=0.5)         | Inline ~70-LOC wrapper around AdamW; sync slow→fast before val eval         | 0.00212 | **237.5 mV** | 3.60% | **+35.9%** |
+| D — EMA + Lookahead combo          | EMA tracks Lookahead's slow-weight trajectory                              | 0.00210 | **221.4 mV** | 3.98% | **+26.7%** |
+| V6.4 best-of-N (target)            | reference                                                                   | —       | 60.1 mV     | —     | −66% |
+
+**Verdict — all four recipes are dead ends at this single seed.** Every
+recipe reduced NRMSE (5.0% → 3.60–4.43%) while *raising* MaxErr — a
+clean empirical confirmation of the seed-lottery thesis. The MAE+LDS
+loss has a flat-minimum manifold over Id, so the smoother weight
+trajectories that EMA/SWA/Lookahead converge to land on lower bulk-Id
+NRMSE but on a *different* gm/gds local Jacobian basin at the inverter
+trip, and the trip's ~20× loop gain amplifies that residual into Vout.
+Val loss is uncorrelated with VTC MaxErr by construction — averaging
+weights to lower val loss does not move the model off the bad gm/gds
+basin that seed-42 happens to inhabit.
+
+**Caveat — single-seed sample with documented 5–10× variance.** A
+rigorous refutation would need best-of-N (≥4 seeds) per recipe before
+declaring each one universally inert. The single-seed bake-off is
+sufficient to refute the strong claim "single-shot stabilizers
+substitute for best-of-N seed selection" — but a weaker claim, "EMA
+narrows the bake-off-winning seed's neighbourhood", remains possible
+and is not falsified here. The cheapest follow-up is N=4 best-of-N per
+recipe (4 × 4 = 16 training cells, ~10 GPU-hours on 4× A100).
+
+**Action.** No production code changes from the bake-off. The four
+candidate checkpoints (`tsmc7_dn_medium_nmos_best.pt` under each
+worktree) are not promoted; the V6.4.1 seed-42 baseline remains the
+shipping checkpoint. Trainer implementations of EMA/SWA/Lookahead/combo
+are **not merged into the bsimar package** — they live only as
+dead-end evidence in `/home/shenshan/NN_SPICE-refactor-nn/.claude/worktrees/agent-*/external_compact_models/bsimar/training/trainer.py`
+on the orphan `worktree-agent-*` branches. Re-propose only with a
+structural argument for why one of them would behave differently —
+not "EMA is standard ML practice", because the standard practice
+result is the +10–37% regression measured above.
+
+**Process notes / dead ends.** The agent-runtime infrastructure for
+long-running training proved brittle:
+- Three of four agents launched training inside their conversation
+  shells; when their conversations ended (~6 min in, well before
+  training completed), the bash process tree's teardown SIGTERMed the
+  python training children. All three trainings died with 0-byte logs.
+  The agents (still alive in their conversations) re-launched with
+  explicit `stdbuf -oL` + direct path to the conda-env python (bypassing
+  `conda run`), which detached properly.
+- Agent worktrees started from a stale `main` rather than `feat/v6.4.3`
+  (the orphan `worktree-agent-*` branches predated the V6.4.3 hygiene
+  release). Each agent had to `git fetch && git reset --hard FETCH_HEAD`
+  before its training could use the V6.4.3 cli flags (`--tech-scope`,
+  `--size`).
+- One agent (B-SWA) entered a tight notification loop emitting
+  `[Silent — waiting]` events that propagated to the main session as
+  user-message events. `TaskStop` rejected the (technically-completed)
+  task; `SendMessage` with a `shutdown_request` message-type payload was
+  the only working interrupt.
+
+**Lessons recorded for future agent-driven training sprints:**
+- Always `git reset --hard origin/<branch>` inside a worktree before
+  starting work; the orphan `worktree-*` branches don't track.
+- Launch any multi-minute training with `nohup setsid stdbuf -oL python
+  -u …` — `conda run` buffers stdout and propagates SIGTERM.
+- A `[Silent — waiting]` loop is itself a notification; either the
+  agent terminates cleanly after launching, or it must use Monitor with
+  a narrow filter (success+failure markers only) and exit on event.
