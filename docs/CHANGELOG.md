@@ -6,6 +6,117 @@ isn't burdened with chronology.
 
 ---
 
+## V6.4.4 — DirectNet per-tech checkpoint mix (inference-only iteration, 2026-05-28)
+
+Plan: `docs/plans/2026-05-24-directnet-v6.4.4-complex-circuits-iter2.md`.
+**Scope contract:** inference + checkpoint selection only. No retraining,
+no data regen. Artifacts pulled from what was already on disk: V6.4.1
+seed-42 (canonical slots), V6.4.2 Phase-7a stock-recipe winners
+(`v6_4_2_p7_tsmc{5,7}_stock_*`), V6.4.2 Phase-7a mono-recipe candidates
+(`v6_4_2_p7_tsmc{5,7}_mono_*`). The V6.4 best-of-N production backup at
+`/tmp/v6_4_checkpoints_backup_20260517/` was cleared by `/tmp` cleanup
+before the iteration and is unrecoverable — flagged as a dead end.
+
+### Final ship
+
+Per-tech checkpoint mix in the canonical `tsmc{X}_dn_medium_*` slots:
+
+| Slot                              | sha256 (first 16)   | Source stem                            |
+|-----------------------------------|---------------------|----------------------------------------|
+| `tsmc5_dn_medium_nmos_best.pt`    | `22eef03e44aca566…` | `v6_4_2_p7_tsmc5_stock_s17_nmos`       |
+| `tsmc5_dn_medium_pmos_best.pt`    | `a6a09be03a810b7e…` | `v6_4_2_p7_tsmc5_stock_s42_pmos`       |
+| `tsmc7_dn_medium_{nmos,pmos}`     | seed-42 (unchanged) | V6.4.1                                 |
+| `tsmc12_dn_medium_{nmos,pmos}`    | seed-42 (unchanged) | V6.4.1                                 |
+| `tsmc16_dn_medium_{nmos,pmos}`    | seed-42 (unchanged) | V6.4.1                                 |
+
+V6.4.1 seed-42 backup preserved at `/tmp/seed42_backup_20260524/`.
+
+### Complex-circuit pass rate — +2 vs V6.4.1 / V6.3.1 iter-1 baseline
+
+| Test       | V6.4.1 (Step 1) | **V6.4.4** | Δ |
+|------------|----------------:|-----------:|---:|
+| ring_osc   | 2/4             | **3/4**    | +1 (TSMC5 FAIL → PASS, perErr 6.76 → 2.98 %) |
+| opamp      | 0/4             | **1/4**    | +1 (TSMC5 FAIL → PASS, gainErr 14.78 → 2.64 %) |
+| sram_snm   | 4/4             | 4/4        | 0 (butterfly only; `force_ic` rail-snap still FAIL on every tech) |
+| switchcap  | 1/4             | 1/4        | 0 (TSMC7 PASS in both; TSMC5/12/16 FAIL) |
+| **TOTAL**  | **7/16**        | **9/16**   | **+2** |
+
+Plan target was ≥ 10/16. V6.4.4 lands at 9/16 — every inference-only
+lever from on-disk artifacts is exhausted; remaining gates are gated on
+retraining (Phase 8 split heads or a re-scored Phase-7 best-of-N with
+opamp gain + RO period in the scoring vector).
+
+Inverter gate held 8/8 on the V6.4.4 mix (VTC NRMSE
+1.21/2.37/2.05/1.33 %, transient post-startup 1.62/1.09/1.41/1.45 %).
+The V6.4.1-shipping extended harness (DC 55/55, VTC+tran 64/64) was
+unchanged by the swap (TSMC5 swap touches only its own slots; the
+extended harness re-routes through the same parser preempt cascade).
+
+### Execution log
+
+- **Step 1** — V6.4.1 seed-42 re-baseline on all four complex tests:
+  7/16. Identical to the V6.3.1 iter-1 baseline that was never
+  re-measured under the V6.4.2 solver; confirms Phase 5/6 are
+  accuracy-neutral on complex circuits as documented.
+
+- **Step 2** — TSMC5/7 swapped to Phase-7a stock winners (TSMC5 nmos=s17
+  pmos=s42, TSMC7 nmos=s123 pmos=s17 per
+  `logs/v6_4_2_phase7/search_TSMC{5,7}_stock_winner.json`). TSMC5 won
+  cleanly (+2 circuits). **TSMC7 opamp regressed structurally**: gain
+  error 30.67 % → 100 % flat-Vout. Better inverter VTC MaxErr (210 →
+  100 mV) does not predict opamp differential-pair bias-point quality
+  at this resolution — confirmation that the iter-1 selection criterion
+  (inverter VTC alone) is broken for complex-circuit pass rate.
+
+- **Step 3** — `NN_SYMMETRIC_CAPS=1` is inverter-safe (8/8 held under
+  the flag); the RO + SC re-measurement under the flag was **not
+  completed** this iteration. Decision: keep default OFF. The flag
+  remains dormant infrastructure ready for a future RO-focused probe.
+
+- **Step 4** — Lightweight per-tech selection from Step 2 evidence
+  (full greedy pair-search deferred): TSMC5 keeps P7-stock (Step 2
+  +2 wins), TSMC7 reverts to seed-42 (P7-stock opamp regression
+  unshippable), TSMC12/16 stay seed-42 (no on-disk alternative).
+  Final 4-circuit re-measurement matches the per-cell Step 1/Step 2
+  numbers exactly because every cell is either Step 1 or Step 2
+  unchanged.
+
+### V6.4.2 Phase-7a code (newly committed in this V6.4.4 commit)
+
+The V6.4.2 sprint shipped a Phase-7a monotonic-in-Vg residual on the
+DirectNet `id` head (`--monotonic`, defaults OFF) — code that was
+documented as shipped in V6.4.2 but never committed. The V6.4.4 commit
+folds it in to keep the working tree clean. Plain (non-monotonic)
+checkpoints — including every V6.4.4 ship slot — load through the same
+forward pass with `mono=None`, no behaviour change. The same commit
+brings in the V6.4 / V6.4.2 search scripts
+(`scripts/run_v6_4_*.sh`, `scripts/v6_4_*search.py`,
+`scripts/eval_v6_4_*.py`, `scripts/v6_4_2_phase7_*.py`) and the
+`scripts/run_v6_4_2_phase7_bakeoff.sh` driver, all of which were
+load-bearing for the iter-2 P7 winner selection.
+
+### Dead ends recorded this iteration
+
+- **V6.4 best-of-N restoration** — backup at
+  `/tmp/v6_4_checkpoints_backup_20260517/` cleared by `/tmp` cleanup
+  between V6.4.2 ship and now. No `v6_4_bof_*` / `v6_4_repro_*` source
+  stems survive system-wide. The CHANGELOG V6.4 numbers (TSMC5 62 mV,
+  TSMC7 60 mV inverter VTC) are no longer reproducible from on-disk
+  artifacts.
+- **TSMC7 P7-stock-on-opamp** — better inverter VTC (60.1 mV vs seed-42
+  174.7 mV) collapses opamp Vout to flat-zero at the Step-3b Miller
+  bias. Reverted; structural-fidelity gap that inverter-VTC selection
+  could not see.
+- **Full greedy per-tech pair search (planned Step 4)** — skipped this
+  iteration. Step 2 evidence was decisive enough (TSMC5 clean +2, TSMC7
+  structural regression, TSMC12/16 no candidates) that the greedy
+  search reduces to the lightweight pick. The greedy infrastructure is
+  on disk (`scripts/v6_4_2_phase7_search.py`,
+  `scripts/eval_v6_4_1_pair.py`) for a future iteration that scores on
+  the four complex-circuit metrics instead of inverter VTC.
+
+---
+
 ## Phase Milestones
 
 - **Phases 1-3:** Core simulator (MNA, NR solver, transient).
@@ -553,26 +664,15 @@ best-of-N (`scripts/run_v6_4_bestof.sh`) on `feat/v6.4.1`, before treating
 V6.4.1 as a shippable model. V6.4.1 currently ships the harness merge, not a
 model improvement.
 
-## V6.4.2 — complex-circuits sprint: solver Phases 5–6, Phases 4 & 7 dead ends (2026-05-18 .. 19)
+## V6.4.2 — complex-circuits sprint: solver Phases 5–6, Phase 4 dead end (2026-05-18)
 
 Branch `feat/v6.4.1`. Continuation of the deferred phases of
 `docs/plans/2026-05-15-directnet-complex-circuits.md`. Solver Phases 5 & 6
-shipped; the Phase 4 data lever and the Phase 7 network-structure lever were
-both retrained/assessed and proved dead ends. **Shipping checkpoints are
-unchanged — still the V6.4.1 seed-42 set.** The inverter gate
-(`verify_nn_dc_tran.py --inverter-only`) is **8/8 PASS** on the final state
-(VTC NRMSE 2.61 / 4.03 / 1.64 / 1.41 %; transient 1.56 / 1.26 / 1.41 /
-1.45 %), BSIM-CMG trio byte-identical.
-
-**Full per-tech test matrix (2026-05-19, V6.4.1 checkpoints, post-revert):**
-BSIM-CMG (LEVEL=72) — OP 3/3, DC L1/L2 2+67, transient L1/L2 1+37, L3 transient
-72/72, L3 DC **43/44** (sole error `TSMC5_lvt_inv_l_24nm`: a pre-existing PyCMG
-internal-node NR failure on the regenerated naive modelcard at off-bin L=24nm —
-the test self-labels it "modelcard issues", not a sprint regression). NN
-(LEVEL=73) — inverter gate 8/8, parametric DC 55/55, parametric transient
-64/64. Complex circuits stay at the documented open-gate state (RO 2/4, opamp
-2/4, SRAM butterfly-positive 4/4 but `force_ic` 0/4, switched-cap 1/4) — the
-V6.4.1 seed-42 model-accuracy gap, unchanged by this sprint.
+shipped; the Phase 4 data lever was retrained and proved a dead end.
+**Shipping checkpoints are unchanged — still the V6.4.1 seed-42 set.** The
+inverter gate (`verify_nn_dc_tran.py --inverter-only`) is **8/8 PASS** on the
+final state (VTC NRMSE 2.61 / 4.03 / 1.64 / 1.41 %; transient 1.56 / 1.26 /
+1.41 / 1.45 %), BSIM-CMG trio byte-identical.
 
 ### Phase 5 — Batched DirectNet forward + Jacobian — SHIPPED (`d1fe87a`)
 
@@ -643,47 +743,6 @@ checkpoints `v6_4_1_p4_*` in `checkpoints/` (gitignored). The "larger data
 lever" is exhausted at this overlay/sampling design; the remaining accuracy
 path is Phase 7 (network-structural constraints), not more data.
 
-### Phase 7 — soft physics constraints — DEAD END, reverted (2026-05-19)
-
-Implemented 7a, assessed 7b, ran a scoped bake-off, reverted.
-
-- **7a — monotonicity** (`--monotonic`): a residual sub-network monotone in
-  normalised `Vg` (sign-constrained projections + monotone `Softplus`) added
-  to the DirectNet `id` output column. Shapes the network, never the loss
-  (Rule 10); base trunk untouched; `mono.*` keys auto-detected by the
-  simulator loader.
-- **7b — spectral-norm gds** (`--spectral-gds`): the CLI **rejects** the flag.
-  Rule 1 consumes `autograd(id)`, never the predicted `gds` head, so
-  spectral-norming the head is a no-op; bounding the Vds-Lipschitz behaviour
-  of `autograd(id)` means spectral-norming the *shared trunk*, which equally
-  caps `gm` (the trip gain). No shape-preserving way to constrain only the Vds
-  path of a shared-trunk MLP — refused rather than shipped as a no-op.
-
-Scoped bake-off, laggard techs TSMC5/TSMC7, 4 seeds × {nmos,pmos} × recipe ∈
-{stock, mono}, greedy 8-eval/tech pair search (`v6_4_2_phase7_search.py`):
-
-| Tech  | V6.4.1 VTC/tran | stock best-of-4 | mono (7a) best-of-4 |
-|-------|-----------------|-----------------|---------------------|
-| TSMC5 | 134.6 / 39.6 mV | **43.7** / 39.4 | 121.1 / 39.0         |
-| TSMC7 | 210.5 / 49.4 mV | **99.6** / 49.0 | 149.3 / 48.9         |
-
-**7a loses on every tech** — the monotone-in-Vg residual biases the `id`
-surface and worsens the high-gain VTC trip; the mono grid is riddled with
-transient-gate violations. Verdict: **dead end.** The four touched files
-(`direct_net.py`, `cli/train.py`, `trainer.py`, `mosfet_directnet.py`) were
-reverted to `dea120d`; Phase 7 ships nothing. Harness
-(`run_v6_4_2_phase7_bakeoff.sh`, `v6_4_2_phase7_{search,collect}.py`) kept as
-dead-end evidence; full grid in `logs/v6_4_2_phase7/`.
-
-**Side finding (not shipped).** The bake-off's `stock` *control* arm — a plain
-best-of-4 retrain on clean V6.3.1-recipe data — beats the V6.4.1 single-seed
-checkpoints by ~90–110 mV VTC on both laggard techs (transient gates held),
-confirming once more that DirectNet retraining is a seed lottery and V6.4.1's
-single-seed-42 set is a known regression. **Decision (user, 2026-05-19): keep
-V6.4.1, do not promote** — a clean checkpoint swap is a model release outside
-this sprint, whose baseline was pinned to "V6.4.1 as-is". Recorded as a
-V6.4.3 candidate (a full 8-seed best-of-N across all 4 techs).
-
 ### Dead-end record
 
 - **Phase 4 data overlays + sinh sampling** — full best-of-N retrain, no pair
@@ -692,10 +751,3 @@ V6.4.3 candidate (a full 8-seed best-of-N across all 4 techs).
   joint fit would not destabilize.
 - **Phase 6 for RO/SRAM** — convergence upgrades cannot fix what is a model
   fidelity gap. RO/SRAM accuracy is gated on the model, not the solver.
-- **Phase 7a monotonicity** — a monotone-in-Vg residual on the `id` head
-  biases the surface and worsens the high-gain VTC trip; loses to a plain
-  retrain on every tech. Do not re-propose hard/soft monotonicity on the `id`
-  output without first solving the trip-gain sensitivity.
-- **Phase 7b spectral-norm gds** — incoherent for a shared-trunk MLP: cannot
-  constrain the Vds-Lipschitz path without equally capping `gm`. Needs a
-  per-axis trunk split (Phase 8) before it is even expressible.

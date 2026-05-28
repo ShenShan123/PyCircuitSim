@@ -21,7 +21,8 @@ from typing import Dict, List, Tuple
 #   parents[2] = <project root>                   (PROJECT_ROOT)
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 BSIMAR_ROOT = Path(__file__).resolve().parents[0]
-CHECKPOINT_DIR = BSIMAR_ROOT / "checkpoints"
+import os as _os
+CHECKPOINT_DIR = Path(_os.environ["BSIMAR_CHECKPOINT_DIR"]) if "BSIMAR_CHECKPOINT_DIR" in _os.environ else BSIMAR_ROOT / "checkpoints"
 RESULTS_DIR = BSIMAR_ROOT / "results"
 DATA_DIR = BSIMAR_ROOT / "data" / "datasets"
 
