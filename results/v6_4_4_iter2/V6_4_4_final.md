@@ -130,6 +130,37 @@ Further gains require:
   inverter verification on the mixed working set)
 - `results/v6_4_4_iter2/V6_4_4_final.md` (this file)
 
+## Two-commit ship — load-bearing Phase-7a dependency
+
+V6.4.4 lands on `feat/v6.4.1` as two commits:
+
+| Commit    | Subject                                                                  |
+|-----------|--------------------------------------------------------------------------|
+| `4fcce2a` | `feat(v6.4.4): add BSIMAR_CHECKPOINT_DIR env var + v6_4_seed42 checkpoint archive` |
+| `df9cfe3` | `fix(v6.4.4): restore Phase-7a code required by on-disk checkpoints`     |
+
+`4fcce2a` carried the V6.4.4 docs (CLAUDE.md, CHANGELOG, this iter-2
+plan + results, and the sprint scripts) plus a new
+`BSIMAR_CHECKPOINT_DIR` env var in `bsimar/config.py`. Crucially it
+**referenced** the V6.4.2 Phase-7a code as "newly committed" but did
+not actually stage those four files
+(`bsimar/{cli/train,models/direct_net,training/trainer}.py`,
+`pycircuitsim/models/mosfet_directnet.py`).
+
+A post-push inverter-gate verification surfaced the consequence: the
+V6.4.1 seed-42 retrain ran with the Phase-7a `_MonotoneVgResidual` class
+in scope (even with `--monotonic` defaults OFF), so the on-disk
+state_dicts carry `mono.*` keys. Without the model class these fail
+with `Unexpected key(s) in state_dict: "mono.w_rest", "mono.w_vg_raw",
+"mono.b1", "mono.w_out_raw", "mono.b_out", "mono.sign"`. With the
+Phase-7a code restored in `df9cfe3`, the gate is back to 8/8 PASS on
+the V6.4.4 mix.
+
+**Lesson:** future inference-only iterations that swap checkpoint files
+must verify the model class matches what the checkpoint was trained
+with, not just the recipe flags. Stem name does not encode whether
+optional submodules were present at save time.
+
 ## Target reckoning
 
 The plan's target was **≥ 10/16**. V6.4.4 lands at **9/16 (+2 over V6.4.1

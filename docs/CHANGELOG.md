@@ -81,19 +81,38 @@ extended harness re-routes through the same parser preempt cascade).
   numbers exactly because every cell is either Step 1 or Step 2
   unchanged.
 
-### V6.4.2 Phase-7a code (newly committed in this V6.4.4 commit)
+### V6.4.2 Phase-7a code (load-bearing, restored in `df9cfe3`)
 
 The V6.4.2 sprint shipped a Phase-7a monotonic-in-Vg residual on the
 DirectNet `id` head (`--monotonic`, defaults OFF) — code that was
-documented as shipped in V6.4.2 but never committed. The V6.4.4 commit
-folds it in to keep the working tree clean. Plain (non-monotonic)
-checkpoints — including every V6.4.4 ship slot — load through the same
-forward pass with `mono=None`, no behaviour change. The same commit
-brings in the V6.4 / V6.4.2 search scripts
-(`scripts/run_v6_4_*.sh`, `scripts/v6_4_*search.py`,
-`scripts/eval_v6_4_*.py`, `scripts/v6_4_2_phase7_*.py`) and the
-`scripts/run_v6_4_2_phase7_bakeoff.sh` driver, all of which were
-load-bearing for the iter-2 P7 winner selection.
+documented as shipped in V6.4.2 but never committed. **It is load-bearing
+for the V6.4.1 seed-42 checkpoints**: the local V6.4.1 retrain ran with
+the `_MonotoneVgResidual` class in scope (even though `--monotonic`
+defaults OFF), so the saved state_dict carries `mono.*` keys. The model
+class must know about them at load time, otherwise PyTorch raises:
+
+    Error(s) in loading state_dict for DirectNet:
+      Unexpected key(s) in state_dict: "mono.w_rest", "mono.w_vg_raw",
+      "mono.b1", "mono.w_out_raw", "mono.b_out", "mono.sign".
+
+The V6.4.4 release ships in two commits:
+- `4fcce2a feat(v6.4.4): add BSIMAR_CHECKPOINT_DIR env var + v6_4_seed42
+  checkpoint archive` — V6.4.4 docs (CLAUDE.md, this CHANGELOG entry,
+  iter-2 plan, results/), the `BSIMAR_CHECKPOINT_DIR` env var support in
+  `bsimar/config.py`, the `v6_4_seed42` checkpoint archive copy, and the
+  V6.4 / V6.4.2 sprint scripts (`scripts/run_v6_4_*.sh`,
+  `scripts/v6_4_*search.py`, `scripts/eval_v6_4_*.py`).
+- `df9cfe3 fix(v6.4.4): restore Phase-7a code required by on-disk
+  checkpoints` — the four files `bsimar/{cli/train,models/direct_net,
+  training/trainer}.py` + `pycircuitsim/models/mosfet_directnet.py`
+  that the docs commit referenced as "newly committed" but didn't
+  actually stage. Without `df9cfe3` the on-disk checkpoints fail to load
+  and the inverter gate errors out 2/8.
+
+Plain (non-monotonic) checkpoints — including every V6.4.4 ship slot —
+load through the same forward pass with `mono=None`; the only effect of
+the Phase-7a code on a stock checkpoint is the load-path tolerance for
+the `mono.*` state_dict keys. No behaviour change at inference.
 
 ### Dead ends recorded this iteration
 

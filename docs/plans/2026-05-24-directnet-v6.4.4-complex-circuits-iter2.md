@@ -283,7 +283,7 @@ complex-circuit count from Step 1 + Step 2 evidence: **ring 3/4 +
 opamp 1/4 + sram 4/4 + sc 1/4 = 9/16**. Result:
 `results/v6_4_4_iter2/step4_logs/inverter_gate.log`.
 
-### Step 5 — DONE (2026-05-28): CHANGELOG + CLAUDE.md updated, V6.4.4 commit
+### Step 5 — DONE (2026-05-28): CHANGELOG + CLAUDE.md updated, two-commit V6.4.4 ship
 
 V6.4.4 ships the per-tech mix at **9/16** complex-circuit gates (+2 vs
 V6.4.1 seed-42 / V6.3.1 iter-1 baseline). Target ≥ 10/16 was **not
@@ -293,5 +293,22 @@ P7-stock has structural opamp regression; TSMC12/16 have no alternative
 candidates). Remaining gates need a retrain (Phase 8 split heads or a
 re-scored Phase-7 best-of-N on opamp gain + RO period — both deferred).
 Final report: `results/v6_4_4_iter2/V6_4_4_final.md`. CHANGELOG V6.4.4
-section + CLAUDE.md status paragraph updated; V6.4.2 Phase-7a code
-(uncommitted since V6.4.2 ship) folded into the same V6.4.4 commit.
+section + CLAUDE.md status paragraph updated.
+
+**Two-commit ship on `feat/v6.4.1`:**
+- `4fcce2a feat(v6.4.4): add BSIMAR_CHECKPOINT_DIR env var + v6_4_seed42
+  checkpoint archive` — V6.4.4 docs, env-var support, sprint scripts.
+  Referenced the V6.4.2 Phase-7a code as "newly committed" but did not
+  actually stage those four files.
+- `df9cfe3 fix(v6.4.4): restore Phase-7a code required by on-disk
+  checkpoints` — restored `bsimar/{cli/train,models/direct_net,
+  training/trainer}.py` + `pycircuitsim/models/mosfet_directnet.py`.
+  Without these the V6.4.1 seed-42 state_dicts fail to load
+  (`Unexpected key(s) "mono.w_rest", …`) because the local retrain ran
+  with `_MonotoneVgResidual` in scope. With them, the inverter gate is
+  back to 8/8 PASS on the V6.4.4 mix.
+
+**Lesson recorded:** future inference-only iterations must verify the
+model class matches the checkpoint's state_dict, not just the recipe
+flags. Stem name does not encode whether optional submodules were
+present at save time.
