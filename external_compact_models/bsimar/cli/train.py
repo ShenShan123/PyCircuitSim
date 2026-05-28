@@ -156,6 +156,28 @@ def _run(args: argparse.Namespace) -> None:
         tech_scope=args.tech_scope,
     )
 
+    # Phase 7 (V6.4.2) soft physics constraints — DirectNet only, opt-in.
+    if args.spectral_gds:
+        # 7b — see docs/plans/2026-05-15-directnet-complex-circuits.md.
+        # Spectral-norming the predicted `gds` head is a no-op: Rule 1
+        # consumes autograd(id), never the head. Faithfully constraining
+        # the autograd Jacobian's Vds-Lipschitz behaviour means bounding
+        # `id` w.r.t. Vds — but `id` flows through the SHARED trunk, so a
+        # trunk spectral norm equally caps gm (the trip gain we need).
+        # There is no shape-preserving way to spectral-norm only the Vds
+        # path of a shared-trunk MLP; that needs a per-axis trunk split
+        # (Phase 8 territory). 7b is therefore NOT a coherent Phase-7
+        # change — refuse rather than ship a no-op.
+        print("[error] --spectral-gds (7b) is not coherently implementable "
+              "for a shared-trunk MLP — see the plan's own 7b tension. "
+              "Refusing to ship a no-op. Aborting.")
+        sys.exit(2)
+    if args.monotonic and args.model != "direct":
+        print("[error] --monotonic is a DirectNet-only Phase-7a flag.")
+        sys.exit(2)
+    if args.model == "direct":
+        common["monotonic"] = args.monotonic
+
     print(f"\n=== Training {args.model} ({args.size}, "
           f"loss-preset={args.loss_preset}) → {save_prefix} ===")
     if args.model == "direct":
@@ -223,6 +245,17 @@ def main() -> None:
                         "2026-05-08-directnet-target-trim plan): "
                         "default=B0, e1=drop-qs, e2=4-output head, "
                         "e3=down-weight non-load-bearing targets")
+
+    # Phase 7 (V6.4.2) — soft physics constraints, DirectNet only, default OFF.
+    p.add_argument("--monotonic", action="store_true",
+                   help="Phase 7a: add a residual sub-network monotone in "
+                        "Vg to the DirectNet `id` output column. Shapes the "
+                        "network, NOT the loss (Rule 10).")
+    p.add_argument("--spectral-gds", action="store_true",
+                   help="Phase 7b: spectral-norm the gds path. NOTE: not "
+                        "coherently implementable for a shared-trunk MLP — "
+                        "the CLI rejects this flag (see the plan's 7b "
+                        "tension). Kept only to document the decision.")
 
     args = p.parse_args()
     set_seed(args.seed)

@@ -52,11 +52,23 @@ class _DirectNetMixin(_MOSFETNNBase):
             num_tech_codes = state["tech_embedding.weight"].shape[0]
             tech_embed_dim = state["tech_embedding.weight"].shape[1]
             input_dim = state[net_keys[0]].shape[1] - tech_embed_dim
+            # Phase 7a — a checkpoint trained with `--monotonic` carries
+            # `mono.*` keys. Auto-detect them so the monotone residual is
+            # rebuilt at the right size; a stock checkpoint has none.
+            monotonic = any(k.startswith("mono.") for k in state)
+            monotone_sign = 1.0
+            monotone_hidden = 64
+            if monotonic:
+                monotone_sign = float(state["mono.sign"].item())
+                monotone_hidden = state["mono.w_vg_raw"].shape[0]
             return DirectNet(
                 input_dim=input_dim, hidden_dim=hidden_dim,
                 n_layers=n_layers, output_dim=output_dim,
                 num_tech_codes=num_tech_codes,
                 tech_embed_dim=tech_embed_dim,
+                monotonic=monotonic,
+                monotone_sign=monotone_sign,
+                monotone_hidden=monotone_hidden,
             )
 
         super().__init__(

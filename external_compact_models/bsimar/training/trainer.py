@@ -283,6 +283,7 @@ def train_directnet(
     column_weights: Optional[np.ndarray] = None,
     output_subset: Optional[list[str]] = None,
     tech_scope: str = "universal",
+    monotonic: bool = False,
     **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
     """DirectNet MLP training pipeline.
@@ -295,6 +296,11 @@ def train_directnet(
     this subset of the 13 outputs (E2 4-output head). The model's
     ``output_dim`` becomes ``len(output_subset)`` and the saved norm
     stats record which columns were kept.
+
+    ``monotonic`` (Phase 7a, default False): build the DirectNet with a
+    residual sub-network monotone in ``Vg`` added to the ``id`` column.
+    The base trunk is unchanged; the extra ``mono.*`` parameters are
+    auto-detected at inference. No loss term is added (Rule 10).
     """
     from bsimar.models.direct_net import DirectNet
 
@@ -322,13 +328,27 @@ def train_directnet(
     # (TSMC5) → unknown=4 / vocab=4 (TSMC7) → unknown=3. Without this,
     # `p_unknown` training-time dropout would write code 17 into a 5-row
     # embedding and trigger a CUDA assert.
+    #
+    # Phase 7a monotone residual: the id column is monotone-increasing in
+    # Vgs for NMOS (terminal-current convention, ∂id/∂Vg > 0) and
+    # decreasing for PMOS in the source-relative training frame. The sign
+    # is verified against the PyCMG datasets. Only valid when `id` is the
+    # first output column (i.e. no `output_subset` reshuffle).
+    if monotonic and output_subset is not None:
+        raise ValueError(
+            "--monotonic is incompatible with output_subset: the monotone "
+            "residual targets id at column 0.")
+    monotone_sign = 1.0 if device_type == "nmos" else -1.0
     model = DirectNet(
         input_dim=in_dim, hidden_dim=config.trunk_hidden,
         n_layers=config.trunk_layers + 1, output_dim=out_dim,
         num_tech_codes=num_tech_codes,
         tech_embed_dim=32, tech_embed_dropout=p_unknown,
         unknown_code_id=num_tech_codes - 1,
+        monotonic=monotonic, monotone_sign=monotone_sign,
     ).to(device)
+    if monotonic:
+        print(f"  Phase 7a monotone-Vg residual ON (sign={monotone_sign:+.0f})")
     print(f"  Params: {model.count_parameters():,}")
 
     return _train_loop(
