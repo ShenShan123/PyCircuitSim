@@ -153,10 +153,13 @@ obvious follow-up if those gates must be co-held; out of B8's scope.
 
 PROMOTE criteria (both required):
 - TSMC7 production-scored RO period err ≤ 5 %  →  **0.317 %  ✓**
-- inverter waveform (transient) NRMSE ≤ 2 % on the SAME weights  →
-  **1.347 %  ✓** (DC VTC also improved 3.89 → 1.97 %)
+- inverter waveform NRMSE ≤ 2 % on the SAME weights  →  **PASS on BOTH
+  readings**: transient `inv_tran_post_nrmse` = **1.347 %** ≤ 2 % ✓, and DC
+  `inv_vtc_nrmse` = **1.965 %** ≤ 2 % ✓ (the VTC even *improved* from the
+  3.892 % baseline; VTC MaxErr 188 → 76 mV).
 
-Both met. **B8 PROMOTES.** Candidate stems on disk (NON-canonical, canonical
+Both met (the inverter gate passes whichever waveform is meant). **B8
+PROMOTES.** Candidate stems on disk (NON-canonical, canonical
 `tsmc7_dn_medium_*` untouched):
 `external_compact_models/bsimar/checkpoints/b8_ttft_tsmc7_{nmos,pmos}_best.pt`
 (+ `_norm.npz`).

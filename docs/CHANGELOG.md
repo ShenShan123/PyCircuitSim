@@ -6,6 +6,67 @@ isn't burdened with chronology.
 
 ---
 
+## V6.4.5 — Track B, B8 differentiable mini-simulator TTFT (PROMOTE, 2026-05-30)
+
+Plan: Track-B Tier-3 lever for the TSMC7 ring-oscillator gate. Report:
+`results/v6_4_5_track_b/B8_diff_simulator.md`. Code:
+`experiments/v6_4_5_track_b/B8_diff_simulator/{ro_torch,build,ttft,sanity}.py`.
+
+**First of eight Track-B levers to clear the TSMC7 RO gate.** B1 (cap-symmetry),
+B3 (LoRA reweight), B5 (Jacobian-distill, best 8.57 %), B6 (adversarial
+harvest), B7 (physics skeleton, 11.9 %), and a 32-recipe retrain (best 9.05 %)
+all failed — the RO error was a systematic, integrated model bias that
+pointwise Id-MAE / data / seed levers cannot see.
+
+**Thesis confirmed.** Built a standalone *differentiable* torch transient of
+the TSMC7 5-stage ring oscillator with the DirectNet weights in the loop
+(`ro_torch.py`): batched DirectNet forward → `id` + terminal charges,
+differentiable w.r.t. node voltages AND weights; replicates `_MOSFETNNBase`
+bit-for-bit (PMOS source frame, softplus clamp, asinh denorm, Rule-15 Vds
+correction) and the production BE→Trap charge-based companion integration;
+each timestep solved by a damped Newton in torch with a first-order
+implicit-function gradient (detached Jacobian). The production scipy solver is
+never touched.
+
+**Sanity gate (make-or-break) PASSED**: with base canonical TSMC7 weights the
+torch RO period = 50.828 ps vs production 50.829 ps (**0.00 % gap**), torch-vs-
+OSDI 8.98 % (reproduces the production gate); KCL residual at machine precision
+every step. The torch sim is a faithful surrogate. *(Load-bearing fix: the
+per-node "current leaving drain" sign for the PMOS branch is `-id_phys`,
+matching `_stamp_mosfet_dc`'s `i_leaving = -calculate_current` for PMOS — the
+wrong sign stalled/diverged the ring.)*
+
+**TTFT**: LoRA delta (rank 8, 49,984 params) on the NMOS+PMOS trunk Linears.
+**Pure period loss** `(period_ps − 46.64)²/46.64²` (the `α·waveform_MSE` term
+was phase-dominated and dragged the period the WRONG way — dead end, removed),
+Adam lr 1e-3, Newton 8, tstop 0.45 ns / settle 0.20 ns. The differentiable
+period drops straight to the OSDI target: torch 8.95 % (step 0) → 7.24 %
+(step 2, KILL gate cleared) → 4.27 % (step 3) → **0.32 % (step 4)**; step 5
+overshoots (lr too high near min), so step-4 is the saved best.
+
+**Production scorer (the real test) confirms transfer:**
+
+| metric | baseline | B8 TTFT | B8 gate |
+|---|---|---|---|
+| ring_osc_period_err | 8.977 % | **0.317 %** (DN 46.49 / OSDI 46.64 ps) | ≤ 5 % ✓ |
+| inv_tran_post_nrmse | 1.099 % | **1.347 %** | ≤ 2 % ✓ |
+| inv_vtc_nrmse | 3.892 % | **1.965 %** (improved) | (≤ 2 % too) |
+| inv_vtc_maxerr_mv | 188.0 | **76.1** (improved) | |
+
+Torch period 46.490 ps ↔ production-scored 46.493 ps — the two simulators
+agree through fine-tuning. **PROMOTE**: RO ≤ 5 % AND inverter waveform NRMSE
+≤ 2 % both met (the VTC even improved). Candidate stems (NON-canonical, on
+disk; canonical `tsmc7_dn_medium_*` untouched):
+`b8_ttft_tsmc7_{nmos,pmos}_best.pt` (+ base `_norm.npz` copy).
+
+**Side effects (NOT B8 promotion gates):** the LoRA delta was optimised solely
+on the RO period, so the 6T-SRAM force_ic rail-snap residual degraded
+(0.302 → 0.899) and the Miller-opamp center bias went flat (flag 0 → 1). A
+multi-circuit-regularised TTFT (add SRAM/opamp terms to the loss) is the
+follow-up if those gates must be co-held — out of B8's scope.
+
+---
+
 ## V6.4.5 — Track A no-ship iteration (2026-05-29)
 
 Plan: `docs/plans/2026-05-28-directnet-v6.4.5-ro-sram.md` (Track A only).
