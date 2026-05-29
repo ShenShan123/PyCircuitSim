@@ -80,8 +80,92 @@ PMOS branch must be `-id_phys` — matching `_stamp_mosfet_dc`'s
 `i_leaving = -calculate_current` for PMOS. With the wrong sign the ring
 charged the wrong way and the Newton stalled / diverged.)*
 
-## TTFT — (in progress, updated below)
+## TTFT — design + torch-sim trajectory
 
-## Production-scorer quartet — (filled after TTFT)
+**Trainable**: a **LoRA delta** (rank 8) on every trunk Linear of the NMOS and
+PMOS models (49,984 trainable params). A delta is cheaper than full-weight
+tuning and — being zero at init — preserves the inverter while it is small.
+The merged (base + delta) plain DirectNet state_dict is saved under
+`b8_ttft_tsmc7_{nmos,pmos}_best.pt` (+ base `_norm.npz` copy); canonical
+`tsmc7_dn_medium_*` is never touched. Datasets are read-only symlinks.
 
-## VERDICT — (filled at the end)
+**Gradient cost**: the unrolled-Newton-with-2nd-order-graph estimator was
+infeasible (~22 min / fwd+bwd). Replaced with a **first-order
+implicit-function estimate** (final timestep refinement `v* = v_conv -
+J_det^{-1}·F`, detached Jacobian — the IFT fixed-point gradient) plus a
+**batched per-stage device forward** (one stacked DirectNet call per
+device-type over the 5 ring stages). Both are accuracy-neutral (sanity gate
+still 50.828 ps, 0.00 % gap).
+
+**Loss lesson**: with `alpha=2.0·waveform_MSE` the MSE term (≈0.32 V², phase-
+dominated) swamped the period term (≈0.008) and dragged the period the WRONG
+way (50.82 → 50.96 ps over 3 steps). Switched to **pure period loss**
+(`alpha=0`): `(period_ps − 46.64)² / 46.64²`, lr=1e-3, Adam, Newton=8,
+tstop=0.45 ns / settle=0.20 ns.
+
+**Torch-sim trajectory (alpha=0, lr=1e-3)** — the differentiable period drops
+straight to the OSDI target:
+
+| step | torch period (ps) | torch RO err |
+|---|---|---|
+| 0 | 50.815 | 8.95 % |
+| 2 | 50.020 | 7.24 % |
+| 3 | 48.631 | 4.27 % |
+| **4** | **46.490** | **0.32 %** |
+| 5 | 44.389 | 4.83 % (overshoot — lr too high near min) |
+
+**The differentiable sim drives its own period to the OSDI target in 4
+steps.** The KILL criterion (≤7 % torch by step 200) is cleared by step 2.
+Best saved checkpoint = step 4 (torch 0.32 %).
+
+## Production-scorer quartet — DECISIVE (step-4 checkpoint)
+
+`scripts/eval_v6_4_5_candidate.py --tech TSMC7 --nmos b8_ttft_tsmc7_nmos
+--pmos b8_ttft_tsmc7_pmos` (CPU, 1-thread — the real test):
+
+| metric | baseline (canonical) | **B8 TTFT** | B8 gate |
+|---|---|---|---|
+| **ring_osc_period_err** | 8.977 % | **0.317 %** | ≤ 5 % ✓ |
+| ro_dn_period_ps | 50.829 | **46.493** (OSDI 46.641) | |
+| **inv_tran_post_nrmse** | 1.099 % | **1.347 %** | ≤ 2 % ✓ |
+| inv_vtc_nrmse | 3.892 % | **1.965 %** (improved) | |
+| inv_vtc_maxerr_mv | 188.0 | **76.1** (improved) | |
+| inv_vtc_dvtrip_mv | −0.16 | −1.43 | |
+| sram_rail_snap_resid | 0.302 | 0.899 (degraded — not a B8 gate) | |
+| opamp_flat_flag | 0 | 1 (flat — not a B8 gate) | |
+
+**The torch sim and the production sim AGREE**: torch period 46.490 ps
+(0.32 %) → production-scored 46.493 ps (0.317 %). Directly optimising the
+period through the differentiable sim moved the PRODUCTION-scored RO from
+**8.98 % → 0.32 %**, and the inverter did NOT break — the transient NRMSE
+stayed at 1.35 % (≤ 2 %) and the DC VTC actually *improved* (3.89 → 1.97 %,
+188 → 76 mV). This is the first lever in eight (B1, B3, B5, B6, B7, the
+32-recipe retrain) to clear the TSMC7 RO gate.
+
+Side effects (not B8 promotion gates): the 6T-SRAM force_ic rail-snap
+residual degraded (0.302 → 0.899) and the Miller-opamp center bias went flat.
+The LoRA delta was optimised solely on the RO period; it shifted the Id
+surface enough to disturb the SRAM butterfly attractor and the opamp DC bias.
+A multi-circuit-regularised TTFT (add SRAM/opamp terms to the loss) is the
+obvious follow-up if those gates must be co-held; out of B8's scope.
+
+## VERDICT — **PROMOTE**
+
+PROMOTE criteria (both required):
+- TSMC7 production-scored RO period err ≤ 5 %  →  **0.317 %  ✓**
+- inverter waveform (transient) NRMSE ≤ 2 % on the SAME weights  →
+  **1.347 %  ✓** (DC VTC also improved 3.89 → 1.97 %)
+
+Both met. **B8 PROMOTES.** Candidate stems on disk (NON-canonical, canonical
+`tsmc7_dn_medium_*` untouched):
+`external_compact_models/bsimar/checkpoints/b8_ttft_tsmc7_{nmos,pmos}_best.pt`
+(+ `_norm.npz`).
+
+**Answer to the decisive question**: YES — directly optimising the period
+through a differentiable simulation moves the PRODUCTION-scored RO below 5 %
+(to 0.32 %) without breaking the inverter. The B8 thesis is confirmed: the RO
+period is an integrated metric that pointwise Id-MAE cannot see, but a
+differentiable transient exposes it to gradient descent. The torch surrogate
+reproduces the production period to 0.00 % on base weights and tracks it
+through fine-tuning (torch 0.32 % ↔ production 0.317 %).
+
