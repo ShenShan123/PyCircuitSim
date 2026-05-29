@@ -55,15 +55,46 @@ overshoots (lr too high near min), so step-4 is the saved best.
 
 Torch period 46.490 ps ↔ production-scored 46.493 ps — the two simulators
 agree through fine-tuning. **PROMOTE**: RO ≤ 5 % AND inverter waveform NRMSE
-≤ 2 % both met (the VTC even improved). Candidate stems (NON-canonical, on
-disk; canonical `tsmc7_dn_medium_*` untouched):
-`b8_ttft_tsmc7_{nmos,pmos}_best.pt` (+ base `_norm.npz` copy).
+≤ 2 % both met (the VTC even improved). **Promoted to the canonical TSMC7 slot**
+`tsmc7_dn_medium_{nmos,pmos}_best.pt` (sha256 nmos `26289484…`, pmos
+`3f94afe5…`; LoRA merged into a plain DirectNet state_dict — loads via the
+standard path, NO load-bearing inference code). Provenance copies kept as
+`b8_ttft_tsmc7_*`. Rollback: `/tmp/v6_4_4_canonical_backup_20260529_094624/`.
 
 **Side effects (NOT B8 promotion gates):** the LoRA delta was optimised solely
 on the RO period, so the 6T-SRAM force_ic rail-snap residual degraded
-(0.302 → 0.899) and the Miller-opamp center bias went flat (flag 0 → 1). A
-multi-circuit-regularised TTFT (add SRAM/opamp terms to the loss) is the
-follow-up if those gates must be co-held — out of B8's scope.
+(0.302 → 0.899) and the Miller-opamp center bias went flat (gain 213 → 0). Both
+are already-failing, out-of-V6.4.5-scope TSMC7 cells (neither is one of the 16
+headline gates), so the headline is a clean +1. A multi-circuit-regularised
+TTFT (add SRAM/opamp terms to the loss) is the V6.4.6 follow-up to co-hold them.
+
+### Verified ship: complex headline 9/16 → 10/16 (TSMC7-only checkpoint swap)
+
+Re-scored independently with `b8_ttft` installed as the TSMC7 slot (TSMC5/12/16
+untouched): ring_osc TSMC7 FAIL 8.98 % → **PASS 0.32 %**; switchcap TSMC7 **PASS**
+(held); SRAM butterfly TSMC7 **positive** (held); inverter gate TSMC7 **PASS**
+(VTC 1.97 % / tran 1.33 %); extended harness TSMC7 **DC 9/9 + tran 16/16** (held).
+No passing gate regressed → **net +1 → 10/16**. Inverter gate stays 8/8 overall.
+
+### Track-B B1–B9 roster (the full cascade; failures are first-class records)
+
+| # | Lever | Tier | Gate | Verdict | killer number |
+|---|-------|:----:|------|:-------:|---------------|
+| B1 | cap-symmetry probe | 1 | RO | KILL | δ median 0.2 %, 1.7 % evals >5 % (0 % mid-rail) → not cap-asymmetry |
+| B2 | seed ensemble (8 siblings) | 1 | SRAM | KILL | all land q≈0.815/qb≈0.21; no rail-snap basin |
+| B3 | LoRA reweight | 1 | RO | KILL | rank-32 RO 8.98 %, val loss unchanged |
+| B4 | force_ic λ-continuation | 1 | SRAM | KILL | all 8 cells relax to attractor → rail not stable |
+| B5 | OSDI Jacobian distill | 2 | RO | KILL | best RO 8.57 % — necessary-not-sufficient |
+| B6 | adversarial harvest+retrain | 2 | both | KILL | 92/85 % worst-residuals IN-BOX → interpolation failure |
+| B7 | physics skeleton+residual | 2 | SRAM | KILL | residual cancels skeleton; RO regressed 11.9 % |
+| **B8** | **diff-sim TTFT** | **3** | **RO** | **PROMOTE** | **RO 0.32 %; ships** |
+| B9 | hard-monotone id head | 3 | SRAM | KILL | qb moves *away* (0.226→0.364); cross-coupled relocates |
+
+Full report: `results/v6_4_5_track_b/V6_4_5_track_b_final.md`; per-lever
+`results/v6_4_5_track_b/B{1..9}_*.md`. SRAM force_ic stays open (model-fidelity;
+six levers converge → V6.4.6 split-head). **Cross-session note:** a concurrent
+Track-A session updated the *main-checkout* CLAUDE.md (Phase-5 retrain, also a RO
+dead end); this branch ships B8 — reconcile the two doc states at merge.
 
 ---
 

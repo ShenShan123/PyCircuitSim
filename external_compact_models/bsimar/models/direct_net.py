@@ -28,15 +28,6 @@ behind a train-CLI flag:
   checkpoint still loads. The extra ``mono.*`` keys are auto-detected by the
   simulator's ``_build_from_state``.
 
-* **B9 — hard-monotone id head** (``mono_full_id=True``). The trunk's ``id``
-  column is *replaced* (not augmented) by a dedicated ``_MonotoneIdHead`` that
-  is globally monotone-decreasing in normalised ``Vg`` by construction. The
-  head uses a 3-layer network where every weight on the Vg-monotone path is
-  softplus-constrained non-negative, Softplus activations between layers
-  (globally monotone, C¹ — Rule 4), and a sign flip at the output.
-  The 12 other output columns remain from the shared trunk unchanged.
-  Extra keys ``mono_id.*`` are auto-detected by ``_build_from_state``.
-
 This module does NOT add any loss term (Rule 10): all Phase-7 work shapes
 the network, never the loss.
 """
@@ -110,100 +101,6 @@ class _MonotoneVgResidual(nn.Module):
         return self.sign * out
 
 
-class _MonotoneIdHead(nn.Module):
-    """Hard-monotone id head for B9 (V6.4.5 Track-B).
-
-    Globally monotone-decreasing in normalised ``Vg`` (input column 1).
-    The entire id column is computed by this network; the shared trunk's
-    id output is discarded when this head is active.
-
-    Construction (3-layer, Daniels & Velikova 2010 / "Certified Monotonic NN"):
-    - Layer 1: split weight on Vg (non-negative via softplus) + unconstrained
-      weights on all other inputs → h1 (monotone-increasing in Vg)
-    - Softplus activation (C¹, globally monotone — Rule 4)
-    - Layer 2: all weights on the h1 path are non-negative (softplus) +
-      a separate unconstrained "skip" path for non-Vg inputs → h2
-      (composition of non-negative map on monotone-increasing input preserves
-       monotone-increasing in Vg)
-    - Softplus activation
-    - Layer 3: non-negative output weights (softplus) → scalar (monotone-increasing)
-    - Final: ``sign * scalar`` where sign = -1 makes output monotone-DECREASING
-
-    This gives a function where ∂id/∂Vg < 0 (id becomes more negative / larger
-    magnitude as Vg increases), matching the NMOS PyCMG data (id < 0 when ON,
-    |id| increases with Vg).
-
-    The sign is stored as a buffer for checkpoint round-trips. For both NMOS
-    and PMOS (source-relative frame), the training data shows id_norm decreasing
-    as Vg_norm increases at high Vd, so sign = -1 for both.
-    """
-
-    def __init__(
-        self,
-        in_dim: int,
-        hidden_dim: int = 128,
-        sign: float = -1.0,
-        vg_col: int = 1,
-    ) -> None:
-        super().__init__()
-        self.vg_col = vg_col
-        self.register_buffer("sign", torch.tensor(float(sign)))
-        self._hidden_dim = hidden_dim
-
-        # ---- Layer 1 ----
-        # Vg path: non-negative weight (sign constrained via softplus of free param)
-        # Other inputs: unconstrained
-        self.l1_w_vg_raw = nn.Parameter(torch.empty(hidden_dim, 1))
-        self.l1_w_rest = nn.Parameter(torch.empty(hidden_dim, in_dim - 1))
-        self.l1_b = nn.Parameter(torch.zeros(hidden_dim))
-
-        # ---- Layer 2 ----
-        # All weights on h1 (which is monotone-increasing in Vg) are non-negative
-        # to preserve monotonicity. Additional skip from non-Vg inputs (unconstrained)
-        # modulates the output without breaking the monotone guarantee on the Vg path.
-        self.l2_w_h1_raw = nn.Parameter(torch.empty(hidden_dim, hidden_dim))
-        self.l2_w_skip = nn.Parameter(torch.empty(hidden_dim, in_dim - 1))
-        self.l2_b = nn.Parameter(torch.zeros(hidden_dim))
-
-        # ---- Layer 3 (output) ----
-        # Non-negative weights on h2 → scalar monotone-increasing in Vg
-        self.l3_w_raw = nn.Parameter(torch.empty(1, hidden_dim))
-        self.l3_b = nn.Parameter(torch.zeros(1))
-
-        self.act = nn.Softplus()
-
-        # Initialise: small positive values via small-mean normal so softplus ≈ 0.13
-        nn.init.normal_(self.l1_w_vg_raw, mean=-2.0, std=0.3)
-        nn.init.xavier_uniform_(self.l1_w_rest)
-        nn.init.normal_(self.l2_w_h1_raw, mean=-2.0, std=0.3)
-        nn.init.xavier_uniform_(self.l2_w_skip)
-        nn.init.normal_(self.l3_w_raw, mean=-2.0, std=0.3)
-
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
-        """Return scalar (B,) monotone-decreasing in x[:, vg_col]."""
-        F = torch.nn.functional
-        vg = x[:, self.vg_col : self.vg_col + 1]                    # (B, 1)
-        rest = torch.cat(
-            [x[:, : self.vg_col], x[:, self.vg_col + 1 :]], dim=-1)  # (B, in-1)
-
-        # Layer 1: h1 is monotone-increasing in Vg
-        w1_vg = F.softplus(self.l1_w_vg_raw)                         # (H, 1) >= 0
-        h1 = rest @ self.l1_w_rest.t() + vg @ w1_vg.t() + self.l1_b # (B, H)
-        h1 = self.act(h1)  # Softplus: monotone, C1, positive                 # (B, H)
-
-        # Layer 2: non-negative weights on h1 preserve monotone-increasing in Vg
-        w2_h1 = F.softplus(self.l2_w_h1_raw)                         # (H, H) >= 0
-        h2 = h1 @ w2_h1.t() + rest @ self.l2_w_skip.t() + self.l2_b # (B, H)
-        h2 = self.act(h2)                                             # (B, H)
-
-        # Layer 3: non-negative output → positive scalar, monotone-increasing in Vg
-        w3 = F.softplus(self.l3_w_raw)                                # (1, H) >= 0
-        out = h2 @ w3.t() + self.l3_b                                 # (B, 1)
-
-        # Sign flip → monotone-DECREASING in Vg
-        return (self.sign * out).squeeze(-1)                          # (B,)
-
-
 class DirectNet(nn.Module):
     """MLP with discrete tech-code embedding predicting MOSFET outputs.
 
@@ -215,11 +112,6 @@ class DirectNet(nn.Module):
     the pinned sign of ∂id/∂Vg (-1 for the PyCMG NMOS/PMOS convention where
     ON current is negative w.r.t. the column ordering). When True the model
     carries extra ``mono.*`` state-dict keys.
-
-    ``mono_full_id`` (B9, default False): replace the trunk's ``id`` column
-    with a ``_MonotoneIdHead`` that is globally monotone-decreasing in ``Vg``.
-    Carries extra ``mono_id.*`` state-dict keys; auto-detected by
-    ``_build_from_state`` in ``mosfet_directnet.py``.
     """
 
     # Index of the `id` column in OUTPUT_COLUMN_ORDER.
@@ -238,9 +130,6 @@ class DirectNet(nn.Module):
         monotonic: bool = False,
         monotone_sign: float = -1.0,
         monotone_hidden: int = 64,
-        mono_full_id: bool = False,
-        mono_id_hidden: int = 128,
-        mono_id_sign: float = -1.0,
     ):
         super().__init__()
         self.output_dim = output_dim
@@ -249,7 +138,6 @@ class DirectNet(nn.Module):
         self._tech_embed_dropout = tech_embed_dropout
         self._unknown_code_id = unknown_code_id
         self._monotonic = monotonic
-        self._mono_full_id = mono_full_id
 
         self.tech_embedding = nn.Embedding(num_tech_codes, tech_embed_dim)
 
@@ -272,16 +160,6 @@ class DirectNet(nn.Module):
                 in_dim=input_dim + tech_embed_dim,
                 hidden_dim=monotone_hidden,
                 sign=monotone_sign,
-                vg_col=1,
-            )
-
-        # B9 — hard-monotone id head (replaces trunk's id column entirely).
-        self.mono_id: _MonotoneIdHead | None = None
-        if mono_full_id:
-            self.mono_id = _MonotoneIdHead(
-                in_dim=input_dim + tech_embed_dim,
-                hidden_dim=mono_id_hidden,
-                sign=mono_id_sign,
                 vg_col=1,
             )
 
@@ -321,16 +199,6 @@ class DirectNet(nn.Module):
             id_col = out[:, self._ID_COL] + corr
             out = torch.cat(
                 [id_col.unsqueeze(-1), out[:, self._ID_COL + 1 :]], dim=-1)
-
-        if self.mono_id is not None:
-            # B9: Replace the trunk's id column entirely with the hard-monotone
-            # head. The head is globally monotone-decreasing in Vg by
-            # construction; the trunk's id output is discarded for the id column.
-            # Re-stacking keeps a single differentiable tensor for autograd.
-            id_col = self.mono_id(combined)  # (B,) monotone-decreasing in Vg
-            out = torch.cat(
-                [id_col.unsqueeze(-1), out[:, self._ID_COL + 1 :]], dim=-1)
-
         return out
 
     def count_parameters(self) -> int:

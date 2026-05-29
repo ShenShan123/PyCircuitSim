@@ -1,0 +1,399 @@
+diff --git a/external_compact_models/bsimar/models/direct_net.py b/external_compact_models/bsimar/models/direct_net.py
+index 24c9049..535b14a 100644
+--- a/external_compact_models/bsimar/models/direct_net.py
++++ b/external_compact_models/bsimar/models/direct_net.py
+@@ -28,12 +28,25 @@ behind a train-CLI flag:
+   checkpoint still loads. The extra ``mono.*`` keys are auto-detected by the
+   simulator's ``_build_from_state``.
+ 
+-This module does NOT add any loss term (Rule 10): all Phase-7 work shapes
+-the network, never the loss.
++* **B7 — physics skeleton** (``physics_skeleton=True``). A closed-form
++  BSIM-style subthreshold/saturation Id skeleton anchors the ``id`` column.
++  The total id = Id_skeleton(physical Vgs,Vds,Vbs) + eps * id_base_head.
++  The skeleton denormalises the normalised input to physical voltages
++  internally via registered buffers (input_mean, input_std from the norm.npz
++  fit at construction). Subthreshold suppression is ≥6 decades below Vth so
++  the SRAM cross-coupled DC equilibrium inherits rail stability. The extra
++  ``skeleton.*`` keys are auto-detected by ``_build_from_state`` at inference.
++  The skeleton is differentiable (C1), so autograd(id_total) gives correct
++  gm/gds/gmb (Rule 1). Default path (physics_skeleton=False) is byte-
++  identical to before this change.
++
++This module does NOT add any loss term (Rule 10): all Phase-7 / B7 work
++shapes the network, never the loss.
+ """
+ 
+ import torch
+ import torch.nn as nn
++import torch.nn.functional as F
+ 
+ 
+ class _MonotoneVgResidual(nn.Module):
+@@ -101,6 +114,227 @@ class _MonotoneVgResidual(nn.Module):
+         return self.sign * out
+ 
+ 
++class _PhysicsSkeletonId(nn.Module):
++    """Closed-form BSIM-style Id skeleton (B7, V6.4.5 Track-B).
++
++    Implements a 3-region (subthreshold / linear / saturation) Id model in
++    the NN-frame PHYSICAL terminal voltages (Vgs, Vds, Vbs).
++
++    The forward receives NORMALISED inputs ``x`` (shape (B, 7)):
++        x[:,0] = norm(Vd), x[:,1] = norm(Vg), x[:,2] = norm(Vs),
++        x[:,3] = norm(Vb), x[:,4] = norm(NFIN_log), x[:,5] = norm(L),
++        x[:,6] = norm(T).
++
++    The skeleton denormalises Vd,Vg,Vs,Vb via registered buffers
++    ``in_mean`` / ``in_std`` (first 4 dims of the norm.npz input stats),
++    then computes physical Vgs = Vg-Vs, Vds = Vd-Vs, Vbs = Vb-Vs, NFIN
++    (from log-NFIN), and evaluates the 3-region formula.
++
++    PyCMG sign convention: NMOS conducting id is **negative** (current flows
++    into the drain terminal), so id_skeleton ≤ 0 for NMOS ON-state.
++    The ``nmos_sign`` buffer carries -1.0 for NMOS and +1.0 for PMOS so one
++    module class covers both. The sign is persisted in the state_dict.
++
++    All 3 region boundaries use smooth blends (softplus) so the output is
++    C1 — required for NR convergence (Rule 4).
++
++    Learnable parameters (~12 per model):
++        Vth0, n_factor, beta_log (log of β for numerical stability),
++        lambda_log (log of λ), gamma, phi_log (log of φ), log_I0,
++        k_blend (Vov=0 softplus width), vt_phys (effective thermal voltage
++        — learned to adapt to temperature / tech — init at 0.026 V).
++
++    All parameters are initialized to physically plausible FinFET 7 nm values.
++    """
++
++    def __init__(
++        self,
++        in_mean: torch.Tensor,    # (7,) input mean from norm.npz
++        in_std: torch.Tensor,     # (7,) input std from norm.npz
++        nmos_sign: float = -1.0,  # -1 for NMOS (id < 0 ON), +1 for PMOS
++        vdd_train: float = 0.75,
++        # Output normalization for the id column (asinh mode):
++        # id_norm = (asinh(id_phys / asinh_scale_id) - id_out_mean) / id_out_std
++        # These buffers allow the skeleton to return a NORMALIZED output so it
++        # can be added to the base head (which is also in normalized space).
++        # If all three are None, the skeleton returns physical units (backward-
++        # compat, but the mixed-units forward is dimensionally inconsistent).
++        id_asinh_scale: "float | None" = None,
++        id_out_mean: "float | None" = None,
++        id_out_std: "float | None" = None,
++    ) -> None:
++        super().__init__()
++        # Store norm stats as buffers so they move with the module
++        # (to(device) / state_dict round-trip).
++        self.register_buffer("in_mean", in_mean.float().clone())
++        self.register_buffer("in_std", in_std.float().clone())
++        self.register_buffer("nmos_sign", torch.tensor(float(nmos_sign)))
++        self.register_buffer("vdd_train_buf", torch.tensor(float(vdd_train)))
++        # Output normalization (optional; stored as scalar buffers).
++        _use_out_norm = (id_asinh_scale is not None
++                         and id_out_mean is not None
++                         and id_out_std is not None)
++        self.register_buffer(
++            "use_out_norm", torch.tensor(float(_use_out_norm)))
++        self.register_buffer(
++            "id_asinh_scale",
++            torch.tensor(float(id_asinh_scale) if id_asinh_scale else 1.0))
++        self.register_buffer(
++            "id_out_mean",
++            torch.tensor(float(id_out_mean) if id_out_mean is not None else 0.0))
++        self.register_buffer(
++            "id_out_std",
++            torch.tensor(float(id_out_std) if id_out_std is not None else 1.0))
++
++        # ── Learnable physical parameters ──────────────────────────────
++        # Calibrated to TSMC7 NMOS dataset (PyCMG): at Vgs=0.75V, Vds=0.375V,
++        # NFIN=1, id ≈ -2e-5 A. In saturation: id_sat = 0.5*β*Vov²*(1+λ*Vds)
++        # with Vov≈0.45V, Vds=0.375V: β ≈ 1.8e-4 A/V² per fin. Below Vth=0.3V
++        # at Vgs=0V (Vov=-0.3V): id_sub = I0*exp(-0.3/(n*vt)) ≈ I0*exp(-8.5) ≈
++        # I0*2e-4; at Vgs=0.3V (threshold): id ≈ I0. Subthreshold slope for
++        # FinFETs: SS ≈ 65 mV/dec → n ≈ 1.1.
++        self.Vth0 = nn.Parameter(torch.tensor(0.28))       # V (SVT ~0.28-0.32)
++        self.n_factor = nn.Parameter(torch.tensor(-2.3))   # n=1+exp(n_factor)≥1; init n≈1.1
++        self.beta_log = nn.Parameter(torch.tensor(-8.6))   # log(β), β≈1.8e-4 A/V²/fin
++        self.lambda_log = nn.Parameter(torch.tensor(-1.2)) # log(λ), λ≈0.3 V⁻¹
++        self.gamma = nn.Parameter(torch.tensor(0.05))      # body-effect coeff (small for FinFET)
++        self.phi_log = nn.Parameter(torch.tensor(-0.36))   # log(φ), φ≈0.7 V
++        self.log_I0 = nn.Parameter(torch.tensor(-12.0))    # log(I0/fin), I0≈6e-6 A/fin at threshold
++        self.k_blend = nn.Parameter(torch.tensor(10.0))    # Vov blend sharpness
++        # vt stored in log-space to allow gradient descent while keeping vt>0:
++        # vt = exp(log_vt); init log(0.026) ≈ -3.65.
++        self.log_vt = nn.Parameter(torch.tensor(-3.65))    # log(vt), vt≈0.026 V
++
++    def _denorm_voltages(
++        self, x: torch.Tensor,
++    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,
++               torch.Tensor]:
++        """Recover physical Vd, Vg, Vs, Vb, NFIN from normalised x (B,7)."""
++        # Reverse z-score for first 4 dims (voltages)
++        v_phys = x[:, :4] * self.in_std[:4] + self.in_mean[:4]  # (B,4)
++        vd, vg, vs, vb = v_phys[:, 0], v_phys[:, 1], v_phys[:, 2], v_phys[:, 3]
++        # NFIN_log is dim 4: recover NFIN = 2^(NFIN_log_phys)
++        nfin_log_phys = x[:, 4] * self.in_std[4] + self.in_mean[4]
++        nfin = torch.exp(nfin_log_phys * 0.6931472)  # 2^x = exp(x*ln2)
++        return vd, vg, vs, vb, nfin
++
++    def forward(self, x: torch.Tensor) -> torch.Tensor:
++        """Return Id_skeleton (B, 1) in PyCMG sign convention."""
++        vd, vg, vs, vb, nfin = self._denorm_voltages(x)
++
++        vgs = vg - vs
++        vds = vd - vs
++        vbs = vb - vs
++
++        # ── Physical parameters (constrained to sensible ranges) ───────
++        # n_factor ≥ 1 (subthreshold swing factor); store raw, map via exp+1
++        n = torch.exp(self.n_factor) + 1.0  # n = 1 + exp(n_factor) ≥ 1
++        # β > 0 (stored in log-space)
++        beta = torch.exp(self.beta_log)
++        # λ > 0 (stored in log-space)
++        lam = torch.exp(self.lambda_log)
++        # φ > 0 (surface potential; stored in log-space + 0.05 floor)
++        phi = torch.exp(self.phi_log) + 0.05
++        # γ (body-effect coefficient; can be near-zero)
++        gamma = self.gamma
++        # I0 > 0 (subthreshold current scale per fin, stored in log-space)
++        I0 = torch.exp(self.log_I0)
++        # vt > 0 stored in log-space: vt = exp(log_vt); init at 0.026 V
++        vt = torch.exp(self.log_vt)
++
++        # ── Body effect on Vth ─────────────────────────────────────────
++        # Vth_eff = Vth0 + γ·(sqrt(φ + |Vbs|) − sqrt(φ))
++        # Use softplus(|Vbs| + φ) ≈ |Vbs| + φ for stability
++        abs_vbs = torch.abs(vbs)
++        sqrt_phi_vbs = torch.sqrt(phi + abs_vbs + 1e-6)
++        sqrt_phi = torch.sqrt(phi + 1e-6)
++        vth_eff = self.Vth0 + gamma * (sqrt_phi_vbs - sqrt_phi)
++
++        # ── Overdrive voltage Vov = |Vgs| - Vth_eff ───────────────────
++        # For NMOS: Vgs is positive when on (PMOS frame: Vgs negative in
++        # source-relative training frame). Work with |Vgs| so one formula
++        # covers both. The nmos_sign at output flips for PMOS.
++        vgs_abs = torch.abs(vgs)
++        vov = vgs_abs - vth_eff
++
++        # ── Subthreshold region (Vov < 0) ─────────────────────────────
++        # Id_sub = I0·NFIN·exp(Vov/(n·vt))·(1 - exp(-|Vds|/(vt)))
++        # Both factors are clamped: Vov/(n·vt) in (-∞, 0] for subthreshold.
++        # The (1-exp) factor goes to 1 for large |Vds|.
++        nvt = n * vt
++        exp_vov = torch.exp(torch.clamp(vov / nvt, max=0.0))  # ≤ 1
++        abs_vds = torch.abs(vds)
++        sat_factor_sub = 1.0 - torch.exp(torch.clamp(-abs_vds / vt, max=0.0))
++        id_sub = I0 * nfin * exp_vov * sat_factor_sub
++
++        # ── Above-threshold regions (Vov > 0) ─────────────────────────
++        # For Vds < Vov (linear):  Id = β·NFIN·(Vov·|Vds| - Vds²/2)
++        # For Vds ≥ Vov (saturation): Id = ½·β·NFIN·Vov²·(1+λ·|Vds|)
++        # Smooth blend: use softplus(Vov - |Vds|) to switch
++        vov_pos = F.softplus(vov)  # differentiable positive part of Vov
++        # vds_eff for the linear region: min(|Vds|, Vov) — softmin
++        k_b = F.softplus(self.k_blend) + 1.0  # sharpness > 0
++        # Smooth min(a,b) = -(1/k)·log(exp(-k·a)+exp(-k·b))
++        ka = -k_b * abs_vds
++        kb2 = -k_b * vov_pos
++        log_sum = torch.logaddexp(ka, kb2)
++        vds_eff = -log_sum / k_b  # smooth min(|Vds|, Vov_pos)
++
++        id_lin = beta * nfin * (vov_pos * vds_eff - 0.5 * vds_eff * vds_eff)
++        id_sat = 0.5 * beta * nfin * vov_pos * vov_pos * (1.0 + lam * abs_vds)
++
++        # Smooth blend between linear and saturation regions:
++        # weight_sat = sigmoid(k_blend · (|Vds| - Vov))
++        # weight_lin = 1 - weight_sat
++        blend_arg = k_b * (abs_vds - vov_pos)
++        w_sat = torch.sigmoid(blend_arg)
++        w_lin = 1.0 - w_sat
++        id_above = w_lin * id_lin + w_sat * id_sat
++
++        # ── Blend subthreshold ↔ above-threshold ──────────────────────
++        # Use exp(Vov/vt) as a smooth gate: near 0 when Vov≪0 (sub), 1 when Vov≫0
++        w_above = torch.sigmoid(k_b * vov)
++        w_below = 1.0 - w_above
++        id_mag = w_below * id_sub + w_above * id_above
++
++        # ── Vds direction (only forward-bias contributes) ──────────────
++        # If NMOS: vds > 0 is the conduction direction.
++        # If PMOS (source-relative frame): vds < 0 is the conduction direction.
++        # Apply the sign via nmos_sign: for NMOS nmos_sign=-1 means id<0 when ON.
++        # The conductance direction is |vds| > 0 and we already use abs_vds above.
++        # Suppress reverse-Vds current with a smooth gate.
++        # Directional gate: suppress reverse-Vds conduction smoothly.
++        # NMOS normal conduction: vds > 0. Gate = sigmoid(k*vds/vt).
++        # PMOS: in the source-relative training frame, vds < 0 when conducting
++        # (source is at 0, drain is pulled down). Gate = sigmoid(-k*vds/vt).
++        # nmos_sign=-1 for NMOS, +1 for PMOS. The conducting-direction sign
++        # is -nmos_sign (NMOS→+1 means vds>0; PMOS→-1 means vds<0).
++        #
++        # NMOS: (-nmos_sign)*vds = (+1)*vds = vds; large positive when on. ✓
++        # PMOS: (-nmos_sign)*vds = (-1)*vds; large positive when vds<0 (on). ✓
++        vds_direction = (-self.nmos_sign) * vds   # positive in conduction direction
++        f_dir = torch.sigmoid(torch.clamp(k_b * vds_direction / vt, min=-100.0, max=100.0))
++
++        id_raw = id_mag * f_dir  # always ≥ 0
++        # PyCMG sign convention: NMOS ON → id < 0; PMOS ON → id > 0.
++        # nmos_sign=-1 for NMOS: id_out = -id_raw ≤ 0 ✓
++        # nmos_sign=+1 for PMOS: id_out = +id_raw ≥ 0 ✓
++        id_phys = self.nmos_sign * id_raw   # physical units (A)
++
++        # Optionally re-normalise to asinh-z-score output space so the skeleton
++        # is dimensionally consistent with the base head (which is in norm space).
++        # Without this, id_phys (~1e-5 A) mixed with the base head (~O(1))
++        # would make the trunk ignore the skeleton entirely.
++        if self.use_out_norm > 0.5:
++            # asinh normalisation: y_inner = asinh(y_phys / scale)
++            id_inner = torch.asinh(id_phys / (self.id_asinh_scale + 1e-30))
++            id_out = (id_inner - self.id_out_mean) / (self.id_out_std + 1e-30)
++        else:
++            id_out = id_phys
++
++        return id_out.unsqueeze(-1)   # (B, 1)
++
++
+ class DirectNet(nn.Module):
+     """MLP with discrete tech-code embedding predicting MOSFET outputs.
+ 
+@@ -112,6 +346,13 @@ class DirectNet(nn.Module):
+     the pinned sign of ∂id/∂Vg (-1 for the PyCMG NMOS/PMOS convention where
+     ON current is negative w.r.t. the column ordering). When True the model
+     carries extra ``mono.*`` state-dict keys.
++
++    ``physics_skeleton`` (B7, default False): replace the ``id`` output with
++    Id_skeleton(physical Vgs,Vds,Vbs; learnable params) + eps * id_base_head.
++    Requires ``skeleton_in_mean`` / ``skeleton_in_std`` (first 7 dims of
++    input_mean/std from the norm.npz) and ``skeleton_nmos_sign`` to be
++    provided at construction. When True, extra ``skeleton.*`` state-dict keys
++    are present; auto-detected by ``_build_from_state`` at inference.
+     """
+ 
+     # Index of the `id` column in OUTPUT_COLUMN_ORDER.
+@@ -130,6 +371,18 @@ class DirectNet(nn.Module):
+         monotonic: bool = False,
+         monotone_sign: float = -1.0,
+         monotone_hidden: int = 64,
++        # B7 physics skeleton
++        physics_skeleton: bool = False,
++        skeleton_in_mean: "torch.Tensor | None" = None,
++        skeleton_in_std: "torch.Tensor | None" = None,
++        skeleton_nmos_sign: float = -1.0,
++        skeleton_vdd_train: float = 0.75,
++        skeleton_eps: float = 0.1,
++        # Output normalization for the skeleton id column (asinh z-score).
++        # Extract from norm.npz: asinh_scale[0], output_mean[0], output_std[0].
++        skeleton_id_asinh_scale: "float | None" = None,
++        skeleton_id_out_mean: "float | None" = None,
++        skeleton_id_out_std: "float | None" = None,
+     ):
+         super().__init__()
+         self.output_dim = output_dim
+@@ -138,6 +391,12 @@ class DirectNet(nn.Module):
+         self._tech_embed_dropout = tech_embed_dropout
+         self._unknown_code_id = unknown_code_id
+         self._monotonic = monotonic
++        self._physics_skeleton = physics_skeleton
++        # skeleton_eps is only registered as a buffer when the skeleton is
++        # active, so stock checkpoints (no skeleton.* keys) load cleanly.
++        if physics_skeleton:
++            self.register_buffer(
++                "skeleton_eps", torch.tensor(float(skeleton_eps)))
+ 
+         self.tech_embedding = nn.Embedding(num_tech_codes, tech_embed_dim)
+ 
+@@ -163,6 +422,23 @@ class DirectNet(nn.Module):
+                 vg_col=1,
+             )
+ 
++        # B7 — physics skeleton on the `id` column.
++        self.skeleton: _PhysicsSkeletonId | None = None
++        if physics_skeleton:
++            if skeleton_in_mean is None or skeleton_in_std is None:
++                raise ValueError(
++                    "physics_skeleton=True requires skeleton_in_mean "
++                    "and skeleton_in_std (from norm.npz input stats)")
++            self.skeleton = _PhysicsSkeletonId(
++                in_mean=skeleton_in_mean,
++                in_std=skeleton_in_std,
++                nmos_sign=skeleton_nmos_sign,
++                vdd_train=skeleton_vdd_train,
++                id_asinh_scale=skeleton_id_asinh_scale,
++                id_out_mean=skeleton_id_out_mean,
++                id_out_std=skeleton_id_out_std,
++            )
++
+         self._init_weights()
+ 
+     def _init_weights(self) -> None:
+@@ -199,6 +475,19 @@ class DirectNet(nn.Module):
+             id_col = out[:, self._ID_COL] + corr
+             out = torch.cat(
+                 [id_col.unsqueeze(-1), out[:, self._ID_COL + 1 :]], dim=-1)
++
++        if self.skeleton is not None:
++            # B7: replace id_col with skeleton + eps * base_head.
++            # The skeleton receives x (continuous features, NOT combined with
++            # the tech embedding) because it denormalises from raw voltage
++            # space using the norm stats; the tech embedding is irrelevant to
++            # the physics formula.
++            id_skel = self.skeleton(x).squeeze(-1)     # (B,) physical signal
++            id_base = out[:, self._ID_COL]             # (B,) base head (norm)
++            id_col = id_skel + self.skeleton_eps * id_base
++            out = torch.cat(
++                [id_col.unsqueeze(-1), out[:, self._ID_COL + 1 :]], dim=-1)
++
+         return out
+ 
+     def count_parameters(self) -> int:
+diff --git a/pycircuitsim/models/mosfet_directnet.py b/pycircuitsim/models/mosfet_directnet.py
+index b3b2739..bc418db 100644
+--- a/pycircuitsim/models/mosfet_directnet.py
++++ b/pycircuitsim/models/mosfet_directnet.py
+@@ -61,6 +61,36 @@ class _DirectNetMixin(_MOSFETNNBase):
+             if monotonic:
+                 monotone_sign = float(state["mono.sign"].item())
+                 monotone_hidden = state["mono.w_vg_raw"].shape[0]
++
++            # B7 — a checkpoint trained with --physics-skeleton carries
++            # `skeleton.*` keys. Reconstruct the skeleton with the norm
++            # stats stored as registered buffers in the state_dict.
++            physics_skeleton = any(k.startswith("skeleton.") for k in state)
++            skeleton_kwargs: Dict[str, object] = {}
++            if physics_skeleton:
++                in_mean = state["skeleton.in_mean"]   # (7,) or (4,)
++                in_std = state["skeleton.in_std"]     # same
++                nmos_sign = float(state["skeleton.nmos_sign"].item())
++                vdd_train = float(state["skeleton.vdd_train_buf"].item())
++                eps = float(state["skeleton_eps"].item())
++                use_out_norm = float(state.get(
++                    "skeleton.use_out_norm", torch.tensor(0.0)).item()) > 0.5
++                skeleton_kwargs = dict(
++                    physics_skeleton=True,
++                    skeleton_in_mean=in_mean,
++                    skeleton_in_std=in_std,
++                    skeleton_nmos_sign=nmos_sign,
++                    skeleton_vdd_train=vdd_train,
++                    skeleton_eps=eps,
++                )
++                if use_out_norm:
++                    skeleton_kwargs["skeleton_id_asinh_scale"] = float(
++                        state["skeleton.id_asinh_scale"].item())
++                    skeleton_kwargs["skeleton_id_out_mean"] = float(
++                        state["skeleton.id_out_mean"].item())
++                    skeleton_kwargs["skeleton_id_out_std"] = float(
++                        state["skeleton.id_out_std"].item())
++
+             return DirectNet(
+                 input_dim=input_dim, hidden_dim=hidden_dim,
+                 n_layers=n_layers, output_dim=output_dim,
+@@ -69,6 +99,7 @@ class _DirectNetMixin(_MOSFETNNBase):
+                 monotonic=monotonic,
+                 monotone_sign=monotone_sign,
+                 monotone_hidden=monotone_hidden,
++                **skeleton_kwargs,
+             )
+ 
+         super().__init__(
