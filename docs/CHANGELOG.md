@@ -6,6 +6,105 @@ isn't burdened with chronology.
 
 ---
 
+## V6.4.5 — Track A no-ship iteration (2026-05-29)
+
+Plan: `docs/plans/2026-05-28-directnet-v6.4.5-ro-sram.md` (Track A only).
+**Scope contract:** inference + zero-code probes only; Phase 5 retrain
+deferred. No code changes shipped — V6.4.4 remains canonical. The whole
+iteration is a dead-end record (CLAUDE.md "always record the dead end
+proposal"). Per-phase gate files under `results/v6_4_5/`.
+
+### Outcome
+
+| Phase                          | Verdict                | Code shipped | 16-cell pass count |
+|--------------------------------|------------------------|--------------|:------------------:|
+| 1 — V6.4.4 re-baseline         | reproduced exactly     | none         | 9/16               |
+| 2 — Zero-code solver probes    | all 3 killed/diagnostic| none         | 9/16               |
+| 3 — Multi-circuit scorer       | deferred (Phase 5 gate)| —            | —                  |
+| 4 — Rule-15 `Ioff_rail` patch  | **KILL** (inverter regress ~10×) | reverted | 9/16        |
+| 5 — TSMC7-only retrain         | deferred (best case +1, target unreachable) | — | —    |
+| 6 — V6.4.6 split-head          | already deferred in plan | —          | —                  |
+
+Inverter 8/8 held, extended harness 55/55 + 64/64 held. Final 9/16
+matches V6.4.4 — TSMC7 ring_osc (8.97 % period err) and SRAM `force_ic`
+(0/8) remain open.
+
+### Dead ends recorded
+
+- **`NN_SYMMETRIC_CAPS=1` does not move TSMC7 RO.** With the flag ON
+  for both ring_osc and switchcap, TSMC7 RO period err stayed at
+  8.97 % bit-for-bit; switchcap charge err improved slightly on
+  TSMC5/12/16 but no new SC cell crossed its gate. The 9 % RO drift is
+  not cap-asymmetry. Flag stays default OFF (unchanged).
+
+- **`max_substeps=4` on RO does not close TSMC7 enough.** A 2-LOC env-
+  var override threading `RO_MAX_SUBSTEPS` through `run_directnet_-
+  transient` moved TSMC7 RO 8.97 % → 8.04 % at ~2× wall time —
+  short of the ≤ 5 % kill gate. The drift is not LTE-dominated.
+  Harness edit reverted.
+
+- **SRAM `force_ic` q ≈ 0.18 is a true NN attractor.** A 10-LOC
+  diagnostic in `verify_complex_sram_snm.py` replaced the literal
+  `(VDD, 0)` rail seed with the NGSPICE butterfly-lobe value
+  (`near_zero` ≈ 83–123 mV depending on tech). All four techs still
+  settle at q ≈ 0.70–0.80 / qb ≈ 0.16–0.47 — not a poor warm-start
+  symptom. Phase 4 was promoted from "diagnostic" to "mandatory" by
+  this finding, but Phase 4 also died (next bullet). Diagnostic edit
+  reverted.
+
+- **Plan's Rule-15 `Ioff_rail` patch is unsound as formulated.** The
+  patched `_apply_vds_correction` (+26 LOC behind `NN_IOFF_RAIL_K`)
+  computed `Ioff_rail = max(|id_raw|, k·NFIN·1nA)` and added
+  `sign_conv · blend · Ioff_rail` to `id`. For a *conducting* device
+  at the rail (`|id_raw| ≫ floor`, `blend ≈ 1`) this effectively
+  doubles the current, collapsing the inverter VTC NRMSE from
+  1.21 % to 11.56 % at the smallest non-zero `k = 1`. The SRAM
+  attractor moved *further* from the rails (q 0.866 → 0.375 on TSMC5,
+  divergence past VDD on TSMC12). Kill criterion 2 (inverter VTC
+  regression > 5 mV) tripped at every `k ∈ {1, 3, 10}`; `k ∈ {30, 100}`
+  OOM'd on parallel GPU contention but the trend was clear. The patch
+  is fully reverted.
+
+  The formula could be salvaged by floor-only-below — e.g.
+  `Ioff_extra = max(floor − |id_raw|, 0)` — but that is a *different*
+  patch (different kill-criterion math) and was not retried; the
+  plan's exact wording was followed (drop, don't silently
+  reformulate).
+
+- **Phase 5 / Phase 3 not started.** With Phase 4 dead and the target
+  (11/16) unreachable via Phase 5 alone (best case +1 → 10/16), the
+  user chose to stop rather than spend 24 GPU-hr on a partial win
+  that still misses the headline target. The plan explicitly permits
+  shipping 9/16 with documented dead ends ("Acceptable partial win —
+  ship as V6.4.5 with 10/16 + documented SRAM gate as V6.4.6 (Phase 8)
+  territory"); 9/16 is the same shape, no partial gain.
+
+### What V6.4.5 rules out
+
+1. The plan-as-written for Phase 4 (`max(|id_raw|, floor)`) — the
+   conducting-state contamination is structural, not a tuning bug.
+2. Cap-asymmetry and LTE as TSMC7 RO drift sources.
+3. "Warm start the SRAM near rails" as a force_ic cure.
+
+### What V6.4.5 leaves for V6.4.6
+
+- **Ring_osc TSMC7** is now firmly model-fidelity (Phase 5 retrain or
+  Track B B5/B6/B7).
+- **SRAM `force_ic`** is also model-fidelity; Phase 4-style
+  inference-only Vds corrections cannot move it without a Vgs gate,
+  and Vgs gating breaks Rule 1 (autograd-of-id). The candidates are
+  Track B B7 (closed-form skeleton + small residual), V6.4.6
+  split-head (spectral-norm `id` head + softplus cap head), or
+  Track B B9 (hard-monotone lattice).
+- An off-state floor with the corrected formula
+  `Ioff_extra = max(floor − |id_raw|, 0)` is the cheapest re-attempt
+  at the inference-only path and was *not* tried in V6.4.5.
+
+V6.4.5 ships ONLY this CHANGELOG entry + the plan doc; no code, no
+checkpoints. V6.4.4 commit `801ac6e` remains the active head.
+
+---
+
 ## V6.4.4 — DirectNet per-tech checkpoint mix (inference-only iteration, 2026-05-28)
 
 Plan: `docs/plans/2026-05-24-directnet-v6.4.4-complex-circuits-iter2.md`.
