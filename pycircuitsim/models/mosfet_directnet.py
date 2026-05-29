@@ -61,6 +61,14 @@ class _DirectNetMixin(_MOSFETNNBase):
             if monotonic:
                 monotone_sign = float(state["mono.sign"].item())
                 monotone_hidden = state["mono.w_vg_raw"].shape[0]
+            # B9 — a checkpoint trained with mono_full_id=True carries
+            # `mono_id.*` keys. Auto-detect to rebuild the head at the right size.
+            mono_full_id = any(k.startswith("mono_id.") for k in state)
+            mono_id_hidden = 128
+            mono_id_sign = -1.0
+            if mono_full_id:
+                mono_id_sign = float(state["mono_id.sign"].item())
+                mono_id_hidden = state["mono_id.l1_w_vg_raw"].shape[0]
             return DirectNet(
                 input_dim=input_dim, hidden_dim=hidden_dim,
                 n_layers=n_layers, output_dim=output_dim,
@@ -69,6 +77,9 @@ class _DirectNetMixin(_MOSFETNNBase):
                 monotonic=monotonic,
                 monotone_sign=monotone_sign,
                 monotone_hidden=monotone_hidden,
+                mono_full_id=mono_full_id,
+                mono_id_hidden=mono_id_hidden,
+                mono_id_sign=mono_id_sign,
             )
 
         super().__init__(
