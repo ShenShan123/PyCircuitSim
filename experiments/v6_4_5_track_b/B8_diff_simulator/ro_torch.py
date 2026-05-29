@@ -174,6 +174,36 @@ class TorchDirectNetDevice:
         id_phys = self._vds_correct(id_phys, vds)
         return id_phys, qg, qd, qs, qb
 
+    def forward_batch(
+        self, vd: torch.Tensor, vg: torch.Tensor, vs: torch.Tensor,
+        vb: torch.Tensor,
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor,
+               torch.Tensor]:
+        """Batched forward: vd/vg/vs/vb are (N,) tensors → (N,) outputs.
+
+        One stacked model forward for all N rows (the 5 ring stages of one
+        device type), bit-identical row-wise to N separate ``forward`` calls
+        for an MLP. Huge launch-overhead win on GPU.
+        """
+        vd_nn, vg_nn, vs_nn, vb_nn = self._raw_voltages(vd, vg, vs, vb)
+        v_raw = torch.stack([vd_nn, vg_nn, vs_nn, vb_nn], dim=-1)  # (N,4)
+        v_norm = self._clamp_norm(v_raw)                           # (N,4)
+        n = v_norm.shape[0]
+        geo = self.geo_norm.unsqueeze(0).expand(n, -1)             # (N,3)
+        x = torch.cat([v_norm, geo], dim=-1)                       # (N,7)
+        codes = self.tech_code.expand(n)
+        out = self.model(x, tech_codes=codes)                      # (N,13)
+
+        id_phys = self._denorm_col(out, "id")
+        qg = self._denorm_col(out, "qg")
+        qd = self._denorm_col(out, "qd")
+        qb = self._denorm_col(out, "qb")
+        qs = -(qg + qd + qb)
+
+        vds = vd_nn - vs_nn
+        id_phys = self._vds_correct(id_phys, vds)
+        return id_phys, qg, qd, qs, qb
+
     def _vds_correct(self, id_raw: torch.Tensor, vds: torch.Tensor) -> torch.Tensor:
         """Rule-15 parts (a), (b), (d) on ``id`` — differentiable.
 
@@ -283,53 +313,32 @@ class RingOscTorch:
         node). This matches the production node-charge KCL where every
         terminal connected to a node contributes its terminal current.
         """
-        vdd_t = torch.tensor(self.vdd, dtype=self.dtype, device=self.dev)
-        zero = torch.zeros((), dtype=self.dtype, device=self.dev)
+        ns = self.n_stages
+        vdd_t = torch.full((ns,), self.vdd, dtype=self.dtype, device=self.dev)
+        zeros = torch.zeros(ns, dtype=self.dtype, device=self.dev)
 
-        # First pass: per-stage device evals. Stage k drives node k; its gate
-        # is node k-1 (mod 5).
-        id_n = [None] * self.n_stages
-        qd_n = [None] * self.n_stages
-        qd_p = [None] * self.n_stages
-        id_p = [None] * self.n_stages
-        qg_n = [None] * self.n_stages
-        qg_p = [None] * self.n_stages
-        for k in range(self.n_stages):
-            vout = vn[k]
-            vin = vn[(k - 1) % self.n_stages]
-            # NMOS: drain=vout, gate=vin, source=0, bulk=0
-            idn, qgn, qdn, qsn, qbn = self.nmos.forward(vout, vin, zero, zero)
-            # PMOS: drain=vout, gate=vin, source=vdd, bulk=vdd
-            idp, qgp, qdp, qsp, qbp = self.pmos.forward(vout, vin, vdd_t, vdd_t)
-            id_n[k] = idn
-            id_p[k] = idp
-            qd_n[k] = qdn
-            qd_p[k] = qdp
-            qg_n[k] = qgn
-            qg_p[k] = qgp
+        # Stage k drives node k; its input (gate) is node k-1 (mod 5).
+        vout = vn                                  # (5,) drain of each stage
+        vin = torch.roll(vn, shifts=1, dims=0)     # (5,) gate = node k-1
 
-        i_node = []
-        q_node = []
-        for k in range(self.n_stages):
-            # Current leaving node k (drain node), production frame
-            # (_stamp_mosfet_dc): i_leaving = -calculate_current for PMOS,
-            # +calculate_current for NMOS. With forward()→id_phys (PyCMG sign,
-            # NMOS id<0 / PMOS id>0):
-            #   NMOS calculate_current = -id_phys → i_leaving = +(-id_phys)
-            #                                              = -id_n
-            #   PMOS calculate_current = +id_phys → i_leaving = -(+id_phys)
-            #                                              = -id_p
-            i_leave_n = -id_n[k]   # NMOS contribution leaving drain
-            i_leave_p = -id_p[k]   # PMOS contribution leaving drain
-            i_node.append(i_leave_n + i_leave_p)
+        # One batched forward per device type (5 rows).
+        # NMOS: drain=vout, gate=vin, source=0, bulk=0
+        idn, qgn, qdn, qsn, qbn = self.nmos.forward_batch(vout, vin, zeros, zeros)
+        # PMOS: drain=vout, gate=vin, source=vdd, bulk=vdd
+        idp, qgp, qdp, qsp, qbp = self.pmos.forward_batch(vout, vin, vdd_t, vdd_t)
 
-            # charge at node k: drain charge of the local pair PLUS gate charge
-            # of the next stage (whose gate is node k).
-            nxt = (k + 1) % self.n_stages
-            q_k = qd_n[k] + qd_p[k] + qg_n[nxt] + qg_p[nxt]
-            q_node.append(q_k)
+        # Current leaving node k (drain node), production frame
+        # (_stamp_mosfet_dc): i_leaving = -calculate_current for PMOS,
+        # +calculate_current for NMOS. With forward()→id_phys (PyCMG sign,
+        # NMOS id<0 / PMOS id>0): both contribute -id_phys leaving the drain.
+        i_node = -idn - idp                        # (5,)
 
-        return torch.stack(i_node), torch.stack(q_node)
+        # Charge at node k = drain charge of the local pair (stage k) PLUS
+        # gate charge of the NEXT stage (whose gate is node k). Stage k+1's
+        # gate charge is row (k+1); roll by -1 to align onto node k.
+        qg_next = torch.roll(qgn + qgp, shifts=-1, dims=0)
+        q_node = qdn + qdp + qg_next               # (5,)
+        return i_node, q_node
 
     def _node_residual(
         self,
@@ -448,17 +457,27 @@ class RingOscTorch:
                 i_cap_new = coeff * q_total_new - (coeff * q_hist + i_hist)
             return v.detach(), q_total_new.detach(), i_cap_new.detach()
 
-        # Final implicit-function refinement keeping the graph:
-        #   v* = v_conv - J^{-1} resid     (one Newton step, differentiable).
-        # q_hist / i_hist carry the graph from prior steps; v_conv is detached
-        # so only the model-weight dependence (through resid and J) survives,
-        # which is exactly the converged-fixed-point sensitivity we want.
-        v_in = v.detach().requires_grad_(True)
+        # Final implicit-function refinement keeping the graph (FIRST ORDER,
+        # DETACHED Jacobian — cheap, no 2nd-order graph):
+        #   v* = v_conv - J_det^{-1} · F(v_conv, q_hist, i_hist, w).
+        # At convergence F≈0 so v* ≈ v_conv numerically, but v* is now a
+        # differentiable function: ∂v*/∂θ = -J_det^{-1} · ∂F/∂θ for every
+        # upstream θ (the model weights AND q_hist / i_hist, which carry the
+        # graph from prior steps → the recurrence). Detaching J drops only the
+        # ∂J/∂θ term, which is exactly the implicit-function-theorem gradient
+        # of the converged fixed point. This is the standard "1-step unrolled
+        # with stop-grad on the Jacobian" estimator and is far cheaper than a
+        # create_graph=True double-backward.
+        v_in = v.detach()
         with torch.enable_grad():
-            resid, J = self._jacobian(
-                v_in, q_hist, coeff, i_hist, cload, create_graph=True)
-            dv = torch.linalg.solve(J, -resid)
-            v_star = v_in + dv
+            v_req = v_in.requires_grad_(True)
+            resid_J, J = self._jacobian(
+                v_req, q_hist, coeff, i_hist, cload, create_graph=False)
+            Jinv = torch.linalg.inv(J.detach())
+            # Recompute the residual with the graph to upstream params (the
+            # _jacobian call already detached J; resid_J still carries the
+            # graph to q_hist/i_hist/weights through v_req's forward).
+            v_star = v_in - Jinv @ resid_J
             i_dc, q_dev = self._stage_currents_charges(v_star)
             q_total_new = q_dev + cload * v_star
             i_cap_new = coeff * q_total_new - (coeff * q_hist + i_hist)
