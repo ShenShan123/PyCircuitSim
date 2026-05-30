@@ -106,7 +106,9 @@ B8-style TTFT — both out of V6.4.5 scope.
 4. ✓ Every dropped lever logged with the empirical numbers that killed it.
 5. ✓ V6.4.6 split-head plan carries forward unchanged; multi-circuit-regularised TTFT added as a follow-up.
 
-**Note (cross-session coordination):** a concurrent Track-A session updated the
-*main checkout's* CLAUDE.md to record the Track-A Phase-5 32-training retrain
-(also a RO dead end, best 9.05 %). This branch (`feat/v6.4.5-track-b`) ships B8;
-the two doc states must be reconciled at merge by the user.
+**Merged with Track A (2026-05-30):** Track A's 5-phase no-ship cascade (incl. the
+Phase-5 32-training retrain, best RO 9.05 %) and its gate files are now folded into
+this branch — `results/v6_4_5/phase{1..5}_*.md`, `results/v6_4_5/V6_4_5_final.md`,
+the Phase-3/5 scorer scripts, and a single unified V6.4.5 CHANGELOG entry (Track A +
+Track B subsections). V6.4.5 is one shipping revision: Track A proved RO is not
+retrain-addressable; Track B's B8 closed it by optimising the period directly.

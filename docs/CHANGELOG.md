@@ -6,7 +6,31 @@ isn't burdened with chronology.
 
 ---
 
-## V6.4.5 — Track B, B8 differentiable mini-simulator TTFT (PROMOTE, 2026-05-30)
+## V6.4.5 — TSMC7 ring_osc closed via B8 differentiable-sim TTFT (SHIP, 9/16 → 10/16, 2026-05-30)
+
+The V6.4.5 ring_osc + SRAM sprint (plan `docs/plans/2026-05-28-directnet-v6.4.5-ro-sram.md`)
+ran as **two tracks**, now merged into this single shipping revision:
+
+- **Track A (conservative)** — a 5-phase cascade (re-baseline → zero-code probes →
+  multi-circuit scorer → Rule-15 patch → 32-training TSMC7 retrain). **All no-ship.**
+  Decisive result: the full 16-seed-stock + 8-seed-mono retrain (32 trainings) cannot
+  close TSMC7 RO (best feasible 9.05 % > baseline 8.98 %) — **the RO error is not
+  seed/recipe/retrain-addressable.**
+- **Track B (unconstrained)** — the B1–B9 cascade. B1–B7 + B9 (8 levers) all KILL,
+  corroborating Track A. **B8 (differentiable-sim TTFT) closes TSMC7 RO** (8.98 % →
+  0.32 %) by optimising the oscillation period *directly* — the one approach neither
+  track's pointwise/retrain levers had tried.
+
+**Ship:** swap the TSMC7 DirectNet checkpoint to B8's TTFT fine-tune (plain merged
+state_dict; TSMC5/12/16 unchanged) → complex headline **9/16 → 10/16**; inverter gate
+8/8, extended harness 55/55 + 64/64 held. **SRAM `force_ic` stays open** — ~10 levers
+across both tracks converge on it being a model-fidelity property → V6.4.6 split-head.
+The negative results in both subsections (Track A's 5 phases + Track B's 8 kills) are
+what make B8's positive result decisive. Full reports:
+`results/v6_4_5_track_b/V6_4_5_track_b_final.md` (Track B), `results/v6_4_5/V6_4_5_final.md`
+(Track A).
+
+### Track B (unconstrained) — B8 differentiable-sim TTFT closes RO (SHIP)
 
 Plan: Track-B Tier-3 lever for the TSMC7 ring-oscillator gate. Report:
 `results/v6_4_5_track_b/B8_diff_simulator.md`. Code:
@@ -68,7 +92,7 @@ are already-failing, out-of-V6.4.5-scope TSMC7 cells (neither is one of the 16
 headline gates), so the headline is a clean +1. A multi-circuit-regularised
 TTFT (add SRAM/opamp terms to the loss) is the V6.4.6 follow-up to co-hold them.
 
-### Verified ship: complex headline 9/16 → 10/16 (TSMC7-only checkpoint swap)
+#### Verified ship: complex headline 9/16 → 10/16 (TSMC7-only checkpoint swap)
 
 Re-scored independently with `b8_ttft` installed as the TSMC7 slot (TSMC5/12/16
 untouched): ring_osc TSMC7 FAIL 8.98 % → **PASS 0.32 %**; switchcap TSMC7 **PASS**
@@ -76,7 +100,7 @@ untouched): ring_osc TSMC7 FAIL 8.98 % → **PASS 0.32 %**; switchcap TSMC7 **PA
 (VTC 1.97 % / tran 1.33 %); extended harness TSMC7 **DC 9/9 + tran 16/16** (held).
 No passing gate regressed → **net +1 → 10/16**. Inverter gate stays 8/8 overall.
 
-### Track-B B1–B9 roster (the full cascade; failures are first-class records)
+#### Track-B B1–B9 roster (the full cascade; failures are first-class records)
 
 | # | Lever | Tier | Gate | Verdict | killer number |
 |---|-------|:----:|------|:-------:|---------------|
@@ -90,44 +114,40 @@ No passing gate regressed → **net +1 → 10/16**. Inverter gate stays 8/8 over
 | **B8** | **diff-sim TTFT** | **3** | **RO** | **PROMOTE** | **RO 0.32 %; ships** |
 | B9 | hard-monotone id head | 3 | SRAM | KILL | qb moves *away* (0.226→0.364); cross-coupled relocates |
 
-Full report: `results/v6_4_5_track_b/V6_4_5_track_b_final.md`; per-lever
-`results/v6_4_5_track_b/B{1..9}_*.md`. SRAM force_ic stays open (model-fidelity;
-six levers converge → V6.4.6 split-head). **Cross-session note:** a concurrent
-Track-A session updated the *main-checkout* CLAUDE.md (Phase-5 retrain, also a RO
-dead end); this branch ships B8 — reconcile the two doc states at merge.
+Per-lever reports: `results/v6_4_5_track_b/B{1..9}_*.md`. SRAM force_ic stays open
+(model-fidelity; six Track-B levers + Track-A Phase 5 converge → V6.4.6 split-head).
 
----
+### Track A (conservative) — 5-phase cascade, no-ship; proves RO not retrain-addressable
 
-## V6.4.5 — Track A no-ship iteration (2026-05-29)
+Plan: `docs/plans/2026-05-28-directnet-v6.4.5-ro-sram.md` (Track A, §§1–9). All five
+phases executed: Phases 1/2/4 first-pass (inference + zero-code probes), then Phase 3
+(built the multi-circuit scorer) + Phase 5 (32-training TSMC7 retrain). **Track A
+shipped no model**; only the Phase-3 scorer scripts are new (infra). Per-phase gate
+files: `results/v6_4_5/phase{1..5}_*.md`, final `results/v6_4_5/V6_4_5_final.md`.
 
-Plan: `docs/plans/2026-05-28-directnet-v6.4.5-ro-sram.md` (Track A only).
-**Scope contract:** inference + zero-code probes only; Phase 5 retrain
-deferred. No code changes shipped — V6.4.4 remains canonical. The whole
-iteration is a dead-end record (CLAUDE.md "always record the dead end
-proposal"). Per-phase gate files under `results/v6_4_5/`.
-
-### Outcome
+#### Outcome
 
 | Phase                          | Verdict                | Code shipped | 16-cell pass count |
 |--------------------------------|------------------------|--------------|:------------------:|
 | 1 — V6.4.4 re-baseline         | reproduced exactly     | none         | 9/16               |
 | 2 — Zero-code solver probes    | all 3 killed/diagnostic| none         | 9/16               |
-| 3 — Multi-circuit scorer       | deferred (Phase 5 gate)| —            | —                  |
+| 3 — Multi-circuit scorer       | **built + validated** (accepts V6.4.4 mix after opamp re-calibration) | scripts (infra) | — |
 | 4 — Rule-15 `Ioff_rail` patch  | **KILL** (inverter regress ~10×) | reverted | 9/16        |
-| 5 — TSMC7-only retrain         | deferred (best case +1, target unreachable) | — | —    |
-| 6 — V6.4.6 split-head          | already deferred in plan | —          | —                  |
+| 5 — TSMC7-only retrain         | **KILL** (best feasible RO 9.05 % > baseline 8.98 %; 32 trainings) | none | 9/16 |
+| 6 — V6.4.6 split-head          | deferred in plan       | —            | —                  |
 
-Inverter 8/8 held, extended harness 55/55 + 64/64 held. Final 9/16
-matches V6.4.4 — TSMC7 ring_osc (8.97 % period err) and SRAM `force_ic`
-(0/8) remain open.
+Inverter 8/8 held, extended harness 55/55 + 64/64 held. Track A's 9/16 matched
+V6.4.4 (Track B's B8 then lifted it to 10/16). Canonical checkpoints sha-verified
+unchanged after the isolated scorer + retrain.
 
-### Dead ends recorded
+#### Dead ends recorded
 
 - **`NN_SYMMETRIC_CAPS=1` does not move TSMC7 RO.** With the flag ON
   for both ring_osc and switchcap, TSMC7 RO period err stayed at
   8.97 % bit-for-bit; switchcap charge err improved slightly on
   TSMC5/12/16 but no new SC cell crossed its gate. The 9 % RO drift is
-  not cap-asymmetry. Flag stays default OFF (unchanged).
+  not cap-asymmetry. Flag stays default OFF (unchanged). *(Track B's B1
+  later confirmed this from the model side: cgd/cdg are near-symmetric.)*
 
 - **`max_substeps=4` on RO does not close TSMC7 enough.** A 2-LOC env-
   var override threading `RO_MAX_SUBSTEPS` through `run_directnet_-
@@ -163,37 +183,68 @@ matches V6.4.4 — TSMC7 ring_osc (8.97 % period err) and SRAM `force_ic`
   plan's exact wording was followed (drop, don't silently
   reformulate).
 
-- **Phase 5 / Phase 3 not started.** With Phase 4 dead and the target
-  (11/16) unreachable via Phase 5 alone (best case +1 → 10/16), the
-  user chose to stop rather than spend 24 GPU-hr on a partial win
-  that still misses the headline target. The plan explicitly permits
-  shipping 9/16 with documented dead ends ("Acceptable partial win —
-  ship as V6.4.5 with 10/16 + documented SRAM gate as V6.4.6 (Phase 8)
-  territory"); 9/16 is the same shape, no partial gain.
+- **Seed/recipe lottery does not move TSMC7 ring_osc (Phase 5, 32
+  trainings).** The full plan §5 sweep — 16-seed stock + 8-seed mono,
+  TSMC7 N+P, scored under the Phase-3 multi-circuit vector — never
+  reaches the ≤ 5 % gate. Best overall RO = 8.21 % (`stock_s31`) is
+  *infeasible* (opamp collapsed to gain 0); best **feasible** RO =
+  9.05 % (`stock_s11`), *worse* than the V6.4.4 baseline (8.98 %). The
+  seed moves inverter VTC NRMSE (1.75–5.50 %) but barely moves the RO
+  period (DN ~50.8–53 ps vs NG 46.64 ps) — a systematic ~9 % model
+  bias, not init variance. 13/16 new candidates collapse the TSMC7
+  opamp to zero gain (the same failure iter-2 saw with P7-stock). Both
+  Phase-5 kill criteria fire; no checkpoint shipped. The 32
+  `v6_4_5_p5_tsmc7_*` checkpoints are kept (in the main checkout) as
+  inert dead-end evidence (they don't match the resolver pattern, so are
+  never auto-loaded).
 
-### What V6.4.5 rules out
+#### Phase 3 — multi-circuit scorer built + validated (infra, not a dead end)
+
+`scripts/eval_v6_4_5_candidate.py` + `scripts/v6_4_5_search.py` score a
+candidate on `(inv_vtc_nrmse, inv_tran_post_nrmse, ring_osc_period_err,
+sram_rail_snap_resid, opamp_flat_flag)` using `BSIMAR_CHECKPOINT_DIR`
+isolation (a private tmp dir holding the candidate copied under the
+canonical `tsmc{X}_dn_medium_{dev}` stem so vocab-scope detection still
+fires) — the real `checkpoints/` dir is never mutated, so candidates run
+concurrently and the canonical slots are sha-verified unchanged. **Track B
+reused this exact scorer** for every B1–B9 candidate.
+
+**Re-calibration (plan §Phase 3 "if the scorer rejects the V6.4.4 mix, fix
+the thresholds"):** the plan's `opamp_flat_flag = |Vout_center − VDD/2| >
+0.3·VDD` flags *every* tech, including the PASSING TSMC5 opamp — a
+high-gain open-loop opamp is railed at the exact center common-mode
+whenever the input pair has any offset. Redefined to `gain < 10` (the true
+collapse signal). Under it the V6.4.4 mix clears the hard gates for
+TSMC5/7/12; TSMC16 reads flat=1, correctly (its opamp is a known fail
+cell). Scorer-accepts-V6.4.4 kill gate MET.
+
+#### What Track A rules out
 
 1. The plan-as-written for Phase 4 (`max(|id_raw|, floor)`) — the
    conducting-state contamination is structural, not a tuning bug.
 2. Cap-asymmetry and LTE as TSMC7 RO drift sources.
 3. "Warm start the SRAM near rails" as a force_ic cure.
+4. **The seed/recipe lottery and the `--monotonic` recipe as TSMC7 RO
+   levers** — 32 trainings, RO floor ~8.2 % infeasible / ~9.0 % feasible.
 
-### What V6.4.5 leaves for V6.4.6
+#### What Track A left for Track B / V6.4.6
 
-- **Ring_osc TSMC7** is now firmly model-fidelity (Phase 5 retrain or
-  Track B B5/B6/B7).
-- **SRAM `force_ic`** is also model-fidelity; Phase 4-style
-  inference-only Vds corrections cannot move it without a Vgs gate,
-  and Vgs gating breaks Rule 1 (autograd-of-id). The candidates are
-  Track B B7 (closed-form skeleton + small residual), V6.4.6
-  split-head (spectral-norm `id` head + softplus cap head), or
-  Track B B9 (hard-monotone lattice).
-- An off-state floor with the corrected formula
-  `Ioff_extra = max(floor − |id_raw|, 0)` is the cheapest re-attempt
-  at the inference-only path and was *not* tried in V6.4.5.
+- **Ring_osc TSMC7** — Track A confirmed it is *not* retrain-addressable
+  (Phase 5, 32 trainings; systematic ~9 % bias). **Track B then closed it
+  with B8** (differentiable-sim TTFT, above): the period had to be optimised
+  *directly*, not via the I-V surface. The V6.4.6 split-head (spectral-norm
+  `id` head + softplus cap head) remains the candidate for a *general*
+  (non-per-circuit) RO fix.
+- **SRAM `force_ic`** — model-fidelity; Phase 4-style inference-only Vds
+  corrections can't move it without a Vgs gate (breaks Rule 1). Track B's
+  B2/B4/B5/B6/B7/B9 all confirmed the attractor is intrinsic → V6.4.6
+  split-head. The corrected off-state floor `Ioff_extra = max(floor − |id_raw|, 0)`
+  was not tried.
 
-V6.4.5 ships ONLY this CHANGELOG entry + the plan doc; no code, no
-checkpoints. V6.4.4 commit `801ac6e` remains the active head.
+Track A shipped no model; **V6.4.5 ultimately ships via Track B's B8** (above).
+New from Track A (carried into this ship): the Phase-3 scorer scripts
+(`scripts/eval_v6_4_5_candidate.py`, `scripts/v6_4_5_search.py`,
+`scripts/{run_v6_4_5_p5_train,score_p5_diagonal}.sh`) + the gate files.
 
 ---
 
