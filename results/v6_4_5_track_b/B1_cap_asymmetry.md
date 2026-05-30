@@ -1,6 +1,6 @@
 # B1 — Adaptive cap-symmetry probe on TSMC7 RO (Track B, Tier 1)
 
-**Date:** 2026-05-29 • **Branch:** `feat/v6.4.5-track-b` • **Verdict: KILL**
+**Date:** 2026-05-29 • **Branch:** `feat/v6.4.5` • **Verdict: KILL**
 **Env:** `CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1` (CPU, 1 thread).
 **Probe:** `experiments/v6_4_5_track_b/B1_cap_asymmetry_probe.py` — monkeypatches
 `_MOSFETNNBase._unpack_eval` (no source edit), logs

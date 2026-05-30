@@ -1,6 +1,6 @@
 # B2 — Test-time seed ensemble + rail voting for SRAM force_ic (Track B, Tier 1)
 
-**Date:** 2026-05-29 • **Branch:** `feat/v6.4.5-track-b` • **Verdict: KILL**
+**Date:** 2026-05-29 • **Branch:** `feat/v6.4.5` • **Verdict: KILL**
 **Env:** `CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`.
 **Driver:** `experiments/v6_4_5_track_b/B2_seed_ensemble.py` → per-seed isolated
 `BSIMAR_CHECKPOINT_DIR` via `scripts/eval_v6_4_5_candidate.py` (`--skip inv,ro,opamp`).

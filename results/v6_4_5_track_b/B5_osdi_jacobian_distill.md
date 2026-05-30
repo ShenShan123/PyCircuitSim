@@ -1,6 +1,6 @@
 # B5 — OSDI Jacobian distillation (Track B, Tier 2)
 
-**Date:** 2026-05-29 • **Branch:** `feat/v6.4.5-track-b` • **Verdict: KILL**
+**Date:** 2026-05-29 • **Branch:** `feat/v6.4.5` • **Verdict: KILL**
 (The B5 agent crashed on a connection error before writing its own report; these
 are the numbers I re-scored independently from the candidate checkpoints it
 trained. Training-loss fork lived in `experiments/v6_4_5_track_b/B5_*.py`;

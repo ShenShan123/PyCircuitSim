@@ -1,6 +1,6 @@
 # B4 — force_ic continuation with shrinking-λ trust region (Track B, Tier 1)
 
-**Date:** 2026-05-29 • **Branch:** `feat/v6.4.5-track-b` • **Verdict: KILL (code reverted)**
+**Date:** 2026-05-29 • **Branch:** `feat/v6.4.5` • **Verdict: KILL (code reverted)**
 **Env:** `CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`.
 **Code (reverted):** `pycircuitsim/solver.py:_solve_force_ic_continuation` +
 env hook `NN_FORCE_IC_CONTINUATION` in `_solve_newton`. Reverted to HEAD after

@@ -1,6 +1,6 @@
 # DirectNet V6.4.5 — Close ring_osc + SRAM gates
 
-**Date:** 2026-05-28  •  **Status:** ✅ SHIPPED V6.4.5 (10/16) via Track B B8 — 2026-05-30  •  **Branch:** `feat/v6.4.5-track-b`
+**Date:** 2026-05-28  •  **Status:** ✅ SHIPPED V6.4.5 (10/16) via Track B B8 — 2026-05-30  •  **Branch:** `feat/v6.4.5`
 
 > **V6.4.5 outcome (SHIP, 9/16 → 10/16).** Both tracks ran; **B8 (Track B) closed TSMC7 ring_osc** and the merged result ships. Full record: `docs/CHANGELOG.md` (unified V6.4.5 entry), `results/v6_4_5_track_b/V6_4_5_track_b_final.md`, `results/v6_4_5/V6_4_5_final.md`.
 >

@@ -1,6 +1,6 @@
 # B6 — Adversarial Harvest-then-Retrain (Track B, Tier 2)
 
-**Date:** 2026-05-29 · **Branch:** `feat/v6.4.5-track-b`
+**Date:** 2026-05-29 · **Branch:** `feat/v6.4.5`
 **Verdict: KILL (in-box interpolation failure; retrain blocked)**
 **Env:** `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 CUDA_VISIBLE_DEVICES="" (harvest/analysis); GPU=3 (retrain attempt)`
 

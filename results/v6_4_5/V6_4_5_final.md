@@ -7,7 +7,7 @@
 > not retrain-addressable (Phase 5, 32 trainings), which is exactly why B8's
 > direct-period-optimisation was the lever that worked.
 
-**Date:** 2026-05-29  •  **Branch:** `feat/v6.4.4` (Track A) → merged into `feat/v6.4.5-track-b`  •  **Status:** Track A no-ship; V6.4.5 ships via Track B B8.
+**Date:** 2026-05-29  •  **Branch:** `feat/v6.4.4` (Track A) → merged into `feat/v6.4.5`  •  **Status:** Track A no-ship; V6.4.5 ships via Track B B8.
 
 ## Outcome
 

@@ -1,6 +1,6 @@
 # V6.4.5 — Track B final report (SHIP: B8 closes TSMC7 ring_osc, 9/16 → 10/16)
 
-**Date:** 2026-05-30 • **Branch:** `feat/v6.4.5-track-b` (off V6.4.4 HEAD `54c4759`)
+**Date:** 2026-05-30 • **Branch:** `feat/v6.4.5` (off V6.4.4 HEAD `54c4759`)
 **Plan:** `docs/plans/2026-05-28-directnet-v6.4.5-ro-sram.md` (Track B, §10)
 **Env:** `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`, CPU scoring (`CUDA_VISIBLE_DEVICES=""`),
 GPU training on free A100/Blackwell cards. Worktree isolated; canonical V6.4.4
