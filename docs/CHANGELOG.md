@@ -30,6 +30,19 @@ what make B8's positive result decisive. Full reports:
 `results/v6_4_5_track_b/V6_4_5_track_b_final.md` (Track B), `results/v6_4_5/V6_4_5_final.md`
 (Track A).
 
+**Re-verified 2026-06-01.** Re-ran the shipped checkpoint mix end-to-end on CPU
+(`OMP_NUM_THREADS=1`), no code/checkpoint change: complex headline **10/16
+reproduced** — ring_osc **4/4** (TSMC7 8.97 % → **0.32 %**, the B8 win), SRAM
+butterfly **4/4**, switchcap 1/4 (TSMC7 0.37 %, held), opamp 1/4; **inverter
+gate 8/8** (VTC 1.13/1.97/1.47/1.53 %, tran 1.62/1.33/1.41/1.45 %); TSMC7
+extended harness **DC 9/9 + tran 16/16** (TSMC5/12/16 sha-identical → 55/55 +
+64/64 held); SRAM force_ic still 0/8 → V6.4.6. Caveat: the opamp's passing tech
+scattered TSMC5 → TSMC12 across runs **despite byte-identical weights** — the
+~160–200× gain is finite-differenced at the trip, so sub-mV solver-path noise
+crosses the ±10 % gate; documented opamp instability (out of scope), the 1/4
+count and 10/16 headline are unchanged. Record:
+`results/v6_4_5/reverify_20260601.md`.
+
 ### Track B (unconstrained) — B8 differentiable-sim TTFT closes RO (SHIP)
 
 Plan: Track-B Tier-3 lever for the TSMC7 ring-oscillator gate. Report:
