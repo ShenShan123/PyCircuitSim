@@ -155,7 +155,34 @@ def _directnet_6t_netlist(bt: BenchTech, q_init: float, qb_init: float,
 
 
 def force_ic_probe(bt: BenchTech, work_dir: Path) -> Dict[str, bool]:
-    """Solve the full 6T cell with force_ic=True for both storage states."""
+    """Solve the full 6T cell with force_ic=True for both storage states.
+
+    V6.4.6 Phase 1 — hardened acceptance. The old accept was
+    ``_last_solve_converged AND |q-q0|<VDD/4 AND |qb-qb0|<VDD/4``: a
+    convergence flag (stale on the old early-return force_ic path) plus
+    rail-proximity, with NO KCL-residual check — a pinned-node artifact
+    could false-PASS. The solver now exposes the *released* (fully
+    unconstrained) solution's KCL residual + per-solve threshold
+    (``_last_dc_residual`` / ``_last_dc_resid_threshold``); acceptance is
+
+        residual <= threshold        (a TRUE unconstrained fixed point)
+        AND |q-q0|  < 0.1*VDD         (the "1" node held near its rail)
+        AND |qb-qb0| < 0.1*VDD        (the "0" node held near its rail)
+
+    Both must hold. The residual gate rejects a non-physical iterate; the
+    rail-proximity gate rejects the inboard attractor (also a real fixed
+    point). The band is **0.1*VDD, NOT VDD/4** — V6.4.6 review showed the
+    VDD/4 (=25 % VDD) band false-PASSES the *documented failure* attractor
+    (q≈0.87 / qb≈0.20, i.e. the storage-"0" node parked at 24–30 % VDD ≈ 1×
+    the true SNM above ground): for the 0.80 V techs qb≈0.19 < 0.20 sneaks
+    inside VDD/4 purely by VDD-scaling, while TSMC5 rails *closer* in
+    absolute volts (qb=0.163) yet fell outside its smaller band. A 10 %-VDD
+    band sits well below the 24–30 % attractor on every tech, so it reports
+    the honest result (the released NN 6T cell lands in the inboard basin on
+    all 4 techs → 0/8) while still accepting a genuinely railed solution if a
+    future model/solver produces one. See
+    results/v6_4_6/phase1_force_ic_recovery.md.
+    """
     from pycircuitsim.solver import DCSolver
 
     out = {}
@@ -166,6 +193,8 @@ def force_ic_probe(bt: BenchTech, work_dir: Path) -> Dict[str, bool]:
         logging.disable(logging.CRITICAL)
         ok = False
         q_v = qb_v = float("nan")
+        resid = thr = float("nan")
+        resid_ok = rail_ok = False
         try:
             parser = parse_netlist(netlist)
             circuit = parser.circuit
@@ -175,17 +204,30 @@ def force_ic_probe(bt: BenchTech, work_dir: Path) -> Dict[str, bool]:
             sol = solver.solve()
             q_v = sol.get("q", float("nan"))
             qb_v = sol.get("qb", float("nan"))
-            # converged on the seeded rail (within VDD/4)?
-            ok = (getattr(solver, "_last_solve_converged", False)
-                  and abs(q_v - q0) < bt.vdd / 4
-                  and abs(qb_v - qb0) < bt.vdd / 4)
+            # Released-solution KCL residual gate (TRUE unconstrained fixed
+            # point), set by the solver's force_ic release path.
+            resid = getattr(solver, "_last_dc_residual", None)
+            thr = getattr(solver, "_last_dc_resid_threshold", None)
+            resid_ok = (resid is not None and thr is not None
+                        and resid <= thr)
+            # Landed on the seeded rail? Band is 0.1*VDD (NOT VDD/4): VDD/4
+            # false-PASSES the documented inboard attractor (qb at 24-30% VDD)
+            # for the higher-VDD techs. See the docstring.
+            rail_band = 0.1 * bt.vdd
+            rail_ok = (abs(q_v - q0) < rail_band
+                       and abs(qb_v - qb0) < rail_band)
+            ok = bool(resid_ok and rail_ok)
         except Exception:  # noqa: BLE001
             ok = False
         finally:
             logging.disable(logging.NOTSET)
         out[tag] = ok
+        resid_s = f"{resid:.3e}" if isinstance(resid, float) else "n/a"
+        thr_s = f"{thr:.3e}" if isinstance(thr, float) else "n/a"
         print(f"      force_ic {tag}: q={q_v:.3f} qb={qb_v:.3f}  "
-              f"-> {'converged' if ok else 'FAILED'}")
+              f"resid={resid_s} thr={thr_s} "
+              f"(resid_ok={resid_ok} rail_ok={rail_ok})  "
+              f"-> {'PASS' if ok else 'FAIL'}")
     return out
 
 

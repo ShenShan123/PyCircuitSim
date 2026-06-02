@@ -6,13 +6,133 @@ isn't burdened with chronology.
 
 ---
 
-## V6.4.5 — Track A no-ship iteration (2026-05-29)
+## V6.4.6 — diagnosis-first architectural iteration; probe fix + dead ends, no behavioral change (2026-06-01/02)
 
-Plan: `docs/plans/2026-05-28-directnet-v6.4.5-ro-sram.md` (Track A only).
-**Scope contract:** inference + zero-code probes only; Phase 5 retrain
-deferred. No code changes shipped — V6.4.4 remains canonical. The whole
-iteration is a dead-end record (CLAUDE.md "always record the dead end
-proposal"). Per-phase gate files under `results/v6_4_5/`.
+Plan: `docs/plans/2026-06-01-directnet-v6.4.6-ro-sram.md`. **Scope contract:**
+close the two gates V6.4.5 confirmed are architectural — TSMC7 ring_osc (8.97 %)
+and SRAM `force_ic` (0/8) — but gate every GPU-spend behind a **0-GPU diagnostic
+that can kill the lever before it is built** (Phase 0), and make any retrain
+opamp-safe by construction (frozen-base LoRA). **Outcome: no model shipped, no
+checkpoint changed, 9/16 held.** Phase 0 (6 diagnostics) killed the RO lever
+before any GPU and unlocked an SRAM solver path; Phase 1 then found the SRAM path
+is a *measurement* fix, not a gate-close. V6.4.6 ships a corrected SRAM probe +
+dead-end records. V6.4.4 remains canonical. Per-phase gate files under
+`results/v6_4_6/`.
+
+### Outcome
+
+| Phase | Verdict | Code shipped | 16-cell pass count |
+|-------|---------|--------------|:------------------:|
+| 0 — six 0-GPU diagnostics | **done 6/6** — one lever killed (P0-C), one unlocked (P0-A), one demoted (P0-D) | none (instrumentation reverted) | 9/16 |
+| 1 — `force_ic` recovery | **probe-hardening SHIPPED; homotopy KILLED; 0 gates closed** | `solver.py` + `verify_complex_sram_snm.py` (corrected probe) | 9/16 |
+| 2 — LoRA + Jacobian distill (RO) | **KILLED before GPU** by P0-C (gds/caps causally inert on the RO period) | none | 9/16 |
+| 3 — physics-core SRAM fallback | not funded (lead chose honest-ship after Phase 1) | none | — |
+
+### Phase 0 — six zero-GPU diagnostics (6/6, all on canonical V6.4.4, tree left clean)
+
+- **P0-A — railed fixed point EXISTS.** The released NN 6T cell's unconstrained
+  KCL residual at the rail seed = 8.5e-5 (TSMC5) / 1.26e-4 (TSMC7), ratio
+  0.013–0.017 ≪ 1. The inboard point (q≈0.82/qb≈0.23) has an equally small
+  residual ⇒ the cell is **bistable**; `solver.py` force_ic re-solve selects the
+  wrong basin. **Unlocked Phase 1.**
+- **P0-B — gds is the divergent surface.** Along the TSMC7 RO trip cycle gds
+  NRMSE 22.9 % (N) / 20.4 % (P), R² 0.24/0.34; gm/id ≤6 %; caps largely
+  exonerated (cgg/cdg ≈0.5–1 %).
+- **P0-C — RO Jacobian-distillation DEAD before any GPU.** Swapping the *exact*
+  OSDI gds/caps into the live TSMC7 RO transient moves the period **≤0.01 ps**
+  (baseline 50.82 ps, cap-swap 50.82 bit-for-bit, gds-swap 50.83; vs NG 46.64).
+  gds & cap-derivatives are **Jacobian-only** — they enter only the NR Jacobian +
+  matching RHS offset and **cancel at the converged fixed point** (code-confirmed
+  `_stamp_mosfet_dc:304`, `_stamp_mosfet_transient:1718-1782`). The divergent gds
+  is real but **causally inert** on the period. The RO period is owned by the
+  id-VALUE + charge-VALUE (qg/qd) trajectories + BE/Trap/BDF-2 truncation.
+  **Killed Phase 2 (gds-distill, charge-distill, and the deferred Softplus
+  cap-head) for RO; deferred to a scoped V6.4.7 dynamic-id/qs/BDF-2 investigation.**
+- **P0-D — SRAM off-leak over-modelled, but pinning device ≈VTH.** At the TSMC7
+  stuck point the pull-down sources −6.36 µA vs OSDI −0.84 µA (7.5×; Id–Vgs
+  NRMSE 21.5 %), but Mnr sits at Vov ≈ +45 mV ≈ VTH (weak inversion = D4
+  territory). **Phase 3 demoted to a caveated fallback** (any off-gate risks the
+  inverter trip).
+- **P0-E — subthreshold band is sign-random floor noise.** `|id|<1e-7` band:
+  45 % negative, 6 % literal-0; asinh crushes the 1nA–100nA band to 0.011 % of
+  the normalised id range. OSDI gm/gds in the subthresh class are CLEAN. ⇒ raw
+  asinh-floor drop / log-reweight on the id *value* is unsafe; only a clipped
+  (`|id|>1e-12`) Huber-on-ln-current distill against the *derivative* is safe.
+- **P0-F — baseline + holdout frozen** (`baseline_v6_4_4.json`, pinned to HEAD
+  `54c4759` + 8 checkpoint sha256s): TSMC12 RO 3.01 % PASS, TSMC16 RO 2.88 % PASS
+  (blind vetoes); TSMC5 opamp 2.64 % PASS, TSMC12 opamp 10.94 % FAIL (protected);
+  TSMC7 RO 8.97 %.
+
+### Phase 1 — `force_ic` is a measurement fix, not a gate-close (0 gates, 9/16 held)
+
+- **Probe-hardening (SHIPPED, correctness).** The force_ic path early-returns, so
+  `_last_solve_converged` was **never set** (stuck at `__init__` `False`) → the
+  old SRAM accept's first clause was *always* `False` → a guaranteed `0/8`
+  **regardless of where NR landed**, with **no KCL-residual gate** (the top
+  Goodhart risk). Fixed: the solver now computes the *released* solution's KCL
+  residual, sets `_last_solve_converged` honestly, and exposes
+  `_last_dc_residual`/`_last_dc_resid_threshold`; the test gates on
+  `resid_ok AND rail_ok`. Isolated to the `if _ic_temp_sources:` branch — inverter
+  8/8 byte-identical, butterfly 4/4 unchanged.
+- **Rail band tightened `VDD/4` → `0.1·VDD`.** An intermediate pass reported
+  **4/8 PASS (TSMC12/16) → 11/16** under the pre-existing `VDD/4` band. Adversarial
+  review **retracted it as a false-PASS**: the released solution lands in the
+  *documented inboard failure attractor* (q≈0.87/qb≈0.20) on **all 4 techs**; the
+  storage-"0" node parks at 24–30 % VDD ≈ 1× the true SNM above ground. `VDD/4`
+  (=25 % VDD) straddles the attractor, so the 0.80 V techs' qb≈0.19 sneaks inside
+  by VDD-scaling while TSMC5 rails *closer in absolute volts* (qb=0.163) yet fell
+  outside its smaller band. The released solution is **byte-identical to V6.4.4**
+  (matching checkpoint sha256s) — so this was a zero-delta *measurement
+  correction* of V6.4.4's own behavior, not an improvement. The `0.1·VDD` band
+  reports the **honest `0/8`** and would still accept a genuinely railed solution.
+- **Constraint-continuation homotopy (BUILT + KILLED).** The plan's Norton
+  soft-pin continuation (sweep conductance g:1→0, track the railed branch P0-A
+  found) folds at **g*≈1e-5 S** into the symmetric metastable point on all 4
+  techs (0/8). Root cause: the railed point is a *residual* fixed point (P0-A) but
+  **NR-unstable** under the full re-stamp map `x→A(x)⁻¹b(x)` — the OFF node's
+  vanishing deep-subthreshold conductance makes `Δqb=residual/g_qb` explode once
+  the soft-pin conductance drops below g*. The series-R fallback is the Norton
+  dual and folds identically. A *stronger* negative than the plan's conjunction
+  foresaw (the railed point exists yet cannot be tracked). Reverted.
+
+### Dead ends recorded (V6.4.6)
+
+| # | Dead end | Evidence |
+|---|----------|----------|
+| E1 | Phase-2 RO Jacobian-distillation (gds/charge/cap-head) | P0-C: exact OSDI gds/caps swapped into the live RO transient move the period ≤0.01 ps (Jacobian-only, cancel at the fixed point). Killed before GPU. |
+| E2 | Phase-1 `force_ic` constraint-continuation homotopy (Norton + series-R) | Folds at g*≈1e-5 S into the metastable point, 0/8; the railed point is NR-unstable, not absent. Reverted. |
+| E3 | `VDD/4` rail-proximity band ("4/8 → 11/16") | False-PASS of the documented inboard attractor (qb at 24–30 % VDD); VDD-scaling artifact. Retracted; band tightened to `0.1·VDD` → honest 0/8. |
+
+### What V6.4.6 rules out / leaves for V6.4.7
+
+- **TSMC7 ring_osc** is owned by the **id-value + charge-value (qg/qd)
+  trajectories + BE/Trap/BDF-2 truncation**, NOT by the gds/cap Jacobian (P0-C).
+  No Jacobian-distillation or cap-head fix can move it. Open for V6.4.7: a scoped
+  **dynamic-id / qs-reconstruction / BDF-2** investigation; the loss-design lesson
+  from P0-E (clipped Huber-on-ln-current distill against clean OSDI gm/gds)
+  carries forward if a retrain is scoped.
+- **SRAM `force_ic`** is a true model-fidelity gap, not a solver-path bug: the
+  inboard attractor is a stable NN fixed point (D3 confirmed) co-existing with an
+  NR-unstable railed point. No 0-GPU solver continuation closes it. Open for
+  V6.4.7: the Phase-3 physics-core off-leakage fix (P0-D-caveated: pinning device
+  ≈VTH → inverter-trip / D4 risk) or the transient write-then-hold re-spec.
+- **Ships:** the corrected SRAM `force_ic` probe (`solver.py` KCL-residual
+  telemetry + honest flag; `verify_complex_sram_snm.py` `resid_ok AND rail_ok`
+  with the `0.1·VDD` band) + Phase-0/1 gate files + `baseline_v6_4_4.json`. No
+  model, no checkpoint. V6.4.4 remains the active revision.
+
+---
+
+## V6.4.5 — Track A no-ship iteration, all 5 phases run (2026-05-29)
+
+Plan: `docs/plans/2026-05-28-directnet-v6.4.5-ro-sram.md` (Track A).
+**Scope contract:** all five Track-A phases executed. Phases 1/2/4 were the
+first pass (inference + zero-code probes); **Phases 3 and 5 were then run** —
+Phase 3 built the multi-circuit scorer, Phase 5 ran the full 16-seed stock +
+8-seed mono TSMC7 retrain (32 fresh trainings) scored under it. **No model
+shipped** — V6.4.4 remains canonical; only the Phase-3 scorer *scripts* are
+new (infra). The iteration is a dead-end record (CLAUDE.md "always record the
+dead end proposal"). Per-phase gate files under `results/v6_4_5/`.
 
 ### Outcome
 
@@ -20,14 +140,15 @@ proposal"). Per-phase gate files under `results/v6_4_5/`.
 |--------------------------------|------------------------|--------------|:------------------:|
 | 1 — V6.4.4 re-baseline         | reproduced exactly     | none         | 9/16               |
 | 2 — Zero-code solver probes    | all 3 killed/diagnostic| none         | 9/16               |
-| 3 — Multi-circuit scorer       | deferred (Phase 5 gate)| —            | —                  |
+| 3 — Multi-circuit scorer       | **built + validated** (scorer accepts V6.4.4 mix after opamp re-calibration) | scripts (infra) | — |
 | 4 — Rule-15 `Ioff_rail` patch  | **KILL** (inverter regress ~10×) | reverted | 9/16        |
-| 5 — TSMC7-only retrain         | deferred (best case +1, target unreachable) | — | —    |
-| 6 — V6.4.6 split-head          | already deferred in plan | —          | —                  |
+| 5 — TSMC7-only retrain         | **KILL** (best feasible RO 9.05 % > baseline 8.98 %; 32 trainings) | none | 9/16 |
+| 6 — V6.4.6 split-head          | deferred in plan       | —            | —                  |
 
 Inverter 8/8 held, extended harness 55/55 + 64/64 held. Final 9/16
-matches V6.4.4 — TSMC7 ring_osc (8.97 % period err) and SRAM `force_ic`
-(0/8) remain open.
+matches V6.4.4 — TSMC7 ring_osc (~9 % period err) and SRAM `force_ic`
+(0/8) remain open. Canonical checkpoints sha-verified unchanged after the
+isolated scorer + retrain.
 
 ### Dead ends recorded
 
@@ -71,13 +192,38 @@ matches V6.4.4 — TSMC7 ring_osc (8.97 % period err) and SRAM `force_ic`
   plan's exact wording was followed (drop, don't silently
   reformulate).
 
-- **Phase 5 / Phase 3 not started.** With Phase 4 dead and the target
-  (11/16) unreachable via Phase 5 alone (best case +1 → 10/16), the
-  user chose to stop rather than spend 24 GPU-hr on a partial win
-  that still misses the headline target. The plan explicitly permits
-  shipping 9/16 with documented dead ends ("Acceptable partial win —
-  ship as V6.4.5 with 10/16 + documented SRAM gate as V6.4.6 (Phase 8)
-  territory"); 9/16 is the same shape, no partial gain.
+- **Seed/recipe lottery does not move TSMC7 ring_osc (Phase 5, 32
+  trainings).** The full plan §5 sweep — 16-seed stock + 8-seed mono,
+  TSMC7 N+P, scored under the Phase-3 multi-circuit vector — never
+  reaches the ≤ 5 % gate. Best overall RO = 8.21 % (`stock_s31`) is
+  *infeasible* (opamp collapsed to gain 0); best **feasible** RO =
+  9.05 % (`stock_s11`), *worse* than the V6.4.4 baseline (8.98 %). The
+  seed moves inverter VTC NRMSE (1.75–5.50 %) but barely moves the RO
+  period (DN ~50.8–53 ps vs NG 46.64 ps) — a systematic ~9 % model
+  bias, not init variance. 13/16 new candidates collapse the TSMC7
+  opamp to zero gain (the same failure iter-2 saw with P7-stock). Both
+  Phase-5 kill criteria fire; no checkpoint shipped. The 32
+  `v6_4_5_p5_tsmc7_*` checkpoints are kept as inert dead-end evidence
+  (they don't match the resolver pattern, so are never auto-loaded).
+
+### Phase 3 — multi-circuit scorer built + validated (infra, not a dead end)
+
+`scripts/eval_v6_4_5_candidate.py` + `scripts/v6_4_5_search.py` score a
+candidate on `(inv_vtc_nrmse, inv_tran_post_nrmse, ring_osc_period_err,
+sram_rail_snap_resid, opamp_flat_flag)` using `BSIMAR_CHECKPOINT_DIR`
+isolation (a private tmp dir holding the candidate copied under the
+canonical `tsmc{X}_dn_medium_{dev}` stem so vocab-scope detection still
+fires) — the real `checkpoints/` dir is never mutated, so candidates run
+concurrently and the canonical slots are sha-verified unchanged.
+
+**Re-calibration (plan §Phase 3 "if the scorer rejects the V6.4.4 mix, fix
+the thresholds"):** the plan's `opamp_flat_flag = |Vout_center − VDD/2| >
+0.3·VDD` flags *every* tech, including the PASSING TSMC5 opamp — a
+high-gain open-loop opamp is railed at the exact center common-mode
+whenever the input pair has any offset. Redefined to `gain < 10` (the true
+collapse signal). Under it the V6.4.4 mix clears the hard gates for
+TSMC5/7/12; TSMC16 reads flat=1, correctly (its opamp is a known fail
+cell). Scorer-accepts-V6.4.4 kill gate MET.
 
 ### What V6.4.5 rules out
 
@@ -85,23 +231,26 @@ matches V6.4.4 — TSMC7 ring_osc (8.97 % period err) and SRAM `force_ic`
    conducting-state contamination is structural, not a tuning bug.
 2. Cap-asymmetry and LTE as TSMC7 RO drift sources.
 3. "Warm start the SRAM near rails" as a force_ic cure.
+4. **The seed/recipe lottery and the `--monotonic` recipe as TSMC7 RO
+   levers** — 32 trainings, RO floor ~8.2 % infeasible / ~9.0 % feasible.
 
 ### What V6.4.5 leaves for V6.4.6
 
-- **Ring_osc TSMC7** is now firmly model-fidelity (Phase 5 retrain or
-  Track B B5/B6/B7).
-- **SRAM `force_ic`** is also model-fidelity; Phase 4-style
-  inference-only Vds corrections cannot move it without a Vgs gate,
-  and Vgs gating breaks Rule 1 (autograd-of-id). The candidates are
-  Track B B7 (closed-form skeleton + small residual), V6.4.6
-  split-head (spectral-norm `id` head + softplus cap head), or
-  Track B B9 (hard-monotone lattice).
+- **Ring_osc TSMC7** is now *confirmed* not retrain-addressable (Phase 5
+  above). It needs an architectural change: V6.4.6 split-head (spectral-
+  norm `id` head + softplus cap head, to fix the cap shape loading the RO
+  period) or Track B B7/B9. Track B B5/B6 (OSDI-Jacobian distill / harvest
+  retrain) are different levers than the seed sweep and remain unproven.
+- **SRAM `force_ic`** is also model-fidelity; Phase 4-style inference-only
+  Vds corrections cannot move it without a Vgs gate (which breaks Rule 1).
+  Candidates: Track B B7, V6.4.6 split-head, Track B B9.
 - An off-state floor with the corrected formula
-  `Ioff_extra = max(floor − |id_raw|, 0)` is the cheapest re-attempt
-  at the inference-only path and was *not* tried in V6.4.5.
+  `Ioff_extra = max(floor − |id_raw|, 0)` is the cheapest re-attempt at
+  the inference-only path and was *not* tried in V6.4.5.
 
-V6.4.5 ships ONLY this CHANGELOG entry + the plan doc; no code, no
-checkpoints. V6.4.4 commit `801ac6e` remains the active head.
+V6.4.5 ships no model and no checkpoints — V6.4.4 remains the active
+revision. New this iteration: the Phase-3 scorer scripts (reusable infra)
+and this CHANGELOG + gate files.
 
 ---
 

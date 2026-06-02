@@ -371,6 +371,15 @@ class DCSolver:
         # The simulation orchestrator inspects this to decide whether
         # to retry with GMIN stepping enabled.
         self._last_solve_converged: bool = False
+        # V6.4.6 Phase 1: KCL-residual telemetry for the force_ic path so
+        # the SRAM probe can gate acceptance on a TRUE convergence check
+        # (the released solution's MNA residual) instead of a stale flag.
+        # These are set only on the force_ic release path; they stay None
+        # on every other solve so a test reading them can tell whether the
+        # value is live.
+        self._last_dc_residual: Optional[float] = None
+        self._last_dc_resid_threshold: Optional[float] = None
+        self._last_residual_ok: Optional[bool] = None
 
     def __enter__(self):
         """
@@ -936,6 +945,38 @@ class DCSolver:
                 vs_idx += 1
 
         # --- Force IC cleanup ---
+        # The solver pins the .ic nodes with temp V-sources, converges
+        # (correctly railed), then removes the pins and re-solves
+        # UNCONSTRAINED, warm-started at the railed result, returning that.
+        #
+        # V6.4.6 Phase 1 — probe-hardening (Step 1) ONLY. The early `return`
+        # here means the `_last_solve_converged` set at the bottom of
+        # `_solve_newton` is NEVER reached on this path → it was stale. The
+        # SRAM `force_ic` acceptance then trusted that stale flag plus a
+        # rail-proximity check, with NO KCL-residual gate, so a pinned-node
+        # artifact could false-PASS (the top Goodhart risk of V6.4.6). We now
+        # compute the *released* (unconstrained) solution's KCL residual and
+        # set `_last_solve_converged` honestly (finite AND residual within
+        # the 100·reltol·‖b‖∞ band), plus expose `_last_dc_residual` /
+        # `_last_dc_resid_threshold` so the test gates on a TRUE convergence
+        # check, not a stale flag.
+        #
+        # The plan's Phase-1 Step-2 constraint-continuation homotopy (Norton
+        # soft-pin g:1→0, tracking the railed branch P0-A proved exists) was
+        # built and KILLED here as a dead end: on ALL 4 techs the railed
+        # branch undergoes a fold/turning-point near g*≈1e-5 S and the
+        # continuation slides into the symmetric metastable point
+        # (q≈qb≈0.60/0.68/0.73), 0/8 — identical to the one-shot release.
+        # Root cause: the railed point is a fixed point of the residual
+        # ‖b−A·x‖ (≈8.5e-5, P0-A) but is UNSTABLE under the full re-stamp NR
+        # map x→A(x)⁻¹b(x). A single re-stamp solve seeded EXACTLY at the
+        # literal rail jumps qb 0→0.159 V in one step: the OFF storage node
+        # has near-zero conductance to ground, so the step Δqb=residual/g_qb
+        # explodes as the soft-pin conductance vanishes. The series-resistor
+        # fallback is the Norton dual (R=1/g) and folds at the same R*=1/g*.
+        # No single schedule rails any tech → the homotopy was reverted; only
+        # the Step-1 probe-hardening ships. See
+        # results/v6_4_6/phase1_force_ic_recovery.md.
         if _ic_temp_sources:
             for vs in _ic_temp_sources:
                 self.circuit.components.remove(vs)
@@ -949,6 +990,19 @@ class DCSolver:
                 voltages = self._solve_newton()
             finally:
                 self.force_ic = saved_force_ic
+            # Released-solution KCL residual + honest convergence flag (Step 1).
+            residual_inf, rhs_scale = self._dc_residual_at(
+                voltages, node_map, nodes, num_nodes, matrix_size, self.gmin)
+            resid_threshold = max(
+                _RESID_ABS_FLOOR, 100.0 * self.reltol * rhs_scale)
+            finite_voltages = all(
+                (np.isfinite(v) and abs(v) < 1.0e10)
+                for v in voltages.values())
+            residual_ok = residual_inf <= resid_threshold
+            self._last_dc_residual = float(residual_inf)
+            self._last_dc_resid_threshold = float(resid_threshold)
+            self._last_residual_ok = bool(residual_ok)
+            self._last_solve_converged = bool(finite_voltages and residual_ok)
             return voltages
 
         # Extract and store voltage source currents from final operating point
