@@ -135,14 +135,28 @@ reconciled with P0-G's convergence result — see the gate files.)
 
 ### What V6.4.6 rules out / leaves for V6.4.7
 
-- **TSMC7 ring_osc** is owned by the **NMOS dynamic `id` VALUE** (P0-G/P0-H above),
-  NOT the gds/cap Jacobian (P0-C), NOT charge VALUES (P0-H), NOT integration
-  truncation (P0-G). Open for V6.4.7: **(P0-I)** a 0-GPU causal id-VALUE swap
-  (inject exact OSDI `id` into the live RO, re-measure the period — the P0-C
-  analogue) to confirm magnitude; if positive, a **frozen-base LoRA id-VALUE
-  distillation** (clipped Huber-on-ln-current against clean OSDI `id`, per P0-E)
-  is the indicated lever. Jacobian-distillation, charge-distillation, and the
-  deferred split-head cap-head are all empirically dead for RO.
+- **TSMC7 ring_osc** — the residual is *located* in the **NMOS dynamic `id` VALUE**
+  (P0-G/P0-H: charges exact, integration ~0.4 ps, ~20 % peak pull-down
+  under-prediction), but the **id-VALUE-only correction lever is NO LONGER
+  de-risked** after **P0-I (2026-06-03, `phase0I_id_injection.md`)**. P0-I ran the
+  causal id-injection swap (the P0-C analogue): the naive swap **diverged** (v1,
+  inconsistent Jacobian artifact), so it was rebuilt as a consistent exact-bias
+  OSDI op-point (v2) — which converges but is ~20–35× slow (hybrid OSDI-id/NN-charge
+  device → NR-failure-driven dt-halving). The causal result is **paradoxical and
+  decisive**: injecting the exact OSDI `id` (NMOS-only **and** symmetric N+P)
+  produces a genuine, full-rail, uniform **~92 ps** oscillation (baseline 50.83;
+  N+P 92.30; NMOS 92.74) — ~2× baseline and *further* from NG 46.64 ps, the
+  *opposite* direction from swapping id+charge together (NGSPICE = 46.64).
+  **Unlike the Jacobian (P0-C: inert, separable), the `id` VALUE is NOT separable
+  from the NN charge model** — the RO period is a joint (id, charge) property.
+  P0-I therefore **cannot confirm/refute** "id owns the gap" cleanly, and the
+  plan's **frozen-base LoRA id-VALUE-ONLY distillation** is re-scoped: V6.4.7 must
+  gate any id-only fix against the live RO period *immediately* and consider a
+  **joint id+charge correction (or retrain)** rather than id-only. (Caveat: the
+  injection bypasses Rule-15 + floors gds, so 92 ps is a *proxy* warning, not proof
+  a real autograd-consistent LoRA fails — it shifts the burden of proof onto
+  *demonstrating* an id-only RO fix.) Jacobian-distillation, charge-distillation,
+  and the deferred split-head cap-head remain empirically dead for RO.
 - **SRAM `force_ic`** is a true model-fidelity gap, not a solver-path bug: the
   inboard attractor is a stable NN fixed point (D3 confirmed) co-existing with an
   NR-unstable railed point. No 0-GPU solver continuation closes it. Open for
@@ -156,8 +170,9 @@ reconciled with P0-G's convergence result — see the gate files.)
 - **Ships:** the corrected SRAM `force_ic` probe (`solver.py` KCL-residual
   telemetry + honest flag; `verify_complex_sram_snm.py` `resid_ok AND rail_ok`
   with the `0.1·VDD` band) + Phase-0/1 gate files (incl. post-ship
-  `phase0{G,H}_*.md`) + the P0-G/H diagnostic scripts + `baseline_v6_4_4.json`. No
-  model, no checkpoint. V6.4.4 remains the active revision.
+  `phase0{G,H,I}_*.md`) + the P0-G/H/I diagnostic scripts (`v6_4_6_p0i_id_injection{,_v2}.py`)
+  + `baseline_v6_4_4.json`. No model, no checkpoint. V6.4.4 remains the active
+  revision. (P0-I is instrumentation-only — `git diff` over `pycircuitsim/` empty.)
 
 ---
 
