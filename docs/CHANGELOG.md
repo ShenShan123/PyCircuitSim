@@ -102,23 +102,61 @@ dead-end records. V6.4.4 remains canonical. Per-phase gate files under
 | E1 | Phase-2 RO Jacobian-distillation (gds/charge/cap-head) | P0-C: exact OSDI gds/caps swapped into the live RO transient move the period ≤0.01 ps (Jacobian-only, cancel at the fixed point). Killed before GPU. |
 | E2 | Phase-1 `force_ic` constraint-continuation homotopy (Norton + series-R) | Folds at g*≈1e-5 S into the metastable point, 0/8; the railed point is NR-unstable, not absent. Reverted. |
 | E3 | `VDD/4` rail-proximity band ("4/8 → 11/16") | False-PASS of the documented inboard attractor (qb at 24–30 % VDD); VDD-scaling artifact. Retracted; band tightened to `0.1·VDD` → honest 0/8. |
+| E4 | RO integrator selection / finer fixed tstep (P0-G) | BDF-2 never fires; Trap & BE both converge to a ~50.4 ps continuum limit (~8 % > NG) as tstep→0. BE's coarse-step "pass" is a truncation artifact. No shippable solver-integration fix. |
+| E5 | RO charge-value (qg/qd) distillation (P0-H) | Charge VALUES already exact vs OSDI (≤2 aC, ≤1.2 % NRMSE) → nothing to distill; cannot move the period. (Distinct from the P0-C Jacobian null: charges are inert because *already correct*, not because they cancel.) |
+
+### Post-ship RO diagnostics (P0-G + P0-H, 2026-06-02) — RO localised to the id-VALUE
+
+Two more 0-GPU diagnostics run after the 9/16 ship, closing the last untested RO
+axes (gate files `results/v6_4_6/phase0{G,H}_*.md`; scripts `v6_4_6_p0{g,h}_*.py`):
+
+- **P0-G (integration study) — no shippable solver fix.** The BDF-2 stiffness
+  auto-switch **never fires** on the TSMC7 RO (baseline is already pure
+  Trapezoidal). Forcing Trap = baseline (50.82 ps); forcing BE "passes" at the
+  coarse 2 ps step (45.14 ps) but a convergence study (×1/÷2/÷4/÷8) shows that is
+  an O(h) truncation artifact — BE climbs back above the gate and **both Trap and
+  BE Richardson-extrapolate to a common ≈50.4 ps continuum limit (~8 % > NG)**. So
+  integration truncation owns only **~0.4 ps** of the 4.18 ps gap; the rest is
+  model-owned. (No regression surface run — there is no shippable candidate.)
+- **P0-H (VALUE overlay) — charges exact, id-VALUE is the owner.** Overlaying the
+  NN's post-Rule-15 **VALUES** (`id`, `qg`, `qd`, `qs`) — what the transient
+  companion actually stamps and which, unlike the Jacobian, do NOT cancel at the
+  fixed point — vs analytic OSDI along the RO trip: **charge VALUES are exact**
+  (NRMSE 0.7–1.2 %, R²≥0.999, MaxErr ≤2 aC ≈ ≤2 % of the per-stage swing) ⇒ a
+  charge-value distillation has nothing to remove. The **`id` VALUE** carries the
+  residual: NMOS on-state NRMSE 9.6 %, **~20 % under-prediction of the dynamic
+  peak pull-down current** (−72 vs −90 µA) — direction-consistent with DN period
+  being *longer* than NG.
+
+**Net:** the ~3.7 ps model residual is owned by the **NMOS dynamic `id` VALUE** —
+gds/cap Jacobian (P0-C), charge VALUES (P0-H), and BE/Trap/BDF-2 integration
+(P0-G) are all exonerated. (P0-H originally mis-attributed the gap to integration;
+reconciled with P0-G's convergence result — see the gate files.)
 
 ### What V6.4.6 rules out / leaves for V6.4.7
 
-- **TSMC7 ring_osc** is owned by the **id-value + charge-value (qg/qd)
-  trajectories + BE/Trap/BDF-2 truncation**, NOT by the gds/cap Jacobian (P0-C).
-  No Jacobian-distillation or cap-head fix can move it. Open for V6.4.7: a scoped
-  **dynamic-id / qs-reconstruction / BDF-2** investigation; the loss-design lesson
-  from P0-E (clipped Huber-on-ln-current distill against clean OSDI gm/gds)
-  carries forward if a retrain is scoped.
+- **TSMC7 ring_osc** is owned by the **NMOS dynamic `id` VALUE** (P0-G/P0-H above),
+  NOT the gds/cap Jacobian (P0-C), NOT charge VALUES (P0-H), NOT integration
+  truncation (P0-G). Open for V6.4.7: **(P0-I)** a 0-GPU causal id-VALUE swap
+  (inject exact OSDI `id` into the live RO, re-measure the period — the P0-C
+  analogue) to confirm magnitude; if positive, a **frozen-base LoRA id-VALUE
+  distillation** (clipped Huber-on-ln-current against clean OSDI `id`, per P0-E)
+  is the indicated lever. Jacobian-distillation, charge-distillation, and the
+  deferred split-head cap-head are all empirically dead for RO.
 - **SRAM `force_ic`** is a true model-fidelity gap, not a solver-path bug: the
   inboard attractor is a stable NN fixed point (D3 confirmed) co-existing with an
   NR-unstable railed point. No 0-GPU solver continuation closes it. Open for
   V6.4.7: the Phase-3 physics-core off-leakage fix (P0-D-caveated: pinning device
   ≈VTH → inverter-trip / D4 risk) or the transient write-then-hold re-spec.
+- **SRAM `force_ic`** remains a model-fidelity off-leakage gap (D3 confirmed: the
+  inboard attractor is a stable NN fixed point co-existing with an NR-unstable
+  railed point). Open for V6.4.7: the Phase-3 physics-core off-leakage fix
+  (P0-D-caveated: pinning device ≈VTH → inverter-trip/D4 risk) or the transient
+  write-then-hold re-spec.
 - **Ships:** the corrected SRAM `force_ic` probe (`solver.py` KCL-residual
   telemetry + honest flag; `verify_complex_sram_snm.py` `resid_ok AND rail_ok`
-  with the `0.1·VDD` band) + Phase-0/1 gate files + `baseline_v6_4_4.json`. No
+  with the `0.1·VDD` band) + Phase-0/1 gate files (incl. post-ship
+  `phase0{G,H}_*.md`) + the P0-G/H diagnostic scripts + `baseline_v6_4_4.json`. No
   model, no checkpoint. V6.4.4 remains the active revision.
 
 ---
