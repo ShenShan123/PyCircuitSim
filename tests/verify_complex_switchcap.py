@@ -8,8 +8,14 @@ A CMOS transmission gate samples a DC input onto a hold capacitor under a
 PULSE clock. The harness measures:
   * charge-transfer accuracy  — Vsamp at the end of a sample window vs the
     NGSPICE ground truth (gate +/-5%, expressed as a fraction of VDD),
-  * hold-phase droop          — Vsamp decay across a hold window (gate +/-10%
-    of the NGSPICE droop).
+  * hold-phase droop          — Vsamp decay across a hold window. Gate:
+    |dn-ng| <= max(10% of the NGSPICE droop, 0.1% of VDD). The absolute
+    floor (V6.4.7 R0.1) reflects the solvers' two-point difference
+    tolerance (~2*(RELTOL*V_hold+VNTOL) ~ 0.6-0.9 mV); the old pure-
+    relative gate was unpassable when the NG droop sat at sub-uV levels,
+    and its nan-guard auto-passed ANY DirectNet droop when
+    |ng_droop| <= 1 uV. Droop%alw in the summary is the disagreement as
+    % of the allowance (<=100 passes).
 
 The DirectNet (LEVEL=73) transmission gate runs in PyCircuitSim transient;
 NGSPICE BSIM-CMG (LEVEL=72) is the ground truth.
@@ -45,7 +51,8 @@ from tests.common.complex import (  # noqa: E402
 )
 
 CHARGE_TOL = 0.05          # +/-5% of VDD on charge-transfer level
-DROOP_TOL = 0.10           # +/-10% of NGSPICE hold droop
+DROOP_TOL = 0.10           # +/-10% of NGSPICE hold droop (relative part)
+DROOP_FLOOR_FRAC = 1e-3    # absolute floor on the droop gate: 0.1% of VDD
 TRAN_TSTEP = 5e-12
 TRAN_TSTOP = 12e-9
 CLK_PER = 4e-9
@@ -131,17 +138,30 @@ def run_one(bt: BenchTech) -> Dict:
     metrics = full_metrics(dn_i, ng_i)
 
     charge_err = abs(dn_charge - ng_charge) / bt.vdd * 100.0
-    droop_err = (abs(dn_droop - ng_droop) / abs(ng_droop) * 100.0
-                 if abs(ng_droop) > 1e-6 else float("nan"))
+    # Droop gate: |dn-ng| <= max(DROOP_TOL*|ng|, DROOP_FLOOR_FRAC*VDD).
+    # The droop is the difference of two solver points, each honest only to
+    # RELTOL*V + VNTOL (NGSPICE defaults 1e-3*V_hold + 1e-6 ~ 0.43 mV here),
+    # so the two-point difference carries a ~2*(RELTOL*V_hold+VNTOL)
+    # ~ 0.6-0.9 mV tolerance ~ 1e-3*VDD. A pure-relative gate against a
+    # sub-uV NG droop demands agreement far below both solvers' tolerances
+    # (unpassable), while a nan-guard that skips tiny |ng| auto-passes ANY
+    # DN droop. NOTE: the floor admits up to ~50 nA of off-state leakage
+    # error over the 1.7 ns hold — this is a circuit-level gate, not a
+    # subthreshold-fidelity gate.
+    droop_abs = abs(dn_droop - ng_droop)
+    droop_allow = max(DROOP_TOL * abs(ng_droop), DROOP_FLOOR_FRAC * bt.vdd)
+    droop_err = droop_abs / droop_allow * 100.0
     charge_ok = charge_err <= CHARGE_TOL * 100
-    droop_ok = (not np.isfinite(droop_err)) or droop_err <= DROOP_TOL * 100
+    droop_ok = droop_abs <= droop_allow
     passed = charge_ok and droop_ok
     print(f"    waveform: {fmt_metrics(metrics)}")
-    print(f"    charge err={charge_err:.2f}% of VDD  droop err={droop_err:.1f}%"
+    print(f"    charge err={charge_err:.2f}% of VDD  "
+          f"droop |dn-ng|={droop_abs*1e3:.3f}mV "
+          f"({droop_err:.0f}% of allowance {droop_allow*1e3:.3f}mV)"
           f"  ->  {'PASS' if passed else 'FAIL'}")
     return {"tech": bt.name, "ng_charge": ng_charge, "dn_charge": dn_charge,
             "charge_err_pct": charge_err, "ng_droop": ng_droop,
-            "dn_droop": dn_droop, "droop_err_pct": droop_err,
+            "dn_droop": dn_droop, "droop_pct_of_allowance": droop_err,
             "partial": partial, "passed": passed, **metrics}
 
 
@@ -154,7 +174,8 @@ def main() -> int:
     print("=" * 78)
     print("Benchmark 3d — switched-cap unit cell: DirectNet vs NGSPICE BSIM-CMG")
     print(f"  Gates: charge transfer +/-{CHARGE_TOL*100:.0f}% of VDD,"
-          f" hold droop +/-{DROOP_TOL*100:.0f}%")
+          f" hold droop |dn-ng| <= max({DROOP_TOL*100:.0f}% of NG droop,"
+          f" {DROOP_FLOOR_FRAC*100:.1f}% of VDD)")
     print("=" * 78)
 
     results: List[Dict] = []
@@ -172,7 +193,7 @@ def main() -> int:
     print("SUMMARY — Benchmark 3d switched-cap unit cell")
     print("=" * 78)
     hdr = (f"{'Tech':8s} | {'NG chg V':>9s} | {'DN chg V':>9s} | "
-           f"{'ChgErr%':>8s} | {'DroopErr%':>10s} | {'NRMSE%':>7s} | "
+           f"{'ChgErr%':>8s} | {'Droop%alw':>10s} | {'NRMSE%':>7s} | "
            f"{'Status':>8s}")
     print(hdr)
     print("-" * len(hdr))
@@ -185,7 +206,8 @@ def main() -> int:
         n_pass += int(r.get("passed", False))
         print(f"{r['tech']:8s} | {r['ng_charge']:9.4f} | "
               f"{r.get('dn_charge', float('nan')):9.4f} | "
-              f"{r['charge_err_pct']:8.2f} | {r['droop_err_pct']:10.1f} | "
+              f"{r['charge_err_pct']:8.2f} | "
+              f"{r['droop_pct_of_allowance']:10.1f} | "
               f"{r['nrmse_pct']:7.2f} | {status:>8s}")
     print(f"\n  {n_pass}/{len(results)} passed both charge + droop gates")
     return 0

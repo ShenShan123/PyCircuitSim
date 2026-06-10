@@ -43,6 +43,27 @@ binding SC owner. SRAM `force_ic` still 0/8 but the inboard attractor moved
 band by ~25 mV on TSMC12/16) — consistent with the planned P0+P2+P3 joint
 ownership. Gate file: `results/v6_4_7/S2_P0_frame_fix.md`.
 
+### S3 = R0.1 — switchcap droop sub-gate repair (measurement correction)
+
+The hold-droop sub-gate was broken in BOTH directions: pure-relative error vs
+a sub-µV NGSPICE droop demanded 19–150 nV agreement (below both solvers'
+RELTOL·V+VNTOL tolerances — unpassable noise), while the `|ng| > 1e-6`
+nan-guard auto-passed ANY DirectNet droop — including TSMC7's 2.208 mV, the
+largest absolute disagreement on the board. Replaced with
+`|dn−ng| ≤ max(10 %·|ng|, 1e-3·VDD)`; the floor matches the principled
+two-point solver tolerance 2·(RELTOL·V_hold+VNTOL) = 0.61–0.90 mV within
+±20 %. Column renamed `DroopErr%` → `Droop%alw` (units changed to % of
+allowance). E3-class adversarial review verdict: **CORRECTION (net
+tightening)** — waveforms bit-identical, only verdict logic changed, the only
+flip is PASS→FAIL on the worst cell; an engineered floor would have needed
+≥3e-3·VDD to preserve the TSMC7 pass. Recorded blind spot: the floor admits
+~50 nA off-state leakage error (the V6.4.5 26 µV phantom-leak class would
+sail under) — subthreshold fidelity is P3/P4 territory, not this gate's.
+**Headline restated: V6.4.4 canonical = 8/16 under the repaired gate (its
+TSMC7 SC "pass" was a nan-guard artifact); current post-P0 honest count =
+9/16** (RO 3, opamp 2, butterfly 4, SC 0). Gate file:
+`results/v6_4_7/S3_R01_droop_gate_repair.md`.
+
 ---
 
 ## V6.4.6 — diagnosis-first architectural iteration; probe fix + dead ends, no behavioral change (2026-06-01/02)
