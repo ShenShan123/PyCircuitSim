@@ -1,6 +1,6 @@
 # DirectNet V6.4.7 — Ranked levers to improve NN compact-model accuracy in complex-circuit simulation
 
-**Date:** 2026-06-10 (rev. 2, same day)  •  **Status:** PROPOSED — REVISED after four-agent adversarial review (dead-end audit, ML methodology, simulator numerics, EV/risk)  •  **Branch:** `feat/v6.4.7` (cut from `feat/v6.4.6` @ `c5155e7`)
+**Date:** 2026-06-10 (rev. 2, same day; rev. 2.1 same day — sequencing serialized per user instruction: every lever is committed-or-rewound before the next starts)  •  **Status:** PROPOSED — REVISED after four-agent adversarial review (dead-end audit, ML methodology, simulator numerics, EV/risk)  •  **Branch:** `feat/v6.4.7` (cut from `feat/v6.4.6` @ `c5155e7`)
 **Authoring:** rev 1 — plan-mode synthesis + staff-engineer adversarial review (checked against recorded V5–V6.4.6 dead ends; three conflicts designed around: V5 Phase-C JAC-loss negative, E2-medium head-trim falsification, P0-A NR-instability of the railed SRAM point). rev 2 — four-agent panel found the **P0 NMOS source-frame bug**, retracted the switchcap droop premise, re-powered the campaign, and hardened selection discipline. Proposal IDs are stable from rev 1; the rev-2 ranking is the section order below (P0/R0 new; P4 now precedes P3 among GPU arms).
 
 **User rulings (2026-06-10):**
@@ -35,7 +35,10 @@ Training-pipeline facts behind these: data is DC-only pointwise op-points; loss 
 
 ## Execution order
 
-**P0 → R0 → P1 → P2 (week 1, all 0 GPU) → re-freeze baseline → full-arm campaign (P4 lead, P3, P5, P6, P7 + P8a rider; ≥4 seeds per config) → promotion.** A decision table (Sequencing §2) re-shapes campaign funding from week-1 outcomes. Gate files go under `results/v6_4_7/`.
+**Strictly serial — one lever at a time, dead ends rewound before the next starts:**
+S1 pre-flight → S2 P0 → S3 R0.1 → S4 R0.2 → S5 R0.3 → S6 P1 → S7 P2 → S8 re-freeze baseline + scorer → S9 SWA/EMA infra (pulled forward from P6) → S10 P4 → S11 P3 → S12 P5 (if S6 funds it) → S13 P8a → S14 P6 distillation → S15 P7 → S16 P8b (conditional) → S17 P9 (fallback) → S18 Stage-B composition → S19 promotion.
+
+Each step starts from a committed clean state, runs its verification gates, and resolves — **progress → commit; kill criteria met → `git reset`/revert + dead-end record** — before the next step begins. The decision table (Sequencing §2) re-shapes the campaign after S8. Gate files go under `results/v6_4_7/`.
 
 ---
 
@@ -138,7 +141,17 @@ Compose-at-inference: frozen MLP owns strong inversion, closed-form weak-inversi
 
 ## Sequencing
 
-1. **Week 1 (0 GPU):** P0 frame fix + lifted-source sweep → R0 switchcap package → P1 swap matrix → P2 raw-probe, then clamp relax → scorer extension (`gain_err` + **switchcap cells** — the scorer currently has none, and `baseline_v6_4_4.json` contains no SC cells and no opamp TSMC7/16) → **re-freeze `baseline_v6_4_7_pre.json` over all 16 cells + force_ic** → **commit the campaign infra** (`scripts/eval_v6_4_5_candidate.py`, `scripts/v6_4_5_search.py` are still untracked in git).
+**Protocol (applies to every step below):** execution is strictly serial — one lever at a time, no overlap. Each step starts from a clean committed state (`git commit` before touching anything), runs its verification gates, then resolves one of two ways before the next step begins: **(a) progress → commit**, becoming part of the baseline every later step builds on; **(b) kill criteria met → rewind** (`git reset`/revert the code; checkpoints stay on disk as inert artifacts that must not match the resolver pattern) **and record the dead end with the numbers that killed it**. No step starts while the previous one is unresolved. The proposal sections above stay in *rank* order (stable IDs); this section is the *execution* order.
+
+1. **Week 1 (0 GPU), serial S1–S8:**
+   - **S1 — pre-flight:** snapshot checkpoints + `manifest.sha256`; **commit the still-untracked campaign infra** (`scripts/eval_v6_4_5_candidate.py`, `scripts/v6_4_5_search.py`) so every later rewind has a clean base.
+   - **S2 = P0** frame fix + lifted-source sweep. Gates: 16-cell harness + force_ic 8 + inverter 8/8 + DC 55/55 + tran 64/64 + the new sweep. Correctness fix — ships regardless; the only stop is the lifted-source sweep regressing vs OSDI (investigate before proceeding, per P0 kill note).
+   - **S3 = R0.1** droop sub-gate repair, under the E3-class adversarial false-PASS review. Shown to be a loosening rather than a correction → rewind + dead-end record. Pass → recount the SC failing-gate census.
+   - **S4 = R0.2** symcaps SC-only re-test on post-P0 code (env-gated probe, zero code — nothing to rewind; record the result; per-circuit env-gated shipping is decided at S19, not here).
+   - **S5 = R0.3** SC per-device id/charge dump at the sample window + phi falling edge (diagnostic artifact only; settles the SC ownership split frame/clamp/charge/symcaps).
+   - **S6 = P1** swap matrix on post-P0 code (diagnostic script; both outcomes decisive — ~46.6–47 ps funds S12, ~92 ps pauses **all** model-side RO levers (S12 RO claim, S13, S16); see §2).
+   - **S7 = P2** — raw-reverse probe **first** (~20 LOC); garbage surface → record dead end, **skip the build** (SRAM rides S2+S11+S17). Else build the clamp relaxation; canaries fail → soft-blend variant; that fails too → rewind + dead-end record.
+   - **S8 — re-freeze:** scorer extension (`gain_err` + **switchcap cells** — the scorer currently has none, and `baseline_v6_4_4.json` contains no SC cells and no opamp TSMC7/16) → **re-freeze `baseline_v6_4_7_pre.json` over all 16 cells + force_ic on exactly the code that survived S2–S7** → commit. Then apply §2 to re-shape the campaign before any GPU is spent.
 2. **Decision table — week-1 outcomes re-shape campaign funding:**
 
    | Week-1 outcome | Re-shape |
@@ -153,8 +166,18 @@ Compose-at-inference: frozen MLP owns strong inversion, closed-form weak-inversi
    | P2 raw reverse surface is garbage | P2 dead end; SRAM rides on P0+P3 (+P9 fallback) |
    | P0+P2 already lift force_ic to ≥6/8 | P3 demoted to a cleanup λ arm |
 
-3. **Weeks 2–4 (full-arm campaign, ~250–300 GPU-h per user ruling):** arms = **P4 (lead)**, P3, P5 (if funded by P1), P6/P7/P8a riders; **≥4 seeds per config**; SWA/EMA flag on every arm. **Stage A:** arms run independently against the post-week-1 control at equal data and seeds. **Stage B:** compose the top-2 compatible winners (P3 loss + P4 loss stack; P5 data composes with either) and re-score — composition is budgeted, not assumed. Hold a **~20 % budget reserve** for scoring wall-clock (V6.4.5's 32-candidate scoring was a full phase; this campaign is larger with a longer vector).
-4. **Week 5:** promotion per the V6.4.6 protocol (baseline JSON, blind holdouts, per-tech mix allowed) + the rev-2 selection discipline below; CHANGELOG/CLAUDE.md; dead-end records for killed arms.
+3. **Weeks 2–4 (GPU campaign, ~250–300 GPU-h per user ruling), serial S9–S18 — one arm at a time, each fully scored and committed-or-rewound before the next starts.** Every arm runs **≥4 seeds per config** and A/Bs **against the S8-frozen control** at equal data — the control is *not* advanced mid-campaign even when an arm survives (a surviving arm's recipe is committed, but attribution stays against S8; composition happens once, at S18). Hold a **~20 % budget reserve** for scoring wall-clock (V6.4.5's 32-candidate scoring was a full phase; this campaign is larger with a longer vector).
+   - **S9 — SWA/EMA flag** (pulled forward from P6, ~20 LOC, `torch.optim.swa_utils`): must land and be committed **before the first arm**, since it is a default flag on every arm.
+   - **S10 = P4 (lead arm):** fine-tune-from-V6.4.4 λ-sweep first; kill gate (best-λ fine-tune does not cut TSMC7 gain err below ~15 % with inverter held) → do **not** fund the full retrain — rewind the trainer changes, record next to the V5 Phase-C entry. Else run the full-retrain sub-arm and score.
+   - **S11 = P3 (ship-required SRAM):** demoted to a cleanup λ arm if S2+S7 already lifted force_ic ≥6/8 (§2). Stage 1 loss, then the **mandatory** Stage 2 regen; re-run the P2 A/B after every P3 retrain. Kill (weak-inversion ratio not ≥10× with VTC ≤5 %) → rewind, escalate to S17.
+   - **S12 = P5** — runs only if S6 returned ~46.6–47 ps. Harvest NGSPICE corridors (post-P0 code only); `sample_class` plumbing + LDS-product renormalization. Kill (first scored arm RO err not <7 %) → stop at one iteration, rewind.
+   - **S13 = P8a rider** — immediately after S12 (same harvested corridors, adds per-point value supervision). Skipped if S6 paused model-side RO levers.
+   - **S14 = P6 distillation:** TSMC7 student from the 32-checkpoint seed bank (0-GPU teachers); other techs distilled from each *surviving* arm's 4 seeds — hence after S10–S13. Kill (not Pareto-≥ the best single seed on the scorer vector) → rewind.
+   - **S15 = P7 split-head:** run only against the scorer-selected surviving recipe. Kill (inverter regression beyond the documented ±1 % run-to-run scatter) → rewind.
+   - **S16 = P8b** — funded only if S12 failed **and** S6 exonerated the simulator; gated by held-out circuits.
+   - **S17 = P9 fallback** — only after S2+S7+S11 have all failed to close force_ic; stays behind the recorded go/no-go fit gate (≥4-decade suppression AND ≤5 % inv_trip simultaneously).
+   - **S18 — Stage B composition:** compose the top-2 compatible *surviving* winners (P3 loss + P4 loss stack; P5 data composes with either) and re-score — composition is budgeted, not assumed. Not Pareto-≥ the best single arm → rewind to the best single arm.
+4. **Week 5, S19 — promotion** per the V6.4.6 protocol (baseline JSON, blind holdouts, per-tech mix allowed) + the rev-2 selection discipline below; the R0.2 symcaps per-circuit env-gated shipping decision is made here; CHANGELOG/CLAUDE.md; a dead-end record for **every rewound step**, with the numbers that killed it.
 
 ## Verification
 
