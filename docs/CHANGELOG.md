@@ -64,6 +64,20 @@ TSMC7 SC "pass" was a nan-guard artifact); current post-P0 honest count =
 9/16** (RO 3, opamp 2, butterfly 4, SC 0). Gate file:
 `results/v6_4_7/S3_R01_droop_gate_repair.md`.
 
+### S4 = R0.2 — symcaps re-test: KILLED for SC (D1 now dead for RO and SC)
+
+`NN_SYMMETRIC_CAPS=1` on post-P0 code still improves SC charge transfer
+(TSMC5 14.65 → 3.68 %, TSMC16 13.14 → 1.38 % — both would pass; TSMC7
+3.06 → 1.76; TSMC12 10.29 → 8.69) **but explodes hold-phase droop to
+30–137 mV of genuine simulated drift** (no NR truncation; 40–170× the
+repaired gate's allowance) — a side effect invisible under the old
+auto-passing droop gate and caught immediately by the S3 repair.
+Per-circuit env-gated shipping is off the table. Ownership evidence
+recorded for S5/P5/P7: SC sample-phase charge error is substantially
+cap/charge-model-owned (symmetrization alone nearly closes it), while the
+asymmetric trans-caps (cgd ≠ cdg) are load-bearing during hold. Gate file:
+`results/v6_4_7/S4_R02_symcaps_retest.md`.
+
 ---
 
 ## V6.4.6 — diagnosis-first architectural iteration; probe fix + dead ends, no behavioral change (2026-06-01/02)
