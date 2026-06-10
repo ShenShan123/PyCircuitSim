@@ -227,20 +227,22 @@ class _MOSFETNNBase(Component):
         # Smooth-clamp sharpness; margin = 5% of per-dim training range
         self._clamp_beta = (1.0 / (0.05 * v_range)).to(self._device)
 
-    # ── Voltage prep: PMOS shift + smooth clamp + z-score ────────────
+    # ── Voltage prep: source shift + smooth clamp + z-score ──────────
 
     def _raw_voltages(
         self, voltages: Dict[str, float],
     ) -> Tuple[float, float, float, float]:
-        """Terminal voltages in the NN frame (PMOS source-shifted)."""
+        """Terminal voltages in the NN frame (source-referenced, Vs ≡ 0).
+
+        Training data is generated exclusively at Vs=0, so BOTH device
+        types must be source-shifted; shift invariance makes this exact.
+        """
         v_d = voltages.get(self.nodes[0], 0.0)
         v_g = voltages.get(self.nodes[1], 0.0)
         v_s = voltages.get(self.nodes[2], 0.0)
         v_b = voltages.get(self.nodes[3], 0.0)
 
-        if self._is_pmos:
-            return v_d - v_s, v_g - v_s, 0.0, v_b - v_s
-        return v_d, v_g, v_s, v_b
+        return v_d - v_s, v_g - v_s, 0.0, v_b - v_s
 
     def _clamp_norm_voltages(self, v_raw: torch.Tensor) -> torch.Tensor:
         """Softplus-clamp ``v_raw`` to [v_min, v_max] then z-score.

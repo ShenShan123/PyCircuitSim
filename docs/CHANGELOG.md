@@ -6,6 +6,45 @@ isn't burdened with chronology.
 
 ---
 
+## V6.4.7 (in progress) — serialized accuracy campaign; S2/P0 NMOS source-frame fix SHIPPED (2026-06-10)
+
+Plan: `docs/plans/2026-06-10-directnet-v6.4.7-accuracy.md` (rev 2.1 — strict
+serial chain S1–S19; every lever commits-or-rewinds before the next starts).
+User rulings: SRAM `force_ic` is ship-required; ~250–300 GPU-h campaign at
+≥4 seeds/config; multi-seed training fans out one-seed-per-GPU.
+
+### S2 = P0 — NMOS source-frame fix (first behavioral change since V6.4.4)
+
+`_raw_voltages` (`pycircuitsim/models/mosfet_nn.py`) source-shifted only PMOS;
+NMOS passed ABSOLUTE terminal voltages into a Vs≡0-trained network, so every
+lifted-source NMOS (opamp `vtail` diff pair, switchcap pass device, SRAM access
+transistors) was evaluated at phantom Vgs/Vds inflated by +Vs with Vbs=0. The
+~3-LOC fix shifts both device types; shift invariance makes it exact, and all
+downstream consumers use the invariant difference `v_d_nn − v_s_nn` (Rule 15
+unaffected). NN Rule 2 updated from "PMOS source-relative frame" to
+source-referenced for BOTH device types.
+
+**New permanent gate** `tests/verify_nn_lifted_source_dc.py` (NMOS Id–Vgs at
+Vs∈{0,0.1,0.2}·VDD vs NGSPICE OSDI, 4 techs, NRMSE ≤10 %): pre-fix the lifted
+rows read 10–64 % NRMSE / MRE up to 809 % / negative R² (Id over-predicted up
+to ~80× at low Vg — the vs input had zero coverage in any suite); post-fix
+**12/12 PASS** at 0.05–4.4 % — lifted rows as accurate as grounded controls.
+
+**Battery (CPU, OMP_NUM_THREADS=1):** inverter 8/8 (tran NRMSE bit-exact),
+DC 55/55, tran 64/64, ring_osc 3/4 **bit-identical** (TSMC7 50.83 ps / 8.98 %
+— all RO sources at rails, untouched by construction), SRAM butterfly 4/4.
+**Headline 9/16 → 10/16: TSMC12 opamp FLIPPED PASS (10.94 → 5.21 %).** TSMC5
+opamp holds PASS but moved 2.64 → 9.78 % (it was *selected* under the buggy
+frame — pre-arbitrated non-veto). TSMC7 opamp changed failure mode (30.7 %
+gain err → flat collapse), sharpening the P4 derivative-fragility case.
+Switchcap ~unchanged (1/4; TSMC12 8.33 → 10.29 %) ⇒ the frame was NOT the
+binding SC owner. SRAM `force_ic` still 0/8 but the inboard attractor moved
+**half-way to the rails** (qb ≈0.19–0.23 → 0.104–0.117 V, missing the 0.1·VDD
+band by ~25 mV on TSMC12/16) — consistent with the planned P0+P2+P3 joint
+ownership. Gate file: `results/v6_4_7/S2_P0_frame_fix.md`.
+
+---
+
 ## V6.4.6 — diagnosis-first architectural iteration; probe fix + dead ends, no behavioral change (2026-06-01/02)
 
 Plan: `docs/plans/2026-06-01-directnet-v6.4.6-ro-sram.md`. **Scope contract:**
