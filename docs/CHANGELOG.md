@@ -112,6 +112,37 @@ make the DN transient honor `.ic` uic-style (constrained-OP start, not the
 force_ic released re-solve), E3-class review, SC+RO re-run (shared runner)
 with blind vetoes on the three passing RO cells.
 
+### S6 = P1 — swap matrix + LEVEL=72 control: simulator EXONERATED, P0-I RETRACTED (2026-06-11)
+
+The plan's missing causal cell (exact OSDI id AND charges together in the
+live TSMC7 RO) was built (`scripts/v6_4_7_s6_p1_swap_matrix.py`, extending
+P0-I v2 to a fully consistent 13-key OSDI op-point; FD-verified conventions;
+the consistent device is ~2.5× faster than P0-I's hybrid) and run:
+**93.01 ps** (N+P), **92.91 ps** (NMOS-only) vs baseline 50.83 / NG 46.65 —
+half-periods uniform at ≈ NG's full period. Before accepting "solver
+indicted", the clean control nobody had run: **pycircuitsim's native
+LEVEL=72 path on the identical RO = 46.64 ps, ratio 1.000 vs NGSPICE
+(0.02 %)** — same solver, runner (S5b uic start), window, estimator, same
+resolved TSMC7 ULVT cards (`scripts/v6_4_7_s6_l72_ro_control.py`). A
+class-method-level device diff (`s6_artifact_probe`) then showed NN and L72
+agree on id/gm/gmb/ALL charges (+1.000) and differ in off-diag cap sign
+convention (NN raw +∂Q/∂V vs OSDI SPICE) and gds floor policy; a within-NN
+cap-flip experiment (`s6_capsign_experiment`) bounds the entire cap-sign
+question at **±1.3 % — second-order, and the NN's own convention is the
+better one** (flipping worsens all 4 techs). Verdicts: (1) simulator/harness
+**exonerated** — the §2 "pause all model-side RO levers" row resolves
+against the pause; (2) the ~92–93 ps numbers are **artifacts of the
+injection id-path mapping** (gds = floor(−OSDI gds) → |id|/2, Rule-15
+bypass) — exact line item recorded as open curiosity, not load-bearing;
+(3) **V6.4.6 P0-I is RETRACTED** — "id-VALUE non-separable from charge"
+rested on scheme-borne 92 ps evidence; id-only levers (P4, P8a, frozen-base
+LoRA) re-armed; (4) RO ownership reverts, unclouded, to the NN's ~20 %
+dynamic id peak pull-down deficit (P0-G/H; charges exact, integration
+~0.4 ps); (5) P5 funded, re-scoped to the id surface along trajectories;
+(6) methodology note — injection-style causal probes are convention-fragile
+on this codebase; use the native L72 device as the exact-physics endpoint
+(129 s vs ~4,400 s). Gate file `results/v6_4_7/S6_P1_swap_matrix.md`.
+
 ### S5b — uic-equivalent `.ic` start SHIPPED; SC failures become honest model errors; headline 10/16 (2026-06-11)
 
 `run_directnet_transient` now solves the OP with `.ic` nodes pinned by

@@ -1,0 +1,37 @@
+[S6-P1] mode=id_q_np  TSTOP=0.020 ns  SETTLE=0.005 ns  tstep=2 ps  (start-state: S5b constrained-.ic uic-equivalent, both sides)
+[S6-P1] FD convention check — NMOS @ (vd=0.375, vg=0.375, vs=0, vb=0):
+  FD cgd: raw dQ/dV=-1.644e-17  -OSDI cgd=-1.644e-17  rel=0.00%  OK
+  FD cgs: raw dQ/dV=-9.100e-17  -OSDI cgs=-9.100e-17  rel=0.00%  OK
+  FD cdg: raw dQ/dV=-4.768e-17  -OSDI cdg=-4.768e-17  rel=0.00%  OK
+  FD gm : -d(id)/dVg=+2.053e-04  OSDI gm=+2.053e-04  rel=0.00%  OK
+[S6-P1] FD convention check — PMOS @ (vd=0.375, vg=0.375, vs=0.750, vb=0.750):
+  FD cgd: raw dQ/dV=-1.595e-17  -OSDI cgd=-1.595e-17  rel=0.00%  OK
+  FD cgs: raw dQ/dV=-8.669e-17  -OSDI cgs=-8.669e-17  rel=0.00%  OK
+  FD cdg: raw dQ/dV=-4.136e-17  -OSDI cdg=-4.136e-17  rel=0.00%  OK
+  FD gm : -d(id)/dVg=+1.167e-04  OSDI gm=+1.167e-04  rel=0.00%  OK
+[S6-P1] NGSPICE ground truth period = nan ps
+[NN-resolver] L73.0 Mp1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+    [spot 1] Mp1 (vd=+0.000 vg=+0.000 vs=+0.000 vb=+0.000)  id NN=+0.0000e+00 OSDI=-0.0000e+00 A (Δ=+0.00e+00)  qg NN=+9.005 OSDI=+10.767 aC (Δ=1.762 aC)
+    [spot 2] Mn1 (vd=+0.000 vg=+0.000 vs=+0.000 vb=+0.000)  id NN=-0.0000e+00 OSDI=-0.0000e+00 A (Δ=+0.00e+00)  qg NN=-6.900 OSDI=-8.606 aC (Δ=1.706 aC)
+    [spot 3] Mp2 (vd=+0.750 vg=+0.000 vs=+0.000 vb=+0.000)  id NN=-0.0000e+00 OSDI=-1.0548e-04 A (Δ=+1.05e-04)  qg NN=+3.696 OSDI=-46.839 aC (Δ=50.534 aC)
+    [spot 4] Mn2 (vd=+0.750 vg=+0.000 vs=+0.000 vb=+0.000)  id NN=-3.4216e-08 OSDI=-0.0000e+00 A (Δ=-3.42e-08)  qg NN=-17.309 OSDI=-18.856 aC (Δ=1.547 aC)
+    [spot 5] Mp3 (vd=+0.000 vg=+0.750 vs=+0.000 vb=+0.000)  id NN=+0.0000e+00 OSDI=-0.0000e+00 A (Δ=+0.00e+00)  qg NN=+10.711 OSDI=+47.034 aC (Δ=36.323 aC)
+    [spot 6] Mn3 (vd=+0.000 vg=+0.750 vs=+0.000 vb=+0.000)  id NN=-0.0000e+00 OSDI=-0.0000e+00 A (Δ=+0.00e+00)  qg NN=+76.887 OSDI=+77.075 aC (Δ=0.188 aC)
+[S6-P1] id_q_np        period =     nan ps  err vs NG =    nan%  Δvs pre-S5b baseline 50.83 =   +nan ps  NRMSE =  32.53%  R2 =  -0.1170
+        partial=False reached=0.0200ns err=''
+        wall=148s  (7383 s/ns; 0.6 ns full run ≈ 1.23 h)  osdi_calls=25458 hits=79312 osdi_fail=0
+        NN-vs-OSDI at injected biases: injected_evals=26120 fallbacks=0  max|Δqg|=50.534 aC  max|Δqd|=34.851 aC  max|Δid|=105.479 uA  max rel id (|id|>1uA)=131.2% at bias=(np.float64(0.784), np.float64(0.233), 0.0, 0.0)
+        wave: vmin=0.002 vmax=0.007 swing=0.005V  n_rise=0 n_fall=0  half-periods(ps)=[]
+        saved waveform -> /data2/home/shenshan/NN_SPICE-refactor-nn/results/v6_4_7/s6_logs/wave_id_q_np_20ps.npz
+[S6-P1] VERDICT: period not measurable in this window (NaN) — extend tstop or judge from half-period diagnostics
+[S6-P1] results table -> /data2/home/shenshan/NN_SPICE-refactor-nn/results/v6_4_7/s6_logs/s6_p1_id_q_np_20ps.md
+

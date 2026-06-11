@@ -1,0 +1,20 @@
+[S6-P1] mode=baseline  TSTOP=0.600 ns  SETTLE=0.300 ns  tstep=2 ps  (start-state: S5b constrained-.ic uic-equivalent, both sides)
+[S6-P1] NGSPICE ground truth period = 46.65 ps
+[NN-resolver] L73.0 Mp1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[S6-P1] baseline       period =   50.83 ps  err vs NG =   8.96%  Δvs pre-S5b baseline 50.83 =  -0.00 ps  NRMSE =  50.89%  R2 =  -0.4470
+        partial=False reached=0.6000ns err=''
+        wall=79s  (132 s/ns; 0.6 ns full run ≈ 0.02 h)  osdi_calls=0 hits=0 osdi_fail=0
+        wave: vmin=-0.030 vmax=0.781 swing=0.811V  n_rise=6 n_fall=6  half-periods(ps)=[26.,26.,24.,26.,26.,24.,26.,26.,26.,24.,26.]
+        saved waveform -> /data2/home/shenshan/NN_SPICE-refactor-nn/results/v6_4_7/s6_logs/wave_baseline_600ps.npz
+[S6-P1] VERDICT(baseline): anchor under S5b uic-start = 50.83 ps (pre-S5b anchor 50.83 ps; NG 46.65 ps)
+[S6-P1] results table -> /data2/home/shenshan/NN_SPICE-refactor-nn/results/v6_4_7/s6_logs/s6_p1_baseline_600ps.md
+
