@@ -1,0 +1,866 @@
+
+==============================================================================
+--- TSMC16 (VDD=0.8 VT=svt Vin=0.48) ---
+[NN-resolver] L73.0 Mpc TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mnc TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mnt TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mpt TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+  NG chg=0.4048V droop=-0.001mV | DN chg=0.5099V droop=0.002mV | gate gap C*dV=+10.51fC
+[NN-resolver] L73.0 Mpc TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mnc TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mnt TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mpt TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+  OSDI cap-sign FD check (NMOS pass device, mid-sample bias):
+  FD cgd: raw dQ/dV=-6.586e-17  -OSDI cgd=-6.586e-17  rel=0.00%  OK
+  FD cgs: raw dQ/dV=-5.418e-17  -OSDI cgs=-5.418e-17  rel=0.00%  OK
+  FD cdg: raw dQ/dV=-6.196e-17  -OSDI cdg=-6.196e-17  rel=0.00%  OK
+  [RISE  ] C*dV=   -2.19fC | Q_res nn/os=   -2.14/   -2.17 | Q_cap nn/os=  -0.046/  -0.019 | Q_num=   -0.00fC
+  [SAMPLE] C*dV=  -18.06fC | Q_res nn/os=  -18.08/  -21.50 | Q_cap nn/os=  +0.027/  +0.028 | Q_num=   -0.00fC
+  [EDGE  ] C*dV=   -0.25fC | Q_res nn/os=   -0.27/   -0.57 | Q_cap nn/os=  +0.020/  +0.010 | Q_num=   -0.00fC
+  [HOLD  ] C*dV=   -0.00fC | Q_res nn/os=   +0.00/   +0.00 | Q_cap nn/os=  -0.000/  -0.000 | Q_num=   -0.00fC
+  CSV: /data2/home/shenshan/NN_SPICE-refactor-nn/results/v6_4_7/s5_sc_dump_TSMC16.csv  (3144 rows)
+
+  ===== TSMC16 per-device Rule-16 tables (NN post-Rule-15 vs OSDI, NN convention) =====
+  --- Mnc / RISE ---
+    id : MRE=  1034.32% | R2=  0.8427 | NRMSE=    7.80% | MaxErr=     3.25uA | mean(nn-os)=  +0.0379uA
+    qg : MRE=     6.04% | R2=  0.9962 | NRMSE=    2.31% | MaxErr=     5.52aC | mean(nn-os)=    +2.59aC
+    qd : MRE=     3.40% | R2=  0.9977 | NRMSE=    1.87% | MaxErr=     2.72aC | mean(nn-os)=    -1.23aC
+    qs : MRE=    29.46% | R2=  0.9933 | NRMSE=    3.01% | MaxErr=     2.73aC | mean(nn-os)=    -1.33aC
+    qb : MRE=    18.50% | R2=  0.9886 | NRMSE=    4.07% | MaxErr=   0.0683aC | mean(nn-os)=  -0.0301aC
+    cgg: MRE=     1.05% | R2=  0.9992 | NRMSE=    1.12% | MaxErr=     1.99aF | mean(nn-os)=   -0.799aF
+    cgd: MRE=     1.98% | R2=  0.9733 | NRMSE=    6.55% | MaxErr=     12.4aF | mean(nn-os)=  +0.0584aF
+    cgs: MRE=   101.75% | R2= -7.8578 | NRMSE=  116.60% | MaxErr=      118aF | mean(nn-os)=    +72.3aF
+    cdg: MRE=     2.04% | R2=  0.9976 | NRMSE=    1.97% | MaxErr=     1.72aF | mean(nn-os)=   +0.866aF
+    cdd: MRE=     1.90% | R2=  0.9535 | NRMSE=    8.68% | MaxErr=     15.7aF | mean(nn-os)=    -1.23aF
+    id clamp split (dQ into source, fC): REV: n=  4 dq=  +0.040  NEAR0: n=  7 dq=  -0.100  FREE: n= 33 dq=  +0.051
+  --- Mnc / SAMPLE ---
+    id : MRE=    99.93% | R2=-36.4632 | NRMSE=   44.73% | MaxErr=      5.9uA | mean(nn-os)=    -4.48uA
+    qg : MRE=     0.45% | R2=-21.0232 | NRMSE=   34.15% | MaxErr=    0.731aC | mean(nn-os)=   -0.517aC
+    qd : MRE=     1.01% | R2=-32.3434 | NRMSE=   41.99% | MaxErr=    0.634aC | mean(nn-os)=   +0.579aC
+    qs : MRE=     0.18% | R2=-115.3629 | NRMSE=   78.86% | MaxErr=     0.71aC | mean(nn-os)=  -0.0836aC
+    qb : MRE=     1.67% | R2=-20147276465940160.0000 | NRMSE=1031741597.97% | MaxErr=   0.0334aC | mean(nn-os)=  +0.0223aC
+    cgg: MRE=     0.57% | R2=-1666.4979 | NRMSE=  293.62% | MaxErr=     1.82aF | mean(nn-os)=    -1.24aF
+    cgd: MRE=   209.14% | R2=-6078663.6370 | NRMSE=18299.63% | MaxErr=      422aF | mean(nn-os)=     -226aF
+    cgs: MRE=   102.51% | R2=-2499416.9440 | NRMSE=11914.89% | MaxErr=      111aF | mean(nn-os)=     +110aF
+    cdg: MRE=     0.27% | R2=-241.4342 | NRMSE=  112.03% | MaxErr=    0.879aF | mean(nn-os)=   +0.182aF
+    cdd: MRE=    77.33% | R2=-1945703.8210 | NRMSE=10171.14% | MaxErr=      168aF | mean(nn-os)=    +53.9aF
+    id clamp split (dQ into source, fC): REV: n=340 dq=  +7.659  NEAR0: n=  1 dq=  -0.016  FREE: n=  0 dq=  +0.000
+  --- Mnc / EDGE ---
+    id : MRE=   325.50% | R2= -0.5854 | NRMSE=   32.00% | MaxErr=     14.4uA | mean(nn-os)=    -2.88uA
+    qg : MRE=     4.79% | R2=  0.9980 | NRMSE=    2.02% | MaxErr=     5.52aC | mean(nn-os)=     +1.7aC
+    qd : MRE=     3.16% | R2=  0.9987 | NRMSE=    1.66% | MaxErr=     2.72aC | mean(nn-os)=   -0.683aC
+    qs : MRE=    21.98% | R2=  0.9966 | NRMSE=    2.61% | MaxErr=     2.73aC | mean(nn-os)=       -1aC
+    qb : MRE=    14.52% | R2=  0.9931 | NRMSE=    3.68% | MaxErr=   0.0684aC | mean(nn-os)=  -0.0199aC
+    cgg: MRE=     0.96% | R2=  0.9995 | NRMSE=    1.08% | MaxErr=     1.87aF | mean(nn-os)=   -0.794aF
+    cgd: MRE=    42.33% | R2= -5.1679 | NRMSE=  118.59% | MaxErr=      126aF | mean(nn-os)=    -42.4aF
+    cgs: MRE=   101.87% | R2= -9.3373 | NRMSE=  147.81% | MaxErr=      110aF | mean(nn-os)=    +79.7aF
+    cdg: MRE=     1.64% | R2=  0.9985 | NRMSE=    1.81% | MaxErr=     2.08aF | mean(nn-os)=    +0.71aF
+    cdd: MRE=    21.74% | R2= -1.0715 | NRMSE=   68.58% | MaxErr=     52.8aF | mean(nn-os)=      +18aF
+    id clamp split (dQ into source, fC): REV: n= 31 dq=  +0.867  NEAR0: n=  2 dq=  -0.001  FREE: n= 28 dq=  +0.012
+  --- Mnc / HOLD ---
+    id : MRE=148233730688599462070190080.00% | R2=     nan | NRMSE=     nan% | MaxErr=     0.11uA | mean(nn-os)= -0.00148uA
+    qg : MRE=    11.23% | R2=-27781.1642 | NRMSE= 1465.00% | MaxErr=     5.52aC | mean(nn-os)=    +5.52aC
+    qd : MRE=     6.20% | R2=-6738.2510 | NRMSE=  721.54% | MaxErr=     2.72aC | mean(nn-os)=    -2.72aC
+    qs : MRE=    49.73% | R2=-107756650274816256.0000 | NRMSE=2881289337.20% | MaxErr=     2.73aC | mean(nn-os)=    -2.73aC
+    qb : MRE=    38.43% | R2=-655733199354097792.0000 | NRMSE=7118641539.40% | MaxErr=   0.0683aC | mean(nn-os)=  -0.0683aC
+    cgg: MRE=     1.88% | R2=-933941.6627 | NRMSE= 8507.24% | MaxErr=     1.84aF | mean(nn-os)=    -1.84aF
+    cgd: MRE=     0.28% | R2=-4773.3021 | NRMSE=  608.25% | MaxErr=    0.132aF | mean(nn-os)=   -0.131aF
+    cgs: MRE=   101.54% | R2=-13228899523954540.0000 | NRMSE=1009543473.06% | MaxErr=     51.1aF | mean(nn-os)=    +51.1aF
+    cdg: MRE=     3.73% | R2=-818055.6334 | NRMSE= 7961.96% | MaxErr=     1.72aF | mean(nn-os)=    +1.72aF
+    cdd: MRE=     0.67% | R2=-26352.6561 | NRMSE= 1429.05% | MaxErr=    0.314aF | mean(nn-os)=   +0.309aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n=  0 dq=  +0.000  FREE: n=340 dq=  +0.003
+  --- Mnt / RISE ---
+    id : MRE=    20.45% | R2= -0.1487 | NRMSE=   33.85% | MaxErr=    0.228uA | mean(nn-os)=  -0.0277uA
+    qg : MRE=   108.77% | R2= -1.7191 | NRMSE=   61.99% | MaxErr=     66.6aC | mean(nn-os)=    +42.6aC
+    qd : MRE=   114.79% | R2= -1.5306 | NRMSE=   60.02% | MaxErr=     32.1aC | mean(nn-os)=    -20.1aC
+    qs : MRE=    89.00% | R2= -1.9645 | NRMSE=   64.46% | MaxErr=     33.8aC | mean(nn-os)=    -22.1aC
+    qb : MRE=   219.48% | R2= -0.5725 | NRMSE=   47.81% | MaxErr=    0.744aC | mean(nn-os)=     -0.4aC
+    cgg: MRE=     6.11% | R2=  0.2705 | NRMSE=   27.40% | MaxErr=     9.26aF | mean(nn-os)=    +3.87aF
+    cgd: MRE=     4.72% | R2=  0.6739 | NRMSE=   18.07% | MaxErr=     8.86aF | mean(nn-os)=    -0.16aF
+    cgs: MRE=   100.45% | R2=-702.2976 | NRMSE=  939.04% | MaxErr=     51.6aF | mean(nn-os)=      +48aF
+    cdg: MRE=     3.25% | R2=  0.8133 | NRMSE=   13.87% | MaxErr=     4.79aF | mean(nn-os)=   -0.205aF
+    cdd: MRE=     9.28% | R2=  0.0305 | NRMSE=   31.59% | MaxErr=     5.54aF | mean(nn-os)=    +3.41aF
+    id clamp split (dQ into source, fC): REV: n= 44 dq=  +0.006  NEAR0: n=  0 dq=  +0.000  FREE: n=  0 dq=  +0.000
+  --- Mnt / SAMPLE ---
+    id : MRE=   100.00% | R2=-36.9597 | NRMSE=  174.03% | MaxErr=    0.228uA | mean(nn-os)=   -0.174uA
+    qg : MRE=     3.89% | R2=  0.9055 | NRMSE=    7.92% | MaxErr=     1.28aC | mean(nn-os)=   -0.747aC
+    qd : MRE=     5.26% | R2=-8131.8973 | NRMSE= 2759.98% | MaxErr=     1.79aC | mean(nn-os)=   +0.609aC
+    qs : MRE=     6.20% | R2=  0.9931 | NRMSE=    2.14% | MaxErr=    0.702aC | mean(nn-os)=  +0.0689aC
+    qb : MRE=     5.20% | R2=-194878770654590.4062 | NRMSE=358806975.66% | MaxErr=    0.188aC | mean(nn-os)=  +0.0694aC
+    cgg: MRE=     3.71% | R2= -8.7854 | NRMSE=   91.44% | MaxErr=     9.26aF | mean(nn-os)=    -4.51aF
+    cgd: MRE=     4.14% | R2=-126.2614 | NRMSE=  293.20% | MaxErr=     8.86aF | mean(nn-os)=    +2.58aF
+    cgs: MRE=   100.44% | R2=-813.3274 | NRMSE=  814.54% | MaxErr=     58.6aF | mean(nn-os)=    +55.3aF
+    cdg: MRE=     6.89% | R2=-328.3634 | NRMSE=  574.99% | MaxErr=     4.79aF | mean(nn-os)=    +4.28aF
+    cdd: MRE=     5.24% | R2=-322.1242 | NRMSE=  454.92% | MaxErr=     5.58aF | mean(nn-os)=    -3.24aF
+    id clamp split (dQ into source, fC): REV: n=341 dq=  +0.296  NEAR0: n=  0 dq=  +0.000  FREE: n=  0 dq=  +0.000
+  --- Mnt / EDGE ---
+    id : MRE=    39.34% | R2= -0.5506 | NRMSE=   57.70% | MaxErr=    0.122uA | mean(nn-os)=  -0.0419uA
+    qg : MRE=    51.30% | R2=  0.2092 | NRMSE=   39.26% | MaxErr=     50.1aC | mean(nn-os)=    +22.3aC
+    qd : MRE=    51.31% | R2=  0.2009 | NRMSE=   39.48% | MaxErr=     24.9aC | mean(nn-os)=    -11.1aC
+    qs : MRE=    47.65% | R2=  0.2125 | NRMSE=   39.16% | MaxErr=     24.5aC | mean(nn-os)=    -10.9aC
+    qb : MRE=   140.67% | R2=  0.3704 | NRMSE=   35.08% | MaxErr=    0.642aC | mean(nn-os)=   -0.261aC
+    cgg: MRE=     1.34% | R2=  0.9766 | NRMSE=    6.81% | MaxErr=     4.46aF | mean(nn-os)=    -1.49aF
+    cgd: MRE=    10.20% | R2=  0.5285 | NRMSE=   30.80% | MaxErr=     6.93aF | mean(nn-os)=    -4.86aF
+    cgs: MRE=   100.83% | R2=-104.3986 | NRMSE=  451.16% | MaxErr=     59.2aF | mean(nn-os)=    +52.4aF
+    cdg: MRE=     5.63% | R2=  0.8024 | NRMSE=   19.85% | MaxErr=     4.76aF | mean(nn-os)=    +2.95aF
+    cdd: MRE=     4.36% | R2=  0.7457 | NRMSE=   22.49% | MaxErr=     7.59aF | mean(nn-os)=    +1.32aF
+    id clamp split (dQ into source, fC): REV: n= 61 dq=  +0.013  NEAR0: n=  0 dq=  +0.000  FREE: n=  0 dq=  +0.000
+  --- Mnt / HOLD ---
+    id : MRE=     0.00% | R2=     nan | NRMSE=     nan% | MaxErr=        0uA | mean(nn-os)=       +0uA
+    qg : MRE=    85.51% | R2=-6210877140129.8174 | NRMSE=45332165.18% | MaxErr=     50.1aC | mean(nn-os)=    +50.1aC
+    qd : MRE=    86.56% | R2=-246352731681680860277735686144.0000 | NRMSE=2972433260822948.00% | MaxErr=     24.9aC | mean(nn-os)=    -24.9aC
+    qs : MRE=    81.86% | R2=-1490815906994.2241 | NRMSE=22209664.82% | MaxErr=     24.5aC | mean(nn-os)=    -24.5aC
+    qb : MRE=   361.40% | R2=-143633502583624626107056128.0000 | NRMSE=219066251119883.97% | MaxErr=    0.642aC | mean(nn-os)=   -0.642aC
+    cgg: MRE=     0.00% | R2=-3100373.8959 | NRMSE=32028.55% | MaxErr=  0.00296aF | mean(nn-os)= -0.00295aF
+    cgd: MRE=    14.68% | R2=-6481325806965407778301018112.0000 | NRMSE=1388201874461647.50% | MaxErr=     6.93aF | mean(nn-os)=    -6.93aF
+    cgs: MRE=   100.96% | R2=-805531757250022.6250 | NRMSE=516263634.97% | MaxErr=     47.6aF | mean(nn-os)=    +47.6aF
+    cdg: MRE=     5.28% | R2=-38594644442896919613602267136.0000 | NRMSE=3675467818446578.00% | MaxErr=     2.49aF | mean(nn-os)=    +2.49aF
+    cdd: MRE=     1.39% | R2=-505017756553443710290886656.0000 | NRMSE=344512120406692.75% | MaxErr=    0.658aF | mean(nn-os)=   +0.658aF
+    id clamp split (dQ into source, fC): REV: n=340 dq=  +0.000  NEAR0: n=  0 dq=  +0.000  FREE: n=  0 dq=  +0.000
+  --- Mpc / RISE ---
+    id : MRE=    69.57% | R2= -0.2880 | NRMSE=   29.40% | MaxErr=     13.8uA | mean(nn-os)=    +2.02uA
+    qg : MRE=     2.37% | R2=  0.9991 | NRMSE=    1.23% | MaxErr=     5.83aC | mean(nn-os)=   -0.293aC
+    qd : MRE=     1.98% | R2=  0.9994 | NRMSE=    1.00% | MaxErr=     2.54aC | mean(nn-os)=   -0.119aC
+    qs : MRE=    12.18% | R2=  0.9983 | NRMSE=    1.66% | MaxErr=     3.22aC | mean(nn-os)=   +0.402aC
+    qb : MRE=     5.14% | R2=  0.9949 | NRMSE=    2.73% | MaxErr=   0.0677aC | mean(nn-os)=   +0.011aC
+    cgg: MRE=     0.55% | R2=  0.9998 | NRMSE=    0.61% | MaxErr=     2.51aF | mean(nn-os)=   -0.529aF
+    cgd: MRE=    11.69% | R2=  0.6901 | NRMSE=   24.52% | MaxErr=     31.4aF | mean(nn-os)=    +14.5aF
+    cgs: MRE=    97.52% | R2= -8.7015 | NRMSE=  130.60% | MaxErr=      125aF | mean(nn-os)=     +100aF
+    cdg: MRE=     0.74% | R2=  0.9997 | NRMSE=    0.77% | MaxErr=     1.59aF | mean(nn-os)=   -0.285aF
+    cdd: MRE=     5.68% | R2=  0.9245 | NRMSE=   12.10% | MaxErr=     17.6aF | mean(nn-os)=    -4.06aF
+    id clamp split (dQ into source, fC): REV: n= 29 dq=  -0.446  NEAR0: n=  2 dq=  +0.002  FREE: n= 13 dq=  -0.000
+  --- Mpc / SAMPLE ---
+    id : MRE=1385315580730834537571942400.00% | R2=     nan | NRMSE=     nan% | MaxErr=   0.0527uA | mean(nn-os)=  +0.0139uA
+    qg : MRE=     9.61% | R2=-12936.9789 | NRMSE=  825.75% | MaxErr=     5.83aC | mean(nn-os)=    -5.82aC
+    qd : MRE=     5.07% | R2=-2450.2550 | NRMSE=  359.43% | MaxErr=     2.54aC | mean(nn-os)=    +2.53aC
+    qs : MRE=    29.89% | R2=-12720899000421838848.0000 | NRMSE=25914001104.08% | MaxErr=     3.22aC | mean(nn-os)=    +3.22aC
+    qb : MRE=    33.37% | R2=-305897642673851648.0000 | NRMSE=4013987017.23% | MaxErr=   0.0678aC | mean(nn-os)=  +0.0678aC
+    cgg: MRE=     1.53% | R2=-150312.9003 | NRMSE= 2807.08% | MaxErr=     1.53aF | mean(nn-os)=    -1.52aF
+    cgd: MRE=     1.07% | R2=-16058.0577 | NRMSE=  917.52% | MaxErr=    0.501aF | mean(nn-os)=   -0.497aF
+    cgs: MRE=   102.53% | R2=-1171512949387240704.0000 | NRMSE=7864299095.10% | MaxErr=     53.1aF | mean(nn-os)=    +53.1aF
+    cdg: MRE=     1.81% | R2=-45902.0723 | NRMSE= 1551.23% | MaxErr=    0.843aF | mean(nn-os)=   -0.841aF
+    cdd: MRE=     0.84% | R2=-9895.1674 | NRMSE=  720.26% | MaxErr=     0.39aF | mean(nn-os)=    +0.39aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n=  0 dq=  +0.000  FREE: n=341 dq=  -0.024
+  --- Mpc / EDGE ---
+    id : MRE=   667.60% | R2=  0.6623 | NRMSE=    7.72% | MaxErr=     11.1uA | mean(nn-os)=   +0.694uA
+    qg : MRE=     4.17% | R2=  0.9982 | NRMSE=    1.92% | MaxErr=     5.82aC | mean(nn-os)=    -1.79aC
+    qd : MRE=     2.46% | R2=  0.9990 | NRMSE=    1.42% | MaxErr=     2.53aC | mean(nn-os)=   +0.636aC
+    qs : MRE=    16.65% | R2=  0.9963 | NRMSE=    2.70% | MaxErr=     3.22aC | mean(nn-os)=    +1.13aC
+    qb : MRE=    12.42% | R2=  0.9900 | NRMSE=    4.42% | MaxErr=   0.0677aC | mean(nn-os)=  +0.0252aC
+    cgg: MRE=     0.82% | R2=  0.9998 | NRMSE=    0.69% | MaxErr=     2.48aF | mean(nn-os)=   -0.688aF
+    cgd: MRE=     7.63% | R2=  0.8305 | NRMSE=   19.71% | MaxErr=     43.7aF | mean(nn-os)=    +7.77aF
+    cgs: MRE=    98.96% | R2= -5.4130 | NRMSE=  109.08% | MaxErr=      138aF | mean(nn-os)=    +90.2aF
+    cdg: MRE=     0.96% | R2=  0.9997 | NRMSE=    0.75% | MaxErr=     1.22aF | mean(nn-os)=   -0.522aF
+    cdd: MRE=     4.36% | R2=  0.9102 | NRMSE=   14.34% | MaxErr=     46.3aF | mean(nn-os)=   -0.635aF
+    id clamp split (dQ into source, fC): REV: n= 21 dq=  -0.243  NEAR0: n=  6 dq=  +0.077  FREE: n= 34 dq=  -0.046
+  --- Mpc / HOLD ---
+    id : MRE=   100.00% | R2= -4.3063 | NRMSE=   20.18% | MaxErr=     4.92uA | mean(nn-os)=   +0.775uA
+    qg : MRE=     0.74% | R2=-90.7773 | NRMSE=   84.11% | MaxErr=     1.05aC | mean(nn-os)=   +0.909aC
+    qd : MRE=     1.16% | R2=-79.1533 | NRMSE=   78.63% | MaxErr=    0.759aC | mean(nn-os)=   -0.707aC
+    qs : MRE=     0.33% | R2=-156.4218 | NRMSE=  109.96% | MaxErr=    0.302aC | mean(nn-os)=   -0.199aC
+    qb : MRE=     0.23% | R2=-615385168523396.8750 | NRMSE=217823550.38% | MaxErr=  0.00261aC | mean(nn-os)= -0.00256aC
+    cgg: MRE=     0.09% | R2=-58.0887 | NRMSE=   67.97% | MaxErr=    0.613aF | mean(nn-os)=    -0.23aF
+    cgd: MRE=    23.60% | R2=-204861.8235 | NRMSE= 3865.87% | MaxErr=     43.7aF | mean(nn-os)=    +30.9aF
+    cgs: MRE=    94.87% | R2=-10497334.5237 | NRMSE=26970.04% | MaxErr=      125aF | mean(nn-os)=     +125aF
+    cdg: MRE=     0.40% | R2=-657.1395 | NRMSE=  226.77% | MaxErr=    0.625aF | mean(nn-os)=   -0.523aF
+    cdd: MRE=     9.35% | R2=-74765.7004 | NRMSE= 2366.12% | MaxErr=     46.3aF | mean(nn-os)=    -9.73aF
+    id clamp split (dQ into source, fC): REV: n=340 dq=  -1.318  NEAR0: n=  0 dq=  +0.000  FREE: n=  0 dq=  +0.000
+  --- Mpt / RISE ---
+    id : MRE=     1.79% | R2=  0.9998 | NRMSE=    0.55% | MaxErr=    0.577uA | mean(nn-os)=    -0.12uA
+    qg : MRE=    21.23% | R2=  0.9505 | NRMSE=    9.26% | MaxErr=       15aC | mean(nn-os)=    -9.11aC
+    qd : MRE=    15.38% | R2=  0.9534 | NRMSE=    8.95% | MaxErr=     6.94aC | mean(nn-os)=    +4.17aC
+    qs : MRE=    30.65% | R2=  0.9482 | NRMSE=    9.44% | MaxErr=     7.95aC | mean(nn-os)=    +4.85aC
+    qb : MRE=    48.54% | R2=  0.9228 | NRMSE=   11.54% | MaxErr=    0.155aC | mean(nn-os)=   +0.092aC
+    cgg: MRE=     2.19% | R2=  0.9981 | NRMSE=    1.89% | MaxErr=     3.65aF | mean(nn-os)=    +1.72aF
+    cgd: MRE=     2.95% | R2=  0.9807 | NRMSE=    5.57% | MaxErr=     2.09aF | mean(nn-os)=    -1.28aF
+    cgs: MRE=   100.49% | R2= -2.8360 | NRMSE=   83.94% | MaxErr=      154aF | mean(nn-os)=    +78.5aF
+    cdg: MRE=     5.54% | R2=  0.9862 | NRMSE=    4.98% | MaxErr=     4.14aF | mean(nn-os)=    -2.58aF
+    cdd: MRE=     3.09% | R2=  0.9702 | NRMSE=    6.97% | MaxErr=     2.19aF | mean(nn-os)=    +1.35aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n= 10 dq=  +0.025  FREE: n= 34 dq=  +0.001
+  --- Mpt / SAMPLE ---
+    id : MRE=    24.77% | R2=  0.9623 | NRMSE=    4.94% | MaxErr=     2.19uA | mean(nn-os)=    -1.83uA
+    qg : MRE=     0.29% | R2=  0.9992 | NRMSE=    0.77% | MaxErr=     0.33aC | mean(nn-os)=   +0.148aC
+    qd : MRE=     1.12% | R2=  0.9582 | NRMSE=    5.62% | MaxErr=     0.45aC | mean(nn-os)=   -0.261aC
+    qs : MRE=     0.38% | R2=  0.9995 | NRMSE=    0.58% | MaxErr=    0.128aC | mean(nn-os)=   +0.108aC
+    qb : MRE=     0.46% | R2=-18.6172 | NRMSE=   32.16% | MaxErr=  0.00728aC | mean(nn-os)= +0.00438aC
+    cgg: MRE=     0.48% | R2=  0.9136 | NRMSE=    8.33% | MaxErr=     1.44aF | mean(nn-os)=    -1.09aF
+    cgd: MRE=     2.27% | R2=  0.8640 | NRMSE=   10.09% | MaxErr=     4.21aF | mean(nn-os)=    +2.26aF
+    cgs: MRE=    98.15% | R2=-125.6103 | NRMSE=  318.44% | MaxErr=      153aF | mean(nn-os)=     +127aF
+    cdg: MRE=     0.51% | R2=  0.5348 | NRMSE=   18.83% | MaxErr=     1.09aF | mean(nn-os)=   +0.568aF
+    cdd: MRE=     2.51% | R2=  0.6808 | NRMSE=   15.26% | MaxErr=     5.45aF | mean(nn-os)=     -2.2aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n=341 dq=  +3.123  FREE: n=  0 dq=  +0.000
+  --- Mpt / EDGE ---
+    id : MRE=    30.88% | R2=  0.4469 | NRMSE=   32.90% | MaxErr=     2.03uA | mean(nn-os)=   -0.942uA
+    qg : MRE=    26.30% | R2=  0.8353 | NRMSE=   18.43% | MaxErr=     34.5aC | mean(nn-os)=    -13.2aC
+    qd : MRE=    25.94% | R2=  0.8361 | NRMSE=   18.36% | MaxErr=     16.9aC | mean(nn-os)=    +6.31aC
+    qs : MRE=    26.74% | R2=  0.8361 | NRMSE=   18.40% | MaxErr=     17.2aC | mean(nn-os)=    +6.75aC
+    qb : MRE=    79.70% | R2=  0.7231 | NRMSE=   24.07% | MaxErr=     0.41aC | mean(nn-os)=   +0.163aC
+    cgg: MRE=     2.92% | R2=  0.9955 | NRMSE=    3.17% | MaxErr=      6.7aF | mean(nn-os)=    +2.17aF
+    cgd: MRE=     6.48% | R2=  0.9766 | NRMSE=    7.17% | MaxErr=     5.31aF | mean(nn-os)=   -0.311aF
+    cgs: MRE=    99.48% | R2= -6.3947 | NRMSE=  130.45% | MaxErr=      116aF | mean(nn-os)=    +84.4aF
+    cdg: MRE=     4.01% | R2=  0.9913 | NRMSE=    4.43% | MaxErr=     4.54aF | mean(nn-os)=    -1.68aF
+    cdd: MRE=    10.39% | R2=  0.9011 | NRMSE=   14.75% | MaxErr=     8.05aF | mean(nn-os)=   +0.382aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n= 61 dq=  +0.287  FREE: n=  0 dq=  +0.000
+  --- Mpt / HOLD ---
+    id : MRE=     0.00% | R2=     nan | NRMSE=     nan% | MaxErr=        0uA | mean(nn-os)=       +0uA
+    qg : MRE=    58.79% | R2=-187705.1884 | NRMSE= 3807.96% | MaxErr=     31.5aC | mean(nn-os)=    -30.8aC
+    qd : MRE=    56.03% | R2=-184911.1110 | NRMSE= 3779.94% | MaxErr=     15.5aC | mean(nn-os)=    +15.1aC
+    qs : MRE=    59.79% | R2=-190292.0526 | NRMSE= 3833.68% | MaxErr=     15.7aC | mean(nn-os)=    +15.3aC
+    qb : MRE=   182.21% | R2=-197107.4797 | NRMSE= 3901.87% | MaxErr=    0.376aC | mean(nn-os)=   +0.367aC
+    cgg: MRE=     6.19% | R2=-406472.3479 | NRMSE= 5614.95% | MaxErr=     6.26aF | mean(nn-os)=    +6.14aF
+    cgd: MRE=    10.38% | R2=-1156342.8181 | NRMSE= 9471.36% | MaxErr=     5.12aF | mean(nn-os)=    -5.07aF
+    cgs: MRE=   101.08% | R2=-102083991.8073 | NRMSE=88975.45% | MaxErr=     49.6aF | mean(nn-os)=    +49.6aF
+    cdg: MRE=     8.72% | R2=-817174.0057 | NRMSE= 7962.08% | MaxErr=     4.32aF | mean(nn-os)=    -4.27aF
+    cdd: MRE=    15.96% | R2=-2736943.2478 | NRMSE=14571.42% | MaxErr=     7.86aF | mean(nn-os)=    +7.81aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n=340 dq=  +0.000  FREE: n=  0 dq=  +0.000
+
+==============================================================================
+--- TSMC12 (VDD=0.8 VT=svt Vin=0.48) ---
+[NN-resolver] L73.0 Mpc TECH=tsmc12 VT=svt -> tsmc12_dn_medium_pmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mnc TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mnt TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mpt TECH=tsmc12 VT=svt -> tsmc12_dn_medium_pmos_best.pt (scope=tsmc12, tech_code=0)
+  NG chg=0.4200V droop=-0.001mV | DN chg=0.5023V droop=0.001mV | gate gap C*dV=+8.23fC
+[NN-resolver] L73.0 Mpc TECH=tsmc12 VT=svt -> tsmc12_dn_medium_pmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mnc TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mnt TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mpt TECH=tsmc12 VT=svt -> tsmc12_dn_medium_pmos_best.pt (scope=tsmc12, tech_code=0)
+  OSDI cap-sign FD check (NMOS pass device, mid-sample bias):
+  FD cgd: raw dQ/dV=-5.798e-17  -OSDI cgd=-5.798e-17  rel=0.00%  OK
+  FD cgs: raw dQ/dV=-5.152e-17  -OSDI cgs=-5.152e-17  rel=0.00%  OK
+  FD cdg: raw dQ/dV=-5.594e-17  -OSDI cdg=-5.594e-17  rel=0.00%  OK
+  [RISE  ] C*dV=   -1.47fC | Q_res nn/os=   -1.44/   -1.52 | Q_cap nn/os=  -0.035/  -0.015 | Q_num=   -0.00fC
+  [SAMPLE] C*dV=  -12.28fC | Q_res nn/os=  -12.29/  -16.50 | Q_cap nn/os=  +0.017/  +0.018 | Q_num=   -0.00fC
+  [EDGE  ] C*dV=   -0.18fC | Q_res nn/os=   -0.20/   -0.49 | Q_cap nn/os=  +0.018/  +0.009 | Q_num=   -0.00fC
+  [HOLD  ] C*dV=   -0.00fC | Q_res nn/os=   +0.00/   +0.00 | Q_cap nn/os=  -0.000/  -0.000 | Q_num=   -0.00fC
+  CSV: /data2/home/shenshan/NN_SPICE-refactor-nn/results/v6_4_7/s5_sc_dump_TSMC12.csv  (3144 rows)
+
+  ===== TSMC12 per-device Rule-16 tables (NN post-Rule-15 vs OSDI, NN convention) =====
+  --- Mnc / RISE ---
+    id : MRE=  1016.93% | R2=  0.8124 | NRMSE=    8.37% | MaxErr=     3.61uA | mean(nn-os)=  +0.0732uA
+    qg : MRE=     5.98% | R2=  0.9959 | NRMSE=    2.41% | MaxErr=     5.42aC | mean(nn-os)=    +2.56aC
+    qd : MRE=     3.37% | R2=  0.9977 | NRMSE=    1.85% | MaxErr=     2.52aC | mean(nn-os)=    -1.12aC
+    qs : MRE=    32.81% | R2=  0.9919 | NRMSE=    3.29% | MaxErr=     2.81aC | mean(nn-os)=     -1.4aC
+    qb : MRE=    23.40% | R2=  0.9832 | NRMSE=    4.94% | MaxErr=   0.0862aC | mean(nn-os)=   -0.044aC
+    cgg: MRE=     1.84% | R2=  0.9978 | NRMSE=    1.87% | MaxErr=     3.09aF | mean(nn-os)=    -1.62aF
+    cgd: MRE=     2.54% | R2=  0.9759 | NRMSE=    6.21% | MaxErr=     10.2aF | mean(nn-os)=    -1.04aF
+    cgs: MRE=   101.57% | R2= -7.4583 | NRMSE=  118.64% | MaxErr=      109aF | mean(nn-os)=    +67.8aF
+    cdg: MRE=     2.07% | R2=  0.9978 | NRMSE=    1.90% | MaxErr=      1.6aF | mean(nn-os)=   +0.897aF
+    cdd: MRE=     2.88% | R2=  0.8668 | NRMSE=   14.67% | MaxErr=     22.4aF | mean(nn-os)=    -1.74aF
+    id clamp split (dQ into source, fC): REV: n=  4 dq=  +0.041  NEAR0: n=  8 dq=  -0.105  FREE: n= 32 dq=  +0.048
+  --- Mnc / SAMPLE ---
+    id : MRE=    99.93% | R2= -6.2844 | NRMSE=   27.09% | MaxErr=      3.7uA | mean(nn-os)=    -2.01uA
+    qg : MRE=     0.56% | R2=-25.4490 | NRMSE=   51.39% | MaxErr=     0.62aC | mean(nn-os)=   -0.595aC
+    qd : MRE=     1.31% | R2=-49.8748 | NRMSE=   71.22% | MaxErr=    0.758aC | mean(nn-os)=   +0.697aC
+    qs : MRE=     0.16% | R2=-22.3980 | NRMSE=   48.56% | MaxErr=    0.121aC | mean(nn-os)=  -0.0863aC
+    qb : MRE=     1.07% | R2=-8705861378199503.0000 | NRMSE=931165644.73% | MaxErr=   0.0167aC | mean(nn-os)=  -0.0148aC
+    cgg: MRE=     0.35% | R2=-446.7457 | NRMSE=  208.90% | MaxErr=     0.85aF | mean(nn-os)=   -0.747aF
+    cgd: MRE=     5.29% | R2=-3427.8399 | NRMSE=  584.37% | MaxErr=     9.39aF | mean(nn-os)=    +5.49aF
+    cgs: MRE=   103.07% | R2=-2638861.1192 | NRMSE=16307.09% | MaxErr=      108aF | mean(nn-os)=     +108aF
+    cdg: MRE=     0.76% | R2=-1223.6523 | NRMSE=  345.58% | MaxErr=    0.962aF | mean(nn-os)=     +0.8aF
+    cdd: MRE=    24.78% | R2=-157139.4813 | NRMSE= 3894.82% | MaxErr=     23.8aF | mean(nn-os)=    -21.9aF
+    id clamp split (dQ into source, fC): REV: n=340 dq=  +3.439  NEAR0: n=  1 dq=  -0.016  FREE: n=  0 dq=  +0.000
+  --- Mnc / EDGE ---
+    id : MRE=    91.31% | R2= -0.2492 | NRMSE=   26.73% | MaxErr=     14.3uA | mean(nn-os)=    -1.78uA
+    qg : MRE=     4.82% | R2=  0.9978 | NRMSE=    2.11% | MaxErr=     5.42aC | mean(nn-os)=    +1.68aC
+    qd : MRE=     3.15% | R2=  0.9987 | NRMSE=    1.66% | MaxErr=     2.53aC | mean(nn-os)=   -0.601aC
+    qs : MRE=    24.59% | R2=  0.9959 | NRMSE=    2.86% | MaxErr=     2.81aC | mean(nn-os)=    -1.04aC
+    qb : MRE=    18.09% | R2=  0.9903 | NRMSE=    4.35% | MaxErr=   0.0863aC | mean(nn-os)=  -0.0367aC
+    cgg: MRE=     1.50% | R2=  0.9987 | NRMSE=    1.67% | MaxErr=     3.16aF | mean(nn-os)=    -1.47aF
+    cgd: MRE=     7.24% | R2=  0.4004 | NRMSE=   37.04% | MaxErr=      171aF | mean(nn-os)=    +3.48aF
+    cgs: MRE=   102.02% | R2= -8.5183 | NRMSE=  141.92% | MaxErr=      108aF | mean(nn-os)=    +76.4aF
+    cdg: MRE=     1.71% | R2=  0.9986 | NRMSE=    1.76% | MaxErr=     1.62aF | mean(nn-os)=   +0.918aF
+    cdd: MRE=    13.79% | R2=  0.0257 | NRMSE=   47.02% | MaxErr=      113aF | mean(nn-os)=    -7.58aF
+    id clamp split (dQ into source, fC): REV: n= 31 dq=  +0.544  NEAR0: n=  2 dq=  -0.001  FREE: n= 28 dq=  +0.001
+  --- Mnc / HOLD ---
+    id : MRE=113098083254431240274575360.00% | R2=     nan | NRMSE=     nan% | MaxErr=    0.107uA | mean(nn-os)= -0.00113uA
+    qg : MRE=    11.35% | R2=-46701.0689 | NRMSE= 1699.10% | MaxErr=     5.41aC | mean(nn-os)=    +5.41aC
+    qd : MRE=     6.02% | R2=-10132.0228 | NRMSE=  791.44% | MaxErr=     2.52aC | mean(nn-os)=    -2.52aC
+    qs : MRE=    47.04% | R2=-120134256050098560.0000 | NRMSE=2722717258.47% | MaxErr=     2.81aC | mean(nn-os)=    -2.81aC
+    qb : MRE=    48.51% | R2=-1576348106119919616.0000 | NRMSE=9872445081.25% | MaxErr=   0.0862aC | mean(nn-os)=  -0.0862aC
+    cgg: MRE=     3.35% | R2=-4367445.3774 | NRMSE=16449.13% | MaxErr=     3.08aF | mean(nn-os)=    -3.08aF
+    cgd: MRE=     1.44% | R2=-178481.8067 | NRMSE= 3325.27% | MaxErr=    0.628aF | mean(nn-os)=   -0.624aF
+    cgs: MRE=   101.23% | R2=-15128788370426644.0000 | NRMSE=966208721.66% | MaxErr=     47.8aF | mean(nn-os)=    +47.8aF
+    cdg: MRE=     3.69% | R2=-1172370.9432 | NRMSE= 8522.39% | MaxErr=      1.6aF | mean(nn-os)=     +1.6aF
+    cdd: MRE=     0.64% | R2=-34784.5202 | NRMSE= 1468.01% | MaxErr=    0.281aF | mean(nn-os)=   +0.275aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n=  0 dq=  +0.000  FREE: n=340 dq=  +0.002
+  --- Mnt / RISE ---
+    id : MRE=    20.45% | R2= -0.1520 | NRMSE=   33.95% | MaxErr=    0.228uA | mean(nn-os)=  -0.0282uA
+    qg : MRE=    76.68% | R2= -1.2166 | NRMSE=   56.10% | MaxErr=     57.1aC | mean(nn-os)=    +35.7aC
+    qd : MRE=   101.28% | R2= -1.1065 | NRMSE=   54.83% | MaxErr=     27.6aC | mean(nn-os)=      -17aC
+    qs : MRE=    69.53% | R2= -1.3440 | NRMSE=   57.53% | MaxErr=     28.6aC | mean(nn-os)=    -18.2aC
+    qb : MRE=   250.27% | R2= -0.9042 | NRMSE=   52.62% | MaxErr=     0.85aC | mean(nn-os)=   -0.495aC
+    cgg: MRE=     6.13% | R2=  0.1036 | NRMSE=   30.96% | MaxErr=      7.6aF | mean(nn-os)=    +4.83aF
+    cgd: MRE=     2.07% | R2=  0.8743 | NRMSE=   11.37% | MaxErr=     5.12aF | mean(nn-os)=  +0.0989aF
+    cgs: MRE=   101.74% | R2=-550.0121 | NRMSE=  826.52% | MaxErr=     50.1aF | mean(nn-os)=      +46aF
+    cdg: MRE=     8.28% | R2= -0.1753 | NRMSE=   35.42% | MaxErr=     5.12aF | mean(nn-os)=    -3.33aF
+    cdd: MRE=     7.06% | R2=  0.1926 | NRMSE=   29.34% | MaxErr=     4.16aF | mean(nn-os)=    +2.64aF
+    id clamp split (dQ into source, fC): REV: n= 44 dq=  +0.006  NEAR0: n=  0 dq=  +0.000  FREE: n=  0 dq=  +0.000
+  --- Mnt / SAMPLE ---
+    id : MRE=   100.00% | R2=-20.9559 | NRMSE=  139.00% | MaxErr=    0.228uA | mean(nn-os)=   -0.164uA
+    qg : MRE=     2.53% | R2=  0.9183 | NRMSE=    7.39% | MaxErr=    0.682aC | mean(nn-os)=   -0.457aC
+    qd : MRE=     4.12% | R2=-3296.9490 | NRMSE= 1903.10% | MaxErr=     1.01aC | mean(nn-os)=    +0.41aC
+    qs : MRE=     2.24% | R2=  0.9911 | NRMSE=    2.44% | MaxErr=    0.444aC | mean(nn-os)=  -0.0136aC
+    qb : MRE=     4.44% | R2=-263612173589958.3438 | NRMSE=418437770.11% | MaxErr=    0.117aC | mean(nn-os)=  +0.0613aC
+    cgg: MRE=     3.50% | R2= -9.5881 | NRMSE=   94.12% | MaxErr=     5.51aF | mean(nn-os)=    -3.91aF
+    cgd: MRE=     9.10% | R2=-1006.6834 | NRMSE=  942.88% | MaxErr=     21.5aF | mean(nn-os)=   +0.683aF
+    cgs: MRE=   101.53% | R2=-1347.6541 | NRMSE= 1065.97% | MaxErr=       55aF | mean(nn-os)=    +52.9aF
+    cdg: MRE=     3.83% | R2=-102.3601 | NRMSE=  337.59% | MaxErr=     2.62aF | mean(nn-os)=    +2.15aF
+    cdd: MRE=     5.76% | R2=-1543.0399 | NRMSE= 1095.63% | MaxErr=     10.9aF | mean(nn-os)=    -2.26aF
+    id clamp split (dQ into source, fC): REV: n=341 dq=  +0.279  NEAR0: n=  0 dq=  +0.000  FREE: n=  0 dq=  +0.000
+  --- Mnt / EDGE ---
+    id : MRE=    39.34% | R2= -0.5544 | NRMSE=   57.53% | MaxErr=    0.103uA | mean(nn-os)=  -0.0354uA
+    qg : MRE=    54.28% | R2=  0.2307 | NRMSE=   38.73% | MaxErr=     46.4aC | mean(nn-os)=    +20.7aC
+    qd : MRE=    50.47% | R2=  0.2392 | NRMSE=   38.53% | MaxErr=     22.8aC | mean(nn-os)=    -10.1aC
+    qs : MRE=    44.68% | R2=  0.2237 | NRMSE=   38.90% | MaxErr=     22.9aC | mean(nn-os)=    -10.2aC
+    qb : MRE=   166.29% | R2=  0.1784 | NRMSE=   40.08% | MaxErr=    0.755aC | mean(nn-os)=   -0.323aC
+    cgg: MRE=     3.24% | R2=  0.8664 | NRMSE=   16.22% | MaxErr=     5.64aF | mean(nn-os)=    -1.35aF
+    cgd: MRE=    20.25% | R2= -6.2376 | NRMSE=  119.93% | MaxErr=       27aF | mean(nn-os)=       +9aF
+    cgs: MRE=   101.88% | R2=-118.9648 | NRMSE=  482.83% | MaxErr=     55.2aF | mean(nn-os)=    +49.5aF
+    cdg: MRE=     4.72% | R2=  0.8015 | NRMSE=   19.81% | MaxErr=     2.73aF | mean(nn-os)=   -0.119aF
+    cdd: MRE=    11.54% | R2= -0.5452 | NRMSE=   55.23% | MaxErr=     8.52aF | mean(nn-os)=     +3.7aF
+    id clamp split (dQ into source, fC): REV: n= 61 dq=  +0.011  NEAR0: n=  0 dq=  +0.000  FREE: n=  0 dq=  +0.000
+  --- Mnt / HOLD ---
+    id : MRE=     0.00% | R2=     nan | NRMSE=     nan% | MaxErr=        0uA | mean(nn-os)=       +0uA
+    qg : MRE=    82.47% | R2=-19357123319074.6289 | NRMSE=71056967.75% | MaxErr=     46.4aC | mean(nn-os)=    +46.4aC
+    qd : MRE=    81.94% | R2=-4602706571874840827424248168448.0000 | NRMSE=21761751282118676.00% | MaxErr=     22.8aC | mean(nn-os)=    -22.8aC
+    qs : MRE=    79.84% | R2=-4701216872483.2041 | NRMSE=35018005.42% | MaxErr=     22.9aC | mean(nn-os)=    -22.9aC
+    qb : MRE=   425.04% | R2=-630255720857610918880608256.0000 | NRMSE=407074182901678.12% | MaxErr=    0.755aC | mean(nn-os)=   -0.755aC
+    cgg: MRE=     2.76% | R2=-7637018924915.0039 | NRMSE=44632201.94% | MaxErr=     2.48aF | mean(nn-os)=    +2.48aF
+    cgd: MRE=     5.65% | R2=-1966374775036158138155794432.0000 | NRMSE=676686830888922.88% | MaxErr=      2.5aF | mean(nn-os)=     -2.5aF
+    cgs: MRE=   102.25% | R2=-2535802430583414.0000 | NRMSE=813287479.76% | MaxErr=     45.2aF | mean(nn-os)=    +45.2aF
+    cdg: MRE=     6.16% | R2=-48275727537326895300412964864.0000 | NRMSE=44265410743375448.00% | MaxErr=     2.73aF | mean(nn-os)=    -2.73aF
+    cdd: MRE=    19.24% | R2=-172810753335744702630688980992.0000 | NRMSE=7279761138837738.00% | MaxErr=     8.52aF | mean(nn-os)=    +8.52aF
+    id clamp split (dQ into source, fC): REV: n=340 dq=  +0.000  NEAR0: n=  0 dq=  +0.000  FREE: n=  0 dq=  +0.000
+  --- Mpc / RISE ---
+    id : MRE=    29.87% | R2= -0.1906 | NRMSE=   29.63% | MaxErr=       14uA | mean(nn-os)=     +1.8uA
+    qg : MRE=     1.92% | R2=  0.9993 | NRMSE=    1.10% | MaxErr=     5.15aC | mean(nn-os)=   -0.492aC
+    qd : MRE=     2.08% | R2=  0.9994 | NRMSE=    0.98% | MaxErr=     2.28aC | mean(nn-os)=   -0.137aC
+    qs : MRE=     5.90% | R2=  0.9986 | NRMSE=    1.52% | MaxErr=     2.79aC | mean(nn-os)=   +0.618aC
+    qb : MRE=     6.01% | R2=  0.9928 | NRMSE=    3.23% | MaxErr=   0.0798aC | mean(nn-os)=  +0.0116aC
+    cgg: MRE=     0.60% | R2=  0.9998 | NRMSE=    0.66% | MaxErr=     3.02aF | mean(nn-os)=    -0.41aF
+    cgd: MRE=     4.58% | R2=  0.9617 | NRMSE=    8.62% | MaxErr=     18.1aF | mean(nn-os)=    -4.26aF
+    cgs: MRE=    97.59% | R2= -8.1197 | NRMSE=  126.51% | MaxErr=      122aF | mean(nn-os)=      +97aF
+    cdg: MRE=     1.21% | R2=  0.9992 | NRMSE=    1.22% | MaxErr=     2.32aF | mean(nn-os)=  +0.0235aF
+    cdd: MRE=     1.71% | R2=  0.9538 | NRMSE=    9.46% | MaxErr=     39.1aF | mean(nn-os)=   -0.589aF
+    id clamp split (dQ into source, fC): REV: n= 29 dq=  -0.399  NEAR0: n=  2 dq=  +0.002  FREE: n= 13 dq=  -0.000
+  --- Mpc / SAMPLE ---
+    id : MRE=936632114446516126767644672.00% | R2=     nan | NRMSE=     nan% | MaxErr=   0.0312uA | mean(nn-os)= +0.00937uA
+    qg : MRE=     8.99% | R2=-11960.4511 | NRMSE= 1090.07% | MaxErr=     5.15aC | mean(nn-os)=    -5.15aC
+    qd : MRE=     4.88% | R2=-2337.2473 | NRMSE=  481.96% | MaxErr=     2.28aC | mean(nn-os)=    +2.28aC
+    qs : MRE=    25.78% | R2=-26941488880970756096.0000 | NRMSE=51773911915.76% | MaxErr=     2.79aC | mean(nn-os)=    +2.79aC
+    qb : MRE=    39.28% | R2=-453277431739469888.0000 | NRMSE=6707876251.03% | MaxErr=   0.0798aC | mean(nn-os)=  +0.0797aC
+    cgg: MRE=     1.16% | R2=-71455.7075 | NRMSE= 2657.10% | MaxErr=     1.07aF | mean(nn-os)=    +1.06aF
+    cgd: MRE=     0.52% | R2=-3151.9237 | NRMSE=  558.14% | MaxErr=    0.224aF | mean(nn-os)=   -0.223aF
+    cgs: MRE=   101.17% | R2=-2579196442185122304.0000 | NRMSE=16019705062.32% | MaxErr=     48.3aF | mean(nn-os)=    +48.3aF
+    cdg: MRE=     5.42% | R2=-336822.9760 | NRMSE= 5768.84% | MaxErr=     2.32aF | mean(nn-os)=    -2.31aF
+    cdd: MRE=     0.44% | R2=-2198.5667 | NRMSE=  466.18% | MaxErr=    0.188aF | mean(nn-os)=   +0.187aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n=  0 dq=  +0.000  FREE: n=341 dq=  -0.016
+  --- Mpc / EDGE ---
+    id : MRE=   603.24% | R2=  0.7326 | NRMSE=    7.87% | MaxErr=     4.85uA | mean(nn-os)=   +0.452uA
+    qg : MRE=     3.66% | R2=  0.9985 | NRMSE=    1.77% | MaxErr=     5.15aC | mean(nn-os)=    -1.75aC
+    qd : MRE=     2.43% | R2=  0.9991 | NRMSE=    1.36% | MaxErr=     2.28aC | mean(nn-os)=    +0.56aC
+    qs : MRE=    10.95% | R2=  0.9970 | NRMSE=    2.44% | MaxErr=     2.79aC | mean(nn-os)=    +1.16aC
+    qb : MRE=    14.67% | R2=  0.9861 | NRMSE=    5.21% | MaxErr=   0.0797aC | mean(nn-os)=  +0.0296aC
+    cgg: MRE=     0.70% | R2=  0.9998 | NRMSE=    0.58% | MaxErr=     1.27aF | mean(nn-os)=  +0.0479aF
+    cgd: MRE=     2.56% | R2=  0.9827 | NRMSE=    6.29% | MaxErr=     24.9aF | mean(nn-os)=   -0.103aF
+    cgs: MRE=    98.58% | R2= -4.9940 | NRMSE=  111.89% | MaxErr=      131aF | mean(nn-os)=    +86.2aF
+    cdg: MRE=     2.27% | R2=  0.9987 | NRMSE=    1.67% | MaxErr=     2.31aF | mean(nn-os)=   -0.621aF
+    cdd: MRE=     2.67% | R2=  0.9689 | NRMSE=    8.44% | MaxErr=     26.6aF | mean(nn-os)=   -0.484aF
+    id clamp split (dQ into source, fC): REV: n= 20 dq=  -0.196  NEAR0: n=  7 dq=  +0.099  FREE: n= 34 dq=  -0.041
+  --- Mpc / HOLD ---
+    id : MRE=   100.00% | R2=-15.5293 | NRMSE=   31.91% | MaxErr=     4.85uA | mean(nn-os)=    +1.16uA
+    qg : MRE=     0.34% | R2=-27.4314 | NRMSE=   41.89% | MaxErr=    0.456aC | mean(nn-os)=   +0.397aC
+    qd : MRE=     1.21% | R2=-129.0847 | NRMSE=   89.62% | MaxErr=    0.745aC | mean(nn-os)=   -0.702aC
+    qs : MRE=     0.54% | R2=-572.1146 | NRMSE=  187.84% | MaxErr=     0.31aC | mean(nn-os)=   +0.309aC
+    qb : MRE=     0.32% | R2=-1906416595772383.5000 | NRMSE=343027437.47% | MaxErr=    0.011aC | mean(nn-os)= -0.00363aC
+    cgg: MRE=     0.42% | R2=-2007.9220 | NRMSE=  354.04% | MaxErr=     1.25aF | mean(nn-os)=    -1.08aF
+    cgd: MRE=     0.66% | R2=-1254.5415 | NRMSE=  273.73% | MaxErr=     24.9aF | mean(nn-os)=   -0.218aF
+    cgs: MRE=    95.24% | R2=-16264826.4889 | NRMSE=30633.31% | MaxErr=      122aF | mean(nn-os)=     +122aF
+    cdg: MRE=     0.41% | R2=-1053.4553 | NRMSE=  256.41% | MaxErr=    0.634aF | mean(nn-os)=   +0.523aF
+    cdd: MRE=     3.99% | R2=-22304.3676 | NRMSE= 1163.40% | MaxErr=     26.6aF | mean(nn-os)=    -3.95aF
+    id clamp split (dQ into source, fC): REV: n=340 dq=  -1.974  NEAR0: n=  0 dq=  +0.000  FREE: n=  0 dq=  +0.000
+  --- Mpt / RISE ---
+    id : MRE=     1.46% | R2=  0.9964 | NRMSE=    2.48% | MaxErr=     1.66uA | mean(nn-os)=   -0.369uA
+    qg : MRE=    26.43% | R2=  0.8983 | NRMSE=   13.27% | MaxErr=     18.9aC | mean(nn-os)=    -11.7aC
+    qd : MRE=    21.24% | R2=  0.9026 | NRMSE=   12.96% | MaxErr=     8.86aC | mean(nn-os)=    +5.43aC
+    qs : MRE=    32.82% | R2=  0.8963 | NRMSE=   13.43% | MaxErr=     9.78aC | mean(nn-os)=    +6.13aC
+    qb : MRE=    86.04% | R2=  0.7558 | NRMSE=   20.61% | MaxErr=    0.265aC | mean(nn-os)=   +0.164aC
+    cgg: MRE=     5.79% | R2=  0.9873 | NRMSE=    4.81% | MaxErr=     8.19aF | mean(nn-os)=    +5.28aF
+    cgd: MRE=     2.99% | R2=  0.9899 | NRMSE=    4.06% | MaxErr=     2.22aF | mean(nn-os)=    -1.44aF
+    cgs: MRE=   100.06% | R2= -2.9203 | NRMSE=   85.10% | MaxErr=      140aF | mean(nn-os)=    +71.1aF
+    cdg: MRE=    10.35% | R2=  0.9571 | NRMSE=    8.78% | MaxErr=     6.91aF | mean(nn-os)=    -4.65aF
+    cdd: MRE=     1.61% | R2=  0.9954 | NRMSE=    2.77% | MaxErr=     1.12aF | mean(nn-os)=   +0.749aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n= 44 dq=  +0.081  FREE: n=  0 dq=  +0.000
+  --- Mpt / SAMPLE ---
+    id : MRE=    34.11% | R2=  0.8759 | NRMSE=    8.96% | MaxErr=     2.69uA | mean(nn-os)=    -2.31uA
+    qg : MRE=     0.33% | R2=  0.9981 | NRMSE=    1.15% | MaxErr=     0.31aC | mean(nn-os)=   +0.117aC
+    qd : MRE=     1.16% | R2=  0.9197 | NRMSE=    7.71% | MaxErr=    0.341aC | mean(nn-os)=   -0.242aC
+    qs : MRE=     0.50% | R2=  0.9979 | NRMSE=    1.21% | MaxErr=    0.226aC | mean(nn-os)=   +0.132aC
+    qb : MRE=     0.60% | R2=-27.4163 | NRMSE=   53.14% | MaxErr=  0.00835aC | mean(nn-os)= -0.00674aC
+    cgg: MRE=     0.10% | R2=  0.9887 | NRMSE=    3.04% | MaxErr=    0.594aF | mean(nn-os)=   -0.206aF
+    cgd: MRE=     2.67% | R2=  0.6734 | NRMSE=   14.79% | MaxErr=      5.4aF | mean(nn-os)=    +2.55aF
+    cgs: MRE=    99.04% | R2=-195.7951 | NRMSE=  388.81% | MaxErr=      139aF | mean(nn-os)=     +119aF
+    cdg: MRE=     0.52% | R2= -0.1215 | NRMSE=   30.90% | MaxErr=     1.08aF | mean(nn-os)=   +0.538aF
+    cdd: MRE=     1.22% | R2=  0.9041 | NRMSE=    7.90% | MaxErr=     1.77aF | mean(nn-os)=   -0.364aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n=341 dq=  +3.935  FREE: n=  0 dq=  +0.000
+  --- Mpt / EDGE ---
+    id : MRE=    31.44% | R2=  0.2997 | NRMSE=   36.99% | MaxErr=     2.01uA | mean(nn-os)=   -0.917uA
+    qg : MRE=    25.70% | R2=  0.8354 | NRMSE=   18.82% | MaxErr=     29.1aC | mean(nn-os)=    -12.4aC
+    qd : MRE=    24.55% | R2=  0.8447 | NRMSE=   18.26% | MaxErr=     13.9aC | mean(nn-os)=    +5.81aC
+    qs : MRE=    26.18% | R2=  0.8289 | NRMSE=   19.20% | MaxErr=     14.8aC | mean(nn-os)=    +6.41aC
+    qb : MRE=    89.26% | R2=  0.6491 | NRMSE=   28.00% | MaxErr=    0.418aC | mean(nn-os)=   +0.177aC
+    cgg: MRE=     4.44% | R2=  0.9905 | NRMSE=    4.63% | MaxErr=      9.1aF | mean(nn-os)=    +3.87aF
+    cgd: MRE=     7.87% | R2=  0.9719 | NRMSE=    7.88% | MaxErr=     6.93aF | mean(nn-os)=    -4.05aF
+    cgs: MRE=    99.52% | R2= -5.9835 | NRMSE=  126.24% | MaxErr=      111aF | mean(nn-os)=    +79.3aF
+    cdg: MRE=     8.01% | R2=  0.9725 | NRMSE=    7.84% | MaxErr=     7.48aF | mean(nn-os)=    -2.69aF
+    cdd: MRE=     7.80% | R2=  0.9452 | NRMSE=   11.00% | MaxErr=     7.54aF | mean(nn-os)=    +3.21aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n= 61 dq=  +0.280  FREE: n=  0 dq=  +0.000
+  --- Mpt / HOLD ---
+    id : MRE=     0.00% | R2=     nan | NRMSE=     nan% | MaxErr=        0uA | mean(nn-os)=       +0uA
+    qg : MRE=    56.53% | R2=-292111.6331 | NRMSE= 4249.46% | MaxErr=     29.1aC | mean(nn-os)=    -28.5aC
+    qd : MRE=    52.88% | R2=-274077.1928 | NRMSE= 4116.49% | MaxErr=     13.9aC | mean(nn-os)=    +13.6aC
+    qs : MRE=    58.19% | R2=-308581.3792 | NRMSE= 4367.31% | MaxErr=     14.8aC | mean(nn-os)=    +14.5aC
+    qb : MRE=   204.30% | R2=-376849.2181 | NRMSE= 4826.23% | MaxErr=    0.418aC | mean(nn-os)=   +0.409aC
+    cgg: MRE=     9.88% | R2=-1342799.1841 | NRMSE= 9124.34% | MaxErr=      9.1aF | mean(nn-os)=       +9aF
+    cgd: MRE=    15.33% | R2=-3235292.9776 | NRMSE=14163.74% | MaxErr=     6.93aF | mean(nn-os)=    -6.88aF
+    cgs: MRE=    99.98% | R2=-130533907.3846 | NRMSE=89956.48% | MaxErr=       45aF | mean(nn-os)=      +45aF
+    cdg: MRE=    16.54% | R2=-3769611.0870 | NRMSE=15288.66% | MaxErr=     7.48aF | mean(nn-os)=    -7.43aF
+    cdd: MRE=    16.68% | R2=-3832402.0609 | NRMSE=15415.46% | MaxErr=     7.54aF | mean(nn-os)=    +7.49aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n=340 dq=  +0.000  FREE: n=  0 dq=  +0.000
+
+==============================================================================
+--- TSMC7 (VDD=0.75 VT=ulvt Vin=0.45) ---
+[NN-resolver] L73.0 Mpc TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mnc TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mnt TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mpt TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+  NG chg=0.4473V droop=-0.000mV | DN chg=0.4703V droop=2.207mV | gate gap C*dV=+2.30fC
+[NN-resolver] L73.0 Mpc TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mnc TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mnt TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mpt TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+  OSDI cap-sign FD check (NMOS pass device, mid-sample bias):
+  FD cgd: raw dQ/dV=-8.069e-17  -OSDI cgd=-8.070e-17  rel=0.00%  OK
+  FD cgs: raw dQ/dV=-3.381e-17  -OSDI cgs=-3.381e-17  rel=0.00%  OK
+  FD cdg: raw dQ/dV=-5.967e-17  -OSDI cdg=-5.967e-17  rel=0.00%  OK
+  [RISE  ] C*dV=   -7.68fC | Q_res nn/os=   -7.64/   -7.94 | Q_cap nn/os=  -0.042/  -0.028 | Q_num=   -0.00fC
+  [SAMPLE] C*dV=  -34.45fC | Q_res nn/os=  -34.49/  -50.15 | Q_cap nn/os=  +0.037/  +0.036 | Q_num=   -0.00fC
+  [EDGE  ] C*dV=   -0.22fC | Q_res nn/os=   -0.23/   -0.88 | Q_cap nn/os=  +0.008/  +0.005 | Q_num=   -0.00fC
+  [HOLD  ] C*dV=   -0.22fC | Q_res nn/os=   -0.22/   +0.00 | Q_cap nn/os=  -0.000/  -0.000 | Q_num=   +0.00fC
+  CSV: /data2/home/shenshan/NN_SPICE-refactor-nn/results/v6_4_7/s5_sc_dump_TSMC7.csv  (3144 rows)
+
+  ===== TSMC7 per-device Rule-16 tables (NN post-Rule-15 vs OSDI, NN convention) =====
+  --- Mnc / RISE ---
+    id : MRE=   362.44% | R2=  0.8143 | NRMSE=    7.75% | MaxErr=     7.23uA | mean(nn-os)=   +0.643uA
+    qg : MRE=     4.35% | R2=  0.9993 | NRMSE=    1.02% | MaxErr=     1.55aC | mean(nn-os)=   +0.724aC
+    qd : MRE=     2.81% | R2=  0.9996 | NRMSE=    0.74% | MaxErr=    0.589aC | mean(nn-os)=   -0.212aC
+    qs : MRE=    11.58% | R2=  0.9988 | NRMSE=    1.28% | MaxErr=    0.854aC | mean(nn-os)=   -0.453aC
+    qb : MRE=    24.29% | R2=  0.9861 | NRMSE=    4.50% | MaxErr=    0.104aC | mean(nn-os)=  -0.0593aC
+    cgg: MRE=     0.79% | R2=  0.9999 | NRMSE=    0.41% | MaxErr=     1.64aF | mean(nn-os)=   +0.167aF
+    cgd: MRE=     6.38% | R2=  0.9192 | NRMSE=   12.32% | MaxErr=     38.4aF | mean(nn-os)=    +2.92aF
+    cgs: MRE=   101.03% | R2= -2.4747 | NRMSE=   74.87% | MaxErr=     98.7aF | mean(nn-os)=    +47.5aF
+    cdg: MRE=     5.22% | R2=  0.9992 | NRMSE=    1.19% | MaxErr=     1.69aF | mean(nn-os)=   +0.582aF
+    cdd: MRE=     4.41% | R2=  0.9672 | NRMSE=    7.86% | MaxErr=     19.2aF | mean(nn-os)=   -0.788aF
+    id clamp split (dQ into source, fC): REV: n=  3 dq=  +0.047  NEAR0: n= 11 dq=  -0.162  FREE: n= 30 dq=  -0.026
+  --- Mnc / SAMPLE ---
+    id : MRE=    87.51% | R2=-12.3011 | NRMSE=   20.14% | MaxErr=     3.83uA | mean(nn-os)=     +1.3uA
+    qg : MRE=     0.16% | R2=-19.9532 | NRMSE=   25.28% | MaxErr=    0.243aC | mean(nn-os)=   -0.139aC
+    qd : MRE=     0.51% | R2=-86.8615 | NRMSE=   51.77% | MaxErr=    0.256aC | mean(nn-os)=   +0.214aC
+    qs : MRE=     0.11% | R2=-36.3521 | NRMSE=   33.76% | MaxErr=   0.0772aC | mean(nn-os)=  -0.0466aC
+    qb : MRE=     1.53% | R2=-188087565274963488.0000 | NRMSE=2395044736.47% | MaxErr=    0.028aC | mean(nn-os)=  -0.0279aC
+    cgg: MRE=     0.27% | R2=-5566.6414 | NRMSE=  411.61% | MaxErr=    0.544aF | mean(nn-os)=   +0.473aF
+    cgd: MRE=    19.70% | R2=-470152.3437 | NRMSE= 3730.58% | MaxErr=     38.4aF | mean(nn-os)=    +16.8aF
+    cgs: MRE=   114.38% | R2=-28502001.6259 | NRMSE=28913.16% | MaxErr=     97.9aF | mean(nn-os)=    +97.7aF
+    cdg: MRE=     0.08% | R2=-295.2869 | NRMSE=   94.96% | MaxErr=    0.125aF | mean(nn-os)=  -0.0721aF
+    cdd: MRE=     6.53% | R2=-98273.7841 | NRMSE= 1704.94% | MaxErr=     13.5aF | mean(nn-os)=    -4.16aF
+    id clamp split (dQ into source, fC): REV: n=  2 dq=  +0.013  NEAR0: n=339 dq=  -2.222  FREE: n=  0 dq=  +0.000
+  --- Mnc / EDGE ---
+    id : MRE=   138.83% | R2=  0.0772 | NRMSE=   19.56% | MaxErr=     18.6uA | mean(nn-os)=    -1.23uA
+    qg : MRE=     3.60% | R2=  0.9996 | NRMSE=    0.92% | MaxErr=     1.55aC | mean(nn-os)=    +0.45aC
+    qd : MRE=     1.92% | R2=  0.9998 | NRMSE=    0.71% | MaxErr=    0.592aC | mean(nn-os)=  -0.0839aC
+    qs : MRE=     8.72% | R2=  0.9994 | NRMSE=    1.13% | MaxErr=    0.855aC | mean(nn-os)=   -0.316aC
+    qb : MRE=    18.67% | R2=  0.9918 | NRMSE=    4.00% | MaxErr=    0.104aC | mean(nn-os)=   -0.051aC
+    cgg: MRE=     0.65% | R2=  0.9999 | NRMSE=    0.40% | MaxErr=     1.62aF | mean(nn-os)=    +0.17aF
+    cgd: MRE=    11.28% | R2=  0.7263 | NRMSE=   25.26% | MaxErr=      124aF | mean(nn-os)=    +3.86aF
+    cgs: MRE=   104.52% | R2= -3.7820 | NRMSE=  101.76% | MaxErr=     97.6aF | mean(nn-os)=    +59.1aF
+    cdg: MRE=     3.91% | R2=  0.9996 | NRMSE=    0.99% | MaxErr=      1.2aF | mean(nn-os)=   +0.405aF
+    cdd: MRE=     6.90% | R2=  0.7084 | NRMSE=   26.07% | MaxErr=      104aF | mean(nn-os)=   +0.165aF
+    id clamp split (dQ into source, fC): REV: n=  8 dq=  +0.584  NEAR0: n= 24 dq=  -0.200  FREE: n= 29 dq=  -0.009
+  --- Mnc / HOLD ---
+    id : MRE=3511023861512516952469274624.00% | R2=     nan | NRMSE=     nan% | MaxErr=     0.25uA | mean(nn-os)=  -0.0351uA
+    qg : MRE=     8.21% | R2=-26515.1218 | NRMSE=  980.19% | MaxErr=     1.55aC | mean(nn-os)=    +1.55aC
+    qd : MRE=     4.02% | R2=-3839.7866 | NRMSE=  373.05% | MaxErr=    0.589aC | mean(nn-os)=   -0.589aC
+    qs : MRE=    19.38% | R2=-101098208848696.0156 | NRMSE=60494808.88% | MaxErr=    0.854aC | mean(nn-os)=   -0.854aC
+    qb : MRE=    49.46% | R2=-740946829192214912.0000 | NRMSE=5180954403.89% | MaxErr=    0.104aC | mean(nn-os)=   -0.104aC
+    cgg: MRE=     0.62% | R2=-4428.3303 | NRMSE=  400.86% | MaxErr=    0.188aF | mean(nn-os)=   -0.188aF
+    cgd: MRE=     4.10% | R2=-29201.9953 | NRMSE= 1029.29% | MaxErr=    0.482aF | mean(nn-os)=   -0.482aF
+    cgs: MRE=    94.90% | R2=-15656649654663.8574 | NRMSE=23806396.57% | MaxErr=     15.7aF | mean(nn-os)=    +15.7aF
+    cdg: MRE=     9.38% | R2=-153085.1902 | NRMSE= 2356.64% | MaxErr=      1.1aF | mean(nn-os)=     +1.1aF
+    cdd: MRE=     3.62% | R2=-22785.6374 | NRMSE=  909.21% | MaxErr=    0.426aF | mean(nn-os)=   +0.426aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n=  0 dq=  +0.000  FREE: n=340 dq=  +0.060
+  --- Mnt / RISE ---
+    id : MRE=    25.68% | R2= -0.1690 | NRMSE=   34.62% | MaxErr=     10.8uA | mean(nn-os)=    -1.42uA
+    qg : MRE=    87.27% | R2= -1.6805 | NRMSE=   57.17% | MaxErr=       24aC | mean(nn-os)=    +15.4aC
+    qd : MRE=    95.72% | R2= -1.1138 | NRMSE=   50.78% | MaxErr=     10.9aC | mean(nn-os)=    -6.52aC
+    qs : MRE=    64.27% | R2= -2.6176 | NRMSE=   65.82% | MaxErr=     11.9aC | mean(nn-os)=    -8.23aC
+    qb : MRE=   283.23% | R2= -0.9328 | NRMSE=   53.01% | MaxErr=     1.14aC | mean(nn-os)=   -0.621aC
+    cgg: MRE=    85.29% | R2= -0.1518 | NRMSE=   36.07% | MaxErr=     34.2aF | mean(nn-os)=    +17.5aF
+    cgd: MRE=   134.40% | R2=  0.0715 | NRMSE=   32.54% | MaxErr=     34.1aF | mean(nn-os)=    -12.9aF
+    cgs: MRE=    96.42% | R2=-48.5353 | NRMSE=  240.81% | MaxErr=     16.2aF | mean(nn-os)=    +12.3aF
+    cdg: MRE=    87.46% | R2=  0.0209 | NRMSE=   33.60% | MaxErr=     20.2aF | mean(nn-os)=    -8.28aF
+    cdd: MRE=    87.98% | R2=  0.0065 | NRMSE=   33.86% | MaxErr=     20.9aF | mean(nn-os)=    +8.22aF
+    id clamp split (dQ into source, fC): REV: n= 44 dq=  +0.313  NEAR0: n=  0 dq=  +0.000  FREE: n=  0 dq=  +0.000
+  --- Mnt / SAMPLE ---
+    id : MRE=   100.00% | R2= -7.4998 | NRMSE=   95.43% | MaxErr=     10.8uA | mean(nn-os)=    -6.83uA
+    qg : MRE=    13.85% | R2=  0.3309 | NRMSE=   21.85% | MaxErr=     5.93aC | mean(nn-os)=    -1.17aC
+    qd : MRE=    15.18% | R2=-31.7469 | NRMSE=  201.13% | MaxErr=     4.68aC | mean(nn-os)=   +0.912aC
+    qs : MRE=    53.05% | R2=  0.9623 | NRMSE=    5.08% | MaxErr=     1.05aC | mean(nn-os)=   +0.177aC
+    qb : MRE=     4.69% | R2=-91697445697791.1875 | NRMSE=234071956.19% | MaxErr=    0.382aC | mean(nn-os)=  +0.0858aC
+    cgg: MRE=     5.75% | R2= -0.6209 | NRMSE=   40.46% | MaxErr=     34.2aF | mean(nn-os)=    -6.39aF
+    cgd: MRE=    11.11% | R2= -1.6833 | NRMSE=   61.11% | MaxErr=     34.1aF | mean(nn-os)=    +8.78aF
+    cgs: MRE=   103.36% | R2= -8.9102 | NRMSE=  107.07% | MaxErr=       60aF | mean(nn-os)=    +41.7aF
+    cdg: MRE=     5.49% | R2= -5.1092 | NRMSE=   84.46% | MaxErr=     20.2aF | mean(nn-os)=     +3.2aF
+    cdd: MRE=     7.55% | R2= -5.3984 | NRMSE=   93.56% | MaxErr=     20.9aF | mean(nn-os)=    -4.18aF
+    id clamp split (dQ into source, fC): REV: n=341 dq= +11.643  NEAR0: n=  0 dq=  +0.000  FREE: n=  0 dq=  +0.000
+  --- Mnt / EDGE ---
+    id : MRE=    44.96% | R2= -0.5865 | NRMSE=   57.30% | MaxErr=     2.98uA | mean(nn-os)=    -1.04uA
+    qg : MRE=    34.89% | R2=  0.6722 | NRMSE=   25.12% | MaxErr=     14.3aC | mean(nn-os)=    +6.31aC
+    qd : MRE=    31.25% | R2=  0.6945 | NRMSE=   24.28% | MaxErr=     6.69aC | mean(nn-os)=    -2.87aC
+    qs : MRE=    78.94% | R2=  0.6770 | NRMSE=   24.92% | MaxErr=     6.72aC | mean(nn-os)=    -3.05aC
+    qb : MRE=   171.75% | R2=  0.3153 | NRMSE=   36.59% | MaxErr=    0.933aC | mean(nn-os)=   -0.395aC
+    cgg: MRE=    13.07% | R2=  0.9879 | NRMSE=    5.09% | MaxErr=     7.19aF | mean(nn-os)=    +2.66aF
+    cgd: MRE=    18.20% | R2=  0.9704 | NRMSE=    7.97% | MaxErr=     6.13aF | mean(nn-os)=   -0.121aF
+    cgs: MRE=   100.30% | R2= -2.3760 | NRMSE=   84.47% | MaxErr=       61aF | mean(nn-os)=    +31.5aF
+    cdg: MRE=    10.95% | R2=  0.9925 | NRMSE=    4.02% | MaxErr=     2.95aF | mean(nn-os)=    -1.04aF
+    cdd: MRE=     8.33% | R2=  0.9776 | NRMSE=    6.89% | MaxErr=      7.5aF | mean(nn-os)=    -1.97aF
+    id clamp split (dQ into source, fC): REV: n= 61 dq=  +0.317  NEAR0: n=  0 dq=  +0.000  FREE: n=  0 dq=  +0.000
+  --- Mnt / HOLD ---
+    id : MRE=     0.00% | R2=     nan | NRMSE=     nan% | MaxErr=        0uA | mean(nn-os)=       +0uA
+    qg : MRE=    65.36% | R2=-3007761.1224 | NRMSE=50212.80% | MaxErr=     14.3aC | mean(nn-os)=    +14.3aC
+    qd : MRE=    61.01% | R2=-24038934238008439423893504.0000 | NRMSE=137328630027950.47% | MaxErr=     6.69aC | mean(nn-os)=    -6.68aC
+    qs : MRE=    60.07% | R2=-659228.4199 | NRMSE=23507.75% | MaxErr=     6.72aC | mean(nn-os)=     -6.7aC
+    qb : MRE=   442.85% | R2=-85752388479225217024.0000 | NRMSE=268124447724.51% | MaxErr=    0.933aC | mean(nn-os)=    -0.93aC
+    cgg: MRE=    25.24% | R2=-4796308.8697 | NRMSE=63408.79% | MaxErr=     7.19aF | mean(nn-os)=    +7.07aF
+    cgd: MRE=    29.41% | R2=-472321535947701354496.0000 | NRMSE=629464247832.67% | MaxErr=     3.86aF | mean(nn-os)=    -3.83aF
+    cgs: MRE=    97.72% | R2=-15380200.1446 | NRMSE=113547.32% | MaxErr=     12.7aF | mean(nn-os)=    +12.7aF
+    cdg: MRE=    22.52% | R2=-212548749605746611157204992.0000 | NRMSE=386469464310094.94% | MaxErr=     2.95aF | mean(nn-os)=    -2.94aF
+    cdd: MRE=     5.03% | R2=-136270301543025262592.0000 | NRMSE=338178819477.65% | MaxErr=    0.696aF | mean(nn-os)=   -0.656aF
+    id clamp split (dQ into source, fC): REV: n=340 dq=  +0.000  NEAR0: n=  0 dq=  +0.000  FREE: n=  0 dq=  +0.000
+  --- Mpc / RISE ---
+    id : MRE=   337.20% | R2=  0.2144 | NRMSE=   17.42% | MaxErr=     10.8uA | mean(nn-os)=   +0.982uA
+    qg : MRE=     3.87% | R2=  0.9994 | NRMSE=    1.02% | MaxErr=     2.41aC | mean(nn-os)=  +0.0757aC
+    qd : MRE=     2.06% | R2=  0.9995 | NRMSE=    1.00% | MaxErr=     0.94aC | mean(nn-os)=   -0.199aC
+    qs : MRE=     6.37% | R2=  0.9993 | NRMSE=    1.10% | MaxErr=     1.32aC | mean(nn-os)=  +0.0962aC
+    qb : MRE=    13.05% | R2=  0.9878 | NRMSE=    4.21% | MaxErr=    0.149aC | mean(nn-os)=  +0.0266aC
+    cgg: MRE=     0.44% | R2=  1.0000 | NRMSE=    0.29% | MaxErr=     1.63aF | mean(nn-os)=  +0.0528aF
+    cgd: MRE=    15.85% | R2=  0.6785 | NRMSE=   25.91% | MaxErr=      111aF | mean(nn-os)=    +9.98aF
+    cgs: MRE=    98.47% | R2= -3.7973 | NRMSE=   91.80% | MaxErr=     94.9aF | mean(nn-os)=    +70.7aF
+    cdg: MRE=     0.99% | R2=  0.9999 | NRMSE=    0.35% | MaxErr=    0.931aF | mean(nn-os)=    +0.12aF
+    cdd: MRE=     9.91% | R2=  0.9013 | NRMSE=   14.36% | MaxErr=     20.2aF | mean(nn-os)=    -3.39aF
+    id clamp split (dQ into source, fC): REV: n=  6 dq=  -0.251  NEAR0: n= 23 dq=  +0.043  FREE: n= 15 dq=  -0.008
+  --- Mpc / SAMPLE ---
+    id : MRE=21192058565942025774193180672.00% | R2=     nan | NRMSE=     nan% | MaxErr=    0.215uA | mean(nn-os)=   +0.212uA
+    qg : MRE=    10.81% | R2=-346608.0064 | NRMSE= 3250.97% | MaxErr=     2.41aC | mean(nn-os)=    -2.41aC
+    qd : MRE=     5.83% | R2=-52828.4325 | NRMSE= 1269.20% | MaxErr=     0.94aC | mean(nn-os)=   +0.939aC
+    qs : MRE=    20.90% | R2=-1775035291578709760.0000 | NRMSE=7357654932.33% | MaxErr=     1.32aC | mean(nn-os)=    +1.32aC
+    qb : MRE=    92.64% | R2=-8768267207147198464.0000 | NRMSE=16351315051.53% | MaxErr=    0.149aC | mean(nn-os)=   +0.149aC
+    cgg: MRE=     0.02% | R2=-22.7475 | NRMSE=   26.91% | MaxErr=  0.00801aF | mean(nn-os)= -0.00522aF
+    cgd: MRE=     2.57% | R2=-74810.5452 | NRMSE= 1510.14% | MaxErr=    0.295aF | mean(nn-os)=   -0.293aF
+    cgs: MRE=   107.57% | R2=-161924632507213664.0000 | NRMSE=2222241823.57% | MaxErr=     16.9aF | mean(nn-os)=    +16.9aF
+    cdg: MRE=     2.32% | R2=-61338.1012 | NRMSE= 1367.42% | MaxErr=    0.266aF | mean(nn-os)=   +0.266aF
+    cdd: MRE=     2.40% | R2=-65243.3986 | NRMSE= 1410.28% | MaxErr=    0.274aF | mean(nn-os)=   +0.274aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n=  0 dq=  +0.000  FREE: n=341 dq=  -0.361
+  --- Mpc / EDGE ---
+    id : MRE=   827.46% | R2=  0.8005 | NRMSE=    5.89% | MaxErr=     6.19uA | mean(nn-os)=   -0.044uA
+    qg : MRE=     5.19% | R2=  0.9990 | NRMSE=    1.44% | MaxErr=     2.41aC | mean(nn-os)=   -0.592aC
+    qd : MRE=     2.97% | R2=  0.9993 | NRMSE=    1.16% | MaxErr=    0.939aC | mean(nn-os)=   +0.124aC
+    qs : MRE=    10.02% | R2=  0.9985 | NRMSE=    1.72% | MaxErr=     1.32aC | mean(nn-os)=    +0.41aC
+    qb : MRE=    33.63% | R2=  0.9759 | NRMSE=    6.87% | MaxErr=    0.149aC | mean(nn-os)=  +0.0572aC
+    cgg: MRE=     0.28% | R2=  1.0000 | NRMSE=    0.17% | MaxErr=     1.17aF | mean(nn-os)=   +0.101aF
+    cgd: MRE=    11.52% | R2=  0.7924 | NRMSE=   21.77% | MaxErr=      112aF | mean(nn-os)=    +6.67aF
+    cgs: MRE=   100.86% | R2= -1.8986 | NRMSE=   79.96% | MaxErr=      101aF | mean(nn-os)=    +57.6aF
+    cdg: MRE=     1.36% | R2=  0.9999 | NRMSE=    0.36% | MaxErr=    0.971aF | mean(nn-os)=   +0.142aF
+    cdd: MRE=     7.63% | R2=  0.8787 | NRMSE=   16.68% | MaxErr=     68.7aF | mean(nn-os)=    -4.85aF
+    id clamp split (dQ into source, fC): REV: n=  4 dq=  -0.050  NEAR0: n= 24 dq=  +0.108  FREE: n= 33 dq=  -0.045
+  --- Mpc / HOLD ---
+    id : MRE=    85.89% | R2= -0.1851 | NRMSE=    6.54% | MaxErr=     6.19uA | mean(nn-os)=   -0.174uA
+    qg : MRE=     0.91% | R2=-82.9346 | NRMSE=   55.10% | MaxErr=     1.12aC | mean(nn-os)=   +0.749aC
+    qd : MRE=     1.40% | R2=-83.2541 | NRMSE=   55.21% | MaxErr=    0.618aC | mean(nn-os)=   -0.562aC
+    qs : MRE=     0.47% | R2=-84.8787 | NRMSE=   55.70% | MaxErr=    0.709aC | mean(nn-os)=   -0.188aC
+    qb : MRE=     0.08% | R2=-71170013156333.7344 | NRMSE=50748096.15% | MaxErr=  0.00349aC | mean(nn-os)= +0.00123aC
+    cgg: MRE=     0.06% | R2=-33.3600 | NRMSE=   35.46% | MaxErr=    0.407aF | mean(nn-os)=   +0.124aF
+    cgd: MRE=    21.26% | R2=-73105.6784 | NRMSE= 1617.67% | MaxErr=      112aF | mean(nn-os)=    +20.7aF
+    cgs: MRE=    94.35% | R2=-2536016.3657 | NRMSE= 9490.95% | MaxErr=     94.9aF | mean(nn-os)=    +94.9aF
+    cdg: MRE=     0.22% | R2=-234.9315 | NRMSE=   92.85% | MaxErr=    0.971aF | mean(nn-os)=   +0.218aF
+    cdd: MRE=    13.74% | R2=-61330.5559 | NRMSE= 1486.43% | MaxErr=     68.7aF | mean(nn-os)=    -10.4aF
+    id clamp split (dQ into source, fC): REV: n=  4 dq=  -0.050  NEAR0: n=336 dq=  +0.347  FREE: n=  0 dq=  +0.000
+  --- Mpt / RISE ---
+    id : MRE=     2.84% | R2=  1.0000 | NRMSE=    0.09% | MaxErr=    0.273uA | mean(nn-os)=  -0.0641uA
+    qg : MRE=     2.36% | R2=  0.9999 | NRMSE=    0.42% | MaxErr=    0.607aC | mean(nn-os)=   -0.299aC
+    qd : MRE=     1.32% | R2=  0.9999 | NRMSE=    0.40% | MaxErr=    0.241aC | mean(nn-os)=   +0.111aC
+    qs : MRE=     4.90% | R2=  0.9999 | NRMSE=    0.41% | MaxErr=    0.334aC | mean(nn-os)=   +0.172aC
+    qb : MRE=     6.86% | R2=  0.9987 | NRMSE=    1.56% | MaxErr=   0.0323aC | mean(nn-os)=  +0.0173aC
+    cgg: MRE=     1.62% | R2=  0.9999 | NRMSE=    0.44% | MaxErr=    0.934aF | mean(nn-os)=   +0.601aF
+    cgd: MRE=     0.88% | R2=  0.9998 | NRMSE=    0.61% | MaxErr=    0.396aF | mean(nn-os)=   -0.147aF
+    cgs: MRE=   101.87% | R2= -0.9717 | NRMSE=   64.18% | MaxErr=      137aF | mean(nn-os)=    +58.5aF
+    cdg: MRE=     3.48% | R2=  0.9997 | NRMSE=    0.81% | MaxErr=    0.844aF | mean(nn-os)=   -0.415aF
+    cdd: MRE=     0.68% | R2=  0.9991 | NRMSE=    1.31% | MaxErr=    0.586aF | mean(nn-os)=   -0.155aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n=  0 dq=  +0.000  FREE: n= 44 dq=  +0.014
+  --- Mpt / SAMPLE ---
+    id : MRE=    27.87% | R2=  0.9888 | NRMSE=    2.52% | MaxErr=     3.32uA | mean(nn-os)=    -2.38uA
+    qg : MRE=     0.54% | R2=  0.9996 | NRMSE=    0.45% | MaxErr=    0.301aC | mean(nn-os)=   +0.158aC
+    qd : MRE=     1.23% | R2=  0.9966 | NRMSE=    1.33% | MaxErr=    0.261aC | mean(nn-os)=   -0.164aC
+    qs : MRE=     0.09% | R2=  1.0000 | NRMSE=    0.09% | MaxErr=   0.0493aC | mean(nn-os)= +0.00938aC
+    qb : MRE=     0.24% | R2=-61.4084 | NRMSE=   43.62% | MaxErr=   0.0104aC | mean(nn-os)= -0.00335aC
+    cgg: MRE=     0.11% | R2=  0.9959 | NRMSE=    1.69% | MaxErr=    0.348aF | mean(nn-os)=  -0.0689aF
+    cgd: MRE=     1.39% | R2=  0.9820 | NRMSE=    3.99% | MaxErr=      5.5aF | mean(nn-os)=   +0.563aF
+    cgs: MRE=    97.43% | R2=-44.6422 | NRMSE=  197.31% | MaxErr=      135aF | mean(nn-os)=     +100aF
+    cdg: MRE=     0.11% | R2=  0.9584 | NRMSE=    4.56% | MaxErr=    0.168aF | mean(nn-os)=  +0.0653aF
+    cdd: MRE=     1.35% | R2=  0.9887 | NRMSE=    3.14% | MaxErr=     1.37aF | mean(nn-os)=   +0.141aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n=300 dq=  +3.982  FREE: n= 41 dq=  +0.084
+  --- Mpt / EDGE ---
+    id : MRE=  1674.72% | R2=  0.1766 | NRMSE=   42.33% | MaxErr=     2.47uA | mean(nn-os)=    -1.12uA
+    qg : MRE=    22.05% | R2=  0.9316 | NRMSE=   11.89% | MaxErr=     9.37aC | mean(nn-os)=    -3.94aC
+    qd : MRE=    20.24% | R2=  0.9380 | NRMSE=   11.29% | MaxErr=     4.29aC | mean(nn-os)=    +1.74aC
+    qs : MRE=    21.23% | R2=  0.9323 | NRMSE=   11.83% | MaxErr=     4.59aC | mean(nn-os)=    +1.99aC
+    qb : MRE=    86.60% | R2=  0.7274 | NRMSE=   24.55% | MaxErr=    0.488aC | mean(nn-os)=   +0.213aC
+    cgg: MRE=     3.40% | R2=  0.9996 | NRMSE=    0.98% | MaxErr=     2.25aF | mean(nn-os)=    +1.03aF
+    cgd: MRE=    11.08% | R2=  0.9679 | NRMSE=    8.56% | MaxErr=     9.87aF | mean(nn-os)=    +3.46aF
+    cgs: MRE=   101.13% | R2= -1.8927 | NRMSE=   82.31% | MaxErr=       87aF | mean(nn-os)=    +51.5aF
+    cdg: MRE=     5.13% | R2=  0.9992 | NRMSE=    1.39% | MaxErr=     1.56aF | mean(nn-os)=   -0.711aF
+    cdd: MRE=    11.57% | R2=  0.9912 | NRMSE=    4.48% | MaxErr=     3.33aF | mean(nn-os)=    +1.24aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n= 61 dq=  +0.343  FREE: n=  0 dq=  +0.000
+  --- Mpt / HOLD ---
+    id : MRE=12985408572303797329768480768.00% | R2=     nan | NRMSE=     nan% | MaxErr=    0.136uA | mean(nn-os)=    +0.13uA
+    qg : MRE=    46.52% | R2=-144836.4717 | NRMSE= 2329.18% | MaxErr=     9.37aC | mean(nn-os)=    -9.03aC
+    qd : MRE=    41.61% | R2=-141719.8842 | NRMSE= 2266.33% | MaxErr=     4.29aC | mean(nn-os)=    +4.13aC
+    qs : MRE=    45.55% | R2=-114843.3262 | NRMSE= 2413.85% | MaxErr=     4.59aC | mean(nn-os)=    +4.43aC
+    qb : MRE=   192.90% | R2=-126812.4169 | NRMSE= 2143.10% | MaxErr=    0.488aC | mean(nn-os)=   +0.469aC
+    cgg: MRE=     7.29% | R2=-39916.0293 | NRMSE= 1232.61% | MaxErr=     2.25aF | mean(nn-os)=    +2.11aF
+    cgd: MRE=    12.46% | R2=-111225.8947 | NRMSE= 2009.85% | MaxErr=     1.74aF | mean(nn-os)=    -1.69aF
+    cgs: MRE=   105.25% | R2=-5399453.6487 | NRMSE=16607.95% | MaxErr=     14.4aF | mean(nn-os)=    +14.4aF
+    cdg: MRE=    11.02% | R2=-87055.0305 | NRMSE= 1778.11% | MaxErr=     1.56aF | mean(nn-os)=     -1.5aF
+    cdd: MRE=    24.10% | R2=-416134.2313 | NRMSE= 3887.55% | MaxErr=     3.33aF | mean(nn-os)=    +3.28aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n=340 dq=  -0.221  FREE: n=  0 dq=  +0.000
+
+==============================================================================
+--- TSMC5 (VDD=0.65 VT=lvt Vin=0.39) ---
+[NN-resolver] L73.0 Mpc TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mnc TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mnt TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mpt TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+  NG chg=0.2948V droop=-0.000mV | DN chg=0.3900V droop=0.000mV | gate gap C*dV=+9.52fC
+[NN-resolver] L73.0 Mpc TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mnc TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mnt TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mpt TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+  OSDI cap-sign FD check (NMOS pass device, mid-sample bias):
+  FD cgd: raw dQ/dV=-5.785e-17  -OSDI cgd=-5.785e-17  rel=0.00%  OK
+  FD cgs: raw dQ/dV=-5.785e-17  -OSDI cgs=-5.785e-17  rel=0.00%  OK
+  FD cdg: raw dQ/dV=-5.785e-17  -OSDI cdg=-5.785e-17  rel=0.00%  OK
+  [RISE  ] C*dV=   +0.00fC | Q_res nn/os=   +0.00/   +0.00 | Q_cap nn/os=  +0.000/  -0.001 | Q_num=   -0.00fC
+  [SAMPLE] C*dV=   -0.00fC | Q_res nn/os=   -0.00/   -0.00 | Q_cap nn/os=  -0.001/  -0.001 | Q_num=   -0.00fC
+  [EDGE  ] C*dV=   -0.00fC | Q_res nn/os=   +0.00/   +0.00 | Q_cap nn/os=  -0.000/  +0.001 | Q_num=   -0.00fC
+  [HOLD  ] C*dV=   -0.00fC | Q_res nn/os=   +0.00/   +0.00 | Q_cap nn/os=  -0.000/  -0.000 | Q_num=   -0.00fC
+  CSV: /data2/home/shenshan/NN_SPICE-refactor-nn/results/v6_4_7/s5_sc_dump_TSMC5.csv  (3144 rows)
+
+  ===== TSMC5 per-device Rule-16 tables (NN post-Rule-15 vs OSDI, NN convention) =====
+  --- Mnc / RISE ---
+    id : MRE=  1298.38% | R2=  0.2438 | NRMSE=   18.41% | MaxErr=     6.07uA | mean(nn-os)=   -0.182uA
+    qg : MRE=     9.57% | R2=  0.9977 | NRMSE=    1.77% | MaxErr=     2.64aC | mean(nn-os)=    +1.35aC
+    qd : MRE=     5.13% | R2=  0.9985 | NRMSE=    1.44% | MaxErr=     1.18aC | mean(nn-os)=   -0.559aC
+    qs : MRE=    14.51% | R2=  0.9963 | NRMSE=    2.19% | MaxErr=     1.47aC | mean(nn-os)=   -0.731aC
+    qb : MRE=    32.73% | R2=  0.9893 | NRMSE=    3.95% | MaxErr=    0.138aC | mean(nn-os)=  -0.0592aC
+    cgg: MRE=     3.31% | R2=  0.9955 | NRMSE=    2.86% | MaxErr=     13.9aF | mean(nn-os)=    +1.28aF
+    cgd: MRE=     6.87% | R2=  0.9411 | NRMSE=   10.36% | MaxErr=     20.8aF | mean(nn-os)=    +3.38aF
+    cgs: MRE=   101.32% | R2= -1.4296 | NRMSE=   66.74% | MaxErr=     84.3aF | mean(nn-os)=    +36.4aF
+    cdg: MRE=     4.01% | R2=  0.9962 | NRMSE=    2.62% | MaxErr=      6.7aF | mean(nn-os)=   -0.679aF
+    cdd: MRE=     4.76% | R2=  0.9392 | NRMSE=   10.55% | MaxErr=     17.9aF | mean(nn-os)=    -2.12aF
+    id clamp split (dQ into source, fC): REV: n=  4 dq=  +0.116  NEAR0: n= 11 dq=  -0.104  FREE: n= 29 dq=  +0.028
+  --- Mnc / SAMPLE ---
+    id : MRE=    99.94% | R2=-129.9624 | NRMSE=   58.19% | MaxErr=     6.07uA | mean(nn-os)=    -5.45uA
+    qg : MRE=     2.62% | R2=-2197.1477 | NRMSE=  238.42% | MaxErr=     2.11aC | mean(nn-os)=    +1.88aC
+    qd : MRE=     2.39% | R2=-803.8966 | NRMSE=  144.28% | MaxErr=    0.951aC | mean(nn-os)=    -0.83aC
+    qs : MRE=     3.22% | R2=-10389.7244 | NRMSE=  518.29% | MaxErr=      1.2aC | mean(nn-os)=    -1.11aC
+    qb : MRE=     2.17% | R2=-439432784342492416.0000 | NRMSE=3371480458.92% | MaxErr=   0.0594aC | mean(nn-os)=  +0.0578aC
+    cgg: MRE=     0.92% | R2=-21263.9956 | NRMSE=  743.14% | MaxErr=     1.56aF | mean(nn-os)=    -1.56aF
+    cgd: MRE=     1.82% | R2=-2374.4964 | NRMSE=  247.69% | MaxErr=     20.8aF | mean(nn-os)=    +1.51aF
+    cgs: MRE=   101.34% | R2=-9459278.3850 | NRMSE=15612.80% | MaxErr=     84.3aF | mean(nn-os)=    +83.8aF
+    cdg: MRE=     0.13% | R2=-219.2995 | NRMSE=   75.62% | MaxErr=    0.372aF | mean(nn-os)=   +0.105aF
+    cdd: MRE=    28.52% | R2=-699430.2762 | NRMSE= 4253.57% | MaxErr=     17.9aF | mean(nn-os)=    -17.3aF
+    id clamp split (dQ into source, fC): REV: n=340 dq=  +9.308  NEAR0: n=  1 dq=  -0.013  FREE: n=  0 dq=  +0.000
+  --- Mnc / EDGE ---
+    id : MRE=   215.24% | R2= -0.6679 | NRMSE=   33.03% | MaxErr=     18.2uA | mean(nn-os)=    -3.85uA
+    qg : MRE=     6.68% | R2=  0.9984 | NRMSE=    1.82% | MaxErr=     2.31aC | mean(nn-os)=    +1.45aC
+    qd : MRE=     5.07% | R2=  0.9989 | NRMSE=    1.47% | MaxErr=    0.999aC | mean(nn-os)=   -0.597aC
+    qs : MRE=    13.33% | R2=  0.9973 | NRMSE=    2.36% | MaxErr=      1.4aC | mean(nn-os)=   -0.826aC
+    qb : MRE=    25.53% | R2=  0.9930 | NRMSE=    3.71% | MaxErr=    0.138aC | mean(nn-os)=  -0.0243aC
+    cgg: MRE=     1.97% | R2=  0.9979 | NRMSE=    2.13% | MaxErr=     13.3aF | mean(nn-os)=   +0.356aF
+    cgd: MRE=     9.33% | R2=  0.8702 | NRMSE=   17.05% | MaxErr=     39.7aF | mean(nn-os)=    +4.59aF
+    cgs: MRE=   101.41% | R2= -2.0833 | NRMSE=   81.83% | MaxErr=     83.8aF | mean(nn-os)=    +47.6aF
+    cdg: MRE=     1.88% | R2=  0.9983 | NRMSE=    1.95% | MaxErr=     6.86aF | mean(nn-os)=   -0.419aF
+    cdd: MRE=    12.26% | R2=  0.8251 | NRMSE=   19.77% | MaxErr=     17.4aF | mean(nn-os)=    -5.52aF
+    id clamp split (dQ into source, fC): REV: n= 33 dq=  +1.164  NEAR0: n=  2 dq=  +0.000  FREE: n= 26 dq=  +0.009
+  --- Mnc / HOLD ---
+    id : MRE=34275167988644048999022592.00% | R2=     nan | NRMSE=     nan% | MaxErr=   0.0788uA | mean(nn-os)=-0.000343uA
+    qg : MRE=     7.63% | R2=-453423.8090 | NRMSE= 3960.82% | MaxErr=     1.07aC | mean(nn-os)=    +1.07aC
+    qd : MRE=     3.76% | R2=-59087.7808 | NRMSE= 1429.83% | MaxErr=    0.388aC | mean(nn-os)=   -0.388aC
+    qs : MRE=    13.84% | R2=-1158774417155666688.0000 | NRMSE=6331326131.98% | MaxErr=    0.548aC | mean(nn-os)=   -0.548aC
+    qb : MRE=    68.58% | R2=-27162838529156038656.0000 | NRMSE=30656105270.85% | MaxErr=    0.138aC | mean(nn-os)=   -0.138aC
+    cgg: MRE=     0.60% | R2=-70127.3892 | NRMSE= 1557.88% | MaxErr=    0.143aF | mean(nn-os)=   +0.137aF
+    cgd: MRE=     3.06% | R2=-249001.0433 | NRMSE= 2935.54% | MaxErr=    0.261aF | mean(nn-os)=   -0.258aF
+    cgs: MRE=   101.41% | R2=-308894865981733824.0000 | NRMSE=3268869881.96% | MaxErr=     11.6aF | mean(nn-os)=    +11.6aF
+    cdg: MRE=     0.68% | R2=-12501.5510 | NRMSE=  657.79% | MaxErr=   0.0602aF | mean(nn-os)=  -0.0578aF
+    cdd: MRE=     1.46% | R2=-56640.7319 | NRMSE= 1400.09% | MaxErr=    0.125aF | mean(nn-os)=   +0.123aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n=  0 dq=  +0.000  FREE: n=340 dq=  +0.001
+  --- Mnt / RISE ---
+    id : MRE=   717.67% | R2=  0.2437 | NRMSE=   12.09% | MaxErr=  0.00136uA | mean(nn-os)=+2.27e-05uA
+    qg : MRE=    39.59% | R2=  0.5572 | NRMSE=   22.92% | MaxErr=     9.13aC | mean(nn-os)=    +5.45aC
+    qd : MRE=    34.47% | R2=  0.6206 | NRMSE=   21.06% | MaxErr=     3.84aC | mean(nn-os)=    -2.27aC
+    qs : MRE=    44.20% | R2=  0.5450 | NRMSE=   23.06% | MaxErr=     4.17aC | mean(nn-os)=    -2.57aC
+    qb : MRE=   271.17% | R2=  0.2754 | NRMSE=   32.46% | MaxErr=     1.11aC | mean(nn-os)=   -0.615aC
+    cgg: MRE=    13.94% | R2=  0.9703 | NRMSE=    5.77% | MaxErr=     12.3aF | mean(nn-os)=    +4.65aF
+    cgd: MRE=    27.73% | R2=  0.9561 | NRMSE=    7.00% | MaxErr=     6.75aF | mean(nn-os)=     -3.2aF
+    cgs: MRE=   100.67% | R2= -1.2391 | NRMSE=   50.05% | MaxErr=     58.8aF | mean(nn-os)=    +17.8aF
+    cdg: MRE=    17.15% | R2=  0.9697 | NRMSE=    5.82% | MaxErr=     5.76aF | mean(nn-os)=    -2.42aF
+    cdd: MRE=    20.05% | R2=  0.9042 | NRMSE=   10.34% | MaxErr=     8.07aF | mean(nn-os)=  +0.0126aF
+    id clamp split (dQ into source, fC): REV: n= 10 dq=  +0.000  NEAR0: n= 34 dq=  -0.000  FREE: n=  0 dq=  +0.000
+  --- Mnt / SAMPLE ---
+    id : MRE=     0.29% | R2= -0.0029 | NRMSE=    5.42% | MaxErr=  0.00101uA | mean(nn-os)=-2.96e-06uA
+    qg : MRE=    13.68% | R2=-10016658587.6679 | NRMSE=524702.13% | MaxErr=     1.81aC | mean(nn-os)=    +1.81aC
+    qd : MRE=    14.91% | R2=-30891106726.1948 | NRMSE=921442.10% | MaxErr=    0.787aC | mean(nn-os)=   -0.787aC
+    qs : MRE=    19.48% | R2=-5722436128.3571 | NRMSE=396590.12% | MaxErr=     1.03aC | mean(nn-os)=    -1.03aC
+    qb : MRE=     0.25% | R2=-19386313972483555852288.0000 | NRMSE=729875699409.20% | MaxErr=  0.00667aC | mean(nn-os)= +0.00666aC
+    cgg: MRE=     8.80% | R2=-35539558495.5521 | NRMSE=988343.23% | MaxErr=     10.5aF | mean(nn-os)=    +10.5aF
+    cgd: MRE=     4.20% | R2=-7097175781.6641 | NRMSE=441666.34% | MaxErr=     2.44aF | mean(nn-os)=    -2.43aF
+    cgs: MRE=   101.63% | R2=-486381525586.1351 | NRMSE=3656286.53% | MaxErr=     58.8aF | mean(nn-os)=    +58.8aF
+    cdg: MRE=     8.75% | R2=-79547471979.7867 | NRMSE=1478648.55% | MaxErr=     5.06aF | mean(nn-os)=    -5.06aF
+    cdd: MRE=    15.37% | R2=-214675495199.6859 | NRMSE=2429084.93% | MaxErr=      6.7aF | mean(nn-os)=    -6.69aF
+    id clamp split (dQ into source, fC): REV: n=341 dq=  +0.000  NEAR0: n=  0 dq=  +0.000  FREE: n=  0 dq=  +0.000
+  --- Mnt / EDGE ---
+    id : MRE=   389.96% | R2=  0.2926 | NRMSE=   13.36% | MaxErr=  0.00234uA | mean(nn-os)=+5.44e-05uA
+    qg : MRE=    33.10% | R2=  0.7894 | NRMSE=   20.13% | MaxErr=     9.13aC | mean(nn-os)=    +4.56aC
+    qd : MRE=    29.57% | R2=  0.8222 | NRMSE=   18.52% | MaxErr=     3.84aC | mean(nn-os)=    -1.91aC
+    qs : MRE=    37.83% | R2=  0.7845 | NRMSE=   20.39% | MaxErr=     4.17aC | mean(nn-os)=    -2.19aC
+    qb : MRE=   204.72% | R2=  0.5942 | NRMSE=   28.17% | MaxErr=     1.11aC | mean(nn-os)=    -0.46aC
+    cgg: MRE=    12.69% | R2=  0.9746 | NRMSE=    7.40% | MaxErr=     12.3aF | mean(nn-os)=    +6.17aF
+    cgd: MRE=    21.76% | R2=  0.9801 | NRMSE=    6.55% | MaxErr=     6.72aF | mean(nn-os)=       -3aF
+    cgs: MRE=   100.91% | R2= -1.6268 | NRMSE=   75.25% | MaxErr=     58.8aF | mean(nn-os)=    +28.4aF
+    cdg: MRE=    15.07% | R2=  0.9753 | NRMSE=    7.30% | MaxErr=     5.76aF | mean(nn-os)=    -3.11aF
+    cdd: MRE=    18.93% | R2=  0.9164 | NRMSE=   13.34% | MaxErr=     8.06aF | mean(nn-os)=     -1.7aF
+    id clamp split (dQ into source, fC): REV: n= 21 dq=  +0.000  NEAR0: n= 40 dq=  -0.000  FREE: n=  0 dq=  +0.000
+  --- Mnt / HOLD ---
+    id : MRE=     0.00% | R2=     nan | NRMSE=     nan% | MaxErr=        0uA | mean(nn-os)=       +0uA
+    qg : MRE=    58.07% | R2=-10540992590146800.0000 | NRMSE=758162261.80% | MaxErr=     9.13aC | mean(nn-os)=    +9.13aC
+    qd : MRE=    48.28% | R2=-3911740216683928988759548231680.0000 | NRMSE=31185606134484324.00% | MaxErr=     3.84aC | mean(nn-os)=    -3.84aC
+    qs : MRE=    52.38% | R2=-2200025333886129.2500 | NRMSE=346365996.50% | MaxErr=     4.17aC | mean(nn-os)=    -4.17aC
+    qb : MRE=   552.20% | R2=-548445631096072530899452821504.0000 | NRMSE=5292013945435157.00% | MaxErr=     1.11aC | mean(nn-os)=    -1.11aC
+    cgg: MRE=    19.54% | R2=-13061495730471424.0000 | NRMSE=843952247.00% | MaxErr=     4.24aF | mean(nn-os)=    +4.24aF
+    cgd: MRE=    40.83% | R2=-143591506769013628033728249856.0000 | NRMSE=4183703728469918.00% | MaxErr=      3.8aF | mean(nn-os)=     -3.8aF
+    cgs: MRE=   100.21% | R2=-63234787722933232.0000 | NRMSE=1856946770.03% | MaxErr=     9.33aF | mean(nn-os)=    +9.33aF
+    cdg: MRE=    24.65% | R2=-2138859644885353146803191545856.0000 | NRMSE=37254526339794528.00% | MaxErr=      2.3aF | mean(nn-os)=     -2.3aF
+    cdd: MRE=    26.49% | R2=-119525804585648534170225344512.0000 | NRMSE=3905891461655567.00% | MaxErr=     2.47aF | mean(nn-os)=    +2.47aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n=340 dq=  +0.000  FREE: n=  0 dq=  +0.000
+  --- Mpc / RISE ---
+    id : MRE=    77.37% | R2= -0.5783 | NRMSE=   24.48% | MaxErr=     9.36uA | mean(nn-os)=    +1.44uA
+    qg : MRE=     5.17% | R2=  0.9963 | NRMSE=    2.59% | MaxErr=     5.05aC | mean(nn-os)=    -0.51aC
+    qd : MRE=     3.72% | R2=  0.9982 | NRMSE=    1.84% | MaxErr=     1.68aC | mean(nn-os)=  +0.0454aC
+    qs : MRE=    13.67% | R2=  0.9962 | NRMSE=    2.67% | MaxErr=     2.15aC | mean(nn-os)=   +0.262aC
+    qb : MRE=   234.91% | R2=  0.9629 | NRMSE=    7.34% | MaxErr=     1.21aC | mean(nn-os)=   +0.203aC
+    cgg: MRE=     0.79% | R2=  0.9999 | NRMSE=    0.41% | MaxErr=     1.67aF | mean(nn-os)=   -0.499aF
+    cgd: MRE=    25.12% | R2=  0.4271 | NRMSE=   34.56% | MaxErr=     44.3aF | mean(nn-os)=    -19.4aF
+    cgs: MRE=    98.96% | R2= -2.4906 | NRMSE=   84.09% | MaxErr=     91.5aF | mean(nn-os)=    +58.8aF
+    cdg: MRE=     2.49% | R2=  0.9997 | NRMSE=    0.75% | MaxErr=     2.02aF | mean(nn-os)=   +0.543aF
+    cdd: MRE=    17.47% | R2=  0.7402 | NRMSE=   23.49% | MaxErr=     20.8aF | mean(nn-os)=    -8.15aF
+    id clamp split (dQ into source, fC): REV: n= 27 dq=  -0.317  NEAR0: n=  1 dq=  +0.000  FREE: n= 16 dq=  -0.000
+  --- Mpc / SAMPLE ---
+    id : MRE=7561483806718403639508992.00% | R2=     nan | NRMSE=     nan% | MaxErr=   0.0106uA | mean(nn-os)=+7.56e-05uA
+    qg : MRE=    22.07% | R2=-1142312.0806 | NRMSE= 5436.91% | MaxErr=     5.05aC | mean(nn-os)=    -5.04aC
+    qd : MRE=    11.56% | R2=-126422.0411 | NRMSE= 1808.72% | MaxErr=     1.68aC | mean(nn-os)=    +1.68aC
+    qs : MRE=    29.04% | R2=-2921801649116894870896640.0000 | NRMSE=8692159184831.65% | MaxErr=     2.15aC | mean(nn-os)=    +2.15aC
+    qb : MRE=   130.76% | R2=-387575096855479844864.0000 | NRMSE=100150566072.83% | MaxErr=     1.21aC | mean(nn-os)=    +1.21aC
+    cgg: MRE=     0.05% | R2=-143.4325 | NRMSE=   61.15% | MaxErr=   0.0154aF | mean(nn-os)=  +0.0139aF
+    cgd: MRE=     8.94% | R2=-566090.2521 | NRMSE= 3828.29% | MaxErr=    0.871aF | mean(nn-os)=   -0.871aF
+    cgs: MRE=   102.37% | R2=-88448281199499051794432.0000 | NRMSE=1512651626332.28% | MaxErr=     12.6aF | mean(nn-os)=    +12.6aF
+    cdg: MRE=     7.28% | R2=-376123.2671 | NRMSE= 3120.52% | MaxErr=    0.729aF | mean(nn-os)=    +0.71aF
+    cdd: MRE=     9.48% | R2=-636966.0420 | NRMSE= 4060.88% | MaxErr=    0.925aF | mean(nn-os)=   +0.924aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n=  0 dq=  +0.000  FREE: n=341 dq=  -0.000
+  --- Mpc / EDGE ---
+    id : MRE=  1519.25% | R2=  0.1865 | NRMSE=   14.60% | MaxErr=      6.2uA | mean(nn-os)=   +0.988uA
+    qg : MRE=     9.17% | R2=  0.9921 | NRMSE=    4.01% | MaxErr=     5.04aC | mean(nn-os)=    -1.74aC
+    qd : MRE=     5.30% | R2=  0.9965 | NRMSE=    2.70% | MaxErr=     1.68aC | mean(nn-os)=   +0.476aC
+    qs : MRE=    12.07% | R2=  0.9914 | NRMSE=    4.17% | MaxErr=     2.15aC | mean(nn-os)=   +0.794aC
+    qb : MRE=   204.31% | R2=  0.9287 | NRMSE=   11.81% | MaxErr=     1.21aC | mean(nn-os)=   +0.465aC
+    cgg: MRE=     0.52% | R2=  1.0000 | NRMSE=    0.28% | MaxErr=     1.62aF | mean(nn-os)=    -0.12aF
+    cgd: MRE=     8.77% | R2=  0.9293 | NRMSE=   12.70% | MaxErr=     66.7aF | mean(nn-os)=    -2.42aF
+    cgs: MRE=    99.97% | R2= -1.4915 | NRMSE=   73.84% | MaxErr=     92.6aF | mean(nn-os)=    +48.2aF
+    cdg: MRE=     3.64% | R2=  0.9998 | NRMSE=    0.73% | MaxErr=    0.813aF | mean(nn-os)=   +0.578aF
+    cdd: MRE=    11.20% | R2=  0.8484 | NRMSE=   18.57% | MaxErr=     66.5aF | mean(nn-os)=    -1.13aF
+    id clamp split (dQ into source, fC): REV: n= 21 dq=  -0.304  NEAR0: n=  5 dq=  +0.037  FREE: n= 35 dq=  -0.035
+  --- Mpc / HOLD ---
+    id : MRE=   100.00% | R2=-1114.5683 | NRMSE=  196.38% | MaxErr=     3.96uA | mean(nn-os)=    +2.63uA
+    qg : MRE=     0.99% | R2=-852.0974 | NRMSE=  171.75% | MaxErr=    0.554aC | mean(nn-os)=   +0.528aC
+    qd : MRE=     1.83% | R2=-1094.6834 | NRMSE=  194.66% | MaxErr=    0.447aC | mean(nn-os)=   -0.442aC
+    qs : MRE=     0.40% | R2=-413.4506 | NRMSE=  119.68% | MaxErr=     0.23aC | mean(nn-os)=  -0.0955aC
+    qb : MRE=     0.19% | R2=-85829182682980016.0000 | NRMSE=1722948948.38% | MaxErr=   0.0118aC | mean(nn-os)=    +0.01aC
+    cgg: MRE=     0.08% | R2=-206.5261 | NRMSE=   84.86% | MaxErr=    0.456aF | mean(nn-os)=   +0.151aF
+    cgd: MRE=     9.29% | R2=-77429.8796 | NRMSE= 1631.32% | MaxErr=     66.7aF | mean(nn-os)=    -8.71aF
+    cgs: MRE=    97.45% | R2=-15224436.4870 | NRMSE=22826.50% | MaxErr=     91.3aF | mean(nn-os)=    +91.3aF
+    cdg: MRE=     0.66% | R2=-7222.1056 | NRMSE=  500.48% | MaxErr=    0.727aF | mean(nn-os)=   +0.624aF
+    cdd: MRE=    16.76% | R2=-477944.3440 | NRMSE= 4058.95% | MaxErr=     66.5aF | mean(nn-os)=    -11.2aF
+    id clamp split (dQ into source, fC): REV: n=340 dq=  -4.468  NEAR0: n=  0 dq=  +0.000  FREE: n=  0 dq=  +0.000
+  --- Mpt / RISE ---
+    id : MRE=   108.06% | R2= -0.2238 | NRMSE=   31.15% | MaxErr=  0.00468uA | mean(nn-os)=+0.000627uA
+    qg : MRE=    34.06% | R2=  0.7008 | NRMSE=   24.21% | MaxErr=     9.55aC | mean(nn-os)=    -5.59aC
+    qd : MRE=    28.93% | R2=  0.7469 | NRMSE=   22.19% | MaxErr=     3.59aC | mean(nn-os)=    +2.04aC
+    qs : MRE=    26.18% | R2=  0.7137 | NRMSE=   23.59% | MaxErr=     3.81aC | mean(nn-os)=    +2.28aC
+    qb : MRE=   910.84% | R2=  0.5474 | NRMSE=   30.34% | MaxErr=     2.15aC | mean(nn-os)=    +1.26aC
+    cgg: MRE=     3.92% | R2=  0.9979 | NRMSE=    1.98% | MaxErr=     2.42aF | mean(nn-os)=   +0.182aF
+    cgd: MRE=    20.30% | R2=  0.9089 | NRMSE=   13.19% | MaxErr=     14.8aF | mean(nn-os)=    +1.67aF
+    cgs: MRE=    99.79% | R2= -1.5684 | NRMSE=   69.99% | MaxErr=     56.1aF | mean(nn-os)=    +25.6aF
+    cdg: MRE=     3.51% | R2=  0.9972 | NRMSE=    2.31% | MaxErr=     1.96aF | mean(nn-os)=   +0.321aF
+    cdd: MRE=    12.64% | R2=  0.9181 | NRMSE=   12.53% | MaxErr=      7.4aF | mean(nn-os)=    +3.15aF
+    id clamp split (dQ into source, fC): REV: n= 34 dq=  -0.000  NEAR0: n= 10 dq=  -0.000  FREE: n=  0 dq=  +0.000
+  --- Mpt / SAMPLE ---
+    id : MRE=723969459732224961150976.00% | R2=     nan | NRMSE=     nan% | MaxErr= 6.15e-05uA | mean(nn-os)=+7.24e-06uA
+    qg : MRE=     3.16% | R2=-38.3316 | NRMSE=   31.85% | MaxErr=    0.363aC | mean(nn-os)=   +0.361aC
+    qd : MRE=     9.92% | R2=-126.2353 | NRMSE=   57.28% | MaxErr=    0.305aC | mean(nn-os)=   -0.304aC
+    qs : MRE=     0.34% | R2=  0.8507 | NRMSE=    1.96% | MaxErr=   0.0112aC | mean(nn-os)=  -0.0104aC
+    qb : MRE=     0.89% | R2=-157.3628 | NRMSE=   64.01% | MaxErr=   0.0505aC | mean(nn-os)=   -0.047aC
+    cgg: MRE=     1.73% | R2=-39.8409 | NRMSE=   32.57% | MaxErr=     2.33aF | mean(nn-os)=    -2.11aF
+    cgd: MRE=    14.89% | R2=-2665.8432 | NRMSE=  263.19% | MaxErr=     9.46aF | mean(nn-os)=    +8.52aF
+    cgs: MRE=    97.64% | R2=-114882.6334 | NRMSE= 1727.42% | MaxErr=     56.1aF | mean(nn-os)=    +55.9aF
+    cdg: MRE=     2.41% | R2=-69.1828 | NRMSE=   42.70% | MaxErr=     1.78aF | mean(nn-os)=    +1.38aF
+    cdd: MRE=    16.61% | R2=-4307.4831 | NRMSE=  334.52% | MaxErr=      7.4aF | mean(nn-os)=    +7.38aF
+    id clamp split (dQ into source, fC): REV: n=  0 dq=  +0.000  NEAR0: n=341 dq=  -0.000  FREE: n=  0 dq=  +0.000
+  --- Mpt / EDGE ---
+    id : MRE=    48.46% | R2= -0.2473 | NRMSE=   37.41% | MaxErr=   0.0081uA | mean(nn-os)= +0.00135uA
+    qg : MRE=    23.45% | R2=  0.8403 | NRMSE=   18.21% | MaxErr=     9.72aC | mean(nn-os)=    -3.52aC
+    qd : MRE=    21.56% | R2=  0.8664 | NRMSE=   16.59% | MaxErr=     3.65aC | mean(nn-os)=    +1.23aC
+    qs : MRE=    17.42% | R2=  0.8498 | NRMSE=   17.60% | MaxErr=     3.87aC | mean(nn-os)=    +1.49aC
+    qb : MRE=  1066.96% | R2=  0.7391 | NRMSE=   23.69% | MaxErr=      2.2aC | mean(nn-os)=   +0.809aC
+    cgg: MRE=     2.95% | R2=  0.9985 | NRMSE=    1.77% | MaxErr=     2.28aF | mean(nn-os)=   -0.492aF
+    cgd: MRE=    17.82% | R2=  0.9212 | NRMSE=   12.89% | MaxErr=     12.6aF | mean(nn-os)=    +3.69aF
+    cgs: MRE=    99.05% | R2= -2.5190 | NRMSE=   86.16% | MaxErr=     60.7aF | mean(nn-os)=    +37.4aF
+    cdg: MRE=     2.70% | R2=  0.9983 | NRMSE=    1.87% | MaxErr=      1.7aF | mean(nn-os)=   +0.491aF
+    cdd: MRE=    13.86% | R2=  0.8880 | NRMSE=   15.39% | MaxErr=     7.53aF | mean(nn-os)=    +4.65aF
+    id clamp split (dQ into source, fC): REV: n= 40 dq=  -0.000  NEAR0: n= 21 dq=  -0.000  FREE: n=  0 dq=  +0.000
+  --- Mpt / HOLD ---
+    id : MRE=     0.00% | R2=     nan | NRMSE=     nan% | MaxErr=        0uA | mean(nn-os)=       +0uA
+    qg : MRE=    51.55% | R2=-2352702.7430 | NRMSE= 9022.26% | MaxErr=     9.07aC | mean(nn-os)=    -8.98aC
+    qd : MRE=    38.34% | R2=-2361148.2961 | NRMSE= 9038.61% | MaxErr=     3.41aC | mean(nn-os)=    +3.37aC
+    qs : MRE=    40.84% | R2=-2679486.0407 | NRMSE= 9628.60% | MaxErr=     3.63aC | mean(nn-os)=    +3.59aC
+    qb : MRE=  1087.27% | R2=-1890258.6638 | NRMSE= 8086.71% | MaxErr=     2.03aC | mean(nn-os)=    +2.01aC
+    cgg: MRE=     5.02% | R2=-641572.4062 | NRMSE= 4712.49% | MaxErr=     1.59aF | mean(nn-os)=    +1.55aF
+    cgd: MRE=    21.96% | R2=-6918684.9379 | NRMSE=15475.34% | MaxErr=     2.57aF | mean(nn-os)=    -2.55aF
+    cgs: MRE=   100.94% | R2=-146143296.4002 | NRMSE=71123.83% | MaxErr=     11.7aF | mean(nn-os)=    +11.7aF
+    cdg: MRE=     3.72% | R2=-198443.8384 | NRMSE= 2620.89% | MaxErr=    0.448aF | mean(nn-os)=   -0.432aF
+    cdd: MRE=    11.32% | R2=-1838450.9769 | NRMSE= 7977.27% | MaxErr=     1.33aF | mean(nn-os)=    +1.32aF
+    id clamp split (dQ into source, fC): REV: n=340 dq=  +0.000  NEAR0: n=  0 dq=  +0.000  FREE: n=  0 dq=  +0.000
+
+MD draft: /data2/home/shenshan/NN_SPICE-refactor-nn/results/v6_4_7/S5_R03_sc_device_dump.md
+osdi[osdi_host] lvl=1 Warning: MEXP_i = 1.884483e+00 < 2.  Setting MEXP_i = 2.
+
+
+

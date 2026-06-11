@@ -78,6 +78,40 @@ cap/charge-model-owned (symmetrization alone nearly closes it), while the
 asymmetric trans-caps (cgd ≠ cdg) are load-bearing during hold. Gate file:
 `results/v6_4_7/S4_R02_symcaps_retest.md`.
 
+### S5 = R0.3 — SC per-device dump: ownership settled; S4's cap hypothesis OVERTURNED; harness `.ic` gap found (2026-06-11)
+
+`scripts/v6_4_7_s5_sc_dump.py` dumps every SC MOSFET along the live DN
+trajectory in four windows (RISE/SAMPLE/EDGE/HOLD), comparing post-Rule-15 NN
+id/qg/qd/qs/qb + full cap matrix vs OSDI at identical absolute bias
+(FD-verified sign conventions), with a Rule-15 clamp-class split
+(REV/NEAR0/FREE) and an exact KCL decomposition C·ΔV = Q_res + Q_cap + Q_num.
+Findings (gate file `results/v6_4_7/S5_R03_sc_device_dump.md`):
+
+- **Numerics and charge VALUES are clean** — Q_num ≈ 0.00 fC in every window;
+  ΔQ_q ≤ 0.05 fC (~0.5 % of the gate gap). The S4 inference that SC charge is
+  cap/charge-model-owned is **overturned**: symcaps' charge win was
+  coincidental compensation (consistent with its 30–137 mV hold drift).
+- **The in-window id error is REV-clamp-concentrated (P2):** TSMC7 Mnt
+  +11.64 fC withheld in SAMPLE (n=341, all REV), TSMC16 +7.66/+3.44,
+  TSMC12 +3.4–3.9 fC — the TG must conduct in reverse to bleed the early
+  overshoot back to Vin and Rule-15 zeroes it.
+- **Dominant owner is a harness semantics gap (trajectory-head probe,
+  `scripts/v6_4_7_s5_head_probe.py`):** NGSPICE runs `tran ... uic`
+  (integrates from `.ic v(vsamp)=0`), but `run_directnet_transient`
+  (`tests/common/complex.py:303`) uses `.ic` only as the OP's NR guess — the
+  OP converges to the NN off-state leakage equilibrium, so DN *starts* at
+  vsamp(0)=0.390 V (TSMC5, =Vin — its +9.52 fC gap accrues entirely before
+  t=0.4 ns; all four windows flat-zero) / 0.704 V (TSMC16). The benchmark
+  compared different experiments.
+- **TSMC7 hold droop exactly attributed:** Mpt NEAR0 id leak −2.222 fC over
+  HOLD ≡ 2.2 mV on 100 fF (measured droop 2.207 mV); OSDI 0.00 fC.
+  Weak-inversion/near-zero-Vds id over-prediction — P3-adjacent.
+
+Consequences: SC dropped from P5/P7 EV claims; **S5b amendment recorded** —
+make the DN transient honor `.ic` uic-style (constrained-OP start, not the
+force_ic released re-solve), E3-class review, SC+RO re-run (shared runner)
+with blind vetoes on the three passing RO cells.
+
 ---
 
 ## V6.4.6 — diagnosis-first architectural iteration; probe fix + dead ends, no behavioral change (2026-06-01/02)
