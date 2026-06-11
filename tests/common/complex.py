@@ -302,16 +302,48 @@ def run_directnet_transient(netlist_path: Path):
         t_stop = parser.analysis_params["tstop"]
 
         guess = circuit.initial_conditions or None
-        op = DCSolver(circuit, initial_guess=guess, use_source_stepping=True,
-                      use_gmin_stepping=False)
+
+        # uic-equivalent start (V6.4.7 S5b): the NGSPICE side of every
+        # complex benchmark runs `tran ... uic`, integrating from `.ic`
+        # exactly. Using `.ic` only as an NR guess lets the OP converge to
+        # the model's unconstrained leakage equilibrium (the S5 SC dump
+        # measured vsamp(0)=0.39-0.70 V instead of the .ic 0 V), so the two
+        # sides simulated different experiments. Pin the .ic nodes with
+        # temporary ideal sources for the OP (constrained solution — NOT
+        # force_ic, whose released re-solve drifts floating nodes back to
+        # the equilibrium) and start the transient from that state.
+        from pycircuitsim.models.passive import VoltageSource
+        _uic_temps = []
+        if circuit.initial_conditions:
+            vs_constrained = set()
+            for comp in circuit.components:
+                if isinstance(comp, VoltageSource):
+                    if comp.nodes[1] in ("0", "GND"):
+                        vs_constrained.add(comp.nodes[0])
+                    elif comp.nodes[0] in ("0", "GND"):
+                        vs_constrained.add(comp.nodes[1])
+            node_map = circuit.get_node_map()
+            for node, val in circuit.initial_conditions.items():
+                if (node not in ("0", "GND") and node not in vs_constrained
+                        and node in node_map):
+                    vs = VoltageSource(f"_V_uic_{node}", [node, "0"], val)
+                    circuit.components.append(vs)
+                    _uic_temps.append(vs)
         try:
-            op_sol = op.solve()
-            if not getattr(op, "_last_solve_converged", True):
-                raise RuntimeError("DC OP fast path did not converge")
-        except (RuntimeError, np.linalg.LinAlgError):
             op = DCSolver(circuit, initial_guess=guess,
-                          use_source_stepping=True, use_gmin_stepping=True)
-            op_sol = op.solve()
+                          use_source_stepping=True, use_gmin_stepping=False)
+            try:
+                op_sol = op.solve()
+                if not getattr(op, "_last_solve_converged", True):
+                    raise RuntimeError("DC OP fast path did not converge")
+            except (RuntimeError, np.linalg.LinAlgError):
+                op = DCSolver(circuit, initial_guess=guess,
+                              use_source_stepping=True,
+                              use_gmin_stepping=True)
+                op_sol = op.solve()
+        finally:
+            for vs in _uic_temps:
+                circuit.components.remove(vs)
 
         solver = TransientSolver(
             circuit, t_stop=t_stop, dt=dt, initial_guess=op_sol,

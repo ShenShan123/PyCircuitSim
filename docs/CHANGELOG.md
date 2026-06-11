@@ -112,6 +112,31 @@ make the DN transient honor `.ic` uic-style (constrained-OP start, not the
 force_ic released re-solve), E3-class review, SC+RO re-run (shared runner)
 with blind vetoes on the three passing RO cells.
 
+### S5b — uic-equivalent `.ic` start SHIPPED; SC failures become honest model errors; headline 10/16 (2026-06-11)
+
+`run_directnet_transient` now solves the OP with `.ic` nodes pinned by
+temporary ideal sources (force_ic-style guards; pins removed before the
+transient starts from the constrained state). Under the old protocol a
+bit-perfect model still failed (TSMC5's "14.65 %" = (Vin−NG_chg)/VDD — pure
+protocol artifact). A/B on post-P0 code: SC 0/4 → 1/4 — TSMC7 PASS (3.40 %,
+droop 0.541 mV); TSMC5 11.96 % (NN TG over-conducts forward), TSMC12 8.14 %
+and TSMC16 6.20 % now UNDershoot (forward id too weak), TSMC16 shows a real
+3.852 mV hold leak (481 % of allowance) previously hidden at the artifact
+equilibrium. RO (shared runner) blind veto held: periods bit-identical
+(75.41/50.83/83.85/92.67 ps, 3/4). E3-class adversarial review: CORRECTION —
+uic-equivalence is exact for both netlists (every non-source node is
+.ic-covered; t=0 mismatch ≤37 µV vs 32–40 mV gate resolution); an engineered
+change does not add a 481 % failure. Conditions recorded: (1) TSMC7
+robustness probe 2/3 — droop healthy at Vin∈{0.55,0.60,0.65}·VDD
+(0.703/0.541/0.107 mV) but charge crosses the gate at 0.65·VDD (5.36 %) ⇒
+**TSMC7 SC = fragile PASS**, off-default-Vin SC variant mandatory in the S19
+blind holdouts, no model-improvement claim from S5b; (2) production `.ic`
+semantics known-issue (`simulation.py` still artifact-start); (3) TSMC16's
+physically impossible 0.704 V NN off-state equilibrium recorded; (4) the P2
+REV-recovery defect is no longer SC-exercised (forward window) — P2 evidence
+unchanged, SC-side EV shrinks. **Honest headline: 10/16** (P0's TSMC12 opamp
++ like-for-like TSMC7 SC).
+
 ---
 
 ## V6.4.6 — diagnosis-first architectural iteration; probe fix + dead ends, no behavioral change (2026-06-01/02)
