@@ -1,6 +1,6 @@
 # DirectNet V6.4.7 — Ranked levers to improve NN compact-model accuracy in complex-circuit simulation
 
-**Date:** 2026-06-10 (rev. 2, same day; rev. 2.1 same day — sequencing serialized per user instruction: every lever is committed-or-rewound before the next starts)  •  **Status:** PROPOSED — REVISED after four-agent adversarial review (dead-end audit, ML methodology, simulator numerics, EV/risk)  •  **Branch:** `feat/v6.4.7` (cut from `feat/v6.4.6` @ `c5155e7`)
+**Date:** 2026-06-10 (rev. 2, same day; rev. 2.1 same day — sequencing serialized per user instruction: every lever is committed-or-rewound before the next starts)  •  **Status:** **WEEK 1 (S1–S8) COMPLETE 2026-06-12 — headline honest 8/16 → 11/16, zero GPU; see "Week-1 outcomes" §. RESUME AT S9 (SWA/EMA infra) → S10 (P4 lead arm, seeds one-per-GPU on GPUs 1/2/3).** Originally PROPOSED — REVISED after four-agent adversarial review (dead-end audit, ML methodology, simulator numerics, EV/risk)  •  **Branch:** `feat/v6.4.7` (cut from `feat/v6.4.6` @ `c5155e7`; week-1 commits `c2ac02b`…`ad62c68`)
 **Authoring:** rev 1 — plan-mode synthesis + staff-engineer adversarial review (checked against recorded V5–V6.4.6 dead ends; three conflicts designed around: V5 Phase-C JAC-loss negative, E2-medium head-trim falsification, P0-A NR-instability of the railed SRAM point). rev 2 — four-agent panel found the **P0 NMOS source-frame bug**, retracted the switchcap droop premise, re-powered the campaign, and hardened selection discipline. Proposal IDs are stable from rev 1; the rev-2 ranking is the section order below (P0/R0 new; P4 now precedes P3 among GPU arms).
 
 **User rulings (2026-06-10):**
@@ -198,7 +198,7 @@ holdouts now include the off-default-Vin SC variant).
 
 **Protocol (applies to every step below):** execution is strictly serial — one lever at a time, no overlap. Each step starts from a clean committed state (`git commit` before touching anything), runs its verification gates, then resolves one of two ways before the next step begins: **(a) progress → commit**, becoming part of the baseline every later step builds on; **(b) kill criteria met → rewind** (`git reset`/revert the code; checkpoints stay on disk as inert artifacts that must not match the resolver pattern) **and record the dead end with the numbers that killed it**. No step starts while the previous one is unresolved. The proposal sections above stay in *rank* order (stable IDs); this section is the *execution* order.
 
-1. **Week 1 (0 GPU), serial S1–S8:**
+1. **Week 1 (0 GPU), serial S1–S8 — ✅ ALL COMPLETE (2026-06-12), see "Week-1 outcomes" for results, gate files under `results/v6_4_7/`:**
    - **S1 — pre-flight:** snapshot checkpoints + `manifest.sha256`; **commit the still-untracked campaign infra** (`scripts/eval_v6_4_5_candidate.py`, `scripts/v6_4_5_search.py`) so every later rewind has a clean base.
    - **S2 = P0** frame fix + lifted-source sweep. Gates: 16-cell harness + force_ic 8 + inverter 8/8 + DC 55/55 + tran 64/64 + the new sweep. Correctness fix — ships regardless; the only stop is the lifted-source sweep regressing vs OSDI (investigate before proceeding, per P0 kill note).
    - **S3 = R0.1** droop sub-gate repair, under the E3-class adversarial false-PASS review. Shown to be a loosening rather than a correction → rewind + dead-end record. Pass → recount the SC failing-gate census.
