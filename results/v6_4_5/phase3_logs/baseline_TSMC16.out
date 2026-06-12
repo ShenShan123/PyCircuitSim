@@ -1,0 +1,42 @@
+
+=== Inverter reproduction: TSMC16 (VDD=0.8V, L_n=16nm, L_p=20nm, NFIN=2) ===
+  [VTC] NGSPICE BSIM-CMG ground truth…
+    ref pts=161  Vout range [0.000, 0.800] V
+  [VTC] PyCircuitSim DirectNet V6.2.1 (LEVEL=73)…
+[NN-resolver] L73.0 Mn1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mp1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+DC sweep plot saved to: /tmp/claude-1001/v645_inv_j4t1jdc9/directnet_v6_2_1_inverter_vtc_TSMC16/directnet_v6_2_1_inverter_TSMC16_dc_sweep.png
+    VTC: NRMSE=1.329%  MRE=13.30%  MaxErr=39.1mV  R²=0.9993  ΔVtrip=+0.0mV
+  [Tran] NGSPICE BSIM-CMG ground truth…
+    ref pts=329  V(out) range [-0.0093, 0.8126] V
+  [Tran] PyCircuitSim DirectNet V6.2.1 (LEVEL=73)…
+[NN-resolver] L73.0 Mn1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mp1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+    Tran (full):         NRMSE=1.767%  MRE=6.94%  MaxErr=132.9mV  R²=0.9987
+    Tran (post-startup): NRMSE=1.473%  MRE=7.75%  MaxErr=55.1mV  R²=0.9991
+    Tran region breakdown: high-rail=0.96% low-rail=1.53% transition=3.19%
+[NN-resolver] L73.0 Mp1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mn1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mp2 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mn2 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mp3 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mn3 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mp4 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mn4 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mp5 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mn5 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mpl TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mnl TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mpr TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mnr TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mal TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mar TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mn1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mn2 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mp3 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mp4 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mn5 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mp6 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mn7 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+DC sweep plot saved to: /tmp/claude-1001/v645_ckpt_hs5xi504/work/opamp/TSMC16/opamp_TSMC16_dcsweep/opamp_TSMC16_dc_sweep.png
+RESULT {"tech": "TSMC16", "nmos": "tsmc16_dn_medium_nmos", "pmos": "tsmc16_dn_medium_pmos", "inv_vtc_nrmse": 1.3286237244898393, "inv_vtc_maxerr_mv": 39.117752397304415, "inv_vtc_r2": 0.9992703909548006, "inv_vtc_dvtrip_mv": 0.024257449136588782, "inv_tran_post_nrmse": 1.4728868722226038, "inv_tran_post_maxerr_mv": 55.0908120824817, "ro_ng_period_ps": 90.076152923894, "ring_osc_period_err": 2.8789857596250488, "ro_nrmse": 29.488229914024878, "ro_r2": 0.4917240293393058, "ro_partial": false, "ro_dn_period_ps": 92.669432539391, "sram_rail_snap_resid": 0.24923439885487014, "sram_q": 0.8650707698073989, "sram_qb": 0.19938751908389613, "opamp_flat_flag": 1, "opamp_gain": 0.00036749068035553736, "opamp_vout_center": 0.00010135116761138133}

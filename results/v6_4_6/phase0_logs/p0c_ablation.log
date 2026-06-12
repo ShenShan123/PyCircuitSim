@@ -1,0 +1,55 @@
+[P0-C] NGSPICE period = 46.64 ps
+[NN-resolver] L73.0 Mp1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[P0-C] baseline         period =   50.82 ps  err =   8.97%  NRMSE =  54.65%  R2 =  -0.6692  partial=False  wall=498s osdi_calls=0 hits=0
+[NN-resolver] L73.0 Mp1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[P0-C] cap-swap         period =   50.82 ps  err =   8.97%  NRMSE =  54.65%  R2 =  -0.6692  partial=False  wall=584s osdi_calls=12810 hits=219040
+[NN-resolver] L73.0 Mp1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[P0-C] gds-swap         period =   50.83 ps  err =   8.98%  NRMSE =  64.57%  R2 =  -1.3305  partial=False  wall=424s osdi_calls=18382 hits=420058
+[NN-resolver] L73.0 Mp1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[P0-C] gds-swap-nofloor period =   50.83 ps  err =   8.98%  NRMSE =  62.78%  R2 =  -1.2030  partial=False  wall=373s osdi_calls=22167 hits=624843
+
+======================================================================
+P0-C SUMMARY — TSMC7 RO period under cap-swap / gds-swap
+======================================================================
+  NGSPICE ground truth period = 46.64 ps  (gate <=5%)
+  variant          |  period(ps) |  perErr% |  NRMSE% |       R2
+  baseline         |       50.82 |     8.97 |   54.65 |  -0.6692
+  cap-swap         |       50.82 |     8.97 |   54.65 |  -0.6692
+  gds-swap         |       50.83 |     8.98 |   64.57 |  -1.3305
+  gds-swap-nofloor |       50.83 |     8.98 |   62.78 |  -1.2030

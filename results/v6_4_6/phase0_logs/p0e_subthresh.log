@@ -1,0 +1,92 @@
+==============================================================================
+V6.4.6 Phase-0 P0-E — subthreshold normalisation / sign-noise audit
+==============================================================================
+dataset : /data2/home/shenshan/NN_SPICE-refactor-nn/external_compact_models/bsimar/data/datasets/tsmc7_nmos.npz
+norm    : /data2/home/shenshan/NN_SPICE-refactor-nn/external_compact_models/bsimar/checkpoints/tsmc7_dn_medium_nmos_norm.npz
+
+[0] SCHEMA CONFIRMATION
+    N rows                 : 2078136
+    inputs shape           : (2078136, 4)  (4 cols)
+      inputs[:,0] Vgs             : min=-0.225 max=1.5 nuniq=1633873
+      inputs[:,1] Vds             : min=0 max=1.5 nuniq=1634251
+      inputs[:,2] Vbs             : min=0 max=0 nuniq=1
+      inputs[:,3] col3(Vbs-sweep) : min=-0.5412 max=0.75 nuniq=1691285
+    outputs shape          : (2078136, 13)  (13 cols)
+    meta_output_columns    : [np.str_('id'), np.str_('gm'), np.str_('gds'), np.str_('gmb'), np.str_('qg'), np.str_('qd'), np.str_('qs'), np.str_('qb'), np.str_('cgg'), np.str_('cgd'), np.str_('cgs'), np.str_('cdg'), np.str_('cdd')]
+      -> id@0 gm@1 gds@2 gmb@3
+    sample_class names     : [np.str_('anchor'), np.str_('vds_zero'), np.str_('subthresh'), np.str_('small_vds'), np.str_('grid'), np.str_('hot'), np.str_('lhs'), np.str_('inv_trip'), np.str_('overshoot'), np.str_('vbs_lhs'), np.str_('reverse_vds')]
+      -> subthresh == code 2
+    meta_vdd               : 0.75
+    norm mode              : asinh
+    asinh_scale[id]        : 5.730942e-05
+    output_mean[id]        : -1.060506
+    output_std[id]         : 2.086147
+
+[1] ASINH CRUSH OF THE LEAKAGE BAND
+    Full normalised id range (all finite rows): [-3.1439, 4.1606]  span=7.3046
+    Normalised id at leakage-band magnitude edges (positive id):
+      id=+1e-09 A -> z=+0.50836  (|z-z@0|=0.00001)
+      id=+1e-08 A -> z=+0.50844  (|z-z@0|=0.00008)
+      id=+1e-07 A -> z=+0.50919  (|z-z@0|=0.00084)
+      id= 0      A -> z=+0.50836
+
+    1nA -> 100nA band occupies 0.00083 normalised-id units
+      = 0.0113% of the full normalised id range (7.3046).
+    On-state ref (99th pct |id|=1.2252e-02 A) -> z=+3.41235
+      The on-band vs 100nA gap is 2.9032 norm-units (39.74% of range); the entire <100nA leakage band is 0.0115% of range below z@0.
+    1nA is 4.76 decades below asinh_scale[id] (5.731e-05); asinh(1e-9/scale)=1.745e-05 ~ linear regime -> crushed toward 0.
+    dz/d|id| @1nA = 8.3643e+03  vs  @on-state = 3.9123e+01  -> ratio 213.79x (NOTE: gradient is *larger* at 1nA because id<<scale; the crush is in the *range fraction*, not the local slope).
+
+[2] FLOOR NOISE IN THE |id| < 1e-7 BAND
+    rows with |id| < 1e-07 A : 263924 (12.70% of all 2078136 rows)
+      negative (id<0)   : 118851  (45.03% of band)
+      literal-zero      : 124786  (47.28% of band; 6.00% of ALL rows)
+      positive (id>0)   : 20287  (7.69% of band)
+    NON-zero leakage tail (0<|id|<1e-07): n=139138  negative=85.42%  (the part a reweight touches)
+
+    Decade histogram of |id| in the leakage band (1e-12 .. 1e-7):
+    |id| == 0 (literal)           : 124786
+    0 < |id| < 1e-12             : 0
+    1e-12 <= |id| < 1e-11        : 1
+    1e-11 <= |id| < 1e-10        : 0
+    1e-10 <= |id| < 1e-9        : 27
+    1e-9 <= |id| < 1e-8        : 68552
+    1e-8 <= |id| < 1e-7        : 70558
+
+    Sign split per |id| decade (neg% within each decade):
+      1e-12..1e-11: n=       1  neg=100.00%
+      1e-11..1e-10: (empty)
+      1e-10..1e-9: n=      27  neg= 29.63%
+      1e-9..1e-8: n=   68552  neg= 84.15%
+      1e-8..1e-7: n=   70558  neg= 86.68%
+      |id|<1e-12 : n=  124786  neg=  0.00%  zero=100.00%
+
+[3] SUBTHRESHOLD OSDI gm/gds CLEANLINESS (sample_class == 2)
+    subthresh class rows  : 97200
+    |id| range in class   : [0.0000e+00, 6.5847e-03] A
+    id sign split         : neg=71.57%  zero=21.11%  pos=7.32%
+
+    gm  NaN/Inf           : 0  (0.0000%)
+    gds NaN/Inf           : 0  (0.0000%)
+    gm  < 0 (wrong sign)  : 1597  (1.6430%)
+    gm  == 0              : 3946  (4.0597%)
+    gds < 0 (wrong sign)  : 0  (0.0000%)
+    gds == 0              : 0  (0.0000%)
+    gm  range (finite)    : [-8.2517e-19, 3.6315e-03]
+    gds range (finite)    : [5.5874e-15, 6.5678e-03]
+
+    [deep-off subset of class, |id|<1nA: n=20525]
+      gm neg%=7.77%  gm zero%=19.23%  gm range=[-8.252e-19,1.241e-05]
+
+[4] DECISION
+    id-band sign-random?   True  (neg frac 45.0% vs 10% threshold)
+    OSDI gm clean?         True
+    OSDI gds clean?        True
+
+    >>> subthresh band clean? NO
+    >>> DECISION: UNSAFE for a raw log-reweight / asinh-floor drop on the id VALUE
+        rationale: the |id|<1e-7 band is sign-random PyCMG floor noise (45.0% negative of band, 47.28% literal-zero of band = 6.00% of all rows; the non-zero tail alone is 85.4% negative). Dropping/lowering the asinh floor (e.g. to 1e-9) would amplify this junk into the surface. 
+        allowed:   ONLY a clipped/winsorised signed-floor target is allowed: restrict support to |id|>1e-12 A and apply Huber on ln(|id|) (signed), NOT a plain log-reweight of the raw id value. HOWEVER the analytic OSDI gm/gds in the subthresh class ARE clean (NaN/Inf 0.0000%/0.0000%, wrong-sign 1.6430%/0.0000%), so a Phase-2 Jacobian/log-DERIVATIVE distillation against OSDI gm/gds on the clipped support (|id|>1e-12) is the safe lever — the derivative target, unlike the raw id value, is not floor-noise.
+
+[done] report  -> /data2/home/shenshan/NN_SPICE-refactor-nn/results/v6_4_6/phase0_E_subthresh_audit.md
+[done] log     -> /data2/home/shenshan/NN_SPICE-refactor-nn/results/v6_4_6/phase0_logs/p0e_subthresh.log

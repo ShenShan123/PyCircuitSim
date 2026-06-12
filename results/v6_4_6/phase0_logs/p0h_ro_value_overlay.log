@@ -1,0 +1,57 @@
+[NN-resolver] L73.0 Mp1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[P0-H] DN RO period = 50.82 ps  (partial=False, err='')
+[NN-resolver] L73.0 Mp1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[P0-H] re-run period (all nodes) = 50.82 ps
+[P0-H] cycle window: 26 timesteps (346.00 -> 396.00 ps), span 50.00 ps
+[P0-H] bias points used = 26  (OSDI fails: NMOS 0, PMOS 0)
+
+==============================================================================
+P0-H SUMMARY — TSMC7 RO-trip VALUE overlay (NN post-Rule-15 VALUE vs analytic OSDI)
+==============================================================================
+DN period 50.82 ps vs NG 46.64 ps (gap 4.18 ps, 8.97%); cycle = 26 bias points
+
+--- NMOS (stage-5 device driving n5) ---
+  id : MRE=   44.57%  R2=   0.9480  NRMSE=    5.93%  MaxErr=17.57uA  (OSDI ptp=124.1uA)
+  qg : MRE=    4.46%  R2=   0.9994  NRMSE=    0.96%  MaxErr=1.991aC  (OSDI ptp=100.1aC)
+  qd : MRE=    3.35%  R2=   0.9996  NRMSE=    0.75%  MaxErr=0.7765aC  (OSDI ptp=54.04aC)
+  qs : MRE=    8.96%  R2=   0.9992  NRMSE=    1.19%  MaxErr=1.082aC  (OSDI ptp=44.41aC)
+
+--- PMOS (stage-5 device driving n5) ---
+  id : MRE=   85.78%  R2=   0.9895  NRMSE=    2.99%  MaxErr=7.257uA  (OSDI ptp=97.57uA)
+  qg : MRE=    3.25%  R2=   0.9995  NRMSE=    0.86%  MaxErr=1.951aC  (OSDI ptp=107.8aC)
+  qd : MRE=    2.99%  R2=   0.9997  NRMSE=    0.72%  MaxErr=0.7574aC  (OSDI ptp=57.93aC)
+  qs : MRE=    6.52%  R2=   0.9994  NRMSE=    1.00%  MaxErr=1.073aC  (OSDI ptp=48.58aC)
+
+--- per-cycle charge swing context (qg/qd VALUE) ---
+  nmos qg: OSDI swing  100.07 aC, NN swing   97.99 aC, MaxErr    1.99 aC =    2.0% of OSDI swing  (stage Cload 0.5 fF -> 500 aC per 1 V swing)
+  nmos qd: OSDI swing   54.04 aC, NN swing   53.07 aC, MaxErr    0.78 aC =    1.4% of OSDI swing  (stage Cload 0.5 fF -> 500 aC per 1 V swing)
+  pmos qg: OSDI swing  107.82 aC, NN swing  105.35 aC, MaxErr    1.95 aC =    1.8% of OSDI swing  (stage Cload 0.5 fF -> 500 aC per 1 V swing)
+  pmos qd: OSDI swing   57.93 aC, NN swing   56.75 aC, MaxErr    0.76 aC =    1.3% of OSDI swing  (stage Cload 0.5 fF -> 500 aC per 1 V swing)

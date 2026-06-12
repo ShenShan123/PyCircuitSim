@@ -1,0 +1,76 @@
+==============================================================================
+Benchmark 3c — 6T SRAM read SNM: DirectNet vs NGSPICE BSIM-CMG
+  NFIN corners: [2]
+  Gate: both butterfly lobes positive across NFIN corners
+==============================================================================
+
+--- TSMC5 (VDD=0.65 VT=lvt) ---
+  NFIN=2:
+    NGSPICE BSIM-CMG butterfly lobe ...
+    DirectNet (LEVEL=73) butterfly lobe ...
+[NN-resolver] L73.0 Mpl TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mnl TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mna TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_complex_results/sram_snm/TSMC5/sram_TSMC5_nfin2_out/sram_TSMC5_2_dc_sweep.png
+      NG SNM=189.2mV  DN SNM=337.7mV  SNMerr=78.5%  DN min(qb)=477.6mV  NRMSE=56.28%
+    force_ic full-6T convergence probe ...
+[NN-resolver] L73.0 Mpl TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mnl TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mpr TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mnr TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mal TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mar TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[P0A] RAILED-seed q=0.65 qb=0.0 residual_inf=8.500148e-05 rhs_scale=6.500000e-01 thr=6.500000e-03 ratio=1.3077e-02
+[P0A] STUCK-final q=0.7021400259811289 qb=0.1632027523289164 residual_inf=8.500100e-05 rhs_scale=6.500000e-01 thr=6.500000e-03
+      force_ic state1: q=0.702 qb=0.163  -> FAILED
+[NN-resolver] L73.0 Mpl TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mnl TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mpr TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mnr TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mal TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mar TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[P0A] RAILED-seed q=0.0 qb=0.65 residual_inf=8.500148e-05 rhs_scale=6.500000e-01 thr=6.500000e-03 ratio=1.3077e-02
+[P0A] STUCK-final q=0.16320275232891626 qb=0.702140025981129 residual_inf=8.500100e-05 rhs_scale=6.500000e-01 thr=6.500000e-03
+      force_ic state0: q=0.163 qb=0.702  -> FAILED
+
+--- TSMC7 (VDD=0.75 VT=ulvt) ---
+  NFIN=2:
+    NGSPICE BSIM-CMG butterfly lobe ...
+    DirectNet (LEVEL=73) butterfly lobe ...
+[NN-resolver] L73.0 Mpl TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mnl TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mna TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_complex_results/sram_snm/TSMC7/sram_TSMC7_nfin2_out/sram_TSMC7_2_dc_sweep.png
+      NG SNM=187.4mV  DN SNM=373.0mV  SNMerr=99.0%  DN min(qb)=527.5mV  NRMSE=55.28%
+    force_ic full-6T convergence probe ...
+[NN-resolver] L73.0 Mpl TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mnl TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mpr TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mnr TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mal TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mar TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[P0A] RAILED-seed q=0.75 qb=0.0 residual_inf=1.256588e-04 rhs_scale=7.500000e-01 thr=7.500000e-03 ratio=1.6755e-02
+[P0A] STUCK-final q=0.8150855321749542 qb=0.22640214434347228 residual_inf=1.255187e-04 rhs_scale=7.500000e-01 thr=7.500000e-03
+      force_ic state1: q=0.815 qb=0.226  -> FAILED
+[NN-resolver] L73.0 Mpl TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mnl TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mpr TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mnr TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mal TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mar TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[P0A] RAILED-seed q=0.0 qb=0.75 residual_inf=1.256588e-04 rhs_scale=7.500000e-01 thr=7.500000e-03 ratio=1.6755e-02
+[P0A] STUCK-final q=0.2264021443434722 qb=0.8150855321749542 residual_inf=1.255187e-04 rhs_scale=7.500000e-01 thr=7.500000e-03
+      force_ic state0: q=0.226 qb=0.815  -> FAILED
+
+==============================================================================
+SUMMARY — Benchmark 3c SRAM read SNM
+==============================================================================
+Tech     |  NFIN |  NG SNM mV |  DN SNM mV |  SNMerr% |  min(qb)mV |  Positive
+------------------------------------------------------------------------------
+TSMC5    |     2 |      189.2 |      337.7 |     78.5 |      477.6 |       yes
+TSMC5    |   force_ic: state1=FAIL state0=FAIL  |  all-positive: yes
+TSMC7    |     2 |      187.4 |      373.0 |     99.0 |      527.5 |       yes
+TSMC7    |   force_ic: state1=FAIL state0=FAIL  |  all-positive: yes
+
+  2/2 techs with all butterfly lobes positive
+

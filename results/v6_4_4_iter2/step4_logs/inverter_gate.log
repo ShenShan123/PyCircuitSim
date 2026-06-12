@@ -1,0 +1,40 @@
+    Full NRMSE=1.52%  Post-startup NRMSE=1.41% -> PASS
+    Region breakdown:  High-rail=0.98% (112pts)  Low-rail=1.46% (166pts)  Transition=3.16% (12pts)
+  [Plot] Saved: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_dc_tran_results/inverter_tran/TSMC12/inverter_tran_comparison_TSMC12.png
+
+======================================================================
+  Inverter Transient Test: TSMC16  L_n=16nm  L_p=20nm  NFIN=2  Cload=1fF
+======================================================================
+  [1/N] Running NGSPICE inverter transient ground truth...
+    Done: 329 pts, V(out) [-0.0093, 0.8126]V
+  [N/N] bsimar_v4 inverter tran -- SKIPPED (missing NMOS+PMOS checkpoint)
+  [N/N] Running directnet_v4 inverter transient (LEVEL=73)...
+[NN-resolver] L73.0 Mn1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mp1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+    Full NRMSE=1.76%  Post-startup NRMSE=1.45% -> PASS
+    Region breakdown:  High-rail=0.95% (112pts)  Low-rail=1.53% (166pts)  Transition=3.19% (12pts)
+  [Plot] Saved: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_dc_tran_results/inverter_tran/TSMC16/inverter_tran_comparison_TSMC16.png
+
+==========================================================================================
+  SUMMARY TABLE
+==========================================================================================
+  Tech     | Model                | Analysis |   NRMSE% |     MRE% |   Id_max_ref |  Id_max_test |   Status
+  --------------------------------------------------------------------------------------
+  TSMC5    | directnet_v4_vtc     | vtc    |     1.21 |      N/A |          N/A |          N/A |     PASS
+  TSMC7    | directnet_v4_vtc     | vtc    |     2.37 |      N/A |          N/A |          N/A |     PASS
+  TSMC12   | directnet_v4_vtc     | vtc    |     2.05 |      N/A |          N/A |          N/A |     PASS
+  TSMC16   | directnet_v4_vtc     | vtc    |     1.33 |      N/A |          N/A |          N/A |     PASS
+  TSMC5    | directnet_v4_inv_tran | inv_tran |     1.62 |      N/A |          N/A |          N/A |     PASS
+  TSMC7    | directnet_v4_inv_tran | inv_tran |     1.09 |      N/A |          N/A |          N/A |     PASS
+  TSMC12   | directnet_v4_inv_tran | inv_tran |     1.41 |      N/A |          N/A |          N/A |     PASS
+  TSMC16   | directnet_v4_inv_tran | inv_tran |     1.45 |      N/A |          N/A |          N/A |     PASS
+
+  Total: 8  Pass: 8  Fail: 0  Error: 0
+
+  Per-model DC NRMSE averages (excluding errors):
+    directnet_v4_vtc    : avg NRMSE = 1.74% (across 4 techs)
+  [CSV] Summary saved: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_dc_tran_results/summary.csv
+
+======================================================================
+  RESULT: ALL 8 tests PASSED out of 8
+

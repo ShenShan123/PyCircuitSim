@@ -1,0 +1,49 @@
+
+=== TSMC7 NFIN=3 (BLIND) VDD=0.75 ===
+[NN-resolver] L73.0 Mpl TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mnl TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mpr TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mnr TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mal TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mar TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+      force_ic state1: q=0.822 qb=0.215  resid=1.843e-04 thr=7.500e-03 (resid_ok=True rail_ok=False)  -> FAIL
+[NN-resolver] L73.0 Mpl TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mnl TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mpr TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mnr TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mal TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mar TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+      force_ic state0: q=0.215 qb=0.822  resid=1.843e-04 thr=7.500e-03 (resid_ok=True rail_ok=False)  -> FAIL
+
+=== TSMC12 NFIN=3 (BLIND) VDD=0.8 ===
+[NN-resolver] L73.0 Mpl TECH=tsmc12 VT=svt -> tsmc12_dn_medium_pmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mnl TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mpr TECH=tsmc12 VT=svt -> tsmc12_dn_medium_pmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mnr TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mal TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mar TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+      force_ic state1: q=0.876 qb=0.180  resid=1.552e-04 thr=8.000e-03 (resid_ok=True rail_ok=True)  -> PASS
+[NN-resolver] L73.0 Mpl TECH=tsmc12 VT=svt -> tsmc12_dn_medium_pmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mnl TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mpr TECH=tsmc12 VT=svt -> tsmc12_dn_medium_pmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mnr TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mal TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mar TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+      force_ic state0: q=0.180 qb=0.876  resid=1.552e-04 thr=8.000e-03 (resid_ok=True rail_ok=True)  -> PASS
+
+=== TSMC16 NFIN=3 (BLIND) VDD=0.8 ===
+[NN-resolver] L73.0 Mpl TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mnl TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mpr TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mnr TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mal TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mar TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+      force_ic state1: q=0.874 qb=0.180  resid=1.459e-04 thr=8.000e-03 (resid_ok=True rail_ok=True)  -> PASS
+[NN-resolver] L73.0 Mpl TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mnl TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mpr TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mnr TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mal TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mar TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+      force_ic state0: q=0.180 qb=0.874  resid=1.459e-04 thr=8.000e-03 (resid_ok=True rail_ok=True)  -> PASS
+

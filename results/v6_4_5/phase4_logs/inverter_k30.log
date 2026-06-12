@@ -1,0 +1,175 @@
+======================================================================
+  NN Compact Model Verification
+  BSIMAR (LEVEL=74) + DirectNet (LEVEL=73) vs BSIM-CMG (LEVEL=72)
+======================================================================
+
+  Technologies: TSMC5, TSMC7, TSMC12, TSMC16
+  Suites: NMOS_DC=False  PMOS_DC=False  INV_VTC=True  NMOS_TRAN=False  INV_TRAN=True  SIGN_DIAG=False  IDVDS_DIAG=False
+
+  Checkpoint availability:
+    bsimar_v4_nmos      : NOT FOUND
+    directnet_v4_nmos   : tsmc5_dn_medium_nmos_best.pt
+    bsimar_v4_pmos      : NOT FOUND
+    directnet_v4_pmos   : tsmc5_dn_medium_pmos_best.pt
+
+  DC acceptance: NRMSE < 10% (NN), < 1% (CMG)
+  VTC acceptance: NRMSE < 15%
+  Tran acceptance: NRMSE < 15% of Vdd
+
+======================================================================
+  Inverter VTC Test: TSMC5  L_n=20nm  L_p=20nm  NFIN=2  VDD=0.65V
+======================================================================
+  [1/N] Running NGSPICE inverter VTC ground truth...
+    Done: 131 pts, Vout range [0.000, 0.650]V
+  [N/N] bsimar_v4 inverter VTC -- SKIPPED (missing NMOS+PMOS checkpoint)
+  [N/N] Running directnet_v4 inverter VTC (LEVEL=73)...
+[NN-resolver] L73.0 Mn1 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+    ERROR: CUDA error: out of memory
+Search for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+
+======================================================================
+  Inverter VTC Test: TSMC7  L_n=20nm  L_p=20nm  NFIN=2  VDD=0.75V
+======================================================================
+  [1/N] Running NGSPICE inverter VTC ground truth...
+    Done: 151 pts, Vout range [0.000, 0.750]V
+  [N/N] bsimar_v4 inverter VTC -- SKIPPED (missing NMOS+PMOS checkpoint)
+  [N/N] Running directnet_v4 inverter VTC (LEVEL=73)...
+[NN-resolver] L73.0 Mn1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+    ERROR: CUDA error: out of memory
+Search for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+
+======================================================================
+  Inverter VTC Test: TSMC12  L_n=16nm  L_p=20nm  NFIN=2  VDD=0.80V
+======================================================================
+  [1/N] Running NGSPICE inverter VTC ground truth...
+    Done: 161 pts, Vout range [0.000, 0.800]V
+  [N/N] bsimar_v4 inverter VTC -- SKIPPED (missing NMOS+PMOS checkpoint)
+  [N/N] Running directnet_v4 inverter VTC (LEVEL=73)...
+[NN-resolver] L73.0 Mn1 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+    ERROR: CUDA error: out of memory
+Search for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+
+======================================================================
+  Inverter VTC Test: TSMC16  L_n=16nm  L_p=20nm  NFIN=2  VDD=0.80V
+======================================================================
+  [1/N] Running NGSPICE inverter VTC ground truth...
+    Done: 161 pts, Vout range [0.000, 0.800]V
+  [N/N] bsimar_v4 inverter VTC -- SKIPPED (missing NMOS+PMOS checkpoint)
+  [N/N] Running directnet_v4 inverter VTC (LEVEL=73)...
+[NN-resolver] L73.0 Mn1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+    ERROR: CUDA error: out of memory
+Search for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+
+======================================================================
+  Inverter Transient Test: TSMC5  L_n=20nm  L_p=20nm  NFIN=2  Cload=1fF
+======================================================================
+  [1/N] Running NGSPICE inverter transient ground truth...
+    Done: 329 pts, V(out) [-0.0066, 0.6572]V
+  [N/N] bsimar_v4 inverter tran -- SKIPPED (missing NMOS+PMOS checkpoint)
+  [N/N] Running directnet_v4 inverter transient (LEVEL=73)...
+[NN-resolver] L73.0 Mn1 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+    ERROR: CUDA error: out of memory
+Search for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+
+======================================================================
+  Inverter Transient Test: TSMC7  L_n=20nm  L_p=20nm  NFIN=2  Cload=1fF
+======================================================================
+  [1/N] Running NGSPICE inverter transient ground truth...
+    Done: 329 pts, V(out) [-0.0194, 0.7543]V
+  [N/N] bsimar_v4 inverter tran -- SKIPPED (missing NMOS+PMOS checkpoint)
+  [N/N] Running directnet_v4 inverter transient (LEVEL=73)...
+[NN-resolver] L73.0 Mn1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+    ERROR: CUDA error: out of memory
+Search for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+
+======================================================================
+  Inverter Transient Test: TSMC12  L_n=16nm  L_p=20nm  NFIN=2  Cload=1fF
+======================================================================
+  [1/N] Running NGSPICE inverter transient ground truth...
+    Done: 329 pts, V(out) [-0.0063, 0.8104]V
+  [N/N] bsimar_v4 inverter tran -- SKIPPED (missing NMOS+PMOS checkpoint)
+  [N/N] Running directnet_v4 inverter transient (LEVEL=73)...
+[NN-resolver] L73.0 Mn1 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+    ERROR: CUDA error: out of memory
+Search for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+
+======================================================================
+  Inverter Transient Test: TSMC16  L_n=16nm  L_p=20nm  NFIN=2  Cload=1fF
+======================================================================
+  [1/N] Running NGSPICE inverter transient ground truth...
+    Done: 329 pts, V(out) [-0.0093, 0.8126]V
+  [N/N] bsimar_v4 inverter tran -- SKIPPED (missing NMOS+PMOS checkpoint)
+  [N/N] Running directnet_v4 inverter transient (LEVEL=73)...
+[NN-resolver] L73.0 Mn1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+    ERROR: CUDA error: out of memory
+Search for `cudaErrorMemoryAllocation' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+
+==========================================================================================
+  SUMMARY TABLE
+==========================================================================================
+  Tech     | Model                | Analysis |   NRMSE% |     MRE% |   Id_max_ref |  Id_max_test |   Status
+  --------------------------------------------------------------------------------------
+  TSMC5    | directnet_v4_vtc     | vtc    |      N/A |      N/A |          N/A |          N/A |    ERROR
+                                             -> CUDA error: out of memory
+Sear
+  TSMC7    | directnet_v4_vtc     | vtc    |      N/A |      N/A |          N/A |          N/A |    ERROR
+                                             -> CUDA error: out of memory
+Sear
+  TSMC12   | directnet_v4_vtc     | vtc    |      N/A |      N/A |          N/A |          N/A |    ERROR
+                                             -> CUDA error: out of memory
+Sear
+  TSMC16   | directnet_v4_vtc     | vtc    |      N/A |      N/A |          N/A |          N/A |    ERROR
+                                             -> CUDA error: out of memory
+Sear
+  TSMC5    | directnet_v4_inv_tran | inv_tran |      N/A |      N/A |          N/A |          N/A |    ERROR
+                                             -> CUDA error: out of memory
+Sear
+  TSMC7    | directnet_v4_inv_tran | inv_tran |      N/A |      N/A |          N/A |          N/A |    ERROR
+                                             -> CUDA error: out of memory
+Sear
+  TSMC12   | directnet_v4_inv_tran | inv_tran |      N/A |      N/A |          N/A |          N/A |    ERROR
+                                             -> CUDA error: out of memory
+Sear
+  TSMC16   | directnet_v4_inv_tran | inv_tran |      N/A |      N/A |          N/A |          N/A |    ERROR
+                                             -> CUDA error: out of memory
+Sear
+
+  Total: 8  Pass: 0  Fail: 0  Error: 8
+  [CSV] Summary saved: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_dc_tran_results/summary.csv
+
+======================================================================
+  RESULT: 0 PASS, 0 FAIL, 8 ERROR out of 8 tests
+ERROR conda.cli.main_run:execute(127): `conda run python tests/verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16 --inverter-only` failed. (See above for error)
+

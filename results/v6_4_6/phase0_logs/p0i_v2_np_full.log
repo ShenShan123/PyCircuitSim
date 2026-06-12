@@ -1,0 +1,33 @@
+[P0-I v2] TRAN_TSTOP=0.600 ns  SETTLE=0.300 ns  variants=['baseline', 'np']
+[P0-I v2] NGSPICE ground truth period = 46.65 ps  (gate <=5% -> DirectNet must reach <=48.98 ps)
+[NN-resolver] L73.0 Mp1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[P0-I v2] baseline         period =   50.83 ps  err =   8.96%  Δvs50.82 =  +0.01 ps  NRMSE =  43.46%  R2 =  -0.0552  partial=False reached=0.600ns err=''  wall=385s osdi_calls=0 hits=0
+[NN-resolver] L73.0 Mp1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[P0-I v2] id-inject-N+P    period =   92.30 ps  err =  97.86%  Δvs50.82 = +41.48 ps  NRMSE =  61.94%  R2 =  -1.1440  partial=False reached=0.600ns err=''  wall=10912s osdi_calls=586490 hits=1778000
+
+==============================================================================
+P0-I v2 SUMMARY — TSMC7 RO period under consistent OSDI-`id`-VALUE injection
+==============================================================================
+  NGSPICE ground truth period = 46.65 ps  (gate <=5% -> <=48.98 ps);  baseline 50.82 ps
+  variant          |  period(ps) |  perErr% |  Δvs50.82 |  NRMSE% |       R2 | partial |  reached
+  baseline         |       50.83 |     8.96 |     +0.01 |   43.46 |  -0.0552 |   False |   0.600ns
+  id-inject-N+P    |       92.30 |    97.86 |    +41.48 |   61.94 |  -1.1440 |   False |   0.600ns
+

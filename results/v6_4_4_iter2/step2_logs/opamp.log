@@ -1,0 +1,81 @@
+==============================================================================
+Benchmark 3b — two-stage Miller opamp: DirectNet vs NGSPICE BSIM-CMG
+  Gate: open-loop DC gain within +/-10%
+==============================================================================
+
+--- TSMC5 (VDD=0.65 VT=lvt) ---
+  NGSPICE BSIM-CMG reference ...
+    NGSPICE gain=160.0  trip=0.3580V  slew(step)=619.24mV
+  DirectNet (LEVEL=73) DC transfer ...
+[NN-resolver] L73.0 Mn1 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mn2 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mp3 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mp4 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mn5 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mp6 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mn7 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_complex_results/opamp/TSMC5/opamp_TSMC5_dcsweep/opamp_TSMC5_dc_sweep.png
+    DirectNet gain=164.2  trip=0.2100V  slew(step)=655.76mV
+    Vout curve: MRE=97.81%  R2=-0.9399  NRMSE=69.41%  MaxErr=662.88mV
+    gain error = 2.64%  trip shift = -148.00mV  ->  PASS
+
+--- TSMC7 (VDD=0.75 VT=ulvt) ---
+  NGSPICE BSIM-CMG reference ...
+    NGSPICE gain=163.4  trip=0.4110V  slew(step)=548.63mV
+  DirectNet (LEVEL=73) DC transfer ...
+[NN-resolver] L73.0 Mn1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp6 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn7 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_complex_results/opamp/TSMC7/opamp_TSMC7_dcsweep/opamp_TSMC7_dc_sweep.png
+    DirectNet gain=0.0  trip=0.5610V  slew(step)=0.00mV
+    Vout curve: MRE=99.97%  R2=-1.0043  NRMSE=70.08%  MaxErr=727.47mV
+    gain error = 100.00%  trip shift = 150.00mV  ->  FAIL
+
+--- TSMC12 (VDD=0.8 VT=svt) ---
+  NGSPICE BSIM-CMG reference ...
+    NGSPICE gain=188.4  trip=0.4380V  slew(step)=694.05mV
+  DirectNet (LEVEL=73) DC transfer ...
+[NN-resolver] L73.0 Mn1 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mn2 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mp3 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_pmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mp4 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_pmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mn5 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mp6 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_pmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mn7 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_complex_results/opamp/TSMC12/opamp_TSMC12_dcsweep/opamp_TSMC12_dc_sweep.png
+    DirectNet gain=167.8  trip=0.3660V  slew(step)=722.06mV
+    Vout curve: MRE=48.22%  R2=0.3300  NRMSE=40.74%  MaxErr=737.05mV
+    gain error = 10.94%  trip shift = -72.00mV  ->  FAIL
+
+--- TSMC16 (VDD=0.8 VT=svt) ---
+  NGSPICE BSIM-CMG reference ...
+    NGSPICE gain=187.7  trip=0.4380V  slew(step)=657.56mV
+  DirectNet (LEVEL=73) DC transfer ...
+[NN-resolver] L73.0 Mn1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mn2 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mp3 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mp4 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mn5 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mp6 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mn7 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_complex_results/opamp/TSMC16/opamp_TSMC16_dcsweep/opamp_TSMC16_dc_sweep.png
+    DirectNet gain=0.0  trip=0.5880V  slew(step)=0.00mV
+    Vout curve: MRE=99.98%  R2=-1.0047  NRMSE=70.43%  MaxErr=797.40mV
+    gain error = 100.00%  trip shift = 150.00mV  ->  FAIL
+
+==============================================================================
+SUMMARY — Benchmark 3b Miller opamp
+==============================================================================
+Tech     |   NG gain |   DN gain |  GainErr% |  TripShift |  NRMSE% |   Status
+------------------------------------------------------------------------------
+TSMC5    |     160.0 |     164.2 |      2.64 |  -148.00mV |   69.41 |     PASS
+TSMC7    |     163.4 |       0.0 |    100.00 |   150.00mV |   70.08 |     FAIL
+TSMC12   |     188.4 |     167.8 |     10.94 |   -72.00mV |   40.74 |     FAIL
+TSMC16   |     187.7 |       0.0 |    100.00 |   150.00mV |   70.43 |     FAIL
+
+  1/4 within +/-10% gain gate
+

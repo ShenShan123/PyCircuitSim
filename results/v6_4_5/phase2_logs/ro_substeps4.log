@@ -1,0 +1,89 @@
+==============================================================================
+Benchmark 3a — 5-stage ring oscillator: DirectNet vs NGSPICE BSIM-CMG
+  Gate: oscillation period within +/-5%
+==============================================================================
+
+--- TSMC5 (VDD=0.65 VT=lvt) ---
+  NGSPICE BSIM-CMG reference ...
+    NGSPICE period = 73.23 ps
+  DirectNet (LEVEL=73) transient ...
+[NN-resolver] L73.0 Mp1 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mn1 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mp2 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mn2 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mp3 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mn3 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mp4 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mn4 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mp5 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mn5 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+    DirectNet period = 75.15 ps
+    waveform: MRE=220.05%  R2=0.6572  NRMSE=25.04%  MaxErr=637.70mV
+    period error = 2.62%  ->  PASS
+
+--- TSMC7 (VDD=0.75 VT=ulvt) ---
+  NGSPICE BSIM-CMG reference ...
+    NGSPICE period = 46.64 ps
+  DirectNet (LEVEL=73) transient ...
+[NN-resolver] L73.0 Mp1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn2 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn3 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn4 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mn5 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+    DirectNet period = 50.39 ps
+    waveform: MRE=356.88%  R2=-0.8232  NRMSE=57.11%  MaxErr=798.43mV
+    period error = 8.04%  ->  FAIL
+
+--- TSMC12 (VDD=0.8 VT=svt) ---
+  NGSPICE BSIM-CMG reference ...
+    NGSPICE period = 81.40 ps
+  DirectNet (LEVEL=73) transient ...
+[NN-resolver] L73.0 Mp1 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_pmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mn1 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mp2 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_pmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mn2 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mp3 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_pmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mn3 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mp4 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_pmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mn4 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mp5 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_pmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mn5 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+    DirectNet period = 83.49 ps
+    waveform: MRE=309.21%  R2=0.1123  NRMSE=39.25%  MaxErr=812.17mV
+    period error = 2.57%  ->  PASS
+
+--- TSMC16 (VDD=0.8 VT=svt) ---
+  NGSPICE BSIM-CMG reference ...
+    NGSPICE period = 90.08 ps
+  DirectNet (LEVEL=73) transient ...
+[NN-resolver] L73.0 Mp1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mn1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mp2 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mn2 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mp3 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mn3 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mp4 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mn4 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mp5 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mn5 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+    DirectNet period = 92.33 ps
+    waveform: MRE=291.26%  R2=0.3348  NRMSE=33.73%  MaxErr=812.23mV
+    period error = 2.50%  ->  PASS
+
+==============================================================================
+SUMMARY — Benchmark 3a ring oscillator
+==============================================================================
+Tech     |  NG per(ps) |  DN per(ps) |  PerErr% |  NRMSE% |      R2 |   Status
+------------------------------------------------------------------------------
+TSMC5    |       73.23 |       75.15 |     2.62 |   25.04 |  0.6572 |     PASS
+TSMC7    |       46.64 |       50.39 |     8.04 |   57.11 | -0.8232 |     FAIL
+TSMC12   |       81.40 |       83.49 |     2.57 |   39.25 |  0.1123 |     PASS
+TSMC16   |       90.08 |       92.33 |     2.50 |   33.73 |  0.3348 |     PASS
+
+  3/4 within +/-5% period gate
+

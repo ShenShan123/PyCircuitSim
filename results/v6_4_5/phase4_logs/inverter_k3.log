@@ -1,0 +1,146 @@
+======================================================================
+  NN Compact Model Verification
+  BSIMAR (LEVEL=74) + DirectNet (LEVEL=73) vs BSIM-CMG (LEVEL=72)
+======================================================================
+
+  Technologies: TSMC5, TSMC7, TSMC12, TSMC16
+  Suites: NMOS_DC=False  PMOS_DC=False  INV_VTC=True  NMOS_TRAN=False  INV_TRAN=True  SIGN_DIAG=False  IDVDS_DIAG=False
+
+  Checkpoint availability:
+    bsimar_v4_nmos      : NOT FOUND
+    directnet_v4_nmos   : tsmc5_dn_medium_nmos_best.pt
+    bsimar_v4_pmos      : NOT FOUND
+    directnet_v4_pmos   : tsmc5_dn_medium_pmos_best.pt
+
+  DC acceptance: NRMSE < 10% (NN), < 1% (CMG)
+  VTC acceptance: NRMSE < 15%
+  Tran acceptance: NRMSE < 15% of Vdd
+
+======================================================================
+  Inverter VTC Test: TSMC5  L_n=20nm  L_p=20nm  NFIN=2  VDD=0.65V
+======================================================================
+  [1/N] Running NGSPICE inverter VTC ground truth...
+    Done: 131 pts, Vout range [0.000, 0.650]V
+  [N/N] bsimar_v4 inverter VTC -- SKIPPED (missing NMOS+PMOS checkpoint)
+  [N/N] Running directnet_v4 inverter VTC (LEVEL=73)...
+[NN-resolver] L73.0 Mn1 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mp1 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_dc_tran_results/inverter_vtc/TSMC5/directnet_v4_inverter_vtc_TSMC5/directnet_v4_inverter_TSMC5_dc_sweep.png
+    NRMSE=12.80% -> PASS
+  [Plot] Saved: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_dc_tran_results/inverter_vtc/TSMC5/vtc_comparison_TSMC5.png
+
+======================================================================
+  Inverter VTC Test: TSMC7  L_n=20nm  L_p=20nm  NFIN=2  VDD=0.75V
+======================================================================
+  [1/N] Running NGSPICE inverter VTC ground truth...
+    Done: 151 pts, Vout range [0.000, 0.750]V
+  [N/N] bsimar_v4 inverter VTC -- SKIPPED (missing NMOS+PMOS checkpoint)
+  [N/N] Running directnet_v4 inverter VTC (LEVEL=73)...
+[NN-resolver] L73.0 Mn1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_dc_tran_results/inverter_vtc/TSMC7/directnet_v4_inverter_vtc_TSMC7/directnet_v4_inverter_TSMC7_dc_sweep.png
+    NRMSE=16.54% -> FAIL
+  [Plot] Saved: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_dc_tran_results/inverter_vtc/TSMC7/vtc_comparison_TSMC7.png
+
+======================================================================
+  Inverter VTC Test: TSMC12  L_n=16nm  L_p=20nm  NFIN=2  VDD=0.80V
+======================================================================
+  [1/N] Running NGSPICE inverter VTC ground truth...
+    Done: 161 pts, Vout range [0.000, 0.800]V
+  [N/N] bsimar_v4 inverter VTC -- SKIPPED (missing NMOS+PMOS checkpoint)
+  [N/N] Running directnet_v4 inverter VTC (LEVEL=73)...
+[NN-resolver] L73.0 Mn1 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mp1 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_pmos_best.pt (scope=tsmc12, tech_code=0)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_dc_tran_results/inverter_vtc/TSMC12/directnet_v4_inverter_vtc_TSMC12/directnet_v4_inverter_TSMC12_dc_sweep.png
+    NRMSE=11.07% -> PASS
+  [Plot] Saved: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_dc_tran_results/inverter_vtc/TSMC12/vtc_comparison_TSMC12.png
+
+======================================================================
+  Inverter VTC Test: TSMC16  L_n=16nm  L_p=20nm  NFIN=2  VDD=0.80V
+======================================================================
+  [1/N] Running NGSPICE inverter VTC ground truth...
+    Done: 161 pts, Vout range [0.000, 0.800]V
+  [N/N] bsimar_v4 inverter VTC -- SKIPPED (missing NMOS+PMOS checkpoint)
+  [N/N] Running directnet_v4 inverter VTC (LEVEL=73)...
+[NN-resolver] L73.0 Mn1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mp1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_dc_tran_results/inverter_vtc/TSMC16/directnet_v4_inverter_vtc_TSMC16/directnet_v4_inverter_TSMC16_dc_sweep.png
+    NRMSE=12.80% -> PASS
+  [Plot] Saved: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_dc_tran_results/inverter_vtc/TSMC16/vtc_comparison_TSMC16.png
+
+======================================================================
+  Inverter Transient Test: TSMC5  L_n=20nm  L_p=20nm  NFIN=2  Cload=1fF
+======================================================================
+  [1/N] Running NGSPICE inverter transient ground truth...
+    Done: 329 pts, V(out) [-0.0066, 0.6572]V
+  [N/N] bsimar_v4 inverter tran -- SKIPPED (missing NMOS+PMOS checkpoint)
+  [N/N] Running directnet_v4 inverter transient (LEVEL=73)...
+[NN-resolver] L73.0 Mn1 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mp1 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+    Full NRMSE=17.55%  Post-startup NRMSE=17.84% -> FAIL
+    Region breakdown:  High-rail=1.56% (112pts)  Low-rail=23.34% (166pts)  Transition=11.64% (12pts)
+  [Plot] Saved: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_dc_tran_results/inverter_tran/TSMC5/inverter_tran_comparison_TSMC5.png
+
+======================================================================
+  Inverter Transient Test: TSMC7  L_n=20nm  L_p=20nm  NFIN=2  Cload=1fF
+======================================================================
+  [1/N] Running NGSPICE inverter transient ground truth...
+    Done: 329 pts, V(out) [-0.0194, 0.7543]V
+  [N/N] bsimar_v4 inverter tran -- SKIPPED (missing NMOS+PMOS checkpoint)
+  [N/N] Running directnet_v4 inverter transient (LEVEL=73)...
+[NN-resolver] L73.0 Mn1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mp1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+    Full NRMSE=23.10%  Post-startup NRMSE=23.49% -> FAIL
+    Region breakdown:  High-rail=0.33% (112pts)  Low-rail=30.71% (166pts)  Transition=17.00% (12pts)
+  [Plot] Saved: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_dc_tran_results/inverter_tran/TSMC7/inverter_tran_comparison_TSMC7.png
+
+======================================================================
+  Inverter Transient Test: TSMC12  L_n=16nm  L_p=20nm  NFIN=2  Cload=1fF
+======================================================================
+  [1/N] Running NGSPICE inverter transient ground truth...
+    Done: 329 pts, V(out) [-0.0063, 0.8104]V
+  [N/N] bsimar_v4 inverter tran -- SKIPPED (missing NMOS+PMOS checkpoint)
+  [N/N] Running directnet_v4 inverter transient (LEVEL=73)...
+[NN-resolver] L73.0 Mn1 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mp1 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_pmos_best.pt (scope=tsmc12, tech_code=0)
+    Full NRMSE=14.84%  Post-startup NRMSE=15.08% -> FAIL
+    Region breakdown:  High-rail=0.72% (112pts)  Low-rail=19.89% (166pts)  Transition=4.55% (12pts)
+  [Plot] Saved: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_dc_tran_results/inverter_tran/TSMC12/inverter_tran_comparison_TSMC12.png
+
+======================================================================
+  Inverter Transient Test: TSMC16  L_n=16nm  L_p=20nm  NFIN=2  Cload=1fF
+======================================================================
+  [1/N] Running NGSPICE inverter transient ground truth...
+    Done: 329 pts, V(out) [-0.0093, 0.8126]V
+  [N/N] bsimar_v4 inverter tran -- SKIPPED (missing NMOS+PMOS checkpoint)
+  [N/N] Running directnet_v4 inverter transient (LEVEL=73)...
+[NN-resolver] L73.0 Mn1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mp1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+    Full NRMSE=10.19%  Post-startup NRMSE=10.34% -> PASS
+    Region breakdown:  High-rail=0.80% (112pts)  Low-rail=13.57% (166pts)  Transition=5.32% (12pts)
+  [Plot] Saved: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_dc_tran_results/inverter_tran/TSMC16/inverter_tran_comparison_TSMC16.png
+
+==========================================================================================
+  SUMMARY TABLE
+==========================================================================================
+  Tech     | Model                | Analysis |   NRMSE% |     MRE% |   Id_max_ref |  Id_max_test |   Status
+  --------------------------------------------------------------------------------------
+  TSMC5    | directnet_v4_vtc     | vtc    |    12.80 |      N/A |          N/A |          N/A |     PASS
+  TSMC7    | directnet_v4_vtc     | vtc    |    16.54 |      N/A |          N/A |          N/A |     FAIL
+  TSMC12   | directnet_v4_vtc     | vtc    |    11.07 |      N/A |          N/A |          N/A |     PASS
+  TSMC16   | directnet_v4_vtc     | vtc    |    12.80 |      N/A |          N/A |          N/A |     PASS
+  TSMC5    | directnet_v4_inv_tran | inv_tran |    17.84 |      N/A |          N/A |          N/A |     FAIL
+  TSMC7    | directnet_v4_inv_tran | inv_tran |    23.49 |      N/A |          N/A |          N/A |     FAIL
+  TSMC12   | directnet_v4_inv_tran | inv_tran |    15.08 |      N/A |          N/A |          N/A |     FAIL
+  TSMC16   | directnet_v4_inv_tran | inv_tran |    10.34 |      N/A |          N/A |          N/A |     PASS
+
+  Total: 8  Pass: 4  Fail: 4  Error: 0
+
+  Per-model DC NRMSE averages (excluding errors):
+    directnet_v4_vtc    : avg NRMSE = 13.30% (across 4 techs)
+  [CSV] Summary saved: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_dc_tran_results/summary.csv
+
+======================================================================
+  RESULT: 4 PASS, 4 FAIL, 0 ERROR out of 8 tests
+ERROR conda.cli.main_run:execute(127): `conda run python tests/verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16 --inverter-only` failed. (See above for error)
+

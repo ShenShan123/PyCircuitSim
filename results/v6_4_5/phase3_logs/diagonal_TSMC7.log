@@ -1,0 +1,18 @@
+
+=== TSMC7 DIAGONAL scan (recipes=['stock', 'mono'] seeds=[42, 123, 7, 17]) ===
+  [baseline        ] VTC= 2.841%  tran= 1.099%  RO=  8.98%  SRAM=0.302  flat=1
+  [stock_s42       ] VTC= 4.021%  tran= 1.274%  RO= 11.35%  SRAM=0.309  flat=1
+  [stock_s123      ] VTC= 2.613%  tran= 1.543%  RO= 11.53%  SRAM=0.278  flat=1
+  [stock_s7        ] VTC= 2.581%  tran= 1.505%  RO= 11.40%  SRAM=0.299  flat=1
+  [stock_s17       ] VTC= 2.972%  tran= 1.718%  RO= 11.47%  SRAM=0.286  flat=1
+  [mono_s42        ] VTC= 2.582%  tran= 1.417%  RO=  8.96%  SRAM=0.299  flat=1
+  [mono_s123       ] VTC= 2.807%  tran= 1.460%  RO=  9.42%  SRAM=0.289  flat=1
+  [mono_s7         ] VTC= 2.665%  tran= 1.630%  RO=  9.32%  SRAM=0.301  flat=1
+  [mono_s17        ] VTC= 3.767%  tran= 1.075%  RO= 11.58%  SRAM=0.292  flat=1
+
+=== TSMC7 SELECTION (evals=9, feasible=9) ===
+winner: nmos=v6_4_2_p7_tsmc7_mono_s42_nmos pmos=v6_4_2_p7_tsmc7_mono_s42_pmos  (mono_s42)
+  inv VTC NRMSE=2.582%  tran=1.417%
+  RO period_err=8.96%  (gate <= 5.0%  -> FAIL)
+  SRAM rail_resid=0.299  opamp flat=1
+  written: /data2/home/shenshan/NN_SPICE-refactor-nn/results/v6_4_5/phase3_logs/search_TSMC7_winner.json
