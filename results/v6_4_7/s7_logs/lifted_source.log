@@ -1,0 +1,45 @@
+==============================================================================
+  V6.4.7 — lifted-source NMOS Id-Vgs (s7)
+==============================================================================
+[NN-resolver] L73.0 Mn1 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_lifted_source_dc_results/TSMC5/vs0_0pct/nn_dc_TSMC5_vs0mV/nn_nmos_TSMC5_vs0mV_dc_sweep.png
+  TSMC5   vs0= 0.000V (0.0*VDD)  NRMSE=   3.05%  MRE=  13.63%  R2= 0.98896  MaxErr=    6.449uA  PASS
+[NN-resolver] L73.0 Mn1 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_lifted_source_dc_results/TSMC5/vs0_10pct/nn_dc_TSMC5_vs65mV/nn_nmos_TSMC5_vs65mV_dc_sweep.png
+  TSMC5   vs0= 0.065V (0.1*VDD)  NRMSE=   2.72%  MRE=  15.09%  R2= 0.98973  MaxErr=    4.461uA  PASS
+[NN-resolver] L73.0 Mn1 TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_lifted_source_dc_results/TSMC5/vs0_20pct/nn_dc_TSMC5_vs130mV/nn_nmos_TSMC5_vs130mV_dc_sweep.png
+  TSMC5   vs0= 0.130V (0.2*VDD)  NRMSE=   2.51%  MRE=  18.48%  R2= 0.98908  MaxErr=    2.753uA  PASS
+[NN-resolver] L73.0 Mn1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_lifted_source_dc_results/TSMC7/vs0_0pct/nn_dc_TSMC7_vs0mV/nn_nmos_TSMC7_vs0mV_dc_sweep.png
+  TSMC7   vs0= 0.000V (0.0*VDD)  NRMSE=   4.55%  MRE=  15.15%  R2= 0.97959  MaxErr=   13.316uA  PASS
+[NN-resolver] L73.0 Mn1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_lifted_source_dc_results/TSMC7/vs0_10pct/nn_dc_TSMC7_vs75mV/nn_nmos_TSMC7_vs75mV_dc_sweep.png
+  TSMC7   vs0= 0.075V (0.1*VDD)  NRMSE=   4.42%  MRE=  16.13%  R2= 0.97904  MaxErr=   11.046uA  PASS
+[NN-resolver] L73.0 Mn1 TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_lifted_source_dc_results/TSMC7/vs0_20pct/nn_dc_TSMC7_vs150mV/nn_nmos_TSMC7_vs150mV_dc_sweep.png
+  TSMC7   vs0= 0.150V (0.2*VDD)  NRMSE=   4.41%  MRE=  17.18%  R2= 0.97637  MaxErr=    8.953uA  PASS
+[NN-resolver] L73.0 Mn1 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_lifted_source_dc_results/TSMC12/vs0_0pct/nn_dc_TSMC12_vs0mV/nn_nmos_TSMC12_vs0mV_dc_sweep.png
+  TSMC12  vs0= 0.000V (0.0*VDD)  NRMSE=   0.04%  MRE=   0.52%  R2= 1.00000  MaxErr=    0.121uA  PASS
+[NN-resolver] L73.0 Mn1 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_lifted_source_dc_results/TSMC12/vs0_10pct/nn_dc_TSMC12_vs80mV/nn_nmos_TSMC12_vs80mV_dc_sweep.png
+  TSMC12  vs0= 0.080V (0.1*VDD)  NRMSE=   0.05%  MRE=   0.68%  R2= 1.00000  MaxErr=    0.108uA  PASS
+[NN-resolver] L73.0 Mn1 TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_lifted_source_dc_results/TSMC12/vs0_20pct/nn_dc_TSMC12_vs160mV/nn_nmos_TSMC12_vs160mV_dc_sweep.png
+  TSMC12  vs0= 0.160V (0.2*VDD)  NRMSE=   0.07%  MRE=   0.93%  R2= 0.99999  MaxErr=    0.089uA  PASS
+[NN-resolver] L73.0 Mn1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_lifted_source_dc_results/TSMC16/vs0_0pct/nn_dc_TSMC16_vs0mV/nn_nmos_TSMC16_vs0mV_dc_sweep.png
+  TSMC16  vs0= 0.000V (0.0*VDD)  NRMSE=   0.04%  MRE=   0.44%  R2= 1.00000  MaxErr=    0.092uA  PASS
+[NN-resolver] L73.0 Mn1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_lifted_source_dc_results/TSMC16/vs0_10pct/nn_dc_TSMC16_vs80mV/nn_nmos_TSMC16_vs80mV_dc_sweep.png
+  TSMC16  vs0= 0.080V (0.1*VDD)  NRMSE=   0.06%  MRE=   0.60%  R2= 1.00000  MaxErr=    0.100uA  PASS
+[NN-resolver] L73.0 Mn1 TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+DC sweep plot saved to: /data2/home/shenshan/NN_SPICE-refactor-nn/tests/verify_nn_lifted_source_dc_results/TSMC16/vs0_20pct/nn_dc_TSMC16_vs160mV/nn_nmos_TSMC16_vs160mV_dc_sweep.png
+  TSMC16  vs0= 0.160V (0.2*VDD)  NRMSE=   0.08%  MRE=   0.86%  R2= 0.99999  MaxErr=    0.106uA  PASS
+
+  [CSV] Raw curves saved: /data2/home/shenshan/NN_SPICE-refactor-nn/results/v6_4_7/lifted_source_sweep_s7.csv
+  [MD]  Summary saved: /data2/home/shenshan/NN_SPICE-refactor-nn/results/v6_4_7/lifted_source_sweep_s7.md
+
+RESULT: 12/12 configs PASSED (NRMSE <= 10%)
+

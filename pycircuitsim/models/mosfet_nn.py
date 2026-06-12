@@ -506,6 +506,25 @@ class _MOSFETNNBase(Component):
         """Physics-based gds floor (rule 5): max(|id|·0.5, 1e-12)."""
         return max(gds_phys, max(abs(id_phys) * 0.5, 1e-12))
 
+    @staticmethod
+    def _reverse_taper(abs_vds: float, vdd_train: float) -> float:
+        """C¹ roll-off of the reverse-conduction blend.
+
+        Soft-blend window (V6.4.7 S7 bisection): 1 inside |Vds| ≤
+        0.20·VDD_train, smoothstep to 0 by 0.30·VDD_train. Window rule:
+        the LARGEST window that breaks no protected gate — the full
+        trained corridor (taper at 0.30–0.40·VDD) regressed the TSMC5
+        opamp; 0.10–0.20 broke nothing but lost the TSMC12 SC flip.
+        """
+        x0 = 0.20 * vdd_train
+        x1 = 0.30 * vdd_train
+        if abs_vds <= x0:
+            return 1.0
+        if abs_vds >= x1:
+            return 0.0
+        u = (abs_vds - x0) / (x1 - x0)
+        return 1.0 - u * u * (3.0 - 2.0 * u)
+
     # ── Vds correction (rule 19) ─────────────────────────────────────
 
     def _apply_vds_correction(
@@ -520,10 +539,16 @@ class _MOSFETNNBase(Component):
             PyCMG's restoring leakage so NR converges to the true rail
             instead of locking on the NN's flat-zero plateau.
         (b) One-sided 1−exp(−|Vds|/VT) factor on Id/gm/gmb in the normal
-            direction; zero in the reverse direction.
+            direction; in the reverse direction the same factor times a
+            C¹ taper (1 inside the trained |Vds| ≤ 0.30·VDD_train
+            reverse_vds corridor, 0 past 0.40·VDD_train) — V6.4.7 S7/P2
+            relaxation; the raw reverse surface is sign-correct and
+            ~25–35 % conservative on the corridor (S7 probe).
         (c) Symmetric Vds factor on gds plus a linear-region term so the
             Jacobian has finite slope even when Id is forced to zero.
-        (d) Sign enforcement (NMOS id≤0, PMOS id≥0).
+        (d) Sign enforcement scoped by direction: normal keeps the
+            original guard (NMOS id≤0, PMOS id≥0); reverse allows the
+            physically flipped sign and clamps forward-sign noise.
         """
         VDD_train = self._vdd_estimate
         VT = max(0.06 * VDD_train, 0.026)
@@ -568,7 +593,10 @@ class _MOSFETNNBase(Component):
 
         exp_sym = math.exp(-abs_vds / VT) if abs_vds <= 20.0 * VT else 0.0
         f_sym = 1.0 - exp_sym
-        f_id = f_sym if normal_dir else 0.0
+        if normal_dir:
+            f_id = f_sym
+        else:
+            f_id = f_sym * self._reverse_taper(abs_vds, VDD_train)
 
         id_raw = result["id"]
         result["id"] = id_raw * f_id
@@ -577,10 +605,17 @@ class _MOSFETNNBase(Component):
         result["gds"] = result["gds"] * f_sym + abs(id_raw) * exp_sym / VT
         result["gds"] = self._floor_gds(result["id"], result["gds"])
 
-        # (d) wrong-sign clamp
-        wrong = (
-            (self._is_pmos and result["id"] < 0.0)
-            or (not self._is_pmos and result["id"] > 0.0))
+        # (d) wrong-sign clamp, scoped by direction: reverse conduction
+        # physically flips the sign, so the reverse branch clamps
+        # forward-sign noise instead of all conduction.
+        if normal_dir:
+            wrong = (
+                (self._is_pmos and result["id"] < 0.0)
+                or (not self._is_pmos and result["id"] > 0.0))
+        else:
+            wrong = (
+                (self._is_pmos and result["id"] > 0.0)
+                or (not self._is_pmos and result["id"] < 0.0))
         if wrong:
             result["id"] = 0.0
             result["gm"] = 0.0

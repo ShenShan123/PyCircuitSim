@@ -1,0 +1,65 @@
+==============================================================================
+Benchmark 3d — switched-cap unit cell: DirectNet vs NGSPICE BSIM-CMG
+  Gates: charge transfer +/-5% of VDD, hold droop |dn-ng| <= max(10% of NG droop, 0.1% of VDD)
+==============================================================================
+
+--- TSMC5 (VDD=0.65 VT=lvt) ---
+  NGSPICE BSIM-CMG reference ...
+    NGSPICE: charge level=0.2948V (Vin=0.39V)  hold droop=-0.000mV
+  DirectNet (LEVEL=73) transient ...
+[NN-resolver] L73.0 Mpc TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mnc TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mnt TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_nmos_best.pt (scope=tsmc5, tech_code=1)
+[NN-resolver] L73.0 Mpt TECH=tsmc5 VT=lvt -> tsmc5_dn_medium_pmos_best.pt (scope=tsmc5, tech_code=1)
+    DirectNet: charge level=0.3737V  hold droop=-0.000mV
+    waveform: MRE=20.93%  R2=0.5848  NRMSE=16.14%  MaxErr=106.09mV
+    charge err=12.14% of VDD  droop |dn-ng|=0.000mV (0% of allowance 0.650mV)  ->  FAIL
+
+--- TSMC7 (VDD=0.75 VT=ulvt) ---
+  NGSPICE BSIM-CMG reference ...
+    NGSPICE: charge level=0.4473V (Vin=0.45V)  hold droop=-0.000mV
+  DirectNet (LEVEL=73) transient ...
+[NN-resolver] L73.0 Mpc TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mnc TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mnt TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_nmos_best.pt (scope=tsmc7, tech_code=2)
+[NN-resolver] L73.0 Mpt TECH=tsmc7 VT=ulvt -> tsmc7_dn_medium_pmos_best.pt (scope=tsmc7, tech_code=2)
+    DirectNet: charge level=0.4334V  hold droop=-0.603mV
+    waveform: MRE=2.17%  R2=0.9933  NRMSE=2.08%  MaxErr=18.69mV
+    charge err=1.86% of VDD  droop |dn-ng|=0.603mV (80% of allowance 0.750mV)  ->  PASS
+
+--- TSMC12 (VDD=0.8 VT=svt) ---
+  NGSPICE BSIM-CMG reference ...
+    NGSPICE: charge level=0.4200V (Vin=0.48V)  hold droop=-0.001mV
+  DirectNet (LEVEL=73) transient ...
+[NN-resolver] L73.0 Mpc TECH=tsmc12 VT=svt -> tsmc12_dn_medium_pmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mnc TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mnt TECH=tsmc12 VT=svt -> tsmc12_dn_medium_nmos_best.pt (scope=tsmc12, tech_code=0)
+[NN-resolver] L73.0 Mpt TECH=tsmc12 VT=svt -> tsmc12_dn_medium_pmos_best.pt (scope=tsmc12, tech_code=0)
+    DirectNet: charge level=0.3905V  hold droop=0.001mV
+    waveform: MRE=6.04%  R2=0.9606  NRMSE=5.20%  MaxErr=30.65mV
+    charge err=3.69% of VDD  droop |dn-ng|=0.002mV (0% of allowance 0.800mV)  ->  PASS
+
+--- TSMC16 (VDD=0.8 VT=svt) ---
+  NGSPICE BSIM-CMG reference ...
+    NGSPICE: charge level=0.4048V (Vin=0.48V)  hold droop=-0.001mV
+  DirectNet (LEVEL=73) transient ...
+[NN-resolver] L73.0 Mpc TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mnc TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mnt TECH=tsmc16 VT=svt -> tsmc16_dn_medium_nmos_best.pt (scope=tsmc16, tech_code=0)
+[NN-resolver] L73.0 Mpt TECH=tsmc16 VT=svt -> tsmc16_dn_medium_pmos_best.pt (scope=tsmc16, tech_code=0)
+    DirectNet: charge level=0.3801V  hold droop=-6.398mV
+    waveform: MRE=5.24%  R2=0.9708  NRMSE=4.45%  MaxErr=26.12mV
+    charge err=3.08% of VDD  droop |dn-ng|=6.397mV (800% of allowance 0.800mV)  ->  FAIL
+
+==============================================================================
+SUMMARY — Benchmark 3d switched-cap unit cell
+==============================================================================
+Tech     |  NG chg V |  DN chg V |  ChgErr% |  Droop%alw |  NRMSE% |   Status
+-----------------------------------------------------------------------------
+TSMC5    |    0.2948 |    0.3737 |    12.14 |        0.0 |   16.14 |     FAIL
+TSMC7    |    0.4473 |    0.4334 |     1.86 |       80.4 |    2.08 |     PASS
+TSMC12   |    0.4200 |    0.3905 |     3.69 |        0.3 |    5.20 |     PASS
+TSMC16   |    0.4048 |    0.3801 |     3.08 |      799.6 |    4.45 |     FAIL
+
+  2/4 passed both charge + droop gates
+

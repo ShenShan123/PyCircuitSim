@@ -143,6 +143,41 @@ dynamic id peak pull-down deficit (P0-G/H; charges exact, integration
 on this codebase; use the native L72 device as the exact-physics endpoint
 (129 s vs ~4,400 s). Gate file `results/v6_4_7/S6_P1_swap_matrix.md`.
 
+### S7 = P2 — reverse-Vds clamp relaxation SHIPPED; headline 11/16 (2026-06-12)
+
+First model-behavior change of the iteration. The S7 probe established the
+raw pre-clamp reverse surface is USABLE (sign-correct 95–100 % where
+|OSDI| > 1 µA, ~25–35 % conservative, R² 0.78–0.93 on the V6.3 reverse_vds
+corridor; at the live SRAM restoring-PMOS bias raw recovers 72–74 % of the
+OSDI current that the clamp zeroed). Relaxation in `_apply_vds_correction`:
+reverse id = `id_raw·f_sym·taper(|Vds|)` (same VT blend as forward —
+Id(Vds=0)=0 stays exact; C¹ smoothstep taper), gm/gmb matched, (c)
+untouched in both directions (its `|id_raw|·exp/VT` linear-region term is
+the fold-curing conductance: 1.32e-4 S at the Mpr bias, 13× the documented
+1e-5 S threshold), (d) direction-scoped (reverse allows the physically
+flipped sign). Forward path structurally untouched.
+
+**Taper-window selection, pre-registered rule = largest window breaking no
+protected gate:** full trained corridor (taper 0.30/0.40·VDD_train) KILLED
+— TSMC5 opamp 9.78 → 13.57 % veto break + force_ic symmetric collapse on 3
+techs; 0.10/0.20 clean but loses the SC TSMC12 flip (7.46 %); **shipped
+0.20/0.30**: opamp 2/4 (TSMC5 2.49 — de-fragilized 4×; TSMC12 4.97; TSMC7
+resurrected from flat collapse to 10.16 %, 0.16 pp from its gate), SC 2/4
+(**TSMC12 FLIPPED, 4.13 %**; TSMC7 1.89; TSMC16 charge 3.38 but real hold
+leak fails droop), RO 3/4 with all four techs improved (2.61/8.28/2.19/2.13
+— TSMC7 −0.7 pp), inverter tran uniformly improved (1.34/1.06/0.84/0.94),
+all protected gates held (lifted 12/12, inverter 8/8, DC 55/55, tran 64/64,
+butterfly 4/4). Multiple-comparison caveat recorded (three windows scanned;
+rule pre-stated; S19 blind holdouts + replicate-3× guard the residual).
+
+force_ic stays 0/8: P2 delivered its mechanism; closure rests on P3 (the
+pinning-NMOS weak-inversion over-prediction props qb at 0.09–0.14 V).
+Recorded caveat: the 0.10 window rails the high node exactly on all 4 techs
+(possibly the better P3 starting basin) — if P3 closes at 0.10 but not
+0.20, the window trade re-opens and ship-required force_ic outranks the SC
+TSMC12 gate. **Honest headline 11/16.** Gate file
+`results/v6_4_7/S7_P2_reverse_clamp.md`.
+
 ### S5b — uic-equivalent `.ic` start SHIPPED; SC failures become honest model errors; headline 10/16 (2026-06-11)
 
 `run_directnet_transient` now solves the OP with `.ic` nodes pinned by
