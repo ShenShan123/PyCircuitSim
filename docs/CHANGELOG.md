@@ -6,219 +6,124 @@ isn't burdened with chronology.
 
 ---
 
-## V6.4.7 (in progress) — serialized accuracy campaign; S2/P0 NMOS source-frame fix SHIPPED (2026-06-10)
+## V6.4.7 (in progress) — serialized accuracy campaign; week 1 (S1–S8) complete: honest 8/16 → 11/16, zero GPU (2026-06-10 → 06-12)
 
 Plan: `docs/plans/2026-06-10-directnet-v6.4.7-accuracy.md` (rev 2.1 — strict
-serial chain S1–S19; every lever commits-or-rewinds before the next starts).
-User rulings: SRAM `force_ic` is ship-required; ~250–300 GPU-h campaign at
-≥4 seeds/config; multi-seed training fans out one-seed-per-GPU.
+serial chain S1–S19, every lever committed-or-rewound before the next; user
+rulings: SRAM `force_ic` ship-required; ~250–300 GPU-h campaign, ≥4
+seeds/config, seeds one-per-GPU). Gate files with full A/B detail under
+`results/v6_4_7/`; campaign control = `baseline_v6_4_7_pre.json`.
 
-### S2 = P0 — NMOS source-frame fix (first behavioral change since V6.4.4)
+- **S1 pre-flight (`c2ac02b`):** plan serialized; V6.4.5 campaign infra
+  finally tracked; 161 checkpoints snapshotted to
+  `/data2/home/shenshan/checkpoint_snapshots/v6_4_7_pre_20260610/`
+  (sha256 manifest mirrored in-repo).
+- **S2 = P0 NMOS source-frame fix (`e2a121a`) — first behavioral change
+  since V6.4.4.** `_raw_voltages` shifted only PMOS; lifted-source NMOS saw
+  phantom Vgs/Vds (+Vs) with Vbs=0 against a Vs≡0-trained net. 3-LOC fix
+  (shift both; Rule 15 consumes the invariant difference). New permanent
+  gate `tests/verify_nn_lifted_source_dc.py` (NMOS Id–Vgs at
+  Vs∈{0,0.1,0.2}·VDD vs NGSPICE OSDI, ≤10 % NRMSE): pre-fix 10–64 % NRMSE /
+  negative R² / Id over-predicted up to ~80×; post-fix **12/12 at
+  0.05–4.4 %**. TSMC12 opamp FLIPPED PASS (10.94→5.21 %); TSMC5 opamp moved
+  2.64→9.78 % (selected under the buggy frame — pre-arbitrated non-veto);
+  TSMC7 opamp changed failure mode (30.7 %→flat); force_ic attractor halved
+  (qb 0.19–0.23→0.104–0.117 V); inverter 8/8 (tran bit-exact), DC 55/55,
+  tran 64/64, RO bit-identical, butterfly 4/4 all held; SC unchanged ⇒ the
+  frame was NOT the SC owner. NN Rule 2 corrected.
+- **S3 = R0.1 switchcap droop-gate repair (`d24c1d7`).** The old gate was
+  simultaneously unpassable (relative error vs sub-µV NG droop demanded
+  19–150 nV ≈ sub-solver-tolerance agreement) and auto-passing (the
+  |ng|>1e-6 nan-guard waved TSMC7's 2.208 mV — the worst cell — through).
+  New: `|dn−ng| ≤ max(10 %·|ng|, 1e-3·VDD)`; the floor matches the two-point
+  solver tolerance 2·(RELTOL·V_hold+VNTOL) within ±20 %; column renamed
+  `Droop%alw`. E3-class review: CORRECTION, net tightening (an engineered
+  floor needed ≥3e-3·VDD to keep TSMC7 passing). **Headline restated:
+  V6.4.4 canonical = 8/16 honest.** Caveat: the floor admits ~50 nA
+  off-state leakage error — subthreshold fidelity is P3/P4 territory.
+- **S4 = R0.2 symcaps re-test (`5c6342b`): KILLED for SC too.** Charge
+  improves (TSMC5 14.65→3.68, TSMC16 13.14→1.38 %) but hold droop explodes
+  to 30–137 mV genuine drift — invisible under the old gate, caught by the
+  S3 repair. D1 now dead for RO and SC; per-circuit env-gated shipping off
+  the table.
+- **S5 = R0.3 SC per-device dump (`6162cad`).** Four-window trajectory dump
+  with exact KCL decomposition C·ΔV=Q_res+Q_cap+Q_num: numerics clean
+  (Q_num≈0), **charge/cap VALUES exonerated** (ΔQ_q≤0.05 fC — S4's cap
+  hypothesis overturned as coincidental compensation), id error
+  REV-clamp-concentrated (TSMC7 Mnt +11.64 fC withheld). Trajectory-head
+  probe found the dominant owner: **harness `.ic`/uic semantics gap** —
+  NGSPICE runs `tran uic` from `.ic v(vsamp)=0` while the DN runner used
+  `.ic` only as an OP guess, starting from the NN leakage equilibrium
+  (vsamp(0)=0.390 V on TSMC5 =Vin exactly / 0.704 V on TSMC16 — a
+  physically impossible equilibrium, recorded as a known issue). TSMC7's
+  2.207 mV hold droop exactly attributed: Mpt NEAR0 id leak −2.222 fC ≡
+  2.2 mV on 100 fF.
+- **S5b uic-equivalent start (`7454034`, recorded amendment).**
+  `run_directnet_transient` now solves the OP with `.ic` nodes pinned
+  (constrained, NOT force_ic's released re-solve) and integrates from it.
+  Under the old protocol a bit-perfect model still failed (TSMC5's
+  "14.65 %" = (Vin−NG_chg)/VDD — pure protocol artifact). SC 0/4→1/4:
+  TSMC7 PASS (**fragile** — robustness probe 2/3, charge crosses its gate
+  at Vin=0.65·VDD ⇒ off-default-Vin SC variant mandatory in the S19 blind
+  holdouts); TSMC12/16 now honestly UNDershoot (forward id too weak);
+  TSMC16's real 3.85 mV hold leak exposed. RO blind veto held
+  (periods bit-identical). E3-class review: CORRECTION. Known issue:
+  production `.ic` semantics (`simulation.py`) still artifact-start.
+- **S6 = P1 swap matrix + LEVEL=72 control (`4e0b55e`): simulator
+  EXONERATED; V6.4.6 P0-I RETRACTED.** The planned exact-id+charges
+  injection read 93.01 ps (NMOS-only 92.91 — reproducing P0-I's ~92 ps),
+  but the decisive uncontrolled cell was the **native LEVEL=72 path: the
+  identical RO at 46.64 ps vs NGSPICE 46.65 (ratio 1.000, 0.02 %)** — same
+  solver, runner, window, estimator, cards. The ~92–93 ps numbers are
+  artifacts of the injection id-path mapping (gds=floor(−OSDI gds)→|id|/2,
+  Rule-15 bypass); exact charges+caps injection adds nothing
+  (92.30→93.01); a within-NN cap-sign-flip experiment bounds ALL
+  cap-convention effects at ±1.3 % (the NN's own convention is the better
+  one). RO ownership reverts, unclouded, to the ~20 % NMOS dynamic id peak
+  pull-down deficit (P0-G/H; charges exact, integration ~0.4 ps). P5
+  funded (re-scoped to the id surface along trajectories); id-only levers
+  (P4, P8a, LoRA) re-armed. Methodology: injection probes are
+  convention-fragile — use the native L72 device as the exact-physics
+  endpoint (129 s vs ~4,400 s).
+- **S7 = P2 reverse-Vds clamp relaxation (`bdf4102`) — second behavioral
+  change.** Probe first: the raw pre-clamp reverse surface is USABLE
+  (sign-correct 95–100 % where |OSDI|>1 µA, ~25–35 % conservative, R²
+  0.78–0.93 on the V6.3 reverse_vds corridor; recovers 72–74 % of the OSDI
+  restoring current at the live SRAM bias). Relaxation in
+  `_apply_vds_correction`: reverse id = `id_raw·f_sym·taper(|Vds|)`
+  (Id(Vds=0)=0 exact; C¹ smoothstep taper; gm/gmb matched; (c) untouched —
+  its `|id_raw|·exp/VT` term is the fold-curing conductance, 1.32e-4 S at
+  the Mpr bias ≈ 13× the documented 1e-5 S NR-fold threshold; (d)
+  direction-scoped). **Window rule pre-registered: largest taper window
+  breaking no protected gate.** Full corridor 0.30/0.40·VDD_train KILLED —
+  TSMC5 opamp 9.78→13.57 % veto break + force_ic symmetric collapse on 3
+  techs (dead end recorded); 0.10/0.20 clean but loses the TSMC12 SC flip;
+  **shipped 0.20/0.30**: SC TSMC12 FLIPPED (4.13 %), TSMC5 opamp
+  de-fragilized 9.78→2.49 %, TSMC7 opamp resurrected flat→10.16 % (0.16 pp
+  from gate), RO improved on all 4 techs (TSMC7 8.98→8.28 %), inverter tran
+  uniformly improved (1.34/1.06/0.84/0.94 %), all protected gates held.
+  force_ic stays 0/8 — P2 delivered its mechanism; closure rests on P3
+  (pinning-NMOS weak-inversion props qb at 0.09–0.14 V). Caveat: the 0.10
+  window rails the high node exactly on all 4 techs — if P3 closes at 0.10
+  but not 0.20, the window trade re-opens and ship-required force_ic
+  outranks the SC TSMC12 gate.
+- **S8 scorer + baseline re-freeze (`ad62c68`).** Scorer gains
+  `opamp_gain_err` vs a file-memoized NG reference (it was blind to the
+  ±10 % gate — the P4 prerequisite), switchcap cells (charge + repaired
+  droop gate), and the V6.4.5 flat-flag recalibration (`gain<10`) finally
+  in the committed file. Cross-validated against the frozen
+  `baseline_v6_4_7_pre.json` (all 16 cells + force_ic + extended gates,
+  commit-stamped, fragility notes carried). Plan updated with the "Week-1
+  outcomes" section: decision table resolved — P5 funded id-scoped; P3
+  stays a full ship-required arm (+ TSMC16 SC leak + S7 window re-test);
+  P4 census = TSMC7 opamp (0.16 pp) + TSMC16 (flat); P8b demoted to
+  fallback (its non-separability premise retracted with P0-I).
 
-`_raw_voltages` (`pycircuitsim/models/mosfet_nn.py`) source-shifted only PMOS;
-NMOS passed ABSOLUTE terminal voltages into a Vs≡0-trained network, so every
-lifted-source NMOS (opamp `vtail` diff pair, switchcap pass device, SRAM access
-transistors) was evaluated at phantom Vgs/Vds inflated by +Vs with Vbs=0. The
-~3-LOC fix shifts both device types; shift invariance makes it exact, and all
-downstream consumers use the invariant difference `v_d_nn − v_s_nn` (Rule 15
-unaffected). NN Rule 2 updated from "PMOS source-relative frame" to
-source-referenced for BOTH device types.
-
-**New permanent gate** `tests/verify_nn_lifted_source_dc.py` (NMOS Id–Vgs at
-Vs∈{0,0.1,0.2}·VDD vs NGSPICE OSDI, 4 techs, NRMSE ≤10 %): pre-fix the lifted
-rows read 10–64 % NRMSE / MRE up to 809 % / negative R² (Id over-predicted up
-to ~80× at low Vg — the vs input had zero coverage in any suite); post-fix
-**12/12 PASS** at 0.05–4.4 % — lifted rows as accurate as grounded controls.
-
-**Battery (CPU, OMP_NUM_THREADS=1):** inverter 8/8 (tran NRMSE bit-exact),
-DC 55/55, tran 64/64, ring_osc 3/4 **bit-identical** (TSMC7 50.83 ps / 8.98 %
-— all RO sources at rails, untouched by construction), SRAM butterfly 4/4.
-**Headline 9/16 → 10/16: TSMC12 opamp FLIPPED PASS (10.94 → 5.21 %).** TSMC5
-opamp holds PASS but moved 2.64 → 9.78 % (it was *selected* under the buggy
-frame — pre-arbitrated non-veto). TSMC7 opamp changed failure mode (30.7 %
-gain err → flat collapse), sharpening the P4 derivative-fragility case.
-Switchcap ~unchanged (1/4; TSMC12 8.33 → 10.29 %) ⇒ the frame was NOT the
-binding SC owner. SRAM `force_ic` still 0/8 but the inboard attractor moved
-**half-way to the rails** (qb ≈0.19–0.23 → 0.104–0.117 V, missing the 0.1·VDD
-band by ~25 mV on TSMC12/16) — consistent with the planned P0+P2+P3 joint
-ownership. Gate file: `results/v6_4_7/S2_P0_frame_fix.md`.
-
-### S3 = R0.1 — switchcap droop sub-gate repair (measurement correction)
-
-The hold-droop sub-gate was broken in BOTH directions: pure-relative error vs
-a sub-µV NGSPICE droop demanded 19–150 nV agreement (below both solvers'
-RELTOL·V+VNTOL tolerances — unpassable noise), while the `|ng| > 1e-6`
-nan-guard auto-passed ANY DirectNet droop — including TSMC7's 2.208 mV, the
-largest absolute disagreement on the board. Replaced with
-`|dn−ng| ≤ max(10 %·|ng|, 1e-3·VDD)`; the floor matches the principled
-two-point solver tolerance 2·(RELTOL·V_hold+VNTOL) = 0.61–0.90 mV within
-±20 %. Column renamed `DroopErr%` → `Droop%alw` (units changed to % of
-allowance). E3-class adversarial review verdict: **CORRECTION (net
-tightening)** — waveforms bit-identical, only verdict logic changed, the only
-flip is PASS→FAIL on the worst cell; an engineered floor would have needed
-≥3e-3·VDD to preserve the TSMC7 pass. Recorded blind spot: the floor admits
-~50 nA off-state leakage error (the V6.4.5 26 µV phantom-leak class would
-sail under) — subthreshold fidelity is P3/P4 territory, not this gate's.
-**Headline restated: V6.4.4 canonical = 8/16 under the repaired gate (its
-TSMC7 SC "pass" was a nan-guard artifact); current post-P0 honest count =
-9/16** (RO 3, opamp 2, butterfly 4, SC 0). Gate file:
-`results/v6_4_7/S3_R01_droop_gate_repair.md`.
-
-### S4 = R0.2 — symcaps re-test: KILLED for SC (D1 now dead for RO and SC)
-
-`NN_SYMMETRIC_CAPS=1` on post-P0 code still improves SC charge transfer
-(TSMC5 14.65 → 3.68 %, TSMC16 13.14 → 1.38 % — both would pass; TSMC7
-3.06 → 1.76; TSMC12 10.29 → 8.69) **but explodes hold-phase droop to
-30–137 mV of genuine simulated drift** (no NR truncation; 40–170× the
-repaired gate's allowance) — a side effect invisible under the old
-auto-passing droop gate and caught immediately by the S3 repair.
-Per-circuit env-gated shipping is off the table. Ownership evidence
-recorded for S5/P5/P7: SC sample-phase charge error is substantially
-cap/charge-model-owned (symmetrization alone nearly closes it), while the
-asymmetric trans-caps (cgd ≠ cdg) are load-bearing during hold. Gate file:
-`results/v6_4_7/S4_R02_symcaps_retest.md`.
-
-### S5 = R0.3 — SC per-device dump: ownership settled; S4's cap hypothesis OVERTURNED; harness `.ic` gap found (2026-06-11)
-
-`scripts/v6_4_7_s5_sc_dump.py` dumps every SC MOSFET along the live DN
-trajectory in four windows (RISE/SAMPLE/EDGE/HOLD), comparing post-Rule-15 NN
-id/qg/qd/qs/qb + full cap matrix vs OSDI at identical absolute bias
-(FD-verified sign conventions), with a Rule-15 clamp-class split
-(REV/NEAR0/FREE) and an exact KCL decomposition C·ΔV = Q_res + Q_cap + Q_num.
-Findings (gate file `results/v6_4_7/S5_R03_sc_device_dump.md`):
-
-- **Numerics and charge VALUES are clean** — Q_num ≈ 0.00 fC in every window;
-  ΔQ_q ≤ 0.05 fC (~0.5 % of the gate gap). The S4 inference that SC charge is
-  cap/charge-model-owned is **overturned**: symcaps' charge win was
-  coincidental compensation (consistent with its 30–137 mV hold drift).
-- **The in-window id error is REV-clamp-concentrated (P2):** TSMC7 Mnt
-  +11.64 fC withheld in SAMPLE (n=341, all REV), TSMC16 +7.66/+3.44,
-  TSMC12 +3.4–3.9 fC — the TG must conduct in reverse to bleed the early
-  overshoot back to Vin and Rule-15 zeroes it.
-- **Dominant owner is a harness semantics gap (trajectory-head probe,
-  `scripts/v6_4_7_s5_head_probe.py`):** NGSPICE runs `tran ... uic`
-  (integrates from `.ic v(vsamp)=0`), but `run_directnet_transient`
-  (`tests/common/complex.py:303`) uses `.ic` only as the OP's NR guess — the
-  OP converges to the NN off-state leakage equilibrium, so DN *starts* at
-  vsamp(0)=0.390 V (TSMC5, =Vin — its +9.52 fC gap accrues entirely before
-  t=0.4 ns; all four windows flat-zero) / 0.704 V (TSMC16). The benchmark
-  compared different experiments.
-- **TSMC7 hold droop exactly attributed:** Mpt NEAR0 id leak −2.222 fC over
-  HOLD ≡ 2.2 mV on 100 fF (measured droop 2.207 mV); OSDI 0.00 fC.
-  Weak-inversion/near-zero-Vds id over-prediction — P3-adjacent.
-
-Consequences: SC dropped from P5/P7 EV claims; **S5b amendment recorded** —
-make the DN transient honor `.ic` uic-style (constrained-OP start, not the
-force_ic released re-solve), E3-class review, SC+RO re-run (shared runner)
-with blind vetoes on the three passing RO cells.
-
-### S6 = P1 — swap matrix + LEVEL=72 control: simulator EXONERATED, P0-I RETRACTED (2026-06-11)
-
-The plan's missing causal cell (exact OSDI id AND charges together in the
-live TSMC7 RO) was built (`scripts/v6_4_7_s6_p1_swap_matrix.py`, extending
-P0-I v2 to a fully consistent 13-key OSDI op-point; FD-verified conventions;
-the consistent device is ~2.5× faster than P0-I's hybrid) and run:
-**93.01 ps** (N+P), **92.91 ps** (NMOS-only) vs baseline 50.83 / NG 46.65 —
-half-periods uniform at ≈ NG's full period. Before accepting "solver
-indicted", the clean control nobody had run: **pycircuitsim's native
-LEVEL=72 path on the identical RO = 46.64 ps, ratio 1.000 vs NGSPICE
-(0.02 %)** — same solver, runner (S5b uic start), window, estimator, same
-resolved TSMC7 ULVT cards (`scripts/v6_4_7_s6_l72_ro_control.py`). A
-class-method-level device diff (`s6_artifact_probe`) then showed NN and L72
-agree on id/gm/gmb/ALL charges (+1.000) and differ in off-diag cap sign
-convention (NN raw +∂Q/∂V vs OSDI SPICE) and gds floor policy; a within-NN
-cap-flip experiment (`s6_capsign_experiment`) bounds the entire cap-sign
-question at **±1.3 % — second-order, and the NN's own convention is the
-better one** (flipping worsens all 4 techs). Verdicts: (1) simulator/harness
-**exonerated** — the §2 "pause all model-side RO levers" row resolves
-against the pause; (2) the ~92–93 ps numbers are **artifacts of the
-injection id-path mapping** (gds = floor(−OSDI gds) → |id|/2, Rule-15
-bypass) — exact line item recorded as open curiosity, not load-bearing;
-(3) **V6.4.6 P0-I is RETRACTED** — "id-VALUE non-separable from charge"
-rested on scheme-borne 92 ps evidence; id-only levers (P4, P8a, frozen-base
-LoRA) re-armed; (4) RO ownership reverts, unclouded, to the NN's ~20 %
-dynamic id peak pull-down deficit (P0-G/H; charges exact, integration
-~0.4 ps); (5) P5 funded, re-scoped to the id surface along trajectories;
-(6) methodology note — injection-style causal probes are convention-fragile
-on this codebase; use the native L72 device as the exact-physics endpoint
-(129 s vs ~4,400 s). Gate file `results/v6_4_7/S6_P1_swap_matrix.md`.
-
-### S8 — scorer extension + baseline re-freeze; week 1 complete (2026-06-12)
-
-`scripts/eval_v6_4_5_candidate.py`: opamp section now scores `gain_err`
-against a file-memoized NGSPICE reference (the scorer was blind to the
-±10 % gate — the P4 prerequisite), the V6.4.5 flat-flag re-calibration
-(`gain < 10`) is finally in the committed file (the documented amendment
-predated the file being tracked), and switchcap cells exist (charge err +
-the repaired droop gate). Cross-validated against the re-frozen
-**`results/v6_4_7/baseline_v6_4_7_pre.json`** (all 16 cells + force_ic +
-extended gates, commit-stamped, with fragility notes carried). The plan
-gained a "Week-1 outcomes" section resolving the §2 decision table:
-simulator exonerated ⇒ P5 funded (id-scoped); force_ic 0/8 ⇒ P3 stays a
-full ship-required arm (+ TSMC16 SC hold leak + the S7 taper-window
-re-test); P4's opamp census = TSMC7 (0.16 pp from gate) + TSMC16 (flat);
-P8b demoted to fallback (its non-separability premise was retracted with
-P0-I). Week-1 ledger: honest 8/16 → **11/16** with zero GPU spent.
-
-### S7 = P2 — reverse-Vds clamp relaxation SHIPPED; headline 11/16 (2026-06-12)
-
-First model-behavior change of the iteration. The S7 probe established the
-raw pre-clamp reverse surface is USABLE (sign-correct 95–100 % where
-|OSDI| > 1 µA, ~25–35 % conservative, R² 0.78–0.93 on the V6.3 reverse_vds
-corridor; at the live SRAM restoring-PMOS bias raw recovers 72–74 % of the
-OSDI current that the clamp zeroed). Relaxation in `_apply_vds_correction`:
-reverse id = `id_raw·f_sym·taper(|Vds|)` (same VT blend as forward —
-Id(Vds=0)=0 stays exact; C¹ smoothstep taper), gm/gmb matched, (c)
-untouched in both directions (its `|id_raw|·exp/VT` linear-region term is
-the fold-curing conductance: 1.32e-4 S at the Mpr bias, 13× the documented
-1e-5 S threshold), (d) direction-scoped (reverse allows the physically
-flipped sign). Forward path structurally untouched.
-
-**Taper-window selection, pre-registered rule = largest window breaking no
-protected gate:** full trained corridor (taper 0.30/0.40·VDD_train) KILLED
-— TSMC5 opamp 9.78 → 13.57 % veto break + force_ic symmetric collapse on 3
-techs; 0.10/0.20 clean but loses the SC TSMC12 flip (7.46 %); **shipped
-0.20/0.30**: opamp 2/4 (TSMC5 2.49 — de-fragilized 4×; TSMC12 4.97; TSMC7
-resurrected from flat collapse to 10.16 %, 0.16 pp from its gate), SC 2/4
-(**TSMC12 FLIPPED, 4.13 %**; TSMC7 1.89; TSMC16 charge 3.38 but real hold
-leak fails droop), RO 3/4 with all four techs improved (2.61/8.28/2.19/2.13
-— TSMC7 −0.7 pp), inverter tran uniformly improved (1.34/1.06/0.84/0.94),
-all protected gates held (lifted 12/12, inverter 8/8, DC 55/55, tran 64/64,
-butterfly 4/4). Multiple-comparison caveat recorded (three windows scanned;
-rule pre-stated; S19 blind holdouts + replicate-3× guard the residual).
-
-force_ic stays 0/8: P2 delivered its mechanism; closure rests on P3 (the
-pinning-NMOS weak-inversion over-prediction props qb at 0.09–0.14 V).
-Recorded caveat: the 0.10 window rails the high node exactly on all 4 techs
-(possibly the better P3 starting basin) — if P3 closes at 0.10 but not
-0.20, the window trade re-opens and ship-required force_ic outranks the SC
-TSMC12 gate. **Honest headline 11/16.** Gate file
-`results/v6_4_7/S7_P2_reverse_clamp.md`.
-
-### S5b — uic-equivalent `.ic` start SHIPPED; SC failures become honest model errors; headline 10/16 (2026-06-11)
-
-`run_directnet_transient` now solves the OP with `.ic` nodes pinned by
-temporary ideal sources (force_ic-style guards; pins removed before the
-transient starts from the constrained state). Under the old protocol a
-bit-perfect model still failed (TSMC5's "14.65 %" = (Vin−NG_chg)/VDD — pure
-protocol artifact). A/B on post-P0 code: SC 0/4 → 1/4 — TSMC7 PASS (3.40 %,
-droop 0.541 mV); TSMC5 11.96 % (NN TG over-conducts forward), TSMC12 8.14 %
-and TSMC16 6.20 % now UNDershoot (forward id too weak), TSMC16 shows a real
-3.852 mV hold leak (481 % of allowance) previously hidden at the artifact
-equilibrium. RO (shared runner) blind veto held: periods bit-identical
-(75.41/50.83/83.85/92.67 ps, 3/4). E3-class adversarial review: CORRECTION —
-uic-equivalence is exact for both netlists (every non-source node is
-.ic-covered; t=0 mismatch ≤37 µV vs 32–40 mV gate resolution); an engineered
-change does not add a 481 % failure. Conditions recorded: (1) TSMC7
-robustness probe 2/3 — droop healthy at Vin∈{0.55,0.60,0.65}·VDD
-(0.703/0.541/0.107 mV) but charge crosses the gate at 0.65·VDD (5.36 %) ⇒
-**TSMC7 SC = fragile PASS**, off-default-Vin SC variant mandatory in the S19
-blind holdouts, no model-improvement claim from S5b; (2) production `.ic`
-semantics known-issue (`simulation.py` still artifact-start); (3) TSMC16's
-physically impossible 0.704 V NN off-state equilibrium recorded; (4) the P2
-REV-recovery defect is no longer SC-exercised (forward window) — P2 evidence
-unchanged, SC-side EV shrinks. **Honest headline: 10/16** (P0's TSMC12 opamp
-+ like-for-like TSMC7 SC).
+**Week-1 ledger: honest 8/16 → 11/16** (RO 3, opamp 2, SC 2, butterfly 4),
+zero GPU. Open cells: TSMC7 opamp 10.16 %, TSMC16 opamp flat, TSMC7 RO
+8.28 %, TSMC5 SC 12.14 % (over-conduction), TSMC16 SC hold leak, and
+ship-required force_ic 0/8. Resume at S9 (SWA/EMA infra) → S10 (P4 lead
+arm, seeds one-per-GPU on GPUs 1/2/3).
 
 ---
 
