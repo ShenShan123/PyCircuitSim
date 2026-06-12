@@ -14,6 +14,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
+from typing import Dict, Optional
 
 import torch
 
@@ -86,6 +87,23 @@ SIZE_PRESETS = {
 }
 
 
+def _parse_class_weights(spec: Optional[str]) -> Optional[Dict[str, float]]:
+    """Parse ``"name=w,name=w"`` into {name: w}. None/empty → None."""
+    if not spec:
+        return None
+    out: Dict[str, float] = {}
+    for part in spec.split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if "=" not in part:
+            raise SystemExit(
+                f"--class-weights entry {part!r} is not name=weight")
+        name, val = part.split("=", 1)
+        out[name.strip()] = float(val)
+    return out or None
+
+
 def _resolve_data_path(args: argparse.Namespace) -> Path:
     if args.data:
         return Path(args.data)
@@ -155,6 +173,8 @@ def _run(args: argparse.Namespace) -> None:
         max_rows=args.max_rows, overwrite=args.overwrite,
         tech_scope=args.tech_scope,
         swa_mode=args.swa_mode, ema_decay=args.ema_decay,
+        apply_filter=(args.apply_filter == "on"),
+        class_weights=_parse_class_weights(args.class_weights),
     )
 
     # Phase 7 (V6.4.2) soft physics constraints — DirectNet only, opt-in.
@@ -250,6 +270,18 @@ def main() -> None:
                         "saved checkpoint use the averaged weights; "
                         "checkpoint key format is unchanged.")
     p.add_argument("--ema-decay", type=float, default=0.999)
+
+    # V6.4.7 S9b (plan rev 3, rulings 3+5) — loader filter exposure +
+    # sample_class loss weighting. Defaults preserve legacy behavior.
+    p.add_argument("--apply-filter", choices=["on", "off"], default="on",
+                   help="'on' (legacy default): drop rows with |id| <= "
+                        "1e-15 before splitting. 'off': keep all "
+                        "small-current rows (V6.4.7 arms).")
+    p.add_argument("--class-weights", type=str, default=None,
+                   help="Per-sample_class loss multipliers, e.g. "
+                        "'subthresh=4.0,reverse_vds=2.0'. Folded into the "
+                        "LDS tensor and renormalized to unit mean per "
+                        "target. Requires a sample_class-tagged dataset.")
     p.add_argument("--loss-preset",
                    choices=sorted(LOSS_PRESETS.keys()),
                    default="default",

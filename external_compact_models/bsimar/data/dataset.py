@@ -14,17 +14,29 @@ from bsimar.data.normalize import _NormalizerBase, normalizer_for
 
 
 class MOSFETDataset(Dataset):
-    """(inputs, outputs, tech_codes) tuples in normalised space."""
+    """(inputs, outputs, tech_codes) tuples in normalised space.
+
+    ``sample_class`` (V6.4.7 S9b): optional per-row generator origin tag
+    (int8 codes from PyCMG ``nn_generate.SAMPLE_CLASS_CODES``), kept
+    aligned with the split rows. ``sample_class_names`` maps code → name
+    (index = code). Both are metadata only — ``__getitem__`` is unchanged.
+    """
 
     def __init__(
         self,
         inputs_norm: np.ndarray,
         outputs_norm: np.ndarray,
         tech_codes: np.ndarray,
+        sample_class: Optional[np.ndarray] = None,
+        sample_class_names: Optional[List[str]] = None,
     ) -> None:
         self.inputs = torch.tensor(inputs_norm, dtype=torch.float32)
         self.outputs = torch.tensor(outputs_norm, dtype=torch.float32)
         self.tech_codes = torch.tensor(tech_codes, dtype=torch.long)
+        self.sample_class = (
+            torch.tensor(sample_class, dtype=torch.int8)
+            if sample_class is not None else None)
+        self.sample_class_names = sample_class_names
 
     def __len__(self) -> int:
         return len(self.inputs)
@@ -37,6 +49,10 @@ class MOSFETDataset(Dataset):
 # absorbed by the asinh per-target scale, so the only useful filter is on
 # Id (v5 plan §4-B4).
 DEFAULT_FILTER_THRESHOLDS: Dict[str, float] = {"id": 1e-15}
+
+# Legacy sample_class code for rows of unknown origin — mirrors
+# PyCMG nn_generate._assemble, which tags pre-B1 bins as "lhs" (code 6).
+_LEGACY_LHS_CLASS_CODE: int = 6
 
 
 def filter_small_targets(
@@ -89,12 +105,35 @@ def load_and_split_bsimar(
     tech_codes = get_or_build_tech_variant_labels(
         data_path, device_type, verbose=True)
 
+    # V6.4.7 S9b: per-row generator origin tag, kept aligned through every
+    # row operation below. Missing → legacy "lhs" code (nn_generate
+    # convention for pre-B1 bins).
+    if "sample_class" in data.files:
+        sample_class = np.asarray(data["sample_class"], dtype=np.int8)
+    else:
+        print(f"  [warn] {data_path} has no sample_class — tagging all "
+              f"rows as legacy 'lhs' (code {_LEGACY_LHS_CLASS_CODE})")
+        sample_class = np.full(
+            len(outputs), _LEGACY_LHS_CLASS_CODE, dtype=np.int8)
+    sample_class_names: Optional[List[str]] = None
+    if "meta_sample_class_names" in data.files:
+        sample_class_names = [
+            n.decode() if isinstance(n, bytes) else str(n)
+            for n in data["meta_sample_class_names"]
+        ]
+
     n0 = len(outputs)
     if apply_filter:
         keep = filter_small_targets(outputs, column_names, filter_thresholds)
         inputs, geometry, outputs = inputs[keep], geometry[keep], outputs[keep]
         tech_codes = tech_codes[keep]
-        print(f"  Filter Id>1e-15: {n0} -> {len(outputs)}")
+        sample_class = sample_class[keep]
+        n_drop = n0 - len(outputs)
+        print(f"  Filter Id>1e-15: {n0} -> {len(outputs)} "
+              f"(dropped {n_drop} rows, {100.0 * n_drop / max(n0, 1):.2f}%)")
+    else:
+        print(f"  Filter OFF: keeping all {n0} rows "
+              "(small-Id rows retained)")
 
     if exclude_techs:
         from bsimar.config import TECH_VARIANT_CODES
@@ -106,6 +145,7 @@ def load_and_split_bsimar(
             [int(c) not in excl for c in tech_codes], dtype=bool)
         inputs, geometry, outputs = inputs[keep], geometry[keep], outputs[keep]
         tech_codes = tech_codes[keep]
+        sample_class = sample_class[keep]
         print(f"  Excluded {exclude_techs}: kept {keep.sum()} samples")
 
     if max_rows is not None and len(outputs) > max_rows:
@@ -113,6 +153,7 @@ def load_and_split_bsimar(
         idx = rng_cap.choice(len(outputs), size=max_rows, replace=False)
         inputs, geometry, outputs = inputs[idx], geometry[idx], outputs[idx]
         tech_codes = tech_codes[idx]
+        sample_class = sample_class[idx]
         print(f"  Capped to {max_rows} rows")
 
     if tech_scope != "universal":
@@ -171,7 +212,10 @@ def load_and_split_bsimar(
     def _make(idxs: np.ndarray) -> MOSFETDataset:
         x = normalizer.normalize_inputs(inputs[idxs], geometry[idxs])
         y = normalizer.normalize_outputs(outputs[idxs])
-        return MOSFETDataset(x, y, tech_codes[idxs])
+        return MOSFETDataset(
+            x, y, tech_codes[idxs],
+            sample_class=sample_class[idxs],
+            sample_class_names=sample_class_names)
 
     train_ds = _make(train_idx)
     val_ds = _make(val_idx)

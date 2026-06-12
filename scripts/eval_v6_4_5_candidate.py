@@ -9,6 +9,18 @@ multi-circuit selection vector (plan §Phase 3):
     sram_rail_snap_resid — force_ic state-1 rail residual max(|q-VDD|,|qb-0|)/VDD  (Pareto objective)
     opamp_flat_flag      — 1 if |Vout(center bias) - VDD/2| > 0.3*VDD  (hard gate == 0)
 
+With ``--deriv-fidelity`` (V6.4.7 S9b, default OFF) the RESULT line also
+carries deriv_{gm,gds,gmb}_nrmse (full split) + deriv_*_nrmse_fwd
+(fwd_inrail corridor, the A/B-sensitive read), offstate_id_excess_max/mean
+(the Mpl-class predicted-current-in-excess-of-true-leakage headline) +
+offstate_id_pred_max (secondary), and deriv_split_mismatch, from
+``scripts/v6_4_7_deriv_fidelity.py`` (autograd ∂id/∂V vs held-out OSDI
+columns; plan rev-3 ruling 4). ``--deriv-apply-filter`` /
+``--deriv-data-suffix`` must match the candidate's training population
+(v2-trained arms: ``--no-deriv-apply-filter --deriv-data-suffix v2``); a
+mismatch raises inside the metric and lands as NaN keys + deriv_error —
+never silent wrong-population numbers.
+
 Mechanism: instead of swapping the shared canonical slots (which would
 serialise the search and risk corrupting the canonical checkpoints), this
 evaluator runs in an ISOLATED checkpoint dir. It mkdtemp's a private dir,
@@ -236,6 +248,43 @@ def _score_switchcap(tech: str) -> dict:
             "sc_pass": int(ok)}
 
 
+def _score_deriv_fidelity(
+    tech: str,
+    nmos_stem: str,
+    pmos_stem: str,
+    apply_filter: bool = True,
+    data_suffix: str | None = None,
+) -> dict:
+    """V6.4.7 S9b (plan rev-3 ruling 4): derivative-fidelity + off-state
+    metric. Reads the candidate checkpoints from the REAL ``CKPT_DIR`` by
+    stem (independent of the BSIMAR_CHECKPOINT_DIR redirect) and the
+    per-tech dataset npz; lazy import per this module's env-var ordering
+    constraint.
+
+    ``apply_filter`` / ``data_suffix`` must match the candidate's training
+    population (v1 checkpoints: filter on, no suffix — the defaults;
+    control-v2 + campaign arms: ``apply_filter=False, data_suffix='v2'``).
+    A mismatch is detected via the checkpoint-vs-fresh-fit norm-stats
+    delta inside ``compute_deriv_fidelity`` and raises — landing here as
+    NaN keys + ``deriv_error`` instead of silent wrong-population numbers.
+    """
+    from scripts.v6_4_7_deriv_fidelity import compute_deriv_fidelity
+    keys = ("deriv_gm_nrmse", "deriv_gds_nrmse", "deriv_gmb_nrmse",
+            "deriv_gm_nrmse_fwd", "deriv_gds_nrmse_fwd",
+            "deriv_gmb_nrmse_fwd",
+            "offstate_id_excess_max", "offstate_id_excess_mean",
+            "offstate_id_pred_max", "deriv_split_mismatch")
+    try:
+        res = compute_deriv_fidelity(
+            tech=tech, nmos_stem=nmos_stem, pmos_stem=pmos_stem,
+            ckpt_dir=CKPT_DIR, apply_filter=apply_filter,
+            data_suffix=data_suffix)
+    except Exception as exc:  # noqa: BLE001
+        return {**{k: float("nan") for k in keys},
+                "deriv_error": repr(exc)}
+    return {k: res[k] for k in keys}
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tech", required=True)
@@ -246,6 +295,20 @@ def main() -> None:
     ap.add_argument("--skip", default="",
                     help="comma-separated benchmarks to skip "
                          "(inv,ro,sram,opamp) — for fast debugging only")
+    ap.add_argument("--deriv-fidelity", action="store_true",
+                    help="V6.4.7 S9b: add deriv_{gm,gds,gmb}_nrmse(+_fwd) "
+                         "+ offstate_id_excess_max/mean to the RESULT line "
+                         "(off by default to keep scorer runtime)")
+    ap.add_argument("--deriv-apply-filter",
+                    action=argparse.BooleanOptionalAction, default=True,
+                    help="dataset filter for --deriv-fidelity; must match "
+                         "the candidate's training (v1: on [default]; "
+                         "v2-trained arms: --no-deriv-apply-filter)")
+    ap.add_argument("--deriv-data-suffix", default=None,
+                    help="dataset filename infix for --deriv-fidelity: "
+                         "{tech}_{suffix}_{dev}.npz — pass 'v2' for "
+                         "candidates trained on the S9b regen-v2 data "
+                         "(default: the v1 {tech}_{dev}.npz)")
     args = ap.parse_args()
     tech = args.tech
     skip = {s.strip() for s in args.skip.split(",") if s.strip()}
@@ -287,6 +350,11 @@ def main() -> None:
             out.update(_score_opamp(tech))
         if "switchcap" not in skip and "sc" not in skip:
             out.update(_score_switchcap(tech))
+        if args.deriv_fidelity:
+            out.update(_score_deriv_fidelity(
+                tech, args.nmos, args.pmos,
+                apply_filter=args.deriv_apply_filter,
+                data_suffix=args.deriv_data_suffix))
 
         if args.json:
             print("RESULT " + json.dumps(out))
@@ -304,6 +372,17 @@ def main() -> None:
             print(f"  opamp flat_flag={out.get('opamp_flat_flag', '?')}  "
                   f"gain={out.get('opamp_gain', float('nan')):.1f}  "
                   f"vout_c={out.get('opamp_vout_center', float('nan')):.3f}")
+            if args.deriv_fidelity:
+                print(f"  deriv NRMSE%  gm={out.get('deriv_gm_nrmse', float('nan')):.2f}  "
+                      f"gds={out.get('deriv_gds_nrmse', float('nan')):.2f}  "
+                      f"gmb={out.get('deriv_gmb_nrmse', float('nan')):.2f}  "
+                      f"(fwd: {out.get('deriv_gm_nrmse_fwd', float('nan')):.2f}/"
+                      f"{out.get('deriv_gds_nrmse_fwd', float('nan')):.2f}/"
+                      f"{out.get('deriv_gmb_nrmse_fwd', float('nan')):.2f})")
+                print(f"  offstate excess max={out.get('offstate_id_excess_max', float('nan')):.3e}A "
+                      f"mean={out.get('offstate_id_excess_mean', float('nan')):.3e}A  "
+                      f"pred_max={out.get('offstate_id_pred_max', float('nan')):.3e}A  "
+                      f"split_mismatch={out.get('deriv_split_mismatch', '?')}")
     finally:
         shutil.rmtree(iso, ignore_errors=True)
         print(f"Cleaned isolated checkpoint dir for {tech}", file=sys.stderr)

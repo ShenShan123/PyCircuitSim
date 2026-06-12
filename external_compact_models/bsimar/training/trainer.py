@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Optional, Set, Tuple
+from typing import Dict, Optional, Set, Tuple
 
 import numpy as np
 import torch
@@ -152,6 +152,7 @@ def _train_loop(
     is_transformer: bool,
     arch_config: Optional[dict] = None,
     column_weights: Optional[np.ndarray] = None,
+    class_weights: Optional[Dict[str, float]] = None,
     swa_mode: str = "none",
     ema_decay: float = 0.999,
 ) -> Tuple[nn.Module, _NormalizerBase]:
@@ -168,6 +169,37 @@ def _train_loop(
     means = lds.mean(axis=0, keepdims=True)
     means[means < 1e-12] = 1.0
     lds = lds / means
+
+    # V6.4.7 S9b (plan P5 plumbing, pulled forward): per-sample-class
+    # multipliers folded into the LDS tensor AFTER the per-target
+    # mean-normalization above, then the product is RENORMALIZED to unit
+    # mean per target — otherwise the effective LR changes and confounds
+    # every A/B against control. Runs BEFORE the column-weight presets so
+    # their deliberately non-unit means (e.g. qs=0) are preserved.
+    if class_weights is not None:
+        names = getattr(train_ds, "sample_class_names", None)
+        sc = getattr(train_ds, "sample_class", None)
+        if names is None or sc is None:
+            raise ValueError(
+                "class_weights requires a dataset with sample_class and "
+                "meta_sample_class_names (regenerate the .npz with a "
+                "sample_class-aware generator).")
+        unknown = sorted(set(class_weights) - set(names))
+        if unknown:
+            raise ValueError(
+                f"class_weights names {unknown} not in dataset "
+                f"sample_class names {names}")
+        w = np.ones(len(sc), dtype=np.float32)
+        sc_np = sc.numpy()
+        for name, mult in class_weights.items():
+            w[sc_np == names.index(name)] = float(mult)
+        lds = lds * w[:, None]
+        prod_means = lds.mean(axis=0, keepdims=True)
+        prod_means[prod_means < 1e-12] = 1.0
+        lds = lds / prod_means
+        print(f"  Class weights: {class_weights}")
+        print(f"  LDS x class-weight product renormalized; post-product "
+              f"per-target mean = {np.round(lds.mean(axis=0), 6).tolist()}")
 
     if column_weights is not None:
         cw = np.asarray(column_weights, dtype=np.float32)
@@ -324,9 +356,18 @@ def train_directnet(
     monotonic: bool = False,
     swa_mode: str = "none",
     ema_decay: float = 0.999,
+    apply_filter: bool = True,
+    class_weights: Optional[Dict[str, float]] = None,
     **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
     """DirectNet MLP training pipeline.
+
+    ``apply_filter`` (V6.4.7 S9b, default True = legacy): drop rows with
+    |id| <= 1e-15 before splitting. V6.4.7 arms pass False — small-current
+    rows stay in training (plan rev-3 ruling 3).
+
+    ``class_weights`` (V6.4.7 S9b): sample_class-name → loss multiplier,
+    folded into the LDS tensor and renormalized to unit mean per target.
 
     ``column_weights`` (length = output dim): per-target multiplier on
     the loss (combined with LDS). Use to down-weight or zero out targets
@@ -353,7 +394,7 @@ def train_directnet(
     train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
         data_path, OUTPUT_COLUMN_ORDER, device_type=device_type,
         train_ratio=config.train_ratio, val_ratio=config.val_ratio,
-        apply_filter=True, exclude_techs=exclude_techs,
+        apply_filter=apply_filter, exclude_techs=exclude_techs,
         norm_mode=_NORM_MODE, max_rows=max_rows,
         output_subset=output_subset,
         tech_scope=tech_scope,
@@ -400,6 +441,7 @@ def train_directnet(
         patience=config.patience, save_prefix=save_prefix,
         device=device, overwrite=overwrite,
         column_weights=column_weights,
+        class_weights=class_weights,
         swa_mode=swa_mode, ema_decay=ema_decay,
     )
 
@@ -422,6 +464,8 @@ def train_transformer(
     tech_scope: str = "universal",
     swa_mode: str = "none",
     ema_decay: float = 0.999,
+    apply_filter: bool = True,
+    class_weights: Optional[Dict[str, float]] = None,
     **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
     """BSIMAR Transformer training pipeline."""
@@ -440,7 +484,7 @@ def train_transformer(
 
     train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
         data_path, OUTPUT_COLUMN_ORDER, device_type=device_type,
-        apply_filter=True, exclude_techs=exclude_techs,
+        apply_filter=apply_filter, exclude_techs=exclude_techs,
         norm_mode=_NORM_MODE, max_rows=max_rows,
         tech_scope=tech_scope,
     )
@@ -476,5 +520,6 @@ def train_transformer(
         patience=patience, save_prefix=save_prefix,
         device=device, overwrite=overwrite,
         arch_config=arch_config,
+        class_weights=class_weights,
         swa_mode=swa_mode, ema_decay=ema_decay,
     )
