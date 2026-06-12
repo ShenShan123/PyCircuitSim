@@ -1,0 +1,55 @@
+{
+  "provenance": {
+    "label": "baseline_v6_4_7_pre — post week-1 (S2 P0 frame fix, S3 R0.1 droop gate, S5b uic start, S7 P2 reverse-clamp 0.20/0.30 window)",
+    "commit": "bdf4102",
+    "date": "2026-06-12",
+    "checkpoints": "V6.4.4 mix unchanged — sha256 manifest at results/v6_4_7/checkpoints_pre_manifest.sha256",
+    "environment": "CPU (CUDA_VISIBLE_DEVICES=\"\"), OMP_NUM_THREADS=1 MKL_NUM_THREADS=1",
+    "gates": {
+      "ring_osc": "period err <= 5%",
+      "opamp": "gain err <= 10%",
+      "switchcap": "charge err <= 5% of VDD AND |dn-ng| droop <= max(10%*|ng|, 1e-3*VDD)",
+      "sram_butterfly": "all lobes positive",
+      "force_ic": "resid_ok AND rail_ok (0.1*VDD band), 8 states"
+    },
+    "headline": "11/16",
+    "logs": "results/v6_4_7/s7_logs/*_vc.log + opamp_vc.log + switchcap_vc.log"
+  },
+  "ring_osc": {
+    "TSMC5":  {"ng_period_ps": 73.23, "dn_period_ps": 75.14, "err_pct": 2.61, "pass": true},
+    "TSMC7":  {"ng_period_ps": 46.64, "dn_period_ps": 50.51, "err_pct": 8.28, "pass": false},
+    "TSMC12": {"ng_period_ps": 81.40, "dn_period_ps": 83.18, "err_pct": 2.19, "pass": true},
+    "TSMC16": {"ng_period_ps": 90.08, "dn_period_ps": 91.99, "err_pct": 2.13, "pass": true}
+  },
+  "opamp": {
+    "TSMC5":  {"ng_gain": 160.0, "dn_gain": 163.9, "gain_err_pct": 2.49,  "pass": true},
+    "TSMC7":  {"ng_gain": 163.4, "dn_gain": 180.0, "gain_err_pct": 10.16, "pass": false},
+    "TSMC12": {"ng_gain": 188.4, "dn_gain": 197.8, "gain_err_pct": 4.97,  "pass": true},
+    "TSMC16": {"ng_gain": 187.7, "dn_gain": 0.0,   "gain_err_pct": 100.0, "pass": false, "flat_collapse": true}
+  },
+  "switchcap": {
+    "TSMC5":  {"ng_charge_v": 0.2948, "dn_charge_v": 0.3737, "charge_err_pct": 12.14, "droop_pct_of_allow": 0.0,   "pass": false},
+    "TSMC7":  {"ng_charge_v": 0.4473, "dn_charge_v": 0.4332, "charge_err_pct": 1.89,  "droop_pct_of_allow": 80.6,  "pass": true, "note": "fragile per S5b probe: charge crosses gate at Vin=0.65*VDD; off-default-Vin variant mandatory in S19 blind holdouts"},
+    "TSMC12": {"ng_charge_v": 0.4200, "dn_charge_v": 0.3870, "charge_err_pct": 4.13,  "droop_pct_of_allow": 0.3,   "pass": true},
+    "TSMC16": {"ng_charge_v": 0.4048, "dn_charge_v": 0.3778, "charge_err_pct": 3.38,  "droop_pct_of_allow": 802.3, "pass": false, "note": "real hold leak ~6.4 mV exposed by S5b uic start"}
+  },
+  "sram_butterfly": {
+    "TSMC5": {"pass": true}, "TSMC7": {"pass": true},
+    "TSMC12": {"pass": true}, "TSMC16": {"pass": true}
+  },
+  "force_ic": {
+    "states_pass": 0,
+    "states_total": 8,
+    "TSMC5":  {"q": 0.328, "qb": 0.328, "resid": 1.483e-06, "character": "symmetric"},
+    "TSMC7":  {"q": 0.751, "qb": 0.128, "resid": 8.195e-05, "character": "railed-high asymmetric"},
+    "TSMC12": {"q": 0.415, "qb": 0.415, "resid": 3.348e-06, "character": "symmetric"},
+    "TSMC16": {"q": 0.410, "qb": 0.410, "resid": 2.549e-06, "character": "symmetric"},
+    "note": "at the 0.10/0.20 taper window the release rails the high node on all 4 techs (q=0.650/0.751/0.802/0.800, qb=0.092-0.137) — see S7 gate-file caveat; window trade re-opens if P3 closes at 0.10 but not 0.20"
+  },
+  "extended_gates": {
+    "lifted_source": "12/12",
+    "inverter": {"count": "8/8", "vtc_nrmse_pct": [0.96, 2.36, 1.31, 1.11], "tran_nrmse_pct": [1.34, 1.06, 0.84, 0.94]},
+    "dc_55": "55/55",
+    "tran_64": "64/64"
+  }
+}

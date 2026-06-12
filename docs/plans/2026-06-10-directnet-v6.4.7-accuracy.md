@@ -22,7 +22,7 @@ The affected-device census maps directly onto the failing families:
 - **SRAM** — access transistors Mal/Mar are lifted; Mar reads NN −125.5 vs OSDI −57.2 µA (**+68 µA — the largest single device error at the P0-D attractor**, 3.4× the Mpr reverse-clamp error);
 - **ring_osc / inverter** — every source at a rail ⇒ **bit-identical under the fix**, consistent with RO being the smallest, genuinely model-owned gap.
 
-### Root-cause table (corrected)
+### Root-cause table (corrected; **rev-2 snapshot — superseded in part by "Week-1 outcomes" below: the ring_osc row's P0-I non-separability claim is RETRACTED (S6), and the SRAM/switchcap rows are re-owned by S5/S5b/S7 findings**)
 
 | Gate | Established owner | Evidence |
 |------|------------------|----------|
@@ -138,6 +138,61 @@ Compose-at-inference: frozen MLP owns strong inversion, closed-form weak-inversi
 - **Solver/integration levers for RO** — dead per P0-G (truncation ~0.4 ps). gds floor tweaks — Jacobian-only, inert at fixed points.
 - **Rev-1 P8 adjoint circuit-in-the-loop** — replaced by P8a/P8b (codebase mis-statement + 2–5× cost underestimate).
 - All recorded dead ends as-is: D2 substeps, D3 warm starts, D4 Ioff_rail floors, D5 seed lotteries without recipe change, gds/cap Jacobian distillation for RO, charge-value distillation, force_ic homotopy. **D1 symmetric caps stays dead for RO only** — its recorded SC-charge improvement is re-tested in R0 (per-circuit re-scoping, not a dead-end violation).
+
+## Week-1 outcomes (2026-06-12, S1–S8 complete — this section supersedes stale claims above)
+
+**Headline: 9/16 (honest restatement of V6.4.4's 8/16 + P0) → 11/16.** Every
+step committed-or-rewound per protocol; commits c2ac02b (S1), e2a121a (S2),
+d24c1d7 (S3), 5c6342b (S4), 6162cad (S5), 7454034 (S5b), 4e0b55e (S6),
+bdf4102 (S7). Baseline re-frozen: `results/v6_4_7/baseline_v6_4_7_pre.json`.
+
+1. **S2 = P0 frame fix shipped.** Canary 12/12 (pre-fix 10–64 % NRMSE);
+   TSMC12 opamp flipped PASS (10.94 → 5.21 %); force_ic attractor halved its
+   rail distance; switchcap unchanged ⇒ frame was NOT the SC owner.
+2. **S3 = R0.1 droop gate repaired** (absolute-floored; adversarial verdict:
+   correction/net-tightening). **V6.4.4's canonical 9/16 was honestly
+   8/16** (TSMC7 SC pass was a nan-guard artifact).
+3. **S4 = R0.2 symcaps KILLED for SC too** — charge win trades for
+   30–137 mV hold drift (invisible under the old gate). D1 dead everywhere.
+4. **S5 = R0.3 dump settled SC ownership**: solver numerics clean, charge/cap
+   VALUES exonerated (ΔQ_q ≤ 0.5 % of gap), id error REV-clamp-concentrated;
+   **dominant owner was a harness `.ic`/uic semantics gap** (DN started from
+   the NN leakage equilibrium, vsamp(0)=0.39–0.70 V, vs NGSPICE's uic 0 V).
+5. **S5b amendment shipped**: uic-equivalent constrained-`.ic` start in the
+   DN runner. SC failures became honest forward-conduction errors; TSMC7 SC
+   = fragile PASS (off-default-Vin variant mandatory in S19 holdouts).
+6. **S6 = P1 resolved by a control nobody had planned: the native LEVEL=72
+   path runs the RO at ratio 1.000 vs NGSPICE (46.64/46.65 ps) ⇒ simulator
+   EXONERATED.** The planned exact-id+q injection (93.01 ps) reproduced
+   P0-I's ~92 ps and is an **artifact of the injection id-path mapping** —
+   **V6.4.6 P0-I IS RETRACTED**; id-only levers (P4, P8a, LoRA) re-armed;
+   cap-sign conventions bounded at ±1.3 % (second-order); the RO gap reverts
+   to the NN's ~20 % dynamic id peak pull-down deficit (P0-G/H), unclouded.
+7. **S7 = P2 shipped** (reverse-Vds clamp relaxed; tapered blend, window
+   rule = largest no-veto window → 0.20/0.30·VDD_train; full corridor
+   0.30/0.40 KILLED on a TSMC5-opamp veto break — dead-end recorded). Gains:
+   SC TSMC12 FLIPPED (4.13 %), TSMC5 opamp de-fragilized 9.78 → 2.49 %,
+   TSMC7 opamp resurrected flat → **10.16 % (0.16 pp from its gate)**, RO
+   improved on all 4 techs (TSMC7 8.98 → 8.28 %), inverter tran improved.
+   force_ic still 0/8 → P3 carries closure (window-trade caveat recorded).
+
+**Decision-table (§2) resolutions:** P0 flipped opamp/SC cells → P4 census
+shrinks to TSMC7 (0.16 pp!) + TSMC16 (flat); R0 changed the SC census →
+recounted (honest 8/16 start); symcaps row → killed; SC frame-owned row →
+no (harness + clamp + forward-id); P1 → exonerated via L72 control ⇒ **P5
+funded** (re-scoped: id surface along trajectories — charges are exact);
+P2 garbage row → no (usable, shipped); P0+P2 ≥6/8 row → no (0/8) ⇒ **P3
+stays a full ship-required arm**, additionally targeting the TSMC16 SC hold
+leak (~6.4 mV — same subthreshold class) and the S7 window-trade re-test.
+
+**Re-shaped campaign (weeks 2–4, serial as before):** S9 SWA/EMA → S10 P4
+(lead; TSMC7 opamp needs −0.2 pp, TSMC16 needs un-collapsing; veto set =
+all 11 passing cells) → S11 P3 (force_ic qb-prop + TSMC16 SC leak + re-test
+the 0.10 taper window under P3) → S12 P5 (id-corridors: TSMC7 RO 8.28 %,
+TSMC5 SC over-conduction 12.14 %) → S13 P8a (re-armed id-VALUE supervision)
+→ S14 P6 → S15 P7 → S16 P8b (premise weakened by the P0-I retraction; keep
+as fallback only) → S17 P9 → S18 composition → S19 promotion (blind
+holdouts now include the off-default-Vin SC variant).
 
 ## Sequencing
 

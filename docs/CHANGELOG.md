@@ -143,6 +143,23 @@ dynamic id peak pull-down deficit (P0-G/H; charges exact, integration
 on this codebase; use the native L72 device as the exact-physics endpoint
 (129 s vs ~4,400 s). Gate file `results/v6_4_7/S6_P1_swap_matrix.md`.
 
+### S8 — scorer extension + baseline re-freeze; week 1 complete (2026-06-12)
+
+`scripts/eval_v6_4_5_candidate.py`: opamp section now scores `gain_err`
+against a file-memoized NGSPICE reference (the scorer was blind to the
+±10 % gate — the P4 prerequisite), the V6.4.5 flat-flag re-calibration
+(`gain < 10`) is finally in the committed file (the documented amendment
+predated the file being tracked), and switchcap cells exist (charge err +
+the repaired droop gate). Cross-validated against the re-frozen
+**`results/v6_4_7/baseline_v6_4_7_pre.json`** (all 16 cells + force_ic +
+extended gates, commit-stamped, with fragility notes carried). The plan
+gained a "Week-1 outcomes" section resolving the §2 decision table:
+simulator exonerated ⇒ P5 funded (id-scoped); force_ic 0/8 ⇒ P3 stays a
+full ship-required arm (+ TSMC16 SC hold leak + the S7 taper-window
+re-test); P4's opamp census = TSMC7 (0.16 pp from gate) + TSMC16 (flat);
+P8b demoted to fallback (its non-separability premise was retracted with
+P0-I). Week-1 ledger: honest 8/16 → **11/16** with zero GPU spent.
+
 ### S7 = P2 — reverse-Vds clamp relaxation SHIPPED; headline 11/16 (2026-06-12)
 
 First model-behavior change of the iteration. The S7 probe established the

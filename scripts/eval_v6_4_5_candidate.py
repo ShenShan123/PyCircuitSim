@@ -145,25 +145,95 @@ def _score_sram_rail(tech: str) -> dict:
     return {"sram_rail_snap_resid": resid, "sram_q": q_v, "sram_qb": qb_v}
 
 
+def _ng_memo(tech: str, kind: str, runner) -> dict:
+    """File-memoized NGSPICE reference (candidate-independent, so it is
+    computed once per (tech, circuit) and reused across the campaign)."""
+    from tests.common.complex import RESULTS_BASE
+    memo = RESULTS_BASE / f"ng_ref_{kind}_{tech}.json"
+    if memo.exists():
+        return json.loads(memo.read_text())
+    val = runner()
+    memo.parent.mkdir(parents=True, exist_ok=True)
+    memo.write_text(json.dumps(val))
+    return val
+
+
 def _score_opamp(tech: str) -> dict:
-    """opamp_flat_flag from the DC transfer sweep at the center common-mode."""
+    """Opamp gain error vs the NGSPICE reference (V6.4.7 S8: the scorer
+    previously returned only flat-flag + raw gain — blind to the ±10 %
+    gain gate) + the V6.4.5-recalibrated flat flag (gain < 10)."""
     from tests.common.complex import BENCH, RESULTS_BASE
-    from tests.verify_complex_opamp import run_directnet_opamp, _bias, _gain_trip
+    from tests.verify_complex_opamp import (
+        run_directnet_opamp, run_ngspice_opamp, _bias, _gain_trip)
     bt = BENCH[tech]
     work_dir = RESULTS_BASE / "opamp" / bt.name
     work_dir.mkdir(parents=True, exist_ok=True)
     vcm, _, _ = _bias(bt)
+
+    def _ng() -> dict:
+        ng = run_ngspice_opamp(bt, work_dir)
+        g, _, _ = _gain_trip(ng["sweep"], ng["vout"], bt.vdd)
+        return {"gain": float(g)}
+
+    ng_gain = float(_ng_memo(tech, "opamp", _ng)["gain"])
     try:
         dn = run_directnet_opamp(bt, work_dir)
     except Exception as exc:  # noqa: BLE001
         return {"opamp_flat_flag": 1, "opamp_gain": float("nan"),
+                "opamp_ng_gain": ng_gain, "opamp_gain_err": float("nan"),
                 "opamp_vout_center": float("nan"), "opamp_error": repr(exc)}
     ix = int(np.argmin(np.abs(dn["sweep"] - vcm)))
     vout_center = float(dn["vout"][ix])
     gain, _, _ = _gain_trip(dn["sweep"], dn["vout"], bt.vdd)
-    flat = abs(vout_center - bt.vdd / 2.0) / bt.vdd > 0.3
+    # V6.4.5 re-calibration (CHANGELOG "V6.4.5"): vout-at-center flagged
+    # even the passing TSMC5 opamp; flat == collapsed gain.
+    flat = float(gain) < 10.0
+    gain_err = (abs(float(gain) - ng_gain) / ng_gain * 100.0
+                if ng_gain > 0 else float("nan"))
     return {"opamp_flat_flag": int(flat), "opamp_gain": float(gain),
+            "opamp_ng_gain": ng_gain, "opamp_gain_err": gain_err,
             "opamp_vout_center": vout_center}
+
+
+def _score_switchcap(tech: str) -> dict:
+    """Switchcap charge-transfer + droop vs the repaired S3/R0.1 gate
+    (V6.4.7 S8: the scorer previously had no SC cells at all)."""
+    from tests.common.complex import BENCH, RESULTS_BASE
+    from tests.verify_complex_switchcap import (
+        run_ngspice_sc, run_directnet_sc, _at,
+        SAMPLE_END, HOLD_START, HOLD_END, CHARGE_TOL, DROOP_TOL,
+        DROOP_FLOOR_FRAC)
+    bt = BENCH[tech]
+    work_dir = RESULTS_BASE / "switchcap" / bt.name
+    work_dir.mkdir(parents=True, exist_ok=True)
+
+    def _ng() -> dict:
+        ng = run_ngspice_sc(bt, work_dir)
+        return {"charge": _at(ng["time"], ng["vsamp"], SAMPLE_END),
+                "droop": (_at(ng["time"], ng["vsamp"], HOLD_START)
+                          - _at(ng["time"], ng["vsamp"], HOLD_END))}
+
+    ref = _ng_memo(tech, "switchcap", _ng)
+    try:
+        dn, partial, err = run_directnet_sc(bt, work_dir)
+        if partial:
+            raise RuntimeError(f"partial transient: {err}")
+    except Exception as exc:  # noqa: BLE001
+        return {"sc_charge_err_pct": float("nan"),
+                "sc_droop_abs_mv": float("nan"),
+                "sc_pass": 0, "sc_error": repr(exc)}
+    t = np.asarray(dn["time"])
+    v = np.asarray(dn["vsamp"])
+    dn_charge = _at(t, v, SAMPLE_END)
+    dn_droop = _at(t, v, HOLD_START) - _at(t, v, HOLD_END)
+    charge_err = abs(dn_charge - ref["charge"]) / bt.vdd * 100.0
+    droop_abs = abs(dn_droop - ref["droop"])
+    allow = max(DROOP_TOL * abs(ref["droop"]), DROOP_FLOOR_FRAC * bt.vdd)
+    ok = charge_err <= CHARGE_TOL * 100 and droop_abs <= allow
+    return {"sc_charge_err_pct": charge_err,
+            "sc_droop_abs_mv": droop_abs * 1e3,
+            "sc_droop_pct_of_allow": droop_abs / allow * 100.0,
+            "sc_pass": int(ok)}
 
 
 def main() -> None:
@@ -215,6 +285,8 @@ def main() -> None:
             out.update(_score_sram_rail(tech))
         if "opamp" not in skip:
             out.update(_score_opamp(tech))
+        if "switchcap" not in skip and "sc" not in skip:
+            out.update(_score_switchcap(tech))
 
         if args.json:
             print("RESULT " + json.dumps(out))
