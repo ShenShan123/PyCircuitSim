@@ -154,6 +154,7 @@ def _run(args: argparse.Namespace) -> None:
         num_tech_codes=args.num_tech_codes, p_unknown=args.p_unknown,
         max_rows=args.max_rows, overwrite=args.overwrite,
         tech_scope=args.tech_scope,
+        swa_mode=args.swa_mode, ema_decay=args.ema_decay,
     )
 
     # Phase 7 (V6.4.2) soft physics constraints — DirectNet only, opt-in.
@@ -238,6 +239,17 @@ def main() -> None:
     p.add_argument("--exp-name", type=str, default=None,
                    help="Override the auto-generated save_prefix")
     p.add_argument("--overwrite", action="store_true")
+
+    # V6.4.7 S9 — within-run weight averaging (default flag on every
+    # campaign arm; plan P6/S9). Default 'none' preserves legacy runs.
+    p.add_argument("--swa-mode", choices=["none", "ema", "swa"],
+                   default="none",
+                   help="Weight averaging: 'ema' = per-step EMA "
+                        "(--ema-decay), 'swa' = equal-weight averaging "
+                        "from 75%% of max_epochs. Val selection and the "
+                        "saved checkpoint use the averaged weights; "
+                        "checkpoint key format is unchanged.")
+    p.add_argument("--ema-decay", type=float, default=0.999)
     p.add_argument("--loss-preset",
                    choices=sorted(LOSS_PRESETS.keys()),
                    default="default",

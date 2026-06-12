@@ -51,6 +51,7 @@ def _epoch_train(
     model: nn.Module, loader: DataLoader,
     criterion: MAELoss, optimizer: optim.Optimizer,
     device: torch.device, is_transformer: bool,
+    ema_model: Optional[nn.Module] = None,
 ) -> float:
     model.train()
     total = 0.0
@@ -66,6 +67,8 @@ def _epoch_train(
         if is_transformer:
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
+        if ema_model is not None:
+            ema_model.update_parameters(model)
         total += loss.item()
         n += 1
     return total / max(n, 1)
@@ -149,6 +152,8 @@ def _train_loop(
     is_transformer: bool,
     arch_config: Optional[dict] = None,
     column_weights: Optional[np.ndarray] = None,
+    swa_mode: str = "none",
+    ema_decay: float = 0.999,
 ) -> Tuple[nn.Module, _NormalizerBase]:
     if is_transformer:
         for ds in (train_ds, val_ds, test_ds):
@@ -194,6 +199,28 @@ def _train_loop(
     scheduler = CosineAnnealingLR(optimizer, T_max=epochs)
     criterion = MAELoss()
 
+    # V6.4.7 S9 — within-run weight averaging (P6, pulled forward).
+    # "ema": per-step exponential moving average from epoch 1.
+    # "swa": equal-weight averaging from 75% of max_epochs.
+    # In either mode, val selection and the saved checkpoint use the
+    # AVERAGED weights once averaging is active; the state_dict is taken
+    # from avg_model.module so the on-disk key format is unchanged.
+    if swa_mode not in ("none", "ema", "swa"):
+        raise ValueError(f"swa_mode must be none|ema|swa, got {swa_mode!r}")
+    avg_model = None
+    swa_start = 1
+    if swa_mode == "ema":
+        from torch.optim.swa_utils import AveragedModel, get_ema_multi_avg_fn
+        avg_model = AveragedModel(
+            model, multi_avg_fn=get_ema_multi_avg_fn(ema_decay),
+            use_buffers=True)
+        print(f"  SWA/EMA: per-step EMA, decay={ema_decay}")
+    elif swa_mode == "swa":
+        from torch.optim.swa_utils import AveragedModel
+        avg_model = AveragedModel(model, use_buffers=True)
+        swa_start = max(1, int(0.75 * epochs))
+        print(f"  SWA/EMA: equal-weight SWA from epoch {swa_start}")
+
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     best_path = CHECKPOINT_DIR / f"{save_prefix}_best.pt"
@@ -216,9 +243,19 @@ def _train_loop(
 
     for epoch in range(1, epochs + 1):
         train_loss = _epoch_train(
-            model, train_loader, criterion, optimizer, device, is_transformer)
+            model, train_loader, criterion, optimizer, device, is_transformer,
+            ema_model=avg_model if swa_mode == "ema" else None)
+        if swa_mode == "swa" and epoch >= swa_start:
+            avg_model.update_parameters(model)
+            if epoch == swa_start:
+                best_val = float("inf")  # selection switches candidates here
+                bad = 0
+        # Candidate = averaged weights once averaging is active, else raw.
+        avg_active = (swa_mode == "ema"
+                      or (swa_mode == "swa" and epoch >= swa_start))
+        eval_model = avg_model if avg_active else model
         val_loss = _epoch_eval(
-            model, val_loader, criterion, device, is_transformer)
+            eval_model, val_loader, criterion, device, is_transformer)
         scheduler.step()
         lr_now = scheduler.get_last_lr()[0]
 
@@ -226,7 +263,8 @@ def _train_loop(
         if val_loss < best_val - 1e-5:
             best_val = val_loss
             bad = 0
-            torch.save(model.state_dict(), str(best_path))
+            state_src = avg_model.module if avg_active else model
+            torch.save(state_src.state_dict(), str(best_path))
             normalizer.stats.save(str(norm_path))
             marker = " *best*"
         else:
@@ -284,6 +322,8 @@ def train_directnet(
     output_subset: Optional[list[str]] = None,
     tech_scope: str = "universal",
     monotonic: bool = False,
+    swa_mode: str = "none",
+    ema_decay: float = 0.999,
     **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
     """DirectNet MLP training pipeline.
@@ -360,6 +400,7 @@ def train_directnet(
         patience=config.patience, save_prefix=save_prefix,
         device=device, overwrite=overwrite,
         column_weights=column_weights,
+        swa_mode=swa_mode, ema_decay=ema_decay,
     )
 
 
@@ -379,6 +420,8 @@ def train_transformer(
     p_unknown: float = 0.1,
     max_rows: Optional[int] = None,
     tech_scope: str = "universal",
+    swa_mode: str = "none",
+    ema_decay: float = 0.999,
     **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
     """BSIMAR Transformer training pipeline."""
@@ -433,4 +476,5 @@ def train_transformer(
         patience=patience, save_prefix=save_prefix,
         device=device, overwrite=overwrite,
         arch_config=arch_config,
+        swa_mode=swa_mode, ema_decay=ema_decay,
     )
