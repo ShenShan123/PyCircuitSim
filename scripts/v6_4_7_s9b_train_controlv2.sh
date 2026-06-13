@@ -20,7 +20,9 @@ cd "$ROOT"
 SEEDS=(42 17 7 31)
 TECHS=(tsmc5 tsmc7 tsmc12 tsmc16)
 DEVS=(nmos pmos)
-GPUS=(1 2 3)
+# This host exposes GPUs 0/1/2 (all shared with other users, but a DirectNet
+# medium job needs <2 GB so co-location is fine). Original plan assumed 1/2/3.
+GPUS=(0 1 2)
 
 # Build the flat job list: tech x dev x seed.
 jobs=()
@@ -42,6 +44,7 @@ run_queue() {
         local log="$LOGDIR/${name}.log"
         echo "[gpu$gpu] START $name $(date +%H:%M:%S)"
         if CUDA_VISIBLE_DEVICES="$gpu" OMP_NUM_THREADS=4 \
+            PYTHONPATH="$ROOT/external_compact_models:$ROOT/external_compact_models/PyCMG${PYTHONPATH:+:$PYTHONPATH}" \
             conda run -n pycircuitsim python -u -m bsimar.cli.train \
                 --model direct --size medium \
                 --device-type "$dev" --tech-scope "$tech" --cuda --overwrite \

@@ -69,3 +69,4 @@ logs/
 
 # Local V6.3.1 checkpoint backup (kept on disk for rollback; not tracked)
 v6_3_1_checkpoints/
+/tools/
