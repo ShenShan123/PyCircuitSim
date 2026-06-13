@@ -9,6 +9,7 @@ DC and transient common modules.
 from __future__ import annotations
 
 import argparse
+import os
 import re
 import subprocess
 import sys
@@ -38,7 +39,8 @@ OSDI_PATH = (
 MODELCARDS_DIR = (
     PROJECT_ROOT / "external_compact_models" / "PyCMG" / "modelcards"
 )
-NGSPICE_BIN = "/usr/local/ngspice-45.2/bin/ngspice"
+NGSPICE_BIN = os.environ.get(
+    "NGSPICE_BIN", "/usr/local/ngspice-45.2/bin/ngspice")
 
 from helpers import bake_inst_params  # noqa: E402
 

@@ -46,7 +46,7 @@ from tests.common.nn import nrmse
 
 # ── Constants ───────────────────────────────────────────────────────────────
 OSDI_PATH = PROJECT_ROOT / "external_compact_models" / "PyCMG" / "build" / "osdi" / "bsimcmg.osdi"
-NGSPICE_BIN = "/usr/local/ngspice-45.2/bin/ngspice"
+NGSPICE_BIN = os.environ.get("NGSPICE_BIN", "/usr/local/ngspice-45.2/bin/ngspice")
 RESULTS_DIR = PROJECT_ROOT / "tests" / "verify_bsimar_v4_inverter_results"
 
 NFIN = 10

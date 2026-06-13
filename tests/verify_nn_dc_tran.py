@@ -70,7 +70,8 @@ from bsimar.config import CHECKPOINT_DIR, OSDI_PATH  # noqa: E402
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-NGSPICE_BIN = "/usr/local/ngspice-45.2/bin/ngspice"
+NGSPICE_BIN = os.environ.get(
+    "NGSPICE_BIN", "/usr/local/ngspice-45.2/bin/ngspice")
 MODELCARDS_DIR = (
     PROJECT_ROOT / "external_compact_models" / "PyCMG" / "modelcards"
 )
