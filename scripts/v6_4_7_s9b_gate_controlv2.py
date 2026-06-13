@@ -42,10 +42,13 @@ INV_TRAN_TOL = 5.0     # inv_tran_post_nrmse %
 
 def _run_scorer(tech: str, nmos: str, pmos: str) -> Optional[dict]:
     """Run the scorer for one (tech, seed) pair; return parsed RESULT dict."""
+    # Scorer keys ALL_TEST_TECHS by UPPERCASE tech; checkpoint stems are
+    # lowercase. deriv-fidelity lowercases tech for the npz filename, so
+    # uppercase is safe everywhere.
     cmd = [
         "conda", "run", "-n", "pycircuitsim", "python",
         str(PROJECT_ROOT / "scripts" / "eval_v6_4_5_candidate.py"),
-        "--tech", tech, "--nmos", nmos, "--pmos", pmos,
+        "--tech", tech.upper(), "--nmos", nmos, "--pmos", pmos,
         "--json", "--deriv-fidelity",
         "--deriv-data-suffix", "v2", "--no-deriv-apply-filter",
     ]
