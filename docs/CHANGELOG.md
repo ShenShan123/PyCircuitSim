@@ -14,6 +14,56 @@ rulings: SRAM `force_ic` ship-required; ~250–300 GPU-h campaign, ≥4
 seeds/config, seeds one-per-GPU). Gate files with full A/B detail under
 `results/v6_4_7/`; campaign control = `baseline_v6_4_7_pre.json`.
 
+### S9 + S9b — SWA/EMA infra + regen-v2 + control-v2 gate (2026-06-12 → 06-14)
+
+**S9 (SWA/EMA, 2026-06-12):** `--swa-mode {none,ema,swa}` + `--ema-decay` in
+`bsimar/{training/trainer,cli/train}.py`; default `none` behavior-preserving.
+
+**S9b (regen-v2 + control-v2, COMPLETE 2026-06-14, verdict PROCEED).** Executed
+on a **bare-checkout machine** — the whole runtime stack was rebuilt first:
+PyCMG restored via proxy on `feat/v6` (the pinned commit is gone from the
+remote); OpenVAF 23.5.0 + BSIM-CMG OSDI built; conda env + torch 2.6.0+cu124
+(CUDA, 3× 4090); **NGSPICE 45.2 + OSDI built from source** (`tools/ngspice-45.2`,
+harness now honors `NGSPICE_BIN`); TSMC PDKs user-supplied. The lost-commit S9b
+generator code was reconstructed on `feat/v6` (preserved as
+`results/v6_4_7/s9b_pycmg_patch/`):
+- `NN_DC_SOLVE_TOL` floor fix (`pycmg/model.py`) — the legacy 1e-9 internal-NR
+  tol returned EXACT 0 for true |id|<~1e-9 (the 6–8 % zero-row artifact);
+  exports 1e-12 for generation. Exact-zero rows 10.0 % → 1.3 %.
+- `subvt_off` sample class (code 11) + `--enable-subvt-off`/`--dc-solve-tol`.
+- **Bug fixes (both load-bearing):** (1) a **parallel modelcard-cache write
+  race** — the on-the-fly naive-card file per `(pdk_device,L,NFIN)` was shared
+  by the 3 temperature-bin workers; non-atomic truncate+write let a reader
+  parse a partial card → **degenerate modelcard** (only PHIG/TOXP non-zero) →
+  physically-wrong rows the tech-variant labeller could not fingerprint. Fixed
+  with atomic temp-file + `os.replace`. (2) **NFIN<2 excluded** in
+  `enumerate_bins` (feat/v6 included it; project Rule 9 excludes it).
+
+Regen-v2 acceptance **PASS**: 8 datasets (1.8–3.1 M rows), decade gate 8/8
+(40k–200k rows/decade in 1e-12..1e-6 A vs the 1k gate), asinh audit
+`drift_id=1.0000` (no s_id pinning needed — the unfiltered small-current rows
+sit above the 1e-15 filter threshold), labeller 0 misses. gm/gds asinh drift
+0.73–0.96 (P4-relevant).
+
+control-v2: 32 cells (4 seeds {42,17,7,31} × 8 tech×dev), stock medium recipe,
+`--apply-filter off`, EMA, v2 data. Full multi-tech gate (per-cell best vs S8
+baseline): **2 protected-gate regressions** — tsmc5 ring_osc (5.80 % vs 2.61 %)
+and tsmc12 opamp (all 4 seeds collapse) — **1 new-pass** (tsmc16 switchcap
+13.1 % → 3.17 %), and inverters **hold on all 4 techs**. **Go/no-go = PROCEED:**
+both regressions are fresh-retrain variance, not data defects — EMA ruled out
+by ablation (RO-neutral, 7.23 ≈ 7.21 %); tsmc5 RO = lost best-of-8 cherry-pick
+(tsmc7 confirms, matching its non-cherry-picked 8.28 % baseline at 8.66 %);
+tsmc12 opamp = the ~44 %-likely 4-seed spontaneous-collapse lottery (tsmc5 s7
+passes at 0.79 %). Data sound (gates pass, inverter holds, tsmc16 SC win) ⇒ not
+rewound. **control-v2 becomes the fresh-retrain attribution baseline** for the
+S10+ arms; the S8 `baseline_v6_4_7_pre.json` stays the promotion gatekeeper;
+**tsmc5 ring_osc + tsmc12 opamp join the arms' recover-set** (P4
+collapse-resistance; P5/P8a RO). Detail:
+`results/v6_4_7/S9b_controlv2_gate_summary.md` (+ per-tech gate files). Harness
+portability fixes: scorer/`verify_*` honor `NGSPICE_BIN`; gate driver
+`scripts/v6_4_7_s9b_gate_controlv2.py` runs GPU-serial (`--workers 1`; 1 scorer
+co-exists with training, >1 CUDA-asserts) or `--cpu`. **Resume at S10 (P4).**
+
 - **S1 pre-flight (`c2ac02b`):** plan serialized; V6.4.5 campaign infra
   finally tracked; 161 checkpoints snapshotted to
   `/data2/home/shenshan/checkpoint_snapshots/v6_4_7_pre_20260610/`

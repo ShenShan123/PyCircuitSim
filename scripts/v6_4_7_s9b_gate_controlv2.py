@@ -40,7 +40,9 @@ INV_VTC_TOL = 5.0      # inv_vtc_nrmse % (baseline 0.96-2.36; 5% = generous gate
 INV_TRAN_TOL = 5.0     # inv_tran_post_nrmse %
 
 
-def _run_scorer(tech: str, nmos: str, pmos: str) -> Optional[dict]:
+def _run_scorer(tech: str, nmos: str, pmos: str,
+                deriv: bool = False, timeout_s: int = 2400,
+                cpu: bool = False) -> Optional[dict]:
     """Run the scorer for one (tech, seed) pair; return parsed RESULT dict."""
     # Scorer keys ALL_TEST_TECHS by UPPERCASE tech; checkpoint stems are
     # lowercase. deriv-fidelity lowercases tech for the npz filename, so
@@ -48,21 +50,29 @@ def _run_scorer(tech: str, nmos: str, pmos: str) -> Optional[dict]:
     cmd = [
         "conda", "run", "-n", "pycircuitsim", "python",
         str(PROJECT_ROOT / "scripts" / "eval_v6_4_5_candidate.py"),
-        "--tech", tech.upper(), "--nmos", nmos, "--pmos", pmos,
-        "--json", "--deriv-fidelity",
-        "--deriv-data-suffix", "v2", "--no-deriv-apply-filter",
+        "--tech", tech.upper(), "--nmos", nmos, "--pmos", pmos, "--json",
     ]
+    if deriv:
+        cmd += ["--deriv-fidelity", "--deriv-data-suffix", "v2",
+                "--no-deriv-apply-filter"]
     env = dict(os.environ)
     env.setdefault(
         "NGSPICE_BIN",
         str(PROJECT_ROOT / "tools" / "ngspice-45.2" / "bin" / "ngspice"))
+    # GPU vs CPU: a SINGLE GPU scorer co-exists with the training arms fine
+    # (validated by the S9b smoke), but >1 concurrent GPU scorer + training
+    # triggers CUDA device-side asserts / OOM. So GPU mode REQUIRES
+    # workers=1; CPU mode (--cpu) avoids the GPU entirely but the full
+    # harness is ~5x slower (ring_osc/opamp transients dominate).
+    if cpu:
+        env["CUDA_VISIBLE_DEVICES"] = ""
     env["PYTHONPATH"] = (
         f"{PROJECT_ROOT/'external_compact_models'}:"
         f"{PROJECT_ROOT/'external_compact_models'/'PyCMG'}:"
         + env.get("PYTHONPATH", ""))
     try:
         p = subprocess.run(cmd, capture_output=True, text=True,
-                           timeout=1800, env=env)
+                           timeout=timeout_s, env=env)
     except subprocess.TimeoutExpired:
         return {"_error": "timeout", "tech": tech, "nmos": nmos}
     for line in p.stdout.splitlines():
@@ -121,7 +131,19 @@ def main() -> int:
     ap.add_argument("--out", default=str(PROJECT_ROOT / "results" / "v6_4_7"
                                          / "S9b_controlv2_gate.md"))
     ap.add_argument("--workers", type=int, default=8)
+    ap.add_argument("--deriv", action="store_true",
+                    help="also compute deriv-fidelity (slower; off for the "
+                         "protected-gate check, compute separately for P4)")
+    ap.add_argument("--timeout", type=int, default=2400,
+                    help="per-(tech,seed) scorer timeout seconds (CPU is slow)")
+    ap.add_argument("--cpu", action="store_true",
+                    help="run scorers on CPU (no GPU contention but ~5x "
+                         "slower); default GPU REQUIRES --workers 1")
     args = ap.parse_args()
+    if not args.cpu and args.workers != 1:
+        print(f"[gate] GPU mode forces workers=1 (was {args.workers}) to "
+              f"avoid CUDA contention with training", file=sys.stderr)
+        args.workers = 1
 
     seeds = [s.strip() for s in args.seeds.split(",") if s.strip()]
     techs = [t.strip() for t in args.techs.split(",") if t.strip()]
@@ -144,7 +166,8 @@ def main() -> int:
           f"with {args.workers} workers", file=sys.stderr)
     results: Dict[Tuple[str, str], dict] = {}
     with cf.ThreadPoolExecutor(max_workers=args.workers) as ex:
-        fut = {ex.submit(_run_scorer, t, n, p): (t, s)
+        fut = {ex.submit(_run_scorer, t, n, p, args.deriv, args.timeout,
+                         args.cpu): (t, s)
                for (t, s, n, p) in jobs}
         for f in cf.as_completed(fut):
             t, s = fut[f]
