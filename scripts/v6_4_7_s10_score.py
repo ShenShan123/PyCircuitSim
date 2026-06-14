@@ -59,6 +59,9 @@ def main() -> int:
     ap.add_argument("--tech", default="tsmc7")
     ap.add_argument("--gpu", default=None, help="GPU id; omit/empty for CPU")
     ap.add_argument("--src-seed", default="17")
+    ap.add_argument("--ft-prefix", default="v6_4_7_s10sob",
+                    help="stem prefix for the candidate configs "
+                         "(v6_4_7_s10sob = from-scratch screen2)")
     ap.add_argument("--configs", default="a,b,c")
     ap.add_argument("--out", default=str(PROJECT_ROOT / "results" / "v6_4_7"
                                          / "S10_screen_score.json"))
@@ -73,9 +76,9 @@ def main() -> int:
         c = c.strip()
         if not c:
             continue
-        pairs.append((f"ft_{c}",
-                      f"v6_4_7_s10ft_{c}_{tech}_nmos",
-                      f"v6_4_7_s10ft_{c}_{tech}_pmos"))
+        pairs.append((f"sob_{c}",
+                      f"{args.ft_prefix}_{c}_{tech}_nmos",
+                      f"{args.ft_prefix}_{c}_{tech}_pmos"))
 
     results = {}
     for label, nmos, pmos in pairs:
