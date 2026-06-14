@@ -52,17 +52,38 @@ def _epoch_train(
     criterion: MAELoss, optimizer: optim.Optimizer,
     device: torch.device, is_transformer: bool,
     ema_model: Optional[nn.Module] = None,
-) -> float:
+    sobolev_loss: Optional[nn.Module] = None,
+    sobolev_norm: Optional[Dict[str, torch.Tensor]] = None,
+) -> Tuple[float, float]:
+    """One training epoch. Returns (mean_total_loss, mean_sobolev_term).
+
+    When ``sobolev_loss`` is given (DirectNet / P4 only), the autograd
+    ∂id/∂V consistency term is added to the MAE; ``x`` carries gradient so
+    ``torch.autograd.grad`` inside the term can build the second-order graph.
+    """
     model.train()
     total = 0.0
+    total_sob = 0.0
     n = 0
     for x, y, tc, w in loader:
         x, y, tc, w = (x.to(device), y.to(device),
                        tc.to(device), w.to(device))
         optimizer.zero_grad()
+        if sobolev_loss is not None:
+            x = x.requires_grad_(True)
         pred = (model(x, y, tech_codes=tc) if is_transformer
                 else model(x, tech_codes=tc))
         loss = criterion(pred, y, weights=w)
+        if sobolev_loss is not None:
+            sob = sobolev_loss(
+                x_norm=x, y_pred_norm=pred, y_true_norm=y,
+                in_std=sobolev_norm["in_std"],
+                out_std=sobolev_norm["out_std"],
+                out_mean=sobolev_norm["out_mean"],
+                asinh_scale=sobolev_norm["asinh_scale"],
+                weights=w)
+            loss = loss + sob
+            total_sob += float(sob.item())
         loss.backward()
         if is_transformer:
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -71,7 +92,8 @@ def _epoch_train(
             ema_model.update_parameters(model)
         total += loss.item()
         n += 1
-    return total / max(n, 1)
+    n = max(n, 1)
+    return total / n, total_sob / n
 
 
 @torch.no_grad()
@@ -155,6 +177,10 @@ def _train_loop(
     class_weights: Optional[Dict[str, float]] = None,
     swa_mode: str = "none",
     ema_decay: float = 0.999,
+    sobolev: bool = False,
+    lam_sobolev: float = 0.1,
+    sobolev_floor: float = 1e-12,
+    sobolev_strong_boost: float = 1.0,
 ) -> Tuple[nn.Module, _NormalizerBase]:
     if is_transformer:
         for ds in (train_ds, val_ds, test_ds):
@@ -231,6 +257,37 @@ def _train_loop(
     scheduler = CosineAnnealingLR(optimizer, T_max=epochs)
     criterion = MAELoss()
 
+    # V6.4.7 S10 (P4) — Sobolev id-derivative consistency term. DirectNet
+    # only (asinh output norm); couples autograd ∂id/∂V to the supervised
+    # gm/gds/gmb columns the deriv-fidelity gate measures.
+    sobolev_loss: Optional[nn.Module] = None
+    sobolev_norm: Optional[Dict[str, torch.Tensor]] = None
+    if sobolev:
+        from bsimar.losses.bni_mae import SobolevIdLoss
+        if is_transformer:
+            raise ValueError("Sobolev id-derivative loss is DirectNet-only")
+        st = normalizer.stats
+        if st.mode != "asinh" or st.asinh_scale is None:
+            raise ValueError(
+                "Sobolev loss requires asinh output normalization")
+        cols = (st.output_columns if st.output_columns is not None
+                else OUTPUT_COLUMN_ORDER)
+        sobolev_loss = SobolevIdLoss(
+            lam=lam_sobolev, column_order=cols,
+            id_floor=sobolev_floor, strong_boost=sobolev_strong_boost)
+
+        def _nt(arr: np.ndarray) -> torch.Tensor:
+            return torch.tensor(arr, dtype=torch.float32, device=device)
+
+        sobolev_norm = {
+            "in_std": _nt(st.input_std),
+            "out_std": _nt(st.output_std),
+            "out_mean": _nt(st.output_mean),
+            "asinh_scale": _nt(st.asinh_scale),
+        }
+        print(f"  Sobolev id-deriv loss ON (λ={lam_sobolev}, "
+              f"floor={sobolev_floor:g}, strong_boost={sobolev_strong_boost})")
+
     # V6.4.7 S9 — within-run weight averaging (P6, pulled forward).
     # "ema": per-step exponential moving average from epoch 1.
     # "swa": equal-weight averaging from 75% of max_epochs.
@@ -274,9 +331,10 @@ def _train_loop(
     epoch = 0
 
     for epoch in range(1, epochs + 1):
-        train_loss = _epoch_train(
+        train_loss, train_sob = _epoch_train(
             model, train_loader, criterion, optimizer, device, is_transformer,
-            ema_model=avg_model if swa_mode == "ema" else None)
+            ema_model=avg_model if swa_mode == "ema" else None,
+            sobolev_loss=sobolev_loss, sobolev_norm=sobolev_norm)
         if swa_mode == "swa" and epoch >= swa_start:
             avg_model.update_parameters(model)
             if epoch == swa_start:
@@ -303,7 +361,8 @@ def _train_loop(
             bad += 1
 
         if epoch <= 5 or epoch % 10 == 0 or marker:
-            print(f"  {epoch:4d} | train={train_loss:.5f} "
+            extra = f" sob={train_sob:.5f}" if sobolev_loss is not None else ""
+            print(f"  {epoch:4d} | train={train_loss:.5f}{extra} "
                   f"val={val_loss:.5f} lr={lr_now:.2e}{marker}")
 
         if bad >= patience:
@@ -358,9 +417,24 @@ def train_directnet(
     ema_decay: float = 0.999,
     apply_filter: bool = True,
     class_weights: Optional[Dict[str, float]] = None,
+    sobolev: bool = False,
+    lam_sobolev: float = 0.1,
+    sobolev_floor: float = 1e-12,
+    sobolev_strong_boost: float = 1.0,
+    init_from: Optional[str] = None,
     **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
     """DirectNet MLP training pipeline.
+
+    ``sobolev`` (V6.4.7 S10 / P4, default False): add the Sobolev
+    id-derivative consistency term (``lam_sobolev`` weight, ``sobolev_floor``
+    trust-floor mask on |id_true|, ``sobolev_strong_boost`` upweight for
+    |id_true| > 1uA). Couples autograd ∂id/∂V to the OSDI gm/gds/gmb columns.
+
+    ``init_from`` (V6.4.7 S10 / P4 fine-tune): checkpoint stem (resolved
+    under ``CHECKPOINT_DIR/<stem>_best.pt``) or an explicit ``*.pt`` path to
+    warm-start the trunk + embedding from. The architecture must match (same
+    --size / --tech-scope). Used for the fine-tune λ-screen from control-v2.
 
     ``apply_filter`` (V6.4.7 S9b, default True = legacy): drop rows with
     |id| <= 1e-15 before splitting. V6.4.7 arms pass False — small-current
@@ -432,6 +506,22 @@ def train_directnet(
         print(f"  Phase 7a monotone-Vg residual ON (sign={monotone_sign:+.0f})")
     print(f"  Params: {model.count_parameters():,}")
 
+    if init_from is not None:
+        init_path = Path(init_from)
+        if not init_path.suffix:
+            init_path = CHECKPOINT_DIR / f"{init_from}_best.pt"
+        if not init_path.exists():
+            raise FileNotFoundError(
+                f"init_from checkpoint not found: {init_path}")
+        init_state = torch.load(str(init_path), weights_only=True,
+                                map_location=device)
+        missing, unexpected = model.load_state_dict(init_state, strict=False)
+        if missing or unexpected:
+            raise ValueError(
+                f"init_from architecture mismatch for {init_path.name}: "
+                f"missing={list(missing)} unexpected={list(unexpected)}")
+        print(f"  Warm-started from {init_path.name}")
+
     return _train_loop(
         model=model, is_transformer=False,
         train_ds=train_ds, val_ds=val_ds, test_ds=test_ds,
@@ -443,6 +533,9 @@ def train_directnet(
         column_weights=column_weights,
         class_weights=class_weights,
         swa_mode=swa_mode, ema_decay=ema_decay,
+        sobolev=sobolev, lam_sobolev=lam_sobolev,
+        sobolev_floor=sobolev_floor,
+        sobolev_strong_boost=sobolev_strong_boost,
     )
 
 

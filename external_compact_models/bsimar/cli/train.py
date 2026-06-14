@@ -201,12 +201,24 @@ def _run(args: argparse.Namespace) -> None:
 
     print(f"\n=== Training {args.model} ({args.size}, "
           f"loss-preset={args.loss_preset}) → {save_prefix} ===")
+    if args.sobolev and loss_preset["output_subset"] is not None:
+        print("[error] --sobolev needs the id/gm/gds/gmb columns; it is "
+              "incompatible with the e2 output-subset preset.")
+        sys.exit(2)
+    if args.sobolev and args.model != "direct":
+        print("[error] --sobolev is a DirectNet-only (P4) flag.")
+        sys.exit(2)
+
     if args.model == "direct":
         cfg = DirectNetConfig(**preset)
         train_directnet(
             str(data_path), config=cfg,
             column_weights=loss_preset["column_weights"],
             output_subset=loss_preset["output_subset"],
+            sobolev=args.sobolev, lam_sobolev=args.lam_sobolev,
+            sobolev_floor=args.sobolev_floor,
+            sobolev_strong_boost=args.sobolev_strong_boost,
+            init_from=args.init_from,
             **common,
         )
     else:
@@ -289,6 +301,28 @@ def main() -> None:
                         "2026-05-08-directnet-target-trim plan): "
                         "default=B0, e1=drop-qs, e2=4-output head, "
                         "e3=down-weight non-load-bearing targets")
+
+    # V6.4.7 S10 (P4) — Sobolev id-derivative consistency, DirectNet only.
+    p.add_argument("--sobolev", action="store_true",
+                   help="Add the Sobolev id-derivative consistency term "
+                        "(autograd ∂id/∂V vs OSDI gm/gds/gmb). DirectNet "
+                        "only; requires asinh output norm.")
+    p.add_argument("--lam-sobolev", type=float, default=0.1,
+                   help="Sobolev term weight λ (default 0.1).")
+    p.add_argument("--sobolev-floor", type=float, default=1e-12,
+                   help="Trust-floor on |id_true| (A): rows below are "
+                        "masked out of the Sobolev term (their OSDI "
+                        "gm/gds/gmb are solve-tolerance noise). Default "
+                        "1e-12 (regen-v2 data trustworthy to this).")
+    p.add_argument("--sobolev-strong-boost", type=float, default=1.0,
+                   help="Upweight rows with |id_true| > 1uA in the Sobolev "
+                        "term (opamp-gain / conducting corridor). Default "
+                        "1.0 = uniform.")
+    p.add_argument("--init-from", type=str, default=None,
+                   help="Warm-start from a checkpoint stem (under "
+                        "CHECKPOINT_DIR) or an explicit *.pt path "
+                        "(fine-tune; architecture must match --size / "
+                        "--tech-scope).")
 
     # Phase 7 (V6.4.2) — soft physics constraints, DirectNet only, default OFF.
     p.add_argument("--monotonic", action="store_true",
