@@ -237,9 +237,18 @@ falsified — precise ∂id/∂V does not help (actively harms) the value-owned
 opamp/RO gates; the deriv-fidelity metric is an NR-robustness indicator, not a
 circuit-accuracy promotion gate.** The opamp/RO levers must target the id VALUE
 surface (P5 corridors, P3 subthreshold). `SobolevIdLoss` stays as default-off,
-recoverable infra (pairs with the permanent deriv-fidelity scorer). **RESUME AT
-S11 = P3 (ship-required SRAM; value-surface subthreshold lever — carry the S10
-SRAM-escape side finding).**
+recoverable infra (pairs with the permanent deriv-fidelity scorer).
+
+**User rulings post-S10 (2026-06-14, rev 4):** (6) **deriv-fidelity gate
+DEMOTED to an NR-robustness metric only** — it is no longer a circuit-accuracy
+promotion gate (S10 showed it anti-correlates with the value-owned opamp);
+promote on the actual circuit gates (16 cells + force_ic + inverter). Ruling 4
+is amended accordingly: ∂id/∂V precision is still *reported*, not *promoted on*.
+(7) **REORDER — do S12 = P5 BEFORE S11 = P3.** The S10 finding most directly
+implicates P5 (NGSPICE-trajectory id VALUE corridors) for the value-owned
+opamp/RO gaps. **RESUME AT S12 = P5** (value-corridor data regen + retrain;
+targets TSMC7 RO 8.28 %, tsmc5 RO, TSMC5 SC over-conduction, opamp/TSMC16);
+P3 (S11, SRAM subthreshold) follows — carry the S10 SRAM-escape side finding.
 
 ## S9b outcomes (2026-06-14 — regen-v2 + control-v2 + gate; verdict PROCEED)
 
