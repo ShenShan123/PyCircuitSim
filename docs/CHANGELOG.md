@@ -6,7 +6,7 @@ isn't burdened with chronology.
 
 ---
 
-## V6.4.7 (in progress) — serialized accuracy campaign; week 1 (S1–S8) complete: honest 8/16 → 11/16, zero GPU (2026-06-10 → 06-12)
+## V6.4.7 (in progress) — serialized accuracy campaign; week 1 (S1–S8) honest 8/16 → 11/16 zero-GPU, S9b regen-v2 PROCEED, S10/P4 Sobolev KILL (deriv-fidelity ⟂ value-owned opamp) (2026-06-10 → 06-14)
 
 Plan: `docs/plans/2026-06-10-directnet-v6.4.7-accuracy.md` (rev 2.1 — strict
 serial chain S1–S19, every lever committed-or-rewound before the next; user
@@ -63,6 +63,67 @@ collapse-resistance; P5/P8a RO). Detail:
 portability fixes: scorer/`verify_*` honor `NGSPICE_BIN`; gate driver
 `scripts/v6_4_7_s9b_gate_controlv2.py` runs GPU-serial (`--workers 1`; 1 scorer
 co-exists with training, >1 CUDA-asserts) or `--cpu`. **Resume at S10 (P4).**
+
+### S10 — P4 Sobolev id-derivative arm (2026-06-14, verdict KILL)
+
+The first GPU arm. Built `SobolevIdLoss` (`bsimar/losses/bni_mae.py`): id
+channels only (∂id/∂{Vg,Vd,Vb} vs OSDI gm/gds/gmb), compared in the **same
+asinh normalized-derivative space the deriv-fidelity gate measures**, so the
+term supervises exactly the quantity ruling-4 scores. The 8-channel V5 Phase-C
+form was net-detrimental; the chain-rule transform was recovered from
+`git show 930c274` but restricted to the 3 id channels. **Sign convention
+verified, not assumed** (the P0-I §2 trap): `scripts/v6_4_7_s10_sign_check.py`
+shows **uniform negation of all three channels** is correct (stored gm/gds/gmb =
+−∂id/∂V) — the 930c274 "gds is the diagonal so no flip" comment is WRONG for the
+stored convention (gds residual 11× larger under it). Trainer/CLI:
+`--sobolev/--lam-sobolev/--sobolev-floor/--sobolev-strong-boost/`
+`--sobolev-corridor-only/--init-from`, second-order autograd, EMA-compatible,
+default path bit-unchanged (smoke-verified).
+
+Methodology: a warm-start fine-tune screen **reverts** under plain val-MAE
+selection (λ=0.1 degraded val-MAE 4× → early-stop epoch 2 ≈ unshaped warm
+start). Replaced by **from-scratch retrains at seed 17** — identical weight
+init + data split + normalizer fit to control-v2 s17, so the A/B isolates the
+Sobolev term exactly. Screened λ∈{0.005,0.01,0.02,0.1,0.3} (global boost4 +
+corridor-only), then ran a **4-seed arm** (config A, λ=0.02 boost4, seeds
+{42,17,7,31}).
+
+Results:
+- **Derivative fidelity improves robustly + monotonically in λ** — PMOS gds_fwd
+  55.8 → 1.7 % (λ=0.3), gm_fwd 137 → 0.1 %, off-state 3–4 orders better; the
+  4-seed arm holds gds 42–43 % vs control 48–69 % on every seed. **Ruling-4
+  core objective met.**
+- **Inverter improves** on every seed (VTC 0.96–2.36 % vs 3.45 %).
+- **The opamp collapses 4/4 seeds** (gain 180 → 0), including s7/s31 which
+  control-v2 kept healthy at 362/187 — **systematic, not seed-luck**, and
+  **λ-independent down to λ=0.005** (val-MAE identical to control, 0.00119).
+- RO mixed (2/4 improved to 7.77/7.99 — best-ever tsmc7; 2/4 regressed). Side
+  finding: 3/4 seeds move SRAM force_ic OUT of the symmetric metastable point
+  (0.39/0.39) toward a railed state (q≈0.75–0.83 / qb≈0.07–0.13) — the
+  off-state-deriv improvement helps the subthreshold-owned SRAM attractor
+  (P3-adjacent; doesn't close, q over-rails).
+
+**Verdict = KILL** (pre-registered S10 kill gate: opamp not < 15 % with inverter
+held → drop the term, record dead-end next to V5 Phase-C). No Sobolev checkpoint
+promoted; `v6_4_7_s10{ft,sob,p4}_*` stems inert (don't match the resolver).
+`SobolevIdLoss` stays as default-off, recoverable infra (pairs with the
+permanent deriv-fidelity scorer).
+
+**Major finding — derivative fidelity is ANTI-correlated with the opamp.**
+control-v2 has wildly-off autograd derivatives on every seed (gm_fwd ~137 %)
+yet its opamp gain is within ~10 % of NG; the Sobolev arm IMPROVES the Jacobian
+and COLLAPSES the gain. Mechanism: the harness opamp gain (max slope of the
+**large-signal DC transfer curve** = locus of *converged* NR fixed points) and
+the RO period are **value-surface / NR-fixed-point owned — the P0-C/P0-I class**
+(the autograd Jacobian guides NR convergence but cancels at the fixed point).
+Fixing the slope necessarily reshapes the coupled id VALUE surface, which
+destabilizes the value-owned opamp bias. **Consequence — ruling-4's premise is
+partially falsified:** precise ∂id/∂V does not help (actively harms) the
+value-owned opamp/RO gates; the deriv-fidelity metric is an NR-robustness
+indicator, NOT a circuit-accuracy promotion gate. The opamp/RO levers must
+target the id VALUE surface (P5 trajectory corridors, P3 subthreshold). Gate
+file `results/v6_4_7/S10_P4_sobolev_gate.md`. **Resume at S11 (P3, SRAM
+value-surface subthreshold lever — carry the SRAM-escape side finding).**
 
 - **S1 pre-flight (`c2ac02b`):** plan serialized; V6.4.5 campaign infra
   finally tracked; 161 checkpoints snapshotted to

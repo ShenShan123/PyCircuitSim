@@ -1,6 +1,6 @@
 # DirectNet V6.4.7 — Ranked levers to improve NN compact-model accuracy in complex-circuit simulation
 
-**Date:** 2026-06-10 (rev. 2, same day; rev. 2.1 same day — sequencing serialized per user instruction: every lever is committed-or-rewound before the next starts; **rev. 3, 2026-06-12 — three user rulings reshape the GPU campaign: keep small-current rows + alter the loss, make ∂id/∂V precise, regen+retrain unconditional; new step S9b**)  •  **Status:** **WEEK 1 (S1–S8) COMPLETE 2026-06-12 — headline honest 8/16 → 11/16, zero GPU; see "Week-1 outcomes" §. S9 (SWA/EMA infra) SHIPPED 2026-06-12. S9b COMPLETE 2026-06-14 — regen-v2 + control-v2 + full multi-tech gate; go/no-go = PROCEED (data sound; the 2 protected-gate regressions are fresh-retrain variance, not data defects). RESUME AT S10 (P4 lead arm). See "S9b outcomes" § below.** Originally PROPOSED — REVISED after four-agent adversarial review (dead-end audit, ML methodology, simulator numerics, EV/risk)  •  **Branch:** `feat/v6.4.7` (cut from `feat/v6.4.6` @ `c5155e7`; week-1 commits `c2ac02b`…`ad62c68`)
+**Date:** 2026-06-10 (rev. 2, same day; rev. 2.1 same day — sequencing serialized per user instruction: every lever is committed-or-rewound before the next starts; **rev. 3, 2026-06-12 — three user rulings reshape the GPU campaign: keep small-current rows + alter the loss, make ∂id/∂V precise, regen+retrain unconditional; new step S9b**)  •  **Status:** **WEEK 1 (S1–S8) COMPLETE 2026-06-12 — headline honest 8/16 → 11/16, zero GPU; see "Week-1 outcomes" §. S9 (SWA/EMA infra) SHIPPED 2026-06-12. S9b COMPLETE 2026-06-14 — regen-v2 + control-v2; go/no-go = PROCEED. **S10 (P4 Sobolev id-derivative arm) COMPLETE 2026-06-14 — verdict KILL: the term improves deriv fidelity + inverter but collapses the opamp 4/4 (systematic); major finding = derivative fidelity is anti-correlated with the value-owned opamp/RO gates (P0-C/P0-I class), partially falsifying ruling-4's premise. RESUME AT S11 (P3 SRAM, value-surface subthreshold lever). See "S10 outcomes" § below.** Originally PROPOSED — REVISED after four-agent adversarial review (dead-end audit, ML methodology, simulator numerics, EV/risk)  •  **Branch:** `feat/v6.4.7` (cut from `feat/v6.4.6` @ `c5155e7`; week-1 commits `c2ac02b`…`ad62c68`)
 **Authoring:** rev 1 — plan-mode synthesis + staff-engineer adversarial review (checked against recorded V5–V6.4.6 dead ends; three conflicts designed around: V5 Phase-C JAC-loss negative, E2-medium head-trim falsification, P0-A NR-instability of the railed SRAM point). rev 2 — four-agent panel found the **P0 NMOS source-frame bug**, retracted the switchcap droop premise, re-powered the campaign, and hardened selection discipline. Proposal IDs are stable from rev 1; the rev-2 ranking is the section order below (P0/R0 new; P4 now precedes P3 among GPU arms). rev 3 — user-directed amendment after week 1 (recorded under the S5b mid-campaign-change precedent): a 2026-06-12 pipeline audit found the loader silently drops every |id| ≤ 1e-15 row (6.0–7.9 % of each dataset) on top of the known empty generator band, and the three rulings below re-anchor the campaign on unfiltered small-current data, precise ∂id/∂V, and unconditional regen+retrain.
 
 **User rulings (2026-06-10):**
@@ -205,6 +205,41 @@ TSMC5 SC over-conduction 12.14 %) → S13 P8a (re-armed id-VALUE supervision)
 → S14 P6 → S15 P7 → S16 P8b (premise weakened by the P0-I retraction; keep
 as fallback only) → S17 P9 → S18 composition → S19 promotion (blind
 holdouts now include the off-default-Vin SC variant).
+
+## S10 outcomes (2026-06-14 — P4 Sobolev id-derivative arm; verdict KILL)
+
+Full detail: `results/v6_4_7/S10_P4_sobolev_gate.md`. Built `SobolevIdLoss`
+(id-channels only, asinh normalized-derivative space matching the deriv gate,
+**uniform-negation sign verified** by FD/empirics — the 930c274 "gds no-flip"
+is wrong, gds res 11× smaller under uniform negation). Warm-start fine-tune
+screen reverts under plain val-MAE selection → replaced by **from-scratch
+retrains at seed 17** (clean A/B vs control-v2 s17). **Result across λ∈{0.005…
+0.3} and a 4-seed arm (config A λ=0.02):**
+
+- **Deriv fidelity improves robustly** (gds_fwd 55.8→1.7 % monotonic; gm_fwd
+  137→0.1 %; off-state 3–4 orders better) — ruling-4 core objective MET — and
+  the **inverter improves** (VTC 0.96–2.36 vs 3.45) on every seed.
+- **But the opamp collapses 4/4 seeds** (gain 180→0), including s7/s31 which
+  control-v2 kept healthy (362/187) — **systematic, not seed-luck**; collapse
+  is **λ-independent down to λ=0.005** (val-MAE identical to control).
+- RO mixed (2/4 improved to 7.77/7.99 — best-ever tsmc7; 2/4 regressed).
+  Side finding: 3/4 seeds move SRAM force_ic OUT of the metastable point toward
+  the rail (off-state-deriv benefit; P3-adjacent, doesn't close).
+
+**Verdict = KILL** (pre-registered S10 kill gate: opamp not < 15 % with inverter
+held → drop the term). No Sobolev checkpoint promoted; `v6_4_7_s10{ft,sob,p4}_*`
+inert. **Major finding: derivative fidelity is ANTI-correlated with the opamp.**
+control-v2 has gm_fwd ~137 % yet gain within 10 % of NG; the Sobolev arm fixes
+the Jacobian and collapses the gain — because the harness opamp gain (and the RO
+period) are **value-surface / NR-fixed-point owned (the P0-C/P0-I class)**, NOT
+autograd-Jacobian owned. **Consequence: ruling-4's premise is partially
+falsified — precise ∂id/∂V does not help (actively harms) the value-owned
+opamp/RO gates; the deriv-fidelity metric is an NR-robustness indicator, not a
+circuit-accuracy promotion gate.** The opamp/RO levers must target the id VALUE
+surface (P5 corridors, P3 subthreshold). `SobolevIdLoss` stays as default-off,
+recoverable infra (pairs with the permanent deriv-fidelity scorer). **RESUME AT
+S11 = P3 (ship-required SRAM; value-surface subthreshold lever — carry the S10
+SRAM-escape side finding).**
 
 ## S9b outcomes (2026-06-14 — regen-v2 + control-v2 + gate; verdict PROCEED)
 
