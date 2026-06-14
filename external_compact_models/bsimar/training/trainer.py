@@ -181,6 +181,7 @@ def _train_loop(
     lam_sobolev: float = 0.1,
     sobolev_floor: float = 1e-12,
     sobolev_strong_boost: float = 1.0,
+    sobolev_corridor_only: bool = False,
 ) -> Tuple[nn.Module, _NormalizerBase]:
     if is_transformer:
         for ds in (train_ds, val_ds, test_ds):
@@ -274,7 +275,8 @@ def _train_loop(
                 else OUTPUT_COLUMN_ORDER)
         sobolev_loss = SobolevIdLoss(
             lam=lam_sobolev, column_order=cols,
-            id_floor=sobolev_floor, strong_boost=sobolev_strong_boost)
+            id_floor=sobolev_floor, strong_boost=sobolev_strong_boost,
+            corridor_only=sobolev_corridor_only)
 
         def _nt(arr: np.ndarray) -> torch.Tensor:
             return torch.tensor(arr, dtype=torch.float32, device=device)
@@ -421,6 +423,7 @@ def train_directnet(
     lam_sobolev: float = 0.1,
     sobolev_floor: float = 1e-12,
     sobolev_strong_boost: float = 1.0,
+    sobolev_corridor_only: bool = False,
     init_from: Optional[str] = None,
     **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
@@ -536,6 +539,7 @@ def train_directnet(
         sobolev=sobolev, lam_sobolev=lam_sobolev,
         sobolev_floor=sobolev_floor,
         sobolev_strong_boost=sobolev_strong_boost,
+        sobolev_corridor_only=sobolev_corridor_only,
     )
 
 

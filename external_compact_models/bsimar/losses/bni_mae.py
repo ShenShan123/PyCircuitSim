@@ -149,12 +149,19 @@ class SobolevIdLoss(nn.Module):
         id_floor: float = 1e-12,
         strong_boost: float = 1.0,
         strong_floor: float = 1e-6,
+        corridor_only: bool = False,
     ) -> None:
         super().__init__()
         self.lam = float(lam)
         self.id_floor = float(id_floor)
         self.strong_boost = float(strong_boost)
         self.strong_floor = float(strong_floor)
+        # corridor_only: hard-mask to the conducting / opamp-gain corridor
+        # (|id_true| > strong_floor) instead of the noise trust-floor. Focuses
+        # the term on the op-point slope rather than diluting it across the
+        # mass of weak-inversion rows (the plan's predicted failure mode of a
+        # globally-uniform λ).
+        self.corridor_only = bool(corridor_only)
         from bsimar.data.normalize import OUTPUT_COLUMN_ORDER
         self.column_order = column_order or OUTPUT_COLUMN_ORDER
         col = {c: i for i, c in enumerate(self.column_order)}
@@ -187,12 +194,14 @@ class SobolevIdLoss(nn.Module):
         id_phys_pred = s_id * torch.sinh(u_id)
         factor = torch.sqrt(s_id * s_id + id_phys_pred * id_phys_pred + 1e-30)
 
-        # True id physical → trust-floor mask + strong-inversion boost.
+        # True id physical → trust-floor / corridor mask + strong boost.
         with torch.no_grad():
             u_id_t = y_true_norm[:, idc] * out_std_id + out_mean[idc]
             abs_id_true = torch.abs(s_id * torch.sinh(u_id_t))
-            row_w = (abs_id_true > self.id_floor).to(y_pred_norm.dtype)
-            if self.strong_boost != 1.0:
+            hard_floor = (self.strong_floor if self.corridor_only
+                          else self.id_floor)
+            row_w = (abs_id_true > hard_floor).to(y_pred_norm.dtype)
+            if self.strong_boost != 1.0 and not self.corridor_only:
                 row_w = row_w * torch.where(
                     abs_id_true > self.strong_floor,
                     torch.as_tensor(self.strong_boost, dtype=row_w.dtype,

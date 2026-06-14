@@ -218,6 +218,7 @@ def _run(args: argparse.Namespace) -> None:
             sobolev=args.sobolev, lam_sobolev=args.lam_sobolev,
             sobolev_floor=args.sobolev_floor,
             sobolev_strong_boost=args.sobolev_strong_boost,
+            sobolev_corridor_only=args.sobolev_corridor_only,
             init_from=args.init_from,
             **common,
         )
@@ -318,6 +319,11 @@ def main() -> None:
                    help="Upweight rows with |id_true| > 1uA in the Sobolev "
                         "term (opamp-gain / conducting corridor). Default "
                         "1.0 = uniform.")
+    p.add_argument("--sobolev-corridor-only", action="store_true",
+                   help="Restrict the Sobolev term to the conducting "
+                        "corridor (|id_true| > 1uA) — focuses op-point slope "
+                        "supervision instead of diluting it across weak "
+                        "rows. Overrides --sobolev-strong-boost.")
     p.add_argument("--init-from", type=str, default=None,
                    help="Warm-start from a checkpoint stem (under "
                         "CHECKPOINT_DIR) or an explicit *.pt path "
