@@ -54,16 +54,21 @@ def _epoch_train(
     ema_model: Optional[nn.Module] = None,
     sobolev_loss: Optional[nn.Module] = None,
     sobolev_norm: Optional[Dict[str, torch.Tensor]] = None,
+    subthresh_loss: Optional[nn.Module] = None,
+    aux_norm: Optional[Dict[str, torch.Tensor]] = None,
 ) -> Tuple[float, float]:
-    """One training epoch. Returns (mean_total_loss, mean_sobolev_term).
+    """One training epoch. Returns (mean_total_loss, mean_aux_term).
 
     When ``sobolev_loss`` is given (DirectNet / P4 only), the autograd
     ∂id/∂V consistency term is added to the MAE; ``x`` carries gradient so
     ``torch.autograd.grad`` inside the term can build the second-order graph.
+    When ``subthresh_loss`` is given (DirectNet / P3), the subthreshold id
+    value+ceiling term is added (no second-order graph needed). ``mean_aux_term``
+    sums whichever auxiliary terms are active.
     """
     model.train()
     total = 0.0
-    total_sob = 0.0
+    total_aux = 0.0
     n = 0
     for x, y, tc, w in loader:
         x, y, tc, w = (x.to(device), y.to(device),
@@ -83,7 +88,15 @@ def _epoch_train(
                 asinh_scale=sobolev_norm["asinh_scale"],
                 weights=w)
             loss = loss + sob
-            total_sob += float(sob.item())
+            total_aux += float(sob.item())
+        if subthresh_loss is not None:
+            sub = subthresh_loss(
+                x_norm=x, y_pred_norm=pred, y_true_norm=y,
+                in_mean=aux_norm["in_mean"], in_std=aux_norm["in_std"],
+                out_std=aux_norm["out_std"], out_mean=aux_norm["out_mean"],
+                asinh_scale=aux_norm["asinh_scale"])
+            loss = loss + sub
+            total_aux += float(sub.item())
         loss.backward()
         if is_transformer:
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -93,7 +106,7 @@ def _epoch_train(
         total += loss.item()
         n += 1
     n = max(n, 1)
-    return total / n, total_sob / n
+    return total / n, total_aux / n
 
 
 @torch.no_grad()
@@ -182,6 +195,14 @@ def _train_loop(
     sobolev_floor: float = 1e-12,
     sobolev_strong_boost: float = 1.0,
     sobolev_corridor_only: bool = False,
+    subthresh: bool = False,
+    lam_subthresh: float = 0.05,
+    subthresh_s2: float = 1e-9,
+    subthresh_upper: float = 1e-6,
+    subthresh_floor: float = 1e-12,
+    subthresh_off_floor: float = 1e-10,
+    subthresh_ceiling_k: float = 1.0,
+    subthresh_ceiling_w: float = 1.0,
 ) -> Tuple[nn.Module, _NormalizerBase]:
     if is_transformer:
         for ds in (train_ds, val_ds, test_ds):
@@ -290,6 +311,42 @@ def _train_loop(
         print(f"  Sobolev id-deriv loss ON (λ={lam_sobolev}, "
               f"floor={sobolev_floor:g}, strong_boost={sobolev_strong_boost})")
 
+    # V6.4.7 S11 (P3) — subthreshold id value+ceiling term. DirectNet only
+    # (asinh output norm); re-scales the sub-uA roll-off (asinh s2) so the
+    # SRAM force_ic weak-inversion band carries loss mass. Shares aux_norm
+    # (in_mean/in_std for the per-fin OFF ceiling; out/asinh for denorm).
+    subthresh_loss: Optional[nn.Module] = None
+    aux_norm: Optional[Dict[str, torch.Tensor]] = None
+    if subthresh:
+        from bsimar.losses.bni_mae import SubthresholdIdLoss
+        if is_transformer:
+            raise ValueError("Subthreshold id loss is DirectNet-only")
+        st = normalizer.stats
+        if st.mode != "asinh" or st.asinh_scale is None:
+            raise ValueError(
+                "Subthreshold loss requires asinh output normalization")
+        cols = (st.output_columns if st.output_columns is not None
+                else OUTPUT_COLUMN_ORDER)
+        subthresh_loss = SubthresholdIdLoss(
+            lam=lam_subthresh, column_order=cols, s2=subthresh_s2,
+            upper=subthresh_upper, id_floor=subthresh_floor,
+            off_floor=subthresh_off_floor, ceiling_k=subthresh_ceiling_k,
+            ceiling_w=subthresh_ceiling_w)
+
+        def _nt2(arr: np.ndarray) -> torch.Tensor:
+            return torch.tensor(arr, dtype=torch.float32, device=device)
+
+        aux_norm = {
+            "in_mean": _nt2(st.input_mean),
+            "in_std": _nt2(st.input_std),
+            "out_std": _nt2(st.output_std),
+            "out_mean": _nt2(st.output_mean),
+            "asinh_scale": _nt2(st.asinh_scale),
+        }
+        print(f"  Subthreshold id loss ON (λ={lam_subthresh}, s2={subthresh_s2:g}, "
+              f"upper={subthresh_upper:g}, off_floor={subthresh_off_floor:g}, "
+              f"ceiling_k={subthresh_ceiling_k}, ceiling_w={subthresh_ceiling_w})")
+
     # V6.4.7 S9 — within-run weight averaging (P6, pulled forward).
     # "ema": per-step exponential moving average from epoch 1.
     # "swa": equal-weight averaging from 75% of max_epochs.
@@ -333,10 +390,11 @@ def _train_loop(
     epoch = 0
 
     for epoch in range(1, epochs + 1):
-        train_loss, train_sob = _epoch_train(
+        train_loss, train_aux = _epoch_train(
             model, train_loader, criterion, optimizer, device, is_transformer,
             ema_model=avg_model if swa_mode == "ema" else None,
-            sobolev_loss=sobolev_loss, sobolev_norm=sobolev_norm)
+            sobolev_loss=sobolev_loss, sobolev_norm=sobolev_norm,
+            subthresh_loss=subthresh_loss, aux_norm=aux_norm)
         if swa_mode == "swa" and epoch >= swa_start:
             avg_model.update_parameters(model)
             if epoch == swa_start:
@@ -363,7 +421,9 @@ def _train_loop(
             bad += 1
 
         if epoch <= 5 or epoch % 10 == 0 or marker:
-            extra = f" sob={train_sob:.5f}" if sobolev_loss is not None else ""
+            extra = (f" aux={train_aux:.5f}"
+                     if (sobolev_loss is not None or subthresh_loss is not None)
+                     else "")
             print(f"  {epoch:4d} | train={train_loss:.5f}{extra} "
                   f"val={val_loss:.5f} lr={lr_now:.2e}{marker}")
 
@@ -424,6 +484,14 @@ def train_directnet(
     sobolev_floor: float = 1e-12,
     sobolev_strong_boost: float = 1.0,
     sobolev_corridor_only: bool = False,
+    subthresh: bool = False,
+    lam_subthresh: float = 0.05,
+    subthresh_s2: float = 1e-9,
+    subthresh_upper: float = 1e-6,
+    subthresh_floor: float = 1e-12,
+    subthresh_off_floor: float = 1e-10,
+    subthresh_ceiling_k: float = 1.0,
+    subthresh_ceiling_w: float = 1.0,
     init_from: Optional[str] = None,
     **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
@@ -540,6 +608,12 @@ def train_directnet(
         sobolev_floor=sobolev_floor,
         sobolev_strong_boost=sobolev_strong_boost,
         sobolev_corridor_only=sobolev_corridor_only,
+        subthresh=subthresh, lam_subthresh=lam_subthresh,
+        subthresh_s2=subthresh_s2, subthresh_upper=subthresh_upper,
+        subthresh_floor=subthresh_floor,
+        subthresh_off_floor=subthresh_off_floor,
+        subthresh_ceiling_k=subthresh_ceiling_k,
+        subthresh_ceiling_w=subthresh_ceiling_w,
     )
 
 

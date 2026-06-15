@@ -233,3 +233,130 @@ class SobolevIdLoss(nn.Module):
         if n_chan == 0:
             return total
         return self.lam * total / n_chan
+
+
+# ── Subthreshold id value loss (V6.4.7 P3 / S11) ────────────────────────────
+#
+# Target: the SRAM force_ic inboard attractor (0/8). At the stuck fixed point
+# the pinning NMOS over-predicts its weak-inversion current ~7.5x (NN 6.36 vs
+# OSDI 0.84 uA at Vov ~ +45 mV) and the hard-OFF PMOS predicts +0.50 uA where
+# OSDI is ~0 (P0-D, results/v6_4_6/phase0_D_sram_attractor.md). The released
+# cell therefore cannot suppress the OFF branch enough to rail.
+#
+# WHY THE STANDARD LOSS MISSES IT: the global asinh scale s_id ~ 2.6e-5 maps
+# the whole sub-uA roll-off to ~0.01 % of normalized range — a 1 nA error is
+# asinh(1e-9/2.6e-5) ~ 4e-5, ~zero loss mass. The regen-v2 data HAS the rows
+# (S9b: ~15 % of each cell below 1 uA, ~6.7 % below 1 nA) but the asinh+LDS
+# transform gives them no signal. This term re-scales the subthreshold band
+# with a SMALL asinh scale s2 ~ 1e-9 so each weak-inversion decade carries
+# unit-order loss (asinh ~ log above s2 ⇒ decade-balanced by construction).
+#
+# TWO BANDS (plan P3 Stage-1 (i),(ii),(vi)):
+#   1. VALUE (Huber, sign-aware): id_floor < |id_true| < upper — teaches the
+#      true sub-uA value, directly suppressing the 7.5x pinning over-prediction.
+#      asinh preserves sign ⇒ reverse_vds rows with genuine negative id are
+#      supervised correctly (plan (iii) needs no special-case).
+#   2. CEILING HINGE (sign-AGNOSTIC): |id_true| <= off_floor — penalize only
+#      relu(|id_pred| above k*NFIN*1nA). Suppresses the hard-OFF over-prediction
+#      WITHOUT ever injecting current (never a floor — NOT the D4 Ioff_rail
+#      dead end). Sign-agnostic ⇒ the random-sign sub-floor OSDI noise (the
+#      v5 §4-B4 filter rationale) is irrelevant, and a reverse_vds row that
+#      genuinely conducts has |id_true| > off_floor so it is auto-exempt.
+#
+# The term is ADDED to the MAE+LDS loss (does not replace it) so strong
+# inversion / the ~20x VTC trip gain band is untouched (upper mask = 1e-6).
+
+
+class SubthresholdIdLoss(nn.Module):
+    """λ · (Huber value term + ceiling_w · ceiling hinge) in asinh(id/s2) space.
+
+    DirectNet-only (asinh output norm). ``s2`` (default 1e-9) sets the
+    subthreshold resolution; ``upper`` (1e-6) caps the value band below the
+    trip gain; ``id_floor`` (data trust floor, 1e-12 post-regen) masks the
+    value MAE; ``off_floor`` (1e-10) selects the hard-OFF rows the ceiling
+    hinge suppresses; ``ceiling_k`` sets the per-fin OFF ceiling k·NFIN·1nA.
+    """
+
+    def __init__(
+        self,
+        lam: float = 0.05,
+        column_order: list[str] | None = None,
+        s2: float = 1e-9,
+        upper: float = 1e-6,
+        id_floor: float = 1e-12,
+        off_floor: float = 1e-10,
+        ceiling_k: float = 1.0,
+        ceiling_w: float = 1.0,
+        huber_delta: float = 1.0,
+        nfin_col: int = 4,
+    ) -> None:
+        super().__init__()
+        self.lam = float(lam)
+        self.s2 = float(s2)
+        self.upper = float(upper)
+        self.id_floor = float(id_floor)
+        self.off_floor = float(off_floor)
+        self.ceiling_k = float(ceiling_k)
+        self.ceiling_w = float(ceiling_w)
+        self.huber_delta = float(huber_delta)
+        self.nfin_col = int(nfin_col)
+        from bsimar.data.normalize import OUTPUT_COLUMN_ORDER
+        self.column_order = column_order or OUTPUT_COLUMN_ORDER
+        col = {c: i for i, c in enumerate(self.column_order)}
+        if "id" not in col:
+            raise ValueError("SubthresholdIdLoss requires an 'id' output column")
+        self.id_col = col["id"]
+
+    @staticmethod
+    def _huber(r: torch.Tensor, delta: float) -> torch.Tensor:
+        a = r.abs()
+        return torch.where(a <= delta, 0.5 * r * r, delta * (a - 0.5 * delta))
+
+    def forward(
+        self,
+        x_norm: torch.Tensor,           # (B, in_dim)
+        y_pred_norm: torch.Tensor,      # (B, out_dim)
+        y_true_norm: torch.Tensor,      # (B, out_dim)
+        in_mean: torch.Tensor,          # (in_dim,)
+        in_std: torch.Tensor,           # (in_dim,)
+        out_std: torch.Tensor,          # (out_dim,)
+        out_mean: torch.Tensor,         # (out_dim,)
+        asinh_scale: torch.Tensor,      # (out_dim,)
+    ) -> torch.Tensor:
+        idc = self.id_col
+        s_id = asinh_scale[idc]
+        out_std_id = out_std[idc]
+        s2 = self.s2
+
+        # Predicted physical id (clamp the asinh argument for sinh safety).
+        u_pred = (y_pred_norm[:, idc] * out_std_id + out_mean[idc]).clamp(-30.0, 30.0)
+        id_phys_pred = s_id * torch.sinh(u_pred)
+
+        with torch.no_grad():
+            u_true = (y_true_norm[:, idc] * out_std_id + out_mean[idc]).clamp(-30.0, 30.0)
+            id_phys_true = s_id * torch.sinh(u_true)
+            abs_id_true = id_phys_true.abs()
+            value_mask = ((abs_id_true > self.id_floor)
+                          & (abs_id_true < self.upper)).to(y_pred_norm.dtype)
+            off_mask = (abs_id_true <= self.off_floor).to(y_pred_norm.dtype)
+            # Per-fin OFF ceiling: recover physical NFIN from the normalized
+            # log2(NFIN) input column. NFIN never carries gradient here.
+            nfin_log2 = (x_norm[:, self.nfin_col] * in_std[self.nfin_col]
+                         + in_mean[self.nfin_col])
+            nfin = torch.pow(torch.as_tensor(2.0, device=x_norm.device,
+                                             dtype=x_norm.dtype), nfin_log2)
+            ceiling = (self.ceiling_k * nfin * 1e-9).clamp_min(1e-30)
+            a_true = torch.asinh(id_phys_true / s2)
+            a_ceil = torch.asinh(ceiling / s2)
+
+        # 1. VALUE term (sign-aware, Huber in asinh-s2 space).
+        a_pred = torch.asinh(id_phys_pred / s2)
+        val = self._huber(a_pred - a_true, self.huber_delta) * value_mask
+        val_term = val.sum() / value_mask.sum().clamp_min(1.0)
+
+        # 2. CEILING hinge (sign-agnostic magnitude suppression).
+        a_absp = torch.asinh(id_phys_pred.abs() / s2)
+        hinge = torch.relu(a_absp - a_ceil) * off_mask
+        ceil_term = hinge.sum() / off_mask.sum().clamp_min(1.0)
+
+        return self.lam * (val_term + self.ceiling_w * ceil_term)

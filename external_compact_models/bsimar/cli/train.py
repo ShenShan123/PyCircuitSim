@@ -208,6 +208,13 @@ def _run(args: argparse.Namespace) -> None:
     if args.sobolev and args.model != "direct":
         print("[error] --sobolev is a DirectNet-only (P4) flag.")
         sys.exit(2)
+    if args.subthresh and args.model != "direct":
+        print("[error] --subthresh is a DirectNet-only (P3) flag.")
+        sys.exit(2)
+    if args.subthresh and loss_preset["output_subset"] is not None:
+        print("[error] --subthresh needs the id column; it is incompatible "
+              "with the e2 output-subset preset.")
+        sys.exit(2)
 
     if args.model == "direct":
         cfg = DirectNetConfig(**preset)
@@ -219,6 +226,13 @@ def _run(args: argparse.Namespace) -> None:
             sobolev_floor=args.sobolev_floor,
             sobolev_strong_boost=args.sobolev_strong_boost,
             sobolev_corridor_only=args.sobolev_corridor_only,
+            subthresh=args.subthresh, lam_subthresh=args.lam_subthresh,
+            subthresh_s2=args.subthresh_s2,
+            subthresh_upper=args.subthresh_upper,
+            subthresh_floor=args.subthresh_floor,
+            subthresh_off_floor=args.subthresh_off_floor,
+            subthresh_ceiling_k=args.subthresh_ceiling_k,
+            subthresh_ceiling_w=args.subthresh_ceiling_w,
             init_from=args.init_from,
             **common,
         )
@@ -329,6 +343,38 @@ def main() -> None:
                         "CHECKPOINT_DIR) or an explicit *.pt path "
                         "(fine-tune; architecture must match --size / "
                         "--tech-scope).")
+
+    # V6.4.7 S11 (P3) — subthreshold id value+ceiling term, DirectNet only.
+    p.add_argument("--subthresh", action="store_true",
+                   help="Add the subthreshold id value+ceiling term "
+                        "(asinh-s2 sub-uA value MAE + sign-agnostic OFF "
+                        "ceiling hinge). Targets SRAM force_ic. DirectNet "
+                        "only; requires asinh output norm.")
+    p.add_argument("--lam-subthresh", type=float, default=0.05,
+                   help="Subthreshold term weight λ (default 0.05). The "
+                        "asinh-s2 term is O(1)/row vs the ~5e-3 base MAE, so "
+                        "λ scales the subthreshold pull; >0.1 risks swamping "
+                        "the strong-inversion fit (screen empirically).")
+    p.add_argument("--subthresh-s2", type=float, default=1e-9,
+                   help="Small asinh scale for the subthreshold band (A); "
+                        "sets sub-uA resolution. Default 1e-9.")
+    p.add_argument("--subthresh-upper", type=float, default=1e-6,
+                   help="Upper |id_true| mask for the value term (A) — "
+                        "above this, the strong-inversion / trip band is "
+                        "left to the base loss. Default 1e-6.")
+    p.add_argument("--subthresh-floor", type=float, default=1e-12,
+                   help="Lower |id_true| trust floor for the value term (A); "
+                        "below it only the ceiling hinge applies. Default "
+                        "1e-12 (regen-v2 trustworthy).")
+    p.add_argument("--subthresh-off-floor", type=float, default=1e-10,
+                   help="|id_true| <= this selects hard-OFF rows for the "
+                        "sign-agnostic ceiling hinge. Default 1e-10.")
+    p.add_argument("--subthresh-ceiling-k", type=float, default=1.0,
+                   help="Per-fin OFF ceiling = k·NFIN·1nA; |id_pred| above "
+                        "is penalized (never injected). Default 1.0.")
+    p.add_argument("--subthresh-ceiling-w", type=float, default=1.0,
+                   help="Relative weight of the ceiling hinge vs the value "
+                        "term within the subthreshold loss. Default 1.0.")
 
     # Phase 7 (V6.4.2) — soft physics constraints, DirectNet only, default OFF.
     p.add_argument("--monotonic", action="store_true",
