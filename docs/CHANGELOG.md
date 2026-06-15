@@ -6,7 +6,7 @@ isn't burdened with chronology.
 
 ---
 
-## V6.4.7 (in progress) — serialized accuracy campaign; week 1 (S1–S8) honest 8/16 → 11/16 zero-GPU, S9b regen-v2 PROCEED, S10/P4 Sobolev KILL (deriv-fidelity ⟂ value-owned opamp) (2026-06-10 → 06-14)
+## V6.4.7 (in progress) — serialized accuracy campaign; week 1 (S1–S8) honest 8/16 → 11/16 zero-GPU, S9b regen-v2 PROCEED, S10/P4 Sobolev KILL (deriv-fidelity ⟂ value-owned opamp), S12/P5 trajectory-corridor KEEP (tsmc7 RO 8.28→2.9 %, per-tech mix 11→14/16) (2026-06-10 → 06-15)
 
 Plan: `docs/plans/2026-06-10-directnet-v6.4.7-accuracy.md` (rev 2.1 — strict
 serial chain S1–S19, every lever committed-or-rewound before the next; user
@@ -235,6 +235,55 @@ zero GPU. Open cells: TSMC7 opamp 10.16 %, TSMC16 opamp flat, TSMC7 RO
 8.28 %, TSMC5 SC 12.14 % (over-conduction), TSMC16 SC hold leak, and
 ship-required force_ic 0/8. Resume at S9 (SWA/EMA infra) → S10 (P4 lead
 arm, seeds one-per-GPU on GPUs 1/2/3).
+
+### S12 — P5 trajectory-corridor arm (2026-06-15, verdict KEEP, headline 11→14/16)
+
+The value-corridor lever the S10 finding implicated (RO/opamp are id-VALUE-surface
+owned, not Jacobian-owned). Built the corridor pipeline:
+`scripts/v6_4_7_s12_{harvest,append}_corridors.py`, `_train_corridor.sh`;
+`traj_corridor` = SAMPLE_CLASS_CODES code 12.
+
+- **Harvest:** ran the 4 complex benchmark circuits and collected the per-device
+  bias **tubes** the transistors visit along the **ground-truth** trajectory —
+  RO + switchcap via the native **LEVEL=72** path (S6: == NGSPICE at ratio
+  1.000); opamp + SRAM butterfly via **NGSPICE** directly (raw L72 DC sweeps
+  diverge under PyCircuitSim's NR for those high-gain circuits — same
+  ground-truth teacher). Vs-shift exactness verified (`|Δid|=0`). OSDI-evaluated
+  at the bench geometry (NMOS 16n / PMOS 20n, NFIN=2, T=300.15), ±12 mV /
+  20-sample jitter tube → ~1 % of each dataset (fail=0; |id| 1e-9–1e-4 A).
+- **Append:** `{tech}_v2cor_{dev}.npz` (v2 left pristine/backed-up). NMOS L=16n
+  is OFF the PDK geometry grid {6,20,36,…}nm, so corridor rows can't be
+  fingerprinted by the tech-variant labeller; they are labeled by a **pre-seeded
+  label cache** (v2 rows via the labeller + corridor rows the known bench-variant
+  code, same concat order). Validated end-to-end in the live trainer (loads, no
+  re-fingerprint/assert, class visible, `--class-weights traj_corridor=3` folds
+  + LDS-renormalizes correctly).
+- **Train:** 4 seeds × 8 cells, control-v2 stock recipe (medium, EMA, filter
+  off) + `--class-weights traj_corridor=3`, A/B vs control-v2 (~6.9 s/epoch).
+
+**Kill gate PASSED decisively — tsmc7 RO 8.28 → 2.87–2.92 % (all 4 seeds,
+NEW-PASS).** Confirms the P5 thesis: the RO period gap is the ~20 % NMOS
+dynamic-id deficit (P0-G/H), owned by the id VALUE surface along the switching
+trajectory; teaching ground-truth id there closes it seed-invariantly. tsmc5 RO
+recovered 5.80 (control-v2) → 4.6 %. tsmc16 switchcap 13.1 → 2.01 % (all 4; also
+flipped by control-v2's v2 data) + opamp fail → 5.06 % (s31 only, fragile 1/4).
+
+**Cost — the corridor COLLAPSES *passing* opamps (tsmc5 + tsmc12, all 4 seeds,
+100 %)** — the same S10 value-surface/NR-fixed-point fragility (reshaping the id
+surface destabilises the high-gain opamp). So the corridor is **promoted
+PER-TECH only where it nets a gain with no veto break:** tsmc7 (corridor: RO
+flip) + tsmc16 s31 (corridor: opamp + SC flip); tsmc5 + tsmc12 keep **baseline**
+(corridor would regress their passing opamps; their RO already passes). Net
+**11/16 → 14/16** (RO 3/4→4/4, opamp 2/4→3/4, switchcap 2/4→3/4, butterfly 4/4
+verified held — tsmc16 SNMerr 0.0 %, tsmc7 positive). Inverter held. **force_ic
+still 0/8 — NOT closed (S11/P3's target); some seeds nudge the released cell
+rail-ward (tsmc7 s42 probe q=0.75).** tsmc5 SC over-conduction NOT fixed
+(12.16 %). W-sweep (gentler dose to preserve passing opamps) deferred — would not
+change the tsmc7 headline (tsmc7 opamp already fails). **KEEP — surviving arm;
+`v6_4_7_s12cor_w3_*` are the S19 per-tech promotion candidates (tsmc16 s31 opamp
+flip replication-gated). Datasets + checkpoints gitignored, regenerable.** Gate
+file `results/v6_4_7/S12_P5_corridor_gate.md`. Resume at **S11 = P3** (SRAM
+subthreshold, ship-required force_ic).
 
 ---
 
