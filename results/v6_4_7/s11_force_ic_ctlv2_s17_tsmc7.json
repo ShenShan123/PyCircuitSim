@@ -1,0 +1,76 @@
+{
+ "label": "v6_4_7_ctlv2_s17",
+ "prefix": "v6_4_7_ctlv2",
+ "seed": "17",
+ "techs": [
+  "TSMC7"
+ ],
+ "force_ic_n_pass": 0,
+ "force_ic_n_total": 2,
+ "force_ic": {
+  "TSMC7": {
+   "state1": false,
+   "state0": false
+  }
+ },
+ "probe": [
+  {
+   "tech": "TSMC7",
+   "device": "nmos",
+   "vdd": 0.75,
+   "n_points": 176,
+   "bands": {
+    "off": {
+     "n": 0
+    },
+    "weak_lo": {
+     "n": 36,
+     "median_ratio": 0.3036101664778197,
+     "median_abs_log10": 0.649627615564937,
+     "max_abs_log10": 22.175923107838987
+    },
+    "weak_hi": {
+     "n": 18,
+     "median_ratio": 0.5656341267853018,
+     "median_abs_log10": 0.24751406098558043,
+     "max_abs_log10": 0.48477208853680664
+    },
+    "moderate": {
+     "n": 116,
+     "median_ratio": 0.6411756196940765,
+     "median_abs_log10": 0.19302300031363445,
+     "max_abs_log10": 0.2530653892942669
+    }
+   }
+  },
+  {
+   "tech": "TSMC7",
+   "device": "pmos",
+   "vdd": 0.75,
+   "n_points": 163,
+   "bands": {
+    "off": {
+     "n": 0
+    },
+    "weak_lo": {
+     "n": 33,
+     "median_ratio": 3.984042195501255,
+     "median_abs_log10": 0.6003239294445109,
+     "max_abs_log10": 1.382447324820173
+    },
+    "weak_hi": {
+     "n": 20,
+     "median_ratio": 0.8727535109995083,
+     "median_abs_log10": 0.08717893989729164,
+     "max_abs_log10": 0.14215531035917006
+    },
+    "moderate": {
+     "n": 110,
+     "median_ratio": 0.993980049923324,
+     "median_abs_log10": 0.0038647067755190863,
+     "max_abs_log10": 0.15186630763018377
+    }
+   }
+  }
+ ]
+}

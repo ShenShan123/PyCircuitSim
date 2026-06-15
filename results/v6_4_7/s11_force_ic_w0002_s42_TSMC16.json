@@ -1,0 +1,17 @@
+{
+ "label": "v6_4_7_s11sub_w0002_s42",
+ "prefix": "v6_4_7_s11sub_w0002",
+ "seed": "42",
+ "techs": [
+  "TSMC16"
+ ],
+ "force_ic_n_pass": 0,
+ "force_ic_n_total": 2,
+ "force_ic": {
+  "TSMC16": {
+   "state1": false,
+   "state0": false
+  }
+ },
+ "probe": []
+}

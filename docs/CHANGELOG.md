@@ -6,7 +6,7 @@ isn't burdened with chronology.
 
 ---
 
-## V6.4.7 (in progress) — serialized accuracy campaign; week 1 (S1–S8) honest 8/16 → 11/16 zero-GPU, S9b regen-v2 PROCEED, S10/P4 Sobolev KILL (deriv-fidelity ⟂ value-owned opamp), S12/P5 trajectory-corridor KEEP (tsmc7 RO 8.28→2.9 %, per-tech mix 11→14/16) (2026-06-10 → 06-15)
+## V6.4.7 (in progress) — serialized accuracy campaign; week 1 (S1–S8) honest 8/16 → 11/16 zero-GPU, S9b regen-v2 PROCEED, S10/P4 Sobolev KILL (deriv-fidelity ⟂ value-owned opamp), S12/P5 trajectory-corridor KEEP (tsmc7 RO 8.28→2.9 %, per-tech mix 11→14/16), S11/P3 subthreshold KILL (force_ic gain/NR-fixed-point owned, not value owned → S17/P9) (2026-06-10 → 06-15)
 
 Plan: `docs/plans/2026-06-10-directnet-v6.4.7-accuracy.md` (rev 2.1 — strict
 serial chain S1–S19, every lever committed-or-rewound before the next; user
@@ -284,6 +284,54 @@ change the tsmc7 headline (tsmc7 opamp already fails). **KEEP — surviving arm;
 flip replication-gated). Datasets + checkpoints gitignored, regenerable.** Gate
 file `results/v6_4_7/S12_P5_corridor_gate.md`. Resume at **S11 = P3** (SRAM
 subthreshold, ship-required force_ic).
+
+### S11 — P3 subthreshold-id arm (2026-06-15, verdict KILL → S17/P9)
+
+The ship-required SRAM `force_ic` arm. Built `SubthresholdIdLoss`
+(`bsimar/losses/bni_mae.py`, `--subthresh`, default-off, DirectNet-only): an
+**asinh-s2 (s2≈1e-9) sub-µA VALUE term** (Huber, sign-aware, masked
+`1e-12<|id|<1e-6`) that re-scales the subthreshold roll-off the global
+`s_id≈2.6e-5` crushes to ~0.01 % of normalized range (the regen-v2 data HAS the
+rows — ~15 %/cell below 1 µA — but asinh+LDS gives them ~zero loss mass), plus a
+**sign-agnostic OFF ceiling hinge** `relu(asinh(|id_pred|/s2) − asinh(k·NFIN·1nA
+/s2))` on `|id_true|≤1e-10` rows (suppresses hard-OFF over-prediction without
+injecting current — NOT the D4 `Ioff_rail` floor). Probe
+`scripts/v6_4_7_s11_subvt_probe.py` + combined `force_ic` gate
+`scripts/v6_4_7_s11_sram_gate.py` + multi-GPU drivers. Default path bit-unchanged.
+
+- **λ calibration (gotcha):** base val-MAE is ~0.001, the raw asinh-s2 term is
+  O(1)/row ⇒ λ=0.05/0.15 swamp the fit (val 12–30× worse, killed); **λ=0.002 is
+  the operating point** (val 1.4× control, inverter holds). Trained 4 TSMC7 seeds
+  + tsmc5/12/16 (seed 42) on v2 data, A/B vs control-v2.
+- **The term WORKS on its target (weak-inversion fidelity):** TSMC7 weak-band
+  NN/OSDI |id| ratio **1.84→1.14** (NMOS, |log10| 0.356→0.102, 3.5×),
+  **0.90→1.13** (PMOS, 5×) — and is **gate-neutral-to-positive**: inv_vtc
+  2.61→2.96 %, inv_tran 1.21→1.16 %, RO 10.86→7.88 %, SC 1.76→1.64 % PASS. The
+  opamp collapse is the documented v2-data retrain lottery (control-v2 collapses
+  identically) — not caused by P3.
+- **But `force_ic` stays 0/14 and moves the WRONG way:** 6/7 (tech,seed) cells
+  COLLAPSE to the symmetric metastable point q=qb=VDD/2 (TSMC7 s42/s17/s7,
+  TSMC5/12/16 s42) — strictly worse than control's near-railed inboard (TSMC7
+  s42 control q=0.749 AT rail, only qb=0.121 = 46 mV out); the one inboard-landing
+  seed (s31) is identical to control (qb=0.122). A more accurate/symmetric
+  subthreshold id surface **removes the asymmetry that kept the baseline partially
+  railed.**
+
+**Pre-registered kill gate (weak-inversion ratio ≥10× with VTC ≤5 %) NOT met**
+(3.5–5×, force_ic not closed). **Conclusion: `force_ic` railing is a
+regenerative-gain / NR-fixed-point property** (the cross-coupled pair needs trip
+gain to make the symmetric point repelling) — the **same value-surface-vs-
+fixed-point split as the opamp gain (S10) and RO period (P0-C/P0-I)**. No
+subthreshold-VALUE variant addresses trip gain. **KILL → S17/P9** (physics-
+anchored compose-at-inference subthreshold core — now unblocked: S2 frame + S7
+reverse-clamp + S11 subthreshold all failed to close force_ic). No checkpoint
+promoted (`v6_4_7_s11sub_*` inert, don't match the resolver); `SubthresholdIdLoss`
+KEPT as default-off recoverable infra (real gate-neutral subthreshold-fidelity
+win, composable — e.g. the TSMC16 SC hold leak). Headline unchanged **14/16**;
+`force_ic` **0/8**, ship-required-OPEN. Gate file
+`results/v6_4_7/S11_P3_subthreshold_gate.md`. Resume at **S13 = P8a** (teacher-
+forced id supervision — RO target already met by S12; the live gap is force_ic
+→ S17/P9).
 
 **Repo cleanup (2026-06-15, same step):** the superseded pre-V6.4.7 plan files
 (`docs/plans/2026-04-24 … 2026-06-01`) and old iteration result dirs
