@@ -285,7 +285,9 @@ promote on the actual circuit gates (16 cells + force_ic + inverter). Ruling 4
 is amended accordingly: ∂id/∂V precision is still *reported*, not *promoted on*.
 (7) **REORDER — do S12 = P5 BEFORE S11 = P3.** The S10 finding most directly
 implicates P5 (NGSPICE-trajectory id VALUE corridors) for the value-owned
-opamp/RO gaps. **RESUME AT S12 = P5** (value-corridor data regen + retrain;
+opamp/RO gaps. [rev-4 set the resume to S12 = P5; **S12 now COMPLETE 2026-06-15,
+verdict KEEP — see "S12 outcomes"; resume is now S11 = P3.**] Original rev-4 text:
+**RESUME AT S12 = P5** (value-corridor data regen + retrain;
 targets TSMC7 RO 8.28 %, tsmc5 RO, TSMC5 SC over-conduction, opamp/TSMC16);
 P3 (S11, SRAM subthreshold) follows — carry the S10 SRAM-escape side finding.
 

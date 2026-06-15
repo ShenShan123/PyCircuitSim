@@ -285,6 +285,13 @@ flip replication-gated). Datasets + checkpoints gitignored, regenerable.** Gate
 file `results/v6_4_7/S12_P5_corridor_gate.md`. Resume at **S11 = P3** (SRAM
 subthreshold, ship-required force_ic).
 
+**Repo cleanup (2026-06-15, same step):** the superseded pre-V6.4.7 plan files
+(`docs/plans/2026-04-24 … 2026-06-01`) and old iteration result dirs
+(`results/{v6_4_4_iter2,v6_4_5,v6_4_6}/`, `results/v4_*`/`v5_*` reports) were
+removed. Their durable dead-end/progress records live in this CHANGELOG and
+CLAUDE.md; any path references to those removed files in older entries are
+intentionally dangling (the narrative, not the gate file, is the record).
+
 ---
 
 ## V6.4.6 — diagnosis-first architectural iteration; probe fix + dead ends, no behavioral change (2026-06-01/02)

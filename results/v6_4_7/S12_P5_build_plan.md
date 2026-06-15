@@ -2,7 +2,15 @@
 
 **Date:** 2026-06-14 · Reordered ahead of S11/P3 per the post-S10 rev-4 ruling
 (the S10 finding makes the value-surface corridor the priority lever for the
-value-owned opamp/RO gaps). **Status: designed + reconnoitred, ready to build.**
+value-owned opamp/RO gaps). **Status: ✅ COMPLETE (2026-06-15, verdict KEEP) —
+this is the pre-build design; the as-built result, deviations, and verdict are
+in `results/v6_4_7/S12_P5_corridor_gate.md`.** Notable deviations from this
+plan: opamp + SRAM-butterfly corridors were harvested from **NGSPICE** (raw L72
+DC sweeps diverge under PyCircuitSim's NR), the dosage landed at **~1 %** (not
+3.5 %) with a ±12 mV jitter tube + class-weight W=3, harvest transient windows
+were shortened (RO 0.6 ns / SC 4.5 ns), and the off-grid 16n geometry forced a
+pre-seeded label cache. Outcome: tsmc7 RO 8.28→2.9 % (kill gate passed),
+per-tech mix 11→14/16.
 
 ## Goal
 

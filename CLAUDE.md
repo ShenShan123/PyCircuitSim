@@ -283,7 +283,7 @@ Both LEVEL=73 (single-shot MLP, primary) and LEVEL=74 (autoregressive Transforme
 - **Modelcards:** `modelcards/` (PyCMG-relative); ASAP7 `*.pm` committed; TSMC raw PDK `cln*.l` is gitignored/IP-protected — naive modelcards regenerated on-the-fly via `pycmg.tech.resolve_modelcard` into `build/modelcards/`.
 - **Results output:** `results/<circuit_name>/<analysis_type>/`.
 - **Test results:** `tests/verify_*_results/` (generated, not tracked).
-- **Sprint history:** `docs/CHANGELOG.md`.
+- **Sprint history:** `docs/CHANGELOG.md`. **Note (2026-06-15 cleanup):** the pre-V6.4.7 plan files and the old iteration result dirs (`results/{v6_4_4_iter2,v6_4_5,v6_4_6}/`, `results/v4_*`/`v5_*`) were pruned; the durable dead-end records remain in this CHANGELOG and CLAUDE.md, so path references to those removed gate files in older notes are intentionally dangling.
 
 ## Other Tips
 
