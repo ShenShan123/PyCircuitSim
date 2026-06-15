@@ -6,7 +6,7 @@ isn't burdened with chronology.
 
 ---
 
-## V6.4.7 (in progress) — serialized accuracy campaign; week 1 (S1–S8) honest 8/16 → 11/16 zero-GPU, S9b regen-v2 PROCEED, S10/P4 Sobolev KILL (deriv-fidelity ⟂ value-owned opamp), S12/P5 trajectory-corridor KEEP (tsmc7 RO 8.28→2.9 %, per-tech mix 11→14/16), S11/P3 subthreshold KILL (force_ic gain/NR-fixed-point owned, not value owned → S17/P9) (2026-06-10 → 06-15)
+## V6.4.7 (in progress) — serialized accuracy campaign; week 1 (S1–S8) honest 8/16 → 11/16 zero-GPU, S9b regen-v2 PROCEED, S10/P4 Sobolev KILL (deriv-fidelity ⟂ value-owned opamp), S12/P5 trajectory-corridor KEEP (tsmc7 RO 8.28→2.9 %, per-tech mix 11→14/16), S11/P3 subthreshold KILL (force_ic gain/NR-fixed-point owned, not value owned → S17/P9), S11b pivot — the 2 open cells (tsmc5 SC over-conduction, tsmc7 opamp over-gain) are systematic model-fidelity limits, headline stays 14/16 (2026-06-10 → 06-15)
 
 Plan: `docs/plans/2026-06-10-directnet-v6.4.7-accuracy.md` (rev 2.1 — strict
 serial chain S1–S19, every lever committed-or-rewound before the next; user
@@ -332,6 +332,36 @@ win, composable — e.g. the TSMC16 SC hold leak). Headline unchanged **14/16**;
 `results/v6_4_7/S11_P3_subthreshold_gate.md`. Resume at **S13 = P8a** (teacher-
 forced id supervision — RO target already met by S12; the live gap is force_ic
 → S17/P9).
+
+### S11b — pivot to the 2 open headline cells (2026-06-15, both model-fidelity limits)
+
+User-directed pivot (force_ic accepted as a known-issue) to the 2 failing cells
+of the 14/16 mix. **Both are systematic model-fidelity limits; headline stays
+14/16.** Gate file `results/v6_4_7/S11b_pivot_open_cells.md`.
+
+- **tsmc5 switchcap over-conduction (12.16 %, gate ≤5 %):** the pass-NMOS
+  forward charge-transfer is too strong. Subthreshold loss (S11) barely moves it
+  (→11.70 % — the over-conduction is moderate/strong region, NOT the
+  weak-inversion tail), and the S12 corridor (any dose) doesn't fix it either +
+  collapses the tsmc5 opamp. Also resisted P0/P2/symcaps. A genuine
+  forward-conduction-accuracy limit, not subthreshold/corridor-addressable.
+- **tsmc7 opamp ~10–11 % gain over-prediction (gate ≤10 %):** systematic, NOT
+  seed luck — production S8 10.16 %, control-v2 healthy seeds s7 10.99 %/s31
+  13.77 % (NG gain ≈163, DN ≈181). The deferred S12 **gentle-corridor W-sweep**
+  (`scripts/v6_4_7_pivot_corridor.sh`, W∈{1,2}×seeds{7,31}) found the corridor
+  **PRESERVES the over-gain (181→181) OR COLLAPSES it to 0 — no gentle "reduce
+  gain 11 %" path** (the S10 value-surface fragility). Best
+  `v6_4_7_pivcor_w2_s7_tsmc7`: opamp 10.78 % (0.78pp over, within run-to-run
+  noise) + RO 2.86 % + inv 2.93 % + SC 1.02 % — **a strictly better-positioned
+  tsmc7 S19 candidate than the S12 corridor (opamp near-pass vs collapsed);
+  recommended for S19.**
+
+**Net: the 2 open cells + force_ic are all value-surface / fixed-point /
+forward-conduction limits resisting the cheap DirectNet levers (subthreshold,
+corridor dose, frame, clamp).** Recommend **S19 promotion at 14/16** with
+force_ic + these 2 cells as documented known-issues (or a scoped structural
+change — architecture / physics-core — if they are must-close). The serial
+chain's S13/S14/S15 are lower-value (S12 already met the RO target).
 
 **Repo cleanup (2026-06-15, same step):** the superseded pre-V6.4.7 plan files
 (`docs/plans/2026-04-24 … 2026-06-01`) and old iteration result dirs
