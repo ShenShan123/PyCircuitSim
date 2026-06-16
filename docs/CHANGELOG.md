@@ -442,6 +442,32 @@ seed checkpoint for the value-owned cells. Gate file
 **Net: ship 14/16** (tsmc16=`s12cor_w3_s17`); force_ic 0/8 ship-required-OPEN;
 known-issues force_ic + tsmc5 SC 12.14 % + tsmc7 opamp 10.78 %.
 
+### S17 = P9 (force_ic) — diagnostic-first → KILLED before any build (2026-06-16)
+
+User chose "attempt P9, diagnostic-first." Phase-1 per-device NN-vs-OSDI
+decomposition at the stuck force_ic fixed point
+(`scripts/v6_4_7_s17_forceic_decomp.py`) **falsifies P9's OFF-leakage premise.**
+force_ic has two failure modes, **neither OFF-owned**:
+- **inboard** (tsmc16/12) — the strongly-ON **driver NMOS under-pulls ~8 % in
+  the LINEAR region** (NN −56.3 vs OSDI −61.1 µA at Vgs=800/Vds=117 mV); it can't
+  sink the (exact) access pull-up so qb sticks at 117 mV. The **OFF load PMOS
+  leakage is exactly 0** (NN=OSDI). ⇒ a strong-inversion id-VALUE error — the
+  opposite end of the surface from P9.
+- **symmetric saddle** (tsmc7 `pivcor_w2_s7`, q=qb=VDD/2) — **every device
+  OSDI-accurate** (ratio 0.999–1.000, errors ≤23 nA); the unconstrained re-solve
+  converges to the metastable saddle ⇒ a fixed-point-selection / gain problem
+  (the P0-A symmetric-continuation homotopy targeting this was already KILLED:
+  railed point NR-unstable).
+
+P9 (compose-at-inference OFF core) addresses the OFF/subthreshold region, where
+the diagnostic shows **zero error** ⇒ it cannot move force_ic. **No P9 code
+written; dead-end recorded** — the diagnostic-first protocol working as intended
+(~5 min of probing avoided a multi-hundred-LOC structural build). The real
+(out-of-V6.4.7-scope) levers: a linear-region driver-id corridor retrain
+(inboard mode only, S10/S11 collapse risk) or an asymmetric-release solver
+homotopy (saddle mode). **force_ic stays a documented known-issue; ship 14/16.**
+Gate file `results/v6_4_7/S17_P9_forceic_diagnostic.md`.
+
 **Repo cleanup (2026-06-15, same step):** the superseded pre-V6.4.7 plan files
 (`docs/plans/2026-04-24 … 2026-06-01`) and old iteration result dirs
 (`results/{v6_4_4_iter2,v6_4_5,v6_4_6}/`, `results/v4_*`/`v5_*` reports) were

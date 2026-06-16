@@ -2,7 +2,7 @@
 
 **Date:** 2026-06-10 (rev 2/2.1 same day — serial commit-or-rewind sequencing; **rev 3, 2026-06-12** — keep small-current rows + alter loss, precise ∂id/∂V, unconditional regen+retrain, new step S9b; **rev 4, 2026-06-14** — demote deriv-fidelity gate to NR-robustness, reorder S12 before S11)  •  **Branch:** `feat/v6.4.7` (from `feat/v6.4.6` @ `c5155e7`).
 
-**STATUS (2026-06-16) — SHIP at 14/16. S19a (13/16) → S14 seed-selection RECOVERED tsmc16 → 14/16; force_ic 0/8 remains the only ship-required open gap (confirmed not seed-closeable; structural S17/P9 pending a user go/no-go).** S14 ran the *authoritative* opamp gate over all existing seeds: tsmc16 `s12cor_w3_s17` passes at 5.14 % (deterministic) and full-gate-verifies 4/4 — recovering the cell the S19a discipline had retracted (s31 was a bistable-basin scorer fluke; s17 is the real pass). A 44-checkpoint force_ic sweep found NO seed rails (storage-0 node 21–46 mV above ground) ⇒ force_ic is a deep fixed-point limit. Gate files `results/v6_4_7/{S14_seed_selection,S19_promotion}.md`. **Original S19a status follows:**
+**STATUS (2026-06-16) — SHIP at 14/16; force_ic 0/8 a documented known-issue (every lever exhausted incl. S17/P9 KILLED by diagnosis).** S19a (13/16) → S14 seed-selection RECOVERED tsmc16 → 14/16 → S17/P9 (user-directed "diagnostic-first") **KILLED before any build**: the Phase-1 per-device NN-vs-OSDI decomposition shows force_ic is **not OFF-leakage-owned** (P9's premise) — it is (a) inboard: the ON driver NMOS under-pulls ~8 % in the LINEAR region (OFF PMOS leak exactly 0), and (b) symmetric saddle: all currents OSDI-exact, a fixed-point-selection problem. P9 targets the zero-error OFF region ⇒ won't move it. Gate `results/v6_4_7/S17_P9_forceic_diagnostic.md`.** S14 ran the *authoritative* opamp gate over all existing seeds: tsmc16 `s12cor_w3_s17` passes at 5.14 % (deterministic) and full-gate-verifies 4/4 — recovering the cell the S19a discipline had retracted (s31 was a bistable-basin scorer fluke; s17 is the real pass). A 44-checkpoint force_ic sweep found NO seed rails (storage-0 node 21–46 mV above ground) ⇒ force_ic is a deep fixed-point limit. Gate files `results/v6_4_7/{S14_seed_selection,S19_promotion}.md`. **Original S19a status follows:**
 **S19a first promotion done at 13/16; campaign RE-OPENED (user-directed) to close the open gaps via the un-deferred structural levers, then re-promote (S19b).** The plan-stated 14/16 was corrected to **13/16** at S19a: the fragile tsmc16 `s12cor_w3_s31` opamp flip (S12 scorer 5.06 % PASS, only-passing-seed-of-4) **failed authoritative-gate replication** (`verify_complex_opamp.py` 103.98 % FAIL, deterministic; re-running the S12 scorer now reproduces the FAIL — a non-reproducible bistable DC basin). RETRACTED per the pre-registered replication discipline. Interim mix: tsmc7=`pivcor_w2_s7`, tsmc16=`s12cor_w3_s31`, tsmc5+tsmc12=V6.4.4 baseline; **force_ic 0/8 OPEN (ship-required)**. Gate file `results/v6_4_7/S19_promotion.md`. **Continuation (see "Continuation roadmap" §): S14=P6 (opamp fixed-point insurance, cheapest) → S17=P9 (force_ic physics core, ship-required) → S15=P7 if needed → S18 compose → S19b re-promote.** Per-step verdicts (detail in the "* outcomes" §§ below):
 - S1–S8 (zero-GPU) ✅, S9 SWA/EMA ✅, S9b regen-v2 + control-v2 ✅ PROCEED.
 - **S10 (P4 Sobolev deriv) KILL** — improves deriv fidelity + inverter but collapses the opamp 4/4; deriv fidelity is *anti-correlated* with the value-owned opamp/RO (P0-C/P0-I class).
@@ -260,14 +260,18 @@ committed-or-rewound; ≥4 seeds; A/B vs control-v2; blind-veto all passing cell
    tsmc16). Directly targets the opamp *fixed-point fragility* that cost the
    S19a cell. **Kill:** distilled/averaged net not Pareto-≥ best single seed on
    the scorer vector AND opamp not de-fragilized on the authoritative gate.
-2. **S17 = P9** (physics-anchored multi-region subthreshold core) — the
-   **ship-required force_ic** lever. Structural compose-at-inference: frozen MLP
-   owns strong inversion, closed-form weak-inversion exponential (ideality
-   n≤1.3) owns OFF. **Go/no-go fit gate (pre-registered): ≥4-decade OFF
-   suppression AND ≤5 % inv_trip simultaneously**, THEN force_ic on the live 6T.
-   **Kill:** fit gate unmet, or force_ic still <8/8 with any protected-gate
-   regression → record dead end, force_ic stays a documented known-issue, ship
-   13/16.
+2. **S17 = P9** (physics-anchored OFF core) — **✅ ATTEMPTED diagnostic-first
+   (user-directed) → KILLED before any build (2026-06-16).** The Phase-1
+   per-device NN-vs-OSDI decomposition at the stuck force_ic point
+   (`scripts/v6_4_7_s17_forceic_decomp.py`) **falsified P9's OFF-leakage
+   premise**: (a) inboard mode (tsmc16/12) = the ON driver NMOS under-pulls ~8 %
+   in the **linear region** (OFF PMOS leak exactly 0 = NN=OSDI); (b) symmetric
+   saddle (tsmc7) = all currents OSDI-exact, a fixed-point-selection problem. P9
+   targets the OFF region where there is **zero error** ⇒ cannot close force_ic.
+   No code written; dead-end recorded. Gate `results/v6_4_7/S17_P9_forceic_diagnostic.md`.
+   Real (out-of-scope) levers: a linear-region driver-id corridor retrain
+   (inboard only; collapse risk) or an asymmetric-release solver homotopy
+   (saddle). force_ic stays a documented known-issue; **ship 14/16.**
 3. **S15 = P7** (split-head, retained 13-target supervision) — only if S14
    leaves the opamp fragile; ~10 GPU-h. **Kill:** inverter regression beyond the
    documented ±1 % scatter.
