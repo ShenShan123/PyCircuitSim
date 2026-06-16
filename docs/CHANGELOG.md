@@ -6,7 +6,7 @@ isn't burdened with chronology.
 
 ---
 
-## V6.4.7 (in progress) — serialized accuracy campaign; week 1 (S1–S8) honest 8/16 → 11/16 zero-GPU, S9b regen-v2 PROCEED, S10/P4 Sobolev KILL (deriv-fidelity ⟂ value-owned opamp), S12/P5 trajectory-corridor KEEP (tsmc7 RO 8.28→2.9 %, per-tech mix 11→14/16), S11/P3 subthreshold KILL (force_ic gain/NR-fixed-point owned, not value owned → S17/P9), S11b pivot — the 2 open cells (tsmc5 SC over-conduction, tsmc7 opamp over-gain) are systematic model-fidelity limits, headline stays 14/16 (2026-06-10 → 06-15)
+## V6.4.7 — serialized accuracy campaign; SHIP at **13/16** (+2 vs S8 11/16; +5 vs V6.4.4 8/16). Week 1 (S1–S8) honest 8/16 → 11/16 zero-GPU, S9b regen-v2 PROCEED, S10/P4 Sobolev KILL (deriv-fidelity ⟂ value-owned opamp), S12/P5 trajectory-corridor KEEP (tsmc7 RO 8.28→2.9 %), S11/P3 subthreshold KILL (force_ic gain/NR-fixed-point owned → S17/P9), S11b pivot (2 open cells = model-fidelity limits), **S19 promotion: the fragile tsmc16 opamp flip is RETRACTED on authoritative-gate replication (non-reproducible bistable basin) ⇒ honest 13/16, not 14/16**. Per-tech mix tsmc7=`pivcor_w2_s7` / tsmc16=`s12cor_w3_s31` / tsmc5+tsmc12=V6.4.4 baseline; force_ic 0/8 ship-required-OPEN (2026-06-10 → 06-16)
 
 Plan: `docs/plans/2026-06-10-directnet-v6.4.7-accuracy.md` (rev 2.1 — strict
 serial chain S1–S19, every lever committed-or-rewound before the next; user
@@ -362,6 +362,55 @@ corridor dose, frame, clamp).** Recommend **S19 promotion at 14/16** with
 force_ic + these 2 cells as documented known-issues (or a scoped structural
 change — architecture / physics-core — if they are must-close). The serial
 chain's S13/S14/S15 are lower-value (S12 already met the RO target).
+
+### S19 — promotion gate (2026-06-16): SHIP at **13/16** (NOT 14/16)
+
+Authoritative-gate verification of the per-tech promotion mix on the campaign
+machine (CPU, `OMP_NUM_THREADS=1`, the `baseline_v6_4_7_pre.json` environment).
+Gate file `results/v6_4_7/S19_promotion.md`.
+
+**The pre-registered replication discipline caught a non-reproducible cell.**
+The S12 scorer recorded **tsmc16 `s12cor_w3_s31` opamp 5.06 % PASS** (the only
+passing seed of 4, flagged fragile, "S19 must replication-check it"). On the
+authoritative `verify_complex_opamp.py` gate the same checkpoint gives
+**103.98 % FAIL** (gain 382.8, deterministic across `OMP_NUM_THREADS ∈
+{1,2,4}`), and **re-running the exact S12 scorer now reproduces 382.8 FAIL** —
+with no inference-path code change since the S12 commit (`d61049a`) and the
+checkpoint predating it. The opamp DC operating point is **bistable** (a
+balanced gain≈197 branch the S12 scoring hit once vs the reproducible gain≈383
+branch); a gain that flips PASS/FAIL on numerical path is not a reliable pass.
+**The tsmc16 opamp flip is RETRACTED** (same value-surface / NR-fixed-point
+fragility as S10 opamp, P0-C/P0-I RO). Honest headline **14 → 13/16**.
+
+**Verified per-tech mix (the 2 CHANGED techs gate-confirmed; tsmc5/tsmc12 keep
+the unchanged V6.4.4 baseline):**
+
+| tech | ships | RO | opamp | SC | butterfly | headline |
+|---|---|---|---|---|---|---|
+| tsmc5  | baseline `tsmc5_dn_medium` | 2.61 P | 2.49 P | 12.14 **F** | pos | 3/4 (S8 record) |
+| tsmc7  | **NEW** `v6_4_7_pivcor_w2_s7_tsmc7` | **2.86 P** | 10.78 **F** | **1.02 P** | pos | 3/4 ✓ |
+| tsmc12 | baseline `tsmc12_dn_medium` | 2.19 P | 4.97 P | 4.13 P | pos | 4/4 (S8 record) |
+| tsmc16 | **NEW** `v6_4_7_s12cor_w3_s31_tsmc16` | **4.03 P** | 103.98 **F** (retracted) | **2.01 P** | pos | 3/4 ✓ |
+
+**Net +2 honestly-verified cells vs the S8 11/16 baseline** (tsmc7 ring_osc
+8.28→2.86 % via the P5 corridor/pivcor id-value-surface fix; tsmc16 switchcap
+FAIL→2.01 % via S9b v2-data + corridor) → **13/16** (+5 over V6.4.4 canonical
+8/16). `force_ic` verified **0/2 on both changed techs → 0/8 overall**,
+ship-required-OPEN. **Blind holdout:** tsmc7 off-default-Vin SC (Vin=0.65·VDD,
+mandated by S5b) PASSES with `pivcor_w2_s7` (charge 1.21 %) — the candidate
+**de-fragilizes** the baseline's 0.65·VDD failure (5.36 %).
+
+**R0.2 symcaps env-gating — decided NOT shipped** (`NN_SYMMETRIC_CAPS=1` KILLED
+at S4: improves SC charge but explodes hold droop 30–137 mV; stays default-off
+dormant). **Documented known-issues** (value-surface / fixed-point /
+forward-conduction — need a structural change, out of cheap-lever scope):
+force_ic 0/8, tsmc5 SC 12.14 %, tsmc7 opamp 10.78 %, tsmc16 opamp 104 %.
+
+**Success criterion `headline > 11/16` MET (13); `force_ic 8/8` NOT MET (0/8).**
+Note: the V6.4.4 baseline checkpoints (`tsmc{5,12}_dn_medium`) are absent on the
+campaign machine — only tsmc7+tsmc16 changed, so the unchanged techs ride the
+S8-frozen record; the canonical install (resolver `{tech}_dn_medium_{dev}` names
++ sha256) is recorded in the gate file.
 
 **Repo cleanup (2026-06-15, same step):** the superseded pre-V6.4.7 plan files
 (`docs/plans/2026-04-24 … 2026-06-01`) and old iteration result dirs
