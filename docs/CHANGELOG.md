@@ -6,7 +6,7 @@ isn't burdened with chronology.
 
 ---
 
-## V6.4.7 — serialized accuracy campaign; SHIP at **13/16** (+2 vs S8 11/16; +5 vs V6.4.4 8/16). Week 1 (S1–S8) honest 8/16 → 11/16 zero-GPU, S9b regen-v2 PROCEED, S10/P4 Sobolev KILL (deriv-fidelity ⟂ value-owned opamp), S12/P5 trajectory-corridor KEEP (tsmc7 RO 8.28→2.9 %), S11/P3 subthreshold KILL (force_ic gain/NR-fixed-point owned → S17/P9), S11b pivot (2 open cells = model-fidelity limits), **S19 promotion: the fragile tsmc16 opamp flip is RETRACTED on authoritative-gate replication (non-reproducible bistable basin) ⇒ honest 13/16, not 14/16**. Per-tech mix tsmc7=`pivcor_w2_s7` / tsmc16=`s12cor_w3_s31` / tsmc5+tsmc12=V6.4.4 baseline; force_ic 0/8 ship-required-OPEN (2026-06-10 → 06-16)
+## V6.4.7 — serialized accuracy campaign; SHIP at **14/16** (+3 vs S8 11/16; +6 vs V6.4.4 8/16). Week 1 (S1–S8) honest 8/16 → 11/16 zero-GPU, S9b regen-v2 PROCEED, S10/P4 Sobolev KILL (deriv-fidelity ⟂ value-owned opamp), S12/P5 trajectory-corridor KEEP (tsmc7 RO 8.28→2.9 %), S11/P3 subthreshold KILL (force_ic gain/NR-fixed-point owned → S17/P9), S11b pivot (2 open cells = model-fidelity limits), **S19a promotion: the tsmc16 `s31` opamp flip RETRACTED on authoritative-gate replication (bistable basin) → 13/16; S14 seed-selection then RECOVERED tsmc16 via `s17` (authoritative opamp gate 5.14 %, deterministic) → 14/16**. Per-tech mix tsmc7=`pivcor_w2_s7` / **tsmc16=`s12cor_w3_s17`** / tsmc5+tsmc12=V6.4.4 baseline; force_ic 0/8 ship-required-OPEN (confirmed not seed-closeable, 44-ckpt sweep) (2026-06-10 → 06-16)
 
 Plan: `docs/plans/2026-06-10-directnet-v6.4.7-accuracy.md` (rev 2.1 — strict
 serial chain S1–S19, every lever committed-or-rewound before the next; user
@@ -406,11 +406,41 @@ dormant). **Documented known-issues** (value-surface / fixed-point /
 forward-conduction — need a structural change, out of cheap-lever scope):
 force_ic 0/8, tsmc5 SC 12.14 %, tsmc7 opamp 10.78 %, tsmc16 opamp 104 %.
 
-**Success criterion `headline > 11/16` MET (13); `force_ic 8/8` NOT MET (0/8).**
-Note: the V6.4.4 baseline checkpoints (`tsmc{5,12}_dn_medium`) are absent on the
-campaign machine — only tsmc7+tsmc16 changed, so the unchanged techs ride the
-S8-frozen record; the canonical install (resolver `{tech}_dn_medium_{dev}` names
-+ sha256) is recorded in the gate file.
+**Success criterion `headline > 11/16` MET (13 at S19a, 14 after S14); `force_ic
+8/8` NOT MET (0/8).** Note: the V6.4.4 baseline checkpoints (`tsmc{5,12}_dn_medium`)
+are absent on the campaign machine — only tsmc7+tsmc16 changed, so the unchanged
+techs ride the S8-frozen record; the canonical install (resolver
+`{tech}_dn_medium_{dev}` names + sha256) is recorded in the gate file.
+
+### S14 — authoritative-gate seed selection (2026-06-16): 13 → **14/16**
+
+Continuation step (user-directed). The cheapest "train-free teachers first"
+form of P6: run the **authoritative gates** (not the scorer) over every existing
+seed checkpoint for the value-owned cells. Gate file
+`results/v6_4_7/S14_seed_selection.md`; logs `results/v6_4_7/s14_logs/`.
+
+- **tsmc16 opamp RECOVERED.** The authoritative `verify_complex_opamp.py` sweep
+  found **`s12cor_w3_s17` passes at 5.14 %** (gain 197.3, deterministic over
+  `OMP∈{1,2,4}`) — and full-gate verified 4/4 (RO 3.99 / SC 2.01 / butterfly
+  positive). The S12 scorer's `s31` pick sat on the 382 over-gain branch (the
+  S19a retraction); s17 lands on the correct ~197 branch. **tsmc16 promotion
+  pick s31 → s17; headline 13 → 14/16.** This is the S19a selection-discipline
+  lesson applied constructively: select per-tech on the *authoritative gate*,
+  not the bistable scorer proxy.
+- **tsmc7 opamp: no recovery.** No seed passes ≤10 % with RO also passing — the
+  RO-needed corridor collapses or over-shoots the opamp; `pivcor_w2_s7`
+  (10.78 %) stays best. Known-issue.
+- **force_ic: no recovery (cheap dead-end).** A fast `force_ic_probe` sweep over
+  **44 checkpoints × 4 techs** found **every one 0/2**: the storage-"0" node
+  rests 21–46 mV above ground (best margins: tsmc5 21, tsmc12 36, tsmc16 37,
+  tsmc7 46 mV vs the `0.1·VDD` band), or lands on the symmetric metastable point
+  (incl. the promoted `pivcor_w2_s7`). Confirms force_ic is a deep
+  regenerative-gain / NR-fixed-point limit (S11 + P0-A), not seed-addressable —
+  the only remaining lever is the structural **S17/P9**, whose premise (accurate
+  OFF → rails) is in tension with S11 (accurate OFF → symmetric collapse).
+
+**Net: ship 14/16** (tsmc16=`s12cor_w3_s17`); force_ic 0/8 ship-required-OPEN;
+known-issues force_ic + tsmc5 SC 12.14 % + tsmc7 opamp 10.78 %.
 
 **Repo cleanup (2026-06-15, same step):** the superseded pre-V6.4.7 plan files
 (`docs/plans/2026-04-24 … 2026-06-01`) and old iteration result dirs

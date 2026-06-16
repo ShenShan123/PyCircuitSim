@@ -2,7 +2,8 @@
 
 **Date:** 2026-06-10 (rev 2/2.1 same day — serial commit-or-rewind sequencing; **rev 3, 2026-06-12** — keep small-current rows + alter loss, precise ∂id/∂V, unconditional regen+retrain, new step S9b; **rev 4, 2026-06-14** — demote deriv-fidelity gate to NR-robustness, reorder S12 before S11)  •  **Branch:** `feat/v6.4.7` (from `feat/v6.4.6` @ `c5155e7`).
 
-**STATUS (2026-06-16) — campaign CONVERGED and SHIPPED at headline 13/16 (S19 complete).** The plan-stated 14/16 was corrected to **13/16** at S19: the fragile tsmc16 `s12cor_w3_s31` opamp flip (S12 scorer 5.06 % PASS, only-passing-seed-of-4) **failed authoritative-gate replication** (`verify_complex_opamp.py` 103.98 % FAIL, deterministic; re-running the S12 scorer now reproduces the FAIL — a non-reproducible bistable DC basin). RETRACTED per the pre-registered replication discipline. Ship mix: tsmc7=`pivcor_w2_s7`, tsmc16=`s12cor_w3_s31`, tsmc5+tsmc12=V6.4.4 baseline; force_ic 0/8 OPEN. Gate file `results/v6_4_7/S19_promotion.md`. Per-step verdicts (detail in the "* outcomes" §§ below):
+**STATUS (2026-06-16) — SHIP at 14/16. S19a (13/16) → S14 seed-selection RECOVERED tsmc16 → 14/16; force_ic 0/8 remains the only ship-required open gap (confirmed not seed-closeable; structural S17/P9 pending a user go/no-go).** S14 ran the *authoritative* opamp gate over all existing seeds: tsmc16 `s12cor_w3_s17` passes at 5.14 % (deterministic) and full-gate-verifies 4/4 — recovering the cell the S19a discipline had retracted (s31 was a bistable-basin scorer fluke; s17 is the real pass). A 44-checkpoint force_ic sweep found NO seed rails (storage-0 node 21–46 mV above ground) ⇒ force_ic is a deep fixed-point limit. Gate files `results/v6_4_7/{S14_seed_selection,S19_promotion}.md`. **Original S19a status follows:**
+**S19a first promotion done at 13/16; campaign RE-OPENED (user-directed) to close the open gaps via the un-deferred structural levers, then re-promote (S19b).** The plan-stated 14/16 was corrected to **13/16** at S19a: the fragile tsmc16 `s12cor_w3_s31` opamp flip (S12 scorer 5.06 % PASS, only-passing-seed-of-4) **failed authoritative-gate replication** (`verify_complex_opamp.py` 103.98 % FAIL, deterministic; re-running the S12 scorer now reproduces the FAIL — a non-reproducible bistable DC basin). RETRACTED per the pre-registered replication discipline. Interim mix: tsmc7=`pivcor_w2_s7`, tsmc16=`s12cor_w3_s31`, tsmc5+tsmc12=V6.4.4 baseline; **force_ic 0/8 OPEN (ship-required)**. Gate file `results/v6_4_7/S19_promotion.md`. **Continuation (see "Continuation roadmap" §): S14=P6 (opamp fixed-point insurance, cheapest) → S17=P9 (force_ic physics core, ship-required) → S15=P7 if needed → S18 compose → S19b re-promote.** Per-step verdicts (detail in the "* outcomes" §§ below):
 - S1–S8 (zero-GPU) ✅, S9 SWA/EMA ✅, S9b regen-v2 + control-v2 ✅ PROCEED.
 - **S10 (P4 Sobolev deriv) KILL** — improves deriv fidelity + inverter but collapses the opamp 4/4; deriv fidelity is *anti-correlated* with the value-owned opamp/RO (P0-C/P0-I class).
 - **S12 (P5 trajectory-corridor) KEEP** — tsmc7 RO 8.28→2.9 % (4/4 seeds); per-tech mix **11/16 → 14/16**; cost = collapses passing opamps (avoided by per-tech mix).
@@ -219,6 +220,68 @@ TSMC5 SC over-conduction 12.14 %) → S13 P8a (re-armed id-VALUE supervision)
 as fallback only) → S17 P9 → S18 composition → S19 promotion (blind
 holdouts now include the off-default-Vin SC variant).
 
+## S19a outcomes (2026-06-16 — first promotion gate; headline corrected 14 → 13/16)
+
+Full detail: `results/v6_4_7/S19_promotion.md`. Authoritative-gate verification
+(CPU, `OMP_NUM_THREADS=1`, the `baseline_v6_4_7_pre.json` environment) of the
+proposed per-tech mix. **The pre-registered replication discipline retracted the
+tsmc16 opamp flip:** the S12 scorer's tsmc16 `s12cor_w3_s31` opamp 5.06 % PASS
+(only-passing-seed-of-4, flagged fragile) gives **103.98 % FAIL on
+`verify_complex_opamp.py`** (gain 382.8, deterministic over `OMP∈{1,2,4}`), and
+re-running the exact S12 scorer now reproduces the FAIL — the high-gain opamp DC
+point is **bistable** (the S12 run hit a balanced gain≈197 branch once; the
+reproducible branch is gain≈383). Verified mix: tsmc7=`pivcor_w2_s7` 3/4
+(RO 2.86/SC 1.02/butterfly PASS; opamp 10.78 FAIL; off-Vin SC holdout 1.21 PASS),
+tsmc16=`s12cor_w3_s31` 3/4 (RO 4.03/SC 2.01/butterfly PASS; opamp retracted),
+tsmc5+tsmc12=V6.4.4 baseline (unchanged). **Net +2 vs the S8 11/16 baseline →
+13/16**; force_ic verified **0/2 on both changed techs → 0/8, ship-required-OPEN**.
+R0.2 symcaps decided NOT shipped (D1 KILLED at S4).
+
+## Continuation roadmap (post-S19a, 2026-06-16 — campaign RE-OPENED, user-directed)
+
+S19a was a **first/interim promotion**; the deferred structural levers S13–S17
+are **un-deferred** to close the open gaps, then re-compose (S18) + re-promote
+(S19b). The four open cells are all **value-surface / NR-fixed-point /
+forward-conduction** owned (the recurring P0-C/P0-I/S10/S11 class), so the
+levers are re-prioritized by *which mechanism* each gap needs, not by the
+original rank:
+
+| open gap | ship-req? | owner (established) | candidate lever |
+|---|---|---|---|
+| **force_ic 0/8** | **YES** (ruling 1) | regenerative-gain / NR-fixed-point bistability — every id-VALUE lever (S2 frame, S7 reverse-clamp, S11 subthreshold) failed; more-accurate id *removes* the bistability | **S17 = P9** physics-anchored compose-at-inference subthreshold core (the designated, now-unblocked fallback) |
+| **tsmc16 opamp 104 %** | no | bistable high-gain DC fixed point (the S19a retraction); over-gain ~2× | **S14 = P6** ensemble/SWA collapse-insurance (smooths the fixed point) + **S15 = P7** split-head; both are opamp-fixed-point-stability levers |
+| **tsmc7 opamp 10.78 %** | no | systematic +0.78 pp over-gain (within run-to-run noise) | S14/S15 (same), or accept (0.78 pp) |
+| **tsmc5 SC 12.14 %** | no | forward-conduction over-conduction (moderate/strong region, not subthreshold) | hardest cheap lever; revisit only if a retrain arm incidentally helps |
+
+**Re-prioritized execution order (cheapest-high-value first, each
+committed-or-rewound; ≥4 seeds; A/B vs control-v2; blind-veto all passing cells):**
+1. **S14 = P6** (ensemble-mean distillation + SWA/EMA) — **cheapest** (~2–4 GPU-h,
+   reuses the S9 EMA flag + existing seed banks incl. the 4-seed s12cor/ctlv2
+   tsmc16). Directly targets the opamp *fixed-point fragility* that cost the
+   S19a cell. **Kill:** distilled/averaged net not Pareto-≥ best single seed on
+   the scorer vector AND opamp not de-fragilized on the authoritative gate.
+2. **S17 = P9** (physics-anchored multi-region subthreshold core) — the
+   **ship-required force_ic** lever. Structural compose-at-inference: frozen MLP
+   owns strong inversion, closed-form weak-inversion exponential (ideality
+   n≤1.3) owns OFF. **Go/no-go fit gate (pre-registered): ≥4-decade OFF
+   suppression AND ≤5 % inv_trip simultaneously**, THEN force_ic on the live 6T.
+   **Kill:** fit gate unmet, or force_ic still <8/8 with any protected-gate
+   regression → record dead end, force_ic stays a documented known-issue, ship
+   13/16.
+3. **S15 = P7** (split-head, retained 13-target supervision) — only if S14
+   leaves the opamp fragile; ~10 GPU-h. **Kill:** inverter regression beyond the
+   documented ±1 % scatter.
+4. **S13 = P8a / S16 = P8b** — **DEMOTED** (RO target already met by S12; run
+   only if an opamp/force_ic lever needs the teacher-forced id rider).
+5. **S18 composition → S19b re-promotion** — compose the surviving arms into the
+   per-tech mix; re-run the full authoritative-gate harness (every cell, not the
+   scorer) + the perturbed-circuit blind holdouts; promote the honest count.
+
+Every arm A/Bs against **control-v2** and must clear `baseline_v6_4_7_pre.json`
+(13/16 floor — no protected-gate regression vs the S19a mix). **Authoritative-gate
+re-verification of any opamp/force_ic flip is now MANDATORY before counting it**
+(the S19a lesson: the scorer proxy and the gate disagree on bistable cells).
+
 ## S11 outcomes (2026-06-15 — P3 subthreshold-id arm; verdict KILL → S17/P9)
 
 Full detail: `results/v6_4_7/S11_P3_subthreshold_gate.md` (+ `S11b_pivot_open_cells.md`). Built `SubthresholdIdLoss` (`bsimar/losses/bni_mae.py`, `--subthresh`, default-off): an asinh-s2 sub-µA VALUE term + sign-agnostic OFF ceiling hinge, re-scaling the subthreshold roll-off the global `s_id≈2.6e-5` crushes to ~0.01 % of range. λ=0.002 (base val-MAE ~0.001, so λ=0.05+ swamps it). Trained 4 TSMC7 seeds + tsmc5/12/16(s42) vs control-v2.
@@ -347,8 +410,8 @@ cards → labeller assert; fixed with atomic write) and **NFIN<2 inclusion**
    - **S12 = P5 (lead arm per rev-4 reorder) — ✅ COMPLETE 2026-06-15, verdict KEEP.** Harvested the id-VALUE bias tubes from the native-L72 (RO+SC) and NGSPICE (opamp+SRAM, raw L72 DC diverges under PyCircuitSim NR) ground-truth trajectories, OSDI-evaluated at the bench geometry, ±12 mV/20-sample jittered to ~1 %, appended to v2 as `traj_corridor` (code 12, pre-seeded label cache for the off-grid 16n geometry), retrained 4 seeds × 8 cells with `--class-weights traj_corridor=3`. **Kill gate PASSED: tsmc7 RO 8.28 → 2.9 % (all 4 seeds, NEW-PASS)** — confirms the P5 thesis (RO = id-value-surface deficit along the trajectory). Per-tech mix (corridor where it nets a gain, baseline where it would regress a passing opamp) → **11/16 → 14/16** (tsmc7 RO; tsmc16 opamp s31 + SC). **Cost: collapses *passing* opamps (tsmc5/tsmc12, all 4) — the S10 value-surface fragility — avoided by the per-tech mix.** SC-tsmc5 NOT fixed; force_ic still 0/8 (S11). butterfly 4/4 + inverter held. See "S12 outcomes" + `results/v6_4_7/S12_P5_corridor_gate.md`. Build plan `results/v6_4_7/S12_P5_build_plan.md`.
    - **S11 = P3 (ship-required SRAM) — ✅ COMPLETE 2026-06-15, verdict KILL (→ S17/P9).** Built `SubthresholdIdLoss` (asinh-s2 sub-µA VALUE term + sign-agnostic OFF ceiling hinge, `--subthresh`, default-off) + the weak-inversion probe + the combined `force_ic` gate. λ calibration: base val-MAE is ~0.001 and the raw term is O(1)/row, so λ=0.05/0.15 swamped the fit (val 12–30× worse); **λ=0.002 is the operating point** (val 1.4× control). Trained 4 TSMC7 seeds + tsmc5/12/16 (seed 42), A/B vs control-v2. **The term WORKS on its target** — TSMC7 weak-band NN/OSDI ratio 1.84→1.14 (NMOS, |log10| 0.356→0.102, 3.5×), 0.90→1.13 (PMOS, 5×) — and **holds protected gates** (inv_vtc 2.61→2.96 %, SC passes, RO incidentally 10.86→7.88 %; opamp collapse = the v2-data retrain lottery, control collapses identically). **But force_ic stays 0/14 and moves the WRONG way: 6/7 (tech,seed) cells COLLAPSE to the symmetric metastable point q=qb=VDD/2** (worse than control's near-railed inboard q=0.749/qb=0.121) — a more accurate/symmetric id surface *removes* the bistability. Pre-registered kill gate (ratio ≥10× with VTC ≤5 %) not met (3.5–5×, force_ic not closed). **force_ic is gain/NR-fixed-point owned, not subthreshold-value owned (same class as S10 opamp, P0-C/P0-I RO).** No checkpoint promoted (`v6_4_7_s11sub_*` inert); `SubthresholdIdLoss` KEPT as default-off recoverable infra (real gate-neutral subthreshold-fidelity win, composable, e.g. for the TSMC16 SC hold leak). The S10 SRAM-escape side-signal did NOT generalize to a force_ic close. **force_ic remains 0/8, ship-required → S17 = P9.** Gate file `results/v6_4_7/S11_P3_subthreshold_gate.md`.
    - **S11b — pivot to the 2 open headline cells (2026-06-15, user-directed; both model-fidelity limits).** tsmc5 SC over-conduction: subthreshold barely moves it (12.16→11.70 %), corridor any-dose doesn't fix it — a forward-conduction limit. tsmc7 opamp ~10–11 % over-gain (systematic; prod 10.16 %, healthy v2 seeds 10.8–15 %, NG≈163 vs DN≈181): the deferred gentle-corridor W-sweep (`scripts/v6_4_7_pivot_corridor.sh`) **preserves-or-collapses** the gain (no gentle correction; S10 fragility); best `pivcor_w2_s7` = opamp 10.78 % + RO/inv/SC pass, a better tsmc7 S19 candidate than the S12 corridor. Gate `results/v6_4_7/S11b_pivot_open_cells.md`.
-   - **S13 P8a / S14 P6 / S15 P7 / S16 P8b / S17 P9 / S18 composition — DEFERRED.** S12 already met the RO target (P8a/P6/P8b were RO/variance levers), and S11/S11b established the 3 remaining gaps (force_ic, tsmc5 SC, tsmc7 opamp) are value-surface / fixed-point / forward-conduction limits no cheap lever closes. S17/P9 (force_ic OFF-leakage core) is unblocked but its premise is in tension with the S11 "force_ic is gain-owned" finding. These are revisited only if the 3 gaps are deemed must-close, as a scoped structural change (architecture / physics-core).
-4. **S19 — promotion at 14/16** per the V6.4.6 protocol (baseline JSON, blind holdouts incl. the off-default-Vin SC variant, per-tech mix allowed) + the selection discipline below. Promote the S12 per-tech mix (tsmc7 corridor / tsmc16 corridor-s31 / tsmc5+tsmc12 baseline), **substituting `pivcor_w2_s7` for the tsmc7 corridor** (same gate count, opamp near-pass not collapsed — replication-check the 10.78 % margin). Record **force_ic (0/8), tsmc5 SC, and tsmc7 opamp as documented value-owned/forward-conduction known-issues**; decide the R0.2 symcaps env-gated question; update CHANGELOG/CLAUDE.md; dead-end record for every rewound step.
+   - **S13 P8a / S14 P6 / S15 P7 / S16 P8b / S17 P9 / S18 composition — UN-DEFERRED (2026-06-16, user-directed continuation).** The S19a ship-required force_ic gap (0/8) and the opamp fragility that cost a cell justify running the structural levers. Re-prioritized by current gaps (full detail in the "Continuation roadmap" §): **S14=P6 first** (cheapest opamp-fixed-point insurance) → **S17=P9** (ship-required force_ic, go/no-go fit-gated) → **S15=P7** if the opamp stays fragile → **S18 compose → S19b re-promote**. S13/P8a + S16/P8b stay demoted (RO already met by S12). Each arm is committed-or-rewound, ≥4 seeds, A/B vs control-v2, must clear the 13/16 S19a floor with no protected-gate regression.
+4. **S19a — first promotion DONE (2026-06-16) at 13/16** (interim) per the V6.4.6 protocol + selection discipline. Promoted the per-tech mix tsmc7=`pivcor_w2_s7` / tsmc16=`s12cor_w3_s31` / tsmc5+tsmc12=baseline; the tsmc16 opamp flip was **retracted on authoritative-gate replication** (the discipline working as designed). force_ic (0/8) + tsmc5 SC + tsmc7 opamp + tsmc16 opamp recorded as known-issues; R0.2 symcaps decided NOT shipped; CHANGELOG/CLAUDE.md updated. **S19b = re-promotion** after the continuation levers — full authoritative-gate harness on every cell (NOT the scorer) + perturbed-circuit blind holdouts; promote the honest count; any opamp/force_ic flip re-verified on the gate before counting.
 
 ## Verification
 

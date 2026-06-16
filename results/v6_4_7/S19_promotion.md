@@ -1,4 +1,18 @@
-# V6.4.7 S19 — promotion gate — verdict: SHIP at **13/16** (NOT 14/16)
+# V6.4.7 S19 — promotion gate — verdict: SHIP at **14/16**
+
+> **UPDATE (S14 seed-selection, 2026-06-16): headline recovered 13 → 14/16.**
+> This S19a record below first shipped 13/16 after retracting the tsmc16 `s31`
+> opamp flip. The continuation step S14 then ran the **authoritative** opamp
+> gate over all existing seeds and found tsmc16 **`s12cor_w3_s17`** passes it at
+> **5.14 %** (deterministic, gain 197.3) — recovering the tsmc16 opamp cell
+> honestly (s17 lands on the correct ~197 branch; s31 was a bistable-basin
+> fluke). **Final ship mix: tsmc16 = `s12cor_w3_s17` (4/4), headline 14/16.**
+> A force_ic seed sweep (44 ckpts × 4 techs) found **no seed closes force_ic**
+> (still 0/8, ship-required-OPEN). Full detail: `results/v6_4_7/S14_seed_selection.md`.
+> The per-cell verification and force_ic/known-issue analysis below stand; only
+> the tsmc16 opamp row flips FAIL → PASS and the headline 13 → 14.
+
+## (S19a, superseded headline) verdict: SHIP at **13/16** (NOT 14/16)
 
 **Date:** 2026-06-16 · Final stage of the V6.4.7 campaign. Authoritative-gate
 verification of the proposed per-tech promotion mix on the campaign machine
