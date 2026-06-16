@@ -134,11 +134,26 @@ def snm_from_lobes(q: np.ndarray, qb: np.ndarray) -> float:
 # Full 6T force_ic convergence probe
 # ---------------------------------------------------------------------------
 def _directnet_6t_netlist(bt: BenchTech, q_init: float, qb_init: float,
-                          path: Path) -> Path:
+                          path: Path, wl_on: bool = False) -> Path:
+    # force_ic / retention test => wordline OFF (wl=0): the access transistors
+    # are OFF and the cross-coupled latch holds its `.ic` state in isolation.
+    # This is the physically-correct HOLD condition.
+    #
+    # V6.4.7 S17b/S17c (2026-06-16) GROUND-TRUTH-PROVEN HARNESS FIX. The old test
+    # pinned wl=VDD (access ON) with BOTH bitlines forced to VDD by ideal
+    # sources — a non-physical harsh READ-DISTURB, not a hold. Under it the "0"
+    # node settles at the read-SNM level (~0.18*VDD), which exceeds the 0.1*VDD
+    # rail band ⇒ a guaranteed 0/8. The native LEVEL=72 OSDI control (exact
+    # BSIM-CMG physics) fails wl=ON 0/8 and passes wl=OFF 8/8 IDENTICALLY to the
+    # NN ⇒ the wl=ON gate rejected ground-truth physics (mis-specified); wl=OFF
+    # is the correction (ground truth passes it). Read-stability is separately
+    # covered by the butterfly SNM gate. `wl_on=True` reproduces the old
+    # read-disturb probe for diagnostics. See results/v6_4_7/S17c_forceic_harness_fix.md.
+    wl_v = bt.vdd if wl_on else 0.0
     path.write_text(
-        f"* 6T SRAM cell — DirectNet ({bt.name})\n"
+        f"* 6T SRAM cell — DirectNet ({bt.name}) wl={'ON/read' if wl_on else 'OFF/hold'}\n"
         f"Vdd vdd 0 {bt.vdd}\n"
-        f"Vwl wl 0 {bt.vdd}\n"
+        f"Vwl wl 0 {wl_v}\n"
         f"Vbl bl 0 {bt.vdd}\n"
         f"Vblb blb 0 {bt.vdd}\n"
         f".ic V(q)={q_init} V(qb)={qb_init}\n"

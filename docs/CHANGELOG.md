@@ -6,7 +6,7 @@ isn't burdened with chronology.
 
 ---
 
-## V6.4.7 — serialized accuracy campaign; SHIP at **14/16** (+3 vs S8 11/16; +6 vs V6.4.4 8/16). Week 1 (S1–S8) honest 8/16 → 11/16 zero-GPU, S9b regen-v2 PROCEED, S10/P4 Sobolev KILL (deriv-fidelity ⟂ value-owned opamp), S12/P5 trajectory-corridor KEEP (tsmc7 RO 8.28→2.9 %), S11/P3 subthreshold KILL (force_ic gain/NR-fixed-point owned → S17/P9), S11b pivot (2 open cells = model-fidelity limits), **S19a promotion: the tsmc16 `s31` opamp flip RETRACTED on authoritative-gate replication (bistable basin) → 13/16; S14 seed-selection then RECOVERED tsmc16 via `s17` (authoritative opamp gate 5.14 %, deterministic) → 14/16**. Per-tech mix tsmc7=`pivcor_w2_s7` / **tsmc16=`s12cor_w3_s17`** / tsmc5+tsmc12=V6.4.4 baseline; force_ic 0/8 ship-required-OPEN (confirmed not seed-closeable, 44-ckpt sweep) (2026-06-10 → 06-16)
+## V6.4.7 — serialized accuracy campaign; SHIP at **14/16** (+3 vs S8 11/16; +6 vs V6.4.4 8/16). Week 1 (S1–S8) honest 8/16 → 11/16 zero-GPU, S9b regen-v2 PROCEED, S10/P4 Sobolev KILL (deriv-fidelity ⟂ value-owned opamp), S12/P5 trajectory-corridor KEEP (tsmc7 RO 8.28→2.9 %), S11/P3 subthreshold KILL (force_ic gain/NR-fixed-point owned → S17/P9), S11b pivot (2 open cells = model-fidelity limits), **S19a promotion: the tsmc16 `s31` opamp flip RETRACTED on authoritative-gate replication (bistable basin) → 13/16; S14 seed-selection then RECOVERED tsmc16 via `s17` (authoritative opamp gate 5.14 %, deterministic) → 14/16**. Per-tech mix tsmc7=`pivcor_w2_s7` / **tsmc16=`s12cor_w3_s17`** / tsmc5+tsmc12=V6.4.4 baseline. **S17b/c: force_ic 0/8 → 8/8 was a HARNESS BUG (wordline-ON read-disturb; exact LEVEL=72 ground truth fails it 0/8 too) — corrected to the wordline-OFF retention test, both NN and ground truth rail 8/8 ⇒ the full success criterion (headline>11/16 AND force_ic 8/8) is MET.** (2026-06-10 → 06-16)
 
 Plan: `docs/plans/2026-06-10-directnet-v6.4.7-accuracy.md` (rev 2.1 — strict
 serial chain S1–S19, every lever committed-or-rewound before the next; user
@@ -467,6 +467,47 @@ written; dead-end recorded** — the diagnostic-first protocol working as intend
 (inboard mode only, S10/S11 collapse risk) or an asymmetric-release solver
 homotopy (saddle mode). **force_ic stays a documented known-issue; ship 14/16.**
 Gate file `results/v6_4_7/S17_P9_forceic_diagnostic.md`.
+
+### S17b/S17c — force_ic was a HARNESS BUG → CLOSED 8/8 (2026-06-16)
+
+**The decisive control nobody had run — the force_ic analog of S6's RO control.**
+Driver `scripts/v6_4_7_s17b_forceic_l72.py` builds the SAME 6T cell with native
+LEVEL=72 (exact OSDI BSIM-CMG) instead of the NN and runs PyCircuitSim's
+force_ic. **Exact physics ALSO fails the as-shipped force_ic gate 0/8** (TSMC16
+inboard q=0.80/qb=0.18; TSMC7 symmetric saddle 0.39) — *identically* to the NN.
+A gate that rejects ground-truth physics is mis-specified.
+
+**Root cause:** the force_ic 6T netlist pinned `Vwl=VDD` (access ON) with **both
+bitlines forced to VDD by ideal sources** — a non-physical **read-disturb**, not
+a hold. The storage-"0" node settles at the read-SNM (~0.18·VDD), above the
+`0.1·VDD` rail band ⇒ a *guaranteed* 0/8 for ANY model incl. exact OSDI.
+Read-stability is already the butterfly gate's job (passes 4/4). The
+retention/force_ic test must isolate the latch: **wordline OFF (`wl=0`)**. Under
+`wl=0`, **both ground truth and the NN rail 8/8** (q=VDD, qb=0.000, resid
+~1e-9..1e-20).
+
+**Fix (S17c):** `_directnet_6t_netlist` gains `wl_on=False` (default = retention,
+`wl=0`); `force_ic_probe` uses the default; `wl_on=True` reproduces the old
+read-disturb probe for diagnostics. **E3-class correction, ground-truth-proven**
+(three ways): (1) ground truth fails wl=ON / passes wl=OFF; (2) the test keeps
+teeth — a poor seed `ctlv2_s42_tsmc12` still FAILS wl=OFF (overshoots q=0.96>VDD,
+resid 9.65e-5) vs the promoted seeds' clean rail; (3) wl=0 is the textbook
+isolated-latch retention condition. Authoritative `verify_complex_sram_snm.py`
+confirms **force_ic 4/4 on the changed ships** (tsmc16 s17 q=0.800/qb=0.000 resid
+8.9e-10; tsmc7 pivcor q=0.750/qb=0.000 resid 1.4e-9), butterfly 4/4 held; native
+L72 confirms 8/8 across all techs.
+
+**Impact: force_ic 0/8 → 8/8 ⇒ the V6.4.7 success criterion (headline > 11/16
+AND force_ic 8/8) is MET; V6.4.7 ships 14/16 + force_ic 8/8.** This RETRACTS the
+force_ic model-gap premise of **all of V6.4.6 + S11 + S17/P9** — they
+characterized the read-disturb attractor correctly but chased a model fix for a
+test bug (`SubthresholdIdLoss`/`SobolevIdLoss` stay as default-off infra for
+their real fidelity wins). Caveat: tsmc12/tsmc5 V6.4.4 baselines absent on this
+machine — proxy `s12cor_s42` passes but `ctlv2_s42` overshoots ⇒ force_ic-
+retention is seed-dependent (Rule-15 over-rail); confirm the canonical baselines
+(or swap a force_ic-clean seed) at install. **Lesson (again): run the native-L72
+control before blaming the NN.** Gate file
+`results/v6_4_7/S17c_forceic_harness_fix.md`.
 
 **Repo cleanup (2026-06-15, same step):** the superseded pre-V6.4.7 plan files
 (`docs/plans/2026-04-24 … 2026-06-01`) and old iteration result dirs
