@@ -221,79 +221,15 @@ holdouts now include the off-default-Vin SC variant).
 
 ## S11 outcomes (2026-06-15 — P3 subthreshold-id arm; verdict KILL → S17/P9)
 
-Full detail: `results/v6_4_7/S11_P3_subthreshold_gate.md`. Built
-`SubthresholdIdLoss` (`bsimar/losses/bni_mae.py`, `--subthresh`, default-off):
-an **asinh-s2 (s2≈1e-9) sub-µA VALUE term** (Huber, sign-aware, masked
-`1e-12<|id|<1e-6`) that re-scales the subthreshold roll-off the global
-`s_id≈2.6e-5` crushes to ~0.01 % of range (the regen-v2 data HAS the rows —
-~15 %/cell below 1 µA — but the asinh+LDS transform gives them ~zero loss mass),
-plus a **sign-agnostic OFF ceiling hinge** (suppresses hard-OFF over-prediction
-without injecting current — not the D4 floor). Probe `v6_4_7_s11_subvt_probe.py`
-+ combined `force_ic` gate `v6_4_7_s11_sram_gate.py`, multi-GPU drivers.
+Full detail: `results/v6_4_7/S11_P3_subthreshold_gate.md` (+ `S11b_pivot_open_cells.md`). Built `SubthresholdIdLoss` (`bsimar/losses/bni_mae.py`, `--subthresh`, default-off): an asinh-s2 sub-µA VALUE term + sign-agnostic OFF ceiling hinge, re-scaling the subthreshold roll-off the global `s_id≈2.6e-5` crushes to ~0.01 % of range. λ=0.002 (base val-MAE ~0.001, so λ=0.05+ swamps it). Trained 4 TSMC7 seeds + tsmc5/12/16(s42) vs control-v2.
 
-**λ calibration (the gotcha):** base val-MAE is ~0.001, the raw asinh-s2 term is
-O(1)/row ⇒ λ=0.05/0.15 swamped the fit (val 12–30× worse, killed); **λ=0.002 is
-the operating point** (val 1.4× control, inverter holds). Trained 4 TSMC7 seeds +
-tsmc5/12/16 (seed 42) on v2 data, A/B vs control-v2.
-
-**Kill gate (weak-inversion ratio ≥10× with VTC ≤5 %): NOT MET.** The term WORKS
-on its target — TSMC7 weak-band NN/OSDI **1.84→1.14** (NMOS, |log10| 0.356→0.102,
-3.5×), **0.90→1.13** (PMOS, 5×) — and is **gate-neutral-to-positive** (inv_vtc
-2.61→2.96 %, inv_tran 1.21→1.16 %, RO 10.86→7.88 %, SC 1.76→1.64 % PASS; opamp
-collapse = the v2-data retrain lottery, control collapses identically). **But
-`force_ic` stays 0/14 and moves the WRONG way: 6/7 (tech,seed) cells COLLAPSE to
-the symmetric metastable point q=qb=VDD/2** (TSMC7 s42/s17/s7, TSMC5/12/16 s42) —
-strictly worse than control's near-railed inboard (TSMC7 s42 control q=0.749 AT
-rail, only qb=0.121 = 46 mV out); the one inboard-landing seed (s31) is identical
-to control (qb=0.122). A more accurate/symmetric subthreshold id surface
-**removes the asymmetry that kept the baseline partially railed.**
-
-**Conclusion: `force_ic` railing is a regenerative-gain / NR-fixed-point
-property** (the cross-coupled pair needs trip gain to make the symmetric point
-repelling) — the **same value-surface-vs-fixed-point split as the opamp gain
-(S10) and RO period (P0-C/P0-I)**. No subthreshold-VALUE variant addresses trip
-gain. **KILL → S17/P9** (the designated force_ic fallback, now unblocked: S2
-frame + S7 reverse-clamp + S11 subthreshold have all failed to close it). No
-checkpoint promoted (`v6_4_7_s11sub_*` inert); `SubthresholdIdLoss` KEPT as
-default-off recoverable infra (real subthreshold-fidelity win, composable — e.g.
-the TSMC16 SC hold leak). Headline unchanged **14/16**; `force_ic` **0/8**.
+**KILL (kill gate not met):** the term WORKS on its target (TSMC7 weak-band NN/OSDI 1.84→1.14, gate-neutral elsewhere) **but `force_ic` stays 0/14 and 6/7 (tech,seed) cells COLLAPSE to the symmetric metastable point q=qb=VDD/2** (worse than control's near-railed inboard q=0.749/qb=0.121). A more accurate/symmetric id surface *removes* the bistability ⇒ **`force_ic` railing is a regenerative-gain / NR-fixed-point property, not subthreshold-value** (same class as S10 opamp, P0-C/P0-I RO). No checkpoint promoted (`v6_4_7_s11sub_*` inert); `SubthresholdIdLoss` kept as default-off infra. → S17/P9 (deferred).
 
 ## S12 outcomes (2026-06-15 — P5 trajectory-corridor arm; verdict KEEP, headline 11→14/16)
 
-Full detail: `results/v6_4_7/S12_P5_corridor_gate.md`. Built the corridor
-harvest/append/train pipeline (`scripts/v6_4_7_s12_{harvest,append}_corridors.py`,
-`scripts/v6_4_7_s12_train_corridor.sh`, `traj_corridor` = SAMPLE_CLASS_CODES
-code 12). Harvested the per-device bias **tubes** the benchmark devices visit
-along the **ground-truth** trajectories (RO+SC via native L72 == NGSPICE; opamp
-+SRAM butterfly via NGSPICE directly — raw L72 DC diverges under PyCircuitSim
-NR), OSDI-evaluated at the bench geometry, ±12 mV/20-sample jittered to ~1 % of
-each dataset, appended to v2 → `{tech}_v2cor_{dev}.npz` (NMOS L=16n is off the
-PDK grid ⇒ corridor rows labeled via a **pre-seeded label cache**, validated in
-the live trainer path). Trained 4 seeds × 8 cells, control-v2 recipe +
-`--class-weights traj_corridor=3`, A/B vs control-v2.
+Full detail: `results/v6_4_7/S12_P5_corridor_gate.md`. Harvested the per-device bias tubes the bench devices visit along the **ground-truth** trajectories (RO+SC via native L72 == NGSPICE; opamp+SRAM via NGSPICE), OSDI-evaluated at bench geometry, ±12 mV jittered to ~1 % of each dataset, appended to v2 → `{tech}_v2cor_{dev}.npz` (`traj_corridor` code 12; off-grid 16n labeled via a pre-seeded label cache). Trained 4 seeds × 8 cells, control-v2 recipe + `--class-weights traj_corridor=3`.
 
-**Kill gate (first scored arm RO err < 7 %): PASSED — tsmc7 RO 8.28 → 2.87–2.92 %
-(all 4 seeds), NEW-PASS.** The P5 thesis is confirmed: the RO period gap is the
-~20 % NMOS dynamic-id deficit (P0-G/H), owned by the id VALUE surface along the
-switching trajectory; teaching ground-truth id there closes it seed-invariantly.
-tsmc5 RO recovered 5.80 (control-v2) → 4.6 % (PASS). **tsmc16: switchcap
-13.1→2.01 % (all 4, but also flipped by control-v2's v2 data) and opamp
-fail→5.06 % (s31 only, fragile 1/4).**
-
-**Major cost — the corridor collapses *passing* opamps (tsmc5, tsmc12, all 4
-seeds, 100 %)** — exactly the S10 value-surface/NR-fixed-point fragility
-(reshaping the id surface destabilises the high-gain opamp). So the corridor is
-**promoted per-tech, only where it nets a gain with no veto break:** tsmc7
-(corridor: RO flip), tsmc16 (corridor s31: opamp+SC flip), tsmc5 + tsmc12
-(**baseline** — corridor would regress their passing opamps). Net **11/16 →
-14/16** (+3: tsmc7 RO, tsmc16 opamp, tsmc16 SC). butterfly 4/4 held (verified on
-the corridor tsmc7/tsmc16 checkpoints; tsmc16 SNMerr 0.0 %, tsmc7 positive at
-SNMerr 39.8 %), inverter held. **force_ic still 0/8 — NOT closed (S11/P3's
-target); some seeds nudge the released cell rail-ward (tsmc7 s42 probe q=0.75).**
-SC over-conduction on tsmc5 NOT fixed (12.16 %). **W-sweep (gentler dose to
-preserve passing opamps) deferred** — would not change the tsmc7 headline.
-**KEEP — surviving arm; `v6_4_7_s12cor_w3_*` are the S19 per-tech promotion
-candidates (tsmc16 s31 opamp flip replication-gated). RESUME AT S11 = P3.**
+**KEEP — kill gate PASSED: tsmc7 RO 8.28 → 2.9 % (all 4 seeds, NEW-PASS)** — confirms the P5 thesis (RO = id-VALUE-surface deficit, P0-G/H). **Cost: the corridor collapses *passing* opamps (tsmc5/tsmc12, all 4 seeds — the S10 value-surface fragility),** so it is promoted **per-tech only where it nets a gain:** tsmc7 (RO flip) + tsmc16 s31 (opamp+SC flip); tsmc5/tsmc12 keep baseline. Net **11/16 → 14/16**; butterfly 4/4 + inverter held; force_ic still 0/8. `v6_4_7_s12cor_w3_*` are the S19 per-tech candidates (tsmc7 superseded by `pivcor_w2_s7` per S11b).
 
 ## S10 outcomes (2026-06-14 — P4 Sobolev id-derivative arm; verdict KILL)
 
