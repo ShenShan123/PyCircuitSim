@@ -1,6 +1,15 @@
-# V6.4.7 S19 — promotion gate — verdict: SHIP at **14/16**
+# V6.4.7 S19 — promotion gate — verdict: SHIP at **14/16 + force_ic 8/8**
 
-> **UPDATE (S14 seed-selection, 2026-06-16): headline recovered 13 → 14/16.**
+> **UPDATE 2 (S17c force_ic harness fix, 2026-06-16): force_ic 0/8 → 8/8.**
+> The force_ic "0/8" recorded throughout this file was a **harness bug**, not a
+> model gap: the test held the wordline ON (read-disturb) where even native
+> LEVEL=72 (exact OSDI) fails 0/8. Corrected to the wordline-OFF retention test,
+> both the NN and ground truth rail **8/8** (verified 4/4 on the changed ships).
+> **The full V6.4.7 success criterion (headline > 11/16 AND force_ic 8/8) is MET.**
+> Supersedes every "force_ic 0/8 OPEN / known-issue" line below. Full detail:
+> `results/v6_4_7/S17c_forceic_harness_fix.md`.
+>
+> **UPDATE 1 (S14 seed-selection, 2026-06-16): headline recovered 13 → 14/16.**
 > This S19a record below first shipped 13/16 after retracting the tsmc16 `s31`
 > opamp flip. The continuation step S14 then ran the **authoritative** opamp
 > gate over all existing seeds and found tsmc16 **`s12cor_w3_s17`** passes it at

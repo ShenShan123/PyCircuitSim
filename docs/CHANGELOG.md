@@ -363,7 +363,7 @@ force_ic + these 2 cells as documented known-issues (or a scoped structural
 change — architecture / physics-core — if they are must-close). The serial
 chain's S13/S14/S15 are lower-value (S12 already met the RO target).
 
-### S19 — promotion gate (2026-06-16): SHIP at **13/16** (NOT 14/16)
+### S19a — first promotion gate (2026-06-16): interim **13/16** (SUPERSEDED → 14/16 by S14, force_ic 8/8 by S17c below)
 
 Authoritative-gate verification of the per-tech promotion mix on the campaign
 machine (CPU, `OMP_NUM_THREADS=1`, the `baseline_v6_4_7_pre.json` environment).
