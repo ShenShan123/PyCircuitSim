@@ -14,7 +14,7 @@ softplus clamp and NO Rule-15 Vds correction — this is the surface the
 Sobolev term would supervise, not the post-corrected one NR consumes.
 
 Sign convention (the P0-I §2 trap, settled empirically + per the P0-B
-header ``scripts/v6_4_6_p0b_ro_overlay.py:15-18``):
+baseline; see CHANGELOG "V6.4.6"):
 
     stored id  : NMOS conducting id < 0 ; PMOS conducting id > 0
     stored gm  = -d(id_stored)/dVg   (positive at strong inversion)
@@ -257,8 +257,8 @@ def _derive_split(
 # ── Metrics ────────────────────────────────────────────────────────────────
 
 def _rule16(pred: np.ndarray, true: np.ndarray) -> Dict[str, float]:
-    """Rule-16 quartet, identical to v6_4_6_p0b_ro_overlay.rule16 so the
-    gds NRMSE is directly comparable to the P0-B 20-23 % baseline."""
+    """Rule-16 quartet; gds NRMSE directly comparable to the P0-B
+    20-23 % baseline (see CHANGELOG "V6.4.6")."""
     pred = np.asarray(pred, float)
     true = np.asarray(true, float)
     diff = pred - true

@@ -30,7 +30,7 @@ LIKE-FOR-LIKE GUARANTEES
     passes modelcard_path/model_name_map to Parser — harness plumbing; the
     device model is the untouched production NMOS_CMG/PMOS_CMG.
   * Window/estimator: 0.6 ns / settle 0.3 ns / tstep 2 ps and
-    _period_from_wave, same as scripts/v6_4_7_s6_p1_swap_matrix.py.
+    _period_from_wave (zero-crossing period estimator).
 
 Usage:
     CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \

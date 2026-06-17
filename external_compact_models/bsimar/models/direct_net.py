@@ -28,7 +28,7 @@ behind a train-CLI flag:
   checkpoint still loads. The extra ``mono.*`` keys are auto-detected by the
   simulator's ``_build_from_state``.
 
-This module does NOT add any loss term (Rule 10): all Phase-7 work shapes
+This module does NOT add any loss term: all Phase-7 work shapes
 the network, never the loss.
 """
 

@@ -295,7 +295,7 @@ class _MOSFETNNBase(Component):
         v_s_nn: float,
     ) -> Dict[str, float]:
         """Denormalise one forward+autograd result into the physical
-        result dict and apply the Vds correction (rule 15).
+        result dict and apply the Vds correction.
 
         ``out_row`` is a 1-D tensor of model outputs; ``grad_*_row`` are
         the 1-D autograd derivatives of the named output w.r.t. the 4
@@ -569,7 +569,7 @@ class _MOSFETNNBase(Component):
                 g_at_cap = g_max * x_cap / x_ref
                 id_extra = id_at_cap + g_at_cap * (overshoot - x_cap)
                 g_extra = g_at_cap
-            # Sign convention for restoring leakage (Rule 20 fix, V6.2):
+            # Sign convention for restoring leakage (V6.2 fix):
             # In PyCMG sign convention, NMOS conducting id < 0 (current
             # leaving drain in CMG's frame) and PMOS conducting id > 0. At
             # rail-overshoot, the physical restoring leakage drives id in
@@ -579,7 +579,7 @@ class _MOSFETNNBase(Component):
             # wrong-sign clamp at (d) then wiped the contribution inside
             # the band VDD_train < |Vds| < 20·VT, creating a current-free
             # dead-band where V(out) could settle at ~±100 mV outside the
-            # rails (the V6.1 TSMC7 transient bottleneck — see Rule 20).
+            # rails (the V6.1 TSMC7 transient bottleneck).
             if normal_dir:
                 if self._is_pmos:
                     result["id"] += id_extra      # PMOS: id more positive

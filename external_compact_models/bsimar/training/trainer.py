@@ -526,7 +526,7 @@ def train_directnet(
     ``monotonic`` (Phase 7a, default False): build the DirectNet with a
     residual sub-network monotone in ``Vg`` added to the ``id`` column.
     The base trunk is unchanged; the extra ``mono.*`` parameters are
-    auto-detected at inference. No loss term is added (Rule 10).
+    auto-detected at inference. No loss term is added.
     """
     from bsimar.models.direct_net import DirectNet
 
