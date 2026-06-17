@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import sys
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
@@ -45,6 +46,18 @@ from bsimar.data.normalize import (
 
 _logger = logging.getLogger(__name__)
 _NN_DEVICE: Optional[torch.device] = None
+
+# V6.4.8 S0 diagnostic gate (default-off, Rule-5 preserving). The Rule-5
+# gds floor coefficient ``k`` in ``_floor_gds`` (= 0.5 shipped) is read from
+# ``PYCIRCUITSIM_GDS_FLOOR_K`` so the S0 settling sweep can adjudicate whether
+# floor-k moves the *converged* opamp gain (pre-registered prediction: it does
+# NOT — the floor is Jacobian-only and cancels at the fixed point). When the
+# env var is unset the value is exactly 0.5, so committed behaviour is
+# unchanged. This is a diagnostic knob, NOT a shipping accuracy lever.
+try:
+    _GDS_FLOOR_K = float(os.environ.get("PYCIRCUITSIM_GDS_FLOOR_K", "0.5"))
+except (TypeError, ValueError):
+    _GDS_FLOOR_K = 0.5
 
 # Process-level shared-module cache. Devices that load the *same*
 # checkpoint file share one ``nn.Module`` instance so the Phase-5
@@ -503,8 +516,13 @@ class _MOSFETNNBase(Component):
 
     @staticmethod
     def _floor_gds(id_phys: float, gds_phys: float) -> float:
-        """Physics-based gds floor (rule 5): max(|id|·0.5, 1e-12)."""
-        return max(gds_phys, max(abs(id_phys) * 0.5, 1e-12))
+        """Physics-based gds floor (rule 5): max(|id|·k, 1e-12), k=0.5 shipped.
+
+        ``k`` is the module-level ``_GDS_FLOOR_K`` (env ``PYCIRCUITSIM_GDS_FLOOR_K``,
+        default 0.5 → Rule-5 unchanged). The S0 diagnostic sweeps it; it does not
+        ship as an accuracy lever (the floor is inert at the converged fixed point).
+        """
+        return max(gds_phys, max(abs(id_phys) * _GDS_FLOOR_K, 1e-12))
 
     @staticmethod
     def _reverse_taper(abs_vds: float, vdd_train: float) -> float:
