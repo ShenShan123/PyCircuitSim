@@ -87,6 +87,8 @@ Inverter circuit must PASS Transient Analysis against NGSPICE ground truth withi
 
 **Current ship: V6.4.7** (branch `feat/v6.4.7`) — per-tech complex-circuit mix at **14/16 gates + `force_ic` 8/8**; the full success criterion (headline > 11/16 AND force_ic 8/8) is **MET** (+3 vs the S8 baseline, +6 vs V6.4.4 canonical 8/16).
 
+**In progress: V6.4.8** (branch `feat/v6.4.8`, from `d9c3d6b`) — value-surface accuracy campaign (plan `docs/plans/2026-06-17-directnet-v6.4.8-accuracy.md`). **S0** floor-k diagnostic = KILL (basin-hopping, not an accuracy lever; env-gate `PYCIRCUITSIM_GDS_FLOOR_K` kept default-off). **S1** `--size large` (384×6) = KILL — **capacity is not the bind**: the larger net fits the value surface better (val ~3e-4) but COLLAPSES the tsmc7 opamp (3/4 seeds → gain 0) and regresses RO; tsmc5 SC stays flat at ~11.3 %. Remaining: **S2** (asymmetric DC continuation for the tsmc16 opamp basin — `run_dc_sweep` continuation-first) + **S3** (EKV-like analytic backbone — now the primary lever). Gate-running methodology: **CPU only** (`CUDA_VISIBLE_DEVICES=""`, `OMP=MKL=1`, repo `tools/ngspice-45.2`) reproduces S19's 10.78 %; CUDA mis-lands the fragile opamp basin (47 %). ⚠ tsmc5/tsmc12 V6.4.4 baselines absent on this machine (install from S19 sha256 manifest before the S4 board).
+
 **Shipping checkpoint mix** (resolver/install names in `results/v6_4_7/S19_promotion.md`):
 - tsmc7 = `v6_4_7_pivcor_w2_s7_tsmc7`
 - tsmc16 = `v6_4_7_s12cor_w3_s17_tsmc16`

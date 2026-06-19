@@ -114,3 +114,51 @@ The user noted some design rules might not hold. After the review, the resolutio
 - **Authoritative-gate re-verification** of any opamp flip across `OMP_NUM_THREADS ∈ {1,2,4}` with deterministic reproduction required before counting.
 - **Rule 16** quartet (MRE / R² / NRMSE / MaxErr) reported per tech for every arm.
 - Gate files under `results/v6_4_8/`. Dead ends recorded with the numbers that killed them. CHANGELOG + CLAUDE.md updated before any commit.
+
+---
+
+## Progress log (execution)
+
+**Branch:** `feat/v6.4.8` (from `feat/v6.4.7` @ `d9c3d6b`). **Methodology locked:**
+all gates run **CPU** (`CUDA_VISIBLE_DEVICES=""`, `OMP=MKL=1`, repo
+`tools/ngspice-45.2`) — reproduces S19's 10.78 % exactly; CUDA lands the fragile
+opamp on a different NR basin (47 %). Shipping tsmc7/tsmc16 ckpts installed into
+resolver slots `tsmc{7,16}_dn_medium_*`. ⚠ **tsmc5/tsmc12 V6.4.4 baselines are
+absent on this machine** — must be installed from the S19 sha256 manifest for the
+full S4 board.
+
+### ✅ S0 — floor-k settling diagnostic — **KILL** (committed `ed6a1b9`)
+Swept `k ∈ {0.3,0.5,0.6,1.0,2.0}` on the shipped tsmc7 opamp gate. k=0.5 → 10.78 %
+(reproduced). Gain wildly non-monotone (15.0 → 10.78 → **0** at k=0.6 → 42.7 →
+7.30): floor-k **hops NR basins**, not a controllable accuracy lever. k=2.0 "PASS"
+= **E3 false-pass** (NRMSE still 31.6 %). Env-gate kept as default-off diagnostic
+infra (`PYCIRCUITSIM_GDS_FLOOR_K`, Rule-5 preserved). Bonus finding: **tsmc7 opamp
+is itself basin-fragile** → strengthens the S2 case. `S0_floork_diagnostic.md`.
+
+### ✅ S1 — `--size large` (384×6, ≈0.9 M params) — **KILL: "capacity is not the bind"**
+control-v2 recipe (`large`, `--apply-filter off`, EMA, v2 data), 4 seeds ×
+{nmos,pmos}, pilots tsmc5 + tsmc7 (full 800 epochs, val MSE ~3e-4).
+- **tsmc5 switchcap flat ~11.3 %** (no SC win); RO regressed 2.61 → 9.6–12.7 %;
+  opamp 2/4 collapse; inverter NRMSE 1–2 % (no gain).
+- **tsmc7 opamp 0/4 PASS, 3/4 collapse to gain 0** (vs 10.78 % baseline); RO
+  regresses (only s42 passes); SC unchanged.
+- **The larger net fits the value surface BETTER yet LOSES the NR-fixed-point
+  properties** (opamp gain, RO period). The deriv-fidelity ⟂ opamp/RO tension is
+  **capacity-independent and capacity-worsened**; the S12 corridor-vs-opamp tension
+  is **not** capacity-bound. Confirms the plan thesis. `tsmc{5,7}_dn_lg_*` kept on
+  disk (gitignored), **none promoted**. `S1_large_{tsmc5_pilot,tsmc7_verdict}.md`.
+
+### ⏭ Next (resume here)
+- **S2** — asymmetric DC-continuation for the tsmc16 opamp basin. Design located
+  in code: `run_dc_sweep` (`simulation.py:419-444`) already carries the warm start
+  (`prev_solution`) but re-ramps sources per point via `use_source_stepping=True,
+  source_stepping_steps=5` (line 432-435), which can knock a multistable opamp off
+  the continuation branch. Lever = **continuation-first** (point>0: solve directly
+  from the neighbour with source-stepping disabled, fall back to the current
+  5-step+GMIN retry only on failure) + anchor from a railed Vin corner. **Must
+  preserve the converged Vout of monostable opamps (tsmc7/12/5)** — verify identical.
+  Note the S0 bonus: tsmc7 opamp is also basin-fragile, so S2 may help it too.
+- **S3** — EKV-like analytic backbone + bounded NN residual (now strongly motivated:
+  S1 proved the value-surface bias is not capacity-curable; only a structural
+  functional-form fix remains).
+- **S4** — compose + promote (needs the absent tsmc5/tsmc12 baselines installed first).
