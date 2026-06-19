@@ -148,6 +148,19 @@ control-v2 recipe (`large`, `--apply-filter off`, EMA, v2 data), 4 seeds ×
   is **not** capacity-bound. Confirms the plan thesis. `tsmc{5,7}_dn_lg_*` kept on
   disk (gitignored), **none promoted**. `S1_large_{tsmc5_pilot,tsmc7_verdict}.md`.
 
+#### ✅ S1 RE-RUN (2026-06-19/20) — "does re-running change the result?" → **NO**
+Two independent checks, both reproduce the KILL (`S1_rerun_verdict.md`):
+1. **Re-eval** of the original `tsmc7_dn_lg_s*` under the NEW continuation-first
+   solver: s7→gain 0, s17→361 (+121%) — still FAIL ⇒ the collapse is not a
+   source-stepping artifact.
+2. **Fresh re-train** (parallel ns `tsmc7_dn_lgB_s*`, same recipe/seeds, GPU 1,
+   ~17 h wall under heavy CPU contention): opamp **4/4 FAIL** (s42→0, s7→0, s31→0
+   collapse; s17→**361.4, byte-identical** to the original s17 basin) — an exact
+   reproduction of S1's 0/4. The over-gain basin is a robust architecture+seed
+   property, not training noise. **S1 stays KILLED; `large` not promoted.** The S2
+   win is on the **medium** ckpt — continuation-first cannot rescue the large net
+   (its value surface has no recoverable high-gain branch on most seeds).
+
 ### ✅ S2 — continuation-first DC sweep — **KEEP: tsmc7 opamp FLIPS 10.78%→8.63% PASS**
 Implemented in `run_dc_sweep` (`simulation.py`): for warm-started points (`point>0`)
 on NN circuits, the fast path now solves DIRECTLY from the neighbour with

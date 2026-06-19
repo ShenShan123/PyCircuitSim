@@ -51,6 +51,12 @@ ran the full 800 epochs to val MSE ~3e-4 (excellent value-surface fit).
   Confirms the plan thesis → the path is S2 (solver continuation) + S3 (EKV
   backbone). **Dead-end, recorded;** `tsmc{5,7}_dn_lg_*` kept on disk, none
   promoted. `results/v6_4_8/S1_large_{tsmc5_pilot,tsmc7_verdict}.md`.
+- **S1 RE-RUN (2026-06-19/20) — reproduces the KILL.** (1) Re-eval of the original
+  large ckpts under the new continuation-first solver: s7→0, s17→361 (still FAIL) ⇒
+  not a source-stepping artifact. (2) Fresh re-train (`tsmc7_dn_lgB_s*`, same recipe,
+  ~17 h wall under contention): opamp **4/4 FAIL** (3× collapse to 0, s17→**361.4
+  byte-identical** to the original) — exact reproduction of S1's 0/4. Capacity KILL
+  robust. `results/v6_4_8/S1_rerun_verdict.md`.
 
 ### S2 — continuation-first DC sweep — KEEP (tsmc7 opamp 10.78% FAIL → 8.63% PASS)
 
