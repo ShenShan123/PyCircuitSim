@@ -429,9 +429,29 @@ def run_dc_sweep(
             # This balances performance (fewer steps than Stage 1's 20) with convergence stability
             guess = op_solution if point_num == 0 else prev_solution
 
-            def _point_solve(use_gmin: bool, _guess=guess):
+            # S2 (V6.4.8) — continuation-first sweep solve for NN circuits.
+            # For warm-started points (point>0) the fast path solves DIRECTLY
+            # from the neighbouring DC point with source-stepping DISABLED (all
+            # sources held at their full value, NR seeded from the warm start),
+            # preserving the continuation branch. The legacy per-point homotopy
+            # re-ramps every source 0->full over 5 steps even when a warm start
+            # is supplied (solver.py source-stepping loop), which re-traces an
+            # ambiguous path and can knock a MULTISTABLE opamp (tsmc16) onto a
+            # spurious gain basin (gain 0 / 383 vs the correct ~197). The GMIN
+            # retry inside `_solve_dc_with_retry` re-enables the original 5-step
+            # source-stepping homotopy as the robust fallback, so this only
+            # affects the *path*, never the converged value of a MONOSTABLE cell
+            # (inverter VTC, tsmc5/7/12 opamp, single-device sweeps): a unique
+            # fixed point is found by either route. Gated on `has_nn` so the
+            # BSIM-CMG (LEVEL=72) DC-sweep path stays byte-identical.
+            warm = point_num > 0 and has_nn
+
+            def _point_solve(use_gmin: bool, _guess=guess, _warm=warm):
+                # Continuation-first: warm point + first attempt (use_gmin=False)
+                # => skip source-stepping. Any retry (use_gmin=True) restores it.
+                use_ss = (not _warm) or use_gmin
                 s = DCSolver(circuit, initial_guess=_guess, logger=solver.logger,
-                             use_source_stepping=True, source_stepping_steps=5,
+                             use_source_stepping=use_ss, source_stepping_steps=5,
                              use_gmin_stepping=use_gmin)
                 sol = s.solve(skip_header=True)
                 return s, sol

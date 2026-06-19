@@ -6,7 +6,7 @@ isn't burdened with chronology.
 
 ---
 
-## V6.4.8 — value-surface accuracy campaign (IN PROGRESS, branch `feat/v6.4.8`). S0 floor-k KILL (basin-hopping, not an accuracy lever), S1 `--size large` KILL (capacity is NOT the bind — large overfits the value surface and COLLAPSES the opamp / regresses RO). S2 (asymmetric DC continuation, tsmc16 opamp basin) + S3 (EKV-like analytic backbone) remain. (2026-06-17 →)
+## V6.4.8 — value-surface accuracy campaign (IN PROGRESS, branch `feat/v6.4.8`). S0 floor-k KILL (basin-hopping, not an accuracy lever), S1 `--size large` KILL (capacity is NOT the bind — large overfits the value surface and COLLAPSES the opamp / regresses RO). **S2 continuation-first DC sweep = KEEP — tsmc7 opamp 10.78% FAIL → 8.63% PASS (deterministic OMP∈{1,2,4}), tsmc16 opamp now NG-faithful, no regression; headline 14/16 → 15/16 conditional on tsmc5/tsmc12. (Plan's basin-de-fragilization hypothesis REFUTED — the 197/383/0 split is value-surface-owned; the win is path-preservation.)** S3 (EKV-like analytic backbone) + S4 (install tsmc5/tsmc12 baselines, re-verify, compose+promote) remain. (2026-06-17 →)
 
 Plan: `docs/plans/2026-06-17-directnet-v6.4.8-accuracy.md` (4-agent design review;
 its key act was falsifying its own cheapest proposal — the floor-k opamp "fix").
@@ -51,6 +51,37 @@ ran the full 800 epochs to val MSE ~3e-4 (excellent value-surface fit).
   Confirms the plan thesis → the path is S2 (solver continuation) + S3 (EKV
   backbone). **Dead-end, recorded;** `tsmc{5,7}_dn_lg_*` kept on disk, none
   promoted. `results/v6_4_8/S1_large_{tsmc5_pilot,tsmc7_verdict}.md`.
+
+### S2 — continuation-first DC sweep — KEEP (tsmc7 opamp 10.78% FAIL → 8.63% PASS)
+
+`run_dc_sweep` (`pycircuitsim/simulation.py`) now solves **warm-started** points
+(`point>0`) on **NN circuits** directly from the neighbouring DC point with
+**source-stepping disabled** (sources at full, NR seeded from the warm start). The
+legacy path re-ramped every source `0→full` over 5 steps even with a warm start,
+re-tracing an ambiguous homotopy that corrupts the continuation branch. The GMIN
+retry inside `_solve_dc_with_retry` restores the 5-step source-stepping homotopy as
+the robust fallback. **Gated on `has_nn`** ⇒ BSIM-CMG (LEVEL=72) DC-sweep path
+byte-identical (`verify_bsimcmg_*` unaffected).
+- **A/B (CPU, shipping `tsmc{7,16}_dn_medium`):** stash→OLD reproduces the documented
+  baseline exactly (tsmc7 10.78% FAIL, tsmc16 5.14% PASS); NEW: **tsmc7 opamp 8.63%
+  PASS** and tsmc16 4.92% PASS now **NG-locus-faithful** (NRMSE 69.5→17.0, trip
+  −146→−10mV). The tsmc7 flip is **deterministic across OMP∈{1,2,4}** (8.63 byte-
+  identical) — not a basin lottery (the S19 replication lesson + S0 basin-fragility
+  finding both demanded this check; it passes).
+- **No regression** (tsmc7+tsmc16): ring_osc 2.86/3.99, sram_snm force_ic+all-pos,
+  switchcap 1.02/2.01, inverter VTC 1.89/1.27 + tran 1.07/0.73, DC-55 23/23 (R²=1.0).
+  **Board for the testable techs 7/8 → 8/8.**
+- **Plan hypothesis REFUTED (recorded dead-end):** continuation does NOT change basin
+  selection — the `s12cor_w3` seed family stays 0/197/383/0 (s31 fixed at 383, s7/s42
+  collapse to 0 regardless). The 197/383/0 split is **value-surface-owned**, not
+  solver-path-owned. The real win is path-preservation: ~2 pp shaved off tsmc7's
+  systematic over-gain (just enough to cross) + the faithful tsmc16 trip recovered.
+- **Caveats → S3/S4:** tsmc7's pass is a gain-gate pass on a still-**unfaithful**
+  locus (trip −144mV, NRMSE 68%) — the value-surface over-gain bias remains, S3 EKV
+  backbone still motivated. **tsmc5/tsmc12 unverified** (V6.4.4 baselines absent);
+  their monostable opamps presumed unchanged but MUST be confirmed in S4 once
+  installed (also unblocks lifted-source 12/12). Headline **14/16 → 15/16
+  conditional**. `results/v6_4_8/S2_dc_continuation.md`.
 
 ---
 

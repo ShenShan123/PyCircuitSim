@@ -148,17 +148,34 @@ control-v2 recipe (`large`, `--apply-filter off`, EMA, v2 data), 4 seeds ×
   is **not** capacity-bound. Confirms the plan thesis. `tsmc{5,7}_dn_lg_*` kept on
   disk (gitignored), **none promoted**. `S1_large_{tsmc5_pilot,tsmc7_verdict}.md`.
 
+### ✅ S2 — continuation-first DC sweep — **KEEP: tsmc7 opamp FLIPS 10.78%→8.63% PASS**
+Implemented in `run_dc_sweep` (`simulation.py`): for warm-started points (`point>0`)
+on NN circuits, the fast path now solves DIRECTLY from the neighbour with
+source-stepping **disabled** (sources at full, NR from the warm start); the GMIN
+retry restores the 5-step source-stepping homotopy as the fallback. Gated on
+`has_nn` → BSIM-CMG path byte-identical. `S2_dc_continuation.md`.
+- **A/B (shipping slots, CPU):** tsmc7 opamp **10.78% FAIL → 8.63% PASS**
+  (reproduces the 10.78% baseline under the stash, then improves); **deterministic
+  across OMP∈{1,2,4}** (8.63/8.63/8.63, byte-identical). tsmc16 opamp 5.14%→4.92%
+  PASS and now **NG-locus-faithful** (NRMSE 69.5→17.0, trip −146→−10mV).
+- **No regression** on the testable techs (tsmc7+tsmc16): ring_osc 2.86/3.99,
+  sram_snm force_ic+all-pos, switchcap 1.02/2.01, inverter VTC 1.89/1.27, DC-55
+  23/23. **Board for the testable techs 7/8 → 8/8.**
+- **Plan hypothesis REFUTED (recorded dead-end):** continuation does NOT change
+  basin selection — the `s12cor_w3` seed family stays 0/197/383/0 (s31 unchanged at
+  383). The 197/383/0 split is **value-surface-owned**, not solver-path-owned. The
+  win came from path-preservation (shaving ~2 pp off tsmc7 over-gain + recovering the
+  tsmc16 faithful trip), not de-fragilization.
+- **Caveats → S4:** tsmc7's pass is a gain-gate pass on a still-unfaithful locus
+  (trip −144mV, NRMSE 68%) — S3 still motivated. **tsmc5/tsmc12 unverified** (absent
+  baselines); must confirm their monostable opamps are unchanged (and run
+  lifted-source 12/12) once installed. Headline **14/16 → 15/16 conditional**.
+
 ### ⏭ Next (resume here)
-- **S2** — asymmetric DC-continuation for the tsmc16 opamp basin. Design located
-  in code: `run_dc_sweep` (`simulation.py:419-444`) already carries the warm start
-  (`prev_solution`) but re-ramps sources per point via `use_source_stepping=True,
-  source_stepping_steps=5` (line 432-435), which can knock a multistable opamp off
-  the continuation branch. Lever = **continuation-first** (point>0: solve directly
-  from the neighbour with source-stepping disabled, fall back to the current
-  5-step+GMIN retry only on failure) + anchor from a railed Vin corner. **Must
-  preserve the converged Vout of monostable opamps (tsmc7/12/5)** — verify identical.
-  Note the S0 bonus: tsmc7 opamp is also basin-fragile, so S2 may help it too.
-- **S3** — EKV-like analytic backbone + bounded NN residual (now strongly motivated:
-  S1 proved the value-surface bias is not capacity-curable; only a structural
-  functional-form fix remains).
-- **S4** — compose + promote (needs the absent tsmc5/tsmc12 baselines installed first).
+- **S3** — EKV-like analytic backbone + bounded NN residual. Now doubly motivated:
+  S1 proved the value-surface bias is not capacity-curable, and S2 confirmed the
+  tsmc7 over-gain is value-surface-rooted (continuation only shaved the magnitude,
+  did not make the locus faithful). Only a structural functional-form fix remains.
+- **S4** — compose + promote; **first** install the absent tsmc5/tsmc12 baselines
+  from the S19 sha256 manifest, then re-verify the S2 change does not regress their
+  opamps + run lifted-source 12/12.
