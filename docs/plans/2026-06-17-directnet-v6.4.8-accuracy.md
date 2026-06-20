@@ -5,6 +5,23 @@
 
 **Predecessor:** `docs/plans/2026-06-10-directnet-v6.4.7-accuracy.md` (V6.4.7, shipped 14/16 + force_ic 8/8).
 
+> **STATUS (2026-06-20) — campaign in progress, headline 14/16 → 15/16 (conditional).**
+> The body below is the original plan; the authoritative outcomes are in the
+> **Progress log** at the bottom. In one line:
+> - **S0** floor-k = KILL (inert/basin-hopping). **S1** `--size large` = KILL
+>   ("capacity is not the bind"); **re-run (re-eval + fresh re-train) reproduces the
+>   KILL** (opamp 4/4 FAIL, s17→361 byte-identical).
+> - **S2** continuation-first DC sweep = **KEEP** — **tsmc7 opamp 10.78% FAIL → 8.63%
+>   PASS** (deterministic OMP∈{1,2,4}), tsmc16 opamp now NG-faithful, no regression.
+>   ⚠ The plan's S2 *hypothesis* (basin de-fragilization) is **REFUTED** — the win is
+>   path-preservation, not basin selection; the 0/197/383 seed split is
+>   value-surface-owned. ⚠ tsmc7's pass is a gain-gate pass on a still-unfaithful
+>   locus (trip −144mV) → S3 still motivated.
+> - **S3** (EKV backbone) + **S4** (promotion) **remain.** S3 now targets the **tsmc5
+>   switchcap** (the 16th cell) + a faithful tsmc7 opamp. S4 is blocked: the exact
+>   tsmc5/tsmc12 V6.4.4 baselines are **unrecoverable on this machine** (sha256
+>   mismatch) — needed to confirm 15/16 and run lifted-source 12/12.
+
 ---
 
 ## Starting point (V6.4.7 ship)
@@ -67,6 +84,11 @@ This guards the campaign against spending effort on an inert knob and against an
 
 ### S2 — Asymmetric branch-selection DC continuation for the tsmc16 opamp (+ same-basin SWA rider) (~30–60 LOC solver, low GPU)
 
+> **OUTCOME: KEEP, but the hypothesis below is REFUTED.** Continuation-first does NOT
+> change basin selection (the 0/197/383 split is value-surface-owned). It KEPT anyway
+> because path-preservation flipped the **tsmc7** opamp (10.78%→8.63% PASS,
+> deterministic) and made tsmc16 NG-faithful. See Progress log → S2.
+
 The tsmc16 opamp passes only via a lucky seed on the 197 basin. Make the basin selection **deterministic**: anchor the DC sweep from a railed Vin corner (where the branch is unambiguous) and **preserve the warm start across sweep points** — today the per-point source-stepping rescales all sources from 0 and discards `prev_solution` (`solver.py:622-642`), which is the path-dependence S19 observed. Carry a **same-basin SWA** weight-average over the 197-basin seeds as a variance-reduction rider (`--swa-mode swa` exists, never used as a promotion recipe; averaging across *different* basins is meaningless, so cluster-then-average).
 - **Targets:** de-fragilize the tsmc16 opamp (deterministic PASS); a robustness win, not a magnitude win.
 - **Kill gate / E3 guard:** the tracked branch must match the **NGSPICE BSIM-CMG locus** (`verify_complex_opamp.py:108-112`), not merely be the passing one; if continuation still lands on the 383/0 basin → record dead-end (sibling to the killed symmetric P0-A homotopy).
@@ -75,6 +97,13 @@ The tsmc16 opamp passes only via a lucky seed on the 197 basin. Make the basin s
 - **Rules:** none broken (solver-orchestration; Rule 1/5 untouched). Must not change the converged solution of any *monostable* opamp (tsmc7/12/5) — verify identical converged Vout there.
 
 ### S3 — Analytic charge-based (EKV-like) backbone + bounded NN residual on the `id` column (~120–180 LOC model + ~30 CLI, ~30–50 GPU-h)
+
+> **STATUS: NOT STARTED — now the sole path to 16/16.** Target reprioritized: the
+> tsmc7 opamp already PASSES gain via S2 (though on an unfaithful locus), so S3's
+> primary target is the **tsmc5 switchcap** (charge-sheet triode self-limiting of
+> low-Vds conduction), with the tsmc7 opamp *faithfulness* as the secondary. GPU is
+> now free; tsmc5 v2 data is present. Gate before any training: Rule-1 finite-diff
+> autograd consistency on the EKV core.
 
 The one **S10-trap-proof** attack on the value-surface opamp/SC bias. Compose the `id` output as `Id(V) = Id_core(Vgs,Vds,Vbs; θ) + tanh-bounded · r_NN(V)`, where `Id_core` is a differentiable closed form (EKV/charge-sheet style) whose Vds/Vgs functional dependence is fixed-physical (monotone `Id(Vgs)`; finite, positive, rolling-off saturation `gds` via a `(1+λ·Vds)` CLM term with NN-predicted **positive** coefficients), and `r_NN` is the existing trunk passed through a bounded gate (±20–50%). The 12 other heads stay (E2 smoothness prior).
 - **Why it escapes the S10 trap:** S10 supervised the *derivative via a loss*, which competed with the value head for capacity and flattened the high-leverage op-point gds → gain collapse. Here the slope is **wired into the functional form** — autograd through the differentiable core yields a structurally-correct, sign-/magnitude-bounded `gds` with **zero added loss terms**, so there is no value-vs-derivative competition. Rule 1 is *preserved* (and made more physical): gm/gds/gmb still come from `torch.autograd.grad(id, V)`.
@@ -106,7 +135,19 @@ The user noted some design rules might not hold. After the review, the resolutio
 
 ## Realistic outcome
 
-**Best case 15/16**; **16/16 contingent** on the S3 backbone landing *both* the tsmc7 opamp and the last SC margin without an S12-style collapse — a real but unproven ceiling. The honest framing: the V6.4.7 campaign already harvested the cheap wins, so expected net gain is fractional (≈0.5–1 cell). The campaign's value is concentrated in **S1** (a nearly-free test of the untrained capacity tier and the capacity-tension hypothesis) and **S3** (the only principled, S10-trap-proof structural attack on the value-surface bias). S0 and S2 are cheap insurance: S0 prevents a wasted gate-loosening, S2 converts a fragile tsmc16 pass into a deterministic one.
+**Forecast (pre-execution):** best case 15/16; 16/16 contingent on S3. Expected net
+gain fractional; value concentrated in S1 (capacity test) and S3 (structural).
+
+**Actual (as executed, 2026-06-20):** the forecast's *number* held but via a
+different lever than predicted. **S2 delivered the +1 cell (14/16 → 15/16
+conditional)** — not as the planned tsmc16 de-fragilization (that hypothesis was
+refuted), but by flipping the **tsmc7** opamp (10.78% → 8.63% PASS) when
+continuation-first stopped the per-point source re-ramp from corrupting the
+fixed point. S1 was a clean KILL (capacity not the bind), re-confirmed by a fresh
+re-train. **16/16 now rests entirely on S3** closing the **tsmc5 switchcap** (and,
+secondarily, making the tsmc7 opamp's locus faithful — it currently passes gain on
+an unfaithful trip). S0 was the cheap insurance it was billed as. Net so far:
+**+1 cell, fractional as predicted, from the lever (S2) that was billed as insurance.**
 
 ## Verification
 
