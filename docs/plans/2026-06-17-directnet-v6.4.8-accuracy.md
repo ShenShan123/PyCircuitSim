@@ -5,22 +5,25 @@
 
 **Predecessor:** `docs/plans/2026-06-10-directnet-v6.4.7-accuracy.md` (V6.4.7, shipped 14/16 + force_ic 8/8).
 
-> **STATUS (2026-06-20) — campaign in progress, headline 14/16 → 15/16 (conditional).**
+> **STATUS (2026-06-20) — CAMPAIGN CLOSED, headline 14/16 → 15/16 (conditional).**
 > The body below is the original plan; the authoritative outcomes are in the
 > **Progress log** at the bottom. In one line:
 > - **S0** floor-k = KILL (inert/basin-hopping). **S1** `--size large` = KILL
->   ("capacity is not the bind"); **re-run (re-eval + fresh re-train) reproduces the
->   KILL** (opamp 4/4 FAIL, s17→361 byte-identical).
+>   ("capacity is not the bind"); re-run reproduces the KILL.
 > - **S2** continuation-first DC sweep = **KEEP** — **tsmc7 opamp 10.78% FAIL → 8.63%
 >   PASS** (deterministic OMP∈{1,2,4}), tsmc16 opamp now NG-faithful, no regression.
->   ⚠ The plan's S2 *hypothesis* (basin de-fragilization) is **REFUTED** — the win is
->   path-preservation, not basin selection; the 0/197/383 seed split is
->   value-surface-owned. ⚠ tsmc7's pass is a gain-gate pass on a still-unfaithful
->   locus (trip −144mV) → S3 still motivated.
-> - **S3** (EKV backbone) + **S4** (promotion) **remain.** S3 now targets the **tsmc5
->   switchcap** (the 16th cell) + a faithful tsmc7 opamp. S4 is blocked: the exact
->   tsmc5/tsmc12 V6.4.4 baselines are **unrecoverable on this machine** (sha256
->   mismatch) — needed to confirm 15/16 and run lifted-source 12/12.
+>   The S2 *hypothesis* (basin de-fragilization) is REFUTED — the win is
+>   path-preservation. **This is the sole V6.4.8 deliverable (+1 cell).**
+> - **S3** EKV analytic backbone = **KILL** — built clean (charge-sheet core +
+>   bounded residual, Rule-1-safe, default-off), but **value-surface-neutral on the
+>   tsmc5 switchcap** (11.6% vs 11.69%; the over-conduction is loss-compression-owned,
+>   not shape-owned) and **regresses the opamp locus** (additive residual overwhelms
+>   the offset-dominated asinh-µA band). The structural-functional-form lever — the
+>   last one funded — is exhausted. No checkpoint promoted.
+> - **S4** promotion = **BLOCKED** (no surviving S3 arm; the exact tsmc5/tsmc12
+>   V6.4.4 baselines are unrecoverable here — sha256 mismatch — so 15/16 cannot be
+>   confirmed). 16/16 NOT reached; needs a fresh campaign (loss/normalization
+>   de-compression in the µA band, or a transient/charge SC investigation).
 
 ---
 
@@ -138,16 +141,20 @@ The user noted some design rules might not hold. After the review, the resolutio
 **Forecast (pre-execution):** best case 15/16; 16/16 contingent on S3. Expected net
 gain fractional; value concentrated in S1 (capacity test) and S3 (structural).
 
-**Actual (as executed, 2026-06-20):** the forecast's *number* held but via a
-different lever than predicted. **S2 delivered the +1 cell (14/16 → 15/16
-conditional)** — not as the planned tsmc16 de-fragilization (that hypothesis was
-refuted), but by flipping the **tsmc7** opamp (10.78% → 8.63% PASS) when
-continuation-first stopped the per-point source re-ramp from corrupting the
-fixed point. S1 was a clean KILL (capacity not the bind), re-confirmed by a fresh
-re-train. **16/16 now rests entirely on S3** closing the **tsmc5 switchcap** (and,
-secondarily, making the tsmc7 opamp's locus faithful — it currently passes gain on
-an unfaithful trip). S0 was the cheap insurance it was billed as. Net so far:
-**+1 cell, fractional as predicted, from the lever (S2) that was billed as insurance.**
+**Actual (as executed + closed, 2026-06-20):** the forecast's *best-case number*
+(15/16) held but **16/16 was NOT reached** and via a different lever than predicted.
+**S2 delivered the +1 cell (14/16 → 15/16 conditional)** — not as the planned tsmc16
+de-fragilization (that hypothesis was refuted), but by flipping the **tsmc7** opamp
+(10.78% → 8.63% PASS) when continuation-first stopped the per-point source re-ramp
+from corrupting the fixed point. **S0/S1/S3 are all clean KILLs**: S0 floor-k inert,
+S1 capacity not the bind, **S3 the structural EKV backbone is value-surface-neutral on
+the tsmc5 switchcap (loss-compression-owned, not shape-owned) and regresses the opamp
+locus (additive-residual authority in the offset-dominated asinh-µA band).** Every
+funded lever class — cheap data/loss, capacity, derivative-via-loss, solver
+continuation, structural functional-form — has now been tried; only S2 (path-
+preservation) moved a gate. **Net: +1 cell, fractional as predicted, from the lever
+(S2) billed as insurance.** 16/16 needs a fresh campaign attacking the µA-band loss
+compression directly (normalization de-compression) or the SC transient/charge path.
 
 ## Verification
 
@@ -225,11 +232,50 @@ retry restores the 5-step source-stepping homotopy as the fallback. Gated on
   baselines); must confirm their monostable opamps are unchanged (and run
   lifted-source 12/12) once installed. Headline **14/16 → 15/16 conditional**.
 
-### ⏭ Next (resume here)
-- **S3** — EKV-like analytic backbone + bounded NN residual. Now doubly motivated:
-  S1 proved the value-surface bias is not capacity-curable, and S2 confirmed the
-  tsmc7 over-gain is value-surface-rooted (continuation only shaved the magnitude,
-  did not make the locus faithful). Only a structural functional-form fix remains.
-- **S4** — compose + promote; **first** install the absent tsmc5/tsmc12 baselines
-  from the S19 sha256 manifest, then re-verify the S2 change does not regress their
-  opamps + run lifted-source 12/12.
+### ✅ S3 — EKV analytic backbone + bounded NN residual — **KILL** (`results/v6_4_8/S3_ekv_verdict.md`)
+Built the charge-sheet EKV core `Id = asinh-encode(Id_core) + α·tanh(trunk_id)` on
+the `id` column (committed `532777c`, default-off, byte-identical stock loading;
+geometry-aware coefficient head; Rule-1-safe all-smooth ops). Pre-training structural
+gates PASS (core self-limits `Id(Vds=0)=3e-11A`, monotone, gds>0 rolling off; Rule-1
+FD-vs-autograd clean). **The structural-functional-form lever — the plan's last —
+does not reach either gap:**
+- **tsmc5 switchcap NEUTRAL** (3 seeds: 11.59/12.09/12.06% vs **11.69%** ctlv2
+  control). The over-conduction is **loss-compression-rooted** (asinh log-knee at µA,
+  finding 3), not shape-rooted — the core's coefficients fit the *same* compressed
+  loss and reproduce the *same* over-conduction. Held-out id-NRMSE ~0.24% (good fit),
+  inverter + DC-55 preserved.
+- **tsmc5 opamp LOCUS REGRESSED** (NRMSE 15.5→52.7%, trip −12→−96mV; gain still
+  PASS 0.74%). Residual-escape probe: in the offset-dominated asinh-µA band the
+  z-signal is only ~0.02–0.1 while an α=0.5 residual is ±0.5 z, so the additive
+  residual **overwhelms the moderate-current region** the opamp output stage and SC
+  traverse — corrupting the Vout(Vin) locus even as the single peak-gain number
+  survives. tsmc7 opamp confirms the same locus regression (secondary target,
+  also harmed, not helped).
+- ring + sram force_ic FAIL at **both** ctlv2 baseline and EKV → ctlv2-vs-shipping
+  artifacts (campaign machine lacks the V6.4.4 tsmc5 baseline), **not** EKV.
+- **Dead-ends distinct from S1/S10:** S1 = capacity; S10 = derivative-via-loss; **S3 =
+  the structural form is also defeated**, by loss-compression + additive-residual
+  authority (zero loss terms, Rule 1 preserved, yet still fails). Implementation kept
+  default-off recoverable infra (precedent: S0 env-gate, Sobolev/subthresh). **No
+  checkpoint promoted.** Untested sub-lever (smaller α / multiplicative residual)
+  recorded but **not funded** — it cannot close the α-independent SC target.
+
+### ⛔ S4 — compose + promote — **BLOCKED (no surviving S3 arm + missing baselines)**
+S3 produced no promotable arm, so there is nothing new to compose. The S2 win
+(tsmc7 opamp 8.63% PASS, tsmc16 NG-faithful) stands as the V6.4.8 deliverable.
+**S4 promotion remains blocked**: the exact tsmc5/tsmc12 V6.4.4 baselines are
+**unrecoverable on this machine** (sha256 mismatch), so the 15/16 headline cannot
+be confirmed (tsmc5/tsmc12 monostable-opamp no-regression + lifted-source 12/12 need
+the real baselines). The ctlv2 controls are a *different* recipe (e.g. ctlv2 tsmc5
+fails ring + force_ic where the V6.4.4 baseline passed), so they cannot stand in for
+the shipping baselines. **Action for whoever resumes:** install tsmc5/tsmc12 V6.4.4
+baselines from the S19 sha256 manifest, then confirm S2 holds there.
+
+### Campaign close
+**V6.4.8 ships the S2 win only: headline 14/16 → 15/16 conditional** (continuation-first
+DC sweep, deterministic). S0/S1/S3 are recorded KILLs; the four accuracy gaps that
+remain (tsmc5 switchcap, tsmc7 opamp locus, inverter MaxErr) are now established as
+**neither cheap-lever, capacity, derivative-loss, nor structural-form addressable** —
+the switchcap specifically is loss-compression-owned. Closing them needs a different
+class of fix (loss/normalization de-compression in the µA band, or a transient/charge
+investigation of the SC gate) — a fresh campaign, not a continuation of V6.4.8.
