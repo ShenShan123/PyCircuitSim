@@ -85,11 +85,14 @@ Inverter circuit must PASS Transient Analysis against NGSPICE ground truth withi
 
 ## Status
 
+**V6.4.9 — S/M/L capacity benchmark (2026-06-21, branch `feat/v6.4.8`).** Clean single-recipe study: regenerated all 8 datasets (full Vth+geometry) and trained **all 24** checkpoints (small/medium/large × tsmc5/7/12/16 × N/P) on one identical recipe (`--apply-filter off --swa-mode ema --seed 42`); tested 6 suites × 12 (size,tech) cells. **Complex pass-rate 6/16 → 9/16 → 12/16 (S→M→L).** Device-level Id-Vgs/inverter accuracy excellent at every size (mean NRMSE <4%; device fidelity is NOT the bind); the opamp is value-surface-fragile (collapses S+M, recovers at L only for tsmc5/tsmc12; tsmc7/tsmc16 need the pivcor/s12cor recipes); switchcap needs capacity (0→3/4); tsmc5 switchcap never passes (µA-band, V6.4.8-S3). Report: `results/benchmark_sml/REPORT.md`; harness: `scripts/benchmark_*.{sh,py}`; full write-up in CHANGELOG "V6.4.9". ⚠ This benchmark left clean-recipe checkpoints in the `tsmc{X}_dn_{small,medium,large}` resolver slots — the V6.4.7 shipping checkpoints persist under their own names (`v6_4_7_pivcor_*`, `v6_4_7_s12cor_*`, `*_c17`); re-point symlinks to restore the production mix.
+
 **Current ship: V6.4.7** (branch `feat/v6.4.7`) — per-tech complex-circuit mix at **14/16 gates + `force_ic` 8/8**; the full success criterion (headline > 11/16 AND force_ic 8/8) is **MET** (+3 vs the S8 baseline, +6 vs V6.4.4 canonical 8/16).
 
 **V6.4.8 CLOSED** (branch `feat/v6.4.8`, from `d9c3d6b`) — value-surface accuracy campaign (plan `docs/plans/2026-06-17-directnet-v6.4.8-accuracy.md`). **Ships the S2 win only: headline 14/16 → 15/16 conditional.** **S0** floor-k = KILL (basin-hopping, not an accuracy lever; env-gate `PYCIRCUITSIM_GDS_FLOOR_K` kept default-off). **S1** `--size large` = KILL — **capacity is not the bind** (larger net fits the surface better but COLLAPSES the opamp / regresses RO; re-run reproduces it byte-identical). **S2** continuation-first DC sweep = **KEEP**: `run_dc_sweep` solves warm-started points (`point>0`, NN circuits) directly from the neighbour with source-stepping disabled (GMIN retry restores it as fallback; BSIM-CMG path byte-identical). **tsmc7 opamp FLIPS 10.78% FAIL → 8.63% PASS, deterministic across OMP∈{1,2,4}**; tsmc16 opamp now NG-locus-faithful (NRMSE 69.5→17.0, trip −146→−10mV); no regression. Basin-de-fragilization hypothesis REFUTED (0/197/383 split is value-surface-owned); the win is path-preservation. **S3** EKV analytic backbone (charge-sheet `Id_core` + bounded asinh-z residual, `direct_net._EKVCore`, `--ekv-core`, Rule-1-safe, default-off, stock-ckpt byte-identical) = **KILL** — pre-train structural gates PASS but **value-surface-NEUTRAL on the tsmc5 switchcap** (3 seeds 11.6/12.1/12.1% vs 11.69% ctlv2 control; the over-conduction is **loss-compression-owned** at the asinh-µA log-knee, NOT shape-owned) and **REGRESSES the opamp locus** (NRMSE 15.5→52.7%, trip −12→−96mV — the additive residual overwhelms the offset-dominated asinh-µA band, confirmed by a residual-escape probe). No checkpoint promoted; kept default-off recoverable infra. **S4** promotion = **BLOCKED** (no surviving S3 arm; tsmc5/tsmc12 V6.4.4 baselines unrecoverable here — sha256 mismatch — so 15/16 cannot be confirmed). **16/16 NOT reached**; every funded lever class (cheap data/loss, capacity, derivative-via-loss, solver continuation, structural form) is exhausted → the residual gaps need a fresh campaign (µA-band loss/normalization de-compression, or an SC transient/charge investigation). Gate methodology: **CPU only** (`CUDA_VISIBLE_DEVICES=""`, `OMP=MKL=1`, repo `tools/ngspice-45.2`); ⚠ tsmc5/tsmc12 V6.4.4 baselines absent on this machine.
 
 **Shipping checkpoint mix** (resolver/install names in `results/v6_4_7/S19_promotion.md`):
+
 - tsmc7 = `v6_4_7_pivcor_w2_s7_tsmc7`
 - tsmc16 = `v6_4_7_s12cor_w3_s17_tsmc16`
 - tsmc5 + tsmc12 = V6.4.4 baseline `tsmc{5,12}_dn_medium` (unchanged; **absent on the campaign machine** — install from the sha256 manifest, see gate file)
@@ -261,7 +264,6 @@ Both LEVEL=73 (single-shot MLP, primary) and LEVEL=74 (autoregressive Transforme
 13. **Unified CLI** — `python -m bsimar.cli.train --model direct --size {small,medium,large} --device-type {nmos,pmos} --tech-scope {tsmc5,tsmc7,universal} ...`. With `--tech-scope tsmc{5,7}` the default save_prefix is `tsmc{X}_dn_<size>_<device>` (recognized by the parser preempt cascade). Same `.npz` from PyCMG; checkpoints under `external_compact_models/bsimar/checkpoints/`. V6.4.7 flags (all default-off / behavior-preserving): `--swa-mode {none,ema,swa}` + `--ema-decay`; `--apply-filter {on,off}` + `--class-weights`; `--enable-subvt-off`; and the optional loss terms `--sobolev` / `--subthresh`.
 14. **Charge conservation** — simulator always computes `qs = -(qg + qd + qb)` analytically, even for 13-output models that directly predict `qs`. Guarantees Kirchhoff conservation at every transient timestep.
 15. *(Removed — Vds-correction behavior is self-documented in `_apply_vds_correction`, `pycircuitsim/models/mosfet_nn.py`; see git history.)*
-
 16. Always report MRE (%), R^2, NRMSE, Max error (mV) metrics per tech.
 17. **Exclude ASAP7** — out of scope at this stage (see Status → What's next).
 18. **DirectNet only** — do NOT train/eval the LEVEL=74 BSIMAR Transformer (parked; see Status → What's next).
@@ -269,14 +271,6 @@ Both LEVEL=73 (single-shot MLP, primary) and LEVEL=74 (autoregressive Transforme
 20. *(Removed — see git history.)*
 
 ---
-
-## References
-
-- **ngspice** — physics equation verification.
-- **Xyce** — architecture patterns for device/solver separation.
-- **BSIM-CMG** — FinFET compact model (LEVEL=72), via PyCMG.
-- **ASAP7** — https://github.com/The-OpenROAD-Project/asap7_pdk_r1p7.git
-- **PyCMG** — https://github.com/ShenShan123/PyCMG.git
 
 ## Important Paths
 
@@ -296,3 +290,4 @@ Both LEVEL=73 (single-shot MLP, primary) and LEVEL=74 (autoregressive Transforme
 * Always record the dead end proposal (the one being reverted), they are as important as the successful ones.
 * **Never be lazy** — never simplify code or skip tests. **NEVER** use simplified equations or self-defined CMG models as reference; ALWAYS use simulation results as ground truth.
 * **Use subagents** — second agent for staff-engineer plan review; multiple subagents on separate branches to try multiple solutions; roll back to main when a subagent hits a dead end.
+* Use **GPUs in parallel** when you train NN models.

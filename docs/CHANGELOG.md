@@ -6,6 +6,55 @@ isn't burdened with chronology.
 
 ---
 
+## V6.4.9 — DirectNet small/medium/large capacity benchmark (branch `feat/v6.4.8`, 2026-06-21)
+
+A clean, single-recipe capacity study across all 4 TSMC techs, answering "how does
+DirectNet accuracy scale with model size?" Report: `results/benchmark_sml/REPORT.md`
+(+ `benchmark_data.json`). Harness: `scripts/benchmark_{gen_data,train_sml,run_tests}.sh`
++ `scripts/benchmark_collect.py`.
+
+**Method (capacity = the only variable).** Regenerated all 8 per-tech datasets on the
+canonical recipe (`--enable-inv-trip --enable-subvt-off`, `--variants all` ⇒ full Vth +
+L/NFIN/T geometry grid; ~2.0–2.6 M rows/tech, unversioned filenames). Trained **all 24**
+checkpoints (small 128×3 / medium 256×5 / large 384×6) × {tsmc5,7,12,16} × {nmos,pmos} on
+one identical clean recipe (`--apply-filter off --swa-mode ema --seed 42`; no loss
+preset / ekv / sobolev / corridor). 9-way GPU concurrency (xargs pool, 3 jobs/GPU; the
+nets are data-loader bound, GPUs sat ~3% at 3-way). All larges ran the full 800 epochs
+(best val ~2.5e-4). Tested each (size,tech) via the parser env-override
+(`PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}`) + `--tech`, CPU-pinned (repo ngspice-45.2,
+OMP=MKL=1): 6 suites × 12 cells = 72 runs, serialized by size / parallel within (the
+harnesses' scratch dirs are tech- but not size-keyed). 0 crashes.
+
+**Headline result — circuit pass-rate rises monotonically with capacity: 6/16 → 9/16 →
+12/16** (small → medium → large complex gates). But the composition is the real finding:
+- **Device-level Id-Vgs + inverter accuracy is excellent at every size** (mean NRMSE <4%,
+  most <2%; inverter VTC+tran 16/16 PASS all sizes/techs). Capacity barely moves it; at the
+  finer nodes the large net slightly *overfits* the device surface (tsmc12 DC mean NRMSE
+  0.36%→1.25% medium→large). **Device fidelity is NOT the bind.**
+- **Opamp = hardest, value-surface-fragile gate.** Open-loop gain collapses to ~0
+  (NRMSE ~70%) at small AND medium for all 4 techs; recovers to PASS only at **large**, and
+  only for tsmc5 + tsmc12 (tsmc12 large: gain err 6.25%, locus NRMSE 1.0%). tsmc7/tsmc16
+  never pass on the clean recipe — exactly why the *shipping* tsmc7/tsmc16 needed special
+  recipes (pivcor / s12cor). **Refines V6.4.8-S1**: the high-gain basin is capacity- AND
+  tech-sensitive, not a clean capacity win or loss.
+- **Switched-cap needs capacity:** 0/4 (small) → 3/4 (medium & large); tsmc5 never passes
+  (~11–12% charge err — its µA-band loss-compression over-conduction, V6.4.8-S3, capacity-
+  independent).
+- **Ring-osc**: tsmc12/16 pass every size, tsmc7 only at large, tsmc5 never. **SRAM**
+  (all-lobes-positive gate) 4/4 every size.
+
+**Bottom line:** larger capacity helps circuit-level behaviour overall (12/16 at large) but
+does NOT close the two recipe-sensitive gaps (tsmc7/tsmc16 opamp, tsmc5 switchcap) that the
+V6.4.x campaigns already attributed to value-surface / loss-compression, not capacity.
+
+**Checkpoint-slot caveat.** This benchmark trained clean-recipe checkpoints into the resolver
+slots `tsmc{X}_dn_{small,medium,large}_{nmos,pmos}` (overwriting the prior `tsmc7_dn_medium`
+symlinks → pivcor and the real `tsmc16_dn_medium`). The V6.4.7 shipping checkpoints persist
+on disk under their own names (`v6_4_7_pivcor_w2_s7_tsmc7_*`, `v6_4_7_s12cor_w3_s17_tsmc16_*`,
+`*_c17`); restore the V6.4.7 production mix by re-pointing those symlinks if needed.
+
+---
+
 ## V6.4.8+ — complex-circuit parametric sweep harness + TSMC7 broad retrain (branch `feat/v6.4.8`, 2026-06-20)
 
 Plan: `docs/plans/2026-06-20-directnet-complex-circuit-sweeps.md`. Brings the

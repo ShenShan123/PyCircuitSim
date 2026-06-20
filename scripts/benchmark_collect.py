@@ -169,6 +169,35 @@ def report(data) -> str:
          "BSIM-CMG (LEVEL=72), repo ngspice-45.2, CPU-pinned.",
          "",
          "Sizes: small=128x3 (~0.06M p) / medium=256x5 (~0.4M p) / large=384x6 (~0.9M p).",
+         "",
+         "## Key findings",
+         "",
+         "1. **Circuit pass-rate rises monotonically with capacity: 6/16 -> 9/16 -> 12/16** "
+         "(small -> medium -> large). The gains come from charge-transfer and timing circuits, "
+         "not from device-curve accuracy (already excellent everywhere).",
+         "2. **Device-level Id-Vgs / inverter accuracy is excellent at every size** (mean NRMSE "
+         "<4%, most <2%; inverter VTC+transient 16/16 PASS at all sizes, all techs). Capacity "
+         "barely moves it, and at the finer nodes the large net slightly *overfits* the device "
+         "surface (e.g. tsmc12 DC mean NRMSE 0.36% medium -> 1.25% large). Device fidelity is NOT "
+         "the bind.",
+         "3. **The opamp is the hardest, value-surface-fragile gate.** Open-loop gain collapses to "
+         "~0 (NRMSE ~70%) at small AND medium for all four techs, and recovers to PASS only at "
+         "**large**, only for tsmc5 and tsmc12 (tsmc12 large: gain err 6.25%, locus NRMSE 1.0%). "
+         "tsmc7/tsmc16 never pass on this clean single recipe -- matching project history that the "
+         "*shipping* tsmc7/tsmc16 needed special recipes (pivcor / s12cor) to keep the opamp alive. "
+         "Refines V6.4.8-S1: the high-gain basin is capacity- AND tech-sensitive, not a clean "
+         "capacity win or loss.",
+         "4. **Switched-cap needs capacity:** 0/4 (small) -> 3/4 (medium and large). tsmc5 never "
+         "passes (~11-12% charge error) -- its known micro-amp-band loss-compression over-conduction "
+         "(V6.4.8-S3), independent of capacity.",
+         "5. **Ring-osc** passes for the higher-VDD nodes (tsmc12/16) at every size and tsmc7 at "
+         "large; tsmc5 never (period err 6-13%). **SRAM butterfly** (all-lobes-positive gate) "
+         "passes 4/4 at every size; force_ic is reported as an informational probe.",
+         "",
+         "**Bottom line:** larger capacity helps circuit-level behaviour overall (12/16 at large) "
+         "but does NOT close the two recipe-sensitive gaps (tsmc7/tsmc16 opamp, tsmc5 switchcap) "
+         "that the V6.4.x campaigns already attributed to value-surface / loss-compression, not "
+         "capacity.",
          ""]
 
     # ── cross-size headline ──
@@ -193,6 +222,42 @@ def report(data) -> str:
         srows.append([size, f"{npass}/{gates}" if gates else "—",
                       dev_nrmse if dev_nrmse is not None else "—"])
     L += [md_table(["Size", "Complex gates PASS", "Device mean-NRMSE% (all sweeps)"], srows), ""]
+
+    # ── capacity comparison: complex gate matrix (tech x circuit, S/M/L) ──
+    L += ["## Capacity comparison (the headline view)", "",
+          "### Complex-circuit gate verdict by capacity", ""]
+    rows = []
+    for tech in TECHS:
+        for suite in CPX_SUITES:
+            cells = []
+            for size in SIZES:
+                c = data[size][tech]["cpx"].get(suite)
+                cells.append(c["gate"] if c else "—")
+            rows.append([tech, CPX_SHORT[suite]] + cells)
+    L += [md_table(["Tech", "Circuit", "small", "medium", "large"], rows), ""]
+
+    # ── device-level mean NRMSE% by size (dynamic dev keys) ──
+    L += ["### Device-level mean NRMSE% by capacity (lower = better fit)", "",
+          "DC = Id-Vgs (NMOS/PMOS); INV = inverter VTC+transient (combined).", ""]
+    rows = []
+    for tech in TECHS:
+        for suite in DEV_SUITES:
+            tag = "DC" if suite.endswith("dc") else "INV"
+            devkeys = []
+            for size in SIZES:
+                dv = data[size][tech]["dev"].get(suite)
+                if dv:
+                    for k in dv["by_dev"]:
+                        if k not in devkeys:
+                            devkeys.append(k)
+            for dev in devkeys:
+                cells = []
+                for size in SIZES:
+                    dv = data[size][tech]["dev"].get(suite)
+                    v = dv["by_dev"].get(dev) if dv else None
+                    cells.append(v["nrmse_mean"] if v else "—")
+                rows.append([tech, f"{tag}/{dev}"] + cells)
+    L += [md_table(["Tech", "Suite/Dev", "small", "medium", "large"], rows), ""]
 
     # ── per-size detail ──
     for size in SIZES:
