@@ -6,6 +6,119 @@ isn't burdened with chronology.
 
 ---
 
+## V6.4.8+ — complex-circuit parametric sweep harness + TSMC7 broad retrain (branch `feat/v6.4.8`, 2026-06-20)
+
+Plan: `docs/plans/2026-06-20-directnet-complex-circuit-sweeps.md`. Brings the
+inverter harness's parametric-sweep capability (`tests/common/nn_sweep.py`) to
+the four complex circuits, and retrains TSMC7 broad so the swept space is
+in-distribution. The four single-point `verify_complex_*.py` ship gates are
+**untouched** (authoritative gate, campaign closed at 15/16).
+
+**New infra (additive):**
+- `tests/common/complex.py` — fixed the **L cache-key bug** (the baked-modelcard
+  cache keyed `(name, vt, nfin)`, dropping L → two variants sharing that key
+  aliased to the first one's file); the key now carries both per-device VTs,
+  both L, both NFIN. Extended `BenchTech` with `nmos_vt`/`pmos_vt`/`nfin_p`
+  (+ `effective_*` properties; defaults preserve every existing caller).
+  Added `usable_vts()` (ground-truth `vt_pairs` ∩ DirectNet local vocab) and
+  `bench_variant()` (resolves NMOS/PMOS VT **independently** from each side's
+  own `VtPair`; raises on an out-of-vocab VT so it can never silently fall to
+  LOCAL_UNKNOWN). Added per-circuit stimulus dataclasses + parametric
+  NGSPICE/DirectNet programmatic builders + shared measurement helpers.
+- `tests/common/complex_sweep.py` (NEW) — mirrors `nn_sweep.py`: per-circuit
+  single-test orchestrators, baseline-gated multi-tech loop, hard gates,
+  3-state exit (0=all-pass / 1=any-fail / 2=could-not-characterize),
+  CSV + bar plot, checkpoint sha256 pin. **Bake / OSDI-Fatal / absent-checkpoint
+  / out-of-region → ERROR, never a silent FAIL.**
+- `tests/verify_complex_{opamp,ringosc,switchcap,sram}_sweep.py` (NEW) — thin
+  drivers (`--tech` / `--dimension` / `--pin-strict`), default `--tech
+  TSMC7,TSMC16` so absent techs never green a CI build.
+- `tests/verify_complex_sweep_canaries.py` (NEW) — C2/C4 equivalence guards.
+- `scripts/v6_4_8_{complex_sweep_gate,run_all_sweeps,retrain_tsmc7_broad}.sh`.
+
+**Equivalence verified (the harness reproduces the single-point decks):**
+- **C1** — every baseline baked `.lib` is **SHA-256-identical** pre/post the
+  complex.py edits for all 4 techs (the edits change only the cache key +
+  filename, never content).
+- **C4 / C2** — the programmatic DirectNet opamp / ring decks are **line-set
+  identical** (whitespace/comment normalized) to the template-rewrite decks for
+  all 4 techs (ring preserves the `.ic` seed ordering).
+- **Baseline numerics reproduce S2 exactly** on TSMC16: opamp `gain_err
+  4.925 %` (trip −10 mV), ring `period_err 3.992 %`, switchcap `charge_err
+  2.006 %`, SRAM all-positive + force_ic ok.
+- **Bug found + fixed:** the single-point switchcap left the DirectNet clock
+  `PULSE` high at a fixed **0.80** for all techs (only `=0.80` was rewritten),
+  while the NGSPICE side used `PULSE(0 VDD …)` — so for sub-0.80 techs
+  (TSMC5/7) it compared NN clock 0→0.80 vs NGSPICE 0→VDD. The sweep makes both
+  VDD-relative (apples-to-apples, plan Step 7). TSMC16/12 unaffected.
+
+**Sweep coverage (per the plan, one-dim-at-a-time):** VT symmetric + asymmetric
+N/P, geometry (L / NFIN∈{3,5,10} / P-N fin ratio nfin_p=3), VDD (±0.05/±0.1),
+and 3+ per-circuit stimulus values. Config counts — TSMC16: opamp 37 / ring 33 /
+sc 36 / sram 27 (incl. **12 asymmetric-VT** witnesses, the marquee feature);
+TSMC7: opamp 23 / ring 19 / sc 22 / sram 13 (**VT dims empty — TSMC7's VT space
+is ground-truth-bound to `{ulvt}`**, R-VT, stated in the harness output).
+`usable_vts`: TSMC5 {lvt,ulvt,elvt} · TSMC7 {ulvt} · TSMC12 {svt,lvt,hvt,ulvt,lnvt}
+· TSMC16 {svt,lvt,hvt,ulvt}.
+
+**Phase A — TSMC7 broad retrain = KILL (reverted; confirms S1).** Trained
+`medium` DirectNet (NMOS GPU 0 ∥ PMOS GPU 1) on the broad `tsmc7_v2_{nmos,pmos}.npz`
+(1.8–2.2 M rows, L 8–120 nm, NFIN 2–12, all variants — the broad generalist
+data; the `_v2cor` corridor variant is the opamp-specialization we deliberately
+avoid, so reusing v2 saved hours of identical regen). Size = `medium` not
+`large` (S1). **Re-baseline (CPU-pinned) on the broad checkpoint REGRESSED the
+ship gate:** opamp **gain → 0 (99.99 % FAIL)**, ring `period_err 11.46 % FAIL`,
+SRAM `force_ic` lands in the metastable basin (q=qb=0.357, FAIL) — switchcap
+still PASS (charge 1.65 %), SRAM butterfly still accurate (SNM 1–20 %, all
+positive). **This is the S1 finding again: breadth fits the value surface
+(switchcap, butterfly) but COLLAPSES the offset-dominated opamp gain — the opamp
+needs the narrow corridor specialization, you can't have both.** Per the dead-end
+discipline, **reverted `tsmc7_dn_medium` → the specialized `v6_4_7_pivcor_w2_s7_tsmc7`**
+(`ln -sf`); **opamp re-confirmed 8.63 % PASS (trip −144 mV — exactly S2), 15/16
+ship gate protected.** The broad checkpoint stays on disk as
+`v6_4_8_broad_tsmc7_*` (recoverable, for a future µA-band-aware retry). So the
+TSMC7 sweep runs against the SHIPPING pivcor checkpoint — its off-baseline
+geometry/VDD FAILs are the honest specialized-checkpoint extrapolation envelope
+(the very thing the broad retrain tried, and failed, to widen).
+
+**Sweep results** (hard gates, baseline-gated, CPU-pinned; the four single-point
+ship gates stay the authoritative PASS — these characterize the swept envelope,
+they are NOT a new ship metric). Every baseline PASSes; the FAILs below are the
+honest model envelope.
+- **TSMC16** (broad-ish checkpoint, full VT space incl. 12 asymmetric-VT
+  witnesses): **opamp 15/38**, ring **30/34**, switchcap **30/37**, sram **18/28**.
+- **TSMC7** (specialized pivcor checkpoint): **opamp 6/24**, ring **16/20**,
+  switchcap **20/23**, sram **12/14** (VT dims = 0 configs — `{ulvt}` only, R-VT,
+  stated in the harness output).
+
+**What the envelope shows (the value of the sweep):**
+- **opamp is by far the most fragile** — it holds its gain at baseline and under
+  *load* perturbations (cc / cl / span / L) but the high-gain NR fixed point
+  **collapses to gain≈0 under almost any operating-point change** (VT, NFIN,
+  VDD, vcm → `gain_err≈100 %`). This quantifies, across the whole parametric
+  space, the value-surface-owned opamp fragility the entire V6.4.8 campaign
+  circled (S0/S1/S2/S3): the NN tracks the offset-dominated µA gain band only at
+  the exact trained bias. Same 10 % gain gate as the single-point — not a
+  harness artifact (baselines PASS 4.9 %/8.6 %).
+- **ring_osc robust** (30/34, 16/20) — only off-baseline NFIN/high-VDD-swing
+  corners drift past the 5 % period gate.
+- **switchcap robust** (30/37, 20/23) — FAILs at high vin (charge transfer
+  through the TG saturates) and a couple of droop corners.
+- **SRAM butterfly accurate everywhere** (NRMSE <6 %) but the **full-cell
+  force_ic latch-retention is fragile off-baseline** (18/28, 12/14) — the
+  butterfly/SNM is value-accurate; the released 6T fixed point isn't.
+- **Asymmetric-VT (the marquee new feature)** runs as real PASS/FAIL on TSMC16
+  (12 witnesses/circuit): mostly PASS on ring/sc/sram, mostly collapse on the
+  fragile opamp.
+
+Net: the harness is the deliverable (validated, reproduces the single-point
+gates exactly); the sweep makes the DirectNet checkpoints' robustness envelope
+**quantitative and comprehensive** for the first time, and independently
+re-confirms that the opamp gain is the binding fragility (and that breadth can't
+fix it — Phase A).
+
+---
+
 ## V6.4.8 — value-surface accuracy campaign (CLOSED, branch `feat/v6.4.8`); SHIP the S2 win only at **14/16 → 15/16 conditional**. S0 floor-k KILL (basin-hopping, not an accuracy lever), S1 `--size large` KILL (capacity is NOT the bind — large overfits the value surface and COLLAPSES the opamp / regresses RO). **S2 continuation-first DC sweep = KEEP — tsmc7 opamp 10.78% FAIL → 8.63% PASS (deterministic OMP∈{1,2,4}), tsmc16 opamp now NG-faithful, no regression. (Plan's basin-de-fragilization hypothesis REFUTED — the 197/383/0 split is value-surface-owned; the win is path-preservation.)** **S3 EKV analytic backbone = KILL — built clean (charge-sheet core + bounded residual, Rule-1-safe, default-off) but value-surface-NEUTRAL on the tsmc5 switchcap (11.6% vs 11.69%; the over-conduction is loss-compression-owned at the asinh-µA log-knee, NOT shape-owned) and REGRESSES the opamp locus (additive residual overwhelms the offset-dominated asinh-µA band). No checkpoint promoted; kept default-off recoverable infra.** **S4 promotion BLOCKED** (no surviving S3 arm; tsmc5/tsmc12 V6.4.4 baselines unrecoverable here — sha256 mismatch). 16/16 NOT reached; needs a fresh campaign (µA-band loss/normalization de-compression, or SC transient/charge investigation). (2026-06-17 → 06-20)
 
 Plan: `docs/plans/2026-06-17-directnet-v6.4.8-accuracy.md` (4-agent design review;

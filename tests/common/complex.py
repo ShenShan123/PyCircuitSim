@@ -27,9 +27,9 @@ import from here so all four share one modelcard cache and one NGSPICE path.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
 
@@ -63,14 +63,19 @@ class BenchTech:
     """
     name: str          # e.g. "TSMC5"
     nn_tech: str        # TECH= netlist parameter, e.g. "tsmc5"
-    vt: str            # VT= netlist parameter, e.g. "lvt"
+    vt: str            # VT= netlist parameter, e.g. "lvt" (symmetric default)
     vdd: float
     l_nmos: float       # [m]
     l_pmos: float       # [m]
     tfin: float         # [m]
-    nfin: int           # default fin count
+    nfin: int           # default fin count (NMOS fin count)
     nmos_model: str     # NGSPICE/BSIM-CMG model name (modelcard)
     pmos_model: str     # NGSPICE/BSIM-CMG model name (modelcard)
+    # --- parametric-sweep extensions (default-empty → all existing callers
+    #     resolve to the symmetric `vt` / `nfin`, so behaviour is preserved) ---
+    nmos_vt: str = ""   # asymmetric NMOS VT (falls back to `vt`)
+    pmos_vt: str = ""   # asymmetric PMOS VT (falls back to `vt`)
+    nfin_p: int = 0     # PMOS fin count (falls back to `nfin`)
 
     @property
     def profile(self) -> TechProfile:
@@ -79,6 +84,18 @@ class BenchTech:
     @property
     def vt_pair(self) -> VtPair:
         return self.profile.get_vt_pair(self.vt)
+
+    @property
+    def effective_nmos_vt(self) -> str:
+        return self.nmos_vt or self.vt
+
+    @property
+    def effective_pmos_vt(self) -> str:
+        return self.pmos_vt or self.vt
+
+    @property
+    def effective_nfin_p(self) -> int:
+        return self.nfin_p or self.nfin
 
 
 def _resolve_bench_tech(name: str) -> BenchTech:
@@ -103,6 +120,8 @@ def _resolve_bench_tech(name: str) -> BenchTech:
         nfin=prof.default_nfin,   # 2 for all four TSMC nodes
         nmos_model=vp.nmos_model,
         pmos_model=vp.pmos_model,
+        nmos_vt=ckpt_vt,
+        pmos_vt=ckpt_vt,
     )
 
 
@@ -110,40 +129,118 @@ BENCH: Dict[str, BenchTech] = {n: _resolve_bench_tech(n) for n in BENCH_TECHS}
 
 
 # ---------------------------------------------------------------------------
+# Parametric-sweep helpers: usable VT vocabulary + a validated variant builder
+# ---------------------------------------------------------------------------
+def usable_vts(tech: str) -> Set[str]:
+    """VT names usable for ``tech`` in the complex-circuit sweep.
+
+    The intersection of (i) the BSIM-CMG ground-truth VT pairs that survive
+    ``base.py`` PDIBL2/garbage pruning and (ii) the per-tech DirectNet local
+    embedding vocabulary (``bsimar.config.LOCAL_VARIANT_CODES``). A VT outside
+    the DN vocab maps to LOCAL_UNKNOWN **silently** (no warning in per-tech
+    scope), so enumerating from this intersection — and validating in
+    ``bench_variant`` — is the only safe way to drive the VT sweep.
+    """
+    from bsimar.config import LOCAL_VARIANT_CODES  # lazy: heavy import
+    scope = tech.lower()
+    dn_vocab = LOCAL_VARIANT_CODES.get(scope, {})
+    prof = ALL_TECHS[tech]
+    return {vp.vt_name for vp in prof.vt_pairs
+            if (scope, vp.vt_name.lower()) in dn_vocab}
+
+
+def bench_variant(base: BenchTech, **overrides: Any) -> BenchTech:
+    """Derive a BenchTech variant, resolving NMOS/PMOS VT **independently**.
+
+    Recognised keyword overrides: ``nmos_vt`` / ``pmos_vt`` (each pulls its OWN
+    side's modelcard from its OWN VtPair — the single most error-prone line),
+    ``l_nmos`` / ``l_pmos``, ``nfin`` / ``nfin_p``, ``vdd``. A VT override is
+    validated against the DirectNet local vocab (NOT just ``get_vt_pair``,
+    which only knows base.py) and raises ``ValueError`` on a miss so an
+    out-of-vocab VT can never silently fall through to LOCAL_UNKNOWN.
+    """
+    prof = ALL_TECHS[base.name]
+    usable = usable_vts(base.name)   # vt_pairs ∩ DN local vocab (both limiters)
+    repl: Dict[str, Any] = {}
+
+    nmos_vt = overrides.pop("nmos_vt", None)
+    if nmos_vt is not None:
+        if nmos_vt.lower() not in usable:
+            raise ValueError(
+                f"NMOS VT {nmos_vt!r} not usable for {base.name} "
+                f"(ground-truth ∩ DN vocab: {sorted(usable)})")
+        vp = prof.get_vt_pair(nmos_vt)
+        repl["nmos_vt"] = nmos_vt
+        repl["nmos_model"] = vp.nmos_model   # NMOS side from its OWN VtPair
+
+    pmos_vt = overrides.pop("pmos_vt", None)
+    if pmos_vt is not None:
+        if pmos_vt.lower() not in usable:
+            raise ValueError(
+                f"PMOS VT {pmos_vt!r} not usable for {base.name} "
+                f"(ground-truth ∩ DN vocab: {sorted(usable)})")
+        vp = prof.get_vt_pair(pmos_vt)
+        repl["pmos_vt"] = pmos_vt
+        repl["pmos_model"] = vp.pmos_model   # PMOS side from its OWN VtPair
+
+    # Plain geometry / supply overrides pass through unchanged.
+    for k in ("l_nmos", "l_pmos", "nfin", "nfin_p", "vdd"):
+        if k in overrides:
+            repl[k] = overrides.pop(k)
+    if overrides:
+        raise ValueError(f"bench_variant: unknown overrides {list(overrides)}")
+    return replace(base, **repl)
+
+
+# ---------------------------------------------------------------------------
 # Modelcard baking — NGSPICE BSIM-CMG side
 # ---------------------------------------------------------------------------
-_baked_cache: Dict[Tuple[str, str, int], Path] = {}
+# Cache key carries everything that changes the baked CONTENT: both per-device
+# VTs (asymmetric N/P), both per-device L, and both per-device NFIN. The old key
+# was (name, vt, nfin) — it dropped L, so two BenchTech variants sharing
+# (name, vt, nfin) but differing in L silently aliased to the first one's file
+# (the L cache-key bug, plan Step 1).
+_baked_cache: Dict[Tuple[str, str, str, float, float, int, int], Path] = {}
 
 
-def get_baked_modelcard(bt: BenchTech, nfin: int, work_dir: Path) -> Path:
+def get_baked_modelcard(bt: BenchTech, nfin: int, work_dir: Path,
+                        nfin_p: Optional[int] = None) -> Path:
     """Merged NMOS+PMOS modelcard with L/NFIN/TFIN/DEVTYPE baked for NGSPICE.
 
     NGSPICE's OSDI interface rejects instance params on the device line, so all
-    geometry must live inside the .model block. NFIN is baked per call so SRAM
-    NFIN-corner sweeps get distinct files.
+    geometry must live inside the .model block. The NMOS block is baked at
+    ``nfin``; the PMOS block at ``nfin_p`` (defaults to ``nfin`` — symmetric).
+    NMOS/PMOS modelcard SOURCES are resolved from each side's OWN effective VT
+    so asymmetric N/P VT pairs bake correct, distinct cards.
     """
-    key = (bt.name, bt.vt, nfin)
+    nfin_n = int(nfin)
+    nfin_p = nfin_n if nfin_p is None else int(nfin_p)
+    key = (bt.name, bt.effective_nmos_vt, bt.effective_pmos_vt,
+           bt.l_nmos, bt.l_pmos, nfin_n, nfin_p)
     if key in _baked_cache:
         return _baked_cache[key]
 
     work_dir.mkdir(parents=True, exist_ok=True)
     prof = bt.profile
-    vp = bt.vt_pair
-    nmos_src = prof.get_nmos_modelcard(vp, bt.l_nmos)
-    pmos_src = prof.get_pmos_modelcard(vp, bt.l_pmos)
+    vp_n = prof.get_vt_pair(bt.effective_nmos_vt)
+    vp_p = prof.get_vt_pair(bt.effective_pmos_vt)
+    nmos_src = prof.get_nmos_modelcard(vp_n, bt.l_nmos)
+    pmos_src = prof.get_pmos_modelcard(vp_p, bt.l_pmos)
     if not nmos_src.exists():
         raise FileNotFoundError(f"NMOS modelcard not found: {nmos_src}")
     if not pmos_src.exists():
         raise FileNotFoundError(f"PMOS modelcard not found: {pmos_src}")
 
-    baked = work_dir / f"baked_{bt.name}_{bt.vt}_nfin{nfin}.lib"
+    baked = (work_dir / f"baked_{bt.name}_{bt.effective_nmos_vt}_"
+             f"{bt.effective_pmos_vt}_ln{bt.l_nmos*1e9:.0f}_"
+             f"lp{bt.l_pmos*1e9:.0f}_nf{nfin_n}_nfp{nfin_p}.lib")
     baked.write_text(nmos_src.read_text() + "\n" + pmos_src.read_text())
 
     bake_inst_params(baked, baked, bt.nmos_model,
-                     {"L": bt.l_nmos, "NFIN": float(nfin),
+                     {"L": bt.l_nmos, "NFIN": float(nfin_n),
                       "TFIN": bt.tfin, "DEVTYPE": 1})
     bake_inst_params(baked, baked, bt.pmos_model,
-                     {"L": bt.l_pmos, "NFIN": float(nfin),
+                     {"L": bt.l_pmos, "NFIN": float(nfin_p),
                       "TFIN": bt.tfin, "DEVTYPE": 0})
 
     _baked_cache[key] = baked
@@ -386,3 +483,335 @@ def run_directnet_dc_sweep(netlist_path: Path, work_dir: Path, tag: str):
     finally:
         logging.disable(logging.NOTSET)
     return results
+
+
+# ===========================================================================
+# Parametric sweep harness (plan 2026-06-20): stimulus dataclasses (Step 3),
+# shared measurement helpers + programmatic builders (Step 4).
+#
+# Every stimulus field defaults to today's single-point value, so a bare
+# ``Params()`` reproduces the ship-gate circuit. NGSPICE builders emit device
+# lines with NO instance params (OSDI rejects them — all geometry lives in the
+# baked .model); DirectNet builders emit per-device ``L=..n NFIN=..`` (the
+# PyCircuitSim parser accepts instance params). The two PULSE syntaxes are kept
+# deliberately distinct (NGSPICE ``PULSE(...)`` vs PyCircuitSim space-separated).
+# ===========================================================================
+def _f(x: float) -> str:
+    """Compact float formatting matching the template decks (str(float))."""
+    return f"{x:g}"
+
+
+def _cap(c: float) -> str:
+    """Farads → 'NNf' femtofarad token (e.g. 20e-15 → '20f')."""
+    return f"{c * 1e15:g}f"
+
+
+def _tn(t: float) -> str:
+    """Seconds → 'NNn' nanosecond token (e.g. 4e-9 → '4n')."""
+    return f"{t * 1e9:g}n"
+
+
+def _tp(t: float) -> str:
+    """Seconds → 'NNp' picosecond token (e.g. 2e-12 → '2p')."""
+    return f"{t * 1e12:g}p"
+
+
+@dataclass(frozen=True)
+class OpAmpParams:
+    """Two-stage Miller opamp stimulus. Bias rails are fractions of VDD; the
+    defaults reproduce ``verify_complex_opamp._bias`` exactly (0.55/0.45/0.55)
+    and the .dc window (vcm±0.15 @ 0.002)."""
+    vcm_frac: float = 0.55
+    vbn_frac: float = 0.45
+    vbp_frac: float = 0.55
+    cc: float = 20e-15
+    cl: float = 50e-15
+    span: float = 0.15
+    step: float = 0.002
+
+
+@dataclass(frozen=True)
+class RingOscParams:
+    """N-stage ring oscillator. ``tstop`` is the NGSPICE probe window; the
+    transient window is grown from the *measured* period in the orchestrator
+    (plan M3) so long corners (n_stages=9, cload=2 fF) stay bounded."""
+    n_stages: int = 5
+    cload: float = 0.5e-15
+    tstep: float = 2e-12
+    tstop: float = 1.2e-9
+    settle: float = 0.3e-9
+    n_measure_cycles: int = 12
+
+
+@dataclass(frozen=True)
+class SwitchCapParams:
+    """Switched-cap unit cell. ``pw`` tracks the period (pw_frac·clk_per →
+    1.9 ns at the 4 ns baseline) so the sample/hold windows stay valid as
+    clk_per sweeps; tstop = n_periods·clk_per."""
+    vin_frac: float = 0.6
+    csample: float = 100e-15
+    clk_per: float = 4e-9
+    clk_slew: float = 0.1e-9
+    td: float = 0.5e-9
+    pw_frac: float = 0.475
+    tstep: float = 5e-12
+    n_periods: int = 3
+    win_margin: float = 0.2e-9
+
+
+@dataclass(frozen=True)
+class SramParams:
+    """6T SRAM read-SNM. ``wl_frac`` sets the butterfly read bias (Vwl =
+    wl_frac·VDD); force_ic always probes the wl=OFF hold and is gated only at
+    wl_frac=1.0 (plan M6)."""
+    nfins: Tuple[int, ...] = (2, 5, 10)
+    wl_frac: float = 1.0
+    storage_states: Tuple[str, ...] = ("state1", "state0")
+    dc_step: float = 0.005
+
+
+# --- shared measurement helpers (moved from the single-point verify scripts) -
+def opamp_bias(bt: BenchTech, p: OpAmpParams) -> Tuple[float, float, float]:
+    """(Vcm, Vbn, Vbp) — common-mode + the two bias rails, VDD-scaled."""
+    return (round(bt.vdd * p.vcm_frac, 3),
+            round(bt.vdd * p.vbn_frac, 3),
+            round(bt.vdd * p.vbp_frac, 3))
+
+
+def gain_trip(sweep: np.ndarray, vout: np.ndarray,
+              vdd: float) -> Tuple[float, float, float]:
+    """Peak |dVout/dVin| gain, trip point (Vout=VDD/2), worst slew step."""
+    g = np.gradient(vout, sweep)
+    gain = float(np.max(np.abs(g)))
+    ix = int(np.argmin(np.abs(vout - vdd / 2.0)))
+    trip = float(sweep[ix])
+    slew = float(np.max(np.abs(np.diff(vout))))
+    return gain, trip, slew
+
+
+def period_from_wave(t: np.ndarray, v: np.ndarray, mid: float,
+                     settle: float) -> float:
+    """Oscillation period from rising-edge crossings of the midpoint level."""
+    keep = t >= settle
+    t, v = t[keep], v[keep]
+    sign = np.sign(v - mid)
+    cross = np.where((sign[:-1] < 0) & (sign[1:] >= 0))[0]
+    if len(cross) < 3:
+        return float("nan")
+    times = []
+    for i in cross:
+        v0, v1 = v[i], v[i + 1]
+        frac = (mid - v0) / (v1 - v0) if v1 != v0 else 0.0
+        times.append(t[i] + frac * (t[i + 1] - t[i]))
+    return float(np.mean(np.diff(times)))
+
+
+def at(t: np.ndarray, v: np.ndarray, t0: float) -> float:
+    """Linear-interpolated value of waveform ``v`` at time ``t0``."""
+    return float(np.interp(t0, t, v))
+
+
+def snm_from_lobes(q: np.ndarray, qb: np.ndarray) -> float:
+    """SNM = largest square between a butterfly lobe and its mirror."""
+    grid = np.linspace(0.0, max(q.max(), qb.max()), 400)
+    l1 = np.interp(grid, q, qb)
+    l2 = np.interp(grid, qb[::-1] if qb[0] > qb[-1] else qb,
+                   q[::-1] if qb[0] > qb[-1] else q)
+    diff = np.abs(l1 - l2)
+    return float(np.max(diff) / np.sqrt(2.0))
+
+
+def sc_windows(p: SwitchCapParams) -> Tuple[float, float, float, float,
+                                            float, float]:
+    """(sample_end, hold_start, hold_end, tstop, pw, per) from the clock.
+
+    PULSE(0 VDD td tr tf pw per): sample phase high on [td+tr, td+tr+pw];
+    hold phase on [td+tr+pw+tf, td+per]. Windows are pulled ``win_margin``
+    inside each edge. Reproduces the single-point 2.3/2.6/4.3/12 ns at the
+    4 ns/1.9 ns baseline.
+    """
+    tr = tf = p.clk_slew
+    per = p.clk_per
+    pw = p.pw_frac * per
+    sample_high_end = p.td + tr + pw
+    hold_start = p.td + tr + pw + tf
+    next_rise = p.td + per
+    m = p.win_margin
+    sample_end = sample_high_end - m
+    hold_end = next_rise - m
+    tstop = p.n_periods * per
+    return sample_end, hold_start, hold_end, tstop, pw, per
+
+
+# --- programmatic builders: opamp -------------------------------------------
+def ngspice_opamp(bt: BenchTech, p: OpAmpParams, baked: Path) -> Dict[str, str]:
+    vcm, vbn, vbp = opamp_bias(bt, p)
+    n, pm = bt.nmos_model, bt.pmos_model
+    body = [f'.include "{baked}"', ".temp 27", f"Vdd vdd 0 {_f(bt.vdd)}",
+            f"Vbn vbn 0 {_f(vbn)}", f"Vbp vbp 0 {_f(vbp)}",
+            f"Vinn inn 0 {_f(vcm)}", f"Vinp inp 0 {_f(vcm)}",
+            f"Nn1 n1 inp vtail 0 {n}", f"Nn2 vo1i inn vtail 0 {n}",
+            f"Np3 n1 n1 vdd vdd {pm}", f"Np4 vo1i n1 vdd vdd {pm}",
+            f"Nn5 vtail vbn 0 0 {n}",
+            f"Np6 vout vo1i vdd vdd {pm}", f"Nn7 vout vbn 0 0 {n}",
+            f"Cc vo1i vout {_cap(p.cc)}", f"CL vout 0 {_cap(p.cl)}"]
+    lo, hi = round(vcm - p.span, 3), round(vcm + p.span, 3)
+    return {"body": "\n".join(body), "signals": "v(vout)",
+            "analysis": f"dc Vinp {_f(lo)} {_f(hi)} {_f(p.step)}"}
+
+
+def directnet_opamp(bt: BenchTech, p: OpAmpParams) -> str:
+    vcm, vbn, vbp = opamp_bias(bt, p)
+    ln, lp = bt.l_nmos * 1e9, bt.l_pmos * 1e9
+    nfn, nfp = bt.nfin, bt.effective_nfin_p
+    lo, hi = round(vcm - p.span, 3), round(vcm + p.span, 3)
+    return (
+        f"* Two-stage Miller opamp — DirectNet LEVEL=73 ({bt.name}) [sweep]\n"
+        f"Vdd vdd 0 {_f(bt.vdd)}\n"
+        f"Vbn vbn 0 {_f(vbn)}\n"
+        f"Vbp vbp 0 {_f(vbp)}\n"
+        f"Vinn inn 0 {_f(vcm)}\n"
+        f"Vinp inp 0 {_f(vcm)}\n"
+        f"Mn1 n1   inp vtail 0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
+        f"Mn2 vo1i inn vtail 0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
+        f"Mp3 n1   n1  vdd   vdd pmos_nn L={lp:.0f}n NFIN={nfp}\n"
+        f"Mp4 vo1i n1  vdd   vdd pmos_nn L={lp:.0f}n NFIN={nfp}\n"
+        f"Mn5 vtail vbn 0    0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
+        f"Mp6 vout vo1i vdd vdd pmos_nn L={lp:.0f}n NFIN={nfp}\n"
+        f"Mn7 vout vbn  0   0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
+        f"Cc vo1i vout {_cap(p.cc)}\n"
+        f"CL vout 0 {_cap(p.cl)}\n"
+        f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})\n"
+        f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})\n"
+        f".dc Vinp {_f(lo)} {_f(hi)} {_f(p.step)}\n"
+        f".end\n")
+
+
+# --- programmatic builders: ring oscillator ---------------------------------
+def ngspice_ringosc(bt: BenchTech, p: RingOscParams, baked: Path,
+                    tstop: float) -> Dict[str, str]:
+    N = p.n_stages
+    nd = [f"n{i}" for i in range(1, N + 1)]
+    body = [f'.include "{baked}"', ".temp 27", f"Vdd vdd 0 {_f(bt.vdd)}"]
+    for i in range(N):
+        inp = nd[i - 1]            # i=0 → nd[-1]=nN (feedback wrap)
+        body += [f"Np{i} {nd[i]} {inp} vdd vdd {bt.pmos_model}",
+                 f"Nn{i} {nd[i]} {inp} 0 0 {bt.nmos_model}",
+                 f"Cl{i} {nd[i]} 0 {_cap(p.cload)}"]
+    ic = " ".join(f"v(n{i})={'0' if i % 2 == 1 else _f(bt.vdd)}"
+                  for i in range(1, N + 1))
+    body.append(f".ic {ic}")
+    return {"body": "\n".join(body), "signals": f"v(n{N})",
+            "analysis": f"tran {_tp(p.tstep)} {_tn(tstop)} uic"}
+
+
+def directnet_ringosc(bt: BenchTech, p: RingOscParams, tstop: float) -> str:
+    N = p.n_stages
+    ln, lp = bt.l_nmos * 1e9, bt.l_pmos * 1e9
+    nfn, nfp = bt.nfin, bt.effective_nfin_p
+    ic = " ".join(f"V(n{i})={'0.0' if i % 2 == 1 else _f(bt.vdd)}"
+                  for i in range(1, N + 1))
+    lines = [f"* {N}-stage ring oscillator — DirectNet LEVEL=73 ({bt.name}) [sweep]",
+             f"Vdd vdd 0 {_f(bt.vdd)}", f".ic {ic}"]
+    for i in range(1, N + 1):
+        inp = f"n{i - 1}" if i > 1 else f"n{N}"
+        lines += [f"Mp{i} n{i} {inp} vdd vdd pmos_nn L={lp:.0f}n NFIN={nfp}",
+                  f"Mn{i} n{i} {inp} 0   0   nmos_nn L={ln:.0f}n NFIN={nfn}",
+                  f"Cl{i} n{i} 0 {_cap(p.cload)}"]
+    lines += [f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})",
+              f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})",
+              f".tran {_tp(p.tstep)} {_tn(tstop)}", ".end"]
+    return "\n".join(lines) + "\n"
+
+
+# --- programmatic builders: switched-cap unit cell --------------------------
+def ngspice_switchcap(bt: BenchTech, p: SwitchCapParams,
+                      baked: Path) -> Dict[str, str]:
+    _se, _hs, _he, tstop, pw, per = sc_windows(p)
+    n, pm = bt.nmos_model, bt.pmos_model
+    vin = round(bt.vdd * p.vin_frac, 3)
+    body = [f'.include "{baked}"', ".temp 27", f"Vdd vdd 0 {_f(bt.vdd)}",
+            f"Vin vin 0 {_f(vin)}",
+            (f"Vphi phi 0 PULSE(0 {_f(bt.vdd)} {_tn(p.td)} {_tn(p.clk_slew)} "
+             f"{_tn(p.clk_slew)} {_tn(pw)} {_tn(per)})"),
+            f"Npc phib phi vdd vdd {pm}", f"Nnc phib phi 0 0 {n}",
+            f"Nnt vin phi vsamp 0 {n}", f"Npt vin phib vsamp vdd {pm}",
+            f"Csample vsamp 0 {_cap(p.csample)}",
+            f".ic v(vsamp)=0 v(phib)={_f(bt.vdd)}"]
+    return {"body": "\n".join(body), "signals": "v(vsamp)",
+            "analysis": f"tran {_tp(p.tstep)} {_tn(tstop)} uic"}
+
+
+def directnet_switchcap(bt: BenchTech, p: SwitchCapParams) -> str:
+    _se, _hs, _he, tstop, pw, per = sc_windows(p)
+    ln, lp = bt.l_nmos * 1e9, bt.l_pmos * 1e9
+    nfn, nfp = bt.nfin, bt.effective_nfin_p
+    vin = round(bt.vdd * p.vin_frac, 3)
+    return (
+        f"* Switched-cap unit cell — DirectNet LEVEL=73 ({bt.name}) [sweep]\n"
+        f"Vdd vdd 0 {_f(bt.vdd)}\n"
+        f"Vin vin 0 {_f(vin)}\n"
+        f"Vphi phi 0 PULSE 0 {_f(bt.vdd)} {_tn(p.td)} {_tn(p.clk_slew)} "
+        f"{_tn(p.clk_slew)} {_tn(pw)} {_tn(per)}\n"
+        f"Mpc phib phi vdd vdd pmos_nn L={lp:.0f}n NFIN={nfp}\n"
+        f"Mnc phib phi 0   0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
+        f"Mnt vin phi  vsamp 0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
+        f"Mpt vin phib vsamp vdd pmos_nn L={lp:.0f}n NFIN={nfp}\n"
+        f"Csample vsamp 0 {_cap(p.csample)}\n"
+        f".ic V(vsamp)=0.0 V(phib)={_f(bt.vdd)}\n"
+        f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})\n"
+        f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})\n"
+        f".tran {_tp(p.tstep)} {_tn(tstop)}\n"
+        f".end\n")
+
+
+# --- programmatic builders: 6T SRAM (half-cell lobe + full-cell force_ic) ----
+def ngspice_sram_lobe(bt: BenchTech, p: SramParams, nfin: int,
+                      baked: Path) -> Dict[str, str]:
+    n, pm = bt.nmos_model, bt.pmos_model
+    wl = round(bt.vdd * p.wl_frac, 3)
+    body = [f'.include "{baked}"', ".temp 27", f"Vdd vdd 0 {_f(bt.vdd)}",
+            f"Vwl wl 0 {_f(wl)}", f"Vbl bl 0 {_f(bt.vdd)}", "Vq q 0 0.0",
+            f"Npl qb q vdd vdd {pm}", f"Nnl qb q 0 0 {n}",
+            f"Nna bl wl qb 0 {n}"]
+    return {"body": "\n".join(body), "signals": "v(qb)",
+            "analysis": f"dc Vq 0 {_f(bt.vdd)} {_f(p.dc_step)}"}
+
+
+def directnet_sram_lobe(bt: BenchTech, p: SramParams, nfin: int) -> str:
+    ln, lp = bt.l_nmos * 1e9, bt.l_pmos * 1e9
+    wl = round(bt.vdd * p.wl_frac, 3)
+    return (
+        f"* SRAM read-SNM half-cell — DirectNet ({bt.name} NFIN={nfin})\n"
+        f"Vdd vdd 0 {_f(bt.vdd)}\n"
+        f"Vwl wl 0 {_f(wl)}\n"
+        f"Vbl bl 0 {_f(bt.vdd)}\n"
+        f"Vq q 0 0.0\n"
+        f"Mpl qb q vdd vdd pmos_nn L={lp:.0f}n NFIN={nfin}\n"
+        f"Mnl qb q 0   0   nmos_nn L={ln:.0f}n NFIN={nfin}\n"
+        f"Mna bl wl qb 0 nmos_nn L={ln:.0f}n NFIN={nfin}\n"
+        f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})\n"
+        f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})\n"
+        f".dc Vq 0 {_f(bt.vdd)} {_f(p.dc_step)}\n"
+        f".end\n")
+
+
+def directnet_sram_6t(bt: BenchTech, q0: float, qb0: float, nfin: int) -> str:
+    """Full cross-coupled 6T cell, wl=OFF/hold (the force_ic retention probe)."""
+    ln, lp = bt.l_nmos * 1e9, bt.l_pmos * 1e9
+    return (
+        f"* 6T SRAM cell — DirectNet ({bt.name}) wl=OFF/hold [sweep]\n"
+        f"Vdd vdd 0 {_f(bt.vdd)}\n"
+        f"Vwl wl 0 0.0\n"
+        f"Vbl bl 0 {_f(bt.vdd)}\n"
+        f"Vblb blb 0 {_f(bt.vdd)}\n"
+        f".ic V(q)={_f(q0)} V(qb)={_f(qb0)}\n"
+        f"Mpl qb q vdd vdd pmos_nn L={lp:.0f}n NFIN={nfin}\n"
+        f"Mnl qb q 0   0   nmos_nn L={ln:.0f}n NFIN={nfin}\n"
+        f"Mpr q qb vdd vdd pmos_nn L={lp:.0f}n NFIN={nfin}\n"
+        f"Mnr q qb 0   0   nmos_nn L={ln:.0f}n NFIN={nfin}\n"
+        f"Mal bl  wl q  0 nmos_nn L={ln:.0f}n NFIN={nfin}\n"
+        f"Mar blb wl qb 0 nmos_nn L={ln:.0f}n NFIN={nfin}\n"
+        f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})\n"
+        f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})\n"
+        f".op\n.end\n")
