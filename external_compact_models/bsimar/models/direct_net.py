@@ -101,6 +101,161 @@ class _MonotoneVgResidual(nn.Module):
         return self.sign * out
 
 
+class _EKVCore(nn.Module):
+    """Differentiable EKV/charge-sheet analytic backbone for the ``id`` column.
+
+    V6.4.8 Stage S3. Composes the ``id`` output as a *physically structured*
+    closed-form drain current plus a bounded NN residual:
+
+        Id_phys(V) = Id_core(Vgs, Vds, Vbs) · (1 + α·tanh(trunk_id))
+
+    where ``Id_core`` is the canonical EKV forward-minus-reverse current
+
+        Id_core = pol · I0 · ( sp(vov)² − sp(vov − vds/(n·φt))² ) · (1 + λ·sp(vd))
+
+    with ``sp`` = softplus and the per-device coefficients ``{I0, Vth, n, λ,
+    γ}`` produced by a tiny MLP head from the (geometry ‖ tech-embedding)
+    features (constant per device). This wires the **V-shape** of the surface
+    to physics — monotone in Vgs, self-limiting as Vds→0 (the switchcap triode
+    fix), saturating in strong Vds (the opamp locus) — while leaving the
+    coefficients learnable per geometry/tech. autograd through the core yields a
+    structurally-correct gm/gds/gmb (Rule 1 preserved); **zero loss terms**.
+
+    Operates in the same space the trunk does:
+
+    * inputs are the *normalised* 7-dim features; the core de-standardises the 4
+      voltage columns to physical Volts using stored ``v_mean/v_std`` buffers;
+    * the result is converted back to the standardised-asinh ``id`` column via
+      the stored ``id_s/id_mean/id_std`` buffers (the exact inverse of the
+      inference-time ``_denorm``), so the loss, the 12 other heads, and the
+      autograd→physical chain rule are all untouched.
+
+    All norm/sign constants are **buffers** so they round-trip through the
+    checkpoint: at inference ``_build_from_state`` rebuilds this module with
+    neutral defaults and ``load_state_dict`` restores the real values — no
+    norm-stat plumbing needed on the simulator side.
+    """
+
+    # EKV coefficient-head last-layer bias inits (physical-sensible global
+    # modelcard): [Vth, n_raw, beta_raw, gamma_raw, lam_raw, vdsat_raw,
+    # theta_raw]. The last layer's WEIGHT is zero-init, so at init the core is
+    # exactly this geometry-independent global EKV; training learns the
+    # geometry/tech dependence on top.
+    _PARAM_BIAS_INIT = (0.30, 0.50, -6.0, -3.0, 0.0, -1.0, -3.0)
+
+    def __init__(
+        self,
+        geo_dim: int = 3,
+        tech_embed_dim: int = 32,
+        hidden_dim: int = 64,
+        alpha: float = 0.5,
+    ) -> None:
+        super().__init__()
+        # Coefficient head: (geo ‖ tech-embedding) → 7 raw EKV params. Keeping
+        # the coefficients geometry-aware (NFIN/L/T enter via geo) is essential
+        # — one checkpoint serves NFIN 2→20 and L 8→120nm, ~100× current range,
+        # far beyond what a bounded residual could recover from per-code-only
+        # constants.
+        self.param_head = nn.Sequential(
+            nn.Linear(geo_dim + tech_embed_dim, hidden_dim),
+            nn.SiLU(),
+            nn.Linear(hidden_dim, 7),
+        )
+        nn.init.xavier_uniform_(self.param_head[0].weight)
+        nn.init.zeros_(self.param_head[0].bias)
+        nn.init.zeros_(self.param_head[2].weight)             # zero last layer
+        with torch.no_grad():
+            self.param_head[2].bias.copy_(
+                torch.tensor(self._PARAM_BIAS_INIT, dtype=torch.float32))
+
+        # — Norm / sign / physical constants (buffers; checkpoint round-trip) —
+        self.register_buffer("v_mean", torch.zeros(4))
+        self.register_buffer("v_std", torch.ones(4))
+        self.register_buffer("id_s", torch.tensor(1.0))
+        self.register_buffer("id_mean", torch.tensor(0.0))
+        self.register_buffer("id_std", torch.tensor(1.0))
+        # psign: voltage orientation = +1 (NMOS) / -1 (PMOS). The terminal
+        # current is id_phys = -psign·|I| (NMOS ON negative, PMOS ON positive).
+        self.register_buffer("psign", torch.tensor(1.0))
+        self.register_buffer("phi0", torch.tensor(0.40))      # body-effect φ0
+        self.register_buffer("ut", torch.tensor(0.025852))    # kT/q @ 300K
+        self.register_buffer("alpha", torch.tensor(float(alpha)))
+        self.register_buffer("lam_lo", torch.tensor(0.30))    # FinFET CLM band
+        self.register_buffer("lam_hi", torch.tensor(1.20))
+
+    def set_norm(
+        self,
+        *,
+        v_mean,
+        v_std,
+        id_s: float,
+        id_mean: float,
+        id_std: float,
+        device_type: str,
+    ) -> None:
+        """Fill the norm/sign buffers from the fitted normalizer (train time)."""
+        self.v_mean.copy_(torch.as_tensor(v_mean, dtype=torch.float32))
+        self.v_std.copy_(torch.as_tensor(v_std, dtype=torch.float32))
+        self.id_s.fill_(float(id_s))
+        self.id_mean.fill_(float(id_mean))
+        self.id_std.fill_(float(id_std))
+        self.psign.fill_(1.0 if device_type == "nmos" else -1.0)
+
+    def core_current(self, x: torch.Tensor, emb: torch.Tensor) -> torch.Tensor:
+        """Physical EKV drain current Id_core(V) in Amps. ``x`` is the
+        normalised 7-dim input; ``emb`` the tech embedding (B, tech_dim).
+
+        Charge-sheet EKV: Id = -psign · β·n·ut²·μ·(i_f − i_r)·clm, with
+        i_{f,r} = softplus(·)² the forward/reverse interpolation. Self-limits
+        as Vds→0 (i_f−i_r→0, the switchcap fix), saturates as Vds grows, and
+        is monotone in the gate drive. All ops smooth (Rule-1-gate safe)."""
+        sp = torch.nn.functional.softplus
+        # De-standardise the 4 voltage columns back to physical Volts (Vs≡0).
+        v_phys = x[:, :4] * self.v_std + self.v_mean          # (B,4): Vd,Vg,Vs,Vb
+        vds = v_phys[:, 0] - v_phys[:, 2]
+        vgs = v_phys[:, 1] - v_phys[:, 2]
+        vbs = v_phys[:, 3] - v_phys[:, 2]
+
+        # Device-oriented drives (>0 in forward conduction for both types).
+        p = self.psign
+        vg, vd, vb = p * vgs, p * vds, p * vbs
+
+        # Per-device coefficients from the (geo ‖ tech) head.
+        feat = torch.cat([x[:, 4:7], emb], dim=-1)
+        raw = self.param_head(feat)                           # (B,7)
+        vth = raw[:, 0]
+        n = 1.0 + sp(raw[:, 1])
+        beta = sp(raw[:, 2])
+        gamma = sp(raw[:, 3])
+        lam = self.lam_lo + (self.lam_hi - self.lam_lo) * torch.sigmoid(raw[:, 4])
+        vdsat = sp(raw[:, 5]) + 1e-3
+        theta = sp(raw[:, 6])
+
+        ut = self.ut
+        # Charge-sheet body effect: reverse body bias (vb<0) raises Vth.
+        vth_b = vth + gamma * (torch.sqrt(self.phi0 + sp(-vb))
+                               - torch.sqrt(self.phi0))
+        vp = (vg - vth_b) / n
+        i_f = sp(vp / (2.0 * ut)) ** 2
+        i_r = sp((vp - vd) / (2.0 * ut)) ** 2
+        mu_fac = 1.0 / (1.0 + theta * sp(vp))                 # mobility roll-off
+        clm = 1.0 + lam * sp(vd - vdsat)                      # finite sat gds
+        i_mag = beta * n * (ut * ut) * mu_fac * (i_f - i_r) * clm
+        return -p * i_mag                                     # (B,) Amps
+
+    def forward(
+        self, x: torch.Tensor, emb: torch.Tensor, trunk_id_norm: torch.Tensor,
+    ) -> torch.Tensor:
+        """Return the composed ``id`` column in standardised-asinh space:
+        the EKV backbone (asinh-z) + a tanh-bounded trunk residual. Additive
+        in asinh-z (not multiplicative-in-physical) so the trunk keeps
+        authority in cutoff where Id_core→0."""
+        id_core = self.core_current(x, emb)                  # (B,) Amps
+        u = torch.asinh(id_core / self.id_s)
+        core_z = (u - self.id_mean) / self.id_std            # backbone in id-norm
+        return core_z + self.alpha * torch.tanh(trunk_id_norm)
+
+
 class DirectNet(nn.Module):
     """MLP with discrete tech-code embedding predicting MOSFET outputs.
 
@@ -130,6 +285,9 @@ class DirectNet(nn.Module):
         monotonic: bool = False,
         monotone_sign: float = -1.0,
         monotone_hidden: int = 64,
+        ekv_core: bool = False,
+        ekv_alpha: float = 0.5,
+        ekv_hidden: int = 64,
     ):
         super().__init__()
         self.output_dim = output_dim
@@ -138,6 +296,7 @@ class DirectNet(nn.Module):
         self._tech_embed_dropout = tech_embed_dropout
         self._unknown_code_id = unknown_code_id
         self._monotonic = monotonic
+        self._ekv_core = ekv_core
 
         self.tech_embedding = nn.Embedding(num_tech_codes, tech_embed_dim)
 
@@ -156,11 +315,25 @@ class DirectNet(nn.Module):
         # input-column index 1.
         self.mono: _MonotoneVgResidual | None = None
         if monotonic:
+            if ekv_core:
+                raise ValueError(
+                    "--monotonic and --ekv-core both target the id column; "
+                    "enable at most one.")
             self.mono = _MonotoneVgResidual(
                 in_dim=input_dim + tech_embed_dim,
                 hidden_dim=monotone_hidden,
                 sign=monotone_sign,
                 vg_col=1,
+            )
+
+        # V6.4.8 S3 — EKV analytic backbone on the id column (default off).
+        self.core: _EKVCore | None = None
+        if ekv_core:
+            self.core = _EKVCore(
+                geo_dim=input_dim - 4,
+                tech_embed_dim=tech_embed_dim,
+                hidden_dim=ekv_hidden,
+                alpha=ekv_alpha,
             )
 
         self._init_weights()
@@ -189,6 +362,15 @@ class DirectNet(nn.Module):
         emb = self.tech_embedding(tech_codes)  # (B, tech_embed_dim)
         combined = torch.cat([x, emb], dim=-1)  # (B, input_dim + tech_embed_dim)
         out = self.net(combined)
+
+        if self.core is not None:
+            # V6.4.8 S3 — replace the id column (col 0) with the EKV core +
+            # bounded residual driven by the trunk's raw id output. The other
+            # 12 columns are untouched; the composed column stays a single
+            # differentiable tensor so the inference autograd Jacobian flows.
+            id_col = self.core(x, emb, out[:, self._ID_COL])
+            out = torch.cat(
+                [id_col.unsqueeze(-1), out[:, self._ID_COL + 1 :]], dim=-1)
 
         if self.mono is not None:
             # Add the monotone-in-Vg residual to the `id` column only. The

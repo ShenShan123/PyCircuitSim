@@ -61,6 +61,15 @@ class _DirectNetMixin(_MOSFETNNBase):
             if monotonic:
                 monotone_sign = float(state["mono.sign"].item())
                 monotone_hidden = state["mono.w_vg_raw"].shape[0]
+            # V6.4.8 S3 — a checkpoint trained with `--ekv-core` carries
+            # `core.*` keys (incl. norm/sign buffers that round-trip). Rebuild
+            # the EKV backbone at the right hidden size; a stock checkpoint has
+            # none. `load_state_dict` then restores the real buffers, so no
+            # norm-stat plumbing is needed here.
+            ekv_core = any(k.startswith("core.") for k in state)
+            ekv_hidden = 64
+            if ekv_core:
+                ekv_hidden = state["core.param_head.0.weight"].shape[0]
             return DirectNet(
                 input_dim=input_dim, hidden_dim=hidden_dim,
                 n_layers=n_layers, output_dim=output_dim,
@@ -69,6 +78,8 @@ class _DirectNetMixin(_MOSFETNNBase):
                 monotonic=monotonic,
                 monotone_sign=monotone_sign,
                 monotone_hidden=monotone_hidden,
+                ekv_core=ekv_core,
+                ekv_hidden=ekv_hidden,
             )
 
         super().__init__(

@@ -183,6 +183,16 @@ def _run(args: argparse.Namespace) -> None:
         sys.exit(2)
     if args.model == "direct":
         common["monotonic"] = args.monotonic
+        common["ekv_core"] = args.ekv_core
+        common["ekv_alpha"] = args.ekv_alpha
+        common["ekv_hidden"] = args.ekv_hidden
+    if args.ekv_core and args.model != "direct":
+        print("[error] --ekv-core is a DirectNet-only (S3) flag.")
+        sys.exit(2)
+    if args.ekv_core and args.loss_preset != "default":
+        print("[error] --ekv-core composes on the id column; it is "
+              "incompatible with loss presets that reshuffle/trim outputs.")
+        sys.exit(2)
 
     print(f"\n=== Training {args.model} ({args.size}, "
           f"loss-preset={args.loss_preset}) → {save_prefix} ===")
@@ -366,6 +376,19 @@ def main() -> None:
                    help="Phase 7a: add a residual sub-network monotone in "
                         "Vg to the DirectNet `id` output column. Shapes the "
                         "network, NOT the loss.")
+
+    # V6.4.8 S3 — EKV analytic backbone + bounded residual, DirectNet only.
+    p.add_argument("--ekv-core", action="store_true",
+                   help="S3: compose the id column as an EKV/charge-sheet "
+                        "analytic core + a tanh-bounded NN residual. Wires the "
+                        "id V-shape to physics (self-limiting at Vds->0, "
+                        "saturating). DirectNet only; shapes the network, NOT "
+                        "the loss. Carries extra `core.*` checkpoint keys.")
+    p.add_argument("--ekv-alpha", type=float, default=0.5,
+                   help="EKV residual bound: Id = Id_core*(1+alpha*tanh(.)). "
+                        "Default 0.5 -> residual within +/-50%% of the core.")
+    p.add_argument("--ekv-hidden", type=int, default=64,
+                   help="Hidden width of the EKV coefficient head. Default 64.")
 
     args = p.parse_args()
     set_seed(args.seed)

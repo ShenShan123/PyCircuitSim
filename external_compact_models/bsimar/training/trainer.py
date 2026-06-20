@@ -475,6 +475,9 @@ def train_directnet(
     output_subset: Optional[list[str]] = None,
     tech_scope: str = "universal",
     monotonic: bool = False,
+    ekv_core: bool = False,
+    ekv_alpha: float = 0.5,
+    ekv_hidden: int = 64,
     swa_mode: str = "none",
     ema_decay: float = 0.999,
     apply_filter: bool = True,
@@ -565,6 +568,10 @@ def train_directnet(
             "--monotonic is incompatible with output_subset: the monotone "
             "residual targets id at column 0.")
     monotone_sign = 1.0 if device_type == "nmos" else -1.0
+    if ekv_core and output_subset is not None:
+        raise ValueError(
+            "--ekv-core is incompatible with output_subset: the EKV core "
+            "composes id at column 0.")
     model = DirectNet(
         input_dim=in_dim, hidden_dim=config.trunk_hidden,
         n_layers=config.trunk_layers + 1, output_dim=out_dim,
@@ -572,9 +579,27 @@ def train_directnet(
         tech_embed_dim=32, tech_embed_dropout=p_unknown,
         unknown_code_id=num_tech_codes - 1,
         monotonic=monotonic, monotone_sign=monotone_sign,
+        ekv_core=ekv_core, ekv_alpha=ekv_alpha, ekv_hidden=ekv_hidden,
     ).to(device)
     if monotonic:
         print(f"  Phase 7a monotone-Vg residual ON (sign={monotone_sign:+.0f})")
+    if ekv_core:
+        # The id column is column 0 of OUTPUT_COLUMN_ORDER; seed the core's
+        # norm/sign buffers from the fitted normalizer so it composes in
+        # physical Amps and re-encodes to the standardised-asinh id space.
+        st = normalizer.stats
+        if st.mode != "asinh" or st.asinh_scale is None:
+            raise ValueError("--ekv-core requires asinh output normalization")
+        model.core.set_norm(
+            v_mean=st.input_mean[:4], v_std=st.input_std[:4],
+            id_s=float(st.asinh_scale[0]),
+            id_mean=float(st.output_mean[0]), id_std=float(st.output_std[0]),
+            device_type=device_type,
+        )
+        model.core.to(device)
+        print(f"  S3 EKV core ON (alpha={ekv_alpha}, hidden={ekv_hidden}, "
+              f"i0_scale={float(st.asinh_scale[0]):.3e}, "
+              f"sign={'NMOS' if device_type == 'nmos' else 'PMOS'})")
     print(f"  Params: {model.count_parameters():,}")
 
     if init_from is not None:

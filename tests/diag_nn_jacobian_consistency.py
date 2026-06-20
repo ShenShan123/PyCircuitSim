@@ -218,10 +218,23 @@ def load_directnet(
     tech_embed_dim = state["tech_embedding.weight"].shape[1]
     input_dim = state[net_keys[0]].shape[1] - tech_embed_dim
 
+    # Auto-detect optional id-column heads so a `--monotonic` / `--ekv-core`
+    # (V6.4.8 S3) checkpoint loads into the matching architecture.
+    monotonic = any(k.startswith("mono.") for k in state)
+    monotone_sign = float(state["mono.sign"].item()) if monotonic else -1.0
+    monotone_hidden = (
+        state["mono.w_vg_raw"].shape[0] if monotonic else 64)
+    ekv_core = any(k.startswith("core.") for k in state)
+    ekv_hidden = (
+        state["core.param_head.0.weight"].shape[0] if ekv_core else 64)
+
     model = DirectNet(
         input_dim=input_dim, hidden_dim=hidden_dim, n_layers=n_layers,
         output_dim=output_dim, num_tech_codes=num_tech_codes,
         tech_embed_dim=tech_embed_dim,
+        monotonic=monotonic, monotone_sign=monotone_sign,
+        monotone_hidden=monotone_hidden,
+        ekv_core=ekv_core, ekv_hidden=ekv_hidden,
     )
     model.load_state_dict(state)
     model.eval()
