@@ -20,6 +20,10 @@ mkdir -p "$LOGDIR"
 FORCE="${1:-}"
 NGPU=3
 
+# The `bsimar` package lives under external_compact_models/ (not on sys.path);
+# it bootstraps pycmg internally. Mirror scripts/train_per_tech_8cells.sh.
+export PYTHONPATH="$ROOT/external_compact_models${PYTHONPATH:+:$PYTHONPATH}"
+
 techs=(tsmc5 tsmc7 tsmc12 tsmc16)
 sizes=(small medium large)
 devs=(nmos pmos)
@@ -47,7 +51,7 @@ run_job () {
     echo "[train] SKIP existing $name"; return 0
   fi
   echo "[train] START $name on GPU$gpu"
-  CUDA_VISIBLE_DEVICES="$gpu" conda run -n pycircuitsim python -u -m bsimar.cli.train \
+  CUDA_VISIBLE_DEVICES="$gpu" conda run --no-capture-output -n pycircuitsim python -u -m bsimar.cli.train \
     --model direct --size "$size" --device-type "$dev" --tech-scope "$tech" \
     --apply-filter off --swa-mode ema --seed 42 --cuda --overwrite \
     > "$log" 2>&1
