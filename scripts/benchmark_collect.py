@@ -104,13 +104,20 @@ def parse_complex_log(suite: str, text: str) -> dict:
             elif suite == "verify_complex_switchcap":
                 d["headline"] = f"charge_err={m.group(1)}%"
     if suite == "verify_complex_sram_snm":
+        # Authoritative gate (verify_complex_sram_snm.main): "both butterfly lobes
+        # positive across NFIN corners" == the `all-positive: yes/NO` summary flag.
+        # force_ic is an informational probe, NOT part of the gate.
         snm = re.search(rf"NG SNM=({NUM})mV\s+DN SNM=({NUM})mV", text)
+        fic = re.search(r"force_ic:\s*state1=(\w+)\s*state0=(\w+)", text)
+        ap = re.search(r"all-positive:\s*(yes|NO)", text)
+        hl = []
         if snm:
-            d["headline"] = f"NG_SNM={snm.group(1)}mV DN_SNM={snm.group(2)}mV"
-        # overall gate: PASS only if every "-> PASS/FAIL" gate in the log passed
-        verdicts = re.findall(r"->\s*(PASS|FAIL)", text)
-        if verdicts:
-            d["gate"] = "PASS" if all(v == "PASS" for v in verdicts) else "FAIL"
+            hl.append(f"NG_SNM={snm.group(1)}mV DN_SNM={snm.group(2)}mV")
+        if fic:
+            hl.append(f"force_ic={fic.group(1)}/{fic.group(2)}")
+        d["headline"] = "  ".join(hl) if hl else "—"
+        d["gate"] = ("PASS" if ap and ap.group(1) == "yes"
+                     else ("FAIL" if ap else "?"))
     # fallback overall gate from any explicit verdict
     if d["gate"] is None:
         vs = re.findall(r"->\s*(PASS|FAIL)", text)
