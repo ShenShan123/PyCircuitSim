@@ -29,7 +29,8 @@ suites=(verify_nn_multi_tech_dc verify_nn_multi_tech_tran \
         verify_complex_sram_snm verify_complex_switchcap)
 techs_uc=(TSMC5 TSMC7 TSMC12 TSMC16)
 techs_lc=(tsmc5 tsmc7 tsmc12 tsmc16)
-sizes=(small medium large)
+# SIZES env lets us pipeline (run small+medium while large is still training).
+read -r -a sizes <<< "${SIZES:-small medium large}"
 
 # ---- single-job worker ----
 if [ "${1:-}" = "_one" ]; then
