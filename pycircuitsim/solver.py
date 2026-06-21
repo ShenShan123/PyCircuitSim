@@ -2384,6 +2384,14 @@ class ACSolver:
         voltages_over_freq = {node: np.zeros(num_freqs, dtype=complex) for node in nodes}
         voltages_over_freq["frequency"] = frequencies
 
+        # Precompute small-signal MOSFET parameters ONCE at the DC operating
+        # point. gm/gds/gmb and the terminal capacitances are linearizations
+        # about the (fixed) operating point, so they do not depend on
+        # frequency. Evaluating the — possibly torch-backed (LEVEL=73) or
+        # OSDI-backed (LEVEL=72) — compact model once per device, instead of
+        # once per (device, frequency), keeps the sweep cheap.
+        mosfet_ss = self._precompute_mosfet_small_signal()
+
         # Step 2: Frequency sweep
         for freq_idx, freq in enumerate(frequencies):
             omega = 2 * np.pi * freq
@@ -2397,10 +2405,12 @@ class ACSolver:
                 if not _is_mosfet(component):
                     self._stamp_component_ac(component, mna_matrix, rhs, node_map, omega)
 
-            # Stamp MOSFETs (small-signal model: gm, gds, capacitances)
+            # Stamp MOSFETs (small-signal model: gm, gds, gmb + transcapacitances)
             for component in self.circuit.components:
                 if _is_mosfet(component):
-                    self._stamp_mosfet_ac(component, mna_matrix, node_map, omega)
+                    self._stamp_mosfet_ac(
+                        component, mna_matrix, node_map, omega,
+                        mosfet_ss[id(component)])
 
             # Stamp voltage sources (DC sources become short circuits, AC sources become AC stimulus)
             self._stamp_voltage_sources_ac(mna_matrix, rhs, node_map, num_nodes)
@@ -2485,18 +2495,117 @@ class ACSolver:
                 mna_matrix[idx_j, idx_j] += y_c
 
         elif isinstance(component, CurrentSource):
-            # Current source: stamp to RHS (AC current sources not yet implemented)
-            # For now, only DC current sources contribute (AC magnitude = 0)
-            pass
+            # AC current source: stamp the complex phasor I = mag * e^{j*phase}
+            # to the RHS. The DC bias current is set to zero in small-signal
+            # AC analysis (independent DC sources are suppressed), so only the
+            # ac_magnitude contributes. Sign convention matches the DC
+            # CurrentSource.stamp_rhs: +I into node_i, -I into node_j.
+            ac_mag = getattr(component, "ac_magnitude", 0.0)
+            if ac_mag != 0.0:
+                ac_phase_rad = np.deg2rad(getattr(component, "ac_phase", 0.0))
+                i_ac = ac_mag * np.exp(1j * ac_phase_rad)
+                node_i, node_j = component.nodes[0], component.nodes[1]
+                if node_i != "0" and node_i in node_map:
+                    rhs[node_map[node_i]] += i_ac
+                if node_j != "0" and node_j in node_map:
+                    rhs[node_map[node_j]] -= i_ac
 
         # VoltageSource handled separately in _stamp_voltage_sources_ac
+
+    def _precompute_mosfet_small_signal(self) -> Dict[int, tuple]:
+        """Evaluate every MOSFET's small-signal parameters once at the OP.
+
+        Returns a dict keyed by ``id(mosfet)`` → ``(g_ds, g_m, g_mb, caps)``
+        where ``caps`` is the ``{cgg, cgd, cgs, cdg, cdd}`` dict from
+        ``mosfet.get_capacitances`` (empty dict if the model does not expose
+        capacitances). These are linearizations about the fixed DC operating
+        point and so are frequency-independent — computing them once avoids a
+        per-frequency compact-model re-evaluation (important for the
+        torch-backed LEVEL=73 model).
+        """
+        ss: Dict[int, tuple] = {}
+        for component in self.circuit.components:
+            if not _is_mosfet(component):
+                continue
+            conductance_result = component.get_conductance(self.dc_solution)
+            if len(conductance_result) == 2:
+                g_ds, g_m = conductance_result
+                g_mb = 0.0
+            else:
+                g_ds, g_m, g_mb = conductance_result
+            # SPICE GMIN floor for numerical stability (matches DC stamping).
+            g_ds = max(g_ds, 1e-12)
+            if hasattr(component, "get_capacitances"):
+                caps = component.get_capacitances(self.dc_solution)
+            else:
+                caps = {}
+            ss[id(component)] = (g_ds, g_m, g_mb, caps)
+        return ss
+
+    def _stamp_cap_ac(
+        self,
+        mna_matrix: np.ndarray,
+        node_map: Dict[str, int],
+        gate: str,
+        drain: str,
+        source: str,
+        caps: Dict[str, float],
+        omega: float,
+    ) -> None:
+        """Stamp the small-signal MOSFET transcapacitances as jω·C admittance.
+
+        The compact models expose the source-referenced, SPICE-sign-convention
+        condensed capacitances {cgg, cgd, cdg, cdd} (PyCMG `_condense_caps`,
+        matching NGSPICE's `@n1[cXX]` operating-point variables). These form
+        the 2-port (gate, drain) capacitance matrix referenced to source:
+
+            I_g = jω [  cgg·(Vg−Vs) − cgd·(Vd−Vs) ]
+            I_d = jω [ −cdg·(Vg−Vs) + cdd·(Vd−Vs) ]
+            I_s = −(I_g + I_d)               (charge conservation / KCL)
+
+        Embedding into the nodal 3×3 over {g, d, s} gives a matrix whose rows
+        and columns each sum to zero, stamped here (× jω). At ω→0 the stamp
+        vanishes, so AC reduces to the resistive small-signal model at DC.
+        """
+        cgg = caps.get("cgg", 0.0)
+        cgd = caps.get("cgd", 0.0)
+        cdg = caps.get("cdg", 0.0)
+        cdd = caps.get("cdd", 0.0)
+        if cgg == 0.0 and cgd == 0.0 and cdg == 0.0 and cdd == 0.0:
+            return
+        jw = 1j * omega
+        # Nodal 3×3 (rows/cols sum to zero):
+        #            gate        drain        source
+        # gate   [  cgg        -cgd          cgd-cgg          ]
+        # drain  [ -cdg         cdd          cdg-cdd          ]
+        # source [  cdg-cgg     cgd-cdd      cgg-cgd-cdg+cdd  ]
+        entries = (
+            (gate,   gate,   cgg),
+            (gate,   drain, -cgd),
+            (gate,   source, cgd - cgg),
+            (drain,  gate,  -cdg),
+            (drain,  drain,  cdd),
+            (drain,  source, cdg - cdd),
+            (source, gate,   cdg - cgg),
+            (source, drain,  cgd - cdd),
+            (source, source, cgg - cgd - cdg + cdd),
+        )
+        for row_node, col_node, val in entries:
+            if val == 0.0:
+                continue
+            if row_node == "0" or row_node not in node_map:
+                continue
+            if col_node == "0" or col_node not in node_map:
+                continue
+            mna_matrix[node_map[row_node], node_map[col_node]] += jw * val
 
     def _stamp_mosfet_ac(
         self,
         mosfet,
         mna_matrix: np.ndarray,
         node_map: Dict[str, int],
-        omega: float
+        omega: float,
+        ss: tuple,
     ) -> None:
         """
         Stamp MOSFET small-signal model for AC analysis.
@@ -2505,19 +2614,16 @@ class ACSolver:
         - gm: transconductance (gate to drain)
         - gds: output conductance (drain to source)
         - gmb: bulk transconductance (bulk to drain, if applicable)
-        - Cgs: gate-source capacitance (creates admittance jwCgs)
-        - Cgd: gate-drain capacitance (Miller capacitance, jwCgd)
-        - Cdb: drain-bulk capacitance (jwCdb, often small)
-        - Csb: source-bulk capacitance (jwCsb, often small)
-
-        For now, we implement gm, gds, gmb (from DC linearization).
-        Capacitances (Cgs, Cgd, etc.) will be added in Phase 5.
+        - Cgg/Cgd/Cdg/Cdd: the source-referenced transcapacitance matrix
+          (Miller-coupled gate-drain feedback + gate/drain self-capacitance),
+          stamped as jω·C by `_stamp_cap_ac`.
 
         Args:
             mosfet: MOSFET component (NMOS or PMOS)
             mna_matrix: Complex MNA matrix to modify (in-place)
             node_map: Mapping from node names to matrix indices
             omega: Angular frequency (2*pi*f) in rad/s
+            ss: precomputed (g_ds, g_m, g_mb, caps) at the DC operating point
         """
         # Get MOSFET terminals
         drain = mosfet.nodes[0]
@@ -2525,16 +2631,8 @@ class ACSolver:
         source = mosfet.nodes[2]
         bulk = mosfet.nodes[3]
 
-        # Get small-signal conductances at DC operating point
-        conductance_result = mosfet.get_conductance(self.dc_solution)
-        if len(conductance_result) == 2:
-            g_ds, g_m = conductance_result
-            g_mb = 0.0
-        else:
-            g_ds, g_m, g_mb = conductance_result
-
-        # Add SPICE GMIN minimum conductance for numerical stability
-        g_ds = max(g_ds, 1e-12)
+        # Small-signal conductances + capacitances (precomputed once at the OP)
+        g_ds, g_m, g_mb, caps = ss
 
         # Stamp conductances (same as DC, but to complex matrix)
         # g_ds between drain and source
@@ -2597,8 +2695,9 @@ class ACSolver:
                 s_idx = node_map[source]
                 mna_matrix[s_idx, s_idx] += g_mb
 
-        # NOTE: AC capacitance stamping (Cgs, Cgd, etc.) not yet implemented.
-        # Only the resistive small-signal model is used for AC analysis.
+        # Frequency-dependent small-signal capacitances (Cgg/Cgd/Cdg/Cdd) —
+        # the Miller-coupled gate↔drain feedback that sets the device roll-off.
+        self._stamp_cap_ac(mna_matrix, node_map, gate, drain, source, caps, omega)
 
     def _stamp_voltage_sources_ac(
         self,

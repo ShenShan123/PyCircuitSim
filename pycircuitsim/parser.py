@@ -568,7 +568,14 @@ class Parser:
 
     def _parse_current_source(self, line: str) -> None:
         """
-        Parse a current source line: I<name> <n+> <n-> <value>.
+        Parse a current source line.
+
+        Supports:
+        - DC current source: I1 n+ n- 1m
+        - AC current source: I1 n+ n- DC=0 AC=1 0 (DC bias, AC magnitude, AC phase in degrees)
+
+        The AC keyword form mirrors the voltage-source parser so that `.ac`
+        analysis can be driven by a current stimulus (e.g. transimpedance).
 
         Args:
             line: Current source definition line
@@ -582,9 +589,33 @@ class Parser:
 
         name = parts[0]
         nodes = [parts[1], parts[2]]
-        value = self._parse_value(parts[3])
 
-        current_source = CurrentSource(name, nodes, value)
+        # Check for the AC specification form: DC=x AC=y phase
+        dc_value = None
+        ac_magnitude = 0.0
+        ac_phase = 0.0
+
+        for i, part in enumerate(parts[3:], start=3):
+            if part.upper().startswith('DC='):
+                dc_value = self._parse_value(part[3:])
+            elif part.upper().startswith('AC='):
+                ac_magnitude = self._parse_value(part[3:])
+                # Optional phase value immediately following AC=magnitude
+                if i + 1 < len(parts) and not parts[i + 1].upper().startswith(('DC=', 'AC=')):
+                    try:
+                        ac_phase = float(parts[i + 1])
+                    except ValueError:
+                        pass  # Not a phase value, skip
+            elif dc_value is None and not part.upper().startswith(('DC=', 'AC=')):
+                # No DC= keyword: treat the first bare value as the DC current
+                dc_value = self._parse_value(part)
+
+        # Default DC value to 0 if only AC specified
+        if dc_value is None:
+            dc_value = 0.0
+
+        current_source = CurrentSource(name, nodes, dc_value,
+                                       ac_magnitude=ac_magnitude, ac_phase=ac_phase)
         self.circuit.add_component(current_source)
 
     def _parse_mosfet(self, line: str) -> None:

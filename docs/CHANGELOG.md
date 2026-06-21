@@ -6,6 +6,60 @@ isn't burdened with chronology.
 
 ---
 
+## AC analysis — small-signal frequency-domain (branch `feat/ac-analysis`, 2026-06-21)
+
+Completed `.ac` (small-signal frequency-domain) analysis from a half-finished, broken
+scaffold into a working, NGSPICE-validated feature. AC linearizes the circuit about the DC
+operating point and solves the complex MNA `Y = G + jωC` at each swept frequency.
+
+**State found (≈60% scaffolded, dead on arrival).** Parser already accepted `.ac dec/oct/lin`
+and `AC=mag phase` on V-sources; `ACSolver`, `run_ac_sweep`, `plot_bode`, and
+`get_capacitances() → {cgg,cgd,cgs,cdg,cdd}` (both model families) existed. But the feature
+could never run or be correct:
+- **Fatal:** `run_ac_sweep` imported `pandas`, which is not in the env → AC crashed immediately.
+- **Core physics missing:** `_stamp_mosfet_ac` stamped only gm/gds/gmb and explicitly skipped
+  the MOSFET capacitances ("not yet implemented") → no Miller effect, no device roll-off; the
+  transfer function was flat/wrong above DC.
+- AC current sources were stubbed; no examples; **zero NGSPICE validation**; not in CLAUDE.md.
+
+**What shipped.**
+1. **pandas bug fixed** — `run_ac_sweep` now writes the CSV with the stdlib `csv` module
+   (mirrors `run_dc_sweep`); no new dependency (`pycircuitsim/simulation.py`).
+2. **MOSFET transcapacitance stamp** — `ACSolver._stamp_cap_ac` (`pycircuitsim/solver.py`)
+   stamps `jω·C` from the source-referenced 2-port `M = [[cgg,-cgd],[-cdg,cdd]]` (the
+   SPICE-sign-convention condensed caps PyCMG already matches to NGSPICE `@n1[cXX]`), embedded
+   into the nodal 3×3 over {g,d,s} so rows/cols sum to zero (charge conservation). At ω→0 the
+   stamp vanishes → AC reduces to the resistive small-signal model at DC. Small-signal params
+   (gm/gds/gmb + caps) are now **precomputed once** at the OP (`_precompute_mosfet_small_signal`)
+   instead of per-(device,frequency) — important for the torch-backed LEVEL=73 model.
+3. **AC current sources** — `CurrentSource.ac_magnitude/ac_phase` (`models/passive.py`), `AC=`
+   parsing for `I` lines (`parser.py`), complex-phasor RHS stamp (`solver._stamp_component_ac`).
+4. **Examples** — `examples/rc_lowpass_ac.sp`, `examples/bsimcmg_cs_amp_ac.sp`.
+5. **NGSPICE-validated test** — `tests/verify_ac.py` (results in `tests/verify_ac_results/`):
+   - **L1 passive RC** — vs NGSPICE `.ac` AND closed-form `1/(1+jωRC)`: **0.0000% mag NRMSE,
+     0.0000° phase, −3dB corner exact** (isolates the complex-MNA/R/C/AC-source path).
+   - **L2 BSIM-CMG NMOS common-source amp** (ASAP7 RVT, the device caps drive the roll-off) —
+     vs NGSPICE `.ac` on the **identical OSDI model**: low-f gain 11.661 dB both, −3dB corner
+     7.079e8 Hz both, **max gain err 5.4e-6 dB, max phase err 1.8e-5°, mag NRMSE 4.9e-7** —
+     agreement to ~machine precision. The transcapacitance sign/convention is confirmed correct.
+   - **DirectNet (LEVEL=73)** AC runs mechanically (shared `get_capacitances`, smoke-tested on a
+     tsmc16 inverter) but is **not** NGSPICE-gated this pass (it is the approximate model).
+6. **Regression guard** — `verify_bsimcmg_{op,dc,tran}` byte-identical (3/3, DC 0.09%/0.08%,
+   tran 0.19%); the AC path is purely additive.
+
+**Notes / methodology.** CPU-pinned (`CUDA_VISIBLE_DEVICES=""`, `OMP=MKL=1`); the system
+`/usr/local/ngspice-45.2` is absent on this machine, so the gate uses the repo
+`tools/ngspice-45.2/bin/ngspice` via `NGSPICE_BIN`. ngspice `wrdata vp()` emits **radians**
+unless `set units=degrees`; the test dumps complex `v(out)` (`[freq,real,imag]`) and computes
+mag/phase in Python to avoid the ambiguity. Bulk is tied to source in the validation deck so
+the source-referenced condensed capacitance matrix is exact (lifted-source AC accuracy is a
+documented limitation, not gated here). The ACSolver retains the dense complex solve
+(`np.linalg.solve`) — fine for these sizes. The stray `external_compact_models/PyCMG/
+modelcards.tar.gz` (IP build artifact) was intentionally **not** committed; it should be
+gitignored inside the submodule.
+
+---
+
 ## V6.4.9 — DirectNet small/medium/large capacity benchmark (branch `feat/v6.4.8`, 2026-06-21)
 
 A clean, single-recipe capacity study across all 4 TSMC techs, answering "how does

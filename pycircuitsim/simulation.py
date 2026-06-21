@@ -665,8 +665,8 @@ def run_ac_sweep(
         Dictionary with frequency array and complex voltages for each node
     """
     from pycircuitsim.solver import ACSolver
+    import csv
     import numpy as np
-    import pandas as pd
 
     logger.info("Computing DC operating point for AC analysis...")
 
@@ -724,24 +724,26 @@ def run_ac_sweep(
 
     logger.info(f"AC analysis complete: {len(frequencies)} frequency points")
 
-    # Step 4: Save results to CSV
+    # Step 4: Save results to CSV (stdlib csv — mirrors run_dc_sweep, no pandas)
     csv_file = output_path / f"{circuit_name}_ac_sweep.csv"
 
-    # Convert complex voltages to magnitude and phase
-    data = {"frequency": frequencies}
+    # Convert complex node voltages to magnitude + phase columns.
+    ac_nodes = [n for n in circuit.get_nodes() if n not in ("0", "GND")]
+    columns = {}
+    for node in ac_nodes:
+        v_complex = ac_results[node]
+        columns[f"V({node})_mag"] = np.abs(v_complex)
+        columns[f"V({node})_phase"] = np.rad2deg(np.angle(v_complex))
 
-    for node in circuit.get_nodes():
-        if node not in ["0", "GND"]:
-            v_complex = ac_results[node]
-            v_mag = np.abs(v_complex)
-            v_phase_rad = np.angle(v_complex)
-            v_phase_deg = np.rad2deg(v_phase_rad)
-
-            data[f"V({node})_mag"] = v_mag
-            data[f"V({node})_phase"] = v_phase_deg
-
-    df = pd.DataFrame(data)
-    df.to_csv(csv_file, index=False)
+    header = ["frequency"] + list(columns.keys())
+    with open(csv_file, "w", newline="") as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(header)
+        for i, freq in enumerate(frequencies):
+            row = [f"{freq:.6e}"]
+            for key in columns:
+                row.append(f"{columns[key][i]:.6e}")
+            writer.writerow(row)
     logger.info(f"AC results saved to: {csv_file}")
 
     # Step 5: Generate Bode plots

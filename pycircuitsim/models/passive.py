@@ -458,16 +458,21 @@ class CurrentSource(Component):
         name: Component identifier (e.g., 'I1', 'I_bias')
         nodes: List of two node names [source, sink]
         current: Current value in amperes (flows from node[0] to node[1])
+        ac_magnitude: AC magnitude for AC analysis (amperes, default 0)
+        ac_phase: AC phase for AC analysis (degrees, default 0)
     """
 
-    def __init__(self, name: str, nodes: List[str], value: float):
+    def __init__(self, name: str, nodes: List[str], value: float,
+                 ac_magnitude: float = 0.0, ac_phase: float = 0.0):
         """
         Initialize a current source.
 
         Args:
             name: Component identifier (e.g., 'I1', 'I_bias')
             nodes: List of exactly two node names [source, sink]
-            value: Current value in amperes
+            value: Current value in amperes (DC value)
+            ac_magnitude: AC magnitude in amperes (default 0)
+            ac_phase: AC phase in degrees (default 0)
 
         Raises:
             ValueError: If nodes count is not 2
@@ -480,6 +485,10 @@ class CurrentSource(Component):
 
         # Store current value
         self.current = float(value)
+
+        # AC analysis parameters (mirror VoltageSource)
+        self.ac_magnitude = float(ac_magnitude)
+        self.ac_phase = float(ac_phase)
 
     def get_nodes(self) -> List[str]:
         """

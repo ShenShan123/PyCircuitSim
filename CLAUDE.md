@@ -25,7 +25,7 @@ pycircuitsim/
 ├── simulation.py       # Orchestration (run_simulation, run_dc_sweep, run_transient)
 ├── parser.py           # Two-pass netlist parsing, .model directive support
 ├── circuit.py          # Circuit topology
-├── solver.py           # MNA matrix + Newton-Raphson
+├── solver.py           # MNA matrix + Newton-Raphson; DC/Transient/AC solvers
 ├── logger.py           # HSPICE-like .lis output
 ├── visualizer.py       # Matplotlib plotting
 └── models/
@@ -74,14 +74,18 @@ tests/
 
 ## Supported Features
 
-* **Devices:** R, C; NMOS/PMOS LEVEL=72 (BSIM-CMG, ground truth), LEVEL=73 (DirectNet, primary NN), LEVEL=74 (BSIMAR, parked); DC voltage/current sources, PULSE.
-* **Analyses:** `.op`, `.dc`, `.tran`.
+* **Devices:** R, C; NMOS/PMOS LEVEL=72 (BSIM-CMG, ground truth), LEVEL=73 (DirectNet, primary NN), LEVEL=74 (BSIMAR, parked); DC + AC voltage/current sources (`AC=mag phase`), PULSE.
+* **Analyses:** `.op`, `.dc`, `.tran`, `.ac`.
 * **Directives:** `.model` (LEVEL=72/73/74), `.include`, `.ic`.
 * Legacy LEVEL=1 (Shichman-Hodges) removed.
+
+**AC (small-signal frequency-domain) analysis** — `ACSolver` (`solver.py`) linearizes about the DC operating point and solves the complex MNA `Y = G + jωC` per frequency: R/C admittances, the full MOSFET small-signal model (gm/gds/gmb **+ the source-referenced transcapacitance matrix Cgg/Cgd/Cdg/Cdd** from `get_capacitances`, i.e. Miller-coupled roll-off), and AC V/I source stimulus. Sweep types `dec`/`oct`/`lin`. Outputs `*_ac_sweep.csv` (mag/phase per node) + a Bode plot. Validated NGSPICE-exact (LEVEL=72) — see Validation.
 
 ## Validation
 
 Inverter circuit must PASS Transient Analysis against NGSPICE ground truth within reasonable numerical tolerance. Never use simplified/self-defined equations as reference.
+
+**AC:** `tests/verify_ac.py` gates `.ac` against ground truth — L1 passive RC vs NGSPICE `.ac` AND the closed-form `1/(1+jωRC)`; L2 BSIM-CMG (LEVEL=72) NMOS common-source amp vs NGSPICE `.ac` on the identical OSDI model. Both agree to ~machine precision (L2: gain err 5e-6 dB, phase err 2e-5°, mag NRMSE 5e-7). DirectNet (LEVEL=73) AC runs mechanically (shared `get_capacitances`) but is not NGSPICE-gated this pass.
 
 ## Status
 
@@ -188,12 +192,15 @@ All tests require `conda activate pycircuitsim`.
 **BSIM-CMG Transient:** L1 `verify_bsimcmg_tran.py` (1) · L2 `verify_bsimcmg_tran_comprehensive.py` (37) · L3 `verify_multi_tech_tran.py` (72).
 **NN V6.2 gate:** `verify_nn_dc_tran.py --tech TSMC5,TSMC7 --inverter-only` (12/12 PASS on the full TSMC5/7 sweep without `--inverter-only`).
 **NN parametric harness (V6.3.2):** the PyCMG L3 parametric sweeps ported to DirectNet (LEVEL=73) via `tests/common/nn_sweep.py`. `verify_nn_multi_tech_dc.py` — single-device NMOS/PMOS Id-Vgs over L/NFIN/VT (55 configs, 4 TSMC techs). `verify_nn_multi_tech_tran.py` — inverter VTC + transient over P/N ratio, VDD, Cload, input slew, pulse width. Baseline-gated: the parametric sweep runs only for techs that pass baseline. Geometry/VT/VDD ride on `dataclasses.replace(TestTechConfig)`; only the inverter-transient circuit knobs needed a (behaviour-preserving) refactor of `verify_nn_dc_tran.py` (`InvCircuitParams`). Run with `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1` — the NN inverter VTC has ~±1% NRMSE run-to-run scatter (high-gain trip point; harness pins `torch` to 1 thread).
+**AC:** `verify_ac.py` — L1 passive RC (vs NGSPICE `.ac` + analytic), L2 BSIM-CMG common-source amp (vs NGSPICE `.ac`, identical OSDI model). 2/2 PASS, ~machine precision. CPU-pinned; needs `NGSPICE_BIN` (repo `tools/ngspice-45.2/bin/ngspice` on this machine).
 **Other:** `verify_bsimcmg_op.py` (OP <0.02% vs NGSPICE).
 
 Quick sanity:
 
 ```bash
 python tests/verify_bsimcmg_op.py && python tests/verify_bsimcmg_dc.py && python tests/verify_bsimcmg_tran.py
+# AC (set NGSPICE_BIN to the repo ngspice if /usr/local is absent):
+NGSPICE_BIN="$PWD/tools/ngspice-45.2/bin/ngspice" python tests/verify_ac.py
 ```
 
 ---
