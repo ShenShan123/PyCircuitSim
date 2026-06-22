@@ -235,6 +235,140 @@ class SobolevIdLoss(nn.Module):
         return self.lam * total / n_chan
 
 
+# ── Charge-derivative (cap) Sobolev consistency loss (V6.7 / charge channels) ─
+#
+# The TRANSIENT and AC solvers consume the small-signal capacitances as the
+# AUTOGRAD derivatives of the predicted terminal charges qg/qd
+# (mosfet_nn._unpack_eval / solver._stamp_cap_ac / _stamp_mosfet_transient):
+#
+#     cgg_sim = +∂qg/∂Vg     cgd_sim = +∂qg/∂Vd     (raw autograd, NO flip)
+#     cdg_sim = +∂qd/∂Vg     cdd_sim = +∂qd/∂Vd
+#
+# The directly-predicted cgg..cdd OUTPUT COLUMNS are supervised in training but
+# NEVER read at inference. So — exactly as SobolevIdLoss couples the autograd
+# ∂id/∂V to the supervised gm/gds/gmb — this term couples the autograd ∂q/∂V to
+# the supervised cap columns, the quantity the AC pole / switchcap charge / RO
+# timing actually depend on. The autograd cap can drift from the (accurate)
+# supervised cap column (V6.7 diag: ~1% on the grid average but up to ~25% on
+# mid-trajectory corners), the cap analogue of the S10 id-slope drift.
+#
+# SIGN CONVENTION (V6.7 diag, confirmed empirically by
+# tests/diag_charge_cap_fidelity.py and rooted in pycmg/model._condense_caps):
+# OSDI stores the SPICE condensed caps with the OFF-DIAGONALS NEGATED
+# (cgd_data = −∂Qg/∂Vd, cdg_data = −∂Qd/∂Vg) while the diagonals are unflipped
+# (cgg_data = +∂Qg/∂Vg, cdd_data = +∂Qd/∂Vd). The autograd ∂q/∂V is the raw
+# derivative, so the per-channel sign that maps autograd→OSDI is +,−,−,+:
+#
+#     autograd ∂qg/∂Vg  vs  +cgg      autograd ∂qg/∂Vd  vs  −cgd
+#     autograd ∂qd/∂Vg  vs  −cdg      autograd ∂qd/∂Vd  vs  +cdd
+#
+# (cgs = ∂qg/∂Vs is degenerate — Vs≡0 in training — and the AC stamp does not
+# consume it, so it is deliberately excluded.) The asinh chain rule and masking
+# mirror SobolevIdLoss; the differentiated head is qg/qd (its own asinh scale).
+
+# (target_cap, charge_head, voltage_input_col, sign)
+CHARGE_SOBOLEV_CHANNELS: list[tuple[str, str, int, float]] = [
+    ("cgg", "qg", 1, +1.0),   # ∂qg/∂Vg  vs  +cgg
+    ("cgd", "qg", 0, -1.0),   # ∂qg/∂Vd  vs  −cgd
+    ("cdg", "qd", 1, -1.0),   # ∂qd/∂Vg  vs  −cdg
+    ("cdd", "qd", 0, +1.0),   # ∂qd/∂Vd  vs  +cdd
+]
+
+
+class ChargeSobolevLoss(nn.Module):
+    """λ · mean_chan MAE(autograd ∂q/∂V, sign·cap_target) in normalized-asinh space.
+
+    DirectNet-only (asinh output norm). For each cap channel the autograd
+    derivative ``∂(q_norm)/∂(V_norm)`` of the relevant charge head is compared
+    against the supervised cap column transformed into the same
+    normalized-derivative units via the asinh chain rule on the CHARGE head:
+
+        d(q_norm)/d(V_norm) = (in_std_V / out_std_q)
+            · d(q_phys)/dV / sqrt(s_q² + q_phys_pred²)
+        target_in_norm = sign · cap_phys · in_std_V / out_std_q
+                          / sqrt(s_q² + q_phys_pred²)
+
+    Two ``autograd.grad`` calls (qg, qd column-sums; DirectNet is per-row
+    independent so the column-sum gradient is the per-row gradient). Rows whose
+    cap target is below ``cap_floor`` (noise) are masked per channel. Honours
+    the per-target LDS / class ``weights`` (so ``--class-weights`` can steer the
+    term toward the reverse_vds / vbs corridors where the autograd cap drifts).
+    """
+
+    def __init__(
+        self,
+        lam: float = 0.05,
+        column_order: list[str] | None = None,
+        cap_floor: float = 1e-19,
+    ) -> None:
+        super().__init__()
+        self.lam = float(lam)
+        self.cap_floor = float(cap_floor)
+        from bsimar.data.normalize import OUTPUT_COLUMN_ORDER
+        self.column_order = column_order or OUTPUT_COLUMN_ORDER
+        col = {c: i for i, c in enumerate(self.column_order)}
+        for q in ("qg", "qd"):
+            if q not in col:
+                raise ValueError(f"ChargeSobolevLoss requires a '{q}' column")
+        # Group channels by charge head so each head differentiates once.
+        # head -> list of (cap_col, vcol, sign)
+        self.heads: dict[str, list[tuple[int, int, float]]] = {}
+        self.head_col: dict[str, int] = {}
+        for cap, head, vcol, sign in CHARGE_SOBOLEV_CHANNELS:
+            if cap not in col or head not in col:
+                continue
+            self.heads.setdefault(head, []).append((col[cap], vcol, sign))
+            self.head_col[head] = col[head]
+
+    def forward(
+        self,
+        x_norm: torch.Tensor,           # (B, in_dim) requires_grad=True
+        y_pred_norm: torch.Tensor,      # (B, out_dim)
+        y_true_norm: torch.Tensor,      # (B, out_dim)
+        in_std: torch.Tensor,           # (in_dim,)
+        out_std: torch.Tensor,          # (out_dim,)
+        out_mean: torch.Tensor,         # (out_dim,)
+        asinh_scale: torch.Tensor,      # (out_dim,)
+        weights: torch.Tensor | None = None,
+    ) -> torch.Tensor:
+        """Caller must set ``x_norm.requires_grad_(True)`` before the forward."""
+        total = torch.zeros((), device=y_pred_norm.device,
+                            dtype=y_pred_norm.dtype)
+        n_chan = 0
+        n_heads = len(self.heads)
+        for h, (head, chans) in enumerate(self.heads.items()):
+            qc = self.head_col[head]
+            s_q = asinh_scale[qc]
+            out_std_q = out_std[qc]
+            # Predicted physical charge → asinh chain-rule denominator factor.
+            u_q = y_pred_norm[:, qc] * out_std_q + out_mean[qc]
+            q_phys_pred = s_q * torch.sinh(u_q)
+            factor = torch.sqrt(s_q * s_q + q_phys_pred * q_phys_pred + 1e-40)
+            # One autograd.grad per charge head (column-sum trick).
+            retain = not (h == n_heads - 1)  # last head can free the graph
+            g = torch.autograd.grad(
+                y_pred_norm[:, qc].sum(), x_norm,
+                create_graph=True, retain_graph=True)[0]    # (B, in_dim)
+            for cap_col, vcol, sign in chans:
+                u_t = (y_true_norm[:, cap_col] * out_std[cap_col]
+                       + out_mean[cap_col])
+                cap_phys = asinh_scale[cap_col] * torch.sinh(u_t)
+                with torch.no_grad():
+                    row_w = (cap_phys.abs() > self.cap_floor).to(
+                        y_pred_norm.dtype)
+                tgt_in_norm = (sign * cap_phys * in_std[vcol]
+                               / out_std_q / factor)
+                ae = torch.abs(g[:, vcol] - tgt_in_norm) * row_w
+                if weights is not None:
+                    w = (weights[:, cap_col] if weights.dim() == 2 else weights)
+                    ae = ae * w
+                total = total + ae.sum() / row_w.sum().clamp_min(1.0)
+                n_chan += 1
+        if n_chan == 0:
+            return total
+        return self.lam * total / n_chan
+
+
 # ── Subthreshold id value loss (V6.4.7 P3 / S11) ────────────────────────────
 #
 # Target: the SRAM force_ic inboard attractor (0/8). At the stuck fixed point

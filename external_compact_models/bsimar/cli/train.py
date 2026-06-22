@@ -218,6 +218,13 @@ def _run(args: argparse.Namespace) -> None:
         print("[error] --subthresh needs the id column; it is incompatible "
               "with the e2 output-subset preset.")
         sys.exit(2)
+    if args.charge_sobolev and args.model != "direct":
+        print("[error] --charge-sobolev is a DirectNet-only (V6.7) flag.")
+        sys.exit(2)
+    if args.charge_sobolev and loss_preset["output_subset"] is not None:
+        print("[error] --charge-sobolev needs the qg/qd + cgg/cgd/cdg/cdd "
+              "columns; it is incompatible with the e2 output-subset preset.")
+        sys.exit(2)
 
     if args.model == "direct":
         cfg = DirectNetConfig(**preset)
@@ -236,6 +243,9 @@ def _run(args: argparse.Namespace) -> None:
             subthresh_off_floor=args.subthresh_off_floor,
             subthresh_ceiling_k=args.subthresh_ceiling_k,
             subthresh_ceiling_w=args.subthresh_ceiling_w,
+            charge_sobolev=args.charge_sobolev,
+            lam_charge_sobolev=args.lam_charge_sobolev,
+            charge_sobolev_floor=args.charge_sobolev_floor,
             init_from=args.init_from,
             **common,
         )
@@ -378,6 +388,18 @@ def main() -> None:
     p.add_argument("--subthresh-ceiling-w", type=float, default=1.0,
                    help="Relative weight of the ceiling hinge vs the value "
                         "term within the subthreshold loss. Default 1.0.")
+
+    # V6.7 — charge-derivative (cap) Sobolev consistency, DirectNet only.
+    p.add_argument("--charge-sobolev", action="store_true",
+                   help="Add the charge-derivative (cap) Sobolev term: couples "
+                        "the autograd ∂qg/∂V, ∂qd/∂V the AC/transient solvers "
+                        "consume to the supervised cgg/cgd/cdg/cdd columns "
+                        "(+,−,−,+ sign map). DirectNet only; asinh output norm.")
+    p.add_argument("--lam-charge-sobolev", type=float, default=0.05,
+                   help="Charge-Sobolev term weight λ (default 0.05).")
+    p.add_argument("--charge-sobolev-floor", type=float, default=1e-19,
+                   help="Cap-target magnitude floor (F): rows below are masked "
+                        "out of the charge-Sobolev term. Default 1e-19.")
 
     # Phase 7 (V6.4.2) — soft physics constraints, DirectNet only, default OFF.
     p.add_argument("--monotonic", action="store_true",

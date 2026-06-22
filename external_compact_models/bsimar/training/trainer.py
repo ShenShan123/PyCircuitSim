@@ -56,6 +56,8 @@ def _epoch_train(
     sobolev_norm: Optional[Dict[str, torch.Tensor]] = None,
     subthresh_loss: Optional[nn.Module] = None,
     aux_norm: Optional[Dict[str, torch.Tensor]] = None,
+    charge_sobolev_loss: Optional[nn.Module] = None,
+    charge_sobolev_norm: Optional[Dict[str, torch.Tensor]] = None,
 ) -> Tuple[float, float]:
     """One training epoch. Returns (mean_total_loss, mean_aux_term).
 
@@ -74,7 +76,7 @@ def _epoch_train(
         x, y, tc, w = (x.to(device), y.to(device),
                        tc.to(device), w.to(device))
         optimizer.zero_grad()
-        if sobolev_loss is not None:
+        if sobolev_loss is not None or charge_sobolev_loss is not None:
             x = x.requires_grad_(True)
         pred = (model(x, y, tech_codes=tc) if is_transformer
                 else model(x, tech_codes=tc))
@@ -97,6 +99,16 @@ def _epoch_train(
                 asinh_scale=aux_norm["asinh_scale"])
             loss = loss + sub
             total_aux += float(sub.item())
+        if charge_sobolev_loss is not None:
+            csob = charge_sobolev_loss(
+                x_norm=x, y_pred_norm=pred, y_true_norm=y,
+                in_std=charge_sobolev_norm["in_std"],
+                out_std=charge_sobolev_norm["out_std"],
+                out_mean=charge_sobolev_norm["out_mean"],
+                asinh_scale=charge_sobolev_norm["asinh_scale"],
+                weights=w)
+            loss = loss + csob
+            total_aux += float(csob.item())
         loss.backward()
         if is_transformer:
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -203,6 +215,9 @@ def _train_loop(
     subthresh_off_floor: float = 1e-10,
     subthresh_ceiling_k: float = 1.0,
     subthresh_ceiling_w: float = 1.0,
+    charge_sobolev: bool = False,
+    lam_charge_sobolev: float = 0.05,
+    charge_sobolev_floor: float = 1e-19,
 ) -> Tuple[nn.Module, _NormalizerBase]:
     if is_transformer:
         for ds in (train_ds, val_ds, test_ds):
@@ -347,6 +362,38 @@ def _train_loop(
               f"upper={subthresh_upper:g}, off_floor={subthresh_off_floor:g}, "
               f"ceiling_k={subthresh_ceiling_k}, ceiling_w={subthresh_ceiling_w})")
 
+    # V6.7 — charge-derivative (cap) Sobolev consistency term. DirectNet only
+    # (asinh output norm); couples the autograd ∂q/∂V the AC/transient solvers
+    # consume to the supervised cgg/cgd/cdg/cdd columns (the cap analogue of the
+    # S10 id-slope Sobolev). Shares the same x.requires_grad path as sobolev.
+    charge_sobolev_loss: Optional[nn.Module] = None
+    charge_sobolev_norm: Optional[Dict[str, torch.Tensor]] = None
+    if charge_sobolev:
+        from bsimar.losses.bni_mae import ChargeSobolevLoss
+        if is_transformer:
+            raise ValueError("Charge-Sobolev loss is DirectNet-only")
+        st = normalizer.stats
+        if st.mode != "asinh" or st.asinh_scale is None:
+            raise ValueError(
+                "Charge-Sobolev loss requires asinh output normalization")
+        cols = (st.output_columns if st.output_columns is not None
+                else OUTPUT_COLUMN_ORDER)
+        charge_sobolev_loss = ChargeSobolevLoss(
+            lam=lam_charge_sobolev, column_order=cols,
+            cap_floor=charge_sobolev_floor)
+
+        def _ntc(arr: np.ndarray) -> torch.Tensor:
+            return torch.tensor(arr, dtype=torch.float32, device=device)
+
+        charge_sobolev_norm = {
+            "in_std": _ntc(st.input_std),
+            "out_std": _ntc(st.output_std),
+            "out_mean": _ntc(st.output_mean),
+            "asinh_scale": _ntc(st.asinh_scale),
+        }
+        print(f"  Charge-Sobolev (cap dQ/dV) loss ON (λ={lam_charge_sobolev}, "
+              f"cap_floor={charge_sobolev_floor:g})")
+
     # V6.4.7 S9 — within-run weight averaging (P6, pulled forward).
     # "ema": per-step exponential moving average from epoch 1.
     # "swa": equal-weight averaging from 75% of max_epochs.
@@ -394,7 +441,9 @@ def _train_loop(
             model, train_loader, criterion, optimizer, device, is_transformer,
             ema_model=avg_model if swa_mode == "ema" else None,
             sobolev_loss=sobolev_loss, sobolev_norm=sobolev_norm,
-            subthresh_loss=subthresh_loss, aux_norm=aux_norm)
+            subthresh_loss=subthresh_loss, aux_norm=aux_norm,
+            charge_sobolev_loss=charge_sobolev_loss,
+            charge_sobolev_norm=charge_sobolev_norm)
         if swa_mode == "swa" and epoch >= swa_start:
             avg_model.update_parameters(model)
             if epoch == swa_start:
@@ -422,7 +471,8 @@ def _train_loop(
 
         if epoch <= 5 or epoch % 10 == 0 or marker:
             extra = (f" aux={train_aux:.5f}"
-                     if (sobolev_loss is not None or subthresh_loss is not None)
+                     if (sobolev_loss is not None or subthresh_loss is not None
+                         or charge_sobolev_loss is not None)
                      else "")
             print(f"  {epoch:4d} | train={train_loss:.5f}{extra} "
                   f"val={val_loss:.5f} lr={lr_now:.2e}{marker}")
@@ -495,6 +545,9 @@ def train_directnet(
     subthresh_off_floor: float = 1e-10,
     subthresh_ceiling_k: float = 1.0,
     subthresh_ceiling_w: float = 1.0,
+    charge_sobolev: bool = False,
+    lam_charge_sobolev: float = 0.05,
+    charge_sobolev_floor: float = 1e-19,
     init_from: Optional[str] = None,
     **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
@@ -639,6 +692,9 @@ def train_directnet(
         subthresh_off_floor=subthresh_off_floor,
         subthresh_ceiling_k=subthresh_ceiling_k,
         subthresh_ceiling_w=subthresh_ceiling_w,
+        charge_sobolev=charge_sobolev,
+        lam_charge_sobolev=lam_charge_sobolev,
+        charge_sobolev_floor=charge_sobolev_floor,
     )
 
 
