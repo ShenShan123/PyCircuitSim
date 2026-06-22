@@ -35,9 +35,12 @@ if [ "${1:-}" = "_one" ]; then
   log="$LOGDIR/${name}.log"
   if [ -f "$ckpt" ] && [ "$force" != "--force" ]; then echo "[train] SKIP existing $name"; exit 0; fi
   echo "[train] START $name on GPU$gpu"
+  # EXTRA_TRAIN_ARGS lets a campaign inject a recipe addendum (e.g. the V6.6
+  # µA-band loss lever: '--subthresh --subthresh-s2 1e-7 --subthresh-upper 3e-5')
+  # without editing this script; empty by default = the clean control-v2 recipe.
   CUDA_VISIBLE_DEVICES="$gpu" conda run --no-capture-output -n pycircuitsim python -u -m bsimar.cli.train \
     --model direct --size "$size" --device-type "$dev" --tech-scope "$tech" \
-    --apply-filter off --swa-mode ema --seed 42 --cuda --overwrite \
+    --apply-filter off --swa-mode ema --seed 42 --cuda --overwrite ${EXTRA_TRAIN_ARGS:-} \
     > "$log" 2>&1
   rc=$?
   if [ $rc -eq 0 ] && [ -f "$ckpt" ]; then echo "[train] DONE $name"; else echo "[train] FAIL $name (rc=$rc, see $log)"; fi
@@ -46,9 +49,11 @@ fi
 
 # ---- dispatcher ----
 FORCE="${1:-}"
-techs=(tsmc5 tsmc7 tsmc12 tsmc16)
-sizes=(small medium large)
-devs=(nmos pmos)
+# TECHS / SIZES / DEVS env-overridable so a campaign can train a subset
+# (e.g. SIZES=xl, or TECHS='tsmc5 tsmc12' for the µA-lever A/B).
+read -r -a techs <<< "${TECHS:-tsmc5 tsmc7 tsmc12 tsmc16}"
+read -r -a sizes <<< "${SIZES:-small medium large xl}"
+read -r -a devs  <<< "${DEVS:-nmos pmos}"
 
 missing=0
 for tech in "${techs[@]}"; do for dev in "${devs[@]}"; do
@@ -56,10 +61,14 @@ for tech in "${techs[@]}"; do for dev in "${devs[@]}"; do
 done; done
 [ "$missing" -eq 0 ] || { echo "[train] ABORT: datasets incomplete"; exit 1; }
 
-# size-major ordering (small first for fast feedback); gpu = index % NGPU
+# size-major ordering (small first for fast feedback); gpu = index % NGPU.
+# The last field is ALWAYS non-empty (`noforce` placeholder when --force is
+# absent): an empty trailing field leaves a trailing blank, and `xargs -L1`
+# treats a trailing blank as a line continuation — silently joining every job
+# into ONE command so only the first runs. (Bit us on the no-force XL relaunch.)
 lines=(); i=0
 for size in "${sizes[@]}"; do for tech in "${techs[@]}"; do for dev in "${devs[@]}"; do
-  lines+=("$tech $size $dev $((i % NGPU)) $FORCE")
+  lines+=("$tech $size $dev $((i % NGPU)) ${FORCE:-noforce}")
   i=$((i+1))
 done; done; done
 

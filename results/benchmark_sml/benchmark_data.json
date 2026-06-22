@@ -1912,5 +1912,643 @@
    },
    "ckpt": "tsmc16_dn_large_nmos_best.pt"
   }
+ },
+ "xl": {
+  "tsmc5": {
+   "dev": {
+    "verify_nn_multi_tech_dc": {
+     "by_dev": {
+      "nmos": {
+       "n": 7,
+       "n_pass": 7,
+       "nrmse_mean": 4.12,
+       "nrmse_med": 3.95,
+       "nrmse_max": 7.82,
+       "mre_mean": 13.77,
+       "r2_min": 0.938,
+       "maxerr_max": 20.701,
+       "unit": "uA",
+       "base_nrmse": 3.95,
+       "base_mre": 14.27,
+       "base_r2": 0.9815,
+       "base_maxerr": 7.323
+      },
+      "pmos": {
+       "n": 7,
+       "n_pass": 7,
+       "nrmse_mean": 1.69,
+       "nrmse_med": 0.55,
+       "nrmse_max": 6.29,
+       "mre_mean": 6.0,
+       "r2_min": 0.9501,
+       "maxerr_max": 21.258,
+       "unit": "uA",
+       "base_nrmse": 0.01,
+       "base_mre": 0.18,
+       "base_r2": 1.0,
+       "base_maxerr": 0.011
+      }
+     },
+     "result": "ALL 14 configs PASSED"
+    },
+    "verify_nn_multi_tech_tran": {
+     "by_dev": {
+      "all": {
+       "n": 16,
+       "n_pass": 16,
+       "nrmse_mean": 1.75,
+       "nrmse_med": 1.24,
+       "nrmse_max": 4.86,
+       "mre_mean": 9.22,
+       "r2_min": 0.9903,
+       "maxerr_max": 185.865,
+       "unit": "mV",
+       "base_nrmse": 1.08,
+       "base_mre": 11.05,
+       "base_r2": 0.99952,
+       "base_maxerr": 34.517
+      }
+     },
+     "result": "ALL 16 configs PASSED"
+    }
+   },
+   "cpx": {
+    "verify_complex_ring_osc": {
+     "wave": {
+      "mre": 510.6,
+      "r2": -1.1374,
+      "nrmse": 62.53,
+      "maxerr": 693.85,
+      "unit": "mV"
+     },
+     "gate": "FAIL",
+     "headline": "period_err=13.50%",
+     "raw": [
+      "period error = 13.50%  ->  FAIL"
+     ]
+    },
+    "verify_complex_opamp": {
+     "wave": {
+      "mre": 99.99,
+      "r2": -1.006,
+      "nrmse": 70.58,
+      "maxerr": 648.6,
+      "unit": "mV"
+     },
+     "gate": "FAIL",
+     "headline": "gain_err=100.00% trip_shift=24.00mV",
+     "raw": [
+      "gain error = 100.00%  trip shift = 24.00mV  ->  FAIL"
+     ]
+    },
+    "verify_complex_sram_snm": {
+     "wave": null,
+     "gate": "PASS",
+     "headline": "NG_SNM=189.2mV DN_SNM=181.8mV  force_ic=FAIL/FAIL",
+     "raw": [
+      "Benchmark 3c \u2014 6T SRAM read SNM: DirectNet vs NGSPICE BSIM-CMG",
+      "NG SNM=189.2mV  DN SNM=181.8mV  SNMerr=3.9%  DN min(qb)=93.4mV  NRMSE=1.39%",
+      "NG SNM=194.2mV  DN SNM=179.2mV  SNMerr=7.7%  DN min(qb)=88.8mV  NRMSE=2.56%",
+      "NG SNM=196.1mV  DN SNM=175.9mV  SNMerr=10.3%  DN min(qb)=88.0mV  NRMSE=5.89%",
+      "force_ic state1: q=0.306 qb=0.306  resid=1.155e-06 thr=6.500e-03 (resid_ok=True rail_ok=False)  -> FAIL",
+      "force_ic state0: q=0.306 qb=0.306  resid=1.155e-06 thr=6.500e-03 (resid_ok=True rail_ok=False)  -> FAIL",
+      "Tech     |  NFIN |  NG SNM mV |  DN SNM mV |  SNMerr% |  min(qb)mV |  Positive"
+     ]
+    },
+    "verify_complex_switchcap": {
+     "wave": {
+      "mre": 18.64,
+      "r2": 0.6617,
+      "nrmse": 14.57,
+      "maxerr": 91.03,
+      "unit": "mV"
+     },
+     "gate": "FAIL",
+     "headline": "charge_err=11.21%",
+     "raw": [
+      "charge err=11.21% of VDD  droop |dn-ng|=0.001mV (0% of allowance 0.650mV)  ->  FAIL"
+     ]
+    }
+   },
+   "ac": {
+    "verify_nn_ac": {
+     "by_dev": {
+      "?": {
+       "passed": false,
+       "status": "STATUS",
+       "gain0_err_db": NaN,
+       "f3db_ratio": NaN,
+       "mag_nrmse_pct": NaN,
+       "phase_deg": NaN
+      },
+      "nmos": {
+       "gain0_err_db": 1.584,
+       "f3db_ratio": NaN,
+       "mag_nrmse_pct": 15.88,
+       "phase_deg": 74.83,
+       "passed": false,
+       "status": "FAIL"
+      },
+      "pmos": {
+       "gain0_err_db": 0.392,
+       "f3db_ratio": 1.122,
+       "mag_nrmse_pct": 4.17,
+       "phase_deg": 81.24,
+       "passed": true,
+       "status": "PASS"
+      }
+     },
+     "result": "1/2 device AC gates passed",
+     "n": 3,
+     "n_pass": 1
+    },
+    "verify_complex_opamp_ac": {
+     "gate": "FAIL",
+     "dc_gain_err_db": 86.09,
+     "gbw_ratio": "n/a",
+     "pm_err_deg": "n/a",
+     "mag_nrmse_pct": 69.15,
+     "headline": "dc_gain_err=86.09dB gbw_ratio=n/a pm_err=n/adeg"
+    }
+   },
+   "ckpt": "tsmc5_dn_xl_nmos_best.pt"
+  },
+  "tsmc7": {
+   "dev": {
+    "verify_nn_multi_tech_dc": {
+     "by_dev": {
+      "nmos": {
+       "n": 5,
+       "n_pass": 5,
+       "nrmse_mean": 2.12,
+       "nrmse_med": 1.14,
+       "nrmse_max": 6.69,
+       "mre_mean": 6.65,
+       "r2_min": 0.9561,
+       "maxerr_max": 20.813,
+       "unit": "uA",
+       "base_nrmse": 6.69,
+       "base_mre": 17.31,
+       "base_r2": 0.9561,
+       "base_maxerr": 20.813
+      },
+      "pmos": {
+       "n": 4,
+       "n_pass": 4,
+       "nrmse_mean": 2.65,
+       "nrmse_med": 2.7,
+       "nrmse_max": 5.16,
+       "mre_mean": 5.16,
+       "r2_min": 0.9731,
+       "maxerr_max": 50.859,
+       "unit": "uA",
+       "base_nrmse": 0.04,
+       "base_mre": 0.62,
+       "base_r2": 1.0,
+       "base_maxerr": 0.067
+      }
+     },
+     "result": "ALL 9 configs PASSED"
+    },
+    "verify_nn_multi_tech_tran": {
+     "by_dev": {
+      "all": {
+       "n": 16,
+       "n_pass": 16,
+       "nrmse_mean": 1.73,
+       "nrmse_med": 1.14,
+       "nrmse_max": 5.79,
+       "mre_mean": 9.79,
+       "r2_min": 0.9844,
+       "maxerr_max": 306.138,
+       "unit": "mV",
+       "base_nrmse": 1.19,
+       "base_mre": 11.34,
+       "base_r2": 0.9994,
+       "base_maxerr": 56.704
+      }
+     },
+     "result": "ALL 16 configs PASSED"
+    }
+   },
+   "cpx": {
+    "verify_complex_ring_osc": {
+     "wave": {
+      "mre": 424.63,
+      "r2": -0.94,
+      "nrmse": 58.91,
+      "maxerr": 783.49,
+      "unit": "mV"
+     },
+     "gate": "FAIL",
+     "headline": "period_err=14.31%",
+     "raw": [
+      "period error = 14.31%  ->  FAIL"
+     ]
+    },
+    "verify_complex_opamp": {
+     "wave": {
+      "mre": 99.97,
+      "r2": -1.0043,
+      "nrmse": 70.08,
+      "maxerr": 727.47,
+      "unit": "mV"
+     },
+     "gate": "FAIL",
+     "headline": "gain_err=99.99% trip_shift=126.00mV",
+     "raw": [
+      "gain error = 99.99%  trip shift = 126.00mV  ->  FAIL"
+     ]
+    },
+    "verify_complex_sram_snm": {
+     "wave": null,
+     "gate": "PASS",
+     "headline": "NG_SNM=187.4mV DN_SNM=195.4mV  force_ic=FAIL/FAIL",
+     "raw": [
+      "Benchmark 3c \u2014 6T SRAM read SNM: DirectNet vs NGSPICE BSIM-CMG",
+      "NG SNM=187.4mV  DN SNM=195.4mV  SNMerr=4.3%  DN min(qb)=131.1mV  NRMSE=2.93%",
+      "NG SNM=184.8mV  DN SNM=204.3mV  SNMerr=10.5%  DN min(qb)=121.0mV  NRMSE=1.05%",
+      "NG SNM=184.4mV  DN SNM=277.0mV  SNMerr=50.2%  DN min(qb)=122.7mV  NRMSE=2.68%",
+      "force_ic state1: q=1.089 qb=-0.192  resid=1.533e-04 thr=7.500e-03 (resid_ok=True rail_ok=False)  -> FAIL",
+      "force_ic state0: q=-0.192 qb=1.089  resid=1.533e-04 thr=7.500e-03 (resid_ok=True rail_ok=False)  -> FAIL",
+      "Tech     |  NFIN |  NG SNM mV |  DN SNM mV |  SNMerr% |  min(qb)mV |  Positive"
+     ]
+    },
+    "verify_complex_switchcap": {
+     "wave": {
+      "mre": 2.55,
+      "r2": 0.9914,
+      "nrmse": 2.35,
+      "maxerr": 30.68,
+      "unit": "mV"
+     },
+     "gate": "PASS",
+     "headline": "charge_err=1.72%",
+     "raw": [
+      "charge err=1.72% of VDD  droop |dn-ng|=0.001mV (0% of allowance 0.750mV)  ->  PASS"
+     ]
+    }
+   },
+   "ac": {
+    "verify_nn_ac": {
+     "by_dev": {
+      "?": {
+       "passed": false,
+       "status": "STATUS",
+       "gain0_err_db": NaN,
+       "f3db_ratio": NaN,
+       "mag_nrmse_pct": NaN,
+       "phase_deg": NaN
+      },
+      "nmos": {
+       "gain0_err_db": 1.067,
+       "f3db_ratio": 1.413,
+       "mag_nrmse_pct": 10.93,
+       "phase_deg": 57.52,
+       "passed": false,
+       "status": "FAIL"
+      },
+      "pmos": {
+       "gain0_err_db": 0.853,
+       "f3db_ratio": 1.122,
+       "mag_nrmse_pct": 8.86,
+       "phase_deg": 66.9,
+       "passed": true,
+       "status": "PASS"
+      }
+     },
+     "result": "1/2 device AC gates passed",
+     "n": 3,
+     "n_pass": 1
+    },
+    "verify_complex_opamp_ac": {
+     "gate": "FAIL",
+     "dc_gain_err_db": 19.48,
+     "gbw_ratio": "4.64",
+     "pm_err_deg": "24.4",
+     "mag_nrmse_pct": 65.08,
+     "headline": "dc_gain_err=19.48dB gbw_ratio=4.64 pm_err=24.4deg"
+    }
+   },
+   "ckpt": "tsmc7_dn_xl_nmos_best.pt"
+  },
+  "tsmc12": {
+   "dev": {
+    "verify_nn_multi_tech_dc": {
+     "by_dev": {
+      "nmos": {
+       "n": 9,
+       "n_pass": 8,
+       "nrmse_mean": 1.89,
+       "nrmse_med": 0.08,
+       "nrmse_max": 11.25,
+       "mre_mean": 4.71,
+       "r2_min": 0.8639,
+       "maxerr_max": 149.493,
+       "unit": "uA",
+       "base_nrmse": 0.02,
+       "base_mre": 0.32,
+       "base_r2": 1.0,
+       "base_maxerr": 0.036
+      },
+      "pmos": {
+       "n": 9,
+       "n_pass": 8,
+       "nrmse_mean": 3.57,
+       "nrmse_med": 0.1,
+       "nrmse_max": 23.66,
+       "mre_mean": 9.57,
+       "r2_min": 0.3683,
+       "maxerr_max": 291.143,
+       "unit": "uA",
+       "base_nrmse": 0.02,
+       "base_mre": 0.28,
+       "base_r2": 1.0,
+       "base_maxerr": 0.038
+      }
+     },
+     "result": "2 FAIL, 0 ERROR out of 18"
+    },
+    "verify_nn_multi_tech_tran": {
+     "by_dev": {
+      "all": {
+       "n": 16,
+       "n_pass": 16,
+       "nrmse_mean": 1.59,
+       "nrmse_med": 1.25,
+       "nrmse_max": 4.12,
+       "mre_mean": 9.51,
+       "r2_min": 0.9915,
+       "maxerr_max": 222.411,
+       "unit": "mV",
+       "base_nrmse": 1.02,
+       "base_mre": 9.35,
+       "base_r2": 0.99957,
+       "base_maxerr": 31.711
+      }
+     },
+     "result": "ALL 16 configs PASSED"
+    }
+   },
+   "cpx": {
+    "verify_complex_ring_osc": {
+     "wave": {
+      "mre": 766.41,
+      "r2": -0.8664,
+      "nrmse": 56.91,
+      "maxerr": 842.63,
+      "unit": "mV"
+     },
+     "gate": "PASS",
+     "headline": "period_err=3.40%",
+     "raw": [
+      "period error = 3.40%  ->  PASS"
+     ]
+    },
+    "verify_complex_opamp": {
+     "wave": {
+      "mre": 99.98,
+      "r2": -1.0053,
+      "nrmse": 70.48,
+      "maxerr": 797.4,
+      "unit": "mV"
+     },
+     "gate": "FAIL",
+     "headline": "gain_err=100.00% trip_shift=-8.00mV",
+     "raw": [
+      "gain error = 100.00%  trip shift = -8.00mV  ->  FAIL"
+     ]
+    },
+    "verify_complex_sram_snm": {
+     "wave": null,
+     "gate": "PASS",
+     "headline": "NG_SNM=239.1mV DN_SNM=226.7mV  force_ic=ok/ok",
+     "raw": [
+      "Benchmark 3c \u2014 6T SRAM read SNM: DirectNet vs NGSPICE BSIM-CMG",
+      "NG SNM=239.1mV  DN SNM=226.7mV  SNMerr=5.2%  DN min(qb)=121.2mV  NRMSE=0.91%",
+      "NG SNM=230.6mV  DN SNM=215.0mV  SNMerr=6.8%  DN min(qb)=127.2mV  NRMSE=1.57%",
+      "NG SNM=226.9mV  DN SNM=221.7mV  SNMerr=2.3%  DN min(qb)=127.0mV  NRMSE=4.39%",
+      "force_ic state1: q=0.804 qb=-0.003  resid=2.349e-08 thr=8.000e-03 (resid_ok=True rail_ok=True)  -> PASS",
+      "force_ic state0: q=-0.003 qb=0.804  resid=2.349e-08 thr=8.000e-03 (resid_ok=True rail_ok=True)  -> PASS",
+      "Tech     |  NFIN |  NG SNM mV |  DN SNM mV |  SNMerr% |  min(qb)mV |  Positive"
+     ]
+    },
+    "verify_complex_switchcap": {
+     "wave": {
+      "mre": 6.74,
+      "r2": 0.9507,
+      "nrmse": 5.82,
+      "maxerr": 34.24,
+      "unit": "mV"
+     },
+     "gate": "PASS",
+     "headline": "charge_err=4.19%",
+     "raw": [
+      "charge err=4.19% of VDD  droop |dn-ng|=0.009mV (1% of allowance 0.800mV)  ->  PASS"
+     ]
+    }
+   },
+   "ac": {
+    "verify_nn_ac": {
+     "by_dev": {
+      "?": {
+       "passed": false,
+       "status": "STATUS",
+       "gain0_err_db": NaN,
+       "f3db_ratio": NaN,
+       "mag_nrmse_pct": NaN,
+       "phase_deg": NaN
+      },
+      "nmos": {
+       "gain0_err_db": 0.331,
+       "f3db_ratio": 1.0,
+       "mag_nrmse_pct": 3.49,
+       "phase_deg": 30.09,
+       "passed": true,
+       "status": "PASS"
+      },
+      "pmos": {
+       "gain0_err_db": 1.279,
+       "f3db_ratio": 1.122,
+       "mag_nrmse_pct": 12.56,
+       "phase_deg": 34.63,
+       "passed": false,
+       "status": "FAIL"
+      }
+     },
+     "result": "1/2 device AC gates passed",
+     "n": 3,
+     "n_pass": 1
+    },
+    "verify_complex_opamp_ac": {
+     "gate": "FAIL",
+     "dc_gain_err_db": 42.69,
+     "gbw_ratio": "0.125",
+     "pm_err_deg": "115",
+     "mag_nrmse_pct": 67.64,
+     "headline": "dc_gain_err=42.69dB gbw_ratio=0.125 pm_err=115deg"
+    }
+   },
+   "ckpt": "tsmc12_dn_xl_nmos_best.pt"
+  },
+  "tsmc16": {
+   "dev": {
+    "verify_nn_multi_tech_dc": {
+     "by_dev": {
+      "nmos": {
+       "n": 7,
+       "n_pass": 7,
+       "nrmse_mean": 1.23,
+       "nrmse_med": 0.04,
+       "nrmse_max": 6.64,
+       "mre_mean": 3.24,
+       "r2_min": 0.9516,
+       "maxerr_max": 40.039,
+       "unit": "uA",
+       "base_nrmse": 0.02,
+       "base_mre": 0.33,
+       "base_r2": 1.0,
+       "base_maxerr": 0.039
+      },
+      "pmos": {
+       "n": 7,
+       "n_pass": 7,
+       "nrmse_mean": 1.8,
+       "nrmse_med": 0.04,
+       "nrmse_max": 9.09,
+       "mre_mean": 4.8,
+       "r2_min": 0.9025,
+       "maxerr_max": 98.302,
+       "unit": "uA",
+       "base_nrmse": 0.02,
+       "base_mre": 0.3,
+       "base_r2": 1.0,
+       "base_maxerr": 0.037
+      }
+     },
+     "result": "ALL 14 configs PASSED"
+    },
+    "verify_nn_multi_tech_tran": {
+     "by_dev": {
+      "all": {
+       "n": 16,
+       "n_pass": 16,
+       "nrmse_mean": 1.9,
+       "nrmse_med": 1.44,
+       "nrmse_max": 4.88,
+       "mre_mean": 9.52,
+       "r2_min": 0.9755,
+       "maxerr_max": 212.948,
+       "unit": "mV",
+       "base_nrmse": 1.01,
+       "base_mre": 9.2,
+       "base_r2": 0.99958,
+       "base_maxerr": 31.933
+      }
+     },
+     "result": "ALL 16 configs PASSED"
+    }
+   },
+   "cpx": {
+    "verify_complex_ring_osc": {
+     "wave": {
+      "mre": 838.49,
+      "r2": -1.0546,
+      "nrmse": 59.29,
+      "maxerr": 847.89,
+      "unit": "mV"
+     },
+     "gate": "PASS",
+     "headline": "period_err=3.05%",
+     "raw": [
+      "period error = 3.05%  ->  PASS"
+     ]
+    },
+    "verify_complex_opamp": {
+     "wave": {
+      "mre": 99.98,
+      "r2": -1.0047,
+      "nrmse": 70.43,
+      "maxerr": 797.4,
+      "unit": "mV"
+     },
+     "gate": "FAIL",
+     "headline": "gain_err=100.00% trip_shift=-16.00mV",
+     "raw": [
+      "gain error = 100.00%  trip shift = -16.00mV  ->  FAIL"
+     ]
+    },
+    "verify_complex_sram_snm": {
+     "wave": null,
+     "gate": "PASS",
+     "headline": "NG_SNM=235.5mV DN_SNM=223.0mV  force_ic=FAIL/FAIL",
+     "raw": [
+      "Benchmark 3c \u2014 6T SRAM read SNM: DirectNet vs NGSPICE BSIM-CMG",
+      "NG SNM=235.5mV  DN SNM=223.0mV  SNMerr=5.3%  DN min(qb)=122.5mV  NRMSE=0.90%",
+      "NG SNM=229.7mV  DN SNM=216.4mV  SNMerr=5.8%  DN min(qb)=121.5mV  NRMSE=1.53%",
+      "NG SNM=228.7mV  DN SNM=215.8mV  SNMerr=5.7%  DN min(qb)=128.3mV  NRMSE=2.22%",
+      "force_ic state1: q=0.391 qb=0.391  resid=4.010e-06 thr=8.000e-03 (resid_ok=True rail_ok=False)  -> FAIL",
+      "force_ic state0: q=0.391 qb=0.391  resid=4.010e-06 thr=8.000e-03 (resid_ok=True rail_ok=False)  -> FAIL",
+      "Tech     |  NFIN |  NG SNM mV |  DN SNM mV |  SNMerr% |  min(qb)mV |  Positive"
+     ]
+    },
+    "verify_complex_switchcap": {
+     "wave": {
+      "mre": 6.32,
+      "r2": 0.9569,
+      "nrmse": 5.4,
+      "maxerr": 29.72,
+      "unit": "mV"
+     },
+     "gate": "PASS",
+     "headline": "charge_err=3.42%",
+     "raw": [
+      "charge err=3.42% of VDD  droop |dn-ng|=0.006mV (1% of allowance 0.800mV)  ->  PASS"
+     ]
+    }
+   },
+   "ac": {
+    "verify_nn_ac": {
+     "by_dev": {
+      "?": {
+       "passed": false,
+       "status": "STATUS",
+       "gain0_err_db": NaN,
+       "f3db_ratio": NaN,
+       "mag_nrmse_pct": NaN,
+       "phase_deg": NaN
+      },
+      "nmos": {
+       "gain0_err_db": 0.26,
+       "f3db_ratio": 1.0,
+       "mag_nrmse_pct": 2.75,
+       "phase_deg": 32.72,
+       "passed": true,
+       "status": "PASS"
+      },
+      "pmos": {
+       "gain0_err_db": 1.485,
+       "f3db_ratio": 1.259,
+       "mag_nrmse_pct": 14.42,
+       "phase_deg": 34.68,
+       "passed": false,
+       "status": "FAIL"
+      }
+     },
+     "result": "1/2 device AC gates passed",
+     "n": 3,
+     "n_pass": 1
+    },
+    "verify_complex_opamp_ac": {
+     "gate": "FAIL",
+     "dc_gain_err_db": 99.77,
+     "gbw_ratio": "n/a",
+     "pm_err_deg": "n/a",
+     "mag_nrmse_pct": 66.64,
+     "headline": "dc_gain_err=99.77dB gbw_ratio=n/a pm_err=n/adeg"
+    }
+   },
+   "ckpt": "tsmc16_dn_xl_nmos_best.pt"
+  }
  }
 }

@@ -142,6 +142,7 @@ def _resolve_nn_checkpoint(
                 CHECKPOINT_DIR / f"{tech_key}_dn_medium_{device_key}_best.pt",
                 CHECKPOINT_DIR / f"{tech_key}_dn_small_{device_key}_best.pt",
                 CHECKPOINT_DIR / f"{tech_key}_dn_large_{device_key}_best.pt",
+                CHECKPOINT_DIR / f"{tech_key}_dn_xl_{device_key}_best.pt",
             ]
         candidates = per_tech_preempt + [
             CHECKPOINT_DIR / f"refac_dn_medium_{device_key}_best.pt",

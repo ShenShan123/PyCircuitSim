@@ -18,7 +18,11 @@ from statistics import mean, median
 
 ROOT = Path(__file__).resolve().parent.parent
 BASE = ROOT / "results" / "benchmark_sml"
-SIZES = ["small", "medium", "large"]
+# Canonical capacity order; the report includes only the tiers that have
+# result dirs on disk, so adding/removing a tier (e.g. V6.6 `xl`) needs no
+# further edits — every table header derives from SIZES.
+_SIZE_ORDER = ["small", "medium", "large", "xl"]
+SIZES = [s for s in _SIZE_ORDER if (BASE / s).is_dir()] or _SIZE_ORDER[:3]
 TECHS = ["tsmc5", "tsmc7", "tsmc12", "tsmc16"]
 DEV_SUITES = ["verify_nn_multi_tech_dc", "verify_nn_multi_tech_tran"]
 CPX_SUITES = ["verify_complex_ring_osc", "verify_complex_opamp",
@@ -262,6 +266,12 @@ def _ac_section(data) -> list:
         "owned, not a charge-derivative (dQ/dV) deficiency (which would have shown as bad "
         "gain *and* bad pole everywhere, the opposite of what is measured).",
         "",
+        "**V6.6 — XL adds 8 checkpoints (32 total) and does NOT change the AC story.** "
+        "Device CS-amp gate holds at 4/12 for XL (17/32 overall), opamp stays 0/4 (0/16 "
+        "overall), and device mean gain0-err drifts marginally worse (0.86→0.91 dB L→XL) — "
+        "consistent with the XL device-surface over-fit seen in DC. AC fidelity is "
+        "capacity-saturated by `large`.",
+        "",
     ]
     # cross-size tally
     srows = []
@@ -303,7 +313,7 @@ def _ac_section(data) -> list:
                 r = dv["by_dev"].get(dev) if dv else None
                 cells.append(r["status"] if r else "—")
             rows.append([tech, dev] + cells)
-    L += [md_table(["Tech", "Dev", "small", "medium", "large"], rows), ""]
+    L += [md_table(["Tech", "Dev"] + SIZES, rows), ""]
 
     # device CS-amp gain0-err dB by capacity (headline accuracy number)
     L += ["### Device CS-amp gain0 error (dB) by capacity (lower = better)", ""]
@@ -316,7 +326,7 @@ def _ac_section(data) -> list:
                 r = dv["by_dev"].get(dev) if dv else None
                 cells.append(_fmtnum(r["gain0_err_db"]) if r else "—")
             rows.append([tech, dev] + cells)
-    L += [md_table(["Tech", "Dev", "small", "medium", "large"], rows), ""]
+    L += [md_table(["Tech", "Dev"] + SIZES, rows), ""]
 
     # opamp AC gate matrix
     L += ["### Opamp open-loop AC gate by capacity (DC-gain err dB / GBW ratio / PM err°)", ""]
@@ -332,7 +342,7 @@ def _ac_section(data) -> list:
                     f"{op['gate']} ({_fmtnum(op.get('dc_gain_err_db'))}/"
                     f"{op.get('gbw_ratio', '—')}/{op.get('pm_err_deg', '—')})")
         rows.append([tech] + cells)
-    L += [md_table(["Tech", "small", "medium", "large"], rows), ""]
+    L += [md_table(["Tech"] + SIZES, rows), ""]
     return L
 
 
@@ -366,7 +376,7 @@ def _ac_size_detail(data, size) -> list:
     return L
 
 def report(data) -> str:
-    L = ["# DirectNet (LEVEL=73) capacity benchmark — small / medium / large",
+    L = ["# DirectNet (LEVEL=73) capacity benchmark — small / medium / large / xl",
          "",
          "All checkpoints trained on ONE identical clean recipe "
          "(`--apply-filter off --swa-mode ema --seed 42`); capacity is the only "
@@ -374,47 +384,61 @@ def report(data) -> str:
          "(`--variants all`, inv-trip + subvt-off overlays). Ground truth = NGSPICE "
          "BSIM-CMG (LEVEL=72), repo ngspice-45.2, CPU-pinned.",
          "",
-         "Sizes: small=128x3 (~0.06M p) / medium=256x5 (~0.4M p) / large=384x6 (~0.9M p).",
+         "Sizes: small=128x3 (~0.06M p) / medium=256x5 (~0.4M p) / large=384x6 (~0.9M p) / "
+         "**xl=512x8 (~2.13M p)**.",
          "",
-         "> **V6.5 update — AC small-signal accuracy.** The DC/transient capacity "
-         "study below is unchanged; V6.5 adds the first NGSPICE-gated evaluation of "
-         "DirectNet **AC** (`.ac`) fidelity across all 24 checkpoints — see the "
-         "[AC small-signal accuracy](#ac-small-signal-accuracy-v65) section. Headline: "
-         "AC **gain** fidelity (gm/gds via autograd) is excellent everywhere "
-         "(gain0 err <1.5 dB, 24/24); the **dominant cap-driven pole / bandwidth** is "
-         "good but capacity/tech-variable (device CS-amp gate 13/24); the **opamp** AC "
-         "inherits the DC value-surface fragility (0/12, though tsmc12-large reproduces "
-         "GBW to 0.97× and phase margin to 1.3°). No retraining warranted (the gaps are "
-         "value-surface- and feedforward-owned, not a charge-derivative deficiency).",
+         "> **V6.6 update — XL capacity tier + µA-band loss lever (KILLED).** This revision "
+         "adds the **XL** tier (512×8, 2.13M p) on the identical clean recipe and a tested-"
+         "but-reverted accuracy lever. **Headline: the capacity curve PEAKS at `large` and "
+         "DECLINES at XL — 6 → 9 → 12 → 9 / 16.** XL fits the device surface ~10× tighter "
+         "(val loss 2e-4 vs medium's ~2e-3) yet has the *worst* off-nominal parametric NRMSE "
+         "(2.17% mean, the highest of any tier) and *loses every value-surface-fragile gate "
+         "`large` had won* (tsmc5 opamp, tsmc12 opamp, tsmc7 ring-osc all PASS→FAIL). This is "
+         "the cleanest possible confirmation of V6.4.8-S1: **capacity is not the bind; beyond "
+         "`large` it over-fits the value-surface and collapses the high-gain basins.** The "
+         "**µA-band loss de-compression** lever (the V6.4.8 roadmap's named next step — retune "
+         "the default-off `SubthresholdIdLoss` to the µA band, `s2=1e-7 upper=3e-5`) was A/B-"
+         "tested on tsmc5 switchcap and **KILLED**: charge_err 11.84% → 12.05%/11.69% "
+         "(unchanged) with a slight DC regress. It *refutes* the 'loss-compression-owned' "
+         "hypothesis — the tsmc5 switchcap over-charge survives direct µA-band loss de-"
+         "compression (and survived S3's EKV prior), so it is **charge/transient (sample-and-"
+         "hold) owned, not DC-current-band owned**. The V6.5 AC study below is unchanged "
+         "(XL does not move AC: opamp 0/4, device CS-amp 4/12, gain0-err marginally worse).",
          "",
          "## Key findings",
          "",
-         "1. **Circuit pass-rate rises monotonically with capacity: 6/16 -> 9/16 -> 12/16** "
-         "(small -> medium -> large). The gains come from charge-transfer and timing circuits, "
-         "not from device-curve accuracy (already excellent everywhere).",
-         "2. **Device-level Id-Vgs / inverter accuracy is excellent at every size** (mean NRMSE "
-         "<4%, most <2%; inverter VTC+transient 16/16 PASS at all sizes, all techs). Capacity "
-         "barely moves it, and at the finer nodes the large net slightly *overfits* the device "
-         "surface (e.g. tsmc12 DC mean NRMSE 0.36% medium -> 1.25% large). Device fidelity is NOT "
-         "the bind.",
+         "1. **Circuit pass-rate is NON-monotonic in capacity: 6/16 → 9/16 → 12/16 → 9/16** "
+         "(small → medium → large → **xl**). It rises through `large`, then **regresses at XL**. "
+         "The S→L gains come from charge-transfer and timing circuits; the L→XL loss comes from "
+         "value-surface over-fit collapsing the opamp / high-VDD-RO high-gain basins.",
+         "2. **Device-level Id-Vgs / inverter accuracy is excellent at every size, but XL over-fits.** "
+         "Mean parametric NRMSE 1.63 → 1.29 → 1.7 → 2.17% (S→M→L→XL): it is *best at medium* and "
+         "*worst at XL*, even though XL's validation loss is ~10× lower than medium's. XL fits the "
+         "training distribution tightest but generalizes worst to off-nominal geometry/VT sweeps "
+         "(e.g. tsmc7 DC/pmos 0.51% medium → 2.65% XL; tsmc12 DC/pmos 0.76% → 3.57%). Inverter "
+         "VTC+transient stays 16/16 PASS at all four sizes. **Device fidelity is NOT the bind; "
+         "more capacity past `large` hurts generalization.**",
          "3. **The opamp is the hardest, value-surface-fragile gate.** Open-loop gain collapses to "
-         "~0 (NRMSE ~70%) at small AND medium for all four techs, and recovers to PASS only at "
-         "**large**, only for tsmc5 and tsmc12 (tsmc12 large: gain err 6.25%, locus NRMSE 1.0%). "
-         "tsmc7/tsmc16 never pass on this clean single recipe -- matching project history that the "
-         "*shipping* tsmc7/tsmc16 needed special recipes (pivcor / s12cor) to keep the opamp alive. "
-         "Refines V6.4.8-S1: the high-gain basin is capacity- AND tech-sensitive, not a clean "
-         "capacity win or loss.",
-         "4. **Switched-cap needs capacity:** 0/4 (small) -> 3/4 (medium and large). tsmc5 never "
-         "passes (~11-12% charge error) -- its known micro-amp-band loss-compression over-conduction "
-         "(V6.4.8-S3), independent of capacity.",
-         "5. **Ring-osc** passes for the higher-VDD nodes (tsmc12/16) at every size and tsmc7 at "
-         "large; tsmc5 never (period err 6-13%). **SRAM butterfly** (all-lobes-positive gate) "
-         "passes 4/4 at every size; force_ic is reported as an informational probe.",
+         "~0 (NRMSE ~70%) at small AND medium for all four techs, recovers to PASS only at **large** "
+         "and only for tsmc5/tsmc12 (tsmc12 large: gain err 6.25%, locus NRMSE 1.0%), then **collapses "
+         "again at XL** (tsmc5/tsmc12 opamp PASS→FAIL). tsmc7/tsmc16 never pass on this clean recipe "
+         "(the *shipping* tsmc7/tsmc16 need the pivcor / s12cor recipes). The high-gain basin is "
+         "capacity- AND tech-sensitive with a sweet spot at `large` — bigger is not better.",
+         "4. **Switched-cap needs capacity up to a point:** 0/4 (small) → 3/4 (medium, large, **xl**). "
+         "tsmc5 never passes (~11-12% charge error) at ANY size — and V6.6 proves it is **not** "
+         "µA-band-loss-compression-owned (the lever moved it <0.2%): it is sample-and-hold "
+         "charge/transient over-charge, independent of both capacity and µA-band DC loss weighting.",
+         "5. **Ring-osc** passes for the higher-VDD nodes (tsmc12/16) at every size; tsmc7 passes "
+         "ONLY at `large` (PASS at L, FAIL at S/M/**XL** — another L→XL over-fit regression); tsmc5 "
+         "never (period err 6-14%). **SRAM butterfly** (all-lobes-positive gate) passes 4/4 at every "
+         "size; force_ic is an informational probe.",
          "",
-         "**Bottom line:** larger capacity helps circuit-level behaviour overall (12/16 at large) "
-         "but does NOT close the two recipe-sensitive gaps (tsmc7/tsmc16 opamp, tsmc5 switchcap) "
-         "that the V6.4.x campaigns already attributed to value-surface / loss-compression, not "
-         "capacity.",
+         "**Bottom line:** capacity helps circuit-level behaviour up to **`large` (12/16), which is "
+         "the sweet spot**; **XL over-fits and regresses to 9/16**. Neither more capacity (XL) nor "
+         "µA-band loss de-compression closes the recipe-sensitive gaps (tsmc7/tsmc16 opamp, tsmc5 "
+         "switchcap) — the V6.4.x attribution to value-surface / charge-transient ownership (not "
+         "capacity, not µA-band DC loss) is confirmed and sharpened. `large` remains the production "
+         "capacity; XL is retained as the empirical over-fit boundary.",
          ""]
 
     # ── cross-size headline ──
@@ -451,7 +475,7 @@ def report(data) -> str:
                 c = data[size][tech]["cpx"].get(suite)
                 cells.append(c["gate"] if c else "—")
             rows.append([tech, CPX_SHORT[suite]] + cells)
-    L += [md_table(["Tech", "Circuit", "small", "medium", "large"], rows), ""]
+    L += [md_table(["Tech", "Circuit"] + SIZES, rows), ""]
 
     # ── device-level mean NRMSE% by size (dynamic dev keys) ──
     L += ["### Device-level mean NRMSE% by capacity (lower = better fit)", "",
@@ -474,7 +498,7 @@ def report(data) -> str:
                     v = dv["by_dev"].get(dev) if dv else None
                     cells.append(v["nrmse_mean"] if v else "—")
                 rows.append([tech, f"{tag}/{dev}"] + cells)
-    L += [md_table(["Tech", "Suite/Dev", "small", "medium", "large"], rows), ""]
+    L += [md_table(["Tech", "Suite/Dev"] + SIZES, rows), ""]
 
     # ── AC small-signal accuracy (V6.5) ──
     L += _ac_section(data)

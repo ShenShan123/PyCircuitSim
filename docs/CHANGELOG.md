@@ -6,6 +6,82 @@ isn't burdened with chronology.
 
 ---
 
+## V6.6 — XL capacity tier + µA-band loss lever (KILLED) (branch `feat/ac-analysis`, 2026-06-22)
+
+Acted on the V6.4.9/V6.5 benchmark's open questions with two **simple-first** levers
+(no complex methods, per the brief): add an **XL capacity tier** and test the
+**µA-band loss de-compression** the V6.4.8 roadmap had named as the next campaign.
+Both were run on the *identical clean recipe* (`--apply-filter off --swa-mode ema
+--seed 42`) so they compare cleanly to the published S/M/L. Datasets were **not**
+regenerated — both levers are loss/architecture changes, and the V6.4.9 full-Vth+geometry
+datasets are current. Full analysis: `docs/plans/2026-06-22-v6.6-accuracy-and-xl.md`;
+metrics: `results/benchmark_sml/REPORT.md` (now a 4-tier S/M/L/XL report).
+
+**Headline: the capacity curve PEAKS at `large` and DECLINES at XL — complex gates
+6 → 9 → 12 → 9 / 16 (S→M→L→XL).** XL (512×8, **2.13M params**, all 8 checkpoints trained
+on 3× RTX 4090) fits the device value-surface ~10× tighter than medium (val loss 2e-4 vs
+~2e-3) yet:
+- has the **worst** off-nominal parametric NRMSE of any tier (2.17% mean vs medium's 1.29%;
+  e.g. tsmc7 DC/pmos 0.51%→2.65%, tsmc12 DC/pmos 0.76%→3.57%) — a textbook **over-fit**
+  (tightest train fit, worst generalization to off-nominal geometry/VT sweeps);
+- **loses every value-surface-fragile gate `large` had won**: tsmc5 opamp, tsmc12 opamp,
+  and tsmc7 ring-osc all flip PASS→FAIL at XL.
+
+This is the **cleanest confirmation yet of V6.4.8-S1** ("capacity is not the bind"): more
+capacity past `large` over-fits the value-surface and **collapses the high-gain NR basins**.
+`large` is the capacity sweet spot; **XL is retained as the empirical over-fit boundary**,
+and `medium` remains the shipped production size. Inverter VTC+transient stays 16/16 at all
+four sizes; SRAM butterfly 4/4; AC is capacity-saturated by `large` (XL: opamp 0/4, device
+CS-amp 4/12, gain0-err drifts 0.86→0.91 dB).
+
+**µA-band loss de-compression — KILL (and it refutes the roadmap hypothesis).** The V6.4.8
+close named "µA-band loss/normalization de-compression" as the fix for the tsmc5 switchcap
+~11.8% over-charge, on the theory that the asinh output scale `s_id`≈1.6e-5 A puts the
+SC-relevant µA currents in the compressed asinh-*linear* band. We measured `s_id` ≈ 1.0–2.6e-5
+for **every** tech (confirming the knee), then A/B-tested the lever: retune the *existing,
+default-off* `SubthresholdIdLoss` from its sub-nA SRAM band to the **µA band** (`s2=1e-7`,
+`upper=3e-5`, λ ∈ {0.02, 0.05}) — a config-only change, zero new model code. Medium A/B,
+tsmc5 (target) + tsmc12 (no-regress control):
+
+| arm | tsmc5 switchcap charge_err | tsmc5 DC no-regress |
+|---|---|---|
+| stock | 11.84% (lvl 0.3717 V, NG 0.2948 V) FAIL | clean |
+| µA λ=0.05 | 12.05% (0.3731 V) FAIL — worse | slight regress |
+| µA λ=0.02 | 11.69% (0.3707 V) FAIL — flat | slight regress (l_16nm base NRMSE 0.84→2.41%) |
+| tsmc12 λ=0.05 | 4.19→4.24% PASS (no regress) | clean |
+
+The charge level moved **<0.2% of VDD** despite the aux loss term running ≈ ½ the base MAE
+and visibly reshaping the DC fit. **The over-charge survives direct µA-band loss de-compression**
+— exactly as it survived V6.4.8-S3's EKV structural prior. This **refutes** the
+"loss-compression-owned" attribution: the tsmc5 switchcap over-charge is **not**
+µA-band-DC-current-owned. It is a **sample-and-hold charge/transient** behaviour (the 100 fF
+cap charges through the transmission gate; the DC Id surface is already <1% accurate in that
+band). Closing it needs a transient/charge-model investigation — a *complex* lever de-scoped
+by the brief. Lever **reverted** (temp `_uA*` checkpoints moved out of the resolver dir to
+`results/v6_6_uA_ab/killed_lever_ckpt/`; default-off `SubthresholdIdLoss` infra untouched and
+recoverable; stock checkpoints byte-identical).
+
+**Bug fixed — `xargs -L1` silent job collapse.** `scripts/benchmark_train_sml.sh` built each
+job line as `"$tech $size $dev $gpu $FORCE"`; with `--force` absent, `$FORCE` is empty so the
+line ends in a **trailing blank**, and `xargs -L1` treats a trailing blank as a *line
+continuation* — silently joining all N jobs into ONE command so only the first ran. (The
+original 24-job run used `--force`, so it never surfaced; the no-force XL relaunch did — only
+1 of 8 dispatched.) Fixed by making the last field always non-empty (`${FORCE:-noforce}`) and
+documenting the trap.
+
+**Infra (all behaviour-preserving / opt-in):**
+- `("direct","xl")` SIZE_PRESET (512×8, 800ep/patience-150) + `--size xl` choice
+  (`bsimar/cli/train.py`); `tsmc{X}_dn_xl_{dev}` resolver slot (`pycircuitsim/parser.py`).
+- `benchmark_train_sml.sh`: `TECHS`/`SIZES`/`DEVS` env-overridable + `EXTRA_TRAIN_ARGS` (recipe
+  addendum injection, used for the lever A/B) + the trailing-blank fix.
+- `benchmark_run_tests.sh`: default `SIZES` includes `xl`.
+- `benchmark_collect.py`: `SIZES` is **data-driven** (includes any tier with a result dir on
+  disk) so every table header derives from it — adding/removing a tier needs no further edits.
+- `scripts/v6_6_uA_ab_eval.sh`: reusable lever-A/B eval harness.
+
+**Production unchanged.** Shipping size stays `medium`; the V6.4.7 per-tech shipping mix
+(pivcor/s12cor) is untouched. XL/lever checkpoints are not in any production slot.
+
 ## V6.5 — AC small-signal accuracy of the NN models (branch `feat/ac-analysis`, 2026-06-22)
 
 Extended the `.ac` feature from a 2-circuit sanity gate into a full **AC accuracy

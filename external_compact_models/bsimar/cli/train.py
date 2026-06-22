@@ -72,6 +72,14 @@ SIZE_PRESETS = {
     ("direct", "large"): dict(
         trunk_hidden=384, trunk_layers=6, batch_size=2048,
         max_epochs=800, patience=150, lr=1e-3),
+    # V6.6 — XL capacity tier (512x8, ~2.1M params). Extends the S/M/L
+    # capacity curve one notch. Slightly higher weight_decay than the
+    # smaller tiers (set via DirectNetConfig default 1e-5; XL relies on the
+    # EMA + early-stop already in the clean recipe to bound device-surface
+    # overfit the report flagged at `large`).
+    ("direct", "xl"): dict(
+        trunk_hidden=512, trunk_layers=8, batch_size=2048,
+        max_epochs=800, patience=150, lr=1e-3),
     ("transformer", "small"): dict(
         d_model=128, nhead=4, num_layers=3, dim_feedforward=512,
         dropout=0.1, batch_size=1024, max_epochs=60,
@@ -245,7 +253,7 @@ def main() -> None:
         description="Unified BSIMAR / DirectNet training CLI")
     p.add_argument("--model", choices=["direct", "transformer"],
                    default="direct")
-    p.add_argument("--size", choices=["small", "medium", "large"],
+    p.add_argument("--size", choices=["small", "medium", "large", "xl"],
                    default="medium",
                    help="Architecture-size preset (overridable below)")
     p.add_argument("--device-type", choices=["nmos", "pmos"], default="nmos")
