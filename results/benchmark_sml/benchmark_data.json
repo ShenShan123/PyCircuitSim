@@ -116,6 +116,47 @@
      ]
     }
    },
+   "ac": {
+    "verify_nn_ac": {
+     "by_dev": {
+      "?": {
+       "passed": false,
+       "status": "STATUS",
+       "gain0_err_db": NaN,
+       "f3db_ratio": NaN,
+       "mag_nrmse_pct": NaN,
+       "phase_deg": NaN
+      },
+      "nmos": {
+       "gain0_err_db": 0.831,
+       "f3db_ratio": 1.585,
+       "mag_nrmse_pct": 8.69,
+       "phase_deg": 69.6,
+       "passed": false,
+       "status": "FAIL"
+      },
+      "pmos": {
+       "gain0_err_db": 0.093,
+       "f3db_ratio": 1.0,
+       "mag_nrmse_pct": 1.0,
+       "phase_deg": 79.91,
+       "passed": true,
+       "status": "PASS"
+      }
+     },
+     "result": "1/2 device AC gates passed",
+     "n": 3,
+     "n_pass": 1
+    },
+    "verify_complex_opamp_ac": {
+     "gate": "FAIL",
+     "dc_gain_err_db": 5.69,
+     "gbw_ratio": "21.6",
+     "pm_err_deg": "5.9",
+     "mag_nrmse_pct": 83.71,
+     "headline": "dc_gain_err=5.69dB gbw_ratio=21.6 pm_err=5.9deg"
+    }
+   },
    "ckpt": "tsmc5_dn_small_nmos_best.pt"
   },
   "tsmc7": {
@@ -232,6 +273,47 @@
      "raw": [
       "charge err=1.51% of VDD  droop |dn-ng|=1.311mV (175% of allowance 0.750mV)  ->  FAIL"
      ]
+    }
+   },
+   "ac": {
+    "verify_nn_ac": {
+     "by_dev": {
+      "?": {
+       "passed": false,
+       "status": "STATUS",
+       "gain0_err_db": NaN,
+       "f3db_ratio": NaN,
+       "mag_nrmse_pct": NaN,
+       "phase_deg": NaN
+      },
+      "nmos": {
+       "gain0_err_db": 0.565,
+       "f3db_ratio": 1.0,
+       "mag_nrmse_pct": 6.51,
+       "phase_deg": 49.95,
+       "passed": true,
+       "status": "PASS"
+      },
+      "pmos": {
+       "gain0_err_db": 0.323,
+       "f3db_ratio": 1.0,
+       "mag_nrmse_pct": 3.66,
+       "phase_deg": 62.17,
+       "passed": true,
+       "status": "PASS"
+      }
+     },
+     "result": "2/2 device AC gates passed",
+     "n": 3,
+     "n_pass": 2
+    },
+    "verify_complex_opamp_ac": {
+     "gate": "FAIL",
+     "dc_gain_err_db": 244.86,
+     "gbw_ratio": "n/a",
+     "pm_err_deg": "n/a",
+     "mag_nrmse_pct": 73.18,
+     "headline": "dc_gain_err=244.86dB gbw_ratio=n/a pm_err=n/adeg"
     }
    },
    "ckpt": "tsmc7_dn_small_nmos_best.pt"
@@ -352,6 +434,47 @@
      ]
     }
    },
+   "ac": {
+    "verify_nn_ac": {
+     "by_dev": {
+      "?": {
+       "passed": false,
+       "status": "STATUS",
+       "gain0_err_db": NaN,
+       "f3db_ratio": NaN,
+       "mag_nrmse_pct": NaN,
+       "phase_deg": NaN
+      },
+      "nmos": {
+       "gain0_err_db": 0.042,
+       "f3db_ratio": 1.0,
+       "mag_nrmse_pct": 0.47,
+       "phase_deg": 29.49,
+       "passed": true,
+       "status": "PASS"
+      },
+      "pmos": {
+       "gain0_err_db": 1.251,
+       "f3db_ratio": 1.413,
+       "mag_nrmse_pct": 15.89,
+       "phase_deg": 36.45,
+       "passed": false,
+       "status": "FAIL"
+      }
+     },
+     "result": "1/2 device AC gates passed",
+     "n": 3,
+     "n_pass": 1
+    },
+    "verify_complex_opamp_ac": {
+     "gate": "FAIL",
+     "dc_gain_err_db": 84.33,
+     "gbw_ratio": "n/a",
+     "pm_err_deg": "n/a",
+     "mag_nrmse_pct": 68.17,
+     "headline": "dc_gain_err=84.33dB gbw_ratio=n/a pm_err=n/adeg"
+    }
+   },
    "ckpt": "tsmc12_dn_small_nmos_best.pt"
   },
   "tsmc16": {
@@ -468,6 +591,47 @@
      "raw": [
       "charge err=2.76% of VDD  droop |dn-ng|=3.711mV (464% of allowance 0.800mV)  ->  FAIL"
      ]
+    }
+   },
+   "ac": {
+    "verify_nn_ac": {
+     "by_dev": {
+      "?": {
+       "passed": false,
+       "status": "STATUS",
+       "gain0_err_db": NaN,
+       "f3db_ratio": NaN,
+       "mag_nrmse_pct": NaN,
+       "phase_deg": NaN
+      },
+      "nmos": {
+       "gain0_err_db": 0.055,
+       "f3db_ratio": 1.0,
+       "mag_nrmse_pct": 0.59,
+       "phase_deg": 32.48,
+       "passed": true,
+       "status": "PASS"
+      },
+      "pmos": {
+       "gain0_err_db": 1.26,
+       "f3db_ratio": 1.259,
+       "mag_nrmse_pct": 12.35,
+       "phase_deg": 34.87,
+       "passed": false,
+       "status": "FAIL"
+      }
+     },
+     "result": "1/2 device AC gates passed",
+     "n": 3,
+     "n_pass": 1
+    },
+    "verify_complex_opamp_ac": {
+     "gate": "FAIL",
+     "dc_gain_err_db": 23.46,
+     "gbw_ratio": "3.33",
+     "pm_err_deg": "4.98",
+     "mag_nrmse_pct": 61.91,
+     "headline": "dc_gain_err=23.46dB gbw_ratio=3.33 pm_err=4.98deg"
     }
    },
    "ckpt": "tsmc16_dn_small_nmos_best.pt"
@@ -590,6 +754,47 @@
      ]
     }
    },
+   "ac": {
+    "verify_nn_ac": {
+     "by_dev": {
+      "?": {
+       "passed": false,
+       "status": "STATUS",
+       "gain0_err_db": NaN,
+       "f3db_ratio": NaN,
+       "mag_nrmse_pct": NaN,
+       "phase_deg": NaN
+      },
+      "nmos": {
+       "gain0_err_db": 0.701,
+       "f3db_ratio": 1.585,
+       "mag_nrmse_pct": 7.4,
+       "phase_deg": 69.66,
+       "passed": false,
+       "status": "FAIL"
+      },
+      "pmos": {
+       "gain0_err_db": 0.368,
+       "f3db_ratio": 1.122,
+       "mag_nrmse_pct": 3.91,
+       "phase_deg": 81.28,
+       "passed": true,
+       "status": "PASS"
+      }
+     },
+     "result": "1/2 device AC gates passed",
+     "n": 3,
+     "n_pass": 1
+    },
+    "verify_complex_opamp_ac": {
+     "gate": "FAIL",
+     "dc_gain_err_db": 13.87,
+     "gbw_ratio": "5.76",
+     "pm_err_deg": "44.4",
+     "mag_nrmse_pct": 54.63,
+     "headline": "dc_gain_err=13.87dB gbw_ratio=5.76 pm_err=44.4deg"
+    }
+   },
    "ckpt": "tsmc5_dn_medium_nmos_best.pt"
   },
   "tsmc7": {
@@ -706,6 +911,47 @@
      "raw": [
       "charge err=1.76% of VDD  droop |dn-ng|=0.148mV (20% of allowance 0.750mV)  ->  PASS"
      ]
+    }
+   },
+   "ac": {
+    "verify_nn_ac": {
+     "by_dev": {
+      "?": {
+       "passed": false,
+       "status": "STATUS",
+       "gain0_err_db": NaN,
+       "f3db_ratio": NaN,
+       "mag_nrmse_pct": NaN,
+       "phase_deg": NaN
+      },
+      "nmos": {
+       "gain0_err_db": 1.321,
+       "f3db_ratio": 1.259,
+       "mag_nrmse_pct": 13.4,
+       "phase_deg": 55.62,
+       "passed": false,
+       "status": "FAIL"
+      },
+      "pmos": {
+       "gain0_err_db": 0.788,
+       "f3db_ratio": 1.259,
+       "mag_nrmse_pct": 8.18,
+       "phase_deg": 67.15,
+       "passed": true,
+       "status": "PASS"
+      }
+     },
+     "result": "1/2 device AC gates passed",
+     "n": 3,
+     "n_pass": 1
+    },
+    "verify_complex_opamp_ac": {
+     "gate": "FAIL",
+     "dc_gain_err_db": 31.89,
+     "gbw_ratio": "1.16",
+     "pm_err_deg": "51.4",
+     "mag_nrmse_pct": 71.23,
+     "headline": "dc_gain_err=31.89dB gbw_ratio=1.16 pm_err=51.4deg"
     }
    },
    "ckpt": "tsmc7_dn_medium_nmos_best.pt"
@@ -826,6 +1072,47 @@
      ]
     }
    },
+   "ac": {
+    "verify_nn_ac": {
+     "by_dev": {
+      "?": {
+       "passed": false,
+       "status": "STATUS",
+       "gain0_err_db": NaN,
+       "f3db_ratio": NaN,
+       "mag_nrmse_pct": NaN,
+       "phase_deg": NaN
+      },
+      "nmos": {
+       "gain0_err_db": 0.311,
+       "f3db_ratio": 1.0,
+       "mag_nrmse_pct": 3.27,
+       "phase_deg": 30.23,
+       "passed": true,
+       "status": "PASS"
+      },
+      "pmos": {
+       "gain0_err_db": 1.298,
+       "f3db_ratio": 1.122,
+       "mag_nrmse_pct": 12.74,
+       "phase_deg": 34.61,
+       "passed": false,
+       "status": "FAIL"
+      }
+     },
+     "result": "1/2 device AC gates passed",
+     "n": 3,
+     "n_pass": 1
+    },
+    "verify_complex_opamp_ac": {
+     "gate": "FAIL",
+     "dc_gain_err_db": 3.15,
+     "gbw_ratio": "19.6",
+     "pm_err_deg": "50.7",
+     "mag_nrmse_pct": 27.69,
+     "headline": "dc_gain_err=3.15dB gbw_ratio=19.6 pm_err=50.7deg"
+    }
+   },
    "ckpt": "tsmc12_dn_medium_nmos_best.pt"
   },
   "tsmc16": {
@@ -942,6 +1229,47 @@
      "raw": [
       "charge err=3.22% of VDD  droop |dn-ng|=0.361mV (45% of allowance 0.800mV)  ->  PASS"
      ]
+    }
+   },
+   "ac": {
+    "verify_nn_ac": {
+     "by_dev": {
+      "?": {
+       "passed": false,
+       "status": "STATUS",
+       "gain0_err_db": NaN,
+       "f3db_ratio": NaN,
+       "mag_nrmse_pct": NaN,
+       "phase_deg": NaN
+      },
+      "nmos": {
+       "gain0_err_db": 0.193,
+       "f3db_ratio": 1.0,
+       "mag_nrmse_pct": 2.05,
+       "phase_deg": 32.56,
+       "passed": true,
+       "status": "PASS"
+      },
+      "pmos": {
+       "gain0_err_db": 1.293,
+       "f3db_ratio": 1.413,
+       "mag_nrmse_pct": 16.27,
+       "phase_deg": 35.84,
+       "passed": false,
+       "status": "FAIL"
+      }
+     },
+     "result": "1/2 device AC gates passed",
+     "n": 3,
+     "n_pass": 1
+    },
+    "verify_complex_opamp_ac": {
+     "gate": "FAIL",
+     "dc_gain_err_db": 8.34,
+     "gbw_ratio": "16.3",
+     "pm_err_deg": "39.3",
+     "mag_nrmse_pct": 41.41,
+     "headline": "dc_gain_err=8.34dB gbw_ratio=16.3 pm_err=39.3deg"
     }
    },
    "ckpt": "tsmc16_dn_medium_nmos_best.pt"
@@ -1064,6 +1392,47 @@
      ]
     }
    },
+   "ac": {
+    "verify_nn_ac": {
+     "by_dev": {
+      "?": {
+       "passed": false,
+       "status": "STATUS",
+       "gain0_err_db": NaN,
+       "f3db_ratio": NaN,
+       "mag_nrmse_pct": NaN,
+       "phase_deg": NaN
+      },
+      "nmos": {
+       "gain0_err_db": 1.457,
+       "f3db_ratio": NaN,
+       "mag_nrmse_pct": 14.7,
+       "phase_deg": 72.42,
+       "passed": false,
+       "status": "FAIL"
+      },
+      "pmos": {
+       "gain0_err_db": 0.366,
+       "f3db_ratio": 1.122,
+       "mag_nrmse_pct": 3.89,
+       "phase_deg": 81.19,
+       "passed": true,
+       "status": "PASS"
+      }
+     },
+     "result": "1/2 device AC gates passed",
+     "n": 3,
+     "n_pass": 1
+    },
+    "verify_complex_opamp_ac": {
+     "gate": "FAIL",
+     "dc_gain_err_db": 113.96,
+     "gbw_ratio": "n/a",
+     "pm_err_deg": "n/a",
+     "mag_nrmse_pct": 69.15,
+     "headline": "dc_gain_err=113.96dB gbw_ratio=n/a pm_err=n/adeg"
+    }
+   },
    "ckpt": "tsmc5_dn_large_nmos_best.pt"
   },
   "tsmc7": {
@@ -1180,6 +1549,47 @@
      "raw": [
       "charge err=1.52% of VDD  droop |dn-ng|=0.053mV (7% of allowance 0.750mV)  ->  PASS"
      ]
+    }
+   },
+   "ac": {
+    "verify_nn_ac": {
+     "by_dev": {
+      "?": {
+       "passed": false,
+       "status": "STATUS",
+       "gain0_err_db": NaN,
+       "f3db_ratio": NaN,
+       "mag_nrmse_pct": NaN,
+       "phase_deg": NaN
+      },
+      "nmos": {
+       "gain0_err_db": 0.24,
+       "f3db_ratio": 1.0,
+       "mag_nrmse_pct": 2.59,
+       "phase_deg": 51.32,
+       "passed": true,
+       "status": "PASS"
+      },
+      "pmos": {
+       "gain0_err_db": 0.918,
+       "f3db_ratio": 1.259,
+       "mag_nrmse_pct": 9.49,
+       "phase_deg": 67.13,
+       "passed": true,
+       "status": "PASS"
+      }
+     },
+     "result": "2/2 device AC gates passed",
+     "n": 3,
+     "n_pass": 2
+    },
+    "verify_complex_opamp_ac": {
+     "gate": "FAIL",
+     "dc_gain_err_db": 45.85,
+     "gbw_ratio": "0.15",
+     "pm_err_deg": "118",
+     "mag_nrmse_pct": 72.79,
+     "headline": "dc_gain_err=45.85dB gbw_ratio=0.15 pm_err=118deg"
     }
    },
    "ckpt": "tsmc7_dn_large_nmos_best.pt"
@@ -1300,6 +1710,47 @@
      ]
     }
    },
+   "ac": {
+    "verify_nn_ac": {
+     "by_dev": {
+      "?": {
+       "passed": false,
+       "status": "STATUS",
+       "gain0_err_db": NaN,
+       "f3db_ratio": NaN,
+       "mag_nrmse_pct": NaN,
+       "phase_deg": NaN
+      },
+      "nmos": {
+       "gain0_err_db": 0.89,
+       "f3db_ratio": 1.995,
+       "mag_nrmse_pct": 13.64,
+       "phase_deg": 41.44,
+       "passed": false,
+       "status": "FAIL"
+      },
+      "pmos": {
+       "gain0_err_db": 1.257,
+       "f3db_ratio": 1.122,
+       "mag_nrmse_pct": 12.37,
+       "phase_deg": 34.52,
+       "passed": false,
+       "status": "FAIL"
+      }
+     },
+     "result": "0/2 device AC gates passed",
+     "n": 3,
+     "n_pass": 0
+    },
+    "verify_complex_opamp_ac": {
+     "gate": "FAIL",
+     "dc_gain_err_db": 5.14,
+     "gbw_ratio": "0.966",
+     "pm_err_deg": "1.43",
+     "mag_nrmse_pct": 52.11,
+     "headline": "dc_gain_err=5.14dB gbw_ratio=0.966 pm_err=1.43deg"
+    }
+   },
    "ckpt": "tsmc12_dn_large_nmos_best.pt"
   },
   "tsmc16": {
@@ -1416,6 +1867,47 @@
      "raw": [
       "charge err=3.32% of VDD  droop |dn-ng|=0.060mV (8% of allowance 0.800mV)  ->  PASS"
      ]
+    }
+   },
+   "ac": {
+    "verify_nn_ac": {
+     "by_dev": {
+      "?": {
+       "passed": false,
+       "status": "STATUS",
+       "gain0_err_db": NaN,
+       "f3db_ratio": NaN,
+       "mag_nrmse_pct": NaN,
+       "phase_deg": NaN
+      },
+      "nmos": {
+       "gain0_err_db": 0.251,
+       "f3db_ratio": 1.0,
+       "mag_nrmse_pct": 2.65,
+       "phase_deg": 32.71,
+       "passed": true,
+       "status": "PASS"
+      },
+      "pmos": {
+       "gain0_err_db": 1.48,
+       "f3db_ratio": 1.259,
+       "mag_nrmse_pct": 14.38,
+       "phase_deg": 34.61,
+       "passed": false,
+       "status": "FAIL"
+      }
+     },
+     "result": "1/2 device AC gates passed",
+     "n": 3,
+     "n_pass": 1
+    },
+    "verify_complex_opamp_ac": {
+     "gate": "FAIL",
+     "dc_gain_err_db": 8.68,
+     "gbw_ratio": "14.9",
+     "pm_err_deg": "31.7",
+     "mag_nrmse_pct": 42.22,
+     "headline": "dc_gain_err=8.68dB gbw_ratio=14.9 pm_err=31.7deg"
     }
    },
    "ckpt": "tsmc16_dn_large_nmos_best.pt"

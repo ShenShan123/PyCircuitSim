@@ -23,6 +23,11 @@ TECHS = ["tsmc5", "tsmc7", "tsmc12", "tsmc16"]
 DEV_SUITES = ["verify_nn_multi_tech_dc", "verify_nn_multi_tech_tran"]
 CPX_SUITES = ["verify_complex_ring_osc", "verify_complex_opamp",
               "verify_complex_sram_snm", "verify_complex_switchcap"]
+# AC (small-signal) suites — V6.5. Device CS-amp (per-checkpoint) + opamp
+# open-loop. RO/SRAM excluded (no stable amplifying OP → no .ac ground truth).
+AC_DEV_SUITE = "verify_nn_ac"
+AC_CPX_SUITE = "verify_complex_opamp_ac"
+AC_SUITES = [AC_DEV_SUITE, AC_CPX_SUITE]
 
 NUM = r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?"
 
@@ -124,6 +129,51 @@ def parse_complex_log(suite: str, text: str) -> dict:
         d["gate"] = ("PASS" if vs and all(v == "PASS" for v in vs) else ("FAIL" if vs else "?"))
     return d
 
+# ── AC device gate: rows "AC | tech_device | gain0_err | f3db_ratio | nrmse | phase | status"
+def parse_ac_device_log(text: str) -> dict:
+    by_dev = {}
+    for ln in text.splitlines():
+        s = ln.strip()
+        if not s.startswith("AC |"):
+            continue
+        parts = [p.strip() for p in s.split("|")]
+        if len(parts) < 7:
+            continue
+        label = parts[1]
+        dev = "nmos" if "nmos" in label else ("pmos" if "pmos" in label else "?")
+        status = parts[6].upper()
+        try:
+            row = dict(
+                gain0_err_db=float(parts[2]), f3db_ratio=float(parts[3]),
+                mag_nrmse_pct=float(parts[4]), phase_deg=float(parts[5]),
+                passed=status.startswith("PASS"), status=status)
+        except ValueError:
+            row = dict(passed=False, status=status, gain0_err_db=float("nan"),
+                       f3db_ratio=float("nan"), mag_nrmse_pct=float("nan"),
+                       phase_deg=float("nan"))
+        by_dev[dev] = row
+    res = re.search(r"RESULT:\s*(.+)", text)
+    return {"by_dev": by_dev, "result": res.group(1).strip() if res else "?",
+            "n": len(by_dev), "n_pass": sum(r["passed"] for r in by_dev.values())}
+
+
+# ── AC opamp gate: "opamp AC <tech>: dc_gain_err=..dB gbw_ratio=.. pm_err=..deg magNRMSE=..% -> PASS"
+_AC_OPAMP = re.compile(
+    rf"opamp AC \w+:\s*dc_gain_err=({NUM})dB\s+gbw_ratio=(\S+)\s+"
+    rf"pm_err=(\S+)deg\s+magNRMSE=({NUM})%\s*->\s*(PASS|FAIL)")
+
+def parse_ac_complex_log(text: str) -> dict:
+    m = _AC_OPAMP.search(text)
+    if not m:
+        vs = re.findall(r"->\s*(PASS|FAIL)", text)
+        return {"gate": ("PASS" if vs and all(v == "PASS" for v in vs)
+                         else ("FAIL" if vs else "?")), "headline": "—"}
+    dc_err, gbw, pm, nrmse, gate = m.groups()
+    return {"gate": gate, "dc_gain_err_db": float(dc_err), "gbw_ratio": gbw,
+            "pm_err_deg": pm, "mag_nrmse_pct": float(nrmse),
+            "headline": f"dc_gain_err={dc_err}dB gbw_ratio={gbw} pm_err={pm}deg"}
+
+
 def resolver_line(text: str) -> str:
     m = re.search(r"\[NN-resolver\].*?->\s*(\S+)", text)
     return m.group(1) if m else "?"
@@ -133,7 +183,7 @@ def load():
     for size in SIZES:
         data[size] = {}
         for tech in TECHS:
-            d = {"dev": {}, "cpx": {}, "ckpt": None}
+            d = {"dev": {}, "cpx": {}, "ac": {}, "ckpt": None}
             for suite in DEV_SUITES:
                 p = BASE / size / tech / f"{suite}.log"
                 if p.exists():
@@ -146,6 +196,14 @@ def load():
                     t = p.read_text(errors="replace")
                     d["cpx"][suite] = parse_complex_log(suite, t)
                     d["ckpt"] = d["ckpt"] or resolver_line(t)
+            p = BASE / size / tech / f"{AC_DEV_SUITE}.log"
+            if p.exists():
+                d["ac"][AC_DEV_SUITE] = parse_ac_device_log(
+                    p.read_text(errors="replace"))
+            p = BASE / size / tech / f"{AC_CPX_SUITE}.log"
+            if p.exists():
+                d["ac"][AC_CPX_SUITE] = parse_ac_complex_log(
+                    p.read_text(errors="replace"))
             data[size][tech] = d
     return data
 
@@ -159,6 +217,154 @@ def md_table(headers, rows):
 CPX_SHORT = {"verify_complex_ring_osc": "ring_osc", "verify_complex_opamp": "opamp",
              "verify_complex_sram_snm": "sram_snm", "verify_complex_switchcap": "switchcap"}
 
+
+def _fmtnum(x, nd=2):
+    try:
+        return round(float(x), nd)
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _ac_section(data) -> list:
+    """Top-level AC small-signal accuracy section (V6.5)."""
+    L = [
+        "## AC small-signal accuracy (V6.5)",
+        "",
+        "First-ever NGSPICE-gated evaluation of DirectNet (LEVEL=73) AC fidelity. "
+        "The NN's small-signal capacitances are autograd derivatives of its predicted "
+        "terminal charges (cgd=∂qg/∂Vd, cdd=∂qd/∂Vd, …) — a quantity no prior gate "
+        "measured. Ground truth = NGSPICE `.ac` on the identical BSIM-CMG (LEVEL=72) "
+        "OSDI model. Two circuit classes (AC needs a stable amplifying OP, so the "
+        "free-running ring oscillator and bistable SRAM are out of scope):",
+        "",
+        "- **Device CS-amp** — per-checkpoint NMOS/PMOS common-source amplifier, no "
+        "external load cap so the device's own Cgd/Cdd set the pole; gates gain0 err "
+        "≤1.5 dB, f3db ratio ∈[0.7,1.43], mag NRMSE ≤10%. The passband phase is "
+        "reported (not gated): deep in-band it matches (<7°), but at/beyond the −3 dB "
+        "corner NG carries a strong Cgd-feedforward RHP-zero phase lag the NN does not "
+        "reproduce — a distinct limitation from the (excellent) cap-driven pole.",
+        "- **Opamp open-loop** — two-stage Miller opamp; gates DC-gain err ≤3 dB, "
+        "GBW ratio ∈[0.6,1.67], phase-margin err ≤15° (linear mag NRMSE reported, "
+        "not gated — dominated by the 40 dB passband plateau).",
+        "",
+        "**Findings.** (1) AC **gain** fidelity is excellent everywhere — device gain0 "
+        "err <1.5 dB in 24/24 cells (mean 0.55–0.86 dB) — so the autograd gm/gds the NN "
+        "feeds the AC stamp are accurate. (2) The dominant **cap-driven pole** is mostly "
+        "faithful (f3db ratio ≈1.0 for the well-fit cells) but capacity/tech-variable: "
+        "tsmc5 NMOS and tsmc12/16 PMOS under-predict the output cap (ratio 1.1–1.6), so "
+        "13/24 clear the magnitude gate. (3) The high-frequency **phase** (Cgd-feedforward "
+        "RHP zero) is not reproduced — a clean, specific transcapacitance limitation. "
+        "(4) The **opamp** AC inherits the DC value-surface fragility (0/12): the gain "
+        "collapses or over-predicts at most cells, BUT where the OP lands in the good "
+        "basin (tsmc12-large) the NN reproduces GBW to 0.97× and phase margin to 1.3° — "
+        "the dynamics are right, the DC-gain *level* is the value-surface-owned miss. "
+        "**No retraining is warranted:** the gaps are value-surface- and feedforward-"
+        "owned, not a charge-derivative (dQ/dV) deficiency (which would have shown as bad "
+        "gain *and* bad pole everywhere, the opposite of what is measured).",
+        "",
+    ]
+    # cross-size tally
+    srows = []
+    for size in SIZES:
+        dev_pass = dev_tot = op_pass = op_tot = 0
+        g0errs, nrmses = [], []
+        for tech in TECHS:
+            ac = data[size][tech].get("ac", {})
+            dv = ac.get(AC_DEV_SUITE)
+            if dv:
+                for r in dv["by_dev"].values():
+                    dev_tot += 1
+                    dev_pass += 1 if r["passed"] else 0
+                    if r["gain0_err_db"] == r["gain0_err_db"]:  # not NaN
+                        g0errs.append(r["gain0_err_db"])
+                    if r["mag_nrmse_pct"] == r["mag_nrmse_pct"]:
+                        nrmses.append(r["mag_nrmse_pct"])
+            op = ac.get(AC_CPX_SUITE)
+            if op:
+                op_tot += 1
+                op_pass += 1 if op.get("gate") == "PASS" else 0
+        srows.append([
+            size, f"{dev_pass}/{dev_tot}" if dev_tot else "—",
+            f"{op_pass}/{op_tot}" if op_tot else "—",
+            round(mean(g0errs), 2) if g0errs else "—",
+            round(mean(nrmses), 2) if nrmses else "—"])
+    L += ["### Cross-size AC summary", "",
+          md_table(["Size", "Device CS-amp PASS", "Opamp PASS",
+                    "Device mean gain0-err dB", "Device mean magNRMSE%"], srows), ""]
+
+    # device CS-amp gate matrix
+    L += ["### Device CS-amp AC gate by capacity", ""]
+    rows = []
+    for tech in TECHS:
+        for dev in ("nmos", "pmos"):
+            cells = []
+            for size in SIZES:
+                dv = data[size][tech].get("ac", {}).get(AC_DEV_SUITE)
+                r = dv["by_dev"].get(dev) if dv else None
+                cells.append(r["status"] if r else "—")
+            rows.append([tech, dev] + cells)
+    L += [md_table(["Tech", "Dev", "small", "medium", "large"], rows), ""]
+
+    # device CS-amp gain0-err dB by capacity (headline accuracy number)
+    L += ["### Device CS-amp gain0 error (dB) by capacity (lower = better)", ""]
+    rows = []
+    for tech in TECHS:
+        for dev in ("nmos", "pmos"):
+            cells = []
+            for size in SIZES:
+                dv = data[size][tech].get("ac", {}).get(AC_DEV_SUITE)
+                r = dv["by_dev"].get(dev) if dv else None
+                cells.append(_fmtnum(r["gain0_err_db"]) if r else "—")
+            rows.append([tech, dev] + cells)
+    L += [md_table(["Tech", "Dev", "small", "medium", "large"], rows), ""]
+
+    # opamp AC gate matrix
+    L += ["### Opamp open-loop AC gate by capacity (DC-gain err dB / GBW ratio / PM err°)", ""]
+    rows = []
+    for tech in TECHS:
+        cells = []
+        for size in SIZES:
+            op = data[size][tech].get("ac", {}).get(AC_CPX_SUITE)
+            if not op or op.get("gate") in (None, "?"):
+                cells.append("—")
+            else:
+                cells.append(
+                    f"{op['gate']} ({_fmtnum(op.get('dc_gain_err_db'))}/"
+                    f"{op.get('gbw_ratio', '—')}/{op.get('pm_err_deg', '—')})")
+        rows.append([tech] + cells)
+    L += [md_table(["Tech", "small", "medium", "large"], rows), ""]
+    return L
+
+
+def _ac_size_detail(data, size) -> list:
+    """Per-size AC detail tables (device CS-amp + opamp)."""
+    L = ["### AC small-signal (per tech)", ""]
+    hdr = ["Tech", "Dev", "gain0_err dB", "f3db ratio", "magNRMSE%",
+           "phase(inband)°", "Gate"]
+    rows = []
+    for tech in TECHS:
+        dv = data[size][tech].get("ac", {}).get(AC_DEV_SUITE)
+        for dev in ("nmos", "pmos"):
+            r = dv["by_dev"].get(dev) if dv else None
+            if not r:
+                rows.append([tech, dev, "—", "—", "—", "—", "—"]); continue
+            rows.append([tech, dev, _fmtnum(r["gain0_err_db"]),
+                         _fmtnum(r["f3db_ratio"]), _fmtnum(r["mag_nrmse_pct"]),
+                         _fmtnum(r["phase_deg"]), r["status"]])
+    L += [md_table(hdr, rows), ""]
+    # opamp
+    ohdr = ["Tech", "DC-gain err dB", "GBW ratio", "PM err°", "magNRMSE%", "Gate"]
+    orows = []
+    for tech in TECHS:
+        op = data[size][tech].get("ac", {}).get(AC_CPX_SUITE)
+        if not op:
+            orows.append([tech, "—", "—", "—", "—", "—"]); continue
+        orows.append([tech, _fmtnum(op.get("dc_gain_err_db")),
+                      op.get("gbw_ratio", "—"), op.get("pm_err_deg", "—"),
+                      _fmtnum(op.get("mag_nrmse_pct")), op.get("gate", "—")])
+    L += ["Opamp open-loop:", "", md_table(ohdr, orows), ""]
+    return L
+
 def report(data) -> str:
     L = ["# DirectNet (LEVEL=73) capacity benchmark — small / medium / large",
          "",
@@ -169,6 +375,17 @@ def report(data) -> str:
          "BSIM-CMG (LEVEL=72), repo ngspice-45.2, CPU-pinned.",
          "",
          "Sizes: small=128x3 (~0.06M p) / medium=256x5 (~0.4M p) / large=384x6 (~0.9M p).",
+         "",
+         "> **V6.5 update — AC small-signal accuracy.** The DC/transient capacity "
+         "study below is unchanged; V6.5 adds the first NGSPICE-gated evaluation of "
+         "DirectNet **AC** (`.ac`) fidelity across all 24 checkpoints — see the "
+         "[AC small-signal accuracy](#ac-small-signal-accuracy-v65) section. Headline: "
+         "AC **gain** fidelity (gm/gds via autograd) is excellent everywhere "
+         "(gain0 err <1.5 dB, 24/24); the **dominant cap-driven pole / bandwidth** is "
+         "good but capacity/tech-variable (device CS-amp gate 13/24); the **opamp** AC "
+         "inherits the DC value-surface fragility (0/12, though tsmc12-large reproduces "
+         "GBW to 0.97× and phase margin to 1.3°). No retraining warranted (the gaps are "
+         "value-surface- and feedforward-owned, not a charge-derivative deficiency).",
          "",
          "## Key findings",
          "",
@@ -259,6 +476,9 @@ def report(data) -> str:
                 rows.append([tech, f"{tag}/{dev}"] + cells)
     L += [md_table(["Tech", "Suite/Dev", "small", "medium", "large"], rows), ""]
 
+    # ── AC small-signal accuracy (V6.5) ──
+    L += _ac_section(data)
+
     # ── per-size detail ──
     for size in SIZES:
         L += [f"## Size = {size}", ""]
@@ -300,6 +520,8 @@ def report(data) -> str:
                               w["nrmse"] if w else "—", w["r2"] if w else "—",
                               (f"{w['maxerr']}{w['unit']}" if w else "—")])
         L += [md_table(chdr, crows), ""]
+        # AC small-signal detail (per tech)
+        L += _ac_size_detail(data, size)
         # checkpoints used
         L += ["<details><summary>checkpoints resolved</summary>", ""]
         for tech in TECHS:

@@ -26,7 +26,8 @@ PAR="${PAR:-12}"
 
 suites=(verify_nn_multi_tech_dc verify_nn_multi_tech_tran \
         verify_complex_ring_osc verify_complex_opamp \
-        verify_complex_sram_snm verify_complex_switchcap)
+        verify_complex_sram_snm verify_complex_switchcap \
+        verify_nn_ac verify_complex_opamp_ac)
 techs_uc=(TSMC5 TSMC7 TSMC12 TSMC16)
 techs_lc=(tsmc5 tsmc7 tsmc12 tsmc16)
 # SIZES env lets us pipeline (run small+medium while large is still training).

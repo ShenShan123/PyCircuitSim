@@ -4,6 +4,8 @@ All checkpoints trained on ONE identical clean recipe (`--apply-filter off --swa
 
 Sizes: small=128x3 (~0.06M p) / medium=256x5 (~0.4M p) / large=384x6 (~0.9M p).
 
+> **V6.5 update — AC small-signal accuracy.** The DC/transient capacity study below is unchanged; V6.5 adds the first NGSPICE-gated evaluation of DirectNet **AC** (`.ac`) fidelity across all 24 checkpoints — see the [AC small-signal accuracy](#ac-small-signal-accuracy-v65) section. Headline: AC **gain** fidelity (gm/gds via autograd) is excellent everywhere (gain0 err <1.5 dB, 24/24); the **dominant cap-driven pole / bandwidth** is good but capacity/tech-variable (device CS-amp gate 13/24); the **opamp** AC inherits the DC value-surface fragility (0/12, though tsmc12-large reproduces GBW to 0.97× and phase margin to 1.3°). No retraining warranted (the gaps are value-surface- and feedforward-owned, not a charge-derivative deficiency).
+
 ## Key findings
 
 1. **Circuit pass-rate rises monotonically with capacity: 6/16 -> 9/16 -> 12/16** (small -> medium -> large). The gains come from charge-transfer and timing circuits, not from device-curve accuracy (already excellent everywhere).
@@ -64,6 +66,58 @@ DC = Id-Vgs (NMOS/PMOS); INV = inverter VTC+transient (combined).
 | tsmc16 | DC/pmos | 0.65 | 0.65 | 1.03 |
 | tsmc16 | INV/all | 2.01 | 1.96 | 1.89 |
 
+## AC small-signal accuracy (V6.5)
+
+First-ever NGSPICE-gated evaluation of DirectNet (LEVEL=73) AC fidelity. The NN's small-signal capacitances are autograd derivatives of its predicted terminal charges (cgd=∂qg/∂Vd, cdd=∂qd/∂Vd, …) — a quantity no prior gate measured. Ground truth = NGSPICE `.ac` on the identical BSIM-CMG (LEVEL=72) OSDI model. Two circuit classes (AC needs a stable amplifying OP, so the free-running ring oscillator and bistable SRAM are out of scope):
+
+- **Device CS-amp** — per-checkpoint NMOS/PMOS common-source amplifier, no external load cap so the device's own Cgd/Cdd set the pole; gates gain0 err ≤1.5 dB, f3db ratio ∈[0.7,1.43], mag NRMSE ≤10%. The passband phase is reported (not gated): deep in-band it matches (<7°), but at/beyond the −3 dB corner NG carries a strong Cgd-feedforward RHP-zero phase lag the NN does not reproduce — a distinct limitation from the (excellent) cap-driven pole.
+- **Opamp open-loop** — two-stage Miller opamp; gates DC-gain err ≤3 dB, GBW ratio ∈[0.6,1.67], phase-margin err ≤15° (linear mag NRMSE reported, not gated — dominated by the 40 dB passband plateau).
+
+**Findings.** (1) AC **gain** fidelity is excellent everywhere — device gain0 err <1.5 dB in 24/24 cells (mean 0.55–0.86 dB) — so the autograd gm/gds the NN feeds the AC stamp are accurate. (2) The dominant **cap-driven pole** is mostly faithful (f3db ratio ≈1.0 for the well-fit cells) but capacity/tech-variable: tsmc5 NMOS and tsmc12/16 PMOS under-predict the output cap (ratio 1.1–1.6), so 13/24 clear the magnitude gate. (3) The high-frequency **phase** (Cgd-feedforward RHP zero) is not reproduced — a clean, specific transcapacitance limitation. (4) The **opamp** AC inherits the DC value-surface fragility (0/12): the gain collapses or over-predicts at most cells, BUT where the OP lands in the good basin (tsmc12-large) the NN reproduces GBW to 0.97× and phase margin to 1.3° — the dynamics are right, the DC-gain *level* is the value-surface-owned miss. **No retraining is warranted:** the gaps are value-surface- and feedforward-owned, not a charge-derivative (dQ/dV) deficiency (which would have shown as bad gain *and* bad pole everywhere, the opposite of what is measured).
+
+### Cross-size AC summary
+
+| Size | Device CS-amp PASS | Opamp PASS | Device mean gain0-err dB | Device mean magNRMSE% |
+|---|---|---|---|---|
+| small | 5/12 | 0/4 | 0.55 | 6.14 |
+| medium | 4/12 | 0/4 | 0.78 | 8.4 |
+| large | 4/12 | 0/4 | 0.86 | 9.21 |
+
+### Device CS-amp AC gate by capacity
+
+| Tech | Dev | small | medium | large |
+|---|---|---|---|---|
+| tsmc5 | nmos | FAIL | FAIL | FAIL |
+| tsmc5 | pmos | PASS | PASS | PASS |
+| tsmc7 | nmos | PASS | FAIL | PASS |
+| tsmc7 | pmos | PASS | PASS | PASS |
+| tsmc12 | nmos | PASS | PASS | FAIL |
+| tsmc12 | pmos | FAIL | FAIL | FAIL |
+| tsmc16 | nmos | PASS | PASS | PASS |
+| tsmc16 | pmos | FAIL | FAIL | FAIL |
+
+### Device CS-amp gain0 error (dB) by capacity (lower = better)
+
+| Tech | Dev | small | medium | large |
+|---|---|---|---|---|
+| tsmc5 | nmos | 0.83 | 0.7 | 1.46 |
+| tsmc5 | pmos | 0.09 | 0.37 | 0.37 |
+| tsmc7 | nmos | 0.56 | 1.32 | 0.24 |
+| tsmc7 | pmos | 0.32 | 0.79 | 0.92 |
+| tsmc12 | nmos | 0.04 | 0.31 | 0.89 |
+| tsmc12 | pmos | 1.25 | 1.3 | 1.26 |
+| tsmc16 | nmos | 0.06 | 0.19 | 0.25 |
+| tsmc16 | pmos | 1.26 | 1.29 | 1.48 |
+
+### Opamp open-loop AC gate by capacity (DC-gain err dB / GBW ratio / PM err°)
+
+| Tech | small | medium | large |
+|---|---|---|---|
+| tsmc5 | FAIL (5.69/21.6/5.9) | FAIL (13.87/5.76/44.4) | FAIL (113.96/n/a/n/a) |
+| tsmc7 | FAIL (244.86/n/a/n/a) | FAIL (31.89/1.16/51.4) | FAIL (45.85/0.15/118) |
+| tsmc12 | FAIL (84.33/n/a/n/a) | FAIL (3.15/19.6/50.7) | FAIL (5.14/0.966/1.43) |
+| tsmc16 | FAIL (23.46/3.33/4.98) | FAIL (8.34/16.3/39.3) | FAIL (8.68/14.9/31.7) |
+
 ## Size = small
 
 ### Device-level parametric sweeps (per tech)
@@ -107,6 +161,28 @@ Gate verdict + headline + waveform NRMSE%/R2.
 | tsmc16 | opamp | FAIL | gain_err=10.23% trip_shift=0.00mV | 1.76 | 0.9988 | 129.97mV |
 | tsmc16 | sram_snm | PASS | NG_SNM=235.5mV DN_SNM=219.3mV  force_ic=FAIL/FAIL | — | — | — |
 | tsmc16 | switchcap | FAIL | charge_err=2.76% | 4.2 | 0.974 | 23.26mV |
+
+### AC small-signal (per tech)
+
+| Tech | Dev | gain0_err dB | f3db ratio | magNRMSE% | phase(inband)° | Gate |
+|---|---|---|---|---|---|---|
+| tsmc5 | nmos | 0.83 | 1.58 | 8.69 | 69.6 | FAIL |
+| tsmc5 | pmos | 0.09 | 1.0 | 1.0 | 79.91 | PASS |
+| tsmc7 | nmos | 0.56 | 1.0 | 6.51 | 49.95 | PASS |
+| tsmc7 | pmos | 0.32 | 1.0 | 3.66 | 62.17 | PASS |
+| tsmc12 | nmos | 0.04 | 1.0 | 0.47 | 29.49 | PASS |
+| tsmc12 | pmos | 1.25 | 1.41 | 15.89 | 36.45 | FAIL |
+| tsmc16 | nmos | 0.06 | 1.0 | 0.59 | 32.48 | PASS |
+| tsmc16 | pmos | 1.26 | 1.26 | 12.35 | 34.87 | FAIL |
+
+Opamp open-loop:
+
+| Tech | DC-gain err dB | GBW ratio | PM err° | magNRMSE% | Gate |
+|---|---|---|---|---|---|
+| tsmc5 | 5.69 | 21.6 | 5.9 | 83.71 | FAIL |
+| tsmc7 | 244.86 | n/a | n/a | 73.18 | FAIL |
+| tsmc12 | 84.33 | n/a | n/a | 68.17 | FAIL |
+| tsmc16 | 23.46 | 3.33 | 4.98 | 61.91 | FAIL |
 
 <details><summary>checkpoints resolved</summary>
 
@@ -161,6 +237,28 @@ Gate verdict + headline + waveform NRMSE%/R2.
 | tsmc16 | sram_snm | PASS | NG_SNM=235.5mV DN_SNM=222.1mV  force_ic=FAIL/FAIL | — | — | — |
 | tsmc16 | switchcap | PASS | charge_err=3.22% | 5.08 | 0.9619 | 27.76mV |
 
+### AC small-signal (per tech)
+
+| Tech | Dev | gain0_err dB | f3db ratio | magNRMSE% | phase(inband)° | Gate |
+|---|---|---|---|---|---|---|
+| tsmc5 | nmos | 0.7 | 1.58 | 7.4 | 69.66 | FAIL |
+| tsmc5 | pmos | 0.37 | 1.12 | 3.91 | 81.28 | PASS |
+| tsmc7 | nmos | 1.32 | 1.26 | 13.4 | 55.62 | FAIL |
+| tsmc7 | pmos | 0.79 | 1.26 | 8.18 | 67.15 | PASS |
+| tsmc12 | nmos | 0.31 | 1.0 | 3.27 | 30.23 | PASS |
+| tsmc12 | pmos | 1.3 | 1.12 | 12.74 | 34.61 | FAIL |
+| tsmc16 | nmos | 0.19 | 1.0 | 2.05 | 32.56 | PASS |
+| tsmc16 | pmos | 1.29 | 1.41 | 16.27 | 35.84 | FAIL |
+
+Opamp open-loop:
+
+| Tech | DC-gain err dB | GBW ratio | PM err° | magNRMSE% | Gate |
+|---|---|---|---|---|---|
+| tsmc5 | 13.87 | 5.76 | 44.4 | 54.63 | FAIL |
+| tsmc7 | 31.89 | 1.16 | 51.4 | 71.23 | FAIL |
+| tsmc12 | 3.15 | 19.6 | 50.7 | 27.69 | FAIL |
+| tsmc16 | 8.34 | 16.3 | 39.3 | 41.41 | FAIL |
+
 <details><summary>checkpoints resolved</summary>
 
 - tsmc5: `tsmc5_dn_medium_nmos_best.pt`
@@ -213,6 +311,28 @@ Gate verdict + headline + waveform NRMSE%/R2.
 | tsmc16 | opamp | FAIL | gain_err=100.00% trip_shift=-60.00mV | 70.43 | -1.0047 | 797.4mV |
 | tsmc16 | sram_snm | PASS | NG_SNM=235.5mV DN_SNM=222.9mV  force_ic=ok/ok | — | — | — |
 | tsmc16 | switchcap | PASS | charge_err=3.32% | 5.34 | 0.9579 | 29.23mV |
+
+### AC small-signal (per tech)
+
+| Tech | Dev | gain0_err dB | f3db ratio | magNRMSE% | phase(inband)° | Gate |
+|---|---|---|---|---|---|---|
+| tsmc5 | nmos | 1.46 | nan | 14.7 | 72.42 | FAIL |
+| tsmc5 | pmos | 0.37 | 1.12 | 3.89 | 81.19 | PASS |
+| tsmc7 | nmos | 0.24 | 1.0 | 2.59 | 51.32 | PASS |
+| tsmc7 | pmos | 0.92 | 1.26 | 9.49 | 67.13 | PASS |
+| tsmc12 | nmos | 0.89 | 2.0 | 13.64 | 41.44 | FAIL |
+| tsmc12 | pmos | 1.26 | 1.12 | 12.37 | 34.52 | FAIL |
+| tsmc16 | nmos | 0.25 | 1.0 | 2.65 | 32.71 | PASS |
+| tsmc16 | pmos | 1.48 | 1.26 | 14.38 | 34.61 | FAIL |
+
+Opamp open-loop:
+
+| Tech | DC-gain err dB | GBW ratio | PM err° | magNRMSE% | Gate |
+|---|---|---|---|---|---|
+| tsmc5 | 113.96 | n/a | n/a | 69.15 | FAIL |
+| tsmc7 | 45.85 | 0.15 | 118 | 72.79 | FAIL |
+| tsmc12 | 5.14 | 0.966 | 1.43 | 52.11 | FAIL |
+| tsmc16 | 8.68 | 14.9 | 31.7 | 42.22 | FAIL |
 
 <details><summary>checkpoints resolved</summary>
 

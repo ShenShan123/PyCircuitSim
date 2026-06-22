@@ -6,6 +6,88 @@ isn't burdened with chronology.
 
 ---
 
+## V6.5 — AC small-signal accuracy of the NN models (branch `feat/ac-analysis`, 2026-06-22)
+
+Extended the `.ac` feature from a 2-circuit sanity gate into a full **AC accuracy
+campaign across all 24 DirectNet (LEVEL=73) capacity checkpoints** (S/M/L × tsmc{5,7,12,16}
+× N/P), and wired AC into the S/M/L benchmark + report. This is the **first time NN AC
+fidelity has ever been gated against ground truth** — the prior pass only ran it
+"mechanically." Ground truth is always NGSPICE `.ac` on the identical BSIM-CMG (LEVEL=72)
+OSDI model (never a self-defined transfer function).
+
+**Why AC is the novel measurement.** The NN's small-signal capacitances are *autograd
+derivatives of its predicted terminal charges* (`mosfet_nn._eval`: `cgd=∂qg/∂Vd`,
+`cdd=∂qd/∂Vd`, …). No prior gate measured those charge-surface derivatives — DC/transient
+test `id` and the integrated charge, not `dQ/dV`. AC is the direct probe.
+
+**Scope decision.** AC linearizes about a stable amplifying OP, so it is only physically
+meaningful for circuits that have one. Gated: the device common-source amp (NMOS+PMOS,
+per checkpoint) and the two-stage Miller opamp (open loop). **Excluded (documented, not
+faked): the free-running ring oscillator (astable) and the 6T SRAM (bistable)** — neither
+has a defensible NGSPICE `.ac` ground truth.
+
+**New code (harness + reporting only — no solver/model changes).**
+- `tests/common/complex_ac.py` — imports the AC primitives from `verify_ac.py` (one code
+  path) and adds `run_directnet_ac` (NN-aware DC OP via `_solve_dc_with_retry`, optional
+  pre-computed `dc_op`), `run_ngspice_ac_baked` (BSIM-CMG baked body), `ac_metrics_extended`
+  (GBW / unity-gain / phase-margin / f3db), and `inband_phase_maxerr_deg` (passband phase
+  via the complex transfer **ratio** `H_nn/H_ng` — branch-robust, no unwrap artifact).
+- `tests/verify_nn_ac.py` — device CS-amp gate. **No external load cap** so the device's own
+  Cgd/Cdd set the pole (a 5 fF load would swamp the ~0.1 fF device caps and the test would
+  re-check the external RC, not the NN caps). Each side biased at its OWN mid-rail OP — NG via
+  its DC sweep, NN via a **fresh per-point `_solve_dc_with_retry` scan** (the continuation DC
+  sweep `run_directnet_dc_sweep` rails on these high-gain single stages and must NOT be used
+  for bias-finding). Gate = gain0 err ≤1.5 dB, f3db ratio ∈[0.7,1.43], mag NRMSE ≤10%; phase
+  reported as a diagnostic.
+- `tests/verify_complex_opamp_ac.py` — opamp open-loop AC, reusing the `complex.py`
+  `ngspice_opamp`/`directnet_opamp` builders via local stimulus/`.ac` string transforms (the
+  shipping DC builders stay byte-identical). Each side biased at its own peak-gain trip; gate =
+  DC-gain err ≤3 dB, GBW ratio ∈[0.6,1.67], PM err ≤15° (linear mag NRMSE reported, not gated —
+  it is dominated by the 40 dB passband plateau).
+- Benchmark wiring: `verify_nn_ac` + `verify_complex_opamp_ac` added to
+  `scripts/benchmark_run_tests.sh`; `scripts/benchmark_collect.py` gains `AC_SUITES`,
+  `parse_ac_device_log`/`parse_ac_complex_log`, an `ac` data bucket, and a new
+  "AC small-signal accuracy" report section (cross-size tally + gate matrices + per-size
+  detail). `results/benchmark_sml/REPORT.md` regenerated.
+
+**Results (CPU-pinned, repo ngspice-45.2).**
+- **AC gain fidelity is excellent everywhere — 24/24 device cells gain0 err <1.5 dB**
+  (mean 0.55–0.86 dB). The autograd gm/gds the NN feeds the AC stamp are accurate.
+- **Dominant cap-driven pole / bandwidth is good but capacity/tech-variable — device CS-amp
+  gate 13/24.** f3db ratio ≈1.0 for the well-fit cells; tsmc5 NMOS and tsmc12/16 PMOS
+  under-predict the output cap (ratio 1.1–1.6) → those miss the magnitude gate.
+- **High-frequency phase (Cgd-feedforward RHP zero) is NOT reproduced.** Deep in-band the NN
+  phase matches (<7°), but by the −3 dB corner NG's feedforward RHP-zero phase lag diverges
+  (30–80°). A clean, specific transcapacitance limitation, distinct from the (good) pole.
+- **Opamp open-loop AC inherits the DC value-surface fragility — 0/12.** Gain collapses or
+  over-predicts at most cells; BUT where the OP lands in the good basin (**tsmc12-large**) the
+  NN reproduces **GBW to 0.97× and phase margin to 1.3°** — the dynamics are right, the
+  DC-gain *level* is the value-surface-owned miss (mirrors the DC opamp gate's recovery only at
+  large for tsmc5/tsmc12). AC also exposes a gain-level error the coarse DC-slope gate masks
+  (tsmc12-large: +5 dB).
+
+**Decision: no retraining warranted (measure-first outcome).** A charge-derivative (dQ/dV)
+deficiency would have shown as bad gain AND bad pole *everywhere* — the opposite of what is
+measured (gain is excellent; the pole is mostly good; only feedforward phase and the
+value-surface opamp gain miss). The opamp gap is the same value-surface bind the V6.4.x
+campaigns already attributed to the value surface (not capacity, not derivatives, V6.4.8 S10);
+the RHP-zero phase is a feedforward-cap-sign limitation. A scoped cap-Sobolev experiment
+remains the documented contingency if a future pass targets the feedforward phase / µA-band
+pole specifically.
+
+**Metric gotchas burned in (so they are not re-litigated).**
+- Full-band phase error is meaningless (the >100 GHz Cgd-feedthrough tail swings wildly on a
+  tiny vector); use the passband complex **ratio** phase.
+- A 5 fF load cap swamps the ~0.1 fF device caps — drop it to probe the NN caps.
+- `run_directnet_dc_sweep` (continuation) rails on a high-gain single CS stage; use a fresh
+  per-point `_solve_dc_with_retry` scan for bias-finding. The opamp is fine on the
+  continuation path (V6.4.8 S2 validated it there).
+- A high-gain CS-amp trip legitimately trips the strict NR convergence flag while the
+  pseudo-transient fallback returns a sound OP → judge OP validity by the OP *voltage*
+  (mid-rail), not the flag.
+
+---
+
 ## AC analysis — small-signal frequency-domain (branch `feat/ac-analysis`, 2026-06-21)
 
 Completed `.ac` (small-signal frequency-domain) analysis from a half-finished, broken

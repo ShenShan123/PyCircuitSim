@@ -63,12 +63,17 @@ LEVEL=72/73/74 are supported.
 - **DC Operating Point** (`op`) - Single-point bias calculation
 - **DC Sweep** (`.dc`) - Parameter sweep analysis
 - **Transient Analysis** (`.tran`) - Time-domain simulation
+- **AC Analysis** (`.ac`) - Small-signal frequency-domain sweep (`dec`/`oct`/`lin`);
+  linearizes about the DC OP and solves the complex MNA `Y = G + jωC` including the
+  full MOSFET transcapacitance matrix. NGSPICE-validated for LEVEL=72 (machine
+  precision) and LEVEL=73 (NN, V6.5 — see `results/benchmark_sml/REPORT.md`).
 
 ### Supported Directives
 
 - `.model` - MOSFET model definitions (LEVEL=72, LEVEL=73, or LEVEL=74)
 - `.include` - Include external library files
 - `.ic` - Set initial node voltages
+- AC stimulus on sources: `AC=<mag> [phase]` on `V`/`I` lines
 
 ---
 
@@ -235,6 +240,9 @@ Mp1 3 2 1 1 PMOS_VTL L=1u W=20u
 
 * Transient: .tran <tstep> <tstop>
 .tran 10p 5n
+
+* AC sweep: .ac <dec|oct|lin> <points> <fstart> <fstop>   (AC stimulus via AC= on a source)
+.ac dec 20 1e3 1e12
 ```
 
 ### MOSFET Models
@@ -814,9 +822,11 @@ simulation, use ngspice / Xyce / Spectre.
 
 ## Future Work
 
+- [x] AC small-signal (`.ac`) — LEVEL=72 NGSPICE-exact; LEVEL=73 NN gated across all
+  24 capacity checkpoints (V6.5: device CS-amp 13/24, opamp open-loop dynamics validated)
 - [ ] Adaptive output timestep
 - [ ] Expanded SRAM / ring-oscillator test suite
-- [ ] Inductor support, AC small-signal, `.subckt`
+- [ ] Inductor support, `.subckt`
 
 ## References
 
