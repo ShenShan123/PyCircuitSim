@@ -62,9 +62,14 @@ def _osdi_inst(tech: str, dev: str, variant: str, L: float, NFIN: float):
 
 
 def _nn_device(tech: str, dev: str, L: float, NFIN: float):
+    import os
     from pycircuitsim.models.mosfet_directnet import NMOS_NN, PMOS_NN
     cls = NMOS_NN if dev == "nmos" else PMOS_NN
-    ck = CHECKPOINT_DIR / f"{tech}_dn_medium_{dev}_best.pt"
+    # DIAG_CKPT_TAG lets the diagnostic point at an A/B checkpoint
+    # (e.g. "tsmc5_dn_tg") instead of the default tsmc{X}_dn_medium slot.
+    tag = os.environ.get("DIAG_CKPT_TAG")
+    stem = f"{tag}_{dev}" if tag else f"{tech}_dn_medium_{dev}"
+    ck = CHECKPOINT_DIR / f"{stem}_best.pt"
     tcode = local_variant_code(tech, tech, TECH[tech]["vt"])
     return cls("Mx", ["d", "g", "s", "b"], str(ck), L=L, NFIN=NFIN,
                temperature=300.15, tech_code=tcode)

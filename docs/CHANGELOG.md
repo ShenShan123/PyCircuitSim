@@ -6,6 +6,72 @@ isn't burdened with chronology.
 
 ---
 
+## V6.7 — charge-derivative levers + the switchcap-is-SOLVER-owned finding (branch `feat/ac-analysis`, 2026-06-22)
+
+Executed the V6.6 plan's §5 recommended campaign — "attack gap #1 (switchcap charge
+model)" — end-to-end. **Outcome: both candidate levers KILL, but the cheap diagnostic
++ a never-before-run native-LEVEL=72 control overturn the framing: the tsmc5 switchcap
+over-charge is a PyCircuitSim-TRANSIENT-vs-NGSPICE SOLVER discrepancy, NOT an NN model
+gap.** Every prior switchcap "model" lever (V6.4.8-S3 EKV, V6.6 µA-band loss, V6.6
+capacity, and now V6.7's two) correctly failed because there was never a model gap.
+
+**Diagnostics (decision gate, no training).** `tests/diag_charge_cap_fidelity.py`: the
+NN's **autograd** caps `{cgg,cgd,cdg,cdd}` (what the AC/transient solvers actually
+consume — not the predicted cap columns) match OSDI to **~0.3–2.5 %** on the sampled
+grid, and the per-channel sign map is `+cgg,−cgd,−cdg,+cdd` (OSDI off-diagonals are
+SPICE-negated; the sim stores raw autograd and the AC stamp's explicit minus reconciles
+it). `tests/diag_switchcap_trajectory.py`: the switchcap over-charge localizes to ONE
+under-sampled corner — the PMOS pass at reverse-Vds(>0.30·VDD)×forward-Vbs(>0.25·VDD)×
+Vgs≈0, where raw NN `id≈0` (OSDI conducts ~2 µA) and PMOS caps are 30–60 % under-predicted.
+That corner is **absent from training** (`reverse_vds` caps Vd at 0.30·VDD / Vbs at
+0.25·VDD; the switchcap needs 0.6·VDD / VDD). A data-coverage gap, not a uniform
+cap-derivative deficiency — so §1's hypothesis was refuted.
+
+**Lever 1 — charge-Sobolev (KILL).** `ChargeSobolevLoss` (`--charge-sobolev`) couples the
+autograd `dQ/dV` to the supervised `cgg/cgd/cdg/cdd` columns (the cap analogue of S10's
+id-Sobolev). tsmc5 A/B: switchcap 11.84→11.32 % (no flip); it did **not** move the AC
+f3db (1.585→1.778) — refuting "f3db>1 = cap under-prediction"; the f3db is **OP-drift/gds
+(value-surface) owned** — and it regressed pmos AC (PASS→FAIL).
+
+**Lever 2 — TG-corridor data-aug (KILL as a gate-mover).** New PyCMG `tg_corridor` sample
+class + `scripts/v6_7_append_tg_corridor.py` appended 69.6k rows (3.5 %) filling the
+missing corner; retrained tsmc5 N/P (`--class-weights tg_corridor=4.0`). It **DID fix the
+corner** (PMOS cdd err 62 %→**5 %**; reverse-conduction id now accurate where the taper
+allows) — yet the switchcap **did not move** (11.84→11.70 %). The tell: corner caps fixed,
+over-charge unchanged → never cap/model-owned. A widened reverse-taper
+(`PYCIRCUITSIM_REV_TAPER_X0/X1` default-off knob) on the TG checkpoint also moved it 0.00 %.
+
+**The native-L72 control (★ the finding).** `tests/diag_l72_switchcap_control.py` runs the
+EXACT switchcap through PyCircuitSim's OWN transient solver with the **ground-truth
+BSIM-CMG (LEVEL=72) OSDI model — no NN** — vs NGSPICE:
+
+| Tech | L72-in-PyCircuitSim | NGSPICE | solver floor | NN gate |
+|---|---|---|---|---|
+| TSMC5 | 0.3900 (=vin) | 0.2948 | **14.65 %** | 11.7 % FAIL |
+| TSMC7 | 0.4500 (=vin) | 0.4473 | 0.36 % | 1.8 % PASS |
+| TSMC12 | 0.4800 (=vin) | 0.4200 | 7.50 % | 4.2 % PASS |
+| TSMC16 | 0.4800 (=vin) | 0.4048 | 9.40 % | 3.2 % PASS |
+
+PyCircuitSim's transient charges the 100 fF hold cap to **full vin for every tech** while
+NGSPICE stops short (body-effect source-follower limit / finite RC). Timestep-independent
+(dt 5p→0.2p ±substeps all 0.3901), uic-independent, present for the NMOS-only gate, no
+overshoot past vin (so not Trap ringing) — it is the **transient integration of
+near-threshold pass-gate conduction**. **The tsmc5 gate floor (14.65 %) exceeds the 5 %
+gate even with ground truth → NOT NN-fixable; the NN (11.7 %) is in fact CLOSER to NGSPICE
+than ground-truth-L72, and for tsmc12/16 the NN (4.2/3.2 %) beats ground-truth-L72
+(7.5/9.4 %).** Corrected roadmap: the switchcap needs a PyCircuitSim transient-solver
+investigation, not an NN lever; run `diag_l72_switchcap_control.py` first on any "model
+gap" (ring-osc timing too). AC-f3db/opamp are value-surface (pivcor/s12cor recipe family).
+
+**Kept (default-off, recoverable, like Sobolev/EKV/subthresh):** `ChargeSobolevLoss`,
+PyCMG `tg_corridor` + append script, the reverse-taper env knob, and the 3 diagnostics.
+Production `tsmc{X}_dn_medium` byte-identical (verified). Killed-lever ckpts + augmented
+datasets parked in `results/v6_7/killed_lever_ckpt/`. Full write-up:
+`docs/plans/2026-06-22-v6.6-accuracy-and-xl.md` "V6.7"; memory
+`[[v67-switchcap-is-solver-owned]]`.
+
+---
+
 ## V6.6 — XL capacity tier + µA-band loss lever (KILLED) (branch `feat/ac-analysis`, 2026-06-22)
 
 Acted on the V6.4.9/V6.5 benchmark's open questions with two **simple-first** levers

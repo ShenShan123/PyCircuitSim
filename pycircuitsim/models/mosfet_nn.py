@@ -59,6 +59,15 @@ try:
 except (TypeError, ValueError):
     _GDS_FLOOR_K = 0.5
 
+# V6.7 reverse-conduction taper window (fractions of VDD_train). Default
+# 0.20/0.30 == the S7-bisected committed window; env-overridable for the
+# tg_corridor-retrain A/B (see ``_reverse_taper``). Unset → unchanged.
+try:
+    _REV_TAPER_X0 = float(os.environ.get("PYCIRCUITSIM_REV_TAPER_X0", "0.20"))
+    _REV_TAPER_X1 = float(os.environ.get("PYCIRCUITSIM_REV_TAPER_X1", "0.30"))
+except (TypeError, ValueError):
+    _REV_TAPER_X0, _REV_TAPER_X1 = 0.20, 0.30
+
 # Process-level shared-module cache. Devices that load the *same*
 # checkpoint file share one ``nn.Module`` instance so the Phase-5
 # batched path (``batch_eval``) can group them into a single stacked
@@ -533,9 +542,20 @@ class _MOSFETNNBase(Component):
         the LARGEST window that breaks no protected gate — the full
         trained corridor (taper at 0.30–0.40·VDD) regressed the TSMC5
         opamp; 0.10–0.20 broke nothing but lost the TSMC12 SC flip.
+
+        V6.7 diagnostic knob (default-off, S7-window preserving): the
+        window edges are read from ``PYCIRCUITSIM_REV_TAPER_X0`` /
+        ``PYCIRCUITSIM_REV_TAPER_X1`` (fractions of VDD_train, default
+        0.20 / 0.30). The TG-corridor retrain teaches the deep-reverse
+        conduction the original taper zeros; widening the window lets that
+        learned surface reach the switchcap pass-device regime. When the env
+        vars are unset the window is exactly 0.20/0.30 → committed behaviour
+        is unchanged. Only valid in tandem with a tg_corridor-trained
+        checkpoint; widening it on a stock checkpoint injects the raw (~0)
+        reverse surface as garbage.
         """
-        x0 = 0.20 * vdd_train
-        x1 = 0.30 * vdd_train
+        x0 = _REV_TAPER_X0 * vdd_train
+        x1 = _REV_TAPER_X1 * vdd_train
         if abs_vds <= x0:
             return 1.0
         if abs_vds >= x1:
