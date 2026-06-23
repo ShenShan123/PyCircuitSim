@@ -209,7 +209,7 @@ def _resolve_nn_checkpoint(
             break
     tech_code = local_variant_code(scope, tech_key, vt_key)
 
-    # Rule 12 (fail loud): log every NN checkpoint resolution so the .lis /
+    # Fail loud: log every NN checkpoint resolution so the .lis /
     # stdout makes the universal-vs-per-tech choice and tech_code visible.
     print(f"[NN-resolver] L{level} {netlist_name} TECH={tech_key} VT={vt_key} "
           f"-> {chk_name} (scope={scope}, tech_code={tech_code})")

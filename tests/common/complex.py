@@ -42,7 +42,7 @@ from tests.common.nn import nrmse as _nrmse_pct, mre as _mre_pct
 
 # ---------------------------------------------------------------------------
 # Benchmark techs — only the four with V6.3.1 DirectNet checkpoints.
-# ASAP7 is out of scope (Rule 17); LEVEL=74 BSIMAR out of scope (Rule 18).
+# ASAP7 is out of scope; LEVEL=74 BSIMAR out of scope.
 # ---------------------------------------------------------------------------
 BENCH_TECHS: List[str] = ["TSMC5", "TSMC7", "TSMC12", "TSMC16"]
 
@@ -313,10 +313,10 @@ def run_ngspice_wrdata(
 
 
 # ---------------------------------------------------------------------------
-# Metric helpers — Rule 16: always report MRE, R^2, NRMSE, MaxErr
+# Metric helpers — always report MRE, R^2, NRMSE, MaxErr
 # ---------------------------------------------------------------------------
 def full_metrics(pred: np.ndarray, true: np.ndarray) -> Dict[str, float]:
-    """Return MRE(%), R2, NRMSE(% of ptp) and MaxErr — Rule 16 quartet.
+    """Return MRE(%), R2, NRMSE(% of ptp) and MaxErr.
 
     ``pred`` / ``true`` must already be on a common grid.
     """
@@ -336,7 +336,7 @@ def full_metrics(pred: np.ndarray, true: np.ndarray) -> Dict[str, float]:
 
 def fmt_metrics(m: Dict[str, float], err_scale: float = 1e3,
                 err_unit: str = "mV") -> str:
-    """One-line Rule-16 metric string."""
+    """One-line metric string."""
     return (f"MRE={m['mre_pct']:.2f}%  R2={m['r2']:.4f}  "
             f"NRMSE={m['nrmse_pct']:.2f}%  "
             f"MaxErr={m['max_err']*err_scale:.2f}{err_unit}")
@@ -382,7 +382,7 @@ def run_directnet_transient(netlist_path: Path):
 
     Returns ``(results_dict, partial_flag, err_msg)``. On a mid-transient NR
     failure the committed waveform is recovered (partial_flag=True) so the
-    harness can still report a numeric gap (Rule 12 — fail loud, not silent).
+    harness can still report a numeric gap (fail loud, not silent).
     Mirrors the retry design in verify_nn_dc_tran.py / simulation.py.
     """
     import logging

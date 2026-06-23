@@ -21,7 +21,7 @@ behind a train-CLI flag:
   sub-network is *added* to the ``id`` output column. The sub-network is
   monotone in normalised ``Vg`` by construction (non-negative first-layer
   weights w.r.t. ``Vg`` + monotone SiLU + non-negative output projection),
-  so the autograd Jacobian ``gm = ∂id/∂Vg`` that NR consumes (Rule 1) gains
+  so the autograd Jacobian ``gm = ∂id/∂Vg`` that NR consumes gains
   a guaranteed-sign component. The base MLP is untouched, so the monotone
   term only *biases* the surface — it does not hard-clip it. Shapes of the
   base ``net`` / ``tech_embedding`` keys are unchanged, so a non-monotone
@@ -45,7 +45,7 @@ class _MonotoneVgResidual(nn.Module):
       sign via ``softplus`` of a free parameter — so ∂(hidden)/∂Vg keeps a
       single sign;
     * SiLU is *not* globally monotone, so the hidden activation is a plain
-      ``Softplus`` (monotone, smooth, non-zero gradient — Rule 4 friendly);
+      ``Softplus`` (monotone, smooth, non-zero gradient);
     * the output projection is likewise sign-constrained.
 
     The composition of a sign-fixed affine map, a monotone activation and a
@@ -119,7 +119,7 @@ class _EKVCore(nn.Module):
     to physics — monotone in Vgs, self-limiting as Vds→0 (the switchcap triode
     fix), saturating in strong Vds (the opamp locus) — while leaving the
     coefficients learnable per geometry/tech. autograd through the core yields a
-    structurally-correct gm/gds/gmb (Rule 1 preserved); **zero loss terms**.
+    structurally-correct gm/gds/gmb; **zero loss terms**.
 
     Operates in the same space the trunk does:
 
@@ -208,7 +208,7 @@ class _EKVCore(nn.Module):
         Charge-sheet EKV: Id = -psign · β·n·ut²·μ·(i_f − i_r)·clm, with
         i_{f,r} = softplus(·)² the forward/reverse interpolation. Self-limits
         as Vds→0 (i_f−i_r→0, the switchcap fix), saturates as Vds grows, and
-        is monotone in the gate drive. All ops smooth (Rule-1-gate safe)."""
+        is monotone in the gate drive. All ops smooth."""
         sp = torch.nn.functional.softplus
         # De-standardise the 4 voltage columns back to physical Volts (Vs≡0).
         v_phys = x[:, :4] * self.v_std + self.v_mean          # (B,4): Vd,Vg,Vs,Vb
@@ -376,7 +376,7 @@ class DirectNet(nn.Module):
             # Add the monotone-in-Vg residual to the `id` column only. The
             # remaining 12 columns are untouched. Indexing then re-stacking
             # keeps the output a single differentiable tensor so the
-            # inference-time autograd Jacobian (Rule 1) still flows.
+            # inference-time autograd Jacobian still flows.
             corr = self.mono(combined).squeeze(-1)  # (B,)
             id_col = out[:, self._ID_COL] + corr
             out = torch.cat(

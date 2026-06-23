@@ -21,7 +21,7 @@ The DirectNet (LEVEL=73) transmission gate runs in PyCircuitSim transient;
 NGSPICE BSIM-CMG (LEVEL=72) is the ground truth.
 
 Ground truth is ALWAYS NGSPICE BSIM-CMG (CLAUDE.md Validation rule).
-Rule 16: report MRE / R2 / NRMSE / MaxErr.
+Report MRE / R2 / NRMSE / MaxErr.
 
 Usage:
     conda run -n pycircuitsim python tests/verify_complex_switchcap.py

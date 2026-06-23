@@ -12,7 +12,7 @@ ground truth. Extracts open-loop DC gain (peak |dVout/dVin|), trip point
 Gates: open-loop DC gain within +/-10%; trip-point shift reported.
 
 Ground truth is ALWAYS NGSPICE BSIM-CMG (CLAUDE.md Validation rule).
-Rule 16: report MRE / R2 / NRMSE / MaxErr.
+Report MRE / R2 / NRMSE / MaxErr.
 
 Usage:
     conda run -n pycircuitsim python tests/verify_complex_opamp.py

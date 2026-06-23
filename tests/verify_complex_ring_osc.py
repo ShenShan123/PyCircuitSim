@@ -11,7 +11,7 @@ NGSPICE BSIM-CMG (LEVEL=72) ground truth.
 Gate: DirectNet period within +/-5% of NGSPICE per technology (TSMC5/7/12/16).
 
 Ground truth is ALWAYS NGSPICE BSIM-CMG -- never a simplified model
-(CLAUDE.md Validation rule). Rule 16: report MRE / R2 / NRMSE / MaxErr.
+(CLAUDE.md Validation rule). Report MRE / R2 / NRMSE / MaxErr.
 
 Usage:
     conda run -n pycircuitsim python tests/verify_complex_ring_osc.py

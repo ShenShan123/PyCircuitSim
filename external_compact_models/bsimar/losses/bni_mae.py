@@ -81,7 +81,7 @@ class MAELoss(nn.Module):
 
 # ── Sobolev id-derivative consistency loss (V6.4.7 P4 / S10) ─────────────────
 #
-# Couples the autograd ∂id/∂V the SOLVER consumes (NN Rule 1) to the OSDI
+# Couples the autograd ∂id/∂V the SOLVER consumes to the OSDI
 # gm/gds/gmb columns the 13-head loss already supervises. The predicted gm/gds
 # /gmb *heads* are accurate (~1 % NRMSE), but the autograd slope of the id
 # head — the only Jacobian NR uses — drifts (S10 deriv-fidelity ref: NMOS gds

@@ -15,7 +15,7 @@ truth over circuit-level parameters:
 
 The parametric sweep runs only for tech/analysis pairs that pass baseline.
 
-ASAP7 is out of scope (project Rule 17); DirectNet only (Rule 18). Run against
+ASAP7 is out of scope; DirectNet only. Run against
 a stable checkpoint set and with ``OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`` — the
 inverter trip point has gain ~-15..-30 that amplifies any NN-weight change
 (e.g. a concurrent retrain overwriting the checkpoints) ~20x into the VTC.
@@ -65,7 +65,7 @@ def main() -> int:
     for tk in tech_keys:
         if tk not in NN_TECHS:
             print(f"ERROR: tech '{tk}' not in scope {NN_TECHS} "
-                  f"(ASAP7 excluded — project Rule 17)")
+                  f"(ASAP7 excluded — out of scope)")
             return 2
     for an in analyses:
         if an not in ("vtc", "tran"):

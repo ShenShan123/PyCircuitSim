@@ -294,7 +294,7 @@ These rules were learned from bugs. Violating them causes NR divergence or wrong
 
 ### NN Model Rules (LEVEL=73 DirectNet primary; LEVEL=74 BSIMAR parked)
 
-Both LEVEL=73 (single-shot MLP, primary) and LEVEL=74 (autoregressive Transformer, parked — Rule 18) share the data pipeline and inference rules, and use `nn.Embedding` for tech-code identity (7-dim input: Vgs, Vds, Vbs, NFIN, L, T, tech_code). Rules 11–12 are parked BSIMAR-specific structure — resurrect from CHANGELOG / git if needed. Rule numbers are stable references (cited across `tests/` and `models/`); removed rules leave gaps rather than renumber.
+Both LEVEL=73 (single-shot MLP, primary) and LEVEL=74 (autoregressive Transformer, parked — Rule 18) share the data pipeline and inference rules, and use `nn.Embedding` for tech-code identity (7-dim input: Vgs, Vds, Vbs, NFIN, L, T, tech_code). Rules 11–12 are parked BSIMAR-specific structure — resurrect from CHANGELOG / git if needed. Rule numbers are internal to this document and are no longer cited in code.
 
 1. Deleted by user.
 2. **Source-relative frame for BOTH device types** — shift all terminal voltages by -Vs before NN eval (`v_d_nn = v_d - v_s`, Vs ≡ 0). Training uses Vs=0; shift invariance makes this exact. Until V6.4.7 only PMOS was shifted — lifted-source NMOS (opamp tail pair, SC pass device, SRAM access) saw phantom Vgs/Vds with Vbs=0; the lifted-source canary `tests/verify_nn_lifted_source_dc.py` (NRMSE ≤10 %) guards this permanently.

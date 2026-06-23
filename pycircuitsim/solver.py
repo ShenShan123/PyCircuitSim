@@ -162,7 +162,7 @@ def _nn_mosfet_types() -> tuple:
     LEVEL=72 BSIM-CMG and LEVEL=74 BSIMAR are intentionally excluded:
     only DirectNet is eligible for the batched forward+Jacobian path
     (plan Phase 5). BSIMAR overrides ``_forward_model`` for AR inference
-    and is parked (Rule 18).
+    and is parked.
     """
     try:
         from pycircuitsim.models.mosfet_directnet import NMOS_NN, PMOS_NN

@@ -6,7 +6,7 @@ Used by ``mosfet_directnet`` (LEVEL=73, MLP) and ``mosfet_bsimar``
 * terminal voltage prep (PMOS source-shift + softplus clamp + z-score)
 * a 1-sample autograd pass that gives id/qg/qd plus their Jacobians
 * normalised → physical chain rule (delegated to the normalizer)
-* analytical Vds correction (rule 19) including rail-restoring extrapolation
+* analytical Vds correction including rail-restoring extrapolation
 * charge state + caching used by the transient solver
 
 Subclasses provide:
@@ -47,7 +47,7 @@ from bsimar.data.normalize import (
 _logger = logging.getLogger(__name__)
 _NN_DEVICE: Optional[torch.device] = None
 
-# V6.4.8 S0 diagnostic gate (default-off, Rule-5 preserving). The Rule-5
+# V6.4.8 S0 diagnostic gate (default-off, gds-floor preserving). The
 # gds floor coefficient ``k`` in ``_floor_gds`` (= 0.5 shipped) is read from
 # ``PYCIRCUITSIM_GDS_FLOOR_K`` so the S0 settling sweep can adjudicate whether
 # floor-k moves the *converged* opamp gain (pre-registered prediction: it does
@@ -525,10 +525,10 @@ class _MOSFETNNBase(Component):
 
     @staticmethod
     def _floor_gds(id_phys: float, gds_phys: float) -> float:
-        """Physics-based gds floor (rule 5): max(|id|·k, 1e-12), k=0.5 shipped.
+        """Physics-based gds floor: max(|id|·k, 1e-12), k=0.5 shipped.
 
         ``k`` is the module-level ``_GDS_FLOOR_K`` (env ``PYCIRCUITSIM_GDS_FLOOR_K``,
-        default 0.5 → Rule-5 unchanged). The S0 diagnostic sweeps it; it does not
+        default 0.5 → floor unchanged). The S0 diagnostic sweeps it; it does not
         ship as an accuracy lever (the floor is inert at the converged fixed point).
         """
         return max(gds_phys, max(abs(id_phys) * _GDS_FLOOR_K, 1e-12))
@@ -563,7 +563,7 @@ class _MOSFETNNBase(Component):
         u = (abs_vds - x0) / (x1 - x0)
         return 1.0 - u * u * (3.0 - 2.0 * u)
 
-    # ── Vds correction (rule 19) ─────────────────────────────────────
+    # ── Vds correction ───────────────────────────────────────────────
 
     def _apply_vds_correction(
         self, result: Dict[str, float], vds: float,

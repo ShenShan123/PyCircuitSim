@@ -13,7 +13,7 @@ The parametric sweep runs only for tech/device pairs that pass baseline.
 Off-bin L/NFIN points exercise NN extrapolation beyond the per-tech training
 bins — elevated NRMSE/MRE there is expected model behaviour, not a fault.
 
-ASAP7 is out of scope (project Rule 17); DirectNet only (Rule 18). For
+ASAP7 is out of scope; DirectNet only. For
 reproducible results invoke with ``OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`` — the
 harness also pins torch to one thread (see tests/common/nn_sweep.py).
 
@@ -62,7 +62,7 @@ def main() -> int:
     for tk in tech_keys:
         if tk not in NN_TECHS:
             print(f"ERROR: tech '{tk}' not in scope {NN_TECHS} "
-                  f"(ASAP7 excluded — project Rule 17)")
+                  f"(ASAP7 excluded — out of scope)")
             return 2
     for dv in devices:
         if dv not in ("nmos", "pmos"):
