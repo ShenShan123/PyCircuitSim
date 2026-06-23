@@ -34,7 +34,7 @@ pycircuitsim/
     ├── mosfet_cmg.py         # BSIM-CMG (LEVEL=72) via PyCMG
     ├── mosfet_nn.py          # Shared _MOSFETNNBase (LEVEL=73/74) — voltage prep, autograd, Vds correction
     ├── mosfet_directnet.py   # DirectNet (LEVEL=73, primary)
-    └── mosfet_bsimar.py      # BSIMAR Transformer (LEVEL=74, parked — see Rule 18)
+    └── mosfet_bsimar.py      # BSIMAR Transformer (LEVEL=74, parked — see Rule 15)
 
 external_compact_models/
 ├── bsimar/             # Unified NN compact model package (importable as `bsimar`)
@@ -91,14 +91,14 @@ authoritative ground truth; DirectNet is the production NN; BSIMAR is parked.
   equations for it.
 - **DirectNet (LEVEL=73)** — single-shot feed-forward MLP. 7-dim input
   (Vgs, Vds, Vbs, NFIN, L, T, tech_code) with an `nn.Embedding` tech-code;
-  gm/gds/gmb are the **autograd Jacobian** of the predicted `id` (Rule 1).
+  gm/gds/gmb are the **autograd Jacobian** of the predicted `id`.
   Production size is `medium`; per-tech NMOS/PMOS checkpoints for TSMC5/7/12/16
-  use a local embedding vocab (Rule 19). Charges are predicted and the AC caps
+  use a local embedding vocab (Rule 16). Charges are predicted and the AC caps
   are their `dQ/dV` autograd.
 - **BSIMAR Transformer (LEVEL=74)** — autoregressive Transformer sharing
-  DirectNet's data pipeline and inference rules. Parked (Rule 18); no checkpoints
+  DirectNet's data pipeline and inference rules. Parked (Rule 15); no checkpoints
   on disk. Resurrect the cap-head / AR-loop structure from CHANGELOG / git
-  (Rules 11–12).
+  (Rules 9–10).
 
 ## Supported Features
 
@@ -201,7 +201,7 @@ conda run -n pycircuitsim python external_compact_models/PyCMG/scripts/generate_
 # 2. Train a dedicated per-tech DirectNet. --tech-scope auto-sets --exclude-techs
 #    (all other techs), --num-tech-codes (per-tech local vocab + UNKNOWN), the
 #    default --data path (datasets/<scope>_<dev>.npz), and the save_prefix
-#    `tsmc{X}_dn_<size>_<dev>` that the parser preempt cascade recognizes (Rule 19).
+#    `tsmc{X}_dn_<size>_<dev>` that the parser preempt cascade recognizes (Rule 16).
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
     --model direct --size medium \
     --device-type {nmos,pmos} --tech-scope {tsmc5,tsmc7,tsmc12,tsmc16} --cuda --overwrite
@@ -211,7 +211,7 @@ conda run -n pycircuitsim python -u -m bsimar.cli.train \
 
 **Checkpoints** (`external_compact_models/bsimar/checkpoints/`, each `*_best.pt` + `_norm.npz`):
 
-- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}`. Each uses a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot, e.g. TSMC5: 5, TSMC7: 4; Rule 19). Production is `medium`; the V6.4.7 campaign also parks specialized shipping variants (`v6_4_7_pivcor_*`, `v6_4_7_s12cor_*`, `*_c17`, …) — install/repoint per the shipping mix in CHANGELOG.
+- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}`. Each uses a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot, e.g. TSMC5: 5, TSMC7: 4; Rule 16). Production is `medium`; the V6.4.7 campaign also parks specialized shipping variants (`v6_4_7_pivcor_*`, `v6_4_7_s12cor_*`, `*_c17`, …) — install/repoint per the shipping mix in CHANGELOG.
 - Resolver cascade (`pycircuitsim/parser.py`): for a TSMC5/7/12/16 netlist the per-tech slot `tsmc{X}_dn_{medium,small,large,xl}` (medium-first) preempts the universal fallback chain (`refac_dn_* > v4_re_dn_universal > v4_dn_universal > bare`). The universal fallbacks are unreachable until someone retrains a universal stack (`refac_dn_*` / `v4_*` artifacts were deleted 2026-05-12). Resolutions log at parse time as `[NN-resolver] L73 <name> TECH=<x> VT=<y> -> <chk> (scope=<s>, tech_code=<c>)`. Override via `--exp-name` at train time, or `PYCIRCUITSIM_NN_CHECKPOINT_*` / `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}` env vars at runtime (the latter is read first, before the medium-first preempt — used by the benchmark to pin a capacity tier).
 
 **Netlist usage:** `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`. Parser auto-resolves the per-tech checkpoint and the local-vocab tech_code via `bsimar.config.local_variant_code(scope, tech, variant)`.
@@ -228,7 +228,7 @@ All tests require `conda activate pycircuitsim`.
 
 **BSIM-CMG DC:** L1 `verify_bsimcmg_dc.py` (2) · L2 `verify_bsimcmg_dc_comprehensive.py` (67) · L3 `verify_multi_tech_dc.py` (44).
 **BSIM-CMG Transient:** L1 `verify_bsimcmg_tran.py` (1) · L2 `verify_bsimcmg_tran_comprehensive.py` (37) · L3 `verify_multi_tech_tran.py` (72).
-**NN device + inverter gate:** `verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16 [--inverter-only]` — per-tech NMOS/PMOS single-OP / DC-sweep / inverter VTC + transient (LEVEL=73) vs NGSPICE BSIM-CMG; `--inverter-only` restricts to the inverter VTC/transient gate. Production per-tech baseline: inverter gate 8/8, DC 55/55, tran 64/64. The bare `--tech` default (`TECH_ORDER`) also lists ASAP7 variants — out of scope, no checkpoints (Rule 17).
+**NN device + inverter gate:** `verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16 [--inverter-only]` — per-tech NMOS/PMOS single-OP / DC-sweep / inverter VTC + transient (LEVEL=73) vs NGSPICE BSIM-CMG; `--inverter-only` restricts to the inverter VTC/transient gate. Production per-tech baseline: inverter gate 8/8, DC 55/55, tran 64/64. The bare `--tech` default (`TECH_ORDER`) also lists ASAP7 variants — out of scope, no checkpoints (Rule 14).
 **NN parametric harness (V6.3.2):** the PyCMG L3 parametric sweeps ported to DirectNet (LEVEL=73) via `tests/common/nn_sweep.py`. `verify_nn_multi_tech_dc.py` — single-device NMOS/PMOS Id-Vgs over L/NFIN/VT (55 configs, 4 TSMC techs). `verify_nn_multi_tech_tran.py` — inverter VTC + transient over P/N ratio, VDD, Cload, input slew, pulse width. Baseline-gated: the parametric sweep runs only for techs that pass baseline. Geometry/VT/VDD ride on `dataclasses.replace(TestTechConfig)`; only the inverter-transient circuit knobs needed a (behaviour-preserving) refactor of `verify_nn_dc_tran.py` (`InvCircuitParams`). Run with `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1` — the NN inverter VTC has ~±1% NRMSE run-to-run scatter (high-gain trip point; harness pins `torch` to 1 thread).
 **Complex circuits:** `verify_complex_{ring_osc,opamp,sram_snm,switchcap}.py` + `tests/common/complex.py` vs NGSPICE BSIM-CMG (4 circuits × 4 techs = 16 gates + the authoritative `force_ic` single-point ship gate). Parametric sweep mirror: `verify_complex_{opamp,ringosc,switchcap,sram}_sweep.py` + `tests/common/complex_sweep.py` (tech / VT / geometry / VDD / stimulus; baseline-gated, sha256-pinned). CPU-pinned, repo NGSPICE.
 **AC (LEVEL=72):** `verify_ac.py` — L1 passive RC (vs NGSPICE `.ac` + analytic), L2 BSIM-CMG common-source amp (vs NGSPICE `.ac`, identical OSDI model). 2/2 PASS, ~machine precision. CPU-pinned; needs `NGSPICE_BIN` (repo `tools/ngspice-45.2/bin/ngspice` on this machine).
@@ -294,7 +294,7 @@ These rules were learned from bugs. Violating them causes NR divergence or wrong
 
 ### NN Model Rules (LEVEL=73 DirectNet primary; LEVEL=74 BSIMAR parked)
 
-Both LEVEL=73 (single-shot MLP, primary) and LEVEL=74 (autoregressive Transformer, parked — Rule 18) share the data pipeline and inference rules, and use `nn.Embedding` for tech-code identity (7-dim input: Vgs, Vds, Vbs, NFIN, L, T, tech_code). Rules 11–12 are parked BSIMAR-specific structure — resurrect from CHANGELOG / git if needed. Rule numbers are internal to this document and are no longer cited in code.
+Both LEVEL=73 (single-shot MLP, primary) and LEVEL=74 (autoregressive Transformer, parked — Rule 15) share the data pipeline and inference rules, and use `nn.Embedding` for tech-code identity (7-dim input: Vgs, Vds, Vbs, NFIN, L, T, tech_code). Rules 9–10 are parked BSIMAR-specific structure — resurrect from CHANGELOG / git if needed. Rule numbers are internal to this document and are no longer cited in code.
 
 1. Deleted by user.
 2. **Source-relative frame for BOTH device types** — shift all terminal voltages by -Vs before NN eval (`v_d_nn = v_d - v_s`, Vs ≡ 0). Training uses Vs=0; shift invariance makes this exact. Until V6.4.7 only PMOS was shifted — lifted-source NMOS (opamp tail pair, SC pass device, SRAM access) saw phantom Vgs/Vds with Vbs=0; the lifted-source canary `tests/verify_nn_lifted_source_dc.py` (NRMSE ≤10 %) guards this permanently.
