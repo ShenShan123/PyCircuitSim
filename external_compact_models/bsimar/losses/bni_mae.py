@@ -235,7 +235,7 @@ class SobolevIdLoss(nn.Module):
         return self.lam * total / n_chan
 
 
-# ── Charge-derivative (cap) Sobolev consistency loss (V6.7 / charge channels) ─
+# ── Charge-derivative (cap) Sobolev consistency loss (V6.5.2 / charge channels) ─
 #
 # The TRANSIENT and AC solvers consume the small-signal capacitances as the
 # AUTOGRAD derivatives of the predicted terminal charges qg/qd
@@ -249,10 +249,10 @@ class SobolevIdLoss(nn.Module):
 # ∂id/∂V to the supervised gm/gds/gmb — this term couples the autograd ∂q/∂V to
 # the supervised cap columns, the quantity the AC pole / switchcap charge / RO
 # timing actually depend on. The autograd cap can drift from the (accurate)
-# supervised cap column (V6.7 diag: ~1% on the grid average but up to ~25% on
+# supervised cap column (V6.5.2 diag: ~1% on the grid average but up to ~25% on
 # mid-trajectory corners), the cap analogue of the S10 id-slope drift.
 #
-# SIGN CONVENTION (V6.7 diag, confirmed empirically by
+# SIGN CONVENTION (V6.5.2 diag, confirmed empirically by
 # tests/diag_charge_cap_fidelity.py and rooted in pycmg/model._condense_caps):
 # OSDI stores the SPICE condensed caps with the OFF-DIAGONALS NEGATED
 # (cgd_data = −∂Qg/∂Vd, cdg_data = −∂Qd/∂Vg) while the diagonals are unflipped

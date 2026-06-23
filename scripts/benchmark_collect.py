@@ -19,7 +19,7 @@ from statistics import mean, median
 ROOT = Path(__file__).resolve().parent.parent
 BASE = ROOT / "results" / "benchmark_sml"
 # Canonical capacity order; the report includes only the tiers that have
-# result dirs on disk, so adding/removing a tier (e.g. V6.6 `xl`) needs no
+# result dirs on disk, so adding/removing a tier (e.g. V6.5.1 `xl`) needs no
 # further edits — every table header derives from SIZES.
 _SIZE_ORDER = ["small", "medium", "large", "xl"]
 SIZES = [s for s in _SIZE_ORDER if (BASE / s).is_dir()] or _SIZE_ORDER[:3]
@@ -266,7 +266,7 @@ def _ac_section(data) -> list:
         "owned, not a charge-derivative (dQ/dV) deficiency (which would have shown as bad "
         "gain *and* bad pole everywhere, the opposite of what is measured).",
         "",
-        "**V6.6 — XL adds 8 checkpoints (32 total) and does NOT change the AC story.** "
+        "**V6.5.1 — XL adds 8 checkpoints (32 total) and does NOT change the AC story.** "
         "Device CS-amp gate holds at 4/12 for XL (17/32 overall), opamp stays 0/4 (0/16 "
         "overall), and device mean gain0-err drifts marginally worse (0.86→0.91 dB L→XL) — "
         "consistent with the XL device-surface over-fit seen in DC. AC fidelity is "
@@ -387,7 +387,7 @@ def report(data) -> str:
          "Sizes: small=128x3 (~0.06M p) / medium=256x5 (~0.4M p) / large=384x6 (~0.9M p) / "
          "**xl=512x8 (~2.13M p)**.",
          "",
-         "> **V6.6 update — XL capacity tier + µA-band loss lever (KILLED).** This revision "
+         "> **V6.5.1 update — XL capacity tier + µA-band loss lever (KILLED).** This revision "
          "adds the **XL** tier (512×8, 2.13M p) on the identical clean recipe and a tested-"
          "but-reverted accuracy lever. **Headline: the capacity curve PEAKS at `large` and "
          "DECLINES at XL — 6 → 9 → 12 → 9 / 16.** XL fits the device surface ~10× tighter "
@@ -425,7 +425,7 @@ def report(data) -> str:
          "(the *shipping* tsmc7/tsmc16 need the pivcor / s12cor recipes). The high-gain basin is "
          "capacity- AND tech-sensitive with a sweet spot at `large` — bigger is not better.",
          "4. **Switched-cap needs capacity up to a point:** 0/4 (small) → 3/4 (medium, large, **xl**). "
-         "tsmc5 never passes (~11-12% charge error) at ANY size — and V6.6 proves it is **not** "
+         "tsmc5 never passes (~11-12% charge error) at ANY size — and V6.5.1 proves it is **not** "
          "µA-band-loss-compression-owned (the lever moved it <0.2%): it is sample-and-hold "
          "charge/transient over-charge, independent of both capacity and µA-band DC loss weighting.",
          "5. **Ring-osc** passes for the higher-VDD nodes (tsmc12/16) at every size; tsmc7 passes "

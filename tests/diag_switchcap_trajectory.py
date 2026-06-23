@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""V6.7 decision gate (part 2) — NN vs OSDI along the EXACT switchcap trajectory.
+"""V6.5.2 decision gate (part 2) — NN vs OSDI along the EXACT switchcap trajectory.
 
 The grid diagnostic (``diag_charge_cap_fidelity.py``) showed the NN's autograd
 caps match OSDI to ~1% on the *sampled training distribution*. Yet tsmc5

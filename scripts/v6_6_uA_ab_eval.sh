@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# V6.6 µA-band loss-lever A/B evaluation.
+# V6.5.1 µA-band loss-lever A/B evaluation.
 # Runs switchcap (target metric: charge_err) + DC device sweep (no-regress
 # check: Id-Vgs NRMSE) against a given checkpoint pair, CPU-pinned per the gate
 # methodology. Usage: v6_6_uA_ab_eval.sh <TECHUC> <ckpt_stem_prefix>

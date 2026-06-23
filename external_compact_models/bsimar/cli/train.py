@@ -72,7 +72,7 @@ SIZE_PRESETS = {
     ("direct", "large"): dict(
         trunk_hidden=384, trunk_layers=6, batch_size=2048,
         max_epochs=800, patience=150, lr=1e-3),
-    # V6.6 — XL capacity tier (512x8, ~2.1M params). Extends the S/M/L
+    # V6.5.1 — XL capacity tier (512x8, ~2.1M params). Extends the S/M/L
     # capacity curve one notch. Slightly higher weight_decay than the
     # smaller tiers (set via DirectNetConfig default 1e-5; XL relies on the
     # EMA + early-stop already in the clean recipe to bound device-surface
@@ -219,7 +219,7 @@ def _run(args: argparse.Namespace) -> None:
               "with the e2 output-subset preset.")
         sys.exit(2)
     if args.charge_sobolev and args.model != "direct":
-        print("[error] --charge-sobolev is a DirectNet-only (V6.7) flag.")
+        print("[error] --charge-sobolev is a DirectNet-only (V6.5.2) flag.")
         sys.exit(2)
     if args.charge_sobolev and loss_preset["output_subset"] is not None:
         print("[error] --charge-sobolev needs the qg/qd + cgg/cgd/cdg/cdd "
@@ -389,7 +389,7 @@ def main() -> None:
                    help="Relative weight of the ceiling hinge vs the value "
                         "term within the subthreshold loss. Default 1.0.")
 
-    # V6.7 — charge-derivative (cap) Sobolev consistency, DirectNet only.
+    # V6.5.2 — charge-derivative (cap) Sobolev consistency, DirectNet only.
     p.add_argument("--charge-sobolev", action="store_true",
                    help="Add the charge-derivative (cap) Sobolev term: couples "
                         "the autograd ∂qg/∂V, ∂qd/∂V the AC/transient solvers "

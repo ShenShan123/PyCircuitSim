@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""V6.7 — append the transmission-gate / pass-device corridor to a dataset.
+"""V6.5.2 — append the transmission-gate / pass-device corridor to a dataset.
 
 Adds the ``tg_corridor`` sample class (code 13) to an existing per-tech .npz.
 For every (variant, NFIN, L, T) bin already present in the dataset, OSDI-evaluates

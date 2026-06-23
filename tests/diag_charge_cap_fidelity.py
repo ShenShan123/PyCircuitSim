@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""V6.7 decision gate — charge-derivative (autograd dQ/dV) cap fidelity.
+"""V6.5.2 decision gate — charge-derivative (autograd dQ/dV) cap fidelity.
 
 The simulator's small-signal capacitances are NOT the network's predicted
 ``cgg/cgd/cdg/cdd`` *columns* — they are the **autograd** derivatives of the

@@ -59,7 +59,7 @@ try:
 except (TypeError, ValueError):
     _GDS_FLOOR_K = 0.5
 
-# V6.7 reverse-conduction taper window (fractions of VDD_train). Default
+# V6.5.2 reverse-conduction taper window (fractions of VDD_train). Default
 # 0.20/0.30 == the S7-bisected committed window; env-overridable for the
 # tg_corridor-retrain A/B (see ``_reverse_taper``). Unset → unchanged.
 try:
@@ -543,7 +543,7 @@ class _MOSFETNNBase(Component):
         trained corridor (taper at 0.30–0.40·VDD) regressed the TSMC5
         opamp; 0.10–0.20 broke nothing but lost the TSMC12 SC flip.
 
-        V6.7 diagnostic knob (default-off, S7-window preserving): the
+        V6.5.2 diagnostic knob (default-off, S7-window preserving): the
         window edges are read from ``PYCIRCUITSIM_REV_TAPER_X0`` /
         ``PYCIRCUITSIM_REV_TAPER_X1`` (fractions of VDD_train, default
         0.20 / 0.30). The TG-corridor retrain teaches the deep-reverse

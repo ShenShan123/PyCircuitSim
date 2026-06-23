@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# V6.7 A/B eval: run the switchcap + device AC + opamp AC + DC-sanity gates for a
+# V6.5.2 A/B eval: run the switchcap + device AC + opamp AC + DC-sanity gates for a
 # given DirectNet checkpoint tag, CPU-pinned against the repo NGSPICE.
 #
 # Usage:

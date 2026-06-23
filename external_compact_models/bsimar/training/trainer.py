@@ -362,7 +362,7 @@ def _train_loop(
               f"upper={subthresh_upper:g}, off_floor={subthresh_off_floor:g}, "
               f"ceiling_k={subthresh_ceiling_k}, ceiling_w={subthresh_ceiling_w})")
 
-    # V6.7 — charge-derivative (cap) Sobolev consistency term. DirectNet only
+    # V6.5.2 — charge-derivative (cap) Sobolev consistency term. DirectNet only
     # (asinh output norm); couples the autograd ∂q/∂V the AC/transient solvers
     # consume to the supervised cgg/cgd/cdg/cdd columns (the cap analogue of the
     # S10 id-slope Sobolev). Shares the same x.requires_grad path as sobolev.

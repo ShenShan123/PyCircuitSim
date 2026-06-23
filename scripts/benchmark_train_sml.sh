@@ -35,7 +35,7 @@ if [ "${1:-}" = "_one" ]; then
   log="$LOGDIR/${name}.log"
   if [ -f "$ckpt" ] && [ "$force" != "--force" ]; then echo "[train] SKIP existing $name"; exit 0; fi
   echo "[train] START $name on GPU$gpu"
-  # EXTRA_TRAIN_ARGS lets a campaign inject a recipe addendum (e.g. the V6.6
+  # EXTRA_TRAIN_ARGS lets a campaign inject a recipe addendum (e.g. the V6.5.1
   # µA-band loss lever: '--subthresh --subthresh-s2 1e-7 --subthresh-upper 3e-5')
   # without editing this script; empty by default = the clean control-v2 recipe.
   CUDA_VISIBLE_DEVICES="$gpu" conda run --no-capture-output -n pycircuitsim python -u -m bsimar.cli.train \

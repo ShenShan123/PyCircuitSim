@@ -6,14 +6,14 @@ isn't burdened with chronology.
 
 ---
 
-## V6.7 — charge-derivative levers + the switchcap-is-SOLVER-owned finding (branch `feat/ac-analysis`, 2026-06-22)
+## V6.5.2 — charge-derivative levers + the switchcap-is-SOLVER-owned finding (branch `feat/ac-analysis`, 2026-06-22)
 
-Executed the V6.6 plan's §5 recommended campaign — "attack gap #1 (switchcap charge
+Executed the V6.5.1 plan's §5 recommended campaign — "attack gap #1 (switchcap charge
 model)" — end-to-end. **Outcome: both candidate levers KILL, but the cheap diagnostic
 + a never-before-run native-LEVEL=72 control overturn the framing: the tsmc5 switchcap
 over-charge is a PyCircuitSim-TRANSIENT-vs-NGSPICE SOLVER discrepancy, NOT an NN model
-gap.** Every prior switchcap "model" lever (V6.4.8-S3 EKV, V6.6 µA-band loss, V6.6
-capacity, and now V6.7's two) correctly failed because there was never a model gap.
+gap.** Every prior switchcap "model" lever (V6.4.8-S3 EKV, V6.5.1 µA-band loss, V6.5.1
+capacity, and now V6.5.2's two) correctly failed because there was never a model gap.
 
 **Diagnostics (decision gate, no training).** `tests/diag_charge_cap_fidelity.py`: the
 NN's **autograd** caps `{cgg,cgd,cdg,cdd}` (what the AC/transient solvers actually
@@ -67,12 +67,12 @@ gap" (ring-osc timing too). AC-f3db/opamp are value-surface (pivcor/s12cor recip
 PyCMG `tg_corridor` + append script, the reverse-taper env knob, and the 3 diagnostics.
 Production `tsmc{X}_dn_medium` byte-identical (verified). Killed-lever ckpts + augmented
 datasets parked in `results/v6_7/killed_lever_ckpt/`. Full write-up:
-`docs/plans/2026-06-22-v6.6-accuracy-and-xl.md` "V6.7"; memory
+`docs/plans/2026-06-22-v6.6-accuracy-and-xl.md` "V6.5.2"; memory
 `[[v67-switchcap-is-solver-owned]]`.
 
 ---
 
-## V6.6 — XL capacity tier + µA-band loss lever (KILLED) (branch `feat/ac-analysis`, 2026-06-22)
+## V6.5.1 — XL capacity tier + µA-band loss lever (KILLED) (branch `feat/ac-analysis`, 2026-06-22)
 
 Acted on the V6.4.9/V6.5 benchmark's open questions with two **simple-first** levers
 (no complex methods, per the brief): add an **XL capacity tier** and test the
