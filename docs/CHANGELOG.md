@@ -63,11 +63,15 @@ than ground-truth-L72, and for tsmc12/16 the NN (4.2/3.2 %) beats ground-truth-L
 investigation, not an NN lever; run `diag_l72_switchcap_control.py` first on any "model
 gap" (ring-osc timing too). AC-f3db/opamp are value-surface (pivcor/s12cor recipe family).
 
-**Kept (default-off, recoverable, like Sobolev/EKV/subthresh):** `ChargeSobolevLoss`,
-PyCMG `tg_corridor` + append script, the reverse-taper env knob, and the 3 diagnostics.
-Production `tsmc{X}_dn_medium` byte-identical (verified). Killed-lever ckpts + augmented
-datasets parked in `results/v6_7/killed_lever_ckpt/`. Full write-up:
-`docs/plans/2026-06-22-v6.6-accuracy-and-xl.md` "V6.5.2"; memory
+**Kept (default-off, like Sobolev/EKV/subthresh):** `ChargeSobolevLoss`, the PyCMG
+`tg_corridor` sample class, and the reverse-taper env knob — all in-package and
+retrainable; plus the `diag_l72_switchcap_control.py` control diagnostic.
+Production `tsmc{X}_dn_medium` byte-identical (verified). The killed-lever ckpts +
+augmented datasets (`results/v6_7/`), the `v6_7_append_tg_corridor.py` / `v6_7_ab_eval.sh`
+campaign scripts, and the `diag_charge_cap_fidelity.py` / `diag_switchcap_trajectory.py`
+diagnostics were **DELETED in the 2026-06-23 cleanup — NOT recoverable** (regenerate from
+the in-package infra if needed). Full write-up:
+`docs/plans/2026-06-22-v6.5-accuracy-and-xl.md` "V6.5.2"; memory
 `[[v67-switchcap-is-solver-owned]]`.
 
 ---
@@ -80,7 +84,7 @@ Acted on the V6.4.9/V6.5 benchmark's open questions with two **simple-first** le
 Both were run on the *identical clean recipe* (`--apply-filter off --swa-mode ema
 --seed 42`) so they compare cleanly to the published S/M/L. Datasets were **not**
 regenerated — both levers are loss/architecture changes, and the V6.4.9 full-Vth+geometry
-datasets are current. Full analysis: `docs/plans/2026-06-22-v6.6-accuracy-and-xl.md`;
+datasets are current. Full analysis: `docs/plans/2026-06-22-v6.5-accuracy-and-xl.md`;
 metrics: `results/benchmark_sml/REPORT.md` (now a 4-tier S/M/L/XL report).
 
 **Headline: the capacity curve PEAKS at `large` and DECLINES at XL — complex gates
@@ -124,8 +128,9 @@ and visibly reshaping the DC fit. **The over-charge survives direct µA-band los
 cap charges through the transmission gate; the DC Id surface is already <1% accurate in that
 band). Closing it needs a transient/charge-model investigation — a *complex* lever de-scoped
 by the brief. Lever **reverted** (temp `_uA*` checkpoints moved out of the resolver dir to
-`results/v6_6_uA_ab/killed_lever_ckpt/`; default-off `SubthresholdIdLoss` infra untouched and
-recoverable; stock checkpoints byte-identical).
+`results/v6_6_uA_ab/killed_lever_ckpt/` — since **DELETED in the 2026-06-23 cleanup**;
+default-off `SubthresholdIdLoss` infra untouched and recoverable; stock checkpoints
+byte-identical).
 
 **Bug fixed — `xargs -L1` silent job collapse.** `scripts/benchmark_train_sml.sh` built each
 job line as `"$tech $size $dev $gpu $FORCE"`; with `--force` absent, `$FORCE` is empty so the
@@ -143,7 +148,7 @@ documenting the trap.
 - `benchmark_run_tests.sh`: default `SIZES` includes `xl`.
 - `benchmark_collect.py`: `SIZES` is **data-driven** (includes any tier with a result dir on
   disk) so every table header derives from it — adding/removing a tier needs no further edits.
-- `scripts/v6_6_uA_ab_eval.sh`: reusable lever-A/B eval harness.
+- `scripts/v6_6_uA_ab_eval.sh`: lever-A/B eval harness (**deleted in the 2026-06-23 cleanup**).
 
 **Production unchanged.** Shipping size stays `medium`; the V6.4.7 per-tech shipping mix
 (pivcor/s12cor) is untouched. XL/lever checkpoints are not in any production slot.

@@ -252,8 +252,7 @@ class SobolevIdLoss(nn.Module):
 # supervised cap column (V6.5.2 diag: ~1% on the grid average but up to ~25% on
 # mid-trajectory corners), the cap analogue of the S10 id-slope drift.
 #
-# SIGN CONVENTION (V6.5.2 diag, confirmed empirically by
-# tests/diag_charge_cap_fidelity.py and rooted in pycmg/model._condense_caps):
+# SIGN CONVENTION (V6.5.2 diag, rooted in pycmg/model._condense_caps):
 # OSDI stores the SPICE condensed caps with the OFF-DIAGONALS NEGATED
 # (cgd_data = −∂Qg/∂Vd, cdg_data = −∂Qd/∂Vg) while the diagonals are unflipped
 # (cgg_data = +∂Qg/∂Vg, cdd_data = +∂Qd/∂Vd). The autograd ∂q/∂V is the raw
