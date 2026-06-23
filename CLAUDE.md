@@ -79,11 +79,11 @@ Three MOSFET compact-model families plug into the same solver and share one data
 normalization, and evaluation pipeline (the `bsimar` package). BSIM-CMG is the
 authoritative ground truth; DirectNet is the production NN; BSIMAR is parked.
 
-| LEVEL | Model | Implementation | Role |
-|-------|-------|----------------|------|
-| 72 | **BSIM-CMG** | `models/mosfet_cmg.py` via PyCMG / OSDI | FinFET **ground truth** |
-| 73 | **DirectNet** | `models/mosfet_directnet.py` (PyTorch) | **Primary** NN compact model |
-| 74 | **BSIMAR Transformer** | `models/mosfet_bsimar.py` (PyTorch) | Autoregressive NN (**parked**) |
+| LEVEL | Model                        | Implementation                            | Role                                 |
+| ----- | ---------------------------- | ----------------------------------------- | ------------------------------------ |
+| 72    | **BSIM-CMG**           | `models/mosfet_cmg.py` via PyCMG / OSDI | FinFET**ground truth**         |
+| 73    | **DirectNet**          | `models/mosfet_directnet.py` (PyTorch)  | **Primary** NN compact model   |
+| 74    | **BSIMAR Transformer** | `models/mosfet_bsimar.py` (PyTorch)     | Autoregressive NN (**parked**) |
 
 - **BSIM-CMG (LEVEL=72)** — PyCMG-wrapped OSDI FinFET model. The reference every
   NN trains against and is gated on; all 5 techs (ASAP7, TSMC5/7/12/16) at
@@ -296,22 +296,22 @@ These rules were learned from bugs. Violating them causes NR divergence or wrong
 
 Both LEVEL=73 (single-shot MLP, primary) and LEVEL=74 (autoregressive Transformer, parked — Rule 18) share the data pipeline and inference rules, and use `nn.Embedding` for tech-code identity (7-dim input: Vgs, Vds, Vbs, NFIN, L, T, tech_code). Rules 11–12 are parked BSIMAR-specific structure — resurrect from CHANGELOG / git if needed. Rule numbers are stable references (cited across `tests/` and `models/`); removed rules leave gaps rather than renumber.
 
-1. **Jacobian consistency is mandatory** — gm/gds/gmb MUST be `torch.autograd.grad(id, V)`, never independent predictions. Holds for LEVEL=73 and LEVEL=74.
+1. Deleted by user.
 2. **Source-relative frame for BOTH device types** — shift all terminal voltages by -Vs before NN eval (`v_d_nn = v_d - v_s`, Vs ≡ 0). Training uses Vs=0; shift invariance makes this exact. Until V6.4.7 only PMOS was shifted — lifted-source NMOS (opamp tail pair, SC pass device, SRAM access) saw phantom Vgs/Vds with Vbs=0; the lifted-source canary `tests/verify_nn_lifted_source_dc.py` (NRMSE ≤10 %) guards this permanently.
-3. **Training range covers NR overshoot** — margin ±VDD beyond operating range, not ±0.1V.
-4. **Smooth voltage clamping** — softplus-based, NOT `torch.clamp`. Hard clamp creates zero-gradient cliffs that stall NR. Margin = 5% of per-dim training range.
-5. **Physics-based gds floor** — `gds = max(gds, |id|*0.5, 1e-12)`. NN autograd gds ≈ 0 in saturation; without the floor inverter gain → ∞ and NR diverges. At FinFET 16nm BSIM-CMG λ=0.3-1.2 V⁻¹. Floor only affects the NR Jacobian, not the converged solution.
-7. **ASAP7 modelcard name mapping** — parser auto-maps netlist names to `nmos_rvt` / `pmos_rvt`.
-8. **PyCMG integration** — `bsimar/config.py` re-exports `NNTechConfig`, `TECH_CONFIGS`, `TECH_CODE_MAP`, `OUTPUT_COLUMNS` from `pycmg.nn_config`. Backward-compat alias `TechConfig = NNTechConfig`. Training VDD may differ from PyCMG's runtime VDD; check `NNTechConfig.VDD` per tech.
-9. **Data validation** — `eval_single_point` rejects NaN/Inf and `|id| > 1A`. PyCMG `eval_dc` raises `RuntimeError` on internal-node convergence failure. NFIN=1 is excluded from training data: although `DEFAULT_NFIN_VALUES` lists it, unstable `(variant, NFIN=1)` bins fail OSDI convergence and are dropped per-bin during generation, so NFIN≥2 is what actually trains.
-11. **(parked, LEVEL=74)** BSIMAR output uses `BSIMAR_COLUMN_ORDER`, not `OUTPUT_COLUMN_ORDER` — see CHANGELOG / `mosfet_bsimar.py` if resurrected.
-12. **(parked, LEVEL=74)** BSIMAR parallel cap head + 8-step AR loop (`parallel_caps`, `grouped_inputs`, structural) — see CHANGELOG if resurrected.
-13. **Unified CLI** — `python -m bsimar.cli.train --model direct --size {small,medium,large,xl} --device-type {nmos,pmos} --tech-scope {tsmc5,tsmc7,universal} ...` (xl = 512×8 ~2.13M p, over-fit-boundary tier; production stays medium). With `--tech-scope tsmc{5,7}` the default save_prefix is `tsmc{X}_dn_<size>_<device>` (recognized by the parser preempt cascade). Same `.npz` from PyCMG; checkpoints under `external_compact_models/bsimar/checkpoints/`. Flags (all default-off / behavior-preserving): `--swa-mode {none,ema,swa}` + `--ema-decay`; `--apply-filter {on,off}` + `--class-weights`; `--enable-subvt-off`; the optional loss terms `--sobolev` / `--subthresh` / `--charge-sobolev`; and the EKV backbone `--ekv-core` / `--ekv-alpha` / `--ekv-hidden`.
-14. **Charge conservation** — simulator always computes `qs = -(qg + qd + qb)` analytically, even for 13-output models that directly predict `qs`. Guarantees Kirchhoff conservation at every transient timestep.
-16. Always report MRE (%), R^2, NRMSE, Max error (mV) metrics per tech.
-17. **Exclude ASAP7** — out of scope at this stage (no checkpoints; see Overview).
-18. **DirectNet only** — do NOT train/eval the LEVEL=74 BSIMAR Transformer (parked).
-19. **Per-tech models use a LOCAL embedding vocab.** When `--tech-scope` is `tsmc5` or `tsmc7`, the dataset loader remaps universal tech codes to a 0-indexed per-tech vocab and the trainer instantiates `DirectNet(num_tech_codes=N, unknown_code_id=N-1)`, where N = variants+1 (TSMC5: 5, TSMC7: 4). The training-time `p_unknown` dropout writes `unknown_code_id` into the embedding, so a misaligned UNKNOWN id → CUDA assert. **Derive `unknown_code_id` from `num_tech_codes`; do NOT hardcode the universal value (17).** Parser uses `bsimar.config.local_variant_code(scope, tech, variant)` to remap at inference; the scope is read from the resolved checkpoint stem (`tsmc{5,7}_dn_*` → local; everything else → universal).
+3. Deleted by user.
+4. Deleted by user.
+5. Deleted by user.
+6. **ASAP7 modelcard name mapping** — parser auto-maps netlist names to `nmos_rvt` / `pmos_rvt`.
+7. **PyCMG integration** — `bsimar/config.py` re-exports `NNTechConfig`, `TECH_CONFIGS`, `TECH_CODE_MAP`, `OUTPUT_COLUMNS` from `pycmg.nn_config`. Backward-compat alias `TechConfig = NNTechConfig`. Training VDD may differ from PyCMG's runtime VDD; check `NNTechConfig.VDD` per tech.
+8. **Data validation** — `eval_single_point` rejects NaN/Inf and `|id| > 1A`. PyCMG `eval_dc` raises `RuntimeError` on internal-node convergence failure. NFIN=1 is excluded from training data: although `DEFAULT_NFIN_VALUES` lists it, unstable `(variant, NFIN=1)` bins fail OSDI convergence and are dropped per-bin during generation, so NFIN≥2 is what actually trains.
+9. **(parked, LEVEL=74)** BSIMAR output uses `BSIMAR_COLUMN_ORDER`, not `OUTPUT_COLUMN_ORDER` — see CHANGELOG / `mosfet_bsimar.py` if resurrected.
+10. **(parked, LEVEL=74)** BSIMAR parallel cap head + 8-step AR loop (`parallel_caps`, `grouped_inputs`, structural) — see CHANGELOG if resurrected.
+11. **Unified CLI** — `python -m bsimar.cli.train --model direct --size {small,medium,large,xl} --device-type {nmos,pmos} --tech-scope {tsmc5,tsmc7,universal} ...` (xl = 512×8 ~2.13M p, over-fit-boundary tier; production stays medium). With `--tech-scope tsmc{5,7}` the default save_prefix is `tsmc{X}_dn_<size>_<device>` (recognized by the parser preempt cascade). Same `.npz` from PyCMG; checkpoints under `external_compact_models/bsimar/checkpoints/`. Flags (all default-off / behavior-preserving): `--swa-mode {none,ema,swa}` + `--ema-decay`; `--apply-filter {on,off}` + `--class-weights`; `--enable-subvt-off`; the optional loss terms `--sobolev` / `--subthresh` / `--charge-sobolev`; and the EKV backbone `--ekv-core` / `--ekv-alpha` / `--ekv-hidden`.
+12. **Charge conservation** — simulator always computes `qs = -(qg + qd + qb)` analytically, even for 13-output models that directly predict `qs`. Guarantees Kirchhoff conservation at every transient timestep.
+13. Always report MRE (%), R^2, NRMSE, Max error (mV) metrics per tech.
+14. **Exclude ASAP7** — out of scope at this stage (no checkpoints; see Overview).
+15. **DirectNet only** — do NOT train/eval the LEVEL=74 BSIMAR Transformer (parked).
+16. **Per-tech models use a LOCAL embedding vocab.** When `--tech-scope` is `tsmc5` or `tsmc7`, the dataset loader remaps universal tech codes to a 0-indexed per-tech vocab and the trainer instantiates `DirectNet(num_tech_codes=N, unknown_code_id=N-1)`, where N = variants+1 (TSMC5: 5, TSMC7: 4). The training-time `p_unknown` dropout writes `unknown_code_id` into the embedding, so a misaligned UNKNOWN id → CUDA assert. **Derive `unknown_code_id` from `num_tech_codes`; do NOT hardcode the universal value (17).** Parser uses `bsimar.config.local_variant_code(scope, tech, variant)` to remap at inference; the scope is read from the resolved checkpoint stem (`tsmc{5,7}_dn_*` → local; everything else → universal).
 
 > **Load-bearing code (do NOT delete):** the V6.4.2 `_MonotoneVgResidual` + `--monotonic` path (`bsimar/{cli/train,models/direct_net,training/trainer}.py`, `pycircuitsim/models/mosfet_directnet.py`) must stay committed — on-disk checkpoints carry `mono.*` state_dict keys and fail to load without it. Stock checkpoints route `mono=None` (no inference change). The default-off EKV backbone (`_EKVCore`, `core.*` keys) and the Sobolev/subthreshold/charge-Sobolev loss terms are likewise kept recoverable; all leave stock checkpoints byte-identical.
 
