@@ -34,6 +34,6 @@ Cl5 n5 0 0.5f
 .model nmos_nn NMOS (LEVEL=73 TECH=tsmc12 VT=svt)
 .model pmos_nn PMOS (LEVEL=73 TECH=tsmc12 VT=svt)
 
-.tran 1p 5n
+.tran 1p 5n uic
 
 .end

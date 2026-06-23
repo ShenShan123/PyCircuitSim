@@ -183,7 +183,7 @@ Mn1 3 2 0 0 nmos1 L=30n NFIN=10
 
 - `.op` — DC operating point.
 - `.dc <src> <start> <stop> <step>` — DC sweep (e.g. `.dc Vin 0 1.0 0.01`).
-- `.tran <tstep> <tstop>` — transient; drive with a `PULSE v1 v2 td tr tf pw period` source (e.g. `.tran 10p 5n`).
+- `.tran <tstep> <tstop> [uic]` — transient; drive with a `PULSE v1 v2 td tr tf pw period` source (e.g. `.tran 10p 5n`). `uic` (use-initial-conditions, NGSPICE-style) starts the transient from the `.ic` state — pins `.ic` nodes during the OP so a high-impedance node (e.g. a switched-cap hold node) starts at its `.ic` value instead of its off-device leakage equilibrium. Default-off; non-`uic` decks are byte-identical.
 - `.ac {dec|oct|lin} <N> <fstart> <fstop>` — small-signal; requires `AC=mag phase` on a source.
 - `.ic V(node)=...` (hard initial condition) and `.include` are also supported.
 

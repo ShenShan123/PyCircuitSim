@@ -564,7 +564,36 @@ def run_transient(
         sol = s.solve()
         return s, sol
 
-    op_solver, op_solution = _solve_dc_with_retry(circuit, has_nn, _tran_op_solve)
+    # `.tran ... uic`: pin the `.ic` nodes with temporary ideal sources during
+    # the OP so the transient starts from the `.ic` state — NGSPICE's uic. A
+    # high-impedance node (a switched-cap hold node, a sampled gate) otherwise
+    # seeds at its off-device leakage equilibrium (~supply) rather than `.ic`,
+    # so PyCircuitSim and NGSPICE would integrate from different initial states.
+    # Default-off: only engaged when the netlist requests `uic`, so non-uic
+    # decks are byte-identical. Mirrors the test harness's uic pinning
+    # (tests/common/complex.py run_directnet_transient).
+    from pycircuitsim.models.passive import VoltageSource
+    _uic_temps = []
+    if analysis_params.get("uic") and circuit.initial_conditions:
+        _vs_constrained = set()
+        for comp in circuit.components:
+            if isinstance(comp, VoltageSource):
+                if comp.nodes[1] in ("0", "GND"):
+                    _vs_constrained.add(comp.nodes[0])
+                elif comp.nodes[0] in ("0", "GND"):
+                    _vs_constrained.add(comp.nodes[1])
+        _nm = circuit.get_node_map()
+        for _node, _val in circuit.initial_conditions.items():
+            if (_node not in ("0", "GND") and _node not in _vs_constrained
+                    and _node in _nm):
+                _vs = VoltageSource(f"_V_uic_{_node}", [_node, "0"], _val)
+                circuit.components.append(_vs)
+                _uic_temps.append(_vs)
+    try:
+        op_solver, op_solution = _solve_dc_with_retry(circuit, has_nn, _tran_op_solve)
+    finally:
+        for _vs in _uic_temps:
+            circuit.components.remove(_vs)
     logger.info(f"DC operating point computed: {len(op_solution)} nodes")
 
     # STAGE 2: Use OP solution as initial guess for transient

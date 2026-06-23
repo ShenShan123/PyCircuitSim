@@ -1,3 +1,13 @@
+> **★ V6.5.3 CORRECTION (2026-06-23).** Every `tsmc5 switchcap FAIL (~11–12 %)`
+> row below is a NETLIST CLOCK-AMPLITUDE RENDERING BUG, not a model/solver gap:
+> `render_directnet_netlist` left the PULSE clock at 0.80 V instead of rescaling
+> to VDD, so the tsmc5 DirectNet clock over-drove the pass gates to 0.80 V while
+> NGSPICE clocked to 0.65 V. Fixed → tsmc5 switchcap **1.56 % PASS** at every
+> capacity; switchcap is now **4/4** (medium complex 9/16 → 10/16). The
+> "switchcap-is-solver-owned" finding (V6.5.2) is likewise refuted (the L72
+> control was missing uic pinning). See `docs/CHANGELOG.md` V6.5.3 +
+> `[[v652-switchcap-is-harness-clock-bug]]`. The non-switchcap rows are unaffected.
+
 # DirectNet (LEVEL=73) capacity benchmark — small / medium / large / xl
 
 All checkpoints trained on ONE identical clean recipe (`--apply-filter off --swa-mode ema --seed 42`); capacity is the only variable. Datasets = full Vth + geometry grid per tech (`--variants all`, inv-trip + subvt-off overlays). Ground truth = NGSPICE BSIM-CMG (LEVEL=72), repo ngspice-45.2, CPU-pinned.

@@ -867,10 +867,18 @@ class Parser:
         if len(parts) < 3:
             raise ValueError(f"Invalid .tran syntax: {line}")
 
+        # `uic` (use-initial-conditions, NGSPICE-style): start the transient
+        # from the `.ic` state instead of the unconstrained DC operating point.
+        # Without it, a high-impedance node (e.g. a switched-cap hold node) seeds
+        # at its off-device leakage equilibrium rather than the `.ic` value —
+        # see run_transient's uic pinning. Any token after tstep/tstop.
+        uic = any(p.lower() == "uic" for p in parts[3:])
+
         self.analysis_type = "tran"
         self.analysis_params = {
             "tstep": self._parse_value(parts[1]),
             "tstop": self._parse_value(parts[2]),
+            "uic": uic,
         }
 
     def _parse_ac(self, line: str) -> None:

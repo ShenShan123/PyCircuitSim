@@ -27,6 +27,7 @@ import from here so all four share one modelcard cache and one NGSPICE path.
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -369,9 +370,17 @@ def render_directnet_netlist(template_path: Path, bt: BenchTech,
     text = template_path.read_text()
     text = text.replace("TECH=tsmc12", f"TECH={bt.nn_tech}")
     text = text.replace("VT=svt", f"VT={bt.vt}")
-    # supply-voltage lines and .ic rails written at 0.80 in the templates
-    text = text.replace("Vdd vdd 0 0.80", f"Vdd vdd 0 {bt.vdd}")
-    text = text.replace("=0.80", f"={bt.vdd}")
+    # Rescale EVERY 0.80 V rail to the tech VDD. The templates are authored at
+    # the TSMC12/16 rail (0.80 V); for the 0.65/0.75 V nodes every standalone
+    # 0.80 token is a supply rail — the Vdd line, the PULSE clock amplitude
+    # (`PULSE 0 0.80`), SRAM word/bit lines (`Vwl wl 0 0.80`), and the `.ic`
+    # rails (`=0.80`). The earlier targeted `Vdd vdd 0 0.80` / `=0.80` replaces
+    # MISSED the space-delimited clock/rail values, so on tsmc5/tsmc7 the
+    # DirectNet clock over-drove the pass gates to 0.80 V while NGSPICE clocked
+    # to VDD — different experiments (the tsmc5 switchcap "11.8% over-charge").
+    # Geometry (`L=16n`, `NFIN=2`) carries no 0.80 token, so a whole-number
+    # match is safe. A no-op on tsmc12/16 (0.80 -> 0.80).
+    text = re.sub(r"(?<![\w.])0\.80(?![\w])", f"{bt.vdd}", text)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(text)
     return out_path

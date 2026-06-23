@@ -6,7 +6,63 @@ isn't burdened with chronology.
 
 ---
 
+## V6.5.3 — ★ the switchcap gap was a HARNESS CLOCK BUG, not solver/NN-owned (branch `V6.5.2`, 2026-06-23)
+
+**Overturns the V6.5.2 conclusion below.** The tsmc5 switchcap "11.84 % over-charge" that
+the ENTIRE V6.4.x–V6.5.2 campaign chased — XL capacity, µA-band loss, charge-Sobolev,
+TG-corridor data-aug, EKV backbone, and the "switchcap-is-SOLVER-owned" verdict — was
+**two independent harness bugs**, not a model or solver gap. Re-derived from first
+principles this session (`tests/diag_passgate_iv_trajectory.py`,
+`diag_tg_conduction_nn_vs_l72.py`, `diag_nn_switchcap_trajectory.py`,
+`diag_l72_switchcap_uic_control.py`).
+
+**Bug 1 — the real switchcap FAIL: a netlist clock-amplitude rendering bug.**
+`render_directnet_netlist` (`tests/common/complex.py`) rescaled `Vdd vdd 0 0.80` and
+`=0.80` to the tech VDD but MISSED the space-delimited rails: the PULSE clock
+`Vphi phi 0 PULSE 0 0.80 ...` and the SRAM `Vwl/Vbl/Vblb 0 0.80`. So for tsmc5 (VDD=0.65)
+the **DirectNet clock over-drove the pass gates to 0.80 V** while the NGSPICE deck clocked
+to `bt.vdd=0.65` — the two sides simulated different experiments. The over-drive exactly
+explains the tech pattern (tsmc5 0.65 → +0.15 over-drive = 11.8 % FAIL; tsmc7 0.75 →
++0.05 = marginal; tsmc12/16 0.80 → no over-drive = PASS). **Fix:** rescale every standalone
+`0.80` rail to `bt.vdd` (`re.sub(r"(?<![\w.])0\.80(?![\w])", ...)`). **Result: tsmc5
+switchcap 11.84 % FAIL → 1.56 % PASS; switchcap 4/4** (medium complex gates 9/16 → 10/16).
+Verified no regression: SRAM SNM unchanged (builds programmatically), ring-osc 2/4 and
+opamp 0/4 byte-identical (templates carry only `Vdd`+`=0.80` rails).
+
+**Bug 2 — the bogus "14.65 % L72 solver floor" (V6.5.2.3): a control-harness artifact.**
+`diag_l72_switchcap_control.py` ran a plain DC op with **no uic pinning**, so the
+high-impedance hold node `vsamp` seeded at the off-pass-transistor leakage equilibrium
+(~vin) instead of `.ic` 0 V. The NN path (`run_directnet_transient`, V6.4.7 S5b) and the
+NGSPICE deck (`tran ... uic`) BOTH pin `.ic`; the L72 control did not — so it integrated a
+different initial state. With uic pinning the L72 control matches NGSPICE → **the
+PyCircuitSim transient solver is faithful.** Proof: the full-TG conduction
+`I_into_vsamp(vsamp)` from PyCircuitSim-L72 matches NGSPICE to 4 digits (ratio 1.000) and
+hand-integrates to 0.294 ≈ NGSPICE 0.2948; the NN UNDER-conducts (ratio 0.96→0.26) and
+integrates to 0.284 — it would slightly UNDER-charge, the opposite of the reported
+"over-charge". The control was fixed to pin uic.
+
+**uic now first-class in the product path.** The uic-vs-DC-op seeding difference was a real
+`main.py` bug too (only the test harness worked around it). Added: `.tran ... uic` parsing
+(`parser.py`) and uic pinning in `run_transient` (`simulation.py`) — default-off, engaged
+only when the netlist requests `uic`, so non-uic decks are byte-identical (`verify_bsimcmg_tran`
+still PASS). The switchcap + ring-osc examples now carry `uic`. Verified: `main.py`
+switchcap with uic seeds `vsamp(0)=0.0000` and charges to 0.3865 (matches the harness),
+vs 0.1954/0.4045 without.
+
+**LESSON (load-bearing):** when an NN gate fails vs NGSPICE, FIRST diff the rendered NN
+netlist against the NGSPICE deck token-by-token — clock amplitude, supply rails, bias
+voltages, sweep ranges, geometry — BEFORE attributing it to the model or solver. A whole
+campaign treated a clock-rail rendering typo (+ a control missing uic) as a deep
+model/solver property. Memory `[[v652-switchcap-is-harness-clock-bug]]`.
+
+---
+
 ## V6.5.2 — charge-derivative levers + the switchcap-is-SOLVER-owned finding (branch `feat/ac-analysis`, 2026-06-22)
+
+> **SUPERSEDED by V6.5.3 above — the "switchcap is SOLVER-owned / not NN-fixable / 14.65 %
+> floor" conclusion in this section is WRONG (two harness bugs: clock-rail render +
+> L72-control-missing-uic). The charge-Sobolev / TG-corridor levers correctly KILLED because
+> there was never a model gap; the cap-fidelity sub-findings remain valid reference.**
 
 Executed the V6.5.1 plan's §5 recommended campaign — "attack gap #1 (switchcap charge
 model)" — end-to-end. **Outcome: both candidate levers KILL, but the cheap diagnostic

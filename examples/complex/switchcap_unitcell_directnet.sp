@@ -30,6 +30,6 @@ Csample vsamp 0 100f
 .model nmos_nn NMOS (LEVEL=73 TECH=tsmc12 VT=svt)
 .model pmos_nn PMOS (LEVEL=73 TECH=tsmc12 VT=svt)
 
-.tran 5p 12n
+.tran 5p 12n uic
 
 .end
