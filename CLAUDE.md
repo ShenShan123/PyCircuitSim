@@ -187,34 +187,32 @@ Mn1 3 2 0 0 nmos1 L=30n NFIN=10
 - `.ac {dec|oct|lin} <N> <fstart> <fstop>` — small-signal; requires `AC=mag phase` on a source.
 - `.ic V(node)=...` (hard initial condition) and `.include` are also supported.
 
-### NN training (V6.2 — per-tech dedicated)
+### NN training (per-tech DirectNet, LEVEL=73)
+
+Dedicated per-tech NMOS/PMOS DirectNet checkpoints for **TSMC5 / TSMC7 / TSMC12 / TSMC16**. `--tech-scope` ∈ `{tsmc5,tsmc7,tsmc12,tsmc16,universal}`; `--size` ∈ `{small,medium,large,xl}` (**production = `medium`**; `large`/`xl` are the capacity-study tiers — `large` is the over-fit sweet spot, `xl` the boundary — see CHANGELOG).
 
 ```bash
-# Generate per-tech data. --enable-inv-trip overlay covers all 4 TSMC techs
-# inside pycmg/nn_generate.py. V6.3 re-centered it on VDD/2; V6.3.1 dropped the
-# ±0.25·VDD Vbs sweep, so the overlay is ~3.5% of rows (was ~9.8% pre-V6.3.1).
-# V6.3 also added the reverse_vds corridor class (~7.5% of rows, always on).
+# 1. Generate per-tech data (one .npz per tech+device). --enable-inv-trip adds the
+#    inverter-trip overlay; the grid sampler also carries the reverse-Vds corridor.
+#    --tech ∈ {tsmc5,tsmc7,tsmc12,tsmc16,asap7,all}. Repeat per tech.
 conda run -n pycircuitsim python external_compact_models/PyCMG/scripts/generate_nn_data.py \
     --device both --tech tsmc5 --enable-inv-trip --n-workers 8
-conda run -n pycircuitsim python external_compact_models/PyCMG/scripts/generate_nn_data.py \
-    --device both --tech tsmc7 --enable-inv-trip --n-workers 8
 
-# Train dedicated per-tech DirectNet. --tech-scope auto-sets:
-#   --exclude-techs (all other techs), --num-tech-codes (per-tech vocab + UNKNOWN),
-#   default --data path (datasets/<scope>_<dev>.npz), and the save_prefix
-#   (`tsmc{5,7}_dn_<size>_<dev>`) recognized by the parser preempt cascade.
+# 2. Train a dedicated per-tech DirectNet. --tech-scope auto-sets --exclude-techs
+#    (all other techs), --num-tech-codes (per-tech local vocab + UNKNOWN), the
+#    default --data path (datasets/<scope>_<dev>.npz), and the save_prefix
+#    `tsmc{X}_dn_<size>_<dev>` that the parser preempt cascade recognizes (Rule 19).
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
-    --model direct --size {small,medium} \
-    --device-type {nmos,pmos} --tech-scope {tsmc5,tsmc7} --cuda --overwrite
-
-# Convenience: full 8-cell sweep (S+M × NMOS/PMOS × TSMC5/TSMC7) at GPU 2.
-bash scripts/train_per_tech_8cells.sh
+    --model direct --size medium \
+    --device-type {nmos,pmos} --tech-scope {tsmc5,tsmc7,tsmc12,tsmc16} --cuda --overwrite
 ```
 
-**Checkpoints** (in `external_compact_models/bsimar/checkpoints/`):
+**Full capacity sweep** — the S/M/L benchmark drives the whole matrix (4 techs × N/P × sizes) on one clean recipe: `scripts/benchmark_gen_data.sh` (datasets) → `scripts/benchmark_train_sml.sh` (the 24 checkpoints) → `scripts/benchmark_run_tests.sh` → `scripts/benchmark_collect.py` (`results/benchmark_sml/REPORT.md`). The older `scripts/train_per_tech_8cells.sh` is a TSMC5/7-only S+M convenience sweep.
 
-- V6.2 DirectNet per-tech: `tsmc{5,7}_dn_{small,medium}_{nmos,pmos}_best.pt` + `_norm.npz`. Embedding vocab shrunk to per-tech variant count + 1 UNKNOWN slot (TSMC5: 5, TSMC7: 4). Production size is `medium`. No other checkpoints are present — universal `refac_dn_*` / `v4_*` artifacts were deleted on 2026-05-12.
-- Resolver cascade (`pycircuitsim/parser.py`): for TSMC5/TSMC7 netlists, the per-tech slot `tsmc{X}_dn_{medium,small,large}` preempts the universal fallback chain (`refac_dn_* > v4_re_dn_universal > v4_dn_universal`). At V6.2 only `tsmc{5,7}_dn_medium_{nmos,pmos}` exist on disk; the universal fallbacks are unreachable until someone retrains a universal stack. Resolutions are logged at parse time as `[NN-resolver] L73 <name> TECH=<x> VT=<y> -> <chk> (scope=<s>, tech_code=<c>)`. Override via `--exp-name` at train time or `PYCIRCUITSIM_NN_CHECKPOINT_*` env vars at runtime.
+**Checkpoints** (`external_compact_models/bsimar/checkpoints/`, each `*_best.pt` + `_norm.npz`):
+
+- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}`. Each uses a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot, e.g. TSMC5: 5, TSMC7: 4; Rule 19). Production is `medium`; the V6.4.7 campaign also parks specialized shipping variants (`v6_4_7_pivcor_*`, `v6_4_7_s12cor_*`, `*_c17`, …) — install/repoint per the shipping mix in CHANGELOG.
+- Resolver cascade (`pycircuitsim/parser.py`): for a TSMC5/7/12/16 netlist the per-tech slot `tsmc{X}_dn_{medium,small,large,xl}` (medium-first) preempts the universal fallback chain (`refac_dn_* > v4_re_dn_universal > v4_dn_universal > bare`). The universal fallbacks are unreachable until someone retrains a universal stack (`refac_dn_*` / `v4_*` artifacts were deleted 2026-05-12). Resolutions log at parse time as `[NN-resolver] L73 <name> TECH=<x> VT=<y> -> <chk> (scope=<s>, tech_code=<c>)`. Override via `--exp-name` at train time, or `PYCIRCUITSIM_NN_CHECKPOINT_*` / `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}` env vars at runtime (the latter is read first, before the medium-first preempt — used by the benchmark to pin a capacity tier).
 
 **Netlist usage:** `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`. Parser auto-resolves the per-tech checkpoint and the local-vocab tech_code via `bsimar.config.local_variant_code(scope, tech, variant)`.
 
@@ -230,7 +228,7 @@ All tests require `conda activate pycircuitsim`.
 
 **BSIM-CMG DC:** L1 `verify_bsimcmg_dc.py` (2) · L2 `verify_bsimcmg_dc_comprehensive.py` (67) · L3 `verify_multi_tech_dc.py` (44).
 **BSIM-CMG Transient:** L1 `verify_bsimcmg_tran.py` (1) · L2 `verify_bsimcmg_tran_comprehensive.py` (37) · L3 `verify_multi_tech_tran.py` (72).
-**NN V6.2 gate:** `verify_nn_dc_tran.py --tech TSMC5,TSMC7 --inverter-only` (12/12 PASS on the full TSMC5/7 sweep without `--inverter-only`).
+**NN device + inverter gate:** `verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16 [--inverter-only]` — per-tech NMOS/PMOS single-OP / DC-sweep / inverter VTC + transient (LEVEL=73) vs NGSPICE BSIM-CMG; `--inverter-only` restricts to the inverter VTC/transient gate. Production per-tech baseline: inverter gate 8/8, DC 55/55, tran 64/64. The bare `--tech` default (`TECH_ORDER`) also lists ASAP7 variants — out of scope, no checkpoints (Rule 17).
 **NN parametric harness (V6.3.2):** the PyCMG L3 parametric sweeps ported to DirectNet (LEVEL=73) via `tests/common/nn_sweep.py`. `verify_nn_multi_tech_dc.py` — single-device NMOS/PMOS Id-Vgs over L/NFIN/VT (55 configs, 4 TSMC techs). `verify_nn_multi_tech_tran.py` — inverter VTC + transient over P/N ratio, VDD, Cload, input slew, pulse width. Baseline-gated: the parametric sweep runs only for techs that pass baseline. Geometry/VT/VDD ride on `dataclasses.replace(TestTechConfig)`; only the inverter-transient circuit knobs needed a (behaviour-preserving) refactor of `verify_nn_dc_tran.py` (`InvCircuitParams`). Run with `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1` — the NN inverter VTC has ~±1% NRMSE run-to-run scatter (high-gain trip point; harness pins `torch` to 1 thread).
 **Complex circuits:** `verify_complex_{ring_osc,opamp,sram_snm,switchcap}.py` + `tests/common/complex.py` vs NGSPICE BSIM-CMG (4 circuits × 4 techs = 16 gates + the authoritative `force_ic` single-point ship gate). Parametric sweep mirror: `verify_complex_{opamp,ringosc,switchcap,sram}_sweep.py` + `tests/common/complex_sweep.py` (tech / VT / geometry / VDD / stimulus; baseline-gated, sha256-pinned). CPU-pinned, repo NGSPICE.
 **AC (LEVEL=72):** `verify_ac.py` — L1 passive RC (vs NGSPICE `.ac` + analytic), L2 BSIM-CMG common-source amp (vs NGSPICE `.ac`, identical OSDI model). 2/2 PASS, ~machine precision. CPU-pinned; needs `NGSPICE_BIN` (repo `tools/ngspice-45.2/bin/ngspice` on this machine).
