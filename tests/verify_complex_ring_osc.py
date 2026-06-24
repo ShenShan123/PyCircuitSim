@@ -81,7 +81,7 @@ def run_ngspice_ro(bt: BenchTech, work_dir: Path) -> Dict[str, np.ndarray]:
     body.append(f".ic v(n1)=0 v(n2)={bt.vdd} v(n3)=0 v(n4)={bt.vdd} v(n5)=0")
     data = run_ngspice_wrdata("\n".join(body), "v(n5)", work_dir,
                               f"ro_{bt.name}",
-                              f"tran {TRAN_TSTEP:.0e} {TRAN_TSTOP:.0e} uic")
+                              f"tran {TRAN_TSTEP:.1e} {TRAN_TSTOP:.1e} uic")
     return {"time": data[:, 0], "v(n5)": data[:, 1]}
 
 

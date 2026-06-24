@@ -85,7 +85,7 @@ def run_ngspice_sc(bt: BenchTech, work_dir: Path) -> Dict[str, np.ndarray]:
             "Csample vsamp 0 100f", f".ic v(vsamp)=0 v(phib)={bt.vdd}"]
     data = run_ngspice_wrdata("\n".join(body), "v(vsamp)", work_dir,
                               f"sc_{bt.name}",
-                              f"tran {TRAN_TSTEP:.0e} {TRAN_TSTOP:.0e} uic")
+                              f"tran {TRAN_TSTEP:.1e} {TRAN_TSTOP:.1e} uic")
     return {"time": data[:, 0], "vsamp": data[:, 1]}
 
 

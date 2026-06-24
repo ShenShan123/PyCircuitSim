@@ -1,0 +1,62 @@
+{
+  "tsmc5": {
+    "cand": "tsmc5_dn_large",
+    "passed": {
+      "sram_snm": true,
+      "ring_osc": false,
+      "switchcap": true,
+      "opamp": true
+    },
+    "metric": {
+      "sram_snm": 4.4,
+      "ring_osc": 12.66,
+      "switchcap": 3.48,
+      "opamp": 2.1
+    }
+  },
+  "tsmc7": {
+    "cand": "tsmc7_dn_large",
+    "passed": {
+      "sram_snm": true,
+      "ring_osc": true,
+      "switchcap": true,
+      "opamp": false
+    },
+    "metric": {
+      "sram_snm": 68.2,
+      "ring_osc": 4.82,
+      "switchcap": 2.45,
+      "opamp": 99.99
+    }
+  },
+  "tsmc12": {
+    "cand": "tsmc12_dn_large",
+    "passed": {
+      "opamp": true,
+      "sram_snm": true,
+      "ring_osc": true,
+      "switchcap": true
+    },
+    "metric": {
+      "opamp": 6.25,
+      "sram_snm": 5.1,
+      "ring_osc": 4.04,
+      "switchcap": 4.14
+    }
+  },
+  "tsmc16": {
+    "cand": "tsmc16_dn_lgs17",
+    "passed": {
+      "opamp": true,
+      "sram_snm": true,
+      "switchcap": true,
+      "ring_osc": true
+    },
+    "metric": {
+      "opamp": 6.16,
+      "sram_snm": 5.4,
+      "switchcap": 3.31,
+      "ring_osc": 3.4
+    }
+  }
+}

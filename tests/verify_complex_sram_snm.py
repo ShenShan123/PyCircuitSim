@@ -150,6 +150,10 @@ def _directnet_6t_netlist(bt: BenchTech, q_init: float, qb_init: float,
     # covered by the butterfly SNM gate. `wl_on=True` reproduces the old
     # read-disturb probe for diagnostics. See results/v6_4_7/S17c_forceic_harness_fix.md.
     wl_v = bt.vdd if wl_on else 0.0
+    # Geometry from the BenchTech (was hardcoded L=20n/16n — equal to the
+    # benchmark default so verdict-neutral, but a latent trap if l_pmos/l_nmos
+    # are ever swept; the half-cell + sweep builders already parameterize).
+    lp, ln = bt.l_pmos * 1e9, bt.l_nmos * 1e9
     path.write_text(
         f"* 6T SRAM cell — DirectNet ({bt.name}) wl={'ON/read' if wl_on else 'OFF/hold'}\n"
         f"Vdd vdd 0 {bt.vdd}\n"
@@ -157,12 +161,12 @@ def _directnet_6t_netlist(bt: BenchTech, q_init: float, qb_init: float,
         f"Vbl bl 0 {bt.vdd}\n"
         f"Vblb blb 0 {bt.vdd}\n"
         f".ic V(q)={q_init} V(qb)={qb_init}\n"
-        f"Mpl qb q vdd vdd pmos_nn L=20n NFIN={bt.nfin}\n"
-        f"Mnl qb q 0   0   nmos_nn L=16n NFIN={bt.nfin}\n"
-        f"Mpr q qb vdd vdd pmos_nn L=20n NFIN={bt.nfin}\n"
-        f"Mnr q qb 0   0   nmos_nn L=16n NFIN={bt.nfin}\n"
-        f"Mal bl  wl q  0 nmos_nn L=16n NFIN={bt.nfin}\n"
-        f"Mar blb wl qb 0 nmos_nn L=16n NFIN={bt.nfin}\n"
+        f"Mpl qb q vdd vdd pmos_nn L={lp:.0f}n NFIN={bt.nfin}\n"
+        f"Mnl qb q 0   0   nmos_nn L={ln:.0f}n NFIN={bt.nfin}\n"
+        f"Mpr q qb vdd vdd pmos_nn L={lp:.0f}n NFIN={bt.nfin}\n"
+        f"Mnr q qb 0   0   nmos_nn L={ln:.0f}n NFIN={bt.nfin}\n"
+        f"Mal bl  wl q  0 nmos_nn L={ln:.0f}n NFIN={bt.nfin}\n"
+        f"Mar blb wl qb 0 nmos_nn L={ln:.0f}n NFIN={bt.nfin}\n"
         f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.vt})\n"
         f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.vt})\n"
         f".op\n.end\n")

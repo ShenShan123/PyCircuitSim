@@ -1,0 +1,258 @@
+[
+  {
+    "tech": "tsmc5",
+    "size": "small",
+    "passed": {
+      "sram_snm": true,
+      "switchcap": true,
+      "ring_osc": false,
+      "opamp": false
+    },
+    "metric": {
+      "sram_snm": 7.8,
+      "switchcap": 1.72,
+      "ring_osc": 8.06,
+      "opamp": 100.0
+    }
+  },
+  {
+    "tech": "tsmc5",
+    "size": "medium",
+    "passed": {
+      "sram_snm": true,
+      "switchcap": true,
+      "ring_osc": false,
+      "opamp": false
+    },
+    "metric": {
+      "sram_snm": 4.8,
+      "switchcap": 1.56,
+      "ring_osc": 5.89,
+      "opamp": 100.0
+    }
+  },
+  {
+    "tech": "tsmc5",
+    "size": "large",
+    "passed": {
+      "sram_snm": true,
+      "ring_osc": false,
+      "switchcap": true,
+      "opamp": true
+    },
+    "metric": {
+      "sram_snm": 4.4,
+      "ring_osc": 12.66,
+      "switchcap": 3.48,
+      "opamp": 2.1
+    }
+  },
+  {
+    "tech": "tsmc5",
+    "size": "xl",
+    "passed": {
+      "sram_snm": true,
+      "ring_osc": false,
+      "switchcap": true,
+      "opamp": false
+    },
+    "metric": {
+      "sram_snm": 3.9,
+      "ring_osc": 13.5,
+      "switchcap": 3.18,
+      "opamp": 100.0
+    }
+  },
+  {
+    "tech": "tsmc7",
+    "size": "small",
+    "passed": {
+      "sram_snm": true,
+      "switchcap": false,
+      "ring_osc": false,
+      "opamp": false
+    },
+    "metric": {
+      "sram_snm": 72.4,
+      "switchcap": 2.34,
+      "ring_osc": 5.94,
+      "opamp": 10.33
+    }
+  },
+  {
+    "tech": "tsmc7",
+    "size": "medium",
+    "passed": {
+      "sram_snm": true,
+      "ring_osc": false,
+      "switchcap": true,
+      "opamp": false
+    },
+    "metric": {
+      "sram_snm": 43.2,
+      "ring_osc": 10.86,
+      "switchcap": 2.81,
+      "opamp": 99.99
+    }
+  },
+  {
+    "tech": "tsmc7",
+    "size": "large",
+    "passed": {
+      "sram_snm": true,
+      "ring_osc": true,
+      "switchcap": true,
+      "opamp": false
+    },
+    "metric": {
+      "sram_snm": 68.2,
+      "ring_osc": 4.82,
+      "switchcap": 2.45,
+      "opamp": 99.99
+    }
+  },
+  {
+    "tech": "tsmc7",
+    "size": "xl",
+    "passed": {
+      "sram_snm": true,
+      "ring_osc": false,
+      "switchcap": true,
+      "opamp": false
+    },
+    "metric": {
+      "sram_snm": 4.3,
+      "ring_osc": 14.31,
+      "switchcap": 2.67,
+      "opamp": 99.99
+    }
+  },
+  {
+    "tech": "tsmc12",
+    "size": "small",
+    "passed": {
+      "sram_snm": true,
+      "switchcap": false,
+      "ring_osc": true,
+      "opamp": false
+    },
+    "metric": {
+      "sram_snm": 5.1,
+      "switchcap": 4.09,
+      "ring_osc": 1.95,
+      "opamp": 100.0
+    }
+  },
+  {
+    "tech": "tsmc12",
+    "size": "medium",
+    "passed": {
+      "sram_snm": true,
+      "ring_osc": true,
+      "switchcap": true,
+      "opamp": false
+    },
+    "metric": {
+      "sram_snm": 5.4,
+      "ring_osc": 2.26,
+      "switchcap": 4.19,
+      "opamp": 100.0
+    }
+  },
+  {
+    "tech": "tsmc12",
+    "size": "large",
+    "passed": {
+      "opamp": true,
+      "sram_snm": true,
+      "ring_osc": true,
+      "switchcap": true
+    },
+    "metric": {
+      "opamp": 6.25,
+      "sram_snm": 5.1,
+      "ring_osc": 4.04,
+      "switchcap": 4.14
+    }
+  },
+  {
+    "tech": "tsmc12",
+    "size": "xl",
+    "passed": {
+      "sram_snm": true,
+      "switchcap": true,
+      "ring_osc": true,
+      "opamp": false
+    },
+    "metric": {
+      "sram_snm": 5.2,
+      "switchcap": 4.19,
+      "ring_osc": 3.4,
+      "opamp": 100.0
+    }
+  },
+  {
+    "tech": "tsmc16",
+    "size": "small",
+    "passed": {
+      "sram_snm": true,
+      "ring_osc": true,
+      "switchcap": false,
+      "opamp": false
+    },
+    "metric": {
+      "sram_snm": 6.8,
+      "ring_osc": 1.47,
+      "switchcap": 2.76,
+      "opamp": 10.23
+    }
+  },
+  {
+    "tech": "tsmc16",
+    "size": "medium",
+    "passed": {
+      "sram_snm": true,
+      "ring_osc": true,
+      "switchcap": true,
+      "opamp": false
+    },
+    "metric": {
+      "sram_snm": 5.7,
+      "ring_osc": 2.22,
+      "switchcap": 3.22,
+      "opamp": 100.0
+    }
+  },
+  {
+    "tech": "tsmc16",
+    "size": "large",
+    "passed": {
+      "sram_snm": true,
+      "ring_osc": true,
+      "switchcap": true,
+      "opamp": false
+    },
+    "metric": {
+      "sram_snm": 5.3,
+      "ring_osc": 2.59,
+      "switchcap": 3.32,
+      "opamp": 100.0
+    }
+  },
+  {
+    "tech": "tsmc16",
+    "size": "xl",
+    "passed": {
+      "sram_snm": true,
+      "switchcap": true,
+      "ring_osc": true,
+      "opamp": false
+    },
+    "metric": {
+      "sram_snm": 5.3,
+      "switchcap": 3.42,
+      "ring_osc": 3.05,
+      "opamp": 100.0
+    }
+  }
+]

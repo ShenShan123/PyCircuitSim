@@ -92,9 +92,11 @@ authoritative ground truth; DirectNet is the production NN; BSIMAR is parked.
 - **DirectNet (LEVEL=73)** — single-shot feed-forward MLP. 7-dim input
   (Vgs, Vds, Vbs, NFIN, L, T, tech_code) with an `nn.Embedding` tech-code;
   gm/gds/gmb are the **autograd Jacobian** of the predicted `id`.
-  Production size is `medium`; per-tech NMOS/PMOS checkpoints for TSMC5/7/12/16
-  use a local embedding vocab (Rule 16). Charges are predicted and the AC caps
-  are their `dQ/dV` autograd.
+  Production is the **V6.5.4 fresh-retrain best-config-per-tech mix** (14/16
+  complex gates): `large` for tsmc5/tsmc7/tsmc12, `lgs17` (seed 17) for tsmc16,
+  installed as `tsmc{X}_dn_medium` resolver-slot symlinks (medium-first preempt).
+  Per-tech NMOS/PMOS checkpoints use a local embedding vocab (Rule 16). Charges
+  are predicted and the AC caps are their `dQ/dV` autograd.
 - **BSIMAR Transformer (LEVEL=74)** — autoregressive Transformer sharing
   DirectNet's data pipeline and inference rules. Parked (Rule 15); no checkpoints
   on disk. Resurrect the cap-head / AR-loop structure from CHANGELOG / git
@@ -189,7 +191,7 @@ Mn1 3 2 0 0 nmos1 L=30n NFIN=10
 
 ### NN training (per-tech DirectNet, LEVEL=73)
 
-Dedicated per-tech NMOS/PMOS DirectNet checkpoints for **TSMC5 / TSMC7 / TSMC12 / TSMC16**. `--tech-scope` ∈ `{tsmc5,tsmc7,tsmc12,tsmc16,universal}`; `--size` ∈ `{small,medium,large,xl}` (**production = `medium`**; `large`/`xl` are the capacity-study tiers — `large` is the over-fit sweet spot, `xl` the boundary — see CHANGELOG).
+Dedicated per-tech NMOS/PMOS DirectNet checkpoints for **TSMC5 / TSMC7 / TSMC12 / TSMC16**. `--tech-scope` ∈ `{tsmc5,tsmc7,tsmc12,tsmc16,universal}`; `--size` ∈ `{small,medium,large,xl}` (**V6.5.4 production = best config per tech: `large` for tsmc5/7/12, `large`+seed-17 for tsmc16** — `large` is the over-fit sweet spot, `xl` the boundary — see CHANGELOG V6.5.4).
 
 ```bash
 # 1. Generate per-tech data (one .npz per tech+device). --enable-inv-trip adds the
@@ -211,7 +213,7 @@ conda run -n pycircuitsim python -u -m bsimar.cli.train \
 
 **Checkpoints** (`external_compact_models/bsimar/checkpoints/`, each `*_best.pt` + `_norm.npz`):
 
-- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}`. Each uses a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot, e.g. TSMC5: 5, TSMC7: 4; Rule 16). Production is `medium`; the V6.4.7 campaign also parks specialized shipping variants (`v6_4_7_pivcor_*`, `v6_4_7_s12cor_*`, `*_c17`, …) — install/repoint per the shipping mix in CHANGELOG.
+- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}`. Each uses a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot, e.g. TSMC5: 5, TSMC7: 4; Rule 16). **V6.5.4 production = fresh-retrain best-config-per-tech (14/16):** the `tsmc{X}_dn_medium` slots are symlinks → `large` (tsmc5/7/12) and `tsmc16_dn_lgs17` (seed 17), installed by `scripts/v6_5_4_install_final.py` (reads `results/v6_5_4_retrain/final_mix.json`; `--restore` reverts). All 436 prior stale checkpoints (V6.4.7 pivcor/s12cor/ctlv2/c17/lg_s*, clean-recipe S/M/L/XL, killed-lever artifacts) were deleted and the matrix retrained from scratch on freshly regenerated data (V6.5.4). Residual open gates (tsmc5 ring, tsmc7 opamp) need corridor-augmented data — see CHANGELOG V6.5.4.
 - Resolver cascade (`pycircuitsim/parser.py`): for a TSMC5/7/12/16 netlist the per-tech slot `tsmc{X}_dn_{medium,small,large,xl}` (medium-first) preempts the universal fallback chain (`refac_dn_* > v4_re_dn_universal > v4_dn_universal > bare`). The universal fallbacks are unreachable until someone retrains a universal stack (`refac_dn_*` / `v4_*` artifacts were deleted 2026-05-12). Resolutions log at parse time as `[NN-resolver] L73 <name> TECH=<x> VT=<y> -> <chk> (scope=<s>, tech_code=<c>)`. Override via `--exp-name` at train time, or `PYCIRCUITSIM_NN_CHECKPOINT_*` / `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}` env vars at runtime (the latter is read first, before the medium-first preempt — used by the benchmark to pin a capacity tier).
 
 **Netlist usage:** `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`. Parser auto-resolves the per-tech checkpoint and the local-vocab tech_code via `bsimar.config.local_variant_code(scope, tech, variant)`.
@@ -296,7 +298,7 @@ These rules were learned from bugs. Violating them causes NR divergence or wrong
 
 Both LEVEL=73 (single-shot MLP, primary) and LEVEL=74 (autoregressive Transformer, parked — Rule 15) share the data pipeline and inference rules, and use `nn.Embedding` for tech-code identity (7-dim input: Vgs, Vds, Vbs, NFIN, L, T, tech_code). Rules 9–10 are parked BSIMAR-specific structure — resurrect from CHANGELOG / git if needed. Rule numbers are internal to this document and are no longer cited in code.
 
-1. Deleted by user.
+1. Feel free to **re-generate datasets and re-train all models** as you want.
 2. **Source-relative frame for BOTH device types** — shift all terminal voltages by -Vs before NN eval (`v_d_nn = v_d - v_s`, Vs ≡ 0). Training uses Vs=0; shift invariance makes this exact. Until V6.4.7 only PMOS was shifted — lifted-source NMOS (opamp tail pair, SC pass device, SRAM access) saw phantom Vgs/Vds with Vbs=0; the lifted-source canary `tests/verify_nn_lifted_source_dc.py` (NRMSE ≤10 %) guards this permanently.
 3. Deleted by user.
 4. Deleted by user.

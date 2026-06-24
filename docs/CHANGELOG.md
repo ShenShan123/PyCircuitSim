@@ -6,6 +6,50 @@ isn't burdened with chronology.
 
 ---
 
+## V6.5.4 — fresh full retrain + best-config-per-tech → 14/16; native-L72 ownership controls (branch `V6.5.4`, 2026-06-23/24)
+
+**Headline: the entire DirectNet capacity matrix was retrained from scratch on
+freshly regenerated data, the best config selected per tech, reaching 14/16
+complex gates — matching the V6.4.7 ship but clean (no stale/specialized
+checkpoints).** Plan: `docs/plans/2026-06-23-v6.5.4-bakeoff-and-value-surface.md`.
+
+**Native-L72 controls (the decisive new diagnostic).** Built
+`tests/diag_l72_complex_control.py` — the never-before-run native-L72 control for
+ring-osc + opamp (recommended in V6.5.2.4). Running the EXACT gate circuits
+through PyCircuitSim's own solver with the ground-truth OSDI model (no NN) vs
+NGSPICE: ring period **0.00%** (tsmc5/7), opamp gain **0.00–0.10%** (all techs,
+continuation-first). ⇒ both remaining gaps are **genuinely NN-value-surface-owned**
+(not solver/harness); the 2ps timestep is adequate (refutes the substep/finer-dt
+lever); the opamp gate is well-posed (validates the S2 continuation win).
+
+**Scaffold audit (7-agent workflow): no gate-changer; 3 hygiene fixes** (all
+verdict-neutral): ring/switchcap NGSPICE `tran` tstop `:.0e`→`:.1e` rounding
+(`1.2e-9→1.0ns`, `12e-9→10ns`); sram `_directnet_6t_netlist` hardcoded `L=20n/16n`
+→ BenchTech geometry; plus `RESULTS_BASE` env-overridable
+(`PYCIRCUITSIM_COMPLEX_RESULTS`) for parallel-safe sweeps.
+
+**Fresh retrain (executed).** (1) Regenerated all 8 `{tech}_{dev}.npz` from PyCMG
+(2.0–2.5M samples each, 0 bins dropped). (2) **Hard-deleted all 436 stale
+checkpoint files** (the entire pool: clean S/M/L/XL, pivcor/s12cor/ctlv2/c17/lg_s*,
+killed-lever artifacts). (3) Trained **32 fresh models** (S/M/L/XL × 4 techs × 2
+devices) on ONE uniform clean recipe (`--apply-filter off --swa-mode ema
+--seed 42`), 9 concurrent on 3×RTX4090; val losses textbook (monotonic capacity,
+XL tightest). (4) Per-size eval → best-size-per-tech **13/16**. (5) Stage-B seed
+sweep at `large` × seeds {7,17,31} for the 3 open-gate techs → **14/16**.
+
+**Final mix (best config per tech, installed into the `_dn_medium` resolver slots
+as symlinks):** tsmc5 `large` (3/4, opamp 2.10%, ring FAIL 12.66%); tsmc7 `large`
+(3/4, ring 4.82%, opamp FAIL gain→0); tsmc12 `large` (**4/4**); tsmc16 `lgs17`
+seed 17 (**4/4** — seed selection recovered the opamp basin). gate totals: opamp
+3/4, ring 3/4, switchcap 4/4, sram-butterfly 4/4 (verified on the natural resolver
+path). **Residual 2 gates (tsmc5 ring, tsmc7 opamp)** resist every clean-data size
+AND seed — the genuine value-surface limit the V6.4.7 ship only cleared with
+**corridor-augmented data** (pivcor/s12cor). That corridor-data retrain is the
+sole remaining lever (Tier-2, A/B-gated), deferred pending go-ahead since it
+reintroduces a non-clean data recipe for 2/16 gates. Scripts:
+`scripts/v6_5_4_{eval_sizes,eval_seeds,seed_sweep,install_final}.py/.sh`; reports in
+`results/v6_5_4_retrain/`. Memory `[[v653-l72-control-ring-opamp-model-owned]]`.
+
 ## V6.5.3 — ★ the switchcap gap was a HARNESS CLOCK BUG, not solver/NN-owned (branch `V6.5.2`, 2026-06-23)
 
 **Overturns the V6.5.2 conclusion below.** The tsmc5 switchcap "11.84 % over-charge" that

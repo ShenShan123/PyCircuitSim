@@ -48,7 +48,14 @@ from tests.common.nn import nrmse as _nrmse_pct, mre as _mre_pct
 BENCH_TECHS: List[str] = ["TSMC5", "TSMC7", "TSMC12", "TSMC16"]
 
 REFERENCES_DIR = PROJECT_ROOT / "tests" / "references" / "complex"
-RESULTS_BASE = PROJECT_ROOT / "tests" / "verify_complex_results"
+# RESULTS_BASE is env-overridable so parallel sweeps (e.g. the V6.5.4 checkpoint
+# bake-off) can give each worker an isolated output dir — otherwise concurrent
+# runs of the same (gate, tech) clobber each other's baked modelcards / NGSPICE
+# decks. Default = the committed in-tree path (unchanged for normal runs).
+import os as _os  # noqa: E402
+RESULTS_BASE = Path(_os.environ.get(
+    "PYCIRCUITSIM_COMPLEX_RESULTS",
+    str(PROJECT_ROOT / "tests" / "verify_complex_results")))
 
 
 # ---------------------------------------------------------------------------
