@@ -6,6 +6,61 @@ isn't burdened with chronology.
 
 ---
 
+## V6.5.5 — diagnostic-routed corridor retrain → 15/16 (branch `V6.5.4`, 2026-06-24/25)
+
+**Headline: three zero-risk diagnostics localized the V6.5.4 open gates and ROUTED
+a targeted corridor retrain that lifted tsmc5 3/4 → 4/4 — overall 14/16 → 15/16.
+tsmc7 opamp confirmed a genuine value-surface limit (unrecoverable by corridor,
+exhaustively).** Plan + tiered roadmap:
+`docs/plans/2026-06-24-v6.5.5-diagnose-then-corridor.md`; final report
+`results/v6_5_5/FINAL_REPORT.md`. Produced after a 25-agent analysis workflow
+(6 finders → adversarial verification of 18 candidates, 7 rejected as ledger
+re-treads → synthesis).
+
+**tsmc5 ring = CONDUCTION-owned** (`tests/diag_nn_ring_trajectory.py`). The
+MOSFET intrinsic-charge transient stamp toggle (`_stamp_mosfet_transient →
+_stamp_mosfet_dc`, the switchcap-diag pattern) splits the period error: NN
+charge-ON 82.5ps vs L72 73.2ps = **12.66% (reproduces the gate exactly)**;
+charge-OFF (only Cl=0.5f) still **8.36%** ⇒ conduction explains **66%** of the
+period error. The static stage-1 drive table localizes it: the **NMOS pull-down
+under-drives id ~23%** (ratio 0.768) and gm ~16–21% across the switching band,
+while the **PMOS pull-up is accurate (~1.00)**. ⇒ route to Tier-2a NMOS-focused
+ring-edge corridor retrain (ring↔opamp trade risk per S12).
+
+**tsmc7 opamp = VALUE-SURFACE-owned, NOT a basin/solver fix**
+(`tests/diag_opamp_op_decomp.py` + `diag_opamp_basin_seed.py`). 1b: at the L72
+true OP the NN internal nodes are railed (vo1i 0.0002 vs 0.349, Δ348mV; vout
+Δ583mV) yet the NN *small-signal* gain there is 142 (0.58×L72) — looked like a
+seedable basin. **1c falsifies the cheap fix:** seeding the NN sweep from the L72
+ground-truth OP at EVERY point still yields gain 0.0 — the NN rails away from the
+high-gain OP even when handed it exactly ⇒ that equilibrium is **unstable on the
+NN large-signal surface** (small-signal gain at a point ≠ stability as a DC fixed
+point). So PTC/homotopy/OP-seed CANNOT fix it — **confirms V6.4.8-S2** and the
+workflow verifier's rejection of the basin lever. ⇒ route to Tier-2b trip-OP
+corridor retrain (medium, multi-seed). TSMC12 positive control: basin Δ6mV, seed
+recovers 94% — the probe cleanly separates reachable (passes) from unstable.
+
+**Tier-2 corridor retrain (executed).** Rebuilt the V6.4.7-S12 harvest→append→
+train pipeline, TARGETED per the verdicts (`scripts/v6_5_5_{harvest,append}_corridor.py`
+reuse the L72-control circuit builders; the harvest reads the per-device trajectory
+the gate visits, source-shifts to Vs=0, 2mV-dedups, +/-12mV jitter-tube, OSDI-labels).
+- **tsmc5 ring (2a) — WON, the +1.** Medium+corridor at all 3 seeds reproduced the
+  S12 ring↔opamp trade (ring ✓4.04 but opamp collapses ✗100); **large+corridor+seed7
+  threads both**: `tsmc5_dn_corringL_s7` = opamp ✓1.85 / ring ✓4.02 = **4/4** (better
+  opamp than the 2.10 baseline). Device gate 6/6, lifted-source canary 12/12.
+  Installed into the `tsmc5_dn_medium` resolver slot (symlink). Capacity was the bind
+  exactly as predicted — medium cannot hold both surfaces, large+seed can.
+- **tsmc7 opamp (2b) — confirmed unrecoverable.** Exhaustive sweep (medium+large ×
+  seeds {7,17,42,31} × W∈{3,8}) — EVERY config stays gain→0 (best 42%, gate 10%).
+  Confirms the 1c verdict: the high-gain OP is unstable on the NN value surface; no
+  corridor weight/capacity/seed stabilizes it. tsmc7 production unchanged (3/4).
+
+**Net 14/16 → 15/16** (the plan's exact predicted ceiling). The diagnostics prevented
+three mis-routed efforts (ring charge densification; tsmc7 opamp solver-seed lever;
+and — caught by the medium-first A/B — shipping a medium corridor that trades ring for
+opamp). tsmc7 opamp is now a *characterized* residual, not an open question. Memory:
+`[[v655-diagnostic-routing-verdicts]]`, `[[v655-corridor-retrain-15of16]]`.
+
 ## V6.5.4 — fresh full retrain + best-config-per-tech → 14/16; native-L72 ownership controls (branch `V6.5.4`, 2026-06-23/24)
 
 **Headline: the entire DirectNet capacity matrix was retrained from scratch on

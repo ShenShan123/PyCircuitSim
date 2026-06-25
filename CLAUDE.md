@@ -92,11 +92,14 @@ authoritative ground truth; DirectNet is the production NN; BSIMAR is parked.
 - **DirectNet (LEVEL=73)** — single-shot feed-forward MLP. 7-dim input
   (Vgs, Vds, Vbs, NFIN, L, T, tech_code) with an `nn.Embedding` tech-code;
   gm/gds/gmb are the **autograd Jacobian** of the predicted `id`.
-  Production is the **V6.5.4 fresh-retrain best-config-per-tech mix** (14/16
-  complex gates): `large` for tsmc5/tsmc7/tsmc12, `lgs17` (seed 17) for tsmc16,
-  installed as `tsmc{X}_dn_medium` resolver-slot symlinks (medium-first preempt).
-  Per-tech NMOS/PMOS checkpoints use a local embedding vocab (Rule 16). Charges
-  are predicted and the AC caps are their `dQ/dV` autograd.
+  Production is the **V6.5.5 best-config-per-tech mix** (**15/16** complex gates):
+  `corringL_s7` (large + ring-edge corridor, seed 7) for tsmc5, `large` for
+  tsmc7/tsmc12, `lgs17` (seed 17) for tsmc16, installed as `tsmc{X}_dn_medium`
+  resolver-slot symlinks (medium-first preempt). The lone open gate is the **tsmc7
+  opamp** (gain→0) — a characterized value-surface limit (the high-gain OP is
+  unstable on the NN surface; corridor data cannot stabilize it — see CHANGELOG
+  V6.5.5 + diagnostics). Per-tech NMOS/PMOS checkpoints use a local embedding vocab
+  (Rule 16). Charges are predicted and the AC caps are their `dQ/dV` autograd.
 - **BSIMAR Transformer (LEVEL=74)** — autoregressive Transformer sharing
   DirectNet's data pipeline and inference rules. Parked (Rule 15); no checkpoints
   on disk. Resurrect the cap-head / AR-loop structure from CHANGELOG / git
@@ -191,7 +194,7 @@ Mn1 3 2 0 0 nmos1 L=30n NFIN=10
 
 ### NN training (per-tech DirectNet, LEVEL=73)
 
-Dedicated per-tech NMOS/PMOS DirectNet checkpoints for **TSMC5 / TSMC7 / TSMC12 / TSMC16**. `--tech-scope` ∈ `{tsmc5,tsmc7,tsmc12,tsmc16,universal}`; `--size` ∈ `{small,medium,large,xl}` (**V6.5.4 production = best config per tech: `large` for tsmc5/7/12, `large`+seed-17 for tsmc16** — `large` is the over-fit sweet spot, `xl` the boundary — see CHANGELOG V6.5.4).
+Dedicated per-tech NMOS/PMOS DirectNet checkpoints for **TSMC5 / TSMC7 / TSMC12 / TSMC16**. `--tech-scope` ∈ `{tsmc5,tsmc7,tsmc12,tsmc16,universal}`; `--size` ∈ `{small,medium,large,xl}` (**V6.5.5 production = best config per tech: `large`+ring-corridor+seed-7 for tsmc5, `large` for tsmc7/12, `large`+seed-17 for tsmc16** — `large` is the over-fit sweet spot, `xl` the boundary — see CHANGELOG V6.5.5/V6.5.4). The V6.5.5 corridor pipeline (`scripts/v6_5_5_{harvest,append}_corridor.py`, `v6_5_5_train_corridor.sh`, `v6_5_5_eval_corridor.py`) harvests the L72-control circuit trajectory, OSDI-labels it, appends as `traj_corridor`, and A/B-gates the per-tech retrain.
 
 ```bash
 # 1. Generate per-tech data (one .npz per tech+device). --enable-inv-trip adds the
@@ -213,7 +216,7 @@ conda run -n pycircuitsim python -u -m bsimar.cli.train \
 
 **Checkpoints** (`external_compact_models/bsimar/checkpoints/`, each `*_best.pt` + `_norm.npz`):
 
-- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}`. Each uses a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot, e.g. TSMC5: 5, TSMC7: 4; Rule 16). **V6.5.4 production = fresh-retrain best-config-per-tech (14/16):** the `tsmc{X}_dn_medium` slots are symlinks → `large` (tsmc5/7/12) and `tsmc16_dn_lgs17` (seed 17), installed by `scripts/v6_5_4_install_final.py` (reads `results/v6_5_4_retrain/final_mix.json`; `--restore` reverts). All 436 prior stale checkpoints (V6.4.7 pivcor/s12cor/ctlv2/c17/lg_s*, clean-recipe S/M/L/XL, killed-lever artifacts) were deleted and the matrix retrained from scratch on freshly regenerated data (V6.5.4). Residual open gates (tsmc5 ring, tsmc7 opamp) need corridor-augmented data — see CHANGELOG V6.5.4.
+- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}`. Each uses a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot, e.g. TSMC5: 5, TSMC7: 4; Rule 16). **V6.5.5 production = best-config-per-tech (15/16):** the `tsmc{X}_dn_medium` slots are symlinks → `tsmc5_dn_corringL_s7` (large + ring-edge `traj_corridor`, seed 7 — V6.5.5), `large` (tsmc7/12), `tsmc16_dn_lgs17` (seed 17). tsmc7/12/16 installed by `scripts/v6_5_4_install_final.py` (V6.5.4 `final_mix.json`); tsmc5 repointed in V6.5.5. The V6.5.4 base matrix was retrained from scratch on freshly regenerated data (all 436 prior stale checkpoints deleted). **tsmc5 ring was closed by the V6.5.5 diagnostic-routed corridor retrain** (`scripts/v6_5_5_{harvest,append}_corridor.py` + `v6_5_5_train_corridor.sh`; data `datasets/tsmc5_cor_*.npz`). The lone residual is the **tsmc7 opamp** — exhaustively shown unrecoverable by corridor (value-surface/OP-unstable; see CHANGELOG V6.5.5).
 - Resolver cascade (`pycircuitsim/parser.py`): for a TSMC5/7/12/16 netlist the per-tech slot `tsmc{X}_dn_{medium,small,large,xl}` (medium-first) preempts the universal fallback chain (`refac_dn_* > v4_re_dn_universal > v4_dn_universal > bare`). The universal fallbacks are unreachable until someone retrains a universal stack (`refac_dn_*` / `v4_*` artifacts were deleted 2026-05-12). Resolutions log at parse time as `[NN-resolver] L73 <name> TECH=<x> VT=<y> -> <chk> (scope=<s>, tech_code=<c>)`. Override via `--exp-name` at train time, or `PYCIRCUITSIM_NN_CHECKPOINT_*` / `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}` env vars at runtime (the latter is read first, before the medium-first preempt — used by the benchmark to pin a capacity tier).
 
 **Netlist usage:** `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`. Parser auto-resolves the per-tech checkpoint and the local-vocab tech_code via `bsimar.config.local_variant_code(scope, tech, variant)`.
@@ -236,6 +239,7 @@ All tests require `conda activate pycircuitsim`.
 **AC (LEVEL=72):** `verify_ac.py` — L1 passive RC (vs NGSPICE `.ac` + analytic), L2 BSIM-CMG common-source amp (vs NGSPICE `.ac`, identical OSDI model). 2/2 PASS, ~machine precision. CPU-pinned; needs `NGSPICE_BIN` (repo `tools/ngspice-45.2/bin/ngspice` on this machine).
 **NN AC (LEVEL=73):** `verify_nn_ac.py --tech TSMC<XX> [--device nmos,pmos]` — per-checkpoint NMOS/PMOS common-source amp vs NGSPICE BSIM-CMG (no load cap → device caps set the pole; each side at its own fresh-solved mid-rail OP; gate = gain0 ≤1.5 dB / f3db ratio ∈[0.7,1.43] / mag NRMSE ≤10%; phase = diagnostic). `verify_complex_opamp_ac.py --tech TSMC<XX>` — two-stage Miller opamp open-loop (gate = DC-gain ≤3 dB / GBW ratio ∈[0.6,1.67] / PM ≤15°). Shared infra `tests/common/complex_ac.py`. Both run in the S/M/L benchmark (`scripts/benchmark_run_tests.sh` → `benchmark_collect.py` "AC small-signal accuracy" section). CPU-pinned, `NGSPICE_BIN` + `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}`. RO + SRAM excluded (no stable amplifying OP for `.ac`).
 **Other:** `verify_bsimcmg_op.py` (OP <0.02% vs NGSPICE); lifted-source canary `verify_nn_lifted_source_dc.py` (NRMSE ≤10%, guards Rule 2).
+**Open-gate routing diagnostics (V6.5.5, no NGSPICE — L72-in-PyCircuitSim reference):** `tests/diag_nn_ring_trajectory.py` (charge-stamp toggle: conduction-vs-cap split of the ring period error), `tests/diag_opamp_op_decomp.py` (basin-vs-value-surface of the opamp gain), `tests/diag_opamp_basin_seed.py` (is the high-gain OP stable when seeded from ground truth?). These localized the 2 open gates and routed the corridor retrain.
 
 Quick sanity:
 
