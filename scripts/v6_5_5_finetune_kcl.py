@@ -143,7 +143,16 @@ class KCLGroups:
     id_phys for device j = asinh_scale·sinh(id_norm·out_std + out_mean) using
     the device's own (N or P) production normalizer. F[g, node] accumulates
     -id at the drain free node and +id at the source free node (Rule 2 /
-    solver._stamp_mosfet_dc). Loss = mean_{g,node} (F / arm_scale)².
+    solver._stamp_mosfet_dc). KCL loss = mean_{g,node} (F / arm_scale)².
+
+    N2 (contraction) loss: the autograd ∂id/∂V the SOLVER consumes vs the
+    device's own (accurate ~1%) predicted gm/gds COLUMNS, AT the opamp OPs. The
+    1c/probe showed the now-existent OP repels because the autograd gm·ro there
+    is flat (drifts from the predicted columns — the S10 deriv-fidelity gap);
+    pulling autograd→columns makes the OP Newton-attracting. Localized to the 59
+    opamp OPs + KCL-anchored (KCL holds the VALUE so the slope term can't move
+    the FP) → avoids the S10 broad-collapse. Sign convention mirrors
+    mosfet_nn._unpack_eval: gds = +∂id/∂Vd, gm = -∂id/∂Vg, gmb = -∂id/∂Vb.
     """
 
     def __init__(self, path: Path, models: Dict[str, nn.Module],
@@ -160,11 +169,14 @@ class KCLGroups:
         self.n_free = self.arm.shape[1]
         self.device = device
 
+        def _t(a):
+            return torch.tensor(np.asarray(a, dtype=np.float64),
+                                dtype=torch.float32, device=device)
+
         self.dev: List[dict] = []
         for j in range(self.ndev):
             key = "pmos" if is_pmos[j] else "nmos"
             st = norms[key]
-            # build the 7-col normaliser input: [Vd,Vg,Vs,Vb, nfin_log, L, T].
             volts = nn_volts[:, j, :]                       # (G,4)
             geo = np.zeros((self.G, 15), dtype=np.float64)
             geo[:, 0] = nfin[j]; geo[:, 1] = Lg[j]; geo[:, 2] = Tg[j]
@@ -175,21 +187,26 @@ class KCLGroups:
                 "x": torch.tensor(x, dtype=torch.float32, device=device),
                 "tc": torch.full((self.G,), int(tcode[j]),
                                  dtype=torch.long, device=device),
-                "out_std": float(st.output_std[0]),
-                "out_mean": float(st.output_mean[0]),
-                "id_s": float(st.asinh_scale[0]),
+                # per-column (id,gm,gds,gmb = 0,1,2,3) asinh denorm stats.
+                "o_std": _t(st.output_std[:4]),
+                "o_mean": _t(st.output_mean[:4]),
+                "scale": _t(st.asinh_scale[:4]),
+                "in_std": _t(st.input_std[:4]),     # Vd,Vg,Vs,Vb normaliser std
                 "drain_free": int(self.drain_free[j]),
                 "source_free": int(self.source_free[j]),
             })
+
+    @staticmethod
+    def _denorm_col(out_col, scale, o_std, o_mean):
+        return scale * torch.sinh(out_col * o_std + o_mean)
 
     def residual(self) -> torch.Tensor:
         """(G, n_free) signed-current residual into each free node."""
         F = torch.zeros(self.G, self.n_free, device=self.device)
         for dv in self.dev:
             out = dv["model"](dv["x"], tech_codes=dv["tc"])     # (G,13)
-            id_norm = out[:, 0]
-            u = id_norm * dv["out_std"] + dv["out_mean"]
-            id_phys = dv["id_s"] * torch.sinh(u)                # native Amps
+            id_phys = self._denorm_col(out[:, 0], dv["scale"][0],
+                                       dv["o_std"][0], dv["o_mean"][0])
             if dv["drain_free"] >= 0:
                 F[:, dv["drain_free"]] = F[:, dv["drain_free"]] - id_phys
             if dv["source_free"] >= 0:
@@ -203,6 +220,36 @@ class KCLGroups:
         # per-free-node RMS fraction (diagnostic; index 2 = vo1i).
         frac = torch.sqrt((rel ** 2).mean(dim=0)).detach().cpu().numpy()
         return loss, frac
+
+    def contraction_loss(self) -> torch.Tensor:
+        """N2: relative MSE of the autograd-Jacobian the solver uses vs the
+        device's own predicted gm/gds columns, summed over the opamp OPs.
+
+        For each device: ∂id_phys/∂V_phys,c = (∂id_norm/∂x_norm,c)·factor/in_std,
+        factor = scale_id·cosh(u)·o_std_id. gds_solver=+∂/∂Vd, gm_solver=-∂/∂Vg.
+        Target = denorm(predicted gds/gm column), detached. Relative error so
+        µS-scale conductances aren't washed out.
+        """
+        FLOOR = 1e-7   # S — conductance relative-error floor
+        terms = []
+        for dv in self.dev:
+            xv = dv["x"][:, :4].detach().clone().requires_grad_(True)
+            xg = dv["x"][:, 4:]
+            x_full = torch.cat([xv, xg], dim=1)
+            out = dv["model"](x_full, tech_codes=dv["tc"])      # (G,13)
+            id_norm = out[:, 0]
+            g = torch.autograd.grad(id_norm.sum(), xv, create_graph=True)[0]  # (G,4)
+            u = id_norm * dv["o_std"][0] + dv["o_mean"][0]
+            factor = dv["scale"][0] * torch.cosh(u) * dv["o_std"][0]          # (G,)
+            gds_solver = factor * g[:, 0] / dv["in_std"][0]
+            gm_solver = -factor * g[:, 1] / dv["in_std"][1]
+            gds_pred = self._denorm_col(out[:, 2].detach(), dv["scale"][2],
+                                        dv["o_std"][2], dv["o_mean"][2])
+            gm_pred = self._denorm_col(out[:, 1].detach(), dv["scale"][1],
+                                       dv["o_std"][1], dv["o_mean"][1])
+            terms.append(((gds_solver - gds_pred) / (gds_pred.abs() + FLOOR)) ** 2)
+            terms.append(((gm_solver - gm_pred) / (gm_pred.abs() + FLOOR)) ** 2)
+        return torch.stack(terms).mean()
 
 
 # ── fine-tune ────────────────────────────────────────────────────────────────
@@ -231,6 +278,17 @@ def main() -> int:
     ap.add_argument("--weight-decay", type=float, default=1e-4)
     ap.add_argument("--batch-size", type=int, default=2048)
     ap.add_argument("--lam-kcl", type=float, default=1.0)
+    ap.add_argument("--lam-sob", type=float, default=0.0,
+                    help="N2 contraction term weight (autograd ∂id/∂V -> predicted "
+                         "gm/gds columns at the opamp OPs; 0 disables). Per-epoch "
+                         "balanced like KCL.")
+    ap.add_argument("--ring-weight", type=float, default=0.0,
+                    help="ring-corridor anchor weight (per-step MAE on the tsmc7 "
+                         "ring trajectory OSDI labels; 0 disables). Pins the shared "
+                         "NMOS switching region against ring regression.")
+    ap.add_argument("--ring-corridor", default=None,
+                    help="dir holding {tech}_ring_{nmos,pmos}_corridor.npz "
+                         "(default results/v6_5_5/corridors)")
     ap.add_argument("--grad-clip", type=float, default=1.0,
                     help="clip combined grad-norm (0 disables); kills the "
                          "KCL-vs-anchor tug-of-war blowups")
@@ -284,6 +342,33 @@ def main() -> int:
     kcl = KCLGroups(KCL_DIR / f"{scope}_opamp_kcl.npz", models, norms, device)
     print(f"  KCL groups: G={kcl.G} devices={kcl.ndev} free_nodes={kcl.n_free}")
 
+    # — ring-corridor anchor (Track B: pin the shared NMOS switching region) —
+    from bsimar.config import local_variant_code
+    from bsimar.data.normalize import normalizer_from_stats
+    ring = None
+    if args.ring_weight > 0:
+        rdir = Path(args.ring_corridor) if args.ring_corridor else \
+            (ROOT / "results" / "v6_5_5" / "corridors")
+        ring = {}
+        for key, st in (("nmos", st_n), ("pmos", st_p)):
+            fr = rdir / f"{scope}_ring_{key}_corridor.npz"
+            if not fr.exists():
+                raise SystemExit(f"ring corridor not found: {fr} (harvest first)")
+            dd = np.load(fr, allow_pickle=True)
+            variant = str(dd["meta_variant"]) if "meta_variant" in dd.files else "ulvt"
+            tcode = local_variant_code(scope, scope, variant)
+            nz = normalizer_from_stats(st)
+            x = nz.normalize_inputs(dd["inputs"], dd["geometry"])
+            y = nz.normalize_outputs(dd["outputs"])
+            ring[key] = {
+                "x": torch.tensor(x, dtype=torch.float32, device=device),
+                "y": torch.tensor(y, dtype=torch.float32, device=device),
+                "tc": torch.full((len(x),), int(tcode), dtype=torch.long, device=device),
+                "n": len(x),
+            }
+        print(f"  ring anchor: nmos={ring['nmos']['n']} pmos={ring['pmos']['n']} rows "
+              f"(weight={args.ring_weight})")
+
     crit = MAELoss()
     params = [p for p in (list(model_n.parameters()) + list(model_p.parameters()))
               if p.requires_grad]
@@ -318,7 +403,7 @@ def main() -> int:
         perm_n = torch.randperm(nN, device=device)
         perm_p = torch.randperm(nP, device=device)
         steps = max(nN, nP) // bs + 1
-        run_anchor, run_kcl, ns = 0.0, 0.0, 0
+        run_anchor, run_kcl, run_sob, ns = 0.0, 0.0, 0.0, 0
         for s in range(steps):
             bn = perm_n[(s * bs) % nN:(s * bs) % nN + bs]
             bp = perm_p[(s * bs) % nP:(s * bs) % nP + bs]
@@ -327,11 +412,23 @@ def main() -> int:
             lb = crit(model_p(xp[bp], tech_codes=tcp[bp]), yp[bp], weights=lds_p[bp])
             lk, _ = kcl.loss_and_frac()
             loss = la + lb + args.lam_kcl * kcl_step_scale * lk
+            if args.ring_weight > 0:
+                lr_n = crit(model_n(ring["nmos"]["x"], tech_codes=ring["nmos"]["tc"]),
+                            ring["nmos"]["y"])
+                lr_p = crit(model_p(ring["pmos"]["x"], tech_codes=ring["pmos"]["tc"]),
+                            ring["pmos"]["y"])
+                loss = loss + args.ring_weight * (lr_n + lr_p)
+            lsob_val = 0.0
+            if args.lam_sob > 0:
+                lsob = kcl.contraction_loss()
+                loss = loss + args.lam_sob * kcl_step_scale * lsob
+                lsob_val = float(lsob.item())
             loss.backward()
             if args.grad_clip > 0:
                 torch.nn.utils.clip_grad_norm_(params, args.grad_clip)
             opt.step()
-            run_anchor += (la + lb).item(); run_kcl += lk.item(); ns += 1
+            run_anchor += (la + lb).item(); run_kcl += lk.item()
+            run_sob += lsob_val; ns += 1
         vn = _val_mae(model_n, va_n, device)
         vp = _val_mae(model_p, va_p, device)
         with torch.no_grad():
@@ -351,7 +448,8 @@ def main() -> int:
             mark = " *best*"
         if epoch <= 5 or epoch % 5 == 0 or mark:
             print(f"  {epoch:3d} | anchor={run_anchor/ns:.5f} kcl={run_kcl/ns:.5f} "
-                  f"| val_n={vn:.5f}(+{rise_n*100:.0f}%) val_p={vp:.5f}(+{rise_p*100:.0f}%) "
+                  f"sob={run_sob/ns:.4f} | val_n={vn:.5f}(+{rise_n*100:.0f}%) "
+                  f"val_p={vp:.5f}(+{rise_p*100:.0f}%) "
                   f"frac(vo1i)={frac[2]:.4f} {'FIXED' if fixed else 'open '}{mark}")
 
     if best_state is None:
