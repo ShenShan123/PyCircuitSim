@@ -91,6 +91,16 @@ applying the wrong fix-class.
   DC/tran. ⇒ T1 checkpoints NOT installed; production stays 15/16 (symlinks
   untouched). k2_a/k2_b/k2_c left on disk (gitignored) as the existence-fixed
   starting point for the next-session contraction lever.
+- **Solver lever PROBE-CLOSED (`tests/diag_opamp_solver_conditioning.py`).** To test
+  whether the now-existent OP is reachable by a DC-safe solve (no retrain → no ring
+  risk), multi-started the opamp DC solve at vin* from a grid of mid-rail seeds ×
+  {stock damped+LM, GMIN homotopy}, on BOTH k2_c (T1) and production: **all 20
+  converged solutions RAIL (vout=0.000); ZERO high-gain solutions.** The 0.7% k2_c
+  residual is a small-residual SHELF, not an exact zero (an exact high-gain fixed
+  point needs F≈0 at ALL free nodes — vout's residual stays large), so no
+  seed/GMIN/trust-region lever has anything to converge to. ⇒ the solver side of G1
+  is closed; the retrain track (ring-anchored harder existence at ALL free nodes +
+  localized N2 contraction term) is the only remaining path. See plan §9.
 
 **Newly recorded dead-ends / learnings (T1 sub-campaign):**
 1. **Unbalanced KCL (computed every step on the same 59 groups) wrecks the

@@ -203,17 +203,27 @@ All CPU-pinned, L72-in-PyCircuitSim reference where applicable, NEW test/diag fi
   switchcap droop 2260%); the fix is balanced per-step scaling + grad-clip + frozen
   embed + min-drift selection.
 
-## 9. NEXT (the contraction campaign — the de-risked remaining sub-problem)
-G1 is now a CONTRACTION + PRESERVATION problem (existence solved). Sequence:
+## 9. NEXT — solver lever PROBE-CLOSED; retrain (Track B) is the only path
+**Track A (DC-safe solver lever) is DEAD.** `tests/diag_opamp_solver_conditioning.py`
+multi-started the opamp DC solve at vin* from a grid of mid-rail seeds × {stock
+damped+LM, GMIN homotopy}, on BOTH k2_c (T1) and production: **all 20 converged
+solutions RAIL (vout=0.000); zero high-gain solutions.** The 0.7% k2_c residual is
+a small-residual SHELF, not an exact zero — an exact high-gain DC fixed point needs
+F≈0 at ALL free nodes (vout's residual stays large), so no seed/GMIN/trust-region
+lever has anything to converge to. The solver side of G1 is closed.
+
+**Track B (retrain) — the remaining contraction + preservation campaign.** Sequence:
 1. **Ring-region anchor first** — add the tsmc7 ring trajectory corridor (the
    V6.5.5 ring harvest, retargeted to tsmc7) to the fine-tune ANCHOR so the shared
    NMOS bias region is explicitly pinned. Prerequisite to any tsmc7 id-surface edit.
-2. **N2 contraction term** — localized Jacobian/Sobolev supervision at the (now
-   existent) 59 opamp OPs: pull the autograd ∂id/∂V toward the accurate predicted
-   gm/gds columns so the OP becomes Newton-attracting (≈L72). MUST be localized +
-   KCL-anchored (the value is held by KCL so the derivative term can't move the FP)
-   to avoid the S10 broad-collapse. Gate on 1c-holds-gain>0 AND the full tsmc7 matrix
-   + ring + canary unregressed.
+2. **Push existence HARDER (F→~0 at ALL free nodes, not just vo1i) + localized N2.**
+   The probe shows vo1i alone isn't enough — vout/n1 residuals must also reach ~0 so
+   an exact high-gain zero appears. Add localized Jacobian/Sobolev supervision at the
+   59 opamp OPs (pull autograd ∂id/∂V toward the accurate predicted gm/gds columns so
+   the OP is Newton-attracting ≈ L72), KCL-anchored so it can't move the FP (avoids
+   the S10 broad-collapse). Gate on 1c-holds-gain>0 AND the full tsmc7 matrix + ring
+   + canary unregressed.
 3. **Realistic ceiling unchanged:** 16/16 ≈ 1-in-4; plan for 15/16 stable. The win
-   from this session is existence is now PROVEN solvable and the residual is a
-   narrower, characterized contraction+preservation target.
+   from this session: existence is PROVEN solvable, the solver shortcut is closed,
+   and the residual is a narrower, characterized harder-existence+contraction target
+   bounded by the ring-preservation constraint.
