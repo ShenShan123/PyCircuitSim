@@ -251,6 +251,15 @@ def _print_result(r: Dict[str, object]) -> None:
         f"magNRMSE={m['mag_nrmse']*100:.2f}%  "
         f"phaseErr(inband)={m['phase_maxerr_inband_deg']:.2f}deg  "
         f"-> {verdict}{op_note}")
+    # G4 visibility (diagnostic, NOT gated): the in-band phase above masks to the
+    # passband and is blind to the Cgd-feedforward RHP-zero lag, which appears in
+    # the band ABOVE the −3 dB corner. A large value here is the (expected) G4
+    # miss made measurable — it does NOT affect the PASS/FAIL verdict.
+    print(
+        f"      phaseErr(beyond-corner): "
+        f"max={m['phase_maxerr_beyond_corner_deg']:.2f}deg "
+        f"rmse={m['phase_rmse_beyond_corner_deg']:.2f}deg  "
+        f"[diagnostic, not gated — G4 Cgd RHP-zero]")
 
 
 # ---------------------------------------------------------------------------

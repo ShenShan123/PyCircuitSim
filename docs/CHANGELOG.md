@@ -6,6 +6,110 @@ isn't burdened with chronology.
 
 ---
 
+## V6.5.6 — 3-operator Phase-0 routing + T1 KCL-residual lever: tsmc7 opamp EXISTENCE→CONTRACTION (branch `V6.5.4`, 2026-06-26)
+
+**Headline: the four zero-GPU Phase-0 diagnostics routed every open gap, and the
+T1 net-node KCL-residual loss DECISIVELY SOLVED the tsmc7 opamp EXISTENCE failure
+— the L72 high-gain OP went from a 12.8% KCL residual (not a zero of the NN
+current map) to 0.7% (a genuine residual zero); the corridor never achieved this.
+But the opamp gate still fails: the now-existent OP is an UNSTABLE Newton fixed
+point (CONTRACTION), and at any λ strong enough to move existence the shared NMOS
+bias region regresses the ring (~6%) + device DC/tran. T1 is NOT installed —
+production unchanged at 15/16.** This is the plan's anticipated "15/16 stable"
+outcome with the open gate now de-risked and re-characterized. Plan:
+`docs/plans/2026-06-26-accuracy-frontier-3operator-phase0.md` (Phase-0/1 RESULTS
+addendum at the end). Produced after a 32-agent frontier analysis.
+
+**The organizing frame (3-operator taxonomy).** DirectNet emits ONE surface
+(`id` + charges) but the solver reads it through THREE operators, each owning a
+different gap and needing a structurally different fix-class: id-VALUES→KCL→NR
+fixed point (G1 opamp gain, ring period); autograd dQ/dV→pole (G3 f3db, G2 opamp
+AC dynamics); off-diagonal cgd→RHP zero (G4 HF phase). Charge-head retrains are
+DC-safe; id-surface retrains are DC-unsafe. The recurring ledger failure is
+applying the wrong fix-class.
+
+**Phase 0 — four zero-GPU diagnostics (all routed, byte-identical to the gates):**
+- **P0-1 (decisive) `tests/diag_opamp_kcl_residual.py` — D1 = EXISTENCE.** At the
+  L72-converged high-gain OP, assemble the net signed NN MOSFET current into each
+  free node {vtail,n1,vo1i,vout} using the solver's own convention
+  (`_stamp_mosfet_dc:303-309`, i_leaving=-id for both types). tsmc7 stage-1
+  balance node **vo1i F_rel = 0.128** (12.8% of arm current) vs the passing
+  **tsmc12 control 0.002** — the high-gain OP is NOT a residual zero of the NN
+  current map. L72 self-check F_L72 = 2.5e-12 A validates the sign assembly.
+  ⇒ routes G1 to **T1 (net-node KCL-residual loss)**; N2/T3 (contraction) are
+  inert when the fixed point doesn't exist. (vo1i is the only predictive node:
+  the passing tsmc12 shows large vout/vtail residuals too, so those are not
+  predictive — only the stage-1 diff-pair/mirror balance node is.)
+- **P0-2 `tests/diag_g3_cdd_match.py` — D2 = MATCH.** On the tsmc12-PMOS CS-amp
+  grid the autograd `∂qd/∂Vd` the AC solver consumes ALREADY equals the supervised
+  `cdd` head AND both match OSDI to ~0.1%. ⇒ the G3 charge-Sobolev lever is dead
+  on arrival; f3db (13/24) is **OP-drift / value-surface owned**, not a cap-
+  derivative deficiency (confirms the V6.5.2 `--charge-sobolev` + TG-corridor
+  cdd-62%→5%-yet-f3db-unchanged record).
+- **P0-3 — T2 Jacobian-blend family CLOSED analytically (subsumed by P0-1).** The
+  converged DC solution is defined by F(V*)=Σ i_leaving(V*)=0 (id VALUES); the
+  stamped conductances (gm/gds, autograd or any blended head) are only the
+  Newton-step Jacobian — they set the convergence PATH, never the fixed-point
+  LOCATION. Since the high-gain OP is not a zero of the id-value map, no Jacobian
+  edit can make it one. No code needed; the Jacobian side of G1 is closed.
+- **P0-4 — G4 made visible.** Added a beyond-corner HF-phase metric
+  (`phase_{maxerr,rmse}_beyond_corner_deg`) to `tests/common/complex_ac.py` +
+  `tests/verify_nn_ac.py` (additive, diagnostic-only — existing gate verdicts
+  byte-identical). The passband mask was structurally blind to G4; the new metric
+  shows tsmc12 beyond-corner phase err max **140–152°** vs passband 35–41°, so
+  the Cgd RHP-zero divergence is now measurable. Fidelity-only; moves no gate.
+
+**Phase 1 — T1 net-node KCL-residual lever (the GPU bet D1 routed to).**
+- **Harness (new infra):** `scripts/v6_5_5_harvest_kcl.py` harvests the opamp
+  OP-groups (59 sweep OPs in a ±0.06 V band around the high-gain crossing; per
+  device the source-referenced NN bias + free-node incidence/sign + L72 arm
+  current; L72 self-check 2.5e-12). `scripts/v6_5_5_finetune_kcl.py` jointly
+  fine-tunes the tsmc7 NMOS+PMOS DirectNet from production `large` (the KCL
+  residual at vo1i couples Mn2[NMOS]+Mp4[PMOS], so ONE loss must hold both
+  checkpoints): total = base-data LDS-MAE anchor (pins the 15 gates) + λ·mean
+  (Σ signed NN id / arm)² over groups, with KCL id the FULL native-µA asinh
+  denorm (the s_id≈2.6e-5 compression that killed every absolute-id corridor
+  lever does not apply to the cancellation residual). `scripts/v6_5_5_gate_kcl.sh`
+  gates a candidate (KCL diag + 1c + 4 tsmc7 complex gates + device DC/tran/AC +
+  canary; swapping only tsmc7's checkpoints touches only tsmc7's gates).
+- **KEY RESULT — T1 converts EXISTENCE → CONTRACTION.** Re-running P0-1 on the
+  T1-trained checkpoint FLIPS its own verdict: tsmc7 **vo1i F_rel 0.128 → 0.007**
+  (k2_c, λ=50) — the L72 high-gain OP is now a genuine residual zero of the NN
+  current map, and the diagnostic reclassifies it as "CONTRACTION failure: the OP
+  IS a KCL zero yet 1c shows it repels." The 1c basin-seed confirms: seeding from
+  the L72 OP recovers 0% gain — the OP exists but is an UNSTABLE Newton fixed
+  point. This is the first lever to make the high-gain OP a residual zero on the
+  NN surface (the corridor never did).
+- **Why it still fails the gate + why it's not installable.** (a) CONTRACTION: the
+  opamp open-loop high-gain OP is a near-unstable DC equilibrium; the NN's autograd
+  gm·ro there is too flat (1b diag), so the existent zero repels and the cold
+  continuation rails. Needs the contraction lever (N2: localized Jacobian/Sobolev
+  supervision at the now-existent OPs, the S10 channel, guarded). (b) PRESERVATION
+  is the binding constraint: the opamp saturation locus overlaps the ring's
+  switching-edge NMOS region, so any λ strong enough to move existence regresses
+  the **ring (k2_a λ=5: 5.97%, k2_c λ=50: 6.44%, vs 5% gate)** and the device
+  DC/tran. ⇒ T1 checkpoints NOT installed; production stays 15/16 (symlinks
+  untouched). k2_a/k2_b/k2_c left on disk (gitignored) as the existence-fixed
+  starting point for the next-session contraction lever.
+
+**Newly recorded dead-ends / learnings (T1 sub-campaign):**
+1. **Unbalanced KCL (computed every step on the same 59 groups) wrecks the
+   surface.** It gets ~n_steps×(~1068) more gradient updates/epoch than its data
+   share, so it dominates regardless of λ and thrashes (l05 anchor val-MAE +2142%,
+   a kcl-spike of 155; gate: opamp 0, ring 15.9%, switchcap droop 2260%). FIX:
+   scale per-step KCL by batch/n_anchor so per-epoch weight ≈ λ, + grad-clip 1.0 +
+   freeze the tech embedding + select the min-drift epoch that reaches vo1i<0.02
+   → stable trajectories, +75–104% val drift (val ~5e-4, absolute tiny), ring
+   regression contained to ~6%.
+2. **T1 alone cannot pass the opamp** — existence is necessary but not sufficient;
+   the contraction (Newton-stability) of the now-existent OP is a separate barrier
+   owned by the autograd Jacobian, and the value/derivative coupling means the
+   contraction fix must be localized + KCL-anchored to avoid the S10 broad-collapse.
+3. **Preservation is binding for any tsmc7 id-surface edit** — the opamp and ring
+   share the NMOS saturation/switching bias region; the MLP cannot bend one
+   without nicking the other. A ring-region-aware anchor is the prerequisite for
+   the contraction campaign.
+
 ## V6.5.5 — diagnostic-routed corridor retrain → 15/16 (branch `V6.5.4`, 2026-06-24/25)
 
 **Headline: three zero-risk diagnostics localized the V6.5.4 open gates and ROUTED

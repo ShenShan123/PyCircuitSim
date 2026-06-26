@@ -96,9 +96,17 @@ authoritative ground truth; DirectNet is the production NN; BSIMAR is parked.
   `corringL_s7` (large + ring-edge corridor, seed 7) for tsmc5, `large` for
   tsmc7/tsmc12, `lgs17` (seed 17) for tsmc16, installed as `tsmc{X}_dn_medium`
   resolver-slot symlinks (medium-first preempt). The lone open gate is the **tsmc7
-  opamp** (gain→0) — a characterized value-surface limit (the high-gain OP is
-  unstable on the NN surface; corridor data cannot stabilize it — see CHANGELOG
-  V6.5.5 + diagnostics). Per-tech NMOS/PMOS checkpoints use a local embedding vocab
+  opamp** (gain→0). V6.5.6 re-characterized it via the 3-operator taxonomy: P0-1
+  (`tests/diag_opamp_kcl_residual.py`) proved it was an **EXISTENCE** failure (the
+  L72 high-gain OP was not a residual zero of the NN current map, vo1i F_rel=0.128),
+  and the **T1 net-node KCL-residual lever** (`scripts/v6_5_5_{harvest,finetune}_kcl.py`)
+  decisively SOLVED existence (vo1i F_rel→0.007, the corridor never achieved a zero
+  there) — but it is now a **CONTRACTION** sub-problem (the now-existent OP is an
+  unstable Newton fixed point) AND surface-PRESERVATION-bound (any λ that moves
+  existence regresses the ring ~6% — opamp/ring share the NMOS bias region). T1 is
+  NOT installed; production stays 15/16. Next lever = a localized, KCL-anchored
+  contraction term (N2) with a ring-region anchor (see CHANGELOG V6.5.6). Per-tech
+  NMOS/PMOS checkpoints use a local embedding vocab
   (Rule 16). Charges are predicted and the AC caps are their `dQ/dV` autograd.
 - **BSIMAR Transformer (LEVEL=74)** — autoregressive Transformer sharing
   DirectNet's data pipeline and inference rules. Parked (Rule 15); no checkpoints
@@ -240,6 +248,8 @@ All tests require `conda activate pycircuitsim`.
 **NN AC (LEVEL=73):** `verify_nn_ac.py --tech TSMC<XX> [--device nmos,pmos]` — per-checkpoint NMOS/PMOS common-source amp vs NGSPICE BSIM-CMG (no load cap → device caps set the pole; each side at its own fresh-solved mid-rail OP; gate = gain0 ≤1.5 dB / f3db ratio ∈[0.7,1.43] / mag NRMSE ≤10%; phase = diagnostic). `verify_complex_opamp_ac.py --tech TSMC<XX>` — two-stage Miller opamp open-loop (gate = DC-gain ≤3 dB / GBW ratio ∈[0.6,1.67] / PM ≤15°). Shared infra `tests/common/complex_ac.py`. Both run in the S/M/L benchmark (`scripts/benchmark_run_tests.sh` → `benchmark_collect.py` "AC small-signal accuracy" section). CPU-pinned, `NGSPICE_BIN` + `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}`. RO + SRAM excluded (no stable amplifying OP for `.ac`).
 **Other:** `verify_bsimcmg_op.py` (OP <0.02% vs NGSPICE); lifted-source canary `verify_nn_lifted_source_dc.py` (NRMSE ≤10%, guards Rule 2).
 **Open-gate routing diagnostics (V6.5.5, no NGSPICE — L72-in-PyCircuitSim reference):** `tests/diag_nn_ring_trajectory.py` (charge-stamp toggle: conduction-vs-cap split of the ring period error), `tests/diag_opamp_op_decomp.py` (basin-vs-value-surface of the opamp gain), `tests/diag_opamp_basin_seed.py` (is the high-gain OP stable when seeded from ground truth?). These localized the 2 open gates and routed the corridor retrain.
+
+**V6.5.6 3-operator Phase-0 routing diagnostics + T1 lever (no NGSPICE for P0-1/3):** `tests/diag_opamp_kcl_residual.py` (P0-1, DECISIVE — opamp EXISTENCE-vs-CONTRACTION: net signed NN MOSFET current into {vtail,n1,vo1i,vout} at the L72 OP; vo1i F_rel large⇒existence, ~0⇒contraction; L72 self-check validates the sign assembly), `tests/diag_g3_cdd_match.py` (P0-2 — autograd cdd vs supervised cdd column vs OSDI on the CS-amp grid; D2=MATCH⇒f3db is OP-drift, charge lever dead), and the P0-4 beyond-corner HF-phase metric (`phase_{maxerr,rmse}_beyond_corner_deg` in `tests/common/complex_ac.py`, surfaced diagnostic-only in `verify_nn_ac.py`). **T1 net-node KCL-residual lever** (the GPU bet P0-1 routed to): `scripts/v6_5_5_harvest_kcl.py` (opamp OP-groups), `scripts/v6_5_5_finetune_kcl.py` (joint N+P KCL fine-tune from production `large` — KCL couples Mn2[N]/Mp4[P]; balanced per-step scaling + grad-clip + frozen embed + min-drift selection), `scripts/v6_5_5_gate_kcl.sh` (tsmc7-only gate). T1 SOLVED existence (vo1i 0.128→0.007) but the opamp gate needs the contraction lever and is preservation-bound; not installed (see CHANGELOG V6.5.6).
 
 Quick sanity:
 

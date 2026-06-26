@@ -229,6 +229,38 @@ def inband_phase_maxerr_deg(
     return float(np.max(np.abs(np.rad2deg(np.angle(ratio)))))
 
 
+def beyond_corner_phase_err_deg(
+    freq: np.ndarray, v_test: np.ndarray, v_ref: np.ndarray,
+) -> Tuple[float, float]:
+    """Phase error in the band ABOVE the −3 dB corner (G4 visibility metric).
+
+    DIAGNOSTIC ONLY — complements ``inband_phase_maxerr_deg`` (which masks to the
+    passband, UP TO the −3 dB corner, and is therefore structurally BLIND to the
+    Cgd-feedforward RHP-zero phase). The NN does not reproduce that feedforward
+    lag, and it manifests AT/BEYOND the corner — exactly the band the in-band
+    metric drops. This measures the NN-vs-NGSPICE phase disagreement there.
+
+    The corner is located via ``minus3db_corner`` on the REFERENCE (NGSPICE)
+    response; the error band is ``[f3db_ref, fstop]``. As in the in-band metric,
+    the error is taken on the complex transfer RATIO ``v_test / v_ref``, which
+    cancels the shared response and the ±180° inverting branch (no unwrap /
+    co-alignment / HF-tail artifact).
+
+    Returns ``(maxerr_deg, rmse_deg)``. Returns ``(nan, nan)`` when the reference
+    −3 dB corner is not found (no roll-off in band) or fewer than 2 grid points
+    lie above it (too few points to characterize the tail) — never raises.
+    """
+    f3_r = minus3db_corner(freq, v_ref)
+    if not np.isfinite(f3_r):
+        return float("nan"), float("nan")
+    mask = freq >= f3_r
+    if int(np.count_nonzero(mask)) < 2:
+        return float("nan"), float("nan")
+    ratio = v_test[mask] / v_ref[mask]
+    err = np.abs(np.rad2deg(np.angle(ratio)))
+    return float(np.max(err)), float(np.sqrt(np.mean(err ** 2)))
+
+
 def ac_metrics_extended(
     freq: np.ndarray, v_test: np.ndarray, v_ref: np.ndarray,
 ) -> Dict[str, float]:
@@ -239,6 +271,11 @@ def ac_metrics_extended(
     """
     m = dict(ac_metrics(freq, v_test, v_ref))
     m["phase_maxerr_inband_deg"] = inband_phase_maxerr_deg(freq, v_test, v_ref)
+    # G4 visibility (diagnostic, not gated): HF-tail phase ABOVE the −3 dB corner,
+    # where the in-band passband mask above is blind to the Cgd RHP-zero lag.
+    bc_max, bc_rmse = beyond_corner_phase_err_deg(freq, v_test, v_ref)
+    m["phase_maxerr_beyond_corner_deg"] = bc_max
+    m["phase_rmse_beyond_corner_deg"] = bc_rmse
 
     f3_t = minus3db_corner(freq, v_test)
     f3_r = minus3db_corner(freq, v_ref)
