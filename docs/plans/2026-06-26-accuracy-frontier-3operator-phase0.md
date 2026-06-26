@@ -212,18 +212,34 @@ a small-residual SHELF, not an exact zero — an exact high-gain DC fixed point 
 F≈0 at ALL free nodes (vout's residual stays large), so no seed/GMIN/trust-region
 lever has anything to converge to. The solver side of G1 is closed.
 
-**Track B (retrain) — the remaining contraction + preservation campaign.** Sequence:
-1. **Ring-region anchor first** — add the tsmc7 ring trajectory corridor (the
-   V6.5.5 ring harvest, retargeted to tsmc7) to the fine-tune ANCHOR so the shared
-   NMOS bias region is explicitly pinned. Prerequisite to any tsmc7 id-surface edit.
-2. **Push existence HARDER (F→~0 at ALL free nodes, not just vo1i) + localized N2.**
-   The probe shows vo1i alone isn't enough — vout/n1 residuals must also reach ~0 so
-   an exact high-gain zero appears. Add localized Jacobian/Sobolev supervision at the
-   59 opamp OPs (pull autograd ∂id/∂V toward the accurate predicted gm/gds columns so
-   the OP is Newton-attracting ≈ L72), KCL-anchored so it can't move the FP (avoids
-   the S10 broad-collapse). Gate on 1c-holds-gain>0 AND the full tsmc7 matrix + ring
-   + canary unregressed.
-3. **Realistic ceiling unchanged:** 16/16 ≈ 1-in-4; plan for 15/16 stable. The win
-   from this session: existence is PROVEN solvable, the solver shortcut is closed,
-   and the residual is a narrower, characterized harder-existence+contraction target
-   bounded by the ring-preservation constraint.
+**Track B (retrain) — EXECUTED. Preservation SOLVED; opamp NOT (N2 conflicts).**
+1. **Ring-region anchor — WORKS.** Harvested the tsmc7 ring corridor
+   (`v6_5_5_harvest_corridor --circuit ring`, 27930 rows/dev) and added it as a
+   per-step anchor (`--ring-weight`). k3_a (ring + KCL, no N2) fixed existence
+   (vo1i 0.009) AND **preserved the ring: 2.29% PASS** (vs 6.44% FAIL without it) +
+   switchcap/SRAM/device-AC PASS, device-DC matching production's marginal baseline
+   → a CLEAN, non-regressing existence-fixed checkpoint.
+2. **N2 localized Sobolev — FAILS (blocks existence).** k3_b (sob=10) / k3_c
+   (sob=20): vo1i STUCK at 0.22–0.24 (worse than production 0.13). Pulling the
+   autograd slope toward the predicted gm/gds columns and pinning the KCL value are
+   mutually exclusive on the shared id head (the S10 value/derivative conflict).
+3. **No high-gain zero exists** even with existence fixed + ring preserved — the
+   solver-conditioning probe on k3_a finds ZERO high-gain solutions (all rail). So
+   existence is necessary but NOT sufficient, and the only lever to make the OP a
+   Newton attractor (N2) destroys existence. ⇒ a stable high-gain DC fixed point is
+   NOT realizable on the single-id-head DirectNet surface via KCL + N2. Production
+   stays 15/16; k3_* not installed (no gate-count gain).
+
+## 10. The one remaining (heavy, un-attempted) lever — T3
+A passing OP needs to be BOTH a residual zero (existence ✓ via T1) AND a Newton
+attractor (contraction ✗ — N2 conflicts with existence). The only way to get both
+without the value/slope conflict is to optimize the SOLVED transfer curve directly:
+**T3 = differentiable unrolled-DC-solver / implicit-function supervision of
+Vout(Vin) against L72.** Unroll K Newton steps of the opamp DC solve through the NN
+(or use the implicit-function theorem for ∂Vout/∂θ at the converged point) and
+supervise the transfer curve / gain. This creates a stable high-gain zero BY
+CONSTRUCTION (the solve is in the loss), sidestepping the existence-vs-contraction
+conflict. It is a separate, heavy build (a differentiable circuit solver), high
+risk, its own campaign — not part of Track B. The ring-anchor + `harvest_kcl`
+infra is committed and ready as its substrate. Realistic ceiling unchanged:
+16/16 remains ~1-in-4; 15/16 is the stable ship.

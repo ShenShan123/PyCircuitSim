@@ -101,11 +101,18 @@ authoritative ground truth; DirectNet is the production NN; BSIMAR is parked.
   L72 high-gain OP was not a residual zero of the NN current map, vo1i F_rel=0.128),
   and the **T1 net-node KCL-residual lever** (`scripts/v6_5_5_{harvest,finetune}_kcl.py`)
   decisively SOLVED existence (vo1i F_rel→0.007, the corridor never achieved a zero
-  there) — but it is now a **CONTRACTION** sub-problem (the now-existent OP is an
-  unstable Newton fixed point) AND surface-PRESERVATION-bound (any λ that moves
-  existence regresses the ring ~6% — opamp/ring share the NMOS bias region). T1 is
-  NOT installed; production stays 15/16. Next lever = a localized, KCL-anchored
-  contraction term (N2) with a ring-region anchor (see CHANGELOG V6.5.6). Per-tech
+  there) — converting it to a **CONTRACTION** sub-problem (the now-existent OP is an
+  unstable Newton fixed point). The solver lever was then PROBE-CLOSED
+  (`tests/diag_opamp_solver_conditioning.py`: no exact high-gain zero exists even
+  when seeded), and **Track B** (retrain) showed: the **ring-region anchor WORKS**
+  (`scripts/v6_5_5_finetune_kcl.py --ring-weight` + ring corridor → ring 6.44% FAIL
+  → 2.29% PASS, a clean non-regressing existence fix), but the **N2 contraction term
+  (`--lam-sob`) BLOCKS existence** (value/slope conflict on the shared id head) and
+  no high-gain zero exists even so. ⇒ a stable high-gain DC fixed point is NOT
+  realizable on the single-id-head DirectNet surface via KCL+N2; the only remaining
+  lever is **T3** (a differentiable unrolled-DC-solver supervising the Vout(Vin)
+  transfer curve — a separate heavy campaign). T1/Track-B checkpoints NOT installed;
+  production stays 15/16 (see CHANGELOG V6.5.6 + plan §8-10). Per-tech
   NMOS/PMOS checkpoints use a local embedding vocab
   (Rule 16). Charges are predicted and the AC caps are their `dQ/dV` autograd.
 - **BSIMAR Transformer (LEVEL=74)** — autoregressive Transformer sharing

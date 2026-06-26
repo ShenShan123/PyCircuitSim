@@ -87,10 +87,13 @@ applying the wrong fix-class.
   supervision at the now-existent OPs, the S10 channel, guarded). (b) PRESERVATION
   is the binding constraint: the opamp saturation locus overlaps the ring's
   switching-edge NMOS region, so any λ strong enough to move existence regresses
-  the **ring (k2_a λ=5: 5.97%, k2_c λ=50: 6.44%, vs 5% gate)** and the device
-  DC/tran. ⇒ T1 checkpoints NOT installed; production stays 15/16 (symlinks
-  untouched). k2_a/k2_b/k2_c left on disk (gitignored) as the existence-fixed
-  starting point for the next-session contraction lever.
+  the **ring (k2_a λ=5: 5.97%, k2_c λ=50: 6.44%, vs 5% gate)**. (The device-DC/tran
+  exit=1 seen here is NOT a T1 regression — production `verify_nn_dc_tran --tech
+  TSMC7` is also 4/6, the 2 fails being NMOS/PMOS DC-sweep at ~11% NRMSE vs the 10%
+  gate, marginal and pre-existing.) ⇒ T1 checkpoints NOT installed; production stays
+  15/16 (symlinks untouched). k2_a/k2_b/k2_c left on disk (gitignored) as the
+  existence-fixed starting point for the contraction lever; the Track B ring-anchor
+  (below) removes even the ring regression.
 - **Solver lever PROBE-CLOSED (`tests/diag_opamp_solver_conditioning.py`).** To test
   whether the now-existent OP is reachable by a DC-safe solve (no retrain → no ring
   risk), multi-started the opamp DC solve at vin* from a grid of mid-rail seeds ×
@@ -119,6 +122,39 @@ applying the wrong fix-class.
    share the NMOS saturation/switching bias region; the MLP cannot bend one
    without nicking the other. A ring-region-aware anchor is the prerequisite for
    the contraction campaign.
+
+**Track B executed (ring-anchor + N2 contraction) — preservation SOLVED, opamp NOT.**
+The solver lever was probe-closed, so the only path was retrain. Extended the joint
+KCL fine-tune (`scripts/v6_5_5_finetune_kcl.py`) with a tsmc7 ring-corridor anchor
+(`--ring-weight`, 27930 rows/dev from `v6_5_5_harvest_corridor --circuit ring`) and
+an N2 contraction term (`--lam-sob`: autograd ∂id/∂V → the device's own accurate
+predicted gm/gds columns at the 59 opamp OPs, KCL-anchored). Sweep (k3_a/b/c):
+- **Ring anchor WORKS (preservation solved).** k3_a (ring + KCL, no N2) fixed
+  existence (vo1i 0.009) AND **preserved the ring: 2.29% PASS** (vs T1-k2_c 6.44%
+  FAIL without it) + switchcap PASS + SRAM PASS + device-AC 2/2 PASS. The
+  ring-region anchor is the prerequisite it was designed to be.
+- **N2 self-consistency Sobolev BLOCKS existence (wrong lever).** k3_b (sob=10) /
+  k3_c (sob=20) leave vo1i STUCK at 0.22–0.24 (worse than production 0.13) — pulling
+  the autograd slope toward the predicted columns and pinning the KCL value are
+  mutually exclusive on the shared id head (the S10 value/derivative conflict).
+- **No high-gain zero exists even with existence fixed + ring preserved.** The
+  solver-conditioning probe on k3_a (and k2_c) finds ZERO high-gain solutions (all
+  20 mid-rail seeds × {stock, GMIN} rail). So existence (KCL=0 at the L72 OP) is
+  necessary but NOT sufficient: the surface has no self-consistent high-gain DC
+  fixed point, and the only lever that would create one (N2) conflicts with
+  existence.
+
+**Verdict — the tsmc7 opamp is a precisely-characterized representational limit.**
+A stable high-gain DC fixed point cannot be realized on the single-id-head DirectNet
+surface while keeping it accurate: existence is achievable (T1) and preservation is
+achievable (ring anchor), but the two properties a passing OP needs — being a
+residual ZERO and being a Newton ATTRACTOR — are not co-achievable via KCL + N2
+(N2 destroys existence). k3_* NOT installed (opamp still fails; no gate-count gain);
+production stays 15/16. The only remaining un-attempted lever is **T3** (a
+differentiable unrolled-DC-solver / implicit-function supervision of the Vout(Vin)
+transfer curve, which would create a stable zero by construction) — a separate,
+heavy build (its own campaign), not part of Track B. The ring-anchor + harvest_kcl
+infra is kept committed for that future work.
 
 ## V6.5.5 — diagnostic-routed corridor retrain → 15/16 (branch `V6.5.4`, 2026-06-24/25)
 
