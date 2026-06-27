@@ -11,7 +11,7 @@ Python-based SPICE-like circuit simulator emphasizing educational clarity and mo
 
 DirectNet and BSIM-AR share the same data, normalization, and evaluation pipelines via the unified `bsimar` package at `external_compact_models/bsimar/`. DirectNet is the baseline for comparison against BSIM-AR.
 
-Must support **Operating Point**, **DC Sweep**, and **Transient Analysis** for all model types.
+Must support **Operating Point**, **DC Sweep**, AC Sweep, and **Transient Analysis** for all model types.
 
 **Core Principles:** pure Python; Solver ↔ Device Models decoupled; production-grade compact models via PyCMG/OSDI; basic HSPICE netlist compatibility.
 
@@ -91,30 +91,16 @@ authoritative ground truth; DirectNet is the production NN; BSIMAR is parked.
   equations for it.
 - **DirectNet (LEVEL=73)** — single-shot feed-forward MLP. 7-dim input
   (Vgs, Vds, Vbs, NFIN, L, T, tech_code) with an `nn.Embedding` tech-code;
-  gm/gds/gmb are the **autograd Jacobian** of the predicted `id`.
-  Production is the **V6.5.5 best-config-per-tech mix** (**15/16** complex gates):
-  `corringL_s7` (large + ring-edge corridor, seed 7) for tsmc5, `large` for
-  tsmc7/tsmc12, `lgs17` (seed 17) for tsmc16, installed as `tsmc{X}_dn_medium`
-  resolver-slot symlinks (medium-first preempt). The lone open gate is the **tsmc7
-  opamp** (gain→0). V6.5.6 re-characterized it via the 3-operator taxonomy: P0-1
-  (`tests/diag_opamp_kcl_residual.py`) proved it was an **EXISTENCE** failure (the
-  L72 high-gain OP was not a residual zero of the NN current map, vo1i F_rel=0.128),
-  and the **T1 net-node KCL-residual lever** (`scripts/v6_5_5_{harvest,finetune}_kcl.py`)
-  decisively SOLVED existence (vo1i F_rel→0.007, the corridor never achieved a zero
-  there) — converting it to a **CONTRACTION** sub-problem (the now-existent OP is an
-  unstable Newton fixed point). The solver lever was then PROBE-CLOSED
-  (`tests/diag_opamp_solver_conditioning.py`: no exact high-gain zero exists even
-  when seeded), and **Track B** (retrain) showed: the **ring-region anchor WORKS**
-  (`scripts/v6_5_5_finetune_kcl.py --ring-weight` + ring corridor → ring 6.44% FAIL
-  → 2.29% PASS, a clean non-regressing existence fix), but the **N2 contraction term
-  (`--lam-sob`) BLOCKS existence** (value/slope conflict on the shared id head) and
-  no high-gain zero exists even so. ⇒ a stable high-gain DC fixed point is NOT
-  realizable on the single-id-head DirectNet surface via KCL+N2; the only remaining
-  lever is **T3** (a differentiable unrolled-DC-solver supervising the Vout(Vin)
-  transfer curve — a separate heavy campaign). T1/Track-B checkpoints NOT installed;
-  production stays 15/16 (see CHANGELOG V6.5.6 + plan §8-10). Per-tech
-  NMOS/PMOS checkpoints use a local embedding vocab
-  (Rule 16). Charges are predicted and the AC caps are their `dQ/dV` autograd.
+  gm/gds/gmb are the **autograd Jacobian** of the predicted `id`. Per-tech
+  NMOS/PMOS checkpoints use a local embedding vocab (Rule 16); charges are
+  predicted and the AC caps are their `dQ/dV` autograd. Production is the
+  **V6.5.5 best-config-per-tech mix** (**15/16** complex gates; see Checkpoints
+  below). The lone open gate is the **tsmc7 opamp** (gain→0), characterized in
+  CHANGELOG V6.5.6 as a representational limit of the single-id-head surface: a
+  stable high-gain DC fixed point is not co-achievable with accuracy via the
+  KCL-residual + Sobolev levers (existence is fixable via the T1 KCL lever, but
+  the OP is then an unstable Newton point and the N2 term destroys existence
+  again); only the unbuilt T3 differentiable-DC-solver lever remains.
 - **BSIMAR Transformer (LEVEL=74)** — autoregressive Transformer sharing
   DirectNet's data pipeline and inference rules. Parked (Rule 15); no checkpoints
   on disk. Resurrect the cap-head / AR-loop structure from CHANGELOG / git
@@ -127,13 +113,9 @@ authoritative ground truth; DirectNet is the production NN; BSIMAR is parked.
 * **Directives:** `.model` (LEVEL=72/73/74), `.include`, `.ic`.
 * Legacy LEVEL=1 (Shichman-Hodges) removed.
 
-**AC (small-signal frequency-domain) analysis** — `ACSolver` (`solver.py`) linearizes about the DC operating point and solves the complex MNA `Y = G + jωC` per frequency: R/C admittances, the full MOSFET small-signal model (gm/gds/gmb **+ the source-referenced transcapacitance matrix Cgg/Cgd/Cdg/Cdd** from `get_capacitances`, i.e. Miller-coupled roll-off), and AC V/I source stimulus. Sweep types `dec`/`oct`/`lin`. Outputs `*_ac_sweep.csv` (mag/phase per node) + a Bode plot. Validated NGSPICE-exact (LEVEL=72) — see Validation.
-
 ## Validation
 
 Inverter circuit must PASS Transient Analysis against NGSPICE ground truth within reasonable numerical tolerance. Never use simplified/self-defined equations as reference.
-
-**AC:** `tests/verify_ac.py` gates `.ac` against ground truth — L1 passive RC vs NGSPICE `.ac` AND the closed-form `1/(1+jωRC)`; L2 BSIM-CMG (LEVEL=72) NMOS common-source amp vs NGSPICE `.ac` on the identical OSDI model. Both agree to ~machine precision (L2: gain err 5e-6 dB, phase err 2e-5°, mag NRMSE 5e-7). **DirectNet (LEVEL=73) AC is NGSPICE-gated** across all 24 capacity checkpoints (`tests/verify_nn_ac.py` device CS-amp + `tests/verify_complex_opamp_ac.py` opamp open-loop, shared infra `tests/common/complex_ac.py`). The NN AC caps are autograd `dQ/dV` of its predicted charges. Result: AC **gain** fidelity excellent everywhere (24/24 gain0 err <1.5 dB); the cap-driven **pole/bandwidth** is good but tech-variable (device gate 13/24); the Cgd-feedforward **RHP-zero phase is not reproduced** (diagnostic, not gated); the **opamp** AC inherits the DC value-surface fragility (0/12, but tsmc12-large reproduces GBW 0.97× / PM 1.3°). The gaps are value-surface/feedforward-owned, not a charge-derivative deficiency. See `docs/CHANGELOG.md` + REPORT "AC small-signal accuracy". RO + SRAM excluded (no stable amplifying OP).
 
 > **Sprint history, version-by-version status, dead-ends, and the open
 > known-issue roadmap live in `docs/CHANGELOG.md` + `MEMORY.md`** — not duplicated
@@ -209,7 +191,7 @@ Mn1 3 2 0 0 nmos1 L=30n NFIN=10
 
 ### NN training (per-tech DirectNet, LEVEL=73)
 
-Dedicated per-tech NMOS/PMOS DirectNet checkpoints for **TSMC5 / TSMC7 / TSMC12 / TSMC16**. `--tech-scope` ∈ `{tsmc5,tsmc7,tsmc12,tsmc16,universal}`; `--size` ∈ `{small,medium,large,xl}` (**V6.5.5 production = best config per tech: `large`+ring-corridor+seed-7 for tsmc5, `large` for tsmc7/12, `large`+seed-17 for tsmc16** — `large` is the over-fit sweet spot, `xl` the boundary — see CHANGELOG V6.5.5/V6.5.4). The V6.5.5 corridor pipeline (`scripts/v6_5_5_{harvest,append}_corridor.py`, `v6_5_5_train_corridor.sh`, `v6_5_5_eval_corridor.py`) harvests the L72-control circuit trajectory, OSDI-labels it, appends as `traj_corridor`, and A/B-gates the per-tech retrain.
+Dedicated per-tech NMOS/PMOS DirectNet checkpoints for **TSMC5 / TSMC7 / TSMC12 / TSMC16**. `--tech-scope` ∈ `{tsmc5,tsmc7,tsmc12,tsmc16,universal}`; `--size` ∈ `{small,medium,large,xl}` (`large` is the over-fit sweet spot, `xl` the boundary). **Production = best config per tech** (`large`+ring-corridor+seed-7 for tsmc5, `large` for tsmc7/12, `large`+seed-17 for tsmc16). The corridor-retrain pipeline (`scripts/v6_5_5_{harvest,append}_corridor.py`, `v6_5_5_train_corridor.sh`, `v6_5_5_eval_corridor.py`) harvests the L72-control circuit trajectory, OSDI-labels it, appends as `traj_corridor`, and A/B-gates the per-tech retrain (detail in CHANGELOG V6.5.5/V6.5.4).
 
 ```bash
 # 1. Generate per-tech data (one .npz per tech+device). --enable-inv-trip adds the
@@ -231,7 +213,7 @@ conda run -n pycircuitsim python -u -m bsimar.cli.train \
 
 **Checkpoints** (`external_compact_models/bsimar/checkpoints/`, each `*_best.pt` + `_norm.npz`):
 
-- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}`. Each uses a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot, e.g. TSMC5: 5, TSMC7: 4; Rule 16). **V6.5.5 production = best-config-per-tech (15/16):** the `tsmc{X}_dn_medium` slots are symlinks → `tsmc5_dn_corringL_s7` (large + ring-edge `traj_corridor`, seed 7 — V6.5.5), `large` (tsmc7/12), `tsmc16_dn_lgs17` (seed 17). tsmc7/12/16 installed by `scripts/v6_5_4_install_final.py` (V6.5.4 `final_mix.json`); tsmc5 repointed in V6.5.5. The V6.5.4 base matrix was retrained from scratch on freshly regenerated data (all 436 prior stale checkpoints deleted). **tsmc5 ring was closed by the V6.5.5 diagnostic-routed corridor retrain** (`scripts/v6_5_5_{harvest,append}_corridor.py` + `v6_5_5_train_corridor.sh`; data `datasets/tsmc5_cor_*.npz`). The lone residual is the **tsmc7 opamp** — exhaustively shown unrecoverable by corridor (value-surface/OP-unstable; see CHANGELOG V6.5.5).
+- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}`. Each uses a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot, e.g. TSMC5: 5, TSMC7: 4; Rule 16). **Production = best-config-per-tech (15/16):** the `tsmc{X}_dn_medium` resolver slots are symlinks → `tsmc5_dn_corringL_s7` (large + ring-edge `traj_corridor`, seed 7), `large` (tsmc7/12), `tsmc16_dn_lgs17` (seed 17). The lone residual is the **tsmc7 opamp** (value-surface/OP-unstable, characterized unrecoverable). Install/retrain history (the V6.5.4 from-scratch matrix retrain + stale-checkpoint purge via `scripts/v6_5_4_install_final.py`, the V6.5.5 tsmc5 corridor repoint) is in CHANGELOG V6.5.4/V6.5.5.
 - Resolver cascade (`pycircuitsim/parser.py`): for a TSMC5/7/12/16 netlist the per-tech slot `tsmc{X}_dn_{medium,small,large,xl}` (medium-first) preempts the universal fallback chain (`refac_dn_* > v4_re_dn_universal > v4_dn_universal > bare`). The universal fallbacks are unreachable until someone retrains a universal stack (`refac_dn_*` / `v4_*` artifacts were deleted 2026-05-12). Resolutions log at parse time as `[NN-resolver] L73 <name> TECH=<x> VT=<y> -> <chk> (scope=<s>, tech_code=<c>)`. Override via `--exp-name` at train time, or `PYCIRCUITSIM_NN_CHECKPOINT_*` / `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}` env vars at runtime (the latter is read first, before the medium-first preempt — used by the benchmark to pin a capacity tier).
 
 **Netlist usage:** `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`. Parser auto-resolves the per-tech checkpoint and the local-vocab tech_code via `bsimar.config.local_variant_code(scope, tech, variant)`.
@@ -242,23 +224,39 @@ Results in `results/<circuit_name>/<analysis_type>/`: an HSPICE-like `*_simulati
 
 ## Testing & Verification
 
-All tests require `conda activate pycircuitsim`.
+All tests require `conda activate pycircuitsim`. Ground truth is **always** NGSPICE on the identical BSIM-CMG (LEVEL=72) OSDI model — never a simplified/self-defined reference. Gates are CPU-pinned (`CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`) and honor `NGSPICE_BIN` (repo `tools/ngspice-45.2/bin/ngspice` when `/usr/local/ngspice-45.2` is absent).
 
-**Shared infra:** `tests/common/{base,bsimcmg_dc,bsimcmg_tran,nn,nn_sweep}.py` and `tests/references/`.
+**Shared infra** (`tests/common/`): `base.py` (PROJECT_ROOT, OSDI_PATH, TechProfile, ALL_TECHS, NGSPICE runner), `bsimcmg_{dc,tran}.py`, `nn.py` + `nn_sweep.py`, `complex.py` + `complex_sweep.py` + `complex_ac.py`; reference netlists in `tests/references/`.
 
-**BSIM-CMG DC:** L1 `verify_bsimcmg_dc.py` (2) · L2 `verify_bsimcmg_dc_comprehensive.py` (67) · L3 `verify_multi_tech_dc.py` (44).
-**BSIM-CMG Transient:** L1 `verify_bsimcmg_tran.py` (1) · L2 `verify_bsimcmg_tran_comprehensive.py` (37) · L3 `verify_multi_tech_tran.py` (72).
-**NN device + inverter gate:** `verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16 [--inverter-only]` — per-tech NMOS/PMOS single-OP / DC-sweep / inverter VTC + transient (LEVEL=73) vs NGSPICE BSIM-CMG; `--inverter-only` restricts to the inverter VTC/transient gate. Production per-tech baseline: inverter gate 8/8, DC 55/55, tran 64/64. The bare `--tech` default (`TECH_ORDER`) also lists ASAP7 variants — out of scope, no checkpoints (Rule 14).
-**NN parametric harness (V6.3.2):** the PyCMG L3 parametric sweeps ported to DirectNet (LEVEL=73) via `tests/common/nn_sweep.py`. `verify_nn_multi_tech_dc.py` — single-device NMOS/PMOS Id-Vgs over L/NFIN/VT (55 configs, 4 TSMC techs). `verify_nn_multi_tech_tran.py` — inverter VTC + transient over P/N ratio, VDD, Cload, input slew, pulse width. Baseline-gated: the parametric sweep runs only for techs that pass baseline. Geometry/VT/VDD ride on `dataclasses.replace(TestTechConfig)`; only the inverter-transient circuit knobs needed a (behaviour-preserving) refactor of `verify_nn_dc_tran.py` (`InvCircuitParams`). Run with `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1` — the NN inverter VTC has ~±1% NRMSE run-to-run scatter (high-gain trip point; harness pins `torch` to 1 thread).
-**Complex circuits:** `verify_complex_{ring_osc,opamp,sram_snm,switchcap}.py` + `tests/common/complex.py` vs NGSPICE BSIM-CMG (4 circuits × 4 techs = 16 gates + the authoritative `force_ic` single-point ship gate). Parametric sweep mirror: `verify_complex_{opamp,ringosc,switchcap,sram}_sweep.py` + `tests/common/complex_sweep.py` (tech / VT / geometry / VDD / stimulus; baseline-gated, sha256-pinned). CPU-pinned, repo NGSPICE.
-**AC (LEVEL=72):** `verify_ac.py` — L1 passive RC (vs NGSPICE `.ac` + analytic), L2 BSIM-CMG common-source amp (vs NGSPICE `.ac`, identical OSDI model). 2/2 PASS, ~machine precision. CPU-pinned; needs `NGSPICE_BIN` (repo `tools/ngspice-45.2/bin/ngspice` on this machine).
-**NN AC (LEVEL=73):** `verify_nn_ac.py --tech TSMC<XX> [--device nmos,pmos]` — per-checkpoint NMOS/PMOS common-source amp vs NGSPICE BSIM-CMG (no load cap → device caps set the pole; each side at its own fresh-solved mid-rail OP; gate = gain0 ≤1.5 dB / f3db ratio ∈[0.7,1.43] / mag NRMSE ≤10%; phase = diagnostic). `verify_complex_opamp_ac.py --tech TSMC<XX>` — two-stage Miller opamp open-loop (gate = DC-gain ≤3 dB / GBW ratio ∈[0.6,1.67] / PM ≤15°). Shared infra `tests/common/complex_ac.py`. Both run in the S/M/L benchmark (`scripts/benchmark_run_tests.sh` → `benchmark_collect.py` "AC small-signal accuracy" section). CPU-pinned, `NGSPICE_BIN` + `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}`. RO + SRAM excluded (no stable amplifying OP for `.ac`).
-**Other:** `verify_bsimcmg_op.py` (OP <0.02% vs NGSPICE); lifted-source canary `verify_nn_lifted_source_dc.py` (NRMSE ≤10%, guards Rule 2).
-**Open-gate routing diagnostics (V6.5.5, no NGSPICE — L72-in-PyCircuitSim reference):** `tests/diag_nn_ring_trajectory.py` (charge-stamp toggle: conduction-vs-cap split of the ring period error), `tests/diag_opamp_op_decomp.py` (basin-vs-value-surface of the opamp gain), `tests/diag_opamp_basin_seed.py` (is the high-gain OP stable when seeded from ground truth?). These localized the 2 open gates and routed the corridor retrain.
+### BSIM-CMG ground truth (LEVEL=72)
 
-**V6.5.6 3-operator Phase-0 routing diagnostics + T1 lever (no NGSPICE for P0-1/3):** `tests/diag_opamp_kcl_residual.py` (P0-1, DECISIVE — opamp EXISTENCE-vs-CONTRACTION: net signed NN MOSFET current into {vtail,n1,vo1i,vout} at the L72 OP; vo1i F_rel large⇒existence, ~0⇒contraction; L72 self-check validates the sign assembly), `tests/diag_g3_cdd_match.py` (P0-2 — autograd cdd vs supervised cdd column vs OSDI on the CS-amp grid; D2=MATCH⇒f3db is OP-drift, charge lever dead), and the P0-4 beyond-corner HF-phase metric (`phase_{maxerr,rmse}_beyond_corner_deg` in `tests/common/complex_ac.py`, surfaced diagnostic-only in `verify_nn_ac.py`). **T1 net-node KCL-residual lever** (the GPU bet P0-1 routed to): `scripts/v6_5_5_harvest_kcl.py` (opamp OP-groups), `scripts/v6_5_5_finetune_kcl.py` (joint N+P KCL fine-tune from production `large` — KCL couples Mn2[N]/Mp4[P]; balanced per-step scaling + grad-clip + frozen embed + min-drift selection), `scripts/v6_5_5_gate_kcl.sh` (tsmc7-only gate). T1 SOLVED existence (vo1i 0.128→0.007) but the opamp gate needs the contraction lever and is preservation-bound; not installed (see CHANGELOG V6.5.6).
+- **OP:** `verify_bsimcmg_op.py` (<0.02% vs NGSPICE).
+- **DC:** L1 `verify_bsimcmg_dc.py` (2) · L2 `verify_bsimcmg_dc_comprehensive.py` (67) · L3 `verify_multi_tech_dc.py` (44).
+- **Transient:** L1 `verify_bsimcmg_tran.py` (1) · L2 `verify_bsimcmg_tran_comprehensive.py` (37) · L3 `verify_multi_tech_tran.py` (72).
+- **AC:** `verify_ac.py` — L1 passive RC (vs NGSPICE `.ac` + analytic), L2 BSIM-CMG common-source amp (identical OSDI). 2/2 PASS, ~machine precision.
 
-Quick sanity:
+### DirectNet NN (LEVEL=73)
+
+- **Device + inverter gate:** `verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16 [--inverter-only]` — per-tech NMOS/PMOS single-OP / DC-sweep / inverter VTC + transient. Production baseline: inverter 8/8, DC 55/55, tran 64/64. (The bare `--tech` default also lists ASAP7 — out of scope, Rule 14.)
+- **Parametric sweep (V6.3.2):** `verify_nn_multi_tech_dc.py` (Id-Vgs over L/NFIN/VT, 55 configs) + `verify_nn_multi_tech_tran.py` (inverter over P/N ratio, VDD, Cload, slew, pulse width) via `tests/common/nn_sweep.py`; baseline-gated. Pin `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1` (the high-gain VTC trip has ~±1% run-to-run scatter).
+- **AC:** `verify_nn_ac.py --tech TSMC<XX> [--device nmos,pmos]` — CS-amp, no load cap so device caps set the pole; gate = gain0 ≤1.5 dB / f3db ratio ∈[0.7,1.43] / mag NRMSE ≤10% (phase diagnostic). Needs `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}`.
+- **Lifted-source canary:** `verify_nn_lifted_source_dc.py` (NRMSE ≤10%, guards Rule 2).
+
+### Complex circuits (4 circuits × 4 techs = 16 gates)
+
+- **Single-point ship gates:** `verify_complex_{ring_osc,opamp,sram_snm,switchcap}.py` + `tests/common/complex.py`, plus the authoritative `force_ic` single-point ship gate.
+- **Parametric mirror:** `verify_complex_{opamp,ringosc,switchcap,sram}_sweep.py` + `tests/common/complex_sweep.py` (tech / VT / geometry / VDD / stimulus; baseline-gated, sha256-pinned); `verify_complex_sweep_canaries.py` guards single-point ↔ sweep equivalence.
+- **Opamp AC:** `verify_complex_opamp_ac.py --tech TSMC<XX>` — two-stage Miller open-loop (gate = DC-gain ≤3 dB / GBW ratio ∈[0.6,1.67] / PM ≤15°); shared infra `tests/common/complex_ac.py`. RO + SRAM are AC-excluded (no stable amplifying OP). The NN AC suites also run in the S/M/L benchmark (`scripts/benchmark_run_tests.sh` → `benchmark_collect.py` "AC small-signal accuracy").
+
+### Diagnostics (`tests/diag_*.py`, no NGSPICE — L72-in-PyCircuitSim reference)
+
+Not pass/fail gates — they localize open gates and route retrains; the verdicts they produced are recorded in the CHANGELOG.
+
+- **Ring / opamp ownership (V6.5.5):** `diag_nn_ring_trajectory.py` (conduction-vs-cap split), `diag_opamp_op_decomp.py` / `diag_opamp_basin_seed.py` (basin-vs-value-surface).
+- **3-operator routing (V6.5.6):** `diag_opamp_kcl_residual.py` (opamp EXISTENCE-vs-CONTRACTION), `diag_g3_cdd_match.py` (autograd-vs-supervised cdd), `diag_opamp_solver_conditioning.py` (high-gain-zero reachability); T1 KCL fine-tune infra `scripts/v6_5_5_{harvest,finetune,gate}_kcl.{py,sh}`.
+- **Native-L72 controls / switchcap:** `diag_l72_complex_control.py`, `diag_l72_switchcap_{control,uic_control}.py`, `diag_passgate_{iv_trajectory,step_probe,traj_dump}.py`, `diag_tg_conduction_nn_vs_l72.py`, `diag_nn_switchcap_trajectory.py`, `diag_nn_jacobian_consistency.py`.
+
+**Quick sanity:**
 
 ```bash
 python tests/verify_bsimcmg_op.py && python tests/verify_bsimcmg_dc.py && python tests/verify_bsimcmg_tran.py
@@ -352,10 +350,7 @@ Both LEVEL=73 (single-shot MLP, primary) and LEVEL=74 (autoregressive Transforme
 ## Other Tips
 
 * **Start every complex task in plan mode** — pour energy into the plan for 1-shot implementation. Re-plan the moment something goes sideways; enter plan mode for verification steps too.
-* If the plan has several solutions or stages, implement them in sequence. Use git commit first before you modify anything, keep the useful one that make progress and incorperate it. Otherwise, revert the solutions that were proven to be no help with git reset.
-* **Update CLAUDE.md before every git commit**.
-* Whenever there is a version update, update the `docs/CHANGELOG.md`.
-* Always record the dead end proposal (the one being reverted), they are as important as the successful ones.
+* If the plan has several solutions or stages, implement them in sequence. Use git commit first before you modify anything, keep the useful one that make progress and ingest the solution. Otherwise, revert the solutions that were proven to be no help with git reset.
+* Whenever there is a version update, update the `docs/CHANGELOG.md` with a new version number. Record the dead end proposal (the one being reverted), they are as important as the successful ones.
 * **Never be lazy** — never simplify code or skip tests. **NEVER** use simplified equations or self-defined CMG models as reference; ALWAYS use simulation results as ground truth.
-* **Use subagents** — second agent for staff-engineer plan review; multiple subagents on separate branches to try multiple solutions; roll back to main when a subagent hits a dead end.
 * Use **GPUs in parallel** when you train NN models.
