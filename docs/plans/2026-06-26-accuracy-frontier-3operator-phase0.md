@@ -2,6 +2,15 @@
 
 Date: 2026-06-26 (executed 2026-06-26/27) · Branch `V6.5.4` · Author: campaign notes
 
+> **⚠ CORRECTED (V6.5.7, 2026-06-27).** A 5-agent adversarial review found this
+> plan's close ("no high-gain zero exists / probe-closed / only T3 remains")
+> OVER-STRONG. The bind is full-system *stable existence* with `vout` the
+> never-supervised node (T1 pinned only `vo1i`); the cheap vout-prioritized
+> existence retrain was never run; fetlim and the residual-at-V\*_L72 argument are
+> dead/non-predictive. Forward routing now lives in
+> **`docs/plans/2026-06-27-tsmc7-opamp-vout-existence-retrain.md`** (CHANGELOG
+> V6.5.7). Read §8–10 below as the *executed history*, not the standing verdict.
+>
 > **STATUS — EXECUTED & CLOSED (V6.5.6). Production unchanged at 15/16.** §1–7 are the
 > original pre-execution analysis (kept as the rationale); **§8–10 are the results.**
 > Headline outcomes:

@@ -168,6 +168,12 @@ class KCLGroups:
         tcode = d["dev_tcode"].astype(int)
         self.n_free = self.arm.shape[1]
         self.device = device
+        # free-node names + the two predictive indices (V6.5.7 vout-prioritized
+        # lever): vo1i = stage-1 diff-pair/mirror balance; vout = output-stage
+        # balance (i_Mp6 - i_Mn7) — the node T1 never supervised.
+        self.free_nodes = [str(x) for x in d["free_nodes"]]
+        self.vo1i_idx = self.free_nodes.index("vo1i")
+        self.vout_idx = self.free_nodes.index("vout")
 
         def _t(a):
             return torch.tensor(np.asarray(a, dtype=np.float64),
@@ -213,10 +219,16 @@ class KCLGroups:
                 F[:, dv["source_free"]] = F[:, dv["source_free"]] + id_phys
         return F
 
-    def loss_and_frac(self) -> Tuple[torch.Tensor, np.ndarray]:
+    def loss_and_frac(self, node_w: torch.Tensor = None) -> Tuple[torch.Tensor, np.ndarray]:
         F = self.residual()
         rel = F / self.arm
-        loss = (rel ** 2).mean()
+        # node_w (len n_free) optionally up-weights a free node in the loss; None
+        # ⇒ the V6.5.6 uniform mean (byte-identical). The returned `frac` is ALWAYS
+        # the unweighted per-node RMS (used verbatim for epoch selection).
+        if node_w is None:
+            loss = (rel ** 2).mean()
+        else:
+            loss = (node_w.view(1, -1) * rel ** 2).mean()
         # per-free-node RMS fraction (diagnostic; index 2 = vo1i).
         frac = torch.sqrt((rel ** 2).mean(dim=0)).detach().cpu().numpy()
         return loss, frac
@@ -295,6 +307,15 @@ def main() -> int:
     ap.add_argument("--vo1i-target", type=float, default=0.02,
                     help="stage-1 balance F_rel below which KCL counts as fixed; "
                          "selection = min anchor-drift among epochs that reach it")
+    ap.add_argument("--vout-weight", type=float, default=1.0,
+                    help="V6.5.7 vout-prioritized lever: extra weight on the "
+                         "OUTPUT-stage balance node (vout) in the KCL loss. 1.0 = "
+                         "the V6.5.6 uniform mean (behavior-preserving); >1 drives "
+                         "the full vout-inclusive high-gain root T1 never created.")
+    ap.add_argument("--vout-target", type=float, default=None,
+                    help="if set, an epoch counts as 'fixed' only when vout F_rel "
+                         "is ALSO below this (AND vo1i-target). Default off = the "
+                         "V6.5.6 vo1i-only selection.")
     ap.add_argument("--freeze-embed", choices=["on", "off"], default="on",
                     help="freeze the tech embedding during fine-tune (the opamp "
                          "uses a single fixed code; freezing reduces drift)")
@@ -341,6 +362,13 @@ def main() -> int:
     # — KCL groups —
     kcl = KCLGroups(KCL_DIR / f"{scope}_opamp_kcl.npz", models, norms, device)
     print(f"  KCL groups: G={kcl.G} devices={kcl.ndev} free_nodes={kcl.n_free}")
+    # vout-prioritized node weighting (V6.5.7). All-ones ⇒ V6.5.6 uniform mean.
+    node_w = torch.ones(kcl.n_free, device=device)
+    node_w[kcl.vout_idx] = args.vout_weight
+    if args.vout_weight != 1.0:
+        print(f"  vout-prioritized KCL: node_w={node_w.tolist()} "
+              f"(vout idx={kcl.vout_idx}, vo1i idx={kcl.vo1i_idx}); "
+              f"vout_target={args.vout_target}")
 
     # — ring-corridor anchor (Track B: pin the shared NMOS switching region) —
     from bsimar.config import local_variant_code
@@ -410,7 +438,7 @@ def main() -> int:
             opt.zero_grad()
             la = crit(model_n(xn[bn], tech_codes=tcn[bn]), yn[bn], weights=lds_n[bn])
             lb = crit(model_p(xp[bp], tech_codes=tcp[bp]), yp[bp], weights=lds_p[bp])
-            lk, _ = kcl.loss_and_frac()
+            lk, _ = kcl.loss_and_frac(node_w)
             loss = la + lb + args.lam_kcl * kcl_step_scale * lk
             if args.ring_weight > 0:
                 lr_n = crit(model_n(ring["nmos"]["x"], tech_codes=ring["nmos"]["tc"]),
@@ -435,8 +463,11 @@ def main() -> int:
             kloss, frac = kcl.loss_and_frac()
         rise_n = (vn - base_val_n) / base_val_n
         rise_p = (vp - base_val_p) / base_val_p
-        fixed = float(frac[2]) < args.vo1i_target
-        # selection = min anchor drift among epochs that FIXED the KCL balance.
+        vout_ok = (args.vout_target is None) or \
+            (float(frac[kcl.vout_idx]) < args.vout_target)
+        fixed = (float(frac[kcl.vo1i_idx]) < args.vo1i_target) and vout_ok
+        # selection = min anchor drift among epochs that FIXED the KCL balance
+        # (vo1i, and vout too when --vout-target is set).
         drift = max(rise_n, rise_p)
         score = drift if fixed else float("inf")
         mark = ""
@@ -450,7 +481,9 @@ def main() -> int:
             print(f"  {epoch:3d} | anchor={run_anchor/ns:.5f} kcl={run_kcl/ns:.5f} "
                   f"sob={run_sob/ns:.4f} | val_n={vn:.5f}(+{rise_n*100:.0f}%) "
                   f"val_p={vp:.5f}(+{rise_p*100:.0f}%) "
-                  f"frac(vo1i)={frac[2]:.4f} {'FIXED' if fixed else 'open '}{mark}")
+                  f"frac(vo1i)={frac[kcl.vo1i_idx]:.4f} "
+                  f"frac(vout)={frac[kcl.vout_idx]:.4f} "
+                  f"{'FIXED' if fixed else 'open '}{mark}")
 
     if best_state is None:
         print("  WARNING: no epoch reached vo1i_target — saving FINAL "

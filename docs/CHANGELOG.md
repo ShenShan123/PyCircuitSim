@@ -6,6 +6,83 @@ isn't burdened with chronology.
 
 ---
 
+## V6.5.7 — panel-review correction: the V6.5.6 "probe-closed / no-zero-exists / T3-only" verdict was OVER-STRONG (branch `V6.5.4`, 2026-06-27)
+
+**Headline: a 5-agent adversarial review of the V6.5.6 tsmc7-opamp verdict found
+the diagnosis incomplete and the closing claims over-stated. The bind is NOT
+"existence-solved → contraction" and NOT "no high-gain zero exists / only T3
+remains." It is full-system STABLE EXISTENCE with `vout` as the never-supervised
+node. The cheapest lever that targets it — a vout-prioritized native-µA existence
+retrain — was then RUN (Rung 1) and is a clean KILL: it confirms the reframe but
+does not reach 16/16.** Production unchanged at 15/16; nothing installed. This
+entry softens three over-strong V6.5.6 phrases (flagged inline below) and records
+the reframe + the Rung-1 result. Forward plan + full Rung-1 data:
+`docs/plans/2026-06-27-tsmc7-opamp-vout-existence-retrain.md` (§4, §5).
+
+**Rung 1 EXECUTED (vout-prioritized existence retrain).** `finetune_kcl.py` gained
+`--vout-weight`/`--vout-target` (behavior-preserving at defaults). Sweep: vout-weight
+{16,64} × {`large`, k3_a} starts, ring-anchored, N2 off. **Baseline alone proves the
+reframe:** k3_a's start is `vo1i 0.009 / vout 0.279` — T1 fixed only `vo1i`; the
+output node sat at a 28 % residual. **Frontier:** `vout` F_rel floors at 0.062
+(only by wrecking the base surface, +492 % val) → 0.13 (at +31 % preservation-safe
+drift), vs the ~0.006 (≈1/gain) a high-gain zero needs — a ~10–20× gap with a hard
+`vout`↓ ⟺ anchor↑ anti-correlation. **Decisive probes:**
+`diag_opamp_solver_conditioning.py` finds 0 high-gain solutions / 20 starts on BOTH
+the preserved AND the surface-wrecking candidate; `verify_complex_opamp.py` (NGSPICE)
+on the clean candidate gives DirectNet gain 0.0 / FAIL. ⇒ the full `vout`-inclusive
+high-gain root is NOT creatable by KCL loss-weighting within preservation budget;
+the soft-wall is near-hard for this family. Routes to the heavier representation
+levers (EKV high-r_o core / T3), neither funded. `tsmc7_dn_kclV_w16k3a` kept as the
+existence-improved substrate.
+
+**What the review corrected (all unanimous across the panel):**
+- **"Existence was solved by T1" is only PARTIAL.** T1/k3_a pinned the stage-1
+  balance node `vo1i` (the `i_Mn2−i_Mp4` difference) and **never supervised
+  `vout`** (`scripts/v6_5_5_finetune_kcl.py:216-222` is a `mean` over free nodes
+  with `vout`'s arm floored at `ARM_FLOOR_A`, so its residual was structurally
+  under-measured). The full 4-node high-gain root (`vo1i` balanced AND `vout`
+  mid-rail *simultaneously*) was therefore never CREATED on k3_a. So the binding
+  failure is still full-system *existence* (with `vout` unpinned), re-cast as a
+  *stability* problem only because the partial root looked existent at `vo1i`.
+- **"Solver lever PROBE-CLOSED / no high-gain zero exists" overstates the probe.**
+  `diag_opamp_solver_conditioning.py` ran 20 *cold* multistarts seeded
+  effectively along a 1-D `vout` line (`:115-136`) with `vtail`/`n1` pinned and
+  `vo1i` clipped to L72. That proves "no high-gain solution *reachable by
+  multistart/seed/GMIN*," NOT "no zero exists." Pseudo-arclength (Keller)
+  branch-tracking — which traverses the near-singular fold the naive Norton
+  soft-pin homotopy already folds at (`solver.py:964-979`) — was never run.
+- **The `vout`-residual-at-V*_L72 non-existence argument is falsified by tsmc12.**
+  The PASSING tsmc12 control has `vout` F_rel ≈ 0.19 at its own L72 OP and still
+  passes (its NN zero V′ sits at slightly different node voltages than L72's V*),
+  per `diag_opamp_kcl_residual.py:135-141`. A large residual measured AT V*_L72 is
+  not evidence of non-existence; only branch-tracking probes the NN's own zero.
+- **The wall is a tech-specific SOFT *ratio* wall, not a universal MLP ceiling.**
+  A high-gain zero lands in-band only if `1/gain ≳` the achievable output-stage
+  cancellation precision (~1%). tsmc12 passes (lower gain, wider band); tsmc7
+  fails (ulvt + 0.7 V VDD → gain≈163 ⇒ 1/gain≈0.6% AND a narrower/steeper
+  high-gain Vin window). 0.6% needed vs ~1–1.5% raw is a ~2–3× gap, and T1's
+  native-µA signed-difference mechanism already closed `vo1i` ~18× (0.128→0.007)
+  — so a `vout`-prioritized output-stage-difference retrain is HARD-BUT-LIVE
+  (panel range ~12–30%), not "unattainable."
+- **fetlim is a DEAD lever.** The L72-in-PyCircuitSim opamp control lands gain
+  163–188 on the SAME continuation-first, fetlim-less PyCircuitSim path
+  (`diag_opamp_op_decomp.py:109-115`) — so voltage-limiting absence is not what
+  discards the NN's Newton step; the gap is purely the NN value surface. fetlim
+  conditions the path, cannot manufacture a zero or stabilize a repeller.
+- **Re-confirmed dead (no change):** Jacobian/gm-gds distillation and
+  decoupled-/separate-head stamping (P0-3 — the DC fixed-point *location* is a
+  pure function of `id` VALUES; gm/gds set only the Newton path; re-verified at
+  `mosfet_nn.py:629-643`); `force_ic`/`uic` pinning (releases and re-solves
+  unconstrained → an unstable OP diverges, strictly weaker than the 1c L72-seed
+  that already rails).
+
+**Corrected routing (the forward plan — cheapest-first ladder, the soft-wall
+odds disagreement, and the Rung-1 build spec) lives in
+`docs/plans/2026-06-27-tsmc7-opamp-vout-existence-retrain.md`**, not duplicated
+here. In one line: run the cheap vout-prioritized existence retrain (then validate
+stability by arclength + the full gate matrix) BEFORE escalating to the EKV-core
+or T3 levers, and before declaring a permanent representational limit.
+
 ## V6.5.6 — 3-operator Phase-0 routing + T1 KCL-residual lever: tsmc7 opamp EXISTENCE→CONTRACTION (branch `V6.5.4`, 2026-06-26)
 
 **Headline: the four zero-GPU Phase-0 diagnostics routed every open gap, and the
@@ -94,16 +171,23 @@ applying the wrong fix-class.
   15/16 (symlinks untouched). k2_a/k2_b/k2_c left on disk (gitignored) as the
   existence-fixed starting point for the contraction lever; the Track B ring-anchor
   (below) removes even the ring regression.
-- **Solver lever PROBE-CLOSED (`tests/diag_opamp_solver_conditioning.py`).** To test
-  whether the now-existent OP is reachable by a DC-safe solve (no retrain → no ring
-  risk), multi-started the opamp DC solve at vin* from a grid of mid-rail seeds ×
-  {stock damped+LM, GMIN homotopy}, on BOTH k2_c (T1) and production: **all 20
-  converged solutions RAIL (vout=0.000); ZERO high-gain solutions.** The 0.7% k2_c
-  residual is a small-residual SHELF, not an exact zero (an exact high-gain fixed
-  point needs F≈0 at ALL free nodes — vout's residual stays large), so no
-  seed/GMIN/trust-region lever has anything to converge to. ⇒ the solver side of G1
-  is closed; the retrain track (ring-anchored harder existence at ALL free nodes +
-  localized N2 contraction term) is the only remaining path. See plan §9.
+- **Solver lever PROBE-NEGATIVE (`tests/diag_opamp_solver_conditioning.py`).**
+  [⚠ V6.5.7 correction: this was originally written "PROBE-CLOSED / the solver
+  side is closed" — over-strong. The probe is 20 *cold multistarts* seeded
+  effectively along a 1-D `vout` line; it shows "not reachable by
+  multistart/seed/GMIN," not non-existence. Pseudo-arclength branch-tracking was
+  never run.] To test whether the now-existent OP is reachable by a DC-safe solve
+  (no retrain → no ring risk), multi-started the opamp DC solve at vin* from a grid
+  of mid-rail seeds × {stock damped+LM, GMIN homotopy}, on BOTH k2_c (T1) and
+  production: **all 20 converged solutions RAIL (vout=0.000); ZERO high-gain
+  solutions found.** The 0.7% k2_c residual is a small-residual SHELF, not an exact
+  zero (an exact high-gain fixed point needs F≈0 at ALL free nodes — and `vout` was
+  never supervised, so its residual stays large), so the multistart probe has
+  nothing to converge to. ⇒ a DC-safe solve on the *current* surface does not reach
+  a high-gain OP; the retrain track is the path of choice — but "create the full
+  `vout`-inclusive root first, then validate stability by arclength" (V6.5.7), not
+  "only T3 remains." See plan §9 and
+  `docs/plans/2026-06-27-tsmc7-opamp-vout-existence-retrain.md`.
 
 **Newly recorded dead-ends / learnings (T1 sub-campaign):**
 1. **Unbalanced KCL (computed every step on the same 59 groups) wrecks the
@@ -137,24 +221,28 @@ predicted gm/gds columns at the 59 opamp OPs, KCL-anchored). Sweep (k3_a/b/c):
   k3_c (sob=20) leave vo1i STUCK at 0.22–0.24 (worse than production 0.13) — pulling
   the autograd slope toward the predicted columns and pinning the KCL value are
   mutually exclusive on the shared id head (the S10 value/derivative conflict).
-- **No high-gain zero exists even with existence fixed + ring preserved.** The
-  solver-conditioning probe on k3_a (and k2_c) finds ZERO high-gain solutions (all
-  20 mid-rail seeds × {stock, GMIN} rail). So existence (KCL=0 at the L72 OP) is
-  necessary but NOT sufficient: the surface has no self-consistent high-gain DC
-  fixed point, and the only lever that would create one (N2) conflicts with
-  existence.
+- **No high-gain zero reachable by multistart, even with `vo1i` existence fixed +
+  ring preserved.** [⚠ V6.5.7 correction: originally "No high-gain zero EXISTS" —
+  over-strong. k3_a fixed existence only at `vo1i`; `vout` was never supervised, so
+  the full 4-node root was never created, and the multistart probe is
+  reachability-limited, not an existence proof.] The solver-conditioning probe on
+  k3_a (and k2_c) finds ZERO high-gain solutions (all 20 mid-rail seeds × {stock,
+  GMIN} rail). So `vo1i`-only existence is necessary but NOT sufficient; the
+  untested levers are (a) a `vout`-inclusive existence retrain and (b) arclength
+  branch-tracking to probe the NN's own zero — both in the V6.5.7 plan.
 
-**Verdict — the tsmc7 opamp is a precisely-characterized representational limit.**
-A stable high-gain DC fixed point cannot be realized on the single-id-head DirectNet
-surface while keeping it accurate: existence is achievable (T1) and preservation is
-achievable (ring anchor), but the two properties a passing OP needs — being a
-residual ZERO and being a Newton ATTRACTOR — are not co-achievable via KCL + N2
-(N2 destroys existence). k3_* NOT installed (opamp still fails; no gate-count gain);
-production stays 15/16. The only remaining un-attempted lever is **T3** (a
-differentiable unrolled-DC-solver / implicit-function supervision of the Vout(Vin)
-transfer curve, which would create a stable zero by construction) — a separate,
-heavy build (its own campaign), not part of Track B. The ring-anchor + harvest_kcl
-infra is kept committed for that future work.
+**Verdict (V6.5.6, since CORRECTED — see V6.5.7).** Originally recorded as "a
+precisely-characterized representational limit; the only remaining un-attempted
+lever is T3." The V6.5.7 panel review downgraded this to a **contingent** limit:
+what V6.5.6 actually established is that *`vo1i`-only* existence (T1) + ring
+preservation are co-achievable but do not pass, and that KCL + N2 cannot add Newton
+contraction without destroying that partial existence. It did NOT establish that a
+*full* `vout`-inclusive high-gain root is unrealizable — `vout` was never
+supervised, and the cheaper lever that targets it (a vout-prioritized existence
+retrain) was never run. T3 is the LAST resort, not the only path. k3_* NOT
+installed (opamp still fails; no gate-count gain); production stays 15/16. The
+ring-anchor + harvest_kcl infra is kept committed and is the substrate for both the
+vout-retrain (V6.5.7 plan) and any eventual T3 build.
 
 ## V6.5.5 — diagnostic-routed corridor retrain → 15/16 (branch `V6.5.4`, 2026-06-24/25)
 

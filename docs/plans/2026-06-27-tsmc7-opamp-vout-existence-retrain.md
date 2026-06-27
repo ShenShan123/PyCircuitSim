@@ -1,0 +1,229 @@
+# tsmc7 opamp → 16/16: the vout-prioritized existence retrain (and the cheap-first ladder)
+
+Date: 2026-06-27 · Branch `V6.5.4` · Supersedes the "only T3 remains" close of
+`2026-06-26-accuracy-frontier-3operator-phase0.md` (kept for rationale; its STATUS
+banner now points here). Recorded as CHANGELOG **V6.5.7**.
+
+> **TL;DR.** A 5-agent adversarial review of the V6.5.6 verdict found it
+> over-stated. The lone open gate (tsmc7 opamp DC gain→0) is NOT "existence-solved,
+> contraction-remaining, only T3 left." It is **full-system *stable existence* with
+> `vout` as the never-supervised node**, and the cheapest lever that targets it — a
+> **vout-prioritized native-µA existence retrain** — was never run. Climb a
+> cheapest-first ladder; escalate to the EKV-core and T3 levers only if the cheap
+> retrain fails. Production stays **15/16** until a candidate clears the full gate
+> matrix. Honest ceiling unchanged: **16/16 ≈ 1-in-5 to 1-in-4; plan for 15/16.**
+>
+> **⇒ RUNG 1 EXECUTED (2026-06-27) — KILL. See §5.** The vout-prioritized retrain
+> CONFIRMS the reframe but does NOT reach 16/16: the output-stage residual `vout`
+> floors at ~0.062 (only by wrecking the base surface, +492% val) to ~0.13 (at
+> safe preservation) — vs the ~0.006 a high-gain zero needs — and solver-
+> conditioning finds **0 high-gain solutions on every candidate** (gate gain still
+> 0.0). The soft wall is real and ~10–20× wide. Routes to Rung 3 (EKV core) /
+> Rung 4 (T3). Production unchanged 15/16.
+
+## 1. What the review corrected (why the old verdict was over-strong)
+
+The V6.5.6 close rested on three claims the panel falsified or qualified
+(unanimously, all code-cited):
+
+1. **"T1 solved existence."** Only *partially*. T1/k3_a pinned the stage-1 balance
+   node `vo1i` (`i_Mn2 − i_Mp4`) and **never supervised `vout`** — the KCL loss is a
+   uniform `mean` over the 4 free nodes (`finetune_kcl.py:216-222`) and the epoch
+   selection checks `vo1i` only (`:438`). So the *full* 4-node high-gain root
+   (`vo1i` balanced AND `vout` mid-rail simultaneously) was never created. The bind
+   is still full-system **existence** with `vout` unpinned — it only looked like a
+   pure "contraction" problem because the partial root existed at `vo1i`.
+2. **"No high-gain zero exists (probe-closed)."** Overstated. The
+   solver-conditioning probe is 20 *cold* multistarts seeded effectively along a
+   1-D `vout` line with `vtail`/`n1` pinned and `vo1i` clipped to L72
+   (`diag_opamp_solver_conditioning.py:115-136`). That proves *not reachable by
+   multistart/seed/GMIN*, not *non-existent*. Pseudo-arclength branch-tracking
+   (which traverses the near-singular fold the killed Norton soft-pin homotopy
+   folds at, `solver.py:964-979`) was never run.
+3. **"Representational limit, only T3 remains."** Contingent, not established. What
+   was shown: `vo1i`-only existence + ring preservation are co-achievable but don't
+   pass, and KCL + N2 cannot add Newton contraction without destroying the partial
+   existence. A *full* `vout`-inclusive root was never attempted.
+
+Supporting refinements:
+- **The wall is a tech-specific *soft ratio* wall, not a universal MLP ceiling.** A
+  high-gain zero lands in-band only if `1/gain ≳` the achievable output-stage
+  cancellation precision (~1%). tsmc12 passes (lower gain, wider band); tsmc7 fails
+  (ulvt + 0.7 V VDD → gain≈163 ⇒ 1/gain≈0.6% AND a narrower/steeper high-gain Vin
+  window). 0.6% needed vs ~1–1.5% raw is a **~2–3× gap** — and T1 already closed
+  `vo1i` ~18× (0.128→0.007) with the native-µA signed-difference trick. So pulling
+  the *output-stage* difference under ~0.6% is hard-but-live.
+- **`vout`-residual-at-V\*_L72 is non-predictive** (tsmc12 has `vout` F_rel ≈ 0.19
+  there and passes — its NN zero sits at V′ ≠ V\*; `diag_opamp_kcl_residual.py:135-141`).
+  Do not use it as an existence proxy; use a *post-retrain* solve/branch-track.
+
+## 2. Confirmed-dead levers (do NOT re-tread)
+
+- **fetlim / SPICE voltage-limiting as a fix.** The L72-in-PyCircuitSim opamp
+  control lands gain 163–188 on the SAME continuation-first, fetlim-less path
+  (`diag_opamp_op_decomp.py:109-115`) → voltage-limiting absence is not the
+  blocker; the gap is purely the NN value surface. fetlim conditions the path,
+  cannot manufacture a zero or stabilize a repeller.
+- **Jacobian / gm-gds distillation, decoupled- or separate-head stamping.** P0-3:
+  the DC fixed-point *location* is a pure function of `id` VALUES; gm/gds set only
+  the Newton path (re-verified `mosfet_nn.py:629-643`). Matching L72's high-r_o
+  Jacobian moves the path, not the zero — and the only way it touches the value
+  surface is the S10 weight-sharing collapse.
+- **N2 / id-Sobolev contraction on the shared id head.** k3_b/k3_c left `vo1i`
+  stuck at 0.22–0.24 (value/slope conflict on one output) — the S10 collapse.
+- **`force_ic` / `uic` pinning of `vout`.** Releases and re-solves unconstrained →
+  an unstable OP diverges (strictly weaker than the 1c L72-seed that already rails);
+  and for a single-valued opamp transfer it would measure the injected ground
+  truth, not the NN's emergent gain (goalpost-moving).
+- **Seed/ensemble sweep, broad-data retrain, capacity past `large`, µA-band
+  de-compression *value* retrain.** All recorded dead (V6.5.5 sweep; v648-s1;
+  v66-xl; v66 µA-band KILL).
+
+## 3. The cheapest-first ladder (each rung gates the next)
+
+| Rung | Lever | Cost | P(16/16) | Status |
+|---|---|---|---|---|
+| **1** | **vout-prioritized native-µA existence retrain from k3_a** (§4) | ~1 GPU-hr | ~12–30% | **DONE — KILL (§5).** vout floors 0.062–0.13 vs 0.006 needed; 0 high-gain solns; gate gain 0.0. Soft-wall near-hard for KCL family. |
+| **2** | Validate any candidate (solver-conditioning + optional arclength; full 16-gate + ring + canary) | ~1 CPU-hr | — | **DONE for Rung-1 candidates** (solver-cond + NGSPICE opamp gate run; all rail). |
+| **3** | Region-gated **high-r_o EKV core** as substrate (structural fix for the r_o-shape defect that makes the OP an unstable NN-surface fold) | ~1 day | ~15% | **NEXT if pursuing 16/16.** Changes the representation, not the loss — the only family V6.5.6/Rung-1 did NOT test (they killed the *loss* path to slope, never the *structural* one). |
+| **4** | **T3** unrolled-DC-solver MVP (overfit-hard at the trip-point, no anchor) → full campaign | ~1 day → 1–2 wk | ~15% | last resort; puts the SOLVE in the loss (existence+stability+level jointly). |
+| **5** | Document **permanent 15/16** with the sharpened verdict | — | — | the honest endpoint; Rung-1 already sharpened it (existence/precision wall, ~10–20× on vout). |
+
+**One live (action-neutral) disagreement:** the soft-wall odds — ~12% (near-hard)
+vs ~20–30% (clearly soft). It does not change the next action: run Rung 1 first.
+
+## 4. Rung 1 — build spec (this is what executes next)
+
+**Premise.** k3_a already gives existence at `vo1i` (0.009) + ring PASS (2.29%) +
+switchcap/SRAM/device-AC PASS — a clean, non-regressing start. The only missing
+ingredient is making `vout` (the output-stage balance `i_Mp6 − i_Mn7`) *also* a
+near-zero at the same OPs, so the full high-gain root exists. `F[vout]` is already
+assembled by the harvest (it is free-node index 3); it is simply never prioritized.
+
+**Code change (minimal, behavior-preserving at defaults), `scripts/v6_5_5_finetune_kcl.py`:**
+1. `KCLGroups.__init__`: store `self.free_nodes` (names from the npz) and the
+   `vo1i`/`vout` indices.
+2. `KCLGroups.loss_and_frac(node_w=None)`: optional per-free-node weight —
+   `loss = (node_w[None,:] * rel**2).mean()` (None ⇒ the current uniform mean,
+   byte-identical).
+3. `main()`: add `--vout-weight` (default 1.0) and `--vout-target` (default off).
+   Build `node_w = ones(n_free)`, set `node_w[vout_idx] = vout_weight`; pass it to
+   the training-loop `loss_and_frac`. Extend epoch selection so a candidate counts
+   as "fixed" only if `frac[vo1i] < vo1i_target` AND (`vout-target` off OR
+   `frac[vout] < vout_target`). All new args at default ⇒ prior k2/k3 runs reproduce.
+
+**Run (start from k3_a, ring-anchored, N2 OFF):**
+```bash
+CUDA_VISIBLE_DEVICES=0 OMP_NUM_THREADS=8 conda run -n pycircuitsim python -u \
+  scripts/v6_5_5_finetune_kcl.py --tech tsmc7 --cuda --overwrite \
+  --nmos-init tsmc7_dn_kcl3_a_nmos --pmos-init tsmc7_dn_kcl3_a_pmos \
+  --ring-weight <k3_a value> --lam-kcl 1.0 --lam-sob 0 \
+  --vout-weight 8 --vo1i-target 0.02 --vout-target 0.05 \
+  --epochs 60 --exp-name tsmc7_dn_kclV_w8
+```
+Sweep `--vout-weight ∈ {4,8,16}` (one GPU each, parallel) if the first is
+promising-but-marginal.
+
+**Validation gate (Rung 2 — run on each candidate via
+`PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}`):**
+1. `tests/diag_opamp_kcl_residual.py` — BOTH `vo1i` AND `vout` F_rel must drop.
+2. `tests/diag_opamp_solver_conditioning.py` — the **fund-or-kill** signal: does
+   any mid-rail seed now converge to a high-gain solution (gain>50)? (Optional
+   arclength capstone for rigor.)
+3. `tests/diag_opamp_basin_seed.py` (1c) — gain must HOLD >0 when L72-seeded.
+4. `tests/verify_complex_opamp.py` — the authoritative tsmc7 opamp gate.
+5. Full 16-gate matrix + device DC/AC + lifted-source canary — UNREGRESSED
+   (swapping only tsmc7's checkpoints touches only tsmc7's gates; ring is the
+   binding preservation risk).
+
+**Decision:**
+- vout F_rel drops AND a high-gain solution appears AND the gate passes AND
+  preservation holds → **install → 16/16.**
+- vout F_rel drops but the OP is still unstable (gate rails / 1c rails) →
+  existence-without-contraction confirmed at the *full* system → route to Rung 3
+  (EKV core) / Rung 4 (T3).
+- vout won't drop below the gain-demanded ~0.6% without nicking the ring →
+  the soft wall is binding at tsmc7 → quantified verdict, route to Rung 4 or 5.
+
+## 5. Rung 1 — EXECUTED (2026-06-27): KILL — the soft wall is real and ~10–20× wide
+
+**Code:** `scripts/v6_5_5_finetune_kcl.py` gained `--vout-weight` / `--vout-target`
++ vout-aware epoch selection (behavior-preserving at defaults; the `loss_and_frac`
+node weighting and selection now read the `vout` free-node index). Recipe matched
+k3_a (`--apply-filter off`, `--ring-weight 1.0 --lam-kcl 20 --lam-sob 0`); the
+default `--apply-filter on` was a real mismatch the norm-assert correctly caught
+(0.83 % filtered rows drift the normalizer 1.3e-3 off the `large`/k3_a checkpoints).
+
+**Sweep (3× RTX 4090, 80 epochs each):** large-start ×{w16, w64}, k3_a warm-start
+×w16. **Baseline confirms the reframe outright:** at the production `large` start
+`frac = [vtail 0.011, n1 0.132, vo1i 0.132, vout 0.121]`, and **k3_a's start is
+`vo1i 0.009 / vout 0.279`** — i.e. T1/k3_a fixed `vo1i` to 0.009 but left `vout` at
+a **28 % residual**: the full high-gain root never existed there, exactly as the
+panel argued.
+
+**The vo1i↔vout↔preservation frontier (quantified):**
+
+| run | best `vout` F_rel | `vo1i` there | anchor val-drift | reading |
+| --- | --- | --- | --- | --- |
+| w16 (large) | 0.108 | ~0.01 | +200–600 % | `vout` floors ~0.11–0.13, surface wrecked |
+| **w64 (large)** | **0.062** | 0.018 | **+492 %** | best `vout`, base surface destroyed |
+| **w16k3a** (k3_a) | 0.132 | 0.004 | **+31 %** | preservation-safe, `vout` stuck ~0.13 |
+
+A high-gain zero needs `vout` F_rel ≈ 1/gain ≈ **0.006**. Achievable is **0.062
+(10× too high, surface-wrecking) → 0.13 (20× too high, preserved)**, with a hard
+**anti-correlation** (driving `vout` down ⇒ the shared NMOS/PMOS heads blow up the
+base-data anchor — the S10 value-coupling, now on the value side).
+
+**Decisive probes (CPU, L72-in-PyCircuitSim, no inference):**
+- `diag_opamp_solver_conditioning.py` on BOTH the preserved (w16k3a) AND the
+  surface-wrecking (w64) candidates: **0 high-gain solutions / 20 starts; all rail**
+  (best |gain| = 0). No reachable high-gain OP was created.
+- `verify_complex_opamp.py --tech TSMC7` (authoritative, NGSPICE) on w16k3a:
+  **DirectNet gain = 0.0, gain err 99.99 %, FAIL** (NGSPICE truth 163.4).
+
+**Verdict.** The full `vout`-inclusive high-gain root is **not creatable by KCL
+loss-weighting within the preservation budget** on the single-id-head DirectNet
+surface. This is the *existence/precision* wall (not contraction): the output-stage
+current cancellation the gain demands (~0.6 %) is ~10–20× below what the value
+surface can hold while staying accurate. The disagreement between the panel's
+near-hard (~12 %) and soft (~20–30 %) reads resolves toward **near-hard** for the
+KCL-loss family. Nothing installed; production stays **15/16**. Candidate
+`tsmc7_dn_kclV_w16k3a` (preservation-safe, `vout` 0.279→0.13) is kept on disk as
+the existence-improved substrate for Rung 3/4; w16/w64 discarded (surface-wrecked).
+
+**Routing forward:** the value surface cannot represent the cancellation by *loss*;
+the remaining levers change the *representation* (Rung 3 — region-gated high-r_o EKV
+core, which supplies the saturation shape by physics rather than by the conflicted
+loss) or put the *solve* in the loss (Rung 4 — T3). Both are heavier; neither is
+funded yet.
+
+## 6. Lessons learned (reuse these — do not relearn)
+- **Retraining from `tsmc7_dn_large`/k3_a needs `--apply-filter off`.** The
+  `finetune_kcl.py` default `--apply-filter on` drops 0.83 % small-Id rows, drifting
+  the re-fit normalizer ~1.3e-3 off the checkpoint's stored norm → the
+  `_assert_norm_matches` guard (1e-3) aborts. The assert is CORRECT (it catches a
+  genuine preprocessing mismatch); match the checkpoint's recipe, don't relax it.
+- **The decisive metric is `diag_opamp_solver_conditioning.py`, NOT the `vout`
+  residual.** A low residual is necessary, not sufficient; only the multistart
+  (or arclength) shows whether a high-gain OP is actually reachable. Always run it
+  before claiming a candidate works, and the NGSPICE `verify_complex_opamp.py` for
+  the authoritative gain.
+- **`vout`↓ and base-anchor preservation are anti-correlated** on the single-id
+  head (driving the output-stage difference to zero blows up the device surface —
+  the S10 value/derivative conflict, now value-side). Loss-weighting cannot
+  separate them; a *structural* prior (Rung 3 EKV core) is the only way to decouple.
+- **Run the cheap probe BEFORE the heavy lever.** Rung 1 (~1 GPU-hr) converted the
+  open "is 16/16 reachable by the cheap existence lever?" into a hard KILL with a
+  quantified ~10–20× gap — saving a blind T3 campaign. Keep this discipline for
+  Rung 3/4: gate each on `diag_opamp_solver_conditioning.py` first.
+- **Update THIS plan file on every change/lesson** (standing user directive) so the
+  next session starts from the current frontier, not the original hypothesis.
+
+## 7. Status / housekeeping
+- Prerequisites on disk: `results/v6_5_5/kcl_groups/tsmc7_opamp_kcl.npz`,
+  `results/v6_5_5/corridors/tsmc7_ring_{nmos,pmos}_corridor.npz`,
+  `tsmc7_dn_kcl3_a_{nmos,pmos}` checkpoints. 3× RTX 4090 free.
+- Nothing installed; production resolver symlinks untouched. New candidates are
+  `tsmc7_dn_kclV_*` (gitignored), gated before any repoint.
+- This plan is the substrate for Rungs 3–4 as well (the ring-anchor + harvest_kcl
+  infra is shared).
