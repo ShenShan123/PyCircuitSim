@@ -1,6 +1,21 @@
 # Accuracy frontier across the test circuits: the 3-operator taxonomy + Phase-0 zero-GPU routing
 
-Date: 2026-06-26 · Branch `V6.5.4` (→ next) · Author: campaign notes
+Date: 2026-06-26 (executed 2026-06-26/27) · Branch `V6.5.4` · Author: campaign notes
+
+> **STATUS — EXECUTED & CLOSED (V6.5.6). Production unchanged at 15/16.** §1–7 are the
+> original pre-execution analysis (kept as the rationale); **§8–10 are the results.**
+> Headline outcomes:
+> - **Phase 0 routed everything.** D1 = EXISTENCE (P0-1); D2 = cdd-MATCH (P0-2, G3
+>   charge lever dead); P0-3 closed analytically; P0-4 made G4 visible.
+> - **G1 (tsmc7 opamp): existence SOLVABLE, preservation SOLVABLE, contraction NOT
+>   co-achievable.** T1 (net-node KCL loss) made the L72 OP a residual zero
+>   (vo1i F_rel 0.128→0.007 — the corridor never could); the ring-anchor preserved
+>   the ring (6.44%→2.29% PASS); but no high-gain *solver fixed point* exists even so,
+>   and the N2 contraction term *blocks* existence (value/slope conflict on the shared
+>   id head). The solver lever is probe-closed. ⇒ a stable high-gain DC fixed point is
+>   not realizable on the single-id-head DirectNet surface via KCL + N2. Only **T3**
+>   (a differentiable unrolled-DC-solver supervising Vout(Vin); §10) remains — a
+>   separate heavy campaign. Nothing installed; commits `ddfbd92 → 52a299b`.
 
 > **Thesis.** DirectNet (LEVEL=73) emits ONE surface (`id` + charges `qg/qd`), but the
 > solver reads it through THREE different operators, and each open gap needs a structurally
@@ -11,7 +26,7 @@ Date: 2026-06-26 · Branch `V6.5.4` (→ next) · Author: campaign notes
 > analysis workflow (6 grounded finders → 5 design lenses → adversarial verify of 20 levers,
 > 9 killed as re-treads → synthesis).
 
-## 0. Current state (settled)
+## 0. Current state (pre-execution snapshot; see §8–10 for executed verdicts)
 
 Production = best-config-per-tech (V6.5.5). **DC complex gates 15/16.** Four accuracy gaps:
 
@@ -21,13 +36,21 @@ Production = best-config-per-tech (V6.5.5). **DC complex gates 15/16.** Four acc
   gain there is ~142 (0.58× of L72=163). The high-gain mid-rail OP is UNSTABLE as a DC fixed
   point of KCL-with-NN-currents. Corridor *coverage* exhausted (medium+large × seeds
   {7,17,42,31} × W{3,8} all gain→0).
+  → **EXECUTED VERDICT (§8–10):** P0-1 refined this to an EXISTENCE failure; T1 SOLVED
+  existence (vo1i 0.128→0.007) and the ring-anchor solved preservation, but the
+  high-gain OP is still not a realizable solver fixed point (probe-closed) and N2
+  conflicts with existence ⇒ only T3 remains.
 - **G2 — opamp open-loop AC = 0/12.** Inherits G1; but tsmc12-large reproduces GBW 0.97× /
   PM 1.3° ⇒ the dynamics are right, only the DC-gain *level* (G1) is the miss. No independent
-  G2 lever.
+  G2 lever. → **gated entirely by G1; unchanged.**
 - **G3 — device CS-amp pole f3db = 13/24.** Gain 24/24 excellent; pole tech-variable
   (tsmc5-NMOS, tsmc12/16-PMOS under-predict output cap, ratio 1.1–1.6).
+  → **EXECUTED (P0-2, D2=MATCH):** autograd cdd ≈ supervised cdd ≈ OSDI ~0.1% ⇒ the
+  charge-derivative lever is dead; f3db is OP-drift owned. No retrain.
 - **G4 — Cgd-feedforward RHP-zero phase NOT reproduced** (30–80° off by the −3 dB corner).
   **Diagnostic-only — NOT a gate** (`verify_nn_ac.py` passband-masks phase).
+  → **EXECUTED (P0-4):** added a beyond-corner HF-phase metric (G4 now visible:
+  tsmc12 140–152° vs passband 35–41°). Fidelity-only; moves no gate.
 
 ## 1. The organizing insight — one surface, three operators
 
