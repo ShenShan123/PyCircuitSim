@@ -366,16 +366,16 @@ def parse_netlist(netlist_path: Path):
     return parser
 
 
-def render_directnet_netlist(template_path: Path, bt: BenchTech,
-                             out_path: Path) -> Path:
-    """Write a per-tech DirectNet netlist from an examples/ template.
+def render_directnet_text(template_text: str, bt: BenchTech) -> str:
+    """Per-tech rewrite of a DirectNet template's text (TECH/VT/VDD).
 
-    The examples/complex/*_directnet.sp files carry TSMC12/svt/0.80 V
-    placeholders; this swaps in the benchmark tech's TECH= / VT= / VDD so the
-    parser preempt cascade resolves the right ``tsmc{X}_dn_medium`` checkpoint.
+    Pure (string-in, string-out) so the single-point verify scripts can build
+    their ship-gate deck text WITHOUT touching the filesystem, and the
+    equivalence canary (verify_complex_sweep_canaries) can diff that exact text
+    against the sweep builders. ``render_directnet_netlist`` is the file-writing
+    wrapper around this.
     """
-    text = template_path.read_text()
-    text = text.replace("TECH=tsmc12", f"TECH={bt.nn_tech}")
+    text = template_text.replace("TECH=tsmc12", f"TECH={bt.nn_tech}")
     text = text.replace("VT=svt", f"VT={bt.vt}")
     # Rescale EVERY 0.80 V rail to the tech VDD. The templates are authored at
     # the TSMC12/16 rail (0.80 V); for the 0.65/0.75 V nodes every standalone
@@ -387,7 +387,18 @@ def render_directnet_netlist(template_path: Path, bt: BenchTech,
     # to VDD — different experiments (the tsmc5 switchcap "11.8% over-charge").
     # Geometry (`L=16n`, `NFIN=2`) carries no 0.80 token, so a whole-number
     # match is safe. A no-op on tsmc12/16 (0.80 -> 0.80).
-    text = re.sub(r"(?<![\w.])0\.80(?![\w])", f"{bt.vdd}", text)
+    return re.sub(r"(?<![\w.])0\.80(?![\w])", f"{bt.vdd}", text)
+
+
+def render_directnet_netlist(template_path: Path, bt: BenchTech,
+                             out_path: Path) -> Path:
+    """Write a per-tech DirectNet netlist from an examples/ template.
+
+    The examples/complex/*_directnet.sp files carry TSMC12/svt/0.80 V
+    placeholders; this swaps in the benchmark tech's TECH= / VT= / VDD so the
+    parser preempt cascade resolves the right ``tsmc{X}_dn_medium`` checkpoint.
+    """
+    text = render_directnet_text(template_path.read_text(), bt)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(text)
     return out_path
@@ -736,7 +747,11 @@ def directnet_ringosc(bt: BenchTech, p: RingOscParams, tstop: float) -> str:
                   f"Cl{i} n{i} 0 {_cap(p.cload)}"]
     lines += [f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})",
               f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})",
-              f".tran {_tp(p.tstep)} {_tn(tstop)}", ".end"]
+              # `uic` matches the ship-gate template (ring_osc_5stage_directnet.sp:37);
+              # the sweep transient runner pins .ic nodes regardless, but keeping the
+              # token makes the deck byte-faithful so verify_complex_sweep_canaries
+              # stays green (bug report B2).
+              f".tran {_tp(p.tstep)} {_tn(tstop)} uic", ".end"]
     return "\n".join(lines) + "\n"
 
 
@@ -777,7 +792,10 @@ def directnet_switchcap(bt: BenchTech, p: SwitchCapParams) -> str:
         f".ic V(vsamp)=0.0 V(phib)={_f(bt.vdd)}\n"
         f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})\n"
         f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})\n"
-        f".tran {_tp(p.tstep)} {_tn(tstop)}\n"
+        # `uic` matches the ship-gate template (switchcap_unitcell_directnet.sp:33);
+        # byte-faithful with the single-point deck so the equivalence canary is
+        # green (bug report B2). The sweep runner pins .ic nodes regardless.
+        f".tran {_tp(p.tstep)} {_tn(tstop)} uic\n"
         f".end\n")
 
 

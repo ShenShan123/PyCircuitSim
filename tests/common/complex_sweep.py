@@ -66,6 +66,7 @@ RINGOSC_TSTOP_CAP = 8e-9     # bound the worst ring corner (M3)
 SC_CHARGE_TOL = 0.05         # charge transfer, fraction of VDD
 SC_DROOP_TOL = 0.10          # hold droop, relative part
 SC_DROOP_FLOOR = 1e-3        # absolute floor on the droop gate (0.1% VDD)
+SRAM_NRMSE_TOL = 0.10        # butterfly-lobe curve NRMSE vs NGSPICE (B5/B7)
 
 # --- sweep dimensions -------------------------------------------------------
 SHARED_DIMS = ["vt_sym", "vt_asym", "l", "nfin", "pn_ratio", "vdd"]
@@ -152,13 +153,20 @@ def _shared_variants(tech_key: str,
                                 f"vt_{vn}_{vp}",
                                 {"nmos_vt": vn, "pmos_vt": vp}))
     elif dimension == "l":
+        # NMOS-only sweep (PMOS pinned at its default). Skip both the baseline
+        # (l_val == l_nmos) AND the value that equals the PMOS default — there
+        # the (l_val, l_pmos) pair collapses to (l_val, l_val), a duplicate of
+        # the symmetric `lsym_{l_val}` point below (bug report B11). Same logic,
+        # mirrored, for the PMOS-only sweep.
         for l_val in prof.l_values:
-            if abs(l_val - bt0.l_nmos) > 1e-15:
+            if (abs(l_val - bt0.l_nmos) > 1e-15
+                    and abs(l_val - bt0.l_pmos) > 1e-15):
                 out.append((bench_variant(bt0, l_nmos=l_val),
                             f"ln_{l_val*1e9:.0f}nm",
                             {"l_nmos_nm": round(l_val * 1e9)}))
         for l_val in prof.l_values:
-            if abs(l_val - bt0.l_pmos) > 1e-15:
+            if (abs(l_val - bt0.l_pmos) > 1e-15
+                    and abs(l_val - bt0.l_nmos) > 1e-15):
                 out.append((bench_variant(bt0, l_pmos=l_val),
                             f"lp_{l_val*1e9:.0f}nm",
                             {"l_pmos_nm": round(l_val * 1e9)}))
@@ -500,17 +508,23 @@ def run_single_sram(cfg: ComplexSweepConfig,
     dn_snm = snm_from_lobes(dn_q, dn_qb)
     dn_min = float(np.min(dn_qb))
     positive = dn_min >= -1e-3
+    nrmse_ok = m["nrmse_pct"] <= SRAM_NRMSE_TOL * 100
     snm_err = (abs(dn_snm - ng_snm) / ng_snm * 100.0
                if ng_snm > 1e-6 else float("nan"))
-    fic_ok = True
+    # B7: the SRAM sweep baseline must use the SAME pass definition as the
+    # authoritative single-point ship gate (verify_complex_sram_snm) —
+    # positivity AND NGSPICE-NRMSE tracking. force_ic is a self-consistency
+    # convergence probe (not an NGSPICE comparison): it is reported but NOT
+    # gated, exactly as in the ship gate. Previously the sweep AND'd force_ic,
+    # so a force_ic miss (it fails on the steep TSMC5/16 techs) sank the whole
+    # SRAM sweep via baseline-gating while the ship gate passed.
     fic_gated = abs(p.wl_frac - 1.0) < 1e-9
-    if fic_gated:
-        fic_ok = _sram_force_ic(bt, nfin, work_dir)
-    passed = positive and fic_ok
+    fic_ok = _sram_force_ic(bt, nfin, work_dir) if fic_gated else None
+    passed = positive and nrmse_ok
     return _result(cfg, passed, m, {
         "metric": "snm_err%", "value": snm_err, "ng_snm_mV": ng_snm * 1e3,
         "dn_snm_mV": dn_snm * 1e3, "snm_err_pct": snm_err,
-        "min_qb_mV": dn_min * 1e3, "positive": positive,
+        "min_qb_mV": dn_min * 1e3, "positive": positive, "nrmse_ok": nrmse_ok,
         "force_ic": ("ok" if fic_ok else "FAIL") if fic_gated else "—"})
 
 

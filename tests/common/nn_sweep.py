@@ -364,7 +364,11 @@ def run_single_nn_inv(
             test = run_pycircuitsim_nn_inverter_tran(
                 tech, work_dir, NN_LEVEL, NN_MODEL_NAME, dn_n, dn_p,
                 circuit=circuit)
-            if len(test["time"]) < 3:
+            # B4: a mid-transient NR divergence is recovered as a truncated
+            # waveform (`_nr_partial`); curve_metrics would score only the
+            # matching prefix and a railed-then-diverged run could pass. Treat
+            # either an explicit partial flag or a too-short waveform as FAIL.
+            if test.get("_nr_partial") or len(test["time"]) < 3:
                 raise RuntimeError("NN transient truncated — NR diverged")
             m = curve_metrics(
                 ref["time"], ref["v(out)"], test["time"], test["v(out)"],

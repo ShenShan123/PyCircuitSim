@@ -18,11 +18,12 @@ derivative fidelity.
 Geometry is pinned to the checkpoint training bins (NMOS L=16n, PMOS L=20n,
 NFIN from the tech profile) so the model interpolates, not extrapolates.
 
-Bias: the amplifier operating point is the peak-|dVout/dVin| point found on the
-NGSPICE side (a well-defined high-gain saturation bias); the IDENTICAL Vin is
-applied to both decks. Each side then linearizes about its OWN DC OP, so the
-result is the realistic end-to-end AC accuracy a user would see (it folds in any
-NN Vth offset, exactly as a real AC sim would).
+Bias: the amplifier operating point is the mid-rail (Vout ≈ VDD/2) point — a
+well-defined high-gain amplifying bias — located on the NGSPICE side
+(``find_ng_bias``) and, independently, on the DirectNet side (``find_nn_bias``).
+Each side linearizes about its OWN mid-rail DC OP, so the result is the
+realistic end-to-end AC accuracy a user would see (it folds in any NN Vth
+offset, exactly as a real AC sim would).
 
 Run CPU-pinned, repo ngspice (CLAUDE.md gate methodology):
 

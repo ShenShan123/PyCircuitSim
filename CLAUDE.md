@@ -249,7 +249,7 @@ All tests require `conda activate pycircuitsim`. Ground truth is **always** NGSP
 
 ### Complex circuits (4 circuits × 4 techs = 16 gates)
 
-- **Single-point ship gates:** `verify_complex_{ring_osc,opamp,sram_snm,switchcap}.py` + `tests/common/complex.py`, plus the authoritative `force_ic` single-point ship gate.
+- **Single-point ship gates:** `verify_complex_{ring_osc,opamp,sram_snm,switchcap}.py` + `tests/common/complex.py`. Every gate is scored against NGSPICE BSIM-CMG ground truth (ring period, opamp gain, switchcap charge/droop, SRAM butterfly positivity **+ NGSPICE-NRMSE tracking**). The SRAM `force_ic` 6T-latch convergence probe is a printed **diagnostic**, NOT a gate (it is a self-consistency check, not an NGSPICE comparison; it currently rails on TSMC7/12 and not TSMC5/16).
 - **Parametric mirror:** `verify_complex_{opamp,ringosc,switchcap,sram}_sweep.py` + `tests/common/complex_sweep.py` (tech / VT / geometry / VDD / stimulus; baseline-gated, sha256-pinned); `verify_complex_sweep_canaries.py` guards single-point ↔ sweep equivalence.
 - **Opamp AC:** `verify_complex_opamp_ac.py --tech TSMC<XX>` — two-stage Miller open-loop (gate = DC-gain ≤3 dB / GBW ratio ∈[0.6,1.67] / PM ≤15°); shared infra `tests/common/complex_ac.py`. RO + SRAM are AC-excluded (no stable amplifying OP). The NN AC suites also run in the S/M/L benchmark (`scripts/benchmark_run_tests.sh` → `benchmark_collect.py` "AC small-signal accuracy").
 

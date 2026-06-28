@@ -6,6 +6,63 @@ isn't burdened with chronology.
 
 ---
 
+## Test-infrastructure correctness sprint — 11 bugs fixed (branch `V6.5.4`, 2026-06-28)
+
+Audit-driven fix of the verification harness (`docs/test-infra-bug-report-2026-06-28.md`).
+Two defects made a green run untrustworthy and several let a real failure score PASS.
+**Production pass-rates are unchanged** (NN device 24/24; complex 15/16 = ring 4/4 +
+opamp 3/4 + switchcap 4/4 + sram 4/4) — every fix was verified against NGSPICE BSIM-CMG
+ground truth to confirm no regression. NGSPICE is the golden truth throughout.
+
+- **B1 (CRITICAL) — per-tech device gates pinned ONE tech's net.** The DC / PMOS-DC /
+  NMOS-tran device runners in `verify_nn_dc_tran.py` appended `MODEL_PATH=` for the
+  `directnet_v4` alias unconditionally, so TSMC7/12/16 were all served the **tsmc5**
+  checkpoint at its UNKNOWN tech-code (4). Routed all 5 `model_path` sites (3 device
+  runners + 2 diagnostics) through `_cascade_handles_stem` (now covers
+  `tsmc{5,7,12,16}_dn_*` + `refac_dn_*`); omitting MODEL_PATH lets the parser preempt
+  cascade resolve each tech's own net. Verified: each tech now logs
+  `-> tsmc{X}_dn_medium ... tech_code∈{0,1,2}`, NN device suite 24/24. Env pins still
+  win (the parser reads them before the preempt).
+- **B2 (HIGH) — sweep↔ship-gate equivalence canary was RED.** The sweep `.tran`
+  builders (`complex.py`) dropped `uic`; added it back (byte-faithful with the
+  templates). Canary 8 failures → 0.
+- **B3 (HIGH) — SRAM scored PASS when every corner errored** (`all([]) == True`).
+  Verdict now `bool(comparable) and all(...)`.
+- **B4 (HIGH, latent) — diverged inverter transient could score PASS.** The
+  `_nr_partial` "fail-loud" flag was set but never read; a divergence after a railed
+  prefix gives nrmse≈0. Now an automatic FAIL in `run_inverter_tran_tests` and in
+  `nn_sweep.run_single_nn_inv`.
+- **B5 (MED) — SRAM verdict never compared to ground truth.** Gated only on butterfly
+  positivity. Now ANDs **point-by-point NGSPICE-NRMSE tracking** (≤10%, the suite NN
+  tolerance) — robust where the derived SNM scalar is not (it swings 68% at one TSMC7
+  corner while the curve NRMSE stays ~3%). `force_ic` is reconciled as a printed
+  **diagnostic** (a self-consistency probe, not an NGSPICE comparison; it rails on
+  TSMC7/12 only) in the gate, the docstring, and CLAUDE.md.
+- **B6 (MED) — ASAP7 not skipped in `run_dc_tests`/`run_tran_tests`** (Rule 14). Added
+  the `tech_code_in_vocab` skip the other runners already had.
+- **B7 (MED) — SRAM sweep baseline ≠ ship gate.** `run_single_sram` AND'd `force_ic`,
+  so a force_ic miss sank the whole sweep where the ship gate passed. Aligned to the
+  ship-gate definition (positive + NRMSE; force_ic diagnostic) and added an SRAM canary.
+- **B8 (MED) — equivalence canary was partly hollow.** It diffed hand-copied replicas
+  (and only asserted the NGSPICE body was "non-degenerate"). Extracted pure deck
+  builders (`directnet_*_deck` / `ngspice_*_body`, plus `render_directnet_text`) in the
+  single-point scripts and rewrote the canary to diff the **real** ship-gate decks for
+  BOTH the DirectNet and NGSPICE sides of all four circuits (32/32 checks).
+- **B9 (LOW/MED) — `partial` not gated** in the switchcap/ring single-point gates;
+  `passed = … and not partial`.
+- **B10 (LOW) — single-point gates always `return 0`.** Now `return 0 if n_pass ==
+  n_total else 1` (all consumers parse stdout / use `set -u` + explicit `rc=$?`, so the
+  honest exit code is additive, not breaking).
+- **B11 (LOW) — misc.** Deduped the `l`-sweep variant set (`ln_{lp}`/`lp_{ln}`
+  duplicated `lsym`); fixed the `verify_nn_ac.py` bias docstring (mid-rail, not
+  peak-|dVout/dVin|). Left by design: checkpoint-drift stays warn-by-default (drift IS
+  printed; `--pin-strict` opt-in; strict-default fights the retrain-freely workflow),
+  and off-bin L/NFIN gating is unchanged (expectation already documented; off-bin
+  classification is unreliable without the per-tech training bins, and soft-gating
+  risks masking real regressions).
+
+---
+
 ## V6.5.8 — BREAKTHROUGH: EKV high-r_o core + vout-weighted KCL breaks the tsmc7-opamp rail (branch `V6.5.4`, 2026-06-28)
 
 **Headline: the V6.5.6/V6.5.7 "the single-id-head surface cannot host a reachable

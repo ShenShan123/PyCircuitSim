@@ -47,7 +47,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tes
 from tests.common.complex import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech,
     get_baked_modelcard, run_ngspice_wrdata,
-    render_directnet_netlist, run_directnet_transient, full_metrics, fmt_metrics,
+    render_directnet_text, run_directnet_transient, full_metrics, fmt_metrics,
 )
 
 CHARGE_TOL = 0.05          # +/-5% of VDD on charge-transfer level
@@ -73,8 +73,11 @@ def _at(t: np.ndarray, v: np.ndarray, t0: float) -> float:
     return float(np.interp(t0, t, v))
 
 
-def run_ngspice_sc(bt: BenchTech, work_dir: Path) -> Dict[str, np.ndarray]:
-    baked = get_baked_modelcard(bt, bt.nfin, work_dir)
+def ngspice_sc_body(bt: BenchTech, baked: Path) -> Dict[str, str]:
+    """Single-point NGSPICE switched-cap ground-truth deck body.
+
+    Pure (returns text) so verify_complex_sweep_canaries can diff it against the
+    parametric ``tests.common.complex.ngspice_switchcap`` builder (B8)."""
     n, p = bt.nmos_model, bt.pmos_model
     vin = _vin(bt)
     body = [f'.include "{baked}"', ".temp 27", f"Vdd vdd 0 {bt.vdd}",
@@ -83,19 +86,31 @@ def run_ngspice_sc(bt: BenchTech, work_dir: Path) -> Dict[str, np.ndarray]:
             f"Npc phib phi vdd vdd {p}", f"Nnc phib phi 0 0 {n}",
             f"Nnt vin phi vsamp 0 {n}", f"Npt vin phib vsamp vdd {p}",
             "Csample vsamp 0 100f", f".ic v(vsamp)=0 v(phib)={bt.vdd}"]
-    data = run_ngspice_wrdata("\n".join(body), "v(vsamp)", work_dir,
-                              f"sc_{bt.name}",
-                              f"tran {TRAN_TSTEP:.1e} {TRAN_TSTOP:.1e} uic")
+    return {"body": "\n".join(body), "signals": "v(vsamp)",
+            "analysis": f"tran {TRAN_TSTEP:.1e} {TRAN_TSTOP:.1e} uic"}
+
+
+def directnet_sc_deck(bt: BenchTech) -> str:
+    """Single-point DirectNet switched-cap ship-gate deck text (render + Vin
+    rewrite). Pure text so the canary diffs the REAL deck against the sweep
+    builder rather than a hand-copied replica (B8). The template ships Vin at
+    0.48 (0.6*0.80); rewrite per tech."""
+    text = render_directnet_text(TEMPLATE.read_text(), bt)
+    return text.replace("Vin vin 0 0.48", f"Vin vin 0 {_vin(bt)}")
+
+
+def run_ngspice_sc(bt: BenchTech, work_dir: Path) -> Dict[str, np.ndarray]:
+    baked = get_baked_modelcard(bt, bt.nfin, work_dir)
+    spec = ngspice_sc_body(bt, baked)
+    data = run_ngspice_wrdata(spec["body"], spec["signals"], work_dir,
+                              f"sc_{bt.name}", spec["analysis"])
     return {"time": data[:, 0], "vsamp": data[:, 1]}
 
 
 def run_directnet_sc(bt: BenchTech, work_dir: Path):
-    netlist = render_directnet_netlist(
-        TEMPLATE, bt, work_dir / f"switchcap_{bt.name}.sp")
-    # template ships Vin at 0.48 (0.6*0.80); rewrite per tech
-    text = netlist.read_text()
-    text = text.replace("Vin vin 0 0.48", f"Vin vin 0 {_vin(bt)}")
-    netlist.write_text(text)
+    netlist = work_dir / f"switchcap_{bt.name}.sp"
+    netlist.parent.mkdir(parents=True, exist_ok=True)
+    netlist.write_text(directnet_sc_deck(bt))
     results, partial, err = run_directnet_transient(netlist)
     return {"time": np.asarray(results["time"]),
             "vsamp": np.asarray(results["vsamp"])}, partial, err
@@ -153,7 +168,10 @@ def run_one(bt: BenchTech) -> Dict:
     droop_err = droop_abs / droop_allow * 100.0
     charge_ok = charge_err <= CHARGE_TOL * 100
     droop_ok = droop_abs <= droop_allow
-    passed = charge_ok and droop_ok
+    # A transient that diverged mid-run (NR truncated) leaves the sample/hold
+    # reads on a clamped np.interp tail and can land in tolerance by accident —
+    # fail loud instead (bug report B9).
+    passed = charge_ok and droop_ok and not partial
     print(f"    waveform: {fmt_metrics(metrics)}")
     print(f"    charge err={charge_err:.2f}% of VDD  "
           f"droop |dn-ng|={droop_abs*1e3:.3f}mV "
@@ -210,7 +228,8 @@ def main() -> int:
               f"{r['droop_pct_of_allowance']:10.1f} | "
               f"{r['nrmse_pct']:7.2f} | {status:>8s}")
     print(f"\n  {n_pass}/{len(results)} passed both charge + droop gates")
-    return 0
+    # B10: surface the verdict in the exit code (consumers also parse stdout).
+    return 0 if n_pass == len(results) else 1
 
 
 if __name__ == "__main__":

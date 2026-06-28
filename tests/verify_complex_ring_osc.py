@@ -37,7 +37,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tes
 from tests.common.complex import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech,
     get_baked_modelcard, run_ngspice_wrdata,
-    render_directnet_netlist, run_directnet_transient, full_metrics, fmt_metrics,
+    render_directnet_text, run_directnet_transient, full_metrics, fmt_metrics,
 )
 
 PERIOD_TOL = 0.05          # +/-5% gate
@@ -70,8 +70,12 @@ def _period_from_wave(t: np.ndarray, v: np.ndarray, mid: float,
     return float(np.mean(np.diff(times)))
 
 
-def run_ngspice_ro(bt: BenchTech, work_dir: Path) -> Dict[str, np.ndarray]:
-    baked = get_baked_modelcard(bt, bt.nfin, work_dir)
+def ngspice_ring_body(bt: BenchTech, baked: Path) -> Dict[str, str]:
+    """Single-point NGSPICE ring-osc ground-truth deck body (no .control/.end).
+
+    Pure (returns text) so verify_complex_sweep_canaries can diff it against the
+    parametric ``tests.common.complex.ngspice_ringosc`` builder (bug report B8).
+    """
     nd = ["n1", "n2", "n3", "n4", "n5"]
     body = [f'.include "{baked}"', ".temp 27", f"Vdd vdd 0 {bt.vdd}"]
     for i in range(5):
@@ -79,20 +83,34 @@ def run_ngspice_ro(bt: BenchTech, work_dir: Path) -> Dict[str, np.ndarray]:
                  f"Nn{i} {nd[i]} {nd[i-1]} 0 0 {bt.nmos_model}",
                  f"Cl{i} {nd[i]} 0 0.5f"]
     body.append(f".ic v(n1)=0 v(n2)={bt.vdd} v(n3)=0 v(n4)={bt.vdd} v(n5)=0")
-    data = run_ngspice_wrdata("\n".join(body), "v(n5)", work_dir,
-                              f"ro_{bt.name}",
-                              f"tran {TRAN_TSTEP:.1e} {TRAN_TSTOP:.1e} uic")
+    return {"body": "\n".join(body), "signals": "v(n5)",
+            "analysis": f"tran {TRAN_TSTEP:.1e} {TRAN_TSTOP:.1e} uic"}
+
+
+def directnet_ring_deck(bt: BenchTech) -> str:
+    """Single-point DirectNet ring-osc ship-gate deck text (render + window
+    rewrite). The `.tran` token uses the same ``{:g}`` formatting as the sweep
+    builder (``.tran 2p 1.2n uic``) so the equivalence canary is byte-faithful
+    against the REAL deck rather than a hand-copied replica (bug report B8).
+    ``2p 1.2n`` and ``2p 1.20n`` parse identically — this is cosmetic."""
+    text = render_directnet_text(TEMPLATE.read_text(), bt)
+    return text.replace(
+        ".tran 1p 5n",
+        f".tran {TRAN_TSTEP*1e12:g}p {TRAN_TSTOP*1e9:g}n")
+
+
+def run_ngspice_ro(bt: BenchTech, work_dir: Path) -> Dict[str, np.ndarray]:
+    baked = get_baked_modelcard(bt, bt.nfin, work_dir)
+    spec = ngspice_ring_body(bt, baked)
+    data = run_ngspice_wrdata(spec["body"], spec["signals"], work_dir,
+                              f"ro_{bt.name}", spec["analysis"])
     return {"time": data[:, 0], "v(n5)": data[:, 1]}
 
 
 def run_directnet_ro(bt: BenchTech, work_dir: Path):
-    netlist = render_directnet_netlist(
-        TEMPLATE, bt, work_dir / f"ring_osc_{bt.name}.sp")
-    # match the (short) measurement window used for NGSPICE
-    text = netlist.read_text().replace(
-        ".tran 1p 5n",
-        f".tran {TRAN_TSTEP*1e12:.0f}p {TRAN_TSTOP*1e9:.2f}n")
-    netlist.write_text(text)
+    netlist = work_dir / f"ring_osc_{bt.name}.sp"
+    netlist.parent.mkdir(parents=True, exist_ok=True)
+    netlist.write_text(directnet_ring_deck(bt))
     results, partial, err = run_directnet_transient(netlist)
     return {"time": np.asarray(results["time"]),
             "v(n5)": np.asarray(results["n5"])}, partial, err
@@ -132,7 +150,11 @@ def run_one(bt: BenchTech) -> Dict:
 
     per_err = (abs(dn_per - ng_per) / ng_per * 100.0
                if np.isfinite(dn_per) and ng_per > 0 else float("nan"))
-    passed = np.isfinite(per_err) and per_err <= PERIOD_TOL * 100
+    # A truncated (NR-diverged) transient usually loses crossings -> NaN -> FAIL,
+    # but a divergence *after* the measurement window can still land in
+    # tolerance on the clamped tail — fail loud on a partial waveform (B9).
+    passed = (np.isfinite(per_err) and per_err <= PERIOD_TOL * 100
+              and not partial)
     print(f"    waveform: {fmt_metrics(metrics)}")
     print(f"    period error = {per_err:.2f}%  ->  "
           f"{'PASS' if passed else 'FAIL'}")
@@ -183,7 +205,8 @@ def main() -> int:
               f"{dn*1e12:11.2f} | {r['period_err_pct']:8.2f} | "
               f"{r['nrmse_pct']:7.2f} | {r['r2']:7.4f} | {status:>8s}")
     print(f"\n  {n_pass}/{len(results)} within +/-{PERIOD_TOL*100:.0f}% period gate")
-    return 0
+    # B10: surface the verdict in the exit code (consumers also parse stdout).
+    return 0 if n_pass == len(results) else 1
 
 
 if __name__ == "__main__":

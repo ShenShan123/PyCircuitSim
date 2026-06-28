@@ -19,8 +19,12 @@ It additionally solves the full cross-coupled 6T cell with ``force_ic=True``
 (hard .ic mode) to confirm both storage states land on their rails — the same
 solver path SRAM latches need.
 
-Gate: both DirectNet butterfly curves positive (Vout >= 0) across NFIN
-corners, and SNM tracking the NGSPICE reference.
+Gate: across NFIN corners, both DirectNet butterfly curves are positive
+(Vout >= 0) AND track the NGSPICE BSIM-CMG reference point-by-point
+(curve NRMSE <= 10%). The derived SNM *scalar* error and the full-6T
+``force_ic`` convergence probe are reported as diagnostics only — they do
+NOT enter the verdict (force_ic is a self-consistency probe, not an NGSPICE
+comparison; the SNM scalar is too geometry-sensitive to gate on directly).
 
 Ground truth is ALWAYS NGSPICE BSIM-CMG (CLAUDE.md Validation rule).
 Report MRE / R2 / NRMSE / MaxErr.
@@ -54,30 +58,49 @@ from tests.common.complex import (  # noqa: E402
 )
 
 DEFAULT_NFINS = [2, 5, 10]
+# Ground-truth tracking gate: the DirectNet butterfly lobe must match the
+# NGSPICE BSIM-CMG lobe point-by-point to within this NRMSE (10%, the suite-wide
+# NN tolerance). This is the actual "SNM tracking the NGSPICE reference" gate
+# the docstring promises — it is robust where the derived SNM *scalar* is not
+# (a single corner can swing the geometric SNM 60%+ while the curve NRMSE stays
+# ~3%). The SNM scalar (snm_err) and the force_ic convergence probe are reported
+# as diagnostics but are NOT part of the verdict (bug report B5).
+SRAM_NRMSE_TOL = 0.10
 
 
 # ---------------------------------------------------------------------------
 # Half-cell butterfly lobe
 # ---------------------------------------------------------------------------
-def ngspice_lobe(bt: BenchTech, nfin: int, work_dir: Path) -> Dict[str, np.ndarray]:
-    """One NGSPICE half-cell butterfly lobe: qb(q) under read bias."""
-    baked = get_baked_modelcard(bt, nfin, work_dir)
+def ngspice_sram_lobe_body(bt: BenchTech, nfin: int, baked: Path) -> Dict[str, str]:
+    """Single-point NGSPICE SRAM half-cell ground-truth deck body.
+
+    Pure (returns text) so verify_complex_sweep_canaries can diff it against the
+    parametric ``tests.common.complex.ngspice_sram_lobe`` builder (B7/B8)."""
     n, p = bt.nmos_model, bt.pmos_model
     body = [f'.include "{baked}"', ".temp 27", f"Vdd vdd 0 {bt.vdd}",
             f"Vwl wl 0 {bt.vdd}", f"Vbl bl 0 {bt.vdd}", "Vq q 0 0.0",
             f"Npl qb q vdd vdd {p}", f"Nnl qb q 0 0 {n}",
             f"Nna bl wl qb 0 {n}"]
-    data = run_ngspice_wrdata("\n".join(body), "v(qb)", work_dir,
-                              f"sram_{bt.name}_nfin{nfin}",
-                              f"dc Vq 0 {bt.vdd} 0.005")
+    return {"body": "\n".join(body), "signals": "v(qb)",
+            "analysis": f"dc Vq 0 {bt.vdd} 0.005"}
+
+
+def ngspice_lobe(bt: BenchTech, nfin: int, work_dir: Path) -> Dict[str, np.ndarray]:
+    """One NGSPICE half-cell butterfly lobe: qb(q) under read bias."""
+    baked = get_baked_modelcard(bt, nfin, work_dir)
+    spec = ngspice_sram_lobe_body(bt, nfin, baked)
+    data = run_ngspice_wrdata(spec["body"], spec["signals"], work_dir,
+                              f"sram_{bt.name}_nfin{nfin}", spec["analysis"])
     return {"q": data[:, 0], "qb": data[:, 1]}
 
 
-def _directnet_halfcell_netlist(bt: BenchTech, nfin: int, path: Path) -> Path:
-    """A DirectNet (LEVEL=73) SRAM half-cell with broken feedback."""
+def directnet_sram_lobe_deck(bt: BenchTech, nfin: int) -> str:
+    """Single-point DirectNet SRAM half-cell ship-gate deck text (broken
+    feedback). Pure text so the canary diffs the REAL deck against the sweep
+    builder (B7/B8)."""
     n_l = bt.l_nmos * 1e9
     p_l = bt.l_pmos * 1e9
-    path.write_text(
+    return (
         f"* SRAM read-SNM half-cell — DirectNet ({bt.name} NFIN={nfin})\n"
         f"Vdd vdd 0 {bt.vdd}\n"
         f"Vwl wl 0 {bt.vdd}\n"
@@ -90,6 +113,11 @@ def _directnet_halfcell_netlist(bt: BenchTech, nfin: int, path: Path) -> Path:
         f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.vt})\n"
         f".dc Vq 0 {bt.vdd} 0.005\n"
         f".end\n")
+
+
+def _directnet_halfcell_netlist(bt: BenchTech, nfin: int, path: Path) -> Path:
+    """A DirectNet (LEVEL=73) SRAM half-cell with broken feedback."""
+    path.write_text(directnet_sram_lobe_deck(bt, nfin))
     return path
 
 
@@ -197,9 +225,14 @@ def force_ic_probe(bt: BenchTech, work_dir: Path) -> Dict[str, bool]:
     inside VDD/4 purely by VDD-scaling, while TSMC5 rails *closer* in
     absolute volts (qb=0.163) yet fell outside its smaller band. A 10 %-VDD
     band sits well below the 24–30 % attractor on every tech, so it reports
-    the honest result (the released NN 6T cell lands in the inboard basin on
-    all 4 techs → 0/8) while still accepting a genuinely railed solution if a
-    future model/solver produces one. See
+    the honest result while still accepting a genuinely railed solution.
+
+    This probe is a DIAGNOSTIC, not a gate (bug report B5): its result is
+    printed but does NOT enter the tech verdict. With the V6.5.x production
+    checkpoints it rails on TSMC7/TSMC12 and lands in the inboard basin on
+    TSMC5/TSMC16 (i.e. it currently passes 2/4, not the historical wl=ON
+    "0/8") — the SRAM read-stability gate is the butterfly positivity +
+    NGSPICE-NRMSE tracking, not this convergence probe. See
     results/v6_4_6/phase1_force_ic_recovery.md.
     """
     from pycircuitsim.solver import DCSolver
@@ -285,15 +318,17 @@ def run_one(bt: BenchTech, nfins: List[int]) -> Dict:
 
         dn_min = float(np.min(dn["qb"]))
         positive = dn_min >= -1e-3
+        nrmse_ok = metrics["nrmse_pct"] <= SRAM_NRMSE_TOL * 100
         snm_err = (abs(dn_snm - ng_snm) / ng_snm * 100.0
                    if ng_snm > 1e-6 else float("nan"))
         print(f"      NG SNM={ng_snm*1e3:.1f}mV  DN SNM={dn_snm*1e3:.1f}mV  "
               f"SNMerr={snm_err:.1f}%  DN min(qb)={dn_min*1e3:.1f}mV  "
-              f"NRMSE={metrics['nrmse_pct']:.2f}%")
+              f"NRMSE={metrics['nrmse_pct']:.2f}% "
+              f"({'ok' if nrmse_ok else 'HIGH'})")
         corner_rows.append({
             "nfin": nfin, "ng_snm": ng_snm, "dn_snm": dn_snm,
             "snm_err_pct": snm_err, "dn_min_qb": dn_min,
-            "positive": positive, **metrics})
+            "positive": positive, "nrmse_ok": nrmse_ok, **metrics})
 
     print("    force_ic full-6T convergence probe ...")
     try:
@@ -302,10 +337,18 @@ def run_one(bt: BenchTech, nfins: List[int]) -> Dict:
         print(f"      force_ic probe ERROR: {exc!r}")
         fic = {"state1": False, "state0": False}
 
-    all_positive = all(r.get("positive", False)
-                       for r in corner_rows if "error" not in r)
+    # Verdict (bug report B3 + B5): a tech PASSES only when there is at least
+    # one comparable corner AND every comparable corner is both positive and
+    # NGSPICE-NRMSE-tracking. ``bool(corner_rows)`` guards the empty-generator
+    # false-PASS (``all([]) == True``) when every corner errored, and the
+    # ground-truth ``nrmse_ok`` term closes the "wildly inaccurate but
+    # non-negative lobe scores PASS" hole. ``force_ic`` stays a printed
+    # diagnostic (a convergence probe, not an NGSPICE comparison).
+    comparable = [r for r in corner_rows if "error" not in r]
+    all_pass = bool(comparable) and all(
+        r["positive"] and r["nrmse_ok"] for r in comparable)
     return {"tech": bt.name, "corners": corner_rows,
-            "force_ic": fic, "all_positive": all_positive}
+            "force_ic": fic, "all_positive": all_pass}
 
 
 def main() -> int:
@@ -320,7 +363,9 @@ def main() -> int:
     print("=" * 78)
     print("Benchmark 3c — 6T SRAM read SNM: DirectNet vs NGSPICE BSIM-CMG")
     print(f"  NFIN corners: {nfins}")
-    print("  Gate: both butterfly lobes positive across NFIN corners")
+    print("  Gate: butterfly lobes positive AND NGSPICE-NRMSE-tracking "
+          f"(<= {SRAM_NRMSE_TOL*100:.0f}%) across NFIN corners")
+    print("  (SNMerr% and force_ic are diagnostics, not gated)")
     print("=" * 78)
 
     results: List[Dict] = []
@@ -339,7 +384,7 @@ def main() -> int:
     print("=" * 78)
     hdr = (f"{'Tech':8s} | {'NFIN':>5s} | {'NG SNM mV':>10s} | "
            f"{'DN SNM mV':>10s} | {'SNMerr%':>8s} | {'min(qb)mV':>10s} | "
-           f"{'Positive':>9s}")
+           f"{'NRMSE%':>7s} | {'Gate':>5s}")
     print(hdr)
     print("-" * len(hdr))
     n_pass = 0
@@ -352,18 +397,28 @@ def main() -> int:
                 print(f"{r['tech']:8s} | {c['nfin']:5d} | "
                       f"ERROR — {c['error'][:46]}")
                 continue
+            corner_ok = c["positive"] and c["nrmse_ok"]
             print(f"{r['tech']:8s} | {c['nfin']:5d} | "
                   f"{c['ng_snm']*1e3:10.1f} | {c['dn_snm']*1e3:10.1f} | "
                   f"{c['snm_err_pct']:8.1f} | {c['dn_min_qb']*1e3:10.1f} | "
-                  f"{'yes' if c['positive'] else 'NO':>9s}")
+                  f"{c['nrmse_pct']:7.2f} | "
+                  f"{'PASS' if corner_ok else 'FAIL':>5s}")
         fic = r["force_ic"]
+        # `force_ic:` and `all-positive:` are a machine-readable contract for
+        # scripts/benchmark_collect.py — keep both tokens. force_ic is a
+        # diagnostic; `all-positive` now encodes the full gate (positive +
+        # NGSPICE-NRMSE tracking), which is what GATE reports.
         print(f"{r['tech']:8s} |   force_ic: state1="
               f"{'ok' if fic.get('state1') else 'FAIL'} "
-              f"state0={'ok' if fic.get('state0') else 'FAIL'}  "
-              f"|  all-positive: {'yes' if r['all_positive'] else 'NO'}")
+              f"state0={'ok' if fic.get('state0') else 'FAIL'} (diag)  "
+              f"|  GATE: {'PASS' if r['all_positive'] else 'FAIL'}  "
+              f"(all-positive: {'yes' if r['all_positive'] else 'NO'})")
         n_pass += int(r["all_positive"])
-    print(f"\n  {n_pass}/{len(results)} techs with all butterfly lobes positive")
-    return 0
+    n_total = len(results)
+    print(f"\n  {n_pass}/{n_total} techs pass (positive + NGSPICE-NRMSE-tracking "
+          "across NFIN corners)")
+    # B10: reflect the verdict in the exit code (consumers also parse stdout).
+    return 0 if n_pass == n_total else 1
 
 
 if __name__ == "__main__":

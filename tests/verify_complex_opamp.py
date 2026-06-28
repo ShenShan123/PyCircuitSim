@@ -38,7 +38,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tes
 from tests.common.complex import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech,
     get_baked_modelcard, run_ngspice_wrdata,
-    render_directnet_netlist, run_directnet_dc_sweep, full_metrics, fmt_metrics,
+    render_directnet_text, run_directnet_dc_sweep, full_metrics, fmt_metrics,
 )
 
 GAIN_TOL = 0.10            # +/-10% open-loop DC gain gate
@@ -63,8 +63,12 @@ def _gain_trip(sweep: np.ndarray, vout: np.ndarray,
     return gain, trip, slew
 
 
-def run_ngspice_opamp(bt: BenchTech, work_dir: Path) -> Dict[str, np.ndarray]:
-    baked = get_baked_modelcard(bt, bt.nfin, work_dir)
+def ngspice_opamp_body(bt: BenchTech, baked: Path) -> Dict[str, str]:
+    """Single-point NGSPICE opamp ground-truth deck body (no .control/.end).
+
+    Pure (returns text) so verify_complex_sweep_canaries can diff it against the
+    parametric ``tests.common.complex.ngspice_opamp`` builder (bug report B8).
+    """
     vcm, vbn, vbp = _bias(bt)
     n, p = bt.nmos_model, bt.pmos_model
     body = [f'.include "{baked}"', ".temp 27", f"Vdd vdd 0 {bt.vdd}",
@@ -76,25 +80,38 @@ def run_ngspice_opamp(bt: BenchTech, work_dir: Path) -> Dict[str, np.ndarray]:
             f"Np6 vout vo1i vdd vdd {p}", f"Nn7 vout vbn 0 0 {n}",
             "Cc vo1i vout 20f", "CL vout 0 50f"]
     lo, hi = round(vcm - 0.15, 3), round(vcm + 0.15, 3)
-    data = run_ngspice_wrdata("\n".join(body), "v(vout)", work_dir,
-                              f"opamp_{bt.name}", f"dc Vinp {lo} {hi} 0.002")
-    return {"sweep": data[:, 0], "vout": data[:, 1]}
+    return {"body": "\n".join(body), "signals": "v(vout)",
+            "analysis": f"dc Vinp {lo} {hi} 0.002"}
 
 
-def run_directnet_opamp(bt: BenchTech, work_dir: Path) -> Dict[str, np.ndarray]:
+def directnet_opamp_deck(bt: BenchTech) -> str:
+    """Single-point DirectNet opamp ship-gate deck text (render + per-tech
+    bias rewrites). Pure text so the equivalence canary diffs the REAL deck
+    (not a hand-copied replica) against the sweep builder (bug report B8)."""
     vcm, vbn, vbp = _bias(bt)
-    netlist = render_directnet_netlist(
-        TEMPLATE, bt, work_dir / f"opamp_{bt.name}.sp")
     # the template ships TSMC12 0.80V bias rails; rewrite per tech
-    text = netlist.read_text()
+    text = render_directnet_text(TEMPLATE.read_text(), bt)
     text = text.replace("Vbn vbn 0 0.36", f"Vbn vbn 0 {vbn}")
     text = text.replace("Vbp vbp 0 0.44", f"Vbp vbp 0 {vbp}")
     text = text.replace("Vinn inn 0 0.44", f"Vinn inn 0 {vcm}")
     text = text.replace("Vinp inp 0 0.44", f"Vinp inp 0 {vcm}")
     lo, hi = round(vcm - 0.15, 3), round(vcm + 0.15, 3)
-    text = text.replace(".dc Vinp 0.29 0.59 0.002",
+    return text.replace(".dc Vinp 0.29 0.59 0.002",
                         f".dc Vinp {lo} {hi} 0.002")
-    netlist.write_text(text)
+
+
+def run_ngspice_opamp(bt: BenchTech, work_dir: Path) -> Dict[str, np.ndarray]:
+    baked = get_baked_modelcard(bt, bt.nfin, work_dir)
+    spec = ngspice_opamp_body(bt, baked)
+    data = run_ngspice_wrdata(spec["body"], spec["signals"], work_dir,
+                              f"opamp_{bt.name}", spec["analysis"])
+    return {"sweep": data[:, 0], "vout": data[:, 1]}
+
+
+def run_directnet_opamp(bt: BenchTech, work_dir: Path) -> Dict[str, np.ndarray]:
+    netlist = work_dir / f"opamp_{bt.name}.sp"
+    netlist.parent.mkdir(parents=True, exist_ok=True)
+    netlist.write_text(directnet_opamp_deck(bt))
     results = run_directnet_dc_sweep(netlist, work_dir, f"opamp_{bt.name}")
     return {"sweep": np.asarray(results["inp"]),
             "vout": np.asarray(results["vout"])}
@@ -185,7 +202,8 @@ def main() -> int:
               f"{r['trip_shift_mV']:8.2f}mV | {r['nrmse_pct']:7.2f} | "
               f"{status:>8s}")
     print(f"\n  {n_pass}/{len(results)} within +/-{GAIN_TOL*100:.0f}% gain gate")
-    return 0
+    # B10: surface the verdict in the exit code (consumers also parse stdout).
+    return 0 if n_pass == len(results) else 1
 
 
 if __name__ == "__main__":

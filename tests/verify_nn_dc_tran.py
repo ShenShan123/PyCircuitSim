@@ -640,7 +640,12 @@ def run_pycircuitsim_nn_nmos_dc(
 
     # Build model params string
     model_params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={tech.nn_vt}"
-    if model_path is not None:
+    # Omit MODEL_PATH for stems the parser's per-tech preempt cascade handles
+    # (tsmc{5,7,12,16}_dn_* / refac_dn_*) so each tech resolves its OWN
+    # checkpoint from TECH= instead of being pinned to whichever single tech the
+    # `directnet_v4` alias happened to resolve to (bug report B1). A genuine
+    # env pin still wins (the parser reads it before the preempt).
+    if model_path is not None and not _cascade_handles_stem(model_path):
         model_params += f" MODEL_PATH={model_path}"
 
     content = (
@@ -778,7 +783,12 @@ def run_pycircuitsim_nn_nmos_tran(
     per = TRAN_TR + TRAN_PW + TRAN_TF + max(TRAN_PW, 1.0e-9)
 
     model_params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={tech.nn_vt}"
-    if model_path is not None:
+    # Omit MODEL_PATH for stems the parser's per-tech preempt cascade handles
+    # (tsmc{5,7,12,16}_dn_* / refac_dn_*) so each tech resolves its OWN
+    # checkpoint from TECH= instead of being pinned to whichever single tech the
+    # `directnet_v4` alias happened to resolve to (bug report B1). A genuine
+    # env pin still wins (the parser reads it before the preempt).
+    if model_path is not None and not _cascade_handles_stem(model_path):
         model_params += f" MODEL_PATH={model_path}"
 
     netlist_path = work_dir / f"nn_{model_name}_nmos_tran_{tech.name}.sp"
@@ -943,7 +953,12 @@ def run_pycircuitsim_nn_pmos_dc(
     netlist_path = work_dir / f"nn_{model_name}_pmos_dc_{tech.name}.sp"
 
     model_params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={tech.effective_pmos_vt}"
-    if model_path is not None:
+    # Omit MODEL_PATH for stems the parser's per-tech preempt cascade handles
+    # (tsmc{5,7,12,16}_dn_* / refac_dn_*) so each tech resolves its OWN
+    # checkpoint from TECH= instead of being pinned to whichever single tech the
+    # `directnet_v4` alias happened to resolve to (bug report B1). A genuine
+    # env pin still wins (the parser reads it before the preempt).
+    if model_path is not None and not _cascade_handles_stem(model_path):
         model_params += f" MODEL_PATH={model_path}"
 
     content = (
@@ -1064,14 +1079,20 @@ def _cascade_handles_stem(path: Optional[Path]) -> bool:
     can route to the right checkpoint based on the netlist's TECH=.
 
     For these stems we deliberately omit MODEL_PATH in the netlist so a
-    single inverter test invocation can pick TSMC5 medium for TSMC5
-    netlists and TSMC7 medium for TSMC7 netlists, etc.
+    single test invocation can pick TSMC5 medium for TSMC5 netlists, TSMC7
+    medium for TSMC7 netlists, etc. — instead of pinning ONE tech's net for
+    every tech (bug report B1). All four per-tech ``tsmc{5,7,12,16}_dn_*``
+    stems route through the parser's preempt cascade; ``refac_dn_*`` is the
+    universal-refactor preset the cascade also recognises. An explicit env
+    pin (``PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}``) still wins because the
+    parser reads it before the preempt, so omitting MODEL_PATH never defeats
+    the benchmark's capacity-tier pinning.
     """
     if path is None:
         return False
     stem = path.name
     return any(stem.startswith(p) for p in (
-        "tsmc5_dn_", "tsmc7_dn_", "refac_dn_"))
+        "tsmc5_dn_", "tsmc7_dn_", "tsmc12_dn_", "tsmc16_dn_", "refac_dn_"))
 
 
 def run_pycircuitsim_nn_inverter_vtc(
@@ -1835,6 +1856,14 @@ def run_dc_tests(
 
     for tech_name in tech_names:
         tech = ALL_TEST_TECHS[tech_name]
+        # Skip techs whose code is out of the NN vocabulary (ASAP7 — out of
+        # scope, Rule 14). Matches the skip already present in the PMOS-DC /
+        # inverter runners; without it a bare `--tech` (which defaults to the
+        # full TECH_ORDER incl. ASAP7) ran ASAP7 NMOS DC and produced garbage
+        # rows + a nonzero exit (bug report B6).
+        if not tech_code_in_vocab(tech.nn_tech_key, tech.nn_vt):
+            print(f"\n  DC {tech.name} -- SKIPPED (tech code out of vocab)")
+            continue
         work_dir = RESULTS_BASE / "dc" / tech.name
         work_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2340,6 +2369,14 @@ def run_inverter_tran_tests(
 
                 v_range = float(nn_tran["v(out)"].max() - nn_tran["v(out)"].min())
                 is_broken = v_range < 0.01
+                # B4: a transient that diverged mid-run (NR exhausted) is
+                # recovered as a truncated waveform; compare_inverter_tran_*
+                # only scores the matching prefix, so a divergence after a
+                # railed prefix yields nrmse~0 -> spurious PASS. The
+                # `_nr_partial` flag (set by run_pycircuitsim_nn_inverter_tran)
+                # is an automatic FAIL — the very "fail loud" intent the flag
+                # was added for.
+                nr_partial = bool(nn_tran.get("_nr_partial"))
 
                 if is_broken:
                     print(f"    WARNING: Flat inverter transient "
@@ -2350,6 +2387,16 @@ def run_inverter_tran_tests(
                         nrmse_pct=post_metrics["nrmse_vdd"],
                         passed=False,
                         error="BROKEN: flat transient output",
+                    ))
+                elif nr_partial:
+                    print(f"    FAIL: NR diverged mid-transient — partial "
+                          f"waveform ({nn_tran.get('_nr_error_msg', '')[:80]})")
+                    results.append(TestResult(
+                        tech=tech.name, model=f"{model_tag}_inv_tran",
+                        analysis="inv_tran",
+                        nrmse_pct=post_metrics["nrmse_vdd"],
+                        passed=False,
+                        error="NR diverged mid-transient (partial waveform)",
                     ))
                 else:
                     passed = post_metrics["nrmse_vdd"] < TRAN_NRMSE_THRESHOLD * 100
@@ -2414,6 +2461,13 @@ def run_tran_tests(
 
     for tech_name in tech_names:
         tech = ALL_TEST_TECHS[tech_name]
+        # Skip out-of-vocab techs (ASAP7 — Rule 14), as the PMOS-DC / inverter
+        # runners do; a bare `--tech` defaults to the full TECH_ORDER incl.
+        # ASAP7 and otherwise runs ASAP7 NMOS transient -> garbage/ERROR rows
+        # and a nonzero exit (bug report B6).
+        if not tech_code_in_vocab(tech.nn_tech_key, tech.nn_vt):
+            print(f"\n  Transient {tech.name} -- SKIPPED (tech code out of vocab)")
+            continue
         work_dir = RESULTS_BASE / "tran" / tech.name
         work_dir.mkdir(parents=True, exist_ok=True)
 
@@ -2687,7 +2741,9 @@ def _eval_nn_single_op(
         inst_line = f"Mn1 1 2 0 0 nn_model L={l_nm:.0f}n NFIN={tech.nfin}"
 
     params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={vt_key}"
-    if model_path is not None:
+    # See B1 note above: let the parser resolve the per-tech checkpoint for
+    # cascade-handled stems rather than pinning one tech's net for all techs.
+    if model_path is not None and not _cascade_handles_stem(model_path):
         params += f" MODEL_PATH={model_path}"
 
     # Single-point sweep: sweep Vds over [vds, vds] to get one operating point
@@ -2909,7 +2965,12 @@ def run_pycircuitsim_nn_nmos_idvds(
 
     l_nm = tech.l_nmos * 1e9
     model_params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={tech.nn_vt}"
-    if model_path is not None:
+    # Omit MODEL_PATH for stems the parser's per-tech preempt cascade handles
+    # (tsmc{5,7,12,16}_dn_* / refac_dn_*) so each tech resolves its OWN
+    # checkpoint from TECH= instead of being pinned to whichever single tech the
+    # `directnet_v4` alias happened to resolve to (bug report B1). A genuine
+    # env pin still wins (the parser reads it before the preempt).
+    if model_path is not None and not _cascade_handles_stem(model_path):
         model_params += f" MODEL_PATH={model_path}"
 
     netlist_path = work_dir / f"nn_{model_name}_nmos_idvds_{tech.name}.sp"
