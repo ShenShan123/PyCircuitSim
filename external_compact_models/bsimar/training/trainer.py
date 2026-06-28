@@ -528,6 +528,7 @@ def train_directnet(
     ekv_core: bool = False,
     ekv_alpha: float = 0.5,
     ekv_hidden: int = 64,
+    ekv_lam_lo: float = 0.05,
     swa_mode: str = "none",
     ema_decay: float = 0.999,
     apply_filter: bool = True,
@@ -633,6 +634,7 @@ def train_directnet(
         unknown_code_id=num_tech_codes - 1,
         monotonic=monotonic, monotone_sign=monotone_sign,
         ekv_core=ekv_core, ekv_alpha=ekv_alpha, ekv_hidden=ekv_hidden,
+        ekv_lam_lo=ekv_lam_lo,
     ).to(device)
     if monotonic:
         print(f"  Phase 7a monotone-Vg residual ON (sign={monotone_sign:+.0f})")

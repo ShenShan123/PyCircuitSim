@@ -6,6 +6,75 @@ isn't burdened with chronology.
 
 ---
 
+## V6.5.8 — BREAKTHROUGH: EKV high-r_o core + vout-weighted KCL breaks the tsmc7-opamp rail (branch `V6.5.4`, 2026-06-28)
+
+**Headline: the V6.5.6/V6.5.7 "the single-id-head surface cannot host a reachable
+high-gain tsmc7-opamp DC fixed point / only T3 can create one" verdict is REFUTED.
+A high-r_o EKV *structural* core + a vout-weighted KCL existence fine-tune produces
+the FIRST non-railed tsmc7 opamp in the entire campaign — DirectNet open-loop gain
+~350–381 (a real amplifying transfer curve), where every prior attempt across
+V6.4.x–V6.5.7 railed to gain 0.** BUT the reachable OP is over-gained (~2.2× the
+L72 target 163) and its gain is COUPLED to its existence through the output-stage
+r_o, so the ±10 % gain gate is not (yet) passed and the calibration levers are
+exhausted short of it. **Production unchanged at 15/16; nothing installed.** The
+remaining lever is T3 (differentiable transfer-curve supervision), now strongly
+motivated and sitting on the EKV+KCL substrate built here. Forward detail:
+`docs/plans/2026-06-27-tsmc7-opamp-vout-existence-retrain.md` §8.
+
+**What was built.**
+- **`_EKVCore` redesigned** (`bsimar/models/direct_net.py`) to fix the two V6.4.8-S3
+  KILL defects: (1) the residual is now **floor-scaled physical**
+  `id = id_core + sqrt(id_core²+(κ·id_s)²)·α·tanh(trunk)` — authority scales with the
+  local current (no µA-band runaway, the S3 KILL mechanism), smooth (autograd gm/gds
+  intact), keeps cutoff authority — replacing the additive-in-asinh-z form; (2) the
+  CLM `lam` band low end widened (0.30→0.05) and exposed as **`--ekv-lam-lo`**
+  (min lambda = max r_o = max opamp gain). Stock checkpoints byte-identical;
+  `core.*` round-trip preserved.
+- **`scripts/v6_5_5_finetune_kcl.py` made EKV-aware** (`_build_and_load` detects
+  `core.*`, rebuilds the core) + a **`--freeze-core`** flag (freeze the core's
+  `param_head` to preserve data-true r_o while only the bounded residual/heads move).
+
+**The chain of findings (all CPU-pinned gates, NGSPICE ground truth):**
+1. **Pure EKV core (bulk-trained, no existence loss) still rails**, BUT its opamp
+   node residuals at the L72 OP are far more *balanced* than any plain-MLP checkpoint
+   (single-point `vo1i 0.083 / vout 0.042` vs production `0.132 / 0.121`, kcl3_a
+   `0.009 / 0.279`). The physics holds both nodes low at once. Held-out id MRE ~0.24 %.
+2. **EKV substrate DISSOLVES the Rung-1 value-coupling wall.** Fine-tuning the EKV
+   pair with the KCL existence loss + ring-anchor drives BOTH `vo1i` AND `vout` to
+   ~0.004–0.018 with the bulk surface preserved (+1–2 % anchor drift) — what Rung 1
+   on the plain MLP could NOT do (there `vo1i`→0.007 blew `vout` to 0.279). The
+   physics, not free MLP weights, carries the bulk shape, so the anti-correlation is
+   gone.
+3. **vout-WEIGHTING creates the reachable high-gain OP.** Uniform vout-weight rails
+   (gain 0); vout-weight ≥1.5 AND lam-kcl ≥10 → **gain ~350–381**, a real amplifying
+   curve. The cold solver-conditioning probe still misses it; the continuation
+   DC-sweep gate (the V6.4.8-S2 path) finds it.
+
+**The calibration wall (definitive — gain⟺reachability coupled via r_o):** gain is
+stuck at ~370 in the reachable regime; no available lever lowers it to 163 without
+destroying the OP:
+- vout-weight {1.5,2,2.5,3}: binary switch (rail ↔ ~370), not a gain knob.
+- lam-kcl {6,10,14,20,50}: binary switch (≤6 rails, ≥10 → ~370).
+- **`lam_lo` {0.10,0.13,0.16} (cap r_o): RAILS** — capping r_o destroys reachability
+  instead of lowering gain.
+- **`--freeze-core` (data-true r_o, 3 variants): RAILS** — the bounded residual alone
+  can't create existence; the over-flat r_o is *required* for reachability.
+  ⇒ a reachable high-gain OP REQUIRES the over-flattened r_o (gain ~370); the
+  data-true r_o that would give gain 163 supports no reachable OP. The KCL loss
+  over-flattens r_o *because* the over-flatness is what makes the OP a continuation
+  attractor. (Trip offset ~100 mV and Vout-NRMSE ~70 % also remain; the gate keys
+  only on gain, so those are diagnostic.)
+
+**Verdict / routing.** The structural prior + existence loss CAN host a reachable
+high-gain OP (the "unreachable / only-T3-creates-it" verdict is wrong); but
+calibrating the gain to the L72 value needs JOINT existence+gain+curve control,
+i.e. **T3 — a differentiable unrolled-DC-solver supervising Vout(Vin) against L72.**
+The EKV+KCL infra (`tsmc7_dn_ekvhr_*` substrate, `--ekv-lam-lo`, `--freeze-core`,
+EKV-aware fine-tune) is the T3 substrate. Production stays 15/16; candidates
+`tsmc7_dn_ekv{hr,kcl_*}` on disk (gitignored).
+
+---
+
 ## V6.5.7 — panel-review correction: the V6.5.6 "probe-closed / no-zero-exists / T3-only" verdict was OVER-STRONG (branch `V6.5.4`, 2026-06-27)
 
 **Headline: a 5-agent adversarial review of the V6.5.6 tsmc7-opamp verdict found

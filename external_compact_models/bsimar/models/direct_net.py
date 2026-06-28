@@ -104,12 +104,15 @@ class _MonotoneVgResidual(nn.Module):
 class _EKVCore(nn.Module):
     """Differentiable EKV/charge-sheet analytic backbone for the ``id`` column.
 
-    V6.4.8 Stage S3. Composes the ``id`` output as a *physically structured*
-    closed-form drain current plus a bounded NN residual:
+    V6.4.8 Stage S3 / V6.5.8 high-r_o variant. Composes the ``id`` output as a
+    *physically structured* closed-form drain current plus a **floor-scaled**
+    bounded NN residual:
 
-        Id_phys(V) = Id_core(Vgs, Vds, Vbs) · (1 + α·tanh(trunk_id))
+        Id_phys(V) = Id_core + sqrt(Id_core² + (κ·id_s)²) · α·tanh(trunk_id)
 
-    where ``Id_core`` is the canonical EKV forward-minus-reverse current
+    (see ``forward``) — a bounded *fraction* of the local current in conduction,
+    with a small absolute floor in cutoff. ``Id_core`` is the canonical EKV
+    forward-minus-reverse current
 
         Id_core = pol · I0 · ( sp(vov)² − sp(vov − vds/(n·φt))² ) · (1 + λ·sp(vd))
 
@@ -149,6 +152,8 @@ class _EKVCore(nn.Module):
         tech_embed_dim: int = 32,
         hidden_dim: int = 64,
         alpha: float = 0.5,
+        resid_floor: float = 2.0,
+        lam_lo: float = 0.05,
     ) -> None:
         super().__init__()
         # Coefficient head: (geo ‖ tech-embedding) → 7 raw EKV params. Keeping
@@ -180,8 +185,19 @@ class _EKVCore(nn.Module):
         self.register_buffer("phi0", torch.tensor(0.40))      # body-effect φ0
         self.register_buffer("ut", torch.tensor(0.025852))    # kT/q @ 300K
         self.register_buffer("alpha", torch.tensor(float(alpha)))
-        self.register_buffer("lam_lo", torch.tensor(0.30))    # FinFET CLM band
+        # V6.5.8 high-r_o variant: widen the CLM band's LOW end so the core can
+        # represent near-flat saturation (high output resistance) — the
+        # gain-163 tsmc7 opamp output stage needs r_o the old 0.30 floor clipped
+        # from above. The coefficient head still picks the per-geometry value
+        # from data; this only removes an artificial low-r_o floor. V6.5.8: the
+        # floor also CAPS max r_o (= max opamp gain) — raise it to pull the
+        # vout-weighted-KCL over-flattened gain back toward 163.
+        self.register_buffer("lam_lo", torch.tensor(float(lam_lo)))  # CLM band lo
         self.register_buffer("lam_hi", torch.tensor(1.20))
+        # V6.5.8 residual floor κ: the bounded id residual's absolute authority
+        # in cutoff is κ·id_s·α (see forward()); κ·id_s ≈ the asinh current
+        # resolution, so cutoff gets a modest, non-runaway correction budget.
+        self.register_buffer("resid_floor", torch.tensor(float(resid_floor)))
 
     def set_norm(
         self,
@@ -247,13 +263,26 @@ class _EKVCore(nn.Module):
         self, x: torch.Tensor, emb: torch.Tensor, trunk_id_norm: torch.Tensor,
     ) -> torch.Tensor:
         """Return the composed ``id`` column in standardised-asinh space:
-        the EKV backbone (asinh-z) + a tanh-bounded trunk residual. Additive
-        in asinh-z (not multiplicative-in-physical) so the trunk keeps
-        authority in cutoff where Id_core→0."""
-        id_core = self.core_current(x, emb)                  # (B,) Amps
-        u = torch.asinh(id_core / self.id_s)
-        core_z = (u - self.id_mean) / self.id_std            # backbone in id-norm
-        return core_z + self.alpha * torch.tanh(trunk_id_norm)
+        the EKV physical backbone plus a **floor-scaled** bounded residual,
+        added in *physical Amps* with its authority tied to the local current:
+
+            id_phys = id_core + sqrt(id_core² + (κ·id_s)²) · α·tanh(trunk_id)
+
+        In conduction sqrt(...) ≈ |id_core|, so the residual is a bounded
+        fraction (≤ α·|id_core|, no sign flip) of the physical current; in
+        cutoff (id_core→0) it floors at κ·id_s·α — a small absolute correction
+        budget, NOT a runaway. This is the V6.5.8 fix for the V6.4.8 S3 KILL:
+        the old additive-in-asinh-z form (``core_z + α·tanh``) carried a
+        constant ±α·z authority that DOMINATED the offset-dominated µA band and
+        wrecked the opamp output-stage locus. The sqrt magnitude is smooth (no
+        kink at id_core=0), so the autograd gm/gds/gmb chain stays intact and
+        the normalized-space Rule-1 FD gate passes."""
+        id_core = self.core_current(x, emb)                  # (B,) Amps, signed
+        floor = self.resid_floor * self.id_s
+        mag = torch.sqrt(id_core * id_core + floor * floor)  # smooth |id|, ≥floor
+        id_phys = id_core + mag * self.alpha * torch.tanh(trunk_id_norm)
+        u = torch.asinh(id_phys / self.id_s)
+        return (u - self.id_mean) / self.id_std              # standardised-asinh
 
 
 class DirectNet(nn.Module):
@@ -288,6 +317,7 @@ class DirectNet(nn.Module):
         ekv_core: bool = False,
         ekv_alpha: float = 0.5,
         ekv_hidden: int = 64,
+        ekv_lam_lo: float = 0.05,
     ):
         super().__init__()
         self.output_dim = output_dim
@@ -334,6 +364,7 @@ class DirectNet(nn.Module):
                 tech_embed_dim=tech_embed_dim,
                 hidden_dim=ekv_hidden,
                 alpha=ekv_alpha,
+                lam_lo=ekv_lam_lo,
             )
 
         self._init_weights()

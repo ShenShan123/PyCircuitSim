@@ -194,6 +194,7 @@ def _run(args: argparse.Namespace) -> None:
         common["ekv_core"] = args.ekv_core
         common["ekv_alpha"] = args.ekv_alpha
         common["ekv_hidden"] = args.ekv_hidden
+        common["ekv_lam_lo"] = args.ekv_lam_lo
     if args.ekv_core and args.model != "direct":
         print("[error] --ekv-core is a DirectNet-only (S3) flag.")
         sys.exit(2)
@@ -417,6 +418,11 @@ def main() -> None:
     p.add_argument("--ekv-alpha", type=float, default=0.5,
                    help="EKV residual bound: Id = Id_core*(1+alpha*tanh(.)). "
                         "Default 0.5 -> residual within +/-50%% of the core.")
+    p.add_argument("--ekv-lam-lo", type=float, default=0.05,
+                   help="EKV CLM-band lower floor (min lambda = max r_o = max "
+                        "opamp gain). V6.5.8: raise (e.g. 0.10-0.15) to cap the "
+                        "vout-weighted-KCL over-flattened r_o and pull opamp "
+                        "gain back toward the L72 target.")
     p.add_argument("--ekv-hidden", type=int, default=64,
                    help="Hidden width of the EKV coefficient head. Default 64.")
 

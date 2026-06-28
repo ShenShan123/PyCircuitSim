@@ -95,12 +95,17 @@ authoritative ground truth; DirectNet is the production NN; BSIMAR is parked.
   NMOS/PMOS checkpoints use a local embedding vocab (Rule 16); charges are
   predicted and the AC caps are their `dQ/dV` autograd. Production is the
   **V6.5.5 best-config-per-tech mix** (**15/16** complex gates; see Checkpoints
-  below). The lone open gate is the **tsmc7 opamp** (gain→0), characterized in
-  CHANGELOG V6.5.6 as a representational limit of the single-id-head surface: a
-  stable high-gain DC fixed point is not co-achievable with accuracy via the
-  KCL-residual + Sobolev levers (existence is fixable via the T1 KCL lever, but
-  the OP is then an unstable Newton point and the N2 term destroys existence
-  again); only the unbuilt T3 differentiable-DC-solver lever remains.
+  below). The lone open gate is the **tsmc7 opamp** (gain→0). V6.5.8 REFUTED the
+  earlier "representational limit / only T3" verdict: a high-r_o EKV structural
+  core (`--ekv-core --ekv-lam-lo`) + a vout-weighted KCL existence fine-tune
+  produces the first non-railed tsmc7 opamp ever (gain ~350–381, reachable via
+  continuation) with the ring preserved. But the reachable OP is over-gained
+  (~2.2×) and gain is COUPLED to existence via output-stage r_o — capping r_o
+  (`lam_lo`↑) or freezing the core to the data-true r_o both RAIL — so the ±10 %
+  gain gate is not yet passed and production stays 15/16. The remaining lever is
+  **T3** (a differentiable unrolled-DC-solver supervising Vout(Vin)), which alone
+  jointly controls existence+gain; the EKV+KCL infra built in V6.5.8 is its
+  substrate (CHANGELOG V6.5.8; plan §8).
 - **BSIMAR Transformer (LEVEL=74)** — autoregressive Transformer sharing
   DirectNet's data pipeline and inference rules. Parked (Rule 15); no checkpoints
   on disk. Resurrect the cap-head / AR-loop structure from CHANGELOG / git
@@ -213,7 +218,7 @@ conda run -n pycircuitsim python -u -m bsimar.cli.train \
 
 **Checkpoints** (`external_compact_models/bsimar/checkpoints/`, each `*_best.pt` + `_norm.npz`):
 
-- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}`. Each uses a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot, e.g. TSMC5: 5, TSMC7: 4; Rule 16). **Production = best-config-per-tech (15/16):** the `tsmc{X}_dn_medium` resolver slots are symlinks → `tsmc5_dn_corringL_s7` (large + ring-edge `traj_corridor`, seed 7), `large` (tsmc7/12), `tsmc16_dn_lgs17` (seed 17). The lone residual is the **tsmc7 opamp** (value-surface/OP-unstable, characterized unrecoverable). Install/retrain history (the V6.5.4 from-scratch matrix retrain + stale-checkpoint purge via `scripts/v6_5_4_install_final.py`, the V6.5.5 tsmc5 corridor repoint) is in CHANGELOG V6.5.4/V6.5.5.
+- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}`. Each uses a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot, e.g. TSMC5: 5, TSMC7: 4; Rule 16). **Production = best-config-per-tech (15/16):** the `tsmc{X}_dn_medium` resolver slots are symlinks → `tsmc5_dn_corringL_s7` (large + ring-edge `traj_corridor`, seed 7), `large` (tsmc7/12), `tsmc16_dn_lgs17` (seed 17). The lone residual is the **tsmc7 opamp** (gain→0; V6.5.8 broke the rail to gain ~370 via the EKV high-r_o core + vout-weighted KCL but the gain is r_o-coupled to existence and not yet calibratable to 163 — routes to T3, CHANGELOG V6.5.8). Install/retrain history (the V6.5.4 from-scratch matrix retrain + stale-checkpoint purge via `scripts/v6_5_4_install_final.py`, the V6.5.5 tsmc5 corridor repoint) is in CHANGELOG V6.5.4/V6.5.5.
 - Resolver cascade (`pycircuitsim/parser.py`): for a TSMC5/7/12/16 netlist the per-tech slot `tsmc{X}_dn_{medium,small,large,xl}` (medium-first) preempts the universal fallback chain (`refac_dn_* > v4_re_dn_universal > v4_dn_universal > bare`). The universal fallbacks are unreachable until someone retrains a universal stack (`refac_dn_*` / `v4_*` artifacts were deleted 2026-05-12). Resolutions log at parse time as `[NN-resolver] L73 <name> TECH=<x> VT=<y> -> <chk> (scope=<s>, tech_code=<c>)`. Override via `--exp-name` at train time, or `PYCIRCUITSIM_NN_CHECKPOINT_*` / `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}` env vars at runtime (the latter is read first, before the medium-first preempt — used by the benchmark to pin a capacity tier).
 
 **Netlist usage:** `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`. Parser auto-resolves the per-tech checkpoint and the local-vocab tech_code via `bsimar.config.local_variant_code(scope, tech, variant)`.

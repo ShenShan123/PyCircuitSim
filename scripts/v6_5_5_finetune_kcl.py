@@ -74,20 +74,31 @@ def _load_norm(stem: str) -> NormStats:
 
 
 def _build_and_load(stem: str, scope: str, device: torch.device) -> Tuple[nn.Module, NormStats]:
-    """Rebuild a `large` DirectNet matching the production stem and load it."""
+    """Rebuild a `large` DirectNet matching the production stem and load it.
+
+    EKV-aware (V6.5.8): a checkpoint trained with ``--ekv-core`` carries
+    ``core.*`` keys (the physical id-column backbone + its norm/sign buffers).
+    Rebuild the EKV core at the saved hidden size so the fine-tune optimises the
+    SAME composed surface (core + bounded residual) — its buffers round-trip via
+    ``load_state_dict``, so no ``set_norm`` is needed. The KCL autograd chain
+    flows through the core transparently (it is part of ``forward``)."""
     st = _load_norm(stem)
     in_dim = len(st.input_mean)
     out_dim = len(OUTPUT_COLUMN_ORDER)
     vocab = tech_scope_vocab_size(scope)
+    state = torch.load(str(CHECKPOINT_DIR / f"{stem}_best.pt"),
+                       weights_only=True, map_location=device)
+    ekv_core = any(k.startswith("core.") for k in state)
+    ekv_hidden = (int(state["core.param_head.0.weight"].shape[0])
+                  if ekv_core else 64)
     model = DirectNet(
         input_dim=in_dim, hidden_dim=LARGE_HIDDEN,
         n_layers=LARGE_TRUNK_LAYERS + 1, output_dim=out_dim,
         num_tech_codes=vocab, tech_embed_dim=32,
         tech_embed_dropout=0.0,                 # OFF for fine-tune (no code corruption)
         unknown_code_id=vocab - 1,
+        ekv_core=ekv_core, ekv_hidden=ekv_hidden,
     ).to(device)
-    state = torch.load(str(CHECKPOINT_DIR / f"{stem}_best.pt"),
-                       weights_only=True, map_location=device)
     missing, unexpected = model.load_state_dict(state, strict=False)
     if missing or unexpected:
         raise ValueError(f"{stem}: arch mismatch missing={list(missing)} "
@@ -316,6 +327,12 @@ def main() -> int:
                     help="if set, an epoch counts as 'fixed' only when vout F_rel "
                          "is ALSO below this (AND vo1i-target). Default off = the "
                          "V6.5.6 vo1i-only selection.")
+    ap.add_argument("--freeze-core", choices=["on", "off"], default="off",
+                    help="V6.5.8: freeze the EKV core's param_head so its "
+                         "data-true r_o (= opamp gain) is preserved while only "
+                         "the bounded residual + other heads move for existence. "
+                         "Targets the gain↔existence coupling (capping r_o via "
+                         "lam_lo destroys the OP; this preserves r_o instead).")
     ap.add_argument("--freeze-embed", choices=["on", "off"], default="on",
                     help="freeze the tech embedding during fine-tune (the opamp "
                          "uses a single fixed code; freezing reduces drift)")
@@ -349,6 +366,15 @@ def main() -> int:
     if args.freeze_embed == "on":
         model_n.tech_embedding.weight.requires_grad_(False)
         model_p.tech_embedding.weight.requires_grad_(False)
+    if args.freeze_core == "on":
+        n_frozen = 0
+        for m in (model_n, model_p):
+            if getattr(m, "core", None) is not None:
+                for p in m.core.parameters():
+                    p.requires_grad_(False)
+                    n_frozen += 1
+        print(f"  freeze-core ON: froze {n_frozen} EKV core param tensors "
+              f"(data-true r_o preserved; residual+heads free)")
 
     # — base-data anchors —
     apply_filter = args.apply_filter == "on"
