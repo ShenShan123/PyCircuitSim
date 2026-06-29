@@ -2,6 +2,15 @@
 
 Date: 2026-06-26 (executed 2026-06-26/27) · Branch `V6.5.4` · Author: campaign notes
 
+> **★ FINAL RESOLUTION (V6.5.9, 2026-06-29): G1 / the tsmc7 opamp is CLOSED → 16/16.**
+> The whole "no high-gain zero / contraction-not-co-achievable / only-T3" thread of
+> this plan is superseded: **T3** (a differentiable unrolled-DC-solver fine-tune that
+> supervises the SOLVED transfer curve `Vout(Vin)`) lands the opamp gate (gain
+> 178.0/8.92 % PASS). The gain-163 root existed all along; the loss-only levers
+> (corridor, KCL, vout-weight) failed because they supervised a static residual, not
+> the solve. See `docs/plans/2026-06-28-tsmc7-opamp-T3-differentiable-solver.md` +
+> CHANGELOG V6.5.9. §8–10 below are executed history, not the standing verdict.
+>
 > **⚠ CORRECTED (V6.5.7, 2026-06-27).** A 5-agent adversarial review found this
 > plan's close ("no high-gain zero exists / probe-closed / only T3 remains")
 > OVER-STRONG. The bind is full-system *stable existence* with `vout` the

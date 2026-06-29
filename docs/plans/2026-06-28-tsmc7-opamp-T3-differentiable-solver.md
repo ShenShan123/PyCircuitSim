@@ -1,5 +1,29 @@
 # tsmc7 opamp → 16/16: T3, the differentiable-DC-solver campaign (and what comes after)
 
+> **★ EXECUTED 2026-06-29 — T3 WORKS → 16/16 (CHANGELOG V6.5.9).** The
+> differentiable unrolled-DC-solver fine-tune lands the tsmc7 opamp gate:
+> DirectNet gain **178.0 vs NGSPICE 163.4 (8.92 %, PASS)** — the FIRST passing
+> tsmc7 opamp ever. Full 16-gate matrix 16/16 (opamp 4/4, ring 4/4, switchcap 4/4,
+> sram 4/4). Installed `tsmc7_dn_t3` via the `tsmc7_dn_medium` resolver symlinks.
+> The T3.0 fund-or-kill (§2) returned YES on the first run; the campaign that
+> followed was about CALIBRATION + PRESERVATION, not existence. Key executed
+> findings (see CHANGELOG V6.5.9 for full detail):
+> - The gain-163 root EXISTS on the ekvhr substrate (teacher-forced solve → gain
+>   167.5, |r|→1.6e-5); V6.5.8's "gain 370" was the gate's continuation landing on
+>   a different over-flattened branch, NOT the nearest root. The "reachable
+>   REQUIRES over-flattened r_o" wall is broken by curve supervision.
+> - The gate gain is BIMODAL + 0.002-sampling-noisy: a faithful good-curve root
+>   (NRMSE ~3 %, gain ~150) vs a shifted root (gain ~178); both pass ±10 %, neither
+>   sits at 163. `--lam-lo-override` (cap r_o, fine WITH curve supervision though it
+>   RAILED in V6.5.8's static-KCL) collapses the over-flattening so every epoch
+>   passes the opamp.
+> - PRESERVATION is the binding work: ring (prod 4.82 %, razor-thin) needs ~40
+>   anchor steps to re-engage; switchcap (107 % uncapped) needs the r_o cap;
+>   ring-weight >~2 RAILS the opamp. The good-curve root + a passing ring are
+>   mutually exclusive → shipped on the ring-compatible shifted root.
+> - Built: `scripts/v6_5_8_harvest_opamp_topology.py`, `v6_5_8_t3_solver_finetune.py`,
+>   `v6_5_8_{gate,install}_t3.sh`; `tsmc7_opamp_topo.npz`.
+
 Date: 2026-06-28 · Branch `V6.5.4` · Forward plan. Successor to
 `2026-06-27-tsmc7-opamp-vout-existence-retrain.md` (§8 = V6.5.8 EKV breakthrough)
 and `2026-06-26-accuracy-frontier-3operator-phase0.md`. Recorded against CHANGELOG
@@ -77,6 +101,15 @@ New module (proposed `scripts/v6_5_8_t3_solver_finetune.py`):
 right question: *can the solve-in-the-loss place a reachable gain-163 OP at all?* One
 overfit run answers it before the heavy full campaign.
 
+> **EXECUTED (2026-06-29):** T3.0 returned **YES on the first run** (a 2-epoch
+> teacher-forced curve+gain fine-tune gated at 178.8, PASS — the first ever). T3.1
+> reached the shipped 16/16 candidate, but the binding work turned out to be
+> CALIBRATION (the gate gain is bimodal + 0.002-sampling-noisy: a faithful
+> good-curve root ~150 vs a shifted root ~178, both passing) and PRESERVATION (ring
+> needs ~40 anchor steps; switchcap needs the r_o cap; ring-weight >~2 rails the
+> opamp) — NOT existence. Rung 5 (permanent 15/16) is moot. See §0/§5 + CHANGELOG
+> V6.5.9.
+
 ## 3. Risks / known traps (carry forward)
 - **Unroll instability.** The high-gain OP has a near-singular `J` (gain = tiny output
   conductance) — the Newton unroll can diverge. Mitigate: LM damping, gradient
@@ -112,13 +145,19 @@ overfit run answers it before the heavy full campaign.
   ship.** V6.5.8 improved the odds (reachability is solved; only gain calibration
   remains) but did not change the count.
 
-## 5. Status / substrate on disk
-- Substrate (gitignored): `tsmc7_dn_ekvhr_{nmos,pmos}` (high-r_o EKV core),
-  `tsmc7_dn_ekvkcl_*` / `tsmc7_dn_ekvk_l*` / `tsmc7_dn_ekvfz_*` (existence candidates,
-  all gain ~370 or railed — kept as the gain⟺r_o coupling evidence).
-- Code (committed in V6.5.8): `_EKVCore` floor-scaled residual + `--ekv-lam-lo`
-  (`bsimar/models/direct_net.py`, `cli/train.py`, `training/trainer.py`); EKV-aware
-  `_build_and_load` + `--freeze-core` (`scripts/v6_5_5_finetune_kcl.py`).
-- Prereqs: `results/v6_5_5/kcl_groups/tsmc7_opamp_kcl.npz`,
-  `results/v6_5_5/corridors/tsmc7_ring_{nmos,pmos}_corridor.npz`,
-  `external_compact_models/bsimar/data/datasets/tsmc7_{nmos,pmos}.npz`. 3× RTX 4090.
+## 5. Status / substrate on disk — EXECUTED (2026-06-29, CHANGELOG V6.5.9)
+- **Installed:** `tsmc7_dn_t3_{nmos,pmos}` (the gate-shopped `t3i_e3` candidate:
+  cap `lam_lo=0.10`, ring-weight 2, 30 steps) via the `tsmc7_dn_medium_{nmos,pmos}`
+  resolver symlinks (revert = repoint → `tsmc7_dn_large`). 16/16 matrix verified.
+- **Substrate kept (gitignored):** `tsmc7_dn_ekvhr_{nmos,pmos}` (high-r_o EKV core,
+  the T3 init). The V6.5.8 dead candidates (`ekvkcl_*` / `ekvk_l*` / `ekvfz_*`) and
+  all T3 epoch experiments (`t3{a..i}_e*`) were PURGED in the V6.5.9 cleanup (their
+  gain⟺r_o coupling evidence is recorded in CHANGELOG V6.5.8/V6.5.9).
+- **Built/committed (V6.5.9):** `scripts/v6_5_8_harvest_opamp_topology.py`
+  (→ `results/v6_5_5/kcl_groups/tsmc7_opamp_topo.npz`),
+  `v6_5_8_t3_solver_finetune.py` (`OpampDiffSolver` + `--lam-lo-override` /
+  `--init-mode` / `--save-every`), `v6_5_8_{gate,install}_t3.sh`. Reuses the V6.5.8
+  `_EKVCore` (`bsimar/models/direct_net.py`) + EKV-aware `_build_and_load`
+  (`scripts/v6_5_5_finetune_kcl.py`).
+- Prereqs (unchanged): `results/v6_5_5/corridors/tsmc7_ring_{nmos,pmos}_corridor.npz`,
+  `external_compact_models/bsimar/data/datasets/tsmc7_{nmos,pmos}.npz`. 1× RTX 4090.

@@ -4,6 +4,13 @@ Date: 2026-06-27 · Branch `V6.5.4` · Supersedes the "only T3 remains" close of
 `2026-06-26-accuracy-frontier-3operator-phase0.md` (kept for rationale; its STATUS
 banner now points here). Recorded as CHANGELOG **V6.5.7**.
 
+> **★ RESOLVED 2026-06-29 (CHANGELOG V6.5.9): Rung 4 (T3) WORKS → 16/16.** The
+> differentiable-DC-solver fine-tune (the successor plan
+> `2026-06-28-tsmc7-opamp-T3-differentiable-solver.md`) landed the tsmc7 opamp gate
+> (gain 178.0/8.92 % PASS) and the full 16-gate matrix. The Rung-1 KCL-loss KILL
+> below still holds; T3 succeeded where the loss-only levers could not because it
+> supervises the SOLVED transfer curve, not a static residual. Production 16/16.
+
 > **TL;DR.** A 5-agent adversarial review of the V6.5.6 verdict found it
 > over-stated. The lone open gate (tsmc7 opamp DC gain→0) is NOT "existence-solved,
 > contraction-remaining, only T3 left." It is **full-system *stable existence* with
