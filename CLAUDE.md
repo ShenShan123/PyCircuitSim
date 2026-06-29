@@ -98,8 +98,10 @@ authoritative ground truth; DirectNet is the production NN; BSIMAR is parked.
   (tech × device × size) checkpoint trained from scratch on **one identical
   recipe** (no per-case special recipes: no corridor / seed-tune / EKV / T3
   fine-tunes). The intent is to reflect the **genuine, uniform fidelity** of the
-  NN compact model, not a cherry-picked best-config-per-tech mix. The resolver
-  default is `medium` for every tech. See the V6.6.0 accuracy report
+  NN compact model, not a cherry-picked best-config-per-tech mix. **Production =
+  `large`** (the best uniform tier, 13/16 complex gates; capacity peaks at large
+  then over-fits at xl), uniform across all techs — the resolver prefers `large`
+  first. See the V6.6.0 accuracy report
   (`docs/V6.6.0-accuracy-report.md`) + CHANGELOG for the gate matrix. (History:
   V6.5.9 reached 16/16 via hand-tuned specials — retired in the V6.6.0
   house-clean; CHANGELOG.)
@@ -193,7 +195,7 @@ Mn1 3 2 0 0 nmos1 L=30n NFIN=10
 
 ### NN training (per-tech DirectNet, LEVEL=73)
 
-Dedicated per-tech NMOS/PMOS DirectNet checkpoints for **TSMC5 / TSMC7 / TSMC12 / TSMC16**. `--tech-scope` ∈ `{tsmc5,tsmc7,tsmc12,tsmc16,universal}`; `--size` ∈ `{small,medium,large,xl}`. **Production (V6.6.0) = the uniform `s/m/l/xl` matrix** trained from scratch on one identical recipe — no per-case special recipes (no corridor / seed / EKV / T3 fine-tunes); the resolver default is `medium`. The benchmark below drives the whole matrix on that single recipe.
+Dedicated per-tech NMOS/PMOS DirectNet checkpoints for **TSMC5 / TSMC7 / TSMC12 / TSMC16**. `--tech-scope` ∈ `{tsmc5,tsmc7,tsmc12,tsmc16,universal}`; `--size` ∈ `{small,medium,large,xl}`. **Production (V6.6.0) = the uniform `s/m/l/xl` matrix** trained from scratch on one identical recipe — no per-case special recipes (no corridor / seed / EKV / T3 fine-tunes); production = `large` (best uniform tier, 13/16) and the resolver prefers `large` first. The benchmark below drives the whole matrix on that single recipe.
 
 ```bash
 # 1. Generate per-tech data (one .npz per tech+device). --enable-inv-trip adds the
@@ -215,8 +217,8 @@ conda run -n pycircuitsim python -u -m bsimar.cli.train \
 
 **Checkpoints** (`external_compact_models/bsimar/checkpoints/`, each `*_best.pt` + `_norm.npz`):
 
-- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}` — **32 checkpoints**, each a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot, e.g. TSMC5: 5, TSMC7: 4; Rule 16). **V6.6.0 production = the uniform matrix** trained from scratch on one identical recipe (`--apply-filter off --swa-mode ema --seed 42`, no loss preset / EKV / Sobolev / corridor / T3); the resolver default `medium` is production for every tech — **no per-tech best-size cherry-pick** (that would itself be a special recipe). The V6.5.x hand-tuned specials (`tsmc5_dn_corringL_s7`, `tsmc7_dn_t3`/`ekvhr`, `tsmc16_dn_lgs17`) were retired in the V6.6.0 house-clean and archived off-repo at `/data2/shenshan/v6.5.9_production_specials.tar.gz`; their build recipe + verdicts live in CHANGELOG V6.5.4/V6.5.5/V6.5.9 + git history.
-- Resolver cascade (`pycircuitsim/parser.py`): for a TSMC5/7/12/16 netlist the per-tech slot `tsmc{X}_dn_{medium,small,large,xl}` (medium-first) preempts the universal fallback chain (`refac_dn_* > v4_re_dn_universal > v4_dn_universal > bare`). The universal fallbacks are unreachable until someone retrains a universal stack (`refac_dn_*` / `v4_*` artifacts were deleted 2026-05-12). Resolutions log at parse time as `[NN-resolver] L73 <name> TECH=<x> VT=<y> -> <chk> (scope=<s>, tech_code=<c>)`. Override via `--exp-name` at train time, or `PYCIRCUITSIM_NN_CHECKPOINT_*` / `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}` env vars at runtime (the latter is read first, before the medium-first preempt — used by the benchmark to pin a capacity tier).
+- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}` — **32 checkpoints**, each a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot, e.g. TSMC5: 5, TSMC7: 4; Rule 16). **V6.6.0 production = the uniform `large` tier** trained from scratch on one identical recipe (`--apply-filter off --swa-mode ema --seed 42`, no loss preset / EKV / Sobolev / corridor / T3); `large` is the best uniform capacity (13/16 complex gates vs medium 10/16; over-fits at xl). The resolver prefers `large` first for every tech — a single uniform global choice, **not a per-tech best-size cherry-pick** (that would itself be a special recipe). All 32 `s/m/l/xl` checkpoints stay on disk; pin any tier with `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}`. The V6.5.x hand-tuned specials (`tsmc5_dn_corringL_s7`, `tsmc7_dn_t3`/`ekvhr`, `tsmc16_dn_lgs17`) were retired in the V6.6.0 house-clean and archived off-repo at `/data2/shenshan/v6.5.9_production_specials.tar.gz`; their build recipe + verdicts live in CHANGELOG V6.5.4/V6.5.5/V6.5.9 + git history.
+- Resolver cascade (`pycircuitsim/parser.py`): for a TSMC5/7/12/16 netlist the per-tech slot `tsmc{X}_dn_{large,medium,small,xl}` (**large-first**, V6.6.0 — large is the production tier) preempts the universal fallback chain (`refac_dn_* > v4_re_dn_universal > v4_dn_universal > bare`). The universal fallbacks are unreachable until someone retrains a universal stack (`refac_dn_*` / `v4_*` artifacts were deleted 2026-05-12). Resolutions log at parse time as `[NN-resolver] L73 <name> TECH=<x> VT=<y> -> <chk> (scope=<s>, tech_code=<c>)`. Override via `--exp-name` at train time, or `PYCIRCUITSIM_NN_CHECKPOINT_*` / `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}` env vars at runtime (the latter is read first, before the medium-first preempt — used by the benchmark to pin a capacity tier).
 
 **Netlist usage:** `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`. Parser auto-resolves the per-tech checkpoint and the local-vocab tech_code via `bsimar.config.local_variant_code(scope, tech, variant)`.
 

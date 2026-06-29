@@ -11,9 +11,11 @@ isn't burdened with chronology.
 **Headline: a deliberate reset from the V6.5.9 hand-tuned 16/16 to a clean,
 reproducible baseline that reflects the GENUINE fidelity of the NN compact model.**
 No more per-case special recipes — every DirectNet checkpoint is trained from
-scratch on **one identical recipe**, and production is the uniform `s/m/l/xl`
-matrix (resolver default = `medium`), not a cherry-picked best-config-per-tech mix.
-The accuracy matrix is in `docs/V6.6.0-accuracy-report.md`.
+scratch on **one identical recipe**, and production = the uniform **`large`** tier
+(the best uniform capacity, **13/16 complex gates**), not a cherry-picked
+best-config-per-tech mix. Capacity curve: **small 7 → medium 10 → large 13 → xl 10
+/ 16** (peaks at `large`, over-fits at `xl` — the classic DirectNet boundary). Full
+accuracy matrix in `docs/V6.6.0-accuracy-report.md`.
 
 **Why:** V6.5.x reached 16/16 only via bespoke per-tech interventions (tsmc5 ring
 corridor + seed-7, tsmc16 seed-17, tsmc7 T3 differentiable-DC-solver + EKV core).
@@ -47,12 +49,23 @@ model under one honest recipe?". V6.6.0 measures the latter.
   cheaply, kept as rollback insurance.
 - **Tooling:** `scripts/benchmark_train_sml.sh` gained a `GPUS` env override
   (default-preserving) so a run can dodge a busy/shared GPU.
+- **Resolver:** `pycircuitsim/parser.py` now prefers the per-tech `large` slot
+  first (was `medium`-first), so the no-override production default is `large`
+  (the best uniform tier). All 32 real checkpoints stay on disk; the benchmark
+  still pins each tier explicitly via `PYCIRCUITSIM_NN_CHECKPOINT_DN_*`.
 
-**Retrain:** `benchmark_train_sml.sh` rebuilt all **32** checkpoints
+**Retrain + result:** `benchmark_train_sml.sh` rebuilt all **32** checkpoints
 (4 techs × nmos/pmos × small/medium/large/xl) from scratch on the control recipe
 `--apply-filter off --swa-mode ema --seed 42` (no loss preset / EKV / Sobolev /
-corridor / T3), reusing the 8 clean datasets. Gate matrix + device-fidelity
-metrics: see `docs/V6.6.0-accuracy-report.md`.
+corridor / T3), reusing the 8 clean datasets. **Result: 13/16 complex gates at
+`large`** (device 24/24, inverter 16/16 at every size, lifted-source canary 12/12;
+L72 ground-truth OP/DC/TRAN/AC all PASS — reference intact post-clean). The 3 open
+gates (tsmc5 ring, tsmc7/tsmc16 opamp) are the value-surface / fixed-point gaps the
+retired V6.5.x specials used bespoke recipes to force closed; under one honest
+recipe they mark the true fidelity frontier. AC: device CS-amp gain0 < 1.5 dB
+everywhere (gm/gds autograd faithful), the Cgd RHP-zero phase + opamp DC-gain level
+are the genuine limits. Full matrix + device-fidelity metrics:
+`docs/V6.6.0-accuracy-report.md`.
 
 **Rollback:** `git checkout V6.5.4` restores the pre-clean tree;
 `tar xzf /data2/shenshan/v6.5.9_production_specials.tar.gz -C <checkpoints>` +

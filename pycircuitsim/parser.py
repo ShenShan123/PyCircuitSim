@@ -132,16 +132,24 @@ def _resolve_nn_checkpoint(
         # Cascade: per-tech dedicated > refactor universal presets >
         # v4-re universal > legacy v4 universal > per-tech-bare > bare.
         #
-        # Per-tech dedicated slots (`tsmc{5,7}_dn_{size}_{dev}_best.pt`)
+        # Per-tech dedicated slots (`tsmc{5,7,12,16}_dn_{size}_{dev}_best.pt`)
         # preempt the universal cascade when the netlist's tech matches.
         # The trained model uses a SHRUNK local-vocab embedding; the
-        # tech_code remap below keys off the file's `tsmc{5,7}_dn_` prefix.
+        # tech_code remap below keys off the file's `tsmc{X}_dn_` prefix.
+        #
+        # V6.6.0: `large` is the uniform production capacity tier (the best
+        # uniform-recipe gate pass-rate, 13/16, vs medium's 10/16; capacity
+        # peaks at large then over-fits at xl). So the bare resolver default
+        # prefers `large` first, then falls back medium > small > xl. The
+        # benchmark/gate harness still pins any specific tier explicitly via
+        # PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}, so this only sets the
+        # no-override production default.
         per_tech_preempt: list = []
         if tech_key in LOCAL_VARIANT_CODES:
             per_tech_preempt = [
+                CHECKPOINT_DIR / f"{tech_key}_dn_large_{device_key}_best.pt",
                 CHECKPOINT_DIR / f"{tech_key}_dn_medium_{device_key}_best.pt",
                 CHECKPOINT_DIR / f"{tech_key}_dn_small_{device_key}_best.pt",
-                CHECKPOINT_DIR / f"{tech_key}_dn_large_{device_key}_best.pt",
                 CHECKPOINT_DIR / f"{tech_key}_dn_xl_{device_key}_best.pt",
             ]
         candidates = per_tech_preempt + [
