@@ -6,6 +6,60 @@ isn't burdened with chronology.
 
 ---
 
+## V6.6.0 — House-clean + uniform-recipe reset (branch `V6.6`, 2026-06-29)
+
+**Headline: a deliberate reset from the V6.5.9 hand-tuned 16/16 to a clean,
+reproducible baseline that reflects the GENUINE fidelity of the NN compact model.**
+No more per-case special recipes — every DirectNet checkpoint is trained from
+scratch on **one identical recipe**, and production is the uniform `s/m/l/xl`
+matrix (resolver default = `medium`), not a cherry-picked best-config-per-tech mix.
+The accuracy matrix is in `docs/V6.6.0-accuracy-report.md`.
+
+**Why:** V6.5.x reached 16/16 only via bespoke per-tech interventions (tsmc5 ring
+corridor + seed-7, tsmc16 seed-17, tsmc7 T3 differentiable-DC-solver + EKV core).
+Those answer "can a tuned checkpoint pass this gate?", not "how faithful is the NN
+model under one honest recipe?". V6.6.0 measures the latter.
+
+**House-clean (all on branch `V6.6`):**
+- **Datasets:** purged the stale `_v2/_cor/_v2cor` variants + `datasets_v2_backup/`
+  (16 GB → 4.5 GB); kept the 8 clean `datasets/{tech}_{nmos,pmos}.npz` benchmark
+  inputs.
+- **Artifacts:** removed all version-pinned `results/*`, `training_logs/`,
+  `tests/*_results/`, `__pycache__`, and the regenerable example-sim outputs.
+- **Plans/reports:** removed `docs/plans/*` (executed V6.5.x forward plans) and
+  `docs/test-infra-bug-report-2026-06-28.md` (fixes already landed in `b1ae08a`).
+- **Scripts:** removed the version-pinned one-offs `scripts/v6_5_{4,5,8}_*`
+  (corridor / KCL / T3 / seed-sweep campaign drivers); kept the durable
+  `benchmark_*` pipeline + `train_per_tech_8cells.sh`.
+- **Tests:** removed 11 gate-specific routing diagnostics (`diag_opamp_*`,
+  `diag_g3_cdd_match`, `diag_nn_ring_trajectory`, `diag_nn_switchcap_trajectory`,
+  `diag_passgate_*`, `diag_tg_conduction_nn_vs_l72`); kept the 4 reusable controls
+  (`diag_l72_complex_control`, `diag_l72_switchcap_{control,uic_control}`,
+  `diag_nn_jacobian_consistency`). All 23 `verify_*` gates retained.
+- **Core code:** removed the 2 genuinely-dead `pycircuitsim/config.py` helpers
+  (`verify_osdi_binary`, `get_modelcard_path`, 0 callers). Load-bearing
+  recoverable features (monotonic / EKV / Sobolev paths, LEVEL=74 BSIMAR) and the
+  public package exports were kept (conservative dead-code analysis).
+- **Checkpoints:** cleared the checkpoints dir (123 MB → 0) for a clean-slate
+  retrain. The V6.5.x hand-tuned specials (`tsmc5_dn_corringL_s7`, `tsmc7_dn_t3`,
+  `tsmc7_dn_ekvhr`, `tsmc16_dn_lgs17`) were **archived off-repo** to
+  `/data2/shenshan/v6.5.9_production_specials.tar.gz` (27 MB) — not regenerable
+  cheaply, kept as rollback insurance.
+- **Tooling:** `scripts/benchmark_train_sml.sh` gained a `GPUS` env override
+  (default-preserving) so a run can dodge a busy/shared GPU.
+
+**Retrain:** `benchmark_train_sml.sh` rebuilt all **32** checkpoints
+(4 techs × nmos/pmos × small/medium/large/xl) from scratch on the control recipe
+`--apply-filter off --swa-mode ema --seed 42` (no loss preset / EKV / Sobolev /
+corridor / T3), reusing the 8 clean datasets. Gate matrix + device-fidelity
+metrics: see `docs/V6.6.0-accuracy-report.md`.
+
+**Rollback:** `git checkout V6.5.4` restores the pre-clean tree;
+`tar xzf /data2/shenshan/v6.5.9_production_specials.tar.gz -C <checkpoints>` +
+repointing the `tsmc{5,7,16}_dn_medium` symlinks restores the 16/16 specials.
+
+---
+
 ## V6.5.9 — ★ 16/16: T3 differentiable-DC-solver lands the tsmc7 opamp (branch `V6.5.4`, 2026-06-29)
 
 **Headline: the tsmc7 opamp gate PASSES for the first time ever — DirectNet

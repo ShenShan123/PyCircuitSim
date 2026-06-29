@@ -20,7 +20,10 @@ CKPT="$ROOT/external_compact_models/bsimar/checkpoints"
 DS="$ROOT/external_compact_models/bsimar/data/datasets"
 LOGDIR="$ROOT/results/benchmark_sml/train_logs"
 mkdir -p "$LOGDIR"
-NGPU=3
+# GPUS env (space-separated physical GPU ids) lets a run dodge a busy/shared GPU
+# without editing this file; default = all three. NGPU derives from the list.
+read -r -a GPU_IDS <<< "${GPUS:-0 1 2}"
+NGPU=${#GPU_IDS[@]}
 NSTREAMS="${NSTREAMS:-9}"
 
 # The `bsimar` package lives under external_compact_models/ (not on sys.path);
@@ -68,7 +71,7 @@ done; done
 # into ONE command so only the first runs. (Bit us on the no-force XL relaunch.)
 lines=(); i=0
 for size in "${sizes[@]}"; do for tech in "${techs[@]}"; do for dev in "${devs[@]}"; do
-  lines+=("$tech $size $dev $((i % NGPU)) ${FORCE:-noforce}")
+  lines+=("$tech $size $dev ${GPU_IDS[$((i % NGPU))]} ${FORCE:-noforce}")
   i=$((i+1))
 done; done; done
 

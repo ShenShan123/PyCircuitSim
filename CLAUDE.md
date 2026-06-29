@@ -93,19 +93,16 @@ authoritative ground truth; DirectNet is the production NN; BSIMAR is parked.
   (Vgs, Vds, Vbs, NFIN, L, T, tech_code) with an `nn.Embedding` tech-code;
   gm/gds/gmb are the **autograd Jacobian** of the predicted `id`. Per-tech
   NMOS/PMOS checkpoints use a local embedding vocab (Rule 16); charges are
-  predicted and the AC caps are their `dQ/dV` autograd. Production is **16/16**
-  complex gates (V6.5.9): the V6.5.5 best-config-per-tech mix for tsmc5/12/16 plus
-  the **T3** EKV checkpoint for tsmc7 (see Checkpoints below). **V6.5.9 closed the
-  last gate — the tsmc7 opamp** (was gain→0): **T3** — a differentiable unrolled
-  DC-solver fine-tune that supervises the emergent transfer curve `Vout(Vin; θ)`
-  against L72 — lands gain 178.0 vs NGSPICE 163.4 (8.92 %, PASS). T3 broke the
-  V6.5.8 calibration wall by putting the solve IN the loss (so r_o is shaped by the
-  gain target, not the residual-minimisation shortcut that over-flattened it); a
-  `--lam-lo-override` r_o cap collapses the over-flattened gate root that V6.5.8
-  was stuck on. The gate gain is bimodal + 0.002-sampling-noisy on this sharp
-  low-VDD transition, so the ~1 % opamp margin is thin but a deterministic CPU
-  pass; preservation (ring/switchcap) was the binding work, not existence
-  (CHANGELOG V6.5.9; plan `2026-06-28-tsmc7-opamp-T3-differentiable-solver.md`).
+  predicted and the AC caps are their `dQ/dV` autograd. **Production (V6.6.0) is
+  the uniform `small/medium/large/xl` capacity matrix** — every
+  (tech × device × size) checkpoint trained from scratch on **one identical
+  recipe** (no per-case special recipes: no corridor / seed-tune / EKV / T3
+  fine-tunes). The intent is to reflect the **genuine, uniform fidelity** of the
+  NN compact model, not a cherry-picked best-config-per-tech mix. The resolver
+  default is `medium` for every tech. See the V6.6.0 accuracy report
+  (`docs/V6.6.0-accuracy-report.md`) + CHANGELOG for the gate matrix. (History:
+  V6.5.9 reached 16/16 via hand-tuned specials — retired in the V6.6.0
+  house-clean; CHANGELOG.)
 - **BSIMAR Transformer (LEVEL=74)** — autoregressive Transformer sharing
   DirectNet's data pipeline and inference rules. Parked (Rule 15); no checkpoints
   on disk. Resurrect the cap-head / AR-loop structure from CHANGELOG / git
@@ -196,7 +193,7 @@ Mn1 3 2 0 0 nmos1 L=30n NFIN=10
 
 ### NN training (per-tech DirectNet, LEVEL=73)
 
-Dedicated per-tech NMOS/PMOS DirectNet checkpoints for **TSMC5 / TSMC7 / TSMC12 / TSMC16**. `--tech-scope` ∈ `{tsmc5,tsmc7,tsmc12,tsmc16,universal}`; `--size` ∈ `{small,medium,large,xl}` (`large` is the over-fit sweet spot, `xl` the boundary). **Production = best config per tech** (`large`+ring-corridor+seed-7 for tsmc5, `large` for tsmc7/12, `large`+seed-17 for tsmc16). The corridor-retrain pipeline (`scripts/v6_5_5_{harvest,append}_corridor.py`, `v6_5_5_train_corridor.sh`, `v6_5_5_eval_corridor.py`) harvests the L72-control circuit trajectory, OSDI-labels it, appends as `traj_corridor`, and A/B-gates the per-tech retrain (detail in CHANGELOG V6.5.5/V6.5.4).
+Dedicated per-tech NMOS/PMOS DirectNet checkpoints for **TSMC5 / TSMC7 / TSMC12 / TSMC16**. `--tech-scope` ∈ `{tsmc5,tsmc7,tsmc12,tsmc16,universal}`; `--size` ∈ `{small,medium,large,xl}`. **Production (V6.6.0) = the uniform `s/m/l/xl` matrix** trained from scratch on one identical recipe — no per-case special recipes (no corridor / seed / EKV / T3 fine-tunes); the resolver default is `medium`. The benchmark below drives the whole matrix on that single recipe.
 
 ```bash
 # 1. Generate per-tech data (one .npz per tech+device). --enable-inv-trip adds the
@@ -214,11 +211,11 @@ conda run -n pycircuitsim python -u -m bsimar.cli.train \
     --device-type {nmos,pmos} --tech-scope {tsmc5,tsmc7,tsmc12,tsmc16} --cuda --overwrite
 ```
 
-**Full capacity sweep** — the S/M/L benchmark drives the whole matrix (4 techs × N/P × sizes) on one clean recipe: `scripts/benchmark_gen_data.sh` (datasets) → `scripts/benchmark_train_sml.sh` (the 24 checkpoints) → `scripts/benchmark_run_tests.sh` → `scripts/benchmark_collect.py` (`results/benchmark_sml/REPORT.md`). The older `scripts/train_per_tech_8cells.sh` is a TSMC5/7-only S+M convenience sweep.
+**Full capacity sweep** — the benchmark drives the whole matrix (4 techs × N/P × 4 sizes = **32 checkpoints**) on one identical clean recipe: `scripts/benchmark_gen_data.sh` (datasets) → `scripts/benchmark_train_sml.sh` (the 32 checkpoints; `GPUS="0 2"` env-pins a GPU subset, `NSTREAMS` sets concurrency) → `scripts/benchmark_run_tests.sh` → `scripts/benchmark_collect.py` (`results/benchmark_sml/REPORT.md`). The older `scripts/train_per_tech_8cells.sh` is a TSMC5/7-only S+M convenience sweep.
 
 **Checkpoints** (`external_compact_models/bsimar/checkpoints/`, each `*_best.pt` + `_norm.npz`):
 
-- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}`. Each uses a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot, e.g. TSMC5: 5, TSMC7: 4; Rule 16). **Production = best-config-per-tech (16/16):** the `tsmc{X}_dn_medium` resolver slots are symlinks → `tsmc5_dn_corringL_s7` (large + ring-edge `traj_corridor`, seed 7), `large` (tsmc12), **`tsmc7_dn_t3`** (tsmc7 — the V6.5.9 T3 differentiable-DC-solver EKV checkpoint that lands the opamp gate; revert = repoint `tsmc7_dn_medium` → `tsmc7_dn_large`), `tsmc16_dn_lgs17` (seed 17). The **tsmc7 opamp** (was gain→0, the lone open gate through V6.5.8) PASSES under `tsmc7_dn_t3` (gain 178.0/8.92 %); its substrate is the high-r_o EKV core `tsmc7_dn_ekvhr` (kept on disk; the T3 init). Install/retrain history (the V6.5.4 from-scratch matrix retrain + stale-checkpoint purge via `scripts/v6_5_4_install_final.py`, the V6.5.5 tsmc5 corridor repoint, the V6.5.9 tsmc7 T3 repoint via `scripts/v6_5_8_install_t3.sh`) is in CHANGELOG V6.5.4/V6.5.5/V6.5.9.
+- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}` — **32 checkpoints**, each a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot, e.g. TSMC5: 5, TSMC7: 4; Rule 16). **V6.6.0 production = the uniform matrix** trained from scratch on one identical recipe (`--apply-filter off --swa-mode ema --seed 42`, no loss preset / EKV / Sobolev / corridor / T3); the resolver default `medium` is production for every tech — **no per-tech best-size cherry-pick** (that would itself be a special recipe). The V6.5.x hand-tuned specials (`tsmc5_dn_corringL_s7`, `tsmc7_dn_t3`/`ekvhr`, `tsmc16_dn_lgs17`) were retired in the V6.6.0 house-clean and archived off-repo at `/data2/shenshan/v6.5.9_production_specials.tar.gz`; their build recipe + verdicts live in CHANGELOG V6.5.4/V6.5.5/V6.5.9 + git history.
 - Resolver cascade (`pycircuitsim/parser.py`): for a TSMC5/7/12/16 netlist the per-tech slot `tsmc{X}_dn_{medium,small,large,xl}` (medium-first) preempts the universal fallback chain (`refac_dn_* > v4_re_dn_universal > v4_dn_universal > bare`). The universal fallbacks are unreachable until someone retrains a universal stack (`refac_dn_*` / `v4_*` artifacts were deleted 2026-05-12). Resolutions log at parse time as `[NN-resolver] L73 <name> TECH=<x> VT=<y> -> <chk> (scope=<s>, tech_code=<c>)`. Override via `--exp-name` at train time, or `PYCIRCUITSIM_NN_CHECKPOINT_*` / `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}` env vars at runtime (the latter is read first, before the medium-first preempt — used by the benchmark to pin a capacity tier).
 
 **Netlist usage:** `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`. Parser auto-resolves the per-tech checkpoint and the local-vocab tech_code via `bsimar.config.local_variant_code(scope, tech, variant)`.
@@ -255,11 +252,10 @@ All tests require `conda activate pycircuitsim`. Ground truth is **always** NGSP
 
 ### Diagnostics (`tests/diag_*.py`, no NGSPICE — L72-in-PyCircuitSim reference)
 
-Not pass/fail gates — they localize open gates and route retrains; the verdicts they produced are recorded in the CHANGELOG.
+Not pass/fail gates — reusable controls that check harness/solver fidelity and NN autograd consistency. (The V6.5.x gate-specific routing diagnostics — opamp KCL/basin/op-decomp/conditioning, cdd-match, ring/switchcap/passgate trajectory probes — were retired in the V6.6.0 clean-up; their verdicts remain in the CHANGELOG.)
 
-- **Ring / opamp ownership (V6.5.5):** `diag_nn_ring_trajectory.py` (conduction-vs-cap split), `diag_opamp_op_decomp.py` / `diag_opamp_basin_seed.py` (basin-vs-value-surface).
-- **3-operator routing (V6.5.6):** `diag_opamp_kcl_residual.py` (opamp EXISTENCE-vs-CONTRACTION), `diag_g3_cdd_match.py` (autograd-vs-supervised cdd), `diag_opamp_solver_conditioning.py` (high-gain-zero reachability); T1 KCL fine-tune infra `scripts/v6_5_5_{harvest,finetune,gate}_kcl.{py,sh}`.
-- **Native-L72 controls / switchcap:** `diag_l72_complex_control.py`, `diag_l72_switchcap_{control,uic_control}.py`, `diag_passgate_{iv_trajectory,step_probe,traj_dump}.py`, `diag_tg_conduction_nn_vs_l72.py`, `diag_nn_switchcap_trajectory.py`, `diag_nn_jacobian_consistency.py`.
+- **Native-L72 controls:** `diag_l72_complex_control.py`, `diag_l72_switchcap_control.py`, `diag_l72_switchcap_uic_control.py` — prove L72-in-PyCircuitSim matches NGSPICE (~0 %), isolating any complex-gate gap to the NN value-surface vs. the solver/harness.
+- **NN autograd sanity:** `diag_nn_jacobian_consistency.py` — gm/gds/gmb autograd-Jacobian self-consistency of the DirectNet `id` head.
 
 **Quick sanity:**
 
@@ -350,7 +346,7 @@ Both LEVEL=73 (single-shot MLP, primary) and LEVEL=74 (autoregressive Transforme
 - **Modelcards:** `modelcards/` (PyCMG-relative); ASAP7 `*.pm` committed; TSMC raw PDK `cln*.l` is gitignored/IP-protected — naive modelcards regenerated on-the-fly via `pycmg.tech.resolve_modelcard` into `build/modelcards/`. Never commit `modelcards.tar.gz` (bundles the IP `cln*.l`).
 - **Results output:** `results/<circuit_name>/<analysis_type>/`.
 - **Test results:** `tests/verify_*_results/` (generated, not tracked).
-- **Sprint history:** `docs/CHANGELOG.md`. **Note (2026-06-15 cleanup):** the pre-V6.4.7 plan files and the old iteration result dirs (`results/{v6_4_4_iter2,v6_4_5,v6_4_6}/`, `results/v4_*`/`v5_*`) were pruned; the durable dead-end records remain in this CHANGELOG and CLAUDE.md, so path references to those removed gate files in older notes are intentionally dangling.
+- **Sprint history:** `docs/CHANGELOG.md`. **Note (V6.6.0 house-clean, 2026-06-29):** the V6.5.x forward-plan files (`docs/plans/`), the version-pinned one-off campaign scripts (`scripts/v6_5_*`), the gate-specific routing diagnostics, the stale dataset variants, and all generated result/log dirs were pruned; the V6.5.x hand-tuned production specials were retired (archived off-repo). The durable dead-end records remain in the CHANGELOG, so path references to removed scripts/plans in older notes are intentionally dangling. (Prior 2026-06-15 cleanup pruned the pre-V6.4.7 plans + `results/{v6_4_4_iter2,v6_4_5,v6_4_6}/`, `results/v4_*`/`v5_*`.)
 
 ## Other Tips
 
