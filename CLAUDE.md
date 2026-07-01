@@ -6,10 +6,10 @@ Python-based SPICE-like circuit simulator emphasizing educational clarity and mo
 **Primary Goal:** specific support for three compact model families:
 
 - **BSIM-CMG** (LEVEL=72) — PyCMG-wrapped OSDI FinFET model (ground truth).
-- **DirectNet** (LEVEL=73) — baseline feed-forward MLP compact model (PyTorch).
+- **DirectNet** (LEVEL=73) — production feed-forward MLP compact model (PyTorch).
 - **BSIM-AR Transformer** (LEVEL=74) — autoregressive Transformer compact model (PyTorch).
 
-DirectNet and BSIM-AR share the same data, normalization, and evaluation pipelines via the unified `bsimar` package at `external_compact_models/bsimar/`. DirectNet is the baseline for comparison against BSIM-AR.
+DirectNet and BSIM-AR share the same data, normalization, and evaluation pipelines via the unified `bsimar` package at `external_compact_models/bsimar/`. DirectNet is the production NN; BSIM-AR is the parked autoregressive variant (Rule 15).
 
 Must support **Operating Point**, **DC Sweep**, AC Sweep, and **Transient Analysis** for all model types.
 
@@ -93,18 +93,13 @@ authoritative ground truth; DirectNet is the production NN; BSIMAR is parked.
   (Vgs, Vds, Vbs, NFIN, L, T, tech_code) with an `nn.Embedding` tech-code;
   gm/gds/gmb are the **autograd Jacobian** of the predicted `id`. Per-tech
   NMOS/PMOS checkpoints use a local embedding vocab (Rule 16); charges are
-  predicted and the AC caps are their `dQ/dV` autograd. **Production (V6.6.0) is
-  the uniform `small/medium/large/xl` capacity matrix** — every
-  (tech × device × size) checkpoint trained from scratch on **one identical
-  recipe** (no per-case special recipes: no corridor / seed-tune / EKV / T3
-  fine-tunes). The intent is to reflect the **genuine, uniform fidelity** of the
-  NN compact model, not a cherry-picked best-config-per-tech mix. **Production =
-  `large`** (the best uniform tier, 13/16 complex gates; capacity peaks at large
-  then over-fits at xl), uniform across all techs — the resolver prefers `large`
-  first. See the V6.6.0 accuracy report
-  (`docs/V6.6.0-accuracy-report.md`) + CHANGELOG for the gate matrix. (History:
-  V6.5.9 reached 16/16 via hand-tuned specials — retired in the V6.6.0
-  house-clean; CHANGELOG.)
+  predicted and the AC caps are their `dQ/dV` autograd. **Production = the
+  uniform `large` tier** — every (tech × device × size) checkpoint trained from
+  scratch on **one identical recipe** (no per-case special recipes), so the gate
+  matrix reflects the model's genuine uniform fidelity, not a cherry-picked
+  best-config-per-tech mix. The resolver prefers `large` first. Accuracy matrix +
+  recipe study: `docs/V6.6.0-accuracy-report.md`,
+  `docs/V6.6.1-recipe-accuracy-report.md`, CHANGELOG.
 - **BSIMAR Transformer (LEVEL=74)** — autoregressive Transformer sharing
   DirectNet's data pipeline and inference rules. Parked (Rule 15); no checkpoints
   on disk. Resurrect the cap-head / AR-loop structure from CHANGELOG / git
@@ -195,7 +190,7 @@ Mn1 3 2 0 0 nmos1 L=30n NFIN=10
 
 ### NN training (per-tech DirectNet, LEVEL=73)
 
-Dedicated per-tech NMOS/PMOS DirectNet checkpoints for **TSMC5 / TSMC7 / TSMC12 / TSMC16**. `--tech-scope` ∈ `{tsmc5,tsmc7,tsmc12,tsmc16,universal}`; `--size` ∈ `{small,medium,large,xl}`. **Production (V6.6.0) = the uniform `s/m/l/xl` matrix** trained from scratch on one identical recipe — no per-case special recipes (no corridor / seed / EKV / T3 fine-tunes); production = `large` (best uniform tier, 13/16) and the resolver prefers `large` first. The benchmark below drives the whole matrix on that single recipe.
+Dedicated per-tech NMOS/PMOS DirectNet checkpoints for **TSMC5 / TSMC7 / TSMC12 / TSMC16**. `--tech-scope` ∈ `{tsmc5,tsmc7,tsmc12,tsmc16,universal}`; `--size` ∈ `{small,medium,large,xl}`. Production = the uniform `s/m/l/xl` matrix trained from scratch on one identical recipe (no per-case special recipes); production tier = `large`, resolver `large`-first. The benchmark below drives the whole matrix on that single recipe.
 
 ```bash
 # 1. Generate per-tech data (one .npz per tech+device). --enable-inv-trip adds the
@@ -217,8 +212,8 @@ conda run -n pycircuitsim python -u -m bsimar.cli.train \
 
 **Checkpoints** (`external_compact_models/bsimar/checkpoints/`, each `*_best.pt` + `_norm.npz`):
 
-- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}` — **32 checkpoints**, each a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot, e.g. TSMC5: 5, TSMC7: 4; Rule 16). **V6.6.0 production = the uniform `large` tier** trained from scratch on one identical recipe (`--apply-filter off --swa-mode ema --seed 42`, no loss preset / EKV / Sobolev / corridor / T3); `large` is the best uniform capacity (13/16 complex gates vs medium 10/16; over-fits at xl). The resolver prefers `large` first for every tech — a single uniform global choice, **not a per-tech best-size cherry-pick** (that would itself be a special recipe). All 32 `s/m/l/xl` checkpoints stay on disk; pin any tier with `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}`. The V6.5.x hand-tuned specials (`tsmc5_dn_corringL_s7`, `tsmc7_dn_t3`/`ekvhr`, `tsmc16_dn_lgs17`) were retired in the V6.6.0 house-clean and archived off-repo at `/data2/shenshan/v6.5.9_production_specials.tar.gz`; their build recipe + verdicts live in CHANGELOG V6.5.4/V6.5.5/V6.5.9 + git history.
-- Resolver cascade (`pycircuitsim/parser.py`): for a TSMC5/7/12/16 netlist the per-tech slot `tsmc{X}_dn_{large,medium,small,xl}` (**large-first**, V6.6.0 — large is the production tier) preempts the universal fallback chain (`refac_dn_* > v4_re_dn_universal > v4_dn_universal > bare`). The universal fallbacks are unreachable until someone retrains a universal stack (`refac_dn_*` / `v4_*` artifacts were deleted 2026-05-12). Resolutions log at parse time as `[NN-resolver] L73 <name> TECH=<x> VT=<y> -> <chk> (scope=<s>, tech_code=<c>)`. Override via `--exp-name` at train time, or `PYCIRCUITSIM_NN_CHECKPOINT_*` / `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}` env vars at runtime (the latter is read first, before the medium-first preempt — used by the benchmark to pin a capacity tier).
+- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}` — **32 checkpoints**, each a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot, e.g. TSMC5: 5, TSMC7: 4; Rule 16). Trained on the one clean recipe `--apply-filter off --swa-mode ema --seed 42` (no loss preset / EKV / Sobolev / corridor / T3). All 32 stay on disk; the resolver defaults to `large` (uniform global choice, not a per-tech best-size cherry-pick) and any tier is pinnable via `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}`. The V6.6.1 recipe-study checkpoints `tsmc{X}_dn_{recipe}_large_{dev}` also remain on disk — `csob` is the documented AC/device-fidelity alternative (CHANGELOG).
+- Resolver cascade (`pycircuitsim/parser.py`): for a TSMC5/7/12/16 netlist the per-tech slot `tsmc{X}_dn_{large,medium,small,xl}` (**large-first**) preempts the universal fallback chain (`refac_dn_* > v4_re_dn_universal > v4_dn_universal > bare`; those universal artifacts were deleted, so the fallbacks are dormant until a universal stack is retrained). Resolutions log at parse time as `[NN-resolver] L73 <name> TECH=<x> VT=<y> -> <chk> (scope=<s>, tech_code=<c>)`. Override via `--exp-name` at train time, or `PYCIRCUITSIM_NN_CHECKPOINT_*` / `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}` env vars at runtime (the latter is read first, before the preempt — used to pin a specific checkpoint/tier).
 
 **Netlist usage:** `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`. Parser auto-resolves the per-tech checkpoint and the local-vocab tech_code via `bsimar.config.local_variant_code(scope, tech, variant)`.
 
@@ -242,7 +237,7 @@ All tests require `conda activate pycircuitsim`. Ground truth is **always** NGSP
 ### DirectNet NN (LEVEL=73)
 
 - **Device + inverter gate:** `verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16 [--inverter-only]` — per-tech NMOS/PMOS single-OP / DC-sweep / inverter VTC + transient. Production baseline: inverter 8/8, DC 55/55, tran 64/64. (The bare `--tech` default also lists ASAP7 — out of scope, Rule 14.)
-- **Parametric sweep (V6.3.2):** `verify_nn_multi_tech_dc.py` (Id-Vgs over L/NFIN/VT, 55 configs) + `verify_nn_multi_tech_tran.py` (inverter over P/N ratio, VDD, Cload, slew, pulse width) via `tests/common/nn_sweep.py`; baseline-gated. Pin `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1` (the high-gain VTC trip has ~±1% run-to-run scatter).
+- **Parametric sweep:** `verify_nn_multi_tech_dc.py` (Id-Vgs over L/NFIN/VT, 55 configs) + `verify_nn_multi_tech_tran.py` (inverter over P/N ratio, VDD, Cload, slew, pulse width) via `tests/common/nn_sweep.py`; baseline-gated. Pin `OMP_NUM_THREADS=1 MKL_NUM_THREADS=1` (the high-gain VTC trip has ~±1% run-to-run scatter).
 - **AC:** `verify_nn_ac.py --tech TSMC<XX> [--device nmos,pmos]` — CS-amp, no load cap so device caps set the pole; gate = gain0 ≤1.5 dB / f3db ratio ∈[0.7,1.43] / mag NRMSE ≤10% (phase diagnostic). Needs `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}`.
 - **Lifted-source canary:** `verify_nn_lifted_source_dc.py` (NRMSE ≤10%, guards Rule 2).
 
@@ -254,7 +249,7 @@ All tests require `conda activate pycircuitsim`. Ground truth is **always** NGSP
 
 ### Diagnostics (`tests/diag_*.py`, no NGSPICE — L72-in-PyCircuitSim reference)
 
-Not pass/fail gates — reusable controls that check harness/solver fidelity and NN autograd consistency. (The V6.5.x gate-specific routing diagnostics — opamp KCL/basin/op-decomp/conditioning, cdd-match, ring/switchcap/passgate trajectory probes — were retired in the V6.6.0 clean-up; their verdicts remain in the CHANGELOG.)
+Not pass/fail gates — reusable controls that check harness/solver fidelity and NN autograd consistency. (Gate-specific routing diagnostics from past campaigns were retired in the house-cleans; their verdicts remain in the CHANGELOG.)
 
 - **Native-L72 controls:** `diag_l72_complex_control.py`, `diag_l72_switchcap_control.py`, `diag_l72_switchcap_uic_control.py` — prove L72-in-PyCircuitSim matches NGSPICE (~0 %), isolating any complex-gate gap to the NN value-surface vs. the solver/harness.
 - **NN autograd sanity:** `diag_nn_jacobian_consistency.py` — gm/gds/gmb autograd-Jacobian self-consistency of the DirectNet `id` head.
@@ -330,12 +325,12 @@ Both LEVEL=73 (single-shot MLP, primary) and LEVEL=74 (autoregressive Transforme
 8. **Data validation** — `eval_single_point` rejects NaN/Inf and `|id| > 1A`. PyCMG `eval_dc` raises `RuntimeError` on internal-node convergence failure. NFIN=1 is excluded from training data: although `DEFAULT_NFIN_VALUES` lists it, unstable `(variant, NFIN=1)` bins fail OSDI convergence and are dropped per-bin during generation, so NFIN≥2 is what actually trains.
 9. **(parked, LEVEL=74)** BSIMAR output uses `BSIMAR_COLUMN_ORDER`, not `OUTPUT_COLUMN_ORDER` — see CHANGELOG / `mosfet_bsimar.py` if resurrected.
 10. **(parked, LEVEL=74)** BSIMAR parallel cap head + 8-step AR loop (`parallel_caps`, `grouped_inputs`, structural) — see CHANGELOG if resurrected.
-11. **Unified CLI** — `python -m bsimar.cli.train --model direct --size {small,medium,large,xl} --device-type {nmos,pmos} --tech-scope {tsmc5,tsmc7,universal} ...` (xl = 512×8 ~2.13M p, over-fit-boundary tier; production stays medium). With `--tech-scope tsmc{5,7}` the default save_prefix is `tsmc{X}_dn_<size>_<device>` (recognized by the parser preempt cascade). Same `.npz` from PyCMG; checkpoints under `external_compact_models/bsimar/checkpoints/`. Flags (all default-off / behavior-preserving): `--swa-mode {none,ema,swa}` + `--ema-decay`; `--apply-filter {on,off}` + `--class-weights`; `--enable-subvt-off`; the optional loss terms `--sobolev` / `--subthresh` / `--charge-sobolev`; and the EKV backbone `--ekv-core` / `--ekv-alpha` / `--ekv-hidden`.
+11. **Unified CLI** — `python -m bsimar.cli.train --model direct --size {small,medium,large,xl} --device-type {nmos,pmos} --tech-scope {tsmc5,tsmc7,tsmc12,tsmc16,universal} ...` (xl = 512×8 ~2.13M p, over-fit-boundary tier; production = large). With a per-tech `--tech-scope` the default save_prefix is `tsmc{X}_dn_<size>_<device>` (recognized by the parser preempt cascade). Same `.npz` from PyCMG; checkpoints under `external_compact_models/bsimar/checkpoints/`. Flags (all default-off / behavior-preserving): `--swa-mode {none,ema,swa}` + `--ema-decay`; `--apply-filter {on,off}` + `--class-weights`; `--enable-subvt-off`; the optional loss terms `--sobolev` / `--subthresh` / `--charge-sobolev`; and the EKV backbone `--ekv-core` / `--ekv-alpha` / `--ekv-hidden`.
 12. **Charge conservation** — simulator always computes `qs = -(qg + qd + qb)` analytically, even for 13-output models that directly predict `qs`. Guarantees Kirchhoff conservation at every transient timestep.
 13. Always report MRE (%), R^2, NRMSE, Max error (mV) metrics per tech.
 14. **Exclude ASAP7** — out of scope at this stage (no checkpoints; see Overview).
 15. **DirectNet only** — do NOT train/eval the LEVEL=74 BSIMAR Transformer (parked).
-16. **Per-tech models use a LOCAL embedding vocab.** When `--tech-scope` is `tsmc5` or `tsmc7`, the dataset loader remaps universal tech codes to a 0-indexed per-tech vocab and the trainer instantiates `DirectNet(num_tech_codes=N, unknown_code_id=N-1)`, where N = variants+1 (TSMC5: 5, TSMC7: 4). The training-time `p_unknown` dropout writes `unknown_code_id` into the embedding, so a misaligned UNKNOWN id → CUDA assert. **Derive `unknown_code_id` from `num_tech_codes`; do NOT hardcode the universal value (17).** Parser uses `bsimar.config.local_variant_code(scope, tech, variant)` to remap at inference; the scope is read from the resolved checkpoint stem (`tsmc{5,7}_dn_*` → local; everything else → universal).
+16. **Per-tech models use a LOCAL embedding vocab.** When `--tech-scope` is any of `tsmc5`/`tsmc7`/`tsmc12`/`tsmc16`, the dataset loader remaps universal tech codes to a 0-indexed per-tech vocab and the trainer instantiates `DirectNet(num_tech_codes=N, unknown_code_id=N-1)`, where N = variants+1 (TSMC5: 5, TSMC7: 4, TSMC12: 6, TSMC16: 6). The training-time `p_unknown` dropout writes `unknown_code_id` into the embedding, so a misaligned UNKNOWN id → CUDA assert. **Derive `unknown_code_id` from `num_tech_codes`; do NOT hardcode the universal value (17).** Parser uses `bsimar.config.local_variant_code(scope, tech, variant)` to remap at inference; the scope is read from the resolved checkpoint stem (`tsmc{5,7,12,16}_dn_*` → local; universal fallbacks → universal).
 
 > **Load-bearing code (do NOT delete):** the V6.4.2 `_MonotoneVgResidual` + `--monotonic` path (`bsimar/{cli/train,models/direct_net,training/trainer}.py`, `pycircuitsim/models/mosfet_directnet.py`) must stay committed — on-disk checkpoints carry `mono.*` state_dict keys and fail to load without it. Stock checkpoints route `mono=None` (no inference change). The default-off EKV backbone (`_EKVCore`, `core.*` keys) and the Sobolev/subthreshold/charge-Sobolev loss terms are likewise kept recoverable; all leave stock checkpoints byte-identical.
 
@@ -348,7 +343,7 @@ Both LEVEL=73 (single-shot MLP, primary) and LEVEL=74 (autoregressive Transforme
 - **Modelcards:** `modelcards/` (PyCMG-relative); ASAP7 `*.pm` committed; TSMC raw PDK `cln*.l` is gitignored/IP-protected — naive modelcards regenerated on-the-fly via `pycmg.tech.resolve_modelcard` into `build/modelcards/`. Never commit `modelcards.tar.gz` (bundles the IP `cln*.l`).
 - **Results output:** `results/<circuit_name>/<analysis_type>/`.
 - **Test results:** `tests/verify_*_results/` (generated, not tracked).
-- **Sprint history:** `docs/CHANGELOG.md`. **Note (V6.6.0 house-clean, 2026-06-29):** the V6.5.x forward-plan files (`docs/plans/`), the version-pinned one-off campaign scripts (`scripts/v6_5_*`), the gate-specific routing diagnostics, the stale dataset variants, and all generated result/log dirs were pruned; the V6.5.x hand-tuned production specials were retired (archived off-repo). The durable dead-end records remain in the CHANGELOG, so path references to removed scripts/plans in older notes are intentionally dangling. (Prior 2026-06-15 cleanup pruned the pre-V6.4.7 plans + `results/{v6_4_4_iter2,v6_4_5,v6_4_6}/`, `results/v4_*`/`v5_*`.)
+- **Sprint history:** `docs/CHANGELOG.md`. Note: house-cleans have pruned old forward-plans, version-pinned one-off scripts, gate-specific diagnostics, stale datasets, and generated result dirs — so path references to removed scripts/plans in older CHANGELOG entries are intentionally dangling (the narrative, not the file, is the record).
 
 ## Other Tips
 
