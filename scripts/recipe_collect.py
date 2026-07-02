@@ -34,7 +34,8 @@ def discover():
                       if p.is_dir() and p.name not in ("train_logs",)
                       and any((p / s).is_dir() for s in ("small", "medium", "large", "xl"))])
     # canonical order: clean first (control), then the rest
-    order = ["clean", "csob", "sob", "sobf", "ekv", "ekvhi", "e3", "csobekv"]
+    order = ["clean", "cor", "corft", "invtripft", "invtrip", "csob", "sob",
+             "sobf", "ekv", "ekvhi", "e3", "csobekv"]
     recipes = sorted(recipes, key=lambda r: (order.index(r) if r in order else 99, r))
     sizes = set()
     for r in recipes:

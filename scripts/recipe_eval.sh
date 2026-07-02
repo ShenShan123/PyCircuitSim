@@ -24,6 +24,10 @@ NG="$ROOT/tools/ngspice-45.2/bin/ngspice"
 OUT="$ROOT/results/recipe_bench"
 CKPT="$ROOT/external_compact_models/bsimar/checkpoints"
 PAR="${PAR:-12}"
+# V6.6.2: invoke the env python DIRECTLY (the `conda run` wrapper intermittently
+# receives SIGSTKFLT under this harness → empty logs). Override with NN_PY.
+NN_PY="${NN_PY:-/data1/shenshan/.conda/envs/pycircuitsim/bin/python}"
+[ -x "$NN_PY" ] || NN_PY="python"
 
 suites=(verify_nn_multi_tech_dc verify_nn_multi_tech_tran \
         verify_complex_ring_osc verify_complex_opamp \
@@ -51,7 +55,7 @@ if [ "${1:-}" = "_one" ]; then
   export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="$sn"
   export PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="$sp"
   echo "[test] RUN $recipe/$size/$tlc/$suite (pin $sn / $sp)"
-  conda run -n pycircuitsim python -u "$ROOT/tests/${suite}.py" --tech "$tuc" > "$log" 2>&1
+  "$NN_PY" -u "$ROOT/tests/${suite}.py" --tech "$tuc" > "$log" 2>&1
   rc=$?
   echo "===BENCH_DONE rc=$rc===" >> "$log"
   echo "[test] END $recipe/$size/$tlc/$suite rc=$rc"

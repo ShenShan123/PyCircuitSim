@@ -146,7 +146,14 @@ def main() -> int:
                          "lifted_source_sweep_<label>.{csv,md})")
     ap.add_argument("--no-gate", action="store_true",
                     help="diagnostic mode: report metrics, no PASS/FAIL gate")
+    ap.add_argument("--techs", default=None,
+                    help="comma-separated tech filter (e.g. TSMC5,TSMC7); "
+                         "needed when env-pinning per-tech recipe checkpoints")
     args = ap.parse_args()
+    techs = list(NN_TECHS)
+    if args.techs:
+        want = {t.strip().upper() for t in args.techs.split(",")}
+        techs = [tk for tk in techs if tk.upper() in want]
 
     print("=" * 78)
     print(f"  V6.4.7 — lifted-source NMOS Id-Vgs ({args.label})")
@@ -154,7 +161,7 @@ def main() -> int:
     rows: List[Dict[str, object]] = []
     curve_rows: List[List[object]] = []
     n_pass = 0
-    for tk in NN_TECHS:
+    for tk in techs:
         tech = ALL_TEST_TECHS[tk]
         for frac in VS0_FRACTIONS:
             vs0 = round(tech.vdd * frac, 4)

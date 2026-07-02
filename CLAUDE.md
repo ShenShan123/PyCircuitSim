@@ -94,12 +94,16 @@ authoritative ground truth; DirectNet is the production NN; BSIMAR is parked.
   gm/gds/gmb are the **autograd Jacobian** of the predicted `id`. Per-tech
   NMOS/PMOS checkpoints use a local embedding vocab (Rule 16); charges are
   predicted and the AC caps are their `dQ/dV` autograd. **Production = the
-  uniform `large` tier** — every (tech × device × size) checkpoint trained from
-  scratch on **one identical recipe** (no per-case special recipes), so the gate
-  matrix reflects the model's genuine uniform fidelity, not a cherry-picked
-  best-config-per-tech mix. The resolver prefers `large` first. Accuracy matrix +
-  recipe study: `docs/V6.6.0-accuracy-report.md`,
-  `docs/V6.6.1-recipe-accuracy-report.md`, CHANGELOG.
+  uniform `large` tier** — one identical recipe for every (tech × device), no
+  per-case specials, so the gate matrix reflects genuine uniform fidelity. As of
+  **V6.6.4** the production recipe is **crit30**: the clean base
+  (`--apply-filter off --swa-mode ema --seed 42`) plus one identical curriculum
+  fine-tune (`--class-weights traj_corridor=3.0,inv_trip=2.0 --lr 3e-4
+  --epochs 120 --patience 40 --init-from` own clean large, ring-corridor
+  `corro` data) = **14/16 complex gates, deterministic across OMP∈{1,2,3,4,8}**.
+  The resolver prefers `large` first. Accuracy matrix + recipe studies:
+  `docs/V6.6.0-accuracy-report.md`, `docs/V6.6.1-recipe-accuracy-report.md`,
+  plan §15 (`docs/plans/2026-07-01-uniform-recipe-beyond-13of16.md`), CHANGELOG.
 - **BSIMAR Transformer (LEVEL=74)** — autoregressive Transformer sharing
   DirectNet's data pipeline and inference rules. Parked (Rule 15); no checkpoints
   on disk. Resurrect the cap-head / AR-loop structure from CHANGELOG / git
@@ -190,7 +194,7 @@ Mn1 3 2 0 0 nmos1 L=30n NFIN=10
 
 ### NN training (per-tech DirectNet, LEVEL=73)
 
-Dedicated per-tech NMOS/PMOS DirectNet checkpoints for **TSMC5 / TSMC7 / TSMC12 / TSMC16**. `--tech-scope` ∈ `{tsmc5,tsmc7,tsmc12,tsmc16,universal}`; `--size` ∈ `{small,medium,large,xl}`. Production = the uniform `s/m/l/xl` matrix trained from scratch on one identical recipe (no per-case special recipes); production tier = `large`, resolver `large`-first. The benchmark below drives the whole matrix on that single recipe.
+Dedicated per-tech NMOS/PMOS DirectNet checkpoints for **TSMC5 / TSMC7 / TSMC12 / TSMC16**. `--tech-scope` ∈ `{tsmc5,tsmc7,tsmc12,tsmc16,universal}`; `--size` ∈ `{small,medium,large,xl}`. Production tier = `large`, resolver `large`-first; since V6.6.4 the `large` slots carry the uniform **crit30** recipe (clean base + identical corridor+inv_trip curriculum fine-tune via `RECIPES="crit30f" bash scripts/recipe_train.sh`); `small/medium/xl` remain the clean recipe. The benchmark below drives the s/m/l/xl matrix on the clean recipe.
 
 ```bash
 # 1. Generate per-tech data (one .npz per tech+device). --enable-inv-trip adds the
@@ -212,7 +216,7 @@ conda run -n pycircuitsim python -u -m bsimar.cli.train \
 
 **Checkpoints** (`external_compact_models/bsimar/checkpoints/`, each `*_best.pt` + `_norm.npz`):
 
-- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}` — **32 checkpoints**, each a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot, e.g. TSMC5: 5, TSMC7: 4; Rule 16). Trained on the one clean recipe `--apply-filter off --swa-mode ema --seed 42` (no loss preset / EKV / Sobolev / corridor / T3). All 32 stay on disk; the resolver defaults to `large` (uniform global choice, not a per-tech best-size cherry-pick) and any tier is pinnable via `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}`. The V6.6.1 recipe-study checkpoints `tsmc{X}_dn_{recipe}_large_{dev}` also remain on disk — `csob` is the documented AC/device-fidelity alternative (CHANGELOG).
+- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}` — **32 checkpoints**, each a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot, e.g. TSMC5: 5, TSMC7: 4; Rule 16). `small/medium/xl` carry the clean recipe `--apply-filter off --swa-mode ema --seed 42`; the production `large` slots carry **crit30** since V6.6.4 (bit-identical copies of `tsmc{X}_dn_crit30f_large_*`; the V6.6.0 clean-large originals are archived on disk as `tsmc{X}_dn_v660clean_large_*`). All tiers stay on disk; the resolver defaults to `large` (uniform global choice, not a per-tech best-size cherry-pick) and any tier is pinnable via `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}`. The V6.6.1/V6.6.2 recipe-study checkpoints `tsmc{X}_dn_{recipe}_large_{dev}` also remain on disk — `csob` is the documented AC/device-fidelity alternative (CHANGELOG).
 - Resolver cascade (`pycircuitsim/parser.py`): for a TSMC5/7/12/16 netlist the per-tech slot `tsmc{X}_dn_{large,medium,small,xl}` (**large-first**) preempts the universal fallback chain (`refac_dn_* > v4_re_dn_universal > v4_dn_universal > bare`; those universal artifacts were deleted, so the fallbacks are dormant until a universal stack is retrained). Resolutions log at parse time as `[NN-resolver] L73 <name> TECH=<x> VT=<y> -> <chk> (scope=<s>, tech_code=<c>)`. Override via `--exp-name` at train time, or `PYCIRCUITSIM_NN_CHECKPOINT_*` / `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}` env vars at runtime (the latter is read first, before the preempt — used to pin a specific checkpoint/tier).
 
 **Netlist usage:** `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`. Parser auto-resolves the per-tech checkpoint and the local-vocab tech_code via `bsimar.config.local_variant_code(scope, tech, variant)`.

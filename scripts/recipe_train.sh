@@ -51,6 +51,45 @@ recipe_args () {
     cs7)   echo "--charge-sobolev --seed 7" ;;             # csob + seed 7 (smooth-axis winner + basin probe)
     e3)    echo "--loss-preset e3" ;;                       # down-weight non-load-bearing
     csobekv) echo "--charge-sobolev --ekv-core" ;;          # combo
+    # ── V6.6.2 uniform-recipe-beyond-13/16 (docs/plans/2026-07-01) ──
+    #   inv_trip = sample_class 7 (per-tech Vth-centered trip band, already in
+    #   every dataset). Upweighting it (LR-neutral, renormalized to unit mean)
+    #   tightens the id-value + dQ/dV surface at the ~0.65V moderate-inversion
+    #   switching edge where the tsmc5 ring under-drives.
+    invtrip)   echo "--class-weights inv_trip=2.0" ;;                                     # from-scratch bake-off arm (800ep, seed42)
+    invtripft) echo "--class-weights inv_trip=2.0 --lr 3e-4 --epochs 120 --patience 40" ;; # curriculum warm-start (init-from injected in _one)
+    # ── V6.6.2 trajectory-corridor (the real tsmc5-ring lever; V6.5.5-proven) ──
+    #   Trains on the traj_corridor-augmented {tech}_cor_{dev}.npz (harvested bias
+    #   tube along each tech's OWN ground-truth ring/opamp/SC/SRAM trajectories).
+    #   weight=3.0 matches V6.4.7-S12 (commit d61049a). --data injected in _one.
+    cor|corr|corro)     echo "--class-weights traj_corridor=3.0" ;;                                     # from-scratch corridor (full|ring+SC|ring-only)
+    corft|corrft|corroft) echo "--class-weights traj_corridor=3.0 --lr 3e-4 --epochs 120 --patience 40" ;; # curriculum (full|ring+SC|ring-only)
+    # ring-only curriculum at HALF weight (1.5): opens the ring (margin) while the
+    # gentler perturbation preserves the delicate opamp OP that weight=3.0 railed.
+    corro15) echo "--class-weights traj_corridor=1.5 --lr 3e-4 --epochs 120 --patience 40" ;;
+    # ── V6.6.2 COMBO — ring-only corridor + inv_trip (the untested cross-wall pair) ──
+    #   The corridor opens tsmc5-ring but DRIFTS an opamp (tsmc5@w3.0, tsmc12@w1.5);
+    #   inv_trip (class 7) is the proven opamp-MARGIN holder (invtripft: tsmc12-opamp
+    #   6.25→0.35, tsmc5-opamp 2.10→0.67). Combining them on the corro dataset (which
+    #   carries BOTH class 7 and class 12) should open the ring while the inv_trip
+    #   anchor holds the opamp the ring-corridor would otherwise drift. curriculum
+    #   warm-start (init-from own clean large), ring-only corro data injected in _one.
+    crit15) echo "--class-weights traj_corridor=1.5,inv_trip=2.0 --lr 3e-4 --epochs 120 --patience 40" ;;
+    crit30) echo "--class-weights traj_corridor=3.0,inv_trip=2.0 --lr 3e-4 --epochs 120 --patience 40" ;;
+    # crit30f = crit30 rerun to COMPLETION (the original crit30 stragglers were
+    # killed at heterogeneous epochs 30-92, so the on-disk crit30 artifact is not
+    # a uniformly-executed recipe; crit30f is the honest-contract validation).
+    crit30f) echo "--class-weights traj_corridor=3.0,inv_trip=2.0 --lr 3e-4 --epochs 120 --patience 40" ;;
+    crit20) echo "--class-weights traj_corridor=2.0,inv_trip=2.0 --lr 3e-4 --epochs 120 --patience 40" ;;
+    # Round-2: STRONGER inv_trip opamp-anchor at the w1.5 corridor that opens the
+    # ring. crit15 left tsmc12-opamp MULTISTABLE (bare corro15 killed it dead at
+    # 100%); more inv_trip weight should tip its (existing) high-gain basin to a
+    # deterministic pass → 15/16 target.
+    crit15m) echo "--class-weights traj_corridor=1.5,inv_trip=3.0 --lr 3e-4 --epochs 120 --patience 40" ;;
+    crit15h) echo "--class-weights traj_corridor=1.5,inv_trip=4.0 --lr 3e-4 --epochs 120 --patience 40" ;;
+    # Gentler corridor (w1.0) + inv_trip: perturbs tsmc12-opamp less; ring may
+    # sit nearer the 5% edge — margin-gated.
+    crit10) echo "--class-weights traj_corridor=1.0,inv_trip=2.0 --lr 3e-4 --epochs 120 --patience 40" ;;
     *) echo "__UNKNOWN__" ;;
   esac
 }
@@ -64,6 +103,30 @@ if [ "${1:-}" = "_one" ]; then
   if [ -f "$ckpt" ] && [ "$force" != "--force" ]; then echo "[train] SKIP existing $name"; exit 0; fi
   extra="$(recipe_args "$recipe")"
   if [ "$extra" = "__UNKNOWN__" ]; then echo "[train] UNKNOWN recipe $recipe"; exit 1; fi
+  # Curriculum (warm-start) recipes — the "*ft" family fine-tunes from its OWN
+  # clean same-size checkpoint. Locality (init-from) is THE basin-preserving
+  # lever (plan §2/§4). Injected here (not in recipe_args) because it is
+  # per-(tech,dev) yet MECHANICALLY DETERMINED (same rule everywhere) → stays
+  # inside the honest-uniform contract (plan §10).
+  case "$recipe" in
+    *ft|corro15|crit15|crit30|crit30f|crit20|crit15m|crit15h|crit10) initstem="${tech}_dn_${size}_${dev}"
+         if [ ! -f "$CKPT/${initstem}_best.pt" ]; then
+           echo "[train] MISSING init-from ckpt $CKPT/${initstem}_best.pt"; exit 1; fi
+         extra="$extra --init-from ${initstem}" ;;
+  esac
+  # V6.6.2 corridor recipes ("cor", "corft") train on the traj_corridor-augmented
+  # dataset {tech}_cor_{dev}.npz (from v6_4_7_s12_append_corridors.py). Uniform:
+  # every (tech,dev) trains on its OWN corridor set — mechanical, not hand-picked.
+  case "$recipe" in
+    crit*) cordata="$DS/${tech}_corro_${dev}.npz"   # combo always uses ring-only corridor data
+          if [ ! -f "$cordata" ]; then echo "[train] MISSING corridor dataset $cordata"; exit 1; fi
+          extra="$extra --data ${cordata}" ;;
+    cor*) corvar="${recipe/ft/}"   # cor->cor, corft->cor, corr->corr, corrft->corr
+          corvar="${corvar%%[0-9]*}"  # strip weight suffix: corro15->corro
+          cordata="$DS/${tech}_${corvar}_${dev}.npz"
+          if [ ! -f "$cordata" ]; then echo "[train] MISSING corridor dataset $cordata"; exit 1; fi
+          extra="$extra --data ${cordata}" ;;
+  esac
   echo "[train] START $name on GPU$gpu  (extra: ${extra:-<none>})"
   CUDA_VISIBLE_DEVICES="$gpu" conda run --no-capture-output -n pycircuitsim python -u -m bsimar.cli.train \
     --model direct --size "$size" --device-type "$dev" --tech-scope "$tech" \

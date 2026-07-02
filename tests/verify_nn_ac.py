@@ -51,7 +51,12 @@ from tests.common.complex_ac import (  # noqa: E402
     fmt_hz,
 )
 
-RESULTS_BASE = PROJECT_ROOT / "tests" / "verify_nn_ac_results"
+# Env-overridable so parallel checkpoint bake-offs can isolate output dirs
+# (same idiom as PYCIRCUITSIM_COMPLEX_RESULTS in tests/common/complex.py).
+import os as _os  # noqa: E402
+RESULTS_BASE = Path(_os.environ.get(
+    "PYCIRCUITSIM_NN_RESULTS",
+    str(PROJECT_ROOT / "tests" / "verify_nn_ac_results")))
 
 # CS-amp passive load (matches verify_ac.py L2 scale).
 RD = "50k"

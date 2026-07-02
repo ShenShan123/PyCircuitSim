@@ -46,7 +46,12 @@ from tests.common.nn_sweep import (  # noqa: E402
     save_nn_summary_csv,
 )
 
-RESULTS_DIR = PROJECT_ROOT / "tests" / "verify_nn_multi_tech_tran_results"
+# Env-overridable so parallel checkpoint bake-offs can isolate output dirs
+# (same idiom as PYCIRCUITSIM_COMPLEX_RESULTS in tests/common/complex.py).
+import os as _os  # noqa: E402
+RESULTS_DIR = Path(_os.environ.get(
+    "PYCIRCUITSIM_NN_RESULTS",
+    str(PROJECT_ROOT / "tests" / "verify_nn_multi_tech_tran_results")))
 
 
 def main() -> int:
