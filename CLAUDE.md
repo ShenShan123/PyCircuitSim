@@ -91,19 +91,16 @@ authoritative ground truth; DirectNet is the production NN; BSIMAR is parked.
   equations for it.
 - **DirectNet (LEVEL=73)** — single-shot feed-forward MLP. 7-dim input
   (Vgs, Vds, Vbs, NFIN, L, T, tech_code) with an `nn.Embedding` tech-code;
-  gm/gds/gmb are the **autograd Jacobian** of the predicted `id`. Per-tech
-  NMOS/PMOS checkpoints use a local embedding vocab (Rule 16); charges are
-  predicted and the AC caps are their `dQ/dV` autograd. **Production = the
-  uniform `large` tier** — one identical recipe for every (tech × device), no
-  per-case specials, so the gate matrix reflects genuine uniform fidelity. As of
-  **V6.6.4** the production recipe is **crit30**: the clean base
-  (`--apply-filter off --swa-mode ema --seed 42`) plus one identical curriculum
-  fine-tune (`--class-weights traj_corridor=3.0,inv_trip=2.0 --lr 3e-4
-  --epochs 120 --patience 40 --init-from` own clean large, ring-corridor
-  `corro` data) = **14/16 complex gates, deterministic across OMP∈{1,2,3,4,8}**.
-  The resolver prefers `large` first. Accuracy matrix + recipe studies:
-  `docs/V6.6.0-accuracy-report.md`, `docs/V6.6.1-recipe-accuracy-report.md`,
-  plan §15 (`docs/plans/2026-07-01-uniform-recipe-beyond-13of16.md`), CHANGELOG.
+  gm/gds/gmb are the **autograd Jacobian** of the predicted `id`; charges are
+  predicted and the AC caps are their `dQ/dV` autograd; per-tech NMOS/PMOS
+  checkpoints use a local embedding vocab (Rule 16). **Production = the uniform
+  `large` tier carrying the crit30 curriculum recipe (V6.6.4) = 14/16 complex
+  gates, deterministic across OMP** — one identical recipe for every
+  (tech × device), no per-case specials, so the gate matrix reflects genuine
+  uniform fidelity. Reports: `docs/V6.6.6-accuracy-report.md` (current cross-tier
+  conclusions + production recommendation), `docs/V6.6.{0,1}-accuracy-report.md`
+  (baseline + recipe studies), auto-tables
+  `results/recipe_bench/ACCURACY_REPORT.md`, CHANGELOG.
 - **BSIMAR Transformer (LEVEL=74)** — autoregressive Transformer sharing
   DirectNet's data pipeline and inference rules. Parked (Rule 15); no checkpoints
   on disk. Resurrect the cap-head / AR-loop structure from CHANGELOG / git
@@ -194,7 +191,7 @@ Mn1 3 2 0 0 nmos1 L=30n NFIN=10
 
 ### NN training (per-tech DirectNet, LEVEL=73)
 
-Dedicated per-tech NMOS/PMOS DirectNet checkpoints for **TSMC5 / TSMC7 / TSMC12 / TSMC16**. `--tech-scope` ∈ `{tsmc5,tsmc7,tsmc12,tsmc16,universal}`; `--size` ∈ `{small,medium,large,xl}`. Production tier = `large`, resolver `large`-first; since V6.6.4 the `large` slots carry the uniform **crit30** recipe (clean base + identical corridor+inv_trip curriculum fine-tune via `RECIPES="crit30f" bash scripts/recipe_train.sh`); `small/medium/xl` remain the clean recipe. The benchmark below drives the s/m/l/xl matrix on the clean recipe.
+Dedicated per-tech NMOS/PMOS DirectNet checkpoints for **TSMC5 / TSMC7 / TSMC12 / TSMC16**. `--tech-scope` ∈ `{tsmc5,tsmc7,tsmc12,tsmc16,universal}`; `--size` ∈ `{small,medium,large,xl}`. The benchmark below drives the s/m/l/xl matrix on the clean recipe; recipe variants (including the production crit30 curriculum) train via `scripts/recipe_train.sh` (curriculum fine-tunes warm-start from the clean same-size base — at `large` that is the `v660clean` archive, injected automatically).
 
 ```bash
 # 1. Generate per-tech data (one .npz per tech+device). --enable-inv-trip adds the
@@ -216,8 +213,8 @@ conda run -n pycircuitsim python -u -m bsimar.cli.train \
 
 **Checkpoints** (`external_compact_models/bsimar/checkpoints/`, each `*_best.pt` + `_norm.npz`):
 
-- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}` — **32 checkpoints**, each a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot, e.g. TSMC5: 5, TSMC7: 4; Rule 16). `small/medium/xl` carry the clean recipe `--apply-filter off --swa-mode ema --seed 42`; the production `large` slots carry **crit30** since V6.6.4 (bit-identical copies of `tsmc{X}_dn_crit30f_large_*`; the V6.6.0 clean-large originals are archived on disk as `tsmc{X}_dn_v660clean_large_*`). All tiers stay on disk; the resolver defaults to `large` (uniform global choice, not a per-tech best-size cherry-pick) and any tier is pinnable via `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}`. The V6.6.1/V6.6.2 recipe-study checkpoints `tsmc{X}_dn_{recipe}_large_{dev}` also remain on disk — `csob` is the documented AC/device-fidelity alternative (CHANGELOG).
-- Resolver cascade (`pycircuitsim/parser.py`): for a TSMC5/7/12/16 netlist the per-tech slot `tsmc{X}_dn_{large,medium,small,xl}` (**large-first**) preempts the universal fallback chain (`refac_dn_* > v4_re_dn_universal > v4_dn_universal > bare`; those universal artifacts were deleted, so the fallbacks are dormant until a universal stack is retrained). Resolutions log at parse time as `[NN-resolver] L73 <name> TECH=<x> VT=<y> -> <chk> (scope=<s>, tech_code=<c>)`. Override via `--exp-name` at train time, or `PYCIRCUITSIM_NN_CHECKPOINT_*` / `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}` env vars at runtime (the latter is read first, before the preempt — used to pin a specific checkpoint/tier).
+- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}` — **32 checkpoints**, each a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot; Rule 16). `small/medium/xl` = clean recipe `--apply-filter off --swa-mode ema --seed 42`; the production `large` slots carry **crit30** since V6.6.4 (clean originals archived as `tsmc{X}_dn_v660clean_large_*`). Recipe-study checkpoints `tsmc{X}_dn_{recipe}_{size}_{dev}` remain on disk — documented alternates: `csob@large` (AC/device fidelity), `corroft`/`crit10`@xl (tsmc16-opamp coverage). Completed trainings carry a `*_best.pt.complete` marker (a bare `_best.pt` may be a killed run).
+- Resolver cascade (`pycircuitsim/parser.py`): the env pin `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}` is read FIRST (since V6.6.6 an absent pinned stem raises — no silent fallback); then for a TSMC5/7/12/16 netlist the per-tech slot `tsmc{X}_dn_{large,medium,small,xl}` (**large-first**) preempts the dormant universal fallback chain. Resolutions log at parse time as `[NN-resolver] L73 <name> TECH=<x> VT=<y> -> <chk> (scope=<s>, tech_code=<c>)`.
 
 **Netlist usage:** `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`. Parser auto-resolves the per-tech checkpoint and the local-vocab tech_code via `bsimar.config.local_variant_code(scope, tech, variant)`.
 
@@ -227,7 +224,7 @@ Results in `results/<circuit_name>/<analysis_type>/`: an HSPICE-like `*_simulati
 
 ## Testing & Verification
 
-All tests require `conda activate pycircuitsim`. Ground truth is **always** NGSPICE on the identical BSIM-CMG (LEVEL=72) OSDI model — never a simplified/self-defined reference. Gates are CPU-pinned (`CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`) and honor `NGSPICE_BIN` (repo `tools/ngspice-45.2/bin/ngspice` when `/usr/local/ngspice-45.2` is absent).
+All tests require `conda activate pycircuitsim`. Ground truth is **always** NGSPICE on the identical BSIM-CMG (LEVEL=72) OSDI model — never a simplified/self-defined reference. Gates are CPU-pinned (`CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`) and honor `NGSPICE_BIN` (repo `tools/ngspice-45.2/bin/ngspice` when `/usr/local/ngspice-45.2` is absent). Since V6.6.6 the complex/AC gate infra also pins torch to 1 thread by default (`PYCIRCUITSIM_TORCH_THREADS` overrides — used by the OMP multistability sweep).
 
 **Shared infra** (`tests/common/`): `base.py` (PROJECT_ROOT, OSDI_PATH, TechProfile, ALL_TECHS, NGSPICE runner), `bsimcmg_{dc,tran}.py`, `nn.py` + `nn_sweep.py`, `complex.py` + `complex_sweep.py` + `complex_ac.py`; reference netlists in `tests/references/`.
 
@@ -327,13 +324,13 @@ Both LEVEL=73 (single-shot MLP, primary) and LEVEL=74 (autoregressive Transforme
 6. **ASAP7 modelcard name mapping** — parser auto-maps netlist names to `nmos_rvt` / `pmos_rvt`.
 7. **PyCMG integration** — `bsimar/config.py` re-exports `NNTechConfig`, `TECH_CONFIGS`, `TECH_CODE_MAP`, `OUTPUT_COLUMNS` from `pycmg.nn_config`. Backward-compat alias `TechConfig = NNTechConfig`. Training VDD may differ from PyCMG's runtime VDD; check `NNTechConfig.VDD` per tech.
 8. **Data validation** — `eval_single_point` rejects NaN/Inf and `|id| > 1A`. PyCMG `eval_dc` raises `RuntimeError` on internal-node convergence failure. NFIN=1 is excluded from training data: although `DEFAULT_NFIN_VALUES` lists it, unstable `(variant, NFIN=1)` bins fail OSDI convergence and are dropped per-bin during generation, so NFIN≥2 is what actually trains.
-9. **(parked, LEVEL=74)** BSIMAR output uses `BSIMAR_COLUMN_ORDER`, not `OUTPUT_COLUMN_ORDER` — see CHANGELOG / `mosfet_bsimar.py` if resurrected.
-10. **(parked, LEVEL=74)** BSIMAR parallel cap head + 8-step AR loop (`parallel_caps`, `grouped_inputs`, structural) — see CHANGELOG if resurrected.
+9. Deleted by user.
+10. Deleted by user.
 11. **Unified CLI** — `python -m bsimar.cli.train --model direct --size {small,medium,large,xl} --device-type {nmos,pmos} --tech-scope {tsmc5,tsmc7,tsmc12,tsmc16,universal} ...` (xl = 512×8 ~2.13M p, over-fit-boundary tier; production = large). With a per-tech `--tech-scope` the default save_prefix is `tsmc{X}_dn_<size>_<device>` (recognized by the parser preempt cascade). Same `.npz` from PyCMG; checkpoints under `external_compact_models/bsimar/checkpoints/`. Flags (all default-off / behavior-preserving): `--swa-mode {none,ema,swa}` + `--ema-decay`; `--apply-filter {on,off}` + `--class-weights`; `--enable-subvt-off`; the optional loss terms `--sobolev` / `--subthresh` / `--charge-sobolev`; and the EKV backbone `--ekv-core` / `--ekv-alpha` / `--ekv-hidden`.
 12. **Charge conservation** — simulator always computes `qs = -(qg + qd + qb)` analytically, even for 13-output models that directly predict `qs`. Guarantees Kirchhoff conservation at every transient timestep.
 13. Always report MRE (%), R^2, NRMSE, Max error (mV) metrics per tech.
 14. **Exclude ASAP7** — out of scope at this stage (no checkpoints; see Overview).
-15. **DirectNet only** — do NOT train/eval the LEVEL=74 BSIMAR Transformer (parked).
+15. Deleted by user.
 16. **Per-tech models use a LOCAL embedding vocab.** When `--tech-scope` is any of `tsmc5`/`tsmc7`/`tsmc12`/`tsmc16`, the dataset loader remaps universal tech codes to a 0-indexed per-tech vocab and the trainer instantiates `DirectNet(num_tech_codes=N, unknown_code_id=N-1)`, where N = variants+1 (TSMC5: 5, TSMC7: 4, TSMC12: 6, TSMC16: 6). The training-time `p_unknown` dropout writes `unknown_code_id` into the embedding, so a misaligned UNKNOWN id → CUDA assert. **Derive `unknown_code_id` from `num_tech_codes`; do NOT hardcode the universal value (17).** Parser uses `bsimar.config.local_variant_code(scope, tech, variant)` to remap at inference; the scope is read from the resolved checkpoint stem (`tsmc{5,7,12,16}_dn_*` → local; universal fallbacks → universal).
 
 > **Load-bearing code (do NOT delete):** the V6.4.2 `_MonotoneVgResidual` + `--monotonic` path (`bsimar/{cli/train,models/direct_net,training/trainer}.py`, `pycircuitsim/models/mosfet_directnet.py`) must stay committed — on-disk checkpoints carry `mono.*` state_dict keys and fail to load without it. Stock checkpoints route `mono=None` (no inference change). The default-off EKV backbone (`_EKVCore`, `core.*` keys) and the Sobolev/subthreshold/charge-Sobolev loss terms are likewise kept recoverable; all leave stock checkpoints byte-identical.

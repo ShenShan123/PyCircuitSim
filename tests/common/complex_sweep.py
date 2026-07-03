@@ -20,6 +20,7 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
@@ -385,7 +386,9 @@ def run_single_ringosc(cfg: ComplexSweepConfig,
             "ng_period_ps": ng_per * 1e12, "dn_period_ps": float("nan"),
             "period_err_pct": float("nan"), "partial": partial})
     per_err = abs(dn_per - ng_per) / ng_per * 100.0
-    passed = per_err <= RINGOSC_PERIOD_TOL * 100
+    # `not partial` mirrors the single-point ship gate: a diverged transient
+    # whose truncated prefix still crosses within tolerance must not PASS
+    passed = per_err <= RINGOSC_PERIOD_TOL * 100 and not partial
     return _result(cfg, passed, m, {
         "metric": "period_err%", "value": per_err,
         "ng_period_ps": ng_per * 1e12, "dn_period_ps": dn_per * 1e12,
@@ -434,7 +437,9 @@ def run_single_switchcap(cfg: ComplexSweepConfig,
     charge_err = abs(dn_charge - ng_charge) / bt.vdd * 100.0
     droop_allow = max(SC_DROOP_TOL * abs(ng_droop), SC_DROOP_FLOOR * bt.vdd)
     droop_ok = abs(dn_droop - ng_droop) <= droop_allow
-    passed = (charge_err <= SC_CHARGE_TOL * 100) and droop_ok
+    # `not partial` mirrors the single-point ship gate (B9): clamped interp
+    # reads off a truncated waveform must not PASS
+    passed = (charge_err <= SC_CHARGE_TOL * 100) and droop_ok and not partial
     return _result(cfg, passed, m, {
         "metric": "charge_err%", "value": charge_err,
         "charge_err_pct": charge_err, "ng_charge": ng_charge,
@@ -542,12 +547,28 @@ def checkpoint_manifest(tech_keys: List[str]) -> Dict[str, str]:
     for tk in sorted(set(tech_keys)):
         scope = tk.lower()
         for dev in ("nmos", "pmos"):
-            f = CKPT_DIR / f"{scope}_dn_medium_{dev}_best.pt"
-            if f.exists():
-                man[f"{scope}_{dev}"] = hashlib.sha256(
-                    f.resolve().read_bytes()).hexdigest()
+            # hash the checkpoint the runtime actually loads: env pin first,
+            # else the resolver's large-first per-tech cascade (hashing a
+            # fixed tier would watch the wrong file for drift)
+            pin = (os.environ.get(f"PYCIRCUITSIM_NN_CHECKPOINT_DN_{dev.upper()}")
+                   or os.environ.get(f"PYCIRCUITSIM_NN_CHECKPOINT_{dev.upper()}")
+                   or os.environ.get("PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE"))
+            if pin:
+                stem = pin.strip()
+                if stem.endswith(("_nmos", "_pmos")):
+                    if not stem.endswith(f"_{dev}"):
+                        pin = None  # pinned for the other polarity
+                else:
+                    stem = f"{stem}_{dev}"
+            if pin:
+                cands = [CKPT_DIR / f"{stem}_best.pt"]
             else:
-                man[f"{scope}_{dev}"] = "ABSENT"
+                cands = [CKPT_DIR / f"{scope}_dn_{size}_{dev}_best.pt"
+                         for size in ("large", "medium", "small", "xl")]
+            f = next((c for c in cands if c.exists()), None)
+            man[f"{scope}_{dev}"] = (
+                f"{f.name}:{hashlib.sha256(f.resolve().read_bytes()).hexdigest()}"
+                if f is not None else "ABSENT")
     return man
 
 

@@ -346,7 +346,8 @@ def interpolate_to_common_time(
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Interpolate both datasets to a common uniform time grid."""
     t_max = min(ng_data["time"][-1], py_data["time"][-1])
-    t_common = np.arange(max(t_start, ng_data["time"][0]), t_max, config.tstep)
+    t_common = np.arange(max(t_start, ng_data["time"][0], py_data["time"][0]),
+                         t_max, config.tstep)
     ng_vout = np.interp(t_common, ng_data["time"], ng_data["v(out)"])
     py_vout = np.interp(t_common, py_data["time"], py_data["v(out)"])
     ng_vin = np.interp(t_common, ng_data["time"], ng_data["v(in)"])

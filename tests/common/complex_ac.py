@@ -27,10 +27,21 @@ here verbatim (single code path). This module adds:
 from __future__ import annotations
 
 import logging
+import os
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 import numpy as np
+
+# Single-thread torch BEFORE any inference (v664 P0) — same rationale and
+# PYCIRCUITSIM_TORCH_THREADS override as tests/common/complex.py: the AC gate
+# linearizes about the same basin-fragile OP the DC gates solve.
+try:
+    import torch
+
+    torch.set_num_threads(int(os.environ.get("PYCIRCUITSIM_TORCH_THREADS", "1")))
+except (ImportError, ValueError):  # pragma: no cover
+    pass
 
 # Reuse the AC primitives from the shipping single-point AC gate (DRY — one
 # code path for the complex-MNA / NGSPICE-runner / metric logic). verify_ac has

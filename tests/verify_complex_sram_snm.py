@@ -344,9 +344,13 @@ def run_one(bt: BenchTech, nfins: List[int]) -> Dict:
     # ground-truth ``nrmse_ok`` term closes the "wildly inaccurate but
     # non-negative lobe scores PASS" hole. ``force_ic`` stays a printed
     # diagnostic (a convergence probe, not an NGSPICE comparison).
+    # an errored corner is a gate FAIL, not a silent skip: a corner that
+    # cannot be characterized must not leave the remaining corners to carry
+    # the verdict
     comparable = [r for r in corner_rows if "error" not in r]
-    all_pass = bool(comparable) and all(
-        r["positive"] and r["nrmse_ok"] for r in comparable)
+    all_pass = (bool(comparable)
+                and len(comparable) == len(corner_rows)
+                and all(r["positive"] and r["nrmse_ok"] for r in comparable))
     return {"tech": bt.name, "corners": corner_rows,
             "force_ic": fic, "all_positive": all_pass}
 
@@ -418,7 +422,8 @@ def main() -> int:
     print(f"\n  {n_pass}/{n_total} techs pass (positive + NGSPICE-NRMSE-tracking "
           "across NFIN corners)")
     # B10: reflect the verdict in the exit code (consumers also parse stdout).
-    return 0 if n_pass == n_total else 1
+    # empty results (all techs skipped) must not exit green
+    return 0 if (n_total > 0 and n_pass == n_total) else 1
 
 
 if __name__ == "__main__":

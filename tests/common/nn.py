@@ -38,14 +38,15 @@ for _p in (PROJECT_ROOT, _EXTERNAL_DIR, _PYCMG_DIR, _PYCMG_TESTS):
 def nrmse(pred: np.ndarray, true: np.ndarray) -> float:
     """Normalised RMSE as a percentage of the peak-to-peak range.
 
-    Returns 0 when the ground truth has no dynamic range (all-constant
-    signals are treated as a perfect match).
+    A ground truth with no dynamic range is degenerate: the prediction only
+    scores 0 (perfect) if it matches the constant, otherwise inf — returning 0
+    unconditionally would auto-PASS any prediction against a flat reference.
     """
     pred = np.asarray(pred, dtype=float)
     true = np.asarray(true, dtype=float)
     ptp = float(true.max() - true.min())
     if ptp < 1e-30:
-        return 0.0
+        return 0.0 if np.allclose(pred, true, rtol=1e-6, atol=1e-9) else float("inf")
     rmse = float(np.sqrt(np.mean((pred - true) ** 2)))
     return rmse / ptp * 100.0
 

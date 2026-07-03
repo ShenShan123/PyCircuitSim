@@ -36,7 +36,12 @@ if [ "${1:-}" = "_one" ]; then
   name="${tech}_dn_${size}_${dev}"
   ckpt="$CKPT/${name}_best.pt"
   log="$LOGDIR/${name}.log"
-  if [ -f "$ckpt" ] && [ "$force" != "--force" ]; then echo "[train] SKIP existing $name"; exit 0; fi
+  if [ -f "$ckpt" ] && [ "$force" != "--force" ]; then
+    # `_best.pt` alone is NOT proof of a completed run (a killed run leaves a
+    # best-so-far file) — the .complete marker is; warn when it is absent
+    [ -f "$ckpt.complete" ] || echo "[train] WARN $name exists WITHOUT completion marker (killed run? --force to retrain)"
+    echo "[train] SKIP existing $name"; exit 0
+  fi
   echo "[train] START $name on GPU$gpu"
   # EXTRA_TRAIN_ARGS lets a campaign inject a recipe addendum (e.g. the V6.5.1
   # µA-band loss lever: '--subthresh --subthresh-s2 1e-7 --subthresh-upper 3e-5')
@@ -46,7 +51,12 @@ if [ "${1:-}" = "_one" ]; then
     --apply-filter off --swa-mode ema --seed 42 --cuda --overwrite ${EXTRA_TRAIN_ARGS:-} \
     > "$log" 2>&1
   rc=$?
-  if [ $rc -eq 0 ] && [ -f "$ckpt" ]; then echo "[train] DONE $name"; else echo "[train] FAIL $name (rc=$rc, see $log)"; fi
+  if [ $rc -eq 0 ] && [ -f "$ckpt" ]; then
+    touch "$ckpt.complete"
+    echo "[train] DONE $name"
+  else
+    echo "[train] FAIL $name (rc=$rc, see $log)"
+  fi
   exit 0
 fi
 

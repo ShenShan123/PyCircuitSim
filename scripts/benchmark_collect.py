@@ -33,7 +33,9 @@ AC_DEV_SUITE = "verify_nn_ac"
 AC_CPX_SUITE = "verify_complex_opamp_ac"
 AC_SUITES = [AC_DEV_SUITE, AC_CPX_SUITE]
 
-NUM = r"[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?"
+# nan|n/a included so diverged rows are parsed (and surface as nan) instead
+# of being silently dropped from the aggregates (device_retest_collect parity)
+NUM = r"(?:[-+]?\d+(?:\.\d+)?(?:[eE][-+]?\d+)?|nan|n/a)"
 
 # ── parametric summary-table row: "label | sweep | nrmse | mre | r2 | maxerrUNIT | status"
 def parse_device_log(text: str) -> dict:

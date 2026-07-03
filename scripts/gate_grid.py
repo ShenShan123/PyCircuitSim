@@ -7,6 +7,9 @@ from __future__ import annotations
 import re, sys, os, glob
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from recipe_retest_collect import PARSERS  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 BASE = ROOT / "results" / "recipe_bench" / "gate_iso"
 TECHS = ["TSMC5", "TSMC7", "TSMC12", "TSMC16"]
@@ -16,12 +19,23 @@ CIRCS = ["ring_osc", "opamp", "sram_snm", "switchcap"]
 def load(recipe: str):
     f = BASE / recipe / "SUMMARY.txt"
     d = {}
-    if not f.exists():
-        return d
-    for line in f.read_text().splitlines():
-        m = re.match(r"(\S+)\s+(\S+)\s+\|\s+rc=(\d+)\s+(PASS|FAIL)", line)
-        if m:
-            d[(m.group(1), m.group(2))] = (m.group(4), int(m.group(3)))
+    if f.exists():
+        for line in f.read_text().splitlines():
+            m = re.match(r"(\S+)\s+(\S+)\s+\|\s+rc=(\d+)\s+(PASS|FAIL)", line)
+            if m:
+                d[(m.group(1), m.group(2))] = (m.group(4), int(m.group(3)))
+    # fallback: derive the verdict from the per-cell log's own status when
+    # SUMMARY.txt lacks the rc line (subset re-runs used to clobber it);
+    # rc=-1 marks a log-derived verdict
+    for t in TECHS:
+        for c in CIRCS:
+            if (t, c) in d:
+                continue
+            p = BASE / recipe / f"{t.lower()}_{c}.log"
+            if p.exists():
+                st = PARSERS[c](p.read_text(errors="replace")).get("status")
+                if st in ("PASS", "FAIL"):
+                    d[(t, c)] = (st, -1)
     return d
 
 

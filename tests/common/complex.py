@@ -27,12 +27,25 @@ import from here so all four share one modelcard cache and one NGSPICE path.
 """
 from __future__ import annotations
 
+import os
 import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 import numpy as np
+
+# Single-thread torch BEFORE any inference (v664 P0): the opamp gain / SRAM
+# trip are high-gain fixed points and multi-thread GEMM reduction perturbs the
+# NR basin — an unpinned casual run must land the same basin as the CPU-pinned
+# gate methodology. PYCIRCUITSIM_TORCH_THREADS overrides so the OMP fragility
+# sweep (opamp_sweep_def.sh) can still probe multistability deliberately.
+try:
+    import torch
+
+    torch.set_num_threads(int(os.environ.get("PYCIRCUITSIM_TORCH_THREADS", "1")))
+except (ImportError, ValueError):  # pragma: no cover
+    pass
 
 from tests.common.base import (
     PROJECT_ROOT, OSDI_PATH, NGSPICE_BIN,

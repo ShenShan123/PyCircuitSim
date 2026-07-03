@@ -22,12 +22,13 @@ PY="${NN_PY:-/data1/shenshan/.conda/envs/pycircuitsim/bin/python}"
 [ -x "$PY" ] || PY="python"
 PAR="${PAR:-32}"
 OMP="${OMP:-1}"
+SIZE="${SIZE:-large}"
 SCRATCH="${GATE_SCRATCH:-/tmp/claude-1001/-data2-shenshan-PyCircuitSim/6bfa5fc9-5de2-4965-944a-7f36ddc3c72c/scratchpad/gate_iso}"
 
 read -r -a circuits <<< "${CIRCS:-ring_osc opamp sram_snm switchcap}"
 
 stem () {  # recipe tech dev
-  if [ "$1" = "clean" ]; then echo "$2_dn_large_$3"; else echo "$2_dn_$1_large_$3"; fi
+  if [ "$1" = "clean" ]; then echo "$2_dn_${SIZE}_$3"; else echo "$2_dn_$1_${SIZE}_$3"; fi
 }
 
 if [ "${1:-}" = "_one" ]; then
@@ -36,9 +37,10 @@ if [ "${1:-}" = "_one" ]; then
   sn="$(stem "$recipe" "$tlc" nmos)"; sp="$(stem "$recipe" "$tlc" pmos)"
   log="$OUT/$recipe/${tlc}_${circ}.log"
   mkdir -p "$(dirname "$log")"
+  cell="$OUT/$recipe/.cell_${tlc}_${circ}"
   if [ ! -f "$CKPT/${sn}_best.pt" ] || [ ! -f "$CKPT/${sp}_best.pt" ]; then
     echo "NO-CKPT $recipe $tlc ($sn/$sp)" | tee "$log"
-    echo "$tuc $circ | NO-CKPT" >> "$OUT/$recipe/SUMMARY.txt"; exit 0
+    echo "$tuc $circ | NO-CKPT" > "$cell"; exit 0
   fi
   export CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS="$OMP" MKL_NUM_THREADS="$OMP" NGSPICE_BIN="$NG"
   export PYCIRCUITSIM_COMPLEX_RESULTS="$SCRATCH/$recipe/${tlc}_${circ}"
@@ -50,7 +52,10 @@ if [ "${1:-}" = "_one" ]; then
   hl="$(grep -iE "period error|gain error|charge_err|charge error|hold droop|SNM=|butterfly|NRMSE|-> *(PASS|FAIL)" "$log" \
         | grep -viE "resolver|MEXP" | tr '\n' ' ' | sed 's/  */ /g')"
   verdict=$([ "$rc" -eq 0 ] && echo PASS || echo FAIL)
-  echo "$tuc $circ | rc=$rc $verdict | $hl" >> "$OUT/$recipe/SUMMARY.txt"
+  # one file per cell (not an append to SUMMARY.txt): a subset re-run must
+  # update only its own cells — the old append-after-rm wiped every other
+  # circuit's rc line from SUMMARY.txt
+  echo "$tuc $circ | rc=$rc $verdict | $hl" > "$cell"
   echo "[gate] $recipe/$tlc/$circ rc=$rc $verdict"
   exit 0
 fi
@@ -59,7 +64,6 @@ read -r -a recipes <<< "${RECIPES:-clean}"
 read -r -a techs <<< "${TECHS:-TSMC5 TSMC7 TSMC12 TSMC16}"
 specs=()
 for recipe in "${recipes[@]}"; do
-  rm -f "$OUT/$recipe/SUMMARY.txt" 2>/dev/null
   mkdir -p "$OUT/$recipe"
   for tuc in "${techs[@]}"; do for circ in "${circuits[@]}"; do
     specs+=("$recipe $tuc $circ")
@@ -68,7 +72,20 @@ done
 printf '%s\n' "${specs[@]}" | xargs -P "$PAR" -L1 "$SELF" _one
 echo "[gate] ALL DONE — summaries:"
 for recipe in "${recipes[@]}"; do
-  np="$(grep -c 'rc=0 PASS' "$OUT/$recipe/SUMMARY.txt" 2>/dev/null || echo 0)"
+  dir="$OUT/$recipe"
+  # rebuild SUMMARY.txt from the per-cell files, keeping any legacy line
+  # whose cell was never re-run under the per-cell scheme
+  tmp="$dir/.SUMMARY.tmp"; : > "$tmp"
+  if [ -f "$dir/SUMMARY.txt" ]; then
+    while IFS= read -r line; do
+      key="$(echo "$line" | awk '{printf "%s_%s", tolower($1), $2}')"
+      [ -f "$dir/.cell_$key" ] || printf '%s\n' "$line" >> "$tmp"
+    done < "$dir/SUMMARY.txt"
+  fi
+  cat "$dir"/.cell_* >> "$tmp" 2>/dev/null
+  sort "$tmp" > "$dir/SUMMARY.txt"; rm -f "$tmp"
+  # tally the 4 circuit gates only (SUMMARY may also carry opamp_ac lines)
+  np="$(grep -cE ' (ring_osc|opamp|sram_snm|switchcap) \| rc=0 PASS' "$dir/SUMMARY.txt" 2>/dev/null || echo 0)"
   echo "  === $recipe : ${np}/16 ==="
-  sort "$OUT/$recipe/SUMMARY.txt" 2>/dev/null
+  cat "$dir/SUMMARY.txt" 2>/dev/null
 done

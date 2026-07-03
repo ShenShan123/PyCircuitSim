@@ -4,7 +4,7 @@ recipe-comparison matrix.
 
 Parses  results/recipe_bench/<recipe>/<size>/<tech>/<suite>.log  (captured stdout
 of the 8 NN suites) and emits:
-  - results/recipe_bench/RECIPE_REPORT.md      (human-facing comparison tables)
+  - results/recipe_bench/ACCURACY_REPORT.md    (MATRIX section; comparison tables)
   - results/recipe_bench/recipe_data.json      (machine-readable)
 
 Reuses the tolerant gate/device/AC regexes from scripts/benchmark_collect.py so
@@ -203,9 +203,10 @@ def main():
         print("No recipe result dirs found under", BASE); return
     data = load(recipes, sizes)
     (BASE / "recipe_data.json").write_text(json.dumps(data, indent=1))
-    (BASE / "RECIPE_REPORT.md").write_text(report(data, recipes, sizes))
+    import recipe_retest_collect as rrc
+    rrc.write_report_section("MATRIX", report(data, recipes, sizes))
     print(f"Recipes: {recipes}  Sizes: {sizes}")
-    print(f"Wrote {BASE/'RECIPE_REPORT.md'} and recipe_data.json")
+    print(f"Wrote {rrc.REPORT} [MATRIX section] and recipe_data.json")
     # console tally
     print("\nComplex-gate pass-rate (X/16):")
     for recipe in recipes:

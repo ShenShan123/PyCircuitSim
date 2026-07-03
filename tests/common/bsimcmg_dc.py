@@ -574,15 +574,22 @@ def run_single_dc_test(config: DCTestConfig, work_dir: Path,
     nrmse = metrics["nrmse"]
     max_rel = metrics["max_rel_err"]
 
-    # Sanity: extreme NRMSE or MaxRelErr means garbage output (OSDI modelcard issues)
+    # Extreme NRMSE/MaxRelErr is a hard FAIL, not an ERROR skip: both
+    # simulators produced finite data here (NGSPICE NaN/Inf raises earlier in
+    # run_ngspice_dc), so a huge mismatch is a genuine divergence — scoring it
+    # as ERROR would let the suite exit 0 on a railed/shifted PyCircuitSim run.
     if nrmse > 1.0 or max_rel > 1.0 or not np.isfinite(nrmse):
         if verbose:
             print(f"    Output validation failed: NRMSE={nrmse*100:.1f}%,"
-                  f" MaxRel={max_rel*100:.1f}%"
-                  " (likely OSDI parameter issues)")
-        return {"config": config,
-                "error": f"garbage output (NRMSE={nrmse*100:.1f}%)",
-                "passed": False}
+                  f" MaxRel={max_rel*100:.1f}% -> FAIL")
+        return {
+            "config": config,
+            "nrmse": nrmse,
+            "max_rel_err": max_rel,
+            "max_abs_err": metrics["max_abs_err"],
+            "n_points": metrics["n_common_points"],
+            "passed": False,
+        }
 
     passed = nrmse < NRMSE_THRESHOLD and max_rel < MAX_REL_ERR_THRESHOLD
 

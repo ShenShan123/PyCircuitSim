@@ -90,6 +90,16 @@ recipe_args () {
     # Gentler corridor (w1.0) + inv_trip: perturbs tsmc12-opamp less; ring may
     # sit nearer the 5% edge — margin-gated.
     crit10) echo "--class-weights traj_corridor=1.0,inv_trip=2.0 --lr 3e-4 --epochs 120 --patience 40" ;;
+    # ── V6.6.7 15/16 candidates (plan §5 P2a + the corroft/crit30 anchor asymmetry) ──
+    #   csobcrit: csob base (the only large recipe holding the tsmc16-opamp basin)
+    #   + the proven crit30 curriculum (holds tsmc5+tsmc12). charge-sobolev stays ON
+    #   during the fine-tune so the cap surface that banks tsmc16 is preserved.
+    #   init-from csob (injected in _one), corro data.
+    csobcrit) echo "--charge-sobolev --class-weights traj_corridor=3.0,inv_trip=2.0 --lr 3e-4 --epochs 120 --patience 40" ;;
+    #   crit30a1: corridor w3.0 with a HALF anchor — at large, anchor 0 (corroft)
+    #   holds {tsmc16-opamp} and anchor 2.0 (crit30) holds {tsmc5,tsmc12}; the
+    #   intermediate probes the 5+12+16 triple.
+    crit30a1) echo "--class-weights traj_corridor=3.0,inv_trip=1.0 --lr 3e-4 --epochs 120 --patience 40" ;;
     *) echo "__UNKNOWN__" ;;
   esac
 }
@@ -100,7 +110,12 @@ if [ "${1:-}" = "_one" ]; then
   name="${tech}_dn_${recipe}_${size}_${dev}"
   ckpt="$CKPT/${name}_best.pt"
   log="$LOGDIR/${name}.log"
-  if [ -f "$ckpt" ] && [ "$force" != "--force" ]; then echo "[train] SKIP existing $name"; exit 0; fi
+  if [ -f "$ckpt" ] && [ "$force" != "--force" ]; then
+    # `_best.pt` alone is NOT proof of a completed run (a killed run leaves a
+    # best-so-far file) — the .complete marker is; warn when it is absent
+    [ -f "$ckpt.complete" ] || echo "[train] WARN $name exists WITHOUT completion marker (killed run? --force to retrain)"
+    echo "[train] SKIP existing $name"; exit 0
+  fi
   extra="$(recipe_args "$recipe")"
   if [ "$extra" = "__UNKNOWN__" ]; then echo "[train] UNKNOWN recipe $recipe"; exit 1; fi
   # Curriculum (warm-start) recipes — the "*ft" family fine-tunes from its OWN
@@ -109,7 +124,18 @@ if [ "${1:-}" = "_one" ]; then
   # per-(tech,dev) yet MECHANICALLY DETERMINED (same rule everywhere) → stays
   # inside the honest-uniform contract (plan §10).
   case "$recipe" in
-    *ft|corro15|crit15|crit30|crit30f|crit20|crit15m|crit15h|crit10) initstem="${tech}_dn_${size}_${dev}"
+    csobcrit) initstem="${tech}_dn_csob_${size}_${dev}"
+         if [ ! -f "$CKPT/${initstem}_best.pt" ]; then
+           echo "[train] MISSING init-from ckpt $CKPT/${initstem}_best.pt"; exit 1; fi
+         extra="$extra --init-from ${initstem}" ;;
+    *ft|corro15|crit*)
+         # own CLEAN same-size base. Post-V6.6.4 the production large slots
+         # carry crit30f, so at large the clean base is the v660clean archive —
+         # init-from production would silently stack curricula.
+         initstem="${tech}_dn_${size}_${dev}"
+         if [ "$size" = "large" ] && [ -f "$CKPT/${tech}_dn_v660clean_large_${dev}_best.pt" ]; then
+           initstem="${tech}_dn_v660clean_large_${dev}"
+         fi
          if [ ! -f "$CKPT/${initstem}_best.pt" ]; then
            echo "[train] MISSING init-from ckpt $CKPT/${initstem}_best.pt"; exit 1; fi
          extra="$extra --init-from ${initstem}" ;;
@@ -118,7 +144,7 @@ if [ "${1:-}" = "_one" ]; then
   # dataset {tech}_cor_{dev}.npz (from v6_4_7_s12_append_corridors.py). Uniform:
   # every (tech,dev) trains on its OWN corridor set — mechanical, not hand-picked.
   case "$recipe" in
-    crit*) cordata="$DS/${tech}_corro_${dev}.npz"   # combo always uses ring-only corridor data
+    crit*|csobcrit) cordata="$DS/${tech}_corro_${dev}.npz"   # combo always uses ring-only corridor data
           if [ ! -f "$cordata" ]; then echo "[train] MISSING corridor dataset $cordata"; exit 1; fi
           extra="$extra --data ${cordata}" ;;
     cor*) corvar="${recipe/ft/}"   # cor->cor, corft->cor, corr->corr, corrft->corr
@@ -134,7 +160,12 @@ if [ "${1:-}" = "_one" ]; then
     --exp-name "${tech}_dn_${recipe}_${size}" $extra \
     > "$log" 2>&1
   rc=$?
-  if [ $rc -eq 0 ] && [ -f "$ckpt" ]; then echo "[train] DONE $name"; else echo "[train] FAIL $name (rc=$rc, see $log)"; fi
+  if [ $rc -eq 0 ] && [ -f "$ckpt" ]; then
+    touch "$ckpt.complete"
+    echo "[train] DONE $name"
+  else
+    echo "[train] FAIL $name (rc=$rc, see $log)"
+  fi
   exit 0
 fi
 

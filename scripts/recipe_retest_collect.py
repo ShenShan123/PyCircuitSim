@@ -8,7 +8,7 @@ Inputs
   results/recipe_bench/opamp_def/<recipe>/{opamp,ring_osc}.txt  (opamp_sweep_def.sh)
 
 Outputs
-  results/recipe_bench/RETEST_ACCURACY.md   (human-facing tables)
+  results/recipe_bench/ACCURACY_REPORT.md   (RETEST section; human-facing tables)
   results/recipe_bench/retest_data.json     (machine-readable)
 """
 from __future__ import annotations
@@ -22,6 +22,37 @@ from statistics import mean
 ROOT = Path(__file__).resolve().parent.parent
 GATE = ROOT / "results" / "recipe_bench" / "gate_iso"
 OPDEF = ROOT / "results" / "recipe_bench" / "opamp_def"
+GATE_XL = ROOT / "results" / "recipe_bench" / "gate_iso_xl"
+OPDEF_XL = ROOT / "results" / "recipe_bench" / "opamp_def_xl"
+
+# Single consolidated report file — this collector owns the RETEST section,
+# scripts/recipe_collect.py owns the MATRIX section. Each regenerates only its
+# own marker-delimited block.
+REPORT = ROOT / "results" / "recipe_bench" / "ACCURACY_REPORT.md"
+_REPORT_HEADER = (
+    "# PyCircuitSim NN accuracy — consolidated benchmark report\n"
+    "\n"
+    "Single file, two auto-generated datasets (do not edit inside the markers):\n"
+    "**Part I — isolated re-test** (`scripts/recipe_retest_collect.py`; "
+    "authoritative exit-code gates + OMP determinism, large + xl tiers). "
+    "**Part II — recipe×size matrix** (`scripts/recipe_collect.py`; the V6.6.5 "
+    "13-recipe × 4-size sweep incl. device + AC suites). "
+    "Conclusions + production recommendation: `docs/V6.6.6-accuracy-report.md`.\n")
+
+
+def write_report_section(marker: str, content: str) -> None:
+    """Replace (or append) one marker-delimited section of ACCURACY_REPORT.md."""
+    begin, end = f"<!-- BEGIN:{marker} -->", f"<!-- END:{marker} -->"
+    block = f"{begin}\n{content.rstrip()}\n{end}"
+    if REPORT.exists():
+        text = REPORT.read_text()
+        if begin in text and end in text:
+            text = text.split(begin)[0] + block + text.split(end, 1)[1]
+        else:
+            text = text.rstrip() + "\n\n" + block + "\n"
+    else:
+        text = _REPORT_HEADER + "\n" + block + "\n"
+    REPORT.write_text(text)
 
 TECHS = ["tsmc5", "tsmc7", "tsmc12", "tsmc16"]
 CIRCS = ["ring_osc", "opamp", "sram_snm", "switchcap"]
@@ -124,12 +155,12 @@ PARSERS = {"ring_osc": parse_ring, "opamp": parse_opamp,
            "opamp_ac": parse_opamp_ac}
 
 
-def load_gate(recipes):
+def load_gate(recipes, gate_dir=GATE):
     data = {}
     for r in recipes:
         data[r] = {}
         summ = {}
-        sf = GATE / r / "SUMMARY.txt"
+        sf = gate_dir / r / "SUMMARY.txt"
         if sf.exists():
             for line in sf.read_text().splitlines():
                 m = re.match(r"(\S+)\s+(\S+)\s+\|\s+rc=(\d+)\s+(PASS|FAIL)", line)
@@ -138,10 +169,18 @@ def load_gate(recipes):
         for t in TECHS:
             data[r][t] = {}
             for c in CIRCS + ["opamp_ac"]:
-                p = GATE / r / f"{t}_{c}.log"
+                p = gate_dir / r / f"{t}_{c}.log"
                 cell = {"present": p.exists()}
                 if p.exists():
-                    cell.update(PARSERS[c](p.read_text(errors="replace")))
+                    text = p.read_text(errors="replace")
+                    cell.update(PARSERS[c](text))
+                    if "status" not in cell:
+                        # distinguish honest crashes / untrained cells from a
+                        # silent parser miss on a healthy log
+                        if "NO-CKPT" in text:
+                            cell["no_ckpt"] = True
+                        elif re.search(r"ERROR|Traceback|RuntimeError", text):
+                            cell["crashed"] = True
                 v = summ.get((t, c))
                 if v:
                     cell["gate"] = v[0]
@@ -149,12 +188,12 @@ def load_gate(recipes):
     return data
 
 
-def load_opdef(recipes):
+def load_opdef(recipes, opdef_dir=OPDEF):
     """(recipe, TECH, circ) -> {omp: (rc, err%)} from opamp_def txt files."""
     out = {}
     for r in recipes:
         for c in ("opamp", "ring_osc"):
-            f = OPDEF / r / f"{c}.txt"
+            f = opdef_dir / r / f"{c}.txt"
             if not f.exists():
                 continue
             for line in f.read_text().splitlines():
@@ -180,17 +219,15 @@ def fmt(v, nd=2):
 def cell_headline(c, circ):
     if not c.get("present"):
         return "—"
+    s = c.get("status") or ("no-ckpt" if c.get("no_ckpt")
+                            else "CRASH" if c.get("crashed") else "?")
     if circ == "ring_osc":
-        e, s = c.get("period_err_pct"), c.get("status", "?")
-        return f"{fmt(e)} {s}"
+        return f"{fmt(c.get('period_err_pct'))} {s}"
     if circ == "opamp":
-        e, s = c.get("gain_err_pct"), c.get("status", "?")
-        return f"{fmt(e)} {s}"
+        return f"{fmt(c.get('gain_err_pct'))} {s}"
     if circ == "switchcap":
-        e, s = c.get("charge_err_pct"), c.get("status", "?")
-        return f"{fmt(e)}/{fmt(c.get('droop_pct_alw'), 0)} {s}"
-    e, s = c.get("nrmse_max_pct"), c.get("status", "?")
-    return f"{fmt(e)} {s}"
+        return f"{fmt(c.get('charge_err_pct'))}/{fmt(c.get('droop_pct_alw'), 0)} {s}"
+    return f"{fmt(c.get('nrmse_max_pct'))} {s}"
 
 
 def verdict(cell):
@@ -233,23 +270,21 @@ def det_class(runs):
     return "FLIP"
 
 
-def main():
-    recipes = [r for r in RECIPE_ORDER if (GATE / r).is_dir()]
-    extra = sorted(p.name for p in GATE.iterdir() if p.is_dir() and p.name not in recipes)
-    recipes += extra
-    data = load_gate(recipes)
-    opdef = load_opdef(recipes)
+def discover(gate_dir):
+    if not gate_dir.is_dir():
+        return []
+    recipes = [r for r in RECIPE_ORDER if (gate_dir / r).is_dir()]
+    recipes += sorted(p.name for p in gate_dir.iterdir()
+                      if p.is_dir() and p.name not in recipes)
+    return recipes
 
-    L = ["# V6.6.2 re-test — full-recipe continuous-accuracy comparison",
-         "",
-         "Every on-disk uniform recipe at the `large` tier, re-gated on the authoritative "
-         "`verify_complex_*` gates (CPU-pinned, isolated dirs, NGSPICE BSIM-CMG ground truth). "
-         "Accuracy-first per plan §5: continuous metrics lead, X/16 is derived. "
-         "`clean` = production control.",
-         ""]
+
+def render_sections(recipes, data, opdef, suffix=""):
+    """All report sections for one tier; `suffix` disambiguates the xl headers."""
+    L = []
 
     # headline counts
-    L += ["## Derived summary — pass counts", ""]
+    L += [f"## Derived summary — pass counts{suffix}", ""]
     rows = []
     for r in recipes:
         rows.append([r, f"{pass16(data, r)}/16", f"{strict16(data, opdef, r)}/16"])
@@ -260,7 +295,7 @@ def main():
             "sram_snm": "max lobe-NRMSE % (gate ≤10 + positivity)",
             "switchcap": "charge_err %VDD / droop %allowance (gates ≤5 / ≤100)"}
     for circ in CIRCS:
-        L += [f"## {circ} — {HEAD[circ]}", ""]
+        L += [f"## {circ} — {HEAD[circ]}{suffix}", ""]
         rows = []
         for t in TECHS:
             row = [t]
@@ -270,7 +305,7 @@ def main():
         L += [md(["Tech"] + recipes, rows), ""]
 
     # waveform fidelity (NRMSE) per circuit
-    L += ["## Waveform / locus NRMSE % (all circuits, lower = better)", ""]
+    L += [f"## Waveform / locus NRMSE % (all circuits, lower = better){suffix}", ""]
     for circ in CIRCS:
         rows = []
         for t in TECHS:
@@ -279,11 +314,11 @@ def main():
                 c = data[r][t][circ]
                 row.append(fmt(c.get("nrmse_max_pct") if circ == "sram_snm" else c.get("nrmse_pct")))
             rows.append(row)
-        L += [f"### {circ}", "", md(["Tech"] + recipes, rows), ""]
+        L += [f"### {circ}{suffix}", "", md(["Tech"] + recipes, rows), ""]
 
     # opamp AC (if run)
     if any(data[r][t]["opamp_ac"].get("present") for r in recipes for t in TECHS):
-        L += ["## Opamp open-loop AC — dc_gain_err dB / GBW ratio / PM err ° (gate ≤3dB, [0.6,1.67], ≤15°)", ""]
+        L += [f"## Opamp open-loop AC — dc_gain_err dB / GBW ratio / PM err ° (gate ≤3dB, [0.6,1.67], ≤15°){suffix}", ""]
         rows = []
         for t in TECHS:
             row = [t]
@@ -300,7 +335,7 @@ def main():
               "", "`*` = OP-MISBIAS (NN opamp output railed at the linearization point).", ""]
 
     # OMP determinism
-    L += ["## OMP∈{1,2,4} determinism (opamp + ring) — detPASS / detFAIL / FLIP", "",
+    L += [f"## OMP∈{{1,2,4}} determinism (opamp + ring) — detPASS / detFAIL / FLIP{suffix}", "",
           "FLIP = multistable coin-flip (unbankable, §9 discipline #3). "
           "Cell shows class + per-OMP headline err%.", ""]
     for circ in ("opamp", "ring_osc"):
@@ -316,10 +351,10 @@ def main():
                 else:
                     row.append("—")
             rows.append(row)
-        L += [f"### {circ}", "", md(["Tech"] + recipes, rows), ""]
+        L += [f"### {circ}{suffix}", "", md(["Tech"] + recipes, rows), ""]
 
     # aggregate per-recipe scores (deterministic-aware)
-    L += ["## Aggregate accuracy per recipe", "",
+    L += [f"## Aggregate accuracy per recipe{suffix}", "",
           "ring/SC/SRAM aggregates are means over the 4 techs (deterministic gates). "
           "The opamp columns count OMP-deterministic passes only (FLIP cells are "
           "unbankable, excluded from detPASS; mean gain_err is over detPASS cells). "
@@ -358,16 +393,49 @@ def main():
     L += [md(["Recipe", "ring mean period_err%", "ring detPASS", "opamp detPASS",
               "opamp mean err% (det, excl tsmc7)", "SRAM mean maxNRMSE%",
               "SC mean charge_err%", "SC max droop %alw"], rows), ""]
+    return L
+
+
+def main():
+    L = ["# V6.6.2 re-test — full-recipe continuous-accuracy comparison",
+         "",
+         "Every on-disk uniform recipe at the `large` tier, re-gated on the authoritative "
+         "`verify_complex_*` gates (CPU-pinned, isolated dirs, NGSPICE BSIM-CMG ground truth). "
+         "Accuracy-first per plan §5: continuous metrics lead, X/16 is derived. "
+         "`clean` = production control. Sections suffixed `(xl)` repeat the identical "
+         "methodology at the `xl` tier for the recipes with xl checkpoints. "
+         "Conclusions + production recommendation: `docs/V6.6.6-accuracy-report.md`.",
+         ""]
+    json_out = {}
+    summary = []
+    for key, gate_dir, opdef_dir, suffix in (("large", GATE, OPDEF, ""),
+                                             ("xl", GATE_XL, OPDEF_XL, " (xl)")):
+        recipes = discover(gate_dir)
+        if not recipes:
+            continue
+        data = load_gate(recipes, gate_dir)
+        opdef = load_opdef(recipes, opdef_dir)
+        if key == "xl":
+            L += ["---", "", "# xl tier — re-test", "",
+                  "Same isolated methodology, `xl` checkpoints (512×8 ~2.13M p, "
+                  "over-fit-boundary tier; V6.6.5 size-matrix recipe set).", ""]
+        L += render_sections(recipes, data, opdef, suffix)
+        json_out[key] = {"gate": data,
+                         "opdef": {f"{r}|{t}|{c}": v for (r, t, c), v in opdef.items()}}
+        summary.append((key, recipes, data, opdef))
 
     out = ROOT / "results" / "recipe_bench"
-    (out / "retest_data.json").write_text(json.dumps(
-        {"gate": data,
-         "opdef": {f"{r}|{t}|{c}": v for (r, t, c), v in opdef.items()}}, indent=1))
-    (out / "RETEST_ACCURACY.md").write_text("\n".join(L))
-    print(f"Recipes: {recipes}")
-    print(f"Wrote {out/'RETEST_ACCURACY.md'} and retest_data.json")
-    for r in recipes:
-        print(f"  {r:10s}: OMP1 {pass16(data, r):2d}/16   strict {strict16(data, opdef, r):2d}/16")
+    # backwards-compat top-level keys = large tier; xl nested under "xl"
+    payload = dict(json_out.get("large", {}))
+    if "xl" in json_out:
+        payload["xl"] = json_out["xl"]
+    (out / "retest_data.json").write_text(json.dumps(payload, indent=1))
+    write_report_section("RETEST", "\n".join(L))
+    print(f"Wrote {REPORT} [RETEST section] and retest_data.json")
+    for key, recipes, data, opdef in summary:
+        print(f"[{key}] recipes: {recipes}")
+        for r in recipes:
+            print(f"  {r:10s}: OMP1 {pass16(data, r):2d}/16   strict {strict16(data, opdef, r):2d}/16")
 
 
 if __name__ == "__main__":

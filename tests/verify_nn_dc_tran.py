@@ -2377,6 +2377,12 @@ def run_inverter_tran_tests(
                 # is an automatic FAIL — the very "fail loud" intent the flag
                 # was added for.
                 nr_partial = bool(nn_tran.get("_nr_partial"))
+                # also catch UNFLAGGED truncation: the scorers only see the
+                # common time prefix, so a waveform that ends early or is
+                # near-empty must fail here whether or not the flag was set
+                if (len(nn_tran["time"]) < 3
+                        or nn_tran["time"][-1] < 0.98 * ng_tran["time"][-1]):
+                    nr_partial = True
 
                 if is_broken:
                     print(f"    WARNING: Flat inverter transient "
@@ -3277,6 +3283,16 @@ def main() -> int:
     # Save CSV
     csv_path = RESULTS_BASE / "summary.csv"
     save_summary_csv(dc_results, all_tran_and_diag, csv_path)
+
+    # a run that scored no NN rows (checkpoints missing / polarity skipped)
+    # must not exit green on the CMG/NGSPICE reference rows alone
+    nn_scored = [r for r in dc_results + all_tran_and_diag
+                 if "directnet" in r.model or "bsimar" in r.model]
+    if not nn_scored:
+        print(f"\n{'='*70}")
+        print("  ERROR: no NN model was scored — passing rows are "
+              "reference-only; nothing under test")
+        return 1
 
     # Final verdict
     total = n_pass + n_fail + n_error

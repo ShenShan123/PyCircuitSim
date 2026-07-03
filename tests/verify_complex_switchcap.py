@@ -229,7 +229,8 @@ def main() -> int:
               f"{r['nrmse_pct']:7.2f} | {status:>8s}")
     print(f"\n  {n_pass}/{len(results)} passed both charge + droop gates")
     # B10: surface the verdict in the exit code (consumers also parse stdout).
-    return 0 if n_pass == len(results) else 1
+    # empty results (all techs skipped) must not exit green
+    return 0 if (results and n_pass == len(results)) else 1
 
 
 if __name__ == "__main__":

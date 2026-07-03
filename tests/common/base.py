@@ -375,6 +375,11 @@ def run_test_suite(
         return 1
     if n_error > 0:
         print(f"RESULT: {n_pass} PASS, {n_error} ERROR (modelcard issues) out of {total}")
+        if n_pass == 0:
+            # every test errored (broken ngspice, throwing solver, ...):
+            # nothing was verified, so a green exit would be a lie
+            print("RESULT: 0 PASS — all tests ERRORED, nothing verified")
+            return 1
     else:
         print(f"RESULT: ALL {n_pass} tests PASSED")
     return 0
@@ -511,6 +516,11 @@ def run_multi_tech_main(
         return 1
     if n_error > 0:
         print(f"RESULT: {n_pass} PASS, {n_error} ERROR (modelcard issues) out of {total}")
+        if n_pass == 0:
+            # every test errored (broken ngspice, throwing solver, ...):
+            # nothing was verified, so a green exit would be a lie
+            print("RESULT: 0 PASS — all tests ERRORED, nothing verified")
+            return 1
     else:
         print(f"RESULT: ALL {n_pass} tests PASSED")
     return 0

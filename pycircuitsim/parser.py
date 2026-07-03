@@ -105,6 +105,15 @@ def _resolve_nn_checkpoint(
                 ovr_path = CHECKPOINT_DIR / f"{base}_best.pt"
                 if ovr_path.exists():
                     explicit_path = str(ovr_path)
+                else:
+                    # a pinned-but-absent checkpoint must fail LOUDLY: falling
+                    # through to the resolver cascade would silently evaluate
+                    # a different model (typically production `large`) under
+                    # the pinned recipe's name
+                    raise FileNotFoundError(
+                        f"NN checkpoint override '{ovr}' -> {ovr_path} "
+                        "does not exist; refusing silent fallback to the "
+                        "resolver cascade")
             else:  # level == 74
                 phys_path = CHECKPOINT_DIR / f"{base}_best.phys.pt"
                 plain_path = CHECKPOINT_DIR / f"{base}_best.pt"
@@ -125,6 +134,11 @@ def _resolve_nn_checkpoint(
                     explicit_path = str(plain_path)
                 elif phys_path.exists():
                     explicit_path = str(phys_path)
+                else:
+                    raise FileNotFoundError(
+                        f"NN checkpoint override '{ovr}' -> {plain_path} "
+                        f"(or {phys_path.name}) does not exist; refusing "
+                        "silent fallback to the resolver cascade")
 
     if explicit_path is not None:
         path = explicit_path

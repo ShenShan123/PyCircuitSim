@@ -20,8 +20,9 @@ PY="${NN_PY:-/data1/shenshan/.conda/envs/pycircuitsim/bin/python}"; [ -x "$PY" ]
 OUT="${OPDEF_OUT:-$ROOT/results/recipe_bench/opamp_def}"
 SCR="${OPDEF_SCRATCH:-/tmp/claude-1001/-data2-shenshan-PyCircuitSim/6bfa5fc9-5de2-4965-944a-7f36ddc3c72c/scratchpad/opdef}"
 PAR="${PAR:-24}"
+SIZE="${SIZE:-large}"
 
-stem () { [ "$1" = clean ] && echo "$2_dn_large_$3" || echo "$2_dn_$1_large_$3"; }
+stem () { [ "$1" = clean ] && echo "$2_dn_${SIZE}_$3" || echo "$2_dn_$1_${SIZE}_$3"; }
 
 if [ "${1:-}" = "_one" ]; then
   recipe="$2"; tuc="$3"; circ="$4"; omp="$5"
@@ -29,7 +30,10 @@ if [ "${1:-}" = "_one" ]; then
   sn="$(stem "$recipe" "$tlc" nmos)"; sp="$(stem "$recipe" "$tlc" pmos)"
   d="$OUT/$recipe"; mkdir -p "$d"
   [ -f "$CKPT/${sn}_best.pt" ] || { echo "$tuc $circ OMP$omp NO-CKPT" >> "$d/${circ}.txt"; exit 0; }
-  export CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS="$omp" MKL_NUM_THREADS="$omp" NGSPICE_BIN="$NG"
+  # PYCIRCUITSIM_TORCH_THREADS keeps the multistability probe alive now that
+  # tests/common/complex.py pins torch threads to 1 by default (v664 P0)
+  export CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS="$omp" MKL_NUM_THREADS="$omp" \
+         PYCIRCUITSIM_TORCH_THREADS="$omp" NGSPICE_BIN="$NG"
   export PYCIRCUITSIM_COMPLEX_RESULTS="$SCR/${recipe}_${tlc}_${circ}_omp${omp}"
   mkdir -p "$PYCIRCUITSIM_COMPLEX_RESULTS"
   export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="$sn" PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="$sp"
