@@ -142,6 +142,29 @@ inference, verdict + production recommendation. CHANGELOG V6.8.0 entry
   transformer + charge-sobolev/sobolev now force the MATH attention backend
   at forward (commit 8e72713). csob + crit-curriculum (init-from +
   class-weights on corro data) smokes PASS on the transformer.
+- 2026-07-05: **LATENT L74 INTEGRATION BUG found+fixed (d4151bf)** — first
+  real checkpoint (tsmc5 tf-small: trainer-side AVG NRMSE 0.38%, id 0.84%,
+  R² all positive under AR rollout) scored 389% device-DC NRMSE through the
+  netlist path: `_MOSFETNNBase._out_col` preferred `norm_stats.output_columns`
+  (canonical order, describing the STATS arrays) over the BSIMAR model-output
+  layout → qg denormed as id. Historical BSIMAR norm files predate the field —
+  classic silent-green integration regression. Probe now matches trainer path.
+  All pre-fix L74 gate results are void (device suite 5 FAIL, first AC run).
+- 2026-07-05: thread-oversubscription fixed (75d3d07): TRAIN_OMP=4 pin —
+  loadavg 400→49, GPUs 65-90%, small back to ~26 s/epoch. Phase A relaunched
+  smalls-first. DN inverter regression PASS after batched-eval inclusion
+  (8f08c23): VTC 1.04% / tran 0.79% — DN-neutral.
+- 2026-07-05: **SMALL-TIER RESULTS (post-fix)** — tsmc5 device suite 11/11
+  PASS (NMOS DC 1.45%, PMOS DC 0.48%, VTC 4.00%, inv-tran 1.03% NRMSE);
+  AC 2/2 PASS (pmos f3db ratio 1.000, magNRMSE 0.53% — beats DN's historical
+  AC record); **16-cell complex matrix 11/16** (SRAM 4/4, SC 3/4, opamp 2/4
+  [tsmc12 8.3%/tsmc16 6.2%], ring 2/4 [tsmc12 1.9%/tsmc16 2.1%]; fails =
+  tsmc5/7 ring+opamp, tsmc16 SC). **DN small = 6/16 on the same matrix; DN
+  clean large = 13/16.** tsmc16 column re-run on completed weights by the
+  follower → tsmc16 switchcap flips to PASS: **small-tier FINAL = 12/16**
+  (SRAM 4/4, SC 4/4, opamp {12,16}, ring {12,16}; fails = tsmc5/7 ring+opamp
+  — the classic frontier cells). BSIMAR-small(0.67M) = DN-clean-large−1 on
+  the identical matrix; DN small = 6/16. Heavy cells ≈ 1 h each, 1 thread.
 - 2026-07-05: **Phase A LAUNCHED** — MODEL=transformer clean,
   SIZES="large medium small" × 4 techs × 2 devs (24 ckpts), NSTREAMS=6 on
   GPUs 0-2; ~2.5-3 min/epoch per job at 2 jobs/GPU → larges land in ~12 h.
