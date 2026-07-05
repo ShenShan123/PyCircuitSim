@@ -165,6 +165,11 @@ inference, verdict + production recommendation. CHANGELOG V6.8.0 entry
   (SRAM 4/4, SC 4/4, opamp {12,16}, ring {12,16}; fails = tsmc5/7 ring+opamp
   — the classic frontier cells). BSIMAR-small(0.67M) = DN-clean-large−1 on
   the identical matrix; DN small = 6/16. Heavy cells ≈ 1 h each, 1 thread.
+- 2026-07-05: **SMALL TIER COMPLETE** — devices 44/44 PASS (4 techs × 11;
+  DC NRMSE N/P: tsmc5 1.45/0.48, tsmc7 3.37/0.56, tsmc12 0.20/0.21,
+  tsmc16 0.24/0.46 — inside DN-clean-large's device range at 0.67M params);
+  AC **7/8 PASS** (only tsmc12-pmos magNRMSE 13%>10%; DN@large = 4/12).
+  Scoreboard: complex 12/16 · device 44/44 · AC 7/8.
 - 2026-07-05: **Phase A LAUNCHED** — MODEL=transformer clean,
   SIZES="large medium small" × 4 techs × 2 devs (24 ckpts), NSTREAMS=6 on
   GPUs 0-2; ~2.5-3 min/epoch per job at 2 jobs/GPU → larges land in ~12 h.
