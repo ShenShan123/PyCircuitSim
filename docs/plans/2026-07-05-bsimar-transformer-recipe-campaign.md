@@ -56,6 +56,33 @@ side-by-side with the production DirectNet numbers (V6.6.6 report).
 9. `tests/verify_nn_dc_tran.py` `_cascade_handles_stem` extended to `_tf_`
    stems (the bsimar arm then per-tech-resolves instead of pinning one tech).
 
+## 1b. Baselines to beat / historical context (scout briefings, 2026-07-05)
+
+- **DirectNet production (crit30f@large) = 14/16 strict** (banks tsmc5-opamp
+  0.21% + tsmc12-opamp 6.25%; fails tsmc7/tsmc16-opamp). Clean@large = 13/16
+  single / 12/16 strict; DN capacity curve 7→10→13→10 (S/M/L/XL).
+- **DN device level (clean@large):** DC 24/24; per-tech NMOS NRMSE 0.83–3.99%,
+  PMOS 0.02–2.20%; recipe×size device-mean-NRMSE: clean L 1.7, xl 2.17.
+  **DN AC:** device CS-amp 4/12 @large, opamp AC 0/12 @large; AC peaks @small.
+- **BSIMAR history (git b5f6fdd, 2026-04-13):** v4 universal TF device NRMSE
+  NMOS 0.270% / PMOS 0.260% (R² .9937/.9969, 5.02M params) vs DirectNetV4
+  0.043%/0.033% @908K — DN 6–8× better with 5.5× fewer params → parked
+  (Rule 15). Realistic campaign framing: can per-tech BSIMAR + the modern
+  recipe stack MATCH the DN gate matrix? Known BSIMAR risks: AR exposure
+  bias (teacher-forced train vs AR inference → error cascade), phys-best
+  median fix already in-tree, slow CPU inference (SRAM gates previously hit
+  ~2700 s wall-clock with far cheaper models).
+- **OMP strict-determinism probe** must set `PYCIRCUITSIM_TORCH_THREADS=N`
+  alongside OMP/MKL (torch pins to 1 by default since V6.6.6).
+- **Corridor dataset gotcha:** the `{tech}_cor*_{dev}_tech_variant_labels.npy`
+  sidecars are the ONLY valid label source (bench geometry is off-grid for the
+  fingerprint labeller) — never delete/regenerate them.
+- **Verified (numerically) against a scout claim:** the aux losses' column-sum
+  autograd trick IS valid for the Transformer — attention mixes token
+  positions within a sample, never batch rows; max|colsum−perrow| grad diff
+  1.3e-7 (float noise) on a random tf-small. The teacher-forcing caveat
+  (§1 item 3) is the only real approximation.
+
 ## 2. Training matrix
 
 All jobs: `--apply-filter off --swa-mode ema --seed 42` (the clean-recipe
@@ -107,5 +134,19 @@ inference, verdict + production recommendation. CHANGELOG V6.8.0 entry
 - 2026-07-05: scan done; port implemented (items 1–9 above); train+inference
   smokes PASS (tiny tsmc5 tf-small trains, saves, loads via LEVEL=74 and
   FORCE_LEVEL; resolver logs correct). Datasets confirmed on disk (no regen;
-  a mistakenly-launched regen was killed before any write). Timing runs for
-  fp32-vs-AMP @large in flight.
+  a mistakenly-launched regen was killed before any write).
+- 2026-07-05: timing @large (1.6M train rows, batch 1024, 4090): fp32
+  48.5 s/epoch, bf16 --amp 36.6 s/epoch (~1.3×, loader-bound). **Decision: no
+  AMP in the campaign** — comparability with the DN clean recipe outranks 1.3×.
+- 2026-07-05: **BLOCKER found+fixed** — fused SDPA has no double-backward;
+  transformer + charge-sobolev/sobolev now force the MATH attention backend
+  at forward (commit 8e72713). csob + crit-curriculum (init-from +
+  class-weights on corro data) smokes PASS on the transformer.
+- 2026-07-05: **Phase A LAUNCHED** — MODEL=transformer clean,
+  SIZES="large medium small" × 4 techs × 2 devs (24 ckpts), NSTREAMS=6 on
+  GPUs 0-2; ~2.5-3 min/epoch per job at 2 jobs/GPU → larges land in ~12 h.
+  Side-job: tsmc5 tf-small pair trained ahead of queue to validate the whole
+  gating pipeline early. Eval-side check: nn_sweep "baseline" = baseline
+  *config* vs NGSPICE (not a stored-DN comparison) → BSIMAR-safe under
+  FORCE_LEVEL; verify_nn_ac/complex_ac carry no own pin logic → parser env
+  pins/cascade apply.
