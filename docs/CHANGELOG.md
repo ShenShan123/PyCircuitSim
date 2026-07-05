@@ -7,6 +7,47 @@ retained, verbose prose pruned; the full original text lives in git history.)
 
 ---
 
+## V6.7.0 — universal DirectNet + TSMC5 transfer study (branch `V6.6`, 2026-07-04/05)
+
+**Campaign: resurrect the universal-scope DirectNet (retired V6.1) on the current data/recipe
+stack — ONE 18-code-embedding model on TSMC16+12+7 (~7M rows), rank the Core-4 recipes
+(clean/csob/corroft/crit30u) on the 12 shared complex gates, then measure TSMC5 few-shot
+transfer (fine-tune tiers N ∈ {2k,10k,50k,200k,1M,full}) — accuracy-vs-N + retention curves.**
+Live routing + execution log: `docs/plans/2026-07-02-universal-nn-tsmc5-transfer.md`; final
+deliverable `docs/V6.7.0-universal-transfer-report.md`. **No production change**: all artifacts
+use `u716_*` / `u716f5_*` stems — not `tsmc{X}_dn_*`, not resolver fallback names — reachable
+only via explicit `PYCIRCUITSIM_NN_CHECKPOINT_DN_*` pin; per-tech resolution untouched.
+
+New standalone scripts (zero edits to existing files): `scripts/uni_concat_npz.py` (per-tech →
+universal npz concat + sidecars, validated bit-identical), `scripts/uni_subsample_npz.py`
+(stratified TSMC5 tiers — n2000 keeps traj_corridor=9/inv_trip=67 rows that uniform `--max-rows`
+would lose), `scripts/uni_train.sh` (Core-4 × {nmos,pmos}, clean-base warm-start guard,
+`.complete` markers), `scripts/uni_gate_sweep.sh` (12 gates + TSMC5 zero-shot + dev/AC + OMP
+{1,2,4} sweep; resolver post-check re-verdicts wrong-checkpoint cells RESOLVER-MISS).
+
+Executed (Phases 0–4 COMPLETE 2026-07-04, single day — plan estimated 3–5): 32 checkpoints
+(8 universal bases + 24 TSMC5 fine-tune tiers), 200 gate/suite cells, zero RESOLVER-MISS.
+**Headlines:** (1) universal is VIABLE — device fidelity per-tech-grade (id NRMSE ≤0.09%/variant,
+R²≥0.996) and **corroft = 10/12 strict, 0 FLIPs = per-tech parity with full OMP determinism**
+(per-tech large never had it); ranking corroft 10 > clean 9 > crit30u 9+FLIP > csob 8+FLIP;
+corridor fixes tsmc7-ring 14.89%→3.61% (ring-lever confirmed at universal scope); anchor +
+csob basins do NOT survive the scope change (relocation generalizes: recipe→basin maps are
+SCOPE-dependent); tsmc16-opamp rails for all 4 at large. (2) **TSMC5 onboarding = ~1M stratified
+rows: plain@n1M = 4/4 TSMC5 gates STRICT** (ties per-tech production, half the data); threshold
+sharp (0/4 ≤200k); ≤10k tiers DIVERGE (tier-refit normalizer); n1M beats nfull (opamp basin
+non-monotone in N). (3) **No free retention** — source techs collapse at gate level (1–3/12,
+TSMC12 DC up to 23%, one blow-up); fine-tune = de-facto per-tech ckpt; replay-mix = follow-up.
+**Phase 1b (xl arm) CLOSED 2026-07-05:** clean@xl = 8/12+1FLIP — banks tsmc12-opamp (5.55%) AND
+tsmc16-opamp (6.41%) det-PASS (the large-tier tsmc16 rail is TIER-LOCAL) but loses ALL rings;
+corroft@xl = 8/12 — corridor holds rings 3/3 but ALL opamps rail + tsmc7-SC drops (per-tech
+corroft@xl's tsmc16 bank does NOT transfer). The V6.6.1 mutual-exclusive-basin wall reappears at
+universal xl partitioned opamps-XOR-rings → **11/12 unreached at both tiers; corroft@large
+(10/12 strict, 0 FLIPs) = final best universal config.** Campaign totals: 36 ckpts, 264 eval
+cells, zero RESOLVER-MISS, ~1.5 days wall (est. 3–5). Full analysis + Rule-13 tables + dead ends:
+`docs/V6.7.0-universal-transfer-report.md`; curve data `results/uni_bench/transfer_curve.tsv`.
+
+---
+
 ## V6.6.7 — 15/16 hunt round 1: csobcrit + crit30a1 both 13/16 (branch `V6.6`, 2026-07-03)
 
 **Both V6.6.6-routed arms trained (16 ckpts, `large`) and strict-gated: NEGATIVE — 13/16 strict
