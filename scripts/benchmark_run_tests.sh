@@ -20,9 +20,22 @@ set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SELF="$ROOT/scripts/$(basename "${BASH_SOURCE[0]}")"
 NG="$ROOT/tools/ngspice-45.2/bin/ngspice"
-OUT="$ROOT/results/benchmark_sml"
 CKPT="$ROOT/external_compact_models/bsimar/checkpoints"
 PAR="${PAR:-12}"
+
+# V6.8 — MODEL env selects the NN under test (see gate_matrix_iso.sh):
+# direct (default; DN pins, results/benchmark_sml) or transformer (BSIMAR:
+# `_tf_` stems, TF pins, PYCIRCUITSIM_NN_FORCE_LEVEL=74 harness retarget,
+# results/bsimar_bench). DO NOT run both models concurrently — the harness
+# scratch dirs are keyed by (circuit, tech) only.
+MODEL="${MODEL:-direct}"
+case "$MODEL" in
+  direct)      TAG="dn"; OUT_DEFAULT="$ROOT/results/benchmark_sml" ;;
+  transformer) TAG="tf"; OUT_DEFAULT="$ROOT/results/bsimar_bench" ;;
+  *) echo "[test] UNKNOWN MODEL=$MODEL (direct|transformer)"; exit 1 ;;
+esac
+export MODEL
+OUT="${BENCH_OUT:-$OUT_DEFAULT}"
 
 suites=(verify_nn_multi_tech_dc verify_nn_multi_tech_tran \
         verify_complex_ring_osc verify_complex_opamp \
@@ -39,12 +52,18 @@ if [ "${1:-}" = "_one" ]; then
   log="$OUT/$size/$tlc/${suite}.log"
   mkdir -p "$(dirname "$log")"
   if grep -q "===BENCH_DONE" "$log" 2>/dev/null; then echo "[test] SKIP $size/$tlc/$suite"; exit 0; fi
-  if [ ! -f "$CKPT/${tlc}_dn_${size}_nmos_best.pt" ] || [ ! -f "$CKPT/${tlc}_dn_${size}_pmos_best.pt" ]; then
+  if [ ! -f "$CKPT/${tlc}_${TAG}_${size}_nmos_best.pt" ] || [ ! -f "$CKPT/${tlc}_${TAG}_${size}_pmos_best.pt" ]; then
     echo "[test] NO-CKPT $size/$tlc -> skip $suite"; echo "===BENCH_DONE no-ckpt===" > "$log"; exit 0
   fi
   export CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 NGSPICE_BIN="$NG"
-  export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="${tlc}_dn_${size}_nmos"
-  export PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="${tlc}_dn_${size}_pmos"
+  if [ "$TAG" = "tf" ]; then
+    export PYCIRCUITSIM_NN_CHECKPOINT_TF_NMOS="${tlc}_tf_${size}_nmos"
+    export PYCIRCUITSIM_NN_CHECKPOINT_TF_PMOS="${tlc}_tf_${size}_pmos"
+    export PYCIRCUITSIM_NN_FORCE_LEVEL=74
+  else
+    export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="${tlc}_dn_${size}_nmos"
+    export PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="${tlc}_dn_${size}_pmos"
+  fi
   echo "[test] RUN $size/$tlc/$suite"
   conda run -n pycircuitsim python -u "$ROOT/tests/${suite}.py" --tech "$tuc" > "$log" 2>&1
   rc=$?
