@@ -15,15 +15,31 @@ NG="$ROOT/tools/ngspice-45.2/bin/ngspice"
 CKPT="$ROOT/external_compact_models/bsimar/checkpoints"
 recipe="$1"; size="$2"; tuc="$3"; suite="$4"
 tlc="$(echo "$tuc" | tr 'A-Z' 'a-z')"
-if [ "$recipe" = "clean" ]; then sn="${tlc}_dn_${size}_nmos"; sp="${tlc}_dn_${size}_pmos"
-else                             sn="${tlc}_dn_${recipe}_${size}_nmos"; sp="${tlc}_dn_${recipe}_${size}_pmos"; fi
+# V6.8 — MODEL env selects the NN under test (direct default | transformer);
+# see gate_matrix_iso.sh. Transformer: `_tf_` stems + TF pins + FORCE_LEVEL.
+MODEL="${MODEL:-direct}"
+case "$MODEL" in
+  direct)      TAG="dn" ;;
+  transformer) TAG="tf" ;;
+  *) echo "UNKNOWN MODEL=$MODEL (direct|transformer)"; exit 1 ;;
+esac
+if [ "$recipe" = "clean" ]; then sn="${tlc}_${TAG}_${size}_nmos"; sp="${tlc}_${TAG}_${size}_pmos"
+else                             sn="${tlc}_${TAG}_${recipe}_${size}_nmos"; sp="${tlc}_${TAG}_${recipe}_${size}_pmos"; fi
 [ -f "$CKPT/${sn}_best.pt" ] || { echo "MISSING $CKPT/${sn}_best.pt"; exit 1; }
 [ -f "$CKPT/${sp}_best.pt" ] || { echo "MISSING $CKPT/${sp}_best.pt"; exit 1; }
 export CUDA_VISIBLE_DEVICES="" NGSPICE_BIN="$NG"
-export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="$sn" PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="$sp"
-echo "### multirun $recipe/$size/$tlc/$suite  (pin $sn / $sp)"
+if [ "$TAG" = "tf" ]; then
+  export PYCIRCUITSIM_NN_CHECKPOINT_TF_NMOS="$sn" PYCIRCUITSIM_NN_CHECKPOINT_TF_PMOS="$sp"
+  export PYCIRCUITSIM_NN_FORCE_LEVEL=74
+else
+  export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="$sn" PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="$sp"
+fi
+echo "### multirun $recipe/$size/$tlc/$suite  (pin $sn / $sp, model $MODEL)"
 for omp in 1 2 4; do
-  out="$(OMP_NUM_THREADS=$omp MKL_NUM_THREADS=$omp \
+  # PYCIRCUITSIM_TORCH_THREADS=$omp: since the V6.6.6 harness thread-pin,
+  # OMP_NUM_THREADS alone no longer perturbs torch GEMM threading — the
+  # override is what makes this probe exercise the multistability axis.
+  out="$(OMP_NUM_THREADS=$omp MKL_NUM_THREADS=$omp PYCIRCUITSIM_TORCH_THREADS=$omp \
         conda run -n pycircuitsim python -u "$ROOT/tests/${suite}.py" --tech "$tuc" 2>&1)"
   # headline lines the gates print (period error / gain / charge / SNM / status)
   hl="$(printf '%s\n' "$out" | grep -iE "period error|gain_err|gain error|charge_err|charge error|SNM|butterfly|-> *(PASS|FAIL)|Status" | tr '\n' ' ')"
