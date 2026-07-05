@@ -35,6 +35,13 @@ retained, verbose prose pruned; the full original text lives in git history.)
 - Trap-list survivors re-verified: v6_4_7_s12 corridor pipeline scripts, per-tech base+corro
   datasets, PyCMG submodule, tools/ngspice. No orphan `_norm.npz`. Resolver fallback stems
   (refac/v4) were already absent from disk.
+- **Report merge (user request):** the gitignored collector output
+  `results/recipe_bench/ACCURACY_REPORT.md` (580 lines: RETEST large+xl + MATRIX sections) was
+  merged verbatim into **`docs/V6.6.6-accuracy-report.md` as Part II (Appendices A–C, headings
+  demoted one level)** — the docs file is now the complete, git-tracked V6.6.6 accuracy record
+  (Part I analysis + recommendation, Part II all data tables). The results path keeps a stub
+  with empty `BEGIN/END:RETEST|MATRIX` markers so `recipe_retest_collect.py`/`recipe_collect.py`
+  re-runs still regenerate in place. CLAUDE.md + V6.7.0-report pointers updated.
 
 ---
 

@@ -99,8 +99,9 @@ authoritative ground truth; DirectNet is the production NN; BSIMAR is parked.
   (tech × device), no per-case specials, so the gate matrix reflects genuine
   uniform fidelity. Reports: `docs/V6.6.6-accuracy-report.md` (current cross-tier
   conclusions + production recommendation), `docs/V6.6.{0,1}-accuracy-report.md`
-  (baseline + recipe studies), auto-tables
-  `results/recipe_bench/ACCURACY_REPORT.md`, CHANGELOG.
+  (baseline + recipe studies; the V6.6.6 report carries the full data tables as
+  Part II since the V6.7.1 merge — `results/recipe_bench/ACCURACY_REPORT.md` is
+  now just the collector regeneration target), CHANGELOG.
 - **BSIMAR Transformer (LEVEL=74)** — autoregressive Transformer sharing
   DirectNet's data pipeline and inference rules. Parked (Rule 15); no checkpoints
   on disk. Resurrect the cap-head / AR-loop structure from CHANGELOG / git
