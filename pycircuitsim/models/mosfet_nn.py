@@ -191,18 +191,25 @@ class _MOSFETNNBase(Component):
 
         # Derive the model-output → column-name lookup. Three cases:
         #
-        # (1) E2 4-output head: norm.npz declares ``output_columns``
-        #     (e.g. ["id", "qg", "qd", "qb"]). Map names to that
-        #     subset's indices; missing names are unavailable.
-        # (2) Transformer (BSIMAR layout): outputs in BSIMAR_COLUMN_ORDER.
+        # (1) Transformer (BSIMAR layout): the MODEL emits
+        #     BSIMAR_COLUMN_ORDER regardless of what the norm stats carry —
+        #     modern norm.npz files store ``output_columns`` in CANONICAL
+        #     order (they describe the stats arrays, which are fitted before
+        #     the trainer's BSIMAR reorder). This branch must win over (2):
+        #     until V6.8 it did not, so a LEVEL=74 checkpoint whose norm file
+        #     carried ``output_columns`` had every output misread (qg denormed
+        #     as id, ~5x current error) while ``_stats_col`` stayed correct.
+        # (2) E2 4-output head (DirectNet): norm.npz declares a SUBSET
+        #     ``output_columns`` (e.g. ["id", "qg", "qd", "qb"]) matching the
+        #     model head. Map names to that subset's indices.
         # (3) Standard 13-output DirectNet: OUTPUT_COLUMN_ORDER.
-        if self._norm_stats.output_columns is not None:
-            cols = self._norm_stats.output_columns
-            self._out_col = {n: cols.index(n) for n in cols}
-        elif self._output_layout == "bsimar":
+        if self._output_layout == "bsimar":
             self._out_col = {
                 n: BSIMAR_COLUMN_ORDER.index(n) for n in OUTPUT_COLUMN_ORDER
             }
+        elif self._norm_stats.output_columns is not None:
+            cols = self._norm_stats.output_columns
+            self._out_col = {n: cols.index(n) for n in cols}
         else:
             self._out_col = {
                 n: OUTPUT_COLUMN_ORDER.index(n) for n in OUTPUT_COLUMN_ORDER
