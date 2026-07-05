@@ -170,6 +170,22 @@ inference, verdict + production recommendation. CHANGELOG V6.8.0 entry
   tsmc16 0.24/0.46 — inside DN-clean-large's device range at 0.67M params);
   AC **7/8 PASS** (only tsmc12-pmos magNRMSE 13%>10%; DN@large = 4/12).
   Scoreboard: complex 12/16 · device 44/44 · AC 7/8.
+- 2026-07-05: **MEDIUM-TIER MATRIX = 14/16 single-run** — ALL FOUR OPAMPS
+  PASS incl. **tsmc7-opamp (gain err 9.83%)**, the cell that fails all 22 DN
+  recipes × 2 tiers (previously reached only by the V6.5.9 T3 solver
+  fine-tune), and tsmc16-opamp (6.74%) which DN production also fails.
+  Fails: tsmc5 ring 5.55%, tsmc7 ring 7.41% (the corridor-curriculum
+  targets). BSIMAR-medium(1.94M) ties DN production crit30f@large (14/16)
+  single-run — OMP∈{1,2,4} strict probe IN FLIGHT for the 4 opamps + 2
+  passing rings before banking (opamps are historically multistable).
+- 2026-07-05: **OMP STRICT PROBE (medium)** — opamps tsmc5 detPASS
+  (1.46/1.46/1.46), tsmc12 detPASS (2.18/4.76/4.76), tsmc16 detPASS
+  (6.74/2.77/6.78); rings tsmc12/16 detPASS (identical across OMP).
+  **tsmc7-opamp FLIPs** (9.83/9.53/11.39@OMP4 vs 10% gate) → medium strict
+  = **13/16** (single-run 14/16). Medium device 44/44; AC 4/8 (peaks at
+  small, mirroring DN's capacity/AC trade-off). Phase B thesis: corridor
+  (rings tsmc5/7) + inv_trip (opamp margin; tsmc7 needs ~1.5%) → 16/16
+  strict is plausibly reachable.
 - 2026-07-05: **Phase A LAUNCHED** — MODEL=transformer clean,
   SIZES="large medium small" × 4 techs × 2 devs (24 ckpts), NSTREAMS=6 on
   GPUs 0-2; ~2.5-3 min/epoch per job at 2 jobs/GPU → larges land in ~12 h.
