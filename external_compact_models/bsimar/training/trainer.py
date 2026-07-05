@@ -73,16 +73,34 @@ def _epoch_train(
     total = 0.0
     total_aux = 0.0
     n = 0
+    # V6.8: the Sobolev / charge-Sobolev terms build a second-order graph
+    # (autograd.grad with create_graph=True). PyTorch's fused SDPA kernels
+    # have no double-backward (`aten::_scaled_dot_product_efficient_attention
+    # _backward is not implemented`), so the Transformer forward must record
+    # the MATH attention backend when those terms are active. ~2-3x slower
+    # attention; DirectNet and aux-free Transformer paths are untouched.
+    needs_double_bwd = (
+        sobolev_loss is not None or charge_sobolev_loss is not None)
+    if is_transformer and needs_double_bwd:
+        from torch.nn.attention import sdpa_kernel, SDPBackend
+
+        def _fwd_ctx():
+            return sdpa_kernel(SDPBackend.MATH)
+    else:
+        import contextlib
+
+        def _fwd_ctx():
+            return contextlib.nullcontext()
     for x, y, tc, w in loader:
         x, y, tc, w = (x.to(device), y.to(device),
                        tc.to(device), w.to(device))
         optimizer.zero_grad()
-        if sobolev_loss is not None or charge_sobolev_loss is not None:
+        if needs_double_bwd:
             x = x.requires_grad_(True)
         # V6.8 opt-in bf16 autocast (Transformer wall-clock). Incompatible
         # with the double-backward aux terms — the CLI guards that combo.
-        with torch.autocast(device_type="cuda", dtype=torch.bfloat16,
-                            enabled=amp):
+        with _fwd_ctx(), torch.autocast(
+                device_type="cuda", dtype=torch.bfloat16, enabled=amp):
             pred = (model(x, y, tech_codes=tc) if is_transformer
                     else model(x, tech_codes=tc))
             loss = criterion(pred.float(), y, weights=w)
