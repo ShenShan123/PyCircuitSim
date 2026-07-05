@@ -181,7 +181,11 @@ if [ "${1:-}" = "_one" ]; then
     expname="--exp-name ${tech}_${TAG}_${recipe}_${size}"
   fi
   echo "[train] START $name on GPU$gpu  (model: $MODEL, extra: ${extra:-<none>})"
-  CUDA_VISIBLE_DEVICES="$gpu" conda run --no-capture-output -n pycircuitsim python -u -m bsimar.cli.train \
+  # V6.8: pin CPU threads per job. Un-pinned, each torch process spawns a
+  # near-full-core OpenMP pool; at NSTREAMS=6-9 concurrent jobs the box hit
+  # loadavg ~400/192 with GPUs starved at 56-78% util. TRAIN_OMP=4 default.
+  CUDA_VISIBLE_DEVICES="$gpu" OMP_NUM_THREADS="${TRAIN_OMP:-4}" MKL_NUM_THREADS="${TRAIN_OMP:-4}" \
+    conda run --no-capture-output -n pycircuitsim python -u -m bsimar.cli.train \
     --model "$MODEL" --size "$size" --device-type "$dev" --tech-scope "$tech" \
     --apply-filter off --swa-mode ema --seed 42 --cuda --overwrite \
     $expname $extra \
