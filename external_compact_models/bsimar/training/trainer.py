@@ -58,6 +58,7 @@ def _epoch_train(
     aux_norm: Optional[Dict[str, torch.Tensor]] = None,
     charge_sobolev_loss: Optional[nn.Module] = None,
     charge_sobolev_norm: Optional[Dict[str, torch.Tensor]] = None,
+    amp: bool = False,
 ) -> Tuple[float, float]:
     """One training epoch. Returns (mean_total_loss, mean_aux_term).
 
@@ -78,9 +79,13 @@ def _epoch_train(
         optimizer.zero_grad()
         if sobolev_loss is not None or charge_sobolev_loss is not None:
             x = x.requires_grad_(True)
-        pred = (model(x, y, tech_codes=tc) if is_transformer
-                else model(x, tech_codes=tc))
-        loss = criterion(pred, y, weights=w)
+        # V6.8 opt-in bf16 autocast (Transformer wall-clock). Incompatible
+        # with the double-backward aux terms — the CLI guards that combo.
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16,
+                            enabled=amp):
+            pred = (model(x, y, tech_codes=tc) if is_transformer
+                    else model(x, tech_codes=tc))
+            loss = criterion(pred.float(), y, weights=w)
         if sobolev_loss is not None:
             sob = sobolev_loss(
                 x_norm=x, y_pred_norm=pred, y_true_norm=y,
@@ -125,6 +130,7 @@ def _epoch_train(
 def _epoch_eval(
     model: nn.Module, loader: DataLoader, criterion: MAELoss,
     device: torch.device, is_transformer: bool,
+    amp: bool = False,
 ) -> float:
     model.eval()
     total = 0.0
@@ -132,9 +138,11 @@ def _epoch_eval(
     for x, y, tc in loader:
         x, y, tc = x.to(device), y.to(device), tc.to(device)
         # Teacher-forced eval for the Transformer (val loss aligned with train).
-        pred = (model(x, y, tech_codes=tc) if is_transformer
-                else model(x, tech_codes=tc))
-        total += criterion(pred, y).item()
+        with torch.autocast(device_type="cuda", dtype=torch.bfloat16,
+                            enabled=amp):
+            pred = (model(x, y, tech_codes=tc) if is_transformer
+                    else model(x, tech_codes=tc))
+        total += criterion(pred.float(), y).item()
         n += 1
     return total / max(n, 1)
 
@@ -218,7 +226,14 @@ def _train_loop(
     charge_sobolev: bool = False,
     lam_charge_sobolev: float = 0.05,
     charge_sobolev_floor: float = 1e-19,
+    amp: bool = False,
 ) -> Tuple[nn.Module, _NormalizerBase]:
+    if amp and (sobolev or subthresh or charge_sobolev):
+        raise ValueError(
+            "--amp is incompatible with the double-backward aux losses "
+            "(sobolev / subthresh / charge-sobolev)")
+    if amp:
+        print("  AMP: bf16 autocast ON (train + teacher-forced val)")
     if is_transformer:
         for ds in (train_ds, val_ds, test_ds):
             ds.outputs = torch.tensor(
@@ -294,102 +309,103 @@ def _train_loop(
     scheduler = CosineAnnealingLR(optimizer, T_max=epochs)
     criterion = MAELoss()
 
-    # V6.4.7 S10 (P4) — Sobolev id-derivative consistency term. DirectNet
-    # only (asinh output norm); couples autograd ∂id/∂V to the supervised
-    # gm/gds/gmb columns the deriv-fidelity gate measures.
+    # Aux-loss plumbing shared by the Sobolev / subthreshold / charge-Sobolev
+    # terms. The column order and the per-OUTPUT stat arrays must match the
+    # layout of pred/y: the Transformer trains in BSIMAR_COLUMN_ORDER (the
+    # outputs were reordered above) while the normalizer stats stay in the
+    # canonical OUTPUT_COLUMN_ORDER — so for the Transformer the output-side
+    # arrays are permuted to BSIMAR order. Input-side stats are order-invariant.
+    # The column-sum autograd trick inside the losses stays valid for the
+    # Transformer (batch rows never attend to each other). Caveat: under
+    # teacher forcing the differentiated head is conditioned on the TRUE
+    # prefix tokens, so the supervised slope approximates the AR-inference
+    # Jacobian (exact for qg — the first AR token).
+    def _aux_cols_and_stats() -> Tuple[list, np.ndarray, np.ndarray, np.ndarray]:
+        st = normalizer.stats
+        if st.mode != "asinh" or st.asinh_scale is None:
+            raise ValueError(
+                "Aux losses require asinh output normalization")
+        base_cols = (st.output_columns if st.output_columns is not None
+                     else OUTPUT_COLUMN_ORDER)
+        if not is_transformer:
+            return base_cols, st.output_std, st.output_mean, st.asinh_scale
+        from bsimar.data.normalize import BSIMAR_COLUMN_ORDER
+        perm = [base_cols.index(c) for c in BSIMAR_COLUMN_ORDER]
+        return (list(BSIMAR_COLUMN_ORDER), st.output_std[perm],
+                st.output_mean[perm], st.asinh_scale[perm])
+
+    def _nt(arr: np.ndarray) -> torch.Tensor:
+        return torch.tensor(arr, dtype=torch.float32, device=device)
+
+    # V6.4.7 S10 (P4) — Sobolev id-derivative consistency term (asinh output
+    # norm); couples autograd ∂id/∂V to the supervised gm/gds/gmb columns the
+    # deriv-fidelity gate measures. V6.8: also available for the Transformer
+    # (teacher-forced slope; see _aux_cols_and_stats caveat).
     sobolev_loss: Optional[nn.Module] = None
     sobolev_norm: Optional[Dict[str, torch.Tensor]] = None
     if sobolev:
         from bsimar.losses.bni_mae import SobolevIdLoss
-        if is_transformer:
-            raise ValueError("Sobolev id-derivative loss is DirectNet-only")
         st = normalizer.stats
-        if st.mode != "asinh" or st.asinh_scale is None:
-            raise ValueError(
-                "Sobolev loss requires asinh output normalization")
-        cols = (st.output_columns if st.output_columns is not None
-                else OUTPUT_COLUMN_ORDER)
+        cols, out_std_a, out_mean_a, asinh_a = _aux_cols_and_stats()
         sobolev_loss = SobolevIdLoss(
             lam=lam_sobolev, column_order=cols,
             id_floor=sobolev_floor, strong_boost=sobolev_strong_boost,
             corridor_only=sobolev_corridor_only)
-
-        def _nt(arr: np.ndarray) -> torch.Tensor:
-            return torch.tensor(arr, dtype=torch.float32, device=device)
-
         sobolev_norm = {
             "in_std": _nt(st.input_std),
-            "out_std": _nt(st.output_std),
-            "out_mean": _nt(st.output_mean),
-            "asinh_scale": _nt(st.asinh_scale),
+            "out_std": _nt(out_std_a),
+            "out_mean": _nt(out_mean_a),
+            "asinh_scale": _nt(asinh_a),
         }
         print(f"  Sobolev id-deriv loss ON (λ={lam_sobolev}, "
               f"floor={sobolev_floor:g}, strong_boost={sobolev_strong_boost})")
 
-    # V6.4.7 S11 (P3) — subthreshold id value+ceiling term. DirectNet only
-    # (asinh output norm); re-scales the sub-uA roll-off (asinh s2) so the
-    # SRAM force_ic weak-inversion band carries loss mass. Shares aux_norm
-    # (in_mean/in_std for the per-fin OFF ceiling; out/asinh for denorm).
+    # V6.4.7 S11 (P3) — subthreshold id value+ceiling term (asinh output
+    # norm); re-scales the sub-uA roll-off (asinh s2) so the SRAM force_ic
+    # weak-inversion band carries loss mass. Shares aux_norm (in_mean/in_std
+    # for the per-fin OFF ceiling; out/asinh for denorm).
     subthresh_loss: Optional[nn.Module] = None
     aux_norm: Optional[Dict[str, torch.Tensor]] = None
     if subthresh:
         from bsimar.losses.bni_mae import SubthresholdIdLoss
-        if is_transformer:
-            raise ValueError("Subthreshold id loss is DirectNet-only")
         st = normalizer.stats
-        if st.mode != "asinh" or st.asinh_scale is None:
-            raise ValueError(
-                "Subthreshold loss requires asinh output normalization")
-        cols = (st.output_columns if st.output_columns is not None
-                else OUTPUT_COLUMN_ORDER)
+        cols, out_std_a, out_mean_a, asinh_a = _aux_cols_and_stats()
         subthresh_loss = SubthresholdIdLoss(
             lam=lam_subthresh, column_order=cols, s2=subthresh_s2,
             upper=subthresh_upper, id_floor=subthresh_floor,
             off_floor=subthresh_off_floor, ceiling_k=subthresh_ceiling_k,
             ceiling_w=subthresh_ceiling_w)
-
-        def _nt2(arr: np.ndarray) -> torch.Tensor:
-            return torch.tensor(arr, dtype=torch.float32, device=device)
-
         aux_norm = {
-            "in_mean": _nt2(st.input_mean),
-            "in_std": _nt2(st.input_std),
-            "out_std": _nt2(st.output_std),
-            "out_mean": _nt2(st.output_mean),
-            "asinh_scale": _nt2(st.asinh_scale),
+            "in_mean": _nt(st.input_mean),
+            "in_std": _nt(st.input_std),
+            "out_std": _nt(out_std_a),
+            "out_mean": _nt(out_mean_a),
+            "asinh_scale": _nt(asinh_a),
         }
         print(f"  Subthreshold id loss ON (λ={lam_subthresh}, s2={subthresh_s2:g}, "
               f"upper={subthresh_upper:g}, off_floor={subthresh_off_floor:g}, "
               f"ceiling_k={subthresh_ceiling_k}, ceiling_w={subthresh_ceiling_w})")
 
-    # V6.5.2 — charge-derivative (cap) Sobolev consistency term. DirectNet only
-    # (asinh output norm); couples the autograd ∂q/∂V the AC/transient solvers
-    # consume to the supervised cgg/cgd/cdg/cdd columns (the cap analogue of the
-    # S10 id-slope Sobolev). Shares the same x.requires_grad path as sobolev.
+    # V6.5.2 — charge-derivative (cap) Sobolev consistency term (asinh output
+    # norm); couples the autograd ∂q/∂V the AC/transient solvers consume to
+    # the supervised cgg/cgd/cdg/cdd columns (the cap analogue of the S10
+    # id-slope Sobolev). Shares the same x.requires_grad path as sobolev.
+    # V6.8: available for the Transformer — for qg (the first AR token) the
+    # teacher-forced ∂qg/∂V IS the AR-inference Jacobian the AC solver reads.
     charge_sobolev_loss: Optional[nn.Module] = None
     charge_sobolev_norm: Optional[Dict[str, torch.Tensor]] = None
     if charge_sobolev:
         from bsimar.losses.bni_mae import ChargeSobolevLoss
-        if is_transformer:
-            raise ValueError("Charge-Sobolev loss is DirectNet-only")
         st = normalizer.stats
-        if st.mode != "asinh" or st.asinh_scale is None:
-            raise ValueError(
-                "Charge-Sobolev loss requires asinh output normalization")
-        cols = (st.output_columns if st.output_columns is not None
-                else OUTPUT_COLUMN_ORDER)
+        cols, out_std_a, out_mean_a, asinh_a = _aux_cols_and_stats()
         charge_sobolev_loss = ChargeSobolevLoss(
             lam=lam_charge_sobolev, column_order=cols,
             cap_floor=charge_sobolev_floor)
-
-        def _ntc(arr: np.ndarray) -> torch.Tensor:
-            return torch.tensor(arr, dtype=torch.float32, device=device)
-
         charge_sobolev_norm = {
-            "in_std": _ntc(st.input_std),
-            "out_std": _ntc(st.output_std),
-            "out_mean": _ntc(st.output_mean),
-            "asinh_scale": _ntc(st.asinh_scale),
+            "in_std": _nt(st.input_std),
+            "out_std": _nt(out_std_a),
+            "out_mean": _nt(out_mean_a),
+            "asinh_scale": _nt(asinh_a),
         }
         print(f"  Charge-Sobolev (cap dQ/dV) loss ON (λ={lam_charge_sobolev}, "
               f"cap_floor={charge_sobolev_floor:g})")
@@ -443,7 +459,8 @@ def _train_loop(
             sobolev_loss=sobolev_loss, sobolev_norm=sobolev_norm,
             subthresh_loss=subthresh_loss, aux_norm=aux_norm,
             charge_sobolev_loss=charge_sobolev_loss,
-            charge_sobolev_norm=charge_sobolev_norm)
+            charge_sobolev_norm=charge_sobolev_norm,
+            amp=amp)
         if swa_mode == "swa" and epoch >= swa_start:
             avg_model.update_parameters(model)
             if epoch == swa_start:
@@ -454,7 +471,8 @@ def _train_loop(
                       or (swa_mode == "swa" and epoch >= swa_start))
         eval_model = avg_model if avg_active else model
         val_loss = _epoch_eval(
-            eval_model, val_loader, criterion, device, is_transformer)
+            eval_model, val_loader, criterion, device, is_transformer,
+            amp=amp)
         scheduler.step()
         lr_now = scheduler.get_last_lr()[0]
 
@@ -550,6 +568,7 @@ def train_directnet(
     lam_charge_sobolev: float = 0.05,
     charge_sobolev_floor: float = 1e-19,
     init_from: Optional[str] = None,
+    amp: bool = False,
     **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
     """DirectNet MLP training pipeline.
@@ -697,6 +716,7 @@ def train_directnet(
         charge_sobolev=charge_sobolev,
         lam_charge_sobolev=lam_charge_sobolev,
         charge_sobolev_floor=charge_sobolev_floor,
+        amp=amp,
     )
 
 
@@ -720,9 +740,33 @@ def train_transformer(
     ema_decay: float = 0.999,
     apply_filter: bool = True,
     class_weights: Optional[Dict[str, float]] = None,
+    sobolev: bool = False,
+    lam_sobolev: float = 0.1,
+    sobolev_floor: float = 1e-12,
+    sobolev_strong_boost: float = 1.0,
+    sobolev_corridor_only: bool = False,
+    subthresh: bool = False,
+    lam_subthresh: float = 0.05,
+    subthresh_s2: float = 1e-9,
+    subthresh_upper: float = 1e-6,
+    subthresh_floor: float = 1e-12,
+    subthresh_off_floor: float = 1e-10,
+    subthresh_ceiling_k: float = 1.0,
+    subthresh_ceiling_w: float = 1.0,
+    charge_sobolev: bool = False,
+    lam_charge_sobolev: float = 0.05,
+    charge_sobolev_floor: float = 1e-19,
+    init_from: Optional[str] = None,
+    amp: bool = False,
     **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
-    """BSIMAR Transformer training pipeline."""
+    """BSIMAR Transformer training pipeline.
+
+    V6.8 recipe-parity port: ``init_from`` (curriculum warm-start),
+    ``class_weights`` (corridor / inv_trip class multipliers), the
+    Sobolev / subthreshold / charge-Sobolev aux terms (BSIMAR column
+    order handled inside ``_train_loop``), and opt-in bf16 ``amp``.
+    """
     from bsimar.models.transformer import TransformerEncoderModel
 
     epochs = epochs if epochs is not None else config.max_epochs
@@ -753,9 +797,27 @@ def train_transformer(
         dropout=config.dropout,
         num_tech_codes=num_tech_codes,
         tech_embed_dropout=p_unknown,
+        # Rule 16: UNKNOWN at the tail of the (possibly local) vocab.
+        unknown_code_id=num_tech_codes - 1,
     ).to(device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  Params: {n_params:,}")
+
+    if init_from is not None:
+        init_path = Path(init_from)
+        if not init_path.suffix:
+            init_path = CHECKPOINT_DIR / f"{init_from}_best.pt"
+        if not init_path.exists():
+            raise FileNotFoundError(
+                f"init_from checkpoint not found: {init_path}")
+        init_state = torch.load(str(init_path), weights_only=True,
+                                map_location=device)
+        missing, unexpected = model.load_state_dict(init_state, strict=False)
+        if missing or unexpected:
+            raise ValueError(
+                f"init_from architecture mismatch for {init_path.name}: "
+                f"missing={list(missing)} unexpected={list(unexpected)}")
+        print(f"  Warm-started from {init_path.name}")
 
     arch_config = {
         "input_dim": in_dim, "target_dim": out_dim,
@@ -776,4 +838,18 @@ def train_transformer(
         arch_config=arch_config,
         class_weights=class_weights,
         swa_mode=swa_mode, ema_decay=ema_decay,
+        sobolev=sobolev, lam_sobolev=lam_sobolev,
+        sobolev_floor=sobolev_floor,
+        sobolev_strong_boost=sobolev_strong_boost,
+        sobolev_corridor_only=sobolev_corridor_only,
+        subthresh=subthresh, lam_subthresh=lam_subthresh,
+        subthresh_s2=subthresh_s2, subthresh_upper=subthresh_upper,
+        subthresh_floor=subthresh_floor,
+        subthresh_off_floor=subthresh_off_floor,
+        subthresh_ceiling_k=subthresh_ceiling_k,
+        subthresh_ceiling_w=subthresh_ceiling_w,
+        charge_sobolev=charge_sobolev,
+        lam_charge_sobolev=lam_charge_sobolev,
+        charge_sobolev_floor=charge_sobolev_floor,
+        amp=amp,
     )

@@ -45,9 +45,13 @@ class TransformerEncoderModel(nn.Module):
         dropout:    Dropout rate.
         num_tech_codes: Vocabulary size for the tech embedding.
         tech_embed_dropout: During training, probability of replacing the
-            real tech code with UNKNOWN_CODE_ID. Trains the UNKNOWN
+            real tech code with ``unknown_code_id``. Trains the UNKNOWN
             embedding to serve as a generic-device representation
             for zero-shot inference.
+        unknown_code_id: Index of the UNKNOWN slot inside the embedding
+            vocabulary. Per-tech local vocabs (Rule 16) place it at
+            ``num_tech_codes - 1``; ``None`` derives exactly that. The
+            universal vocab's 17 falls out of the same rule (18 - 1).
     """
 
     # P4 — parallel C-block constants.
@@ -71,6 +75,7 @@ class TransformerEncoderModel(nn.Module):
         *,
         num_tech_codes: int = 22,
         tech_embed_dropout: float = 0.0,
+        unknown_code_id: int | None = None,
     ):
         super().__init__()
 
@@ -114,7 +119,12 @@ class TransformerEncoderModel(nn.Module):
         self.tech_embedding = nn.Embedding(num_tech_codes, d_model)
         self.num_tech_codes = num_tech_codes
         self._tech_embed_dropout = tech_embed_dropout
-        self._unknown_code_id = 17  # matches bsimar.config.UNKNOWN_CODE_ID
+        # Rule 16: UNKNOWN sits at the tail of the (possibly local) vocab.
+        # Hardcoding the universal 17 here would CUDA-assert on per-tech
+        # vocabs (TSMC5 vocab=5 → unknown=4) the first time p_unknown fires.
+        self._unknown_code_id = (
+            unknown_code_id if unknown_code_id is not None
+            else num_tech_codes - 1)
 
         # B1: Learned token-type embedding.
         self.n_tokens = self.input_dim + 1 + target_dim

@@ -178,7 +178,16 @@ def _resolve_nn_checkpoint(
         path = next((str(p) for p in candidates if p.exists()),
                     str(candidates[-1]))
     else:  # level == 74
-        # Cascade: v4-re universal > legacy v4 universal > per-tech > bare.
+        # Cascade: per-tech dedicated > v4-re universal > legacy v4 universal
+        # > per-tech-bare > bare.
+        #
+        # V6.8: per-tech dedicated Transformer slots
+        # (`tsmc{5,7,12,16}_tf_{size}_{dev}_best.pt`) preempt the universal
+        # cascade when the netlist's tech matches — the exact mirror of the
+        # LEVEL=73 preempt. Same large-first production ordering; the trained
+        # model uses a SHRUNK local-vocab embedding (Rule 16) keyed off the
+        # `tsmc{X}_tf_` stem below.
+        #
         # For each universal candidate prefer `_best.phys.pt` only when the
         # norm.npz declares `phys_best_metric == "median"` (post-2026-05-03 fix).
         def _select(prefix: str) -> Optional[str]:
@@ -207,14 +216,26 @@ def _resolve_nn_checkpoint(
         per_tech_path = CHECKPOINT_DIR / f"ar_{tech_key}_{device_key}_best.pt"
         bare_path = CHECKPOINT_DIR / f"ar_{device_key}_best.pt"
 
-        # Cascade: refactor presets > v4-re > legacy v4 > per-tech > bare.
-        path = (
-            _select("refac_tf_medium")
-            or _select("refac_tf_small")
-            or _select("refac_tf_large")
-            or _select("v4_re_universal")
-            or _select("v4_universal")
-        )
+        per_tech_preempt = []
+        if tech_key in LOCAL_VARIANT_CODES:
+            per_tech_preempt = [
+                CHECKPOINT_DIR / f"{tech_key}_tf_large_{device_key}_best.pt",
+                CHECKPOINT_DIR / f"{tech_key}_tf_medium_{device_key}_best.pt",
+                CHECKPOINT_DIR / f"{tech_key}_tf_small_{device_key}_best.pt",
+                CHECKPOINT_DIR / f"{tech_key}_tf_xl_{device_key}_best.pt",
+            ]
+
+        # Cascade: per-tech preempt > refactor presets > v4-re > legacy v4
+        # > per-tech-bare > bare.
+        path = next((str(p) for p in per_tech_preempt if p.exists()), None)
+        if path is None:
+            path = (
+                _select("refac_tf_medium")
+                or _select("refac_tf_small")
+                or _select("refac_tf_large")
+                or _select("v4_re_universal")
+                or _select("v4_universal")
+            )
         if path is None:
             if per_tech_path.exists():
                 path = str(per_tech_path)
@@ -222,11 +243,12 @@ def _resolve_nn_checkpoint(
                 path = str(bare_path)
 
     # Determine vocab scope from the resolved checkpoint name.
-    # `tsmc{5,7}_dn_*` => local per-tech vocab; everything else => universal.
+    # `tsmc{X}_dn_*` (DirectNet) / `tsmc{X}_tf_*` (BSIMAR Transformer)
+    # => local per-tech vocab; everything else => universal.
     chk_name = Path(path).name
     scope = "universal"
     for s in LOCAL_VARIANT_CODES:
-        if chk_name.startswith(f"{s}_dn_"):
+        if chk_name.startswith(f"{s}_dn_") or chk_name.startswith(f"{s}_tf_"):
             scope = s
             break
     tech_code = local_variant_code(scope, tech_key, vt_key)
@@ -800,6 +822,18 @@ class Parser:
 
         elif level in (73, 74):
             # NN compact model: LEVEL=73 (DirectNet) or LEVEL=74 (BSIMAR Transformer).
+            #
+            # V6.8 harness hook: PYCIRCUITSIM_NN_FORCE_LEVEL={73,74} retargets
+            # every NN model card at parse time, so the ENTIRE gate/sweep/AC
+            # harness (whose netlists carry LEVEL=73 tokens) can run the BSIMAR
+            # Transformer without rendering parallel decks. Loud per-card log
+            # below; NGSPICE reference decks (LEVEL=72) are untouched.
+            import os as _os
+            _force = _os.environ.get("PYCIRCUITSIM_NN_FORCE_LEVEL")
+            if _force and int(_force) in (73, 74) and int(_force) != level:
+                print(f"[NN-resolver] FORCE LEVEL {level}->{_force} "
+                      f"(PYCIRCUITSIM_NN_FORCE_LEVEL) for {name}")
+                level = int(_force)
             label = "NN" if level == 73 else "BSIM-AR"
             if NFIN is None:
                 raise ValueError(

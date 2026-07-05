@@ -25,10 +25,22 @@ OMP="${OMP:-1}"
 SIZE="${SIZE:-large}"
 SCRATCH="${GATE_SCRATCH:-/tmp/claude-1001/-data2-shenshan-PyCircuitSim/6bfa5fc9-5de2-4965-944a-7f36ddc3c72c/scratchpad/gate_iso}"
 
+# V6.8 — MODEL env selects the NN under test: direct (default, DN pins,
+# LEVEL=73 decks as-is) or transformer (BSIMAR: `_tf_` stems, TF env pins,
+# and PYCIRCUITSIM_NN_FORCE_LEVEL=74 so the LEVEL=73 harness decks retarget
+# to the Transformer at parse time — see pycircuitsim/parser.py).
+MODEL="${MODEL:-direct}"
+case "$MODEL" in
+  direct)      TAG="dn" ;;
+  transformer) TAG="tf" ;;
+  *) echo "[gate] UNKNOWN MODEL=$MODEL (direct|transformer)"; exit 1 ;;
+esac
+export MODEL
+
 read -r -a circuits <<< "${CIRCS:-ring_osc opamp sram_snm switchcap}"
 
 stem () {  # recipe tech dev
-  if [ "$1" = "clean" ]; then echo "$2_dn_${SIZE}_$3"; else echo "$2_dn_$1_${SIZE}_$3"; fi
+  if [ "$1" = "clean" ]; then echo "$2_${TAG}_${SIZE}_$3"; else echo "$2_${TAG}_$1_${SIZE}_$3"; fi
 }
 
 if [ "${1:-}" = "_one" ]; then
@@ -44,8 +56,14 @@ if [ "${1:-}" = "_one" ]; then
   fi
   export CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS="$OMP" MKL_NUM_THREADS="$OMP" NGSPICE_BIN="$NG"
   export PYCIRCUITSIM_COMPLEX_RESULTS="$SCRATCH/$recipe/${tlc}_${circ}"
-  export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="$sn"
-  export PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="$sp"
+  if [ "$TAG" = "tf" ]; then
+    export PYCIRCUITSIM_NN_CHECKPOINT_TF_NMOS="$sn"
+    export PYCIRCUITSIM_NN_CHECKPOINT_TF_PMOS="$sp"
+    export PYCIRCUITSIM_NN_FORCE_LEVEL=74
+  else
+    export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="$sn"
+    export PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="$sp"
+  fi
   mkdir -p "$PYCIRCUITSIM_COMPLEX_RESULTS"
   "$PY" -u "$ROOT/tests/verify_complex_${circ}.py" --tech "$tuc" > "$log" 2>&1
   rc=$?
