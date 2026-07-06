@@ -186,6 +186,17 @@ inference, verdict + production recommendation. CHANGELOG V6.8.0 entry
   small, mirroring DN's capacity/AC trade-off). Phase B thesis: corridor
   (rings tsmc5/7) + inv_trip (opamp margin; tsmc7 needs ~1.5%) → 16/16
   strict is plausibly reachable.
+- 2026-07-05: **LARGE TIER + PHASE A COMPLETE** — large matrix **13/16**
+  (tsmc5-opamp 2.98% PASS joins; tsmc7-opamp 12.78% FAIL regresses from
+  medium's 9.83%; rings tsmc5 7.38%/tsmc7 11.19% FAIL). Device 44/44 (DC
+  N/P: tsmc5 1.60/0.02, tsmc7 4.77/0.10, tsmc12 0.12/0.35, tsmc16
+  0.09/0.15 — tsmc7-NMOS grows with capacity: 3.37→4.07→4.77). AC 4/8.
+  **Clean capacity curve (complex, single-run): 12 → 14 → 13 (S/M/L) —
+  peaks at MEDIUM**, the DN peak-then-decline shape one tier earlier.
+  AC by tier: 7/8 → 4/8 → 4/8 (peaks at small, like DN). Phase B (crit30/
+  corroft/crit15m/invtrip @large, 32 jobs) training in flight; medium-tier
+  curricula queued as follow-up (medium = the peak; its 3 misses map
+  exactly onto the corridor + inv_trip levers).
 - 2026-07-05: **Phase A LAUNCHED** — MODEL=transformer clean,
   SIZES="large medium small" × 4 techs × 2 devs (24 ckpts), NSTREAMS=6 on
   GPUs 0-2; ~2.5-3 min/epoch per job at 2 jobs/GPU → larges land in ~12 h.
