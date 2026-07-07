@@ -252,6 +252,15 @@ inference, verdict + production recommendation. CHANGELOG V6.8.0 entry
   both rings; only tsmc7-opamp missing vs DN's tsmc7-opamp+tsmc16-opamp. Strict
   count pending the corroft@medium ring OMP sweep (if medium banks BOTH rings
   det → 15/16 strict, clearly > DN).
+- 2026-07-07: **★ CAMPAIGN RESULT — corroft@medium = 15/16 STRICT ★** OMP
+  probe: ALL FOUR rings deterministic PASS (tsmc5/7/12/16 @ OMP1/2/4) + 3
+  opamps det + SRAM/SC stable; only tsmc7-opamp rails. **Beats DN production
+  14/16 strict.** Medium rings sit inside the gate; large recipes' extra
+  capacity pushes one ring to the OMP edge (→ 14/16 strict). invtrip@large
+  (no corridor) = 13-14/16, fails BOTH rings, keeps opamps → orthogonal-
+  conflicting levers on tsmc7 (corridor↔ring vs clean↔opamp). Ceiling = 15/16;
+  tsmc7-opamp = solver-level (T3), out of scope. Report:
+  docs/V6.8.0-bsimar-transformer-report.md. **CAMPAIGN COMPLETE.**
 - 2026-07-05: **Phase A LAUNCHED** — MODEL=transformer clean,
   SIZES="large medium small" × 4 techs × 2 devs (24 ckpts), NSTREAMS=6 on
   GPUs 0-2; ~2.5-3 min/epoch per job at 2 jobs/GPU → larges land in ~12 h.

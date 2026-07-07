@@ -7,6 +7,71 @@ retained, verbose prose pruned; the full original text lives in git history.)
 
 ---
 
+## V6.8.0 — BSIM-AR Transformer (LEVEL=74) un-parked: recipe campaign (branch `V6.7`, 2026-07-06/07)
+
+**Shipped the entire DirectNet training/recipe/eval stack to the parked BSIM-AR
+decode-only Transformer (Rule 15) and ran the full scale × recipe campaign per
+tech, gated against NGSPICE BSIM-CMG. Full report:
+`docs/V6.8.0-bsimar-transformer-report.md`.**
+
+**Result — BSIM-AR `corroft@medium` (corridor curriculum, 1.9M params) = 15/16
+STRICT (OMP∈{1,2,4}), beating DirectNet production `crit30f@large` (14/16
+strict).** Better failure basket than DN: banks tsmc16-opamp (DN production
+FAILS it) + both low-VDD rings, all deterministic; misses ONLY tsmc7-opamp —
+the universal hard cell DN itself reached only via the V6.5.9 T3
+differentiable-solver fine-tune (solver-level, not a data recipe; out of scope
+here). Device DC 44/44 all tiers; AC peaks at small (7/8), matches DN's larger
+AC deficit.
+
+- **Port (code, all default-off / behavior-preserving):** (1) `transformer.py`
+  `unknown_code_id` param — was hardcoded universal 17; per-tech local vocab
+  (Rule 16) would CUDA-assert on p_unknown → now `num_tech_codes-1`. (2)
+  `train_transformer` `init_from` warm-start (all curricula). (3) Sobolev /
+  charge-Sobolev / subthreshold aux losses made model-agnostic (output stats
+  permuted to BSIMAR column order); the column-sum autograd trick VERIFIED
+  valid for the Transformer (attention mixes token positions, not batch rows;
+  grad diff 1.3e-7). **Blocker fixed:** fused SDPA has no double-backward →
+  aux losses force the MATH attention backend at forward. (4) Transformer `xl`
+  preset (14.8M). (5) `--amp` bf16 (1.3× at large; unused for comparability).
+  (6) Parser LEVEL=74 per-tech preempt cascade `tsmc{X}_tf_{size}_{dev}`
+  (large-first) + `_tf_` scope detection. (7) `PYCIRCUITSIM_NN_FORCE_LEVEL=74`
+  harness hook — retargets LEVEL=73 decks to BSIM-AR at parse time (whole gate
+  infra runs the Transformer, zero deck changes). (8) `MODEL={direct,
+  transformer}` in recipe_train / gate_matrix_iso / recipe_eval /
+  benchmark_run_tests / recipe_multirun_gate. (9) Solver batched-eval includes
+  LEVEL=74 (per-checkpoint grouped forward — biggest CPU-gate lever for the AR
+  loop; per-device fallback + NN_BATCHED_EVAL=0 opt-out intact).
+- **Latent L74 integration bug fixed (`mosfet_nn.py`):** `_out_col` read model
+  outputs via `norm_stats.output_columns` (canonical order, describing the
+  stats arrays) BEFORE the BSIMAR layout → qg denormed as id (~5× current,
+  389% device NRMSE) though the same module scored 0.38% on the trainer's test
+  set. Historical BSIM-AR norm files predate `output_columns`, so it never
+  fired. Fixed: BSIMAR layout branch ranks first; probe now bit-matches
+  trainer path. Caught by the first real checkpoint — classic silent-green.
+- **Scale study (clean, S/M/L):** complex 12→14→13 (peaks at MEDIUM, one tier
+  earlier than DN's large peak); AC 7→4→4 of 8 (peaks at small, like DN);
+  device 44/44 all tiers (tsmc7-NMOS NRMSE GROWS with capacity 3.37→4.77% —
+  the same tech whose opamp is the one unreachable gate).
+- **Recipe study (Phase B):** 3 distinct large corridor recipes (corroft w3.0,
+  crit30 w3.0+anchor2.0, crit15m w1.5+anchor3.0) ALL converge to 15/16
+  single-run / 14/16 strict, all rail only tsmc7-opamp. **inv_trip anchor is
+  INERT on the Transformer** (corroft ≡ crit30 to <0.5%/cell — opposite of DN,
+  where crit30 > corroft). **corridor is the whole ring lever** (invtrip alone,
+  no corridor, stays ~13/16 with both rings closed). **tsmc7-ring ⊥ tsmc7-opamp
+  under the corridor at EVERY tier** (ring-open perturbation = opamp-kill
+  perturbation; proven from both failing-large and passing-medium 9.83%
+  basins) → campaign ceiling 15/16. Strict best is MEDIUM (both rings
+  deterministic) not large (extra capacity pushes one ring to the OMP edge).
+- **Datasets:** the existing `{tech}_{dev}.npz` + `_corro_` corridor sets (no
+  regeneration; the sets DN production trained on). Checkpoints:
+  `tsmc{X}_tf_{small,medium,large}_{nmos,pmos}` (clean, 24) +
+  `tsmc{X}_tf_{crit30,corroft,crit15m,invtrip}_large_*` +
+  `_{corroft,corro15}_medium_*`. Production NN unchanged (DirectNet stays the
+  fast path; BSIM-AR un-parked as the validated higher-fidelity option — AR
+  inference is ~30-100× slower on CPU gates).
+
+---
+
 ## V6.7.1 — house-clean after the V6.7.0 campaign (branch `V6.7`, 2026-07-05)
 
 **~12.7 G reclaimed; nothing load-bearing touched; retired checkpoints archived to
