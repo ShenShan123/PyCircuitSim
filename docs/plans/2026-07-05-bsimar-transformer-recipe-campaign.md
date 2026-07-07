@@ -209,6 +209,15 @@ inference, verdict + production recommendation. CHANGELOG V6.8.0 entry
   MEDIUM already passes it single-run (9.83%) while failing the 2 rings —
   so crit30/corroft @MEDIUM (corridor opens rings, medium opamp basin more
   robust) is the 16/16 shot. Queue after crit15m/invtrip @large free the GPUs.
+- 2026-07-06: OMP strict probe (crit30/corroft @large) — all passing opamps
+  DETERMINISTIC (tsmc5/12/16 PASS at OMP 1/2/4, both recipes) → the 15/16 is
+  a real strict result, not a coin-flip. tsmc7-opamp + the 2 opened rings
+  still probing (slow AR transient cells). **MEDIUM curricula LAUNCHED**:
+  corroft + corro15 @medium (16 jobs; dropped crit30@medium as corroft≡crit30
+  on the transformer; corro15=gentler w1.5 hedge to preserve the tsmc7-opamp
+  basin). Concurrent with invtrip@large tsmc16 tail (I unblocked the queue —
+  invtrip's 300-ep from-scratch tsmc16 pair was needlessly gating the
+  higher-value 16/16 shot). crit15m@large gate also in flight.
 - 2026-07-05: **Phase A LAUNCHED** — MODEL=transformer clean,
   SIZES="large medium small" × 4 techs × 2 devs (24 ckpts), NSTREAMS=6 on
   GPUs 0-2; ~2.5-3 min/epoch per job at 2 jobs/GPU → larges land in ~12 h.
