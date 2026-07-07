@@ -237,6 +237,21 @@ inference, verdict + production recommendation. CHANGELOG V6.8.0 entry
   tsmc7-opamp basin are mutually exclusive, independent of corridor weight or
   inv_trip anchor.** → the medium-tier curricula (warm-start from the tsmc7-
   opamp-PASSING clean-medium basin, 9.83%) is the only remaining 16/16 route.
+- 2026-07-07: **corroft@medium = 15/16 — 16/16 ROUTE CLOSED.** The corridor
+  RAILS tsmc7-opamp even from the passing medium basin (124% gain err, worse
+  than large). Definitive: on the transformer **tsmc7-ring and tsmc7-opamp are
+  mutually exclusive under the corridor lever at EVERY tier** — the ring-open
+  perturbation IS the opamp-kill perturbation. Even per-tech recipe mixing
+  (each BSIMAR ckpt is per-tech, Rule 16) caps tsmc7 at 3/4 (clean=opamp∧¬ring,
+  corridor=ring∧¬opamp) → **campaign ceiling = 15/16**. tsmc7-opamp is the
+  universal hard cell that needed DN's SOLVER-level T3 fine-tune (V6.5.9), not
+  a data recipe — and T3 isn't ported (out of scope; structural, not a recipe).
+  CONCLUSION forming: BSIMAR **15/16 single-run** beats DN uniform-recipe best
+  (13/16 single) and its failure set is genuinely BETTER than DN production
+  crit30f (14/16 strict) — BSIMAR banks **tsmc16-opamp** (DN prod FAILS it) +
+  both rings; only tsmc7-opamp missing vs DN's tsmc7-opamp+tsmc16-opamp. Strict
+  count pending the corroft@medium ring OMP sweep (if medium banks BOTH rings
+  det → 15/16 strict, clearly > DN).
 - 2026-07-05: **Phase A LAUNCHED** — MODEL=transformer clean,
   SIZES="large medium small" × 4 techs × 2 devs (24 ckpts), NSTREAMS=6 on
   GPUs 0-2; ~2.5-3 min/epoch per job at 2 jobs/GPU → larges land in ~12 h.
