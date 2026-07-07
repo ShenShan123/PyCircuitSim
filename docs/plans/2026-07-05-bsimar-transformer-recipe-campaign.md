@@ -218,6 +218,17 @@ inference, verdict + production recommendation. CHANGELOG V6.8.0 entry
   basin). Concurrent with invtrip@large tsmc16 tail (I unblocked the queue —
   invtrip's 300-ep from-scratch tsmc16 pair was needlessly gating the
   higher-value 16/16 shot). crit15m@large gate also in flight.
+- 2026-07-07: **OMP ring fragility (the strict-vs-single split)** — the two
+  opened rings are OMP-fragile at the ~5% period-edge: corroft banks
+  tsmc7-ring det (1/2/4 PASS) but tsmc5-ring FLIPs (OMP1 FAIL); crit30 is the
+  MIRROR (tsmc5-ring det, tsmc7-ring FLIPs OMP1). Same weight→basin
+  non-monotonicity as DN. → single-run 15/16 (both, real, beats DN single
+  13/16) but **strict ~14/16** each (one ring unbankable), tying DN prod
+  crit30f strict. Opamps stay det (tsmc5/12/16 PASS; tsmc7 rail). Report will
+  carry BOTH single-run and strict columns per DN-report convention. Still
+  need: tsmc7-opamp OMP (expect rail), medium-curricula gate. Corollary: a
+  16/16-strict needs a recipe banking BOTH rings det — the medium tier (robust
+  opamp basin) or a corridor-weight between 1.5/3.0 is the remaining lever.
 - 2026-07-05: **Phase A LAUNCHED** — MODEL=transformer clean,
   SIZES="large medium small" × 4 techs × 2 devs (24 ckpts), NSTREAMS=6 on
   GPUs 0-2; ~2.5-3 min/epoch per job at 2 jobs/GPU → larges land in ~12 h.
