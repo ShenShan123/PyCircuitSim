@@ -229,6 +229,14 @@ inference, verdict + production recommendation. CHANGELOG V6.8.0 entry
   need: tsmc7-opamp OMP (expect rail), medium-curricula gate. Corollary: a
   16/16-strict needs a recipe banking BOTH rings det — the medium tier (robust
   opamp basin) or a corridor-weight between 1.5/3.0 is the remaining lever.
+- 2026-07-07: **crit15m@large = 15/16** — THIRD large curriculum, identical
+  profile (all opamps but tsmc7 [rail 99.98%], all 4 rings PASS). So corroft
+  (w3.0), crit30 (w3.0+anchor2.0), crit15m (w1.5+anchor3.0) — 3 distinct
+  corridor recipes across the weight/anchor grid — ALL converge to 15/16 and
+  ALL rail tsmc7-opamp. Clean finding: **at large the corridor lever and the
+  tsmc7-opamp basin are mutually exclusive, independent of corridor weight or
+  inv_trip anchor.** → the medium-tier curricula (warm-start from the tsmc7-
+  opamp-PASSING clean-medium basin, 9.83%) is the only remaining 16/16 route.
 - 2026-07-05: **Phase A LAUNCHED** — MODEL=transformer clean,
   SIZES="large medium small" × 4 techs × 2 devs (24 ckpts), NSTREAMS=6 on
   GPUs 0-2; ~2.5-3 min/epoch per job at 2 jobs/GPU → larges land in ~12 h.
