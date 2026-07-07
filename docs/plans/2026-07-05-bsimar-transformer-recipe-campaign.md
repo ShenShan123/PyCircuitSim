@@ -261,6 +261,11 @@ inference, verdict + production recommendation. CHANGELOG V6.8.0 entry
   conflicting levers on tsmc7 (corridor↔ring vs clean↔opamp). Ceiling = 15/16;
   tsmc7-opamp = solver-level (T3), out of scope. Report:
   docs/V6.8.0-bsimar-transformer-report.md. **CAMPAIGN COMPLETE.**
+- 2026-07-07: final datapoint — corro15@medium (w1.5) = 15/16, tsmc7-opamp
+  FAIL at 24.83% (NOT railed). Proves the ceiling is CONTINUOUS: tsmc7-opamp
+  degrades monotonically with corridor weight (9.83 clean → 24.83 w1.5 → 124
+  w3.0) while the ring needs nonzero weight → no weight threads the needle.
+  All 72 checkpoints trained + gated; report/CHANGELOG/CLAUDE.md/memory done.
 - 2026-07-05: **Phase A LAUNCHED** — MODEL=transformer clean,
   SIZES="large medium small" × 4 techs × 2 devs (24 ckpts), NSTREAMS=6 on
   GPUs 0-2; ~2.5-3 min/epoch per job at 2 jobs/GPU → larges land in ~12 h.
