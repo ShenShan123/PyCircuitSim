@@ -197,6 +197,18 @@ inference, verdict + production recommendation. CHANGELOG V6.8.0 entry
   corroft/crit15m/invtrip @large, 32 jobs) training in flight; medium-tier
   curricula queued as follow-up (medium = the peak; its 3 misses map
   exactly onto the corridor + inv_trip levers).
+- 2026-07-06: **PHASE B BREAKTHROUGH — corroft & crit30 @large = 15/16
+  single-run each** (beats DN production 14/16). Both open BOTH low-VDD
+  rings (tsmc5 3.88/3.85%, tsmc7 2.31/2.32%) and hold tsmc5/12/16 opamps;
+  ONLY tsmc7-opamp fails, and it RAILS (99.98% gain err — corridor drifts
+  it from clean-large's 12.78% into full gain collapse, the documented
+  corridor↔opamp tradeoff). corroft (corridor-only) ≡ crit30 (corridor+
+  inv_trip) to <0.5% on every cell → **the inv_trip anchor buys nothing on
+  the transformer** (unlike DN, where crit30>corroft). OMP strict probe of
+  both @large in flight. NEXT: tsmc7-opamp is THE 16/16 blocker; clean
+  MEDIUM already passes it single-run (9.83%) while failing the 2 rings —
+  so crit30/corroft @MEDIUM (corridor opens rings, medium opamp basin more
+  robust) is the 16/16 shot. Queue after crit15m/invtrip @large free the GPUs.
 - 2026-07-05: **Phase A LAUNCHED** — MODEL=transformer clean,
   SIZES="large medium small" × 4 techs × 2 devs (24 ckpts), NSTREAMS=6 on
   GPUs 0-2; ~2.5-3 min/epoch per job at 2 jobs/GPU → larges land in ~12 h.
