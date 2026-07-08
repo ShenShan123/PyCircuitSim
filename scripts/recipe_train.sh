@@ -22,6 +22,15 @@
 # Usage:
 #   RECIPES="csob sob ekv" SIZES="large xl" NSTREAMS=9 bash scripts/recipe_train.sh
 #   GPUS="0 1 2" TECHS="tsmc5 tsmc7 tsmc12 tsmc16" DEVS="nmos pmos" ...
+#
+# V6.8 — MODEL env selects the architecture: MODEL=direct (default, byte-
+# identical legacy behavior, `_dn_` stems) or MODEL=transformer (BSIMAR,
+# `_tf_` stems; the parser's LEVEL=74 preempt cascade keys off `tsmc{X}_tf_`
+# for the same Rule-16 local-vocab scope detection). The recipe map is
+# shared; ekv/monotonic recipes stay DirectNet-only (the CLI rejects them).
+# `clean` trains WITHOUT --exp-name so it lands on the production slot
+# `tsmc{X}_{dn,tf}_{size}_{dev}` that the resolver preempt reads.
+# EXTRA_ARGS env appends to every job (e.g. EXTRA_ARGS="--amp").
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SELF="$ROOT/scripts/$(basename "${BASH_SOURCE[0]}")"
@@ -32,6 +41,13 @@ mkdir -p "$LOGDIR"
 read -r -a GPU_IDS <<< "${GPUS:-0 1 2}"
 NGPU=${#GPU_IDS[@]}
 NSTREAMS="${NSTREAMS:-9}"
+MODEL="${MODEL:-direct}"
+case "$MODEL" in
+  direct)      TAG="dn" ;;
+  transformer) TAG="tf" ;;
+  *) echo "[train] UNKNOWN MODEL=$MODEL (direct|transformer)"; exit 1 ;;
+esac
+export MODEL
 export PYTHONPATH="$ROOT/external_compact_models${PYTHONPATH:+:$PYTHONPATH}"
 
 # ── recipe → extra train args. 'clean' is the control (no addendum); it is
@@ -107,7 +123,12 @@ recipe_args () {
 # ---- single-job worker ----
 if [ "${1:-}" = "_one" ]; then
   recipe="$2"; tech="$3"; size="$4"; dev="$5"; gpu="$6"; force="${7:-}"
-  name="${tech}_dn_${recipe}_${size}_${dev}"
+  if [ "$recipe" = "clean" ]; then
+    # clean = the production slot (default save_prefix, no --exp-name).
+    name="${tech}_${TAG}_${size}_${dev}"
+  else
+    name="${tech}_${TAG}_${recipe}_${size}_${dev}"
+  fi
   ckpt="$CKPT/${name}_best.pt"
   log="$LOGDIR/${name}.log"
   if [ -f "$ckpt" ] && [ "$force" != "--force" ]; then
@@ -124,16 +145,17 @@ if [ "${1:-}" = "_one" ]; then
   # per-(tech,dev) yet MECHANICALLY DETERMINED (same rule everywhere) → stays
   # inside the honest-uniform contract (plan §10).
   case "$recipe" in
-    csobcrit) initstem="${tech}_dn_csob_${size}_${dev}"
+    csobcrit) initstem="${tech}_${TAG}_csob_${size}_${dev}"
          if [ ! -f "$CKPT/${initstem}_best.pt" ]; then
            echo "[train] MISSING init-from ckpt $CKPT/${initstem}_best.pt"; exit 1; fi
          extra="$extra --init-from ${initstem}" ;;
     *ft|corro15|crit*)
-         # own CLEAN same-size base. Post-V6.6.4 the production large slots
-         # carry crit30f, so at large the clean base is the v660clean archive —
-         # init-from production would silently stack curricula.
-         initstem="${tech}_dn_${size}_${dev}"
-         if [ "$size" = "large" ] && [ -f "$CKPT/${tech}_dn_v660clean_large_${dev}_best.pt" ]; then
+         # own CLEAN same-size base. Post-V6.6.4 the production DirectNet
+         # large slots carry crit30f, so at large the DN clean base is the
+         # v660clean archive — init-from production would silently stack
+         # curricula. The Transformer production slots ARE the clean bases.
+         initstem="${tech}_${TAG}_${size}_${dev}"
+         if [ "$TAG" = "dn" ] && [ "$size" = "large" ] && [ -f "$CKPT/${tech}_dn_v660clean_large_${dev}_best.pt" ]; then
            initstem="${tech}_dn_v660clean_large_${dev}"
          fi
          if [ ! -f "$CKPT/${initstem}_best.pt" ]; then
@@ -153,11 +175,20 @@ if [ "${1:-}" = "_one" ]; then
           if [ ! -f "$cordata" ]; then echo "[train] MISSING corridor dataset $cordata"; exit 1; fi
           extra="$extra --data ${cordata}" ;;
   esac
-  echo "[train] START $name on GPU$gpu  (extra: ${extra:-<none>})"
-  CUDA_VISIBLE_DEVICES="$gpu" conda run --no-capture-output -n pycircuitsim python -u -m bsimar.cli.train \
-    --model direct --size "$size" --device-type "$dev" --tech-scope "$tech" \
+  extra="$extra ${EXTRA_ARGS:-}"
+  expname=""
+  if [ "$recipe" != "clean" ]; then
+    expname="--exp-name ${tech}_${TAG}_${recipe}_${size}"
+  fi
+  echo "[train] START $name on GPU$gpu  (model: $MODEL, extra: ${extra:-<none>})"
+  # V6.8: pin CPU threads per job. Un-pinned, each torch process spawns a
+  # near-full-core OpenMP pool; at NSTREAMS=6-9 concurrent jobs the box hit
+  # loadavg ~400/192 with GPUs starved at 56-78% util. TRAIN_OMP=4 default.
+  CUDA_VISIBLE_DEVICES="$gpu" OMP_NUM_THREADS="${TRAIN_OMP:-4}" MKL_NUM_THREADS="${TRAIN_OMP:-4}" \
+    conda run --no-capture-output -n pycircuitsim python -u -m bsimar.cli.train \
+    --model "$MODEL" --size "$size" --device-type "$dev" --tech-scope "$tech" \
     --apply-filter off --swa-mode ema --seed 42 --cuda --overwrite \
-    --exp-name "${tech}_dn_${recipe}_${size}" $extra \
+    $expname $extra \
     > "$log" 2>&1
   rc=$?
   if [ $rc -eq 0 ] && [ -f "$ckpt" ]; then

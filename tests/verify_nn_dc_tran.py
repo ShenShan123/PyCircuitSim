@@ -1092,7 +1092,9 @@ def _cascade_handles_stem(path: Optional[Path]) -> bool:
         return False
     stem = path.name
     return any(stem.startswith(p) for p in (
-        "tsmc5_dn_", "tsmc7_dn_", "tsmc12_dn_", "tsmc16_dn_", "refac_dn_"))
+        "tsmc5_dn_", "tsmc7_dn_", "tsmc12_dn_", "tsmc16_dn_", "refac_dn_",
+        # V6.8: per-tech BSIMAR Transformer stems (LEVEL=74 preempt cascade).
+        "tsmc5_tf_", "tsmc7_tf_", "tsmc12_tf_", "tsmc16_tf_", "refac_tf_"))
 
 
 def run_pycircuitsim_nn_inverter_vtc(

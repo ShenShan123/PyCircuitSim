@@ -21,13 +21,25 @@ set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SELF="$ROOT/scripts/$(basename "${BASH_SOURCE[0]}")"
 NG="$ROOT/tools/ngspice-45.2/bin/ngspice"
-OUT="$ROOT/results/recipe_bench"
 CKPT="$ROOT/external_compact_models/bsimar/checkpoints"
 PAR="${PAR:-12}"
 # V6.6.2: invoke the env python DIRECTLY (the `conda run` wrapper intermittently
 # receives SIGSTKFLT under this harness → empty logs). Override with NN_PY.
 NN_PY="${NN_PY:-/data1/shenshan/.conda/envs/pycircuitsim/bin/python}"
 [ -x "$NN_PY" ] || NN_PY="python"
+
+# V6.8 — MODEL env selects the NN under test (see gate_matrix_iso.sh):
+# direct (default; DN pins, results/recipe_bench) or transformer (BSIMAR:
+# `_tf_` stems, TF pins, PYCIRCUITSIM_NN_FORCE_LEVEL=74, results/bsimar_bench).
+# Do NOT run both models concurrently (scratch dirs keyed by circuit,tech).
+MODEL="${MODEL:-direct}"
+case "$MODEL" in
+  direct)      TAG="dn"; OUT_DEFAULT="$ROOT/results/recipe_bench" ;;
+  transformer) TAG="tf"; OUT_DEFAULT="$ROOT/results/bsimar_bench" ;;
+  *) echo "[test] UNKNOWN MODEL=$MODEL (direct|transformer)"; exit 1 ;;
+esac
+export MODEL
+OUT="${EVAL_OUT:-$OUT_DEFAULT}"
 
 suites=(verify_nn_multi_tech_dc verify_nn_multi_tech_tran \
         verify_complex_ring_osc verify_complex_opamp \
@@ -38,7 +50,7 @@ techs_lc=(tsmc5 tsmc7 tsmc12 tsmc16)
 
 # Map (recipe,tech,size) -> checkpoint stem. clean -> production names.
 stem () {  # recipe tech size dev
-  if [ "$1" = "clean" ]; then echo "$2_dn_$3_$4"; else echo "$2_dn_$1_$3_$4"; fi
+  if [ "$1" = "clean" ]; then echo "$2_${TAG}_$3_$4"; else echo "$2_${TAG}_$1_$3_$4"; fi
 }
 
 # ---- single-job worker ----
@@ -52,8 +64,14 @@ if [ "${1:-}" = "_one" ]; then
     echo "[test] NO-CKPT $recipe/$size/$tlc -> skip $suite"; echo "===BENCH_DONE no-ckpt===" > "$log"; exit 0
   fi
   export CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 NGSPICE_BIN="$NG"
-  export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="$sn"
-  export PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="$sp"
+  if [ "$TAG" = "tf" ]; then
+    export PYCIRCUITSIM_NN_CHECKPOINT_TF_NMOS="$sn"
+    export PYCIRCUITSIM_NN_CHECKPOINT_TF_PMOS="$sp"
+    export PYCIRCUITSIM_NN_FORCE_LEVEL=74
+  else
+    export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="$sn"
+    export PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="$sp"
+  fi
   echo "[test] RUN $recipe/$size/$tlc/$suite (pin $sn / $sp)"
   "$NN_PY" -u "$ROOT/tests/${suite}.py" --tech "$tuc" > "$log" 2>&1
   rc=$?

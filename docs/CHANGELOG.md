@@ -7,6 +7,150 @@ retained, verbose prose pruned; the full original text lives in git history.)
 
 ---
 
+## V6.8.0 — BSIM-AR Transformer (LEVEL=74) un-parked: recipe campaign (branch `V6.7`, 2026-07-06/07)
+
+**Shipped the entire DirectNet training/recipe/eval stack to the parked BSIM-AR
+decode-only Transformer (Rule 15) and ran the full scale × recipe campaign per
+tech, gated against NGSPICE BSIM-CMG. Full report:
+`docs/V6.8.0-bsimar-transformer-report.md`.**
+
+**Result — BSIM-AR `corroft@medium` (corridor curriculum, 1.9M params) = 15/16
+STRICT (OMP∈{1,2,4}), beating DirectNet production `crit30f@large` (14/16
+strict).** Better failure basket than DN: banks tsmc16-opamp (DN production
+FAILS it) + both low-VDD rings, all deterministic; misses ONLY tsmc7-opamp —
+the universal hard cell DN itself reached only via the V6.5.9 T3
+differentiable-solver fine-tune (solver-level, not a data recipe; out of scope
+here). Device DC 44/44 all tiers; AC peaks at small (7/8), matches DN's larger
+AC deficit.
+
+- **Port (code, all default-off / behavior-preserving):** (1) `transformer.py`
+  `unknown_code_id` param — was hardcoded universal 17; per-tech local vocab
+  (Rule 16) would CUDA-assert on p_unknown → now `num_tech_codes-1`. (2)
+  `train_transformer` `init_from` warm-start (all curricula). (3) Sobolev /
+  charge-Sobolev / subthreshold aux losses made model-agnostic (output stats
+  permuted to BSIMAR column order); the column-sum autograd trick VERIFIED
+  valid for the Transformer (attention mixes token positions, not batch rows;
+  grad diff 1.3e-7). **Blocker fixed:** fused SDPA has no double-backward →
+  aux losses force the MATH attention backend at forward. (4) Transformer `xl`
+  preset (14.8M). (5) `--amp` bf16 (1.3× at large; unused for comparability).
+  (6) Parser LEVEL=74 per-tech preempt cascade `tsmc{X}_tf_{size}_{dev}`
+  (large-first) + `_tf_` scope detection. (7) `PYCIRCUITSIM_NN_FORCE_LEVEL=74`
+  harness hook — retargets LEVEL=73 decks to BSIM-AR at parse time (whole gate
+  infra runs the Transformer, zero deck changes). (8) `MODEL={direct,
+  transformer}` in recipe_train / gate_matrix_iso / recipe_eval /
+  benchmark_run_tests / recipe_multirun_gate. (9) Solver batched-eval includes
+  LEVEL=74 (per-checkpoint grouped forward — biggest CPU-gate lever for the AR
+  loop; per-device fallback + NN_BATCHED_EVAL=0 opt-out intact).
+- **Latent L74 integration bug fixed (`mosfet_nn.py`):** `_out_col` read model
+  outputs via `norm_stats.output_columns` (canonical order, describing the
+  stats arrays) BEFORE the BSIMAR layout → qg denormed as id (~5× current,
+  389% device NRMSE) though the same module scored 0.38% on the trainer's test
+  set. Historical BSIM-AR norm files predate `output_columns`, so it never
+  fired. Fixed: BSIMAR layout branch ranks first; probe now bit-matches
+  trainer path. Caught by the first real checkpoint — classic silent-green.
+- **Scale study (clean, S/M/L):** complex 12→14→13 (peaks at MEDIUM, one tier
+  earlier than DN's large peak); AC 7→4→4 of 8 (peaks at small, like DN);
+  device 44/44 all tiers (tsmc7-NMOS NRMSE GROWS with capacity 3.37→4.77% —
+  the same tech whose opamp is the one unreachable gate).
+- **Recipe study (Phase B):** 3 distinct large corridor recipes (corroft w3.0,
+  crit30 w3.0+anchor2.0, crit15m w1.5+anchor3.0) ALL converge to 15/16
+  single-run / 14/16 strict, all rail only tsmc7-opamp. **inv_trip anchor is
+  INERT on the Transformer** (corroft ≡ crit30 to <0.5%/cell — opposite of DN,
+  where crit30 > corroft). **corridor is the whole ring lever** (invtrip alone,
+  no corridor, stays ~13/16 with both rings closed). **tsmc7-ring ⊥ tsmc7-opamp
+  under the corridor at EVERY tier** (ring-open perturbation = opamp-kill
+  perturbation; proven from both failing-large and passing-medium 9.83%
+  basins) → campaign ceiling 15/16. Strict best is MEDIUM (both rings
+  deterministic) not large (extra capacity pushes one ring to the OMP edge).
+- **Datasets:** the existing `{tech}_{dev}.npz` + `_corro_` corridor sets (no
+  regeneration; the sets DN production trained on). Checkpoints:
+  `tsmc{X}_tf_{small,medium,large}_{nmos,pmos}` (clean, 24) +
+  `tsmc{X}_tf_{crit30,corroft,crit15m,invtrip}_large_*` +
+  `_{corroft,corro15}_medium_*`. Production NN unchanged (DirectNet stays the
+  fast path; BSIM-AR un-parked as the validated higher-fidelity option — AR
+  inference is ~30-100× slower on CPU gates).
+
+---
+
+## V6.7.1 — house-clean after the V6.7.0 campaign (branch `V6.7`, 2026-07-05)
+
+**~12.7 G reclaimed; nothing load-bearing touched; retired checkpoints archived to
+`/data2/shenshan/v66x_v670_retired_ckpts_2026-07-05.tar.gz` (1.9 G, 1,148 files) before deletion.**
+
+- **Checkpoints (2.5 G → 459 M):** pruned the V6.6.x recipe-study pool — all recorded losers whose
+  verdicts live in `results/recipe_bench/ACCURACY_REPORT.md`: cor/corft/corr/corrft/corro15 (all
+  sizes), crit10/15/15h/15m/20/30/30a1@large, crit30@xl, crit15/15h/20@xl, csob@{s,m,xl}, csobcrit
+  (13/16, relocation-not-composition), csobekv (EKV breaks SRAM), cs7, ekv, invtrip(ft) (inv_trip
+  refuted as ring lever), s123/s17/s7, sob — ×4 techs; plus the failed V6.7.0 fine-tune tiers
+  `u716f5_{plain,crit}_n{2k,10k,50k,200k}` (0/4 gates; ≤10k DIVERGE via tier-refit normalizer) and
+  `u716f5_crit_n{1M,full}` (crit ft worse at gates). **Kept:** production s/m/l/xl, v660clean
+  (warm-start base), crit30f@large (promotion audit), alternates csob@large + corroft/crit10@xl,
+  **promote-candidate crit15m@xl** (14/16 strict ties production, banks tsmc5+tsmc16-opamp), all 6
+  u716 universal bases, u716f5_plain_n{1M,full} (onboarding demonstrators).
+- **Datasets (26 G → 19 G):** deleted the V6.7.0 `uni716_*` concats + `tsmc5ft_n*` tiers — both
+  deterministically regenerable via the committed seeded `scripts/uni_{concat,subsample}_npz.py`.
+  KEPT the `tsmc{X}_{cor,corr}_*` families (9.1 G): consumer-referenced by `recipe_train.sh`'s
+  `cor*` `--data` arm (user chose retrainability over reclaim).
+- **Generated outputs (~3.0 G):** `results/uni_bench/*/complex_omp*` work dirs (SUMMARY.tsv,
+  per-cell logs, train_logs with the Rule-13 tables, transfer_curve.tsv all kept) +
+  `tests/verify_*_results/` (regenerated by every run).
+- **Docs:** removed `docs/plans/2026-07-01-uniform-recipe-beyond-13of16.md` (V6.6.2 campaign plan,
+  closed; verdict + execution log preserved in the V6.6.2–V6.6.7 entries and memory; tracked, so
+  git-recoverable). CLAUDE.md checkpoint section updated (pruned pool + new u716 universal line).
+- Trap-list survivors re-verified: v6_4_7_s12 corridor pipeline scripts, per-tech base+corro
+  datasets, PyCMG submodule, tools/ngspice. No orphan `_norm.npz`. Resolver fallback stems
+  (refac/v4) were already absent from disk.
+- **Report merge (user request):** the gitignored collector output
+  `results/recipe_bench/ACCURACY_REPORT.md` (580 lines: RETEST large+xl + MATRIX sections) was
+  merged verbatim into **`docs/V6.6.6-accuracy-report.md` as Part II (Appendices A–C, headings
+  demoted one level)** — the docs file is now the complete, git-tracked V6.6.6 accuracy record
+  (Part I analysis + recommendation, Part II all data tables). The results path keeps a stub
+  with empty `BEGIN/END:RETEST|MATRIX` markers so `recipe_retest_collect.py`/`recipe_collect.py`
+  re-runs still regenerate in place. CLAUDE.md + V6.7.0-report pointers updated.
+
+---
+
+## V6.7.0 — universal DirectNet + TSMC5 transfer study (branch `V6.6`, 2026-07-04/05)
+
+**Campaign: resurrect the universal-scope DirectNet (retired V6.1) on the current data/recipe
+stack — ONE 18-code-embedding model on TSMC16+12+7 (~7M rows), rank the Core-4 recipes
+(clean/csob/corroft/crit30u) on the 12 shared complex gates, then measure TSMC5 few-shot
+transfer (fine-tune tiers N ∈ {2k,10k,50k,200k,1M,full}) — accuracy-vs-N + retention curves.**
+Live routing + execution log: `docs/plans/2026-07-02-universal-nn-tsmc5-transfer.md`; final
+deliverable `docs/V6.7.0-universal-transfer-report.md`. **No production change**: all artifacts
+use `u716_*` / `u716f5_*` stems — not `tsmc{X}_dn_*`, not resolver fallback names — reachable
+only via explicit `PYCIRCUITSIM_NN_CHECKPOINT_DN_*` pin; per-tech resolution untouched.
+
+New standalone scripts (zero edits to existing files): `scripts/uni_concat_npz.py` (per-tech →
+universal npz concat + sidecars, validated bit-identical), `scripts/uni_subsample_npz.py`
+(stratified TSMC5 tiers — n2000 keeps traj_corridor=9/inv_trip=67 rows that uniform `--max-rows`
+would lose), `scripts/uni_train.sh` (Core-4 × {nmos,pmos}, clean-base warm-start guard,
+`.complete` markers), `scripts/uni_gate_sweep.sh` (12 gates + TSMC5 zero-shot + dev/AC + OMP
+{1,2,4} sweep; resolver post-check re-verdicts wrong-checkpoint cells RESOLVER-MISS).
+
+Executed (Phases 0–4 COMPLETE 2026-07-04, single day — plan estimated 3–5): 32 checkpoints
+(8 universal bases + 24 TSMC5 fine-tune tiers), 200 gate/suite cells, zero RESOLVER-MISS.
+**Headlines:** (1) universal is VIABLE — device fidelity per-tech-grade (id NRMSE ≤0.09%/variant,
+R²≥0.996) and **corroft = 10/12 strict, 0 FLIPs = per-tech parity with full OMP determinism**
+(per-tech large never had it); ranking corroft 10 > clean 9 > crit30u 9+FLIP > csob 8+FLIP;
+corridor fixes tsmc7-ring 14.89%→3.61% (ring-lever confirmed at universal scope); anchor +
+csob basins do NOT survive the scope change (relocation generalizes: recipe→basin maps are
+SCOPE-dependent); tsmc16-opamp rails for all 4 at large. (2) **TSMC5 onboarding = ~1M stratified
+rows: plain@n1M = 4/4 TSMC5 gates STRICT** (ties per-tech production, half the data); threshold
+sharp (0/4 ≤200k); ≤10k tiers DIVERGE (tier-refit normalizer); n1M beats nfull (opamp basin
+non-monotone in N). (3) **No free retention** — source techs collapse at gate level (1–3/12,
+TSMC12 DC up to 23%, one blow-up); fine-tune = de-facto per-tech ckpt; replay-mix = follow-up.
+**Phase 1b (xl arm) CLOSED 2026-07-05:** clean@xl = 8/12+1FLIP — banks tsmc12-opamp (5.55%) AND
+tsmc16-opamp (6.41%) det-PASS (the large-tier tsmc16 rail is TIER-LOCAL) but loses ALL rings;
+corroft@xl = 8/12 — corridor holds rings 3/3 but ALL opamps rail + tsmc7-SC drops (per-tech
+corroft@xl's tsmc16 bank does NOT transfer). The V6.6.1 mutual-exclusive-basin wall reappears at
+universal xl partitioned opamps-XOR-rings → **11/12 unreached at both tiers; corroft@large
+(10/12 strict, 0 FLIPs) = final best universal config.** Campaign totals: 36 ckpts, 264 eval
+cells, zero RESOLVER-MISS, ~1.5 days wall (est. 3–5). Full analysis + Rule-13 tables + dead ends:
+`docs/V6.7.0-universal-transfer-report.md`; curve data `results/uni_bench/transfer_curve.tsv`.
+
+---
+
 ## V6.6.7 — 15/16 hunt round 1: csobcrit + crit30a1 both 13/16 (branch `V6.6`, 2026-07-03)
 
 **Both V6.6.6-routed arms trained (16 ckpts, `large`) and strict-gated: NEGATIVE — 13/16 strict

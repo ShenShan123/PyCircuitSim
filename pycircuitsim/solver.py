@@ -157,18 +157,30 @@ def _pmos_types() -> tuple:
 
 
 def _nn_mosfet_types() -> tuple:
-    """Return tuple of LEVEL=73 DirectNet MOSFET classes only.
+    """Return tuple of NN MOSFET classes eligible for the batched
+    forward+Jacobian pre-warm (plan Phase 5): LEVEL=73 DirectNet and —
+    since V6.8 — LEVEL=74 BSIMAR. LEVEL=72 BSIM-CMG stays per-device.
 
-    LEVEL=72 BSIM-CMG and LEVEL=74 BSIMAR are intentionally excluded:
-    only DirectNet is eligible for the batched forward+Jacobian path
-    (plan Phase 5). BSIMAR overrides ``_forward_model`` for AR inference
-    and is parked.
+    BSIMAR's AR-inference forward is batch-row independent (verified:
+    column-sum grad == per-row grad to float noise), and
+    ``_MOSFETNNBase.batch_eval`` is a pure ``_eval_cache`` pre-warm with the
+    per-device path as fallback — so batching it is the same float-noise
+    trade documented for DirectNet (``NN_BATCHED_EVAL=0`` opt-out applies).
+    For the ~8-forwards-per-eval AR loop the per-checkpoint grouping is the
+    single biggest CPU-gate speedup (e.g. ring-osc: 10 devices → 2 groups).
     """
+    types: list = []
     try:
         from pycircuitsim.models.mosfet_directnet import NMOS_NN, PMOS_NN
-        return (NMOS_NN, PMOS_NN)
+        types.extend([NMOS_NN, PMOS_NN])
     except ImportError:
-        return tuple()
+        pass
+    try:
+        from pycircuitsim.models.mosfet_bsimar import NMOS_BSIMAR, PMOS_BSIMAR
+        types.extend([NMOS_BSIMAR, PMOS_BSIMAR])
+    except ImportError:
+        pass
+    return tuple(types)
 
 
 def _is_mosfet(component) -> bool:

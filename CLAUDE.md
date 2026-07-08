@@ -9,7 +9,7 @@ Python-based SPICE-like circuit simulator emphasizing educational clarity and mo
 - **DirectNet** (LEVEL=73) — production feed-forward MLP compact model (PyTorch).
 - **BSIM-AR Transformer** (LEVEL=74) — autoregressive Transformer compact model (PyTorch).
 
-DirectNet and BSIM-AR share the same data, normalization, and evaluation pipelines via the unified `bsimar` package at `external_compact_models/bsimar/`. DirectNet is the production NN; BSIM-AR is the parked autoregressive variant (Rule 15).
+DirectNet and BSIM-AR share the same data, normalization, and evaluation pipelines via the unified `bsimar` package at `external_compact_models/bsimar/`. DirectNet is the production NN (fast path); BSIM-AR is the autoregressive variant, **un-parked in V6.8.0** as the validated higher-fidelity option (15/16 strict, but ~30–100× slower AR inference).
 
 Must support **Operating Point**, **DC Sweep**, AC Sweep, and **Transient Analysis** for all model types.
 
@@ -99,12 +99,21 @@ authoritative ground truth; DirectNet is the production NN; BSIMAR is parked.
   (tech × device), no per-case specials, so the gate matrix reflects genuine
   uniform fidelity. Reports: `docs/V6.6.6-accuracy-report.md` (current cross-tier
   conclusions + production recommendation), `docs/V6.6.{0,1}-accuracy-report.md`
-  (baseline + recipe studies), auto-tables
-  `results/recipe_bench/ACCURACY_REPORT.md`, CHANGELOG.
+  (baseline + recipe studies; the V6.6.6 report carries the full data tables as
+  Part II since the V6.7.1 merge — `results/recipe_bench/ACCURACY_REPORT.md` is
+  now just the collector regeneration target), CHANGELOG.
 - **BSIMAR Transformer (LEVEL=74)** — autoregressive Transformer sharing
-  DirectNet's data pipeline and inference rules. Parked (Rule 15); no checkpoints
-  on disk. Resurrect the cap-head / AR-loop structure from CHANGELOG / git
-  (Rules 9–10).
+  DirectNet's data pipeline and inference rules. **UN-PARKED in V6.8.0**: the
+  full DirectNet recipe/train/eval stack was ported to it and gated per-tech vs
+  NGSPICE. Best config `corroft@medium` (corridor curriculum, 1.9M params) =
+  **15/16 strict**, beating DN production `crit30f@large` (14/16 strict) with a
+  better basket (banks tsmc16-opamp + both rings; misses only tsmc7-opamp, the
+  universal T3-solver-only cell). AR inference is ~30–100× slower than DirectNet
+  on CPU gates, so **DirectNet stays the production fast path; BSIM-AR is the
+  validated higher-fidelity option.** Per-tech checkpoints
+  `tsmc{X}_tf_{small,medium,large}_{nmos,pmos}` (+ recipe variants) on disk;
+  parser LEVEL=74 per-tech preempt cascade + `PYCIRCUITSIM_NN_FORCE_LEVEL=74`
+  harness hook. Report: `docs/V6.8.0-bsimar-transformer-report.md`.
 
 ## Supported Features
 
@@ -213,7 +222,8 @@ conda run -n pycircuitsim python -u -m bsimar.cli.train \
 
 **Checkpoints** (`external_compact_models/bsimar/checkpoints/`, each `*_best.pt` + `_norm.npz`):
 
-- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}` — **32 checkpoints**, each a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot; Rule 16). `small/medium/xl` = clean recipe `--apply-filter off --swa-mode ema --seed 42`; the production `large` slots carry **crit30** since V6.6.4 (clean originals archived as `tsmc{X}_dn_v660clean_large_*`). Recipe-study checkpoints `tsmc{X}_dn_{recipe}_{size}_{dev}` remain on disk — documented alternates: `csob@large` (AC/device fidelity), `corroft`/`crit10`@xl (tsmc16-opamp coverage). Completed trainings carry a `*_best.pt.complete` marker (a bare `_best.pt` may be a killed run).
+- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}` — **32 checkpoints**, each a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot; Rule 16). `small/medium/xl` = clean recipe `--apply-filter off --swa-mode ema --seed 42`; the production `large` slots carry **crit30** since V6.6.4 (clean originals archived as `tsmc{X}_dn_v660clean_large_*`). The recipe-study pool was pruned in the V6.7.1 house-clean (archive: `/data2/shenshan/v66x_v670_retired_ckpts_2026-07-05.tar.gz`); kept on disk beyond production: `tsmc{X}_dn_v660clean_large` (curriculum warm-start base), `tsmc{X}_dn_crit30f_large` (production provenance), documented alternates `csob@large` (AC/device fidelity) and `corroft`/`crit10`@xl (tsmc16-opamp coverage), plus promote-candidate `crit15m@xl` (14/16 strict, ties production — V6.6.6). Completed trainings carry a `*_best.pt.complete` marker (a bare `_best.pt` may be a killed run).
+- Universal DirectNet (V6.7.0): `u716_dn_{clean,csob,corroft,crit30u}_large` + `u716_dn_{clean,corroft}_xl` + TSMC5 fine-tunes `u716f5_plain_n{1000000,full}_large` — 18-code universal vocab, env-pin-only (stems match no resolver fallback). Best universal config = `u716_dn_corroft_large` (10/12 strict, 0 FLIPs); new-tech onboarding = clean base + plain fine-tune @≥1M stratified rows (`scripts/uni_{concat,subsample}_npz.py` + `uni_ft_train.sh` + `uni_gate_sweep.sh`; datasets regenerable). See `docs/V6.7.0-universal-transfer-report.md`.
 - Resolver cascade (`pycircuitsim/parser.py`): the env pin `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}` is read FIRST (since V6.6.6 an absent pinned stem raises — no silent fallback); then for a TSMC5/7/12/16 netlist the per-tech slot `tsmc{X}_dn_{large,medium,small,xl}` (**large-first**) preempts the dormant universal fallback chain. Resolutions log at parse time as `[NN-resolver] L73 <name> TECH=<x> VT=<y> -> <chk> (scope=<s>, tech_code=<c>)`.
 
 **Netlist usage:** `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with `L=16n NFIN=10`. Parser auto-resolves the per-tech checkpoint and the local-vocab tech_code via `bsimar.config.local_variant_code(scope, tech, variant)`.

@@ -92,6 +92,12 @@ SIZE_PRESETS = {
         d_model=256, nhead=8, num_layers=6, dim_feedforward=1024,
         dropout=0.2, batch_size=1024, max_epochs=300,
         patience=80, lr=8e-4),
+    # V6.8 — Transformer XL tier (~14.8M params), the over-fit-boundary probe
+    # mirroring DirectNet's xl. Slightly lower LR for the deeper stack.
+    ("transformer", "xl"): dict(
+        d_model=384, nhead=8, num_layers=8, dim_feedforward=1536,
+        dropout=0.2, batch_size=1024, max_epochs=300,
+        patience=80, lr=6e-4),
 }
 
 
@@ -205,26 +211,24 @@ def _run(args: argparse.Namespace) -> None:
 
     print(f"\n=== Training {args.model} ({args.size}, "
           f"loss-preset={args.loss_preset}) → {save_prefix} ===")
+    # V6.8: the Sobolev / subthreshold / charge-Sobolev aux terms now run for
+    # BOTH models (the trainer permutes stats to BSIMAR column order for the
+    # Transformer). The e2 output-subset preset is still incompatible.
     if args.sobolev and loss_preset["output_subset"] is not None:
         print("[error] --sobolev needs the id/gm/gds/gmb columns; it is "
               "incompatible with the e2 output-subset preset.")
-        sys.exit(2)
-    if args.sobolev and args.model != "direct":
-        print("[error] --sobolev is a DirectNet-only (P4) flag.")
-        sys.exit(2)
-    if args.subthresh and args.model != "direct":
-        print("[error] --subthresh is a DirectNet-only (P3) flag.")
         sys.exit(2)
     if args.subthresh and loss_preset["output_subset"] is not None:
         print("[error] --subthresh needs the id column; it is incompatible "
               "with the e2 output-subset preset.")
         sys.exit(2)
-    if args.charge_sobolev and args.model != "direct":
-        print("[error] --charge-sobolev is a DirectNet-only (V6.5.2) flag.")
-        sys.exit(2)
     if args.charge_sobolev and loss_preset["output_subset"] is not None:
         print("[error] --charge-sobolev needs the qg/qd + cgg/cgd/cdg/cdd "
               "columns; it is incompatible with the e2 output-subset preset.")
+        sys.exit(2)
+    if args.amp and (args.sobolev or args.subthresh or args.charge_sobolev):
+        print("[error] --amp is incompatible with the double-backward aux "
+              "losses (sobolev / subthresh / charge-sobolev).")
         sys.exit(2)
 
     if args.model == "direct":
@@ -248,6 +252,7 @@ def _run(args: argparse.Namespace) -> None:
             lam_charge_sobolev=args.lam_charge_sobolev,
             charge_sobolev_floor=args.charge_sobolev_floor,
             init_from=args.init_from,
+            amp=args.amp,
             **common,
         )
     else:
@@ -256,7 +261,26 @@ def _run(args: argparse.Namespace) -> None:
             print("[warn] loss presets are DirectNet-only; "
                   "Transformer ignores them")
         cfg = TransformerConfig(**preset)
-        train_transformer(str(data_path), config=cfg, **common)
+        train_transformer(
+            str(data_path), config=cfg,
+            sobolev=args.sobolev, lam_sobolev=args.lam_sobolev,
+            sobolev_floor=args.sobolev_floor,
+            sobolev_strong_boost=args.sobolev_strong_boost,
+            sobolev_corridor_only=args.sobolev_corridor_only,
+            subthresh=args.subthresh, lam_subthresh=args.lam_subthresh,
+            subthresh_s2=args.subthresh_s2,
+            subthresh_upper=args.subthresh_upper,
+            subthresh_floor=args.subthresh_floor,
+            subthresh_off_floor=args.subthresh_off_floor,
+            subthresh_ceiling_k=args.subthresh_ceiling_k,
+            subthresh_ceiling_w=args.subthresh_ceiling_w,
+            charge_sobolev=args.charge_sobolev,
+            lam_charge_sobolev=args.lam_charge_sobolev,
+            charge_sobolev_floor=args.charge_sobolev_floor,
+            init_from=args.init_from,
+            amp=args.amp,
+            **common,
+        )
 
 
 def main() -> None:
@@ -281,6 +305,11 @@ def main() -> None:
                         "fast smoke runs")
 
     p.add_argument("--cuda", action="store_true")
+    p.add_argument("--amp", action="store_true",
+                   help="bf16 autocast for train + teacher-forced val "
+                        "(V6.8; Transformer wall-clock lever). Incompatible "
+                        "with the double-backward aux losses. Final test "
+                        "metrics stay fp32.")
     p.add_argument("--seed", type=int, default=42)
 
     # Tech-code embedding (shared by both models)
