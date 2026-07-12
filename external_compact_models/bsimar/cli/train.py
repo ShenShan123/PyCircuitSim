@@ -113,15 +113,11 @@ SIZE_PRESETS = {
         agg_blocks=3, agg_heads=6, n_cls_tokens=2, icl_num_blocks=4,
         icl_heads=6, ctx_len=2048, batch_size=1024, max_epochs=150,
         patience=40, lr=5e-4),
-    # large: 150-epoch cosine (not 300) — the per-step cost of the ICL
-    # context side makes a 300-epoch schedule ~2.5 GPU-days per checkpoint
-    # on shared 4090s; 150 epochs keeps the tier trainable while the
-    # capacity story (BSIM-AR peaked at medium) is carried by s/m anyway.
     ("tabpfn", "large"): dict(
         embed_dim=128, n_inducing=48, dist_blocks=3, dist_heads=8,
         agg_blocks=3, agg_heads=8, n_cls_tokens=2, icl_num_blocks=6,
-        icl_heads=8, ctx_len=2048, batch_size=1024, max_epochs=150,
-        patience=50, lr=4e-4),
+        icl_heads=8, ctx_len=2048, batch_size=1024, max_epochs=300,
+        patience=80, lr=4e-4),
 }
 
 
