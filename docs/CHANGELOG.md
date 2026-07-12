@@ -7,6 +7,78 @@ retained, verbose prose pruned; the full original text lives in git history.)
 
 ---
 
+## V6.9.0 — TSMC6 (CLN6) onboarding + TSMC PDK parse audit (branch `feat/tsmc6-onboarding`, 2026-07-12)
+
+**Onboarded the TSMC N6 iPDK card (`cln6_1d8_sp_v1d0_2p2.l`, BSIM-CMG 106.1,
+0.75 V core SVT/LVT/ULVT) as the sixth tech `TSMC6` — full LEVEL=72
+ground-truth support + NN config plumbing + datasets (NN checkpoint training
+deferred) — and audited PyCMG's model-card parsing across ALL five TSMC cards.
+Full report: `docs/V6.9.0-tsmc6-onboarding-pdk-parse-audit.md`.**
+
+- **N6 card = structural clone of N7, not a numerical copy:** identical
+  section/model-name sets and binning (zero parser grammar changes); 153/204
+  core `.model` blocks byte-identical to N7 (TSMC copied them), but every
+  `.global` + `.30` bin + most pch bins differ → datasets are md5-distinct.
+- **Wiring (PyCMG submodule):** `TECH_REGISTRY["TSMC6"]` + `TSMC6_CONFIG`
+  (mirror TSMC7: vdd 0.75, tfin 6n, svt/lvt/ulvt); `generate_naive_tsmc.py`
+  choices; inv-trip overlay gate; conftest Tier1+Tier2 entries (suite 280→314
+  tests); docs. Raw card gitignored by the existing `TSMC*/*.l` glob (IP).
+- **Wiring (main repo):** universal tech codes **22/23/24 appended at the
+  TAIL** (after ASAP7) — codes 0–21 and the universal pre-train vocab (18)
+  untouched, so every existing checkpoint/sidecar stays valid;
+  `NUM_TOTAL_CODES` 22→25; code-stability invariant documented in
+  `bsimar/config.py`. `VALID_TECH_SCOPES`/`LOCAL_VARIANT_CODES` += tsmc6
+  (local vocab 4 = svt/lvt/ulvt/UNKNOWN); `_ALL_TECH_NAMES`;
+  `tests/common/base.py` ALL_TECHS/TECH_ORDER/TECH_COLORS;
+  `benchmark_gen_data.sh`. `pycircuitsim/parser.py` needed NO change (the
+  L73/74 resolver is config-map-driven; `tsmc6_dn_*` slots preempt once
+  checkpoints exist).
+- **Labeller collision FIXED (`bsimar/eval/loo_labels.py`)** — the one real
+  defect the audit surfaced: the 12-param fingerprint labeller used silent
+  last-writer-wins across techs, and tsmc6↔tsmc7 fingerprints collide
+  **108/108** (N7-copied bins). Per-tech datasets now label against their own
+  tech (filter inferred from the `<tech>_<device>.npz` stem); the universal
+  scan keeps the legacy 5-tech order byte-identically and RAISES on any
+  cross-tech collision. Universal+tsmc6 mixes must use `uni_concat_npz.py`
+  sidecar concatenation.
+- **Verification (all vs NGSPICE, same OSDI):** PyCMG pytest **314/314**
+  (34 new TSMC6 tests PASS first-run); `verify_multi_tech_dc --tech TSMC6`
+  **9/9** (NRMSE ≤0.0097 %); `verify_multi_tech_tran --tech TSMC6` **14/14**
+  (≤0.64 %); L1 sanity op/dc/tran unchanged PASS. **No empirical pruning
+  needed:** TSMC6 passes all 3 VTs × L=16/20/24 nm — including the symmetric
+  L=16 nm inverter and SVT/LVT cases the N7-era TSMC7 bins fail (the 51
+  N6-updated blocks fixed those pathologies). Full 6-tech regression:
+  tran **86/86 PASS**; DC **52/53 PASS + 1 ERROR** — `TSMC5_lvt_inv_l_24nm`
+  internal-node NR divergence (d→2559 V), reproduced BIT-IDENTICALLY on
+  unmodified main = pre-existing, not a branch regression (same divergence
+  class as the documented NFIN=1 constraint, here TSMC5 lvt L=24nm NFIN=2).
+- **Datasets:** canonical recipe (`--enable-inv-trip --enable-subvt-off`) →
+  `tsmc6_{nmos,pmos}.npz` (1.82 M / 2.19 M rows, 270 bins, 0 dropped) +
+  sidecars (100 % coverage, codes {22,23,24}, variant-balanced); smoke-load
+  with `tech_scope=tsmc6` remaps to local {0,1,2}. Copied to the main
+  checkout (gitignored).
+- **PDK parse audit (new permanent tool
+  `PyCMG/scripts/audit_pdk_parse.py`): AUDIT PASS — 40 device audits, 0
+  naive-vs-raw round-trip mismatches.** Verdicts: (1) zero OSDI-known params
+  among the 265–410 expression-valued assignments each device skips (all
+  HSPICE-side corner/stat/aging/LOD scaffolding); (2) mid-line `*` inside
+  blocks is quoted-expression multiplication, NOT comments — 1,112 legit
+  numeric params ride after such expressions, so `_extract_model_params`'s
+  no-strip behavior is load-bearing (do NOT unify with `parse_modelcard`'s
+  comment stripping); (3) bin selection is inclusive-both-ends vs HSPICE's
+  `lmin ≤ L < lmax` — 28–40 boundary grid points/device are ambiguous,
+  self-consistent PyCMG↔NGSPICE (same baked card), accepted with caveat;
+  (4) ±999·10ⁿ sentinels only exist in TSMC5 (25/device), correctly dropped;
+  (5) ~1.1–1.9 k numeric TMI/stat params per naive card are unknown to the
+  OSDI descriptor and silently ignored IDENTICALLY by PyCMG and NGSPICE
+  (`apply_param` returns False) — accepted.
+- **Follow-ups:** TSMC6 NN training campaign (then add tsmc6 to BENCH_TECHS /
+  NN_TECHS / verify_nn_dc_tran tables / collector TECHS); a future
+  universal+tsmc6 model needs `num_tech_codes=25` + `uni_concat_npz.py`
+  code-subset extension (currently pinned to {4..16}).
+
+---
+
 ## V6.8.0 — BSIM-AR Transformer (LEVEL=74) un-parked: recipe campaign (branch `V6.7`, 2026-07-06/07)
 
 **Shipped the entire DirectNet training/recipe/eval stack to the parked BSIM-AR

@@ -48,11 +48,18 @@ TechConfig = NNTechConfig
 
 # ── Tech-Variant Code Registry ──────────────────────────────────────────────
 # Each (tech, variant) pair gets a stable integer ID for the tech embedding.
-# TSMC codes occupy 0-16, UNKNOWN is 17, ASAP7 codes are 18-21.
-# Total vocabulary size: 22.
+# TSMC codes occupy 0-16, UNKNOWN is 17, ASAP7 codes are 18-21,
+# TSMC6 codes are 22-24 (appended in V6.9.0 — see note below).
+# Total vocabulary size: 25.
 #
 # During TSMC-only pre-training the model sees codes 0-16 + 17 (UNKNOWN).
 # ASAP7 codes (18-21) are added when fine-tuning on ASAP7 data.
+#
+# CODE-STABILITY INVARIANT: codes are baked into every trained checkpoint's
+# embedding rows AND every dataset's *_tech_variant_labels.npy sidecar.
+# New techs MUST be appended at the tail of the ordering (after ASAP7),
+# never inserted into the legacy TSMC block — inserting would renumber
+# codes 4+ and silently corrupt all existing checkpoints/sidecars.
 
 def _build_tech_variant_codes() -> Tuple[
     Dict[Tuple[str, str], int],
@@ -63,7 +70,8 @@ def _build_tech_variant_codes() -> Tuple[
 
     Returns (forward_map, reverse_map, ordered_list).
     """
-    # Order: TSMC techs first (sorted by node), then ASAP7.
+    # Order: legacy TSMC techs first (sorted by node), then ASAP7, then
+    # late-onboarded techs appended at the tail (code-stability invariant).
     # Within each tech, variants follow the order in TECH_CONFIGS.
     ordered: List[Tuple[str, str]] = []
     for tech_name in ("tsmc5", "tsmc7", "tsmc12", "tsmc16"):
@@ -73,6 +81,9 @@ def _build_tech_variant_codes() -> Tuple[
     # slot 17 = UNKNOWN (reserved, not in the list)
     for variant in TECH_CONFIGS["asap7"].variant_names:
         ordered.append(("asap7", variant))
+    # V6.9.0: TSMC6 onboarded after the ASAP7 block -> codes 22-24.
+    for variant in TECH_CONFIGS["tsmc6"].variant_names:
+        ordered.append(("tsmc6", variant))
 
     forward: Dict[Tuple[str, str], int] = {}
     reverse: Dict[int, Tuple[str, str]] = {}
@@ -94,9 +105,9 @@ TECH_VARIANT_CODES, CODE_TO_TECH_VARIANT, _TECH_VARIANT_ORDER = (
 )
 
 UNKNOWN_CODE_ID: int = 17
-NUM_TSMC_CODES: int = 17           # codes 0-16
+NUM_TSMC_CODES: int = 17           # codes 0-16 (legacy TSMC block only)
 NUM_TSMC_CODES_WITH_UNKNOWN: int = 18  # codes 0-17 (pre-train vocab)
-NUM_TOTAL_CODES: int = 22          # codes 0-21 (full vocab after fine-tune)
+NUM_TOTAL_CODES: int = 25          # codes 0-24 (incl. ASAP7 18-21, TSMC6 22-24)
 
 # Input layout: 7 continuous features (no process params)
 INPUT_COLUMNS: List[str] = [
@@ -125,7 +136,7 @@ def tech_variant_to_code(tech: str, variant: str) -> int:
 # model — the universal code would index out-of-range or pick the wrong row.
 
 VALID_TECH_SCOPES: Tuple[str, ...] = (
-    "universal", "tsmc5", "tsmc7", "tsmc12", "tsmc16",
+    "universal", "tsmc5", "tsmc6", "tsmc7", "tsmc12", "tsmc16",
 )
 
 
@@ -136,6 +147,7 @@ def _build_local_codes(tech_name: str) -> Dict[Tuple[str, str], int]:
 
 LOCAL_VARIANT_CODES: Dict[str, Dict[Tuple[str, str], int]] = {
     "tsmc5":  _build_local_codes("tsmc5"),
+    "tsmc6":  _build_local_codes("tsmc6"),
     "tsmc7":  _build_local_codes("tsmc7"),
     "tsmc12": _build_local_codes("tsmc12"),
     "tsmc16": _build_local_codes("tsmc16"),

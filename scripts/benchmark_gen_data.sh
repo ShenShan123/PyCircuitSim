@@ -18,7 +18,7 @@ LOGDIR="$ROOT/results/benchmark_sml/gen_logs"
 WORKERS="${1:-20}"
 mkdir -p "$OUTDIR" "$LOGDIR"
 
-techs=(tsmc5 tsmc7 tsmc12 tsmc16)
+techs=(tsmc5 tsmc6 tsmc7 tsmc12 tsmc16)
 devs=(nmos pmos)
 
 pids=(); jobs=()

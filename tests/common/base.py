@@ -164,6 +164,21 @@ ALL_TECHS: Dict[str, TechProfile] = {
         ],
         modelcard_dir="TSMC5/naive",
     ),
+    "TSMC6": TechProfile(
+        name="TSMC6", vdd=0.75, tfin=6e-9,
+        default_l_nmos=16e-9, default_l_pmos=20e-9,
+        # V6.9.0: unlike TSMC7 (whose N7-era SVT/LVT bins misbehave), the N6
+        # card's updated bins pass ALL 3 VTs and L=16/20/24nm (DC 9/9,
+        # tran 14/14 vs NGSPICE) — no empirical pruning needed.
+        l_values=[16e-9, 20e-9, 24e-9],
+        default_nfin=2, default_vt="ulvt",
+        vt_pairs=[
+            VtPair("svt",  "nch_svt_mac",  "pch_svt_mac"),
+            VtPair("lvt",  "nch_lvt_mac",  "pch_lvt_mac"),
+            VtPair("ulvt", "nch_ulvt_mac", "pch_ulvt_mac"),
+        ],
+        modelcard_dir="TSMC6/naive",
+    ),
     "TSMC7": TechProfile(
         name="TSMC7", vdd=0.75, tfin=6e-9,
         default_l_nmos=16e-9, default_l_pmos=20e-9,
@@ -206,11 +221,12 @@ ALL_TECHS: Dict[str, TechProfile] = {
     ),
 }
 
-TECH_ORDER: List[str] = ["ASAP7", "TSMC5", "TSMC7", "TSMC12", "TSMC16"]
+TECH_ORDER: List[str] = ["ASAP7", "TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 
 TECH_COLORS: Dict[str, str] = {
     "ASAP7": "tab:blue",
     "TSMC5": "tab:green",
+    "TSMC6": "tab:brown",
     "TSMC7": "tab:orange",
     "TSMC12": "tab:purple",
     "TSMC16": "tab:red",
