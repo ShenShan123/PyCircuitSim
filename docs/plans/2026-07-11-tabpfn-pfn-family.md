@@ -111,3 +111,45 @@ Corridor curriculum `corroft` at the best size (warm-start from clean base, `{te
 3. **Solver enumerators missed** → explicit Phase 3 edits + real-inverter smoke before training.
 4. **Model ignores context** (per-tech memorization makes ICL dead weight) → fine for accuracy; report a frozen-vs-resampled context ablation at device level for honesty.
 5. **Jacobian roughness through attention** (the historical LEVEL=74 pain) → smooth C∞ components only, no dropout at eval, direct value head, FD-consistency smoke, existing gds-floor/Vds-correction safety net.
+
+---
+
+## Execution log
+
+### 2026-07-11 — Phases 0–5 DONE, Phase 6 launched
+
+- **Phase 0**: worktree `tabpfn-pfn` (branch `worktree-tabpfn-pfn`); symlinked checkpoints/datasets/PyCMG/tools from the main repo.
+- **Phase 1**: `bsimar/models/tabpfn.py` (`TabPFNCompact`) — param counts land EXACTLY on the plan targets: small 686,413 / medium 2,033,437 / large 4,652,861 (vocab-18 build). All unit invariants pass (fwd/bwd, eval determinism, cache-hit == cache-miss, row independence). Note: at init the output is constant w.r.t. x (v3 zero-init residual scheme) — x-gradients appear after the first optimizer step.
+- **Phase 2–4**: trainer entry `train_tabpfn` (+ `_stratified_context`), sidecar guard generalized, `clip_grad` threaded; CLI `--model tabpfn` + 3 presets + guards; `mosfet_pfn.py`; solver 3 enumerators; parser LEVEL=75 (env family PFN, cascade, stem scope, FORCE_LEVEL); 5 drivers `tabpfn→pfn`. Committed.
+- **Phase 5 smoke — ALL PASS**:
+  - tiny train (tsmc7 small n+p, 200k rows, 6 ep): artifacts land, converges (train 0.26→0.058);
+  - Jacobian autograd↔FD: gm + cgg agree to ~0.2%; gds mismatch = base-class floor/Vds-clamp on the garbage 6-epoch surface (id<0 at forward bias), i.e. the safety net, not an autograd bug;
+  - EMA audit: ctx_x/ctx_y/ctx_tc bit-exact through the EMA wrap ✓;
+  - parser/gate: LEVEL=75 resolves `tsmc7_pfn_small_{n,p}mos` scope=tsmc7 code=1; 76-point inverter DC sweep all-converged; `batch_eval` == per-device (1e-5);
+  - **latency (CPU 1-thread)**: PFN small 15.6 ms/eval vs DN large 1.5 ms vs TF medium 61.5 ms → PFN ≈ 4× FASTER than BSIM-AR medium → gates well within budget;
+  - DN LEVEL=73 regression: production tsmc7_dn_large resolves, proper VTC. (Stock `examples/nn_inverter_dc.sp` fails checkpoint-resolution for ASAP7 — pre-existing, Rule 14.)
+- **Phase 6**: launched small+medium first (16 ckpts, `MODEL=tabpfn RECIPES=clean SIZES="small medium"`, NSTREAMS=6, GPUs 0-2 shared). **Large deferred** until real full-data epoch times are measured — extrapolation from the smoke run suggests large@300ep could exceed the wall-clock budget; will decide (fewer epochs vs amp vs as-is) with data.
+- Pretrained-TabPFN ICL baseline (58M v3-ood ckpt, 10k ctx, 4 targets × 8 tech-dev): running on GPU0; deps installed to scratchpad `pylibs` (conda env not writable — permission denied).
+
+### 2026-07-12 — SMALL tier trained + evaluated
+
+- 8 small ckpts (~2.5h each, full 80-epoch cosine, no early stop). Device test metrics uniformly strong: id MRE 0.33–0.58%, all-target AVG MRE 0.21–0.26%, R²≈0.9999.
+- Pretrained-ICL baseline (58M, 10k ctx): charges 0.3–1.1% MRE but id 3.2–5.7% → the from-scratch port beats it ~10× on id at 1.2% of the params.
+- **Complex matrix @small = 11/16**: tsmc16 4/4; tsmc12 3/4 (switchcap 5.32% vs 5.0% tol — near-miss); tsmc5+tsmc7 = sram+switchcap only (ring 8.96/8.71% FAIL; opamp gain-RAILED 100% — the classic tsmc5/7 value-surface cells the corridor recipes address). Reference: DN clean small=7/16, DN clean large=13/16 → 11/16 at SMALL is the strongest clean small tier yet.
+- Device suites @small: multi_tech_dc 3/4 techs (tsmc16 nmos NFIN=10 corner blows up: MRE 13.7%, NRMSE 26.9% — localized corner, rest of tech passes); multi_tech_tran 4/4; nn_ac 5/8 (fails tsmc5-nmos 11.4%, tsmc12-pmos 12.5%, tsmc16-pmos 14.1% magNRMSE); opamp_ac 0/4 (OP-MISBIAS at the harness's peak-gain bias — DC opamp gate passes at tsmc12/16 but the AC bias probe rails).
+- Eval wall-clock: 24 min for all 32 cells at PAR=16 (PFN ≈ 4× faster than BSIM-AR per eval — batched solver path working).
+- Mediums training (~13h/ckpt est.); large wave queued behind them (150-ep cosine).
+
+### 2026-07-12 (evening) — MEDIUM tier evaluated; capacity peaks at SMALL; NFIN-interpolation root cause
+
+- **Version renumber**: another session landed V6.9.0 (TSMC6 onboarding) on main → this campaign publishes as **V6.10.0**.
+- **Complex matrix @medium = 10/16** (< small's 11/16): tsmc12 3/4 (swcap 5.10% near-miss again), tsmc16 3/4 (**opamp RAILS at medium** — passed small at 3.66%; capacity relocates basins, echoing V6.6.5), tsmc5/7 2/4 each (ring ~9-10%, opamp railed — unchanged). Clean-recipe capacity curve peaks at SMALL for PFN.
+- Device @medium: id MRE 0.10–0.30% (best tier fidelity), but multi_tech_dc drops to 2/4 (tsmc12+tsmc16 nmos `nfin_10` corner: NRMSE 27–31%, R²≈0) and nn_ac 0/8 (small: 5/8 — AC peaks at small, stronger than the TF pattern).
+- **NFIN=10 corner ROOT-CAUSED**: tsmc12/16 datasets contain NFIN ∈ {2,3,4,6,20.888} — NFIN=10 is OFF-GRID; the sweep probes the 6→21 interpolation gap. PFN over-predicts id by ~+20% flat across strong inversion (probe vs DN-production at L=16n, Vds=0.8). Mechanism: context-relative distribution embedding anchors to the context's discrete NFIN values → poor off-grid geometry interpolation vs a smooth global MLP. Fix-class: denser NFIN sampling or context enrichment (frozen ctx is a data buffer — post-hoc re-freeze possible since training was episodic); left as future work.
+- Strict OMP {1,2,4} multirun for SMALL launched (16 cells, P=8). Large wave training (~epoch 15/300 ×6 jobs).
+
+### 2026-07-13 (early) — strict small = 11/16 ZERO-FLIP; large restarted at 150ep+amp
+
+- **Strict OMP {1,2,4} @small = 11/16, zero flips** — every cell deterministic (P/P/P or F/F/F). No OMP multistability anywhere (contrast: DN/TF campaigns fought coin-flip opamps for releases). Failing strict cells: tsmc5/7 ring (8.7–9.5%) + opamp (railed), tsmc12 switchcap (5.32% vs 5.0%).
+- Large fp32 wave was COMPUTE-bound (~12 min/epoch at 2 jobs/GPU; 300 ep ⇒ ~2.5 GPU-days/ckpt) → killed at ~epoch 50, restarted as **150-epoch cosine + --amp** (bf16 smoke-tested clean; V6.8-validated lever). Preset updated + committed.
+- **Incident**: the first (unscoped) pkill of my large wave also killed the dispatcher/bookkeeping tree of ANOTHER session's main-repo campaign (BSIM-AR corroft@xl fill, 3 jobs), orphaning its pythons; its automation relaunched at 02:40 → 2 writers per checkpoint slot. Resolved by killing the orphaned 00:13 generation only; the relaunched tree (correct .complete bookkeeping, --overwrite) is the single writer. Their ~2.5h progress was lost — retrained from scratch by their own automation. Lesson: kill by PID tree, never by broad -f pattern on shared scripts.
