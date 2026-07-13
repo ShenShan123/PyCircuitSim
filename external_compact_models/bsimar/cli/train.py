@@ -113,11 +113,16 @@ SIZE_PRESETS = {
         agg_blocks=3, agg_heads=6, n_cls_tokens=2, icl_num_blocks=4,
         icl_heads=6, ctx_len=2048, batch_size=1024, max_epochs=150,
         patience=40, lr=5e-4),
+    # large: 150-epoch cosine. Unlike small/medium (dataloader-bound,
+    # ~118 s/epoch), large is COMPUTE-bound (~12 min/epoch with 2 jobs/GPU
+    # on shared 4090s) — a 300-epoch schedule is ~2.5 GPU-days/checkpoint.
+    # The V6.10 campaign trained this tier with --amp (bf16, the V6.8
+    # opt-in wall-clock lever).
     ("tabpfn", "large"): dict(
         embed_dim=128, n_inducing=48, dist_blocks=3, dist_heads=8,
         agg_blocks=3, agg_heads=8, n_cls_tokens=2, icl_num_blocks=6,
-        icl_heads=8, ctx_len=2048, batch_size=1024, max_epochs=300,
-        patience=80, lr=4e-4),
+        icl_heads=8, ctx_len=2048, batch_size=1024, max_epochs=150,
+        patience=50, lr=4e-4),
 }
 
 
