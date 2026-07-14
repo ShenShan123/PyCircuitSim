@@ -132,6 +132,11 @@ def _mosfet_types() -> tuple:
         types.extend([NMOS_BSIMAR, PMOS_BSIMAR])
     except ImportError:
         pass
+    try:
+        from pycircuitsim.models.mosfet_pfn import NMOS_PFN, PMOS_PFN
+        types.extend([NMOS_PFN, PMOS_PFN])
+    except ImportError:
+        pass
     return tuple(types)
 
 
@@ -151,6 +156,11 @@ def _pmos_types() -> tuple:
     try:
         from pycircuitsim.models.mosfet_bsimar import PMOS_BSIMAR
         types.append(PMOS_BSIMAR)
+    except ImportError:
+        pass
+    try:
+        from pycircuitsim.models.mosfet_pfn import PMOS_PFN
+        types.append(PMOS_PFN)
     except ImportError:
         pass
     return tuple(types)
@@ -178,6 +188,14 @@ def _nn_mosfet_types() -> tuple:
     try:
         from pycircuitsim.models.mosfet_bsimar import NMOS_BSIMAR, PMOS_BSIMAR
         types.extend([NMOS_BSIMAR, PMOS_BSIMAR])
+    except ImportError:
+        pass
+    # V6.9: LEVEL=75 TabPFN — one-shot forward, row-independent by
+    # construction (queries only cross-attend to the frozen context), so
+    # the batched pre-warm applies unchanged.
+    try:
+        from pycircuitsim.models.mosfet_pfn import NMOS_PFN, PMOS_PFN
+        types.extend([NMOS_PFN, PMOS_PFN])
     except ImportError:
         pass
     return tuple(types)

@@ -33,7 +33,8 @@ MODEL="${MODEL:-direct}"
 case "$MODEL" in
   direct)      TAG="dn" ;;
   transformer) TAG="tf" ;;
-  *) echo "[gate] UNKNOWN MODEL=$MODEL (direct|transformer)"; exit 1 ;;
+  tabpfn)      TAG="pfn" ;;
+  *) echo "[gate] UNKNOWN MODEL=$MODEL (direct|transformer|tabpfn)"; exit 1 ;;
 esac
 export MODEL
 
@@ -60,6 +61,10 @@ if [ "${1:-}" = "_one" ]; then
     export PYCIRCUITSIM_NN_CHECKPOINT_TF_NMOS="$sn"
     export PYCIRCUITSIM_NN_CHECKPOINT_TF_PMOS="$sp"
     export PYCIRCUITSIM_NN_FORCE_LEVEL=74
+  elif [ "$TAG" = "pfn" ]; then
+    export PYCIRCUITSIM_NN_CHECKPOINT_PFN_NMOS="$sn"
+    export PYCIRCUITSIM_NN_CHECKPOINT_PFN_PMOS="$sp"
+    export PYCIRCUITSIM_NN_FORCE_LEVEL=75
   else
     export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="$sn"
     export PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="$sp"
