@@ -8,8 +8,9 @@ Python-based SPICE-like circuit simulator emphasizing educational clarity and mo
 - **BSIM-CMG** (LEVEL=72) — PyCMG-wrapped OSDI FinFET model (ground truth).
 - **DirectNet** (LEVEL=73) — production feed-forward MLP compact model (PyTorch).
 - **BSIM-AR Transformer** (LEVEL=74) — autoregressive Transformer compact model (PyTorch).
+- **PFN / TabPFN** (LEVEL=75) — TabPFN-v3-style in-context transformer compact model (PyTorch, V6.10.0).
 
-DirectNet and BSIM-AR share the same data, normalization, and evaluation pipelines via the unified `bsimar` package at `external_compact_models/bsimar/`. DirectNet is the production NN (fast path); BSIM-AR is the autoregressive variant, **un-parked in V6.8.0** as the validated higher-fidelity option (15/16 strict, but ~30–100× slower AR inference).
+DirectNet, BSIM-AR, and PFN share the same data, normalization, and evaluation pipelines via the unified `bsimar` package at `external_compact_models/bsimar/`. DirectNet is the production NN (fast path); BSIM-AR is the autoregressive variant, **un-parked in V6.8.0** as the validated higher-fidelity option (15/16 strict, but ~30–100× slower AR inference); PFN is the V6.10.0 research family (clean small = 11/16 strict with zero OMP flips; ~10× DN eval cost, 4× faster than BSIM-AR).
 
 Must support **Operating Point**, **DC Sweep**, AC Sweep, and **Transient Analysis** for all model types.
 
@@ -32,9 +33,10 @@ pycircuitsim/
     ├── base.py               # Component abstract base
     ├── passive.py            # R, C, V, I sources (PULSE)
     ├── mosfet_cmg.py         # BSIM-CMG (LEVEL=72) via PyCMG
-    ├── mosfet_nn.py          # Shared _MOSFETNNBase (LEVEL=73/74) — voltage prep, autograd, Vds correction
+    ├── mosfet_nn.py          # Shared _MOSFETNNBase (LEVEL=73/74/75) — voltage prep, autograd, Vds correction
     ├── mosfet_directnet.py   # DirectNet (LEVEL=73, primary)
-    └── mosfet_bsimar.py      # BSIMAR Transformer (LEVEL=74, parked — see Rule 15)
+    ├── mosfet_bsimar.py      # BSIMAR Transformer (LEVEL=74)
+    └── mosfet_pfn.py         # TabPFN-style PFN (LEVEL=75, V6.10.0)
 
 external_compact_models/
 ├── bsimar/             # Unified NN compact model package (importable as `bsimar`)
@@ -84,6 +86,7 @@ authoritative ground truth; DirectNet is the production NN; BSIMAR is parked.
 | 72    | **BSIM-CMG**           | `models/mosfet_cmg.py` via PyCMG / OSDI | FinFET**ground truth**         |
 | 73    | **DirectNet**          | `models/mosfet_directnet.py` (PyTorch)  | **Primary** NN compact model   |
 | 74    | **BSIMAR Transformer** | `models/mosfet_bsimar.py` (PyTorch)     | Autoregressive NN (**parked**) |
+| 75    | **PFN (TabPFN port)**  | `models/mosfet_pfn.py` (PyTorch)        | In-context NN (**research**, V6.10.0) |
 
 - **BSIM-CMG (LEVEL=72)** — PyCMG-wrapped OSDI FinFET model. The reference every
   NN trains against and is gated on; all 5 techs (ASAP7, TSMC5/7/12/16) at
@@ -117,7 +120,7 @@ authoritative ground truth; DirectNet is the production NN; BSIMAR is parked.
 
 ## Supported Features
 
-* **Devices:** R, C; NMOS/PMOS LEVEL=72 (BSIM-CMG, ground truth), LEVEL=73 (DirectNet, primary NN), LEVEL=74 (BSIMAR, parked); DC + AC voltage/current sources (`AC=mag phase`), PULSE.
+* **Devices:** R, C; NMOS/PMOS LEVEL=72 (BSIM-CMG, ground truth), LEVEL=73 (DirectNet, primary NN), LEVEL=74 (BSIMAR), LEVEL=75 (PFN/TabPFN, V6.10.0); DC + AC voltage/current sources (`AC=mag phase`), PULSE.
 * **Analyses:** `.op`, `.dc`, `.tran`, `.ac`.
 * **Directives:** `.model` (LEVEL=72/73/74), `.include`, `.ic`.
 * Legacy LEVEL=1 (Shichman-Hodges) removed.
@@ -175,7 +178,8 @@ C1 out 0 159.155n
 
 - **LEVEL=72** — BSIM-CMG ground truth (`examples/bsimcmg_inverter_dc.sp`).
 - **LEVEL=73** — DirectNet NN; `TECH`/`VT` select the per-tech checkpoint (`examples/nn_inverter_dc.sp`).
-- **LEVEL=74** — BSIMAR (parked; no checkpoints on disk).
+- **LEVEL=74** — BSIMAR (per-tech `tsmc{X}_tf_*` checkpoints, V6.8.0).
+- **LEVEL=75** — PFN/TabPFN (per-tech `tsmc{X}_pfn_{small,medium,large}_*` checkpoints, V6.10.0; env pins `PYCIRCUITSIM_NN_CHECKPOINT_PFN_{NMOS,PMOS}`, harness hook `PYCIRCUITSIM_NN_FORCE_LEVEL=75`, drivers take `MODEL=tabpfn`). Frozen-context buffers live inside the checkpoint; the `_config.npz` sidecar is required to rebuild the arch. Report: `docs/V6.10.0-tabpfn-pfn-report.md`.
 
 CMOS inverter DC sweep (LEVEL=72, `examples/bsimcmg_inverter_dc.sp`):
 

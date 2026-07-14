@@ -153,3 +153,19 @@ Corridor curriculum `corroft` at the best size (warm-start from clean base, `{te
 - **Strict OMP {1,2,4} @small = 11/16, zero flips** — every cell deterministic (P/P/P or F/F/F). No OMP multistability anywhere (contrast: DN/TF campaigns fought coin-flip opamps for releases). Failing strict cells: tsmc5/7 ring (8.7–9.5%) + opamp (railed), tsmc12 switchcap (5.32% vs 5.0%).
 - Large fp32 wave was COMPUTE-bound (~12 min/epoch at 2 jobs/GPU; 300 ep ⇒ ~2.5 GPU-days/ckpt) → killed at ~epoch 50, restarted as **150-epoch cosine + --amp** (bf16 smoke-tested clean; V6.8-validated lever). Preset updated + committed.
 - **Incident**: the first (unscoped) pkill of my large wave also killed the dispatcher/bookkeeping tree of ANOTHER session's main-repo campaign (BSIM-AR corroft@xl fill, 3 jobs), orphaning its pythons; its automation relaunched at 02:40 → 2 writers per checkpoint slot. Resolved by killing the orphaned 00:13 generation only; the relaunched tree (correct .complete bookkeeping, --overwrite) is the single writer. Their ~2.5h progress was lost — retrained from scratch by their own automation. Lesson: kill by PID tree, never by broad -f pattern on shared scripts.
+
+### 2026-07-13 (day) — large-tier optimization instability at lr 4e-4
+
+- **3 of 8 large jobs diverged** with the same signature (train loss explodes 0.02→0.77 around epoch 25–40, collapses to a constant predictor, early-stops on a weak epoch-~15 EMA state): tsmc16-pmos@~25, tsmc12-pmos@30, tsmc7-nmos@40. All at lr 4e-4 + amp. Small/medium (same amp off, lower widths) never diverged. A divergence watch (train>0.2 after ep5) is armed on all large logs.
+- Response: diverged jobs killed by exact PID, artifacts (incl. a poisoned .complete) removed, **retrained at lr 3e-4 + amp**. tsmc16-pmos retry healthy through early epochs. If 3e-4 also diverges → fp32 fallback for those cells; if healthy → report documents the split (5 ckpts @4e-4, 3 @3e-4) and the instability as a large-tier finding.
+
+### 2026-07-13 (later) — instability is not LR-bound; strategy switch
+
+- tsmc16-pmos diverged AGAIN at lr 3e-4 (@ep50) after the 4e-4 collapse (@~25). Total: 6 divergence events across 8 large jobs (5 @4e-4 at ep25–80, 1 @3e-4). Signature is always explosion→constant-collapse; suspect class = attention-logit scaling (SoftmaxScalingMLP base term is unconstrained; deeper W=256 ICL stack compounds it). Small/medium never diverged → the instability is a LARGE-tier property of this port.
+- **Strategy switch**: stop kill/retrain cycles. A diverged run early-stops (patience 50) and banks its pre-divergence EMA best — measured bests ~0.0025–0.0035 val, which is tier-representative (healthy large jobs sit in the same band; medium = ~0.0004). Every large cell therefore gets a valid, comparable checkpoint. The tier verdict ("large trains to ~7× worse val than medium and is optimization-unstable") is itself a campaign finding; a stabilization pass (logit clamp / lower LR schedule) is future work.
+
+### 2026-07-14 — CAMPAIGN COMPLETE (V6.10.0)
+
+- Large tier: all 8 done (3 @4e-4, 5 @3e-4; 8 divergence events total, diverged runs banked tier-representative pre-divergence bests). Device id MRE 0.39–1.39%; **complex matrix @large = 8/16** (opamp rails on all 4 techs; tsmc12/16 swcap regress; NFIN=10 DC corner RECOVERS to PASS ~6% — capacity repairs off-grid interpolation, the one axis large wins).
+- **Final capacity curves**: gates 11 → 10 → 8 (monotone decline, peaks at SMALL); device fidelity peaks at MEDIUM; AC 5/8 → 0/8 → 5/8 (non-monotone).
+- Report finalized (`docs/V6.10.0-tabpfn-pfn-report.md`), CHANGELOG V6.10.0 entry, CLAUDE.md LEVEL=75 rows. Campaign closed; production unchanged (DN crit30f@large). Next-EV: corroft@small on PFN, context re-freeze for NFIN, large logit-scale stabilization.
