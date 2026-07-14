@@ -21,7 +21,8 @@ MODEL="${MODEL:-direct}"
 case "$MODEL" in
   direct)      TAG="dn" ;;
   transformer) TAG="tf" ;;
-  *) echo "UNKNOWN MODEL=$MODEL (direct|transformer)"; exit 1 ;;
+  tabpfn)      TAG="pfn" ;;
+  *) echo "UNKNOWN MODEL=$MODEL (direct|transformer|tabpfn)"; exit 1 ;;
 esac
 if [ "$recipe" = "clean" ]; then sn="${tlc}_${TAG}_${size}_nmos"; sp="${tlc}_${TAG}_${size}_pmos"
 else                             sn="${tlc}_${TAG}_${recipe}_${size}_nmos"; sp="${tlc}_${TAG}_${recipe}_${size}_pmos"; fi
@@ -31,6 +32,9 @@ export CUDA_VISIBLE_DEVICES="" NGSPICE_BIN="$NG"
 if [ "$TAG" = "tf" ]; then
   export PYCIRCUITSIM_NN_CHECKPOINT_TF_NMOS="$sn" PYCIRCUITSIM_NN_CHECKPOINT_TF_PMOS="$sp"
   export PYCIRCUITSIM_NN_FORCE_LEVEL=74
+elif [ "$TAG" = "pfn" ]; then
+  export PYCIRCUITSIM_NN_CHECKPOINT_PFN_NMOS="$sn" PYCIRCUITSIM_NN_CHECKPOINT_PFN_PMOS="$sp"
+  export PYCIRCUITSIM_NN_FORCE_LEVEL=75
 else
   export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="$sn" PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="$sp"
 fi

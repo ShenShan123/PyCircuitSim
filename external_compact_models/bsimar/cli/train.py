@@ -20,10 +20,12 @@ import torch
 
 from bsimar.config import (
     CHECKPOINT_DIR, DATA_DIR,
-    DirectNetConfig, TransformerConfig,
+    DirectNetConfig, TransformerConfig, TabPFNConfig,
     LOCAL_VARIANT_CODES, VALID_TECH_SCOPES, tech_scope_vocab_size,
 )
-from bsimar.training.trainer import train_directnet, train_transformer
+from bsimar.training.trainer import (
+    train_directnet, train_transformer, train_tabpfn,
+)
 from bsimar.utils.seed import set_seed
 
 import numpy as np
@@ -98,6 +100,29 @@ SIZE_PRESETS = {
         d_model=384, nhead=8, num_layers=8, dim_feedforward=1536,
         dropout=0.2, batch_size=1024, max_epochs=300,
         patience=80, lr=6e-4),
+    # V6.9 — TabPFN-style in-context compact model (LEVEL=75). Param
+    # counts mirror the transformer tiers (0.69M / 2.03M / 4.65M) so the
+    # capacity curves are comparable. ctx_len = frozen-context rows.
+    ("tabpfn", "small"): dict(
+        embed_dim=64, n_inducing=32, dist_blocks=2, dist_heads=4,
+        agg_blocks=2, agg_heads=4, n_cls_tokens=2, icl_num_blocks=3,
+        icl_heads=4, ctx_len=1024, batch_size=1024, max_epochs=80,
+        patience=25, lr=6e-4),
+    ("tabpfn", "medium"): dict(
+        embed_dim=96, n_inducing=32, dist_blocks=3, dist_heads=6,
+        agg_blocks=3, agg_heads=6, n_cls_tokens=2, icl_num_blocks=4,
+        icl_heads=6, ctx_len=2048, batch_size=1024, max_epochs=150,
+        patience=40, lr=5e-4),
+    # large: 150-epoch cosine. Unlike small/medium (dataloader-bound,
+    # ~118 s/epoch), large is COMPUTE-bound (~12 min/epoch with 2 jobs/GPU
+    # on shared 4090s) — a 300-epoch schedule is ~2.5 GPU-days/checkpoint.
+    # The V6.10 campaign trained this tier with --amp (bf16, the V6.8
+    # opt-in wall-clock lever).
+    ("tabpfn", "large"): dict(
+        embed_dim=128, n_inducing=48, dist_blocks=3, dist_heads=8,
+        agg_blocks=3, agg_heads=8, n_cls_tokens=2, icl_num_blocks=6,
+        icl_heads=8, ctx_len=2048, batch_size=1024, max_epochs=150,
+        patience=50, lr=4e-4),
 }
 
 
@@ -129,7 +154,7 @@ def _resolve_data_path(args: argparse.Namespace) -> Path:
 def _make_save_prefix(args: argparse.Namespace) -> str:
     if args.exp_name:
         return f"{args.exp_name}_{args.device_type}"
-    tag = "dn" if args.model == "direct" else "tf"
+    tag = {"direct": "dn", "transformer": "tf", "tabpfn": "pfn"}[args.model]
     suffix = ""
     if args.loss_preset != "default":
         suffix = f"_{args.loss_preset}"
@@ -167,6 +192,10 @@ def _run(args: argparse.Namespace) -> None:
             {t.strip().lower() for t in args.exclude_techs.split(",")}
             if args.exclude_techs else None)
 
+    if (args.model, args.size) not in SIZE_PRESETS:
+        print(f"[error] no preset for --model {args.model} "
+              f"--size {args.size}")
+        sys.exit(2)
     preset = dict(SIZE_PRESETS[(args.model, args.size)])
     # Per-flag overrides
     if args.epochs is not None:
@@ -230,6 +259,12 @@ def _run(args: argparse.Namespace) -> None:
         print("[error] --amp is incompatible with the double-backward aux "
               "losses (sobolev / subthresh / charge-sobolev).")
         sys.exit(2)
+    # V6.9 phase 1: TabPFN trains on the plain LDS-MAE recipe only.
+    if args.model == "tabpfn" and (
+            args.sobolev or args.subthresh or args.charge_sobolev):
+        print("[error] the sobolev / subthresh / charge-sobolev aux losses "
+              "are not supported for --model tabpfn (phase 1).")
+        sys.exit(2)
 
     if args.model == "direct":
         cfg = DirectNetConfig(**preset)
@@ -251,6 +286,18 @@ def _run(args: argparse.Namespace) -> None:
             charge_sobolev=args.charge_sobolev,
             lam_charge_sobolev=args.lam_charge_sobolev,
             charge_sobolev_floor=args.charge_sobolev_floor,
+            init_from=args.init_from,
+            amp=args.amp,
+            **common,
+        )
+    elif args.model == "tabpfn":
+        if (loss_preset["output_subset"] is not None
+                or loss_preset["column_weights"] is not None):
+            print("[warn] loss presets are DirectNet-only; "
+                  "TabPFN ignores them")
+        cfg = TabPFNConfig(**preset)
+        train_tabpfn(
+            str(data_path), config=cfg,
             init_from=args.init_from,
             amp=args.amp,
             **common,
@@ -286,7 +333,7 @@ def _run(args: argparse.Namespace) -> None:
 def main() -> None:
     p = argparse.ArgumentParser(
         description="Unified BSIMAR / DirectNet training CLI")
-    p.add_argument("--model", choices=["direct", "transformer"],
+    p.add_argument("--model", choices=["direct", "transformer", "tabpfn"],
                    default="direct")
     p.add_argument("--size", choices=["small", "medium", "large", "xl"],
                    default="medium",

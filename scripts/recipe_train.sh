@@ -45,7 +45,8 @@ MODEL="${MODEL:-direct}"
 case "$MODEL" in
   direct)      TAG="dn" ;;
   transformer) TAG="tf" ;;
-  *) echo "[train] UNKNOWN MODEL=$MODEL (direct|transformer)"; exit 1 ;;
+  tabpfn)      TAG="pfn" ;;
+  *) echo "[train] UNKNOWN MODEL=$MODEL (direct|transformer|tabpfn)"; exit 1 ;;
 esac
 export MODEL
 export PYTHONPATH="$ROOT/external_compact_models${PYTHONPATH:+:$PYTHONPATH}"

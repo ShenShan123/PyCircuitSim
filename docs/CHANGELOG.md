@@ -7,6 +7,69 @@ retained, verbose prose pruned; the full original text lives in git history.)
 
 ---
 
+## V6.10.0 — TabPFN port: the "PFN" compact-model family, LEVEL=75 (branch `worktree-tabpfn-pfn`, 2026-07-11/14)
+
+**Ported the TabPFN v3 architecture (Prior Labs' tabular ICL transformer,
+local copy `/data2/shenshan/TabPFN-main`) into the bsimar stack as a third NN
+compact-model family and ran the full scale campaign (24 ckpts: 4 techs × N/P
+× small/medium/large, clean recipe) on the exact V6.8.0 harness. Full report:
+`docs/V6.10.0-tabpfn-pfn-report.md`.** (V6.9.0 = TSMC6 onboarding, separate
+branch.)
+
+**Result — PFN clean small (0.69M params) = 11/16 STRICT (OMP∈{1,2,4}) with
+ZERO flips** — the first family with no observable OMP multistability; the
+strongest clean small tier on record (DN clean small 7/16); still below the
+curriculum families (DN crit30f@large 14/16, TF corroft@medium 15/16).
+
+- **Architecture** (`bsimar/models/tabpfn.py`, `TabPFNCompact`): faithful
+  scaled-down port of the three v3 stages (per-column induced-attention
+  distribution embedder / column aggregator with CLS readout + RoPE / ICL
+  transformer with context-only K/V) + two deviations: FROZEN LEARNED CONTEXT
+  (episodic sampling at train; stratified K-row buffer frozen into the
+  checkpoint; context-KV cached at inference) and a direct 13-output value
+  head replacing the 5000-bin bar distribution (NR needs smooth first-order
+  autograd). Tech code = 8th column token (local vocab, Rule 16).
+- **New identity**: netlist LEVEL=75, `--model tabpfn`, tag `pfn`, stems
+  `tsmc{X}_pfn_{size}_{dev}`, env pins `PYCIRCUITSIM_NN_CHECKPOINT_PFN_*`,
+  `PYCIRCUITSIM_NN_FORCE_LEVEL=75`; solver enumerators (Rule 5), parser
+  cascade, all 5 drivers wired; DN/TF paths byte-identical (regression-checked).
+- **Gate capacity curve DECLINES monotonically: 11/16 → 10/16 → 8/16
+  (s/m/l)**; failing cells = tsmc5/7 ring+opamp (the classic corridor cells,
+  curriculum untested on PFN), tsmc12 switchcap 5.1–5.3% vs 5.0% (persistent
+  near-miss); tsmc16-opamp rails from medium up; at large the opamp rails on
+  all 4 techs. Device fidelity peaks at MEDIUM (id MRE 0.10–0.30%, best clean
+  tier ever measured here); AC non-monotone (5/8 → 0/8 → 5/8); opamp-AC 0/4
+  everywhere (OP-MISBIAS class).
+- **Runtime**: 15.6 ms/eval CPU (vs DN 1.5, BSIM-AR medium 61.5) — 4× faster
+  than BSIM-AR; a full 32-cell tier eval = ~24 min at PAR=16.
+- **Off-grid geometry finding (root-caused)**: `nmos_nfin_10` DC corner fails
+  at s/m on tsmc12/16 (NRMSE 27–31%, +20% flat over-prediction) because
+  NFIN=10 is OFF-GRID (datasets carry {2,3,4,6,20.9}) and the
+  context-relative distribution embedding interpolates the 6→21 gap poorly vs
+  DN's smooth MLP; **capacity repairs it** (large: ~6% NRMSE PASS). Fix-class:
+  denser NFIN sampling or post-hoc context re-freeze (episodic training makes
+  a swapped context admissible).
+- **Large-tier optimization instability**: 8 divergence-collapse events
+  (train 0.02→0.77 at ep 25–80, collapse to constant; both lr 4e-4 AND 3e-4;
+  grad-clip active; suspect = unconstrained SoftmaxScalingMLP logit scaling
+  in the deeper W=256 ICL stack). Diverged runs bank tier-representative
+  pre-divergence EMA bests (val 0.0020–0.0029 = healthy-run band). Large
+  trained 150-ep cosine + bf16 `--amp` (compute-bound, ~12 min/epoch fp32).
+- **Pretrained-TabPFN ICL baseline** (58M, 10k-row context, zero training):
+  charges 0.3–1.1% MRE (excellent) but id 3.2–5.7% — the from-scratch port
+  beats it ~10× on id at 1.2% of the params. Not solver-viable (single-target,
+  numpy predict path, cost).
+- **Dead ends recorded**: fp32 large @300ep (killed ~ep50 — 2.5 GPU-days/ckpt,
+  compute-bound); lr-3e-4-fixes-divergence hypothesis (refuted — tsmc16-pmos
+  and 2 retries diverged again); one flip-flop on the large epoch budget
+  (150→300→150) driven by the dataloader-vs-compute-bound distinction.
+- Production unchanged (DN crit30f@large). Highest-EV next: corridor
+  curriculum `corroft@small` on PFN (the V6.8.0 lever, aimed at the 4 tsmc5/7
+  cells; zero-flip property + 1/5 params would make it a contender), context
+  enrichment for the NFIN gap, large-tier logit-scale stabilization.
+
+---
+
 ## V6.9.0 — TSMC6 (CLN6) onboarding + TSMC PDK parse audit (branch `feat/tsmc6-onboarding`, 2026-07-12)
 
 **Onboarded the TSMC N6 iPDK card (`cln6_1d8_sp_v1d0_2p2.l`, BSIM-CMG 106.1,

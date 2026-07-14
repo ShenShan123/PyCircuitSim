@@ -27,7 +27,7 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader, TensorDataset
 
 from bsimar.config import (
-    DirectNetConfig, TransformerConfig,
+    DirectNetConfig, TransformerConfig, TabPFNConfig,
     CHECKPOINT_DIR, RESULTS_DIR,
     NUM_TSMC_CODES_WITH_UNKNOWN,
 )
@@ -59,6 +59,7 @@ def _epoch_train(
     charge_sobolev_loss: Optional[nn.Module] = None,
     charge_sobolev_norm: Optional[Dict[str, torch.Tensor]] = None,
     amp: bool = False,
+    clip_grad: bool = False,
 ) -> Tuple[float, float]:
     """One training epoch. Returns (mean_total_loss, mean_aux_term).
 
@@ -133,7 +134,7 @@ def _epoch_train(
             loss = loss + csob
             total_aux += float(csob.item())
         loss.backward()
-        if is_transformer:
+        if is_transformer or clip_grad:
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
         optimizer.step()
         if ema_model is not None:
@@ -245,6 +246,7 @@ def _train_loop(
     lam_charge_sobolev: float = 0.05,
     charge_sobolev_floor: float = 1e-19,
     amp: bool = False,
+    clip_grad: bool = False,
 ) -> Tuple[nn.Module, _NormalizerBase]:
     if amp and (sobolev or subthresh or charge_sobolev):
         raise ValueError(
@@ -478,7 +480,7 @@ def _train_loop(
             subthresh_loss=subthresh_loss, aux_norm=aux_norm,
             charge_sobolev_loss=charge_sobolev_loss,
             charge_sobolev_norm=charge_sobolev_norm,
-            amp=amp)
+            amp=amp, clip_grad=clip_grad)
         if swa_mode == "swa" and epoch >= swa_start:
             avg_model.update_parameters(model)
             if epoch == swa_start:
@@ -521,7 +523,9 @@ def _train_loop(
     print(f"  Done in {elapsed:.0f}s "
           f"({elapsed / max(epoch, 1):.1f}s/epoch). Best val={best_val:.6f}")
 
-    if is_transformer and arch_config is not None:
+    # Architecture sidecar for models the simulator can't shape-infer
+    # (Transformer, TabPFN). DirectNet passes arch_config=None — unchanged.
+    if arch_config is not None:
         np.savez(
             str(CHECKPOINT_DIR / f"{save_prefix}_config.npz"),
             **{k: np.array(v) for k, v in arch_config.items()})
@@ -870,4 +874,180 @@ def train_transformer(
         lam_charge_sobolev=lam_charge_sobolev,
         charge_sobolev_floor=charge_sobolev_floor,
         amp=amp,
+    )
+
+
+def _stratified_context(
+    train_ds, ctx_len: int, seed: int = 42,
+) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Pick the frozen TabPFN context: stratified over tech-code × id-bin.
+
+    Rows are stratified over the (local) tech-code vocabulary crossed with
+    8 quantile bins of the normalized id column (col 0 of
+    OUTPUT_COLUMN_ORDER), proportional with a 1-row floor per non-empty
+    cell, so subthreshold and strong inversion are both represented for
+    every variant. Deterministic for a fixed seed.
+    """
+    x, y, tc = train_ds.inputs, train_ds.outputs, train_ds.tech_codes
+    n = x.shape[0]
+    if n < ctx_len:
+        raise ValueError(
+            f"Training split ({n} rows) smaller than ctx_len={ctx_len}")
+    g = torch.Generator().manual_seed(seed)
+    ids = y[:, 0].numpy()
+    # np.quantile: torch.quantile caps at ~16M elements.
+    cuts = np.quantile(ids, np.linspace(0.0, 1.0, 9)[1:-1])
+    bins = torch.tensor(
+        np.searchsorted(cuts, ids), dtype=torch.long)          # 0..7
+    cells = tc.long() * 8 + bins
+    chosen: list = []
+    for cell in cells.unique():
+        idx = (cells == cell).nonzero(as_tuple=True)[0]
+        take = min(len(idx), max(1, round(ctx_len * len(idx) / n)))
+        perm = torch.randperm(len(idx), generator=g)[:take]
+        chosen.append(idx[perm])
+    sel = torch.cat(chosen)
+    if len(sel) > ctx_len:
+        sel = sel[torch.randperm(len(sel), generator=g)[:ctx_len]]
+    elif len(sel) < ctx_len:
+        mask = torch.ones(n, dtype=torch.bool)
+        mask[sel] = False
+        rest = mask.nonzero(as_tuple=True)[0]
+        extra = rest[torch.randperm(len(rest), generator=g)
+                     [: ctx_len - len(sel)]]
+        sel = torch.cat([sel, extra])
+    return x[sel].clone(), y[sel].clone(), tc[sel].float().clone()
+
+
+def train_tabpfn(
+    data_path: str,
+    save_prefix: str,
+    device_type: str = "nmos",
+    config: TabPFNConfig = TabPFNConfig(),
+    epochs: Optional[int] = None,
+    batch_size: Optional[int] = None,
+    patience: Optional[int] = None,
+    lr: Optional[float] = None,
+    device_str: str = "cpu",
+    overwrite: bool = False,
+    exclude_techs: Optional[Set[str]] = None,
+    num_tech_codes: int = NUM_TSMC_CODES_WITH_UNKNOWN,
+    p_unknown: float = 0.1,
+    max_rows: Optional[int] = None,
+    tech_scope: str = "universal",
+    swa_mode: str = "none",
+    ema_decay: float = 0.999,
+    apply_filter: bool = True,
+    class_weights: Optional[Dict[str, float]] = None,
+    init_from: Optional[str] = None,
+    amp: bool = False,
+    context_seed: int = 42,
+    **_: object,  # swallow legacy kwargs
+) -> Tuple[nn.Module, _NormalizerBase]:
+    """TabPFN-style compact-model training pipeline (LEVEL=75, V6.9).
+
+    One-shot 13-output forward → rides the DirectNet dispatch path
+    (``is_transformer=False``, canonical OUTPUT_COLUMN_ORDER). The episodic
+    context bank and the frozen deployment context are installed BEFORE the
+    EMA wrap so every saved checkpoint carries the identical frozen context
+    (EMA of a constant float buffer is exact).
+    """
+    from bsimar.models.tabpfn import TabPFNCompact
+
+    epochs = epochs if epochs is not None else config.max_epochs
+    batch_size = batch_size if batch_size is not None else config.batch_size
+    patience = patience if patience is not None else config.patience
+    lr = lr if lr is not None else config.lr
+
+    device = torch.device(device_str)
+    print(f"TabPFN compact on {device}; tech codes={num_tech_codes}, "
+          f"p_unknown={p_unknown}, ctx_len={config.ctx_len}")
+    if exclude_techs:
+        print(f"  Excluding techs: {exclude_techs}")
+
+    train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
+        data_path, OUTPUT_COLUMN_ORDER, device_type=device_type,
+        apply_filter=apply_filter, exclude_techs=exclude_techs,
+        norm_mode=_NORM_MODE, max_rows=max_rows,
+        tech_scope=tech_scope,
+    )
+    in_dim = train_ds.inputs.shape[1]
+    out_dim = train_ds.outputs.shape[1]
+
+    model = TabPFNCompact(
+        input_dim=in_dim, output_dim=out_dim,
+        embed_dim=config.embed_dim,
+        n_inducing=config.n_inducing,
+        dist_blocks=config.dist_blocks, dist_heads=config.dist_heads,
+        agg_blocks=config.agg_blocks, agg_heads=config.agg_heads,
+        n_cls_tokens=config.n_cls_tokens,
+        icl_num_blocks=config.icl_num_blocks, icl_heads=config.icl_heads,
+        ctx_len=config.ctx_len,
+        num_tech_codes=num_tech_codes,
+        tech_embed_dropout=p_unknown,
+        # Rule 16: UNKNOWN at the tail of the (possibly local) vocab.
+        unknown_code_id=num_tech_codes - 1,
+        use_rope=config.use_rope,
+        ff_factor=config.ff_factor,
+        feature_group_size=config.feature_group_size,
+    )
+    n_params = model.count_parameters()
+    print(f"  Params: {n_params:,}")
+
+    if init_from is not None:
+        init_path = Path(init_from)
+        if not init_path.suffix:
+            init_path = CHECKPOINT_DIR / f"{init_from}_best.pt"
+        if not init_path.exists():
+            raise FileNotFoundError(
+                f"init_from checkpoint not found: {init_path}")
+        init_state = torch.load(str(init_path), weights_only=True,
+                                map_location="cpu")
+        missing, unexpected = model.load_state_dict(init_state, strict=False)
+        if missing or unexpected:
+            raise ValueError(
+                f"init_from architecture mismatch for {init_path.name}: "
+                f"missing={list(missing)} unexpected={list(unexpected)}")
+        print(f"  Warm-started from {init_path.name} "
+              "(frozen context inherited, re-frozen below)")
+
+    # Context: episodic bank (CPU tensors, shared across EMA deep-copies)
+    # + the frozen deployment context — set BEFORE _train_loop wraps the
+    # model in AveragedModel so all saved states carry it bit-exactly.
+    model.set_context_bank(
+        train_ds.inputs, train_ds.outputs, train_ds.tech_codes)
+    ctx = _stratified_context(train_ds, config.ctx_len, seed=context_seed)
+    model.set_frozen_context(*ctx)
+    print(f"  Frozen context: {config.ctx_len} rows, stratified "
+          f"tech-code × 8 id-quantile bins (seed={context_seed})")
+    model = model.to(device)
+
+    arch_config = {
+        "input_dim": in_dim, "output_dim": out_dim,
+        "embed_dim": config.embed_dim,
+        "n_inducing": config.n_inducing,
+        "dist_blocks": config.dist_blocks, "dist_heads": config.dist_heads,
+        "agg_blocks": config.agg_blocks, "agg_heads": config.agg_heads,
+        "n_cls_tokens": config.n_cls_tokens,
+        "icl_num_blocks": config.icl_num_blocks,
+        "icl_heads": config.icl_heads,
+        "ctx_len": config.ctx_len,
+        "num_tech_codes": num_tech_codes,
+        "use_rope": int(config.use_rope),
+        "ff_factor": config.ff_factor,
+        "feature_group_size": config.feature_group_size,
+    }
+    return _train_loop(
+        model=model, is_transformer=False,
+        train_ds=train_ds, val_ds=val_ds, test_ds=test_ds,
+        normalizer=normalizer,
+        epochs=epochs, batch_size=batch_size,
+        lr=lr, weight_decay=config.weight_decay,
+        patience=patience, save_prefix=save_prefix,
+        device=device, overwrite=overwrite,
+        arch_config=arch_config,
+        class_weights=class_weights,
+        swa_mode=swa_mode, ema_decay=ema_decay,
+        amp=amp,
+        clip_grad=True,
     )
