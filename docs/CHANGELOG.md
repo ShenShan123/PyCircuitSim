@@ -7,6 +7,93 @@ retained, verbose prose pruned; the full original text lives in git history.)
 
 ---
 
+## V6.12.0 — .subckt/.ends hierarchical netlists + hierarchical test-circuit conversion (2026-07-18)
+
+**Added `.subckt`/`.ends` subcircuit definitions with hierarchical `X`
+instances to the parser, extended `.ic` into subckt bodies, converted the
+project's test circuits to hierarchy, and re-ran the verification matrix:
+zero regressions — every suite reproduces its historical pass rate exactly
+(commit 1744b28 = feature + conversion, on `feat/subckt-hierarchy`).**
+
+**Feature (pycircuitsim/parser.py, flattening expansion at parse time):**
+
+- `.subckt <name> <ports…> [param=default …]` … `.ends [name]`; instances
+  `X<id> <nodes…> <subckt> [param=val …]`. Nested definitions AND nested
+  instantiation (X-in-X) supported; defs registered globally (ngspice-flat
+  scoping); recursion guarded (depth 64, loud error).
+- ngspice-style flattening: internal nodes → `X1.n1` (nested `X1.X2.n1`),
+  devices → `M.X1.Mp1` (type char preserved for first-char dispatch); ground
+  `0`/`GND` stays global; ports map to connecting nodes so top-level node
+  names are unchanged. Node names are opaque strings end-to-end — no
+  circuit/solver changes were needed.
+- Parameters: defaults on the `.subckt` card, per-instance overrides, body
+  references as bare names or `{expr}`/`'expr'` arithmetic (+ - * / with
+  unit suffixes). `.ic` cards inside bodies get node-remapped AND
+  param-resolved; top-level `.ic V(X1.n1)=v` reaches internal nodes; `uic`
+  and `force_ic` consume them unchanged. `.model`/`.include` inside bodies
+  are hoisted global; other directives inside a body are loud errors, as are
+  unknown subckt names and port-count mismatches.
+- Robustness fixes riding along: `.include` now save/restores the current
+  file (sibling includes resolve correctly); `.ic`/`.dc`/`.tran`/`.ac`
+  dispatch and `V(...)` matching are case-insensitive.
+
+**New gate `tests/verify_subckt.py` — 8/8 PASS:** L1 linear equivalence
+(subckt deck ≡ hand-flattened deck at max|ΔV|=0 for RC .tran/.ac, nested
+{expr}-param DC OP, `.ic`-in-body + uic pinning); L2 L72 inverter-in-subckt
+≡ flat (max|ΔV|=0) and 0.187% NRMSE vs NGSPICE; L3 nested two-inverter
+buffer (X-in-X, NFIN params, `.ic` on internal `Xbuf.m`) 0.64/0.86% NRMSE
+vs NGSPICE.
+
+**Test-circuit conversion (probed nodes stay top-level as ports, so every
+harness key/baseline is unchanged; NGSPICE reference decks stay flat):**
+inverter VTC + transient generators (`tests/common/bsimcmg_{dc,tran}.py`),
+all four complex builders + their `examples/complex` templates (opamp =
+`ota1`+`cs2` stages, ring = `ringinv`×5, switchcap = `ckinv`+`tgate`, SRAM
+= `sraminv` cell in lobe + 6T force_ic decks), NN inverter VTC/tran decks,
+CS-amp AC decks (L72 + NN), and 7 example netlists. Single-device Id-Vgs
+decks intentionally stay flat — the harness probes device currents by name
+(`i(Mn1)`), and a 1-transistor wrap adds no structure. The sweep
+equivalence canaries (template ↔ builder line-sets) PASS for all 5 techs.
+`verify_subckt.py` keeps its own inline flat inverter deck as the
+pre-V6.12.0 reference.
+
+**Full re-run (2026-07-18, cluster loadavg ~1330, CPU-pinned gates):**
+
+| suite | result | vs baseline |
+|---|---|---|
+| verify_subckt (NEW) | **8/8** | new gate |
+| bsimcmg OP / DC L1 / tran L1 / AC | 3 tasks + 2 + 1 + 2 all PASS | identical (tran 0.19% NRMSE) |
+| bsimcmg DC L2 comprehensive | **81/81** | ✔ (67→81 with TSMC6) |
+| bsimcmg tran L2 comprehensive | **45/45** | ✔ (37→45 with TSMC6) |
+| multi-tech DC L3 | **52/53 + 1 ERROR** | ✔ EXACT — the ERROR is the documented pre-existing `TSMC5_lvt_inv_l_24nm` OSDI divergence (V6.9.0) |
+| multi-tech tran L3 | **86/86** | ✔ |
+| verify_nn_dc_tran (TSMC5/7/12/16) | **24/24** (device DC N+P, VTC, tran, inv-tran) | ✔ |
+| sweep canaries | ALL PASS (5 techs × 4 circuits × DN+ng) | ✔ |
+| complex ring | **5/5** (2.4–4.8% period) | ✔ incl. crit30 tsmc5-ring + tsmc6-ring |
+| complex opamp | **2/5** (TSMC5 0.21%, TSMC12 6.25%) | ✔ EXACT — tsmc7/tsmc16 (crit30 production misses) + tsmc6 (clean-large miss, BSIM-AR-only cell) rail as documented |
+| complex switchcap | **5/5** (2.1–4.2% charge) | ✔ |
+| complex SRAM SNM | **5/5** all-positive butterfly | ✔ (force_ic diag rails TSMC7/12 as documented) |
+
+Follow-up JobD (NN parametric mirrors + canary):
+
+| suite | result | vs baseline |
+|---|---|---|
+| lifted-source canary | **15/15** (NRMSE ≤10%) | ✔ |
+| verify_nn_multi_tech_dc | **68/69** | 1 FAIL `TSMC12_pmos_nfin_10` (NRMSE 16.15) reproduced BIT-IDENTICALLY with the pre-feature parser (51c1c92) = pre-existing DN NFIN-corner (same off-grid-NFIN class as the V6.10.0 finding), NOT a V6.12.0 regression |
+| verify_nn_multi_tech_tran | **80/80** | ✔ |
+
+Complex matrix total **17/20** = exactly the V6.11.0 production state
+(legacy 4-tech 14/16 + TSMC6 3/4). Individual checks: **484/489 PASS**, all
+5 non-passes pre-existing and documented (1 L3-DC OSDI ERROR, 3 opamp
+gates, 1 DN NFIN-corner). **The hierarchical decks are numerically
+transparent: no pass-rate moved in either direction.**
+
+Scope note: complex parametric sweeps, NN AC, and opamp AC were not re-run
+in this campaign (their deck sources are the converted builders whose
+line-set equivalence the canaries already pin).
+
+---
+
 ## V6.11.0 — TSMC6 NN family: all three NN compact models trained + gated at every scale (2026-07-14/17)
 
 **Completed the V6.9.0 NN-training deferral: trained and NGSPICE-gated all three

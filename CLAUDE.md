@@ -122,7 +122,8 @@ authoritative ground truth; DirectNet is the production NN; BSIMAR is parked.
 
 * **Devices:** R, C; NMOS/PMOS LEVEL=72 (BSIM-CMG, ground truth), LEVEL=73 (DirectNet, primary NN), LEVEL=74 (BSIMAR), LEVEL=75 (PFN/TabPFN, V6.10.0); DC + AC voltage/current sources (`AC=mag phase`), PULSE.
 * **Analyses:** `.op`, `.dc`, `.tran`, `.ac`.
-* **Directives:** `.model` (LEVEL=72/73/74), `.include`, `.ic`.
+* **Directives:** `.model` (LEVEL=72/73/74), `.include`, `.ic`, `.subckt`/`.ends` + hierarchical `X` instances (V6.12.0).
+* **Subcircuits (V6.12.0):** `.subckt <name> <ports...> [param=default ...]` … `.ends`; instance `X<id> <nodes...> <name> [param=val ...]`. Flattening expansion at parse time (ngspice-style): internal nodes become `X1.n1` (nested: `X1.X2.n1`), devices `M.X1.Mp1` (type char preserved); ground `0`/`GND` global; params substitute as bare names or `{expr}`/`'expr'` arithmetic (unit suffixes OK); `.ic` inside bodies remaps nodes AND resolves param values; top-level `.ic V(X1.n1)=v` reaches internal nodes; `.model`/`.include` in bodies are hoisted global; nested `.subckt` defs registered globally. Loud errors on unknown subckt, port-count mismatch, recursion (>64 deep). Gate: `tests/verify_subckt.py` (8 checks — subckt==flat bit-identical, L72 inverter + nested buffer vs NGSPICE).
 * Legacy LEVEL=1 (Shichman-Hodges) removed.
 
 ## Validation
@@ -241,6 +242,11 @@ Results in `results/<circuit_name>/<analysis_type>/`: an HSPICE-like `*_simulati
 All tests require `conda activate pycircuitsim`. Ground truth is **always** NGSPICE on the identical BSIM-CMG (LEVEL=72) OSDI model — never a simplified/self-defined reference. Gates are CPU-pinned (`CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`) and honor `NGSPICE_BIN` (repo `tools/ngspice-45.2/bin/ngspice` when `/usr/local/ngspice-45.2` is absent). Since V6.6.6 the complex/AC gate infra also pins torch to 1 thread by default (`PYCIRCUITSIM_TORCH_THREADS` overrides — used by the OMP multistability sweep).
 
 **Shared infra** (`tests/common/`): `base.py` (PROJECT_ROOT, OSDI_PATH, TechProfile, ALL_TECHS, NGSPICE runner), `bsimcmg_{dc,tran}.py`, `nn.py` + `nn_sweep.py`, `complex.py` + `complex_sweep.py` + `complex_ac.py`; reference netlists in `tests/references/`.
+
+### Subcircuit hierarchy (.subckt, V6.12.0)
+
+- `verify_subckt.py` — L1 linear subckt==flat equivalence (tran/AC/nested-OP/uic, no NGSPICE), L2 L72 inverter-in-subckt vs flat vs NGSPICE, L3 nested 2-inverter buffer (X-in-X + params + `.ic` on internal node) vs NGSPICE. 8/8 PASS at introduction.
+- Since V6.12.0 the PyCircuitSim-side test decks are **hierarchical**: inverter VTC/tran (bsimcmg_dc/tran), all complex builders + templates (opamp 2-stage, ring `ringinv`×5, switchcap `ckinv`+`tgate`, SRAM `sraminv`), NN inverter decks, CS-amp AC decks. Probed nodes stay top-level (ports), so harness keys and baselines are unchanged; NGSPICE reference decks stay flat. Single-device Id-Vgs decks stay flat (the harness probes `i(Mn1)` by device name).
 
 ### BSIM-CMG ground truth (LEVEL=72)
 
