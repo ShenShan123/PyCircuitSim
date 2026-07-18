@@ -214,6 +214,16 @@ ALL_TEST_TECHS: Dict[str, TestTechConfig] = {
         l_pmos=20e-9, pmos_model="pch_lvt_mac",
         inv_l_nmos=20e-9, inv_l_pmos=20e-9, inv_nfin=2,
     ),
+    # TSMC6 (CLN6) — sister node to TSMC7 (V6.9.0 onboarding). Same vdd/geometry
+    # family; ulvt is the local-vocab default (all 3 VTs pass, unlike TSMC7).
+    "TSMC6": TestTechConfig(
+        name="TSMC6", vdd=0.75, l_nmos=16e-9, nfin=2, tfin=6e-9,
+        nmos_model="nch_ulvt_mac", nn_tech_key="tsmc6", nn_vt="ulvt",
+        single_file=False, modelcard_dir="TSMC6",
+        modelcard_file="",
+        l_pmos=20e-9, pmos_model="pch_ulvt_mac",
+        inv_l_nmos=20e-9, inv_l_pmos=20e-9, inv_nfin=2,
+    ),
     "TSMC7": TestTechConfig(
         name="TSMC7", vdd=0.75, l_nmos=16e-9, nfin=2, tfin=6e-9,
         nmos_model="nch_ulvt_mac", nn_tech_key="tsmc7", nn_vt="ulvt",
@@ -238,11 +248,12 @@ ALL_TEST_TECHS: Dict[str, TestTechConfig] = {
     ),
 }
 
-TECH_ORDER: List[str] = ["ASAP7", "ASAP7_30nm", "TSMC5", "TSMC7", "TSMC12", "TSMC16"]
+TECH_ORDER: List[str] = ["ASAP7", "ASAP7_30nm", "TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 
 TECH_COLORS: Dict[str, str] = {
     "ASAP7": "tab:blue",
     "TSMC5": "tab:green",
+    "TSMC6": "tab:brown",
     "TSMC7": "tab:orange",
     "TSMC12": "tab:purple",
     "TSMC16": "tab:red",
@@ -1092,9 +1103,9 @@ def _cascade_handles_stem(path: Optional[Path]) -> bool:
         return False
     stem = path.name
     return any(stem.startswith(p) for p in (
-        "tsmc5_dn_", "tsmc7_dn_", "tsmc12_dn_", "tsmc16_dn_", "refac_dn_",
+        "tsmc5_dn_", "tsmc6_dn_", "tsmc7_dn_", "tsmc12_dn_", "tsmc16_dn_", "refac_dn_",
         # V6.8: per-tech BSIMAR Transformer stems (LEVEL=74 preempt cascade).
-        "tsmc5_tf_", "tsmc7_tf_", "tsmc12_tf_", "tsmc16_tf_", "refac_tf_"))
+        "tsmc5_tf_", "tsmc6_tf_", "tsmc7_tf_", "tsmc12_tf_", "tsmc16_tf_", "refac_tf_"))
 
 
 def run_pycircuitsim_nn_inverter_vtc(

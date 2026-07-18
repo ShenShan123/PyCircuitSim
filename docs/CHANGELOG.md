@@ -7,6 +7,81 @@ retained, verbose prose pruned; the full original text lives in git history.)
 
 ---
 
+## V6.11.0 — TSMC6 NN family: all three NN compact models trained + gated at every scale (2026-07-14/17)
+
+**Completed the V6.9.0 NN-training deferral: trained and NGSPICE-gated all three
+NN compact-model families — DirectNet (LEVEL=73), BSIM-AR Transformer (LEVEL=74),
+PFN/TabPFN (LEVEL=75) — at every defined scale on the new 6th tech TSMC6 (CLN6).
+22 clean-recipe checkpoints (DN s/m/l/xl + PFN s/m/l + TF s/m/l/xl, each N/P),
+one identical control recipe (`--apply-filter off --swa-mode ema --seed 42`),
+per-tech local vocab (tsmc6 svt/lvt/ulvt = codes 0/1/2 + UNKNOWN; nn_vt=ulvt).
+Reports updated: `docs/V6.6.6-accuracy-report.md` (DN), `docs/V6.8.0-bsimar-transformer-report.md`
+(TF), `docs/V6.10.0-tabpfn-pfn-report.md` (PFN).**
+
+**Result — TSMC6 complex 4-cell matrix (ring/opamp/sram/switchcap) vs NGSPICE BSIM-CMG:**
+
+| family | small | medium | large | xl |
+|---|---|---|---|---|
+| DirectNet | 1/4 | 2/4 | **3/4** | 2/4 |
+| PFN       | 2/4 | 2/4 | 2/4 | — (no xl preset) |
+| BSIM-AR   | 2/4 | **3/4** | 2/4 | 2/4 |
+
+- **DirectNet peaks at large = 3/4** (banks the ring 4.82%; sram+switchcap; opamp
+  rails to gain≈0 at every size) — the same capacity curve DN shows on the other
+  techs (peaks large, over-fits at xl → 2/4). Production tier = large.
+- **BSIM-AR peaks at medium = 3/4 and is the ONLY family to pass the tsmc6 opamp
+  gate (9.83%)** — banks opamp+sram+switchcap, misses the ring; its opamp gain is
+  *non-collapsed* even at small (13.61%) where DN/PFN rail to 0. Mirrors V6.8.0
+  (BSIM-AR's opamp basin banks tsmc16-opamp). Peaks medium, over-fits at large/xl
+  (ring regresses 7.4→11.2→12.6%).
+- **PFN is flat 2/4** across all sizes (sram+switchcap always; ring 8–12% and opamp
+  both fail) — consistent with V6.10.0 (PFN declines/flattens past small, opamp rails).
+- **Cross-family:** a clean **opamp-XOR-ring split** — DN-large banks the ring,
+  BSIM-AR-medium banks the opamp, no family takes all four. TSMC6 opamp is the
+  tsmc7-family hard cell (tsmc6 is vdd=0.75/ulvt, the CLN6 sister of CLN7); only
+  BSIM-AR's opamp basin cracks it.
+- **Device fidelity excellent and COMPLETE for all 11 cells**: inverter VTC/tran
+  + Id-Vgs DC pass everywhere (DN/PFN 6/6, BSIM-AR 11/11). PMOS DC NRMSE <1% (best
+  0.03%), NMOS DC 2–7%, VTC ~1–3%, tran ~0.8–1.2%. DN best DC at large (2.02%);
+  BSIM-AR best PMOS DC at xl (0.06%). Device-AC 0–2/3; opamp-AC fails (railed OP,
+  the opamp value-surface class).
+
+**Harness wiring (TSMC6 now first-class in the gate/eval stack)** — per the V6.9.0
+follow-up §1: `tests/verify_nn_dc_tran.py` (TSMC6 `TestTechConfig` mirroring sister
+node TSMC7 + `TECH_ORDER`/`TECH_COLORS` + `tsmc6_dn_`/`tsmc6_tf_` stem sentinels),
+`tests/common/nn_sweep.py` (`NN_TECHS`), `tests/common/complex.py` (`BENCH_TECHS`
++ ckpt VT map → ulvt), `scripts/recipe_eval.sh` (`TECHS`-overridable, was hardcoded
+4 techs), `scripts/gate_matrix_iso.sh` (dynamic cell denominator), and the 5
+collectors (`benchmark_collect`/`recipe_collect`/`device_retest_collect`/
+`recipe_retest_collect`/`gate_grid`, TSMC6 + dynamic `/16`→`/20` totals). New
+`scripts/tsmc6_collect.py` scoreboard collector.
+
+**Bug fixed — `tech_code_in_vocab` rejected TSMC6 (`tests/common/nn.py`).** The
+ASAP7-guard checks the *universal* tech code against an 18-ceiling; TSMC6 was
+tail-appended at universal codes 22–24 (V6.9.0), so its device gate silently
+SKIPPED (`tech code out of vocab`) even though per-tech tsmc6 uses a *local* vocab
+(code 2 for ulvt). Fixed: any tech in `LOCAL_VARIANT_CODES` passes unconditionally;
+the ceiling now only gates ASAP7 (no local vocab). Preserves tsmc5/7/12/16 and
+ASAP7 behavior exactly.
+
+**Environment caveat (dead-end / partial):** the whole campaign ran under sustained
+cluster overload (other users' Xyce jobs, loadavg ~1400 on 192 cores for days).
+DirectNet/PFN gates and BSIM-AR small/medium completed fine; the BSIM-AR **large +
+xl opamp** complex gates (LEVEL=74 AR inference is ~30–100× DN, worst on the largest
+models) **exceeded even an 8 h wall-clock cap** but a 12 h best-effort retry
+completed both — **the complex 4-cell matrix is 100% resolved** (large opamp 12.78%,
+xl opamp 10.13%, both ✗). The only never-gated cells are the *secondary* large/xl
+**opamp-AC** diagnostics (still timed out; not part of the complex count, and opamp-AC
+rails everywhere anyway). Notably BSIM-AR's opamp is *non-collapsed* at every size
+(13.6/9.83/12.8/10.1% s/m/l/xl) — the basin is tightest at medium, landing inside
+±10% only there (a near-miss at xl), whereas DN/PFN rail to gain≈0. Gate timeout was
+raised 1800→7200s mid-run; parallel re-gate `scripts/tsmc6_regate.sh` (per-job
+isolated complex scratch) recovered the rest. The gate driver's timeout was
+raised 1800s→7200s mid-campaign after the first PFN-medium timeouts; the parallel
+re-gate (`scripts/tsmc6_regate.sh`, per-job isolated complex scratch) recovered
+PFN-medium + BSIM-AR-large/xl non-opamp cells. No conclusion depends on the two
+open opamp cells (BSIM-AR already peaks at medium).
+
 ## V6.10.0 — TabPFN port: the "PFN" compact-model family, LEVEL=75 (branch `worktree-tabpfn-pfn`, 2026-07-11/14)
 
 **Ported the TabPFN v3 architecture (Prior Labs' tabular ICL transformer,

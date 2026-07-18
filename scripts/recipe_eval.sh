@@ -46,8 +46,10 @@ suites=(verify_nn_multi_tech_dc verify_nn_multi_tech_tran \
         verify_complex_ring_osc verify_complex_opamp \
         verify_complex_sram_snm verify_complex_switchcap \
         verify_nn_ac verify_complex_opamp_ac)
-techs_uc=(TSMC5 TSMC7 TSMC12 TSMC16)
-techs_lc=(tsmc5 tsmc7 tsmc12 tsmc16)
+# TECHS env (uppercase, space-separated) lets a campaign target a subset / a new
+# tech (e.g. TECHS=TSMC6 for the V6.9.x onboarding gate). Lowercase derived.
+read -r -a techs_uc <<< "${TECHS:-TSMC5 TSMC7 TSMC12 TSMC16}"
+techs_lc=(); for _t in "${techs_uc[@]}"; do techs_lc+=("$(echo "$_t" | tr '[:upper:]' '[:lower:]')"); done
 
 # Map (recipe,tech,size) -> checkpoint stem. clean -> production names.
 stem () {  # recipe tech size dev
@@ -91,7 +93,7 @@ read -r -a sizes   <<< "${SIZES:-large xl}"
 for recipe in "${recipes[@]}"; do for size in "${sizes[@]}"; do
   echo "[test] ===== $recipe / $size ====="
   specs=()
-  for i in 0 1 2 3; do for suite in "${suites[@]}"; do
+  for i in "${!techs_uc[@]}"; do for suite in "${suites[@]}"; do
     specs+=("$recipe $size ${techs_uc[$i]} ${techs_lc[$i]} $suite")
   done; done
   printf '%s\n' "${specs[@]}" | xargs -P "$PAR" -L1 "$SELF" _one
