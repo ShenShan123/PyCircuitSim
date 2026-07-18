@@ -18,9 +18,25 @@ Supported analysis:
 - AC analysis: .ac <sweep_type> <num_points> <fstart> <fstop>
 
 Supported directives:
-- Initial conditions: .ic V(<node>)=<value> ...
+- Initial conditions: .ic V(<node>)=<value> ...  (hierarchical nodes like
+  V(X1.n1)=... are accepted; .ic cards inside .subckt bodies are rewritten
+  to the instance-prefixed nodes at expansion time)
 - Model definitions: .model <name> <type> <params>
 - Include files: .include <filename>
+- Subcircuits: .subckt <name> <port1> ... [param=default ...] / .ends
+  with hierarchical X-instance lines: X<name> <node1> ... <subckt> [param=val ...]
+
+Subcircuit semantics (flattening expansion, ngspice-style):
+- Instances are expanded recursively at parse time; internal nodes become
+  "<inst_path>.<node>" (e.g. X1.n1, X1.X2.n1); ground ("0"/"GND") stays global.
+- Flattened device names become "<type_char>.<inst_path>.<orig_name>"
+  (e.g. M.X1.Mp1) so first-character dispatch still works.
+- Parameters: .subckt-line defaults, overridden per instance; referenced in
+  the body as bare names or {expr} / 'expr' arithmetic (unit suffixes OK).
+- .model/.include inside a body are hoisted to global scope; nested .subckt
+  definitions are registered globally (ngspice-flat scoping).
+- Node/port/param matching is case-sensitive for nodes, case-insensitive
+  for subckt names and parameter names.
 
 Value suffixes supported:
 - k/K: kilo (1e3)
@@ -359,6 +375,8 @@ class Parser:
         self.analysis_type: Optional[str] = None
         self.analysis_params: Dict[str, float] = {}
         self.models: Dict[str, Dict[str, Any]] = {}  # Model definitions
+        # Subcircuit definitions: UPPER name -> {name, ports, params, body}
+        self.subckts: Dict[str, Dict[str, Any]] = {}
         self._osdi_path = osdi_path or BSIMCMG_OSDI_PATH
         self._modelcard_base_dir = modelcard_base_dir or GENERIC_MODELCARD_DIR
         self._explicit_modelcard = modelcard_path
@@ -436,17 +454,33 @@ class Parser:
         if continued_line:
             processed_lines.append(continued_line)
 
+        # Subckt pass: extract .subckt/.ends definition blocks (registers
+        # them in self.subckts; hoists .model/.include out of bodies).
+        # Runs before the model/include pre-pass so hoisted cards are seen.
+        component_lines = self._collect_subckt_defs(processed_lines)
+
         # Pre-pass: collect all .model and .include directives first
-        # This ensures models are available before components that reference them
-        for line in processed_lines:
+        # This ensures models are available before components that reference
+        # them. Included files register their .subckt definitions on this
+        # parser too, so top-level X instances can use library subckts.
+        for line in component_lines:
             if line.lower().startswith('.model'):
                 self._parse_model(line)
             elif line.lower().startswith('.include'):
                 # Includes may add more models, so process them
                 self.parse_line(line)
 
+        # Expansion pass: flatten X subcircuit instances recursively.
+        flat_lines = []
+        for line in component_lines:
+            if line[0].upper() == 'X':
+                flat_lines.extend(self._expand_instance(
+                    line, node_map={}, path="", params={}, depth=0))
+            else:
+                flat_lines.append(line)
+
         # Second pass: parse all remaining lines (components, analysis, etc.)
-        for line in processed_lines:
+        for line in flat_lines:
             # Skip .model and .include (already processed)
             if not line.lower().startswith(('.model', '.include')):
                 self.parse_line(line)
@@ -486,13 +520,19 @@ class Parser:
             self._parse_current_source(line)
         elif first_char == 'M':
             self._parse_mosfet(line)
-        elif line.startswith('.dc'):
+        elif first_char == 'X':
+            # X instances are expanded (flattened) inside parse_file; one
+            # reaching parse_line means the subckt machinery was bypassed.
+            raise ValueError(
+                f"Unexpanded subcircuit instance '{line}': X lines are only "
+                "supported through parse_file (.subckt expansion)")
+        elif line.lower().startswith('.dc'):
             self._parse_dc(line)
-        elif line.startswith('.tran'):
+        elif line.lower().startswith('.tran'):
             self._parse_tran(line)
-        elif line.startswith('.ac'):
+        elif line.lower().startswith('.ac'):
             self._parse_ac(line)
-        elif line.startswith('.ic'):
+        elif line.lower().startswith('.ic'):
             self._parse_ic(line)
         elif line.lower().startswith('.model'):
             self._parse_model(line)
@@ -1022,10 +1062,11 @@ class Parser:
         ic_spec = line[3:].strip()
 
         # Pattern to match V(node)=value or V(node)=value, with multiple assignments
-        # Supports: V(2)=3.3, V(2)=3.3 V(3)=0, V(node1)=1.8 V(node2)=0.5
-        pattern = r'V\(\s*([^)]+)\s*\)\s*=\s*([0-9.eE+-]+[kKuUnNpP]?)'
+        # Supports: V(2)=3.3, V(2)=3.3 V(3)=0, V(node1)=1.8 V(node2)=0.5,
+        # and hierarchical (subckt-expanded) nodes: V(X1.n1)=0.5
+        pattern = r'V\(\s*([^)]+?)\s*\)\s*=\s*([0-9.eE+-]+[kKuUnNpP]?)'
 
-        matches = re.findall(pattern, ic_spec)
+        matches = re.findall(pattern, ic_spec, flags=re.IGNORECASE)
 
         if not matches:
             raise ValueError(f"Invalid .ic syntax: {line}")
@@ -1110,5 +1151,302 @@ class Parser:
         if not included_path.exists():
             raise FileNotFoundError(f"Included file not found: {included_path}")
 
-        # Parse the included file using parse_file (handles line continuations)
-        self.parse_file(str(included_path))
+        # Parse the included file using parse_file (handles line continuations).
+        # Save/restore _current_file so sibling includes after this one still
+        # resolve relative to the including file, not the included one.
+        try:
+            self.parse_file(str(included_path))
+        finally:
+            if current_file is not None:
+                self._current_file = current_file
+
+    # ── Subcircuit (.subckt / .ends / X instance) machinery ──────────────
+    #
+    # Hierarchy is supported by flattening at parse time (ngspice-style):
+    # definitions are collected into self.subckts, then every X line is
+    # recursively expanded into ordinary component/.ic lines with
+    # instance-prefixed internal node names ("X1.n1", "X1.X2.n1") and
+    # device names ("M.X1.Mp1" — first char preserved for dispatch).
+
+    #: Maximum instantiation depth (guards recursive subckt cycles).
+    MAX_SUBCKT_DEPTH = 64
+
+    #: Node-token count per component type letter (nodes come right after
+    #: the name token; everything later is values/params/model refs).
+    _NODE_COUNT = {'R': 2, 'C': 2, 'V': 2, 'I': 2, 'M': 4}
+
+    def _collect_subckt_defs(self, lines: list) -> list:
+        """Extract .subckt/.ends blocks from a processed-line stream.
+
+        Registers each definition in ``self.subckts`` (keyed by upper-cased
+        name) and returns the remaining top-level lines. Nested .subckt
+        definitions are allowed and registered globally (ngspice-flat
+        scoping). ``.model``/``.include`` cards found inside a body are
+        hoisted to the top-level stream so the model pre-pass sees them.
+
+        Args:
+            lines: Continuation-folded, whitespace-normalized netlist lines
+
+        Returns:
+            Top-level lines with all .subckt blocks removed
+
+        Raises:
+            ValueError: On malformed/unbalanced .subckt/.ends structure
+        """
+        top_lines: list = []
+        def_stack: list = []  # innermost definition last
+
+        for line in lines:
+            low = line.lower()
+            if low.startswith('.subckt'):
+                parts = line.split()
+                if len(parts) < 2:
+                    raise ValueError(f"Invalid .subckt syntax: {line}")
+                ports = []
+                params: Dict[str, Any] = {}
+                for tok in parts[2:]:
+                    if '=' in tok:
+                        key, val = tok.split('=', 1)
+                        params[key.strip().upper()] = \
+                            self._resolve_param_value(val, {})
+                    else:
+                        ports.append(tok)
+                def_stack.append({
+                    'name': parts[1],
+                    'ports': ports,
+                    'params': params,
+                    'body': [],
+                })
+            elif low.startswith('.ends'):
+                if not def_stack:
+                    raise ValueError(f"'.ends' without matching .subckt: {line}")
+                defn = def_stack.pop()
+                parts = line.split()
+                if len(parts) > 1 and parts[1].upper() != defn['name'].upper():
+                    raise ValueError(
+                        f"'.ends {parts[1]}' does not close "
+                        f".subckt {defn['name']}")
+                self.subckts[defn['name'].upper()] = defn
+            elif def_stack:
+                if low.startswith('.model') or low.startswith('.include'):
+                    # Models/includes are global in this parser — hoist.
+                    top_lines.append(line)
+                else:
+                    def_stack[-1]['body'].append(line)
+            else:
+                top_lines.append(line)
+
+        if def_stack:
+            raise ValueError(
+                f".subckt '{def_stack[-1]['name']}' has no matching .ends")
+        return top_lines
+
+    def _expand_instance(self, line: str, node_map: Dict[str, str],
+                         path: str, params: Dict[str, Any],
+                         depth: int) -> list:
+        """Recursively flatten one X subcircuit-instance line.
+
+        Args:
+            line: ``X<name> <node1> ... <subckt_name> [param=val ...]``
+            node_map: Enclosing scope's local-node -> flat-node mapping
+            path: Enclosing instance path ("" at top level)
+            params: Enclosing scope's parameter environment
+            depth: Current instantiation depth (cycle guard)
+
+        Returns:
+            List of flattened component / .ic lines
+
+        Raises:
+            ValueError: Unknown subckt, port-count mismatch, or recursion
+        """
+        if depth > self.MAX_SUBCKT_DEPTH:
+            raise ValueError(
+                f"Subcircuit nesting deeper than {self.MAX_SUBCKT_DEPTH} "
+                f"levels at '{line}' — recursive .subckt definitions?")
+
+        parts = line.split()
+        inst_name = parts[0]
+        positional = [p for p in parts[1:] if '=' not in p]
+        if len(positional) < 1:
+            raise ValueError(f"Invalid subcircuit instance syntax: {line}")
+        subckt_name = positional[-1]
+        raw_nodes = positional[:-1]
+
+        defn = self.subckts.get(subckt_name.upper())
+        if defn is None:
+            raise ValueError(
+                f"Subcircuit '{subckt_name}' not found for instance "
+                f"'{inst_name}'. Defined subckts: "
+                f"{[d['name'] for d in self.subckts.values()]}")
+        if len(raw_nodes) != len(defn['ports']):
+            raise ValueError(
+                f"Instance '{inst_name}' connects {len(raw_nodes)} nodes "
+                f"but .subckt {defn['name']} declares "
+                f"{len(defn['ports'])} ports ({defn['ports']})")
+
+        # Map connection nodes through the ENCLOSING scope first.
+        ext_nodes = [self._map_node(n, node_map, path) for n in raw_nodes]
+
+        # Parameter environment: defaults overridden per instance; override
+        # values are resolved in the enclosing scope (may reference parent
+        # params or {expr} arithmetic).
+        child_params = dict(defn['params'])
+        for tok in parts[1:]:
+            if '=' in tok:
+                key, val = tok.split('=', 1)
+                child_params[key.strip().upper()] = \
+                    self._resolve_param_value(val, params)
+
+        inst_path = f"{path}.{inst_name}" if path else inst_name
+        child_map = dict(zip(defn['ports'], ext_nodes))
+
+        flat: list = []
+        for body_line in defn['body']:
+            flat.extend(self._expand_body_line(
+                body_line, child_map, inst_path, child_params, depth + 1))
+        return flat
+
+    def _expand_body_line(self, line: str, node_map: Dict[str, str],
+                          path: str, params: Dict[str, Any],
+                          depth: int) -> list:
+        """Flatten a single .subckt body line within an instance context.
+
+        Component lines get instance-prefixed names and mapped nodes plus
+        parameter substitution; nested X lines recurse; ``.ic`` cards are
+        rewritten to the flat node names. Any other directive is an error
+        (``.model``/``.include`` were hoisted at collection time).
+        """
+        if line.startswith('.'):
+            if line.lower().startswith('.ic'):
+                # Rewrite every V(node)=value assignment: node mapped to its
+                # flat name, value resolved in the parameter environment
+                # (bare param names / {expr} allowed inside bodies).
+                def _rewrite_ic(m: "re.Match") -> str:
+                    node = self._map_node(m.group(2).strip(), node_map, path)
+                    value = self._format_param(
+                        self._resolve_param_value(m.group(4), params))
+                    return f"{m.group(1)}{node}{m.group(3)}{value}"
+                return [re.sub(
+                    r'([Vv]\(\s*)([^)]+?)(\s*\)\s*=\s*)(\{[^}]*\}|\S+)',
+                    _rewrite_ic, line)]
+            raise ValueError(
+                f"Directive '{line.split()[0]}' is not allowed inside a "
+                f".subckt body (only components, X instances and .ic)")
+
+        first_char = line[0].upper()
+        if first_char == 'X':
+            return self._expand_instance(line, node_map, path, params, depth)
+
+        if first_char not in self._NODE_COUNT:
+            raise ValueError(
+                f"Unsupported component '{line}' inside .subckt body "
+                f"(supported: R, C, V, I, M, X)")
+
+        parts = line.split()
+        n_nodes = self._NODE_COUNT[first_char]
+        if len(parts) < 1 + n_nodes + 1:
+            raise ValueError(f"Invalid component line in .subckt body: {line}")
+
+        new_name = f"{parts[0][0]}.{path}.{parts[0]}"
+        mapped_nodes = [self._map_node(tok, node_map, path)
+                        for tok in parts[1:1 + n_nodes]]
+        if first_char == 'M':
+            # Token 5 is the .model reference — never substituted.
+            tail = [parts[5]] + [self._subst_token(tok, params)
+                                 for tok in parts[6:]]
+        else:
+            tail = [self._subst_token(tok, params)
+                    for tok in parts[1 + n_nodes:]]
+        return [' '.join([new_name] + mapped_nodes + tail)]
+
+    def _map_node(self, node: str, node_map: Dict[str, str],
+                  path: str) -> str:
+        """Map a local node token to its flat (global) name.
+
+        Ports map to the connecting nodes, ground ("0"/"GND") is global,
+        anything else is an internal node prefixed with the instance path.
+        """
+        if node in node_map:
+            return node_map[node]
+        if node in ("0", "GND") or not path:
+            return node
+        return f"{path}.{node}"
+
+    def _subst_token(self, token: str, params: Dict[str, Any]) -> str:
+        """Apply parameter substitution to one value/param token.
+
+        ``KEY=val`` tokens have their value part resolved (bare parameter
+        names, ``{expr}``/``'expr'`` arithmetic, plain literals); bare
+        tokens are replaced only when they name a parameter or expression.
+        """
+        if '=' in token:
+            key, val = token.split('=', 1)
+            return f"{key}={self._format_param(self._resolve_param_value(val, params))}"
+        resolved = self._resolve_param_value(token, params)
+        if isinstance(resolved, float) or token.upper() in params \
+                or token.startswith(('{', "'")):
+            return self._format_param(resolved)
+        return token
+
+    def _resolve_param_value(self, raw: str, params: Dict[str, Any]):
+        """Resolve a parameter value string in the given environment.
+
+        Order: ``{expr}`` / ``'expr'`` arithmetic > bare parameter-name
+        lookup (case-insensitive) > numeric literal with unit suffix >
+        raw string passthrough.
+        """
+        raw = raw.strip()
+        if (raw.startswith('{') and raw.endswith('}')) or \
+                (raw.startswith("'") and raw.endswith("'") and len(raw) > 1):
+            return self._eval_expr(raw[1:-1], params)
+        if raw.upper() in params:
+            return params[raw.upper()]
+        try:
+            return self._parse_value(raw)
+        except ValueError:
+            return raw
+
+    def _eval_expr(self, expr: str, params: Dict[str, Any]) -> float:
+        """Safely evaluate a {…} parameter expression.
+
+        Supports + - * / ( ), numeric literals with unit suffixes, and
+        parameter names. No builtins/attribute access can be reached: all
+        identifier tokens are substituted (or rejected) before eval and
+        the residue is charset-checked.
+        """
+        def _num(m: "re.Match") -> str:
+            return repr(float(m.group(1)) * self.UNIT_SUFFIXES[m.group(2)])
+
+        # Numeric literals with unit suffixes -> plain floats
+        substituted = re.sub(
+            r'(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)([tTgGmMkKuUnNpPfF])\b',
+            _num, expr)
+
+        def _ident(m: "re.Match") -> str:
+            key = m.group(0).upper()
+            if key in params:
+                val = params[key]
+                if not isinstance(val, (int, float)):
+                    raise ValueError(
+                        f"Parameter {key}={val!r} is not numeric in "
+                        f"expression '{expr}'")
+                return f"({float(val)!r})"
+            raise ValueError(
+                f"Unknown parameter '{m.group(0)}' in expression '{expr}'")
+
+        substituted = re.sub(r'[A-Za-z_][A-Za-z_0-9]*', _ident, substituted)
+        if not re.fullmatch(r"[-+*/(). 0-9eE]*", substituted):
+            raise ValueError(f"Unsupported syntax in expression '{expr}'")
+        try:
+            return float(eval(substituted, {"__builtins__": {}}, {}))
+        except ZeroDivisionError:
+            raise ValueError(f"Division by zero in expression '{expr}'")
+
+    @staticmethod
+    def _format_param(val) -> str:
+        """Format a resolved parameter back into a netlist token."""
+        if isinstance(val, float):
+            if val.is_integer() and abs(val) < 1e15:
+                return str(int(val))
+            return repr(val)
+        return str(val)

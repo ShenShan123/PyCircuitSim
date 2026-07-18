@@ -274,12 +274,15 @@ def test_cs_amp(work_dir: Path) -> bool:
           f"VDD={vdd}V Vbias={vbias}V RD={rd} Cload={cload}")
 
     py_deck = (
-        "* BSIM-CMG CS amp AC (PyCircuitSim)\n"
+        "* BSIM-CMG CS amp AC (PyCircuitSim) — hierarchical (V6.12.0)\n"
         f"VDD vdd 0 {vdd}\n"
         f"Vin in 0 DC={vbias} AC=1 0\n"
+        f"Xamp in out vdd csamp\n"
+        f"Cload out 0 {cload}\n"
+        f".subckt csamp in out vdd\n"
         f"RD vdd out {rd}\n"
         f"Mn1 out in 0 0 {vt.nmos_model} L={l_nm:.0f}n NFIN={nfin} TFIN={tfin_nm:.1f}n\n"
-        f"Cload out 0 {cload}\n"
+        f".ends\n"
         f".model {vt.nmos_model} NMOS (LEVEL=72)\n"
         f".ac {ac_card.split(' ', 1)[1]}\n"
         ".end\n"

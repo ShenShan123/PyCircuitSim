@@ -1,10 +1,15 @@
 * BSIM-CMG Inverter DC Sweep Reference (ASAP7 RVT, VDD=0.7V)
+* Hierarchical (.subckt) version
 
 Vdd vdd 0 0.7
 Vin in 0 0.0
 
-Mp1 out in vdd vdd pmos1 L=7n NFIN=10
-Mn1 out in 0 0 nmos1 L=7n NFIN=10
+Xinv in out vdd inv
+
+.subckt inv i o vdd
+Mp1 o i vdd vdd pmos1 L=7n NFIN=10
+Mn1 o i 0 0 nmos1 L=7n NFIN=10
+.ends
 
 .model nmos1 NMOS (LEVEL=72)
 .model pmos1 PMOS (LEVEL=72)

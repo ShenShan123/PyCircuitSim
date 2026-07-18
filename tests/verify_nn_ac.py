@@ -94,22 +94,29 @@ def _ngspice_body(bt, device: str, baked: Path, vbias_token: str) -> List[str]:
 
 
 def _directnet_deck(bt, device: str, vbias: float, ac_card: str) -> str:
+    # Hierarchical deck (V6.12.0): the CS-amp core (device + load R) is a
+    # .subckt instance; in/out/vdd stay top-level via the ports.
     if device == "nmos":
         ln = bt.l_nmos * 1e9
-        dev = (f"RD vdd out {RD}\n"
-               f"Mn1 out in 0 0 nmos_nn L={ln:.0f}n NFIN={bt.nfin}\n")
+        dev = (f".subckt csamp in out vdd\n"
+               f"RD vdd out {RD}\n"
+               f"Mn1 out in 0 0 nmos_nn L={ln:.0f}n NFIN={bt.nfin}\n"
+               f".ends\n")
         model = (f".model nmos_nn NMOS "
                  f"(LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})\n")
     else:  # pmos
         lp = bt.l_pmos * 1e9
-        dev = (f"Mp1 out in vdd vdd pmos_nn L={lp:.0f}n NFIN={bt.effective_nfin_p}\n"
-               f"RD out 0 {RD}\n")
+        dev = (f".subckt csamp in out vdd\n"
+               f"Mp1 out in vdd vdd pmos_nn L={lp:.0f}n NFIN={bt.effective_nfin_p}\n"
+               f"RD out 0 {RD}\n"
+               f".ends\n")
         model = (f".model pmos_nn PMOS "
                  f"(LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})\n")
     return (
         f"* {device.upper()} CS amp AC — DirectNet LEVEL=73 ({bt.name})\n"
         f"VDD vdd 0 {bt.vdd:g}\n"
         f"Vin in 0 DC={vbias:g} AC=1 0\n"
+        f"Xamp in out vdd csamp\n"
         + dev + model + f".{ac_card}\n.end\n"
     )
 

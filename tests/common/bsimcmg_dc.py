@@ -355,16 +355,21 @@ def create_pycircuitsim_dc_netlist(config: DCTestConfig, work_dir: Path) -> Path
         )
 
     else:  # INVERTER_VTC
+        # Hierarchical deck (V6.12.0): inverter as a .subckt instance; ports
+        # keep probed nodes (2=in, 3=out) at top level, NFIN via parameters.
         l_n_nm = config.l_nmos * 1e9
         l_p_nm = config.l_pmos * 1e9
         content = (
             f"* CMOS Inverter VTC ({config.label})\n"
             f"Vdd 1 0 {config.vdd}\n"
             f"Vin 2 0 0.0\n"
-            f"Mp1 3 2 1 1 {vt.pmos_model} L={l_p_nm:.0f}n"
-            f" NFIN={config.nfin_p} TFIN={tech.tfin*1e9:.1f}n\n"
-            f"Mn1 3 2 0 0 {vt.nmos_model} L={l_n_nm:.0f}n"
-            f" NFIN={config.nfin_n} TFIN={tech.tfin*1e9:.1f}n\n"
+            f"Xinv 2 3 1 inv NFP={config.nfin_p} NFN={config.nfin_n}\n"
+            f".subckt inv i o vdd NFP=1 NFN=1\n"
+            f"Mp1 o i vdd vdd {vt.pmos_model} L={l_p_nm:.0f}n"
+            f" NFIN=NFP TFIN={tech.tfin*1e9:.1f}n\n"
+            f"Mn1 o i 0 0 {vt.nmos_model} L={l_n_nm:.0f}n"
+            f" NFIN=NFN TFIN={tech.tfin*1e9:.1f}n\n"
+            f".ends\n"
             f".model {vt.nmos_model} NMOS (LEVEL=72)\n"
             f".model {vt.pmos_model} PMOS (LEVEL=72)\n"
             f".dc Vin {config.sweep_start} {config.sweep_stop} {config.sweep_step}\n"

@@ -11,25 +11,19 @@
 Vdd vdd 0 0.80
 .ic V(n1)=0.0 V(n2)=0.80 V(n3)=0.0 V(n4)=0.80 V(n5)=0.0
 
-Mp1 n1 n5 vdd vdd pmos_nn L=20n NFIN=2
-Mn1 n1 n5 0   0   nmos_nn L=16n NFIN=2
-Cl1 n1 0 0.5f
+* Hierarchical (V6.12.0): one ringinv .subckt instantiated 5x; the stage
+* nodes n1..n5 stay top-level through the ports.
+Xinv1 n5 n1 vdd ringinv
+Xinv2 n1 n2 vdd ringinv
+Xinv3 n2 n3 vdd ringinv
+Xinv4 n3 n4 vdd ringinv
+Xinv5 n4 n5 vdd ringinv
 
-Mp2 n2 n1 vdd vdd pmos_nn L=20n NFIN=2
-Mn2 n2 n1 0   0   nmos_nn L=16n NFIN=2
-Cl2 n2 0 0.5f
-
-Mp3 n3 n2 vdd vdd pmos_nn L=20n NFIN=2
-Mn3 n3 n2 0   0   nmos_nn L=16n NFIN=2
-Cl3 n3 0 0.5f
-
-Mp4 n4 n3 vdd vdd pmos_nn L=20n NFIN=2
-Mn4 n4 n3 0   0   nmos_nn L=16n NFIN=2
-Cl4 n4 0 0.5f
-
-Mp5 n5 n4 vdd vdd pmos_nn L=20n NFIN=2
-Mn5 n5 n4 0   0   nmos_nn L=16n NFIN=2
-Cl5 n5 0 0.5f
+.subckt ringinv i o vdd
+Mp o i vdd vdd pmos_nn L=20n NFIN=2
+Mn o i 0   0   nmos_nn L=16n NFIN=2
+Cl o 0 0.5f
+.ends
 
 .model nmos_nn NMOS (LEVEL=73 TECH=tsmc12 VT=svt)
 .model pmos_nn PMOS (LEVEL=73 TECH=tsmc12 VT=svt)

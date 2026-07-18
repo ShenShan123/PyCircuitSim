@@ -15,17 +15,26 @@ Vdd vdd 0 0.80
 Vin vin 0 0.48
 Vphi phi 0 PULSE 0 0.80 0.5n 0.1n 0.1n 1.9n 4n
 
-* --- clock inverter: phi -> phib ---
-Mpc phib phi vdd vdd pmos_nn L=20n NFIN=2
-Mnc phib phi 0   0   nmos_nn L=16n NFIN=2
-
-* --- CMOS transmission gate: vin <-> vsamp ---
-Mnt vin phi  vsamp 0   nmos_nn L=16n NFIN=2
-Mpt vin phib vsamp vdd pmos_nn L=20n NFIN=2
+* --- hierarchical (V6.12.0): clock inverter + transmission gate are
+* --- .subckt instances; phi/phib/vsamp stay top-level via the ports ---
+Xck phi phib vdd ckinv
+Xtg vin vsamp phi phib vdd tgate
 
 Csample vsamp 0 100f
 
 .ic V(vsamp)=0.0 V(phib)=0.80
+
+* --- clock inverter: phi -> phib ---
+.subckt ckinv i o vdd
+Mpc o i vdd vdd pmos_nn L=20n NFIN=2
+Mnc o i 0   0   nmos_nn L=16n NFIN=2
+.ends
+
+* --- CMOS transmission gate: a <-> b ---
+.subckt tgate a b phi phib vdd
+Mnt a phi  b 0   nmos_nn L=16n NFIN=2
+Mpt a phib b vdd pmos_nn L=20n NFIN=2
+.ends
 
 .model nmos_nn NMOS (LEVEL=73 TECH=tsmc12 VT=svt)
 .model pmos_nn PMOS (LEVEL=73 TECH=tsmc12 VT=svt)
