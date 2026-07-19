@@ -270,6 +270,10 @@ def create_pycircuitsim_netlist(config: TestConfig, work_dir: Path) -> Path:
     l_p_nm = config.l_pmos * 1e9
 
     netlist_path = work_dir / f"pycircuitsim_{config.label}.sp"
+    # Hierarchical deck (V6.12.0): the inverter is a .subckt instance. Ports
+    # keep the probed nodes (2=in, 3=out, 1=vdd) at top level so the harness
+    # node keys are unchanged; NFIN flows through subckt parameters; the .ic
+    # card inside the body is remapped to the port node by the expansion.
     content = f"""\
 * BSIM-CMG Inverter Transient - PyCircuitSim ({config.label})
 * Tech={tech.name} VT={vt.vt_name} VDD={config.vdd}V
@@ -277,10 +281,13 @@ def create_pycircuitsim_netlist(config: TestConfig, work_dir: Path) -> Path:
 
 Vdd 1 0 {config.vdd}
 Vin 2 0 PULSE {config.pulse_v1} {config.pulse_v2} {config.td} {config.tr} {config.tf} {config.pw} {config.per}
-Mp1 3 2 1 1 {vt.pmos_model} L={l_p_nm:.0f}n NFIN={config.nfin_p} TFIN={tech.tfin*1e9:.1f}n
-Mn1 3 2 0 0 {vt.nmos_model} L={l_n_nm:.0f}n NFIN={config.nfin_n} TFIN={tech.tfin*1e9:.1f}n
+Xinv 2 3 1 inv NFP={config.nfin_p} NFN={config.nfin_n}
 Cload 3 0 {config.cload}
-.ic V(3)={config.vdd}
+.subckt inv i o vdd NFP=1 NFN=1
+Mp1 o i vdd vdd {vt.pmos_model} L={l_p_nm:.0f}n NFIN=NFP TFIN={tech.tfin*1e9:.1f}n
+Mn1 o i 0 0 {vt.nmos_model} L={l_n_nm:.0f}n NFIN=NFN TFIN={tech.tfin*1e9:.1f}n
+.ic V(o)={config.vdd}
+.ends
 .model {vt.nmos_model} NMOS (LEVEL=72)
 .model {vt.pmos_model} PMOS (LEVEL=72)
 .tran {config.tstep} {config.tstop}

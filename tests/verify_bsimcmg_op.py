@@ -441,12 +441,16 @@ def test_inverter_op() -> bool:
         print(f"    [2/2] Running PyCircuitSim...")
 
         inv_netlist = (
-            f'* CMOS Inverter OP (Vin={vin}V)\n'
+            f'* CMOS Inverter OP (Vin={vin}V) — hierarchical (V6.12.0)\n'
             f'Vdd 1 0 {VDD}\n'
             f'Vin 2 0 {vin}\n'
             f'\n'
-            f'Mp1 3 2 1 1 pmos1 L=30n NFIN=10\n'
-            f'Mn1 3 2 0 0 nmos1 L=30n NFIN=10\n'
+            f'Xinv 2 3 1 inv\n'
+            f'\n'
+            f'.subckt inv i o vdd\n'
+            f'Mp1 o i vdd vdd pmos1 L=30n NFIN=10\n'
+            f'Mn1 o i 0 0 nmos1 L=30n NFIN=10\n'
+            f'.ends\n'
             f'\n'
             f'.model nmos1 NMOS (LEVEL=72)\n'
             f'.model pmos1 PMOS (LEVEL=72)\n'

@@ -122,7 +122,8 @@ authoritative ground truth; DirectNet is the production NN; BSIMAR is parked.
 
 * **Devices:** R, C; NMOS/PMOS LEVEL=72 (BSIM-CMG, ground truth), LEVEL=73 (DirectNet, primary NN), LEVEL=74 (BSIMAR), LEVEL=75 (PFN/TabPFN, V6.10.0); DC + AC voltage/current sources (`AC=mag phase`), PULSE.
 * **Analyses:** `.op`, `.dc`, `.tran`, `.ac`.
-* **Directives:** `.model` (LEVEL=72/73/74), `.include`, `.ic`.
+* **Directives:** `.model` (LEVEL=72/73/74), `.include`, `.ic`, `.subckt`/`.ends` + hierarchical `X` instances (V6.12.0).
+* **Subcircuits (V6.12.0):** `.subckt <name> <ports...> [param=default ...]` … `.ends`; instance `X<id> <nodes...> <name> [param=val ...]`. Flattening expansion at parse time (ngspice-style): internal nodes become `X1.n1` (nested: `X1.X2.n1`), devices `M.X1.Mp1` (type char preserved); ground `0`/`GND` global; params substitute as bare names or `{expr}`/`'expr'` arithmetic (unit suffixes OK); `.ic` inside bodies remaps nodes AND resolves param values; top-level `.ic V(X1.n1)=v` reaches internal nodes; `.model`/`.include` in bodies are hoisted global; nested `.subckt` defs registered globally. Loud errors on unknown subckt, port-count mismatch, recursion (>64 deep). Gate: `tests/verify_subckt.py` (8 checks — subckt==flat bit-identical, L72 inverter + nested buffer vs NGSPICE).
 * Legacy LEVEL=1 (Shichman-Hodges) removed.
 
 ## Validation
@@ -204,7 +205,7 @@ Mn1 3 2 0 0 nmos1 L=30n NFIN=10
 
 ### NN training (per-tech DirectNet, LEVEL=73)
 
-Dedicated per-tech NMOS/PMOS DirectNet checkpoints for **TSMC5 / TSMC7 / TSMC12 / TSMC16** (TSMC6 configs + datasets landed in V6.9.0; checkpoints pending a training campaign). `--tech-scope` ∈ `{tsmc5,tsmc6,tsmc7,tsmc12,tsmc16,universal}`; `--size` ∈ `{small,medium,large,xl}`. The benchmark below drives the s/m/l/xl matrix on the clean recipe; recipe variants (including the production crit30 curriculum) train via `scripts/recipe_train.sh` (curriculum fine-tunes warm-start from the clean same-size base — at `large` that is the `v660clean` archive, injected automatically).
+Dedicated per-tech NMOS/PMOS DirectNet checkpoints for **TSMC5 / TSMC6 / TSMC7 / TSMC12 / TSMC16** (TSMC6 = 6th tech; all three NN families trained + gated at every scale in V6.11.0 — DN production = `large` 3/4, PFN flat 2/4, BSIM-AR = `medium` 3/4 banking the tsmc6 opamp; TSMC6 addenda in the DN/TF/PFN accuracy reports + CHANGELOG V6.11.0). `--tech-scope` ∈ `{tsmc5,tsmc6,tsmc7,tsmc12,tsmc16,universal}`; `--size` ∈ `{small,medium,large,xl}`. The benchmark below drives the s/m/l/xl matrix on the clean recipe; recipe variants (including the production crit30 curriculum) train via `scripts/recipe_train.sh` (curriculum fine-tunes warm-start from the clean same-size base — at `large` that is the `v660clean` archive, injected automatically).
 
 ```bash
 # 1. Generate per-tech data (one .npz per tech+device). --enable-inv-trip adds the
@@ -226,7 +227,7 @@ conda run -n pycircuitsim python -u -m bsimar.cli.train \
 
 **Checkpoints** (`external_compact_models/bsimar/checkpoints/`, each `*_best.pt` + `_norm.npz`):
 
-- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}` — **32 checkpoints**, each a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot; Rule 16). `small/medium/xl` = clean recipe `--apply-filter off --swa-mode ema --seed 42`; the production `large` slots carry **crit30** since V6.6.4 (clean originals archived as `tsmc{X}_dn_v660clean_large_*`). The recipe-study pool was pruned in the V6.7.1 house-clean (archive: `/data2/shenshan/v66x_v670_retired_ckpts_2026-07-05.tar.gz`); kept on disk beyond production: `tsmc{X}_dn_v660clean_large` (curriculum warm-start base), `tsmc{X}_dn_crit30f_large` (production provenance), documented alternates `csob@large` (AC/device fidelity) and `corroft`/`crit10`@xl (tsmc16-opamp coverage), plus promote-candidate `crit15m@xl` (14/16 strict, ties production — V6.6.6). Completed trainings carry a `*_best.pt.complete` marker (a bare `_best.pt` may be a killed run).
+- Per-tech DirectNet: `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}` — **32 checkpoints**, each a SHRUNK local-vocab embedding (per-tech variant count + 1 UNKNOWN slot; Rule 16). `small/medium/xl` = clean recipe `--apply-filter off --swa-mode ema --seed 42`; the production `large` slots carry **crit30** since V6.6.4 (clean originals archived as `tsmc{X}_dn_v660clean_large_*`). **TSMC6 (V6.11.0) adds `tsmc6_dn_{s,m,l,xl}_{n,p}` = 8 CLEAN checkpoints** — no curriculum trained (campaign scoped to the clean capacity sweep), so tsmc6 production `large` = clean 3/4; also `tsmc6_tf_{s,m,l,xl}_*` (8) + `tsmc6_pfn_{s,m,l}_*` (6). The recipe-study pool was pruned in the V6.7.1 house-clean (archive: `/data2/shenshan/v66x_v670_retired_ckpts_2026-07-05.tar.gz`); kept on disk beyond production: `tsmc{X}_dn_v660clean_large` (curriculum warm-start base), `tsmc{X}_dn_crit30f_large` (production provenance), documented alternates `csob@large` (AC/device fidelity) and `corroft`/`crit10`@xl (tsmc16-opamp coverage), plus promote-candidate `crit15m@xl` (14/16 strict, ties production — V6.6.6). Completed trainings carry a `*_best.pt.complete` marker (a bare `_best.pt` may be a killed run).
 - Universal DirectNet (V6.7.0): `u716_dn_{clean,csob,corroft,crit30u}_large` + `u716_dn_{clean,corroft}_xl` + TSMC5 fine-tunes `u716f5_plain_n{1000000,full}_large` — 18-code universal vocab, env-pin-only (stems match no resolver fallback). Best universal config = `u716_dn_corroft_large` (10/12 strict, 0 FLIPs); new-tech onboarding = clean base + plain fine-tune @≥1M stratified rows (`scripts/uni_{concat,subsample}_npz.py` + `uni_ft_train.sh` + `uni_gate_sweep.sh`; datasets regenerable). See `docs/V6.7.0-universal-transfer-report.md`.
 - Resolver cascade (`pycircuitsim/parser.py`): the env pin `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}` is read FIRST (since V6.6.6 an absent pinned stem raises — no silent fallback); then for a TSMC5/6/7/12/16 netlist the per-tech slot `tsmc{X}_dn_{large,medium,small,xl}` (**large-first**) preempts the dormant universal fallback chain. Resolutions log at parse time as `[NN-resolver] L73 <name> TECH=<x> VT=<y> -> <chk> (scope=<s>, tech_code=<c>)`.
 
@@ -241,6 +242,11 @@ Results in `results/<circuit_name>/<analysis_type>/`: an HSPICE-like `*_simulati
 All tests require `conda activate pycircuitsim`. Ground truth is **always** NGSPICE on the identical BSIM-CMG (LEVEL=72) OSDI model — never a simplified/self-defined reference. Gates are CPU-pinned (`CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`) and honor `NGSPICE_BIN` (repo `tools/ngspice-45.2/bin/ngspice` when `/usr/local/ngspice-45.2` is absent). Since V6.6.6 the complex/AC gate infra also pins torch to 1 thread by default (`PYCIRCUITSIM_TORCH_THREADS` overrides — used by the OMP multistability sweep).
 
 **Shared infra** (`tests/common/`): `base.py` (PROJECT_ROOT, OSDI_PATH, TechProfile, ALL_TECHS, NGSPICE runner), `bsimcmg_{dc,tran}.py`, `nn.py` + `nn_sweep.py`, `complex.py` + `complex_sweep.py` + `complex_ac.py`; reference netlists in `tests/references/`.
+
+### Subcircuit hierarchy (.subckt, V6.12.0)
+
+- `verify_subckt.py` — L1 linear subckt==flat equivalence (tran/AC/nested-OP/uic, no NGSPICE), L2 L72 inverter-in-subckt vs flat vs NGSPICE, L3 nested 2-inverter buffer (X-in-X + params + `.ic` on internal node) vs NGSPICE. 8/8 PASS at introduction.
+- Since V6.12.0 the PyCircuitSim-side test decks are **hierarchical**: inverter VTC/tran (bsimcmg_dc/tran), all complex builders + templates (opamp 2-stage, ring `ringinv`×5, switchcap `ckinv`+`tgate`, SRAM `sraminv`), NN inverter decks, CS-amp AC decks. Probed nodes stay top-level (ports), so harness keys and baselines are unchanged; NGSPICE reference decks stay flat. Single-device Id-Vgs decks stay flat (the harness probes `i(Mn1)` by device name).
 
 ### BSIM-CMG ground truth (LEVEL=72)
 

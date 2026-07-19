@@ -19,15 +19,18 @@ Vbl bl 0 0.80
 Vblb blb 0 0.80
 .ic V(q)=0.80 V(qb)=0.0
 
-* --- left inverter: q -> qb ... cross-coupled ---
-Mpl qb q vdd vdd pmos_nn L=20n NFIN=2
-Mnl qb q 0   0   nmos_nn L=16n NFIN=2
-* --- right inverter: qb -> q ---
-Mpr q qb vdd vdd pmos_nn L=20n NFIN=2
-Mnr q qb 0   0   nmos_nn L=16n NFIN=2
+* --- hierarchical (V6.12.0): the cross-coupled pair is two instances of
+* --- one sraminv cell; q/qb stay top-level via the ports ---
+Xl q qb vdd sraminv NF=2
+Xr qb q vdd sraminv NF=2
 * --- access transistors ---
 Mal bl  wl q  0 nmos_nn L=16n NFIN=2
 Mar blb wl qb 0 nmos_nn L=16n NFIN=2
+
+.subckt sraminv i o vdd NF=1
+Mpl o i vdd vdd pmos_nn L=20n NFIN=NF
+Mnl o i 0   0   nmos_nn L=16n NFIN=NF
+.ends
 
 .model nmos_nn NMOS (LEVEL=73 TECH=tsmc12 VT=svt)
 .model pmos_nn PMOS (LEVEL=73 TECH=tsmc12 VT=svt)

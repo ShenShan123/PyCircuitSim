@@ -33,20 +33,19 @@ all TSMC cards.
 
 ## Follow-up frontier (next campaigns)
 
-1. **TSMC6 NN training campaign** — `python -m bsimar.cli.train --model
-   direct --size {small,medium,large,xl} --device-type {nmos,pmos}
-   --tech-scope tsmc6 --cuda` (clean recipe first, then the crit30/corridor
-   curriculum via `recipe_train.sh TECHS="tsmc6"`; warm-start base for
-   curriculum at large does NOT exist for tsmc6 — train clean tsmc6 large
-   first). Then: add TSMC6 to `tests/common/complex.py` BENCH_TECHS +
-   `_resolve_bench_tech` VT map, `tests/common/nn_sweep.py` NN_TECHS,
-   `tests/verify_nn_dc_tran.py` ALL_TEST_TECHS/TECH_ORDER/TECH_COLORS +
-   checkpoint-stem sentinel lists (`tsmc6_dn_`/`tsmc6_tf_`), collector TECHS
-   literals (`benchmark_collect.py`, `recipe_collect.py`, `gate_grid.py`,
-   `device_retest_collect.py`, `recipe_retest_collect.py`), and the train
-   script TECHS defaults. Gate expectation: complex matrix grows 16 → 20
-   cells; tsmc6 behavior should track tsmc7's basket (same node family) —
-   watch tsmc7-opamp-class cells.
+1. **TSMC6 NN training campaign** — ✅ **DONE in V6.11.0** (2026-07-14/17). All
+   three families' CLEAN capacity sweeps trained + gated vs NGSPICE (curriculum
+   recipes deferred — user scoped to "all scales", clean only): DirectNet
+   s/m/l/xl (peaks **large 3/4**, banks ring), PFN s/m/l (flat **2/4**), BSIM-AR
+   s/m/l/xl (peaks **medium 3/4**, the only family to bank the tsmc6 opamp 9.83%).
+   All the wiring in this bullet was done — `complex.py` BENCH_TECHS + VT map,
+   `nn_sweep.py` NN_TECHS, `verify_nn_dc_tran.py` tables + `tsmc6_dn_`/`tsmc6_tf_`
+   sentinels, the 5 collectors, `recipe_eval.sh` (TECHS-overridable) — plus a
+   `tech_code_in_vocab` fix (rejected tsmc6 univ codes 22–24). **Prediction
+   CONFIRMED: tsmc6 tracks tsmc7's basket** — the opamp is the tsmc7-family hard
+   cell, cracked only by BSIM-AR's opamp basin; the ring by DN-large (opamp-XOR-ring
+   split). See CHANGELOG V6.11.0 + the DN/TF/PFN report addenda. Env caveat: 2
+   BSIM-AR large/xl opamp cells indeterminate under cluster overload (re-gate-when-idle).
 2. **Universal + tsmc6** — requires `num_tech_codes=NUM_TOTAL_CODES` (25) at
    train time and extending `uni_concat_npz.py` (code-subset validation is
    pinned to the V6.7.0 {4..16} build). Fingerprint labelling CANNOT

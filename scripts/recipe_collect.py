@@ -21,7 +21,7 @@ BASE = ROOT / "results" / "recipe_bench"
 sys.path.insert(0, str(ROOT / "scripts"))
 import benchmark_collect as bc  # reuse parse_device_log / parse_complex_log / AC parsers
 
-TECHS = ["tsmc5", "tsmc7", "tsmc12", "tsmc16"]
+TECHS = ["tsmc5", "tsmc6", "tsmc7", "tsmc12", "tsmc16"]
 CPX_SUITES = bc.CPX_SUITES
 DEV_SUITES = bc.DEV_SUITES
 AC_DEV, AC_CPX = bc.AC_DEV_SUITE, bc.AC_CPX_SUITE

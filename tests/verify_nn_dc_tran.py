@@ -214,6 +214,16 @@ ALL_TEST_TECHS: Dict[str, TestTechConfig] = {
         l_pmos=20e-9, pmos_model="pch_lvt_mac",
         inv_l_nmos=20e-9, inv_l_pmos=20e-9, inv_nfin=2,
     ),
+    # TSMC6 (CLN6) — sister node to TSMC7 (V6.9.0 onboarding). Same vdd/geometry
+    # family; ulvt is the local-vocab default (all 3 VTs pass, unlike TSMC7).
+    "TSMC6": TestTechConfig(
+        name="TSMC6", vdd=0.75, l_nmos=16e-9, nfin=2, tfin=6e-9,
+        nmos_model="nch_ulvt_mac", nn_tech_key="tsmc6", nn_vt="ulvt",
+        single_file=False, modelcard_dir="TSMC6",
+        modelcard_file="",
+        l_pmos=20e-9, pmos_model="pch_ulvt_mac",
+        inv_l_nmos=20e-9, inv_l_pmos=20e-9, inv_nfin=2,
+    ),
     "TSMC7": TestTechConfig(
         name="TSMC7", vdd=0.75, l_nmos=16e-9, nfin=2, tfin=6e-9,
         nmos_model="nch_ulvt_mac", nn_tech_key="tsmc7", nn_vt="ulvt",
@@ -238,11 +248,12 @@ ALL_TEST_TECHS: Dict[str, TestTechConfig] = {
     ),
 }
 
-TECH_ORDER: List[str] = ["ASAP7", "ASAP7_30nm", "TSMC5", "TSMC7", "TSMC12", "TSMC16"]
+TECH_ORDER: List[str] = ["ASAP7", "ASAP7_30nm", "TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 
 TECH_COLORS: Dict[str, str] = {
     "ASAP7": "tab:blue",
     "TSMC5": "tab:green",
+    "TSMC6": "tab:brown",
     "TSMC7": "tab:orange",
     "TSMC12": "tab:purple",
     "TSMC16": "tab:red",
@@ -1092,9 +1103,9 @@ def _cascade_handles_stem(path: Optional[Path]) -> bool:
         return False
     stem = path.name
     return any(stem.startswith(p) for p in (
-        "tsmc5_dn_", "tsmc7_dn_", "tsmc12_dn_", "tsmc16_dn_", "refac_dn_",
+        "tsmc5_dn_", "tsmc6_dn_", "tsmc7_dn_", "tsmc12_dn_", "tsmc16_dn_", "refac_dn_",
         # V6.8: per-tech BSIMAR Transformer stems (LEVEL=74 preempt cascade).
-        "tsmc5_tf_", "tsmc7_tf_", "tsmc12_tf_", "tsmc16_tf_", "refac_tf_"))
+        "tsmc5_tf_", "tsmc6_tf_", "tsmc7_tf_", "tsmc12_tf_", "tsmc16_tf_", "refac_tf_"))
 
 
 def run_pycircuitsim_nn_inverter_vtc(
@@ -1129,8 +1140,11 @@ def run_pycircuitsim_nn_inverter_vtc(
         f"* NN CMOS Inverter VTC ({model_name}, {tech.name})\n"
         f"Vdd 1 0 {tech.vdd}\n"
         f"Vin 2 0 0.0\n"
-        f"Mn1 3 2 0 0 nmos_nn L={l_nmos_nm:.0f}n NFIN={nfin}\n"
-        f"Mp1 3 2 1 1 pmos_nn L={l_pmos_nm:.0f}n NFIN={nfin_p}\n"
+        f"Xinv 2 3 1 inv NFN={nfin} NFP={nfin_p}\n"
+        f".subckt inv i o vdd NFN=1 NFP=1\n"
+        f"Mn1 o i 0 0 nmos_nn L={l_nmos_nm:.0f}n NFIN=NFN\n"
+        f"Mp1 o i vdd vdd pmos_nn L={l_pmos_nm:.0f}n NFIN=NFP\n"
+        f".ends\n"
         f".model nmos_nn NMOS ({nmos_params})\n"
         f".model pmos_nn PMOS ({pmos_params})\n"
         f".dc Vin 0 {tech.vdd} 0.005\n"
@@ -1389,9 +1403,12 @@ def run_pycircuitsim_nn_inverter_tran(
         f"Vdd 1 0 {tech.vdd}\n"
         f"Vin 2 0 PULSE 0 {tech.vdd} {cp.td} {cp.tr}"
         f" {cp.tf} {cp.pw} {per}\n"
-        f"Mn1 3 2 0 0 nmos_nn L={l_nmos_nm:.0f}n NFIN={nfin}\n"
-        f"Mp1 3 2 1 1 pmos_nn L={l_pmos_nm:.0f}n NFIN={nfin_p}\n"
+        f"Xinv 2 3 1 inv NFN={nfin} NFP={nfin_p}\n"
         f"Cload 3 0 {cp.cload}\n"
+        f".subckt inv i o vdd NFN=1 NFP=1\n"
+        f"Mn1 o i 0 0 nmos_nn L={l_nmos_nm:.0f}n NFIN=NFN\n"
+        f"Mp1 o i vdd vdd pmos_nn L={l_pmos_nm:.0f}n NFIN=NFP\n"
+        f".ends\n"
         f".model nmos_nn NMOS ({nmos_params})\n"
         f".model pmos_nn PMOS ({pmos_params})\n"
         f".ic V(3)={tech.vdd}\n"

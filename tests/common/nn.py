@@ -81,8 +81,18 @@ def tech_code_in_vocab(
     v4 universal models are trained with ``--num-tech-codes 18``
     (indices 0-17). ASAP7 codes (18-21) are out-of-range and will crash
     the embedding layer.
+
+    Per-tech checkpoints (Rule 16) use a SHRUNK **local** vocab — the netlist
+    tech_code is remapped to 0..N-1 at parse time — so a tech's *universal*
+    code is irrelevant to whether its per-tech model can be scored. TSMC6 was
+    tail-appended to the universal vocab at codes 22-24 (V6.9.0), which exceeds
+    the 18-ceiling, but it is a first-class per-tech node. Any tech present in
+    ``LOCAL_VARIANT_CODES`` therefore passes unconditionally; the universal
+    ceiling only still needs to gate ASAP7 (no local vocab, no per-tech ckpt).
     """
-    from bsimar.config import tech_variant_to_code
+    from bsimar.config import tech_variant_to_code, LOCAL_VARIANT_CODES
+    if tech_key.lower() in LOCAL_VARIANT_CODES:
+        return True
     return tech_variant_to_code(tech_key, vt_key) < num_codes
 
 

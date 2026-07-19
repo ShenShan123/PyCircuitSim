@@ -54,8 +54,9 @@ def write_report_section(marker: str, content: str) -> None:
         text = _REPORT_HEADER + "\n" + block + "\n"
     REPORT.write_text(text)
 
-TECHS = ["tsmc5", "tsmc7", "tsmc12", "tsmc16"]
+TECHS = ["tsmc5", "tsmc6", "tsmc7", "tsmc12", "tsmc16"]
 CIRCS = ["ring_osc", "opamp", "sram_snm", "switchcap"]
+NGATES = len(TECHS) * len(CIRCS)   # 20 with TSMC6 (was 16 for the 4-tech matrix)
 RECIPE_ORDER = [
     "clean",
     "invtripft", "invtrip",
@@ -287,7 +288,7 @@ def render_sections(recipes, data, opdef, suffix=""):
     L += [f"## Derived summary — pass counts{suffix}", ""]
     rows = []
     for r in recipes:
-        rows.append([r, f"{pass16(data, r)}/16", f"{strict16(data, opdef, r)}/16"])
+        rows.append([r, f"{pass16(data, r)}/{NGATES}", f"{strict16(data, opdef, r)}/{NGATES}"])
     L += [md(["Recipe", "single-run OMP=1", "strict all-OMP (opamp/ring ∈ {1,2,4})"], rows), ""]
 
     # per-circuit headline tables
@@ -435,7 +436,7 @@ def main():
     for key, recipes, data, opdef in summary:
         print(f"[{key}] recipes: {recipes}")
         for r in recipes:
-            print(f"  {r:10s}: OMP1 {pass16(data, r):2d}/16   strict {strict16(data, opdef, r):2d}/16")
+            print(f"  {r:10s}: OMP1 {pass16(data, r):2d}/{NGATES}   strict {strict16(data, opdef, r):2d}/{NGATES}")
 
 
 if __name__ == "__main__":

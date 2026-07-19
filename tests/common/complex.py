@@ -58,7 +58,7 @@ from tests.common.nn import nrmse as _nrmse_pct, mre as _mre_pct
 # Benchmark techs — only the four with V6.3.1 DirectNet checkpoints.
 # ASAP7 is out of scope; LEVEL=74 BSIMAR out of scope.
 # ---------------------------------------------------------------------------
-BENCH_TECHS: List[str] = ["TSMC5", "TSMC7", "TSMC12", "TSMC16"]
+BENCH_TECHS: List[str] = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 
 REFERENCES_DIR = PROJECT_ROOT / "tests" / "references" / "complex"
 # RESULTS_BASE is env-overridable so parallel sweeps (e.g. the V6.5.4 checkpoint
@@ -124,9 +124,9 @@ def _resolve_bench_tech(name: str) -> BenchTech:
 
     The checkpoint VT must match what the parser preempt cascade resolves; the
     verify_nn_dc_tran.py per-tech table is the source of truth:
-      TSMC5 -> lvt, TSMC7 -> ulvt, TSMC12 -> svt, TSMC16 -> svt.
+      TSMC5 -> lvt, TSMC6 -> ulvt, TSMC7 -> ulvt, TSMC12 -> svt, TSMC16 -> svt.
     """
-    ckpt_vt = {"TSMC5": "lvt", "TSMC7": "ulvt",
+    ckpt_vt = {"TSMC5": "lvt", "TSMC6": "ulvt", "TSMC7": "ulvt",
                "TSMC12": "svt", "TSMC16": "svt"}[name]
     prof = ALL_TECHS[name]
     vp = prof.get_vt_pair(ckpt_vt)
@@ -705,6 +705,10 @@ def directnet_opamp(bt: BenchTech, p: OpAmpParams) -> str:
     ln, lp = bt.l_nmos * 1e9, bt.l_pmos * 1e9
     nfn, nfp = bt.nfin, bt.effective_nfin_p
     lo, hi = round(vcm - p.span, 3), round(vcm + p.span, 3)
+    # Hierarchical deck (V6.12.0): the two opamp stages are .subckt
+    # instances. Every pre-existing node (n1/vo1i/vtail/vout) stays a port,
+    # so the flattened net names — and every harness/diagnostic probe — are
+    # byte-identical to the historical flat deck.
     return (
         f"* Two-stage Miller opamp — DirectNet LEVEL=73 ({bt.name}) [sweep]\n"
         f"Vdd vdd 0 {_f(bt.vdd)}\n"
@@ -712,15 +716,21 @@ def directnet_opamp(bt: BenchTech, p: OpAmpParams) -> str:
         f"Vbp vbp 0 {_f(vbp)}\n"
         f"Vinn inn 0 {_f(vcm)}\n"
         f"Vinp inp 0 {_f(vcm)}\n"
+        f"Xs1 inp inn n1 vo1i vtail vbn vdd ota1\n"
+        f"Xs2 vo1i vout vbn vdd cs2\n"
+        f"Cc vo1i vout {_cap(p.cc)}\n"
+        f"CL vout 0 {_cap(p.cl)}\n"
+        f".subckt ota1 inp inn n1 vo1i vtail vbn vdd\n"
         f"Mn1 n1   inp vtail 0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
         f"Mn2 vo1i inn vtail 0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
         f"Mp3 n1   n1  vdd   vdd pmos_nn L={lp:.0f}n NFIN={nfp}\n"
         f"Mp4 vo1i n1  vdd   vdd pmos_nn L={lp:.0f}n NFIN={nfp}\n"
         f"Mn5 vtail vbn 0    0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
-        f"Mp6 vout vo1i vdd vdd pmos_nn L={lp:.0f}n NFIN={nfp}\n"
-        f"Mn7 vout vbn  0   0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
-        f"Cc vo1i vout {_cap(p.cc)}\n"
-        f"CL vout 0 {_cap(p.cl)}\n"
+        f".ends\n"
+        f".subckt cs2 g d vbn vdd\n"
+        f"Mp6 d g vdd vdd pmos_nn L={lp:.0f}n NFIN={nfp}\n"
+        f"Mn7 d vbn  0   0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
+        f".ends\n"
         f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})\n"
         f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})\n"
         f".dc Vinp {_f(lo)} {_f(hi)} {_f(p.step)}\n"
@@ -751,14 +761,20 @@ def directnet_ringosc(bt: BenchTech, p: RingOscParams, tstop: float) -> str:
     nfn, nfp = bt.nfin, bt.effective_nfin_p
     ic = " ".join(f"V(n{i})={'0.0' if i % 2 == 1 else _f(bt.vdd)}"
                   for i in range(1, N + 1))
+    # Hierarchical deck (V6.12.0): one ringinv .subckt instantiated N times;
+    # stage nodes n1..nN stay top-level via the ports, so probes/period
+    # extraction are unchanged.
     lines = [f"* {N}-stage ring oscillator — DirectNet LEVEL=73 ({bt.name}) [sweep]",
              f"Vdd vdd 0 {_f(bt.vdd)}", f".ic {ic}"]
     for i in range(1, N + 1):
         inp = f"n{i - 1}" if i > 1 else f"n{N}"
-        lines += [f"Mp{i} n{i} {inp} vdd vdd pmos_nn L={lp:.0f}n NFIN={nfp}",
-                  f"Mn{i} n{i} {inp} 0   0   nmos_nn L={ln:.0f}n NFIN={nfn}",
-                  f"Cl{i} n{i} 0 {_cap(p.cload)}"]
-    lines += [f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})",
+        lines += [f"Xinv{i} {inp} n{i} vdd ringinv"]
+    lines += [f".subckt ringinv i o vdd",
+              f"Mp o i vdd vdd pmos_nn L={lp:.0f}n NFIN={nfp}",
+              f"Mn o i 0   0   nmos_nn L={ln:.0f}n NFIN={nfn}",
+              f"Cl o 0 {_cap(p.cload)}",
+              f".ends",
+              f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})",
               f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})",
               # `uic` matches the ship-gate template (ring_osc_5stage_directnet.sp:37);
               # the sweep transient runner pins .ic nodes regardless, but keeping the
@@ -797,12 +813,18 @@ def directnet_switchcap(bt: BenchTech, p: SwitchCapParams) -> str:
         f"Vin vin 0 {_f(vin)}\n"
         f"Vphi phi 0 PULSE 0 {_f(bt.vdd)} {_tn(p.td)} {_tn(p.clk_slew)} "
         f"{_tn(p.clk_slew)} {_tn(pw)} {_tn(per)}\n"
-        f"Mpc phib phi vdd vdd pmos_nn L={lp:.0f}n NFIN={nfp}\n"
-        f"Mnc phib phi 0   0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
-        f"Mnt vin phi  vsamp 0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
-        f"Mpt vin phib vsamp vdd pmos_nn L={lp:.0f}n NFIN={nfp}\n"
+        f"Xck phi phib vdd ckinv\n"
+        f"Xtg vin vsamp phi phib vdd tgate\n"
         f"Csample vsamp 0 {_cap(p.csample)}\n"
         f".ic V(vsamp)=0.0 V(phib)={_f(bt.vdd)}\n"
+        f".subckt ckinv i o vdd\n"
+        f"Mpc o i vdd vdd pmos_nn L={lp:.0f}n NFIN={nfp}\n"
+        f"Mnc o i 0   0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
+        f".ends\n"
+        f".subckt tgate a b phi phib vdd\n"
+        f"Mnt a phi  b 0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
+        f"Mpt a phib b vdd pmos_nn L={lp:.0f}n NFIN={nfp}\n"
+        f".ends\n"
         f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})\n"
         f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})\n"
         # `uic` matches the ship-gate template (switchcap_unitcell_directnet.sp:33);
@@ -834,9 +856,12 @@ def directnet_sram_lobe(bt: BenchTech, p: SramParams, nfin: int) -> str:
         f"Vwl wl 0 {_f(wl)}\n"
         f"Vbl bl 0 {_f(bt.vdd)}\n"
         f"Vq q 0 0.0\n"
-        f"Mpl qb q vdd vdd pmos_nn L={lp:.0f}n NFIN={nfin}\n"
-        f"Mnl qb q 0   0   nmos_nn L={ln:.0f}n NFIN={nfin}\n"
+        f"Xinv q qb vdd sraminv NF={nfin}\n"
         f"Mna bl wl qb 0 nmos_nn L={ln:.0f}n NFIN={nfin}\n"
+        f".subckt sraminv i o vdd NF=1\n"
+        f"Mpl o i vdd vdd pmos_nn L={lp:.0f}n NFIN=NF\n"
+        f"Mnl o i 0   0   nmos_nn L={ln:.0f}n NFIN=NF\n"
+        f".ends\n"
         f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})\n"
         f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})\n"
         f".dc Vq 0 {_f(bt.vdd)} {_f(p.dc_step)}\n"
@@ -853,12 +878,14 @@ def directnet_sram_6t(bt: BenchTech, q0: float, qb0: float, nfin: int) -> str:
         f"Vbl bl 0 {_f(bt.vdd)}\n"
         f"Vblb blb 0 {_f(bt.vdd)}\n"
         f".ic V(q)={_f(q0)} V(qb)={_f(qb0)}\n"
-        f"Mpl qb q vdd vdd pmos_nn L={lp:.0f}n NFIN={nfin}\n"
-        f"Mnl qb q 0   0   nmos_nn L={ln:.0f}n NFIN={nfin}\n"
-        f"Mpr q qb vdd vdd pmos_nn L={lp:.0f}n NFIN={nfin}\n"
-        f"Mnr q qb 0   0   nmos_nn L={ln:.0f}n NFIN={nfin}\n"
+        f"Xl q qb vdd sraminv NF={nfin}\n"
+        f"Xr qb q vdd sraminv NF={nfin}\n"
         f"Mal bl  wl q  0 nmos_nn L={ln:.0f}n NFIN={nfin}\n"
         f"Mar blb wl qb 0 nmos_nn L={ln:.0f}n NFIN={nfin}\n"
+        f".subckt sraminv i o vdd NF=1\n"
+        f"Mpl o i vdd vdd pmos_nn L={lp:.0f}n NFIN=NF\n"
+        f"Mnl o i 0   0   nmos_nn L={ln:.0f}n NFIN=NF\n"
+        f".ends\n"
         f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})\n"
         f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})\n"
         f".op\n.end\n")

@@ -7,6 +7,168 @@ retained, verbose prose pruned; the full original text lives in git history.)
 
 ---
 
+## V6.12.0 — .subckt/.ends hierarchical netlists + hierarchical test-circuit conversion (2026-07-18)
+
+**Added `.subckt`/`.ends` subcircuit definitions with hierarchical `X`
+instances to the parser, extended `.ic` into subckt bodies, converted the
+project's test circuits to hierarchy, and re-ran the verification matrix:
+zero regressions — every suite reproduces its historical pass rate exactly
+(commit 1744b28 = feature + conversion, on `feat/subckt-hierarchy`).**
+
+**Feature (pycircuitsim/parser.py, flattening expansion at parse time):**
+
+- `.subckt <name> <ports…> [param=default …]` … `.ends [name]`; instances
+  `X<id> <nodes…> <subckt> [param=val …]`. Nested definitions AND nested
+  instantiation (X-in-X) supported; defs registered globally (ngspice-flat
+  scoping); recursion guarded (depth 64, loud error).
+- ngspice-style flattening: internal nodes → `X1.n1` (nested `X1.X2.n1`),
+  devices → `M.X1.Mp1` (type char preserved for first-char dispatch); ground
+  `0`/`GND` stays global; ports map to connecting nodes so top-level node
+  names are unchanged. Node names are opaque strings end-to-end — no
+  circuit/solver changes were needed.
+- Parameters: defaults on the `.subckt` card, per-instance overrides, body
+  references as bare names or `{expr}`/`'expr'` arithmetic (+ - * / with
+  unit suffixes). `.ic` cards inside bodies get node-remapped AND
+  param-resolved; top-level `.ic V(X1.n1)=v` reaches internal nodes; `uic`
+  and `force_ic` consume them unchanged. `.model`/`.include` inside bodies
+  are hoisted global; other directives inside a body are loud errors, as are
+  unknown subckt names and port-count mismatches.
+- Robustness fixes riding along: `.include` now save/restores the current
+  file (sibling includes resolve correctly); `.ic`/`.dc`/`.tran`/`.ac`
+  dispatch and `V(...)` matching are case-insensitive.
+
+**New gate `tests/verify_subckt.py` — 8/8 PASS:** L1 linear equivalence
+(subckt deck ≡ hand-flattened deck at max|ΔV|=0 for RC .tran/.ac, nested
+{expr}-param DC OP, `.ic`-in-body + uic pinning); L2 L72 inverter-in-subckt
+≡ flat (max|ΔV|=0) and 0.187% NRMSE vs NGSPICE; L3 nested two-inverter
+buffer (X-in-X, NFIN params, `.ic` on internal `Xbuf.m`) 0.64/0.86% NRMSE
+vs NGSPICE.
+
+**Test-circuit conversion (probed nodes stay top-level as ports, so every
+harness key/baseline is unchanged; NGSPICE reference decks stay flat):**
+inverter VTC + transient generators (`tests/common/bsimcmg_{dc,tran}.py`),
+all four complex builders + their `examples/complex` templates (opamp =
+`ota1`+`cs2` stages, ring = `ringinv`×5, switchcap = `ckinv`+`tgate`, SRAM
+= `sraminv` cell in lobe + 6T force_ic decks), NN inverter VTC/tran decks,
+CS-amp AC decks (L72 + NN), and 7 example netlists. Single-device Id-Vgs
+decks intentionally stay flat — the harness probes device currents by name
+(`i(Mn1)`), and a 1-transistor wrap adds no structure. The sweep
+equivalence canaries (template ↔ builder line-sets) PASS for all 5 techs.
+`verify_subckt.py` keeps its own inline flat inverter deck as the
+pre-V6.12.0 reference.
+
+**Full re-run (2026-07-18, cluster loadavg ~1330, CPU-pinned gates):**
+
+| suite | result | vs baseline |
+|---|---|---|
+| verify_subckt (NEW) | **8/8** | new gate |
+| bsimcmg OP / DC L1 / tran L1 / AC | 3 tasks + 2 + 1 + 2 all PASS | identical (tran 0.19% NRMSE) |
+| bsimcmg DC L2 comprehensive | **81/81** | ✔ (67→81 with TSMC6) |
+| bsimcmg tran L2 comprehensive | **45/45** | ✔ (37→45 with TSMC6) |
+| multi-tech DC L3 | **52/53 + 1 ERROR** | ✔ EXACT — the ERROR is the documented pre-existing `TSMC5_lvt_inv_l_24nm` OSDI divergence (V6.9.0) |
+| multi-tech tran L3 | **86/86** | ✔ |
+| verify_nn_dc_tran (TSMC5/7/12/16) | **24/24** (device DC N+P, VTC, tran, inv-tran) | ✔ |
+| sweep canaries | ALL PASS (5 techs × 4 circuits × DN+ng) | ✔ |
+| complex ring | **5/5** (2.4–4.8% period) | ✔ incl. crit30 tsmc5-ring + tsmc6-ring |
+| complex opamp | **2/5** (TSMC5 0.21%, TSMC12 6.25%) | ✔ EXACT — tsmc7/tsmc16 (crit30 production misses) + tsmc6 (clean-large miss, BSIM-AR-only cell) rail as documented |
+| complex switchcap | **5/5** (2.1–4.2% charge) | ✔ |
+| complex SRAM SNM | **5/5** all-positive butterfly | ✔ (force_ic diag rails TSMC7/12 as documented) |
+
+Follow-up JobD (NN parametric mirrors + canary):
+
+| suite | result | vs baseline |
+|---|---|---|
+| lifted-source canary | **15/15** (NRMSE ≤10%) | ✔ |
+| verify_nn_multi_tech_dc | **68/69** | 1 FAIL `TSMC12_pmos_nfin_10` (NRMSE 16.15) reproduced BIT-IDENTICALLY with the pre-feature parser (51c1c92) = pre-existing DN NFIN-corner (same off-grid-NFIN class as the V6.10.0 finding), NOT a V6.12.0 regression |
+| verify_nn_multi_tech_tran | **80/80** | ✔ |
+
+Complex matrix total **17/20** = exactly the V6.11.0 production state
+(legacy 4-tech 14/16 + TSMC6 3/4). Individual checks: **484/489 PASS**, all
+5 non-passes pre-existing and documented (1 L3-DC OSDI ERROR, 3 opamp
+gates, 1 DN NFIN-corner). **The hierarchical decks are numerically
+transparent: no pass-rate moved in either direction.**
+
+Scope note: complex parametric sweeps, NN AC, and opamp AC were not re-run
+in this campaign (their deck sources are the converted builders whose
+line-set equivalence the canaries already pin).
+
+---
+
+## V6.11.0 — TSMC6 NN family: all three NN compact models trained + gated at every scale (2026-07-14/17)
+
+**Completed the V6.9.0 NN-training deferral: trained and NGSPICE-gated all three
+NN compact-model families — DirectNet (LEVEL=73), BSIM-AR Transformer (LEVEL=74),
+PFN/TabPFN (LEVEL=75) — at every defined scale on the new 6th tech TSMC6 (CLN6).
+22 clean-recipe checkpoints (DN s/m/l/xl + PFN s/m/l + TF s/m/l/xl, each N/P),
+one identical control recipe (`--apply-filter off --swa-mode ema --seed 42`),
+per-tech local vocab (tsmc6 svt/lvt/ulvt = codes 0/1/2 + UNKNOWN; nn_vt=ulvt).
+Reports updated: `docs/V6.6.6-accuracy-report.md` (DN), `docs/V6.8.0-bsimar-transformer-report.md`
+(TF), `docs/V6.10.0-tabpfn-pfn-report.md` (PFN).**
+
+**Result — TSMC6 complex 4-cell matrix (ring/opamp/sram/switchcap) vs NGSPICE BSIM-CMG:**
+
+| family | small | medium | large | xl |
+|---|---|---|---|---|
+| DirectNet | 1/4 | 2/4 | **3/4** | 2/4 |
+| PFN       | 2/4 | 2/4 | 2/4 | — (no xl preset) |
+| BSIM-AR   | 2/4 | **3/4** | 2/4 | 2/4 |
+
+- **DirectNet peaks at large = 3/4** (banks the ring 4.82%; sram+switchcap; opamp
+  rails to gain≈0 at every size) — the same capacity curve DN shows on the other
+  techs (peaks large, over-fits at xl → 2/4). Production tier = large.
+- **BSIM-AR peaks at medium = 3/4 and is the ONLY family to pass the tsmc6 opamp
+  gate (9.83%)** — banks opamp+sram+switchcap, misses the ring; its opamp gain is
+  *non-collapsed* even at small (13.61%) where DN/PFN rail to 0. Mirrors V6.8.0
+  (BSIM-AR's opamp basin banks tsmc16-opamp). Peaks medium, over-fits at large/xl
+  (ring regresses 7.4→11.2→12.6%).
+- **PFN is flat 2/4** across all sizes (sram+switchcap always; ring 8–12% and opamp
+  both fail) — consistent with V6.10.0 (PFN declines/flattens past small, opamp rails).
+- **Cross-family:** a clean **opamp-XOR-ring split** — DN-large banks the ring,
+  BSIM-AR-medium banks the opamp, no family takes all four. TSMC6 opamp is the
+  tsmc7-family hard cell (tsmc6 is vdd=0.75/ulvt, the CLN6 sister of CLN7); only
+  BSIM-AR's opamp basin cracks it.
+- **Device fidelity excellent and COMPLETE for all 11 cells**: inverter VTC/tran
+  + Id-Vgs DC pass everywhere (DN/PFN 6/6, BSIM-AR 11/11). PMOS DC NRMSE <1% (best
+  0.03%), NMOS DC 2–7%, VTC ~1–3%, tran ~0.8–1.2%. DN best DC at large (2.02%);
+  BSIM-AR best PMOS DC at xl (0.06%). Device-AC 0–2/3; opamp-AC fails (railed OP,
+  the opamp value-surface class).
+
+**Harness wiring (TSMC6 now first-class in the gate/eval stack)** — per the V6.9.0
+follow-up §1: `tests/verify_nn_dc_tran.py` (TSMC6 `TestTechConfig` mirroring sister
+node TSMC7 + `TECH_ORDER`/`TECH_COLORS` + `tsmc6_dn_`/`tsmc6_tf_` stem sentinels),
+`tests/common/nn_sweep.py` (`NN_TECHS`), `tests/common/complex.py` (`BENCH_TECHS`
++ ckpt VT map → ulvt), `scripts/recipe_eval.sh` (`TECHS`-overridable, was hardcoded
+4 techs), `scripts/gate_matrix_iso.sh` (dynamic cell denominator), and the 5
+collectors (`benchmark_collect`/`recipe_collect`/`device_retest_collect`/
+`recipe_retest_collect`/`gate_grid`, TSMC6 + dynamic `/16`→`/20` totals). New
+`scripts/tsmc6_collect.py` scoreboard collector.
+
+**Bug fixed — `tech_code_in_vocab` rejected TSMC6 (`tests/common/nn.py`).** The
+ASAP7-guard checks the *universal* tech code against an 18-ceiling; TSMC6 was
+tail-appended at universal codes 22–24 (V6.9.0), so its device gate silently
+SKIPPED (`tech code out of vocab`) even though per-tech tsmc6 uses a *local* vocab
+(code 2 for ulvt). Fixed: any tech in `LOCAL_VARIANT_CODES` passes unconditionally;
+the ceiling now only gates ASAP7 (no local vocab). Preserves tsmc5/7/12/16 and
+ASAP7 behavior exactly.
+
+**Environment caveat (dead-end / partial):** the whole campaign ran under sustained
+cluster overload (other users' Xyce jobs, loadavg ~1400 on 192 cores for days).
+DirectNet/PFN gates and BSIM-AR small/medium completed fine; the BSIM-AR **large +
+xl opamp** complex gates (LEVEL=74 AR inference is ~30–100× DN, worst on the largest
+models) **exceeded even an 8 h wall-clock cap** but a 12 h best-effort retry
+completed both — **the complex 4-cell matrix is 100% resolved** (large opamp 12.78%,
+xl opamp 10.13%, both ✗). The only never-gated cells are the *secondary* large/xl
+**opamp-AC** diagnostics (still timed out; not part of the complex count, and opamp-AC
+rails everywhere anyway). Notably BSIM-AR's opamp is *non-collapsed* at every size
+(13.6/9.83/12.8/10.1% s/m/l/xl) — the basin is tightest at medium, landing inside
+±10% only there (a near-miss at xl), whereas DN/PFN rail to gain≈0. Gate timeout was
+raised 1800→7200s mid-run; parallel re-gate `scripts/tsmc6_regate.sh` (per-job
+isolated complex scratch) recovered the rest. The gate driver's timeout was
+raised 1800s→7200s mid-campaign after the first PFN-medium timeouts; the parallel
+re-gate (`scripts/tsmc6_regate.sh`, per-job isolated complex scratch) recovered
+PFN-medium + BSIM-AR-large/xl non-opamp cells. No conclusion depends on the two
+open opamp cells (BSIM-AR already peaks at medium).
+
 ## V6.10.0 — TabPFN port: the "PFN" compact-model family, LEVEL=75 (branch `worktree-tabpfn-pfn`, 2026-07-11/14)
 
 **Ported the TabPFN v3 architecture (Prior Labs' tabular ICL transformer,
