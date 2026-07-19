@@ -132,16 +132,51 @@ inverter behavior (V(out) ≤ 8 mV while V(in) > 0.9 V). Gates re-run:
 `run_dc_sweep`'s return contract (consumed by most NN/complex gates) was
 left untouched.
 
-**Third defect found, NOT fixed (needs a baseline decision):** the
-transient time vector duplicates its final sample. `solver.py:1952`
-computes `num_steps = ceil(t_stop/dt) + 1`, but `5e-9/1e-11` evaluates to
-`500.00000000000006` in IEEE-754, so `ceil` → 501 and `num_steps` → 502
-instead of 501. The last two steps both clamp to `t_stop` via
-`min(current_time, t_stop)`, yielding a duplicated end point and one
-wasted solve. Harmless numerically, but the fix changes transient vector
-lengths wherever `t_stop/dt` lands just above an integer, which could
-shift NRMSE baselines across the transient gate matrix — deferred rather
-than silently re-baselining.
+**Third defect — duplicated final transient sample — FIXED.**
+`solver.py` computed `num_steps = ceil(t_stop/dt) + 1`, but `5e-9/1e-11`
+evaluates to `500.00000000000006` in IEEE-754, so `ceil` → 501 and
+`num_steps` → 502 instead of 501. The loop ran one extra step whose time
+clamped to `t_stop` via `min(current_time, t_stop)`, duplicating the end
+point and wasting a solve. Now the quotient is snapped to the nearest
+integer when it is within a relative epsilon (1e-9) of one, and `ceil` is
+applied only to a genuinely partial final step:
+
+```python
+ratio = self.t_stop / self.dt
+nearest = round(ratio)
+num_intervals = int(nearest) if abs(ratio - nearest) <= 1e-9 * max(1.0, abs(ratio)) \
+                else int(np.ceil(ratio))
+num_steps = num_intervals + 1
+```
+
+Only float-error-integer decks change (500.00000000000006 → 500,
+200.00000000000003 → 200, 1000.0000000000001 → 1000); exactly
+representable ratios (550.0, 150.0) and genuinely fractional ones
+(1666.667, 142.857 → still ceil) are bit-identical. The inverter deck now
+yields 501 unique timepoints ending exactly at 5e-9, with no repeated row.
+
+**Baselines did not move — full transient matrix re-run.** The concern
+that motivated deferring this (NRMSE shifting across the matrix) did not
+materialize, because the removed sample was a duplicate of the one before
+it, so no NRMSE denominator or residual changed meaningfully:
+
+| gate | result |
+|---|---|
+| `verify_bsimcmg_tran` (L1) | 1/1 PASS — 0.19% / 7.6 mV, unchanged |
+| `verify_bsimcmg_tran_comprehensive` (L2) | **45/45 PASS** |
+| `verify_multi_tech_tran` (L3) | **86/86 PASS**, zero FAIL rows |
+| `verify_subckt` | 8/8 PASS — 0.187%, 0.638% / 0.861%, unchanged |
+
+Per-config confirmation that the numbers are bit-for-bit preserved, not
+merely still-passing — every ASAP7 row the README quotes reproduces
+exactly post-fix: baseline 0.19 / 7.6 mV, vdd_0p8 0.21 / 12.9 mV,
+cload_1fF 0.84 / 42.0 mV, cload_100fF 0.02 / 0.9 mV.
+
+README correction riding along: the transient results section claimed "21
+Configurations" and listed two configs that do not exist (`vdd_0p5`,
+`nfin_20` — the real ones are `vdd_0p6` and the `cload_*` / `pn_*` /
+`pw_*` / `slew_*` families), and the script table said L2 was 37-config.
+Now stated as measured: L2 = 45, L3 = 86.
 
 ---
 

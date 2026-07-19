@@ -762,21 +762,28 @@ python tests/verify_subckt.py
 | NRMSE (full-range) | 0.26% |
 | Max absolute error | 7.6 mV (1.1% of Vdd) |
 
-#### Comprehensive Transient (21 Configurations)
+#### Comprehensive Transient
 
-Sweeps VDD (0.5-0.8 V), Cload (1-100 fF), input slew (10-500 ps),
-pulse width (0.2-2.0 ns), NFIN scaling (1-20), and P/N ratio (0.5-2.0).
-**All 21 configs PASS (NRMSE < 5%); worst case 0.84% NRMSE / 42 mV at
-Cload=1fF.** Representative rows:
+Two suites, both **fully passing** as of the latest run:
+
+- `verify_bsimcmg_tran_comprehensive.py` (L2) — VT / L / NFIN sweep:
+  **45/45 PASS**
+- `verify_multi_tech_tran.py` (L3) — multi-tech parametric over VDD
+  (0.6–0.8 V), Cload (1–100 fF), input slew (10–500 ps), pulse width
+  (0.2–2.0 ns), and P/N ratio (0.5–2.0): **86/86 PASS**
+
+Worst case across both is 0.84% NRMSE / 42 mV at Cload=1fF — the smallest
+load, where the output slews fastest. Representative ASAP7 rows (L3):
 
 | Config | VDD | Cload | NRMSE(%) | MaxErr(mV) |
 |--------|-----|-------|----------|------------|
 | baseline | 0.70V | 10fF | 0.19 | 7.6 |
-| vdd_0p5 | 0.50V | 10fF | 0.14 | 4.7 |
+| vdd_0p6 | 0.60V | 10fF | 0.17 | 6.1 |
 | vdd_0p8 | 0.80V | 10fF | 0.21 | 12.9 |
 | cload_1fF (worst) | 0.70V | 1fF | 0.84 | 42.0 |
 | cload_100fF | 0.70V | 100fF | 0.02 | 0.9 |
-| nfin_20 | 0.70V | 10fF | 0.37 | 20.8 |
+| slew_500ps | 0.70V | 10fF | 0.05 | 3.8 |
+| pn_2p0 | 0.70V | 10fF | 0.23 | 12.9 |
 
 #### Subcircuit Hierarchy (V6.12.0)
 
@@ -814,7 +821,7 @@ via the T3 differentiable-DC-solver fine-tune.
 | `tests/verify_bsimcmg_dc_comprehensive.py` | DC sweep L2: 67-config multi-tech VT/L/NFIN sweep |
 | `tests/verify_multi_tech_dc.py` | DC sweep L3: 44-config inverter VTC + parametric |
 | `tests/verify_bsimcmg_tran.py` | Transient L1: single inverter baseline |
-| `tests/verify_bsimcmg_tran_comprehensive.py` | Transient L2: 37-config VT/L/NFIN sweep |
+| `tests/verify_bsimcmg_tran_comprehensive.py` | Transient L2: 45-config VT/L/NFIN sweep |
 | `tests/verify_multi_tech_tran.py` | Transient L3: 86-config multi-tech parametric |
 | `tests/verify_ac.py` | AC L1 passive RC + L2 BSIM-CMG common-source amp |
 | `tests/verify_subckt.py` | Subcircuit hierarchy: equivalence, L72 inverter, nested buffer (8 checks) |

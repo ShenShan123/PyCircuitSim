@@ -1948,8 +1948,22 @@ class TransientSolver:
         num_nodes = len(nodes)
         num_voltage_sources = self.circuit.count_voltage_sources()
 
-        # Calculate number of timesteps
-        num_steps = int(np.ceil(self.t_stop / self.dt)) + 1
+        # Calculate number of timesteps.
+        #
+        # A bare ceil(t_stop/dt) is wrong when the quotient is an exact
+        # integer mathematically but lands a hair above it in IEEE-754:
+        # 5e-9/1e-11 == 500.00000000000006, so ceil returned 501, the loop ran
+        # one extra step whose time clamped to t_stop, and the final sample was
+        # duplicated (502 points for a 500-interval sweep). Snap to the nearest
+        # integer when the quotient is within a relative epsilon of it; ceil
+        # only a genuinely partial final step.
+        ratio = self.t_stop / self.dt
+        nearest = round(ratio)
+        if abs(ratio - nearest) <= 1e-9 * max(1.0, abs(ratio)):
+            num_intervals = int(nearest)
+        else:
+            num_intervals = int(np.ceil(ratio))
+        num_steps = num_intervals + 1
 
         # Initialize storage arrays
         time = np.zeros(num_steps)
