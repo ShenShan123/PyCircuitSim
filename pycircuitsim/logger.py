@@ -258,7 +258,9 @@ class Logger:
         self._write_separator("-")
         self._write("")
 
-    def log_final_results(self, results: Dict[str, any], title: str = "Final Results") -> None:
+    def log_final_results(self, results: Dict[str, any], title: str = "Final Results",
+                          sweep_label: str = "DC Sweep", point_label: str = "sweep points",
+                          final_label: str = "last sweep point") -> None:
         """
         Write final operating point results.
 
@@ -268,6 +270,14 @@ class Logger:
             Final node voltages (node name -> voltage) or sweep results (node name -> list of voltages)
         title : str, optional
             Title for the results section (default: "Final Results")
+        sweep_label : str, optional
+            Name of the swept quantity for the summary heading (default: "DC Sweep").
+            Transient analysis passes "Transient" so the log does not describe
+            time-domain data as a DC sweep.
+        point_label : str, optional
+            Plural noun for the independent variable (default: "sweep points")
+        final_label : str, optional
+            Description of the last sample (default: "last sweep point")
         """
         self._write_separator("=")
         self._write(title)
@@ -281,11 +291,11 @@ class Logger:
             is_sweep = isinstance(first_value, list)
 
             if is_sweep:
-                # DC sweep results
-                self._write("DC Sweep Results Summary")
-                self._write(f"  Total sweep points: {len(first_value)}")
+                # Swept results (DC sweep or transient) — one list per trace
+                self._write(f"{sweep_label} Results Summary")
+                self._write(f"  Total {point_label}: {len(first_value)}")
                 self._write("")
-                self._write("Final node voltages (at last sweep point):")
+                self._write(f"Final node voltages (at {final_label}):")
                 for node, voltages in sorted(results.items()):
                     if voltages:  # Check if list is not empty
                         final_voltage = voltages[-1]

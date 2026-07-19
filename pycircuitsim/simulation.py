@@ -214,6 +214,27 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def _sweep_point_count(results: Dict[str, List[float]]) -> int:
+    """
+    Number of sweep/time points in a trace-keyed results dict.
+
+    `run_dc_sweep` and `run_transient` both return {trace_name: [values]},
+    so `len(results)` counts TRACES, not points — taking it as a point count
+    reports the node count instead (a 3-node inverter looked like "3 time
+    points" after integrating 502 steps). Every trace is sampled on the same
+    grid, so the length of any one of them is the point count.
+
+    Args:
+        results: Mapping of trace name -> per-point values.
+
+    Returns:
+        Number of points per trace, or 0 if there are no traces.
+    """
+    if not results:
+        return 0
+    return len(next(iter(results.values())))
+
+
 def run_simulation(
     netlist_path: str,
     output_dir: Optional[str] = None,
@@ -284,13 +305,15 @@ def run_simulation(
     if parser.analysis_type == "dc":
         logger.info("Running DC sweep analysis...")
         dc_results = run_dc_sweep(circuit, parser.analysis_params, visualizer, output_path, circuit_name)
-        logger.info(f"DC sweep complete: {len(dc_results)} points computed")
+        logger.info(f"DC sweep complete: {_sweep_point_count(dc_results)} points computed "
+                    f"({len(dc_results)} traces)")
 
     # Run transient analysis if present
     elif parser.analysis_type == "tran":
         logger.info("Running transient analysis...")
         tran_results = run_transient(circuit, parser.analysis_params, visualizer, output_path, circuit_name)
-        logger.info(f"Transient analysis complete: {len(tran_results)} time points")
+        logger.info(f"Transient analysis complete: {_sweep_point_count(tran_results)} time points "
+                    f"({len(tran_results)} traces)")
 
     # Run AC analysis if present
     elif parser.analysis_type == "ac":
@@ -528,11 +551,14 @@ def run_transient(
     circuit_name: str
 ) -> Dict[str, List[float]]:
     """
-    Run transient analysis and generate plots.
+    Run transient analysis, then write the plot, CSV, and .lis log.
 
     Uses two-stage analysis:
     1. Stage 1: Compute DC operating point for initial conditions
     2. Stage 2: Perform transient analysis using OP solution as initial guess
+
+    Writes `<circuit_name>_transient.{png,csv}` and
+    `<circuit_name>_simulation.lis` into `output_path`.
 
     Args:
         circuit: Circuit object
@@ -625,6 +651,44 @@ def run_transient(
         results=all_results,
         output_path=str(plot_path)
     )
+
+    # Save waveform data to CSV (stdlib csv — mirrors run_dc_sweep, no pandas).
+    # Without this the CLI transient path emitted only a .png, so a `.tran`
+    # run produced no numerical data at all.
+    import csv
+    csv_path = output_path / f"{circuit_name}_transient.csv"
+    with open(csv_path, 'w', newline='') as csvfile:
+        writer = csv.writer(csvfile)
+        writer.writerow(["Time (s)"] + list(all_results.keys()))
+        for i, t in enumerate(time_points):
+            row = [f"{t:.6e}"]
+            for key in all_results.keys():
+                row.append(f"{all_results[key][i]:.6e}")
+            writer.writerow(row)
+    logger.info(f"Waveform data saved to: {csv_path}")
+
+    # Write the .lis log. TransientSolver takes no `output_file` (unlike
+    # DCSolver), so rather than thread a logger through its per-timestep hot
+    # loop we record the run summary here: header, circuit summary, and final
+    # state. Iteration-level detail stays available via `debug=True`.
+    from pycircuitsim.logger import Logger
+    lis_path = output_path / f"{circuit_name}_simulation.lis"
+    netlist_name = getattr(circuit, 'netlist', circuit_name)
+    with Logger(netlist_name, str(lis_path)) as lis:
+        lis.log_header("Transient Analysis", analysis_params)
+        lis.log_circuit_summary(
+            component_count=len(circuit.components),
+            node_count=len(circuit.get_nodes()),
+            vsource_count=circuit.count_voltage_sources(),
+        )
+        lis.log_final_results(
+            all_results,
+            title="Transient Final Results",
+            sweep_label="Transient",
+            point_label="time points",
+            final_label=f"t = {time_points[-1]:.6e} s" if time_points else "final step",
+        )
+    logger.info(f"Simulation log saved to: {lis_path}")
 
     return all_results
 

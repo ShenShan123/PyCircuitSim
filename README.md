@@ -193,19 +193,21 @@ Results are saved to `results/<circuit_name>/<analysis_type>/` by default:
 results/
 └── bsimcmg_inverter_tran/
     └── tran/
+        ├── bsimcmg_inverter_tran_simulation.lis    # Run summary log
+        ├── bsimcmg_inverter_tran_transient.csv     # Waveform data
         └── bsimcmg_inverter_tran_transient.png     # Waveform plot
 ```
 
-Artifacts differ by analysis type — only `.dc` and `.ac` currently write CSV:
+Artifacts by analysis type:
 
 | Analysis | Subdirectory | Files produced |
 |----------|--------------|----------------|
 | `.dc` | `dc/` | `_simulation.lis`, `_dc_sweep.csv`, `_dc_sweep.png` |
 | `.ac` | `ac/` | `_ac_sweep.csv`, Bode plot |
-| `.tran` | `tran/` | `_transient.png` **only** — no CSV or `.lis` yet |
+| `.tran` | `tran/` | `_simulation.lis`, `_transient.csv`, `_transient.png` |
 | none (`.op`) | `dc_op/` | `_dc_op_point.txt`, `_dc_op_simulation.lis` |
 
-To get transient waveform *data* rather than a plot, drive
+For programmatic access to waveforms without reading the CSV, drive
 `TransientSolver` through the [Python API](#python-api) — it returns the
 time vector and per-node arrays directly.
 
@@ -545,15 +547,18 @@ results/
     │   ├── <circuit>_ac_sweep.csv        # Magnitude / phase per frequency
     │   └── <circuit>_ac_sweep.png        # Bode plot
     ├── tran/                            # .tran
-    │   └── <circuit>_transient.png       # Plot only (see note below)
+    │   ├── <circuit>_simulation.lis      # Run summary log
+    │   ├── <circuit>_transient.csv       # Time + per-node voltages
+    │   └── <circuit>_transient.png       # Waveform plot
     └── dc_op/                           # no analysis directive
         ├── <circuit>_dc_op_point.txt     # Final node voltages
         └── <circuit>_dc_op_simulation.lis
 ```
 
-> **Note:** transient runs currently emit only the plot — `run_transient`
-> writes no CSV and no `.lis`. For transient numerical data, call
-> `TransientSolver` directly (see [Python API](#python-api)).
+> **Note:** the transient `.lis` is a run summary (header, circuit
+> summary, final state) rather than a per-timestep iteration log —
+> `TransientSolver` takes no `output_file`. Use `debug=True` for
+> iteration-level convergence detail.
 
 ### Log Files (.lis)
 

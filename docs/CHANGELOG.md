@@ -102,22 +102,46 @@ still listed `.subckt` as unsupported.
 
 **Two pre-existing CLI defects surfaced while smoke-testing the README
 commands — NOT regressions (both reproduce identically on the pre-merge
-flat decks at 6b3a890), NOT yet fixed:**
+flat decks at 6b3a890). Both FIXED:**
 
-1. `simulation.py:293` logs `len(tran_results)` as "time points", but
-   `run_transient` returns a **node-keyed** dict — so a 3-node inverter
-   reports "Transient analysis complete: 3 time points" after correctly
-   integrating 502 steps. Cosmetic, but reads as a solver failure. The
-   `.dc` branch has the same shape at line 287.
-2. `run_transient` writes only the `.png` — no `_transient.csv` and no
-   `.lis`, though `run_dc_sweep` writes all three and `run_ac_sweep`
-   writes CSV. CLI transient runs therefore yield no numerical data;
-   the `TransientSolver` API returns it fine. README's Output Files
-   table now documents actual per-analysis artifacts rather than the
-   assumed-uniform set.
+1. **Mislabeled point counts.** `simulation.py` logged `len(results)` as
+   "time points" / "points computed", but `run_transient` and
+   `run_dc_sweep` both return a **trace-keyed** dict — so a 3-node
+   inverter reported "Transient analysis complete: 3 time points" after
+   correctly integrating 502 steps, reading as a solver failure. Added
+   `_sweep_point_count()` (length of any trace, since all share one
+   grid); both branches now report points *and* trace count:
+   `502 time points (3 traces)`, `50 points computed (7 traces)`.
+2. **Transient produced no numerical data.** `run_transient` wrote only
+   the `.png`. Now also writes `_transient.csv` (stdlib csv, mirroring
+   `run_dc_sweep`: `Time (s)` + one column per trace) and
+   `_simulation.lis`. `TransientSolver` takes no `output_file` (unlike
+   `DCSolver`), so rather than thread a logger through its per-timestep
+   hot loop the `.lis` is written from `run_transient` as a run summary
+   (header, circuit summary, final state); iteration detail remains
+   available via `debug=True`. `Logger.log_final_results` gained
+   `sweep_label` / `point_label` / `final_label` kwargs so transient data
+   is not described as a "DC Sweep"; defaults preserve the DC wording
+   **byte-identically** (verified).
 
-Neither affects the verification gates, which drive the solver directly
-rather than going through `main.py`.
+Verified after the fix: transient CSV = 502 rows, t ∈ [0, 5e-9], correct
+inverter behavior (V(out) ≤ 8 mV while V(in) > 0.9 V). Gates re-run:
+`verify_bsimcmg_op` PASS, `verify_bsimcmg_dc` 2/2, `verify_bsimcmg_tran`
+1/1, `verify_ac` 2/2, `verify_subckt` 8/8, `verify_nn_lifted_source_dc`
+15/15. No gate touches `main.py` — they drive the solver directly — and
+`run_dc_sweep`'s return contract (consumed by most NN/complex gates) was
+left untouched.
+
+**Third defect found, NOT fixed (needs a baseline decision):** the
+transient time vector duplicates its final sample. `solver.py:1952`
+computes `num_steps = ceil(t_stop/dt) + 1`, but `5e-9/1e-11` evaluates to
+`500.00000000000006` in IEEE-754, so `ceil` → 501 and `num_steps` → 502
+instead of 501. The last two steps both clamp to `t_stop` via
+`min(current_time, t_stop)`, yielding a duplicated end point and one
+wasted solve. Harmless numerically, but the fix changes transient vector
+lengths wherever `t_stop/dt` lands just above an integer, which could
+shift NRMSE baselines across the transient gate matrix — deferred rather
+than silently re-baselining.
 
 ---
 
