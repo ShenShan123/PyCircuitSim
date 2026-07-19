@@ -92,6 +92,33 @@ Scope note: complex parametric sweeps, NN AC, and opamp AC were not re-run
 in this campaign (their deck sources are the converted builders whose
 line-set equivalence the canaries already pin).
 
+**Merged to `main` 2026-07-18** (merge commit `3dadb34`, `--no-ff` from
+`feat/subckt-hierarchy`), carrying V6.11.0 + V6.12.0 together since the
+TSMC6 campaign was in this branch's ancestry. `tests/verify_subckt.py`
+re-run on the merged tree: **8/8 PASS** (L72 inverter 0.187% NRMSE, nested
+buffer 0.638% / 0.861%). README brought up to date in the same pass — it
+had been stranded at the pre-V6.5 "v4-re" universal-checkpoint era and
+still listed `.subckt` as unsupported.
+
+**Two pre-existing CLI defects surfaced while smoke-testing the README
+commands — NOT regressions (both reproduce identically on the pre-merge
+flat decks at 6b3a890), NOT yet fixed:**
+
+1. `simulation.py:293` logs `len(tran_results)` as "time points", but
+   `run_transient` returns a **node-keyed** dict — so a 3-node inverter
+   reports "Transient analysis complete: 3 time points" after correctly
+   integrating 502 steps. Cosmetic, but reads as a solver failure. The
+   `.dc` branch has the same shape at line 287.
+2. `run_transient` writes only the `.png` — no `_transient.csv` and no
+   `.lis`, though `run_dc_sweep` writes all three and `run_ac_sweep`
+   writes CSV. CLI transient runs therefore yield no numerical data;
+   the `TransientSolver` API returns it fine. README's Output Files
+   table now documents actual per-analysis artifacts rather than the
+   assumed-uniform set.
+
+Neither affects the verification gates, which drive the solver directly
+rather than going through `main.py`.
+
 ---
 
 ## V6.11.0 — TSMC6 NN family: all three NN compact models trained + gated at every scale (2026-07-14/17)

@@ -4,18 +4,22 @@
 
 **Pure Python Circuit Simulator with Compact-Model Research Bench**
 
-A clean, readable SPICE-like circuit simulator with three coexisting
+A clean, readable SPICE-like circuit simulator with four coexisting
 compact-model families that share the same solver:
 
 - **BSIM-CMG** (LEVEL=72) via PyCMG/OSDI — production-grade FinFET ground truth.
-- **DirectNet** (LEVEL=73) — PyTorch MLP baseline.
-- **BSIM-AR Transformer** (LEVEL=74) — autoregressive compact model that
-  predicts I-V, Q-V, and C-V curves token-by-token.
+- **DirectNet** (LEVEL=73) — feed-forward MLP; the **production** NN fast path.
+- **BSIM-AR Transformer** (LEVEL=74) — autoregressive compact model; the
+  validated **higher-fidelity** option (best accuracy, ~30–100× slower).
+- **PFN / TabPFN** (LEVEL=75) — TabPFN-v3-style in-context transformer
+  (**research**, V6.10.0).
 
-DirectNet and BSIM-AR live side-by-side in the unified `bsimar` package
+The three NN families live side-by-side in the unified `bsimar` package
 (`external_compact_models/bsimar/`) and share data generation,
-normalization, losses, training, metrics, and visualization. DirectNet
-acts as the baseline for BSIM-AR research.
+normalization, losses, training, metrics, and evaluation. BSIM-CMG is the
+ground truth all three train against and are gated on.
+
+Six technologies are supported: **ASAP7** and **TSMC5/6/7/12/16**.
 
 [![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
@@ -28,10 +32,11 @@ acts as the baseline for BSIM-AR research.
 - [Installation](#installation)
 - [Quick Start](#quick-start)
 - [Netlist Syntax](#netlist-syntax)
+  - [Subcircuits (.subckt)](#subcircuits-subckt-v6120)
 - [Examples](#examples)
 - [Python API](#python-api)
 - [Output Files](#output-files)
-- [NN Compact Models (LEVEL=73 & LEVEL=74)](#nn-compact-models-level73--level74)
+- [NN Compact Models (LEVEL=73 / 74 / 75)](#nn-compact-models-level73--74--75)
 - [Verification](#verification)
 - [Architecture](#architecture)
 - [Algorithms](#algorithms)
@@ -51,12 +56,14 @@ acts as the baseline for BSIM-AR research.
 | Capacitor | `C` | Linear capacitance |
 | Voltage Source | `V` | DC or PULSE waveform |
 | Current Source | `I` | DC current source |
-| NMOS/PMOS Level 72 | `M` | BSIM-CMG FinFET via PyCMG/OSDI |
-| NMOS/PMOS Level 73 | `M` | DirectNet (MLP) compact model via PyTorch — baseline |
-| NMOS/PMOS Level 74 | `M` | BSIM-AR Transformer compact model via PyTorch — primary |
+| NMOS/PMOS Level 72 | `M` | BSIM-CMG FinFET via PyCMG/OSDI — ground truth |
+| NMOS/PMOS Level 73 | `M` | DirectNet (MLP) via PyTorch — **production** NN |
+| NMOS/PMOS Level 74 | `M` | BSIM-AR Transformer via PyTorch — highest fidelity |
+| NMOS/PMOS Level 75 | `M` | PFN / TabPFN in-context transformer via PyTorch — research |
+| Subcircuit instance | `X` | Hierarchical instance of a `.subckt` definition |
 
 The legacy Shichman-Hodges `LEVEL=1` model has been removed. Only
-LEVEL=72/73/74 are supported.
+LEVEL=72/73/74/75 are supported.
 
 ### Supported Analyses
 
@@ -66,13 +73,16 @@ LEVEL=72/73/74 are supported.
 - **AC Analysis** (`.ac`) - Small-signal frequency-domain sweep (`dec`/`oct`/`lin`);
   linearizes about the DC OP and solves the complex MNA `Y = G + jωC` including the
   full MOSFET transcapacitance matrix. NGSPICE-validated for LEVEL=72 (machine
-  precision) and LEVEL=73 (NN, V6.5 — see `results/benchmark_sml/REPORT.md`).
+  precision) and LEVEL=73 (NN — see `docs/V6.6.6-accuracy-report.md`).
 
 ### Supported Directives
 
-- `.model` - MOSFET model definitions (LEVEL=72, LEVEL=73, or LEVEL=74)
+- `.model` - MOSFET model definitions (LEVEL=72, 73, 74, or 75)
 - `.include` - Include external library files
-- `.ic` - Set initial node voltages
+- `.ic` - Set initial node voltages (top-level or inside a `.subckt` body)
+- `.subckt` / `.ends` - Subcircuit definitions with ports and parameters,
+  instantiated by `X` lines; flattened at parse time (V6.12.0)
+- `uic` on `.tran` - start the transient from the `.ic` state (NGSPICE-style)
 - AC stimulus on sources: `AC=<mag> [phase]` on `V`/`I` lines
 
 ---
@@ -98,7 +108,7 @@ conda activate pycircuitsim
 # Install Python dependencies (requirements.txt pins all solver + NN deps)
 pip install -r requirements.txt
 
-# PyTorch is required for LEVEL=73 / LEVEL=74 inference and for training
+# PyTorch is required for LEVEL=73 / 74 / 75 inference and for training
 # the bsimar compact models. Install CPU or CUDA build as appropriate:
 pip install torch
 ```
@@ -118,19 +128,19 @@ ls external_compact_models/PyCMG/build/osdi/bsimcmg.osdi
 Technology modelcards live under `external_compact_models/PyCMG/modelcards/`:
 
 - `ASAP7/` — committed ASAP7 7nm predictive PDK.
-- `TSMC{5,7,12,16}/cln*.l` — raw TSMC PDK files. These are IP-protected and
+- `TSMC{5,6,7,12,16}/cln*.l` — raw TSMC PDK files. These are IP-protected and
   gitignored; supply them yourself to run any TSMC verification. Naive
   modelcards used by NGSPICE tests are regenerated on-the-fly from the raw
   PDK via `pycmg.tech.resolve_modelcard` and cached under
   `external_compact_models/PyCMG/build/modelcards/`.
 
-### NN Compact Model Setup (LEVEL=73 / LEVEL=74)
+### NN Compact Model Setup (LEVEL=73 / 74 / 75)
 
 The `bsimar` package at `external_compact_models/bsimar/` is importable
 once `external_compact_models/` is on `sys.path`. The `pycircuitsim`
 parser and the test harness add this automatically. Checkpoints live at
 `external_compact_models/bsimar/checkpoints/` and are resolved by the
-parser at netlist load time. See [NN Compact Models](#nn-compact-models-level73--level74)
+parser at netlist load time. See [NN Compact Models](#nn-compact-models-level73--74--75)
 for training and inference details.
 
 ---
@@ -183,10 +193,21 @@ Results are saved to `results/<circuit_name>/<analysis_type>/` by default:
 results/
 └── bsimcmg_inverter_tran/
     └── tran/
-        ├── bsimcmg_inverter_tran_simulation.lis   # Iteration log
-        ├── bsimcmg_inverter_tran_transient.csv     # Waveform data
-        └── bsimcmg_inverter_tran_transient.png     # Plot
+        └── bsimcmg_inverter_tran_transient.png     # Waveform plot
 ```
+
+Artifacts differ by analysis type — only `.dc` and `.ac` currently write CSV:
+
+| Analysis | Subdirectory | Files produced |
+|----------|--------------|----------------|
+| `.dc` | `dc/` | `_simulation.lis`, `_dc_sweep.csv`, `_dc_sweep.png` |
+| `.ac` | `ac/` | `_ac_sweep.csv`, Bode plot |
+| `.tran` | `tran/` | `_transient.png` **only** — no CSV or `.lis` yet |
+| none (`.op`) | `dc_op/` | `_dc_op_point.txt`, `_dc_op_simulation.lis` |
+
+To get transient waveform *data* rather than a plot, drive
+`TransientSolver` through the [Python API](#python-api) — it returns the
+time vector and per-node arrays directly.
 
 ---
 
@@ -210,9 +231,13 @@ Vdd 1 0 3.3
 * Current Source: I<name> <node+> <node-> <value>
 Ibias 1 0 1m
 
-* MOSFET: M<name> <drain> <gate> <source> <bulk> <model> L=<len> W=<width>
-Mn1 3 2 0 0 NMOS_VTL L=1u W=10u
-Mp1 3 2 1 1 PMOS_VTL L=1u W=20u
+* MOSFET: M<name> <drain> <gate> <source> <bulk> <model> L=<len> NFIN=<fins>
+* FinFET geometry is L + NFIN (fin count) — there is no W.
+Mn1 3 2 0 0 nmos1 L=30n NFIN=10
+Mp1 3 2 1 1 pmos1 L=30n NFIN=20
+
+* Subcircuit instance: X<name> <nodes...> <subckt name> [param=val ...]
+Xinv in out vdd inv NF=10
 ```
 
 ### Value Suffixes
@@ -286,11 +311,24 @@ Mn1 out in 0 0 nmos_nn L=16n NFIN=10
 Mp1 out in vdd vdd pmos_nn L=16n NFIN=10
 ```
 
-Checkpoints are resolved automatically through the cascade
-`v4_re_dn_universal_*` (current revision) → `v4_dn_universal_*` (legacy)
-→ `{tech}_{nmos,pmos}_best.pt` (per-tech) → bare `{nmos,pmos}_best.pt`.
-The `v4_re_*` checkpoints are produced by the post-2026-05-03 trimmed
-training pipeline (see CLAUDE.md Status / "v4-re").
+Checkpoints are resolved automatically at parse time:
+
+1. The env pin `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}` is read **first**.
+   Since V6.6.6 an absent pinned stem raises — there is no silent fallback.
+2. For a TSMC5/6/7/12/16 netlist, the per-tech slot
+   `tsmc{X}_dn_{large,medium,small,xl}` preempts (large-first); production
+   is the `large` tier.
+3. The dormant universal fallback chain is used only if neither applies.
+
+Each resolution is logged so you can confirm what actually loaded:
+
+```
+[NN-resolver] L73 nmos_nn TECH=tsmc5 VT=lvt -> tsmc5_dn_large_nmos (scope=tsmc5, tech_code=2)
+```
+
+Per-tech models carry a **local embedding vocabulary** (variant count + 1
+UNKNOWN slot), so the parser remaps the tech code via
+`bsimar.config.local_variant_code(scope, tech, variant)`.
 
 #### Level 74 (BSIM-AR — autoregressive Transformer compact model)
 
@@ -303,17 +341,31 @@ Mn1 out in 0 0 nmos_ar L=16n NFIN=10
 Mp1 out in vdd vdd pmos_ar L=16n NFIN=10
 ```
 
-BSIM-AR checkpoints (current revision **v4-re**):
-`v4_re_universal_{nmos,pmos}_best.pt` (TF val-best),
-`v4_re_universal_{nmos,pmos}_best.phys.pt` (physical-space val-best,
-preferred when `phys_best_metric == "median"`),
-`_norm.npz`, `_config.npz` — all under
-`external_compact_models/bsimar/checkpoints/`. The legacy `v4_universal_*`
-files still load if no `v4_re_*` is present.
+BSIM-AR uses per-tech checkpoints `tsmc{X}_tf_{small,medium,large}_{nmos,pmos}`
+(plus recipe variants) under `external_compact_models/bsimar/checkpoints/`.
+Un-parked in V6.8.0: the best config (`corroft@medium`, 1.9M params) reaches
+**15/16 strict** complex-circuit gates, beating DirectNet production — at
+~30–100× the CPU inference cost, which is why DirectNet remains the default.
 
-Both LEVEL=73 and LEVEL=74 expose autograd-derived conductances (gm, gds,
-gmb) so Newton-Raphson stays consistent in multi-device circuits. See
-[NN Compact Models](#nn-compact-models-level73--level74) for training,
+#### Level 75 (PFN — TabPFN-style in-context transformer)
+
+```spice
+.model nmos_pfn NMOS (LEVEL=75 TECH=tsmc5 VT=lvt)
+.model pmos_pfn PMOS (LEVEL=75 TECH=tsmc5 VT=lvt)
+
+Mn1 out in 0 0 nmos_pfn L=16n NFIN=10
+Mp1 out in vdd vdd pmos_pfn L=16n NFIN=10
+```
+
+Per-tech checkpoints `tsmc{X}_pfn_{small,medium,large}_{nmos,pmos}`; env pins
+`PYCIRCUITSIM_NN_CHECKPOINT_PFN_{NMOS,PMOS}`. Frozen-context buffers live
+inside the checkpoint, and the `_config.npz` sidecar is **required** to
+rebuild the architecture. Research-tier: clean `small` scores 11/16 strict —
+notably the first family with zero OMP-threading flips.
+
+All three NN levels expose autograd-derived conductances (gm, gds, gmb) so
+Newton-Raphson stays consistent in multi-device circuits. See
+[NN Compact Models](#nn-compact-models-level73--74--75) for training,
 checkpoint layout, and inference trade-offs.
 
 ### PULSE Sources
@@ -337,7 +389,49 @@ Vclk 1 0 PULSE(0 3.3 0n 1n 1n 10n 20n)
 ```spice
 * Set initial node voltage (useful for bistable circuits)
 .ic V(out)=0.7
+
+* Reach a node inside a subcircuit instance with the hierarchical name
+.ic V(X1.n1)=0.3
 ```
+
+### Subcircuits (`.subckt`, V6.12.0)
+
+Definitions take ports and optional parameters with defaults; `X` lines
+instantiate them and may override any parameter. Expansion is **flattening
+at parse time**, ngspice-style — the solver never sees hierarchy.
+
+```spice
+* Definition: .subckt <name> <ports...> [param=default ...]
+.subckt inv i o vdd NF=10 VIC=1.0
+Mp1 o i vdd vdd pmos1 L=30n NFIN=NF
+Mn1 o i 0 0 nmos1 L=30n NFIN={NF*2}
+.ic V(o)=VIC
+.ends
+
+* Instance: X<id> <nodes...> <name> [param=val ...]
+Xinv in out vdd inv NF=20
+```
+
+Naming after flattening:
+
+| Item | Becomes | Nested |
+|------|---------|--------|
+| Internal node `n1` in `X1` | `X1.n1` | `X1.X2.n1` |
+| Device `Mp1` in `X1` | `M.X1.Mp1` | `M.X1.X2.Mp1` |
+| Port nodes | mapped to the connecting node | — |
+| Ground `0` / `GND` | stays global | — |
+
+- **Parameters** resolve as bare names or `{expr}` / `'expr'` arithmetic
+  (`+ - * /`, unit suffixes allowed).
+- **`.ic` inside a body** is node-remapped *and* parameter-resolved; `uic`
+  and `force_ic` consume the result unchanged.
+- **`.model` / `.include` inside a body** are hoisted global; nested
+  `.subckt` definitions register globally.
+- **Loud errors** on unknown subcircuit names, port-count mismatches, and
+  recursion (depth > 64) — no silent misbehavior.
+
+Because the device type character is preserved (`M.X1.Mp1`), first-char
+dispatch still works, so no circuit or solver changes were needed.
 
 ---
 
@@ -350,7 +444,7 @@ compact-model families plus a passive-only RC reference:
 |------|----------|-------------|----------------------|
 | `examples/bsimcmg_nmos_dc.sp` | DC sweep | LEVEL=72 | NMOS Id-Vgs against PyCMG/OSDI |
 | `examples/bsimcmg_pmos_dc.sp` | DC sweep | LEVEL=72 | PMOS Id-Vgs against PyCMG/OSDI |
-| `examples/bsimcmg_inverter_dc.sp` | DC sweep | LEVEL=72 | Inverter VTC |
+| `examples/bsimcmg_inverter_dc.sp` | OP (no directive) | LEVEL=72 | Inverter bias point; hierarchical `.subckt` form |
 | `examples/bsimcmg_inverter_tran.sp` | Transient | LEVEL=72 | FinFET inverter pulse response |
 | `examples/bsimcmg_inverter_dc_asap7_ref.sp` | DC sweep | LEVEL=72 | ASAP7 reference configuration |
 | `examples/nn_nmos_op.sp` | OP | LEVEL=73 | DirectNet single-point NMOS |
@@ -358,20 +452,37 @@ compact-model families plus a passive-only RC reference:
 | `examples/nn_inverter_dc.sp` | DC sweep | LEVEL=73 | DirectNet inverter VTC |
 | `examples/bsimar_nmos_dc.sp` | DC sweep | LEVEL=74 | BSIM-AR NMOS Id-Vgs |
 | `examples/bsimar_inverter_dc.sp` | DC sweep | LEVEL=74 | BSIM-AR inverter VTC |
+| `examples/bsimcmg_cs_amp_ac.sp` | AC sweep | LEVEL=72 | Common-source amp Bode response |
+| `examples/rc_lowpass_ac.sp` | AC sweep | passives | Single-pole RC `.ac` reference |
 | `examples/rc_transient.sp` | Transient | passives | Pure RC reference |
+| `examples/complex/miller_opamp_directnet.sp` | DC | LEVEL=73 | Two-stage Miller opamp |
+| `examples/complex/ring_osc_5stage_directnet.sp` | Transient | LEVEL=73 | 5-stage ring oscillator |
+| `examples/complex/sram_6t_directnet.sp` | DC | LEVEL=73 | 6T SRAM butterfly / SNM |
+| `examples/complex/switchcap_unitcell_directnet.sp` | Transient | LEVEL=73 | Switched-capacitor unit cell |
+
+Since V6.12.0 the inverter, NN, and complex decks are written
+**hierarchically** with `.subckt` + `X` instances. Probed nodes are kept at
+top level (they are ports), so results and tooling are unchanged.
 
 ### Sample: BSIM-CMG FinFET Inverter Transient (ASAP7 7nm)
 
 ```spice
-* examples/bsimcmg_inverter_tran.sp
-Vdd 1 0 0.7
-Vin 2 0 PULSE 0 0.7 0.5n 0.1n 0.1n 0.8n 2n
+* examples/bsimcmg_inverter_tran.sp — hierarchical (.subckt) version
+Vdd 1 0 1.0
+Vin 2 0 PULSE 0 1.0 0.5n 0.1n 0.1n 0.8n 2n
 
-Mp1 3 2 1 1 pmos1 L=30n NFIN=10
-Mn1 3 2 0 0 nmos1 L=30n NFIN=10
-Cload 3 0 10f
+* Inverter instance: ports (in, out, vdd); node 3 = output stays top-level
+Xinv 2 3 1 inv
+Cload 3 0 10e-15
 
-.ic V(3)=0.7
+* The .ic inside the body is remapped to the connected port node (node 3);
+* VIC shows a parameterized initial condition.
+.subckt inv i o vdd VIC=1.0
+Mp1 o i vdd vdd pmos1 L=30n NFIN=10
+Mn1 o i 0 0 nmos1 L=30n NFIN=10
+.ic V(o)=VIC
+.ends
+
 .model nmos1 NMOS (LEVEL=72)
 .model pmos1 PMOS (LEVEL=72)
 .tran 10p 5n
@@ -390,7 +501,7 @@ from pycircuitsim.simulation import run_simulation
 run_simulation('examples/bsimcmg_inverter_tran.sp',
                output_dir='my_results', verbose=True)
 
-# Low-level: drive the solver directly
+# Low-level: drive the solver directly (this is how you get waveform arrays)
 from pycircuitsim import Parser
 from pycircuitsim.solver import DCSolver, TransientSolver
 
@@ -398,14 +509,24 @@ parser = Parser()
 parser.parse_file('examples/bsimcmg_inverter_tran.sp')
 circuit = parser.circuit
 
+# DC operating point -> {node_name: voltage}
 dc_solution = DCSolver(circuit).solve()
-time_points, waveforms = TransientSolver(circuit).solve(
-    tstep=10e-12, tstop=5e-9, dc_solution=dc_solution,
-)
+
+# Transient: t_stop / dt are constructor args; solve() takes none.
+solver = TransientSolver(circuit, t_stop=5e-9, dt=10e-12,
+                         initial_guess=dc_solution)
+results = solver.solve()
+
+time = results['time']          # numpy array of timepoints
+v_out = results['3']            # per-node numpy array, keyed by node name
 ```
 
-`pycircuitsim.simulation` also exposes `run_dc_sweep()` and
-`run_transient()` for the full orchestrated workflow.
+`results` is a dict keyed by node name plus a `'time'` entry; hierarchical
+nodes appear under their flattened names (e.g. `'X1.n1'`).
+
+`pycircuitsim.simulation` also exposes `run_dc_sweep()`, `run_transient()`,
+and `run_ac_sweep()` for the full orchestrated workflow (parse → solve →
+plot → write files).
 
 ---
 
@@ -416,15 +537,23 @@ PyCircuitSim generates output files organized by circuit name and analysis type:
 ```
 results/
 └── <circuit_name>/
-    ├── dc/
+    ├── dc/                              # .dc sweep
     │   ├── <circuit>_simulation.lis      # Detailed iteration log
     │   ├── <circuit>_dc_sweep.csv        # Numerical waveform data
     │   └── <circuit>_dc_sweep.png        # Voltage/current plots
-    └── tran/
-        ├── <circuit>_simulation.lis
-        ├── <circuit>_transient.csv
-        └── <circuit>_transient.png
+    ├── ac/                              # .ac sweep
+    │   ├── <circuit>_ac_sweep.csv        # Magnitude / phase per frequency
+    │   └── <circuit>_ac_sweep.png        # Bode plot
+    ├── tran/                            # .tran
+    │   └── <circuit>_transient.png       # Plot only (see note below)
+    └── dc_op/                           # no analysis directive
+        ├── <circuit>_dc_op_point.txt     # Final node voltages
+        └── <circuit>_dc_op_simulation.lis
 ```
+
+> **Note:** transient runs currently emit only the plot — `run_transient`
+> writes no CSV and no `.lis`. For transient numerical data, call
+> `TransientSolver` directly (see [Python API](#python-api)).
 
 ### Log Files (.lis)
 
@@ -446,91 +575,111 @@ Vin (V),V(1),V(2),V(3),i(Vdd),i(Vin)
 
 ---
 
-## NN Compact Models (LEVEL=73 & LEVEL=74) — current revision: **v4-re**
+## NN Compact Models (LEVEL=73 / 74 / 75)
 
-Both NN compact-model families live in the unified `bsimar` package at
-`external_compact_models/bsimar/`. DirectNet is the baseline; BSIM-AR
-is the primary Transformer model; they share every layer below the
-model architecture itself (data, normalization, losses, training, eval).
-See [Architecture](#architecture) for the package layout. The current
-shipping revision is **v4-re** (v4 reissue): same v4 7-dim + tech-code
-architecture, but with all unvalidated v5 Phase B levers and the
-AR-finetune phase removed (see CLAUDE.md Status / `docs/superpowers/plans/2026-05-03-nn-stack-trim.md`).
+All three NN compact-model families live in the unified `bsimar` package at
+`external_compact_models/bsimar/` and share every layer below the model
+architecture itself (data, normalization, losses, training, eval). See
+[Architecture](#architecture) for the package layout.
+
+Models are trained **per technology**, not universally: each
+(tech × device) pair gets its own checkpoint with a local embedding
+vocabulary. BSIM-CMG (LEVEL=72) is the ground truth for both training
+targets and pass/fail gating.
 
 ### Data Generation
 
-Data is produced by PyCMG (the ground-truth BSIM-CMG model):
+Data is produced by PyCMG (the ground-truth BSIM-CMG model), one `.npz`
+per tech + device:
 
 ```bash
 conda run -n pycircuitsim python \
     external_compact_models/PyCMG/scripts/generate_nn_data.py \
-    --device both --universal
+    --device both --tech tsmc5 --enable-inv-trip --n-workers 8
 ```
 
-This walks 954 `(L, NFIN)` combinations across 5 techs and 21 threshold
-variants (legal bin boundaries for TSMC, a fallback list for ASAP7) and
-writes one `.npz` per device under
-`external_compact_models/bsimar/data/datasets/`. Each sample is a
-**7-dim** input (`Vd, Vg, Vs, Vb, log2(NFIN), L, T`) plus a discrete
-tech-variant code consumed by `nn.Embedding`, and a 13-column output
-(`id, gm, gds, gmb, qg, qd, qs, qb, cgg, cgd, cgs, cdg, cdd`).
+`--tech` accepts `tsmc5`, `tsmc6`, `tsmc7`, `tsmc12`, `tsmc16`, `asap7`, or
+`all`. `--enable-inv-trip` adds the inverter-trip overlay; the grid sampler
+also carries the reverse-Vds corridor. Datasets land under
+`external_compact_models/bsimar/data/datasets/`.
 
-### Training (v4-re recipe)
+Each sample is a **7-dim** input (`Vgs, Vds, Vbs, NFIN, L, T, tech_code`),
+where `tech_code` is a discrete index consumed by `nn.Embedding`, and a
+13-column output (`id, gm, gds, gmb, qg, qd, qs, qb, cgg, cgd, cgs, cdg, cdd`).
 
-Training is driven by a single CLI. The `--model` flag picks the
-architecture; every other flag is shared. The recipe is hard-wired:
-MAE + per-target LDS, asinh+zscore (Transformer) or zscore (DirectNet),
-parallel cap head, BSIMAR column reorder, phys-best checkpoint tracker.
-Phase B levers (slope loss, structural id-gate) and the AR-finetune
-phase have been removed.
+Note that NFIN=1 is excluded in practice: unstable `(variant, NFIN=1)` bins
+fail OSDI convergence and are dropped per-bin during generation, so NFIN≥2
+is what actually trains.
+
+### Training
+
+One CLI drives all three architectures; `--model` picks which.
+`--tech-scope` auto-sets `--exclude-techs`, `--num-tech-codes`, the default
+`--data` path, and the `save_prefix` that the parser's resolver recognizes.
 
 ```bash
-# DirectNet v4-re (baseline MLP)
+# DirectNet (LEVEL=73) — production family
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
-    --model direct --device-type nmos \
-    --exclude-techs asap7 --num-tech-codes 18 \
-    --epochs 800 --hidden 384 --layers 6 --patience 150 --batch-size 2048 --cuda
+    --model direct --size large \
+    --device-type nmos --tech-scope tsmc5 --cuda --overwrite
 
-# BSIM-AR v4-re Transformer
+# BSIM-AR Transformer (LEVEL=74)
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
-    --model transformer --device-type nmos \
-    --exclude-techs asap7 --num-tech-codes 18 --cuda
+    --model transformer --size medium \
+    --device-type nmos --tech-scope tsmc5 --cuda --overwrite
+
+# PFN / TabPFN (LEVEL=75)
+conda run -n pycircuitsim python -u -m bsimar.cli.train \
+    --model tabpfn --size small \
+    --device-type nmos --tech-scope tsmc5 --cuda --overwrite
 ```
 
-Checkpoints land under `external_compact_models/bsimar/checkpoints/`:
+`--size` ∈ `{small, medium, large, xl}`; `xl` (~2.13M params) sits past the
+over-fit boundary for DirectNet. Capacity does **not** improve monotonically
+— each family peaks at a different tier (see the table below).
 
-| File | Model | Notes |
-|------|-------|-------|
-| `v4_re_dn_universal_{nmos,pmos}_best.pt` + `_norm.npz` | DirectNet v4-re | **Preferred by the parser** |
-| `v4_dn_universal_{nmos,pmos}_best.pt` + `_norm.npz` | DirectNet v4 (legacy) | Falls back if no v4-re on disk |
-| `{tech}_{nmos,pmos}_best.pt` + `_norm.npz` | DirectNet per-tech | Last fallback |
-| `v4_re_universal_{nmos,pmos}_best.{pt,phys.pt,ar.pt}` + `_norm.npz` + `_config.npz` | BSIM-AR v4-re | Transformer; loader prefers `.phys.pt` only when `phys_best_metric == "median"` |
-| `v4_universal_{nmos,pmos}_*` | BSIM-AR v4 (legacy) | Falls back if no v4-re on disk |
+### Checkpoints
 
-### Inference (LEVEL=73 vs LEVEL=74)
+Checkpoints live in `external_compact_models/bsimar/checkpoints/`, each as
+`*_best.pt` plus a `_norm.npz` (and `_config.npz` for BSIM-AR / PFN).
 
-Both LEVELs are drop-in replacements for LEVEL=72 on the same netlist.
-They share the same sign conventions, the same Jacobian-via-autograd
-guarantee for Newton-Raphson consistency, and the same source-relative
-voltage frame for PMOS.
+| Stem | Family | Notes |
+|------|--------|-------|
+| `tsmc{5,6,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}` | DirectNet | Production = `large`; resolver is large-first |
+| `tsmc{X}_dn_v660clean_large_*` | DirectNet | Clean archive; warm-start base for curriculum runs |
+| `tsmc{X}_dn_crit30f_large_*` | DirectNet | Production provenance (crit30 curriculum) |
+| `tsmc{X}_tf_{small,medium,large}_{nmos,pmos}` | BSIM-AR | Best config `corroft@medium` |
+| `tsmc{X}_pfn_{small,medium,large}_{nmos,pmos}` | PFN | `_config.npz` required to rebuild arch |
+| `u716_dn_*` | Universal DirectNet | 18-code vocab, env-pin only |
 
-Key differences:
+A completed training run leaves a `*_best.pt.complete` marker — a bare
+`_best.pt` may be from a killed run, so gate on the marker.
 
-| Aspect | LEVEL=73 (DirectNet) | LEVEL=74 (BSIM-AR) |
-|--------|----------------------|---------------------|
-| Architecture | MLP (SiLU, 5-6 layers) | Transformer encoder with causal mask |
-| Forward pass | 1 per device eval | 13 sequential tokens per device eval |
-| Training time | Fast | Slower (~5-10x) |
-| Inference cost | ~1x | ~13x |
-| Role | Baseline | Primary research model |
-| Normalization | Signed-log + z-score (default) | z-score (default) or signed-log (optional) |
+### Inference: choosing a family
+
+All three LEVELs are drop-in replacements for LEVEL=72 on the same netlist.
+They share sign conventions, the Jacobian-via-autograd guarantee for
+Newton-Raphson consistency, and the source-relative voltage frame (for
+**both** device types — see Critical Design Rules in CLAUDE.md).
+
+| Aspect | LEVEL=73 (DirectNet) | LEVEL=74 (BSIM-AR) | LEVEL=75 (PFN) |
+|--------|----------------------|--------------------|----------------|
+| Architecture | MLP (SiLU) | Transformer, causal mask | In-context transformer |
+| Forward pass | 1 per device eval | 13 sequential tokens | 1 with frozen context |
+| Inference cost | ~1× | ~30–100× | ~10× |
+| Best capacity tier | `large` | `medium` | `small` |
+| Complex gates (strict) | 14/16 | **15/16** | 11/16 |
+| Role | **Production** fast path | Highest fidelity | Research |
+
+The practical trade-off: **DirectNet** unless you specifically need
+BSIM-AR's extra fidelity and can absorb the AR inference cost.
 
 ---
 
 ## Verification
 
 All BSIM-CMG results are validated against NGSPICE 45.2 with the
-BSIM-CMG OSDI binary. NN compact models (LEVEL=73/74) are validated
+BSIM-CMG OSDI binary. NN compact models (LEVEL=73/74/75) are validated
 against PyCMG/NGSPICE as the ground truth.
 
 ### Test Harness Layout
@@ -561,13 +710,24 @@ python tests/verify_bsimcmg_dc.py
 # Transient verification (single baseline config)
 python tests/verify_bsimcmg_tran.py
 
-# Comprehensive transient verification (21 parametric configs)
-python tests/verify_bsimcmg_tran_comprehensive.py
+# Subcircuit hierarchy gate (8 checks)
+python tests/verify_subckt.py
 
 # Run L1 smoke suite in one line
 python tests/verify_bsimcmg_op.py && \
 python tests/verify_bsimcmg_dc.py && \
 python tests/verify_bsimcmg_tran.py
+```
+
+Gates are **CPU-pinned** and honor `NGSPICE_BIN` (use the repo-local ngspice
+when `/usr/local/ngspice-45.2` is absent). The high-gain VTC trip has ~±1%
+run-to-run scatter under multi-threaded BLAS, so thread pinning is not
+optional for reproducible NN results:
+
+```bash
+NGSPICE_BIN="$PWD/tools/ngspice-45.2/bin/ngspice" \
+CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+python tests/verify_subckt.py
 ```
 
 ### Verification Results
@@ -613,15 +773,32 @@ Cload=1fF.** Representative rows:
 | cload_100fF | 0.70V | 100fF | 0.02 | 0.9 |
 | nfin_20 | 0.70V | 10fF | 0.37 | 20.8 |
 
-#### NN Transient (LEVEL=73, 5 Technologies)
+#### Subcircuit Hierarchy (V6.12.0)
 
-| Tech | VDD | NRMSE(%) | MaxErr(mV) | Status |
-|------|-----|----------|------------|--------|
-| ASAP7 | 0.70V | 6.29 | 268.3 | PASS |
-| TSMC5 | 0.65V | 14.41 | 499.7 | PASS |
-| TSMC7 | 0.75V | 6.09 | 396.4 | PASS |
-| TSMC12 | 0.80V | 5.92 | 311.7 | PASS |
-| TSMC16 | 0.80V | 6.70 | 364.2 | PASS |
+`tests/verify_subckt.py` — **8/8 PASS**. Levels 1–3 cover linear
+equivalence, an L72 inverter, and a nested buffer:
+
+| Check | Metric | Result |
+|-------|--------|--------|
+| RC-ladder `.tran`, subckt == flat | max abs dV | 0.000e+00 V |
+| RC-lowpass `.ac`, subckt == flat | max abs dMag / dPh | 0.000e+00 |
+| Nested subckt + `{expr}` params, DC OP | max abs dV | 0.000e+00 V |
+| L72 inverter `.tran`, subckt == flat | max abs dV | 0.000e+00 V |
+| L72 inverter subckt vs NGSPICE | NRMSE | 0.187% of VDD |
+| L72 nested buffer vs NGSPICE | NRMSE (out / mid) | 0.638% / 0.861% |
+
+Flattening is exactly equivalent, not merely close: the subckt-vs-flat
+checks are **bit-identical**.
+
+#### NN Compact Models (LEVEL=73, production)
+
+DirectNet production (`large` tier, crit30 curriculum) device-level baseline
+across TSMC5/7/12/16: **inverter 8/8, DC 55/55, transient 64/64**.
+
+On the 16 complex-circuit gates (4 circuits × 4 techs), scored strictly
+against NGSPICE: DirectNet **14/16**, BSIM-AR **15/16**, PFN **11/16**.
+The one cell no family passes is the TSMC7 opamp, which is reachable only
+via the T3 differentiable-DC-solver fine-tune.
 
 ### Verification Scripts
 
@@ -629,22 +806,42 @@ Cload=1fF.** Representative rows:
 |--------|---------|
 | `tests/verify_bsimcmg_op.py` | OP analysis: PyCircuitSim vs NGSPICE for NMOS, PMOS, inverter |
 | `tests/verify_bsimcmg_dc.py` | DC sweep L1: Id-Vgs (ASAP7 baseline) |
-| `tests/verify_bsimcmg_dc_comprehensive.py` | DC sweep L2: 67-config VT/L/NFIN sweep across 5 techs |
+| `tests/verify_bsimcmg_dc_comprehensive.py` | DC sweep L2: 67-config multi-tech VT/L/NFIN sweep |
 | `tests/verify_multi_tech_dc.py` | DC sweep L3: 44-config inverter VTC + parametric |
 | `tests/verify_bsimcmg_tran.py` | Transient L1: single inverter baseline |
 | `tests/verify_bsimcmg_tran_comprehensive.py` | Transient L2: 37-config VT/L/NFIN sweep |
-| `tests/verify_multi_tech_tran.py` | Transient L3: 72-config multi-tech parametric |
-| `tests/verify_nn_dc.py` | NN L1: NMOS DC + PMOS DC + inverter VTC (single tech, LEVEL=73/74) |
-| `tests/verify_nn_tran_v4.py` | NN L1: NMOS pulse + inverter transient (single tech, LEVEL=73/74) |
-| `tests/verify_nn_dc_tran.py` | NN comprehensive: DC + VTC + transient across all 4 TSMC techs (`--dc-only`, `--pmos-only`, `--inverter-only`, `--tran-only`) |
-| `tests/verify_bsimar_v4_inverter.py` | BSIMAR v4 inverter rail-restoring sanity sweep across 4 TSMC techs |
+| `tests/verify_multi_tech_tran.py` | Transient L3: 86-config multi-tech parametric |
+| `tests/verify_ac.py` | AC L1 passive RC + L2 BSIM-CMG common-source amp |
+| `tests/verify_subckt.py` | Subcircuit hierarchy: equivalence, L72 inverter, nested buffer (8 checks) |
 
-Diagnostics (not part of CI):
+NN compact models (LEVEL=73/74/75):
 
 | Script | Purpose |
 |--------|---------|
-| `tests/diag_d1_tsmc7_nmos_errors.py` | Heatmap of TSMC7 NMOS error vs (Vgs, Vds) |
-| `tests/diag_bsimar_kcl_landscape.py` | KCL landscape probe for BSIMAR inverter convergence |
+| `tests/verify_nn_dc_tran.py` | NN device + inverter gate across TSMC techs (`--tech`, `--inverter-only`) |
+| `tests/verify_nn_multi_tech_dc.py` | Parametric Id-Vgs over L / NFIN / VT (55 configs) |
+| `tests/verify_nn_multi_tech_tran.py` | Parametric inverter over P/N ratio, VDD, Cload, slew, pulse width |
+| `tests/verify_nn_ac.py` | NN CS-amp AC: gain / f3db / magnitude NRMSE |
+| `tests/verify_nn_lifted_source_dc.py` | Lifted-source canary — guards the source-relative frame |
+
+Complex circuits (4 circuits × 4 techs = 16 gates), scored against NGSPICE
+BSIM-CMG ground truth:
+
+| Script | Purpose |
+|--------|---------|
+| `tests/verify_complex_opamp.py` / `_ac.py` / `_sweep.py` | Two-stage Miller opamp: gain, open-loop AC, parametric |
+| `tests/verify_complex_ring_osc.py` / `verify_complex_ringosc_sweep.py` | Ring-oscillator period + parametric mirror |
+| `tests/verify_complex_switchcap.py` / `_sweep.py` | Switched-capacitor charge / droop |
+| `tests/verify_complex_sram_snm.py` / `verify_complex_sram_sweep.py` | 6T SRAM butterfly positivity + NRMSE tracking |
+| `tests/verify_complex_sweep_canaries.py` | Guards single-point ↔ sweep equivalence |
+
+Diagnostics (reusable controls, **not** pass/fail gates — they use
+L72-in-PyCircuitSim as reference rather than NGSPICE):
+
+| Script | Purpose |
+|--------|---------|
+| `tests/diag_l72_complex_control.py` | Proves L72-in-PyCircuitSim matches NGSPICE, isolating NN-surface gaps |
+| `tests/diag_l72_switchcap_control.py` / `_uic_control.py` | Same control for the switched-cap cell (incl. `uic`) |
 | `tests/diag_nn_jacobian_consistency.py` | FD-vs-autograd Jacobian consistency check |
 
 Each script generates comparison plots and detailed metrics in `tests/verify_*_results/`.
@@ -670,25 +867,27 @@ pycircuitsim/                       # Python package (simulator core)
     ├── base.py                     # Component abstract base class
     ├── passive.py                  # R, C, V, I, PULSE sources
     ├── mosfet_cmg.py               # BSIM-CMG FinFET (LEVEL=72) via PyCMG/OSDI
-    ├── mosfet_nn.py                # DirectNet (LEVEL=73) via PyTorch
-    └── mosfet_bsimar.py            # BSIM-AR Transformer (LEVEL=74) via PyTorch
+    ├── mosfet_nn.py                # Shared _MOSFETNNBase for LEVEL=73/74/75
+    ├── mosfet_directnet.py         # DirectNet (LEVEL=73) via PyTorch
+    ├── mosfet_bsimar.py            # BSIM-AR Transformer (LEVEL=74) via PyTorch
+    └── mosfet_pfn.py               # PFN / TabPFN (LEVEL=75) via PyTorch
 
 external_compact_models/            # External compact-model packages
-├── bsimar/                         # Unified NN compact model package (DirectNet + BSIM-AR)
-│   ├── config.py                   # TECH_CONFIGS + DirectNetConfig + TransformerConfig
-│   ├── data/                       # Normalizers, dataset loaders, dataset analysis
-│   ├── models/                     # direct_net.py + transformer.py
-│   ├── losses/                     # direct_loss.py + bni_mae.py
-│   ├── training/                   # train_directnet, train_transformer, EarlyStopping
-│   ├── eval/                       # physical-units metrics, plots
-│   ├── cli/train.py                # `python -m bsimar.cli.train --model {direct,transformer}`
+├── bsimar/                         # Unified NN compact model package (all 3 families)
+│   ├── config.py                   # NNTechConfig + TECH_CODE_MAP + local-vocab helpers
+│   ├── data/                       # normalize.py, dataset.py
+│   ├── models/                     # direct_net.py, transformer.py, tabpfn.py
+│   ├── losses/                     # bni_mae.py (MAELoss + per-target LDS weights)
+│   ├── training/                   # trainer.py
+│   ├── eval/                       # metrics.py, loo_labels.py
+│   ├── cli/train.py                # `python -m bsimar.cli.train --model {direct,transformer,tabpfn}`
 │   ├── checkpoints/                # Trained weights (gitignored)
 │   └── docs/, imgs/, README.md, LICENSE
 │
 └── PyCMG/                          # BSIM-CMG OSDI wrapper (git submodule)
     ├── pycmg/                      # Python ctypes-based OSDI interface
     ├── build/osdi/bsimcmg.osdi     # Compiled OSDI binary
-    ├── modelcards/                 # Technology modelcards (ASAP7 + TSMC5/7/12/16)
+    ├── modelcards/                 # Technology modelcards (ASAP7 + TSMC5/6/7/12/16)
     └── scripts/generate_nn_data.py # NN training-data generator
 
 main.py                             # CLI entry point
@@ -704,15 +903,17 @@ results/                            # Simulation output (generated at runtime)
 | Module | Responsibility |
 |--------|---------------|
 | `simulation.py` | Orchestrates parse -> solve -> visualize workflow |
-| `parser.py` | Two-pass netlist parsing, `.model`/`.include`/`.ic` directives, LEVEL=73/74 process-param resolution via `bsimar.config` |
+| `parser.py` | Two-pass netlist parsing, `.model`/`.include`/`.ic`/`.subckt` directives, subcircuit flattening, LEVEL=73/74/75 checkpoint + process-param resolution via `bsimar.config` |
 | `circuit.py` | Stores circuit topology, component list, node mapping |
-| `solver.py` | MNA construction, Newton-Raphson iteration, transient stepping |
+| `solver.py` | MNA construction, Newton-Raphson iteration, transient stepping, AC solve |
 | `models/mosfet_cmg.py` | BSIM-CMG physics via PyCMG (LEVEL=72) |
-| `models/mosfet_nn.py` | DirectNet inference with autograd conductances (LEVEL=73) |
-| `models/mosfet_bsimar.py` | BSIM-AR Transformer inference (LEVEL=74), reuses `_MOSFETNNBase` |
+| `models/mosfet_nn.py` | Shared NN base: voltage prep, autograd Jacobian, Vds correction |
+| `models/mosfet_directnet.py` | DirectNet inference with autograd conductances (LEVEL=73) |
+| `models/mosfet_bsimar.py` | BSIM-AR Transformer inference (LEVEL=74) |
+| `models/mosfet_pfn.py` | PFN / TabPFN in-context inference (LEVEL=75) |
 | `logger.py` | HSPICE-compatible output formatting |
 | `visualizer.py` | Automatic plot generation |
-| `bsimar.*` | Training / eval pipeline shared by LEVEL=73 and LEVEL=74 |
+| `bsimar.*` | Training / eval pipeline shared by LEVEL=73, 74, and 75 |
 
 ### Design Principles
 
@@ -722,7 +923,7 @@ results/                            # Simulation output (generated at runtime)
 - **Modularity** — every device inherits from `Component` and exposes a
   common interface (`calculate_current()`, `get_conductances()`); new
   devices can be added without touching the solver.
-- **Drop-in compact models** — LEVEL=72/73/74 share sign conventions
+- **Drop-in compact models** — LEVEL=72/73/74/75 share sign conventions
   and Jacobian-via-autograd contracts so the same netlist runs against
   any of the three.
 
@@ -812,7 +1013,8 @@ device currents.
 PyCircuitSim is intentionally simplified for educational use.
 
 **Not supported:** inductors, mutual inductance, `.noise`, `.option`,
-`.measure`, `.param`, subcircuits (`.subckt`).
+`.measure`, global `.param` (subcircuit-scoped parameters *are* supported —
+see [Subcircuits](#subcircuits-subckt-v6120)).
 
 **Known limits:** pure Python is ~10-100× slower than compiled
 simulators; tested on circuits with <100 components; strongly
@@ -824,9 +1026,12 @@ simulation, use ngspice / Xyce / Spectre.
 
 - [x] AC small-signal (`.ac`) — LEVEL=72 NGSPICE-exact; LEVEL=73 NN gated across all
   24 capacity checkpoints (V6.5: device CS-amp 13/24, opamp open-loop dynamics validated)
+- [x] Subcircuits (`.subckt` / `.ends` / `X` instances) — V6.12.0, 8/8 gate
+- [x] Expanded SRAM / ring-oscillator test suite — 16 complex-circuit gates
+      plus parametric sweep mirrors
 - [ ] Adaptive output timestep
-- [ ] Expanded SRAM / ring-oscillator test suite
-- [ ] Inductor support, `.subckt`
+- [ ] Inductor support
+- [ ] Global `.param` / `.measure`
 
 ## References
 
