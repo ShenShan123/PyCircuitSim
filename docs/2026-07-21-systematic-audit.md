@@ -152,8 +152,122 @@ tech, and opamp AC on 2 of 5 techs were run — no ring-osc, SRAM, switchcap, or
 parametric sweeps, which `v647-s10` and `v648-s1` both record as fragile to exactly
 this class of Jacobian change. `k=0.0` is also a blunt instrument: the raw autograd
 gds is still genuinely negative at ~3–8% of conducting points even with the correct
-sign, and those points need *some* guard. A k-scan to find where the improvement
-saturates has not been done.
+sign, and those points need *some* guard. See A3-guard.
+
+#### A3-root — origin of the wrong rule
+
+The negation was **never** present in tracked history (`git log --all -S 'gds_phys =
+-self._denorm_deriv'` returns nothing). The reasoning originates in commit `930c274`
+(2026-05-07), which added a since-deleted Jacobian-consistency aux loss:
+
+> *"To keep both terms in PyCMG-physical sign convention, flip sign for gm/gmb
+> (where id is negative-going); **gds is the diagonal so no flip**"*
+
+That is exactly the rule `mosfet_nn.py:352-358` still implements. The reasoning is
+wrong because `gm = ∂id/∂Vg` and `gds = ∂id/∂Vd` are both derivatives of the *same
+signed* `id` — the sign comes from `id`'s convention, not from which variable is
+differentiated. "Diagonal" is irrelevant.
+
+**Why it survived:** the same wrong rule went into both the aux loss and the
+simulator. Someone later investigated empirically (`v6_4_7_s10_sign_check.py` plus a
+float64-FD selfcheck), established uniform negation, wrote it into `bni_mae.py`, and
+explicitly documented that `930c274`'s rule was wrong. The aux loss carrying the bad
+rule was eventually deleted. **The simulator was never revisited** — the correction
+was recorded in the training module's docstring, where an inference-side reader
+would never encounter it.
+
+#### A3-channels — gm and gmb verified correct
+
+All three channels measured symmetrically (`tsmc5_dn_large_nmos`, 12 conducting
+points): head vs autograd relative error, negated vs non-negated candidate.
+
+| channel | head sign | autograd sign | vs **−autograd** | vs **+autograd** |
+|---|---|---|---|---|
+| gm | 100% + | 100% − | **0.010** | 2.008 |
+| gds | 100% + | 100% − | **0.268** | 2.268 |
+| gmb | 100% + | 100% − | **0.056** | 2.001 |
+
+All three require negation. `gm` and `gmb` are correctly handled — **there is no
+second sign bug.** Note gds tracks its supervised head at only ~27% where gm tracks
+at ~1%, i.e. the Vd-derivative of the learned id surface is markedly less
+well-constrained than the Vg-derivative.
+
+#### A3-guard — where the residual negatives live, and what guard to use
+
+Grid: 61 Vgs × 61 Vds × 3 Vbs per device, all 10 `tsmc*_dn_large_{nmos,pmos}`, at
+NFIN ∈ {10, 2}; OSDI ground truth on the identical grid (111,630 evals, 100%
+converged), both the `gds` opvar and a central finite difference.
+
+**Decisive control: OSDI `−d(id)/dVd` is positive at 100.0000% of conducting points**
+on all 10 devices (min 2.2e-10 S), forward *and* reverse. **No negative has a physics
+defense — every one is model error.** This also independently confirms the
+uniform-negation direction against the ground-truth model itself.
+
+**Where:** 96–100% of sign-corrected negatives are **subthreshold**, and **0.00% of
+amplifying-regime points**, for 9 of 10 checkpoints. 75–93% are in-box, so
+extrapolation is not the driver. At NFIN=2 the amplifying set is 0.00% for all 10.
+
+**The one real exception:** `tsmc16_dn_large_pmos` has a learned non-monotonicity —
+at |Vgs| ≥ VDD its |id(Vds)| peaks near |Vds| ≈ 0.55 V then falls, while OSDI rises
+monotonically. 5.97% of amplifying points, wrong-signed at up to **3× the correct
+magnitude**, fully in-box. Its own supervised gds head is correct at those points
+(+4.520e-05 vs OSDI +4.356e-05), so the defect is in the **id head's Vds slope**, not
+the data. It is a per-training-run lottery, not architectural — sibling sizes are
+clean, and production `large` simply drew it.
+
+**`_apply_vds_correction` is exonerated:** over 111,630 points × 10 devices it turned
+a positive raw gds negative **exactly zero times**, and it *rescues* 17–92% of raw
+negatives via the linear-region term. (The separate C0 jump at Vds ≈ −0.005 V is
+real, floor-independent, and out of scope here.)
+
+**The floor is the dominant error, not the guard.** Measured true Early voltage
+(OSDI): amplifying p50 3.3–9.8 V, max 19.6 V, whole-box max 43.4 V. Independently
+reproduced end-to-end on a LEVEL=72 Id-Vds sweep (tsmc5, L=16n NFIN=10, Vg=VDD):
+saturation V_A **median 3.08 V, max 4.60 V, min 1.41 V**. The shipped `k=0.5` floor
+asserts `V_A ≤ 1/k = 2.00 V` — **below the true median of every device** — and binds
+at 75% of that sweep's saturation points (90.9% of the fuller amplifying set).
+
+| guard | alters cond | alters **amp** | medRelErr cond | medRelErr **amp** |
+|---|---|---|---|---|
+| raw (no guard) | — | — | 0.328 | 0.279 |
+| **A** `max(g, \|id\|·0.5)` *shipped* | 42.67% | **90.90%** | 0.761 | **2.006** |
+| **B** `max(g, \|id\|·0.02)` | 5.64% | 2.30% | 0.321 | 0.279 |
+| **C** `max(g, 1e-12)` (k=0) | 4.43% | 0.60% | 0.328 | 0.279 |
+| **F** `g if g>0 else max(\|id\|·0.02, 1e-12)` | **4.43%** | **0.60%** | **0.324** | **0.279** |
+
+**Recommended: guard F — clamp negatives only, pass positives through untouched.**
+Positives are bit-identical to the raw Jacobian, so it provably cannot perturb a
+correct value (the point, given how fragile opamp OPs are to Jacobian changes). Same
+footprint as k=0 but on the error set it lands within ~1.3–3× of truth instead of
+stamping `r_o = 1e12 Ω` (an essentially open drain) where the true gds is 4.5e-05 S.
+The `0.02` constant is `1/(50 V)`, chosen **above the 43.4 V maximum true Early
+voltage measured anywhere in the box**, so it can never bind on a physically correct
+value — a physical bound, not a tuning knob.
+
+F **bounds** the tsmc16_pmos damage but does not fix it (returns 1.0e-05 S where truth
+is 4.5e-05 S). That checkpoint needs a retrain or a monotonicity constraint on the id
+head; decide separately whether to re-roll it before shipping.
+
+#### A3-data — the OSDI gds opvar flips sign in reverse Vds (separate latent bug)
+
+The OSDI `gds` **opvar** flips sign in reverse Vds (internal source/drain swap) while
+the true derivative does not. Verified by finite difference — tsmc5 nmos at
+Vds = −0.033 V: true `−d(id)/dVd` = **+3.124e-03 S**, opvar = **−3.124e-03 S**. In
+forward Vds the opvar equals `−d(id)/dVd` to 4–5 digits for both device types.
+
+The generator stores the raw opvar, so **the supervised `gds` column is sign-flipped
+throughout the reverse-Vds corridor**, and the trained head reproduces the flip
+(84–99.8% sign agreement with the opvar).
+
+**Scope — currently latent.** `SOBOLEV_ID_CHANNELS` does include `("gds", 0)`, so
+`--sobolev` supervises against that column; and the `sob` recipe is
+`--sobolev --sobolev-corridor-only`, i.e. it applies the gds target *precisely on
+corridor rows*, which is where the flip lives — maximum overlap. But **no
+bare-sobolev checkpoint exists on disk**, and production (`clean`, `crit30f`) plus
+every documented alternate (`csob`, `corroft`, `crit15m`, `crit10`) uses either class
+weights only or `--charge-sobolev` (charge derivatives, not id derivatives). So no
+shipped or documented checkpoint is affected. Fix the convention before anyone runs
+`sob`/`sobf`, and before adopting the head as a gds source.
 
 ---
 
