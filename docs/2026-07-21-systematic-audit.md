@@ -360,9 +360,46 @@ are the same device with bit-identical ground truth (§D1):
 Arm F agrees to ~1 pp at every NFIN corner. Part of the "training lottery" variance
 this project has been ranking recipes against was an artifact of the wrong Jacobian.
 
-**Verdict: ship the sign fix + guard F.** Net +1 gate on both runs, a long-standing
-convergence defect resolved, no regressions, and the two mechanisms that could have
-bitten (reverse corridor, NFIN lobe) both measured inert.
+#### A3-dctran — parametric DC + transient regression, arm A vs F
+
+Thread-pinned, both arms same session. **A repeat arm-A run gave 0 differing metric
+lines**, so this suite is deterministic and every delta below is signal, not scatter.
+
+| suite | configs | arm A | arm F |
+|---|---|---|---|
+| multi-tech DC | 69 | 68/69 | 68/69 |
+| multi-tech transient | 80 | 80/80 | 80/80 |
+
+**DC is EXACTLY invariant — all 69 metric lines bit-identical**, including the single
+pre-existing failure (`TSMC12_pmos_nfin_10`: NRMSE 16.15%, MRE 37.15%, R² 0.70560,
+MaxErr 2.097e-04 in *both* arms). This is the at-scale confirmation that gds cancels
+at the DC Newton fixed point — 69 configs across techs, geometries and VT variants,
+not a single inverter.
+
+**Transient improves.** 441 metric lines differ, and the direction is favourable:
+
+| | arm A | arm F |
+|---|---|---|
+| mean NRMSE | 1.876% | **1.512%** |
+| max NRMSE | 5.750% | **4.860%** |
+| improved / worsened / unchanged | — | **51 / 12 / 17** |
+| best change | — | **−3.940 pp** |
+| worst change | — | **+0.140 pp** |
+
+Mean transient error drops ~19%, the worst config improves from 5.75% to 4.86%, and
+the largest regression anywhere is +0.14 pp against a 15% gate.
+
+**This supersedes an earlier single-tech observation** (inverter transient
+0.79% → 0.97%, reported as a mild degradation). That measurement came from
+`verify_nn_dc_tran.py`, which the audit found is **not** thread-pinned (§B6) — so the
+movement was most likely OMP scatter. The pinned, 80-config measurement shows a clear
+improvement.
+
+**Verdict: ship the sign fix + guard F.** Net +1 gate on both complex runs, device AC
+8/10 → 10/10, transient mean error −19%, DC exactly unchanged, a long-standing
+convergence defect resolved (`force_ic` 2/5 → 5/5), and the two mechanisms that could
+have bitten (reverse corridor, NFIN lobe) both measured inert. The only watch item is
+TSMC5 opamp gain margin (9.54% against a 10% gate).
 
 #### A3-data — the OSDI gds opvar flips sign in reverse Vds (separate latent bug)
 
