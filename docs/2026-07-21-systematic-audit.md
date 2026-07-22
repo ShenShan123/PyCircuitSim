@@ -208,12 +208,45 @@ amplifying-regime points**, for 9 of 10 checkpoints. 75–93% are in-box, so
 extrapolation is not the driver. At NFIN=2 the amplifying set is 0.00% for all 10.
 
 **The one real exception:** `tsmc16_dn_large_pmos` has a learned non-monotonicity —
-at |Vgs| ≥ VDD its |id(Vds)| peaks near |Vds| ≈ 0.55 V then falls, while OSDI rises
-monotonically. 5.97% of amplifying points, wrong-signed at up to **3× the correct
-magnitude**, fully in-box. Its own supervised gds head is correct at those points
-(+4.520e-05 vs OSDI +4.356e-05), so the defect is in the **id head's Vds slope**, not
-the data. It is a per-training-run lottery, not architectural — sibling sizes are
-clean, and production `large` simply drew it.
+its |id(Vds)| peaks then falls while OSDI rises monotonically. Its own supervised gds
+head is correct at those points (+4.520e-05 vs OSDI +4.356e-05), so the defect is in
+the **id head's Vds slope**, not the data. It is a per-training-run lottery, not
+architectural — sibling sizes are clean, and production `large` simply drew it.
+
+**It is a mid-NFIN interpolation lobe** (NFIN enters as `log2(NFIN)`, so this sits
+between training bins). Independently reproduced:
+
+| NFIN | 2 | 5 | 8 | 10 | 10.25 | 12 | 15 | 20 |
+|---|---|---|---|---|---|---|---|---|
+| neg%, \|V\| ≤ 1.3·VDD | 0.00 | 0.00 | 0.00 | **12.80** | **12.80** | **6.56** | 0.00 | 0.00 |
+| neg%, \|V\| ≤ VDD | 0.00 | 0.00 | 0.00 | **0.00** | **0.00** | **0.00** | 0.00 | 0.00 |
+
+`tsmc6_pfn_small_nmos` shows the same signature at a shifted centre (NFIN 5–10), so
+the lobe is a cross-family failure geometry, not a single bad checkpoint.
+
+**CORRECTION — the lobe lives entirely OUTSIDE the supply rails.** An initial report
+put 5.97% of *amplifying* points (defined |Vgs| ≤ VDD ∧ |Vds| ≤ VDD) in the negative
+set. That does not reproduce. Direct measurement gives **0.00% inside the rails at
+every NFIN**, and this holds with Vbs swept over {−0.25, 0, +0.25}·VDD — Vbs does not
+open the region. The negatives appear only for |Vgs| or |Vds| above VDD; the worst
+points sit at |Vg| = 1.3·VDD ≈ 1.04 V against a 0.8 V supply, which no device in a
+0.8 V circuit reaches in normal operation.
+
+Consequences:
+- **The re-roll case is much weaker than it first appeared.** At NFIN=2 (every
+  single-point ship gate) this checkpoint is within ±0.2 dB of OSDI intrinsic gain.
+  There is no gate signal to improve, and V6.6.x history is unambiguous that a
+  retrain re-rolls the whole matrix. **Do not re-roll, and do not gate the A3 fix
+  on it.**
+- **Guard F is sufficient** — it clamps exactly these out-of-rail negatives, which
+  is the robustness case (transient overshoot and NR excursions do transiently
+  leave the rails; that is what the rail-extrapolation machinery exists for). It is
+  a robustness concern, not a value-accuracy concern at any real operating point.
+- Worth adding an NFIN-swept Id-Vds monotonicity **diagnostic** (~30 s CPU per
+  checkpoint, no NGSPICE) and folding it into checkpoint selection for the next
+  campaign — it converts a per-run lottery into a selectable criterion, and covers
+  DN and PFN at once. Note the single-point gates use NFIN=2 and are blind to the
+  lobe, while `complex_sweep.py` uses `nfins = (2, 5, 10)` and does traverse it.
 
 **`_apply_vds_correction` is exonerated:** over 111,630 points × 10 devices it turned
 a positive raw gds negative **exactly zero times**, and it *rescues* 17–92% of raw
@@ -234,6 +267,22 @@ at 75% of that sweep's saturation points (90.9% of the fuller amplifying set).
 | **B** `max(g, \|id\|·0.02)` | 5.64% | 2.30% | 0.321 | 0.279 |
 | **C** `max(g, 1e-12)` (k=0) | 4.43% | 0.60% | 0.328 | 0.279 |
 | **F** `g if g>0 else max(\|id\|·0.02, 1e-12)` | **4.43%** | **0.60%** | **0.324** | **0.279** |
+
+**Guard F holds across all three NN families** (production slots, NFIN=10). LEVEL=74
+is the *cleanest*: 0.00% amplifying negatives on all 8 devices — so the AR family's
+weaker predicted-gds channel does **not** translate into a larger negative region
+(the stamped quantity is the autograd Jacobian of the `id` head, a different surface).
+
+| | L73 DirectNet `dn_large` | L74 BSIM-AR `tf_corroft_medium` | L75 PFN `pfn_small` |
+|---|---|---|---|
+| guard F alters, amplifying | 0.60% | **0.00%** | 1.86% |
+| shipped floor alters, amplifying | 90.90% | 89.28% | 89.23% |
+| raw median relerr, amplifying | 0.279 | 0.218 | 0.218 |
+| shipped-floor median relerr | 2.006 | 1.375 | 1.746 |
+
+The shipped floor is the dominant error in **every** family — ~89–91% of amplifying
+points altered, median error inflated 6–8×. (`tsmc6_tf_corroft_medium` does not exist
+on disk; corroft was only run on the original four techs, so L74 is 8 devices.)
 
 **Recommended: guard F — clamp negatives only, pass positives through untouched.**
 Positives are bit-identical to the raw Jacobian, so it provably cannot perturb a
