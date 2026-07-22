@@ -93,8 +93,67 @@ conducting bias points and replaced by a hard-wired 2 V Early voltage.
 
 DC is insensitive (gds cancels at the NR fixed point — why ten campaigns missed it).
 AC is not: `ACSolver._precompute_smallsignal` (`solver.py:2574-2581`) consumes it
-directly as small-signal `r_o`. **Circuit-level AC impact not yet measured** — that
-experiment is the gate on whether to ship the fix.
+directly as small-signal `r_o`.
+
+#### A3-measured — the sign fix and the floor are COUPLED
+
+Four-arm experiment, `tests/verify_nn_ac.py`, all 5 techs × 2 devices, CPU-pinned,
+out-of-tree monkeypatch (floor varied via the existing `PYCIRCUITSIM_GDS_FLOOR_K`
+knob, no code change):
+
+| arm | gds sign | floor k | AC gates |
+|---|---|---|---|
+| A (shipped) | buggy | 0.5 | **8/10** |
+| B | **fixed** | 0.5 | **8/10** — *bit-identical to A, every digit* |
+| C | **fixed** | 0.0 | **10/10** |
+| D (control) | buggy | 0.0 | **5/10** |
+
+**Neither change is a fix on its own.** The sign fix alone is invisible; relaxing
+the floor alone makes things *worse* than shipped.
+
+**Why B is bit-identical — verified arithmetically.** `_floor_gds` binds whenever
+`|gds| < k·|id|`, i.e. whenever Early voltage `V_A = |id|/|gds| > 1/k = 2 V`. A
+FinFET in saturation essentially always satisfies that, so **both** the buggy
+(negative) and fixed (positive) candidates lose to the floor at every amplifying
+operating point. At the tsmc5 CS-amp OP: raw `−4.851e-06`, negated `+4.851e-06`,
+floor `1.259e-05` → both arms return `1.259e-05`, delta exactly zero. This is the
+mechanism behind the 98–100% override rate.
+
+**Arm D shows what the floor is actually protecting against:** removing it while
+the sign is still wrong stamps a genuinely negative output conductance — the Rule 4
+failure mode. **The floor is load-bearing today precisely because it masks the sign
+bug.**
+
+Arm A→C per-case: 9 of 10 improve, `f3db_ratio` moves to exactly 1.000 in 6 of 10,
+and both baseline failures clear with margin (tsmc12_pmos magNRMSE 12.40→3.59%;
+tsmc16_pmos 14.38→5.94%). Only tsmc6_nmos degrades (2.59→3.88%), still passing.
+
+**Opamp AC un-rails.** `verify_complex_opamp_ac.py` still FAILS in every arm, but
+A→C moves TSMC16 from 0/3 to 2/3 criteria met (GBW ratio 16.6→0.927, PM error
+40.3°→0.647°) and TSMC5 from 0/3 to 1/3 — and in both techs the NN DC operating
+point goes from **railed to un-railed** (TSMC16 `vout=0.000, vo1i=0.000` →
+`vout=0.496, vo1i=0.418`). This is a candidate contributor to the long-standing
+opamp railing in `v657-vout-existence-retrain-kill` / `v658-ekv-core-breaks-opamp-rail`.
+
+**DC confirmed invariant.** `verify_nn_dc_tran.py --tech TSMC5 --inverter-only`:
+VTC NRMSE **1.04% in all three arms, to the printed digit** — the "gds cancels at
+the NR fixed point" claim is now empirical, not just argued. Inverter transient is
+*not* invariant (0.79%→0.97%, still passing), because a transient visits bias points
+off the amplifying OP where the floor does not bind in both arms.
+
+**This falsifies a pre-registered prediction in the code.** `mosfet_nn.py:52-57`
+states the floor "is Jacobian-only and cancels at the fixed point … a diagnostic
+knob, NOT a shipping accuracy lever", predicting floor-k does not move converged
+opamp gain. Correct for DC; **wrong for AC**, where k=0 (sign fixed) moved the gate
+count and un-railed two opamp OPs.
+
+**Not ship-ready.** Only the device AC suite (10 gates), one DC/tran gate on one
+tech, and opamp AC on 2 of 5 techs were run — no ring-osc, SRAM, switchcap, or
+parametric sweeps, which `v647-s10` and `v648-s1` both record as fragile to exactly
+this class of Jacobian change. `k=0.0` is also a blunt instrument: the raw autograd
+gds is still genuinely negative at ~3–8% of conducting points even with the correct
+sign, and those points need *some* guard. A k-scan to find where the improvement
+saturates has not been done.
 
 ---
 
@@ -500,9 +559,13 @@ change and should be worth double-digit percentages on the CPU-pinned gate matri
    full gate re-run, since it arms recovery paths that have never run.
 5. **B6** reject empty `PYCIRCUITSIM_TORCH_THREADS`; add the pin to `verify_nn_dc_tran.py`.
 6. **C2** `mosfet_nn.py:285-291` — `F.softplus(bx, beta=1)/beta`.
-7. **A3** gds negation — **gated on measuring the AC impact first.** The synthetic
-   floor may be better-conditioned than the true learned gds; a regression here is a
-   real possibility. Needs the full DC matrix re-run too (Rule-4-adjacent).
+7. **A3** gds negation — **must ship together with a floor change; neither works
+   alone** (sign alone: bit-identical; floor alone: 8/10 → 5/10). Measured
+   sign+k=0: device AC 8/10 → 10/10, opamp OP un-railed, DC VTC exactly unchanged.
+   Before shipping: scan k rather than using 0.0 (some guard is still needed —
+   raw gds is genuinely negative at ~3–8% of conducting points), then run the full
+   gate matrix including ring-osc/SRAM/switchcap, which are historically fragile to
+   this class of change.
 8. **B3/B4** `set -euo pipefail` + real status aggregation; make the collector fail on
    an empty tree.
 9. **B5c** give `verify_complex_opamp.py` the `OPAMP_MIN_GAIN` guard the sweep harness
@@ -512,7 +575,20 @@ change and should be worth double-digit percentages on the CPU-pinned gate matri
 
 ## Open experiments
 
-- **AC impact of the gds sign fix** (gates item 7). In flight at audit close.
+- **k-scan for `_GDS_FLOOR_K`** with the sign fixed — find where the AC improvement
+  saturates while still guarding the ~3–8% of conducting points where the correctly-
+  signed gds is genuinely negative. Then full gate matrix. (A3-measured settles the
+  direction; it does not settle the value.)
 - **L=16nm on-grid for tsmc5/6/7** (D3) — one-line geometry change, regenerate,
   re-gate.
 - **Held-out-bin validation** (D2) — does any recipe ranking survive a grouped split?
+- **Does the un-railing generalize?** (A3-measured) — opamp OP went railed →
+  un-railed on both techs tested. If that holds across techs it reframes the opamp
+  railing history as partly a gds-floor artifact rather than a value-surface limit.
+
+## Incidental
+
+`external_compact_models/bsimar/config.py:33` does `sys.path.insert(0, PYCMG_DIR)`
+unconditionally, so `PyCMG/tests/` **shadows the repo's own `tests/` package** for
+any script importing `bsimar` before `tests`. Verified: after `import bsimar.config`,
+`import tests` resolves to `PyCMG/tests/__init__.py`. `sys.path.append` avoids it.
