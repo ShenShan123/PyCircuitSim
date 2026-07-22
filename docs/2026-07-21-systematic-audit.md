@@ -297,6 +297,73 @@ F **bounds** the tsmc16_pmos damage but does not fix it (returns 1.0e-05 S where
 is 4.5e-05 S). That checkpoint needs a retrain or a monotonicity constraint on the id
 head; decide separately whether to re-roll it before shipping.
 
+#### A3-gates — full complex matrix, arm A vs arm F, two independent runs
+
+Arm A = committed code (buggy sign, k=0.5), arm F = sign fix + guard F. Both arms
+measured in the same session; historical numbers were **not** used as baseline,
+since gate results flip run-to-run. Two independently-written patches, cross-validated
+to produce byte-identical `id`/`gm`/`gmb`/caps with only `gds` differing.
+
+| | run 1 (5 techs) | run 2 (4 techs, independent) |
+|---|---|---|
+| **gates A → F** | **17/20 → 18/20** | **14/16 → 15/16** |
+| ring | 5/5 → 5/5 | 4/4 → 4/4 |
+| opamp | 2/5 → **3/5** | 2/4 → **3/4** |
+| switchcap | 5/5 → 5/5 | 4/4 → 4/4 |
+| SRAM | 5/5 → 5/5 | 4/4 → 4/4 |
+| **`force_ic` probe** | **2/5 → 5/5** | **1/4 → 4/4** |
+| regressions | none | none |
+
+**Ring is invariant** — 4 of 5 cells bit-identical, one improves (TSMC16 2.90→2.78%).
+Expected: ring period is set by drive current and capacitance, and gds cancels at each
+timestep's fixed point. Reproducing to the digit is a stronger check than passing.
+
+**Switchcap is invariant** (TSMC6/7 identical to the digit; TSMC5 2.06→2.04%). The
+reverse-Vds risk flagged in A3-data did **not** materialize, because the corruption
+lives in the *head* and the shipped source is the autograd, which is correct there
+(measured: 0/8 negative in reverse vs the head's 5/8).
+
+**Opamp +1 — TSMC16 un-rails:** gain 0.0 → 173.2 (true 187.7), err 100% → 7.69%,
+NRMSE 70.43 → 1.78, max error 148 mV → 0.00 mV.
+
+**The one honest caution — TSMC5 opamp gain err 0.21% → 9.54%**, against a 10% gate.
+Thin margin. But it arrives with NRMSE 27.85% → **0.94%** and max error −26 mV → −2 mV:
+in arm A a near-perfect *gain* number coexisted with a 28%-wrong transfer curve, i.e.
+the metric passed on a coincidence of slope at the measurement point. Arm F gets the
+whole curve right and the peak slope 9.5% low. Worth watching on reruns.
+
+**The strongest single result is the `force_ic` latch probe**, and the raw node
+voltages show the mechanism:
+
+```
+              arm A                      arm F
+TSMC5    q=0.304  qb=0.304          q=0.654  qb=-0.000   <- A: both nodes SAME (no latch)
+TSMC7    q=0.751  qb=-0.003         q=0.754  qb= 0.000
+TSMC12   q=0.861  qb=-0.054         q=0.756  qb= 0.000   <- A: qb BELOW ground
+```
+
+In arm A the TSMC5 latch collapses to a degenerate non-bistable state and TSMC7/TSMC12
+settle with `qb` driven below the rail — the signature of a wrong Jacobian steering NR
+off the physical manifold. Arm F yields clean complementary states with `qb` at exactly
+0.000 on every tech. This is a *convergence* property, which is precisely what a
+wrong-signed Jacobian entry should damage; CLAUDE.md has carried it as an unexplained
+diagnostic ("rails on TSMC7/12") across several campaigns.
+
+**The fix also collapses spurious checkpoint-to-checkpoint variance.** TSMC6 and TSMC7
+are the same device with bit-identical ground truth (§D1):
+
+| SNM err, NFIN=2 | TSMC6 | TSMC7 | gap |
+|---|---|---|---|
+| arm A | 68.2% | 2.0% | **66.2 pp** |
+| arm F | 5.2% | 6.2% | **1.0 pp** |
+
+Arm F agrees to ~1 pp at every NFIN corner. Part of the "training lottery" variance
+this project has been ranking recipes against was an artifact of the wrong Jacobian.
+
+**Verdict: ship the sign fix + guard F.** Net +1 gate on both runs, a long-standing
+convergence defect resolved, no regressions, and the two mechanisms that could have
+bitten (reverse corridor, NFIN lobe) both measured inert.
+
 #### A3-data — the OSDI gds opvar flips sign in reverse Vds (separate latent bug)
 
 The OSDI `gds` **opvar** flips sign in reverse Vds (internal source/drain swap) while
