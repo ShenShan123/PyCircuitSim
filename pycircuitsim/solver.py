@@ -43,9 +43,29 @@ def _create_mna_matrix(size: int) -> lil_matrix:
 
 
 def _solve_mna(mna_matrix, rhs: np.ndarray) -> np.ndarray:
-    """Solve MNA system Ax=b, using sparse solver if matrix is sparse."""
+    """Solve MNA system Ax=b, using sparse solver if matrix is sparse.
+
+    Raises:
+        np.linalg.LinAlgError: if the matrix is singular or the solve returns a
+            non-finite vector.
+
+    ``scipy.sparse.linalg.spsolve`` does NOT raise on a singular matrix — it
+    emits a ``MatrixRankWarning`` and returns NaN. Left unchecked, those NaNs
+    flow into the convergence tests, where every ``dv >= threshold`` comparison
+    is False, so the solvers declare convergence and write NaN to the waveform,
+    CSV and plot. The dense path already raises, so normalizing the sparse path
+    onto the same contract makes the surrounding ``except LinAlgError`` handlers
+    (which were written for it) actually reachable.
+    """
     if issparse(mna_matrix):
-        return spsolve(mna_matrix.tocsr(), rhs)
+        solution = spsolve(mna_matrix.tocsr(), rhs)
+        if not np.all(np.isfinite(solution)):
+            raise np.linalg.LinAlgError(
+                "Singular MNA matrix: sparse solve returned a non-finite "
+                "solution (check for floating nodes, duplicate voltage sources, "
+                "or a node connected only through GMIN)."
+            )
+        return solution
     return np.linalg.solve(mna_matrix, rhs)
 
 

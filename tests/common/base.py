@@ -244,17 +244,40 @@ def run_ngspice_subprocess(
     """Run NGSPICE in batch mode and return raw CSV lines.
 
     Handles:
-      - subprocess execution
+      - stale-artifact removal (work dirs are persistent and deterministically
+        named, so a previous run's CSV/log MUST NOT survive into this one)
+      - subprocess execution + exit-status check
       - OSDI fatal error checking in log
       - CSV existence and emptiness checks
 
     Returns the raw lines from the CSV file (caller does domain-specific parsing).
     Raises RuntimeError on any failure.
     """
+    # Remove the previous run's artifacts BEFORE invoking. Work dirs are
+    # persistent and deterministically named, so without this a dead NGSPICE
+    # (missing/non-executable binary, bad NGSPICE_BIN) leaves the prior CSV in
+    # place and every downstream check passes against stale ground truth — the
+    # whole suite reports PASS having compared nothing.
+    csv_path.unlink(missing_ok=True)
+    log_path.unlink(missing_ok=True)
+
     res = subprocess.run(
         [NGSPICE_BIN, "-b", "-o", str(log_path), str(runner_path)],
         capture_output=True, text=True,
     )
+
+    # Non-zero exit is a hard failure. NGSPICE returns 0 on a healthy batch run;
+    # anything else means the simulation did not complete, so nothing downstream
+    # may be treated as ground truth.
+    if res.returncode != 0:
+        log_text = log_path.read_text() if log_path.exists() else "(no log)"
+        raise RuntimeError(
+            f"NGSPICE failed (rc={res.returncode}) for {runner_path}\n"
+            f"bin: {NGSPICE_BIN}\n"
+            f"stdout: {res.stdout[-500:]}\n"
+            f"stderr: {res.stderr[-500:]}\n"
+            f"log (tail): ...{log_text[-500:]}"
+        )
 
     # Check for OSDI fatal errors (NGSPICE may still produce garbage output)
     if log_path.exists():
