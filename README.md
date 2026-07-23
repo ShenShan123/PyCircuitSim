@@ -818,8 +818,8 @@ via the T3 differentiable-DC-solver fine-tune.
 |--------|---------|
 | `tests/verify_bsimcmg_op.py` | OP analysis: PyCircuitSim vs NGSPICE for NMOS, PMOS, inverter |
 | `tests/verify_bsimcmg_dc.py` | DC sweep L1: Id-Vgs (ASAP7 baseline) |
-| `tests/verify_bsimcmg_dc_comprehensive.py` | DC sweep L2: 67-config multi-tech VT/L/NFIN sweep |
-| `tests/verify_multi_tech_dc.py` | DC sweep L3: 44-config inverter VTC + parametric |
+| `tests/verify_bsimcmg_dc_comprehensive.py` | DC sweep L2: 81-config multi-tech VT/L/NFIN sweep |
+| `tests/verify_multi_tech_dc.py` | DC sweep L3: 53-config inverter VTC + parametric |
 | `tests/verify_bsimcmg_tran.py` | Transient L1: single inverter baseline |
 | `tests/verify_bsimcmg_tran_comprehensive.py` | Transient L2: 45-config VT/L/NFIN sweep |
 | `tests/verify_multi_tech_tran.py` | Transient L3: 86-config multi-tech parametric |
