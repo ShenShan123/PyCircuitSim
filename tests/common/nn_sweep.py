@@ -68,7 +68,7 @@ from tests.verify_nn_dc_tran import (  # noqa: E402
 
 # Techs in scope for V6.3.2: the four TSMC nodes with V6.3.1 DirectNet
 # checkpoints. ASAP7 excluded.
-NN_TECHS: List[str] = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
+NN_TECHS: List[str] = ["TSMC5", "TSMC7", "TSMC12", "TSMC16"]
 
 # Acceptance thresholds (NRMSE %). Loose, like the legacy NN gate — these
 # are stress tests, not the tight inverter gate.

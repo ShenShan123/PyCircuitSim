@@ -47,7 +47,7 @@ suites=(verify_nn_multi_tech_dc verify_nn_multi_tech_tran \
         verify_complex_sram_snm verify_complex_switchcap \
         verify_nn_ac verify_complex_opamp_ac)
 # TECHS env (uppercase, space-separated) lets a campaign target a subset / a new
-# tech (e.g. TECHS=TSMC6 for the V6.9.x onboarding gate). Lowercase derived.
+# tech (e.g. TECHS=TSMC5 for a single-tech gate). Lowercase derived.
 read -r -a techs_uc <<< "${TECHS:-TSMC5 TSMC7 TSMC12 TSMC16}"
 techs_lc=(); for _t in "${techs_uc[@]}"; do techs_lc+=("$(echo "$_t" | tr '[:upper:]' '[:lower:]')"); done
 

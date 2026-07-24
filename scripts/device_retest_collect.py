@@ -11,7 +11,7 @@ from statistics import mean
 
 ROOT = Path(__file__).resolve().parent.parent
 BASE = ROOT / "results" / "recipe_bench" / "device_iso"
-TECHS = ["tsmc5", "tsmc6", "tsmc7", "tsmc12", "tsmc16"]
+TECHS = ["tsmc5", "tsmc7", "tsmc12", "tsmc16"]
 NUM = r"([-+]?[0-9.]+(?:[eE][-+]?[0-9]+)?|nan|n/a)"
 
 

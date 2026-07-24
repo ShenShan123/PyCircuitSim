@@ -12,9 +12,9 @@ from recipe_retest_collect import PARSERS  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 BASE = ROOT / "results" / "recipe_bench" / "gate_iso"
-TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
+TECHS = ["TSMC5", "TSMC7", "TSMC12", "TSMC16"]
 CIRCS = ["ring_osc", "opamp", "sram_snm", "switchcap"]
-NCELL = len(TECHS) * len(CIRCS)   # 20 with TSMC6 (was 16 for the 4-tech matrix)
+NCELL = len(TECHS) * len(CIRCS)   # 16 = 4 techs x 4 circuits
 
 
 def load(recipe: str):

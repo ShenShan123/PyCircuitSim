@@ -12,7 +12,7 @@ tests) should import from here.
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 # ── Project paths ────────────────────────────────────────────────────────────
 # Path hierarchy (after path-depth collapse):
@@ -48,9 +48,9 @@ TechConfig = NNTechConfig
 
 # ── Tech-Variant Code Registry ──────────────────────────────────────────────
 # Each (tech, variant) pair gets a stable integer ID for the tech embedding.
-# TSMC codes occupy 0-16, UNKNOWN is 17, ASAP7 codes are 18-21,
-# TSMC6 codes are 22-24 (appended in V6.9.0 — see note below).
-# Total vocabulary size: 25.
+# TSMC codes occupy 0-16, UNKNOWN is 17, ASAP7 codes are 18-21.
+# Total vocabulary size: 22. (Codes 22-24 were TSMC6, retired 2026-07-24 —
+# see the TSMC6 note below; nothing was renumbered.)
 #
 # During TSMC-only pre-training the model sees codes 0-16 + 17 (UNKNOWN).
 # ASAP7 codes (18-21) are added when fine-tuning on ASAP7 data.
@@ -81,9 +81,10 @@ def _build_tech_variant_codes() -> Tuple[
     # slot 17 = UNKNOWN (reserved, not in the list)
     for variant in TECH_CONFIGS["asap7"].variant_names:
         ordered.append(("asap7", variant))
-    # V6.9.0: TSMC6 onboarded after the ASAP7 block -> codes 22-24.
-    for variant in TECH_CONFIGS["tsmc6"].variant_names:
-        ordered.append(("tsmc6", variant))
+    # V6.9.0 appended TSMC6 here as codes 22-24; removed 2026-07-24 because
+    # TSMC6 is TSMC7 relabelled under BSIM-CMG (see TSMC6 note below). The
+    # codes were tail-appended, so dropping them renumbers nothing: codes
+    # 0-21 are unchanged and every existing checkpoint/sidecar stays valid.
 
     forward: Dict[Tuple[str, str], int] = {}
     reverse: Dict[int, Tuple[str, str]] = {}
@@ -107,7 +108,24 @@ TECH_VARIANT_CODES, CODE_TO_TECH_VARIANT, _TECH_VARIANT_ORDER = (
 UNKNOWN_CODE_ID: int = 17
 NUM_TSMC_CODES: int = 17           # codes 0-16 (legacy TSMC block only)
 NUM_TSMC_CODES_WITH_UNKNOWN: int = 18  # codes 0-17 (pre-train vocab)
-NUM_TOTAL_CODES: int = 25          # codes 0-24 (incl. ASAP7 18-21, TSMC6 22-24)
+NUM_TOTAL_CODES: int = 22          # codes 0-21 (incl. ASAP7 18-21)
+
+# ── TSMC6 is NOT a supported tech scope ──────────────────────────────────────
+# TSMC6 was onboarded in V6.9.0 as a sixth technology and removed on
+# 2026-07-24. It is TSMC7 relabelled as far as BSIM-CMG is concerned:
+# tsmc6_{nmos,pmos}.npz were bit-identical to tsmc7_* in inputs, geometry,
+# outputs and sample_class (1,816,830 / 2,187,292 rows) with only
+# meta_tech_name differing, and two LEVEL=72 Id-Vgs sweeps matched to the last
+# printed digit. The raw PDKs do differ, but every differing key
+# (tmi_ver_lod, tmi_ver_isocpode, sfxmin, samax_c, wodx5akvth0) is a TSMC
+# TMI-proprietary extension with zero occurrences in the BSIM-CMG Verilog-A,
+# so the model cannot see any of it. Evidence:
+# docs/2026-07-21-systematic-audit.md D1.
+#
+# Before onboarding a new tech, diff its resolved modelcard against the
+# BSIM-CMG Verilog-A parameter list and confirm at least one *implemented*
+# parameter differs from every existing tech. ``assert_tech_is_distinct``
+# below does exactly that check.
 
 # Input layout: 7 continuous features (no process params)
 INPUT_COLUMNS: List[str] = [
@@ -136,7 +154,7 @@ def tech_variant_to_code(tech: str, variant: str) -> int:
 # model — the universal code would index out-of-range or pick the wrong row.
 
 VALID_TECH_SCOPES: Tuple[str, ...] = (
-    "universal", "tsmc5", "tsmc6", "tsmc7", "tsmc12", "tsmc16",
+    "universal", "tsmc5", "tsmc7", "tsmc12", "tsmc16",
 )
 
 
@@ -147,7 +165,6 @@ def _build_local_codes(tech_name: str) -> Dict[Tuple[str, str], int]:
 
 LOCAL_VARIANT_CODES: Dict[str, Dict[Tuple[str, str], int]] = {
     "tsmc5":  _build_local_codes("tsmc5"),
-    "tsmc6":  _build_local_codes("tsmc6"),
     "tsmc7":  _build_local_codes("tsmc7"),
     "tsmc12": _build_local_codes("tsmc12"),
     "tsmc16": _build_local_codes("tsmc16"),
@@ -174,6 +191,91 @@ def local_variant_code(scope: str, tech: str, variant: str) -> int:
         (tech.lower(), variant.lower()),
         LOCAL_UNKNOWN_CODE_ID[scope],
     )
+
+
+def _bsimcmg_implemented_params() -> frozenset:
+    """Parameter names the open BSIM-CMG Verilog-A actually implements.
+
+    A modelcard key outside this set is inert: the OSDI binary never reads it,
+    so two techs differing only in such keys produce identical currents.
+    """
+    import re
+    from pathlib import Path as _Path
+
+    va_dir = _Path(__file__).resolve().parents[1] / "PyCMG" / "bsim-cmg-va" / "code"
+    if not va_dir.is_dir():
+        raise FileNotFoundError(
+            f"BSIM-CMG Verilog-A source not found at {va_dir} — cannot verify "
+            "tech distinctness. Run `git submodule update --init --recursive`.")
+    decl = re.compile(r"^\s*parameter\s+(?:real|integer)\s+(\w+)", re.MULTILINE)
+    names = set()
+    for src in sorted(va_dir.iterdir()):
+        if src.suffix in (".va", ".include"):
+            names.update(
+                m.lower() for m in decl.findall(src.read_text(errors="replace")))
+    if not names:
+        raise RuntimeError(f"No parameter declarations parsed from {va_dir}")
+    return frozenset(names)
+
+
+def assert_tech_is_distinct(tech: str, against: Optional[Sequence[str]] = None,
+                            ) -> None:
+    """Raise if ``tech`` is electrically indistinguishable from another tech.
+
+    Guards the failure that put TSMC6 in the registry for two campaigns: a PDK
+    can differ substantially on disk while every differing key is a vendor
+    extension the open BSIM-CMG ignores, so the "new" tech trains on data
+    bit-identical to an existing one. Call this before onboarding a tech, not
+    after gating it.
+
+    Compares resolved modelcards restricted to parameters BSIM-CMG actually
+    implements. Techs sharing an identical implemented-parameter fingerprint on
+    every device are the same technology as far as this simulator is concerned.
+
+    Raises:
+        ValueError: if ``tech`` collides with any tech in ``against``.
+    """
+    from pycmg.parser import parse_modelcard      # noqa: E402
+    from pycmg.tech import resolve_modelcard       # noqa: E402
+
+    implemented = _bsimcmg_implemented_params()
+    others = list(against) if against is not None else [
+        t for t in TECH_CONFIGS if t.lower() != tech.lower()]
+
+    def fingerprint(name: str) -> Dict[str, Tuple]:
+        cfg = TECH_CONFIGS[name]
+        pycmg_tech = cfg.pycmg_tech
+        out: Dict[str, Tuple] = {}
+        for device_type in ("nmos", "pmos"):
+            for variant in cfg.variant_names:
+                combos = cfg.get_geometry_combos(device_type, variant)
+                if not combos:
+                    continue
+                L, NFIN = combos[0]
+                dev = pycmg_tech.get_device(f"{device_type}_{variant}")
+                card = resolve_modelcard(dev, pycmg_tech, L=L, NFIN=NFIN)
+                params = parse_modelcard(card, dev.model_name).params
+                out[f"{device_type}_{variant}"] = tuple(sorted(
+                    (k, v) for k, v in params.items()
+                    if k.lower() in implemented))
+        return out
+
+    mine = fingerprint(tech)
+    for other in others:
+        try:
+            theirs = fingerprint(other)
+        except Exception:      # a tech whose PDK is absent cannot collide
+            continue
+        if set(mine) == set(theirs) and all(
+                mine[k] == theirs[k] for k in mine):
+            raise ValueError(
+                f"Technology {tech!r} is electrically identical to {other!r} "
+                f"under BSIM-CMG: every device's implemented-parameter "
+                f"fingerprint matches, so both would train on the same data. "
+                f"The PDKs may differ on disk, but only in keys the open "
+                f"BSIM-CMG does not implement. Do not onboard {tech!r} as a "
+                f"separate technology (this is exactly how TSMC6 entered the "
+                f"registry; see docs/2026-07-21-systematic-audit.md D1).")
 
 
 def tech_scope_vocab_size(scope: str) -> int:

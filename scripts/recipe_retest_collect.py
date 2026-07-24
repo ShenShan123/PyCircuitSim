@@ -54,9 +54,9 @@ def write_report_section(marker: str, content: str) -> None:
         text = _REPORT_HEADER + "\n" + block + "\n"
     REPORT.write_text(text)
 
-TECHS = ["tsmc5", "tsmc6", "tsmc7", "tsmc12", "tsmc16"]
+TECHS = ["tsmc5", "tsmc7", "tsmc12", "tsmc16"]
 CIRCS = ["ring_osc", "opamp", "sram_snm", "switchcap"]
-NGATES = len(TECHS) * len(CIRCS)   # 20 with TSMC6 (was 16 for the 4-tech matrix)
+NGATES = len(TECHS) * len(CIRCS)   # 16 = 4 techs x 4 circuits
 RECIPE_ORDER = [
     "clean",
     "invtripft", "invtrip",

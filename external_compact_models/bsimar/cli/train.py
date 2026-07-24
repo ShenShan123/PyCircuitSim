@@ -32,7 +32,7 @@ import numpy as np
 
 
 # All TSMC + ASAP7 tech names for the per-tech `--tech-scope` auto-exclude.
-_ALL_TECH_NAMES = ("tsmc5", "tsmc6", "tsmc7", "tsmc12", "tsmc16", "asap7")
+_ALL_TECH_NAMES = ("tsmc5", "tsmc7", "tsmc12", "tsmc16", "asap7")
 
 
 # ── Loss presets (per docs/superpowers/plans/2026-05-08-…) ─────────────
