@@ -124,8 +124,23 @@ for stem in "${stems_arr[@]}"; do
   done
   [ $ok -eq 1 ] || continue
   rdir="$OUT/$stem"; mkdir -p "$rdir"
-  # fresh summary per dispatch (cells append)
-  : > "$rdir/SUMMARY.tsv"
+  # Drop only the rows for the sections this dispatch re-runs; keep every
+  # other section's rows. Truncating the whole file here meant a follow-up
+  # `SECTIONS=omp` dispatch silently erased the `gates` verdicts it was
+  # supposed to be compared against (same clobber class as the one fixed in
+  # gate_matrix_iso.sh). Cells still append.
+  if [ -f "$rdir/SUMMARY.tsv" ]; then
+    keep="$rdir/.SUMMARY.keep"; : > "$keep"
+    while IFS= read -r line; do
+      sec="${line%%	*}"
+      drop=0
+      for s in $SECTIONS; do [ "$sec" = "$s" ] && drop=1; done
+      [ $drop -eq 1 ] || printf '%s\n' "$line" >> "$keep"
+    done < "$rdir/SUMMARY.tsv"
+    mv "$keep" "$rdir/SUMMARY.tsv"
+  else
+    : > "$rdir/SUMMARY.tsv"
+  fi
   for section in $SECTIONS; do
     case "$section" in
       gates)
