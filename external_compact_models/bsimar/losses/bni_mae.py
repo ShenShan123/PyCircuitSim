@@ -112,10 +112,29 @@ class MAELoss(nn.Module):
 # well-trained control-v2 net (autograd ∂id/∂Vd already ≈ -gds to ~7 % for
 # NMOS) both confirm the uniform negation.
 
+# ⚠ THE STORED gds COLUMN IS SIGN-FLIPPED IN THE REVERSE-Vds CORRIDOR.
+# The OSDI `gds` *opvar* flips sign in reverse Vds (the model swaps source and
+# drain internally) while the true derivative does not. Verified by finite
+# difference — tsmc5 nmos at Vds = -0.033 V: true -d(id)/dVd = +3.124e-03 S,
+# opvar = -3.124e-03 S. In forward Vds the opvar equals -d(id)/dVd to 4-5
+# digits for both device types. The generator stores the raw opvar, so every
+# dataset's `gds` column is wrong-signed throughout the reverse corridor, and
+# the trained gds head reproduces the flip (84-99.8 % sign agreement with it).
+# See docs/2026-07-21-systematic-audit.md §A3-data.
+#
+# Currently latent, and the guard below keeps it that way: no shipped or
+# documented checkpoint supervises the id-derivative channels. But the `sob`
+# recipe is `--sobolev --sobolev-corridor-only`, which would apply the gds
+# target *precisely on corridor rows* — maximum overlap with the corruption.
+# Fix the generator convention before enabling gds here, and note that the
+# simulator's stamped gds is the autograd Jacobian of the `id` head, not this
+# column, so inference is unaffected.
+SOBOLEV_GDS_IS_REVERSE_CORRUPTED: bool = True
+
 # (target_name, voltage-input column index) — ∂id/∂V_col vs the stored target.
 SOBOLEV_ID_CHANNELS: list[tuple[str, int]] = [
     ("gm", 1),    # ∂id/∂Vg  vs gm
-    ("gds", 0),   # ∂id/∂Vd  vs gds
+    ("gds", 0),   # ∂id/∂Vd  vs gds — see SOBOLEV_GDS_IS_REVERSE_CORRUPTED
     ("gmb", 3),   # ∂id/∂Vb  vs gmb
 ]
 
@@ -167,6 +186,18 @@ class SobolevIdLoss(nn.Module):
         col = {c: i for i, c in enumerate(self.column_order)}
         if "id" not in col:
             raise ValueError("SobolevIdLoss requires an 'id' output column")
+        if SOBOLEV_GDS_IS_REVERSE_CORRUPTED and "gds" in col and any(
+                t == "gds" for t, _ in SOBOLEV_ID_CHANNELS):
+            raise ValueError(
+                "The supervised `gds` column is sign-flipped throughout the "
+                "reverse-Vds corridor (the OSDI gds opvar flips sign there "
+                "while the true derivative does not; audit A3-data), so this "
+                "loss would train the id head against a wrong-signed slope on "
+                "exactly the rows --sobolev-corridor-only selects. Fix the "
+                "sign convention in the data generator and regenerate, then "
+                "set SOBOLEV_GDS_IS_REVERSE_CORRUPTED = False. Refusing "
+                "rather than silently dropping the channel, so no run reports "
+                "a Sobolev number it did not actually measure.")
         self.id_col = col["id"]
         # (target_col, voltage_input_col) for channels present in this order.
         self.channels: list[tuple[int, int]] = [
