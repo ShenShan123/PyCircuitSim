@@ -8,6 +8,61 @@ lives in git history.)
 
 ---
 
+## V6.12.1 — silent-green P0 branch merged + accuracy reports consolidated per family (2026-07-24)
+
+**Merged `fix/silent-green-p0` into `main` (fast-forward, 9 commits) and replaced the
+seven per-version accuracy reports with three unified per-family reports under
+`docs/accuracy/`.**
+
+**Merged from the branch (already recorded in their own commits + the audit register):**
+
+- **P0 silent-green fixes** (`e756481`): `tests/common/base.py` never checked NGSPICE's
+  exit status, so a dead binary left the previous run's CSV in a never-cleaned work dir
+  and every downstream check passed against **stale ground truth** (reproduced:
+  `NGSPICE_BIN=/bin/false tests/verify_subckt.py` → 8/8 PASS with byte-identical NRMSE).
+  Fix: unlink CSV+log before invoking, raise on non-zero return. And `solver.py` —
+  `spsolve` returns NaN rather than raising on a singular matrix, so every
+  `except LinAlgError` guard on the sparse path was dead code; now detected and raised.
+- **`docs/2026-07-21-systematic-audit.md`** — the 5-area, ~70-finding audit register
+  (solver, parser/models, data generation, NN architecture, test infra), including the
+  **gds sign bug** root-cause (§A3: inference negates gm/gmb but not gds; `_floor_gds`
+  then discards the learned output conductance at 98–100 % of conducting points),
+  its measured 4-arm impact (device AC 8/10 → 10/10, complex 17/20 → 18/20, `force_ic`
+  2/5 → 5/5, DC exactly invariant, transient mean NRMSE −19 %), and **§D1 TSMC6 ≡ TSMC7
+  relabelled** (bit-identical datasets; the differing PDK keys are TMI-proprietary and
+  absent from the BSIM-CMG Verilog-A). **The gds fix is NOT shipped** — sign and floor
+  are coupled, and the floor value still needs a k-scan.
+- **V6.8.1 BSIM-AR xl-tier fill** documentation + `docs/plans/2026-07-07-bsimar-transformer-xl-fill.md`.
+
+**Accuracy-report consolidation (this entry's new work):**
+
+- New `docs/accuracy/`: `DirectNet-L73-accuracy.md` (V6.6.0 baseline + capacity curve,
+  V6.6.1 recipe study, V6.6.2–4 curriculum → production 14/16, V6.6.5/6 cross-tier + xl,
+  V6.6.7 negative round, V6.7.0 universal + TSMC5 transfer, V6.11.0 TSMC6, plus **Part II**
+  = the frozen collector tables A/B/C verbatim), `BSIM-AR-L74-accuracy.md`
+  (V6.8.0 + V6.8.1 xl + TSMC6), `PFN-L75-accuracy.md` (V6.10.0 + TSMC6), and a
+  `README.md` index.
+- **Deleted** (content fully carried; git history retains them at `1fe1cdb`):
+  `V6.6.0-accuracy-report.md`, `V6.6.1-recipe-accuracy-report.md`,
+  `V6.6.6-accuracy-report.md`, `V6.7.0-universal-transfer-report.md`,
+  `V6.8.0-bsimar-transformer-report.md`, `V6.10.0-tabpfn-pfn-report.md`. Every
+  reference in CLAUDE.md / README.md / this file / `docs/plans/` /
+  `scripts/recipe_retest_collect.py` was redirected.
+  `V6.9.0-tsmc6-onboarding-pdk-parse-audit.md` stays — it is a tech-onboarding + PDK
+  audit record, not an NN accuracy report.
+- Each unified report now carries the two cross-cutting caveats explicitly: **every
+  published number was measured with the gds sign bug present**, and **TSMC6 rows are a
+  second training run on the TSMC7 data**, not a sixth technology.
+
+**Also:** `scripts/recipe_train.sh` — balanced round-robin. The GPU index now advances
+only for jobs that will actually train; an already-`.complete` job used to consume its
+slot, so a resume where one tech was finished starved a GPU (observed 3:3:1 on the
+reboot-resume of the xl clean wave). A fresh run skips nothing → byte-identical
+assignment. GPU choice never affects results (seeds pinned); this only rebalances
+wall-clock.
+
+---
+
 ## V6.12.0 — .subckt/.ends hierarchical netlists + hierarchical test-circuit conversion (2026-07-18)
 
 **Added `.subckt`/`.ends` + hierarchical `X` instances to the parser, extended
@@ -144,7 +199,7 @@ depends on the two open opamp-AC cells (BSIM-AR already peaks at medium).
 **Ported TabPFN v3 (Prior Labs' tabular ICL transformer) into the bsimar stack as
 a third NN family and ran the full scale campaign (24 ckpts: 4 techs × N/P ×
 s/m/l, clean recipe) on the V6.8.0 harness. Report:
-`docs/V6.10.0-tabpfn-pfn-report.md`.** (V6.9.0 = TSMC6, separate branch.)
+`docs/accuracy/PFN-L75-accuracy.md`.** (V6.9.0 = TSMC6, separate branch.)
 
 **Result — PFN clean small (0.69M) = 11/16 STRICT (OMP∈{1,2,4}) with ZERO flips**
 — the first family with no OMP multistability; strongest clean small on record
@@ -234,7 +289,7 @@ NOT a distinct 6th tech under BSIM-CMG.
 **Trained the untrained xl preset (384×8L×ff1536, 14.81M params — 3× tf-large,
 5.5× DN-xl) across the full Phase-B recipe mirror — 48 checkpoints (6 recipes ×
 4 techs × 2 devs), full 300/120-epoch fidelity — and gated vs NGSPICE. Report
-§9 in `docs/V6.8.0-bsimar-transformer-report.md`; driver + logs in
+§9 in `docs/accuracy/BSIM-AR-L74-accuracy.md`; driver + logs in
 `results/recipe_bench/xl_campaign/`.**
 
 **Result — xl TIES medium at 15/16 strict, does NOT exceed it, and does NOT
@@ -273,7 +328,7 @@ DirectNet `gate_iso_xl/` nearly contaminated the tally → fresh `gate_iso_xl_tf
 
 **Shipped the entire DirectNet training/recipe/eval stack to the parked BSIM-AR
 decode-only Transformer and ran the full scale × recipe campaign per tech, gated
-vs NGSPICE. Report: `docs/V6.8.0-bsimar-transformer-report.md`.**
+vs NGSPICE. Report: `docs/accuracy/BSIM-AR-L74-accuracy.md`.**
 
 **Result — BSIM-AR `corroft@medium` (corridor curriculum, 1.9M params) = 15/16
 STRICT (OMP∈{1,2,4}), beating DN production `crit30f@large` (14/16).** Better basket:
@@ -335,7 +390,7 @@ ONLY tsmc7-opamp — the hard cell DN reached only via the V6.5.9 T3 solver fine
 - **Docs:** removed the closed V6.6.2 campaign plan (git-recoverable; verdict preserved in
   entries + memory). **Report merge (user request):** the 580-line collector output
   `results/recipe_bench/ACCURACY_REPORT.md` merged verbatim into
-  `docs/V6.6.6-accuracy-report.md` as Part II (Part I = analysis, Part II = all data
+  `docs/accuracy/DirectNet-L73-accuracy.md` as Part II (Part I = analysis, Part II = all data
   tables). The results path keeps a marker stub so collectors still regenerate in place.
 - Trap-list survivors re-verified (corridor pipeline scripts, base+corro datasets, PyCMG,
   tools/ngspice); no orphan `_norm.npz`.
@@ -348,7 +403,7 @@ ONLY tsmc7-opamp — the hard cell DN reached only via the V6.5.9 T3 solver fine
 18-code-embedding model on TSMC16+12+7 (~7M rows), rank the Core-4 recipes
 (clean/csob/corroft/crit30u) on the 12 shared complex gates, then measure TSMC5
 few-shot transfer (fine-tune tiers N ∈ {2k…1M,full}).** Report:
-`docs/V6.7.0-universal-transfer-report.md`. **No production change:** all artifacts use
+`docs/accuracy/DirectNet-L73-accuracy.md`. **No production change:** all artifacts use
 `u716_*`/`u716f5_*` stems (env-pin-only; per-tech resolution untouched). New standalone
 scripts (zero edits to existing): `uni_concat_npz.py`, `uni_subsample_npz.py`,
 `uni_train.sh`, `uni_gate_sweep.sh` (12 gates + zero-shot + OMP sweep + RESOLVER-MISS check).
@@ -396,7 +451,7 @@ CHANGELOG compressed, CLAUDE.md de-duplicated, `results/` pruned to the live evi
 strict-gated: `corroft`/`crit10`/`crit15m`@xl = 14/16 STRICT, tying production — all
 three bank the tsmc16-opamp deterministically (6.2–6.7%) which production FAILS**
 (crit15m also banks tsmc5-opamp). Production UNCHANGED; analysis:
-`docs/V6.6.6-accuracy-report.md`. Also re-gated the 13 base recipes' xl ckpts (V6.6.3
+`docs/accuracy/DirectNet-L73-accuracy.md`. Also re-gated the 13 base recipes' xl ckpts (V6.6.3
 methodology, `SIZE`-parameterized) — reproduces V6.6.5 cell-for-cell; **xl basins are
 OMP-deterministic** (sole FLIP corft tsmc5-ring), unlike large's endemic opamp flips.
 Findings: curriculum warm-start rescues xl wholesale (clean@xl 10→14); the **weight→basin
@@ -502,7 +557,7 @@ EKV core breaks tsmc12/16 SRAM → 10/16; it also converges 10–40× worse val-
 best all-rounder** (best device NRMSE at `large` 1.50 vs 1.70, best AC, lands tsmc16-opamp, −1
 complex gate) → promoted to documented alternative; refutes the V6.5.x "charge-Sobolev dead on
 arrival" verdict (which was measured only at `medium`). `sob` reconfirms deriv-fidelity ⟂ opamp
-(5/16). Report: `docs/V6.6.1-recipe-accuracy-report.md`. Infra: `scripts/recipe_{train,eval}.sh`
+(5/16). Report: `docs/accuracy/DirectNet-L73-accuracy.md`. Infra: `scripts/recipe_{train,eval}.sh`
 + `recipe_collect.py`; checkpoints saved `tsmc{X}_dn_{recipe}_{size}_{dev}` (clean never
 clobbered).
 
@@ -516,7 +571,7 @@ DirectNet checkpoints retrained from scratch on ONE identical recipe (`--apply-f
 (capacity curve 7/10/13/10 s→xl — peaks at `large`, over-fits at xl).** The 3 open gates
 (tsmc5 ring, tsmc7/tsmc16 opamp) are the true fidelity frontier the V6.5.x per-case specials
 had force-closed. Device 24/24, inverter 16/16 at every size, lifted-source canary 12/12, L72
-OP/DC/TRAN/AC all PASS post-clean. Report: `docs/V6.6.0-accuracy-report.md`. House-clean:
+OP/DC/TRAN/AC all PASS post-clean. Report: `docs/accuracy/DirectNet-L73-accuracy.md`. House-clean:
 datasets purged of stale variants (16 GB → 4.5 GB); version-pinned results/plans/one-off
 scripts and 11 gate-specific diagnostics removed (4 reusable controls + all 23 `verify_*` gates
 kept); 2 dead `config.py` helpers removed; checkpoints dir cleared with the V6.5.x specials

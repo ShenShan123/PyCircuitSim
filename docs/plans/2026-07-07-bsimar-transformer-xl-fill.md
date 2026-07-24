@@ -49,7 +49,7 @@ Mirrors the V6.8.0 large study exactly, at XL:
    recipe (OMP=1); `recipe_eval.sh` device DC/tran + AC per tech.
 5. **OMP strict** — `recipe_multirun_gate.sh` OMP∈{1,2,4} on the XL winner's
    fragile cells (rings/opamps).
-6. **Report** — add an XL section to `docs/V6.8.0-bsimar-transformer-report.md`
+6. **Report** — add an XL section to `docs/accuracy/BSIM-AR-L74-accuracy.md`
    (retitle scope), CHANGELOG V6.8.1, memory.
 
 ## Gating (unchanged from V6.8.0)
@@ -121,7 +121,7 @@ cleaner. Keep NSTREAMS≤6 / TRAIN_OMP=4 for considerate pacing — box is share
 3. **Gate**: `MODEL=transformer SIZE=xl RECIPES="clean corroft crit30 crit15m corro15 csob" GATE_SCRATCH=<this-session-scratch>/gate_iso OMP=1 PAR=20 bash scripts/gate_matrix_iso.sh`
    + `MODEL=transformer SIZES=xl RECIPES="..." PAR=16 bash scripts/recipe_eval.sh` (device DC/tran + AC).
 4. **OMP strict** on the winner: `MODEL=transformer bash scripts/recipe_multirun_gate.sh <recipe> xl <TECH> <suite>`.
-5. **Report**: XL section into `docs/V6.8.0-bsimar-transformer-report.md`, CHANGELOG V6.8.1, memory.
+5. **Report**: XL section into `docs/accuracy/BSIM-AR-L74-accuracy.md`, CHANGELOG V6.8.1, memory.
 
 Background waiter baqz84cac and the detached dispatcher die with the server —
 nothing to clean up; just start from the RESUME COMMAND.
@@ -284,4 +284,4 @@ gates seed-skipped (have from gate). corroft AC (near-complete):
 ### Then (gate + report — unchanged):
 3. **Gate**: `MODEL=transformer SIZE=xl RECIPES="clean corroft crit30 crit15m corro15 csob" GATE_SCRATCH=/data2/shenshan/PyCircuitSim/results/recipe_bench/xl_campaign/gate_iso_scratch OMP=1 PAR=20 bash scripts/gate_matrix_iso.sh` + `recipe_eval.sh` (device DC/tran + AC). NOTE: `gate_matrix_iso.sh`'s GATE_SCRATCH default points at a STALE session dir — ALWAYS override it (persistent path above).
 4. **OMP strict** on the winner: `MODEL=transformer bash scripts/recipe_multirun_gate.sh <recipe> xl <TECH> <suite>`.
-5. **Report**: XL section into `docs/V6.8.0-bsimar-transformer-report.md`, CHANGELOG V6.8.1, memory.
+5. **Report**: XL section into `docs/accuracy/BSIM-AR-L74-accuracy.md`, CHANGELOG V6.8.1, memory.

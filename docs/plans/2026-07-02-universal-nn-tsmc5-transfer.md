@@ -1,7 +1,7 @@
 # V6.7.0 — Universal DirectNet (TSMC16/12/7) + TSMC5 Fine-Tune Transfer Study + Universal Recipe Comparison
 
 **Version: V6.7.0** (campaign designation; all artifacts — scripts, checkpoints `u716_*`, `results/uni_bench/`, report — belong to this version).
-**Status: COMPLETE 2026-07-05 (all phases incl. 1b). V6.7.1 house-clean disposition:** uni716/tsmc5ft datasets deleted (regenerable via the committed seeded scripts), failed `u716f5` tiers archived+deleted, eval `complex_omp*` work dirs deleted (SUMMARY.tsv/logs/train_logs/curve kept); kept ckpts = 6 u716 bases + `u716f5_plain_n{1M,full}`. Verdict: universal corroft@large = 10/12 strict 0-FLIP (per-tech parity); TSMC5 onboarding = plain fine-tune @1M rows → 4/4 strict; retention collapses without replay; xl arm banks tsmc16-opamp but trades ALL rings → ceiling 11/12 NOT reached, corroft@large stands. Full findings: `docs/V6.7.0-universal-transfer-report.md`. Revised 2026-07-03 against `results/recipe_bench/ACCURACY_REPORT.md` (V6.6.6 25-recipe large retest + 22-recipe xl retest + V6.6.7 round-1) — recipe set, OMP standard, env-pin semantics, and an optional xl arm updated; see §2b. This file is the live routing doc — update it on every phase change / lesson (workflow rule).
+**Status: COMPLETE 2026-07-05 (all phases incl. 1b). V6.7.1 house-clean disposition:** uni716/tsmc5ft datasets deleted (regenerable via the committed seeded scripts), failed `u716f5` tiers archived+deleted, eval `complex_omp*` work dirs deleted (SUMMARY.tsv/logs/train_logs/curve kept); kept ckpts = 6 u716 bases + `u716f5_plain_n{1M,full}`. Verdict: universal corroft@large = 10/12 strict 0-FLIP (per-tech parity); TSMC5 onboarding = plain fine-tune @1M rows → 4/4 strict; retention collapses without replay; xl arm banks tsmc16-opamp but trades ALL rings → ceiling 11/12 NOT reached, corroft@large stands. Full findings: `docs/accuracy/DirectNet-L73-accuracy.md`. Revised 2026-07-03 against `results/recipe_bench/ACCURACY_REPORT.md` (V6.6.6 25-recipe large retest + 22-recipe xl retest + V6.6.7 round-1) — recipe set, OMP standard, env-pin semantics, and an optional xl arm updated; see §2b. This file is the live routing doc — update it on every phase change / lesson (workflow rule).
 
 ## 1. Goal & context
 
@@ -119,7 +119,7 @@ Deliverable curve: accuracy vs N (per device, per ft-recipe), zero-shot → full
 ## 9. Phase 5 — Report + bookkeeping
 
 - Keep THIS file updated as the execution log (per-phase status, surprises, dead ends).
-- `docs/V6.7.0-universal-transfer-report.md` — TL;DR, methodology, universal recipe ranking table (12 gates, strict OMP∈{1,2,4}, detPASS/FLIP classification and aggregate conventions identical to `results/recipe_bench/ACCURACY_REPORT.md` so the tables are directly comparable), TSMC5 sample-efficiency curves, retention analysis, device metric tables (Rule 13), **best recipe(s) recommendation**, dead ends.
+- `docs/accuracy/DirectNet-L73-accuracy.md` — TL;DR, methodology, universal recipe ranking table (12 gates, strict OMP∈{1,2,4}, detPASS/FLIP classification and aggregate conventions identical to `results/recipe_bench/ACCURACY_REPORT.md` so the tables are directly comparable), TSMC5 sample-efficiency curves, retention analysis, device metric tables (Rule 13), **best recipe(s) recommendation**, dead ends.
 - `docs/CHANGELOG.md` — new V6.7.0 entry (docs + new scripts + checkpoints; no production change, resolver untouched).
 - Memory file for durable findings.
 

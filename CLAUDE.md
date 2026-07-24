@@ -99,16 +99,17 @@ DirectNet is production; BSIM-AR is the higher-fidelity option; PFN is research.
   predicted `id`; AC caps are the `dQ/dV` autograd of predicted charges; per-tech
   checkpoints use a local embedding vocab (Rule 16). **Production = uniform `large`
   tier with the crit30 curriculum (V6.6.4) = 14/16 complex gates, OMP-deterministic**
-  — one identical recipe per (tech × device), no per-case specials. Reports:
-  `docs/V6.6.6-accuracy-report.md` (current conclusions + recommendation; carries
-  the full data tables as Part II), `docs/V6.6.{0,1}-accuracy-report.md`, CHANGELOG.
+  — one identical recipe per (tech × device), no per-case specials. Report:
+  `docs/accuracy/DirectNet-L73-accuracy.md` — the unified DirectNet record
+  (V6.6.0 baseline → V6.6.1 recipes → V6.6.6 cross-tier → V6.7.0 universal → TSMC6;
+  Part I = analysis + recommendation, Part II = the frozen data tables), CHANGELOG.
 - **BSIM-AR (74)** — autoregressive Transformer sharing DirectNet's pipeline.
   Best config `corroft@medium` (corridor curriculum, 1.9M params) = **15/16 strict**,
   beating DN production (banks tsmc16-opamp + both rings; misses only tsmc7-opamp,
   the T3-solver-only cell). AR inference is ~30–100× slower on CPU, so DirectNet
   stays production. Per-tech `tsmc{X}_tf_{small,medium,large}_{nmos,pmos}` (+ recipe
   variants); parser LEVEL=74 preempt cascade + `PYCIRCUITSIM_NN_FORCE_LEVEL=74`
-  hook. Report: `docs/V6.8.0-bsimar-transformer-report.md`.
+  hook. Report: `docs/accuracy/BSIM-AR-L74-accuracy.md`.
 - **PFN / TabPFN (75)** — faithful scaled-down port of TabPFN-v3's in-context
   transformer (tech code = 8th column token, local vocab), with two deviations: a
   **frozen learned context** (stratified K-row buffer baked into the checkpoint,
@@ -117,7 +118,7 @@ DirectNet is production; BSIM-AR is the higher-fidelity option; PFN is research.
   capacity curve declines s→m→l (11/10/8). Per-tech `tsmc{X}_pfn_{small,medium,large}_{nmos,pmos}`;
   env pins `PYCIRCUITSIM_NN_CHECKPOINT_PFN_{NMOS,PMOS}`, hook
   `PYCIRCUITSIM_NN_FORCE_LEVEL=75`, drivers take `MODEL=tabpfn`. The `_config.npz`
-  sidecar is **required** to rebuild the arch. Report: `docs/V6.10.0-tabpfn-pfn-report.md`.
+  sidecar is **required** to rebuild the arch. Report: `docs/accuracy/PFN-L75-accuracy.md`.
 
 ## Supported Features
 
@@ -142,6 +143,11 @@ DirectNet is production; BSIM-AR is the higher-fidelity option; PFN is research.
 Inverter circuit must PASS Transient Analysis against NGSPICE ground truth within
 reasonable numerical tolerance. Never use simplified/self-defined equations as reference.
 
+> **Accuracy evidence lives in `docs/accuracy/` — one unified report per NN family**
+> (`DirectNet-L73`, `BSIM-AR-L74`, `PFN-L75`; index in `docs/accuracy/README.md`).
+> Shared methodology + the standing gds-sign-bug caveat: `DirectNet-L73-accuracy.md`
+> §2 and §12.2.
+>
 > **Sprint history, version-by-version status, dead-ends, and the open known-issue
 > roadmap live in `docs/CHANGELOG.md` + `MEMORY.md`** — not duplicated here.
 > CLAUDE.md tracks durable architecture, rules, and how-to-run.
@@ -262,7 +268,7 @@ recipe): `scripts/benchmark_gen_data.sh` → `scripts/benchmark_train_sml.sh`
 - **Universal DirectNet (V6.7.0):** `u716_dn_{clean,csob,corroft,crit30u}_large` +
   `_{clean,corroft}_xl` + TSMC5 fine-tunes `u716f5_plain_n{1000000,full}_large` —
   18-code vocab, env-pin-only. Best = `u716_dn_corroft_large` (10/12 strict, 0 FLIPs).
-  See `docs/V6.7.0-universal-transfer-report.md`.
+  See `docs/accuracy/DirectNet-L73-accuracy.md`.
 - **Resolver cascade** (`pycircuitsim/parser.py`): env pin
   `PYCIRCUITSIM_NN_CHECKPOINT_{DN,PFN}_{NMOS,PMOS}` read FIRST (since V6.6.6 an absent
   pinned stem RAISES — no silent fallback); then per-tech `tsmc{X}_{dn,tf,pfn}_{large,

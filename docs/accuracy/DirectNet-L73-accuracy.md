@@ -1,73 +1,309 @@
-# PyCircuitSim V6.6.6 — Consolidated Accuracy Report & Cross-Tier Production Recommendation
+# DirectNet (LEVEL=73) — Unified Accuracy Report
 
-**Date:** 2026-07-03 (Part I conclusions) / 2026-07-05 (Part II data tables merged in — V6.7.1)
-**Branch:** `V6.6`  **Model family:** DirectNet (LEVEL=73)
+**Family:** DirectNet, feed-forward MLP compact model, netlist `LEVEL=73` — the
+**production** NN fast path.
+**Ground truth:** always NGSPICE on the *identical* BSIM-CMG (LEVEL=72) OSDI model
+(repo `tools/ngspice-45.2`). Never a simplified or self-defined reference.
+**Consolidated:** 2026-07-24. **Covers:** V6.6.0 → V6.11.0 (all DirectNet accuracy
+campaigns).
 
-> **This file is the complete V6.6.6 accuracy record**: Part I (§1–§8) = analysis, scoreboards,
-> and the production recommendation; Part II (Appendices A–C) = the full collector-generated
-> data tables — large-tier re-test, xl-tier re-test, and the V6.6.5 recipe × size matrix with
-> device + AC suites.
+> **This file supersedes and replaces** `docs/V6.6.0-accuracy-report.md` (clean
+> baseline + capacity curve), `docs/V6.6.1-recipe-accuracy-report.md` (uniform
+> single-lever recipe study), `docs/V6.6.6-accuracy-report.md` (cross-tier
+> consolidation + Part II data tables + TSMC6 addendum), and
+> `docs/V6.7.0-universal-transfer-report.md` (universal scope + TSMC5 transfer).
+> All of their content is carried here — Part I below is the synthesis, Part II
+> is the frozen collector-generated data verbatim. The deleted files remain in git
+> history (last present at commit `1fe1cdb`).
 
-> **Question this report answers.** V6.6.5 completed the 13-recipe × 4-size matrix and
-> left one family untested above `large`: the **curriculum fine-tunes** (corridor /
-> inv_trip warm-starts — the family that produced the production crit30 recipe). This
-> report (a) re-gates every xl checkpoint on the authoritative isolated harness,
-> (b) trains and gates the **9 curriculum recipes at xl** (72 new checkpoints), and
-> (c) consolidates everything — large tier, xl tier, device, AC — into one
-> **production recommendation**. All numbers ran on the freshly audited test
-> infrastructure (§6), against NGSPICE BSIM-CMG (LEVEL=72) ground truth.
->
-> "Uniform" remains load-bearing: every recipe is one identical addendum applied to
-> every (tech × device) checkpoint; the curriculum family warm-starts from its own
-> tier's clean checkpoint (`--init-from tsmc{X}_dn_xl_{dev}`) — mechanical, never
-> per-case.
+Sibling reports: `BSIM-AR-L74-accuracy.md` (LEVEL=74), `PFN-L75-accuracy.md`
+(LEVEL=75). Cross-family comparison: §11.
 
 ---
 
-## 1. TL;DR
+## 0. Provenance
 
-- **Three curriculum recipes at xl — `corroft`, `crit10`, `crit15m` — reach 14/16
-  strict all-OMP, tying the production `crit30f@large` score.** The curriculum
-  warm-start rescues the xl tier wholesale: clean@xl is 10/16; one identical
-  fine-tune adds +4.
-- **They bank the tsmc16-opamp deterministically (6.2–6.7 % gain error) — the cell
-  production FAILS.** crit15m additionally banks tsmc5-opamp (3.37 %); corroft/crit10
-  bank tsmc12-opamp (6.2 %). Every ring is a deterministic PASS across the whole
-  crit family at xl.
-- **No recipe at any tier holds all three reachable opamp basins (tsmc5, tsmc12,
-  tsmc16) simultaneously** — that is the 15/16 target. tsmc7-opamp fails for all
-  22 recipes × 2 tiers (the structural wall; T3 territory, V6.5.9).
-- **The weight→basin map is tier-dependent:** crit30 is the best recipe at large
-  (14/16) but only 12/16 at xl; crit10/crit15m peak at xl. Recipe rankings do NOT
-  transfer across capacity.
-- **Production recommendation: UNCHANGED — keep `crit30f@large`** (§7). The xl
-  14/16s tie on count but lose on AC (0 passes at xl for all recipes), carry no
-  device-suite validation, and cost 2.3× the inference parameters.
+| Source campaign | Date | What it contributed |
+|---|---|---|
+| V6.6.0 | 2026-06-29 | Uniform-recipe reset; clean capacity curve 7/10/13/10; device + AC baselines |
+| V6.6.1 | 2026-07-01 | 9-recipe single-lever sweep; mutual-exclusive-basin ceiling; `csob` alternate |
+| V6.6.2/3/4 | 2026-07-02 | Curriculum (corridor + inv_trip) breaks the ceiling; `crit30f` → **production 14/16 strict** |
+| V6.6.5 | 2026-07-03 | Full 13-recipe × 4-size matrix (208 ckpts, 864 cells) |
+| V6.6.6 | 2026-07-03/05 | xl curriculum wave (72 ckpts); cross-tier recommendation; Part II tables |
+| V6.6.7 | 2026-07-03 | 15/16 hunt round 1 — both arms negative |
+| V6.7.0 | 2026-07-04/05 | Universal 18-code DirectNet + TSMC5 sample-efficiency / retention |
+| V6.11.0 | 2026-07-14/17 | TSMC6 capacity sweep (§10 — **see the TSMC6≡TSMC7 correction**) |
 
-## 2. Methodology
+---
 
-Identical to the V6.6.3 re-test, extended to two tiers:
+## 1. Headline — current production state
 
-- **Single-run matrix:** `scripts/gate_matrix_iso.sh` — fully isolated per-cell runs
-  (own `PYCIRCUITSIM_COMPLEX_RESULTS`, CPU-pinned `OMP=MKL=1`, repo ngspice), gate
-  verdict = the verify script's **exit code**, per-cell logs + per-cell verdict files.
-  `SIZE=xl` selects the tier (env-parameterized this campaign).
-- **Strict determinism:** `scripts/opamp_sweep_def.sh` — opamp + ring at
-  OMP∈{1,2,4}; a cell counts only if **all three** runs pass (multistable FLIPs are
-  unbankable). The new default torch thread-pin (§6) preserves this probe via
-  `PYCIRCUITSIM_TORCH_THREADS`.
-- **Training (new xl checkpoints):** `RECIPES="corrft corroft corro15 crit10 crit15
-  crit15m crit15h crit20 crit30" SIZES=xl scripts/recipe_train.sh` — 72 checkpoints,
-  each the clean xl base + the recipe's identical addendum, warm-started from its own
-  tech's clean xl checkpoint on the corr/corro corridor datasets. All 72 ran to
-  completion (verified per-log; `.complete` markers now enforce this). `crit30f` was
-  not duplicated at xl — it is flag-identical to `crit30` and existed at large only
-  to re-validate an early-killed run.
-- **Tables:** Part II of this file (Appendices A–C: RETEST two-tier — 23 recipes at
-  large, 22 at xl — plus the MATRIX section; frozen from the collector output
-  2026-07-05); machine-readable `results/recipe_bench/retest_data.json`.
+| Metric | Result |
+|---|---|
+| **Production checkpoint** | `tsmc{5,7,12,16}_dn_large_{nmos,pmos}` = the **crit30f** curriculum artifact (V6.6.4) |
+| **Complex-circuit gates** | **14 / 16 PASS, strict across OMP∈{1,2,4}** |
+| Open gates | **tsmc7-opamp**, **tsmc16-opamp** |
+| Clean-recipe capacity curve (s→m→l→xl) | 7 → 10 → **13** → 10 / 16 |
+| Device DC (`verify_nn_dc_tran`, resolver default) | 24/24 PASS; NMOS 1.53 % / PMOS 0.02 % NRMSE |
+| Inverter VTC + transient | 16/16 PASS at every size |
+| Lifted-source canary (Rule 2) | 12/12 PASS (NRMSE ≤10 %) |
+| AC small-signal, device CS-amp | 4/12 PASS (gain0 err <1.5 dB in 24/24 cells) |
+| Opamp open-loop AC | 0/12 at every size |
+| Params | large = 384×6 ≈ 0.92 M · ~1.5 ms/eval (CPU, 1 thread) |
 
-## 3. xl scoreboard — strict all-OMP (single-run in parentheses where different)
+**Production recipe (crit30f):** clean base + **one identical** curriculum fine-tune —
+`--class-weights traj_corridor=3.0,inv_trip=2.0 --lr 3e-4 --epochs 120 --patience 40
+--init-from <own clean large>` on the ring-only `corro` datasets. The clean originals
+are archived as `tsmc{X}_dn_v660clean_large_*`; small/medium/xl stay clean.
+
+**Documented alternates** (env-pin only, never the resolver default):
+
+| Alternate | Pin | Why |
+|---|---|---|
+| `csob@large` | `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}=tsmc{X}_dn_csob_large_{dev}` | Best device NRMSE + AC; the only large-tier recipe that banks tsmc16-opamp on seed-42 |
+| `corroft@xl` / `crit10@xl` | `…=tsmc{X}_dn_{corroft\|crit10}_xl_{dev}` | Deterministic tsmc16-opamp coverage (6.2–6.7 % gain err) |
+| `crit15m@xl` | `…=tsmc{X}_dn_crit15m_xl_{dev}` | tsmc5-opamp (3.37 %) + tsmc16-opamp (6.47 %) |
+| `u716_dn_corroft_large` | `…=u716_dn_corroft_large_{dev}` | One-checkpoint multi-tech serving, 10/12 strict (§9) |
+
+---
+
+## 2. Methodology (applies to every number in this report)
+
+- **Uniformity contract.** Every recipe is **one identical addendum applied to every
+  (tech × device × size) checkpoint** — never a per-tech or per-gate special. The
+  V6.5.x per-case specials (seed-tuning, per-gate corridor harvests, T3 fine-tunes)
+  were retired in V6.6.0 precisely so the matrix reflects genuine uniform fidelity.
+  Curriculum recipes warm-start from **their own tier's clean checkpoint**, which is
+  mechanical, not per-case.
+- **Complex gate matrix = 4 circuits × 4 techs = 16 cells.** Ring-osc period err
+  ≤5 %; opamp open-loop DC-gain err ≤10 % (trip shift reported, not gated);
+  switchcap charge err ≤5 % of VDD + droop; SRAM butterfly all-lobes-positive
+  (+ lobe NRMSE ≤10 %). Verdict = the `verify_complex_*` script's **exit code**.
+- **Strict determinism.** `scripts/opamp_sweep_def.sh` re-runs opamp + ring at
+  `OMP_NUM_THREADS = MKL_NUM_THREADS = PYCIRCUITSIM_TORCH_THREADS ∈ {1,2,4}`; a cell
+  counts as strict only if **all three** runs pass. Multistable FLIPs are unbankable.
+  SRAM/switchcap are deterministic and not swept.
+- **Isolation.** `scripts/gate_matrix_iso.sh` — per-cell `PYCIRCUITSIM_COMPLEX_RESULTS`,
+  CPU-pinned (`CUDA_VISIBLE_DEVICES="" OMP=MKL=1`), repo ngspice, per-cell logs and
+  verdict files. Gates run on **CPU, never CUDA** — the fragile opamp fixed points
+  land in different NR basins under CUDA float.
+- **Device suites.** `verify_nn_dc_tran` (single-point, resolver path),
+  `verify_nn_multi_tech_{dc,tran}` (parametric, baseline-gated),
+  `verify_nn_ac` (CS-amp gain0 ≤1.5 dB / f3db ratio ∈[0.7,1.43] / mag NRMSE ≤10 %),
+  `verify_nn_lifted_source_dc` (Rule 2 canary).
+- **Metrics** are Rule 13: MRE %, R², NRMSE, Max error, per tech.
+- **Reproduce:** `scripts/recipe_train.sh` → `scripts/recipe_eval.sh` /
+  `gate_matrix_iso.sh` → `scripts/recipe_{collect,retest_collect}.py`.
+  Capacity sweep: `benchmark_gen_data.sh` → `benchmark_train_sml.sh` →
+  `benchmark_run_tests.sh` → `benchmark_collect.py`.
+- **Completion discipline.** A bare `_best.pt` is **not** evidence of a finished run;
+  completed runs carry a `*_best.pt.complete` marker (V6.6.5 quarantined and retrained
+  22 killed-run checkpoints found this way).
+
+---
+
+## 3. Capacity study — the clean uniform baseline (V6.6.0)
+
+32 checkpoints: 4 techs × {NMOS, PMOS} × {small 128×3 ≈0.06 M, medium 256×5 ≈0.4 M,
+large 384×6 ≈0.9 M, xl 512×8 ≈2.13 M}, one identical recipe
+(`--apply-filter off --swa-mode ema --seed 42`), capacity the only variable.
+
+### 3.1 Complex-circuit gate matrix (4 circuits × 4 techs × 4 sizes)
+
+| Tech | Circuit | small | medium | **large** | xl |
+|---|---|:---:|:---:|:---:|:---:|
+| TSMC5 | ring_osc | FAIL | FAIL | **FAIL** | FAIL |
+| TSMC5 | opamp | FAIL | FAIL | **PASS** | FAIL |
+| TSMC5 | sram_snm | PASS | PASS | **PASS** | PASS |
+| TSMC5 | switchcap | PASS | PASS | **PASS** | PASS |
+| TSMC7 | ring_osc | FAIL | FAIL | **PASS** | FAIL |
+| TSMC7 | opamp | FAIL | FAIL | **FAIL** | FAIL |
+| TSMC7 | sram_snm | PASS | PASS | **PASS** | PASS |
+| TSMC7 | switchcap | FAIL | PASS | **PASS** | PASS |
+| TSMC12 | ring_osc | PASS | PASS | **PASS** | PASS |
+| TSMC12 | opamp | FAIL | FAIL | **PASS** | FAIL |
+| TSMC12 | sram_snm | PASS | PASS | **PASS** | PASS |
+| TSMC12 | switchcap | FAIL | PASS | **PASS** | PASS |
+| TSMC16 | ring_osc | PASS | PASS | **PASS** | PASS |
+| TSMC16 | opamp | FAIL | FAIL | **FAIL** | FAIL |
+| TSMC16 | sram_snm | PASS | PASS | **PASS** | PASS |
+| TSMC16 | switchcap | FAIL | PASS | **PASS** | PASS |
+| | **TOTAL** | **7/16** | **10/16** | **13/16** | **10/16** |
+
+Per-circuit at `large`: SRAM 4/4 (robust at every size) · switchcap 4/4 (charge err
+2.4–4.1 %) · ring 3/4 (tsmc5 never passes, period err 6–14 %) · opamp 2/4 (passes only
+where the high-gain OP lands in the good basin — tsmc5 2.10 %, tsmc12 6.25 %;
+tsmc7/tsmc16 collapse to gain≈0).
+
+### 3.2 Device-level fidelity, production `large` (Rule 13)
+
+Id-Vgs over the full L/NFIN/VT sweep + inverter VTC/transient, per tech, vs NGSPICE.
+
+| Tech | Dev | mean NRMSE% | mean MRE% | min R² | max MaxErr | Pass |
+|---|---|---|---|---|---|---|
+| TSMC5 | NMOS | 3.99 | 13.02 | 0.941 | 26.1 µA | 7/7 |
+| TSMC5 | PMOS | 1.21 | 3.88 | 0.961 | 15.2 µA | 7/7 |
+| TSMC7 | NMOS | 1.84 | 4.66 | 0.985 | 54.0 µA | 5/5 |
+| TSMC7 | PMOS | 0.65 | 1.55 | 0.998 | 15.5 µA | 4/4 |
+| TSMC12 | NMOS | 1.25 | 3.09 | 0.926 | 114.9 µA | 9/9 |
+| TSMC12 | PMOS | 2.20 | 5.99 | 0.723 | 203.2 µA | 8/9 |
+| TSMC16 | NMOS | 0.83 | 2.16 | 0.990 | 40.4 µA | 7/7 |
+| TSMC16 | PMOS | 1.03 | 2.45 | 0.975 | 63.3 µA | 7/7 |
+| **all** | **INV (VTC+tran)** | **1.6–2.0** | ~10 | >0.97 | — | **16/16** |
+
+Device current/inverter fidelity is **excellent and not the bind.** The worst
+single-OP cell is TSMC7 NMOS (steep low-VDD tech): 6.7 % NRMSE / 17.5 % MRE at the
+nominal OP — still inside the device gate, inverter still 16/16.
+
+### 3.3 Why `large`, and why not `xl`
+
+| Size | Complex gates | Device mean NRMSE% | Note |
+|---|---|---|---|
+| small | 7/16 | 1.63 | under-capacity; opamp 0/4, switchcap 1/4 |
+| medium | 10/16 | **1.29** | best device fit; opamp 0/4 |
+| **large** | **13/16** | 1.70 | **production sweet spot** |
+| xl | 10/16 | 2.17 | **over-fit**: worst off-nominal NRMSE; opamp/ring collapse |
+
+xl fits the training distribution ~10× tighter (val loss ~2e-4 vs medium ~2e-3) yet
+generalizes worst off-nominal (tsmc12 PMOS min-R² 0.37) and loses every high-gain
+basin `large` won. **Capacity is not the bind** — beyond `large` the model over-fits
+the value surface and collapses the high-gain fixed points.
+
+> V6.6.5 refined this: xl is **basin-shuffled, not uniformly over-fit** (invtrip/s17
+> reach 12/16 at xl where clean gets 10; `sob`, worst everywhere else, jumps 5→10).
+> The corridor recipes *invert* the capacity curve (`cor`: 11/12/11/5 s→xl).
+
+### 3.4 Historical context — the V6.5.9 "16/16"
+
+V6.5.9 reported 16/16, but only via per-tech bespoke interventions (tsmc5 ring
+corridor + seed-7, tsmc16 seed-17, tsmc7 T3 differentiable-DC-solver on an EKV core).
+Those answer *"can a hand-tuned checkpoint pass this gate?"*, not *"how faithful is
+the model under one recipe?"*. **13/16 (clean) → 14/16 (crit30f) is the honest
+uniform-recipe number.**
+
+---
+
+## 4. Uniform single-lever recipe study (V6.6.1)
+
+Recipes, all uniform addenda on the clean base: `csob` (`--charge-sobolev`),
+`sob` (`--sobolev --sobolev-corridor-only`), `ekv` (`--ekv-core`), seeds
+`s7/s17/s123`, combos `csobekv`, `cs7`.
+
+### 4.1 Complex-gate pass-rate — recipe × scale (X/16)
+
+| Recipe | small | medium | large | xl | Σ all scales |
+|---|:---:|:---:|:---:|:---:|:---:|
+| **clean** (control) | 7 | 10 | **13** | 10 | **40** |
+| **csob** | **9** | 10 | 12 | 10 | **41** |
+| sob | 6 | 6 | 5 | 10 | 27 |
+| ekv | 7 | **11** | 10 | 9 | 37 |
+| s7 (uniform seed) | — | — | 11 | — | — |
+| s17 (uniform seed) | — | — | 11 | — | — |
+| s123 (uniform seed) | — | — | 10 | — | — |
+| `csobekv` (combo) | — | — | 10 | — | — |
+| `cs7` (combo) | — | — | 11 | — | — |
+
+**No uniform single-lever recipe, seed, or combo beats clean's 13/16 at `large`.**
+
+### 4.2 The ceiling is mutually-exclusive value-surface basins
+
+| Tech · gate | clean | csob | ekv | s7 | s17 | s123 |
+|---|:---:|:---:|:---:|:---:|:---:|:---:|
+| tsmc5 ring | F 12.7% | F 10.3% | F 6.1% | F 12.6% | F 9.6% | F 11.8% |
+| tsmc7 ring | **P 4.8%** | F 5.1% | F 6.7% | F 7.2% | F 8.7% | F 7.2% |
+| tsmc12 ring | P | P | P | P | P | P |
+| tsmc16 ring | P | P | P | P | P | P |
+| tsmc5 opamp | **P 2.1%** | F | **P 1.6%** | **P 0.2%** | F | F |
+| tsmc7 opamp | F | F | F | F | F | F |
+| tsmc12 opamp | **P 6.3%** | **P 5.8%** | **P 7.0%** | F | F | F |
+| tsmc16 opamp | F | **P 1.3%** | F | F | **P 6.2%** | F |
+
+Each recipe lands exactly **two** of the four opamp gates — a *different* two:
+clean/ekv {tsmc5, tsmc12} · csob {tsmc12, tsmc16} · s7 {tsmc5} · s17 {tsmc16}.
+**tsmc12-opamp passes only on seed-42**, which is why the seed axis cannot win.
+**tsmc7-opamp passes nowhere.**
+
+### 4.3 Combos — basin-stacking is zero-sum (refuted)
+
+| combo | @large | basins |
+|---|:---:|---|
+| `csobekv` (csob + `--ekv-core`) | **10/16** | opamp {tsmc16}; ring {tsmc7, tsmc12, tsmc16}; **loses SRAM {tsmc12, tsmc16}** |
+| `cs7` (csob + `--seed 7`) | **11/16** | opamp {tsmc5}; ring {tsmc12, tsmc16}; SRAM 4/4 |
+
+`csobekv` is the **only** checkpoint in the sweep to pass tsmc7-ring **and**
+tsmc16-opamp together, and its EKV core pushes tsmc5-ring to 5.80 % (closest any
+`large` checkpoint gets to the 5 % gate, vs clean's 12.66 %) — but the same analytic
+core breaks tsmc12/16 SRAM and tsmc12 opamp, netting 10/16, and it converges to a
+validation loss 10–40× worse than clean (EKV core and charge-Sobolev fight on the
+shared `id` head).
+
+### 4.4 Device / AC — where `csob` earns its keep
+
+Device mean NRMSE % (lower better):
+
+| Recipe | small | medium | large | xl | mean |
+|---|:---:|:---:|:---:|:---:|:---:|
+| clean | 1.63 | **1.29** | 1.70 | 2.17 | 1.70 |
+| **csob** | 1.77 | 1.33 | **1.50** | **1.77** | **1.59** |
+| sob | 1.92 | 1.38 | 1.95 | 2.22 | 1.87 |
+| ekv | 1.99 | 1.72 | 2.38 | 2.18 | 2.07 |
+
+AC device CS-amp pass-rate (X/12):
+
+| Recipe | small | medium | large | xl | Σ |
+|---|:---:|:---:|:---:|:---:|:---:|
+| clean | 5 | 4 | 4 | 4 | 17 |
+| **csob** | **7** | 4 | **5** | **5** | **21** |
+| sob | 5 | 5 | 4 | 4 | 18 |
+| ekv | 5 | 5 | 5 | 3 | 18 |
+
+`csob` directly supervises the autograd ∂q/∂V the AC/transient solvers consume, and
+it shows: best mean device NRMSE, best AC count, and the only recipe landing
+tsmc16-opamp at `large` on the clean seed — for one complex gate at `large`. This
+**refutes** the V6.5.x "charge-Sobolev is dead on arrival" verdict, which was measured
+only at `medium`. `sob` is a **KILL** (5/16), reproducing "deriv-fidelity ⟂ opamp".
+
+---
+
+## 5. The curriculum breaks the ceiling → production 14/16 (V6.6.2–V6.6.4)
+
+The corridor (`traj_corridor`) and inverter-trip (`inv_trip`) class weights had only
+ever been tested **separately**, on opposite sides of the shared-MLP wall. Combining
+them in a warm-start curriculum on the ring-only `corro` data broke 13/16:
+
+| step | recipe | result |
+|---|---|---|
+| V6.6.2 | `crit15` (corridor 1.5 + inv_trip 2.0) | 14/16 single-run, **13/16 strict** = clean+1; the +1 is the deterministic tsmc5-ring opening (12.66 → 4.0 %) |
+| V6.6.3 | `crit30` (corridor 3.0 + inv_trip 2.0) | **14/16 STRICT all-OMP** — clean+2, best of all 22 on-disk recipes |
+| V6.6.3 | `crit30f` | full-spec retrain of crit30 (the original had been killed at heterogeneous epochs 30–92); reproduces the artifact cell-for-cell |
+| V6.6.4 | **`crit30f` PROMOTED** | all 8 `tsmc{X}_dn_large_*` production slots replaced; clean archived `v660clean_large` |
+
+**What crit30 banks deterministically:** all 4 rings (tsmc5 12.66→4.04 %), all
+SRAM + switchcap, tsmc12-opamp 6.25 %, **and tsmc5-opamp 0.21 %** (a coin-flip under
+clean, det-FAIL under crit15). Device level ≥ clean everywhere (DC mean NRMSE
+1.64→1.46 %, device-AC 4/8→6/8). Post-promotion verification on the default resolver
+path (no env pins) reproduces the record: **14/16 deterministic**.
+
+**Two durable lessons:**
+
+1. **The opamp gate is a multistable OMP coin-flip.** tsmc5/tsmc16 opamps flip
+   0–8 % ↔ 100 % across OMP∈{1,2,4} in both clean and crit15 — *single-run opamp
+   passes are unbankable*. `opamp_sweep_def.sh` became the standing probe.
+2. **The corridor-weight → basin map is NON-MONOTONE.** For tsmc5-opamp: w1.0 FLIP,
+   w1.5/2.0 det-FAIL, w3.0 det-PASS. The inv_trip anchor makes w3.0 safe where
+   corroft alone railed.
+
+---
+
+## 6. Cross-tier consolidation — the xl curriculum wave (V6.6.6)
+
+V6.6.5 completed the 13-recipe × 4-size matrix but left the **curriculum fine-tunes**
+untested above `large`. V6.6.6 trained 72 new xl checkpoints (9 recipes × 4 techs × 2
+devices, each the clean xl base + the recipe's identical addendum, warm-started from
+its own tech's clean xl checkpoint) and re-gated every xl checkpoint on the isolated
+harness.
+
+### 6.1 xl scoreboard — strict all-OMP
 
 | strict | recipes |
 |---|---|
@@ -77,25 +313,21 @@ Identical to the V6.6.3 re-test, extended to two tiers:
 | 10/16 | clean, invtripft, csob, cs7, sob, s7, s123 |
 | 9/16 | csobekv, ekv |
 | 6/16 | corrft |
-| 5/16 (4) | cor, corft |
+| 5/16 (4 single-run) | cor, corft |
 
-Key structure in this board:
+- **The curriculum rescues the xl tier wholesale:** clean@xl is 10/16; one identical
+  fine-tune adds +4.
+- **xl basins are OMP-deterministic** (strict ≈ single-run for every recipe; the sole
+  FLIP in the whole tier is corft's tsmc5-ring at 4.6/4.9/5.1 % around the 5 % gate),
+  unlike `large` where opamp FLIPs are endemic.
+- **The full-corridor curriculum collapses at xl** (corrft 6/16, cor 5, corft 4) —
+  at xl the *ring-only* corridor is the only safe corridor. cor/corft tsmc7+tsmc12 xl
+  checkpoints are structurally broken (value surface overflows `sinh` → singular MNA →
+  NR divergence at t=2 ps); the gates record honest FAILs, tables render them `CRASH`.
+- **Recipe rankings do NOT transfer across capacity:** crit30 is best at large (14/16)
+  but only 12/16 at xl; crit10/crit15m peak at xl.
 
-- **Base recipes (V6.6.5 set) reproduce cell-for-cell** under the fresh isolated
-  re-run — the size-matrix numbers are stable. New information: xl basins are
-  **OMP-deterministic** (strict ≈ single-run for every recipe; the sole FLIP in
-  the whole tier is corft's tsmc5-ring at 4.6/4.9/5.1 % around the 5 % gate),
-  unlike large where opamp FLIPs are endemic.
-- **The curriculum dominates xl.** Ring-only corridor curriculum (corroft) and both
-  gentle-corridor combos (crit10 w1.0, crit15m w1.5+anchor3.0) each add +4 over
-  clean@xl. The full-corridor curriculum (corrft, 6/16) collapses exactly like the
-  from-scratch corridor recipes (cor 5, corft 4) — at xl the *ring-only* corridor
-  is the only safe corridor.
-- **cor/corft tsmc7+tsmc12 xl checkpoints are structurally broken** (value surface
-  overflows `sinh` → singular MNA → NR divergence at t=2 ps). The gates record
-  honest FAILs; the tables render them `CRASH`.
-
-## 4. The 14/16 club — cell-level coverage (the load-bearing table)
+### 6.2 The 14/16 club — cell-level coverage (the load-bearing table)
 
 Gain/period errors in %; **bold** = deterministic PASS (OMP 1/2/4 identical verdict).
 
@@ -109,112 +341,327 @@ Gain/period errors in %; **bold** = deterministic PASS (OMP 1/2/4 identical verd
 | SRAM maxNRMSE | all PASS (≤4.04) | all PASS (≤6.20) | all PASS (≤6.01) | all PASS (≤6.00) |
 | switchcap chg | all PASS (≤4.17) | all PASS (≤4.22) | all PASS (≤4.22) | all PASS (≤4.22) |
 
-Readings:
+1. **Every opamp basin except tsmc7 is individually reachable by a uniform curriculum
+   recipe** — tsmc5 0.21 %/3.37 %, tsmc12 6.2 %, tsmc16 6.5–6.7 %, all deterministic.
+   The tsmc16 basin, which no large-tier recipe holds together with tsmc5+tsmc12, is
+   *stable* at xl under three different curricula.
+2. **The three-basin simultaneous hold (5+12+16) is the open 15/16 target.** A
+   per-case selection across these recipes would score 15/16 — but per-case selection
+   violates the uniform-production contract, so it is routing information, not a
+   promotion.
+3. **tsmc7-opamp: 0 passes over 22 recipes × 2 tiers × 3 OMPs.** Capacity-, recipe-
+   and tier-independent — this gate needs the T3 differentiable-solver class of fix
+   (V6.5.9), not a recipe.
 
-1. **Every opamp basin except tsmc7 is individually reachable by a uniform
-   curriculum recipe** — tsmc5 at 0.21 %/3.37 %, tsmc12 at 6.2 %, tsmc16 at 6.5–6.7 %,
-   all deterministic. The tsmc16 basin, which no large-tier recipe holds together
-   with tsmc5+tsmc12 (csob@large banks it but flips tsmc12 at OMP8; corroft@large
-   banks it but drops tsmc5+tsmc12), is *stable* at xl under three different
-   curricula. This affirmatively answers the plan-§5 P1 existence question.
-2. **The three-basin simultaneous hold (5+12+16) is the open 15/16 target.** The
-   anchor (inv_trip) holds 5+12 at large; the ring-only corridor reaches 16 at both
-   tiers but at large drops 5+12, and at xl the outcome splits by corridor weight
-   (w1.0/ring-only hold 12+16; w1.5+strong-anchor holds 5+16). A per-case selection
-   across these recipes would score 15/16 — but per-case selection violates the
-   uniform-production contract, so it is routing information, not a promotion.
-3. **tsmc7-opamp: 0 passes over 22 recipes × 2 tiers × 3 OMPs.** Capacity-,
-   recipe-, and tier-independent, exactly as V6.6.3/V6.6.5 concluded — this gate
-   needs the T3 differentiable-solver class of fix (V6.5.9), not a recipe.
+### 6.3 Why xl was NOT promoted
 
-## 5. Device, AC, and cost axes (why counting gates isn't enough)
+- **Opamp AC: 0/4 for every xl recipe** including the 14/16 club. At `large`
+  production posts near-misses (tsmc12 5.0–9.8 dB / GBW 0.95–0.98) and `csob` passes
+  tsmc16 outright. Cap-surface fidelity peaks at *small*; xl is the worst AC tier —
+  any xl promotion regresses the AC axis outright.
+- **No device-suite record.** The crit-xl checkpoints were gated on complex + AC only;
+  production crit30@large carries full DC/tran/AC device validation.
+- **Cost:** xl 2.13 M params vs large 0.92 M ≈ 2.3× the per-eval FLOPs, for a tied
+  gate count and a cell *swap* (gain tsmc16-opamp, lose tsmc5- or tsmc12-opamp).
 
-- **Opamp AC:** 0/4 passes for **every** xl recipe including the 14/16 club
-  (OP-misbias or GBW/PM misses everywhere). At large, production posts near-misses
-  (e.g. tsmc12 5.0–9.8 dB / GBW 0.95–0.98) and csob passes tsmc16 outright. The
-  V6.6.5 finding stands: cap-surface fidelity peaks at *small*, and xl is the worst
-  AC tier. Any xl promotion would regress the AC axis outright.
-- **Device suites:** the crit-xl checkpoints were gated on the complex matrix + AC
-  only. Production crit30@large carries full device validation (DC/tran/AC suites,
-  device-level ≥ clean everywhere — V6.6.3 `DEVICE_RETEST.md`). The xl club has no
-  equivalent record; promoting it would mean re-earning that evidence.
-- **Cost:** xl = 512×8 ≈ 2.13 M params vs large = 384×6 ≈ 0.92 M — ~2.3× the
-  per-eval FLOPs on the CPU inference path, for a tied gate count.
-
-## 6. Test-infrastructure audit (what makes these numbers trustworthy)
-
-A 4-agent audit of the entire test infra ran alongside this campaign (details:
-CHANGELOG V6.6.6, memory `test-infra-bughunt-2026-07`). 17 verified fixes landed —
-the silent-green class (DC garbage-branch scored as skip-not-FAIL, all-ERROR suites
-exiting 0, env-pin silently falling back to production checkpoints, sweep gates
-missing the `not partial` divergence guard, SRAM dropping errored corners, flat-ref
-NRMSE auto-pass, empty-result exits) and the reporting class (gate_matrix_iso
-SUMMARY clobber, gate_grid 0/16, ambiguous blank cells, nan row drops, drift
-manifest hashing the wrong tier, `_best.pt`-trusting training resume). Independently
-verified clean: NN-vs-NGSPICE deck parity in all four circuits, every collector
-regex against every real log (each blank cell = a genuine crash), 512 checkpoint-stem
-→ local-vocab mappings, and an end-to-end recompute of reported cells. The v664 P0
-thread-pin (`torch.set_num_threads(1)` default, `PYCIRCUITSIM_TORCH_THREADS`
-override for the OMP probe) is now in the single-point/AC gate infra — validated
-verdict-neutral for the pinned-env methodology (production tsmc12-opamp reproduces
-6.25 % exactly), so pre- and post-pin tables remain comparable.
-
-## 7. Production recommendation
-
-1. **Keep `crit30f@large` as production (no change).** The xl challengers tie at
-   14/16 but win nothing on net: AC categorically worse (0/4 vs near-misses + a
-   csob-passing cell at large), no device-suite record, 2.3× inference cost, and a
-   cell-swap (gain tsmc16-opamp, lose tsmc5- or tsmc12-opamp) rather than a gain.
-   Uniform-production discipline (one tier, one recipe, resolver `large`-first)
-   stays intact.
-2. **Document `corroft@xl` / `crit10@xl` as the tsmc16-opamp coverage alternates.**
-   When a tsmc16 opamp DC gate matters more than tsmc5, pin them at runtime:
-   `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}=tsmc{X}_dn_{corroft|crit10}_xl_{dev}`.
-   (csob@large remains the AC/device-fidelity alternate per V6.6.1.) These are
-   documented alternates, not defaults — the same status csob has held since V6.6.1.
-3. **15/16 hunt round 1 (V6.6.7) — EXECUTED, both arms negative (13/16 strict
-   each):** (a) **csobcrit** (csob base + crit30 curriculum, charge-Sobolev
-   retained) — the curriculum *relocates* rather than composes: csob's
-   deterministic tsmc16-opamp hold (1.28 %) degrades to a FLIP (100 % at OMP1,
-   7.49 % at OMP2/4) while tsmc12 (which csob failed) is gained deterministically
-   (5.80 %). The plan-§5 P2a composition hypothesis is refuted. (b) **crit30a1**
-   (ring-only corridor w3.0 + HALF anchor 1.0, v660clean base) — reproduces
-   corroft (anchor 0) almost exactly (tsmc16-opamp 7.34 % detPASS, identical
-   rings): anchor 1.0 sits below the basin-transition threshold, so the
-   {16} → {5,12} hop is **discontinuous in anchor weight between 1.0 and 2.0**.
-   Remaining cheap arm: anchor ~1.5 at w3.0 (probe the discontinuity); beyond
-   that, the uniform-recipe lever looks exhausted for the triple and 15/16 likely
-   needs a structural lever (T3-class).
-   *Correction vs this report's first issue:* **crit10@large is NOT untested** — it
-   was gated in V6.6.3 at 13/16 strict (tsmc12-opamp detPASS, tsmc5 FLIP, tsmc16
-   detFAIL), so the gentle-corridor arm was already known not to hold the triple at
-   large on the clean base.
-4. **16/16 still runs through tsmc7-opamp = T3** (differentiable-DC-solver
-   fine-tune, plan-§5 P2b fund-or-kill) — no uniform recipe/tier/seed has ever moved
-   it.
-
-## 8. Data & artifacts
-
-- Tables: **Part II of this file** (Appendices A–C; frozen 2026-07-05). The old
-  collector target `results/recipe_bench/ACCURACY_REPORT.md` is now a stub with
-  empty markers — `scripts/recipe_retest_collect.py` / `recipe_collect.py` still
-  regenerate their sections there if re-run; machine-readable
-  `retest_data.json` (`"xl"` key) + `recipe_data.json` remain in `results/recipe_bench/`.
-- Raw runs: `results/recipe_bench/gate_iso_xl/` (22 recipes × 20 cells),
-  `opamp_def_xl/` (OMP sweeps), `CAMPAIGN_xl_*.log` (train/gate/sweep logs).
-- Checkpoints: pruned in the V6.7.1 house-clean (archive
-  `/data2/shenshan/v66x_v670_retired_ckpts_2026-07-05.tar.gz`); kept on disk:
-  production `tsmc{X}_dn_large_{dev}`, `v660clean` + `crit30f@large` archives,
-  alternates `csob@large` + `corroft`/`crit10`@xl, promote-candidate `crit15m@xl`.
-- Prior studies: `docs/V6.6.0-accuracy-report.md` (capacity curve),
-  `docs/V6.6.1-recipe-accuracy-report.md` (recipe families at large); the V6.6.2
-  uniform-recipe plan was retired in V6.7.1 (verdicts live in CHANGELOG + memory).
+**Decision: production stays `crit30f@large`.** `corroft@xl` / `crit10@xl` are
+documented tsmc16-opamp alternates.
 
 ---
 
-# Part II — Full accuracy data tables (frozen 2026-07-05, V6.7.1 merge)
+## 7. The 15/16 hunt, round 1 — both arms negative (V6.6.7)
 
-Merged verbatim from the collector-generated `results/recipe_bench/ACCURACY_REPORT.md` (that path now holds a regeneration stub; the collectors `scripts/recipe_retest_collect.py` / `recipe_collect.py` still write there if re-run). Headings demoted one level; content otherwise untouched. Appendix A = isolated re-test, large tier (23 recipes, V6.6.3 methodology). Appendix B = xl tier re-test (22 recipes). Appendix C = the V6.6.5 13-recipe × 4-size matrix incl. device + AC suites.
+| arm | result | reading |
+|---|---|---|
+| **csobcrit** (csob base + crit30 curriculum, charge-Sobolev retained) | **13/16 strict** | The curriculum **relocates** rather than composes: csob's deterministic tsmc16-opamp hold (1.28 %) degrades to a FLIP (100 % at OMP1, 7.49 % at OMP2/4) while tsmc12 (which csob failed) is gained deterministically (5.80 %). Composition hypothesis **refuted**. |
+| **crit30a1** (ring-only corridor w3.0 + HALF anchor 1.0, v660clean base) | **13/16 strict** | Reproduces corroft (anchor 0) almost exactly (tsmc16-opamp 7.34 % det-PASS, identical rings): anchor 1.0 sits below the basin-transition threshold, so the {16} → {5,12} hop is **discontinuous in anchor weight between 1.0 and 2.0**. |
+
+*Correction carried forward:* **crit10@large is NOT untested** — it was gated in
+V6.6.3 at 13/16 strict (tsmc12-opamp det-PASS, tsmc5 FLIP, tsmc16 det-FAIL).
+
+Remaining cheap arm: anchor ~1.5 at w3.0 (probe the discontinuity). Beyond that the
+uniform-recipe lever looks exhausted for the triple; 15/16 likely needs a structural
+(T3-class) lever. **16/16 still runs through tsmc7-opamp = T3.**
+
+---
+
+## 8. AC small-signal (autograd dQ/dV capacitances)
+
+The NN's small-signal caps are autograd derivatives of its predicted terminal charges
+(cgd = ∂qg/∂Vd, …), gated against NGSPICE `.ac` on the identical L72 model.
+
+| Class | Production (large) | Cross-size |
+|---|---|---|
+| Device CS-amp (gain0 ≤1.5 dB / f3db ratio ∈[0.7,1.43] / mag NRMSE ≤10 %) | **4/12 PASS** | S 5/12, M 4/12, **L 4/12**, XL 4/12 |
+| Opamp open-loop (DC-gain ≤3 dB / GBW ∈[0.6,1.67] / PM ≤15°) | **0/12** | 0/12 every size |
+
+**What is right:** DC gain is excellent everywhere — device gain0 error <1.5 dB in
+24/24 cells (mean 0.86 dB), so the autograd gm/gds fed to the AC stamp are accurate.
+The dominant cap-driven pole is faithful for well-fit cells (f3db ratio ≈1.0).
+
+**What is the genuine limit:** (1) the **Cgd-feedforward RHP zero** (high-frequency
+phase lag) is not reproduced — a clean, specific transcapacitance limitation;
+(2) some cells under-predict the output cap (tsmc5 NMOS, tsmc12/16 PMOS, f3db ratio
+1.1–1.6) and miss the magnitude gate; (3) the opamp AC inherits the DC value-surface
+fragility — where the OP is in the good basin (tsmc12) the NN nails GBW (0.97×) and
+phase margin (1.3°), confirming the *dynamics* are right and only the DC-gain *level*
+is the miss. These are value-surface / feedforward limits, **not** a charge-derivative
+deficiency (which would corrupt gain *and* pole everywhere).
+
+**AC pass-rate peaks at SMALL across recipes** (V6.6.5) — AC (a dQ/dV pole property)
+and DC circuit fixed-points want opposite capacities.
+
+> See §12 for the measured, **not-yet-shipped** gds sign + floor fix that moves device
+> AC 8/10 → 10/10 and un-rails the opamp OP.
+
+---
+
+## 9. Universal DirectNet + TSMC5 transfer (V6.7.0)
+
+One 18-code-embedding DirectNet trained on TSMC16+12+7 concatenated (`uni716_{dev}.npz`,
+nmos 6.92 M / pmos 7.26 M rows). **Production impact: NONE** — all artifacts use
+`u716_*` / `u716f5_*` stems, reachable only via explicit env pin; the per-tech resolver
+cascade is untouched. Calibration bar: per-tech recipes all = 10/12 strict on the same
+12 gates ({ring, opamp, SRAM, SC} × {TSMC7,12,16}); 11/12 (all but tsmc7-opamp) is the
+realistic ceiling. Zero RESOLVER-MISS across all 200 cells.
+
+### 9.1 Universal recipe ranking (12 gates, strict OMP∈{1,2,4})
+
+| rank | recipe | strict | FLIPs | ring 7/12/16 | opamp 7/12/16 | SRAM | SC | basin identity vs per-tech |
+|---|---|---|---|---|---|---|---|---|
+| 1 | **corroft** | **10/12** | **0** | ✅✅✅ | ✖️ ✅(6.15%) ✖️ | 3/3 | 3/3 | = per-tech corroft count; banks tsmc12- instead of tsmc16-opamp |
+| 2 | clean | 9/12 | 0 | ✖️(14.89%) ✅✅ | ✖️ ✅(6.54%) ✖️ | 3/3 | 3/3 | per-tech clean = 10/12; universal loses tsmc7-ring |
+| 3 | crit30u | 9/12 | 1 | ✅✅✅ | ✖️ FLIP ✖️ | 3/3 | 3/3 | anchor relocates tsmc12-opamp det-PASS → FLIP |
+| 4 | csob | 8/12 | 1 | ✖️✅✅ | ✖️ FLIP ✖️ | 3/3 | 3/3 | per-tech csob's tsmc16-opamp hold does NOT transfer |
+
+**Universal is viable:** device fidelity matches per-tech (id NRMSE ≤0.09 % per
+variant, R² ≥0.996) and corroft **ties the per-tech calibration bar with zero OMP
+flips** — which per-tech `large` never achieved. The corridor is the ring lever at
+universal scope too (tsmc7-ring 14.89 % → 3.61 %). AC (CS-amp suites) 0/12.
+
+### 9.2 xl arm — tsmc16-opamp is reachable, but only by trading ALL rings
+
+| recipe@xl | strict | FLIPs | detail |
+|---|---|---|---|
+| clean@xl | 8/12 | 1 | banks tsmc12-opamp (5.55 %) **and** tsmc16-opamp (6.41 %) det-PASS — the `large` tsmc16 rail is tier-local — but ALL rings fail (tsmc7 13.36 % / tsmc12 7.00 % det-FAIL, tsmc16 5.19 % FLIP) |
+| corroft@xl | 8/12 | 0 | corridor holds rings 3/3 (tsmc7 4.76 %) but ALL opamps rail (tsmc12 gain err 100 %, trip shift 146 mV) and tsmc7-SC drops (charge 2.15 % of VDD). Curiosity: tsmc7 AC PASS — the campaign's only AC pass |
+
+The mutual-exclusive-basin wall reappears at universal xl, partitioned
+**opamps-XOR-rings**. 11/12 is unreached at both tiers; **corroft@large stands**.
+Third independent demonstration (after tier and scope) that curriculum weight→basin
+maps do not transfer across capacity/scope axes.
+
+### 9.3 TSMC5 onboarding by fine-tune — sample efficiency
+
+| tier N | plain | crit |
+|---|---|---|
+| 2k / 10k / 50k / 200k | 0/4 | 0/4 |
+| **1M** | **4/4 — STRICT (OMP 1/2/4)** | 1/4 (ring only) |
+| full (~2.02M) | 3/4 (opamp det-FAIL) | 3/4 (opamp FAIL) |
+
+Device level (DC NRMSE %, nmos):
+
+| tier | plain | crit | note |
+|---|---|---|---|
+| 2k | unusable | N/A | model wrecked by norm refit on 1.8k train rows |
+| 10k | ~1e69 (DIVERGED) | ~1e69 | normalizer-refit failure mode, not noise |
+| 50k | 35.1 (ERROR) | 35.1 (ERROR) | |
+| 200k | 10.1 FAIL | 5.9 PASS | crit's class weights help at moderate N |
+| 1M | 0.69 PASS | 0.57 PASS | |
+| full | 0.42 PASS | 1.08 PASS | pmos full 0.64 / tran 0.52 / inv-tran 1.27 (plain) |
+
+- **The gate threshold lags the device threshold**: 5.9 % DC NRMSE (device-PASS) is
+  nowhere near enough for complex gates; the value surface needs the ~1M-row tightening.
+- **n1M > nfull at gates** (4/4 vs 3/4) — non-monotone in N; more TSMC5 data shifted the
+  opamp basin *out*. The n1M hold is deterministic, so bankable, but tier selection is
+  itself a basin lottery.
+- Zero-shot (untrained embedding rows): 0/4 — no free lunch from the shared trunk.
+
+### 9.4 Retention — no free lunch
+
+TSMC12 DC NRMSE % after TSMC5-only fine-tune (worst source tech):
+
+| tier | plain | crit |
+|---|---|---|
+| 2k | 5.8 PASS | 5.8 PASS |
+| 10k | 7.9 PASS | 7.8 PASS |
+| 50k | 11.0 FAIL | 10.1 FAIL |
+| 200k | 17.5 FAIL | 23.0 FAIL |
+| 1M | **26,424 FAIL (blow-up)** | 5.9 PASS |
+| full | 18.0 FAIL | 23.0 FAIL |
+
+Gate level (12 retention gates, plain): n1M keeps 1/12, full keeps 3/12. Forgetting
+grows with fine-tune N and is **high-variance**. Without replay, the fine-tune converts
+the universal model into a de-facto per-tech model: universal-base fine-tuning is a
+cheap **onboarding** path, not a **multi-tech serving** path.
+
+### 9.5 Universal dead ends (recorded per workflow rule)
+
+1. **csob at universal scope** — worst of four (8/12 + FLIP); its per-tech tsmc16-opamp
+   basin is scope-local. Charge-axis benefits (halved q-errors) persist.
+2. **crit30u (anchor) at universal scope** — anchor relocates tsmc12-opamp into a FLIP.
+3. **`crit` fine-tune for transfer** — better mid-tier device metrics, worse gates at
+   the tier that matters (n1M 1/4 vs plain 4/4).
+4. **Tiny-tier fine-tunes (≤10k)** — diverge outright via the tier-refit normalizer.
+   Any few-shot regime below ~50k rows needs a frozen normalizer (pipeline change).
+5. **Zero-shot TSMC5 from the universal trunk** — 0/4; embedding rows must be trained.
+
+---
+
+## 10. TSMC6 (V6.11.0) — and the correction that reframes it
+
+> ### ⚠ TSMC6 ≡ TSMC7 relabelled — verified 2026-07-21
+>
+> `docs/2026-07-21-systematic-audit.md` §D1 established, with four independent lines
+> of evidence, that **TSMC6 is not an independent technology under BSIM-CMG**:
+> the `tsmc6_{nmos,pmos}.npz` datasets are `array_equal` to `tsmc7_*` in `inputs`,
+> `geometry`, `outputs` and `sample_class` (only `meta_tech_name` differs); the raw
+> PDKs genuinely differ but every differing key (`tmi_ver_lod`, `sfxmin`, …) is a
+> TSMC TMI-proprietary extension with **zero occurrences** in the BSIM-CMG Verilog-A
+> source; and two LEVEL=72 Id-Vgs sweeps at identical geometry match to the last
+> printed digit.
+>
+> **Consequence for the numbers below:** they are a *second independent training run
+> on the TSMC7 data*, not a sixth technology. Differences between the TSMC6 and TSMC7
+> rows anywhere in this report are **NR-basin / training-lottery scatter, not tech
+> fidelity**. The "6 techs" and any /20-denominator gate matrix carry a duplicate.
+
+Clean capacity sweep, all four sizes, gated per-tech vs NGSPICE BSIM-CMG, CPU-pinned.
+Local vocab: tsmc6 svt/lvt/ulvt = codes 0/1/2 (+UNKNOWN); checkpoint VT = ulvt.
+Checkpoints `tsmc6_dn_{small,medium,large,xl}_{nmos,pmos}`.
+
+**Complex 4-cell:**
+
+| size | complex | ring period_err% | opamp gain_err% | sram lobeNRMSE% | switchcap chg_err% |
+|---|---|---|---|---|---|
+| small  | 1/4 | 5.94 ✗ | 10.33 ✗ | 3.66 ✓ | 2.34 ✗ (droop) |
+| medium | 2/4 | 10.86 ✗ | rails ✗ | 3.31 ✓ | 2.81 ✓ |
+| **large** | **3/4** | **4.82 ✓** | rails ✗ | 3.61 ✓ | 2.45 ✓ |
+| xl     | 2/4 | 14.31 ✗ | rails ✗ | 2.93 ✓ | 2.67 ✓ |
+
+**Capacity peaks at large (1→2→3→2) — exactly the DN pattern §3 documents.** The
+opamp rails to gain≈0 at every size, consistent with tsmc7-opamp being the hard cell.
+
+**Device + inverter (6/6 PASS at every size):**
+
+| size | NMOS DC nrmse/mre% | PMOS DC nrmse/mre% | inv VTC% | inv tran% | dev-AC |
+|---|---|---|---|---|---|
+| small  | 3.88 / 17.47 | 0.91 / 5.39 | 2.62 | 1.20 | 2/3 |
+| medium | 6.84 / 17.49 | 0.06 / 0.46 | 2.48 | 1.19 | 1/3 |
+| large  | 2.02 / 5.70  | 0.04 / 0.61 | 1.79 | 0.98 | 2/3 |
+| xl     | 6.69 / 17.31 | 0.04 / 0.62 | 1.19 | 0.78 | 1/3 |
+
+---
+
+## 11. Cross-family comparison (as of 2026-07-24)
+
+| family | best config | params | complex strict | device | AC | CPU ms/eval |
+|---|---|---|---|---|---|---|
+| **DirectNet (73)** | **crit30f@large** | 0.92 M | **14/16** | 24/24 | 4/12 device | **1.5** |
+| BSIM-AR (74) | corroft@medium | 1.9 M | **15/16** | 44/44 | 4/8 device | 61.5 |
+| PFN (75) | clean@small | 0.69 M | 11/16 (zero OMP flips) | see report | 5/8 device | 15.6 |
+
+**DirectNet stays production**: BSIM-AR wins the gate matrix by one cell
+(tsmc16-opamp) but costs ~30–100× the inference time; PFN is the only flip-free family
+but sits below the curriculum recipes. **tsmc7-opamp is the universal ceiling cell for
+all three families** — no capacity, tier, scope, seed or data recipe has ever reached
+it; only the V6.5.9 T3 differentiable-DC-solver fine-tune ever did.
+
+---
+
+## 12. Open frontier and standing caveats
+
+### 12.1 Open gates at production
+
+| Open gate | Headline | Owner |
+|---|---|---|
+| **tsmc7 opamp** | gain → 0 | high-gain fixed point unreachable on the value surface; T3-class (solver) fix only |
+| **tsmc16 opamp** | gain → 0 | same value-surface high-gain-basin fragility; reachable at xl (corroft/crit10/crit15m) and by csob@large, but not simultaneously with tsmc5+tsmc12 |
+
+These are **value-surface / fixed-point** properties (open-loop gain, oscillation
+period at a sharp edge), **not** device-current or charge-derivative fidelity gaps —
+device DC, inverter, switchcap, SRAM and AC-gain are all strong.
+
+### 12.2 ⚠ Every number here was measured with the gds sign bug present
+
+`docs/2026-07-21-systematic-audit.md` §A3 found (and verified) that inference negates
+`gm`/`gmb` but **not** `gds`, so the learned output conductance is discarded by
+`_floor_gds` at 98–100 % of conducting bias points and replaced by a hard-wired 2 V
+Early voltage. As of this consolidation the fix is **not shipped**
+(`pycircuitsim/models/mosfet_nn.py` still floors with k=0.5 and no negation).
+
+Measured impact (sign fix + relaxed/guarded floor — the two are **coupled**; neither
+works alone):
+
+| axis | shipped (arm A) | fixed (arm C/F) |
+|---|---|---|
+| device AC gates | 8/10 | **10/10** |
+| complex matrix | 17/20 (14/16 on the 4-tech basket) | **18/20** (15/16) |
+| `force_ic` SRAM latch probe | 2/5 | **5/5** |
+| DC (69 parametric configs) | — | **exactly bit-identical** |
+| transient (80 configs) | mean NRMSE 1.876 % | **1.512 %** (51 improved / 12 worsened) |
+| opamp OP | railed (TSMC16 `vout=0.000`) | **un-railed** (`vout=0.496`) |
+
+So the AC 4/12 in §8 and the opamp rails in §3/§6 are **partly an artifact of the
+floor masking a sign error**, not purely a value-surface limit. Open experiment: scan
+`_GDS_FLOOR_K` with the sign fixed, then re-run the full gate matrix.
+
+### 12.3 Validation split cannot measure what the gates measure
+
+Audit §D2: `dataset.py` takes a uniform random row permutation over a **dense per-bin
+lattice** — every (variant, L, NFIN, T) bin appears in train, val *and* test. Measured
+on tsmc5 NMOS: grid pitch 44.8 mV, median val→train nearest-neighbour distance
+**28.4 mV** (below the pitch), 10.75 % of val rows within 10 mV of a train row. Device
+test-split metrics are therefore optimistic relative to gate behaviour; a grouped /
+held-out-L split is the open follow-up.
+
+### 12.4 Denominator hygiene
+
+The authoritative DirectNet matrix is **/16** (4 circuits × TSMC5/7/12/16). Collectors
+that hardcoded `NCELL`/`NGATES` after TSMC6 joined report **/20** (audit §B5k) — and
+per §10 that fifth column duplicates TSMC7. Read any /20 number accordingly.
+
+---
+
+## 13. Artifacts and reproduction
+
+- **Data tables:** Part II of this file (Appendices A–C, frozen 2026-07-05).
+  Machine-readable `results/recipe_bench/retest_data.json` (`"xl"` key) +
+  `recipe_data.json`. `results/recipe_bench/ACCURACY_REPORT.md` is a regeneration
+  stub — `scripts/recipe_retest_collect.py` / `recipe_collect.py` still write there.
+- **Raw runs:** `results/recipe_bench/gate_iso_xl/` (22 recipes × 20 cells),
+  `opamp_def_xl/`, `CAMPAIGN_xl_*.log`; universal study `results/uni_bench/`.
+- **Checkpoints** (gitignored): production `tsmc{X}_dn_large_{dev}`;
+  `v660clean_large` (warm-start base) + `crit30f_large` (production provenance);
+  alternates `csob@large`, `corroft`/`crit10`@xl, `crit15m@xl`; universal
+  `u716_dn_{clean,csob,corroft,crit30u}_large` + `_{clean,corroft}_xl` + TSMC5
+  fine-tunes `u716f5_plain_n{1000000,full}_large`. Retired sets archived to
+  `/data2/shenshan/v66x_v670_retired_ckpts_2026-07-05.tar.gz` and
+  `/data2/shenshan/v6.5.9_production_specials.tar.gz`.
+- **Plans / execution logs:** `docs/plans/2026-07-02-universal-nn-tsmc5-transfer.md`.
+- **Narrative history:** `docs/CHANGELOG.md` (V6.6.0 → V6.11.0).
+
+```bash
+# train one recipe wave
+RECIPES="corroft crit30" SIZES=large GPUS="0 1 2" NSTREAMS=6 bash scripts/recipe_train.sh
+# gate it (isolated, CPU-pinned)
+SIZE=large bash scripts/gate_matrix_iso.sh
+# strict OMP determinism probe, one cell
+bash scripts/recipe_multirun_gate.sh crit30 large TSMC16 verify_complex_opamp
+```
+
+---
+
+# Part II — Full accuracy data tables (frozen 2026-07-05)
+
+Collector-generated tables, carried verbatim from the retired
+`docs/V6.6.6-accuracy-report.md` (which had itself merged them from
+`results/recipe_bench/ACCURACY_REPORT.md`, now a regeneration stub). Content
+untouched.
+
+- **Appendix A** — isolated re-test, `large` tier (23 recipes, V6.6.3 methodology).
+- **Appendix B** — isolated re-test, `xl` tier (22 recipes).
+- **Appendix C** — the V6.6.5 13-recipe × 4-size matrix, incl. device + AC suites.
 
 ## Appendix A — large-tier isolated re-test (23 recipes)
 
@@ -787,43 +1234,3 @@ Clean control: large 4/8-equiv (4/12 over all sizes in V6.6.0). Per (recipe,size
 | tsmc16 | opamp | gain_err=100.00% trip_shift=-16.00mV | gain_err=nan% trip_shift=nanmV | gain_err=nan% trip_shift=nanmV | gain_err=100.00% trip_shift=2.00mV | gain_err=6.50% trip_shift=0.00mV | gain_err=100.00% trip_shift=150.00mV | gain_err=7.73% trip_shift=0.00mV | gain_err=100.00% trip_shift=4.00mV | gain_err=100.00% trip_shift=44.00mV | gain_err=100.00% trip_shift=34.00mV | gain_err=100.00% trip_shift=148.00mV | gain_err=6.74% trip_shift=0.00mV | gain_err=100.00% trip_shift=148.00mV |
 | tsmc16 | sram_snm | NG_SNM=235.5mV DN_SNM=223.0mV  force_ic=FAIL/FAIL | NG_SNM=235.5mV DN_SNM=nanmV  force_ic=FAIL/FAIL | NG_SNM=235.5mV DN_SNM=1060.1mV  force_ic=FAIL/FAIL | NG_SNM=235.5mV DN_SNM=223.0mV  force_ic=FAIL/FAIL | NG_SNM=235.5mV DN_SNM=222.8mV  force_ic=FAIL/FAIL | NG_SNM=235.5mV DN_SNM=222.8mV  force_ic=FAIL/FAIL | NG_SNM=235.5mV DN_SNM=222.6mV  force_ic=FAIL/FAIL | NG_SNM=235.5mV DN_SNM=222.8mV  force_ic=FAIL/FAIL | NG_SNM=235.5mV DN_SNM=222.9mV  force_ic=FAIL/FAIL | NG_SNM=235.5mV DN_SNM=223.1mV  force_ic=ok/ok | NG_SNM=235.5mV DN_SNM=222.7mV  force_ic=ok/ok | NG_SNM=235.5mV DN_SNM=222.8mV  force_ic=ok/ok | NG_SNM=235.5mV DN_SNM=223.0mV  force_ic=FAIL/FAIL |
 | tsmc16 | switchcap | charge_err=3.42% | charge_err=2.01% | charge_err=2.01% | charge_err=3.42% | charge_err=3.30% | charge_err=3.32% | charge_err=1.46% | charge_err=3.27% | charge_err=3.26% | charge_err=3.33% | charge_err=3.33% | charge_err=3.32% | charge_err=3.24% |
-
----
-
-# TSMC6 addendum (V6.11.0, 2026-07-14/17)
-
-TSMC6 (CLN6) is the 6th tech, onboarded for BSIM-CMG ground truth in V6.9.0 with
-NN training deferred; V6.11.0 trained the full DirectNet capacity sweep
-(clean recipe `--apply-filter off --swa-mode ema --seed 42`) at all four sizes and
-gated it per-tech vs NGSPICE BSIM-CMG (LEVEL=72), CPU-pinned. Local vocab: tsmc6
-svt/lvt/ulvt = codes 0/1/2 (+UNKNOWN); checkpoint VT = ulvt (the CLN6/CLN7 sister
-default). Checkpoints `tsmc6_dn_{small,medium,large,xl}_{nmos,pmos}`.
-
-**Complex 4-cell (ring/opamp/sram/switchcap) — key metric + verdict:**
-
-| size | complex | ring period_err% | opamp gain_err% | sram lobeNRMSE% | switchcap chg_err% |
-|---|---|---|---|---|---|
-| small  | 1/4 | 5.94 ✗ | 10.33 ✗ | 3.66 ✓ | 2.34 ✗ (droop) |
-| medium | 2/4 | 10.86 ✗ | rails ✗ | 3.31 ✓ | 2.81 ✓ |
-| **large** | **3/4** | **4.82 ✓** | rails ✗ | 3.61 ✓ | 2.45 ✓ |
-| xl     | 2/4 | 14.31 ✗ | rails ✗ | 2.93 ✓ | 2.67 ✓ |
-
-**Capacity peaks at large (1→2→3→2), exactly the DN pattern this report documents
-for the other techs** — large is the production tier, xl over-fits (the ring
-regresses 4.82→14.31%). TSMC6 large banks the ring; the opamp rails to gain≈0 at
-every size (tsmc6, at vdd=0.75/ulvt, is the CLN6 sister of the universally-hard
-tsmc7-opamp — the T3-solver-only cell; on tsmc6 only the BSIM-AR opamp basin cracks
-it, see `docs/V6.8.0-bsimar-transformer-report.md`).
-
-**Device + inverter (all 6/6 PASS at every size):**
-
-| size | NMOS DC nrmse/mre% | PMOS DC nrmse/mre% | inv VTC% | inv tran% | dev-AC |
-|---|---|---|---|---|---|
-| small  | 3.88 / 17.47 | 0.91 / 5.39 | 2.62 | 1.20 | 2/3 |
-| medium | 6.84 / 17.49 | 0.06 / 0.46 | 2.48 | 1.19 | 1/3 |
-| large  | 2.02 / 5.70  | 0.04 / 0.61 | 1.79 | 0.98 | 2/3 |
-| xl     | 6.69 / 17.31 | 0.04 / 0.62 | 1.19 | 0.78 | 1/3 |
-
-Device fidelity is excellent at all sizes (PMOS DC <1%; best DC at large, NMOS 2.02%);
-opamp-AC fails everywhere (railed OP, the opamp value-surface class). **Production
-DirectNet for TSMC6 = `large` = 3/4 complex, 6/6 device.**

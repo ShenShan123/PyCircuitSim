@@ -168,4 +168,4 @@ Corridor curriculum `corroft` at the best size (warm-start from clean base, `{te
 
 - Large tier: all 8 done (3 @4e-4, 5 @3e-4; 8 divergence events total, diverged runs banked tier-representative pre-divergence bests). Device id MRE 0.39–1.39%; **complex matrix @large = 8/16** (opamp rails on all 4 techs; tsmc12/16 swcap regress; NFIN=10 DC corner RECOVERS to PASS ~6% — capacity repairs off-grid interpolation, the one axis large wins).
 - **Final capacity curves**: gates 11 → 10 → 8 (monotone decline, peaks at SMALL); device fidelity peaks at MEDIUM; AC 5/8 → 0/8 → 5/8 (non-monotone).
-- Report finalized (`docs/V6.10.0-tabpfn-pfn-report.md`), CHANGELOG V6.10.0 entry, CLAUDE.md LEVEL=75 rows. Campaign closed; production unchanged (DN crit30f@large). Next-EV: corroft@small on PFN, context re-freeze for NFIN, large logit-scale stabilization.
+- Report finalized (`docs/accuracy/PFN-L75-accuracy.md`), CHANGELOG V6.10.0 entry, CLAUDE.md LEVEL=75 rows. Campaign closed; production unchanged (DN crit30f@large). Next-EV: corroft@small on PFN, context re-freeze for NFIN, large logit-scale stabilization.

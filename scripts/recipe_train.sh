@@ -217,11 +217,23 @@ done; done
 # size-major (large first → opamp signal first), then recipe, tech, dev.
 # trailing field ALWAYS non-empty (noforce placeholder) so `xargs -L1` never
 # joins lines (the benchmark trailing-blank bug).
+#
+# BALANCED round-robin (V6.8.1): the GPU index advances ONLY for jobs that will
+# actually train. An already-`.complete` job would SKIP inside _one but, with a
+# naive `i % NGPU` over ALL jobs, it still consumes its GPU slot — so on a resume
+# where e.g. every tsmc7-*-nmos is done, one GPU is starved while the others run
+# 3 jobs each (observed 3:3:1 on the reboot-resume of the xl clean wave). Skipping
+# completed jobs before assignment keeps the survivors evenly spread. A fresh run
+# (no .complete) skips nothing → byte-identical to the old assignment. GPU choice
+# never affects results (seeds are pinned), so this only rebalances wall-clock.
 lines=(); i=0
 for size in "${sizes[@]}"; do for recipe in "${recipes[@]}"; do for tech in "${techs[@]}"; do for dev in "${devs[@]}"; do
+  if [ "$recipe" = clean ]; then _nm="${tech}_${TAG}_${size}_${dev}"; else _nm="${tech}_${TAG}_${recipe}_${size}_${dev}"; fi
+  if [ -f "$CKPT/${_nm}_best.pt.complete" ] && [ "$FORCE" != "--force" ]; then continue; fi
   lines+=("$recipe $tech $size $dev ${GPU_IDS[$((i % NGPU))]} ${FORCE:-noforce}")
   i=$((i+1))
 done; done; done; done
+if [ "${#lines[@]}" -eq 0 ]; then echo "[train] nothing to do — all requested jobs already .complete"; exit 0; fi
 
 echo "[train] launching ${#lines[@]} jobs, $NSTREAMS concurrent across $NGPU GPUs (${GPU_IDS[*]})"
 printf '%s\n' "${lines[@]}" | xargs -P "$NSTREAMS" -L1 "$SELF" _one

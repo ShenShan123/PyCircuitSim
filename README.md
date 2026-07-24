@@ -73,7 +73,7 @@ LEVEL=72/73/74/75 are supported.
 - **AC Analysis** (`.ac`) - Small-signal frequency-domain sweep (`dec`/`oct`/`lin`);
   linearizes about the DC OP and solves the complex MNA `Y = G + jωC` including the
   full MOSFET transcapacitance matrix. NGSPICE-validated for LEVEL=72 (machine
-  precision) and LEVEL=73 (NN — see `docs/V6.6.6-accuracy-report.md`).
+  precision) and LEVEL=73 (NN — see `docs/accuracy/DirectNet-L73-accuracy.md`).
 
 ### Supported Directives
 

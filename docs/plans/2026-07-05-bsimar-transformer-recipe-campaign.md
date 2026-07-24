@@ -123,7 +123,7 @@ per-epoch timing fp32 vs `--amp` measured before launching (see §5 log).
 
 ## 4. Report
 
-`docs/V6.8.0-bsimar-transformer-report.md`, mirroring the V6.6.6 structure:
+`docs/accuracy/BSIM-AR-L74-accuracy.md`, mirroring the V6.6.6 structure:
 capacity curve, recipe table, 16-gate matrix, device metrics per tech
 (vs DN clean@large + crit30f@large baselines), AC, runtime cost of AR
 inference, verdict + production recommendation. CHANGELOG V6.8.0 entry
@@ -260,7 +260,7 @@ inference, verdict + production recommendation. CHANGELOG V6.8.0 entry
   (no corridor) = 13-14/16, fails BOTH rings, keeps opamps → orthogonal-
   conflicting levers on tsmc7 (corridor↔ring vs clean↔opamp). Ceiling = 15/16;
   tsmc7-opamp = solver-level (T3), out of scope. Report:
-  docs/V6.8.0-bsimar-transformer-report.md. **CAMPAIGN COMPLETE.**
+  docs/accuracy/BSIM-AR-L74-accuracy.md. **CAMPAIGN COMPLETE.**
 - 2026-07-07: final datapoint — corro15@medium (w1.5) = 15/16, tsmc7-opamp
   FAIL at 24.83% (NOT railed). Proves the ceiling is CONTINUOUS: tsmc7-opamp
   degrades monotonically with corridor weight (9.83 clean → 24.83 w1.5 → 124
