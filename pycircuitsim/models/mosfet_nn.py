@@ -47,17 +47,31 @@ from bsimar.data.normalize import (
 _logger = logging.getLogger(__name__)
 _NN_DEVICE: Optional[torch.device] = None
 
-# V6.4.8 S0 diagnostic gate (default-off, gds-floor preserving). The
-# gds floor coefficient ``k`` in ``_floor_gds`` (= 0.5 shipped) is read from
-# ``PYCIRCUITSIM_GDS_FLOOR_K`` so the S0 settling sweep can adjudicate whether
-# floor-k moves the *converged* opamp gain (pre-registered prediction: it does
-# NOT — the floor is Jacobian-only and cancels at the fixed point). When the
-# env var is unset the value is exactly 0.5, so committed behaviour is
-# unchanged. This is a diagnostic knob, NOT a shipping accuracy lever.
+# gds negative-branch guard coefficient (audit 2026-07-21 §A3-guard, "guard F").
+# Only ever applied to a *negative* gds candidate: k = 0.02 S/A == 1/(50 V), and
+# 50 V sits above the 43.4 V maximum true Early voltage measured anywhere in the
+# training box, so this can never bind on a physically correct value. It is a
+# physical bound, not a tuning knob — env-overridable for diagnostics only.
+#
+# History: the shipped V6.4.8 form was a two-sided floor max(gds, |id|·0.5), i.e.
+# an asserted V_A ≤ 2 V, below the true median Early voltage of every device. It
+# overrode the learned output conductance at 90.9% of amplifying points and was
+# load-bearing only because it masked the gds sign bug below (audit §A3-measured
+# arm D). Its docstring carried a pre-registered prediction that floor-k is
+# "Jacobian-only … NOT a shipping accuracy lever" — true for DC, falsified for AC.
 try:
-    _GDS_FLOOR_K = float(os.environ.get("PYCIRCUITSIM_GDS_FLOOR_K", "0.5"))
+    _GDS_GUARD_K = float(os.environ.get("PYCIRCUITSIM_GDS_GUARD_K", "0.02"))
 except (TypeError, ValueError):
-    _GDS_FLOOR_K = 0.5
+    _GDS_GUARD_K = 0.02
+
+if "PYCIRCUITSIM_GDS_FLOOR_K" in os.environ:
+    # Loud, not silent: the old knob tuned a two-sided floor that no longer
+    # exists, so honouring it would mean something different than its setter
+    # intended (audit §B6 silent-green class).
+    _logger.warning(
+        "PYCIRCUITSIM_GDS_FLOOR_K is obsolete and IGNORED — the two-sided gds "
+        "floor was replaced by the negative-only guard F. Use "
+        "PYCIRCUITSIM_GDS_GUARD_K to vary the guard coefficient.")
 
 # V6.5.2 reverse-conduction taper window (fractions of VDD_train). Default
 # 0.20/0.30 == the S7-bisected committed window; env-overridable for the
@@ -348,11 +362,22 @@ class _MOSFETNNBase(Component):
 
         # Conductances from autograd. The NN predicts id in PyCMG sign
         # convention (negative for NMOS ON), so d(id)/dV is negative;
-        # negate gm/gmb so the solver's "current leaving drain" frame
-        # gets always-positive transconductance.
+        # negate ALL THREE so the solver's "current leaving drain" frame
+        # gets always-positive conductances.
+        #
+        # gds is negated for the same reason gm and gmb are: gm = d(id)/dVg and
+        # gds = d(id)/dVd are both derivatives of the same signed id, so the sign
+        # comes from id's convention, not from which variable is differentiated.
+        # Until 2026-07-21 gds alone was left un-negated, following commit
+        # 930c274's "gds is the diagonal so no flip" rule — wrong for this stored
+        # convention, and already refuted in losses/bni_mae.py:100-113, which
+        # negates all three. Verified: autograd d(id)/dVd vs -gds_head = 0.12 rel
+        # err, vs +gds_head = 2.08 (a rel err of exactly 2.0 is the signature of a
+        # pure sign flip); OSDI -d(id)/dVd is positive at 100.0000% of conducting
+        # points over 111,630 evals. See docs/2026-07-21-systematic-audit.md §A3.
         gm_phys = -self._denorm_deriv(
             "id", in_col=1, deriv_norm=gi[1], phys_val=id_phys)
-        gds_phys = self._denorm_deriv(
+        gds_phys = -self._denorm_deriv(
             "id", in_col=0, deriv_norm=gi[0], phys_val=id_phys)
         gmb_phys = -self._denorm_deriv(
             "id", in_col=3, deriv_norm=gi[3], phys_val=id_phys)
@@ -368,7 +393,7 @@ class _MOSFETNNBase(Component):
         cdd_phys = self._denorm_deriv(
             "qd", in_col=0, deriv_norm=gqd[0], phys_val=qd_phys)
 
-        gds_phys = self._floor_gds(id_phys, gds_phys)
+        gds_phys = self._guard_gds(id_phys, gds_phys)
 
         result = {
             "id": id_phys, "gm": gm_phys, "gds": gds_phys, "gmb": gmb_phys,
@@ -531,14 +556,25 @@ class _MOSFETNNBase(Component):
             out_idx=i, in_idx=in_col, y_phys=phys_val)
 
     @staticmethod
-    def _floor_gds(id_phys: float, gds_phys: float) -> float:
-        """Physics-based gds floor: max(|id|·k, 1e-12), k=0.5 shipped.
+    def _guard_gds(id_phys: float, gds_phys: float) -> float:
+        """Negative-only gds guard ("guard F", audit §A3-guard).
 
-        ``k`` is the module-level ``_GDS_FLOOR_K`` (env ``PYCIRCUITSIM_GDS_FLOOR_K``,
-        default 0.5 → floor unchanged). The S0 diagnostic sweeps it; it does not
-        ship as an accuracy lever (the floor is inert at the converged fixed point).
+        Positives pass through **bit-identical** to the raw autograd Jacobian, so
+        this provably cannot perturb a correct value — the point, given how
+        sensitive opamp operating points are to Jacobian changes. Only a negative
+        candidate is clamped, to ``max(|id|·k, 1e-12)`` with k = 1/(50 V).
+
+        A negative small-signal output conductance is never physical here: OSDI
+        ``-d(id)/dVd`` is positive at 100.0000% of conducting points across
+        111,630 evals on all 10 production devices, forward and reverse. Every
+        negative is model error, so clamping (rather than passing it to the
+        solver, which is the Rule 4 divergence mode) is always right. Landing at
+        1/(50 V) keeps the error set within ~1.3-3x of truth instead of stamping
+        r_o = 1e12 ohm — an essentially open drain — where truth is ~4.5e-05 S.
         """
-        return max(gds_phys, max(abs(id_phys) * _GDS_FLOOR_K, 1e-12))
+        if gds_phys > 0.0:
+            return gds_phys
+        return max(abs(id_phys) * _GDS_GUARD_K, 1e-12)
 
     @staticmethod
     def _reverse_taper(abs_vds: float, vdd_train: float) -> float:
@@ -648,7 +684,7 @@ class _MOSFETNNBase(Component):
         result["gm"] *= f_id
         result["gmb"] *= f_id
         result["gds"] = result["gds"] * f_sym + abs(id_raw) * exp_sym / VT
-        result["gds"] = self._floor_gds(result["id"], result["gds"])
+        result["gds"] = self._guard_gds(result["id"], result["gds"])
 
         # (d) wrong-sign clamp, scoped by direction: reverse conduction
         # physically flips the sign, so the reverse branch clamps
