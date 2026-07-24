@@ -34,10 +34,16 @@ PRE_FIX: Dict[str, Optional[int]] = {
     # "single-run OMP=1" columns.
     "dn/clean/small": 7,
     "dn/clean/medium": 10,
-    "dn/clean/large": 13,
     "dn/clean/xl": 10,
-    "dn/v660clean/large": 13,     # the archived clean@large
-    "dn/crit30f/large": 14,       # production
+    # NB "dn/clean/large" is the bare `tsmc{X}_dn_large_*` slot, which has
+    # carried the crit30 curriculum weights since V6.6.4 — it is the PRODUCTION
+    # checkpoint, not a clean one. Its pre-fix baseline is therefore crit30f's
+    # 14/16, and `dn/crit30f/large` (the provenance copy of the same weights)
+    # is an independent re-measurement of it. The genuine clean@large lives at
+    # `dn/v660clean/large`.
+    "dn/clean/large": 14,         # production slot (crit30 weights)
+    "dn/crit30f/large": 14,       # same weights, provenance copy
+    "dn/v660clean/large": 13,     # the archived genuine clean@large
     "dn/csob/large": 12,
     "dn/corroft/xl": 14,
     "dn/crit10/xl": 14,
