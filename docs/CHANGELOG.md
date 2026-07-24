@@ -229,6 +229,46 @@ NOT a distinct 6th tech under BSIM-CMG.
 
 ---
 
+## V6.8.1 — BSIM-AR Transformer xl-tier fill (2026-07-11/23)
+
+**Trained the untrained xl preset (384×8L×ff1536, 14.81M params — 3× tf-large,
+5.5× DN-xl) across the full Phase-B recipe mirror — 48 checkpoints (6 recipes ×
+4 techs × 2 devs), full 300/120-epoch fidelity — and gated vs NGSPICE. Report
+§9 in `docs/V6.8.0-bsimar-transformer-report.md`; driver + logs in
+`results/recipe_bench/xl_campaign/`.**
+
+**Result — xl TIES medium at 15/16 strict, does NOT exceed it, and does NOT
+basin-shuffle.** Single-run complex gate (`gate_iso_xl_tf/`, 96 cells): corroft
+/ crit15m / corro15 = **15/16** (all miss ONLY tsmc7-opamp), crit30 14/16, clean
+& csob 13/16. corroft@xl OMP-strict-confirmed (opamps tsmc5 4.02 / tsmc12 5.90 /
+tsmc16 5.98% gain-err, OMP-invariant across {1,2,4}). **The DirectNet xl
+basin-shuffle (DN-xl banked tsmc16-opamp) does NOT replicate on the Transformer**
+— it already banks tsmc16-opamp at medium and just holds the same 15/16 basket at
+xl. Capacity ceiling = 15/16 across three tiers (medium/large/xl); tsmc7-opamp is
+genuinely a solver-only (T3/EKV) cell no capacity/recipe reaches.
+
+**AC COLLAPSES at xl** (the sharp negative result): **opamp-AC 0/4 every recipe**
+(tsmc5/16 rail on OP-misbias, tsmc12 GBW/PM good but magNRMSE 102%; tsmc7-opamp-AC
+does not converge — a ~6 h non-convergent solver spin, seed-skip it), **device
+nn_ac weak** (corroft 4/8 device-passes, csob 4/8, clean 2/8), and **csob's
+charge-Sobolev does NOT recover AC** — AC weakness at xl is a tier property, not
+recipe-fixable. Confirms the "AC peaks at small" law (xl = worst AC tier, like
+DN-xl→0). Device DC stays excellent: corroft@xl 55/55 configs PASS (baseline
+NRMSE 0.03–0.19%).
+
+**Dead-end / no-promote:** xl costs 3× params + ~30–100× AR inference for the
+*same* 15/16 as medium, with collapsed AC and zero basin gain. **corroft@medium
+(1.9M) remains the validated best BSIM-AR config; xl is not promoted.**
+
+**Ops notes (shared-box campaign):** ~11-day run under heavy co-tenancy
+(Xyce/Swin fleets + the TSMC6 campaign); reboot-resilient `setsid`+`@reboot`-cron
+driver with a `.complete`-gated idempotent resume and a 3→30 retry cap
+(exactly one transient SIGKILL all campaign, auto-recovered; cap never needed).
+Gate lesson: never reuse a `gate_iso_*` output dir across model families (a stale
+DirectNet `gate_iso_xl/` nearly contaminated the tally → fresh `gate_iso_xl_tf/`).
+
+---
+
 ## V6.8.0 — BSIM-AR Transformer (LEVEL=74) un-parked: recipe campaign (branch `V6.7`, 2026-07-06/07)
 
 **Shipped the entire DirectNet training/recipe/eval stack to the parked BSIM-AR

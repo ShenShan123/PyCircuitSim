@@ -7,7 +7,10 @@ medium+large; XL was coded (`SIZE_PRESETS[("transformer","xl")]`) but never
 trained. Train the full Phase-B recipe mirror at XL, gate vs NGSPICE, update the
 report.
 
-**Status: LIVE** (2026-07-07).
+**Status: ✅ DONE (2026-07-23).** 48/48 trained; gated 15/16 strict (corroft/
+crit15m/corro15, ties medium, no basin shuffle); AC collapses at xl; xl NOT
+promoted (corroft@medium stays best). Report §9 + CHANGELOG V6.8.1 + memory
+[[v681-bsimar-xl-fill-ties-medium]] all written.
 
 ## Why XL is worth a run
 
@@ -213,6 +216,70 @@ Health: `pgrep -af xl_train_driver.sh` alive + `nvidia-smi` GPUs busy.
   deeper fix needed — identify the killer (who sends SIGKILL), and/or drop Wave
   C `NSTREAMS_ALL` 3→2, and/or coordinate co-tenancy. Not warranted yet (single
   event, attempt 2 stable).
+
+### ✅ TRAINING COMPLETE (2026-07-22 00:18) — 48/48
+
+All 6 recipes × 4 techs × 2 devs banked `.complete`; `xl_train.DONE` written.
+Total wall: ~2026-07-11 → 07-22 (~11 days) dominated by shared-GPU contention
+(co-tenants wangyk-Xyce, hey-swin, the tsmc6 campaign) — the plain waves ran
+~150-330 s/epoch, csob (2nd-order autograd) ~400-1000 s/epoch. Robustness record:
+**exactly one** transient SIGKILL event (02:40 Jul-13, Wave-C attempt 1, 0/32),
+auto-recovered by the driver's retry; the raised 3→30 cap was never needed. No
+OOM on csob (1 job/GPU held ~10 GB, fit alongside co-tenants). No tail-hangs
+(two false alarms investigated — jobs were just slow in the cosine tail).
+
+**GATING LAUNCHED (2026-07-22 00:1x):** `gate_matrix_iso.sh` MODEL=transformer
+SIZE=xl, 6 recipes × 16 cells = 96, OMP=1 PAR=12 nice-10 (box load ~1324/192 —
+CPU-pinned so deterministic, just slow). GATE_SCRATCH + GATE_OUT under persistent
+paths (`$CAMP/gate_iso_scratch`, `results/recipe_bench/gate_iso_xl`). recipe_eval
+(device DC/tran + AC) to follow after, not concurrent (CPU-considerate).
+
+### 📊 GATE RESULTS (2026-07-22, single-run OMP=1, `gate_iso_xl_tf/`)
+
+96/96 cells vs NGSPICE. **Resolver verified loading L74 tf-xl ckpts.** ⚠️ First
+launch hit a STALE Jul-2-3 DirectNet `gate_iso_xl/` dir of the same recipe
+names — relaunched into fresh `gate_iso_xl_tf/` (lesson: never reuse a gate_iso
+dir across model families).
+
+| recipe   | strict | FAIL cells                                  |
+|----------|--------|---------------------------------------------|
+| corroft  | 15/16  | tsmc7-opamp                                 |
+| crit15m  | 15/16  | tsmc7-opamp                                 |
+| corro15  | 15/16  | tsmc7-opamp                                 |
+| crit30   | 14/16  | tsmc5-opamp, tsmc7-opamp                    |
+| clean    | 13/16  | tsmc5-ring, tsmc7-opamp, tsmc7-ring        |
+| csob     | 13/16  | tsmc5-ring, tsmc7-ring, tsmc7-opamp        |
+
+**Central finding: tf-XL TIES medium (15/16), does NOT exceed it, and does NOT
+shuffle basins** — the three 15/16 recipes miss ONLY tsmc7-opamp, the same
+universal T3-solver-only ceiling cell as medium's corroft. Capacity still peaks
+at MEDIUM (XL matches). No XL basin bought tsmc7-opamp. Mild XL effect: crit15m
+& corro15 join corroft at 15/16 (broader 15/16 plateau than medium), but no
+count gain. csob (AC-axis recipe) is WORSE on complex (13/16, loses both rings)
+— its value is on the AC axis (pending recipe_eval).
+
+**OMP-STRICT (in progress, corroft-first):** `run_ompstrict_xl.sh` re-runs the
+fragile PASSING cells (opamp tsmc5/12/16 + ring tsmc5/7) across OMP∈{1,2,4} to
+confirm the 15/16 is deterministic, not a coin-flip (opamp multistable per
+v648/v659). Narrowed to corroft (headline); crit15m/corro15 stay single-run
+15/16 in the report. AC/device eval (verify_nn_ac + verify_complex_opamp_ac +
+verify_nn_multi_tech_{dc,tran}) for winners still TODO — answers "does AC hold
+at xl?" (medium AC peaked small).
+
+### ⚙️ AC/DEVICE EVAL (2026-07-23, results/bsimar_bench/)
+
+recipe_eval MODEL=transformer SIZES=xl RECIPES="corroft csob clean", complex
+gates seed-skipped (have from gate). corroft AC (near-complete):
+- **opamp_ac (open-loop Miller): 0/4** — tsmc5/tsmc16 rail (OP-misbias→value
+  collapse), tsmc12 good GBW(1.03)/PM(4.4°) but magNRMSE 102%.
+- **device nn_ac: only tsmc5 PASS** (2/2); tsmc7 0/2, tsmc12 & tsmc16 1/2.
+- ⇒ **AC is WEAK at xl** (confirms AC-peaks-at-small; opamp-AC collapses).
+- ⚠️ **tsmc7-opamp_ac HANGS** (~6h, non-convergent OP solver spin, no
+  recipe_eval timeout) — the same tsmc7-opamp value-surface ceiling, now in the
+  AC harness. Killed corroft+csob instances (record FAIL — it's the known
+  ceiling) and seed-skipped it for all recipes so it can't block the serial
+  recipe loop. LESSON: recipe_eval has NO per-cell timeout; tsmc7-opamp_ac is a
+  guaranteed hang — always seed-skip it for tf-xl eval.
 
 ### Then (gate + report — unchanged):
 3. **Gate**: `MODEL=transformer SIZE=xl RECIPES="clean corroft crit30 crit15m corro15 csob" GATE_SCRATCH=/data2/shenshan/PyCircuitSim/results/recipe_bench/xl_campaign/gate_iso_scratch OMP=1 PAR=20 bash scripts/gate_matrix_iso.sh` + `recipe_eval.sh` (device DC/tran + AC). NOTE: `gate_matrix_iso.sh`'s GATE_SCRATCH default points at a STALE session dir — ALWAYS override it (persistent path above).
