@@ -33,7 +33,7 @@ set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SELF="$ROOT/scripts/$(basename "${BASH_SOURCE[0]}")"
 CKPT="$ROOT/external_compact_models/bsimar/checkpoints"
-OUT="$ROOT/results/uni_bench"
+OUT="${UNI_OUT:-$ROOT/results/uni_bench}"
 SIZE="${SIZE:-large}"
 NPAR="${NPAR:-6}"
 GATE_TIMEOUT="${GATE_TIMEOUT:-5400}"

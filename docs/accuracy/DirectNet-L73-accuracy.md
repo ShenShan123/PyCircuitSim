@@ -508,49 +508,40 @@ cheap **onboarding** path, not a **multi-tech serving** path.
 
 ---
 
-## 10. TSMC6 (V6.11.0) — and the correction that reframes it
+## 10. TSMC6 — retired, and what it taught us
 
-> ### ⚠ TSMC6 ≡ TSMC7 relabelled — verified 2026-07-21
->
-> `docs/2026-07-21-systematic-audit.md` §D1 established, with four independent lines
-> of evidence, that **TSMC6 is not an independent technology under BSIM-CMG**:
-> the `tsmc6_{nmos,pmos}.npz` datasets are `array_equal` to `tsmc7_*` in `inputs`,
-> `geometry`, `outputs` and `sample_class` (only `meta_tech_name` differs); the raw
-> PDKs genuinely differ but every differing key (`tmi_ver_lod`, `sfxmin`, …) is a
-> TSMC TMI-proprietary extension with **zero occurrences** in the BSIM-CMG Verilog-A
-> source; and two LEVEL=72 Id-Vgs sweeps at identical geometry match to the last
-> printed digit.
->
-> **Consequence for the numbers below:** they are a *second independent training run
-> on the TSMC7 data*, not a sixth technology. Differences between the TSMC6 and TSMC7
-> rows anywhere in this report are **NR-basin / training-lottery scatter, not tech
-> fidelity**. The "6 techs" and any /20-denominator gate matrix carry a duplicate.
+**TSMC6 was deleted from this repo on 2026-07-24.** It was never an independent
+technology under BSIM-CMG — it is TSMC7 relabelled — so the V6.11.0 "TSMC6"
+campaign was a *second training run on the TSMC7 data*, and its rows here were
+a duplicate data point presented as a sixth technology.
 
-Clean capacity sweep, all four sizes, gated per-tech vs NGSPICE BSIM-CMG, CPU-pinned.
-Local vocab: tsmc6 svt/lvt/ulvt = codes 0/1/2 (+UNKNOWN); checkpoint VT = ulvt.
-Checkpoints `tsmc6_dn_{small,medium,large,xl}_{nmos,pmos}`.
+Evidence (`docs/2026-07-21-systematic-audit.md` §D1, re-verified at deletion):
 
-**Complex 4-cell:**
+* `tsmc6_{nmos,pmos}.npz` were `array_equal` to `tsmc7_*` in `inputs`,
+  `geometry`, `outputs` and `sample_class` over 1,816,830 / 2,187,292 rows —
+  only `meta_tech_name` differed.
+* The raw PDKs genuinely differ, but every differing key (`tmi_ver_lod`,
+  `tmi_ver_isocpode`, `sfxmin`, `samax_c`, `wodx5akvth0`) is a TSMC
+  TMI-proprietary extension with **zero occurrences** in the BSIM-CMG
+  Verilog-A. Reproduced mechanically at deletion time: of 871 implemented
+  parameter names parsed from the Verilog-A sources, `toxp` and `phig` are
+  present and all five TMI keys are absent.
+* Two LEVEL=72 Id-Vgs sweeps at identical geometry matched to the last digit.
 
-| size | complex | ring period_err% | opamp gain_err% | sram lobeNRMSE% | switchcap chg_err% |
-|---|---|---|---|---|---|
-| small  | 1/4 | 5.94 ✗ | 10.33 ✗ | 3.66 ✓ | 2.34 ✗ (droop) |
-| medium | 2/4 | 10.86 ✗ | rails ✗ | 3.31 ✓ | 2.81 ✓ |
-| **large** | **3/4** | **4.82 ✓** | rails ✗ | 3.61 ✓ | 2.45 ✓ |
-| xl     | 2/4 | 14.31 ✗ | rails ✗ | 2.93 ✓ | 2.67 ✓ |
+**What was deleted:** 22 checkpoints, both datasets, `results/tsmc6_gate`, the
+registry/driver/test entries, and the per-size TSMC6 tables that stood here.
+They remain in git history (last present at commit `a96112a`). The raw vendor
+PDK is kept but unreferenced. TSMC6 held tail codes 22-24, so nothing was
+renumbered.
 
-**Capacity peaks at large (1→2→3→2) — exactly the DN pattern §3 documents.** The
-opamp rails to gain≈0 at every size, consistent with tsmc7-opamp being the hard cell.
+**The methodological result is worth keeping.** TSMC6-vs-TSMC7 was an accidental controlled experiment: identical data, identical recipe, different training run. The two disagreed wildly — SRAM SNM error 68.2 % vs 2.0 % at NFIN=2 — which this project had been reading as per-tech difficulty. After the A3 gds fix the same comparison lands at 5.2 % vs 6.2 %, a 66.2 pp gap collapsing to 1.0 pp. **Part of the "training lottery" variance recipes were being ranked against was an artifact of the wrong Jacobian, not of training stochasticity.** Rankings decided by a single cell in the pre-fix era should be treated as provisional.
 
-**Device + inverter (6/6 PASS at every size):**
-
-| size | NMOS DC nrmse/mre% | PMOS DC nrmse/mre% | inv VTC% | inv tran% | dev-AC |
-|---|---|---|---|---|---|
-| small  | 3.88 / 17.47 | 0.91 / 5.39 | 2.62 | 1.20 | 2/3 |
-| medium | 6.84 / 17.49 | 0.06 / 0.46 | 2.48 | 1.19 | 1/3 |
-| large  | 2.02 / 5.70  | 0.04 / 0.61 | 1.79 | 0.98 | 2/3 |
-| xl     | 6.69 / 17.31 | 0.04 / 0.62 | 1.19 | 0.78 | 1/3 |
-
+**The guard:** `bsimar.config.assert_tech_is_distinct(tech)` compares resolved
+modelcards restricted to parameters BSIM-CMG implements, and refuses a tech
+that collides with an existing one. It flags `tsmc6`↔`tsmc7` and confirms
+tsmc5/7/12/16 are genuinely distinct. Run it *before* onboarding a technology —
+the V6.9.0 onboarding gated TSMC6 9/9 DC and 14/14 transient, and passing those
+gates told us nothing, because they were TSMC7's gates.
 ---
 
 ## 11. Cross-family comparison (as of 2026-07-24)

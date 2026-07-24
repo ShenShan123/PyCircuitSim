@@ -310,59 +310,40 @@ a fidelity option, not a speed option.**
 
 ---
 
-## 8. TSMC6 (V6.11.0) — and the correction that reframes it
+## 8. TSMC6 — retired, and what it taught us
 
-> ### ⚠ TSMC6 ≡ TSMC7 relabelled — verified 2026-07-21
->
-> `docs/2026-07-21-systematic-audit.md` §D1 established with four independent lines of
-> evidence that **TSMC6 is not an independent technology under BSIM-CMG**: the
-> `tsmc6_*` datasets are `array_equal` to `tsmc7_*`; the raw PDKs differ only in
-> TSMC TMI-proprietary keys that have **zero occurrences** in the BSIM-CMG Verilog-A
-> source; and two LEVEL=72 Id-Vgs sweeps match to the last printed digit.
->
-> **This specifically invalidates the recorded claim that "BSIM-AR is the only family
-> to bank the tsmc6 opamp (9.83 %) while tsmc7-opamp is the universal ceiling."** Same
-> input data, opposite outcomes is the documented **NR-basin coin-flip**, not a
-> fidelity difference between families. Note the numeric coincidence that makes this
-> unmistakable: the tsmc6-medium opamp pass (9.83 %) is the *same number* as the
-> tsmc7-opamp clean-medium pass in §4 — because it is the same measurement.
+**TSMC6 was deleted from this repo on 2026-07-24.** It was never an independent
+technology under BSIM-CMG — it is TSMC7 relabelled — so the V6.11.0 "TSMC6"
+campaign was a *second training run on the TSMC7 data*, and its rows here were
+a duplicate data point presented as a sixth technology.
 
-Clean capacity sweep at all four sizes, gated per-tech vs NGSPICE BSIM-CMG. Local vocab
-tsmc6 ulvt; checkpoints `tsmc6_tf_{small,medium,large,xl}_{nmos,pmos}`,
-`PYCIRCUITSIM_NN_FORCE_LEVEL=74`.
+Evidence (`docs/2026-07-21-systematic-audit.md` §D1, re-verified at deletion):
 
-**Complex 4-cell:**
+* `tsmc6_{nmos,pmos}.npz` were `array_equal` to `tsmc7_*` in `inputs`,
+  `geometry`, `outputs` and `sample_class` over 1,816,830 / 2,187,292 rows —
+  only `meta_tech_name` differed.
+* The raw PDKs genuinely differ, but every differing key (`tmi_ver_lod`,
+  `tmi_ver_isocpode`, `sfxmin`, `samax_c`, `wodx5akvth0`) is a TSMC
+  TMI-proprietary extension with **zero occurrences** in the BSIM-CMG
+  Verilog-A. Reproduced mechanically at deletion time: of 871 implemented
+  parameter names parsed from the Verilog-A sources, `toxp` and `phig` are
+  present and all five TMI keys are absent.
+* Two LEVEL=72 Id-Vgs sweeps at identical geometry matched to the last digit.
 
-| size | complex | ring period_err% | opamp gain_err% | sram lobeNRMSE% | switchcap chg_err% |
-|---|---|---|---|---|---|
-| small  | 2/4 | 5.97 ✗ | 13.61 ✗ | 2.10 ✓ | 2.46 ✓ |
-| **medium** | **3/4** | 7.41 ✗ | **9.83 ✓** | 2.19 ✓ | 2.62 ✓ |
-| large  | 2/4 | 11.19 ✗ | 12.78 ✗ | 3.22 ✓ | 2.64 ✓ |
-| xl     | 2/4 | 12.55 ✗ | 10.13 ✗ | 2.21 ✓ | 2.73 ✓ |
+**What was deleted:** 22 checkpoints, both datasets, `results/tsmc6_gate`, the
+registry/driver/test entries, and the per-size TSMC6 tables that stood here.
+They remain in git history (last present at commit `a96112a`). The raw vendor
+PDK is kept but unreferenced. TSMC6 held tail codes 22-24, so nothing was
+renumbered.
 
-**Capacity peaks at MEDIUM = 3/4 — the same "peaks medium" behaviour §3 documents.**
-The opamp gain stays *non-collapsed* at every size (13.61 / **9.83 ✓** / 12.78 / 10.13 %)
-where DirectNet and PFN both rail to gain≈0 on the same data; the basin is simply
-*tightest at medium*. The ring is BSIM-AR's miss at every size (7.4→11.2→12.6 %,
-regressing past medium).
+**The methodological result is worth keeping.** The headline claim this section used to carry — *"BSIM-AR is the only family to bank the tsmc6 opamp (9.83 %) while tsmc7-opamp is the universal ceiling"* — was never a fidelity result. It is the same measurement twice, landing in different NR basins; the giveaway is that 9.83 % is the *identical number* to the tsmc7-opamp clean-medium pass in §4. A cross-family claim that rests on one opamp cell is a claim about basin luck unless it is reproduced under an OMP sweep on genuinely different data.
 
-**Device + inverter (11/11 PASS at every size):**
-
-| size | NMOS DC nrmse/mre% | PMOS DC nrmse/mre% | inv VTC% | inv tran% |
-|---|---|---|---|---|
-| small  | 3.37 / 11.32 | 0.56 / 2.29 | 1.48 | 1.21 |
-| medium | 4.07 / 11.71 | 0.16 / 0.85 | 2.97 | 1.15 |
-| large  | 4.77 / 12.54 | 0.10 / 0.55 | 2.35 | 1.18 |
-| xl     | 6.41 / 16.79 | 0.06 / 0.15 | 1.78 | 1.00 |
-
-**Caveat (resolved):** the campaign ran under sustained cluster overload (unrelated
-Xyce jobs, loadavg ~1400 for days). BSIM-AR's AR inference is worst on the largest
-models; the large/xl opamp DC-sweep gates exceeded the initial 8 h cap but a 12 h
-best-effort retry completed both — **the complex 4-cell matrix is 100 % resolved**. The
-only cells never gated are the *secondary* large/xl **opamp-AC** diagnostics (still
-timed out under load) — not part of the complex pass-count, and opamp-AC rails
-everywhere anyway.
-
+**The guard:** `bsimar.config.assert_tech_is_distinct(tech)` compares resolved
+modelcards restricted to parameters BSIM-CMG implements, and refuses a tech
+that collides with an existing one. It flags `tsmc6`↔`tsmc7` and confirms
+tsmc5/7/12/16 are genuinely distinct. Run it *before* onboarding a technology —
+the V6.9.0 onboarding gated TSMC6 9/9 DC and 14/14 transient, and passing those
+gates told us nothing, because they were TSMC7's gates.
 ---
 
 ## 9. Cross-family comparison and recommendation

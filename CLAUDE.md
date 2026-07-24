@@ -18,8 +18,9 @@ compact-model families on one solver, all gated against NGSPICE ground truth:
 
 The three NN families share one data / normalization / loss / training / eval
 pipeline via the unified `bsimar` package (`external_compact_models/bsimar/`).
-Supports **`.op` / `.dc` / `.ac` / `.tran`** for all model types. Six techs:
-ASAP7 + TSMC5/6/7/12/16.
+Supports **`.op` / `.dc` / `.ac` / `.tran`** for all model types. Five techs:
+ASAP7 + TSMC5/7/12/16. (TSMC6 was retired 2026-07-24 — it is TSMC7 relabelled
+under BSIM-CMG; see `docs/2026-07-21-systematic-audit.md` §D1.)
 
 **Core Principles:** pure Python; Solver ↔ Device Models decoupled; production-grade
 compact models via PyCMG/OSDI; basic HSPICE netlist compatibility.
@@ -92,7 +93,7 @@ DirectNet is production; BSIM-AR is the higher-fidelity option; PFN is research.
 | 75    | **PFN (TabPFN port)**  | `models/mosfet_pfn.py` (PyTorch)        | In-context NN (**research**, V6.10.0)  |
 
 - **BSIM-CMG (72)** — the reference every NN trains against and is gated on;
-  all 6 techs at DC <0.1 % / transient ~0.2 % NRMSE vs NGSPICE. Never substitute
+  all 5 techs at DC <0.1 % / transient ~0.2 % NRMSE vs NGSPICE. Never substitute
   simplified equations for it.
 - **DirectNet (73)** — single-shot MLP; 7-dim input (Vgs, Vds, Vbs, NFIN, L, T,
   tech_code with `nn.Embedding`). gm/gds/gmb are the **autograd Jacobian** of the
@@ -101,7 +102,7 @@ DirectNet is production; BSIM-AR is the higher-fidelity option; PFN is research.
   tier with the crit30 curriculum (V6.6.4) = 14/16 complex gates, OMP-deterministic**
   — one identical recipe per (tech × device), no per-case specials. Report:
   `docs/accuracy/DirectNet-L73-accuracy.md` — the unified DirectNet record
-  (V6.6.0 baseline → V6.6.1 recipes → V6.6.6 cross-tier → V6.7.0 universal → TSMC6;
+  (V6.6.0 baseline → V6.6.1 recipes → V6.6.6 cross-tier → V6.7.0 universal → V6.13.0 A3 re-gate;
   Part I = analysis + recommendation, Part II = the frozen data tables), CHANGELOG.
 - **BSIM-AR (74)** — autoregressive Transformer sharing DirectNet's pipeline.
   Best config `corroft@medium` (corridor curriculum, 1.9M params) = **15/16 strict**,
@@ -228,16 +229,16 @@ Mn1 3 2 0 0 nmos1 L=30n NFIN=10
 
 ### NN training (per-tech, LEVEL=73/74/75)
 
-Dedicated per-tech NMOS/PMOS checkpoints for **TSMC5/6/7/12/16** (all three families
-trained + gated at every scale in V6.11.0; addenda in the DN/TF/PFN accuracy reports +
-CHANGELOG V6.11.0). `--tech-scope` ∈ `{tsmc5,tsmc6,tsmc7,tsmc12,tsmc16,universal}`;
+Dedicated per-tech NMOS/PMOS checkpoints for **TSMC5/7/12/16** (all three families
+trained at every scale; every checkpoint on disk re-gated in V6.13.0 after the gds
+fix — see the accuracy reports). `--tech-scope` ∈ `{tsmc5,tsmc7,tsmc12,tsmc16,universal}`;
 `--size` ∈ `{small,medium,large,xl}`. Curriculum recipes (incl. the production crit30)
 train via `scripts/recipe_train.sh` (warm-start from the clean same-size base — at
 `large` the `v660clean` archive, injected automatically).
 
 ```bash
 # 1. Per-tech data (one .npz per tech+device). --enable-inv-trip adds the inverter-trip
-#    overlay; the grid sampler carries the reverse-Vds corridor. --tech ∈ {tsmc5,tsmc6,
+#    overlay; the grid sampler carries the reverse-Vds corridor. --tech ∈ {tsmc5,
 #    tsmc7,tsmc12,tsmc16,asap7,all}. Repeat per tech.
 conda run -n pycircuitsim python external_compact_models/PyCMG/scripts/generate_nn_data.py \
     --device both --tech tsmc5 --enable-inv-trip --n-workers 8
@@ -247,7 +248,7 @@ conda run -n pycircuitsim python external_compact_models/PyCMG/scripts/generate_
 #    recognizes (tsmc{X}_{dn,tf,pfn}_<size>_<dev>).
 conda run -n pycircuitsim python -u -m bsimar.cli.train \
     --model {direct,transformer,tabpfn} --size medium \
-    --device-type {nmos,pmos} --tech-scope {tsmc5,tsmc6,tsmc7,tsmc12,tsmc16} --cuda --overwrite
+    --device-type {nmos,pmos} --tech-scope {tsmc5,tsmc7,tsmc12,tsmc16} --cuda --overwrite
 ```
 
 **Full capacity sweep** (DirectNet, 4 techs × N/P × 4 sizes = **32 ckpts**, one clean
@@ -258,10 +259,10 @@ recipe): `scripts/benchmark_gen_data.sh` → `scripts/benchmark_train_sml.sh`
 **Checkpoints** (`external_compact_models/bsimar/checkpoints/`, each `*_best.pt` +
 `_norm.npz`, plus `_config.npz` for TF/PFN):
 
-- **DirectNet:** `tsmc{5,6,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}` — each a
+- **DirectNet:** `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}` — each a
   local-vocab embedding (variants + 1 UNKNOWN; Rule 16). Production `large` carries
-  **crit30** since V6.6.4 (clean originals archived `..._v660clean_large_*`; TSMC6 =
-  clean only, so its production `large` = clean 3/4). Kept beyond production:
+  **crit30** since V6.6.4 (clean originals archived `..._v660clean_large_*`). Kept
+  beyond production:
   `v660clean_large` (warm-start base), `crit30f_large` (production provenance),
   alternates `csob@large` (AC/device), `corroft`/`crit10`@xl + `crit15m@xl`
   (tsmc16-opamp coverage). Also `tsmc{X}_tf_*` (BSIM-AR) + `tsmc{X}_pfn_*` (PFN).
@@ -423,7 +424,7 @@ cited in code.
 14. **Exclude ASAP7** — out of scope (no checkpoints; see Overview).
 16. **Per-tech models use a LOCAL embedding vocab.** For a per-tech `--tech-scope` the
     loader remaps universal tech codes to a 0-indexed vocab and the trainer instantiates
-    `num_tech_codes=N, unknown_code_id=N-1`, N = variants+1 (TSMC5:5, TSMC6:4, TSMC7:4,
+    `num_tech_codes=N, unknown_code_id=N-1`, N = variants+1 (TSMC5:5, TSMC7:4,
     TSMC12:6, TSMC16:6). Training-time `p_unknown` dropout writes `unknown_code_id`, so a
     misaligned UNKNOWN id → CUDA assert. **Derive `unknown_code_id` from `num_tech_codes`;
     do NOT hardcode the universal 17.** Parser remaps at inference via

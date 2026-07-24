@@ -250,48 +250,40 @@ hours for BSIM-AR. The context-KV cache + the solver's batched pre-warm are the 
 
 ---
 
-## 9. TSMC6 (V6.11.0) — and the correction that reframes it
+## 9. TSMC6 — retired, and what it taught us
 
-> ### ⚠ TSMC6 ≡ TSMC7 relabelled — verified 2026-07-21
->
-> `docs/2026-07-21-systematic-audit.md` §D1 established with four independent lines of
-> evidence that **TSMC6 is not an independent technology under BSIM-CMG**: the
-> `tsmc6_*` datasets are `array_equal` to `tsmc7_*`; the raw PDKs differ only in TSMC
-> TMI-proprietary keys with **zero occurrences** in the BSIM-CMG Verilog-A source; and
-> two LEVEL=72 Id-Vgs sweeps match to the last printed digit. The rows below are a
-> *second independent training run on the TSMC7 data*, not a sixth technology.
+**TSMC6 was deleted from this repo on 2026-07-24.** It was never an independent
+technology under BSIM-CMG — it is TSMC7 relabelled — so the V6.11.0 "TSMC6"
+campaign was a *second training run on the TSMC7 data*, and its rows here were
+a duplicate data point presented as a sixth technology.
 
-Full PFN clean capacity sweep at all three PFN sizes (no xl preset), gated per-tech vs
-NGSPICE BSIM-CMG on this exact harness. Local vocab tsmc6 ulvt; checkpoints
-`tsmc6_pfn_{small,medium,large}_{nmos,pmos}`, `PYCIRCUITSIM_NN_FORCE_LEVEL=75`.
+Evidence (`docs/2026-07-21-systematic-audit.md` §D1, re-verified at deletion):
 
-**Complex 4-cell:**
+* `tsmc6_{nmos,pmos}.npz` were `array_equal` to `tsmc7_*` in `inputs`,
+  `geometry`, `outputs` and `sample_class` over 1,816,830 / 2,187,292 rows —
+  only `meta_tech_name` differed.
+* The raw PDKs genuinely differ, but every differing key (`tmi_ver_lod`,
+  `tmi_ver_isocpode`, `sfxmin`, `samax_c`, `wodx5akvth0`) is a TSMC
+  TMI-proprietary extension with **zero occurrences** in the BSIM-CMG
+  Verilog-A. Reproduced mechanically at deletion time: of 871 implemented
+  parameter names parsed from the Verilog-A sources, `toxp` and `phig` are
+  present and all five TMI keys are absent.
+* Two LEVEL=72 Id-Vgs sweeps at identical geometry matched to the last digit.
 
-| size | complex | ring period_err% | opamp gain_err% | sram lobeNRMSE% | switchcap chg_err% |
-|---|---|---|---|---|---|
-| small  | 2/4 | 8.22 ✗ | rails ✗ | 2.29 ✓ | 2.94 ✓ |
-| medium | 2/4 | 9.93 ✗ | rails ✗ | 1.75 ✓ | 2.94 ✓ |
-| large  | 2/4 | 12.38 ✗ | rails ✗ | 4.92 ✓ | 2.85 ✓ |
+**What was deleted:** 22 checkpoints, both datasets, `results/tsmc6_gate`, the
+registry/driver/test entries, and the per-size TSMC6 tables that stood here.
+They remain in git history (last present at commit `a96112a`). The raw vendor
+PDK is kept but unreferenced. TSMC6 held tail codes 22-24, so nothing was
+renumbered.
 
-**PFN is flat 2/4 across all sizes** — sram + switchcap pass everywhere, ring (8–12 %,
-worsening with size) and opamp (rails to gain≈0) fail everywhere. This matches §5: PFN's
-clean capacity curve declines/flattens past small and its opamp rails from medium up. No
-capacity tier banks a third cell.
+**The methodological result is worth keeping.** PFN read *flat* 2/4 across all three sizes on the duplicated data, agreeing with its TSMC7 rows — which, read correctly, is the reassuring case: the family that showed no TSMC6-vs-TSMC7 discrepancy is the one whose gates were already flip-free (§5). The families that disagreed across the duplicate were the ones with unstable opamp basins, which is the signature to watch for.
 
-**Device + inverter (6/6 PASS at every size):**
-
-| size | NMOS DC nrmse/mre% | PMOS DC nrmse/mre% | inv VTC% | inv tran% | dev-AC |
-|---|---|---|---|---|---|
-| small  | 3.57 / 10.24 | 0.04 / 0.40 | 1.07 | 1.15 | 2/3 |
-| medium | 3.80 / 8.01  | 0.05 / 0.59 | 1.06 | 0.97 | 1/3 |
-| large  | 4.75 / 11.22 | 0.03 / 0.64 | 1.06 | 1.17 | 2/3 |
-
-Device fidelity is excellent at all sizes (PMOS DC <0.05 % NRMSE) and PFN's inverter VTC
-(~1.06 %) is **the tightest of the three families** on this data. Runtime caveat: PFN's
-~10× DirectNet inference cost made its complex gates the slowest to complete under the
-concurrent cluster overload during the campaign (PFN-medium's opamp/switchcap needed a
-re-gate at a raised timeout).
-
+**The guard:** `bsimar.config.assert_tech_is_distinct(tech)` compares resolved
+modelcards restricted to parameters BSIM-CMG implements, and refuses a tech
+that collides with an existing one. It flags `tsmc6`↔`tsmc7` and confirms
+tsmc5/7/12/16 are genuinely distinct. Run it *before* onboarding a technology —
+the V6.9.0 onboarding gated TSMC6 9/9 DC and 14/14 transient, and passing those
+gates told us nothing, because they were TSMC7's gates.
 ---
 
 ## 10. Verdict, routing, and caveats

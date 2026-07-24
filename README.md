@@ -603,7 +603,7 @@ conda run -n pycircuitsim python \
     --device both --tech tsmc5 --enable-inv-trip --n-workers 8
 ```
 
-`--tech` accepts `tsmc5`, `tsmc6`, `tsmc7`, `tsmc12`, `tsmc16`, `asap7`, or
+`--tech` accepts `tsmc5`, `tsmc7`, `tsmc12`, `tsmc16`, `asap7`, or
 `all`. `--enable-inv-trip` adds the inverter-trip overlay; the grid sampler
 also carries the reverse-Vds corridor. Datasets land under
 `external_compact_models/bsimar/data/datasets/`.
