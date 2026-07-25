@@ -232,6 +232,28 @@ Mn1 3 2 0 0 nmos1 L=30n NFIN=10
 - `.ic V(node)=...` (hard initial condition; reaches subckt-internal nodes via
   `V(X1.n1)`) and `.include` are also supported.
 
+### NN performance knobs (V7.0.x)
+
+The NN eval is roughly half of an NN simulation's runtime, and it is
+**memory-bandwidth-bound on the weights** — cost scales with how many times a
+checkpoint is streamed, not with FLOPs. Measurements + dead ends:
+`docs/plans/2026-07-25-v700-nn-perf.md`.
+
+- **DC/OP skips the charge Jacobians** (V7.0.1, always on, bit-identical). The
+  qg/qd autograd sweeps only feed the 5 capacitances, which only
+  `TransientSolver` / `ACSolver` read — those two declare `_require_nn_caps`;
+  a `.dc`/`.op` run pays 1 backward instead of 3. **Adding a third caps
+  consumer means calling `_require_nn_caps` in it** (`get_capacitances`
+  self-heals, so the failure mode is slow, never wrong).
+- `PYCIRCUITSIM_NN_FUSED_JAC=1` — closed-form Jacobian for DirectNet
+  (V7.0.3). **Default off, and must stay off until a 16-gate re-gate clears
+  it**: same math, different summation order. Helps transient/AC (~1.4×) only —
+  for DC the charge-skip above already wins.
+- `BSIMAR_LOADER=torch|device|auto` — training batch source (V7.0.2, default
+  `auto` = GPU-resident when it fits). `torch` restores the legacy
+  `DataLoader` to reproduce a historical run.
+- `NN_BATCHED_EVAL=0` — pre-existing opt-out of the batched multi-device eval.
+
 ### NN training (per-tech, LEVEL=73/74/75)
 
 Dedicated per-tech NMOS/PMOS checkpoints for **TSMC5/7/12/16** (all three families

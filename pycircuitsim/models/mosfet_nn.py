@@ -47,6 +47,18 @@ from bsimar.data.normalize import (
 _logger = logging.getLogger(__name__)
 _NN_DEVICE: Optional[torch.device] = None
 
+# V7.0.3 — opt-in closed-form Jacobian (DirectNet only; see
+# ``DirectNet.forward_with_jacobian``). Replaces 1 forward + 3 backward
+# weight streams with a single fused pass: 1610 us -> 748 us per eval at
+# DirectNet-large / batch 1.
+#
+# DEFAULT OFF, and it must stay off until a full 16-gate complex re-gate
+# clears it. The mathematics is identical but the summation order is not
+# (values ~5e-7 abs, d(id)/dV ~4e-6 relative), and this repo has repeatedly
+# seen a high-gain circuit turn a last-bit NN perturbation into a different
+# NR basin — the same reason ``NN_BATCHED_EVAL=0`` exists in solver.py.
+_FUSED_JAC = os.environ.get("PYCIRCUITSIM_NN_FUSED_JAC", "0") == "1"
+
 # gds negative-branch guard coefficient (audit 2026-07-21 §A3-guard, "guard F").
 # Only ever applied to a *negative* gds candidate: k = 0.02 S/A == 1/(50 V), and
 # 50 V sits above the 43.4 V maximum true Early voltage measured anywhere in the
@@ -117,6 +129,21 @@ class _MOSFETNNBase(Component):
     # Subclasses (DirectNet / BSIMAR) set these.
     _is_pmos: bool = False
     _output_layout: str = "standard"   # "standard" or "bsimar"
+
+    # V7.0.1 — does this analysis consume capacitances?
+    #
+    # The 5 caps are the ONLY consumers of the qg / qd autograd Jacobians,
+    # and they are read in exactly two places: ``TransientSolver`` and
+    # ``ACSolver``. A ``.dc`` / ``.op`` run computed both backward passes
+    # and threw them away — two thirds of the eval cost (measured: 1610 us
+    # -> 784 us per eval at DirectNet-large, batch 1).
+    #
+    # Default False so a pure DC run is fast without any solver having to
+    # opt in; the two cap consumers call ``require_caps`` at construction.
+    # ``get_capacitances`` self-heals if anything else asks for caps on a
+    # DC-warmed cache, so the flag is a performance hint, never a
+    # correctness precondition.
+    _caps_required: bool = False
 
     def __init__(
         self,
@@ -235,9 +262,29 @@ class _MOSFETNNBase(Component):
             abs(float(self._norm_stats.input_min[0])))
         self._vdd_estimate = vd_range / 2.0
 
+        # ── Pre-resolved denorm constants (V7.0.1) ───────────────────
+        # ``_stats_col`` used to do a ``list.index`` per scalar, 13x per
+        # eval, to rediscover indices fixed at construction. Resolve them
+        # once here. The arithmetic in ``_denorm`` / ``_denorm_deriv`` is
+        # left in exactly its original order — only the lookups moved.
+        stats_cols = self._norm_stats.output_columns or OUTPUT_COLUMN_ORDER
+        self._stats_idx: Dict[str, int] = {
+            n: stats_cols.index(n) for n in stats_cols}
+        s = self._norm_stats
+        self._out_std_f: Dict[str, float] = {
+            n: float(s.output_std[i]) for n, i in self._stats_idx.items()}
+        self._out_mean_f: Dict[str, float] = {
+            n: float(s.output_mean[i]) for n, i in self._stats_idx.items()}
+        self._asinh_f: Dict[str, float] = (
+            {n: float(s.asinh_scale[i]) for n, i in self._stats_idx.items()}
+            if s.mode == "asinh" and s.asinh_scale is not None else {})
+        self._in_std_f: List[float] = [float(v) for v in s.input_std[:4]]
+
         # ── Cache + transient state ──────────────────────────────────
         self._eval_cache: Optional[Dict[str, float]] = None
         self._cache_voltages: Optional[Tuple[float, ...]] = None
+        # V7.0.1: whether the cached result carries the capacitance block.
+        self._cache_has_caps: bool = False
         self._q_prev: Optional[Dict[str, float]] = None
         self._q_prev2: Optional[Dict[str, float]] = None
         self._v_prev_tran: Optional[Dict[str, float]] = None
@@ -332,8 +379,8 @@ class _MOSFETNNBase(Component):
         self,
         out_row: torch.Tensor,
         grad_id_row: torch.Tensor,
-        grad_qg_row: torch.Tensor,
-        grad_qd_row: torch.Tensor,
+        grad_qg_row: Optional[torch.Tensor],
+        grad_qd_row: Optional[torch.Tensor],
         v_d_nn: float,
         v_s_nn: float,
     ) -> Dict[str, float]:
@@ -344,13 +391,18 @@ class _MOSFETNNBase(Component):
         the 1-D autograd derivatives of the named output w.r.t. the 4
         voltage inputs. Shared verbatim by the per-device ``_eval`` and
         the batched ``batch_eval`` path so both produce identical numbers.
+
+        V7.0.1: ``grad_qg_row`` / ``grad_qd_row`` may be ``None`` when the
+        analysis consumes no capacitances (see ``_caps_required``). The
+        returned dict then omits the 5 cap keys; every other value is
+        bit-identical to the full path, because nothing in the id / charge
+        chain or the Vds correction reads a cap.
         """
         # One ``.tolist()`` per tensor instead of per-element ``.item()``
         # — same float32 values, far fewer host/device syncs.
         out = out_row.tolist()
         gi = grad_id_row.tolist()
-        gqg = grad_qg_row.tolist()
-        gqd = grad_qd_row.tolist()
+        with_caps = grad_qg_row is not None and grad_qd_row is not None
 
         # Scalar predictions → physical units. The normalizer's stats
         # are stored in OUTPUT_COLUMN_ORDER, so look up by name.
@@ -382,33 +434,53 @@ class _MOSFETNNBase(Component):
         gmb_phys = -self._denorm_deriv(
             "id", in_col=3, deriv_norm=gi[3], phys_val=id_phys)
 
-        cgg_phys = self._denorm_deriv(
-            "qg", in_col=1, deriv_norm=gqg[1], phys_val=qg_phys)
-        cgd_phys = self._denorm_deriv(
-            "qg", in_col=0, deriv_norm=gqg[0], phys_val=qg_phys)
-        cgs_phys = self._denorm_deriv(
-            "qg", in_col=2, deriv_norm=gqg[2], phys_val=qg_phys)
-        cdg_phys = self._denorm_deriv(
-            "qd", in_col=1, deriv_norm=gqd[1], phys_val=qd_phys)
-        cdd_phys = self._denorm_deriv(
-            "qd", in_col=0, deriv_norm=gqd[0], phys_val=qd_phys)
-
         gds_phys = self._guard_gds(id_phys, gds_phys)
 
         result = {
             "id": id_phys, "gm": gm_phys, "gds": gds_phys, "gmb": gmb_phys,
             "qg": qg_phys, "qd": qd_phys, "qs": qs_phys, "qb": qb_phys,
-            "cgg": cgg_phys, "cgd": cgd_phys, "cgs": cgs_phys,
-            "cdg": cdg_phys, "cdd": cdd_phys,
         }
+        if with_caps:
+            gqg = grad_qg_row.tolist()
+            gqd = grad_qd_row.tolist()
+            result["cgg"] = self._denorm_deriv(
+                "qg", in_col=1, deriv_norm=gqg[1], phys_val=qg_phys)
+            result["cgd"] = self._denorm_deriv(
+                "qg", in_col=0, deriv_norm=gqg[0], phys_val=qg_phys)
+            result["cgs"] = self._denorm_deriv(
+                "qg", in_col=2, deriv_norm=gqg[2], phys_val=qg_phys)
+            result["cdg"] = self._denorm_deriv(
+                "qd", in_col=1, deriv_norm=gqd[1], phys_val=qd_phys)
+            result["cdd"] = self._denorm_deriv(
+                "qd", in_col=0, deriv_norm=gqd[0], phys_val=qd_phys)
+
         return self._apply_vds_correction(result, vds=v_d_nn - v_s_nn)
 
     def _eval(self, voltages: Dict[str, float]) -> Dict[str, float]:
         v_tuple = self._v_tuple(voltages)
         if self._cache_voltages == v_tuple and self._eval_cache is not None:
-            return self._eval_cache
+            if self._cache_has_caps or not self._caps_required:
+                return self._eval_cache
 
+        need_caps = self._caps_required
         x, v_d_nn, v_s_nn = self._prep_voltages(voltages)
+
+        if self._fused_jac_available(self._nn_model):
+            with torch.no_grad():
+                out, grad_id, grad_qg, grad_qd = self._fused_eval(
+                    self._nn_model, x, self._tech_code_tensor,
+                    self._mcol("id"), self._mcol("qg"), self._mcol("qd"),
+                    need_caps)
+            result = self._unpack_eval(
+                out[0], grad_id[0],
+                grad_qg[0] if grad_qg is not None else None,
+                grad_qd[0] if grad_qd is not None else None,
+                v_d_nn, v_s_nn)
+            self._eval_cache = result
+            self._cache_voltages = v_tuple
+            self._cache_has_caps = need_caps
+            return result
+
         x_v = x[:, :4].requires_grad_(True)
         x_g = x[:, 4:]
         x_full = torch.cat([x_v, x_g], dim=1)
@@ -417,19 +489,25 @@ class _MOSFETNNBase(Component):
             out = self._forward_model(x_full)
             grad_id = torch.autograd.grad(
                 out[:, self._mcol("id")].sum(), x_v,
-                create_graph=False, retain_graph=True)[0]
-            grad_qg = torch.autograd.grad(
-                out[:, self._mcol("qg")].sum(), x_v,
-                create_graph=False, retain_graph=True)[0]
-            grad_qd = torch.autograd.grad(
-                out[:, self._mcol("qd")].sum(), x_v,
-                create_graph=False, retain_graph=False)[0]
+                create_graph=False, retain_graph=need_caps)[0]
+            grad_qg = grad_qd = None
+            if need_caps:
+                grad_qg = torch.autograd.grad(
+                    out[:, self._mcol("qg")].sum(), x_v,
+                    create_graph=False, retain_graph=True)[0]
+                grad_qd = torch.autograd.grad(
+                    out[:, self._mcol("qd")].sum(), x_v,
+                    create_graph=False, retain_graph=False)[0]
 
         result = self._unpack_eval(
-            out[0], grad_id[0], grad_qg[0], grad_qd[0], v_d_nn, v_s_nn)
+            out[0], grad_id[0],
+            grad_qg[0] if grad_qg is not None else None,
+            grad_qd[0] if grad_qd is not None else None,
+            v_d_nn, v_s_nn)
 
         self._eval_cache = result
         self._cache_voltages = v_tuple
+        self._cache_has_caps = need_caps
         return result
 
     @staticmethod
@@ -472,7 +550,8 @@ class _MOSFETNNBase(Component):
         v_tuples: Dict[int, List[Tuple[float, ...]]] = {}
         for m in mosfets:
             v_tuple = m._v_tuple(voltages)
-            if m._cache_voltages == v_tuple and m._eval_cache is not None:
+            if (m._cache_voltages == v_tuple and m._eval_cache is not None
+                    and (m._cache_has_caps or not m._caps_required)):
                 continue  # already warm
             key = id(m._nn_model)
             groups.setdefault(key, []).append(m)
@@ -492,11 +571,33 @@ class _MOSFETNNBase(Component):
             tech_codes = torch.cat(
                 [m._tech_code_tensor for m in devs], dim=0)
 
+            need_caps = any(m._caps_required for m in devs)
+            id_col = ref._mcol("id")
+            qg_col = ref._mcol("qg")
+            qd_col = ref._mcol("qd")
+
+            if ref._fused_jac_available(ref._nn_model):
+                with torch.no_grad():
+                    out, grad_id, grad_qg, grad_qd = ref._fused_eval(
+                        ref._nn_model, x_full, tech_codes,
+                        id_col, qg_col, qd_col, need_caps)
+                for i, m in enumerate(devs):
+                    v_d_nn, _, v_s_nn, _ = raw_v[key][i]
+                    m._eval_cache = m._unpack_eval(
+                        out[i], grad_id[i],
+                        grad_qg[i] if grad_qg is not None else None,
+                        grad_qd[i] if grad_qd is not None else None,
+                        v_d_nn, v_s_nn)
+                    m._cache_voltages = v_tuples[key][i]
+                    m._cache_has_caps = need_caps
+                continue
+
             with torch.enable_grad():
                 out = ref._nn_model(x_full, tech_codes=tech_codes)
-                id_col = ref._mcol("id")
-                qg_col = ref._mcol("qg")
-                qd_col = ref._mcol("qd")
+                # V7.0.1: the qg / qd sweeps below are skipped outright
+                # when no capacitance consumer is attached (DC / OP) —
+                # a 2x saving, not a reordering. The forward and the id
+                # sweep are untouched, so DC results are bit-identical.
                 # Three separate backward sweeps — one per output
                 # column. NOT collapsed via ``is_grads_batched``: that
                 # vmap path changes the reduction order and is not
@@ -505,22 +606,27 @@ class _MOSFETNNBase(Component):
                 # accuracy-neutral gate outranks the extra speedup.
                 grad_id = torch.autograd.grad(
                     out[:, id_col].sum(), x_v,
-                    create_graph=False, retain_graph=True)[0]
-                grad_qg = torch.autograd.grad(
-                    out[:, qg_col].sum(), x_v,
-                    create_graph=False, retain_graph=True)[0]
-                grad_qd = torch.autograd.grad(
-                    out[:, qd_col].sum(), x_v,
-                    create_graph=False, retain_graph=False)[0]
+                    create_graph=False, retain_graph=need_caps)[0]
+                grad_qg = grad_qd = None
+                if need_caps:
+                    grad_qg = torch.autograd.grad(
+                        out[:, qg_col].sum(), x_v,
+                        create_graph=False, retain_graph=True)[0]
+                    grad_qd = torch.autograd.grad(
+                        out[:, qd_col].sum(), x_v,
+                        create_graph=False, retain_graph=False)[0]
 
             rows = raw_v[key]
             tuples = v_tuples[key]
             for i, m in enumerate(devs):
                 v_d_nn, _, v_s_nn, _ = rows[i]
                 m._eval_cache = m._unpack_eval(
-                    out[i], grad_id[i], grad_qg[i], grad_qd[i],
+                    out[i], grad_id[i],
+                    grad_qg[i] if grad_qg is not None else None,
+                    grad_qd[i] if grad_qd is not None else None,
                     v_d_nn, v_s_nn)
                 m._cache_voltages = tuples[i]
+                m._cache_has_caps = need_caps
 
     # — small helpers —
 
@@ -528,32 +634,89 @@ class _MOSFETNNBase(Component):
         """Override in BSIMAR subclass to call the AR-inference forward."""
         return self._nn_model(x_full, tech_codes=self._tech_code_tensor)
 
+    @staticmethod
+    def _fused_jac_available(model: torch.nn.Module) -> bool:
+        """Whether ``model`` can serve the V7.0.3 closed-form Jacobian.
+
+        Requires the opt-in flag AND a model that implements it AND an
+        instance whose ``id`` column is not re-composed by an EKV core or
+        monotone residual. False for BSIM-AR and PFN, whose forwards are
+        not plain MLPs.
+        """
+        return (
+            _FUSED_JAC
+            and hasattr(model, "forward_with_jacobian")
+            and model.supports_fused_jacobian())
+
+    @staticmethod
+    def _fused_eval(
+        model: torch.nn.Module,
+        x_full: torch.Tensor,
+        tech_codes: torch.Tensor,
+        id_col: int, qg_col: int, qd_col: int,
+        need_caps: bool,
+    ) -> Tuple[torch.Tensor, torch.Tensor,
+               Optional[torch.Tensor], Optional[torch.Tensor]]:
+        """Closed-form (out, grad_id, grad_qg, grad_qd) — no autograd.
+
+        Slices the (B, 4, out_dim) Jacobian into the same per-column (B, 4)
+        tensors the autograd path produces, so ``_unpack_eval`` is shared
+        verbatim between the two.
+        """
+        out, jac = model.forward_with_jacobian(x_full, tech_codes=tech_codes)
+        return (
+            out,
+            jac[:, :, id_col],
+            jac[:, :, qg_col] if need_caps else None,
+            jac[:, :, qd_col] if need_caps else None,
+        )
+
     def _mcol(self, name: str) -> int:
         """Model-output column index for ``name``."""
         return self._out_col[name]
 
     def _stats_col(self, name: str) -> int:
         """Index of column ``name`` in the normalizer's stats arrays."""
-        cols = self._norm_stats.output_columns or OUTPUT_COLUMN_ORDER
-        return cols.index(name)
+        return self._stats_idx[name]
 
     def _denorm(self, name: str, val_norm: float) -> float:
-        """Physical value of a single scalar output column."""
-        i = self._stats_col(name)
-        s = self._norm_stats
-        u = float(val_norm) * float(s.output_std[i]) + float(s.output_mean[i])
-        if s.mode == "asinh":
-            return float(s.asinh_scale[i]) * float(np.sinh(u))
+        """Physical value of a single scalar output column.
+
+        V7.0.1: the per-column stats are resolved once in ``__init__``
+        (``_out_std_f`` / ``_out_mean_f`` / ``_asinh_f``) instead of via a
+        ``list.index`` + numpy element read per call. The arithmetic is
+        unchanged — ``float(np.float64)`` is exact, and ``np.sinh`` is kept
+        rather than ``math.sinh`` because libm and numpy may disagree in
+        the last ulp and this feeds every stamped current.
+        """
+        u = (float(val_norm) * self._out_std_f[name]
+             + self._out_mean_f[name])
+        if self._asinh_f:
+            return self._asinh_f[name] * float(np.sinh(u))
         return u
 
     def _denorm_deriv(
         self, out_name: str, in_col: int, deriv_norm: float, phys_val: float,
     ) -> float:
-        """Chain-rule denormalise a derivative via the normalizer."""
-        i = self._stats_col(out_name)
-        return self._normalizer.denormalize_derivative(
-            deriv_norm=deriv_norm,
-            out_idx=i, in_idx=in_col, y_phys=phys_val)
+        """Chain-rule denormalise a derivative.
+
+        V7.0.1: inlined from ``_NormalizerBase.denormalize_derivative`` with
+        the constants pre-resolved. The expression is reproduced in its
+        original association order — ``d * out_std * factor / in_std``
+        regrouped (e.g. folding ``out_std / in_std``) would round
+        differently. ``math.sqrt`` is IEEE-correctly-rounded, so it is
+        bit-identical to the ``np.sqrt`` it replaces.
+        """
+        in_std = self._in_std_f[in_col]
+        if in_std < 1e-12:
+            return 0.0
+        out_std = self._out_std_f[out_name]
+        if self._asinh_f:
+            scale = self._asinh_f[out_name]
+            out_factor = math.sqrt(scale * scale + phys_val * phys_val)
+        else:
+            out_factor = 1.0
+        return float(deriv_norm) * out_std * out_factor / in_std
 
     @staticmethod
     def _guard_gds(id_phys: float, gds_phys: float) -> float:
@@ -721,9 +884,33 @@ class _MOSFETNNBase(Component):
         r = self._eval(voltages)
         return r["gds"], r["gm"], r["gmb"]
 
+    @staticmethod
+    def require_caps(components) -> None:
+        """Mark every NN MOSFET in ``components`` as cap-consuming.
+
+        Called once by the two analyses that read capacitances
+        (``TransientSolver`` / ``ACSolver``) so their evals compute the
+        qg / qd Jacobians. A ``.dc`` / ``.op`` run never calls this and so
+        never pays for them (V7.0.1). Any stale DC-warmed cache is
+        dropped, so the first eval after this call is a full one.
+        """
+        for c in components:
+            if isinstance(c, _MOSFETNNBase):
+                c._caps_required = True
+                if not c._cache_has_caps:
+                    c.clear_cache()
+
     def get_capacitances(
         self, voltages: Dict[str, float],
     ) -> Dict[str, float]:
+        # Self-heal: something is asking for caps on a device that was
+        # never marked cap-consuming (a direct API/test call, or an
+        # analysis that forgot ``require_caps``). Latch the flag on and
+        # recompute rather than KeyError — the flag is a performance
+        # hint, never a correctness precondition.
+        if not self._caps_required:
+            self._caps_required = True
+            self.clear_cache()
         r = self._eval(voltages)
         return {k: r[k] for k in ("cgg", "cgd", "cgs", "cdg", "cdd")}
 
@@ -770,3 +957,4 @@ class _MOSFETNNBase(Component):
     def clear_cache(self) -> None:
         self._eval_cache = None
         self._cache_voltages = None
+        self._cache_has_caps = False

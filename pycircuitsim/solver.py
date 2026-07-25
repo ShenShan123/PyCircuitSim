@@ -26,6 +26,7 @@ The solver handles:
 - Non-linear MOSFETs (Newton-Raphson iteration)
 - Capacitors (Backward Euler companion model for transient analysis)
 """
+import functools
 import os
 from typing import Dict, List, Tuple, Optional
 from pathlib import Path
@@ -134,8 +135,16 @@ def _lm_augment(mna_matrix, lam: float):
 
 # --- Module-level MOSFET helpers (used by both DCSolver and TransientSolver) ---
 
+@functools.lru_cache(maxsize=None)
 def _mosfet_types() -> tuple:
-    """Return tuple of all MOSFET classes (BSIM-CMG, NN, BSIM-AR)."""
+    """Return tuple of all MOSFET classes (BSIM-CMG, NN, BSIM-AR).
+
+    The tuple is fixed once the model modules are importable, but this is
+    called once per component per stamp — 4462 times in a 70-point NN DC
+    sweep before V7.0.1, each re-running four ``try: import`` blocks.
+    Memoized: the classes are module-level singletons, so the tuple is a
+    process-lifetime constant.
+    """
     types = []
     try:
         from pycircuitsim.models.mosfet_cmg import NMOS_CMG, PMOS_CMG
@@ -160,8 +169,16 @@ def _mosfet_types() -> tuple:
     return tuple(types)
 
 
+@functools.lru_cache(maxsize=None)
 def _pmos_types() -> tuple:
-    """Return tuple of all PMOS classes (BSIM-CMG, DirectNet, BSIM-AR)."""
+    """Return tuple of all PMOS classes (BSIM-CMG, DirectNet, BSIM-AR).
+
+    The tuple is fixed once the model modules are importable, but this is
+    called once per component per stamp — 4462 times in a 70-point NN DC
+    sweep before V7.0.1, each re-running four ``try: import`` blocks.
+    Memoized: the classes are module-level singletons, so the tuple is a
+    process-lifetime constant.
+    """
     types = []
     try:
         from pycircuitsim.models.mosfet_cmg import PMOS_CMG
@@ -186,6 +203,7 @@ def _pmos_types() -> tuple:
     return tuple(types)
 
 
+@functools.lru_cache(maxsize=None)
 def _nn_mosfet_types() -> tuple:
     """Return tuple of NN MOSFET classes eligible for the batched
     forward+Jacobian pre-warm (plan Phase 5): LEVEL=73 DirectNet and —
@@ -249,6 +267,20 @@ def _has_nn_device(circuit: Circuit) -> bool:
     """Check if circuit contains any NN compact-model device (LEVEL>=73)."""
     from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase
     return any(isinstance(c, _MOSFETNNBase) for c in circuit.components)
+
+
+def _require_nn_caps(circuit: Circuit) -> None:
+    """Tell every NN device in ``circuit`` that this analysis reads caps.
+
+    Only ``TransientSolver`` and ``ACSolver`` consume MOSFET
+    capacitances. Marking them here lets a ``.dc`` / ``.op`` run skip the
+    qg / qd autograd sweeps that produce those caps — two of the three
+    backward passes, ~2x on the NN eval path (V7.0.1). A no-op for
+    circuits with no NN device, and ``get_capacitances`` self-heals if
+    some other caller needs caps anyway.
+    """
+    from pycircuitsim.models.mosfet_nn import _MOSFETNNBase
+    _MOSFETNNBase.require_caps(circuit.components)
 
 
 def _batch_eval_nn_mosfets(
@@ -1353,6 +1385,12 @@ class TransientSolver:
         self.initial_guess = initial_guess
         self.debug = debug
 
+        # V7.0.1 — transient stamps the MOSFET capacitances every NR
+        # iteration, so the NN devices must compute their qg / qd autograd
+        # Jacobians. Declared once here; a `.dc` / `.op` run never declares
+        # it and skips those two backward passes entirely.
+        _require_nn_caps(circuit)
+
         # Gmin stepping parameters
         self.use_gmin_stepping = use_gmin_stepping
         self.gmin_initial = gmin_initial
@@ -2405,6 +2443,10 @@ class ACSolver:
         """
         self.circuit = circuit
         self.dc_solution = dc_solution
+        # V7.0.1 — the small-signal stamp reads the full transcapacitance
+        # block, so the NN devices need their charge Jacobians (see
+        # TransientSolver.__init__).
+        _require_nn_caps(circuit)
 
     def solve(self, frequencies: np.ndarray) -> Dict[str, np.ndarray]:
         """
