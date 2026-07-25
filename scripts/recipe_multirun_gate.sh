@@ -39,13 +39,29 @@ else
   export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="$sn" PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="$sp"
 fi
 echo "### multirun $recipe/$size/$tlc/$suite  (pin $sn / $sp, model $MODEL)"
+# audit B3 — sequential driver: accumulate a no-verdict flag and `exit $rc` at
+# the end (same convention as scripts/benchmark_gen_data.sh). The per-OMP echo
+# used to be the last command, so this script always returned 0 — including when
+# all three runs crashed and the "OMP=n |" lines were printed empty.
+rc=0
 for omp in 1 2 4; do
   # PYCIRCUITSIM_TORCH_THREADS=$omp: since the V6.6.6 harness thread-pin,
   # OMP_NUM_THREADS alone no longer perturbs torch GEMM threading — the
   # override is what makes this probe exercise the multistability axis.
   out="$(OMP_NUM_THREADS=$omp MKL_NUM_THREADS=$omp PYCIRCUITSIM_TORCH_THREADS=$omp \
         conda run -n pycircuitsim python -u "$ROOT/tests/${suite}.py" --tech "$tuc" 2>&1)"
+  prc=$?
   # headline lines the gates print (period error / gain / charge / SNM / status)
   hl="$(printf '%s\n' "$out" | grep -iE "period error|gain_err|gain error|charge_err|charge error|SNM|butterfly|-> *(PASS|FAIL)|Status" | tr '\n' ' ')"
   echo "  OMP=$omp | $hl"
+  # A FAIL headline is a result; an EMPTY one means the run never reached a
+  # verdict, which is precisely what this determinism probe must not average over.
+  if [ -z "${hl// /}" ] || [ "$prc" -ge 126 ]; then
+    echo "  OMP=$omp NO VERDICT (rc=$prc)" >&2
+    rc=1
+  fi
 done
+if [ "$rc" -ne 0 ]; then
+  echo "### INFRASTRUCTURE FAILURE: not all 3 OMP runs produced a verdict — this cell is UNDECIDED" >&2
+fi
+exit $rc

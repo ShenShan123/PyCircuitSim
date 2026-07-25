@@ -173,6 +173,12 @@ def main() -> int:
     ap.add_argument("--tech", default=",".join(BENCH_TECHS))
     args = ap.parse_args()
     techs = [t.strip().upper() for t in args.tech.split(",") if t.strip()]
+    # audit B5l — a typo'd tech used to SKIP silently, so `--tech TSMC5,TSMC7X`
+    # scored 1/1 and exited 0. Reject up front instead of shrinking the matrix.
+    unknown = [t for t in techs if t not in BENCH]
+    if unknown:
+        print(f"ERROR: unknown tech(s) {unknown}. Available: {list(BENCH)}")
+        return 1
 
     print("=" * 78)
     print("Complex AC — two-stage Miller opamp open-loop: DirectNet vs NGSPICE")
@@ -180,9 +186,6 @@ def main() -> int:
 
     rows: List[Dict[str, object]] = []
     for tech in techs:
-        if tech not in BENCH:
-            print(f"  SKIP unknown tech {tech}")
-            continue
         print(f"\n--- {tech} (VDD={BENCH[tech].vdd} VT={BENCH[tech].vt}) ---")
         try:
             r = eval_opamp_ac(tech)

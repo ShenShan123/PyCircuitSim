@@ -42,6 +42,11 @@ from tests.common.complex import (  # noqa: E402
 )
 
 GAIN_TOL = 0.10            # +/-10% open-loop DC gain gate
+# audit B5c: an NGSPICE reference gain below this V/V means the cell is biased
+# out of its amplifying region — it is not an opamp, so no DirectNet run can
+# certify it. Mirrors the parametric twin (tests/common/complex_sweep.py
+# OPAMP_MIN_GAIN). The shipped cells sit at 160-190 V/V, ~30x above the floor.
+OPAMP_MIN_GAIN = 5.0
 TEMPLATE = PROJECT_ROOT / "examples" / "complex" / "miller_opamp_directnet.sp"
 
 
@@ -61,6 +66,31 @@ def _gain_trip(sweep: np.ndarray, vout: np.ndarray,
     trip = float(sweep[ix])
     slew = float(np.max(np.abs(np.diff(vout))))
     return gain, trip, slew
+
+
+def _region_error(ng_gain: float) -> str:
+    """Reason string when the NGSPICE reference is not a usable opamp, else "".
+
+    audit B5c: the only reference-side guard used to be ``ng_gain > 0``, so a
+    mis-biased cell (reference gain ~0.3 V/V) was certified by any DirectNet run
+    that reproduced the same non-amplifying bias to within 10%.
+    """
+    if not np.isfinite(ng_gain) or ng_gain < OPAMP_MIN_GAIN:
+        return f"out-of-region (ng_gain={ng_gain:.2f}<{OPAMP_MIN_GAIN})"
+    return ""
+
+
+def _verdict(ng_gain: float, dn_gain: float) -> Tuple[float, bool, str]:
+    """(gain error %, pass flag, reason) for one opamp cell.
+
+    Pure + importable so the region guard and the tolerance can be exercised
+    without NGSPICE (audit B5c).
+    """
+    reason = _region_error(ng_gain)
+    if reason:
+        return float("nan"), False, reason
+    err = abs(dn_gain - ng_gain) / ng_gain * 100.0
+    return err, bool(err <= GAIN_TOL * 100), ""
 
 
 def ngspice_opamp_body(bt: BenchTech, baked: Path) -> Dict[str, str]:
@@ -127,6 +157,14 @@ def run_one(bt: BenchTech) -> Dict:
     ng_gain, ng_trip, ng_slew = _gain_trip(ng["sweep"], ng["vout"], bt.vdd)
     print(f"    NGSPICE gain={ng_gain:.1f}  trip={ng_trip:.4f}V  "
           f"slew(step)={ng_slew*1e3:.2f}mV")
+    region_err = _region_error(ng_gain)
+    if region_err:
+        # audit B5c: bail before spending the DirectNet run — an out-of-region
+        # reference cannot certify anything. Ordering mirrors the parametric
+        # twin's `_err` in tests/common/complex_sweep.py.
+        print(f"    {region_err} — not a usable opamp reference")
+        return {"tech": bt.name, "ng_gain": ng_gain, "ng_trip": ng_trip,
+                "error": region_err}
 
     print("  DirectNet (LEVEL=73) DC transfer ...")
     try:
@@ -148,9 +186,8 @@ def run_one(bt: BenchTech) -> Dict:
     dn_i = np.interp(grid, dn["sweep"], dn["vout"])
     metrics = full_metrics(dn_i, ng_i)
 
-    gain_err = abs(dn_gain - ng_gain) / ng_gain * 100.0 if ng_gain > 0 else float("nan")
+    gain_err, passed, _ = _verdict(ng_gain, dn_gain)
     trip_shift = (dn_trip - ng_trip) * 1e3
-    passed = np.isfinite(gain_err) and gain_err <= GAIN_TOL * 100
     print(f"    Vout curve: {fmt_metrics(metrics)}")
     print(f"    gain error = {gain_err:.2f}%  trip shift = {trip_shift:.2f}mV"
           f"  ->  {'PASS' if passed else 'FAIL'}")
@@ -164,6 +201,13 @@ def main() -> int:
     ap.add_argument("--tech", default=",".join(BENCH_TECHS))
     args = ap.parse_args()
     techs = [t.strip() for t in args.tech.split(",")]
+    # audit B5l: an unknown tech used to print SKIP and never enter `results`,
+    # so `--tech TSMC5,TSMC7X` reported 1/1 and exited 0. Reject up front
+    # (same pattern as verify_nn_dc_tran.py).
+    unknown = [t for t in techs if t not in BENCH]
+    if unknown:
+        print(f"ERROR: unknown tech(s) {unknown}. Available: {list(BENCH)}")
+        return 1
 
     print("=" * 78)
     print("Benchmark 3b — two-stage Miller opamp: DirectNet vs NGSPICE BSIM-CMG")
@@ -172,9 +216,6 @@ def main() -> int:
 
     results: List[Dict] = []
     for name in techs:
-        if name not in BENCH:
-            print(f"  SKIP unknown tech {name}")
-            continue
         try:
             results.append(run_one(BENCH[name]))
         except Exception as exc:  # noqa: BLE001

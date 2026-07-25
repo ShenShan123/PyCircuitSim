@@ -82,11 +82,19 @@ def main() -> int:
     print(f"  DC acceptance: NRMSE < 10%")
 
     results = []
-    for device in devices:
-        results.extend(run_nn_multi_tech(
-            tech_keys, device, RESULTS_DIR,
-            make_dc_baseline, build_dc_parametric, run_single_nn_dc,
-        ))
+    # audit B5d — get_available_checkpoints() now RAISES on a pinned-but-absent
+    # stem instead of printing a SKIP with no result row. Catch it here so this
+    # gate reports the same clean "ERROR: ... / rc 1" as verify_nn_dc_tran.py
+    # rather than a traceback.
+    try:
+        for device in devices:
+            results.extend(run_nn_multi_tech(
+                tech_keys, device, RESULTS_DIR,
+                make_dc_baseline, build_dc_parametric, run_single_nn_dc,
+            ))
+    except FileNotFoundError as exc:
+        print(f"ERROR: {exc}")
+        return 1
 
     counts = print_nn_summary_table(results, kind="dc")
     save_nn_summary_csv(

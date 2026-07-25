@@ -491,6 +491,8 @@ class TabPFNCompact(nn.Module):
         # ---- Non-state attributes ----
         self._bank: Optional[_SharedBank] = None
         self._ctx_cache: Optional[Dict[str, list]] = None
+        # Version counters the cache was built from (audit C6r).
+        self._ctx_cache_ver: Optional[Tuple[int, ...]] = None
 
     # ── Context management ────────────────────────────────────────────
 
@@ -520,6 +522,30 @@ class TabPFNCompact(nn.Module):
         # .to(device)/.float() etc. relocate parameters → drop the cache.
         self._ctx_cache = None
         return super()._apply(fn, recurse)
+
+    def _load_from_state_dict(self, *args: object, **kwargs: object) -> None:
+        # audit C6r: nn.Module.load_state_dict dispatches here on every
+        # submodule including self, so this covers both a direct load and a
+        # parent's load — neither passes through train() or _apply(), and
+        # loading new weights under an already-warm eval-mode module would
+        # otherwise keep serving the previous checkpoint's context.
+        self._ctx_cache = None
+        super()._load_from_state_dict(*args, **kwargs)
+
+    def _state_version(self) -> Tuple[int, ...]:
+        """Autograd version counters of every parameter and buffer.
+
+        ``Tensor._version`` ticks on every in-place write, which is how
+        ``load_state_dict`` (``copy_``), ``AveragedModel.update_parameters``
+        (EMA ``lerp_``/``add_``) and a hand-edited ``ctx_*`` buffer all
+        mutate a module. Comparing the tuple therefore catches the stale
+        frozen context that no hook can be relied on to invalidate
+        (audit C6r) — ~60 int reads per eval forward, against a full
+        transformer context pass if it is ever wrong.
+        """
+        return tuple(
+            t._version
+            for t in list(self.parameters()) + list(self.buffers()))
 
     def _sample_context(
         self, device: torch.device,
@@ -605,8 +631,15 @@ class TabPFNCompact(nn.Module):
         return dist_hidden, icl_kv
 
     def _get_ctx_cache(self, device: torch.device) -> Dict[str, list]:
-        """Frozen-context cache for eval mode (built lazily, detached)."""
-        if self._ctx_cache is None:
+        """Frozen-context cache for eval mode (built lazily, detached).
+
+        Rebuilt whenever any parameter or buffer has been written since the
+        cache was taken (audit C6r) — the context activations are a pure
+        function of those tensors, so an unchanged version tuple guarantees
+        the cached values are the ones a rebuild would produce.
+        """
+        ver = self._state_version()
+        if self._ctx_cache is None or self._ctx_cache_ver != ver:
             with torch.no_grad():
                 dist_hidden, icl_kv = self._context_side(
                     self.ctx_x, self.ctx_y, self.ctx_tc)
@@ -614,6 +647,7 @@ class TabPFNCompact(nn.Module):
                 "dist_hidden": [h.detach() for h in dist_hidden],
                 "icl_kv": [(k.detach(), v.detach()) for k, v in icl_kv],
             }
+            self._ctx_cache_ver = ver
         return self._ctx_cache
 
     # ── Forward ───────────────────────────────────────────────────────

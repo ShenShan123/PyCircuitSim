@@ -141,7 +141,7 @@ DirectNet is production; BSIM-AR is the higher-fidelity option; PFN is research.
   reaches internal nodes, `uic`/`force_ic` consume them unchanged; `.model`/`.include`
   in bodies are hoisted global; nested `.subckt` defs register globally. Loud errors
   on unknown subckt, port-count mismatch, recursion (>64). Gate: `tests/verify_subckt.py`
-  (8 checks — subckt==flat bit-identical, L72 inverter + nested buffer vs NGSPICE).
+  (11 checks — subckt==flat bit-identical, L72 inverter + nested buffer vs NGSPICE).
 * Legacy LEVEL=1 (Shichman-Hodges) removed.
 
 ## Validation
@@ -308,7 +308,7 @@ references in `tests/references/`.
 - **Subcircuit hierarchy (V6.12.0):** `verify_subckt.py` — L1 linear subckt==flat
   equivalence (tran/AC/nested-OP/uic, no NGSPICE), L2 L72 inverter-in-subckt vs flat
   vs NGSPICE, L3 nested 2-inverter buffer (X-in-X + params + `.ic` on internal node).
-  **8/8 PASS.** The PyCircuitSim-side test decks are now hierarchical (inverter,
+  **11/11 PASS.** The PyCircuitSim-side test decks are now hierarchical (inverter,
   complex builders, NN inverter, CS-amp AC); probed nodes stay top-level (ports) so
   harness keys/baselines are unchanged; NGSPICE reference decks + single-device
   Id-Vgs decks stay flat.

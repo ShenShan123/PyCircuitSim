@@ -27,7 +27,14 @@ NGPU=${#GPU_IDS[@]}
 NSTREAMS="${NSTREAMS:-9}"
 
 # The `bsimar` package lives under external_compact_models/ (not on sys.path);
-# it bootstraps pycmg internally. Mirror scripts/train_per_tech_8cells.sh.
+# it bootstraps pycmg internally.
+#
+# audit B5a — this script also absorbed the deleted scripts/train_per_tech_8cells.sh
+# (the 8-cell {tsmc5,tsmc7} x {small,medium} x {nmos,pmos} sweep). That one ran the
+# CLI with `--overwrite` and NO `--exp-name`, so it wrote straight into the
+# production tsmc{X}_dn_{size}_{dev} resolver slots, on the CLI defaults rather
+# than the clean control-v2 recipe. Use instead:
+#     TECHS='tsmc5 tsmc7' SIZES='small medium' bash scripts/benchmark_train_sml.sh
 export PYTHONPATH="$ROOT/external_compact_models${PYTHONPATH:+:$PYTHONPATH}"
 
 # ---- single-job worker: SELF _one <tech> <size> <dev> <gpu> <force> ----
@@ -55,7 +62,11 @@ if [ "${1:-}" = "_one" ]; then
     touch "$ckpt.complete"
     echo "[train] DONE $name"
   else
+    # audit B3 — a failed train produces NO artifact, so there is nothing for a
+    # downstream gate to judge; exit 3 (never 255: xargs aborts the run on 255)
+    # so the dispatcher fails loudly instead of printing FAIL and returning 0.
     echo "[train] FAIL $name (rc=$rc, see $log)"
+    exit 3
   fi
   exit 0
 fi
@@ -86,5 +97,12 @@ for size in "${sizes[@]}"; do for tech in "${techs[@]}"; do for dev in "${devs[@
 done; done; done
 
 echo "[train] launching ${#lines[@]} jobs, $NSTREAMS concurrent across $NGPU GPUs"
+# audit B3 — capture xargs BEFORE the trailing echo, which would otherwise
+# overwrite $? with 0 and report a clean sweep over a wave of failed trainings.
 printf '%s\n' "${lines[@]}" | xargs -P "$NSTREAMS" -L1 "$SELF" _one
+xrc=$?
+if [ "$xrc" -ne 0 ]; then
+  echo "[train] INFRASTRUCTURE FAILURE: some jobs produced no checkpoint (xargs rc=$xrc, see $LOGDIR)" >&2
+  exit 1
+fi
 echo "[train] ALL TRAINING COMPLETE"

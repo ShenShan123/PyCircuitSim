@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import time
 from pathlib import Path
-from typing import Dict, Optional, Set, Tuple
+from typing import Dict, Optional, Sequence, Set, Tuple
 
 import numpy as np
 import torch
@@ -29,9 +29,10 @@ from torch.utils.data import DataLoader, TensorDataset
 from bsimar.config import (
     DirectNetConfig, TransformerConfig, TabPFNConfig,
     CHECKPOINT_DIR, RESULTS_DIR,
+    CODE_TO_TECH_VARIANT,
     NUM_TSMC_CODES_WITH_UNKNOWN,
 )
-from bsimar.data.dataset import load_and_split_bsimar
+from bsimar.data.dataset import MOSFETDataset, load_and_split_bsimar
 from bsimar.data.normalize import (
     OUTPUT_COLUMN_ORDER, reorder_outputs, unreorder_outputs,
     _NormalizerBase,
@@ -43,6 +44,39 @@ from bsimar.losses.bni_mae import MAELoss, compute_lds_weights_per_target
 # dominates inverter trip-point NRMSE.
 _NORM_MODE = "asinh"
 _NUM_WORKERS = 8
+
+
+# ── Pre-flight checks ──────────────────────────────────────────────────────
+
+def _assert_codes_in_vocab(
+    datasets: Sequence[MOSFETDataset], num_tech_codes: int, tech_scope: str,
+) -> None:
+    """Raise if any split carries a tech code the embedding cannot index.
+
+    audit C6q: ``nn.Embedding(num_tech_codes)`` has no range check of its
+    own — an out-of-range code is an IndexError on CPU and an opaque
+    device-side assert on CUDA, both surfacing an epoch into a multi-hour
+    run with nothing naming the offending tech. The reachable case is the
+    universal scope, whose vocabulary is TSMC-only (0-16 + UNKNOWN 17)
+    while the registry also numbers ASAP7 at 18-21.
+    """
+    maxima = [int(ds.tech_codes.max()) for ds in datasets if len(ds) > 0]
+    if not maxima or max(maxima) < num_tech_codes:
+        return
+    offenders = sorted({
+        int(c)
+        for ds in datasets if len(ds) > 0
+        for c in torch.unique(ds.tech_codes).tolist()
+        if int(c) >= num_tech_codes
+    })
+    named = ", ".join(
+        f"{c}={CODE_TO_TECH_VARIANT.get(c, ('?', '?'))}" for c in offenders)
+    raise ValueError(
+        f"tech_scope={tech_scope!r}: dataset carries tech code(s) outside "
+        f"the embedding vocabulary (num_tech_codes={num_tech_codes}, valid "
+        f"0..{num_tech_codes - 1}): {named}. Drop those rows with "
+        f"--exclude-techs, or size the vocabulary with --num-tech-codes "
+        f"and warm-start from a checkpoint that has the extra rows.")
 
 
 # ── Per-epoch helpers ──────────────────────────────────────────────────────
@@ -642,6 +676,8 @@ def train_directnet(
         output_subset=output_subset,
         tech_scope=tech_scope,
     )
+    _assert_codes_in_vocab(
+        (train_ds, val_ds, test_ds), num_tech_codes, tech_scope)
     in_dim = train_ds.inputs.shape[1]
     out_dim = train_ds.outputs.shape[1]
     if output_subset is not None:
@@ -808,6 +844,8 @@ def train_transformer(
         norm_mode=_NORM_MODE, max_rows=max_rows,
         tech_scope=tech_scope,
     )
+    _assert_codes_in_vocab(
+        (train_ds, val_ds, test_ds), num_tech_codes, tech_scope)
     in_dim = train_ds.inputs.shape[1]
     out_dim = train_ds.outputs.shape[1]
 
@@ -971,6 +1009,8 @@ def train_tabpfn(
         norm_mode=_NORM_MODE, max_rows=max_rows,
         tech_scope=tech_scope,
     )
+    _assert_codes_in_vocab(
+        (train_ds, val_ds, test_ds), num_tech_codes, tech_scope)
     in_dim = train_ds.inputs.shape[1]
     out_dim = train_ds.outputs.shape[1]
 

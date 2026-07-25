@@ -88,6 +88,24 @@ def _uic_op(circuit):
     return op
 
 
+def _verdict(err: float, tol_pct: float,
+             undefined_why: str = "control metric undefined") -> str:
+    """Three-way ownership verdict for one control cell.
+
+    audit B5h: a two-way ``"SOLVER-OWNED" if err > tol else "model-owned"`` is
+    wrong for a non-finite ``err`` — ``float("nan") > tol`` is False in Python,
+    so the cell that produced NO comparable number at all (ring that never
+    oscillated, non-positive reference gain) printed the maximally reassuring
+    "L72 matches NGSPICE". Both call sites share this helper so the NaN branch
+    cannot drift apart again.
+    """
+    if not np.isfinite(err):
+        return f"INCONCLUSIVE ({undefined_why}; NOT evidence of a model-owned gap)"
+    if err > tol_pct:
+        return "SOLVER-OWNED (L72 misses gate too)"
+    return "model-owned (L72 matches NGSPICE)"
+
+
 def _period(t, v, mid, settle):
     keep = t >= settle
     t, v = t[keep], v[keep]
@@ -148,8 +166,9 @@ def ring(bt: BenchTech) -> Dict:
     ng_per = _period(ng["time"], ng["v(n5)"], vdd / 2.0, RO_SETTLE)
     err = (abs(l72_per - ng_per) / ng_per * 100.0
            if np.isfinite(l72_per) and ng_per > 0 else float("nan"))
-    verdict = ("SOLVER-OWNED (L72 misses gate too)" if err > 5
-               else "model-owned (L72 matches NGSPICE)")
+    verdict = _verdict(err, 5.0,
+                       "period undefined: <3 mid-crossings — the L72 or "
+                       "NGSPICE control never oscillated")
     print(f"  RING {bt.name}: L72-PyCS period={l72_per*1e12:7.2f}ps | "
           f"NGSPICE={ng_per*1e12:7.2f}ps | err={err:6.2f}%  -> {verdict}")
     return {"tech": bt.name, "l72_per": l72_per, "ng_per": ng_per, "err": err}
@@ -218,8 +237,8 @@ CL vout 0 50f
     ng = run_ngspice_opamp(bt, work)
     ng_gain, ng_trip, _ = _gain_trip(ng["sweep"], ng["vout"], vdd)
     err = abs(l72_gain - ng_gain) / ng_gain * 100.0 if ng_gain > 0 else float("nan")
-    verdict = ("SOLVER-OWNED (L72 misses gate too)" if err > 10
-               else "model-owned (L72 matches NGSPICE)")
+    verdict = _verdict(err, 10.0,
+                       "L72 or NGSPICE gain undefined/non-positive")
     print(f"  OPAMP {bt.name}: L72-PyCS gain={l72_gain:7.1f} trip={l72_trip:.4f} | "
           f"NGSPICE gain={ng_gain:7.1f} trip={ng_trip:.4f} | err={err:6.2f}%  -> {verdict}")
     return {"tech": bt.name, "l72_gain": l72_gain, "ng_gain": ng_gain, "err": err}
@@ -238,20 +257,35 @@ def main() -> int:
     print("own solver with ground-truth OSDI (no NN) vs NGSPICE.")
     print("  Gate that rejects ground-truth physics == mis-specified / solver-owned.")
     print("=" * 78)
+    # audit B5h: a cell that raised, or that produced a non-finite err, yields NO
+    # ownership verdict. Tally them so a reader cannot mistake a broken control
+    # run for a "model-owned" result.
+    n_cells = n_inconclusive = 0
     if "ring" in circuits:
         print("\n[Ring oscillator — period gate +/-5%]")
         for t in techs:
+            n_cells += 1
             try:
-                ring(BENCH[t])
+                if not np.isfinite(ring(BENCH[t])["err"]):
+                    n_inconclusive += 1
             except Exception as exc:  # noqa: BLE001
+                n_inconclusive += 1
                 import traceback; print(f"  RING {t}: ERROR {exc!r}"); traceback.print_exc()
     if "opamp" in circuits:
         print("\n[Two-stage Miller opamp — gain gate +/-10%]")
         for t in techs:
+            n_cells += 1
             try:
-                opamp(BENCH[t])
+                if not np.isfinite(opamp(BENCH[t])["err"]):
+                    n_inconclusive += 1
             except Exception as exc:  # noqa: BLE001
+                n_inconclusive += 1
                 import traceback; print(f"  OPAMP {t}: ERROR {exc!r}"); traceback.print_exc()
+
+    print(f"\n{n_inconclusive}/{n_cells} cells INCONCLUSIVE (no usable "
+          f"L72-vs-NGSPICE comparison — read NO ownership verdict from them).")
+    # Diagnostic, not a gate: the exit code stays 0 even when cells are
+    # inconclusive, so no caller starts treating this script as a pass/fail.
     return 0
 
 

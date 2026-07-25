@@ -716,7 +716,7 @@ python tests/verify_bsimcmg_dc.py
 # Transient verification (single baseline config)
 python tests/verify_bsimcmg_tran.py
 
-# Subcircuit hierarchy gate (8 checks)
+# Subcircuit hierarchy gate (11 checks)
 python tests/verify_subckt.py
 
 # Run L1 smoke suite in one line
@@ -788,7 +788,8 @@ load, where the output slews fastest. Representative ASAP7 rows (L3):
 
 #### Subcircuit Hierarchy (V6.12.0)
 
-`tests/verify_subckt.py` — **8/8 PASS**. Levels 1–3 cover linear
+`tests/verify_subckt.py` — **11/11 PASS**. Level 0 covers the three loud
+parse errors; Levels 1–3 cover linear
 equivalence, an L72 inverter, and a nested buffer:
 
 | Check | Metric | Result |
@@ -825,7 +826,7 @@ via the T3 differentiable-DC-solver fine-tune.
 | `tests/verify_bsimcmg_tran_comprehensive.py` | Transient L2: 37-config VT/L/NFIN sweep |
 | `tests/verify_multi_tech_tran.py` | Transient L3: 72-config multi-tech parametric |
 | `tests/verify_ac.py` | AC L1 passive RC + L2 BSIM-CMG common-source amp |
-| `tests/verify_subckt.py` | Subcircuit hierarchy: equivalence, L72 inverter, nested buffer (8 checks) |
+| `tests/verify_subckt.py` | Subcircuit hierarchy: equivalence, L72 inverter, nested buffer (11 checks) |
 
 NN compact models (LEVEL=73/74/75):
 

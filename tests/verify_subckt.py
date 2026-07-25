@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
 """Verification suite for .subckt / .ends hierarchical netlist support.
 
-Three levels:
+Four levels:
+  Level 0 (no NGSPICE, no solver): malformed hierarchies must be rejected
+    loudly — unknown subckt name, instance/port count mismatch, and runaway
+    recursion each raise a ValueError naming the problem.
   Level 1 (no NGSPICE): subckt-based decks must produce results identical to
     their hand-flattened equivalents (same MNA system) — RC transient, RC AC,
     nested hierarchy + parameter passing at DC OP, and `.ic`-in-body + uic.
@@ -120,6 +123,70 @@ def run_ac(parser) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
         return freqs, ac.solve(freqs)
     finally:
         logging.disable(logging.NOTSET)
+
+
+# ---------------------------------------------------------------------------
+# Level 0 — loud parse errors (no NGSPICE, no solver)
+# ---------------------------------------------------------------------------
+# audit B5g: every other check in this file is a numeric-agreement check, so
+# the three documented .subckt guard rails could be deleted from the parser
+# without moving the verdict. Each entry is (label, file stem, deck, needle);
+# the needle pins the diagnostic, not just the fact that something blew up.
+BAD_DECKS: List[Tuple[str, str, str, str]] = [
+    ("unknown subckt raises", "unknown_subckt",
+     "V1 in 0 1\n"
+     "X1 in out nosuch\n"
+     ".end\n",
+     "not found"),
+    ("port-count mismatch raises", "port_count",
+     ".subckt rdiv a b\n"
+     "R1 a b 1k\n"
+     ".ends\n"
+     "V1 in 0 1\n"
+     "X1 in mid out rdiv\n"
+     ".end\n",
+     "declares 2 ports"),
+    ("recursive subckt raises", "recursion",
+     ".subckt loopy a b\n"
+     "R1 a b 1k\n"
+     "X9 a b loopy\n"
+     ".ends\n"
+     "V1 in 0 1\n"
+     "X1 in out loopy\n"
+     ".end\n",
+     "nesting deeper than"),
+]
+
+
+def level0() -> List[Tuple[str, bool, str]]:
+    """Malformed hierarchies must raise ValueError with a diagnostic message.
+
+    Two distinct failures are checked for, because both are silent-green
+    hazards: a deck that parses anyway (the guard was dropped) and a deck that
+    dies with some incidental downstream exception (TypeError from a None
+    definition, RecursionError from an unguarded cycle) instead of a named
+    error the user can act on.
+    """
+    work = RESULTS_DIR / "level0"
+    work.mkdir(parents=True, exist_ok=True)
+    results = []
+
+    for label, stem, text, needle in BAD_DECKS:
+        try:
+            parse_deck(text, work / f"{stem}.sp")
+        except ValueError as exc:
+            msg = str(exc)
+            ok = needle in msg
+            results.append((label, ok,
+                            f"ValueError: {msg[:60]}" if ok
+                            else f"message lacks '{needle}': {msg[:80]}"))
+        except Exception as exc:  # noqa: BLE001 — wrong type is still a miss
+            results.append((label, False,
+                            f"wrong exception type "
+                            f"{type(exc).__name__}: {str(exc)[:60]}"))
+        else:
+            results.append((label, False, "NO RAISE — silent accept"))
+    return results
 
 
 # ---------------------------------------------------------------------------
@@ -482,7 +549,8 @@ def main() -> int:
     print("=" * 72)
     print("Subcircuit (.subckt/.ends/X) verification")
     print("=" * 72)
-    for name, fn in [("Level 1 (linear equivalence)", level1),
+    for name, fn in [("Level 0 (loud parse errors)", level0),
+                     ("Level 1 (linear equivalence)", level1),
                      ("Level 2 (L72 inverter vs NGSPICE)", level2),
                      ("Level 3 (L72 nested buffer vs NGSPICE)", level3)]:
         print(f"\n--- {name} ---")

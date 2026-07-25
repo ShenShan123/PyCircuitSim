@@ -38,13 +38,23 @@ Subcircuit semantics (flattening expansion, ngspice-style):
 - Node/port/param matching is case-sensitive for nodes, case-insensitive
   for subckt names and parameter names.
 
+Line continuations:
+- A line starting with '+' continues the previous logical line, whatever
+  its type (component, .model, .ic, .tran, X instance, ...); comment and
+  blank lines in between do not break the continuation. A leading '+' with
+  no preceding line to continue is an error.
+
+Ground:
+- "0" and "gnd" (any case) are the global ground spellings; both are
+  canonicalized to "0" at parse time, at top level and inside subcircuits.
+
 Value suffixes supported:
 - k/K: kilo (1e3)
 - u/U: micro (1e-6)
 - n/N: nano (1e-9)
 - p/P: pico (1e-12)
 """
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Optional, Set, Tuple
 import os
 import re
 import sys
@@ -85,7 +95,7 @@ def _resolve_nn_checkpoint(
     """
     from bsimar.config import (
         CHECKPOINT_DIR, tech_variant_to_code, UNKNOWN_CODE_ID,
-        LOCAL_VARIANT_CODES, local_variant_code,
+        LOCAL_UNKNOWN_CODE_ID, LOCAL_VARIANT_CODES, local_variant_code,
     )
 
     # ── Env-var override (V5 Phase C): force a specific exp prefix ──────
@@ -103,9 +113,13 @@ def _resolve_nn_checkpoint(
         f"PYCIRCUITSIM_NN_CHECKPOINT_{level_tag}_{device_key.upper()}")
     per_polarity_env = (
         f"PYCIRCUITSIM_NN_CHECKPOINT_{device_key.upper()}")
-    _override = (os.environ.get(level_polarity_env)
-                 or os.environ.get(per_polarity_env)
-                 or os.environ.get("PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE"))
+    # Remember WHICH var supplied the value so a bad pin can be named.
+    _src_env, _override = next(
+        ((name, os.environ[name])
+         for name in (level_polarity_env, per_polarity_env,
+                      "PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE")
+         if os.environ.get(name)),
+        (None, None))
     # The env var takes priority over explicit_path (MODEL_PATH= in netlist)
     # so V5 Phase C verify can swap checkpoints without re-generating netlists.
     if _override:
@@ -113,49 +127,59 @@ def _resolve_nn_checkpoint(
         if ovr.endswith(f"_{device_key}"):
             base = ovr
         elif ovr.endswith("_nmos") or ovr.endswith("_pmos"):
-            base = None
+            # audit C6l: an opposite-polarity stem used to skip the whole
+            # override block and drop into the resolver cascade unannounced —
+            # the same silent fallback the V6.6.6 FileNotFoundError below was
+            # written to prevent, left open for one branch. Do NOT rewrite the
+            # suffix either: that turns a typo into a silently different run.
+            raise ValueError(
+                f"NN checkpoint override {_src_env}='{ovr}' names the "
+                f"opposite polarity but this device is {device_key.upper()}. "
+                f"Refusing silent fallback to the resolver cascade (which "
+                f"would evaluate production `large` under the pinned "
+                f"recipe's name). Pin '{ovr[:-5]}_{device_key}', or drop the "
+                f"polarity suffix to let the resolver append it.")
         else:
             base = f"{ovr}_{device_key}"
 
-        if base is not None:
-            if level in (73, 75):
-                ovr_path = CHECKPOINT_DIR / f"{base}_best.pt"
-                if ovr_path.exists():
-                    explicit_path = str(ovr_path)
-                else:
-                    # a pinned-but-absent checkpoint must fail LOUDLY: falling
-                    # through to the resolver cascade would silently evaluate
-                    # a different model (typically production `large`) under
-                    # the pinned recipe's name
-                    raise FileNotFoundError(
-                        f"NN checkpoint override '{ovr}' -> {ovr_path} "
-                        "does not exist; refusing silent fallback to the "
-                        "resolver cascade")
-            else:  # level == 74
-                phys_path = CHECKPOINT_DIR / f"{base}_best.phys.pt"
-                plain_path = CHECKPOINT_DIR / f"{base}_best.pt"
-                norm_path = CHECKPOINT_DIR / f"{base}_norm.npz"
-                phys_trustworthy = False
-                if phys_path.exists() and norm_path.exists():
-                    try:
-                        from bsimar.data.normalize import BSIMARNormStats
-                        _ns = BSIMARNormStats.load(str(norm_path))
-                        phys_trustworthy = (
-                            getattr(_ns, "phys_best_metric", "legacy_mean")
-                            == "median")
-                    except Exception:
-                        phys_trustworthy = False
-                if phys_trustworthy:
-                    explicit_path = str(phys_path)
-                elif plain_path.exists():
-                    explicit_path = str(plain_path)
-                elif phys_path.exists():
-                    explicit_path = str(phys_path)
-                else:
-                    raise FileNotFoundError(
-                        f"NN checkpoint override '{ovr}' -> {plain_path} "
-                        f"(or {phys_path.name}) does not exist; refusing "
-                        "silent fallback to the resolver cascade")
+        if level in (73, 75):
+            ovr_path = CHECKPOINT_DIR / f"{base}_best.pt"
+            if ovr_path.exists():
+                explicit_path = str(ovr_path)
+            else:
+                # a pinned-but-absent checkpoint must fail LOUDLY: falling
+                # through to the resolver cascade would silently evaluate
+                # a different model (typically production `large`) under
+                # the pinned recipe's name
+                raise FileNotFoundError(
+                    f"NN checkpoint override '{ovr}' -> {ovr_path} "
+                    "does not exist; refusing silent fallback to the "
+                    "resolver cascade")
+        else:  # level == 74
+            phys_path = CHECKPOINT_DIR / f"{base}_best.phys.pt"
+            plain_path = CHECKPOINT_DIR / f"{base}_best.pt"
+            norm_path = CHECKPOINT_DIR / f"{base}_norm.npz"
+            phys_trustworthy = False
+            if phys_path.exists() and norm_path.exists():
+                try:
+                    from bsimar.data.normalize import BSIMARNormStats
+                    _ns = BSIMARNormStats.load(str(norm_path))
+                    phys_trustworthy = (
+                        getattr(_ns, "phys_best_metric", "legacy_mean")
+                        == "median")
+                except Exception:
+                    phys_trustworthy = False
+            if phys_trustworthy:
+                explicit_path = str(phys_path)
+            elif plain_path.exists():
+                explicit_path = str(plain_path)
+            elif phys_path.exists():
+                explicit_path = str(phys_path)
+            else:
+                raise FileNotFoundError(
+                    f"NN checkpoint override '{ovr}' -> {plain_path} "
+                    f"(or {phys_path.name}) does not exist; refusing "
+                    "silent fallback to the resolver cascade")
 
     if explicit_path is not None:
         path = explicit_path
@@ -300,13 +324,27 @@ def _resolve_nn_checkpoint(
     print(f"[NN-resolver] L{level} {netlist_name} TECH={tech_key} VT={vt_key} "
           f"-> {chk_name} (scope={scope}, tech_code={tech_code})")
 
-    if scope == "universal" and tech_code == UNKNOWN_CODE_ID:
+    # audit C6m: the UNKNOWN slot is per-vocab (universal 17; tsmc5 4,
+    # tsmc7 3, tsmc12/tsmc16 5), so the old `scope == "universal"` guard
+    # never fired for a per-tech checkpoint — an out-of-vocab VT, or a
+    # pinned per-tech checkpoint under a netlist declaring a different TECH,
+    # routed every device to the untrained UNKNOWN row in silence.
+    _unknown = (UNKNOWN_CODE_ID if scope == "universal"
+                else LOCAL_UNKNOWN_CODE_ID[scope])
+    if tech_code == _unknown:
+        msg = (f"MOSFET {netlist_name}: TECH={tech_key} VT={vt_key} maps to "
+               f"the UNKNOWN tech code ({_unknown}) in the '{scope}' vocab "
+               f"of {chk_name} — the model has no trained embedding row for "
+               f"this (tech, VT) pair, only the p_unknown dropout average. "
+               f"Predictions will be materially less accurate.")
+        if os.environ.get("PYCIRCUITSIM_NN_STRICT_TECH_CODE") == "1":
+            raise ValueError(msg)
         import warnings
-        warnings.warn(
-            f"MOSFET {netlist_name}: TECH={tech_key} VT={vt_key} maps to "
-            f"UNKNOWN tech code ({UNKNOWN_CODE_ID}). "
-            "Predictions may be less accurate."
-        )
+        warnings.warn(msg)
+        # warnings.warn de-duplicates per call site, so only the first of N
+        # devices would ever surface; the print is what lands in the .lis /
+        # gate log for every device.
+        print(f"[NN-resolver] WARNING {msg}")
     return path, tech_code
 
 
@@ -344,6 +382,14 @@ class Parser:
         'F': 1e-15,
     }
 
+    #: Node names that denote global ground, compared case-insensitively
+    #: (audit C6i). These are exactly the spellings the rest of the codebase
+    #: already treats as ground ("0"/"GND" in circuit.py / solver.py /
+    #: simulation.py) — the fix is the case-insensitivity, not a new alias.
+    #: "vss"/"gnd!" are deliberately NOT aliases: "vss" is a legitimate
+    #: signal name in many decks, and NGSPICE only globalizes "0"/"gnd".
+    GROUND_ALIASES = frozenset({"0", "gnd"})
+
     # ASAP7 modelcard filenames (from ASAP7 PDK)
     ASAP7_MODELCARD_FILES = [
         "7nm_TT_160803.pm",  # Typical-Typical corner
@@ -377,6 +423,11 @@ class Parser:
         self.models: Dict[str, Dict[str, Any]] = {}  # Model definitions
         # Subcircuit definitions: UPPER name -> {name, ports, params, body}
         self.subckts: Dict[str, Dict[str, Any]] = {}
+        # Flattened instance paths already expanded (audit C6h duplicate
+        # guard). Deliberately NOT reset per parse_file: .include re-enters
+        # parse_file and flattened names share one global namespace, so a
+        # cross-file repeat is a genuine duplicate.
+        self._seen_inst_paths: Set[str] = set()
         self._osdi_path = osdi_path or BSIMCMG_OSDI_PATH
         self._modelcard_base_dir = modelcard_base_dir or GENERIC_MODELCARD_DIR
         self._explicit_modelcard = modelcard_path
@@ -405,10 +456,17 @@ class Parser:
         with open(filename, 'r') as f:
             lines = f.readlines()
 
-        # First pass: handle line continuations and collect models/includes
+        # First pass: fold '+' continuations and normalize whitespace.
+        #
+        # audit C1: EVERY logical line is buffered, not just `.model`. The
+        # previous version primed the buffer only for `.model`, so a '+'
+        # fragment after any other card accumulated into an empty buffer and
+        # was flushed as a space-prefixed orphan line — which `parse_line`
+        # then dropped silently (first char ' ' matches no dispatch branch).
+        # That lost X-instance params, `AC=` stimulus, extra `.ic` nodes and
+        # the `.tran ... / + uic` flag with no diagnostic.
         processed_lines = []
         continued_line = ""
-        in_model = False  # Track if we're in a .model definition
 
         for raw_line in lines:
             line = raw_line.strip()
@@ -419,36 +477,24 @@ class Parser:
 
             # Handle line continuations (lines starting with '+')
             if line.startswith('+'):
+                if not continued_line:
+                    raise ValueError(
+                        f"Continuation line '{line}' has no preceding line "
+                        f"to continue (in {filename})")
                 continuation = line[1:].strip()
                 continuation = continuation.replace(' = ', '=').replace('= ', '=')
                 continuation = re.sub(r'\s*=\s*', '=', continuation)
                 continued_line += " " + continuation
                 continue
 
-            # If we have a continued line, add it to processed lines
+            # A new logical line starts here: flush the buffered one first so
+            # netlist order is preserved, then buffer this one in case a '+'
+            # fragment follows.
             if continued_line:
                 processed_lines.append(continued_line)
-                continued_line = ""
-                in_model = False
 
-            # Check if this is a new .model or .include or analysis line
-            if line.lower().startswith('.model') or line.lower().startswith('.include') or \
-               line.lower().startswith('.dc') or line.lower().startswith('.tran') or \
-               line.lower().startswith('.ac') or line.lower().startswith('.ic') or line.lower().startswith('.end'):
-                line = line.replace(' = ', '=').replace('= ', '=')
-                line = ' '.join(line.split())
-
-                # For .model lines, start accumulating continuations
-                if line.lower().startswith('.model'):
-                    continued_line = line
-                    in_model = True
-                else:
-                    processed_lines.append(line)
-            else:
-                # Regular line (component definition)
-                line = line.replace(' = ', '=').replace('= ', '=')
-                line = ' '.join(line.split())
-                processed_lines.append(line)
+            line = line.replace(' = ', '=').replace('= ', '=')
+            continued_line = ' '.join(line.split())
 
         # Process any remaining continued line
         if continued_line:
@@ -566,6 +612,25 @@ class Parser:
         # No suffix, just convert to float
         return float(value_str)
 
+    @classmethod
+    def _canon_node(cls, node: str) -> str:
+        """Canonicalize a node token: any ground spelling becomes "0".
+
+        Applied at every point where the parser ingests a node name, so
+        nothing downstream (circuit/solver/simulation, which all test
+        ground case-sensitively against {"0", "GND"}) has to change. Before
+        this, a lowercase "gnd" was an ordinary node — floating on GMIN at
+        top level, and prefixed into a brand-new dead node ("X1.gnd")
+        inside a subcircuit (audit C6i).
+
+        Args:
+            node: Raw node token from the netlist
+
+        Returns:
+            "0" for any ground spelling, the token unchanged otherwise
+        """
+        return "0" if node.lower() in cls.GROUND_ALIASES else node
+
     def _parse_resistor(self, line: str) -> None:
         """
         Parse a resistor line: R<name> <n1> <n2> <value>.
@@ -581,7 +646,7 @@ class Parser:
             raise ValueError(f"Invalid resistor syntax: {line}")
 
         name = parts[0]
-        nodes = [parts[1], parts[2]]
+        nodes = [self._canon_node(parts[1]), self._canon_node(parts[2])]
         value = self._parse_value(parts[3])
 
         resistor = Resistor(name, nodes, value)
@@ -602,7 +667,7 @@ class Parser:
             raise ValueError(f"Invalid capacitor syntax: {line}")
 
         name = parts[0]
-        nodes = [parts[1], parts[2]]
+        nodes = [self._canon_node(parts[1]), self._canon_node(parts[2])]
         value = self._parse_value(parts[3])
 
         capacitor = Capacitor(name, nodes, value)
@@ -628,7 +693,7 @@ class Parser:
             raise ValueError(f"Invalid voltage source syntax: {line}")
 
         name = parts[0]
-        nodes = [parts[1], parts[2]]
+        nodes = [self._canon_node(parts[1]), self._canon_node(parts[2])]
 
         # Check if it's a PULSE source
         if len(parts) >= 4 and parts[3].upper() == 'PULSE':
@@ -699,7 +764,7 @@ class Parser:
             raise ValueError(f"Invalid current source syntax: {line}")
 
         name = parts[0]
-        nodes = [parts[1], parts[2]]
+        nodes = [self._canon_node(parts[1]), self._canon_node(parts[2])]
 
         # Check for the AC specification form: DC=x AC=y phase
         dc_value = None
@@ -749,7 +814,7 @@ class Parser:
             raise ValueError(f"Invalid MOSFET syntax: {line}")
 
         name = parts[0]
-        nodes = parts[1:5]  # [drain, gate, source, bulk]
+        nodes = [self._canon_node(n) for n in parts[1:5]]  # d, g, s, b
         model = parts[5].upper()  # NMOS or PMOS
 
         # Extract geometric parameters (BSIM-CMG: L, NFIN, TFIN, HFIN, FPITCH; NN: L, NFIN)
@@ -1072,7 +1137,7 @@ class Parser:
             raise ValueError(f"Invalid .ic syntax: {line}")
 
         for node_str, value_str in matches:
-            node = node_str.strip()
+            node = self._canon_node(node_str.strip())
             value = self._parse_value(value_str)
             self.circuit.initial_conditions[node] = value
 
@@ -1119,11 +1184,22 @@ class Parser:
                             # Store as string for unknown params
                             params[key] = value
 
-        # Store model definition
-        self.models[model_name] = {
-            'type': model_type,
-            'params': params
-        }
+        # Store model definition. audit C6j: a redefinition is retroactive —
+        # .model cards are resolved in a pre-pass that runs before ANY
+        # component line, so a second card silently re-typed (NMOS->PMOS) or
+        # re-levelled devices written ABOVE it. An exactly identical
+        # redefinition is still allowed: .include has no include-once guard,
+        # so a doubly-included library must stay legal.
+        new_def = {'type': model_type, 'params': params}
+        prev = self.models.get(model_name)
+        if prev is not None and prev != new_def:
+            raise ValueError(
+                f".model '{model_name}' redefined with different content "
+                f"(was type={prev['type']} params={prev['params']}, "
+                f"now type={new_def['type']} params={new_def['params']}). "
+                f"Model cards are resolved in a pre-pass, so a redefinition "
+                f"retroactively changes devices written ABOVE it.")
+        self.models[model_name] = new_def
 
     def _parse_include(self, line: str) -> None:
         """
@@ -1210,6 +1286,13 @@ class Parser:
                         params[key.strip().upper()] = \
                             self._resolve_param_value(val, {})
                     else:
+                        if self._canon_node(tok) == "0":
+                            # audit C6i: ground is global, so a port with a
+                            # ground name could never be connected — the
+                            # instance's net would be silently shorted to 0.
+                            raise ValueError(
+                                f"Port '{tok}' of .subckt {parts[1]} names "
+                                f"global ground; ground cannot be a port")
                         ports.append(tok)
                 def_stack.append({
                     'name': parts[1],
@@ -1298,6 +1381,22 @@ class Parser:
                     self._resolve_param_value(val, params)
 
         inst_path = f"{path}.{inst_name}" if path else inst_name
+        # audit C6h: two instances sharing a path would flatten their internal
+        # nodes onto the SAME names ("X1.mid"), silently merging two
+        # subcircuits into one cross-wired net. Comparing the full path (not
+        # just the bare name) gives per-scope uniqueness for free, so nested
+        # Xbuf.X1 / Xtop.X1 remain distinct.
+        if inst_path in self._seen_inst_paths:
+            raise ValueError(
+                f"Duplicate subcircuit instance '{inst_path}' — instance "
+                f"names must be unique within their scope (NGSPICE rejects "
+                f"duplicates; here the two instances' internal nodes would "
+                f"silently merge). Note `.include` has no include-once guard, "
+                f"so including the same file twice also trips this — unlike a "
+                f"repeated identical `.model`, which is deliberately allowed "
+                f"(audit C6j). Include the file once.")
+        self._seen_inst_paths.add(inst_path)
+
         child_map = dict(zip(defn['ports'], ext_nodes))
 
         flat: list = []
@@ -1363,12 +1462,17 @@ class Parser:
                   path: str) -> str:
         """Map a local node token to its flat (global) name.
 
-        Ports map to the connecting nodes, ground ("0"/"GND") is global,
-        anything else is an internal node prefixed with the instance path.
+        Ports map to the connecting nodes, ground is global, anything else
+        is an internal node prefixed with the instance path. The token is
+        canonicalized first (audit C6i), so every ground spelling — not just
+        the literal "0"/"GND" — stays global instead of becoming a dead
+        "<inst>.gnd" net. Ground can therefore never be a port name;
+        `_collect_subckt_defs` rejects such a .subckt line outright.
         """
+        node = self._canon_node(node)
         if node in node_map:
             return node_map[node]
-        if node in ("0", "GND") or not path:
+        if node == "0" or not path:
             return node
         return f"{path}.{node}"
 

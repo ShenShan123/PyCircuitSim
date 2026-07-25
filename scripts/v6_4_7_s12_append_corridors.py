@@ -41,7 +41,10 @@ for p in (ROOT / "external_compact_models" / "PyCMG",
         sys.path.remove(sp)
     sys.path.insert(0, sp)
 
-from bsimar.eval.loo_labels import get_or_build_tech_variant_labels  # noqa: E402
+from bsimar.eval.loo_labels import (  # noqa: E402
+    get_or_build_tech_variant_labels,
+    write_sidecar_meta,
+)
 from bsimar.config import tech_variant_to_code  # noqa: E402
 from pycmg.nn_generate import SAMPLE_CLASS_NAMES, SAMPLE_CLASS_CODES  # noqa: E402
 
@@ -123,6 +126,9 @@ def append_one(tech: str, dev: str, frag_tag: str = "",
         [np.asarray(v2_labels), np.full(n_cor, cor_code, v2_labels.dtype)])
     cache_path = out_path.with_name(out_path.stem + "_tech_variant_labels.npy")
     np.save(cache_path, all_labels)
+    # audit C6o — the appended sidecar must carry the fingerprint of the
+    # CONCATENATED geometry, not the v2 block it was derived from.
+    write_sidecar_meta(out_path, geometry, all_labels)
 
     # --- validation: reload + decade coverage + cache length ---
     chk = np.load(out_path, allow_pickle=True)

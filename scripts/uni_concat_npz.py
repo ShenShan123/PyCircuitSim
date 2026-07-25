@@ -32,6 +32,20 @@ from pathlib import Path
 
 import numpy as np
 
+# audit C6o — sidecar fingerprints are written through bsimar's loo_labels, so
+# put the package on the path the same way scripts/v6_4_7_s12_append_corridors.py
+# does.
+_ROOT = Path(__file__).resolve().parents[1]
+for _p in (_ROOT / "external_compact_models" / "PyCMG",
+           _ROOT / "external_compact_models", _ROOT):
+    _sp = str(_p)
+    if _sp in sys.path:
+        sys.path.remove(_sp)
+    sys.path.insert(0, _sp)
+
+from bsimar.eval.loo_labels import write_sidecar_meta  # noqa: E402
+
+
 ROOT = Path(__file__).resolve().parents[1]
 DS = ROOT / "external_compact_models" / "bsimar" / "data" / "datasets"
 
@@ -130,7 +144,11 @@ def build_one(variant: str, dev: str) -> bool:
         meta_created_by=np.array("scripts/uni_concat_npz.py (V6.7.0 universal campaign)"),
     )
     np.save(out_sc, sidecar)
-    print(f"  saved {out_npz.name} ({n_total} rows) + sidecar")
+    # audit C6o — pair every sidecar with its geometry fingerprint, or the
+    # loader can only validate it by scope + row count (and for a u716_* stem
+    # the scope check is skipped too, leaving row count as the only guard).
+    write_sidecar_meta(out_npz, cat["geometry"], sidecar)
+    print(f"  saved {out_npz.name} ({n_total} rows) + sidecar + meta")
 
     # ── spot-check: reload output, compare seeded random rows to sources ─
     del cat, sidecar, parts, sidecars

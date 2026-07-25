@@ -85,11 +85,19 @@ def main() -> int:
     print(f"  Inverter acceptance: NRMSE < 15%")
 
     results = []
-    for analysis in analyses:
-        results.extend(run_nn_multi_tech(
-            tech_keys, analysis, RESULTS_DIR,
-            make_inv_baseline, build_inv_parametric, run_single_nn_inv,
-        ))
+    # audit B5d — get_available_checkpoints() now RAISES on a pinned-but-absent
+    # stem instead of printing a SKIP with no result row. Catch it here so this
+    # gate reports the same clean "ERROR: ... / rc 1" as verify_nn_dc_tran.py
+    # rather than a traceback.
+    try:
+        for analysis in analyses:
+            results.extend(run_nn_multi_tech(
+                tech_keys, analysis, RESULTS_DIR,
+                make_inv_baseline, build_inv_parametric, run_single_nn_inv,
+            ))
+    except FileNotFoundError as exc:
+        print(f"ERROR: {exc}")
+        return 1
 
     counts = print_nn_summary_table(results, kind="inv")
     save_nn_summary_csv(

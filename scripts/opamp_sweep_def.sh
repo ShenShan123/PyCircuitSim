@@ -29,7 +29,9 @@ if [ "${1:-}" = "_one" ]; then
   tlc="$(echo "$tuc" | tr 'A-Z' 'a-z')"
   sn="$(stem "$recipe" "$tlc" nmos)"; sp="$(stem "$recipe" "$tlc" pmos)"
   d="$OUT/$recipe"; mkdir -p "$d"
-  [ -f "$CKPT/${sn}_best.pt" ] || { echo "$tuc $circ OMP$omp NO-CKPT" >> "$d/${circ}.txt"; exit 0; }
+  # audit B3 — exit 3 = "this cell reached NO verdict"; an rc=1 FAIL run IS a
+  # verdict and exits 0. Never 255: xargs aborts the whole run on 255.
+  [ -f "$CKPT/${sn}_best.pt" ] || { echo "$tuc $circ OMP$omp NO-CKPT" >> "$d/${circ}.txt"; exit 3; }
   # PYCIRCUITSIM_TORCH_THREADS keeps the multistability probe alive now that
   # tests/common/complex.py pins torch threads to 1 by default (v664 P0)
   export CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS="$omp" MKL_NUM_THREADS="$omp" \
@@ -40,6 +42,9 @@ if [ "${1:-}" = "_one" ]; then
   out="$("$PY" -u "$ROOT/tests/verify_complex_${circ}.py" --tech "$tuc" 2>&1)"; rc=$?
   hl="$(printf '%s\n' "$out" | grep -iE "gain error|period error" | grep -viE "resolver|MEXP" | head -1 | sed 's/^ *//')"
   echo "$tuc $circ OMP$omp rc=$rc | $hl" >> "$d/${circ}.txt"
+  # rc 124 (timeout) / >=126 (cannot-exec, killed by signal) = no verdict; the
+  # tally below would otherwise read the row as a plain FAIL.
+  if [ "$rc" -eq 124 ] || [ "$rc" -ge 126 ]; then exit 3; fi
   exit 0
 fi
 
@@ -50,7 +55,10 @@ specs=()
 for r in "${recipes[@]}"; do rm -f "$OUT/$r"/*.txt 2>/dev/null; mkdir -p "$OUT/$r"
   for t in "${techs[@]}"; do for c in "${circs[@]}"; do for o in ${OMPS:-1 2 4}; do
     specs+=("$r $t $c $o"); done; done; done; done
+# audit B3 — capture xargs BEFORE the trailing echo/tally, which would otherwise
+# overwrite $? with 0. Verdict is decided after the tally has been printed.
 printf '%s\n' "${specs[@]}" | xargs -P "$PAR" -L1 "$SELF" _one
+xrc=$?
 echo "=== DEFINITIVE OPAMP/RING SWEEP DONE ==="
 # tally: a (recipe,tech,circ) cell PASSES iff all 3 OMP runs rc=0
 for r in "${recipes[@]}"; do
@@ -66,3 +74,16 @@ for r in "${recipes[@]}"; do
     done
   done
 done
+# audit B3/B5f — a cell that recorded no row at all silently shrinks the (pass/tot)
+# denominators printed above, so a half-killed sweep reads as a smaller-but-clean
+# tally. Compare rows on disk against the number of cells dispatched.
+recorded=0
+for r in "${recipes[@]}"; do for c in "${circs[@]}"; do
+  [ -f "$OUT/$r/${c}.txt" ] || continue
+  recorded=$((recorded + $(grep -c . "$OUT/$r/${c}.txt")))
+done; done
+if [ "$xrc" -ne 0 ] || [ "$recorded" -lt "${#specs[@]}" ]; then
+  echo "[opdef] INFRASTRUCTURE FAILURE: $recorded/${#specs[@]} cells recorded a row" \
+       "(xargs rc=$xrc) — the tallies above are PARTIAL" >&2
+  exit 1
+fi
