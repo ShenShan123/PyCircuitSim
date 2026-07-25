@@ -10,11 +10,11 @@ compact-model families on one solver, all gated against NGSPICE ground truth:
   every NN trains against and is gated on.
 - **DirectNet** (LEVEL=73) — feed-forward MLP; the **production** NN fast path.
 - **BSIM-AR Transformer** (LEVEL=74) — autoregressive Transformer; the validated
-  **higher-fidelity** option (15/16 strict, ~30–100× slower AR inference).
+  **higher-fidelity** option (16/16 strict post-V6.13.0, ~30–100× slower AR inference).
   Un-parked in V6.8.0.
 - **PFN / TabPFN** (LEVEL=75) — TabPFN-v3-style in-context transformer;
-  **research** family (V6.10.0; clean small 11/16 strict, zero OMP flips; ~10× DN
-  eval cost, 4× faster than BSIM-AR).
+  **research** family (V6.10.0; clean small 11/16 strict at only 0.69M params;
+  ~10× DN eval cost, 4× faster than BSIM-AR).
 
 The three NN families share one data / normalization / loss / training / eval
 pipeline via the unified `bsimar` package (`external_compact_models/bsimar/`).
@@ -99,24 +99,29 @@ DirectNet is production; BSIM-AR is the higher-fidelity option; PFN is research.
   tech_code with `nn.Embedding`). gm/gds/gmb are the **autograd Jacobian** of the
   predicted `id`; AC caps are the `dQ/dV` autograd of predicted charges; per-tech
   checkpoints use a local embedding vocab (Rule 16). **Production = uniform `large`
-  tier with the crit30 curriculum (V6.6.4) = 14/16 complex gates, OMP-deterministic**
+  tier with the crit30 curriculum (V6.6.4) = 15/16 complex gates, strict across
+  OMP∈{1,2,4} with zero flips** (V6.13.0 re-gate; was 14/16 before the gds fix —
+  `tsmc16-opamp` is now banked, `tsmc7-opamp` is the sole open cell at `large`)
   — one identical recipe per (tech × device), no per-case specials. Report:
   `docs/accuracy/DirectNet-L73-accuracy.md` — the unified DirectNet record
   (V6.6.0 baseline → V6.6.1 recipes → V6.6.6 cross-tier → V6.7.0 universal → V6.13.0 A3 re-gate;
   Part I = analysis + recommendation, Part II = the frozen data tables), CHANGELOG.
 - **BSIM-AR (74)** — autoregressive Transformer sharing DirectNet's pipeline.
-  Best config `corroft@medium` (corridor curriculum, 1.9M params) = **15/16 strict**,
-  beating DN production (banks tsmc16-opamp + both rings; misses only tsmc7-opamp,
-  the T3-solver-only cell). AR inference is ~30–100× slower on CPU, so DirectNet
-  stays production. Per-tech `tsmc{X}_tf_{small,medium,large}_{nmos,pmos}` (+ recipe
+  Best config `corroft@medium` (corridor curriculum, 1.9M params) = **16/16 strict,
+  zero flips** (V6.13.0 re-gate; was 15/16). The old "tsmc7-opamp is the T3-solver-only
+  cell" claim is **RETRACTED** — BSIM-AR passes it at every size, and DirectNet's
+  `crit15m@xl` also sweeps 16/16 strict. AR inference is ~30–100× slower on CPU, so
+  DirectNet stays production. Per-tech `tsmc{X}_tf_{small,medium,large}_{nmos,pmos}` (+ recipe
   variants); parser LEVEL=74 preempt cascade + `PYCIRCUITSIM_NN_FORCE_LEVEL=74`
   hook. Report: `docs/accuracy/BSIM-AR-L74-accuracy.md`.
 - **PFN / TabPFN (75)** — faithful scaled-down port of TabPFN-v3's in-context
   transformer (tech code = 8th column token, local vocab), with two deviations: a
   **frozen learned context** (stratified K-row buffer baked into the checkpoint,
   context-KV cached at inference) and a direct 13-output value head (NR needs smooth
-  autograd). Clean `small` = 11/16 strict, the first family with zero OMP flips;
-  capacity curve declines s→m→l (11/10/8). Per-tech `tsmc{X}_pfn_{small,medium,large}_{nmos,pmos}`;
+  autograd). Clean `small` = 11/16 strict; capacity curve declines s→m→l
+  (11/11/9 post-gds-fix; was 11/10/8). PFN's old "only flip-free family" claim is
+  **overtaken** — since the V6.13.0 gds fix every family is flip-free. Per-tech
+  `tsmc{X}_pfn_{small,medium,large}_{nmos,pmos}`;
   env pins `PYCIRCUITSIM_NN_CHECKPOINT_PFN_{NMOS,PMOS}`, hook
   `PYCIRCUITSIM_NN_FORCE_LEVEL=75`, drivers take `MODEL=tabpfn`. The `_config.npz`
   sidecar is **required** to rebuild the arch. Report: `docs/accuracy/PFN-L75-accuracy.md`.
@@ -308,9 +313,13 @@ references in `tests/references/`.
   harness keys/baselines are unchanged; NGSPICE reference decks + single-device
   Id-Vgs decks stay flat.
 - **BSIM-CMG (72):** OP `verify_bsimcmg_op.py` (<0.02%); DC L1 `verify_bsimcmg_dc.py` (2)
-  · L2 `..._comprehensive.py` (81) · L3 `verify_multi_tech_dc.py` (53); tran L1
-  `verify_bsimcmg_tran.py` (1) · L2 `..._comprehensive.py` (45) · L3
-  `verify_multi_tech_tran.py` (86); AC `verify_ac.py` (2/2, ~machine precision).
+  · L2 `..._comprehensive.py` (67) · L3 `verify_multi_tech_dc.py` (44); tran L1
+  `verify_bsimcmg_tran.py` (1) · L2 `..._comprehensive.py` (37) · L3
+  `verify_multi_tech_tran.py` (72); AC `verify_ac.py` (2/2, ~machine precision).
+  Counts dropped from 81/53/45/86 when TSMC6 was retired in V6.13.0 — same
+  coverage, one fewer (duplicate) tech column. L3 DC currently reports 43 PASS +
+  **1 known ERROR** (`TSMC5_lvt_inv_l_24nm`, internal-node NR divergence in the
+  pure BSIM-CMG path — pre-existing, unrelated to the NN surface).
 - **DirectNet (73):** `verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16 [--inverter-only]`
   (baseline inverter 8/8, DC 55/55, tran 64/64); `verify_nn_multi_tech_{dc,tran}.py`
   (parametric, baseline-gated — pin OMP/MKL=1, VTC trip has ~±1% scatter);

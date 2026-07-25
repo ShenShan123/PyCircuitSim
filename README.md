@@ -346,7 +346,7 @@ Mp1 out in vdd vdd pmos_ar L=16n NFIN=10
 BSIM-AR uses per-tech checkpoints `tsmc{X}_tf_{small,medium,large}_{nmos,pmos}`
 (plus recipe variants) under `external_compact_models/bsimar/checkpoints/`.
 Un-parked in V6.8.0: the best config (`corroft@medium`, 1.9M params) reaches
-**15/16 strict** complex-circuit gates, beating DirectNet production — at
+**16/16 strict** complex-circuit gates (post-V6.13.0 gds fix) — at
 ~30–100× the CPU inference cost, which is why DirectNet remains the default.
 
 #### Level 75 (PFN — TabPFN-style in-context transformer)
@@ -363,7 +363,8 @@ Per-tech checkpoints `tsmc{X}_pfn_{small,medium,large}_{nmos,pmos}`; env pins
 `PYCIRCUITSIM_NN_CHECKPOINT_PFN_{NMOS,PMOS}`. Frozen-context buffers live
 inside the checkpoint, and the `_config.npz` sidecar is **required** to
 rebuild the architecture. Research-tier: clean `small` scores 11/16 strict —
-notably the first family with zero OMP-threading flips.
+notably the first family with zero OMP-threading flips — a distinction that no
+longer separates it, since the V6.13.0 gds fix made every family flip-free.
 
 All three NN levels expose autograd-derived conductances (gm, gds, gmb) so
 Newton-Raphson stays consistent in multi-device circuits. See
@@ -673,7 +674,7 @@ Newton-Raphson consistency, and the source-relative voltage frame (for
 | Forward pass | 1 per device eval | 13 sequential tokens | 1 with frozen context |
 | Inference cost | ~1× | ~30–100× | ~10× |
 | Best capacity tier | `large` | `medium` | `small` |
-| Complex gates (strict) | 14/16 | **15/16** | 11/16 |
+| Complex gates (strict) | **15/16** (16/16 at `crit15m@xl`) | **16/16** | 11/16 |
 | Role | **Production** fast path | Highest fidelity | Research |
 
 The practical trade-off: **DirectNet** unless you specifically need
@@ -767,10 +768,10 @@ python tests/verify_subckt.py
 Two suites, both **fully passing** as of the latest run:
 
 - `verify_bsimcmg_tran_comprehensive.py` (L2) — VT / L / NFIN sweep:
-  **45/45 PASS**
+  **37/37 PASS**
 - `verify_multi_tech_tran.py` (L3) — multi-tech parametric over VDD
   (0.6–0.8 V), Cload (1–100 fF), input slew (10–500 ps), pulse width
-  (0.2–2.0 ns), and P/N ratio (0.5–2.0): **86/86 PASS**
+  (0.2–2.0 ns), and P/N ratio (0.5–2.0): **72/72 PASS**
 
 Worst case across both is 0.84% NRMSE / 42 mV at Cload=1fF — the smallest
 load, where the output slews fastest. Representative ASAP7 rows (L3):
@@ -808,7 +809,7 @@ DirectNet production (`large` tier, crit30 curriculum) device-level baseline
 across TSMC5/7/12/16: **inverter 8/8, DC 55/55, transient 64/64**.
 
 On the 16 complex-circuit gates (4 circuits × 4 techs), scored strictly
-against NGSPICE: DirectNet **14/16**, BSIM-AR **15/16**, PFN **11/16**.
+against NGSPICE: DirectNet **15/16** (16/16 at `crit15m@xl`), BSIM-AR **16/16**, PFN **11/16** — all strict across OMP∈{1,2,4} with zero flips since the V6.13.0 gds fix.
 The one cell no family passes is the TSMC7 opamp, which is reachable only
 via the T3 differentiable-DC-solver fine-tune.
 
@@ -818,11 +819,11 @@ via the T3 differentiable-DC-solver fine-tune.
 |--------|---------|
 | `tests/verify_bsimcmg_op.py` | OP analysis: PyCircuitSim vs NGSPICE for NMOS, PMOS, inverter |
 | `tests/verify_bsimcmg_dc.py` | DC sweep L1: Id-Vgs (ASAP7 baseline) |
-| `tests/verify_bsimcmg_dc_comprehensive.py` | DC sweep L2: 81-config multi-tech VT/L/NFIN sweep |
-| `tests/verify_multi_tech_dc.py` | DC sweep L3: 53-config inverter VTC + parametric |
+| `tests/verify_bsimcmg_dc_comprehensive.py` | DC sweep L2: 67-config multi-tech VT/L/NFIN sweep |
+| `tests/verify_multi_tech_dc.py` | DC sweep L3: 44-config inverter VTC + parametric |
 | `tests/verify_bsimcmg_tran.py` | Transient L1: single inverter baseline |
-| `tests/verify_bsimcmg_tran_comprehensive.py` | Transient L2: 45-config VT/L/NFIN sweep |
-| `tests/verify_multi_tech_tran.py` | Transient L3: 86-config multi-tech parametric |
+| `tests/verify_bsimcmg_tran_comprehensive.py` | Transient L2: 37-config VT/L/NFIN sweep |
+| `tests/verify_multi_tech_tran.py` | Transient L3: 72-config multi-tech parametric |
 | `tests/verify_ac.py` | AC L1 passive RC + L2 BSIM-CMG common-source amp |
 | `tests/verify_subckt.py` | Subcircuit hierarchy: equivalence, L72 inverter, nested buffer (8 checks) |
 

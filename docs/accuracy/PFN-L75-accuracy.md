@@ -22,6 +22,7 @@ Sibling reports: `DirectNet-L73-accuracy.md` (LEVEL=73, production),
 |---|---|---|
 | V6.10.0 | 2026-07-11/14 | The port itself + presets, device/complex/AC gates, pretrained baseline, runtime (branch `worktree-tabpfn-pfn`, merged `6b3a890`) |
 | V6.11.0 | 2026-07-14/17 | TSMC6 clean capacity sweep (§9 — see the TSMC6≡TSMC7 correction) |
+| V6.13.0 | 2026-07-24 | Re-gate of all three tiers after the gds sign + guard fix (§1, §5, §7) |
 
 ---
 
@@ -35,14 +36,19 @@ on the exact V6.8.0 harness.
 | Metric | Result |
 |---|---|
 | **Best config** | **clean `small`, 0.69 M params** |
-| **Complex gates** | **11/16 — STRICT across OMP∈{1,2,4} with ZERO flips** |
-| Distinction | **the first family in this project with no observable OMP multistability** |
-| Clean capacity curve on gates | **11 → 10 → 8 / 16** (small → medium → large) — *monotone decline* |
+| **Complex gates** | **11/16 — STRICT across OMP∈{1,2,4} with ZERO flips** (unchanged by the V6.13.0 fix) |
+| Distinction | was **the first family with no observable OMP multistability** — true when measured, **overtaken in V6.13.0**: every family is now flip-free (§10) |
+| Clean capacity curve on gates | **11 → 11 → 9 / 16** (small → medium → large), post-gds-fix; was 11 → 10 → 8 |
 | Device fidelity peak | **medium** (id MRE 0.10–0.30 %) — the best device-fidelity clean tier measured in this project |
-| Device CS-amp AC | 5/8 small · 0/8 medium · 5/8 large (**non-monotone**) |
+| Device CS-amp AC | **8/8 at `large`** post-fix (was 5/8 pre-fix); small/medium not re-measured (5/8 · 0/8 pre-fix) |
 | Opamp open-loop AC | 0/4 at every tier |
 | Runtime | 15.6 ms/eval — ~10× DirectNet, **4× faster than BSIM-AR** |
 | Large tier | **optimization-unstable** (8 divergence-collapse events) |
+
+The V6.13.0 gds fix (see `DirectNet-L73-accuracy.md` §12.2) moved PFN by **+1 cell at
+medium and +1 at large, and 0 at small** — the smallest response of the three
+families, and the decline with capacity survives it. Both gained cells are opamps
+(tsmc7 at medium, tsmc5 at large), matching the DirectNet signature exactly.
 
 DirectNet (LEVEL=73) remains production; PFN is a validated research family whose sweet
 spot is the **small** tier, with three identified architecture-specific behaviours:
@@ -165,16 +171,28 @@ context is admissible without retraining). Left as future work.
 Single-run matrix (`recipe_eval.sh`, CPU-pinned, isolated scratch) — cells listed are
 the **passing** ones:
 
+**Pre-gds-fix** (V6.10.0 measurement, kept for the capacity narrative):
+
 | tier | tsmc5 | tsmc7 | tsmc12 | tsmc16 | total |
 |---|---|---|---|---|---|
 | **small** | sram, swcap | sram, swcap | ring, opamp, sram | ALL 4 | **11/16** |
 | medium | sram, swcap | sram, swcap | ring, opamp, sram | ring, sram, swcap | 10/16 |
 | large | sram, swcap | sram, swcap | ring, sram | ring, sram | 8/16 |
 
-The clean capacity curve on gates **declines monotonically** (11 → 10 → 8). At large the
-opamp rails on ALL four techs (tsmc12's 0.57 %-gain pass at s/m is lost) and the
-tsmc12/16 switchcaps regress (5.30 % / 4.99 % + droop-fail) — value-surface basins
-relocate with capacity, and the unstable optimization compounds it.
+**Post-gds-fix** (V6.13.0 re-gate, same checkpoints and harness):
+
+| tier | tsmc5 | tsmc7 | tsmc12 | tsmc16 | total |
+|---|---|---|---|---|---|
+| **small** | sram, swcap | sram, swcap | ring, opamp, sram | ALL 4 | **11/16** (0) |
+| medium | sram, swcap | **opamp**, sram, swcap | ring, opamp, sram | ring, sram, swcap | **11/16** (+1) |
+| large | **opamp**, sram, swcap | sram, swcap | ring, sram | ring, sram | **9/16** (+1) |
+
+The clean capacity curve still **declines** (11 → 11 → 9); the fix lifts the middle
+and the tail without changing the shape. Both gained cells are opamps, and no ring,
+SRAM or switchcap cell moved at any tier — the same gds-only signature seen in
+DirectNet §3.1b. At large the opamp no longer rails on all four techs (tsmc5 now
+passes), but the tsmc12/16 switchcap regressions remain: those are charge-side, and
+the fix touches conductance only.
 
 **Strict OMP∈{1,2,4} @small = 11/16 with ZERO flips** — every cell verdict identical at
 all thread counts (`recipe_multirun_gate.sh`, 48 runs). No other family has shown a
@@ -194,7 +212,8 @@ multistability. Margins: tsmc12 ring 2.9–4.3 %, opamp 0.57 %, sram ≤1.5 %; t
   basins, echoing the V6.6.5 tier-dependence finding.
 
 Reference points (single-run clean recipes): DN small 7/16, DN large 13/16; production
-DN crit30@large = 14/16 strict; BSIM-AR corroft@medium = 15/16 strict. **PFN clean small
+DN crit30@large = **15/16** strict; BSIM-AR corroft@medium = **16/16** strict
+(both post-gds-fix). **PFN clean small
 = 11/16 strict is the strongest clean small tier on record**, but the clean ceiling
 stays below the curriculum recipes.
 
@@ -221,10 +240,13 @@ pretrained model ~10× on `id` with 1.2 % of the parameters.**
 
 ## 7. AC small-signal and transient
 
-- **Device CS-amp** (`verify_nn_ac`): small **5/8** (fails tsmc5-nmos 11.4 %,
-  tsmc12-pmos 12.5 %, tsmc16-pmos 14.1 % magNRMSE — all magNRMSE; gain0/f3db mostly
-  in-gate), medium **0/8**, large **5/8** — **non-monotone**; the medium-tier dQ/dV
-  surface is the outlier, not a trend.
+- **Device CS-amp** (`verify_nn_ac`): **`large` is 8/8 after the V6.13.0 gds fix**
+  (`results/a3_regate/suites/nn_ac_pfn.log`, resolver default = `large`); it was 5/8.
+  The pre-fix small/medium/large readings were 5/8 · 0/8 · 5/8 — **non-monotone** —
+  and small/medium have not been re-measured post-fix, so that non-monotonicity is
+  now an open question rather than an established result. Every pre-fix miss was a
+  magNRMSE miss with gain0/f3db in-gate, which is exactly the class the corrected
+  output conductance repairs.
 - **Opamp AC** (`verify_complex_opamp_ac`): **0/4 at every tier** — the harness's
   peak-gain bias probe rails (OP-MISBIAS) even where the DC opamp gate passes; the
   historically hardest cell class (BSIM-AR also fails it broadly).
@@ -288,18 +310,30 @@ gates told us nothing, because they were TSMC7's gates.
 
 ## 10. Verdict, routing, and caveats
 
-- **Production unchanged**: DirectNet crit30@large (14/16 strict) remains the fast path;
-  BSIM-AR corroft@medium (15/16 strict) the high-fidelity option.
-- **PFN in one line**: best-in-class small-tier gates (11/16 strict) + total OMP
-  determinism + mid-pack speed, with a clean-recipe ceiling below the curriculum
-  families, a monotone-declining gate capacity curve (11/10/8), an off-grid geometry
-  weakness that capacity repairs, and a large tier that is optimization-unstable.
+- **Production unchanged**: DirectNet crit30@large (**15/16** strict post-gds-fix)
+  remains the fast path; BSIM-AR corroft@medium (**16/16** strict) the
+  high-fidelity option.
+- **PFN in one line**: strong small-tier gates (11/16 strict) at 0.69 M params and
+  mid-pack speed, with a clean-recipe ceiling below the curriculum families, a
+  *declining* gate capacity curve (11/11/9 post-fix), an off-grid geometry weakness
+  that capacity repairs, and a large tier that is optimization-unstable.
 
 | family | best config | params | complex strict | AC (device) | CPU ms/eval |
 |---|---|---|---|---|---|
-| DirectNet (73) | crit30f@large | 0.92 M | 14/16 | 4/12 | 1.5 |
-| BSIM-AR (74) | corroft@medium | 1.9 M | **15/16** | 4/8 | 61.5 |
-| **PFN (75)** | **clean@small** | **0.69 M** | 11/16 (**zero flips**) | 5/8 | 15.6 |
+| DirectNet (73) | crit30f@large | 0.92 M | **15/16** (0 flips) | 8/8 | 1.5 |
+| DirectNet (73) | crit15m@xl | 2.1 M | **16/16** (0 flips) | — | 3.4 |
+| BSIM-AR (74) | corroft@medium | 1.9 M | **16/16** (0 flips) | 4/8 | 61.5 |
+| **PFN (75)** | **clean@small** | **0.69 M** | 11/16 (0 flips) | **8/8** at large | 15.6 |
+
+> ⚠ **PFN's headline distinction has been overtaken.** "The first and only
+> flip-free family" was true when measured, and it is no longer a
+> differentiator: after the V6.13.0 gds sign fix **every** family is flip-free,
+> on all 18 re-gated per-tech groups and all 8 universal stems. The shared cause
+> was a wrong-signed Jacobian entry steering NR into different basins under
+> different GEMM thread counts — not an architectural property of the in-context
+> transformer. What PFN keeps is the *smallest* parameter count of the three and
+> the best small-tier clean result; what it does not keep is a unique claim on
+> determinism.
 
 **Highest-EV next steps** (not run):
 
@@ -313,12 +347,12 @@ gates told us nothing, because they were TSMC7's gates.
    charge-side improvement.
 4. **Stabilize the large tier** (attention-logit clamp / warmup).
 
-**Standing caveat — the gds sign bug.** Every number here was measured with the
-inference-side `gds` sign error present (`docs/2026-07-21-systematic-audit.md` §A3; not
-shipped as of 2026-07-24). The audit measured the corruption across all three NN
-families and specifically flagged `tsmc6_pfn_small_nmos` as showing the off-grid NFIN
-signature at a shifted centre. Expect §7's AC numbers and the opamp rails to move when
-the sign + guard-F fix lands. See `DirectNet-L73-accuracy.md` §12.2.
+**Provenance.** The gds sign + guard fix is **shipped** (`8ed35bd`, V6.13.0) and
+this family was re-gated on it. §1, §5's post-fix table and §7's `large` AC row
+are post-fix at `d2ea720`; §4, §6, §8 and the rest of §7 are pre-fix. PFN moved
+the least of the three families — +1 cell at medium, +1 at large, 0 at small —
+and both gained cells are opamps, matching the DirectNet signature exactly. See
+`DirectNet-L73-accuracy.md` §12.2 for the fix and its evidence.
 
 ---
 

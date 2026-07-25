@@ -1,8 +1,37 @@
 # V6.13.0 — A3 gds fix + TSMC6 retire + full re-gate — STATUS / HANDOFF
 
 **Date:** 2026-07-24. **State:** code fixes shipped and committed; re-gate ~90 %
-complete when the session ended and the background jobs were killed. This file
+complete when the first session ended and the background jobs were killed. This file
 is the resume point. Companion memory: `v6130-a3-fix-regate-campaign`.
+
+## RESUMED 2026-07-24 20:10 — session 2 (this session)
+
+The three unfinished compute blocks below were relaunched, and a second workstream
+(the remaining systematic-audit bug fixes) runs alongside them.
+
+- **Driver:** `/data2/shenshan/a3_gate_snap/a3_resume.sh`, launched detached
+  (`setsid nohup`). It runs three pools concurrently — 33 missing matrix cells
+  (PAR=33), 45 missing OMP runs (PAR=12), and `nn_ac_tf` — and folds the results
+  back into `results/a3_regate/`. Progress: `results/a3_regate/_resume/`,
+  `results/a3_regate/_resume_main.log`.
+- **Frozen code snapshot.** The gates run from `/data2/shenshan/a3_gate_snap`, an
+  rsync of the repo at `d2ea720` with `checkpoints/`, `tools/` and `PyCMG/`
+  symlinked back. This decouples the campaign from the repo working tree, so
+  bug-fix edits landing during the run cannot change the numerics half-way
+  through. Every V6.13.0 number is therefore measured at exactly `d2ea720`.
+- **Per-OMP resume.** `scripts/a3_omp_one.sh` (new) runs ONE OMP value and writes a
+  sidecar `<log>.omp<n>`, instead of `recipe_multirun_gate.sh`'s all-of-{1,2,4}.
+  The killed sweeps had already banked 1–2 of the 3 runs per cell; re-running only
+  the missing values saves ~40 BSIM-AR gate-hours. Sidecars are folded into the
+  cell log in OMP order when the pool finishes (concurrent appends to one log
+  interleave, hence the sidecar).
+- **Strict collector.** `scripts/a3_regate_omp_collect.py` (new) turns the OMP logs
+  into per-group strict verdicts → `results/a3_regate/OMP_REPORT.md`.
+- **Bug-fix worktree.** `/data2/shenshan/pcs-fixes` on branch `audit-fixes`, so the
+  audit fixes never contaminate the V6.13.0 measurement commit on `main`. The
+  triage of the 43 remaining audit findings and their two-wave ordering live in
+  **`docs/plans/2026-07-24-audit-fix-waves.md`** — wave 2 is gate-affecting and is
+  blocked on this campaign's results being committed.
 
 ## What is DONE and committed (branch `main`, NOT pushed)
 

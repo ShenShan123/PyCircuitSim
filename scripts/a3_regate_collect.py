@@ -166,7 +166,11 @@ def matrix(cells: List[Cell]) -> Tuple[str, int, int]:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--root", default="results/a3_regate", type=Path)
-    ap.add_argument("--out", default=None, type=Path)
+    # Default to <root>/REPORT.md, as the module docstring advertises. It used
+    # to default to None, so a bare invocation printed a fresh report while
+    # leaving a STALE REPORT.md on disk — read once as the new result.
+    ap.add_argument("--out", default=None, type=Path,
+                    help="output path (default: <root>/REPORT.md)")
     args = ap.parse_args()
 
     groups = discover(args.root)
@@ -219,12 +223,11 @@ def main() -> int:
     out += detail
 
     text = "\n".join(out)
-    if args.out:
-        args.out.parent.mkdir(parents=True, exist_ok=True)
-        args.out.write_text(text)
-        print(f"wrote {args.out}")
-    else:
-        print(text)
+    dest = args.out or (args.root / "REPORT.md")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    dest.write_text(text)
+    print(text)
+    print(f"\n[written] {dest}")
     return 0
 
 

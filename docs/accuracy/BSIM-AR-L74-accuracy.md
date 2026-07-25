@@ -29,29 +29,50 @@ identical gates, identical isolation, identical strict-OMP discipline.
 
 ## 1. Headline
 
-| model / recipe | params | complex 16-gate (single-run) | complex (strict OMP∈{1,2,4}) | device | AC |
-|---|---|---|---|---|---|
-| **BSIM-AR corroft @medium** (corridor curriculum) | **1.9M** | **15/16** | **15/16** | 44/44 | 4/8 |
-| BSIM-AR corridor @large (crit30/corroft/crit15m) | 5.0M | 15/16 | 14/16 | 44/44 | 4/8 |
-| BSIM-AR clean @medium | 1.9M | 14/16 | 13/16 | 44/44 | 4/8 |
-| BSIM-AR clean @small | 0.67M | 12/16 | — | 44/44 | 7/8 |
-| BSIM-AR corridor @xl (corroft/crit15m/corro15) | 14.8M | 15/16 | 15/16 (corroft) | 55/55 | ~2/8 (opamp-AC 0/4) |
-| — DirectNet production crit30f @large | 0.9M | 14/16 | 14/16 | 24/24 | — |
-| — DirectNet clean @large | 0.9M | 13/16 | 12/16 | 24/24 | 4/12 |
+> **Updated 2026-07-24 (V6.13.0).** The table below is the **post-gds-fix**
+> re-gate at `d2ea720`; §3, §4, §6 and Appendix A are the pre-fix measurements
+> and are marked in place. See `DirectNet-L73-accuracy.md` §12.2 for the fix.
 
-**BSIM-AR `corroft@medium` reaches 15/16 both single-run AND strict — beating
-DirectNet's production 14/16 strict outright**, at 1.9 M params. Its failure set is
-strictly *better* than DN production: BSIM-AR banks **tsmc16-opamp** (which DN
-production fails) plus both low-VDD rings — all deterministic across OMP∈{1,2,4} —
-and misses only **tsmc7-opamp**. DN production misses *both* tsmc7- and tsmc16-opamp.
+| model / recipe | params | complex 16-gate (single-run) | complex (strict OMP∈{1,2,4}) | pre-fix strict | device | AC |
+|---|---|---|---|---|---|---|
+| **BSIM-AR corroft @medium** (corridor curriculum) | **1.9M** | **16/16** | **16/16, zero flips** | 15/16 | 44/44 | 4/8 |
+| **BSIM-AR corro15 @xl** | 14.8M | **16/16** | **16/16, zero flips** | 15/16 | 55/55 | — |
+| BSIM-AR corro15 @medium | 1.9M | **16/16** | not swept | — | 44/44 | — |
+| BSIM-AR corroft / crit15m / crit30 @xl | 14.8M | **16/16** each | not swept | 15/15/14 | 55/55 | — |
+| BSIM-AR corroft / crit15m / crit30 @large | 5.0M | 15/16 each | not swept | 15/16 | 44/44 | 4/8 |
+| BSIM-AR clean @{small, medium, large, xl} | 0.67–14.8M | **14/16 at every tier** | 14/16 (large), zero flips | 12/14/13/13 | 44/44 | 7/8 small |
+| — DirectNet production crit30f @large | 0.9M | 15/16 | 15/16 | 14/16 | 24/24 | 8/8 |
+| — DirectNet crit15m @xl | 2.1M | 16/16 | **16/16, zero flips** | 14/16 | 24/24 | — |
 
-The large-tier corridor recipes reach the same 15/16 single-run but only 14/16 strict
-(one OMP-fragile ring each); the **medium tier is where both rings sit deterministically
-inside the gate** — so the strict best is medium, not large.
+**`corroft@medium` now sweeps the entire matrix: 16/16 single-run AND 16/16 strict
+across OMP∈{1,2,4} with zero flips**, at 1.9 M params. Cell margins are not
+marginal either — opamp 2.52 / 6.73 / 5.32 / 5.82 % against a 10 % gate, ring
+3.33 / 2.25 / 2.13 / 2.19 % against 5 %, switchcap 1.99–4.15 % against 5 %, worst
+SRAM lobe 6.11 % against 10 % (tsmc5/7/12/16). Three checkpoint sets are now
+strict-confirmed at 16/16 — `corroft@medium`, `corro15@xl` and DirectNet's
+`crit15m@xl` — and **six** reach 16/16 single-run.
 
-The one cell BSIM-AR cannot reach with any data recipe — **tsmc7-opamp** — is the
-universal hard cell that DirectNet itself only ever passed via the V6.5.9 **T3
-differentiable-solver fine-tune** (a solver-level method, not a data recipe).
+**Every corridor recipe at `xl` sweeps the matrix.** `corroft`, `crit15m`,
+`crit30` and `corro15` are all 16/16 single-run at xl (pre-fix: 15/15/14/15),
+and `corro15@xl` is strict-confirmed with zero flips. At `large` the same four
+recipes all sit at 15/16, missing only `tsmc7-opamp`. So the corridor
+curriculum's effect is uniform rather than recipe-specific, which is the
+opposite of the pre-fix reading where recipe choice appeared to decide which
+opamp basin you got.
+
+**`tsmc7-opamp` was never the wall it was described as.** The claim that it is the
+universal hard cell reachable only by the V6.5.9 T3 differentiable-solver fine-tune
+appears throughout the pre-fix sections of this report and is **retracted**: BSIM-AR
+passes it at *every* size and every recipe measured post-fix, clean included
+(0.55–6.73 % gain error). What was actually happening is that the gds floor masked a
+railed operating point.
+
+**The ceiling moved opamp → ring.** For clean BSIM-AR the only two open cells at any
+tier are `tsmc5-ring` and `tsmc7-ring`, and they fail *deterministically* — 7.38 %
+and 8.63 % identically at OMP 1, 2 and 4 — against a 5 % gate. The corridor
+curriculum is the lever that closes them (`corroft@medium` banks both at 3.33 % and
+2.25 %), which is the same role the corridor plays for DirectNet and at universal
+scope.
 
 **Historical context:** the parked v4 *universal* BSIM-AR (2026-04) scored device
 NRMSE 0.27 %/0.26 % and was 6–8× worse than DirectNet at 5.5× the params — dominated,
@@ -129,6 +150,31 @@ One identical clean recipe (`--apply-filter off --swa-mode ema --seed 42`), per-
   a genuine value-surface quirk of the tsmc7 steep low-VDD curve, and the same tech
   whose opamp is the campaign's only unreachable gate.
 
+#### 3.1 The scale study re-measured after the gds fix (V6.13.0)
+
+Same four checkpoint sets, same harness, only the sign + guard fix of
+`DirectNet-L73-accuracy.md` §12.2 between them.
+
+| tier | complex, pre-fix | complex, post-fix | failing cells, post-fix |
+|---|---|---|---|
+| small | 12/16 | **14/16** | tsmc5-ring 6.53 %, tsmc7-ring 5.97 % |
+| medium | 14/16 | **14/16** | tsmc5-ring 5.55 %, tsmc7-ring 7.41 % |
+| large | 13/16 | **14/16** | tsmc5-ring 7.38 %, tsmc7-ring 8.63 % |
+| xl | 13/16 | **14/16** | tsmc5-ring 7.61 %, tsmc7-ring 12.55 % |
+
+**The capacity curve is gone.** Clean BSIM-AR is 14/16 at *every* tier and fails the
+*same two cells* at every tier — so "capacity peaks at medium (12→14→13)" was largely
+a gds artifact, not a property of the architecture. What the fix bought is the whole
+opamp column: all four opamps now pass at all four sizes (gain err 0.55–8.53 % against
+a 10 % gate), where pre-fix they were the deciding cells.
+
+**The ceiling moved opamp → ring.** The two low-VDD rings are now the only thing
+between clean BSIM-AR and a full sweep, and they are *not* close: 5.55–12.55 % period
+error against a 5 % gate, worsening with capacity (tsmc7-ring 5.97 % at small →
+12.55 % at xl). Rings are gds-invariant — the same result DirectNet §3.1b and the
+universal study §9.1b show — so this is a genuine remaining value-surface gap and the
+corridor curriculum (§4) is the lever that addresses it.
+
 ### Device DC NRMSE % by tech (NMOS / PMOS)
 
 | tier | tsmc5 | tsmc7 | tsmc12 | tsmc16 |
@@ -162,6 +208,36 @@ no corridor) is strictly dominated: it leaves both rings closed AND actively *ra
 tsmc7-opamp (99.99 %, worse than clean's marginal 12.78 %). This confirms **the
 corridor is the whole ring lever** and that the inv_trip weight is inert-to-harmful on
 the Transformer.
+
+### 4.1 The recipe table re-measured after the gds fix (V6.13.0, single-run)
+
+| recipe / tier | pre-fix | post-fix | fails, post-fix |
+|---|---|---|---|
+| corroft / medium | 15/16 | **16/16** | — |
+| corro15 / medium | — | **16/16** | — |
+| corroft / large | 15/16 | 15/16 | tsmc7-opamp |
+| crit15m / large | 15/16 | 15/16 | tsmc7-opamp |
+| crit30 / large | 15/16 | 15/16 | tsmc7-opamp |
+| invtrip / large | 13/16 | **14/16** | tsmc5-ring, tsmc7-ring |
+| clean / large | 13/16 | **14/16** | tsmc5-ring, tsmc7-ring |
+
+Two of the section's conclusions survive and one does not.
+
+**Survives — the corridor is the whole ring lever.** `invtrip@large` (inv_trip
+alone, no corridor) still leaves both rings open, and now lands on *exactly*
+clean@large's failure set. Every recipe that closes a ring has the corridor in it.
+
+**Survives, and is now unambiguous — inv_trip is inert on the Transformer.**
+Pre-fix, invtrip@large looked actively harmful because it railed tsmc7-opamp at
+99.99 % against clean's marginal 12.78 %. Post-fix both pass, and invtrip's
+failure set is identical to clean's. It was the gds floor railing the opamp, not
+the inv_trip weight; the honest verdict is that inv_trip does nothing here,
+rather than that it does harm.
+
+**Does not survive — "the recipe decides which opamp basin you get".** All three
+large curricula now score exactly 15/16 with exactly the same single miss, and
+all four xl curricula score 16/16 (§6.1). The recipe no longer discriminates
+among opamps at all; it discriminates only on rings.
 
 ### Key findings
 
@@ -215,6 +291,36 @@ scatter + opamp multistability).
 - SRAM ×4, switchcap ×4: stable (positivity / charge gates, not multistable).
 - → **15/16 strict** (16 − tsmc7-opamp). Campaign best; beats DirectNet production.
 
+### 5.1 Re-measured after the gds fix (V6.13.0) — and the flips are gone
+
+Everything above was measured with the gds sign bug present. Re-run on the
+identical checkpoints:
+
+| stem | pre-fix strict | post-fix strict | FLIPs |
+|---|---|---|---|
+| **corroft@medium** | 15/16 | **16/16** | **0** |
+| clean@large | 13/16 | **14/16** | **0** |
+
+Two things changed, and the second is the more interesting one.
+
+1. **`tsmc7-opamp` closed** at `corroft@medium`, taking it to a full sweep. The
+   "deterministic FAIL (rail)" recorded above was the gds floor holding the
+   operating point at the rail, not a value-surface limit.
+2. **Every FLIP disappeared.** The large corridor recipes' OMP-fragile ring
+   (corroft's tsmc5-ring, crit30's tsmc7-ring — each passing at OMP 2/4 and
+   failing at OMP 1) was the whole reason `large` scored 14/16 strict against
+   15/16 single-run, and it is the reason this section concluded "the strict
+   best is medium, not large". Post-fix, clean@large's two failing rings return
+   **identical** period errors at all three thread counts (7.38 % and 8.63 %),
+   i.e. the multistability itself is gone rather than resolved favourably. The
+   same flip-free result holds across all seven re-gated DirectNet groups, PFN,
+   and all eight universal stems — a wrong-signed Jacobian entry was steering NR
+   into different basins under different GEMM thread counts.
+
+   That means the medium-over-large conclusion needs re-deriving rather than
+   inheriting: it rested on a flip that no longer exists. The corridor recipes at
+   `large` have not yet been strict-swept post-fix.
+
 ---
 
 ## 6. XL-tier fill (V6.8.1, 2026-07-11/23)
@@ -236,6 +342,33 @@ vs NGSPICE):
 | crit15m  | **15/16** | tsmc7-opamp                      |
 | corro15  | **15/16** | tsmc7-opamp                      |
 | crit30   | 14/16  | tsmc5-opamp, tsmc7-opamp            |
+
+### 6.1 The xl tier re-measured after the gds fix (V6.13.0) — every corridor recipe sweeps
+
+| recipe | pre-fix | post-fix | fails, post-fix |
+|---|---|---|---|
+| corroft | 15/16 | **16/16** | — |
+| crit15m | 15/16 | **16/16** | — |
+| corro15 | 15/16 | **16/16** (strict, zero flips) | — |
+| crit30 | 14/16 | **16/16** | — |
+| csob | 13/16 | **14/16** | tsmc5-ring, tsmc7-ring |
+| clean | 13/16 | **14/16** | tsmc5-ring, tsmc7-ring |
+
+**All four corridor curricula at xl now sweep the full matrix**, and `corro15@xl`
+is strict-confirmed across OMP∈{1,2,4} with zero flips. That reframes this
+section's central question. It asked whether the Transformer "shuffles basins at
+xl the way DirectNet-xl did" — the answer is that the basin-shuffling was largely
+the gds bug. Post-fix, xl is where the corridor is *most* reliable, not where its
+gains get traded away.
+
+**What this does NOT change: xl is still not promoted.** 14.81 M params for a
+result that `corroft@medium` also reaches at 1.9 M, on top of §6's AC collapse
+and the ~11-day training cost. The medium tier remains the recommendation; xl is
+now a corroboration of it rather than a rival to it.
+
+The non-corridor recipes (clean, csob) gain only +1 and stay stuck on the two
+low-VDD rings — consistent everywhere else in this campaign: **gds moved opamps,
+the corridor moves rings, and the two levers are independent.**
 | clean    | 13/16  | tsmc5-ring, tsmc7-opamp, tsmc7-ring |
 | csob     | 13/16  | tsmc5-ring, tsmc7-ring, tsmc7-opamp |
 
@@ -348,36 +481,50 @@ gates told us nothing, because they were TSMC7's gates.
 
 ## 9. Cross-family comparison and recommendation
 
+Post-gds-fix (V6.13.0), strict OMP∈{1,2,4} where stated:
+
 | family | best config | params | complex strict | device | AC | CPU ms/eval |
 |---|---|---|---|---|---|---|
-| DirectNet (73) | crit30f@large | 0.92 M | 14/16 | 24/24 | 4/12 device | **1.5** |
-| **BSIM-AR (74)** | **corroft@medium** | 1.9 M | **15/16** | **44/44** | 4/8 device | 61.5 |
-| PFN (75) | clean@small | 0.69 M | 11/16 (zero OMP flips) | — | 5/8 device | 15.6 |
+| DirectNet (73) — **production** | crit30f@large | 0.92 M | 15/16 (0 flips) | 24/24 | 8/8 device | **1.5** |
+| DirectNet (73) — best any tier | crit15m@xl | 2.1 M | **16/16** (0 flips) | 24/24 | — | 3.4 |
+| **BSIM-AR (74)** | **corroft@medium** | 1.9 M | **16/16** (0 flips) | **44/44** | 4/8 device | 61.5 |
+| PFN (75) | clean@small | 0.69 M | 11/16 (0 flips) | — | 8/8 at large | 15.6 |
 
-- **DirectNet stays the production NN** (LEVEL=73): 0.9 M params, ~30–100× faster
-  inference, 14/16 strict. Nothing here changes that.
-- **BSIM-AR is un-parked as a validated fidelity alternative** (LEVEL=74) and it
-  **exceeds DN's production strict count**: `corroft@medium = 15/16 strict` at 1.9 M
-  params banks tsmc16-opamp + both low-VDD rings deterministically — all cells DN
-  production fails except the universal tsmc7-opamp. Device DC 44/44, AC competitive.
-  If speed weren't a concern, corroft@medium would be the higher-fidelity NN.
-- **tsmc7-opamp** remains the one universal unreachable gate for *both* models via data
-  recipes; it is a solver-level (T3 / EKV) problem. Porting the T3 differentiable-solver
-  fine-tune to the Transformer is the only known path to 16/16 and is the natural
-  follow-up.
+- **DirectNet stays the production NN** (LEVEL=73). It is now 15/16 strict, and at
+  `xl` a uniform recipe reaches a full sweep — at 40× the inference speed of
+  BSIM-AR. Nothing here changes the production choice; if anything the case is
+  stronger, because the one cell that used to separate the families has closed
+  for both.
+- **BSIM-AR remains the higher-fidelity option** (LEVEL=74): `corroft@medium`
+  = 16/16 strict at 1.9 M params, with device DC 44/44 (vs DirectNet's 24/24
+  suite) and comfortable margins on every cell. At ~40× DirectNet's per-eval cost
+  it is the choice when fidelity dominates and wall-clock does not.
+- **PFN (LEVEL=75) stays research.** It was the first flip-free family, but as of
+  V6.13.0 *every* family is flip-free, so that distinction has been overtaken —
+  the gds sign error was the shared cause. PFN's remaining gap is the low-VDD
+  rings and its declining capacity curve.
+- **The "universal ceiling" framing is retracted.** `tsmc7-opamp` is passed by
+  BSIM-AR at every size and by DirectNet at `small`, `xl` and `crit15m@xl` strict.
+  Two independent families reach a full 16/16 strict sweep with ordinary data
+  recipes, so the T3 differentiable-solver fine-tune is no longer the only known
+  path there and porting it to the Transformer is no longer the natural
+  follow-up. The open work is the **low-VDD rings** (tsmc5/tsmc7) for the clean
+  recipes, and the **opamp open-loop AC gate**, which no family passes.
 
-**Standing caveat — the gds sign bug.** Every number in this report was measured with
-the inference-side `gds` sign error present (`docs/2026-07-21-systematic-audit.md` §A3;
-not shipped as of 2026-07-24). The audit measured the corruption on all three NN
-families (BSIM-AR: shipped-floor alters ~89–91 % of amplifying points, median error
-inflated 6–8×) and the sign+guard fix moved the complex matrix 17/20 → 18/20 and the
-`force_ic` latch probe 2/5 → 5/5 on DirectNet, with DC exactly invariant. Expect the
-AC numbers in §7 — and the opamp rails — to move when it ships. See
-`DirectNet-L73-accuracy.md` §12.2.
+**Provenance caveat.** §1, §3.1, §5.1 and this section are post-fix (`d2ea720`).
+§3 (except 3.1), §4, §6, §7 and Appendix A are pre-fix and are marked where they
+are contradicted. The audit's measurement of the corruption on BSIM-AR
+specifically — the shipped floor altering ~89–91 % of amplifying points, median
+error inflated 6–8× — explains why the opamp column moved so uniformly. See
+`DirectNet-L73-accuracy.md` §12.2 for the fix itself.
 
 ---
 
 ## Appendix A — full complex matrix (single-run)
+
+> ⚠ **Pre-fix (V6.8.0/V6.8.1) data, kept for provenance.** Every cell below was
+> measured with the gds sign bug present. For the post-fix matrix see §1, §3.1,
+> §4.1 and §6.1, or regenerate from `results/a3_regate/REPORT.md`.
 
 | recipe/tier | tsmc5 | tsmc7 | tsmc12 | tsmc16 |
 |---|---|---|---|---|

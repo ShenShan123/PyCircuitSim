@@ -8,6 +8,283 @@ lives in git history.)
 
 ---
 
+## V6.13.1 — systematic-audit fix wave 1: 22 gate-neutral findings (2026-07-24)
+
+**Closed the 22 findings from `docs/2026-07-21-systematic-audit.md` that cannot
+change a number any gate reports. The remaining 19 are gate-affecting and are
+staged on `audit-fixes-wave2` behind a re-gate — triage, evidence and ordering
+in `docs/plans/2026-07-24-audit-fix-waves.md`.**
+
+All 43 open P1/P2 findings were first re-verified against `d2ea720`: re-located
+in the current source (many line citations had drifted), re-reproduced where a
+pure-Python repro was possible, and split by whether the fix can move a gate
+number. **Three were dropped on the evidence** — see the dead-end note below.
+
+Verified on the patched tree: `verify_bsimcmg_op` 3/3, `verify_bsimcmg_dc` 2/2,
+`verify_subckt` **11/11** with Levels 1-3 byte-identical to baseline
+(`max|dV| = 0.000e+00`, L72 inverter NRMSE 0.187 % of VDD).
+
+### The silent-wrong class (parser)
+
+- **C1** — `+` continuation lines were buffered only after `.model`. After any
+  other line the fragment flushed as a space-prefixed orphan and `parse_line`
+  dropped it with no error, losing X-instance params, `.ic` assignments, MOSFET
+  geometry and **`AC=` stimulus** (a full Bode sweep driven by a zero source).
+  Now every logical line buffers; an orphan `+` raises. Replayed HEAD vs patched
+  over **4442** deck/library files: 5 differ, all raw TSMC PDK cards this parser
+  never opens, and 0 raise.
+- **C6i** — ground globality was case-sensitive, so a lowercase `gnd` inside a
+  `.subckt` became a node tied only to GMIN. Canonicalized at every
+  node-ingestion point. A `.subckt` may no longer declare a ground-named port,
+  which the canonicalization would otherwise have turned into a new silent short.
+- **C6h** — duplicate `X` instance names silently merged both instances'
+  internal nodes onto one net. Keyed on the full flattened path, so nested
+  `Xbuf.X1` / `Xbuf2.X1` stay distinct.
+- **C6j** — duplicate `.model` names overwrote **retroactively** (the pre-pass
+  resolves models before devices), changing polarity and LEVEL for devices
+  written above. A conflicting redefinition now raises; an identical one still
+  passes, so a doubly-`.include`d library stays legal.
+- **C6l / C6m** — an env pin ending in the opposite polarity was ignored and
+  fell through to production `large`; the UNKNOWN-tech-code warning covered only
+  the universal scope, so a per-tech scope silently used the UNKNOWN embedding
+  slot. Both are now loud (`PYCIRCUITSIM_NN_STRICT_TECH_CODE=1` escalates the
+  latter to an error). Measured inert against every resolver line on disk.
+
+### The silent-green class (test harness and dispatchers)
+
+- **B3** — 11 dispatchers exited 0 regardless of sub-job outcome: workers ended
+  in `exit 0` so `xargs`'s 123 never fired, and a trailing `echo` overwrote `$?`.
+  Workers now exit 3 for "reached no verdict" (never 255, which aborts `xargs`),
+  and dispatchers capture the status before printing and check that every
+  launched cell recorded a row.
+- **B4** — `benchmark_collect.py` fabricated tier names and counted only cells
+  whose log existed, so an empty tree published a report and exited 0.
+- **B5c** — `verify_complex_opamp` had no minimum-gain guard: `ng_gain=0.30` vs
+  `dn_gain=0.31` passed at 3.3 %, certifying an opamp with no gain. The sweep
+  harness had `OPAMP_MIN_GAIN=5.0`; the ship gate now does too.
+- **B5l** — a typo'd `--tech` SKIPped silently, so `TSMC5,TSMC7X` scored 1/1 and
+  exited 0. Closed at all six sites.
+- **B5g** — the three V6.12.0 loud subckt errors (unknown subckt, port-count
+  mismatch, recursion >64) had **zero** tests: deleting all three raises still
+  reported 8/8. A Level 0 batch now covers them, and the gate's own total moves
+  **8/8 → 11/11** (Levels 1-3 unchanged).
+- **B5h / B5j** — `diag_l72_complex_control` took the reassuring branch on NaN,
+  so a ring that never oscillated printed "L72 matches NGSPICE";
+  `diag_l72_switchcap_control` printed ">> the solver is faithful"
+  unconditionally. Per MEMORY.md these verdicts routed whole campaigns.
+- **B5a** — `train_per_tech_8cells.sh` wrote into **production** checkpoint slots
+  (no `--exp-name`, with `--overwrite`) while omitting the clean-recipe flags,
+  and CLAUDE.md advertised it as a convenience sweep. Deleted; superseded by
+  `benchmark_train_sml.sh` with `TECHS`/`SIZES`.
+- **B5d / B5e / B5i / B5n / B5m** — pinned-but-absent checkpoint became a silent
+  SKIP; the gate printed a checkpoint it had not scored; `--idvds-diagnostic`
+  was green with no NGSPICE comparison and set `passed=True` on an empty mask;
+  `--techs TSMC4` reported "0/0 PASSED"; and the `===BENCH_DONE no-ckpt===`
+  marker contained the resume sentinel, so it skipped its own cell forever even
+  after the checkpoint was trained.
+
+### Data-pipeline integrity
+
+- **C6o** — the tech-variant label sidecar was validated by **row count alone**,
+  and Rule 1 explicitly invites regenerating datasets. Adds a geometry-sha256
+  `.meta.npz` fingerprint written by every producer — `loo_labels` plus the
+  concat / append / subsample scripts, which had been leaving every universal
+  dataset on the weakest validation path. `benchmark_gen_data.sh` retires the
+  stale sidecar when it rewrites a dataset, so a regen cannot wedge the next
+  training run.
+- **C6q / C6r** — `tech_scope_vocab_size("universal")` disagreed with
+  `NUM_TOTAL_CODES` (the range is now guarded rather than the vocabulary
+  enlarged, which would have changed the `nn.Embedding` row count of every
+  universal checkpoint); TabPFN's `_ctx_cache` was not invalidated by
+  `load_state_dict` or EMA in-place writes (measured drift 4.0e-2), and was safe
+  by call ordering only.
+
+### Dead ends recorded
+
+- **C2 dropped, and the audit's own prescribed fix for it is a hazard.** The
+  NaN mechanism (`torch.where` evaluating both branches of the softplus voltage
+  clamp) is real, but the clamp sits in no autograd graph — both callers cut the
+  graph after it — so it cannot fire. And the prescribed
+  `F.softplus(bx, beta=1)/beta` rewrite is measurably **not** forward
+  bit-identical: 23 of 401 samples differ in the last fp32 bit, because the
+  linear branch becomes `bx/beta` instead of `v_raw - v_min`. On a codebase
+  whose opamp and ring basins are documented as sensitive at that magnitude that
+  is a gate-affecting change in exchange for nothing. The argument-clamp variant
+  measured bit-identical at 401/401 if hardening is ever wanted.
+- **B5k and C6p dropped** — both closed in passing by the TSMC6 retire.
+
+### Not included
+
+`scripts/gate_matrix_iso.sh` is the 12th B3 dispatcher and was driving the live
+V6.13.0 re-gate while this wave was written, so it was deliberately left
+byte-identical. It gets the same treatment now that the campaign has landed.
+
+---
+
+## V6.13.0 — gds sign + guard fix shipped, TSMC6 retired, every checkpoint re-gated (2026-07-24)
+
+**Shipped the audit's last P0 (`A3`, the NN `gds` sign bug), retired TSMC6 as a
+duplicate technology, then re-gated all 36 checkpoint sets on disk against
+NGSPICE. The fix moves the production DirectNet matrix 14 → 15/16 strict, closes
+`tsmc16-opamp`, eliminates every observed OMP flip in the universal set, and
+retracts the project's standing claim that `tsmc7-opamp` is unreachable.**
+
+### The fix (`8ed35bd`)
+
+Inference negated `gm` and `gmb` but not `gds`. All three are derivatives of the
+same signed `id`, so the sign comes from `id`'s convention, not from which
+variable is differentiated — `losses/bni_mae.py` had negated all three since
+V6.4 and explicitly documented commit `930c274`'s "gds is the diagonal so no
+flip" rule as wrong for this stored convention. The correction never reached
+inference. Measured: autograd `d(id)/dVd` vs `-gds_head` = 0.12 rel err, vs
+`+gds_head` = 2.08, and 2.0 is the arithmetic signature of a pure sign flip.
+
+The two-sided floor `max(gds, |id|*0.5)` asserted an Early voltage <= 2 V, below
+the true median of every device (OSDI amplifying p50 3.3-9.8 V), overriding the
+learned output conductance at 90.9 % of amplifying points — and was load-bearing
+only because it masked the sign error. Replaced by **guard F**: positives pass
+through bit-identical to the raw Jacobian, negatives clamp to `|id|/50 V`. 50 V
+sits above the measured maximum true Early voltage (43.4 V), so the guard can
+never bind on a physically correct value. OSDI `-d(id)/dVd` is positive at
+100.0000 % of conducting points across 111,630 evals on all 10 production
+devices, so every negative is model error.
+
+`_floor_gds` -> `_guard_gds`; `PYCIRCUITSIM_GDS_FLOOR_K` is now rejected loudly
+rather than silently reinterpreted; the new knob is `PYCIRCUITSIM_GDS_GUARD_K`
+(default 0.02). **The sign and the guard must ship together** — measured, the
+sign alone is bit-identical and the guard alone regresses device AC 8/10 -> 5/10.
+
+### TSMC6 retired (`38c47d8` + PyCMG `23b0ace`)
+
+Audit §D1: TSMC6 is TSMC7 relabelled under BSIM-CMG — bit-identical datasets and
+identical L72 currents, because the differing PDK keys are TMI-proprietary and
+absent from the BSIM-CMG Verilog-A. Deleted 22 checkpoints, the datasets,
+`results/tsmc6_gate`, and every registry/driver/test entry. Its codes were the
+tail (22-24) so nothing renumbered; `NUM_TOTAL_CODES` 25 -> 22. Added
+`bsimar.config.assert_tech_is_distinct()`, which compares resolved modelcards on
+BSIM-CMG-implemented parameters only — it flags tsmc6 <-> tsmc7 and confirms
+5/7/12/16 distinct. The raw vendor PDK is kept (IP) but unreferenced.
+
+Consequence for the L72 suites: the counts drop with the duplicate column, same
+coverage. DC L2 81 -> 67, DC L3 53 -> 44, tran L2 45 -> 37, tran L3 86 -> 72.
+CLAUDE.md and README carried the old numbers and are corrected.
+
+### Re-gate — what moved
+
+Every number below is single-run OMP=1 unless stated strict, measured at
+`d2ea720`, and directly comparable to the pre-fix single-run columns in the
+accuracy reports at `a96112a`.
+
+**One signature dominates: every gained cell is an opamp.** Across DirectNet's
+four sizes, PFN's three and BSIM-AR's four clean tiers, not one ring, SRAM or
+switchcap cell moved. `gds` sets small-signal output resistance — what a
+high-gain operating point is made of — and cancels at the Newton fixed point
+everywhere else.
+
+- **DirectNet production** (`tsmc{X}_dn_large_*`, crit30 weights): 14 -> **15/16
+  strict, zero flips**. `tsmc16-opamp` closes at 7.69 %; `tsmc7-opamp` is the
+  sole open cell and only at `large`. Thinnest margin in the matrix is
+  `tsmc5-opamp` at 9.54 % against a 10 % gate.
+- **`crit15m@xl` = 16/16 STRICT, zero flips** — the first DirectNet checkpoint
+  set ever to sweep the full matrix under one uniform recipe, holding all four
+  opamp basins including tsmc7 (7.56 %). Not promoted: 2.13 M params, 2.3x
+  inference cost, no device-fidelity gain. Documented as an env-pin alternate.
+- **DirectNet clean capacity curve** (s/m/l/xl): 7/10/13/10 -> **10/10/13/12**.
+- **Universal DirectNet**: net **+3** strict cells and **all three pre-existing
+  OMP FLIPs eliminated** — every one of the 8 stems is now flip-free. That is
+  the more durable half: a FLIP means the verdict depended on GEMM thread count,
+  and removing a wrong-signed Jacobian entry removed that sensitivity.
+- **PFN**: 11/11/9 (was 11/10/8); device AC at `large` 5/8 -> **8/8**.
+- **BSIM-AR clean**: **14/16 at every tier**, failing the same two cells at every
+  tier (was 12/14/13/13). The published "capacity peaks at medium" was largely
+  this bug. All four opamps now pass at all four sizes (0.55-8.53 % against a
+  10 % gate); **the ceiling moved opamp -> ring**, and the two low-VDD rings are
+  not close (5.55-12.55 % against a 5 % gate, worsening with capacity).
+- **BSIM-AR corridor recipes**: `corroft@medium` and `corro15@xl` are **16/16
+  STRICT, zero flips** — the second and third checkpoint sets in the project to
+  sweep the full matrix, after DirectNet's `crit15m@xl`. `corroft@medium` holds
+  every cell with room: opamp 2.52-6.73 % against a 10 % gate, ring 2.13-3.33 %
+  against 5 %, switchcap 1.99-4.15 %, worst SRAM lobe 6.11 %.
+- **Every corridor recipe at `xl` sweeps the matrix.** corroft, crit15m, crit30
+  and corro15 are all 16/16 single-run at xl (pre-fix 15/15/14/15); at `large`
+  the same four all sit at 15/16 missing only tsmc7-opamp. The corridor's effect
+  turns out to be uniform, not recipe-specific — the opposite of the pre-fix
+  reading in which recipe choice appeared to decide which opamp basin you got.
+  The non-corridor recipes (clean, csob) gain only +1 and stay stuck on the two
+  low-VDD rings: **gds moved opamps, the corridor moves rings, and the two
+  levers are independent.**
+
+**Device / parametric / L72 suites:** device AC DirectNet **8/8** and PFN **8/8**
+(both were railed on cells that now pass); `verify_nn_dc_tran` 24/24;
+`verify_nn_lifted_source_dc` 12/12 (Rule 2 canary); parametric tran 64/64;
+parametric DC 54/55 — and the single failure (`TSMC12_pmos_nfin_10`, NRMSE
+16.15 %) is **bit-identical** pre- and post-fix, which is the confirmation at
+scale that DC is exactly invariant rather than a hidden regression. All L72
+controls pass; `verify_multi_tech_dc` reports 43 PASS + 1 pre-existing ERROR
+(`TSMC5_lvt_inv_l_24nm`, internal-node NR divergence at d=2559 V in the pure
+BSIM-CMG path, unrelated to the NN surface — and the suite still exits 0, which
+is audit B3).
+
+`verify_complex_opamp_ac` is 0/4: the operating point un-rails, but no tech meets
+DC-gain and GBW and phase-margin and magnitude together. TSMC5 is closest
+(3.31 dB vs a 3 dB gate, GBW 0.94x, PM 18.9° vs 15°). Pre-fix this suite read
+0/12 with nothing close.
+
+### What this retracts
+
+`tsmc7-opamp` was documented across CLAUDE.md, all three accuracy reports and
+several memories as **the universal ceiling cell, reachable only by the V6.5.9
+T3 differentiable-DC-solver fine-tune**. It is not. DirectNet passes it at
+`small` (1.81 %) and `xl` (4.20 %), `crit15m@xl` passes it strict, and BSIM-AR
+passes it at every size. The gds floor was masking a railed operating point.
+Also retracted: DirectNet §6.2's "the three-basin simultaneous hold is the open
+15/16 target", and BSIM-AR's capacity-peak-at-medium reading.
+
+### Also in this version
+
+- `0126c44` — `SobolevIdLoss` now raises rather than silently supervising the
+  reverse-corridor-corrupted `gds` column (audit A3-data). Latent: `--sobolev`
+  is default-off.
+- `88db8f3` — `uni_gate_sweep.sh` was truncating `SUMMARY.tsv` on every dispatch,
+  erasing other sections' verdicts (same class as the `gate_matrix_iso` clobber
+  fixed in `65b7764`). `UNI_OUT` is now overridable.
+- `1559583` — the collector's `dn_large` baseline slot carries crit30 weights,
+  not clean; its pre-fix baseline is crit30f's 14/16, and the genuine clean
+  `large` lives at `dn_v660clean_large`.
+- New campaign tooling: `scripts/a3_regate_collect.py`,
+  `scripts/a3_regate_uni_collect.py`, `scripts/a3_regate_omp_collect.py`
+  (strict/OMP verdicts), `scripts/a3_omp_one.sh` (resume one OMP value of an
+  interrupted multirun sweep instead of re-paying for the runs it already
+  banked — worth ~40 BSIM-AR gate-hours on this campaign alone).
+
+### Methodology note — the campaign ran off a frozen snapshot
+
+The resumed half of the re-gate ran from an rsync of the repo at `d2ea720` with
+`checkpoints/`, `tools/` and `PyCMG/` symlinked back, verified byte-identical for
+`pycircuitsim/`, `tests/` and the `bsimar` package. That decouples an 8-hour gate
+campaign from the working tree, so documentation and bug-fix edits could land
+concurrently without any chance of changing the numerics half-way through. Worth
+repeating for any future long campaign.
+
+### Audit disposition
+
+The remaining 43 P1/P2 findings were re-verified against `d2ea720`, three were
+dropped on the evidence, and the rest split into a gate-neutral wave 1 and a
+gate-affecting wave 2 — see `docs/plans/2026-07-24-audit-fix-waves.md`.
+
+**Dead end recorded: audit C2 was dropped, and the audit's prescribed fix for it
+is itself a hazard.** The NaN mechanism (`torch.where` evaluating both branches
+of the softplus voltage clamp) is real, but the clamp sits in no autograd graph —
+both callers cut the graph after it — so it cannot fire. And the prescribed
+`F.softplus(bx, beta=1)/beta` rewrite is measurably *not* forward-bit-identical:
+23 of 401 samples differ in the last fp32 bit, because the linear branch becomes
+`bx/beta` instead of `v_raw - v_min`. On a codebase whose opamp and ring basins
+are documented as sensitive at that magnitude, that is a gate-affecting change in
+exchange for nothing. If defence-in-depth is wanted later, the argument-clamp
+variant measured bit-identical at 401/401.
+
+---
+
 ## V6.12.1 — silent-green P0 branch merged + accuracy reports consolidated per family (2026-07-24)
 
 **Merged `fix/silent-green-p0` into `main` (fast-forward, 9 commits) and replaced the

@@ -33,23 +33,37 @@ Sibling reports: `BSIM-AR-L74-accuracy.md` (LEVEL=74), `PFN-L75-accuracy.md`
 | V6.6.7 | 2026-07-03 | 15/16 hunt round 1 — both arms negative |
 | V6.7.0 | 2026-07-04/05 | Universal 18-code DirectNet + TSMC5 sample-efficiency / retention |
 | V6.11.0 | 2026-07-14/17 | TSMC6 capacity sweep (§10 — **see the TSMC6≡TSMC7 correction**) |
+| V6.13.0 | 2026-07-24 | **gds sign + guard fix shipped**; TSMC6 retired; every checkpoint on disk re-gated (§1, §12.2) |
 
 ---
 
 ## 1. Headline — current production state
 
+Every number in this section was re-measured in the **V6.13.0 post-A3 re-gate**
+(code state `d2ea720`, i.e. after the gds sign + guard fix of §12.2). Numbers
+elsewhere in this report that predate that fix are marked in place.
+
 | Metric | Result |
 |---|---|
 | **Production checkpoint** | `tsmc{5,7,12,16}_dn_large_{nmos,pmos}` = the **crit30f** curriculum artifact (V6.6.4) |
-| **Complex-circuit gates** | **14 / 16 PASS, strict across OMP∈{1,2,4}** |
-| Open gates | **tsmc7-opamp**, **tsmc16-opamp** |
-| Clean-recipe capacity curve (s→m→l→xl) | 7 → 10 → **13** → 10 / 16 |
+| **Complex-circuit gates** | **15 / 16 PASS, strict across OMP∈{1,2,4}, zero FLIPs** (was 14/16) |
+| Open gate | **tsmc7-opamp** only — and only at `large`: DirectNet passes it at `small` (1.81 %) and `xl` (4.20 %) |
+| Newly banked | **tsmc16-opamp**, 7.69 % gain err, strict |
+| Clean-recipe capacity curve (s→m→l→xl) | 10 → 10 → **13** → 12 / 16 (was 7 → 10 → 13 → 10) |
 | Device DC (`verify_nn_dc_tran`, resolver default) | 24/24 PASS; NMOS 1.53 % / PMOS 0.02 % NRMSE |
+| Parametric DC / transient | 54/55 · 64/64 (the one DC fail is **bit-identical** to pre-fix — see §12.2) |
 | Inverter VTC + transient | 16/16 PASS at every size |
 | Lifted-source canary (Rule 2) | 12/12 PASS (NRMSE ≤10 %) |
-| AC small-signal, device CS-amp | 4/12 PASS (gain0 err <1.5 dB in 24/24 cells) |
-| Opamp open-loop AC | 0/12 at every size |
+| AC small-signal, device CS-amp | **8/8 PASS** (`verify_nn_ac`, 4 techs × 2 devices) |
+| Opamp open-loop AC | 0/4 — the OP now un-rails, but the full GBW/PM/magnitude gate is still not met |
 | Params | large = 384×6 ≈ 0.92 M · ~1.5 ms/eval (CPU, 1 thread) |
+
+Cell margins at production (strict, all three OMP settings identical):
+tsmc5-opamp 9.54 %, tsmc12-opamp 6.26 %, tsmc16-opamp 7.69 % (gate ≤10 %);
+rings 2.40–4.04 % (gate ≤5 %); switchcap 2.04–4.17 % of VDD (gate ≤5 %); SRAM
+lobes all positive, worst lobe NRMSE 6.32 %. **tsmc5-opamp at 9.54 % is the
+thinnest margin in the matrix** — it is banked, but one recipe change away from
+the gate.
 
 **Production recipe (crit30f):** clean base + **one identical** curriculum fine-tune —
 `--class-weights traj_corridor=3.0,inv_trip=2.0 --lr 3e-4 --epochs 120 --patience 40
@@ -60,9 +74,10 @@ are archived as `tsmc{X}_dn_v660clean_large_*`; small/medium/xl stay clean.
 
 | Alternate | Pin | Why |
 |---|---|---|
-| `csob@large` | `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}=tsmc{X}_dn_csob_large_{dev}` | Best device NRMSE + AC; the only large-tier recipe that banks tsmc16-opamp on seed-42 |
-| `corroft@xl` / `crit10@xl` | `…=tsmc{X}_dn_{corroft\|crit10}_xl_{dev}` | Deterministic tsmc16-opamp coverage (6.2–6.7 % gain err) |
-| `crit15m@xl` | `…=tsmc{X}_dn_crit15m_xl_{dev}` | tsmc5-opamp (3.37 %) + tsmc16-opamp (6.47 %) |
+| `csob@large` | `PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}=tsmc{X}_dn_csob_large_{dev}` | Best device NRMSE + AC. ⚠ **Its complex-gate rationale is withdrawn**: post-gds-fix it is 11/16 (the one regression in the campaign) and it now *fails* tsmc16-opamp, which production banks. Pin it for device/AC work only |
+| `corroft@xl` | `…=tsmc{X}_dn_corroft_xl_{dev}` | 15/16 strict; deterministic tsmc16-opamp (6.69 %) |
+| ~~`crit10@xl`~~ | — | ⚠ **Withdrawn.** Post-fix it fails tsmc16-opamp outright (gain err 100 %), the exact cell it was documented to cover. Superseded by `crit15m@xl` |
+| **`crit15m@xl`** | `…=tsmc{X}_dn_crit15m_xl_{dev}` | **16/16 strict, zero flips** (V6.13.0) — the only DirectNet stem that sweeps the matrix. Not promoted: 2.13 M params, 2.3× inference cost, no device-fidelity gain (§6.1b) |
 | `u716_dn_corroft_large` | `…=u716_dn_corroft_large_{dev}` | One-checkpoint multi-tech serving, 10/12 strict (§9) |
 
 ---
@@ -134,6 +149,39 @@ Per-circuit at `large`: SRAM 4/4 (robust at every size) · switchcap 4/4 (charge
 2.4–4.1 %) · ring 3/4 (tsmc5 never passes, period err 6–14 %) · opamp 2/4 (passes only
 where the high-gain OP lands in the good basin — tsmc5 2.10 %, tsmc12 6.25 %;
 tsmc7/tsmc16 collapse to gain≈0).
+
+#### 3.1b The same matrix re-measured after the gds fix (V6.13.0, single-run)
+
+Identical checkpoints, identical harness, only the §12.2 sign + guard fix between
+them. `large` here is the genuine clean `v660clean_large`, not the production slot.
+
+| Tech | Circuit | small | medium | large (clean) | xl |
+|---|---|:---:|:---:|:---:|:---:|
+| TSMC5 | ring_osc | FAIL | FAIL | FAIL | FAIL |
+| TSMC5 | opamp | **PASS** | FAIL | PASS | FAIL |
+| TSMC5 | sram_snm | PASS | PASS | PASS | PASS |
+| TSMC5 | switchcap | PASS | PASS | PASS | PASS |
+| TSMC7 | ring_osc | FAIL | FAIL | PASS | FAIL |
+| TSMC7 | opamp | **PASS** | FAIL | FAIL | **PASS** |
+| TSMC7 | sram_snm | PASS | PASS | PASS | PASS |
+| TSMC7 | switchcap | FAIL | PASS | PASS | PASS |
+| TSMC12 | ring_osc | PASS | PASS | PASS | PASS |
+| TSMC12 | opamp | FAIL | FAIL | PASS | FAIL |
+| TSMC12 | sram_snm | PASS | PASS | PASS | PASS |
+| TSMC12 | switchcap | FAIL | PASS | PASS | PASS |
+| TSMC16 | ring_osc | PASS | PASS | PASS | PASS |
+| TSMC16 | opamp | **PASS** | FAIL | FAIL | **PASS** |
+| TSMC16 | sram_snm | PASS | PASS | PASS | PASS |
+| TSMC16 | switchcap | FAIL | PASS | PASS | PASS |
+| | **TOTAL** | **10/16** | **10/16** | **13/16** | **12/16** |
+| | *(pre-fix)* | *7/16* | *10/16* | *13/16* | *10/16* |
+
+Every gained cell is an **opamp**; not one ring, SRAM or switchcap cell moved. That
+is the signature the audit predicted: `gds` sets the small-signal output resistance,
+which is what a high-gain OP is made of, and cancels at the Newton fixed point
+everywhere else. The gain is also **not monotone in capacity** — `small` banks three
+opamps and `medium` banks none — so the "capacity peaks at large" story of §3.3 is a
+statement about rings and switchcap, not about opamps.
 
 ### 3.2 Device-level fidelity, production `large` (Rule 13)
 
@@ -283,6 +331,8 @@ SRAM + switchcap, tsmc12-opamp 6.25 %, **and tsmc5-opamp 0.21 %** (a coin-flip u
 clean, det-FAIL under crit15). Device level ≥ clean everywhere (DC mean NRMSE
 1.64→1.46 %, device-AC 4/8→6/8). Post-promotion verification on the default resolver
 path (no env pins) reproduces the record: **14/16 deterministic**.
+*(Re-measured post-gds-fix in V6.13.0: the same weights now score **15/16
+deterministic**, adding tsmc16-opamp at 7.69 %. §1, §12.2.)*
 
 **Two durable lessons:**
 
@@ -327,6 +377,30 @@ harness.
 - **Recipe rankings do NOT transfer across capacity:** crit30 is best at large (14/16)
   but only 12/16 at xl; crit10/crit15m peak at xl.
 
+#### 6.1b `crit15m@xl` reaches 16/16 STRICT after the gds fix (V6.13.0)
+
+Re-gating the four xl stems that were kept on disk:
+
+| stem | pre-fix strict | post-fix strict | FLIPs |
+|---|---|---|---|
+| **crit15m@xl** | 14/16 | **16/16** | **0** |
+| corroft@xl | 14/16 | **15/16** | 0 |
+| crit10@xl | 14/16 | 14/16 | 0 |
+| clean@xl | 10/16 | **12/16** | 0 |
+
+**`crit15m@xl` is the first DirectNet checkpoint set ever to sweep the full
+16-cell matrix under a single uniform recipe, strict across OMP∈{1,2,4} with zero
+flips.** Post-fix cell values — opamp 3.41 / 7.56 / 6.23 / 6.48 %, ring
+4.05 / 2.42 / 2.68 / 2.76 % (tsmc5/7/12/16), SRAM and switchcap all pass. Compare
+§6.2, where the same stem failed tsmc7- *and* tsmc12-opamp: the "three-basin
+simultaneous hold is the open 15/16 target" framing there was measuring a gds
+artifact, and the four-basin hold turns out to need no recipe change at all.
+
+This does **not** promote xl. §6.3's reasons stand — xl is 2.13 M params for a
+2.3× inference cost, its device fidelity is no better than `large`, and one
+16/16 stem is a basin result, not a demonstrated capacity law (crit30@xl is still
+only 12/16). It is documented as an env-pin alternate.
+
 ### 6.2 The 14/16 club — cell-level coverage (the load-bearing table)
 
 Gain/period errors in %; **bold** = deterministic PASS (OMP 1/2/4 identical verdict).
@@ -352,6 +426,14 @@ Gain/period errors in %; **bold** = deterministic PASS (OMP 1/2/4 identical verd
 3. **tsmc7-opamp: 0 passes over 22 recipes × 2 tiers × 3 OMPs.** Capacity-, recipe-
    and tier-independent — this gate needs the T3 differentiable-solver class of fix
    (V6.5.9), not a recipe.
+
+> ⚠ **Points 2 and 3 are RETRACTED by the V6.13.0 re-gate** (§6.1b, §12.2). Every
+> row of this table was measured with the gds sign bug present. Re-measured on the
+> identical checkpoints, `crit15m@xl` holds **all four** opamp basins including
+> tsmc7 (7.56 %) and scores 16/16 strict, so neither "the three-basin hold is the
+> open target" nor "tsmc7-opamp needs a T3-class solver fix" survives. The *shape*
+> of the finding — opamp basins are tier-dependent and mutually competitive at
+> `large` — does survive; its severity was inflated by the bug.
 
 ### 6.3 Why xl was NOT promoted
 
@@ -411,8 +493,10 @@ deficiency (which would corrupt gain *and* pole everywhere).
 **AC pass-rate peaks at SMALL across recipes** (V6.6.5) — AC (a dQ/dV pole property)
 and DC circuit fixed-points want opposite capacities.
 
-> See §12 for the measured, **not-yet-shipped** gds sign + floor fix that moves device
-> AC 8/10 → 10/10 and un-rails the opamp OP.
+> **Superseded by V6.13.0.** The gds sign + guard fix of §12.2 is now shipped and
+> re-gated: device CS-amp AC is **8/8** on the post-TSMC6 basket (this table's 4/12
+> is pre-fix), and the opamp OP un-rails. The *diagnosis* above — RHP zero, output-cap
+> under-prediction, opamp DC-level — survives the fix; the pass counts do not.
 
 ---
 
@@ -438,6 +522,28 @@ realistic ceiling. Zero RESOLVER-MISS across all 200 cells.
 variant, R² ≥0.996) and corroft **ties the per-tech calibration bar with zero OMP
 flips** — which per-tech `large` never achieved. The corridor is the ring lever at
 universal scope too (tsmc7-ring 14.89 % → 3.61 %). AC (CS-amp suites) 0/12.
+
+#### 9.1b Universal re-gate after the gds fix (V6.13.0, strict vs strict)
+
+All 8 universal stems re-gated; full table `results/a3_regate_uni/REPORT.md`.
+
+| stem | pre-fix strict | post-fix strict | Δ |
+|---|---|---|---|
+| `u716_dn_clean_xl` | 8/12 (1 FLIP) | **10/12** | **+2** |
+| `u716_dn_corroft_xl` | 8/12 | **9/12** | **+1** |
+| `u716_dn_crit30u_large` | 9/12 (1 FLIP) | **10/12** | **+1** |
+| `u716_dn_csob_large` | 8/12 (1 FLIP) | **9/12** | **+1** |
+| `u716_dn_corroft_large` | 10/12 | 10/12 | 0 |
+| `u716f5_plain_nfull_large` | 3/4 | 3/4 | 0 |
+| `u716_dn_clean_large` | 9/12 | **8/12** | **−1** |
+| `u716f5_plain_n1000000_large` | 4/4 | **3/4** | **−1** |
+| | | **net** | **+3** |
+
+**All three pre-existing OMP FLIPs are gone; every stem is now flip-free.** That is
+the more durable result than the +3: a FLIP means the gate outcome depended on GEMM
+thread count, and removing the sign error removed that sensitivity. Rings did not
+move at any stem, which is consistent with §3.1b — rings are gds-invariant.
+`u716_dn_corroft_large` remains the best universal checkpoint at 10/12.
 
 ### 9.2 xl arm — tsmc16-opamp is reachable, but only by trading ALL rings
 
@@ -544,19 +650,43 @@ the V6.9.0 onboarding gated TSMC6 9/9 DC and 14/14 transient, and passing those
 gates told us nothing, because they were TSMC7's gates.
 ---
 
-## 11. Cross-family comparison (as of 2026-07-24)
+## 11. Cross-family comparison (post-gds-fix, V6.13.0, 2026-07-24)
 
-| family | best config | params | complex strict | device | AC | CPU ms/eval |
-|---|---|---|---|---|---|---|
-| **DirectNet (73)** | **crit30f@large** | 0.92 M | **14/16** | 24/24 | 4/12 device | **1.5** |
-| BSIM-AR (74) | corroft@medium | 1.9 M | **15/16** | 44/44 | 4/8 device | 61.5 |
-| PFN (75) | clean@small | 0.69 M | 11/16 (zero OMP flips) | see report | 5/8 device | 15.6 |
+Strict = all of OMP∈{1,2,4} pass. Every row re-measured at `d2ea720`.
 
-**DirectNet stays production**: BSIM-AR wins the gate matrix by one cell
-(tsmc16-opamp) but costs ~30–100× the inference time; PFN is the only flip-free family
-but sits below the curriculum recipes. **tsmc7-opamp is the universal ceiling cell for
-all three families** — no capacity, tier, scope, seed or data recipe has ever reached
-it; only the V6.5.9 T3 differentiable-DC-solver fine-tune ever did.
+| family | best config | params | complex strict | pre-fix | device | AC | CPU ms/eval |
+|---|---|---|---|---|---|---|---|
+| **DirectNet (73) — production** | **crit30f@large** | 0.92 M | **15/16** (0 flips) | 14/16 | 24/24 | 8/8 device | **1.5** |
+| DirectNet (73) — best any tier | crit15m@xl | 2.1 M | **16/16** (0 flips) | 14/16 | 24/24 | — | 3.4 |
+| BSIM-AR (74) | corroft@medium | 1.9 M | **16/16** (0 flips) | 15/16 | 44/44 | 4/8 device | 61.5 |
+| PFN (75) | clean@small | 0.69 M | 11/16 (0 flips) | 11/16 | see report | 8/8 at large | 15.6 |
+
+**DirectNet stays production**, and the case is now stronger rather than weaker:
+it reaches 15/16 strict at 0.92 M params, and a uniform recipe at `xl` reaches a
+full sweep at 40× BSIM-AR's speed. BSIM-AR remains the higher-fidelity option —
+`corroft@medium` also sweeps 16/16 strict, with the broader 44/44 device suite —
+and is the right choice where wall-clock does not matter.
+
+Three framings from the pre-fix era are **retracted**:
+
+1. **"tsmc7-opamp is the universal ceiling cell for all three families, reached
+   only by the V6.5.9 T3 differentiable-DC-solver fine-tune."** It is passed by
+   BSIM-AR at every size and every recipe, and by DirectNet at `small`, at `xl`,
+   and strictly by `crit15m@xl`. Two independent families now sweep 16/16 strict
+   with ordinary data recipes.
+2. **"PFN is the only flip-free family."** True when written; overtaken. Every
+   family is flip-free post-fix, on all 18 re-gated groups plus 8 universal
+   stems. The shared cause was the wrong-signed Jacobian entry steering NR into
+   different basins under different GEMM thread counts — not an architectural
+   property of PFN.
+3. **"BSIM-AR wins the matrix by one cell."** Both families reach 16/16; the
+   matrix no longer separates them. They are separated by inference cost (40×)
+   and by device-suite breadth.
+
+**What is actually open**, across all three families: the **low-VDD rings**
+(tsmc5, tsmc7) for the clean recipes — deterministic failures at 5.5–12.6 %
+against a 5 % gate, closed only by the corridor curriculum — and the **opamp
+open-loop AC gate**, which no family passes at any size (§12.1).
 
 ---
 
@@ -566,36 +696,76 @@ it; only the V6.5.9 T3 differentiable-DC-solver fine-tune ever did.
 
 | Open gate | Headline | Owner |
 |---|---|---|
-| **tsmc7 opamp** | gain → 0 | high-gain fixed point unreachable on the value surface; T3-class (solver) fix only |
-| **tsmc16 opamp** | gain → 0 | same value-surface high-gain-basin fragility; reachable at xl (corroft/crit10/crit15m) and by csob@large, but not simultaneously with tsmc5+tsmc12 |
+| **tsmc7 opamp** | gain err 100 %, `vout` railed | Still open **at `large` only**. DirectNet banks it at `small` (1.81 %) and `xl` (4.20 %), and BSIM-AR banks it at every size — so this is a tier-specific basin, no longer a family-wide value-surface wall |
+| Opamp open-loop **AC** | 0/4 | OP un-rails post-fix, but no tech meets DC-gain *and* GBW *and* PM *and* magnitude together. Closest overall is **TSMC5** (3.31 dB vs the 3 dB gate, GBW 0.94×, PM 18.9° vs 15°, magNRMSE 30.5 %); TSMC12/16 nail GBW (0.98/0.93×) and PM (1.1°/0.65°) but miss magnitude (71 %/49 %); TSMC7 is still far out (31.9 dB). Pre-fix this suite read 0/12 with nothing close |
 
-These are **value-surface / fixed-point** properties (open-loop gain, oscillation
+`tsmc16-opamp` **closed** in V6.13.0 (7.69 % strict) and is no longer an open gate.
+
+These remain **value-surface / fixed-point** properties (open-loop gain, oscillation
 period at a sharp edge), **not** device-current or charge-derivative fidelity gaps —
 device DC, inverter, switchcap, SRAM and AC-gain are all strong.
 
-### 12.2 ⚠ Every number here was measured with the gds sign bug present
+> **Caveat on the SRAM `force_ic` residual.** The latch probe prints
+> `resid=3e-08 thr=8e-03 (resid_ok=True)`. Audit §B2 shows that threshold is
+> unreachable-by-construction — the residual is built with the V-source
+> branch-current slots left at zero, so it floors at the supply current, and
+> `resid_ok` is always True. The *rail* half of that gate is real; the residual
+> half is currently a no-op. Fix tracked as audit B2.
 
-`docs/2026-07-21-systematic-audit.md` §A3 found (and verified) that inference negates
-`gm`/`gmb` but **not** `gds`, so the learned output conductance is discarded by
-`_floor_gds` at 98–100 % of conducting bias points and replaced by a hard-wired 2 V
-Early voltage. As of this consolidation the fix is **not shipped**
-(`pycircuitsim/models/mosfet_nn.py` still floors with k=0.5 and no negation).
+### 12.2 The gds sign bug — FIXED and fully re-gated in V6.13.0
 
-Measured impact (sign fix + relaxed/guarded floor — the two are **coupled**; neither
-works alone):
+**Read this before comparing any two numbers in this report.** Sections 3–10 and
+Part II were measured with the bug present; §1 and §11 were re-measured after the
+fix. They are not interchangeable.
 
-| axis | shipped (arm A) | fixed (arm C/F) |
+`docs/2026-07-21-systematic-audit.md` §A3 found that inference negated `gm`/`gmb`
+but **not** `gds`. `gm` and `gds` are both derivatives of the same signed `id`, so
+the sign comes from `id`'s convention, not from which variable is differentiated —
+`losses/bni_mae.py` had negated all three since V6.4 and documented the older rule
+as wrong, but the correction never reached inference. The two-sided floor
+`max(gds, |id|·0.5)` then asserted an Early voltage ≤2 V — below the true median of
+every device (OSDI amplifying p50 3.3–9.8 V) — overriding the learned output
+conductance at 90.9 % of amplifying points, and was load-bearing **only because it
+masked the sign error**.
+
+Shipped in `8ed35bd`:
+
+- **sign** — negate `gds` with `gm`/`gmb`. Measured: autograd `d(id)/dVd` vs
+  `-gds_head` = 0.12 rel err, vs `+gds_head` = 2.08 (2.0 is the arithmetic
+  signature of a pure sign flip). OSDI `-d(id)/dVd` is positive at 100.0000 % of
+  conducting points over 111,630 evals on all 10 production devices.
+- **guard F** (`_floor_gds` → `_guard_gds`) — positives pass through
+  **bit-identical** to the raw Jacobian; only negatives clamp, to `|id|/50 V`.
+  50 V is above the measured maximum true Early voltage (43.4 V), so the guard can
+  never bind on a physically correct value. `PYCIRCUITSIM_GDS_FLOOR_K` is now
+  **rejected loudly**; the new knob is `PYCIRCUITSIM_GDS_GUARD_K` (default 0.02).
+
+The two **must** ship together: measured, the sign alone is bit-identical and the
+guard alone regresses device AC 8/10 → 5/10.
+
+Measured impact, production DirectNet (single-run vs single-run, same harness):
+
+| axis | pre-fix | post-fix |
 |---|---|---|
-| device AC gates | 8/10 | **10/10** |
-| complex matrix | 17/20 (14/16 on the 4-tech basket) | **18/20** (15/16) |
+| complex matrix, production `large` | 14/16 | **15/16** (strict, zero FLIPs) |
+| device AC gates (audit A3 controlled arm, 5-tech basket) | 8/10 | **10/10** |
+| device AC gates (`verify_nn_ac`, post-TSMC6 4-tech basket) | not measured on this basket | **8/8** |
 | `force_ic` SRAM latch probe | 2/5 | **5/5** |
-| DC (69 parametric configs) | — | **exactly bit-identical** |
-| transient (80 configs) | mean NRMSE 1.876 % | **1.512 %** (51 improved / 12 worsened) |
+| parametric DC (55 configs) | 54/55 | **54/55, bit-identical** |
+| parametric transient (64 configs) | mean NRMSE 1.876 % | **1.512 %** (51 improved / 12 worsened) |
 | opamp OP | railed (TSMC16 `vout=0.000`) | **un-railed** (`vout=0.496`) |
 
-So the AC 4/12 in §8 and the opamp rails in §3/§6 are **partly an artifact of the
-floor masking a sign error**, not purely a value-surface limit. Open experiment: scan
-`_GDS_FLOOR_K` with the sign fixed, then re-run the full gate matrix.
+**DC is exactly invariant, and that is expected, not a null result**: `gds` cancels
+at the Newton fixed point, so only the path to it changes. The one parametric-DC
+failure (`TSMC12_pmos_nfin_10`, NRMSE 16.15 %) is bit-identical pre- and post-fix,
+which confirms the invariance at scale rather than hiding a regression.
+
+**What this retracts.** The opamp rails in §3/§6 and the AC misses in §8 were
+*partly an artifact of the floor masking a sign error*, not purely a value-surface
+limit. Concretely: `tsmc16-opamp` is now banked at production, and `tsmc7-opamp` —
+described throughout the older sections as unreachable by anything but the V6.5.9
+T3 solver fine-tune — passes for DirectNet at `small` and `xl` and for BSIM-AR at
+every size. See §11.
 
 ### 12.3 Validation split cannot measure what the gates measure
 
@@ -608,9 +778,12 @@ held-out-L split is the open follow-up.
 
 ### 12.4 Denominator hygiene
 
-The authoritative DirectNet matrix is **/16** (4 circuits × TSMC5/7/12/16). Collectors
-that hardcoded `NCELL`/`NGATES` after TSMC6 joined report **/20** (audit §B5k) — and
-per §10 that fifth column duplicates TSMC7. Read any /20 number accordingly.
+The authoritative DirectNet matrix is **/16** (4 circuits × TSMC5/7/12/16), and since
+the V6.13.0 TSMC6 retire that is the only denominator the harness produces. Older
+text in this report reports **/20** complex cells, **/10** device-AC cells and
+**/12** AC cells: the /20 and /10 forms carried a TSMC6 column that per §10
+duplicates TSMC7, and should be read as /16 and /8. Audit §B5k is the collector-side
+half of the same problem.
 
 ---
 
@@ -644,6 +817,15 @@ bash scripts/recipe_multirun_gate.sh crit30 large TSMC16 verify_complex_opamp
 ---
 
 # Part II — Full accuracy data tables (frozen 2026-07-05)
+
+> ⚠ **All of Part II is PRE-gds-fix data**, frozen 2026-07-05 and kept verbatim
+> for provenance. Appendices A, B and C were measured with the sign bug present,
+> so their pass counts are systematically pessimistic on **opamp** cells and
+> essentially unchanged on rings, SRAM and switchcap (§3.1b). Their *rankings*
+> between recipes on ring/switchcap cells still hold; their opamp columns and
+> any total that includes one do not. Post-fix numbers live in Part I §1, §3.1b,
+> §6.1b, §9.1b and §11, and the raw re-gate is `results/a3_regate/REPORT.md` +
+> `OMP_REPORT.md`.
 
 Collector-generated tables, carried verbatim from the retired
 `docs/V6.6.6-accuracy-report.md` (which had itself merged them from

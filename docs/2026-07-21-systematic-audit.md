@@ -12,6 +12,25 @@ Baseline at audit time: `verify_bsimcmg_op` 3/3, `verify_bsimcmg_dc` 2/2,
 > running 5 days on the V6.8.1 BSIM-AR XL fill, writing `tsmc16_tf_csob_xl`.
 > Nothing in `checkpoints/` or the base/`_corro_` datasets was touched.
 
+> ## ⚑ Disposition (updated 2026-07-24)
+>
+> This file stays the **finding register** — it is not edited as fixes land, so
+> that the record of what was found still reads as it was found. Current status
+> of every finding lives in **`docs/plans/2026-07-24-audit-fix-waves.md`**.
+>
+> - **Shipped:** A1 (`e756481`), A2 (`e756481`), A3 (`8ed35bd` — sign + guard F,
+>   followed by the full V6.13.0 re-gate), D1 (`38c47d8` — TSMC6 retired).
+> - **Dropped on re-verification:** **C2** — the NaN mechanism is real but the
+>   softplus clamp is in no autograd graph, and the prescribed `F.softplus`
+>   rewrite is measurably *not* forward-bit-identical (23/401 samples differ in
+>   the last fp32 bit), so shipping it would risk basins for a bug that cannot
+>   fire. **B5k**, **C6p** — both closed by the TSMC6 retire.
+> - **Remaining 40 findings** were re-located against `d2ea720` (several line
+>   citations here have drifted by a few lines) and split into a gate-neutral
+>   wave 1 and a gate-affecting wave 2. See the plan for the ordering
+>   constraints — notably that **B2 must precede B1**, and that B2 needs a
+>   telemetry pass before its thresholds are flipped.
+
 ---
 
 ## P0 — Results-corrupting
