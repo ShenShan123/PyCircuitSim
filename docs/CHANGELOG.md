@@ -155,8 +155,11 @@ Verified — flag off: LEVEL=74 DC/tran/AC CSVs **sha256-identical** to the
 pre-change baseline; L72 op 3/3 + dc 2/2 + tran 1/1, `verify_ac` 2/2,
 `verify_subckt` 11/11, DirectNet L73 inverter **8/8** across four techs.
 Flag on: LEVEL=74 TSMC5 inverter gate vs NGSPICE **2/2 PASS with identical
-scores** (VTC 1.09 %, inverter transient 0.97 %) — the perturbation is far
-below gate resolution.
+scores** (VTC 1.09 %, inverter transient 0.97 %), and the LEVEL=74 device AC
+gate — the derivative-sensitive one, whose caps are the autograd dQ/dV of the
+predicted charges — **2/2 PASS with every metric identical to the last printed
+digit** (NMOS 0.435 dB / f3db 1.259 / 4.67 % / 67.40°; PMOS 0.189 dB / 0.891 /
+2.08 % / 79.58°). The perturbation is far below gate resolution.
 
 ### Dead ends (measured, rejected — do not retry)
 
