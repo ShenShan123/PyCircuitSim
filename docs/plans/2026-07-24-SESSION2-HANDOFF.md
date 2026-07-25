@@ -5,8 +5,14 @@ when the gates finished.** This is the resume point. Read this file first, then
 `docs/plans/2026-07-24-a3-regate-status.md` (campaign background) and
 `docs/plans/2026-07-24-audit-fix-waves.md` (bug-fix triage).
 
-Nothing in this session has been committed to `main` yet. Two fix branches are
-committed. **The gate campaign has finished** — see §1.
+**STATUS 2026-07-25 02:40 — V6.13.0 AND WAVE 1 ARE PUSHED TO `main`**
+(`a96112a..9fd0301`). The campaign is finished (§1) and the docs are committed.
+What remains is `audit-fixes-wave2`, which is committed on its branch and
+**unmerged pending a re-gate** (§6), plus the deferred items in §7.
+
+Verified on merged `main` before pushing: `verify_bsimcmg_op` 3/3,
+`verify_bsimcmg_dc` 2/2, `verify_bsimcmg_tran` 1/1, `verify_ac` 2/2,
+`verify_subckt` 11/11.
 
 ---
 
