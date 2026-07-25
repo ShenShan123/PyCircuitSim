@@ -27,9 +27,28 @@ Output: (B, 13) — outputs in BSIMAR (paper) AR order.
 """
 
 import math
+import os
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
+
+# V7.0.4 — autoregressive prefix cache (plan lever I4). See
+# ``_ar_generate_cached``.
+#
+# DEFAULT OFF, and it must stay off until a full 16-gate complex re-gate
+# clears it — same bar as the V7.0.3 fused Jacobian. I4 was routed as
+# "exact in exact arithmetic, needs verification"; the verification came
+# back NEGATIVE. It is exact in real arithmetic but *not* bit-identical
+# in float32, and the reason is a hard floor rather than a fixable
+# implementation detail: on this CPU ``F.linear`` is not row-stable —
+# a 1-row GEMV accumulates in a different order than the same row of an
+# L-row GEMM (measured 0/96 shapes stable, ~8e-6 abs). Any formulation
+# that computes fewer rows than the stock recompute therefore moves the
+# last bits, no matter how attention is arranged. Measured end-to-end
+# deviation on shipped checkpoints: outputs <= 5.3e-6, autograd Jacobian
+# <= 1.6e-6 (see docs/plans/2026-07-25-v700-nn-perf.md).
+_AR_CACHE = os.environ.get("PYCIRCUITSIM_NN_AR_CACHE", "0") == "1"
 
 
 class TransformerEncoderModel(nn.Module):
@@ -228,6 +247,161 @@ class TransformerEncoderModel(nn.Module):
         cap_h = last_hidden.unsqueeze(1) + cap_te.unsqueeze(0)
         return self._project_outputs(cap_h, start_idx=self.CAP_START)
 
+    # ── V7.0.4: autoregressive prefix cache (plan lever I4) ──────────
+    #
+    # The stock inference loop below re-runs the ENTIRE encoder over the
+    # whole growing prefix once per AR step: 8 passes over 4, 5, ..., 11
+    # tokens = 60 token-passes to produce 11 distinct hidden states.
+    # Under a causal mask a prefix hidden state cannot change once
+    # computed, so 49 of those 60 are pure waste — and this recompute,
+    # not model size, is why BSIM-AR inference is ~30-100x DirectNet.
+    #
+    # The cached path streams each token through the stack exactly once,
+    # keeping per-layer K/V so the new token can still attend to the whole
+    # prefix. Same algebra, one evaluation each — but see ``_AR_CACHE``:
+    # the summation order is NOT the same, which is why it is opt-in.
+
+    def _ar_cache_usable(self) -> bool:
+        """Whether ``_ar_generate_cached`` models this module at all.
+
+        The incremental path re-implements ``TransformerEncoderLayer``'s
+        pre-LN block against ``self_attn``'s packed projection weights, so
+        it is only valid for the exact configuration this class builds.
+        Anything else (a hand-edited encoder, a training-mode call whose
+        dropout is stochastic) falls back to the stock loop rather than
+        silently computing something different. These are *correctness*
+        conditions — the float deviation documented on ``_AR_CACHE`` is
+        separate and applies whenever the cache runs at all.
+        """
+        if self.training:
+            return False   # dropout is live; the stock loop owns that path
+        norm = self.transformer_encoder.norm
+        if norm is not None and not isinstance(norm, nn.LayerNorm):
+            return False   # a non-per-position final norm would not split
+        for layer in self.transformer_encoder.layers:
+            sa = getattr(layer, "self_attn", None)
+            if sa is None or not getattr(layer, "norm_first", False):
+                return False
+            if not (getattr(sa, "_qkv_same_embed_dim", False)
+                    and getattr(sa, "batch_first", False)):
+                return False
+            if sa.bias_k is not None or sa.bias_v is not None:
+                return False
+            if getattr(sa, "add_zero_attn", False):
+                return False
+            if sa.num_heads != self.nhead or sa.embed_dim != self.d_model:
+                return False
+        return True
+
+    def _encoder_append(
+        self,
+        x_new: torch.Tensor,
+        cache: list[list[torch.Tensor | None]],
+    ) -> torch.Tensor:
+        """Push ``T`` new tokens through the stack, extending the K/V cache.
+
+        Args:
+            x_new: ``(B, T, d_model)`` layer-0 input for the new tokens
+                (token-type embedding already added).
+            cache: per-layer ``[k, v]`` of shape ``(B, nhead, S, head_dim)``
+                for the ``S`` tokens already consumed; mutated in place.
+
+        Returns:
+            ``(B, T, d_model)`` encoder output for the new tokens only.
+            Prefix outputs are not recomputed — under the causal mask they
+            are unchanged, and the AR loop only ever reads the last one.
+        """
+        B, T, _ = x_new.shape
+        n_head = self.nhead
+        head_dim = self.d_model // n_head
+
+        x = x_new
+        for li, layer in enumerate(self.transformer_encoder.layers):
+            sa = layer.self_attn
+
+            # Pre-LN self-attention block, with K/V of the prefix reused.
+            h = layer.norm1(x)
+            qkv = F.linear(h, sa.in_proj_weight, sa.in_proj_bias)
+            q, k, v = qkv.chunk(3, dim=-1)
+            q = q.view(B, T, n_head, head_dim).transpose(1, 2)
+            k = k.view(B, T, n_head, head_dim).transpose(1, 2)
+            v = v.view(B, T, n_head, head_dim).transpose(1, 2)
+
+            k_prev, v_prev = cache[li]
+            if k_prev is not None:
+                k = torch.cat([k_prev, k], dim=2)
+                v = torch.cat([v_prev, v], dim=2)
+            cache[li] = [k, v]
+
+            # New token t sits at absolute position (S - T) + t, so it may
+            # attend to every key up to there. Both shapes the AR loop
+            # actually produces are mask-free: priming (T == S) is plain
+            # causal attention, and an incremental token (T == 1) attends
+            # to the entire cache.
+            #
+            # Priming passes ``is_causal=True`` rather than an equivalent
+            # triangular mask on purpose. ``nn.TransformerEncoder`` runs
+            # ``_detect_is_causal_mask`` over the mask it is handed and
+            # forwards the hint, so the stock call reaches SDPA's fused
+            # causal kernel with ``attn_mask=None``; rebuilding the mask
+            # explicitly would select the math kernel and shift the primer
+            # by ~7e-7 for no reason. Matching it costs nothing and keeps
+            # the deviation confined to the incremental steps.
+            S = k.size(2)
+            attn_mask = None
+            is_causal = False
+            if T == S:
+                is_causal = True
+            elif T > 1:
+                attn_mask = torch.triu(
+                    torch.full((T, S), float("-inf"),
+                               dtype=q.dtype, device=q.device),
+                    diagonal=S - T + 1)
+            attn = F.scaled_dot_product_attention(
+                q, k, v, attn_mask=attn_mask, is_causal=is_causal)
+            attn = attn.transpose(1, 2).reshape(B, T, self.d_model)
+
+            x = x + sa.out_proj(attn)
+            x = x + layer.linear2(
+                layer.activation(layer.linear1(layer.norm2(x))))
+
+        norm = self.transformer_encoder.norm
+        return x if norm is None else norm(x)
+
+    def _ar_generate_cached(
+        self,
+        context_emb: torch.Tensor,
+        start_token: torch.Tensor,
+    ) -> torch.Tensor:
+        """Cached equivalent of the stock autoregressive inference loop."""
+        device = context_emb.device
+        cache: list[list[torch.Tensor | None]] = [
+            [None, None] for _ in self.transformer_encoder.layers]
+
+        # Prime with the 3 context tokens + the start token — byte for byte
+        # the sequence the stock loop's first pass sees.
+        primer = torch.cat(
+            [context_emb, self._embed_ar_scalars(start_token)], dim=1)
+        primer = self._add_token_type(primer)
+        last_hidden = self._encoder_append(primer, cache)[:, -1, :]
+
+        next_pos = primer.size(1)
+        predictions = []
+        for i in range(self.ar_target_dim):
+            next_pred = self.output_heads[i](last_hidden).squeeze(-1)
+            predictions.append(next_pred)
+            if i == self.ar_target_dim - 1:
+                break
+            token = self._embed_ar_scalars(next_pred.unsqueeze(1))
+            token = token + self.token_type_emb(
+                torch.tensor([next_pos], device=device)).unsqueeze(0)
+            last_hidden = self._encoder_append(token, cache)[:, -1, :]
+            next_pos += 1
+
+        pred_caps = self._parallel_cap_head(last_hidden)
+        pred_qic = torch.stack(predictions, dim=1)
+        return torch.cat([pred_qic, pred_caps], dim=1)
+
     def forward(
         self,
         x: torch.Tensor,
@@ -277,6 +451,11 @@ class TransformerEncoderModel(nn.Module):
         # Inference: autoregressive generation
         context_emb = self._embed_context(x, tech_codes)
         start_token = torch.zeros(batch_size, 1, device=x.device, dtype=x.dtype)
+
+        # V7.0.4 — same generation, each token encoded once (lever I4).
+        if _AR_CACHE and self._ar_cache_usable():
+            return self._ar_generate_cached(context_emb, start_token)
+
         ar_scalars = start_token
         predictions = []
         last_encoder_out: torch.Tensor | None = None

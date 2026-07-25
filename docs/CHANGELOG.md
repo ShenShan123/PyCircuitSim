@@ -8,11 +8,12 @@ lives in git history.)
 
 ---
 
-## V7.0.0–V7.0.3 — NN compact-model performance (2026-07-25)
+## V7.0.0–V7.0.4 — NN compact-model performance (2026-07-25)
 
-**Scan of the NN inference and training paths, then three infra changes.
-Inference DC solve 1.68× with byte-identical output; training 4.9× per epoch.
-Full measurements, routing and dead ends: `docs/plans/2026-07-25-v700-nn-perf.md`.**
+**Scan of the NN inference and training paths, then four infra changes.
+Inference DC solve 1.68× with byte-identical output; training 4.9× per epoch;
+BSIM-AR 1.6× behind an opt-in flag. Full measurements, routing and dead ends:
+`docs/plans/2026-07-25-v700-nn-perf.md`.**
 
 The governing constraint throughout: shipped checkpoints and gate results are
 the product, and this repo has repeatedly watched a last-bit NN perturbation
@@ -102,6 +103,60 @@ Not bit-identical (same math, different summation order): max |ΔV| = 7e-7 (DC)
 and 4e-7 (transient) on the inverter — but the inverter is the benign case, and
 the opamps are what a re-gate must clear. **Stays off until that re-gate runs.**
 With the flag off, the three CSVs remain sha256-identical.
+
+### V7.0.4 — LEVEL=74 AR prefix cache, opt-in, DEFAULT OFF
+
+The BSIM-AR inference loop re-ran the **entire encoder over the whole growing
+prefix, once per AR step** — 8 passes over 4, 5, … 11 tokens = 60 token-passes
+to produce 11 hidden states. Under the causal mask a prefix hidden state cannot
+change once computed, so 49 of the 60 were pure waste. `_encoder_append` now
+streams each token through the stack once, keeping per-layer K/V so the new
+token still attends to the whole prefix. Behind `PYCIRCUITSIM_NN_AR_CACHE=1`.
+
+Delivered **1.60× DC / 1.56× transient / 1.21× AC** end-to-end, and **4.3× at
+batch 2048** in the trainer's `no_grad` AR metrics (that regime is genuinely
+FLOP-bound). Gains grow with device count — 2.06× at batch 4.
+
+**Routing correction: I4 was classified "exact in exact arithmetic"; the
+bit-wise verification refuted it, and the cause is a hard floor.** `F.linear`
+is not row-stable on this CPU — a 1-row GEMV accumulates in a different order
+than the same row of an L-row GEMM (measured **0/96 shapes stable**, up to
+8e-6 abs). *Any* formulation computing fewer rows than the stock recompute
+moves the last bits, however attention is arranged. That also kills the
+rescue of caching Q/K/V and replaying the identical full-prefix SDPA call:
+attention is only ~1 % of the cost, and the projections holding the other
+99 % are exactly what cannot be shrunk exactly. So I4 ships default-off like
+V7.0.3, promoted only on a full 16-gate `MODEL=transformer` re-gate.
+
+Deviation is small but real: outputs ≤ 5.3e-6, autograd Jacobians ≤ 1.6e-6,
+solved node voltages ≤ 1.6 µV.
+
+**Why 1.6× and not the 5.45× the token count implies:** the encoder is
+weight-bandwidth-bound like DirectNet, and the weight stream is paid *per
+encoder call, not per token* — 8 AR steps means 8 streams either way. The
+cache removes the redundant arithmetic, not the traffic, and the 8 sequential
+streams are the autoregressive data dependence itself.
+
+Two PyTorch behaviours found and recorded:
+
+- `nn.TransformerEncoder` runs `_detect_is_causal_mask` on the mask it is
+  given and forwards `is_causal=True` with `attn_mask=None`, so the stock call
+  reaches SDPA's **fused causal** kernel. Rebuilding an equivalent triangular
+  mask selects the math kernel and shifts the primer by 7e-7 for nothing;
+  `_encoder_append` matches the hint.
+- `TransformerEncoderLayer.forward` has a second fused fast path
+  (`torch._transformer_encoder_layer_fwd`) that fires **only under `no_grad`** —
+  it is disqualified whenever grad is enabled and a parameter requires grad,
+  because the fused op is not differentiable. Every simulator eval wraps the
+  forward in `torch.enable_grad()` for the Jacobian, so the shipped LEVEL=74
+  surface has never touched it.
+
+Verified — flag off: LEVEL=74 DC/tran/AC CSVs **sha256-identical** to the
+pre-change baseline; L72 op 3/3 + dc 2/2 + tran 1/1, `verify_ac` 2/2,
+`verify_subckt` 11/11, DirectNet L73 inverter **8/8** across four techs.
+Flag on: LEVEL=74 TSMC5 inverter gate vs NGSPICE **2/2 PASS with identical
+scores** (VTC 1.09 %, inverter transient 0.97 %) — the perturbation is far
+below gate resolution.
 
 ### Dead ends (measured, rejected — do not retry)
 
