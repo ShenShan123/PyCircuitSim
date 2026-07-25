@@ -52,9 +52,24 @@ if [ "${1:-}" = "_one" ]; then
   size="$2"; tuc="$3"; tlc="$4"; suite="$5"
   log="$OUT/$size/$tlc/${suite}.log"
   mkdir -p "$(dirname "$log")"
+  # audit B3 — worker exit code means "did this cell reach a VERDICT?", not
+  # "did it pass": a PASS and a FAIL are both scientific results (exit 0), while
+  # a cell that could not be judged at all exits 3 so the dispatcher can fail
+  # loudly. Never 255 — xargs aborts the whole run on 255.
+  # audit B5m — the NO-CKPT marker contains the resume sentinel, so it used to
+  # skip its own cell forever, even after the checkpoint had been trained. Retry
+  # the existence test on a pill log and clear it if the checkpoints now exist;
+  # only a still-missing checkpoint keeps the no-verdict exit 3.
+  if grep -q "===BENCH_DONE no-ckpt===" "$log" 2>/dev/null; then
+    if [ -f "$CKPT/${tlc}_${TAG}_${size}_nmos_best.pt" ] && [ -f "$CKPT/${tlc}_${TAG}_${size}_pmos_best.pt" ]; then
+      echo "[test] RETRY $size/$tlc/$suite (checkpoints appeared since the NO-CKPT record)"; rm -f "$log"
+    else
+      echo "[test] SKIP $size/$tlc/$suite (recorded NO-CKPT — still no verdict)"; exit 3
+    fi
+  fi
   if grep -q "===BENCH_DONE" "$log" 2>/dev/null; then echo "[test] SKIP $size/$tlc/$suite"; exit 0; fi
   if [ ! -f "$CKPT/${tlc}_${TAG}_${size}_nmos_best.pt" ] || [ ! -f "$CKPT/${tlc}_${TAG}_${size}_pmos_best.pt" ]; then
-    echo "[test] NO-CKPT $size/$tlc -> skip $suite"; echo "===BENCH_DONE no-ckpt===" > "$log"; exit 0
+    echo "[test] NO-CKPT $size/$tlc -> skip $suite"; echo "===BENCH_DONE no-ckpt===" > "$log"; exit 3
   fi
   export CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 NGSPICE_BIN="$NG"
   if [ "$TAG" = "tf" ]; then
@@ -74,10 +89,19 @@ if [ "${1:-}" = "_one" ]; then
   rc=$?
   echo "===BENCH_DONE rc=$rc===" >> "$log"
   echo "[test] END $size/$tlc/$suite rc=$rc"
+  # audit B3 — rc 124 (timeout) and rc >= 126 (cannot-exec / killed by signal)
+  # mean the suite never printed a verdict; a plain nonzero rc IS the FAIL verdict.
+  if [ "$rc" -eq 124 ] || [ "$rc" -ge 126 ]; then exit 3; fi
+  # ...as does a log holding nothing but the marker (the empty-log failure mode).
+  [ "$(grep -cv '^===BENCH_DONE' "$log")" -gt 0 ] || exit 3
   exit 0
 fi
 
 # ---- dispatcher: serialize sizes, parallelize (tech x suite) within a size ----
+# audit B3 — xargs' status must be captured BEFORE any echo, or the echo's 0
+# overwrites it and every no-verdict cell is swallowed. Propagation convention
+# copied from scripts/benchmark_gen_data.sh (rc accumulator + `exit $rc`).
+rc=0
 for size in "${sizes[@]}"; do
   echo "[test] ===== SIZE $size ====="
   specs=()
@@ -85,6 +109,12 @@ for size in "${sizes[@]}"; do
     specs+=("$size ${techs_uc[$i]} ${techs_lc[$i]} $suite")
   done; done
   printf '%s\n' "${specs[@]}" | xargs -P "$PAR" -L1 "$SELF" _one
+  xrc=$?
+  [ "$xrc" -eq 0 ] || { echo "[test] SIZE $size: cells produced no verdict (xargs rc=$xrc)" >&2; rc=1; }
   echo "[test] ===== SIZE $size COMPLETE ====="
 done
+if [ "$rc" -ne 0 ]; then
+  echo "[test] INFRASTRUCTURE FAILURE: some cells produced no verdict (see NO-CKPT / rc>=124 above)" >&2
+  exit 1
+fi
 echo "[test] ALL TESTS COMPLETE"

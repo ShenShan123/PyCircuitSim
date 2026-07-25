@@ -611,13 +611,16 @@ def run_complex_multi_tech(circuit: str, tech_keys: List[str], dimension: str,
                            results_dir: Path,
                            pin_strict: bool = False) -> List[Dict[str, Any]]:
     runner = _RUNNERS[circuit]
+    # audit B5l — a typo'd tech used to SKIP silently here too, shrinking the
+    # denominator of every sweep mirror rather than failing. Reject up front.
+    unknown = [t for t in tech_keys if t not in BENCH]
+    if unknown:
+        raise ValueError(
+            f"unknown tech(s) {unknown}. Available: {list(BENCH)}")
     verify_checkpoint_pin(tech_keys, results_dir, strict=pin_strict)
     results: List[Dict[str, Any]] = []
     for tk in tech_keys:
         print(f"\n{'=' * 72}\n  {tk} — {circuit} ({dimension})\n{'=' * 72}")
-        if tk not in BENCH:
-            print(f"  SKIP unknown tech {tk}")
-            continue
         base_cfg = make_baseline(circuit, tk)
         wd = results_dir / tk / "baseline"
         res = runner(base_cfg, wd)

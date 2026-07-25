@@ -25,6 +25,14 @@ pids=(); jobs=()
 for tech in "${techs[@]}"; do
   for dev in "${devs[@]}"; do
     log="$LOGDIR/gen_${tech}_${dev}.log"
+    # audit C6o — the label sidecar is fingerprinted against the geometry block
+    # of the dataset it was built from, and the loader now REFUSES a sidecar
+    # whose fingerprint does not match rather than silently re-using it. Rule 1
+    # invites regenerating datasets, so retire the stale sidecar here; the next
+    # training run rebuilds it. Without this a regen makes every later train
+    # die inside load_and_split_bsimar until someone deletes the .npy by hand.
+    rm -f "$OUTDIR/${tech}_${dev}_tech_variant_labels.npy" \
+          "$OUTDIR/${tech}_${dev}_tech_variant_labels.meta.npz"
     echo "[gen] $tech $dev ($WORKERS workers) -> $log"
     conda run -n pycircuitsim python -u "$GEN" \
         --device "$dev" --tech "$tech" \

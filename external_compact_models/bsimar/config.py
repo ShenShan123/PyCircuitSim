@@ -279,7 +279,19 @@ def assert_tech_is_distinct(tech: str, against: Optional[Sequence[str]] = None,
 
 
 def tech_scope_vocab_size(scope: str) -> int:
-    """Embedding vocabulary size required for a given tech_scope."""
+    """Embedding vocabulary size required for a given tech_scope.
+
+    ``"universal"`` means the TSMC-only pre-train vocabulary — codes 0-16
+    plus UNKNOWN 17, i.e. 18 rows — NOT every code in the registry. ASAP7
+    owns codes 18-21 (Rule 14 keeps it out of scope, and no ``asap7_*.npz``
+    exists), so a dataset carrying one would index past an 18-row
+    ``nn.Embedding``; training on ASAP7 needs an explicit
+    ``--num-tech-codes 22`` and an ASAP7-aware checkpoint. Widening this
+    return value instead would resize the embedding for every universal
+    run and break ``load_state_dict`` on the 18-code ``u716_dn_*``
+    checkpoints, so the range is guarded at load time
+    (``trainer._assert_codes_in_vocab``, audit C6q) rather than here.
+    """
     if scope == "universal":
         return NUM_TSMC_CODES_WITH_UNKNOWN
     if scope not in LOCAL_VOCAB_SIZE:

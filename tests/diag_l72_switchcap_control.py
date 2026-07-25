@@ -5,6 +5,14 @@ NGSPICE deck) through PyCircuitSim's OWN transient solver but with the LEVEL=72
 BSIM-CMG OSDI model — no NN. If this ALSO over-charges vs NGSPICE's 0.2948 V, the
 ~11-12% switchcap "gap" is a PyCircuitSim-solver-vs-NGSPICE difference, not the NN
 (cf. the V6.4.7 force_ic harness-bug lesson: run the native-L72 control first).
+
+Provenance (what this control already established, V6.5.2.x — kept here rather
+than printed per run, because it is history, not a conclusion about the run you
+are looking at): with uic pinning the L72 control tracked NGSPICE closely, so
+the original no-uic control's ~14.65% was a *seeding* artifact (high-impedance
+hold node vsamp starting at the leakage equilibrium ~vin instead of .ic 0 V),
+NOT a solver gap; and the real tsmc5 switchcap FAIL was a clock-amplitude
+rendering bug in render_directnet_netlist.
 """
 import logging
 import sys
@@ -22,9 +30,30 @@ from pycircuitsim.solver import DCSolver, TransientSolver  # noqa: E402
 
 TRAN_TSTEP, TRAN_TSTOP = 5e-12, 12e-9
 SAMPLE_END = 2.3e-9
+CHARGE_TOL_PCT = 5.0        # % of VDD — mirrors verify_complex_switchcap.CHARGE_TOL
 
 
-def run(name="TSMC5"):
+def _verdict(err: float) -> str:
+    """Ownership verdict for one L72 switchcap control cell.
+
+    audit B5j: the conclusion sentence used to be a literal print, emitted
+    verbatim for err=0.1% and err=40% alike — so a control run that MISSED
+    NGSPICE still announced "the solver is faithful". The verdict now reads the
+    number that was just computed.
+    """
+    if not np.isfinite(err):
+        return ("  >> INCONCLUSIVE: the L72 control produced no comparable "
+                "number (non-finite err) — read NO ownership verdict from it.")
+    if err <= CHARGE_TOL_PCT:
+        return (f"  >> L72 control tracks NGSPICE to {err:.2f}% of VDD "
+                f"(<= {CHARGE_TOL_PCT}%): the solver is faithful on this cell "
+                f"— a switchcap gap here is NN-owned.")
+    return (f"  >> L72 control MISSES NGSPICE by {err:.2f}% of VDD "
+            f"(> {CHARGE_TOL_PCT}%): solver/harness-owned — do NOT attribute "
+            f"this gap to the NN.")
+
+
+def run(name: str = "TSMC5") -> tuple[float, float]:
     bt = BENCH[name]
     prof = bt.profile
     vp = prof.get_vt_pair(bt.vt)
@@ -113,10 +142,7 @@ Csample vsamp 0 100f
     err = abs(v_at - ng) / vdd * 100.0
     print(f"{name}: L72(PyCircuitSim solver, uic) vsamp@2.3ns = {v_at:.4f} V  "
           f"| NGSPICE = {ng:.4f} V  | err = {err:.2f}% of VDD")
-    print(f"  >> With uic pinning the L72 control matches NGSPICE: the solver is "
-          f"faithful. (The original no-uic control's ~14.65% was a seeding "
-          f"artifact, NOT a solver gap; the real tsmc5 switchcap FAIL was a "
-          f"clock-amplitude rendering bug in render_directnet_netlist.)")
+    print(_verdict(err))
     return v_at, err
 
 

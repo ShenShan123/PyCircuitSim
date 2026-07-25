@@ -152,7 +152,15 @@ def main() -> int:
     args = ap.parse_args()
     techs = list(NN_TECHS)
     if args.techs:
-        want = {t.strip().upper() for t in args.techs.split(",")}
+        want = {t.strip().upper() for t in args.techs.split(",") if t.strip()}
+        # audit B5n: an unknown tech used to filter `techs` down to [] and
+        # then report a green "0/0 configs PASSED" — silently retiring this
+        # permanent Rule-2 canary. A typo must be loud.
+        unknown = want - {tk.upper() for tk in NN_TECHS}
+        if unknown:
+            print(f"ERROR: unknown tech(s) {sorted(unknown)}. "
+                  f"Available: {NN_TECHS}")
+            return 1
         techs = [tk for tk in techs if tk.upper() in want]
 
     print("=" * 78)
@@ -216,6 +224,12 @@ def main() -> int:
 
     if args.no_gate:
         return 0
+    # audit B5n, defence in depth: `0 == 0` would otherwise exit green on an
+    # empty run (e.g. a future tech-gating change or an emptied
+    # VS0_FRACTIONS) even though nothing was measured.
+    if not rows:
+        print("\nERROR: no configs ran — nothing under test")
+        return 1
     total = len(rows)
     print(f"\nRESULT: {n_pass}/{total} configs PASSED "
           f"(NRMSE <= {DC_NRMSE_PASS:.0f}%)")

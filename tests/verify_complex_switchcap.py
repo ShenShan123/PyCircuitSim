@@ -188,6 +188,13 @@ def main() -> int:
     ap.add_argument("--tech", default=",".join(BENCH_TECHS))
     args = ap.parse_args()
     techs = [t.strip() for t in args.tech.split(",")]
+    # audit B5l: an unknown tech used to print SKIP and never enter `results`,
+    # so `--tech TSMC5,TSMC7X` reported 1/1 and exited 0. Reject up front
+    # (same pattern as verify_nn_dc_tran.py).
+    unknown = [t for t in techs if t not in BENCH]
+    if unknown:
+        print(f"ERROR: unknown tech(s) {unknown}. Available: {list(BENCH)}")
+        return 1
 
     print("=" * 78)
     print("Benchmark 3d — switched-cap unit cell: DirectNet vs NGSPICE BSIM-CMG")
@@ -198,9 +205,6 @@ def main() -> int:
 
     results: List[Dict] = []
     for name in techs:
-        if name not in BENCH:
-            print(f"  SKIP unknown tech {name}")
-            continue
         try:
             results.append(run_one(BENCH[name]))
         except Exception as exc:  # noqa: BLE001

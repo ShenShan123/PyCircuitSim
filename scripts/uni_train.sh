@@ -79,7 +79,11 @@ if [ "${1:-}" = "_one" ]; then
     touch "$ckpt.complete"
     echo "[uni-train] DONE $name"
   else
+    # audit B3 — a failed train produces NO artifact, so there is nothing for a
+    # downstream gate to judge; exit 3 (never 255: xargs aborts the run on 255)
+    # so the dispatcher fails loudly instead of printing FAIL and returning 0.
     echo "[uni-train] FAIL $name (rc=$rc, see $log)"
+    exit 3
   fi
   exit 0
 fi
@@ -98,5 +102,12 @@ for recipe in "${recipes[@]}"; do for dev in "${devs[@]}"; do
 done; done
 
 echo "[uni-train] launching ${#lines[@]} jobs (size=$SIZE), $NSTREAMS concurrent across $NGPU GPUs (${GPU_IDS[*]})"
+# audit B3 — capture xargs BEFORE the trailing echo, which would otherwise
+# overwrite $? with 0 and report a clean sweep over a wave of failed trainings.
 printf '%s\n' "${lines[@]}" | SIZE="$SIZE" xargs -P "$NSTREAMS" -L1 "$SELF" _one
+xrc=$?
+if [ "$xrc" -ne 0 ]; then
+  echo "[uni-train] INFRASTRUCTURE FAILURE: some jobs produced no checkpoint (xargs rc=$xrc, see $LOGDIR)" >&2
+  exit 1
+fi
 echo "[uni-train] ALL UNIVERSAL TRAINING COMPLETE"

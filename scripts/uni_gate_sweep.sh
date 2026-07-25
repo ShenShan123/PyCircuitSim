@@ -100,6 +100,14 @@ if [ "${1:-}" = "_cell" ]; then
     "$section" "$vscript" "$tech" "$ompn" "$verdict" "$rc" "$wall" \
     >> "$rdir/SUMMARY.tsv"
   echo "[uni-eval] $stem $tag -> $verdict (rc=$rc, ${wall}s)"
+  # audit B3 — PASS and FAIL are both scientific verdicts (exit 0). TIMEOUT
+  # (rc 124) and RESOLVER-MISS (the cell ran on the WRONG checkpoint, so it is
+  # campaign-invalid) are NOT verdicts, nor is rc >= 126 (cannot-exec / signal):
+  # exit 3 so the dispatcher fails loudly. Never 255 — xargs aborts on 255.
+  case "$verdict" in
+    TIMEOUT|RESOLVER-MISS) exit 3 ;;
+  esac
+  if [ "$rc" -ge 126 ]; then exit 3; fi
   exit 0
 fi
 
@@ -113,6 +121,7 @@ fi
 
 mkdir -p "$OUT"
 cells=()
+ran_stems=()
 for stem in "${stems_arr[@]}"; do
   ok=1
   for dev in nmos pmos; do
@@ -123,6 +132,11 @@ for stem in "${stems_arr[@]}"; do
     fi
   done
   [ $ok -eq 1 ] || continue
+  # audit B3 — only stems that actually dispatch may enter the completeness
+  # count below; a SKIPped stem's rows are stale leftovers from an earlier
+  # dispatch (the section prune happens after this guard) and counting them
+  # inflates `recorded` enough to mask a real shortfall.
+  ran_stems+=("$stem")
   rdir="$OUT/$stem"; mkdir -p "$rdir"
   # Drop only the rows for the sections this dispatch re-runs; keep every
   # other section's rows. Truncating the whole file here meant a follow-up
@@ -167,13 +181,37 @@ done
 
 if [ ${#cells[@]} -eq 0 ]; then echo "[uni-eval] nothing to run"; exit 1; fi
 echo "[uni-eval] launching ${#cells[@]} cells, $NPAR concurrent (sections: $SECTIONS; stems: ${stems_arr[*]})"
+# audit B3 — capture xargs BEFORE the trailing echo / print loop, which would
+# otherwise overwrite $? with 0. Verdict is decided after the tables print.
 printf '%s\n' "${cells[@]}" | \
   SIZE="$SIZE" OUT="$OUT" PYBIN="$PYBIN" NGSPICE_BIN="$NGSPICE_BIN" \
   GATE_TIMEOUT="$GATE_TIMEOUT" ZS_TIMEOUT="$ZS_TIMEOUT" DEV_TIMEOUT="$DEV_TIMEOUT" \
   xargs -P "$NPAR" -L1 "$SELF" _cell
+xrc=$?
 echo "[uni-eval] ALL CELLS DONE"
 for stem in "${stems_arr[@]}"; do
   [ -f "$OUT/$stem/SUMMARY.tsv" ] || continue
   echo "--- $stem ---"
   sort "$OUT/$stem/SUMMARY.tsv" | column -t
 done
+
+# audit B3/B5f — a cell that appended no row leaves SUMMARY.tsv short, and every
+# downstream ratio then reads over a silently smaller denominator. Count the rows
+# belonging to the sections this dispatch re-ran (they were pruned before the run,
+# so what is there now is exactly what the cells wrote) against the cells launched.
+recorded=0
+for stem in "${ran_stems[@]}"; do
+  f="$OUT/$stem/SUMMARY.tsv"
+  [ -f "$f" ] || continue
+  while IFS= read -r line; do
+    sec="${line%%	*}"
+    for s in $SECTIONS; do
+      if [ "$sec" = "$s" ]; then recorded=$((recorded + 1)); break; fi
+    done
+  done < "$f"
+done
+if [ "$xrc" -ne 0 ] || [ "$recorded" -lt "${#cells[@]}" ]; then
+  echo "[uni-eval] INFRASTRUCTURE FAILURE: $recorded/${#cells[@]} cells recorded a verdict" \
+       "(xargs rc=$xrc) — TIMEOUT / RESOLVER-MISS / missing rows are NOT results" >&2
+  exit 1
+fi

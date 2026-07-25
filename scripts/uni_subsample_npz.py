@@ -28,6 +28,20 @@ from pathlib import Path
 
 import numpy as np
 
+# audit C6o — sidecar fingerprints are written through bsimar's loo_labels, so
+# put the package on the path the same way scripts/v6_4_7_s12_append_corridors.py
+# does.
+_ROOT = Path(__file__).resolve().parents[1]
+for _p in (_ROOT / "external_compact_models" / "PyCMG",
+           _ROOT / "external_compact_models", _ROOT):
+    _sp = str(_p)
+    if _sp in sys.path:
+        sys.path.remove(_sp)
+    sys.path.insert(0, _sp)
+
+from bsimar.eval.loo_labels import write_sidecar_meta  # noqa: E402
+
+
 ROOT = Path(__file__).resolve().parents[1]
 DS = ROOT / "external_compact_models" / "bsimar" / "data" / "datasets"
 
@@ -99,8 +113,11 @@ def build_tiers(dev: str, tiers: tuple[int, ...]) -> bool:
         payload.update({k: data[k] for k in meta_keys})
         payload["meta_created_by"] = np.array(
             f"scripts/uni_subsample_npz.py seed={SEED} from {src_stem}.npz")
-        np.savez(DS / f"{out_stem}.npz", **payload)
+        out_npz = DS / f"{out_stem}.npz"
+        np.savez(out_npz, **payload)
         np.save(DS / f"{out_stem}_tech_variant_labels.npy", sidecar[idx])
+        # audit C6o — fingerprint the sidecar against the rows it labels.
+        write_sidecar_meta(out_npz, payload["geometry"], sidecar[idx])
 
         # validation
         tier_sc = payload["sample_class"]

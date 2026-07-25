@@ -401,6 +401,43 @@ def create_baked_pmos_modelcard(tech: TestTechConfig, work_dir: Path) -> Path:
 # ---------------------------------------------------------------------------
 # Checkpoint availability
 # ---------------------------------------------------------------------------
+def _env_pin(var_names: Tuple[str, ...]) -> Tuple[Optional[str], str]:
+    """First non-empty env var among ``var_names`` -> (stem, var name).
+
+    Mirrors the ``a or b or c`` precedence the callers used before, but keeps
+    the *name* of the variable that won so a bad pin can be reported against
+    the knob the operator actually turned (audit B5d).
+    """
+    for name in var_names:
+        value = os.environ.get(name)
+        if value:
+            return value, name
+    return None, ""
+
+
+def _require_pinned_checkpoint(
+    stem: str, var_name: str, suffixes: Tuple[str, ...],
+) -> Path:
+    """Resolve a pinned stem to the first existing ``<stem><suffix>``.
+
+    Raises when none of them exists. audit B5d: returning ``None`` here was
+    silently green — every consumer reads ``None`` as "this arm is not
+    configured", skips it WITHOUT appending a TestResult row, and the run
+    still exits 0 on the other polarity's rows. A pinned stem never falls
+    back (V6.6.6, same rule ``pycircuitsim/parser.py`` enforces), and the
+    parser never gets a chance to enforce it here because no model is
+    instantiated on the skipped path.
+    """
+    for sfx in suffixes:
+        path = CHECKPOINT_DIR / f"{stem}{sfx}"
+        if path.exists():
+            return path
+    tried = ", ".join(str(CHECKPOINT_DIR / f"{stem}{s}") for s in suffixes)
+    raise FileNotFoundError(
+        f"{var_name} pins '{stem}' but no checkpoint file exists for it "
+        f"(tried {tried}) — pinned stems never fall back (V6.6.6)")
+
+
 def get_available_checkpoints() -> Dict[str, Optional[Path]]:
     """Check which NN checkpoints are available.
 
@@ -415,28 +452,30 @@ def get_available_checkpoints() -> Dict[str, Optional[Path]]:
       PYCIRCUITSIM_NN_CHECKPOINT_{NMOS,PMOS}     — both arms (per polarity)
       PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE        — both arms, both polarities
     Value should be the checkpoint stem without _best.pt; e.g. ``v6_dn_small_e2_asinh_nmos``.
+
+    Raises:
+        FileNotFoundError: an env pin names a stem with no checkpoint file on
+            disk. Only the *unpinned* fallback arms may yield ``None``.
     """
-    import os
     checkpoints: Dict[str, Optional[Path]] = {}
 
     for dev in ("nmos", "pmos"):
         suffix = f"_{dev}"
         DEV = dev.upper()
 
-        tf_ovr = (os.environ.get(f"PYCIRCUITSIM_NN_CHECKPOINT_TF_{DEV}")
-                  or os.environ.get(f"PYCIRCUITSIM_NN_CHECKPOINT_{DEV}")
-                  or os.environ.get("PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE"))
-        dn_ovr = (os.environ.get(f"PYCIRCUITSIM_NN_CHECKPOINT_DN_{DEV}")
-                  or os.environ.get(f"PYCIRCUITSIM_NN_CHECKPOINT_{DEV}")
-                  or os.environ.get("PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE"))
+        tf_ovr, tf_var = _env_pin((
+            f"PYCIRCUITSIM_NN_CHECKPOINT_TF_{DEV}",
+            f"PYCIRCUITSIM_NN_CHECKPOINT_{DEV}",
+            "PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE"))
+        dn_ovr, dn_var = _env_pin((
+            f"PYCIRCUITSIM_NN_CHECKPOINT_DN_{DEV}",
+            f"PYCIRCUITSIM_NN_CHECKPOINT_{DEV}",
+            "PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE"))
 
         # BSIMAR v4 (tech-code embedding, phys-best) or env override
         if tf_ovr:
-            tf_phys = CHECKPOINT_DIR / f"{tf_ovr}_best.phys.pt"
-            tf_plain = CHECKPOINT_DIR / f"{tf_ovr}_best.pt"
-            checkpoints[f"bsimar_v4{suffix}"] = (
-                tf_phys if tf_phys.exists()
-                else (tf_plain if tf_plain.exists() else None))
+            checkpoints[f"bsimar_v4{suffix}"] = _require_pinned_checkpoint(
+                tf_ovr, tf_var, ("_best.phys.pt", "_best.pt"))
         else:
             bsimar_phys = CHECKPOINT_DIR / f"v4_universal_{dev}_best.phys.pt"
             bsimar_plain = CHECKPOINT_DIR / f"v4_universal_{dev}_best.pt"
@@ -455,9 +494,8 @@ def get_available_checkpoints() -> Dict[str, Optional[Path]]:
         # tests omit MODEL_PATH for per-tech/refac stems so the parser's
         # preempt cascade selects the right checkpoint for each tech.
         if dn_ovr:
-            dn_path = CHECKPOINT_DIR / f"{dn_ovr}_best.pt"
-            checkpoints[f"directnet_v4{suffix}"] = (
-                dn_path if dn_path.exists() else None)
+            checkpoints[f"directnet_v4{suffix}"] = _require_pinned_checkpoint(
+                dn_ovr, dn_var, ("_best.pt",))
         else:
             fallbacks = [
                 CHECKPOINT_DIR / f"v4_dn_universal_{dev}_best.pt",
@@ -1095,6 +1133,22 @@ def _cascade_handles_stem(path: Optional[Path]) -> bool:
         "tsmc5_dn_", "tsmc7_dn_", "tsmc12_dn_", "tsmc16_dn_", "refac_dn_",
         # V6.8: per-tech BSIMAR Transformer stems (LEVEL=74 preempt cascade).
         "tsmc5_tf_", "tsmc7_tf_", "tsmc12_tf_", "tsmc16_tf_", "refac_tf_"))
+
+
+def _ckpt_label(path: Path) -> str:
+    """Human-readable label for a checkpoint path in the progress log.
+
+    audit B5e: for a cascade-handled stem the path is only an *existence
+    sentinel* — MODEL_PATH is deliberately omitted from the netlist (see
+    ``_cascade_handles_stem``) and the parser resolves the real per-tech
+    checkpoint from ``TECH=``. Printing the sentinel's filename as
+    "Checkpoint:" contradicts the ``[NN-resolver]`` line the parser emits two
+    lines later, so name the mechanism instead of the file.
+    """
+    if _cascade_handles_stem(path):
+        return (f"resolved per-tech by the parser cascade from TECH= "
+                f"(sentinel {path.name} is NOT loaded) — see [NN-resolver] below")
+    return path.name
 
 
 def run_pycircuitsim_nn_inverter_vtc(
@@ -1934,7 +1988,7 @@ def run_dc_tests(
         if checkpoints.get("bsimar_v4") is not None:
             bsimar_ckpt = checkpoints["bsimar_v4"]
             print(f"  [3/N] Running BSIMAR v4 (LEVEL=74)...")
-            print(f"    Checkpoint: {bsimar_ckpt.name}")
+            print(f"    Checkpoint: {_ckpt_label(bsimar_ckpt)}")
             try:
                 bsimar_data = run_pycircuitsim_nn_nmos_dc(
                     tech, work_dir, level=74,
@@ -1972,7 +2026,7 @@ def run_dc_tests(
         if checkpoints.get("directnet_v4") is not None:
             dnv4_ckpt = checkpoints["directnet_v4"]
             print(f"  [4/N] Running DirectNet v4 (LEVEL=73, tech-code embedding)...")
-            print(f"    Checkpoint: {dnv4_ckpt.name}")
+            print(f"    Checkpoint: {_ckpt_label(dnv4_ckpt)}")
             try:
                 dnv4_data = run_pycircuitsim_nn_nmos_dc(
                     tech, work_dir, level=73,
@@ -2091,7 +2145,7 @@ def run_pmos_dc_tests(
         if checkpoints.get("bsimar_v4_pmos") is not None:
             bsimar_ckpt = checkpoints["bsimar_v4_pmos"]
             print(f"  [2/N] Running BSIMAR v4 PMOS (LEVEL=74)...")
-            print(f"    Checkpoint: {bsimar_ckpt.name}")
+            print(f"    Checkpoint: {_ckpt_label(bsimar_ckpt)}")
             try:
                 bsimar_data = run_pycircuitsim_nn_pmos_dc(
                     tech, work_dir, level=74,
@@ -2129,7 +2183,7 @@ def run_pmos_dc_tests(
         if checkpoints.get("directnet_v4_pmos") is not None:
             dnv4_ckpt = checkpoints["directnet_v4_pmos"]
             print(f"  [3/N] Running DirectNet v4 PMOS (LEVEL=73)...")
-            print(f"    Checkpoint: {dnv4_ckpt.name}")
+            print(f"    Checkpoint: {_ckpt_label(dnv4_ckpt)}")
             try:
                 dnv4_data = run_pycircuitsim_nn_pmos_dc(
                     tech, work_dir, level=73,
@@ -2894,6 +2948,11 @@ def run_sign_diagnostic(
                         n_sign_fail += 1
 
             passed = n_sign_fail == 0
+            # audit B5i: `nrmse_pct` here is NOT a metric — this screen
+            # evaluates isolated bias points, so there is no curve to score.
+            # 0.0/100.0 is a pass/fail flag squeezed into the shared
+            # TestResult column; read the `sign` rows' Status, never their
+            # NRMSE (unlike the `idvds` rows, which carry a real NRMSE).
             results.append(TestResult(
                 tech=tech.name, model=f"{model_tag}_sign",
                 analysis="sign",
@@ -3080,6 +3139,13 @@ def run_idvds_diagnostic(
 
     For each tech: NGSPICE ground truth + available NN models.
     Generates comparison plots.
+
+    Pass criterion is the wrong-sign count alone — that is what this
+    diagnostic exists for, and a legitimately inaccurate but correctly-signed
+    subthreshold curve must not turn red here for a different reason. The
+    NRMSE/MRE carried on each row are the real curve errors against the
+    NGSPICE reference (audit B5i: they used to be a fabricated 0.0/100.0 that
+    printed as a perfect score); they are **reported, not gated**.
     """
     results: List[TestResult] = []
 
@@ -3129,6 +3195,7 @@ def run_idvds_diagnostic(
 
                 # Check for wrong-sign: positive Id at positive Vds
                 pos_vds_mask = nn_data["sweep"] > 0.01
+                reason = ""
                 if pos_vds_mask.any():
                     wrong_sign_count = int(
                         (nn_data["id"][pos_vds_mask] > 1e-10).sum()
@@ -3139,15 +3206,33 @@ def run_idvds_diagnostic(
                           f"{nn_data['id'].max():.4e}], "
                           f"wrong-sign={wrong_sign_count}/{total_pos}")
                     passed = wrong_sign_count == 0
+                    if not passed:
+                        reason = "wrong-sign Id at Vds>0"
                 else:
-                    passed = True
+                    # audit B5i: an empty screen means the sweep returned no
+                    # usable points — nothing was actually checked, so this
+                    # is a failure, not a free pass.
+                    passed = False
+                    reason = "no Vds>0.01 samples in the NN sweep"
+                    print(f"    {model_tag}: {reason}")
+
+                # audit B5i: score the curve against the NGSPICE reference
+                # already in hand instead of fabricating 0.0/100.0. Reported
+                # only — the verdict above stays the wrong-sign count.
+                m = compare_dc_curves(
+                    ng_data["sweep"], ng_data["id"],
+                    nn_data["sweep"], nn_data["id"],
+                )
+                print(f"    {model_tag}: NRMSE={m['nrmse']:.2f}%  "
+                      f"MRE={m['mre']:.2f}%  (reported, not gated)")
 
                 results.append(TestResult(
                     tech=tech.name, model=f"{model_tag}_idvds",
                     analysis="idvds",
-                    nrmse_pct=0.0 if passed else 100.0,
+                    nrmse_pct=m["nrmse"],
+                    mre_pct=m["mre"],
                     passed=passed,
-                    error="" if passed else "wrong-sign Id at Vds>0",
+                    error=reason,
                 ))
             except Exception as e:
                 print(f"    {model_tag} ERROR: {e}")
@@ -3225,8 +3310,13 @@ def main() -> int:
     # Create results directory
     RESULTS_BASE.mkdir(parents=True, exist_ok=True)
 
-    # Check available checkpoints
-    checkpoints = get_available_checkpoints()
+    # Check available checkpoints. A pinned-but-absent stem is fatal
+    # (audit B5d) — report it as a clean red instead of a traceback.
+    try:
+        checkpoints = get_available_checkpoints()
+    except FileNotFoundError as exc:
+        print(f"ERROR: {exc}")
+        return 1
 
     print("=" * 70)
     print("  NN Compact Model Verification")

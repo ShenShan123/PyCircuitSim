@@ -182,8 +182,12 @@ def _run(args: argparse.Namespace) -> None:
             {t.strip().lower() for t in args.exclude_techs.split(",")}
             if args.exclude_techs else set())
         exclude = explicit_excl | auto_excl
-        # Vocab = #variants(scope) + 1 UNKNOWN slot.
-        if args.num_tech_codes == 18:  # untouched default
+        # Vocab = #variants(scope) + 1 UNKNOWN slot, but only when the flag
+        # was left unset. audit C6q: the old test was `== 18`, which also
+        # swallowed an *explicit* `--num-tech-codes 18` (the vocab you want
+        # when warm-starting a per-tech run from a universal checkpoint) —
+        # contradicting the "explicit still wins" promise above.
+        if args.num_tech_codes is None:
             args.num_tech_codes = tech_scope_vocab_size(args.tech_scope)
         print(f"  [tech-scope={args.tech_scope}] auto exclude={sorted(exclude)} "
               f"num_tech_codes={args.num_tech_codes}")
@@ -191,6 +195,8 @@ def _run(args: argparse.Namespace) -> None:
         exclude = (
             {t.strip().lower() for t in args.exclude_techs.split(",")}
             if args.exclude_techs else None)
+        if args.num_tech_codes is None:
+            args.num_tech_codes = tech_scope_vocab_size("universal")
 
     if (args.model, args.size) not in SIZE_PRESETS:
         print(f"[error] no preset for --model {args.model} "
@@ -361,7 +367,11 @@ def main() -> None:
 
     # Tech-code embedding (shared by both models)
     p.add_argument("--exclude-techs", type=str, default=None)
-    p.add_argument("--num-tech-codes", type=int, default=18)
+    p.add_argument("--num-tech-codes", type=int, default=None,
+                   help="Embedding vocabulary size. Unset (default) derives "
+                        "it from --tech-scope: 18 universal (TSMC codes "
+                        "0-16 + UNKNOWN 17), variants+1 per-tech. An "
+                        "explicit value always wins (audit C6q).")
     p.add_argument("--p-unknown", type=float, default=0.1)
 
     p.add_argument("--tech-scope",

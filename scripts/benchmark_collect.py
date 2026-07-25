@@ -21,8 +21,11 @@ BASE = ROOT / "results" / "benchmark_sml"
 # Canonical capacity order; the report includes only the tiers that have
 # result dirs on disk, so adding/removing a tier (e.g. V6.5.1 `xl`) needs no
 # further edits — every table header derives from SIZES.
+# audit B4: NO `or _SIZE_ORDER[:3]` fallback. On an empty tree that fabricated
+# three tier names and produced a full report of 0/0 ratios; main() now refuses
+# to collect instead.
 _SIZE_ORDER = ["small", "medium", "large", "xl"]
-SIZES = [s for s in _SIZE_ORDER if (BASE / s).is_dir()] or _SIZE_ORDER[:3]
+SIZES = [s for s in _SIZE_ORDER if (BASE / s).is_dir()]
 TECHS = ["tsmc5", "tsmc7", "tsmc12", "tsmc16"]
 DEV_SUITES = ["verify_nn_multi_tech_dc", "verify_nn_multi_tech_tran"]
 CPX_SUITES = ["verify_complex_ring_osc", "verify_complex_opamp",
@@ -184,7 +187,18 @@ def resolver_line(text: str) -> str:
     m = re.search(r"\[NN-resolver\].*?->\s*(\S+)", text)
     return m.group(1) if m else "?"
 
-def load():
+
+def _missing_cpx(reason: str) -> dict:
+    """audit B4 — placeholder for a complex cell that reached no verdict.
+
+    A cell that is simply absent from `data` drops out of BOTH sides of every
+    pass ratio, so a half-run tier reports e.g. 15/15 instead of 15/16. Storing
+    an explicit non-PASS entry keeps it in the denominator.
+    """
+    return {"wave": None, "gate": "MISSING", "headline": reason, "raw": []}
+
+
+def load() -> dict:
     data = {}
     for size in SIZES:
         data[size] = {}
@@ -198,10 +212,20 @@ def load():
                     d["ckpt"] = d["ckpt"] or resolver_line(t)
             for suite in CPX_SUITES:
                 p = BASE / size / tech / f"{suite}.log"
-                if p.exists():
-                    t = p.read_text(errors="replace")
-                    d["cpx"][suite] = parse_complex_log(suite, t)
-                    d["ckpt"] = d["ckpt"] or resolver_line(t)
+                if not p.exists():
+                    d["cpx"][suite] = _missing_cpx("no log")
+                    continue
+                t = p.read_text(errors="replace")
+                d["ckpt"] = d["ckpt"] or resolver_line(t)
+                c = parse_complex_log(suite, t)
+                # audit B4: a log with no parseable verdict AND no completion
+                # marker is a killed worker or a `no-ckpt` stub — absence, not a
+                # result. A log that DID reach a verdict is kept verbatim
+                # (marker or not), so no cell that already reports a number moves.
+                if c["gate"] == "?" and "===BENCH_DONE rc=" not in t:
+                    d["cpx"][suite] = _missing_cpx("no verdict in log")
+                else:
+                    d["cpx"][suite] = c
             p = BASE / size / tech / f"{AC_DEV_SUITE}.log"
             if p.exists():
                 d["ac"][AC_DEV_SUITE] = parse_ac_device_log(
@@ -235,6 +259,13 @@ def _ac_section(data) -> list:
     """Top-level AC small-signal accuracy section (V6.5)."""
     L = [
         "## AC small-signal accuracy (V6.5)",
+        "",
+        # audit B4 — the narrative below (through the V6.5.1 paragraph) is a
+        # frozen string literal; only the tables that follow it come from the
+        # logs this invocation parsed.
+        "> **The commentary in this section is the frozen V6.5 write-up — historical, "
+        "NOT re-derived from this run.** The tables after it are generated from this "
+        "invocation's logs.",
         "",
         "First-ever NGSPICE-gated evaluation of DirectNet (LEVEL=73) AC fidelity. "
         "The NN's small-signal capacitances are autograd derivatives of its predicted "
@@ -389,6 +420,17 @@ def report(data) -> str:
          "Sizes: small=128x3 (~0.06M p) / medium=256x5 (~0.4M p) / large=384x6 (~0.9M p) / "
          "**xl=512x8 (~2.13M p)**.",
          "",
+         # audit B4 — everything down to "## Cross-size summary" is a fixed
+         # string literal from the V6.5.1 write-up. It was previously emitted
+         # unlabelled, so a report generated from *any* tree asserted V6.5.1's
+         # measurements as if this run had reproduced them.
+         "## Frozen V6.5.1 narrative (historical — NOT re-derived from this run)",
+         "",
+         "> The prose and the pass-rate counts quoted in this section were written for "
+         "the V6.5.1 capacity study and are reproduced verbatim as context. Every "
+         "**table** below this section is generated from the logs this invocation "
+         "parsed; every **number quoted in prose here** is not.",
+         "",
          "> **V6.5.1 update — XL capacity tier + µA-band loss lever (KILLED).** This revision "
          "adds the **XL** tier (512×8, 2.13M p) on the identical clean recipe and a tested-"
          "but-reverted accuracy lever. **Headline: the capacity curve PEAKS at `large` and "
@@ -407,7 +449,7 @@ def report(data) -> str:
          "hold) owned, not DC-current-band owned**. The V6.5 AC study below is unchanged "
          "(XL does not move AC: opamp 0/4, device CS-amp 4/12, gain0-err marginally worse).",
          "",
-         "## Key findings",
+         "### Key findings (V6.5.1, frozen)",
          "",
          "1. **Circuit pass-rate is NON-monotonic in capacity: 6/16 → 9/16 → 12/16 → 9/16** "
          "(small → medium → large → **xl**). It rises through `large`, then **regresses at XL**. "
@@ -555,10 +597,30 @@ def report(data) -> str:
         L += ["", "</details>", ""]
     return "\n".join(L)
 
-def main():
+def main() -> int:
+    # audit B4: refuse to manufacture a report out of an empty tree. Without
+    # this the fabricated SIZES fallback wrote a 17 kB REPORT.md of 0/0 ratios
+    # (whose frozen prose still asserted measurements) and exited 0.
+    if not SIZES:
+        sys.exit(f"[collect] no size dirs under {BASE} — nothing to collect")
     data = load()
+    missing = [(size, tech, suite)
+               for size in SIZES for tech in TECHS for suite in CPX_SUITES
+               if data[size][tech]["cpx"][suite]["gate"] == "MISSING"]
+    expected = len(SIZES) * len(TECHS) * len(CPX_SUITES)
+
+    text = report(data)
+    if missing:
+        # Banner first, so no reader reaches a ratio before learning it is partial
+        # (scripts/a3_regate_collect.py uses the same "(incomplete)" discipline).
+        text = ("> **INCOMPLETE: {} of {} complex cells have no log — every ratio "
+                "below is partial.**\n>\n> Missing: {}\n\n{}").format(
+                    len(missing), expected,
+                    "; ".join(f"`{s}/{t}/{CPX_SHORT[q]}`" for s, t, q in missing),
+                    text)
+
     (BASE / "benchmark_data.json").write_text(json.dumps(data, indent=1))
-    (BASE / "REPORT.md").write_text(report(data))
+    (BASE / "REPORT.md").write_text(text)
     print(f"Wrote {BASE/'REPORT.md'} and benchmark_data.json")
     # quick console tally
     for size in SIZES:
@@ -569,6 +631,11 @@ def main():
                 if c:
                     g += 1; p += 1 if c["gate"] == "PASS" else 0
         print(f"  {size:7s}: complex gates {p}/{g}")
+    if missing:
+        print(f"[collect] INCOMPLETE: {len(missing)}/{expected} complex cells have "
+              f"no log — REPORT.md ratios are partial", file=sys.stderr)
+        return 1
+    return 0
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
