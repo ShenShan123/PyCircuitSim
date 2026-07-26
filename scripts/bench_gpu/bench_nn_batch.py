@@ -74,7 +74,7 @@ def run(dev_str, batches):
             torch.autograd.grad(o[:, 5].sum(), xv, retain_graph=True)
             torch.autograd.grad(o[:, 6].sum(), xv, retain_graph=False)
 
-        reps = max(3, min(200, int(2e6 / max(n, 1))))
+        reps = max(3, min(20, int(2e5 / max(n, 1))))
         t_dc = timeit(dc, reps)
         t_tr = timeit(tran, reps)
         out[n] = (t_dc, t_tr)
@@ -84,7 +84,7 @@ def run(dev_str, batches):
 
 
 if __name__ == "__main__":
-    BATCHES = [1, 6, 24, 96, 384, 1536, 6144, 24576, 98304]
+    BATCHES = [1, 96, 384, 1536, 6144]
     mode = sys.argv[1] if len(sys.argv) > 1 else "cpu"
     if mode == "cpu":
         torch.set_num_threads(1)
