@@ -225,12 +225,23 @@ pre-fix measurement until now.
    output-cap pole on that cell.
 
 4. **"The opamp open-loop AC gate is 0/4 at every tier for every family" is
-   false.** DirectNet `small` banks TSMC16 (1.78 dB / GBW 0.962 / PM err
-   0.32°) and BSIM-AR `small` banks it too (0.54 dB / 0.97 / 0.16°). Both are
-   clean passes with an un-railed operating point (`vout` 0.649 V of a 0.8 V
-   supply), not threshold-grazing. The gate is still 0/4 at DirectNet
-   `medium`, `large` and `xl` — and the next subsection explains why part of
-   that denominator is unreachable by construction.
+   false — by a wide margin.** Seven cells pass, and they are clean passes with
+   un-railed operating points, not threshold-grazing:
+   * **BSIM-AR is the strongest here (5 of 16)** — TSMC16 at *every* tier
+     (0.54 / 2.62 / 0.33 / 0.97 dB) and **TSMC7 at `large` at 0.12 dB**, the
+     tech this project spent two campaigns calling unreachable.
+   * DirectNet passes 1 of 16: TSMC16 at `small`
+     (1.78 dB / GBW 0.962 / PM err 0.32°, NN OP 0.649 V of a 0.8 V supply).
+   * PFN passes TSMC7 at `medium` (0.84 dB).
+
+   It also retires the V6.8.1 reading that **"AC collapses at xl"**: BSIM-AR
+   `xl` banks TSMC16 at 0.97 dB, and `tsmc7-opamp-AC` — recorded there as not
+   converging *at all* after ~6 h — now completes and returns 3.86 dB. That
+   pathology was the railed OP, i.e. the gds bug.
+
+   What remains true is that **no family passes more than half** of the gate,
+   and the next subsection shows part of that denominator is unreachable by
+   construction.
 
 ### The opamp open-loop AC gate has a bias-resolution defect
 

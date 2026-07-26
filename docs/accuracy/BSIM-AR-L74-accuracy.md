@@ -117,8 +117,9 @@ against a 10 % gate, ring 3.33 / 2.25 / 2.13 / 2.19 % against 5 %, switchcap
 1.99–4.15 % against 5 %, worst SRAM lobe 6.11 % against 10 % (tsmc5/7/12/16).
 
 **Recommendation: `corroft@medium`.** `xl` reaches the same 16/16 at 7.7× the
-parameters, ~11 days of training, and collapsed AC (§4) — it corroborates the
-medium result rather than beating it.
+parameters and ~11 days of training. Its AC is *not* the collapse the pre-fix
+campaign recorded (§4), but it is no better than medium's either — so xl
+corroborates the medium result rather than beating it.
 
 ## 4. Family-specific findings
 
@@ -143,13 +144,18 @@ questions:
   pre-fix it held the same 15/16 basket; post-fix every corridor recipe at xl
   simply sweeps. What looked like DirectNet-style basin-shuffling was largely
   the gds bug.
-* *Does AC hold at xl?* **No — AC collapses.** opamp-AC 0/4 for every recipe
-  (tsmc5/tsmc16 rail; tsmc12 has good GBW 1.03 / PM 4.4° but magNRMSE 102 %),
-  device AC 4/8 for `corroft`, 4/8 `csob`, 2/8 `clean`, and **`tsmc7-opamp-AC
-  does not converge at all** — its DC OP spins non-convergent for ~6 h with no
-  `recipe_eval` timeout, so seed-skip it in any tf-xl evaluation.
-  `csob`'s charge-Sobolev does **not** recover it: AC weakness at xl is a
-  tier property, not a recipe-fixable one.
+* *Does AC hold at xl?* Pre-fix the answer was **"no — AC collapses"**:
+  opamp-AC 0/4 for every recipe (tsmc5/tsmc16 rail; tsmc12 good GBW 1.03 /
+  PM 4.4° but magNRMSE 102 %), device AC 4/8 `corroft`, 4/8 `csob`, 2/8
+  `clean`, and `tsmc7-opamp-AC` **not converging at all** — its DC OP spun
+  non-convergent for ~6 h with no `recipe_eval` timeout.
+  **The V7.1.0 re-gate overturns most of that.** `clean@xl` banks TSMC16 on
+  the opamp-AC gate (0.97 dB), and `tsmc7-opamp-AC` now *completes* and
+  returns 3.86 dB — the non-convergence was the railed operating point, i.e.
+  the gds bug, not a tier property. Current per-tier numbers: `by-scale.md`
+  §5. The pre-fix conclusion that "`csob`'s charge-Sobolev does not recover
+  AC at xl" was measured on the same broken OP and should be re-tested before
+  it is relied on.
 
 **Selection-vs-deployment mismatch (audit C6n, open).** LEVEL=74 selects
 checkpoints on **teacher-forced** validation loss while deployment is
