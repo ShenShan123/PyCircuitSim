@@ -111,13 +111,15 @@ the same weights and agree cell for cell. The genuine clean@large is
 ### PFN (LEVEL=75)
 
 Only `clean` has ever been trained for PFN — the curriculum recipes are wired
-(`MODEL=tabpfn` is supported by every driver) but untested.
+(`MODEL=tabpfn` is supported by every driver) but untested. The `xl` tier is
+new in V7.1.0 (`by-scale.md` §1) and is training as this is written.
 
 | recipe | tier | /16 | pre-fix | failing cells |
 |---|---|---|---|---|
 | `clean` | small | 11 | 11 | tsmc5-ring/opamp, tsmc7-ring/opamp, tsmc12-switchcap |
 | `clean` | medium | **11** | 10 | tsmc5-ring/opamp, tsmc7-ring, tsmc16-opamp, tsmc12-switchcap |
 | `clean` | large | **9** | 8 | tsmc5-ring, tsmc7-ring/opamp, tsmc12-opamp/switchcap, tsmc16-opamp/switchcap |
+| `clean` | xl | *training (V7.1.0)* | — | — |
 
 ---
 
