@@ -108,7 +108,7 @@ unmeasured cells is shown against its measured denominator, not 16.
 |---|---|---|---|
 | `dn/corroft_xl` | 15/16 | 0 | — |
 | `dn/crit10_xl` | 14/16 | 0 | — |
-| `dn/crit15m_xl` | 15/15 measured | 0 | 1 |
+| `dn/crit15m_xl` | 16/16 | 0 | — |
 | `dn/crit30f_large` | 15/16 | 0 | — |
 | `dn/csob_large` | 11/16 | 0 | — |
 | `dn/large` | 15/16 | 0 | — |
@@ -116,10 +116,10 @@ unmeasured cells is shown against its measured denominator, not 16.
 | `dn/small` | 10/16 | 0 | — |
 | `dn/v660clean_large` | 13/16 | 0 | — |
 | `dn/xl` | 12/16 | 0 | — |
-| `tf/corroft_large` | 1/1 measured | 0 | 15 |
+| `tf/corroft_large` | 1/2 measured | 0 | 14 |
 | `pfn/large` | 7/10 measured | 0 | 6 |
 | `pfn/medium` | 4/4 measured | 0 | 12 |
-| `pfn/small` | 9/12 measured | 0 | 4 |
+| `pfn/small` | 9/13 measured | 0 | 3 |
 
 **Zero FLIPs, everywhere, again — and the four groups V6.13.0 swept reproduce
 exactly.** `dn/large` 15/16, `dn/corroft_xl` 15/16, `dn/v660clean_large` 13/16
@@ -198,10 +198,9 @@ re-measured per tier.** The V6.13.0 campaign re-ran the AC suites only for each
 family's resolver-default stem. Every per-tier AC number in these reports was a
 pre-fix measurement until now.
 
-> **Coverage.** The denominator in each row is what has been *measured*, not the
-> full 8 (device AC) or 4 (opamp AC) cells — the BSIM-AR and PFN rows fill in as
-> their (much slower) cells complete. A row reading `1/1` is one measured cell,
-> not a complete tier. Raw per-cell data: `results/v710_regate/REPORT.md`.
+> **Coverage.** Complete for all 11 existing (family, tier) combinations — 88
+> device-AC cells and 44 opamp-AC cells. PFN's `xl` row appears once that tier
+> finishes training. Raw per-cell data: `results/v710_regate/REPORT.md`.
 
 **Device CS-amp AC (gate: gain0 ≤1.5 dB, f3db ratio ∈[0.7,1.43], magNRMSE ≤10 %)**
 
@@ -237,14 +236,22 @@ pre-fix measurement until now.
 
 ### What this changes
 
-1. **"AC peaks at SMALL" is retracted.** DirectNet's device CS-amp AC is
-   **7/8 · 8/8 · 8/8 · 7/8** across small → xl: essentially saturated at every
-   capacity, with the only two misses at the *ends* of the range. Pre-fix the
-   same suite read 5/12 · 4/12 · 4/12 · 4/12 — a pass fraction near a third,
-   declining with capacity. Both the level and the shape were artifacts of the
-   wrong-signed `gds`. (The /12 denominator is pre-TSMC6-retire; see
-   `methodology.md` §5. The comparison that matters is the fraction, not the
-   count.)
+1. **"AC peaks at SMALL" is retracted — device AC is saturated everywhere.**
+   **86 of 88 cells pass**, across all three families and every tier:
+   BSIM-AR **8/8 at all four tiers**, PFN **8/8 at all three**, DirectNet
+   7/8 · 8/8 · 8/8 · 7/8. The only two misses in the entire matrix are
+   DirectNet `small` on TSMC7-NMOS and DirectNet `xl` on TSMC5-NMOS.
+   Pre-fix the same suite read 5/12 · 4/12 · 4/12 · 4/12 — a pass fraction near
+   a third, *declining* with capacity. Both the level and the shape were
+   artifacts of the wrong-signed `gds`. (The /12 denominator predates the TSMC6
+   retire; the comparison that matters is the fraction, not the count.)
+
+   The charge-derivative surface these gates read is therefore **not** a
+   remaining weakness of any family — which retires "AC (a dQ/dV pole property)
+   and DC circuit fixed-points want opposite capacities" as a capacity law.
+   What is left of it is the *specific* diagnosis in
+   `DirectNet-L73-accuracy.md` §4: two named cells, one under-capacity value
+   surface and one under-predicted output cap.
 
 2. **The two surviving device-AC misses are the documented failure classes, not
    new ones.** DirectNet `small` on TSMC7-NMOS fails on *gain* (2.03 dB against
@@ -262,8 +269,8 @@ pre-fix measurement until now.
    output-cap pole on that cell.
 
 4. **"The opamp open-loop AC gate is 0/4 at every tier for every family" is
-   false — by a wide margin.** Seven cells pass, and they are clean passes with
-   un-railed operating points, not threshold-grazing:
+   false — by a wide margin.** **7 of 44** cells pass, and they are clean passes
+   with un-railed operating points, not threshold-grazing:
    * **BSIM-AR is the strongest here (5 of 16)** — TSMC16 at *every* tier
      (0.54 / 2.62 / 0.33 / 0.97 dB) and **TSMC7 at `large` at 0.12 dB**, the
      tech this project spent two campaigns calling unreachable.
