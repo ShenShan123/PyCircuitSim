@@ -262,10 +262,10 @@ gds bug distorted recipe rankings.
 | BSIM-AR `small` | 2.54 | 1.47 | 1.53 | 1.60 |
 | BSIM-AR `medium` | 1.80 | 1.52 | 1.52 | 1.50 |
 | BSIM-AR `large` | 1.66 | 1.48 | 1.51 | 1.49 |
-| BSIM-AR `xl` | 1.62 | 1.48 | — | — |
+| BSIM-AR `xl` | 1.62 | 1.48 | 1.51 | — |
 | BSIM-AR `corroft_medium` | — | 1.53 | 1.50 | 1.49 |
 | PFN `small` | 1.88 | 1.44 | 1.50 | 1.48 |
-| PFN `medium` | 1.71 | — | — | — |
+| PFN `medium` | 1.71 | 1.48 | — | — |
 | PFN `large` | 2.23 | 1.49 | 1.50 | 1.51 |
 
 **Device CS-amp AC — NMOS / PMOS verdicts**
@@ -345,7 +345,7 @@ fidelity. Verdicts are strict (OMP ∈ {1,2,4}) for opamp and ring_osc.
 | ↳ TSMC7 same tier | 2/4 | FAIL 10.86% | FAIL 100.00% | PASS 2.22% | PASS 2.81% |
 | DirectNet `large` | **3/4** | FAIL 9.04% | PASS 7.12% | PASS 1.58% | PASS 2.52% |
 | ↳ TSMC7 same tier | 3/4 | PASS 4.82% | FAIL 100.00% | PASS 1.28% | PASS 2.45% |
-| DirectNet `xl` | **2/4** | partial 15.05% | FAIL 100.00% | PASS 1.86% | PASS 2.65% |
+| DirectNet `xl` | **2/4** | FAIL 15.05% | FAIL 100.00% | PASS 1.86% | PASS 2.65% |
 | ↳ TSMC7 same tier | 3/4 | FAIL 13.59% | PASS 4.20% | PASS 1.92% | PASS 2.67% |
 
 **Cells whose verdict differs between the two runs on identical data:** DirectNet `small`: ring_osc, opamp; DirectNet `large`: ring_osc, opamp; DirectNet `xl`: opamp.

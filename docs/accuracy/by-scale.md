@@ -107,8 +107,8 @@ unmeasured cells is shown against its measured denominator, not 16.
 | group | strict PASS | FLIPs | cells not yet measured |
 |---|---|---|---|
 | `dn/corroft_xl` | 15/16 | 0 | — |
-| `dn/crit10_xl` | 13/15 measured | 0 | 1 |
-| `dn/crit15m_xl` | 14/14 measured | 0 | 2 |
+| `dn/crit10_xl` | 14/16 | 0 | — |
+| `dn/crit15m_xl` | 15/15 measured | 0 | 1 |
 | `dn/crit30f_large` | 15/16 | 0 | — |
 | `dn/csob_large` | 11/16 | 0 | — |
 | `dn/large` | 15/16 | 0 | — |
@@ -117,8 +117,8 @@ unmeasured cells is shown against its measured denominator, not 16.
 | `dn/v660clean_large` | 13/16 | 0 | — |
 | `dn/xl` | 12/16 | 0 | — |
 | `tf/corroft_large` | 1/1 measured | 0 | 15 |
-| `pfn/large` | 7/9 measured | 0 | 7 |
-| `pfn/medium` | 3/3 measured | 0 | 13 |
+| `pfn/large` | 7/10 measured | 0 | 6 |
+| `pfn/medium` | 4/4 measured | 0 | 12 |
 | `pfn/small` | 9/12 measured | 0 | 4 |
 
 **Zero FLIPs, everywhere, again — and the four groups V6.13.0 swept reproduce
