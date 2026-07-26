@@ -151,9 +151,20 @@ family whose gates were already flip-free.
 
 ### V7.1.0 status
 
-Datasets regenerated from the kept vendor PDK; all three families are being
-re-trained at **all four scales** (24 checkpoints, one clean recipe) and will be
-gated on the same 4-cell matrix. Driver: `scripts/tsmc6_restore_campaign.sh`.
+Datasets regenerated from the kept vendor PDK and **verified `array_equal` to
+`tsmc7_*`** — 1,816,830 nmos / 2,187,292 pmos rows matching on `inputs`,
+`geometry`, `outputs` and `sample_class`. That is both the precondition for the
+repeat being controlled and a fresh, independent reproduction of the V6.13.0
+duplicate finding: the audit compared files generated in June, this re-derives
+the same bytes from the PDK today.
+
+The campaign refuses to train unless that check passes
+(`scripts/tsmc6_restore_campaign.sh`) — it has already stopped one wave, when
+the first regeneration followed a documented recipe that omitted
+`--enable-subvt-off` and silently produced a set 4.7 % smaller. All three
+families are now training at **all four scales** (24 checkpoints, one clean
+recipe) and will be gated on the same 4-cell matrix by
+`scripts/tsmc6_gate_campaign.sh`.
 Until those land, the tables below are the **V6.11.0 pre-fix** run, recovered
 from commit `a96112a`, and are the "before" half of the repeat.
 

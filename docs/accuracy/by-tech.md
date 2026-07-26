@@ -235,14 +235,16 @@ gds bug distorted recipe rankings.
 | DirectNet `v660clean_large` | 2.60 | 1.31 | 1.72 (17/18) | 0.93 |
 | DirectNet `csob_large` | 2.29 | 1.58 | 0.43 | 1.15 |
 | DirectNet `corroft_xl` | 2.39 | 1.52 | — | 1.39 |
-| DirectNet `crit10_xl` | 2.25 | — | — | — |
+| DirectNet `crit10_xl` | 2.25 | 1.40 | 2.73 (16/18) | 1.49 |
+| DirectNet `crit15m_xl` | 2.35 | 1.43 | 2.75 (16/18) | — |
 | BSIM-AR `small` | 2.54 | 1.24 | 0.82 | 1.61 (13/14) |
 | BSIM-AR `medium` | 1.77 | 1.46 | 1.34 (17/18) | 1.57 (13/14) |
 | BSIM-AR `large` | 1.80 | 1.21 | 1.67 (16/18) | 1.58 (13/14) |
 | BSIM-AR `xl` | 1.94 | 2.92 | 1.08 | 1.07 |
-| BSIM-AR `corroft_medium` | — | 1.00 | — | — |
+| BSIM-AR `corroft_medium` | — | 1.00 | 1.15 (17/18) | 1.54 (13/14) |
 | PFN `small` | 2.14 | 1.58 | 0.56 | 1.12 (13/14) |
-| PFN `large` | 2.65 | 1.52 | — | — |
+| PFN `medium` | 2.36 | — | — | — |
+| PFN `large` | 2.65 | 1.52 | 1.04 | — |
 
 **Parametric transient — mean NRMSE % per tech**
 
@@ -255,9 +257,13 @@ gds bug distorted recipe rankings.
 | DirectNet `v660clean_large` | 1.68 | 1.46 | 1.50 | 1.47 |
 | DirectNet `csob_large` | 1.69 | 1.46 | 1.50 | 1.47 |
 | DirectNet `corroft_xl` | 1.68 | 1.46 | — | 1.46 |
+| DirectNet `crit10_xl` | 1.66 | 1.45 | 1.49 | 1.48 |
+| DirectNet `crit15m_xl` | 1.67 | 1.45 | 1.50 | — |
 | BSIM-AR `small` | 2.54 | 1.47 | 1.53 | 1.60 |
 | BSIM-AR `medium` | 1.80 | 1.52 | 1.52 | 1.50 |
-| BSIM-AR `xl` | 1.41 | — | — | — |
+| BSIM-AR `large` | 1.66 | — | — | — |
+| BSIM-AR `xl` | 1.83 | — | — | — |
+| BSIM-AR `corroft_medium` | — | 1.53 | — | — |
 | PFN `small` | 1.88 | 1.44 | 1.50 | 1.48 |
 | PFN `large` | 2.23 | 1.49 | — | — |
 
@@ -272,16 +278,16 @@ gds bug distorted recipe rankings.
 | DirectNet `v660clean_large` | ✗ f3db 1.78 / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
 | DirectNet `csob_large` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
 | DirectNet `corroft_xl` | ✓ / ✓ | ✓ / ✓ | ✗ f3db nan / ✗ f3db nan | ✓ / ✓ |
-| DirectNet `crit10_xl` | ✓ / ✓ | — | — | — |
-| DirectNet `crit15m_xl` | ✓ / ✓ | — | — | — |
+| DirectNet `crit10_xl` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
+| DirectNet `crit15m_xl` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
 | BSIM-AR `small` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
 | BSIM-AR `medium` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
-| BSIM-AR `large` | ✓ / ✓ | — | — | ✓ / ✓ |
-| BSIM-AR `xl` | — | ✗ f3db nan / ✗ f3db nan | — | — |
-| BSIM-AR `corroft_medium` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | — |
+| BSIM-AR `large` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
+| BSIM-AR `xl` | ✓ / ✓ | — | — | — |
+| BSIM-AR `corroft_medium` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
 | PFN `small` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
-| PFN `medium` | ✓ / ✓ | — | — | — |
-| PFN `large` | ✓ / ✓ | ✓ / ✓ | — | — |
+| PFN `medium` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
+| PFN `large` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
 
 ## 5. TSMC6 — the controlled repeat
 
@@ -325,9 +331,20 @@ family whose gates were already flip-free.
 
 ### V7.1.0 status
 
-Datasets regenerated from the kept vendor PDK; all three families are being
-re-trained at **all four scales** (24 checkpoints, one clean recipe) and will be
-gated on the same 4-cell matrix. Driver: `scripts/tsmc6_restore_campaign.sh`.
+Datasets regenerated from the kept vendor PDK and **verified `array_equal` to
+`tsmc7_*`** — 1,816,830 nmos / 2,187,292 pmos rows matching on `inputs`,
+`geometry`, `outputs` and `sample_class`. That is both the precondition for the
+repeat being controlled and a fresh, independent reproduction of the V6.13.0
+duplicate finding: the audit compared files generated in June, this re-derives
+the same bytes from the PDK today.
+
+The campaign refuses to train unless that check passes
+(`scripts/tsmc6_restore_campaign.sh`) — it has already stopped one wave, when
+the first regeneration followed a documented recipe that omitted
+`--enable-subvt-off` and silently produced a set 4.7 % smaller. All three
+families are now training at **all four scales** (24 checkpoints, one clean
+recipe) and will be gated on the same 4-cell matrix by
+`scripts/tsmc6_gate_campaign.sh`.
 Until those land, the tables below are the **V6.11.0 pre-fix** run, recovered
 from commit `a96112a`, and are the "before" half of the repeat.
 

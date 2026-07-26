@@ -190,6 +190,11 @@ under BSIM-CMG. Four independent lines of evidence
   Reproduced mechanically: of 871 implemented parameter names parsed from the
   Verilog-A sources, `toxp` and `phig` are present and all five TMI keys absent.
 * Two LEVEL=72 Id-Vgs sweeps at identical geometry matched to the last digit.
+* **Reproduced independently in V7.1.0**: the datasets were regenerated from the
+  kept vendor PDK with today's generator and came out `array_equal` to
+  `tsmc7_*` again — 1,816,830 nmos / 2,187,292 pmos rows, matching on `inputs`,
+  `geometry`, `outputs` *and* `sample_class`. The original finding compared
+  files generated in 2026-06; this one re-derives it from the PDK.
 
 **What changed is the disposition, not the physics.** V6.13.0 deleted TSMC6
 (22 checkpoints, both datasets, registry entries). **V7.1.0 restored it by

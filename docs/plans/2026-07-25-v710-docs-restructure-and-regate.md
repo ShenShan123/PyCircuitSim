@@ -90,7 +90,14 @@ fix, i.e. most of the "training lottery" was the wrong Jacobian.
   as well**, and CLAUDE.md never said so. Regenerated with both flags; CLAUDE.md
   fixed. Had this gone unnoticed, the "controlled repeat" would have been
   confounded by a missing overlay — a 4.7 % row difference is not visible in any
-  training log.
+  training log. The campaign now **refuses to train** unless the check passes
+  (`scripts/tsmc6_restore_campaign.sh` §1b).
+
+* ✅ **Verified 2026-07-25 23:50: the regenerated datasets are `array_equal` to
+  `tsmc7_*`** — 1,816,830 nmos / 2,187,292 pmos rows matching on `inputs`,
+  `geometry`, `outputs` and `sample_class`. The repeat is controlled, and this
+  is also a fresh reproduction of audit D1 from the PDK rather than from the
+  June files. DirectNet wave started (6 concurrent across 3 GPUs).
 * `scripts/tsmc6_restore_campaign.sh` waits for the datasets, then trains
   DirectNet → BSIM-AR → PFN, 4 sizes × 2 devices each (24 checkpoints, clean
   recipe). Gating is chained: `scripts/tsmc6_gate_campaign.sh` (launched, PAR=10)
