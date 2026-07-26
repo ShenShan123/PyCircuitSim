@@ -106,10 +106,10 @@ ICL width 384 = its `d_model`. lr 3e-4 (large's 4e-4 produced 5 of the 8
 divergence collapses and this stack is deeper), 150 epochs, `--amp`.
 
 8 checkpoints training (4 techs × N/P). Measured ~10 min/epoch for a solo job;
-with 8 sharing 3 GPUs on a box at loadavg ~1840, expect **~2–3 days**. A gate
-watcher is armed (scratchpad `pfnxl_gate.sh` — fold it into `scripts/` if it is
-still needed next session): it waits for all 8 `.complete` markers, then gates
-the 4-cell matrix + device suites + strict OMP through the V7.1.0 driver. After
+with 8 sharing 3 GPUs on a box at loadavg ~1840, expect **~2–3 days**.
+`scripts/pfnxl_gate_campaign.sh` is armed behind them: it waits for all 8
+`.complete` markers, gates the 4-cell matrix + device suites + strict OMP
+through the V7.1.0 driver, then re-runs the collector and the docs build. After
 that, `by-scale.md` §2's PFN row goes from 3 tiers to 4.
 
 ## 5. Finding: the opamp open-loop AC gate has a bias-resolution defect
