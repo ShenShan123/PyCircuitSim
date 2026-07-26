@@ -337,6 +337,19 @@ the same code — so every difference below is run-to-run variance of the whole
 pipeline (weight init, GPU nondeterminism, then NR basin selection), not tech
 fidelity. Verdicts are strict (OMP ∈ {1,2,4}) for opamp and ring_osc.
 
+**The complex gates are genuinely controlled; the device suites are not.**
+Verified against the harness config: for the four complex circuits TSMC6 and
+TSMC7 are gated identically — same VT (`ulvt`), VDD 0.75 V, L = 16 n / 20 n,
+NFIN 2, TFIN 6 n, same model cards. The **device** suites are not comparable,
+because the two profiles differ: TSMC6 carries `l_values = [16, 20, 24] nm` and
+all three VT pairs, while TSMC7's SVT/LVT bins were empirically pruned to
+`[20, 24] nm` + `ulvt` only. `verify_nn_multi_tech_dc` therefore runs **14
+configs for TSMC6 against 9 for TSMC7**, and TSMC6's set contains the harder
+unpruned bins. TSMC6's higher device NRMSE (2.06 / 2.21 / 2.25 / 3.18 % by tier,
+DC 14/14 · 14/14 · 14/14 · 13/14, transient 16/16 throughout, device AC 2/2 at
+every tier) is that config difference, **not** run-to-run scatter — do not read
+it as variance.
+
 | run | /4 | ring_osc | opamp | sram_snm | switchcap |
 |---|---|---|---|---|---|
 | DirectNet `small` | **2/4** | PASS 4.32% | FAIL 11.15% | PASS 1.68% | FAIL 2.27% |
