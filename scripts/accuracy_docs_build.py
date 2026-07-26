@@ -245,6 +245,41 @@ def dev_by_tier() -> str:
     return "\n\n".join(blocks)
 
 
+def strict_v710() -> str:
+    """Strict OMP∈{1,2,4} verdicts for every group the V7.1.0 pass swept."""
+    rows = []
+    for tag in ("dn", "tf", "pfn"):
+        for var in sorted(V710.get(tag, {})):
+            npass = flips = partial = 0
+            for tech in TECHS:
+                for circ in CIRCS:
+                    c = V710[tag][var].get(f"verify_complex_{circ}", {}).get(tech, {})
+                    if not c:
+                        partial += 1; continue
+                    if circ in ("opamp", "ring_osc"):
+                        vs = [c.get(f"omp{n}") for n in (1, 2, 4)]
+                        if any(v is None for v in vs):
+                            partial += 1; continue
+                        ok = [v["rc"] == "0" for v in vs]
+                        if all(ok):
+                            npass += 1
+                        elif any(ok):
+                            flips += 1
+                    else:
+                        e = c.get("omp1")
+                        if not e:
+                            partial += 1; continue
+                        npass += e["rc"] == "0"
+            if npass or flips:
+                note = f"{npass}/16" if not partial else f"{npass}/{16 - partial} measured"
+                rows.append(f"| `{tag}/{var}` | {note} | {flips} | "
+                            f"{partial if partial else '—'} |")
+    if not rows:
+        return ""
+    return "\n".join(["| group | strict PASS | FLIPs | cells not yet measured |",
+                       "|---|---|---|---|"] + rows)
+
+
 # ── build ───────────────────────────────────────────────────────────────────
 def main() -> int:
     t = (TPL / "by-tech.md.in").read_text()
@@ -262,6 +297,7 @@ def main() -> int:
 
     s = (TPL / "by-scale.md.in").read_text()
     s = s.replace("<!--V710-DEV-->", dev_by_tier()).replace("<!--V710-AC-->", ac_by_tier())
+    s = s.replace("<!--V710-STRICT-->", strict_v710() or "*(no strict sweeps collected yet)*")
     (DOCS / "by-scale.md").write_text(s)
 
     print(f"[docs-build] by-tech.md + by-scale.md rebuilt "

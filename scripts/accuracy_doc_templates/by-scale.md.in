@@ -98,6 +98,21 @@ are flip-free**, which is the durable result (`methodology.md` §3).
 Groups not in this list have no post-fix strict measurement; their single-run
 counts are in `by-recipe.md` §2 and must not be read as strict.
 
+### Strict sweeps added in V7.1.0
+
+The V7.1.0 pass re-runs opamp and ring at OMP ∈ {1,2,4} for every group it
+touches, which extends strict coverage beyond the ten groups above. A group with
+unmeasured cells is shown against its measured denominator, not 16.
+
+<!--V710-STRICT-->
+
+**Zero FLIPs, everywhere, again.** The V6.13.0 result — that the OMP
+multistability was a wrong-signed Jacobian and not a property of high-gain
+circuits — now holds across the newly swept groups too, including the two
+DirectNet tiers (`small`, `medium`) that had never been strict-swept at all.
+`dn/crit30f_large` re-measures the production slot independently at 15/16
+strict, matching `dn/large`.
+
 Pre-fix, the tiers differed sharply in how *stable* they were: `xl` basins were
 OMP-deterministic (strict ≈ single-run for every recipe; the sole FLIP in the
 whole tier was `corft`'s tsmc5-ring sitting at 4.6/4.9/5.1 % around the 5 %
