@@ -106,9 +106,9 @@ unmeasured cells is shown against its measured denominator, not 16.
 
 | group | strict PASS | FLIPs | cells not yet measured |
 |---|---|---|---|
-| `dn/corroft_xl` | 11/12 measured | 0 | 4 |
-| `dn/crit10_xl` | 10/12 measured | 0 | 4 |
-| `dn/crit15m_xl` | 10/10 measured | 0 | 6 |
+| `dn/corroft_xl` | 15/16 | 0 | — |
+| `dn/crit10_xl` | 13/15 measured | 0 | 1 |
+| `dn/crit15m_xl` | 14/14 measured | 0 | 2 |
 | `dn/crit30f_large` | 15/16 | 0 | — |
 | `dn/csob_large` | 11/16 | 0 | — |
 | `dn/large` | 15/16 | 0 | — |
@@ -116,15 +116,20 @@ unmeasured cells is shown against its measured denominator, not 16.
 | `dn/small` | 10/16 | 0 | — |
 | `dn/v660clean_large` | 13/16 | 0 | — |
 | `dn/xl` | 12/16 | 0 | — |
-| `pfn/large` | 6/6 measured | 0 | 10 |
+| `pfn/large` | 7/9 measured | 0 | 7 |
+| `pfn/medium` | 3/3 measured | 0 | 13 |
 | `pfn/small` | 9/12 measured | 0 | 4 |
 
-**Zero FLIPs, everywhere, again.** The V6.13.0 result — that the OMP
-multistability was a wrong-signed Jacobian and not a property of high-gain
-circuits — now holds across the newly swept groups too, including the two
-DirectNet tiers (`small`, `medium`) that had never been strict-swept at all.
-`dn/crit30f_large` re-measures the production slot independently at 15/16
-strict, matching `dn/large`.
+**Zero FLIPs, everywhere, again — and the four groups V6.13.0 swept reproduce
+exactly.** `dn/large` 15/16, `dn/corroft_xl` 15/16, `dn/v660clean_large` 13/16
+and `dn/clean/xl` 12/16 land on the same strict counts a second time, on a
+different day and a different code state. The pass adds four DirectNet groups
+that had no strict measurement at all — `small` 10/16, `medium` 10/16,
+`crit30f_large` 15/16 (an independent re-measure of the production slot, which
+agrees with `dn/large` cell for cell) and `csob_large` 11/16 — so **all ten
+DirectNet groups are now strict-swept and every one is flip-free.** The
+V6.13.0 conclusion, that the OMP multistability was a wrong-signed Jacobian
+rather than a property of high-gain circuits, holds on twice the evidence.
 
 Pre-fix, the tiers differed sharply in how *stable* they were: `xl` basins were
 OMP-deterministic (strict ≈ single-run for every recipe; the sole FLIP in the
@@ -151,6 +156,7 @@ re-measured below.
 | BSIM-AR | large | 52/55 | 1.80 / 1.21 / 1.67 / 1.58 |
 | BSIM-AR | xl | 55/55 | 1.94 / 2.92 / 1.08 / 1.07 |
 | PFN | small | 54/55 | 2.14 / 1.58 / 0.56 / 1.12 |
+| PFN | large | 55/55 | 2.65 / 1.52 / 1.04 / 1.10 |
 
 **Parametric transient — `verify_nn_multi_tech_tran`, 64 configs**
 
@@ -162,7 +168,9 @@ re-measured below.
 | DirectNet | xl | 64/64 | 1.66 / 1.45 / 1.52 / 1.48 |
 | BSIM-AR | small | 64/64 | 2.54 / 1.47 / 1.53 / 1.60 |
 | BSIM-AR | medium | 64/64 | 1.80 / 1.52 / 1.52 / 1.50 |
+| BSIM-AR | large | 64/64 | 1.66 / 1.48 / 1.51 / 1.49 |
 | PFN | small | 64/64 | 1.88 / 1.44 / 1.50 / 1.48 |
+| PFN | large | 64/64 | 2.23 / 1.49 / 1.50 / 1.51 |
 
 **Non-tier (recipe) stems measured in the same pass**
 
@@ -172,7 +180,7 @@ re-measured below.
 | `dn/csob_large` | 8/8 | 1/4 | 55/55 | 64/64 |
 | `dn/corroft_xl` | 6/8 | 0/4 | — | — |
 | `dn/crit10_xl` | 8/8 | 0/4 | 53/55 | 64/64 |
-| `dn/crit15m_xl` | 8/8 | 0/4 | — | — |
+| `dn/crit15m_xl` | 8/8 | 0/4 | 53/55 | 64/64 |
 | `tf/corroft_medium` | 8/8 | 2/4 | — | — |
 
 Reading the DC column: **`medium` is the best device fit for DirectNet**, and
@@ -205,7 +213,7 @@ pre-fix measurement until now.
 | BSIM-AR | small | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
 | BSIM-AR | medium | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
 | BSIM-AR | large | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
-| BSIM-AR | xl | **2/2** | TSMC5: n✓ p✓ · TSMC7: — · TSMC12: — · TSMC16: — |
+| BSIM-AR | xl | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
 | PFN | small | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
 | PFN | medium | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
 | PFN | large | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
