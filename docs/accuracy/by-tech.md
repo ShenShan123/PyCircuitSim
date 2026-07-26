@@ -243,7 +243,7 @@ gds bug distorted recipe rankings.
 | BSIM-AR `xl` | 1.94 | 2.92 | 1.08 | 1.07 |
 | BSIM-AR `corroft_medium` | — | 1.00 | 1.15 (17/18) | 1.54 (13/14) |
 | PFN `small` | 2.14 | 1.58 | 0.56 | 1.12 (13/14) |
-| PFN `medium` | 2.36 | 1.62 | — | — |
+| PFN `medium` | 2.36 | 1.62 | 1.95 (17/18) | 2.65 (13/14) |
 | PFN `large` | 2.65 | 1.52 | 1.04 | 1.10 |
 
 **Parametric transient — mean NRMSE % per tech**
@@ -265,7 +265,7 @@ gds bug distorted recipe rankings.
 | BSIM-AR `xl` | 1.62 | 1.48 | 1.51 | — |
 | BSIM-AR `corroft_medium` | — | 1.53 | 1.50 | 1.49 |
 | PFN `small` | 1.88 | 1.44 | 1.50 | 1.48 |
-| PFN `medium` | 1.71 | 1.48 | — | — |
+| PFN `medium` | 1.71 | 1.48 | 1.50 | 1.49 |
 | PFN `large` | 2.23 | 1.49 | 1.50 | 1.51 |
 
 **Device CS-amp AC — NMOS / PMOS verdicts**

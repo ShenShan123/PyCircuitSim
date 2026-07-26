@@ -117,20 +117,28 @@ unmeasured cells is shown against its measured denominator, not 16.
 | `dn/v660clean_large` | 13/16 | 0 | — |
 | `dn/xl` | 12/16 | 0 | — |
 | `tf/corroft_large` | 1/2 measured | 0 | 14 |
-| `pfn/large` | 7/10 measured | 0 | 6 |
-| `pfn/medium` | 4/4 measured | 0 | 12 |
-| `pfn/small` | 9/13 measured | 0 | 3 |
+| `tf/crit30_large` | 2/2 measured | 0 | 14 |
+| `pfn/large` | 7/11 measured | 0 | 5 |
+| `pfn/medium` | 9/13 measured | 0 | 3 |
+| `pfn/small` | 11/15 measured | 0 | 1 |
 
-**Zero FLIPs, everywhere, again — and the four groups V6.13.0 swept reproduce
-exactly.** `dn/large` 15/16, `dn/corroft_xl` 15/16, `dn/v660clean_large` 13/16
-and `dn/clean/xl` 12/16 land on the same strict counts a second time, on a
-different day and a different code state. The pass adds four DirectNet groups
-that had no strict measurement at all — `small` 10/16, `medium` 10/16,
-`crit30f_large` 15/16 (an independent re-measure of the production slot, which
-agrees with `dn/large` cell for cell) and `csob_large` 11/16 — so **all ten
-DirectNet groups are now strict-swept and every one is flip-free.** The
-V6.13.0 conclusion, that the OMP multistability was a wrong-signed Jacobian
-rather than a property of high-gain circuits, holds on twice the evidence.
+**Zero FLIPs everywhere, and every group V6.13.0 swept reproduces exactly.**
+Six DirectNet groups had a prior strict count and all six land on it again, on a
+different day and a different code state: `crit15m_xl` **16/16**, `large`
+15/16, `corroft_xl` 15/16, `crit10_xl` 14/16, `v660clean_large` 13/16,
+`clean/xl` 12/16. The pass adds the four that had no strict measurement at all —
+`small` 10/16, `medium` 10/16, `crit30f_large` 15/16 (an independent re-measure
+of the production slot, agreeing with `dn/large` cell for cell) and `csob_large`
+11/16 — so **all ten DirectNet groups are strict-swept and every one is
+flip-free.**
+
+**Put that beside the TSMC6 repeat and the picture completes: the variance is
+in training, not in evaluation.** Re-gating *the same weights* is deterministic
+— 6/6 groups reproduce their strict counts and 223/223 complex cells agree with
+the V6.13.0 snapshot. Retraining *the same recipe on the same rows* is not —
+ring period error moves ±4 pp and the opamp flips between a good basin and a
+rail (`by-tech.md` §5). A gate result is a reproducible property of a
+checkpoint; it is not a reproducible property of a recipe.
 
 Pre-fix, the tiers differed sharply in how *stable* they were: `xl` basins were
 OMP-deterministic (strict ≈ single-run for every recipe; the sole FLIP in the
@@ -157,6 +165,7 @@ re-measured below.
 | BSIM-AR | large | 52/55 | 1.80 / 1.21 / 1.67 / 1.58 |
 | BSIM-AR | xl | 55/55 | 1.94 / 2.92 / 1.08 / 1.07 |
 | PFN | small | 54/55 | 2.14 / 1.58 / 0.56 / 1.12 |
+| PFN | medium | 53/55 | 2.36 / 1.62 / 1.95 / 2.65 |
 | PFN | large | 55/55 | 2.65 / 1.52 / 1.04 / 1.10 |
 
 **Parametric transient — `verify_nn_multi_tech_tran`, 64 configs**
@@ -171,6 +180,7 @@ re-measured below.
 | BSIM-AR | medium | 64/64 | 1.80 / 1.52 / 1.52 / 1.50 |
 | BSIM-AR | large | 64/64 | 1.66 / 1.48 / 1.51 / 1.49 |
 | PFN | small | 64/64 | 1.88 / 1.44 / 1.50 / 1.48 |
+| PFN | medium | 64/64 | 1.71 / 1.48 / 1.50 / 1.49 |
 | PFN | large | 64/64 | 2.23 / 1.49 / 1.50 / 1.51 |
 
 **Non-tier (recipe) stems measured in the same pass**
