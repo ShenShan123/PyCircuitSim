@@ -283,10 +283,14 @@ train via `scripts/recipe_train.sh` (warm-start from the clean same-size base �
 
 ```bash
 # 1. Per-tech data (one .npz per tech+device). --enable-inv-trip adds the inverter-trip
-#    overlay; the grid sampler carries the reverse-Vds corridor. --tech ∈ {tsmc5,
+#    overlay and --enable-subvt-off the 1e-12..1e-6 A off-state decades
+#    (sample_class 11). BOTH are required to reproduce the production datasets —
+#    omitting --enable-subvt-off silently yields a set 4.7 % smaller that is
+#    otherwise class-for-class identical, which is exactly how it goes unnoticed.
+#    The grid sampler carries the reverse-Vds corridor. --tech ∈ {tsmc5,
 #    tsmc6,tsmc7,tsmc12,tsmc16,asap7,all}. Repeat per tech.
 conda run -n pycircuitsim python external_compact_models/PyCMG/scripts/generate_nn_data.py \
-    --device both --tech tsmc5 --enable-inv-trip --n-workers 8
+    --device both --tech tsmc5 --enable-inv-trip --enable-subvt-off --n-workers 8
 
 # 2. Train. --tech-scope auto-sets --exclude-techs, --num-tech-codes (local vocab +
 #    UNKNOWN), the default --data path, and the save_prefix the parser resolver

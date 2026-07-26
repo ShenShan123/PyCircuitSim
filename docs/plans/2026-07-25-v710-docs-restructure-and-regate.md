@@ -79,6 +79,18 @@ fix, i.e. most of the "training lottery" was the wrong Jacobian.
 * **Scoring rule: TSMC6 is a /4 column of its own, never inside the /16.**
 * Datasets regenerating from the kept vendor PDK
   (`modelcards/TSMC6/cln6_1d8_sp_v1d0_2p2.l`).
+
+  **⚠ The first regeneration was wrong, and the reason is a documentation bug.**
+  Following CLAUDE.md's recipe (`--enable-inv-trip` only) produced a set 4.7 %
+  smaller than `tsmc7_*` — 1,731,780 vs 1,816,830 nmos rows. Diffing the
+  `sample_class` histograms showed the *only* difference: class 11
+  (`subvt_off`, 85,050 rows) present in the production sets and absent from
+  mine; all eight other classes matched exactly and both had the same 270
+  geometry bins. The production datasets were built with **`--enable-subvt-off`
+  as well**, and CLAUDE.md never said so. Regenerated with both flags; CLAUDE.md
+  fixed. Had this gone unnoticed, the "controlled repeat" would have been
+  confounded by a missing overlay — a 4.7 % row difference is not visible in any
+  training log.
 * `scripts/tsmc6_restore_campaign.sh` waits for the datasets, then trains
   DirectNet → BSIM-AR → PFN, 4 sizes × 2 devices each (24 checkpoints, clean
   recipe). Gating is chained: `scripts/tsmc6_gate_campaign.sh` (launched, PAR=10)
