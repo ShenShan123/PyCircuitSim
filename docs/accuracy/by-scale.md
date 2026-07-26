@@ -143,8 +143,9 @@ re-measured below.
 | `dn/v660clean_large` | 7/8 | 0/4 | 54/55 | 64/64 |
 | `dn/csob_large` | 8/8 | 1/4 | 55/55 | 64/64 |
 | `dn/corroft_xl` | 6/8 | 0/4 | — | — |
+| `dn/crit10_xl` | 2/2 | 0/2 | — | — |
 | `dn/crit15m_xl` | 2/2 | 0/0 | — | — |
-| `tf/corroft_medium` | 4/4 | 2/4 | — | — |
+| `tf/corroft_medium` | 6/6 | 2/4 | — | — |
 
 Reading the DC column: **`medium` is the best device fit for DirectNet**, and
 `large`'s slightly worse device numbers are the price of the curriculum
@@ -194,7 +195,7 @@ pre-fix measurement until now.
 | BSIM-AR | large | **2/4** | FAIL 2.54 dB | PASS 0.12 dB | FAIL 4.34 dB | PASS 0.33 dB |
 | BSIM-AR | xl | **1/4** | FAIL 24.95 dB | FAIL 3.86 dB | FAIL 5.18 dB | PASS 0.97 dB |
 | PFN | small | **0/4** | FAIL 16.04 dB | FAIL 30.04 dB | FAIL 8.46 dB | FAIL 4.44 dB |
-| PFN | medium | **1/2** | FAIL 15.61 dB | PASS 0.84 dB | — | — |
+| PFN | medium | **1/4** | FAIL 15.61 dB | PASS 0.84 dB | FAIL 3.29 dB | FAIL 33.44 dB |
 | PFN | large | **0/2** | FAIL 5.32 dB | FAIL 30.99 dB | — | — |
 
 ### What this changes
