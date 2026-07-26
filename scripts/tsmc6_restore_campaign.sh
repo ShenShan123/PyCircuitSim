@@ -45,6 +45,33 @@ for f in "$DS/tsmc6_nmos.npz" "$DS/tsmc6_pmos.npz"; do
   echo "[tsmc6] dataset ready: $f ($(numfmt --to=iec "$prev" 2>/dev/null || echo "$prev" bytes))"
 done
 
+# ---- 1b. verify the repeat is actually controlled ----
+# TSMC6 exists to be a bit-identical repeat of TSMC7 (docs/accuracy/methodology.md
+# §7). If the regenerated data is NOT array_equal to tsmc7_*, the experiment is
+# confounded and the training is a waste of GPU-days — so refuse, don't warn.
+# This check has already earned itself once: the first regeneration followed
+# CLAUDE.md's recipe, which omitted --enable-subvt-off, and came out 4.7 %
+# smaller (sample_class 11 missing) while looking perfectly healthy in the log.
+echo "[tsmc6] verifying the dataset is bit-identical to tsmc7 …"
+"${NN_PY:-/data1/shenshan/.conda/envs/pycircuitsim/bin/python}" - "$DS" <<'PYEOF' || exit 1
+import numpy as np, pathlib, sys
+D = pathlib.Path(sys.argv[1])
+bad = 0
+for dev in ("nmos", "pmos"):
+    a = np.load(D / f"tsmc6_{dev}.npz", allow_pickle=True)
+    b = np.load(D / f"tsmc7_{dev}.npz", allow_pickle=True)
+    for k in ("inputs", "geometry", "outputs", "sample_class"):
+        same = a[k].shape == b[k].shape and np.array_equal(a[k], b[k])
+        print(f"  {dev} {k}: {a[k].shape} vs {b[k].shape} array_equal={same}")
+        bad += not same
+if bad:
+    print("[tsmc6] ABORT: regenerated data differs from tsmc7 — the repeat would "
+          "be confounded. Check the generator flags (--enable-inv-trip AND "
+          "--enable-subvt-off) before training.")
+    sys.exit(1)
+print("[tsmc6] datasets are bit-identical to tsmc7 — the repeat is controlled.")
+PYEOF
+
 # ---- 2. training waves ----
 wave () {
   local model="$1" streams="$2"; shift 2
