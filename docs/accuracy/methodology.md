@@ -239,10 +239,21 @@ What the TSMC6 rows are actually good for is in `by-tech.md` §TSMC6.
    `FORCE_LEVEL=74/75`.** `nn_ac_tf.log` / `nn_ac_pfn.log` therefore *read* as
    DirectNet results while measuring BSIM-AR / PFN. Cosmetic, unfixed, and the
    reason to trust the log's path rather than its header.
-4. **Single-cell rankings from the pre-fix era are provisional.** The TSMC6
-   duplicate showed a 66.2 pp SRAM-error gap between two runs on identical data
-   that collapsed to 1.0 pp after the gds fix — part of the "training lottery"
-   variance recipes were ranked against was the wrong Jacobian, not stochasticity.
+4. **Single-cell rankings are inside the pipeline's own run-to-run noise —
+   measured, not asserted.** The V7.1.0 TSMC6 repeat (`by-tech.md` §5) retrains
+   the same recipe on bit-identical rows and compares strict verdicts. The gate
+   *counts* agree at three of four tiers, but **which** cells pass swaps:
+   `ring_osc` carries **±4 pp** of scatter across a **5 %** gate (4.82 % vs
+   9.04 % at `large`), and `opamp` is **bimodal** — a good basin (1.81–7.12 %)
+   or a 100 % rail, unpredictably. `sram_snm` and `switchcap` reproduce to
+   ≤0.3 pp and never flip.
+   **So a recipe promoted on one ring or opamp cell is not a result; the same
+   claim on a SRAM or switchcap cell is.** Family-level counts over many cells,
+   and levers whose effect clears the noise floor (the corridor moves rings by
+   ~8 pp), are unaffected. Pre-fix single-cell rankings are doubly suspect: the
+   same repeat showed a 66.2 pp SRAM gap that collapsed to 1.0 pp once the gds
+   sign bug was fixed, so part of that era's "training lottery" was a wrong
+   Jacobian on top of this noise.
 
 ## 9. Reproducing
 
