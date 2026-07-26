@@ -23,12 +23,18 @@ numbers; the family files carry only what is specific to one family.
 
 Strict = passes at OMP ∈ {1, 2, 4}. Complex matrix = 4 circuits × 4 techs.
 
-| LEVEL | family | role | best config | params | complex (strict) | device AC | CPU ms/eval |
-|---|---|---|---|---|---|---|---|
-| 73 | **DirectNet** | **production** | `crit30f@large` | 0.92 M | **15/16**, 0 flips | 8/8 | **1.5** |
-| 73 | DirectNet | best any tier | `crit15m@xl` | 2.13 M | **16/16**, 0 flips | see `by-scale.md` | 3.4 |
-| 74 | **BSIM-AR** | higher fidelity | `corroft@medium` | 1.9 M | **16/16**, 0 flips | 8/8 | 61.5 |
-| 75 | **PFN** | research | `clean@small` | 0.69 M | 11/16, 0 flips | 8/8 at `large` | 15.6 |
+| LEVEL | family | role | best config | params | complex (strict) | device AC | opamp AC | CPU ms/eval |
+|---|---|---|---|---|---|---|---|---|
+| 73 | **DirectNet** | **production** | `crit30f@large` | 0.92 M | **15/16**, 0 flips | 8/8 | 0/4 | **1.5** |
+| 73 | DirectNet | best any tier | `crit15m@xl` | 2.13 M | **16/16**, 0 flips | 8/8 (xl 7/8) | 0/4 | 3.4 |
+| 74 | **BSIM-AR** | higher fidelity | `corroft@medium` | 1.9 M | **16/16**, 0 flips | **8/8 at every tier** | 1–2/4 | 61.5 |
+| 75 | **PFN** | research | `clean@small` | 0.69 M | 11/16, 0 flips | **8/8 at every tier** | 0–1/4 | 15.6 |
+
+Device AC is **86 of 88 cells** across all three families and every tier — the
+charge-derivative surface is no longer a differentiator, and "AC peaks at small"
+is retired (`by-scale.md` §5). The opamp open-loop AC gate is passed 7 times in
+44, against a standing claim of never; part of its remaining denominator is
+unreachable by construction (same section).
 
 * **Production stays DirectNet.** 15/16 strict at 0.92 M params and ~40× BSIM-AR's
   speed; the single open cell is `tsmc7-opamp` **at `large` only** — DirectNet
