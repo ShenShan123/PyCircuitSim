@@ -1,0 +1,89 @@
+#!/usr/bin/env bash
+# V7.1.0 re-gate — re-measure every accuracy number that was produced by the
+# pre-A3 (gds sign bug) code and never re-measured in the V6.13.0 campaign.
+#
+# V6.13.0 re-ran the complex 16-cell matrix for all 28 on-disk checkpoint
+# groups, but the *device* suites (nn_ac, opamp_ac, multi_tech_dc/tran) only
+# for the resolver-DEFAULT stem of each family (DirectNet production `large`,
+# BSIM-AR `large`, PFN `large`). Every per-size / per-recipe device+AC number
+# in docs/accuracy/ is therefore still a pre-fix measurement, and AC is the
+# axis the fix moved most (device AC 8/10 -> 10/10, 4/12 -> 8/8). It also
+# strict-swept OMP for only 10 of the 28 groups.
+#
+# This driver closes both gaps. One job = (tag, variant, tech, suite, omp):
+#
+#   tag      dn | tf | pfn          (LEVEL 73 / 74 / 75)
+#   variant  small | medium | large | xl | <recipe>_<size>
+#              -> checkpoint stem {tech}_{tag}_{variant}_{nmos,pmos}
+#   suite    any tests/verify_*.py taking --tech
+#   omp      OMP_NUM_THREADS = MKL_NUM_THREADS = PYCIRCUITSIM_TORCH_THREADS
+#
+# Verdict = the suite's EXIT CODE (CLAUDE.md gate methodology), recorded in the
+# log's trailing marker. CPU-pinned, repo ngspice, per-job isolated results dir
+# (both PYCIRCUITSIM_NN_RESULTS and PYCIRCUITSIM_COMPLEX_RESULTS) so jobs fan
+# out safely — the harness scratch dirs are keyed by (circuit, tech) only.
+#
+# Usage:
+#   PAR=24 JOBS=jobs.txt bash scripts/v710_regate.sh          # dispatch a pool
+#   bash scripts/v710_regate.sh _one dn small TSMC16 verify_nn_ac 1
+#
+# Resumable: a job whose log already carries ===V710_DONE is skipped.
+set -u
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SELF="$ROOT/scripts/$(basename "${BASH_SOURCE[0]}")"
+NG="$ROOT/tools/ngspice-45.2/bin/ngspice"
+CKPT="$ROOT/external_compact_models/bsimar/checkpoints"
+OUT="${V710_OUT:-$ROOT/results/v710_regate}"
+SCRATCH="${V710_SCRATCH:-/tmp/v710_regate_scratch}"
+PY="${NN_PY:-/data1/shenshan/.conda/envs/pycircuitsim/bin/python}"
+[ -x "$PY" ] || PY="python"
+
+if [ "${1:-}" = "_one" ]; then
+  tag="$2"; variant="$3"; tuc="$4"; suite="$5"; omp="${6:-1}"
+  tlc="$(echo "$tuc" | tr 'A-Z' 'a-z')"
+  log="$OUT/$tag/$variant/$tlc/${suite}.omp${omp}.log"
+  mkdir -p "$(dirname "$log")"
+  if grep -q "===V710_DONE" "$log" 2>/dev/null; then echo "[v710] SKIP $tag/$variant/$tlc/$suite/omp$omp"; exit 0; fi
+
+  sn="${tlc}_${tag}_${variant}_nmos"; sp="${tlc}_${tag}_${variant}_pmos"
+  if [ ! -f "$CKPT/${sn}_best.pt" ] || [ ! -f "$CKPT/${sp}_best.pt" ]; then
+    echo "[v710] NO-CKPT $tag/$variant/$tlc -> skip $suite"
+    echo "===V710_DONE rc=no-ckpt===" > "$log"; exit 3
+  fi
+
+  export CUDA_VISIBLE_DEVICES="" NGSPICE_BIN="$NG"
+  case "$tag" in
+    tf)  export PYCIRCUITSIM_NN_CHECKPOINT_TF_NMOS="$sn"  PYCIRCUITSIM_NN_CHECKPOINT_TF_PMOS="$sp"
+         export PYCIRCUITSIM_NN_FORCE_LEVEL=74 ;;
+    pfn) export PYCIRCUITSIM_NN_CHECKPOINT_PFN_NMOS="$sn" PYCIRCUITSIM_NN_CHECKPOINT_PFN_PMOS="$sp"
+         export PYCIRCUITSIM_NN_FORCE_LEVEL=75 ;;
+    dn)  export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="$sn"  PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="$sp" ;;
+    *)   echo "[v710] UNKNOWN tag=$tag"; exit 1 ;;
+  esac
+
+  iso="$SCRATCH/${tag}_${variant}_${tlc}_${suite}_omp${omp}"
+  export PYCIRCUITSIM_COMPLEX_RESULTS="$iso/cplx" PYCIRCUITSIM_NN_RESULTS="$iso/nn"
+  mkdir -p "$PYCIRCUITSIM_COMPLEX_RESULTS" "$PYCIRCUITSIM_NN_RESULTS"
+
+  echo "[v710] RUN $tag/$variant/$tlc/$suite/omp$omp"
+  OMP_NUM_THREADS=$omp MKL_NUM_THREADS=$omp PYCIRCUITSIM_TORCH_THREADS=$omp \
+    "$PY" -u "$ROOT/tests/${suite}.py" --tech "$tuc" > "$log" 2>&1
+  rc=$?
+  echo "===V710_DONE rc=$rc===" >> "$log"
+  echo "[v710] END $tag/$variant/$tlc/$suite/omp$omp rc=$rc"
+  # rc 124 (timeout) / >=126 (killed, cannot-exec) = no verdict reached; a
+  # plain nonzero rc IS the FAIL verdict (audit B3 convention).
+  if [ "$rc" -eq 124 ] || [ "$rc" -ge 126 ]; then rm -f "$log.novrd"; exit 3; fi
+  [ "$(grep -cv '^===V710_DONE' "$log")" -gt 0 ] || exit 3
+  exit 0
+fi
+
+# ---- dispatcher ----
+JOBS="${JOBS:?set JOBS=<file of 'tag variant TECH suite omp' lines>}"
+PAR="${PAR:-16}"
+n="$(grep -cve '^\s*$' -e '^#' "$JOBS")"
+echo "[v710] pool start: $n jobs, PAR=$PAR, out=$OUT  ($(date '+%F %T'))"
+grep -ve '^\s*$' -e '^#' "$JOBS" | xargs -P "$PAR" -L1 "$SELF" _one
+xrc=$?
+echo "[v710] pool done  (xargs rc=$xrc)  ($(date '+%F %T'))"
+exit "$xrc"

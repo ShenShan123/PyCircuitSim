@@ -1,33 +1,61 @@
-# Accuracy reports — one per compact-model family
+# Accuracy reports
 
-Each file is the **single unified accuracy record** for one NN compact-model family:
-every campaign that measured it, consolidated, with the frozen data tables carried
-verbatim. Ground truth is always NGSPICE on the identical BSIM-CMG (LEVEL=72) OSDI
-model.
+Ground truth is **always** NGSPICE on the *identical* BSIM-CMG (LEVEL=72) OSDI
+model — never a simplified or self-defined reference.
 
-| LEVEL | Family | Report | Best config | Complex gates (strict) |
-|---|---|---|---|---|
-| 73 | **DirectNet** (production) | [`DirectNet-L73-accuracy.md`](DirectNet-L73-accuracy.md) | `crit30f@large`, 0.92 M | **15/16** (16/16 at `crit15m@xl`) |
-| 74 | **BSIM-AR Transformer** (higher-fidelity) | [`BSIM-AR-L74-accuracy.md`](BSIM-AR-L74-accuracy.md) | `corroft@medium`, 1.9 M | **16/16** |
-| 75 | **PFN / TabPFN** (research) | [`PFN-L75-accuracy.md`](PFN-L75-accuracy.md) | `clean@small`, 0.69 M | 11/16 |
+## Start here
 
-BSIM-CMG (LEVEL=72) is the ground truth, not a graded family; its own gate record lives
-in `../CHANGELOG.md` and `../V6.9.0-tsmc6-onboarding-pdk-parse-audit.md`.
+| file | what it answers |
+|---|---|
+| **[`methodology.md`](methodology.md)** | What a "gate" is, the thresholds, strict-OMP discipline, isolation, and **which code state produced which number**. Read before comparing any two numbers. |
+| **[`by-tech.md`](by-tech.md)** | *"How does TSMC5 / 7 / 12 / 16 behave, across families and scales?"* — plus TSMC6, retired. |
+| **[`by-scale.md`](by-scale.md)** | *"What does small / medium / large / xl buy?"* — the capacity laws, and which ones survived the re-gate. |
+| **[`by-recipe.md`](by-recipe.md)** | *"What does each training recipe do?"* — the catalogue, the corridor/anchor levers, the dead ends. |
+| [`DirectNet-L73-accuracy.md`](DirectNet-L73-accuracy.md) | The production family: architecture, production state, universal-scope study. |
+| [`BSIM-AR-L74-accuracy.md`](BSIM-AR-L74-accuracy.md) | The high-fidelity family: AR transformer, its cost, its ceiling. |
+| [`PFN-L75-accuracy.md`](PFN-L75-accuracy.md) | The research family: TabPFN port, in-context inference. |
+| [`archive-pre-gds-fix.md`](archive-pre-gds-fix.md) | Frozen pre-fix data tables + the register of retracted claims. |
 
-**Read these first, whatever the family:**
+The three axis files are the **single source of truth** for cross-cutting
+numbers; the family files carry only what is specific to one family.
 
-- **`DirectNet-L73-accuracy.md` §2** — the shared methodology (gate definitions, strict
-  OMP discipline, isolation, CPU pinning) that every number in all three files obeys.
-- **`DirectNet-L73-accuracy.md` §12.2** — the **gds sign bug**: every number in every
-  report was measured with it present, and the measured fix moves AC, `force_ic` and one
-  complex gate. Not shipped as of 2026-07-24.
-- **TSMC6 ≡ TSMC7 relabelled** (`../2026-07-21-systematic-audit.md` §D1) — TSMC6 rows are
-  a second training run on the TSMC7 data, not a sixth technology. Flagged in each report.
+## Scoreboard
 
-**Consolidated 2026-07-24** from `V6.6.0`, `V6.6.1`, `V6.6.6`, `V6.7.0` (→ DirectNet),
-`V6.8.0`/`V6.8.1` (→ BSIM-AR), and `V6.10.0` (→ PFN), plus the V6.11.0 TSMC6 addenda.
-Those per-version files were removed; git history keeps them (last present at `1fe1cdb`).
+Strict = passes at OMP ∈ {1, 2, 4}. Complex matrix = 4 circuits × 4 techs.
 
-All counts are strict across OMP∈{1,2,4} and were re-measured in **V6.13.0**
-(2026-07-24) after the `gds` sign + guard fix; every family is now flip-free.
-See `DirectNet-L73-accuracy.md` §12.2 for the fix and what it retracts.
+| LEVEL | family | role | best config | params | complex (strict) | device AC | CPU ms/eval |
+|---|---|---|---|---|---|---|---|
+| 73 | **DirectNet** | **production** | `crit30f@large` | 0.92 M | **15/16**, 0 flips | 8/8 | **1.5** |
+| 73 | DirectNet | best any tier | `crit15m@xl` | 2.13 M | **16/16**, 0 flips | see `by-scale.md` | 3.4 |
+| 74 | **BSIM-AR** | higher fidelity | `corroft@medium` | 1.9 M | **16/16**, 0 flips | 8/8 | 61.5 |
+| 75 | **PFN** | research | `clean@small` | 0.69 M | 11/16, 0 flips | 8/8 at `large` | 15.6 |
+
+* **Production stays DirectNet.** 15/16 strict at 0.92 M params and ~40× BSIM-AR's
+  speed; the single open cell is `tsmc7-opamp` **at `large` only** — DirectNet
+  passes it at `small` (1.81 %) and `xl` (4.20 %).
+* **Two independent families now sweep 16/16 strict** with ordinary uniform data
+  recipes (`crit15m@xl`, `corroft@medium`), so the matrix no longer separates
+  them; inference cost and device-suite breadth do.
+* **Every family is flip-free.** The OMP multistability that plagued every
+  earlier campaign was a wrong-signed Jacobian entry, not a property of
+  high-gain circuits (`methodology.md` §6).
+
+## What is actually open
+
+1. **The low-VDD rings** (`tsmc5-ring`, `tsmc7-ring`) for every *clean* recipe —
+   deterministic failures at 5.5–13 % against a 5 % gate, closed only by the
+   corridor curriculum (`by-recipe.md` §3).
+2. **`tsmc7-opamp` at DirectNet `large`** — the sole cell keeping production off
+   a full sweep, and reachable at other tiers, so a basin problem rather than a
+   fidelity wall.
+3. **The opamp open-loop AC gate** — see `by-scale.md` §5 for the V7.1.0
+   re-measurement of a claim that stood as "0/4 everywhere".
+4. **PFN's clean-recipe ceiling** — the corridor curriculum has never been run on
+   PFN, and it is the lever that closes exactly the cells PFN fails.
+
+## Provenance in one line
+
+Numbers carry one of three code states — **pre-fix** (≤ `a96112a`, `gds` sign
+bug present), **V6.13.0** (`d2ea720`, fix shipped, full complex re-gate),
+**V7.1.0** (HEAD, device/AC/strict re-gate). `methodology.md` §6 says exactly
+what each is comparable to; every table here is labelled.

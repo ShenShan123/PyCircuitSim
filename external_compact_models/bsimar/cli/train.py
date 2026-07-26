@@ -123,6 +123,17 @@ SIZE_PRESETS = {
         agg_blocks=3, agg_heads=8, n_cls_tokens=2, icl_num_blocks=6,
         icl_heads=8, ctx_len=2048, batch_size=1024, max_epochs=150,
         patience=50, lr=4e-4),
+    # V7.1.0 — PFN XL tier, completing the 4-scale matrix for all three NN
+    # families. 14.86M params mirrors the transformer xl (14.81M), and the
+    # ICL width W = embed_dim * n_cls_tokens = 384 equals transformer-xl's
+    # d_model, so the capacity axis stays comparable across families.
+    # lr 3e-4, not large's 4e-4: the V6.10 large wave logged 8 divergence
+    # collapses (5/8 at 4e-4) and this stack is 50 % deeper on the ICL side.
+    ("tabpfn", "xl"): dict(
+        embed_dim=192, n_inducing=64, dist_blocks=4, dist_heads=12,
+        agg_blocks=4, agg_heads=12, n_cls_tokens=2, icl_num_blocks=9,
+        icl_heads=12, ctx_len=2048, batch_size=1024, max_epochs=150,
+        patience=50, lr=3e-4),
 }
 
 

@@ -1,0 +1,273 @@
+#!/usr/bin/env python3
+"""Collect the V7.1.0 re-gate (scripts/v710_regate.sh) into tables + JSON.
+
+Reads ``results/v710_regate/<tag>/<variant>/<tech>/<suite>.omp<n>.log``, whose
+verdict is the trailing ``===V710_DONE rc=N===`` marker, and extracts each
+suite's headline metric so the accuracy docs can be rebuilt from measurements
+rather than transcription.
+
+Emits:
+  * ``REPORT.md`` — per (tag, variant): device AC, opamp open-loop AC, device
+    DC/transient, the complex 4x4 matrix, and the strict OMP{1,2,4} verdicts.
+  * ``data.json`` — the same, machine-readable.
+
+Usage: python scripts/v710_regate_collect.py [--root results/v710_regate]
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import re
+from pathlib import Path
+from typing import Dict, List, Optional
+
+TECHS = ["TSMC5", "TSMC7", "TSMC12", "TSMC16"]
+CIRCS = ["ring_osc", "opamp", "sram_snm", "switchcap"]
+FAMILY = {"dn": "DirectNet (L73)", "tf": "BSIM-AR (L74)", "pfn": "PFN (L75)"}
+
+_RC = re.compile(r"===V710_DONE rc=(\S+)===")
+_AC_ROW = re.compile(
+    r"^\s*AC \| (\w+)_(nmos|pmos) \| (\S+) \| (\S+) \| (\S+) \| (\S+) \| (\S+)", re.M)
+_OPAMP_AC = re.compile(
+    r"^\s*(TSMC\d+)\s*\| dc_gain_err=\s*(\S+)dB \| gbw_ratio=\s*(\S+) \| "
+    r"pm_err=\s*(\S+)deg \| magNRMSE=\s*(\S+)% \| (\w+)", re.M)
+_DEV_ROW = re.compile(
+    r"^\s+(TSMC\d+_\w+)\s+NRMSE=\s*(\S+)%\s+MRE=\s*(\S+)%\s+R2=\s*(\S+)\s+"
+    r"MaxErr=(\S+)\s+(PASS|FAIL|ERROR)", re.M)
+# SRAM's gate metric is the worst lobe NRMSE over the NFIN corners — column 7
+# of its summary table, not the first "NRMSE=" the log happens to print.
+_SRAM_ROW = re.compile(
+    r"^\s*TSMC\d+\s*\|\s*\d+\s*\|\s*[\d.-]+\s*\|\s*[\d.-]+\s*\|\s*[\d.-]+\s*\|"
+    r"\s*[\d.-]+\s*\|\s*([\d.]+)\s*\|\s*(PASS|FAIL)", re.M)
+_CIRC_METRIC = {
+    "ring_osc": re.compile(r"period error\s*=\s*(-?[\d.]+)\s*%"),
+    "opamp": re.compile(r"gain error\s*=\s*(-?[\d.]+)\s*%"),
+    "switchcap": re.compile(r"charge err=\s*(-?[\d.]+)%\s*of VDD"),
+}
+
+
+def read(p: Path) -> Optional[str]:
+    try:
+        return p.read_text(errors="replace")
+    except OSError:
+        return None
+
+
+def rc_of(txt: str) -> Optional[str]:
+    # Two dispatchers can race onto the same job if one was launched while the
+    # other already had it in flight; the tell is two completion markers in one
+    # log. Such a log is a mixture of two runs and must be re-run, not parsed.
+    ms = _RC.findall(txt)
+    if len(ms) > 1:
+        return "RACED"
+    return ms[0] if ms else None
+
+
+def collect(root: Path) -> Dict:
+    out: Dict[str, Dict] = {}
+    for log in sorted(root.glob("*/*/*/*.omp*.log")):
+        tech_dir = log.parent.name
+        variant = log.parent.parent.name
+        tag = log.parent.parent.parent.name
+        suite, _, omp = log.name[:-4].partition(".omp")
+        txt = read(log)
+        if txt is None:
+            continue
+        rc = rc_of(txt)
+        if rc is None:
+            continue  # still running
+        g = out.setdefault(tag, {}).setdefault(variant, {})
+        cell = g.setdefault(suite, {}).setdefault(tech_dir.upper(), {})
+        entry: Dict = {"rc": rc}
+
+        if suite == "verify_nn_ac":
+            for m in _AC_ROW.finditer(txt):
+                entry[m.group(2)] = {
+                    "gain0_err_db": m.group(3), "f3db_ratio": m.group(4),
+                    "mag_nrmse_pct": m.group(5), "phase_inband_deg": m.group(6),
+                    "status": m.group(7)}
+        elif suite == "verify_complex_opamp_ac":
+            for m in _OPAMP_AC.finditer(txt):
+                entry.update(dc_gain_err_db=m.group(2), gbw_ratio=m.group(3),
+                             pm_err_deg=m.group(4), mag_nrmse_pct=m.group(5),
+                             status=m.group(6))
+        elif suite.startswith("verify_nn_multi_tech"):
+            rows = [(m.group(1), float(m.group(2)), float(m.group(3)),
+                     float(m.group(4)), m.group(6)) for m in _DEV_ROW.finditer(txt)]
+            if rows:
+                entry["n"] = len(rows)
+                entry["n_pass"] = sum(1 for r in rows if r[4] == "PASS")
+                entry["mean_nrmse"] = round(sum(r[1] for r in rows) / len(rows), 3)
+                entry["max_nrmse"] = round(max(r[1] for r in rows), 3)
+                entry["mean_mre"] = round(sum(r[2] for r in rows) / len(rows), 3)
+                entry["min_r2"] = round(min(r[3] for r in rows), 5)
+                entry["rows"] = {r[0]: {"nrmse": r[1], "mre": r[2], "r2": r[3],
+                                        "status": r[4]} for r in rows}
+        else:  # complex circuits
+            circ = suite.replace("verify_complex_", "")
+            if circ == "sram_snm":
+                vals = [float(m.group(1)) for m in _SRAM_ROW.finditer(txt)]
+                if vals:
+                    entry["metric"] = max(vals)
+            else:
+                pat = _CIRC_METRIC.get(circ)
+                if pat:
+                    vals = pat.findall(txt)
+                    if vals:
+                        entry["metric"] = float(vals[-1])
+        cell[f"omp{omp}"] = entry
+    return out
+
+
+def _verdict(cell: Dict, omp: str = "omp1") -> str:
+    e = cell.get(omp)
+    if not e:
+        return "—"
+    if e["rc"] == "0":
+        return "PASS"
+    if e["rc"] in ("no-ckpt",):
+        return "n/a"
+    return "FAIL"
+
+
+def _strict(cell: Dict) -> str:
+    vs = [_verdict(cell, f"omp{n}") for n in (1, 2, 4)]
+    if any(v == "—" for v in vs):
+        return "partial"
+    if all(v == "PASS" for v in vs):
+        return "PASS"
+    if all(v == "FAIL" for v in vs):
+        return "FAIL"
+    return "FLIP"
+
+
+def render(data: Dict) -> str:
+    L: List[str] = ["# V7.1.0 re-gate — device suites, AC and strict OMP",
+                    "",
+                    "Every number below is measured at the current HEAD (post gds sign +",
+                    "guard fix, post V7.0.x perf work, opt-in perf flags OFF), CPU-pinned,",
+                    "repo ngspice, per-job isolated results dir. Verdict = suite exit code.",
+                    ""]
+    for tag in ("dn", "tf", "pfn"):
+        if tag not in data:
+            continue
+        L += [f"## {FAMILY[tag]}", ""]
+        for variant, g in sorted(data[tag].items()):
+            L += [f"### `{tag}/{variant}`", ""]
+
+            if "verify_nn_ac" in g:
+                cells = g["verify_nn_ac"]
+                npass = ntot = 0
+                rows = []
+                for t in TECHS:
+                    c = cells.get(t, {}).get("omp1")
+                    if not c:
+                        rows.append(f"| {t} | — | — |")
+                        continue
+                    for dev in ("nmos", "pmos"):
+                        d = c.get(dev)
+                        if d:
+                            ntot += 1
+                            npass += d["status"] == "PASS"
+                    n = c.get("nmos", {}); p = c.get("pmos", {})
+                    rows.append(
+                        f"| {t} | {n.get('status','—')} "
+                        f"(gain0 {n.get('gain0_err_db','—')} dB, f3db {n.get('f3db_ratio','—')}, "
+                        f"mag {n.get('mag_nrmse_pct','—')} %) | {p.get('status','—')} "
+                        f"(gain0 {p.get('gain0_err_db','—')} dB, f3db {p.get('f3db_ratio','—')}, "
+                        f"mag {p.get('mag_nrmse_pct','—')} %) |")
+                L += [f"**Device CS-amp AC: {npass}/{ntot}**", "",
+                      "| tech | NMOS | PMOS |", "|---|---|---|", *rows, ""]
+
+            if "verify_complex_opamp_ac" in g:
+                cells = g["verify_complex_opamp_ac"]
+                rows, npass, ntot = [], 0, 0
+                for t in TECHS:
+                    c = cells.get(t, {}).get("omp1")
+                    if not c:
+                        rows.append(f"| {t} | — | | | | |")
+                        continue
+                    ntot += 1
+                    npass += c["rc"] == "0"
+                    rows.append(
+                        f"| {t} | {c.get('status', 'FAIL' if c['rc'] != '0' else 'PASS')} "
+                        f"| {c.get('dc_gain_err_db','—')} | {c.get('gbw_ratio','—')} "
+                        f"| {c.get('pm_err_deg','—')} | {c.get('mag_nrmse_pct','—')} |")
+                L += [f"**Opamp open-loop AC: {npass}/{ntot}** "
+                      "(gate: dc_gain_err ≤3 dB, GBW ratio ∈[0.6,1.67], PM err ≤15°; "
+                      "magNRMSE reported, not gated)", "",
+                      "| tech | verdict | dc_gain_err dB | GBW ratio | PM err ° | magNRMSE % |",
+                      "|---|---|---|---|---|---|", *rows, ""]
+
+            for suite, label in (("verify_nn_multi_tech_dc", "Parametric DC (Id-Vgs)"),
+                                 ("verify_nn_multi_tech_tran", "Parametric transient")):
+                if suite not in g:
+                    continue
+                cells = g[suite]
+                rows, npass, ntot = [], 0, 0
+                for t in TECHS:
+                    c = cells.get(t, {}).get("omp1")
+                    if not c or "n" not in c:
+                        rows.append(f"| {t} | — | | | |")
+                        continue
+                    npass += c["n_pass"]; ntot += c["n"]
+                    rows.append(f"| {t} | {c['n_pass']}/{c['n']} | {c['mean_nrmse']} "
+                                f"| {c['max_nrmse']} | {c['mean_mre']} |")
+                L += [f"**{label}: {npass}/{ntot} configs**", "",
+                      "| tech | pass | mean NRMSE % | max NRMSE % | mean MRE % |",
+                      "|---|---|---|---|---|", *rows, ""]
+
+            have_circ = [c for c in CIRCS if f"verify_complex_{c}" in g]
+            if have_circ:
+                rows, npass, ntot = [], 0, 0
+                for t in TECHS:
+                    cs = []
+                    for c in CIRCS:
+                        cell = g.get(f"verify_complex_{c}", {}).get(t, {})
+                        if not cell:
+                            cs.append("—"); continue
+                        v = _verdict(cell)
+                        m = cell.get("omp1", {}).get("metric")
+                        ntot += 1; npass += v == "PASS"
+                        cs.append(f"{v}" + (f" {m:.2f}%" if m is not None else ""))
+                    rows.append(f"| {t} | " + " | ".join(cs) + " |")
+                L += [f"**Complex matrix (single-run OMP=1): {npass}/{ntot}**", "",
+                      "| tech | " + " | ".join(CIRCS) + " |",
+                      "|---|" + "---|" * len(CIRCS), *rows, ""]
+
+                srows, spass, stot, flips = [], 0, 0, 0
+                for t in TECHS:
+                    cs = []
+                    for c in CIRCS:
+                        cell = g.get(f"verify_complex_{c}", {}).get(t, {})
+                        if not cell:
+                            cs.append("—"); continue
+                        s = _strict(cell) if c in ("opamp", "ring_osc") else _verdict(cell)
+                        stot += 1
+                        spass += s == "PASS"
+                        flips += s == "FLIP"
+                        cs.append(s)
+                    srows.append(f"| {t} | " + " | ".join(cs) + " |")
+                L += [f"**Strict OMP∈{{1,2,4}} (opamp+ring swept; sram/switchcap "
+                      f"deterministic): {spass}/{stot}, {flips} FLIP**", "",
+                      "| tech | " + " | ".join(CIRCS) + " |",
+                      "|---|" + "---|" * len(CIRCS), *srows, ""]
+    return "\n".join(L) + "\n"
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--root", default="results/v710_regate", type=Path)
+    ap.add_argument("--out", default=None, type=Path)
+    a = ap.parse_args()
+    data = collect(a.root)
+    out = a.out or (a.root / "REPORT.md")
+    out.write_text(render(data))
+    (a.root / "data.json").write_text(json.dumps(data, indent=1, sort_keys=True))
+    n = sum(len(s) for t in data.values() for v in t.values() for s in v.values())
+    print(f"[v710-collect] {n} suite-cells -> {out}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

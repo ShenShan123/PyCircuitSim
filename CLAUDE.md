@@ -103,9 +103,9 @@ DirectNet is production; BSIM-AR is the higher-fidelity option; PFN is research.
   OMP∈{1,2,4} with zero flips** (V6.13.0 re-gate; was 14/16 before the gds fix —
   `tsmc16-opamp` is now banked, `tsmc7-opamp` is the sole open cell at `large`)
   — one identical recipe per (tech × device), no per-case specials. Report:
-  `docs/accuracy/DirectNet-L73-accuracy.md` — the unified DirectNet record
-  (V6.6.0 baseline → V6.6.1 recipes → V6.6.6 cross-tier → V6.7.0 universal → V6.13.0 A3 re-gate;
-  Part I = analysis + recommendation, Part II = the frozen data tables), CHANGELOG.
+  `docs/accuracy/DirectNet-L73-accuracy.md` (family: production state, universal
+  scope, AC diagnosis); the cross-cutting numbers live in the axis files
+  `by-tech.md` / `by-scale.md` / `by-recipe.md`.
 - **BSIM-AR (74)** — autoregressive Transformer sharing DirectNet's pipeline.
   Best config `corroft@medium` (corridor curriculum, 1.9M params) = **16/16 strict,
   zero flips** (V6.13.0 re-gate; was 15/16). The old "tsmc7-opamp is the T3-solver-only
@@ -149,10 +149,15 @@ DirectNet is production; BSIM-AR is the higher-fidelity option; PFN is research.
 Inverter circuit must PASS Transient Analysis against NGSPICE ground truth within
 reasonable numerical tolerance. Never use simplified/self-defined equations as reference.
 
-> **Accuracy evidence lives in `docs/accuracy/` — one unified report per NN family**
-> (`DirectNet-L73`, `BSIM-AR-L74`, `PFN-L75`; index in `docs/accuracy/README.md`).
-> Shared methodology + the standing gds-sign-bug caveat: `DirectNet-L73-accuracy.md`
-> §2 and §12.2.
+> **Accuracy evidence lives in `docs/accuracy/`** (index + scoreboard:
+> `README.md`). Restructured V7.1.0 into **three cross-cutting pivots** —
+> `by-tech.md` (TSMC5/7/12/16 + retired TSMC6), `by-scale.md` (small→xl),
+> `by-recipe.md` (the recipe catalogue and its levers) — plus one **family**
+> report each (`DirectNet-L73`, `BSIM-AR-L74`, `PFN-L75`) for what is specific
+> to one model. The pivots are the single source of truth for any number that
+> spans families. Gate definitions, strict-OMP discipline and the code-state
+> ladder (pre-fix / V6.13.0 / V7.1.0): **`methodology.md`**. Frozen pre-fix
+> tables + the register of retracted claims: `archive-pre-gds-fix.md`.
 >
 > **Sprint history, version-by-version status, dead-ends, and the open known-issue
 > roadmap live in `docs/CHANGELOG.md` + `MEMORY.md`** — not duplicated here.
