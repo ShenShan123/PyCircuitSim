@@ -8,6 +8,120 @@ lives in git history.)
 
 ---
 
+## V7.1.0 — accuracy docs restructured into pivots, the pre-fix device/AC suites re-measured, TSMC6 restored, PFN given an xl tier (2026-07-25)
+
+**Four threads. (1) `docs/accuracy/` reorganized from three chronological
+per-family reports into three cross-cutting pivots — technology, capacity,
+recipe — plus a shared methodology file, slimmed family reports and an archive
+of the frozen pre-fix tables. (2) Every accuracy number still standing on
+pre-`gds`-fix code re-measured. (3) TSMC6 restored as a deliberate
+duplicate-of-TSMC7 repeat experiment. (4) A `("tabpfn","xl")` preset so all
+three NN families have a four-scale capacity curve.** Live status and resume
+point: `docs/plans/2026-07-25-v710-docs-restructure-and-regate.md`.
+
+### Why the device/AC suites needed re-measuring
+
+V6.13.0 re-gated the complex 16-cell matrix for all 28 on-disk checkpoint groups
+but ran the device suites only for each family's **resolver-default** stem. So
+every per-size and per-recipe AC number in `docs/accuracy/` was still a pre-fix
+measurement — and AC is the axis the gds fix moved most (device AC 8/10 → 10/10
+on the audit arm, 4/12 → 8/8 on the default stem), while DC is exactly
+invariant. That made the per-tier AC tables the largest block of numbers in the
+docs that were both wrong and load-bearing: they carried "AC peaks at SMALL" and
+"the opamp open-loop AC gate is 0/4 at every tier for every family".
+
+New driver `scripts/v710_regate{,_jobs,_collect,_control}` — one job is
+(tag, variant, tech, suite, omp), resumable, isolated per job, CPU-pinned,
+verdict = exit code.
+
+**Control first:** `v710_regate_control.py` compares every complex cell measured
+in both campaigns. HEAD (V7.0.x perf work + audit wave 1) reproduces the
+V6.13.0 `d2ea720` verdicts — so the two campaigns are interchangeable, which is
+what makes the rest of the comparison legitimate.
+
+**What changed:**
+
+- **"AC peaks at SMALL" — retracted.** DirectNet device CS-amp AC is
+  **7/8 · 8/8 · 8/8 · 7/8** across small→xl, i.e. saturated at every capacity
+  with both misses at the ends of the range. Pre-fix: 5/12 · 4/12 · 4/12 · 4/12.
+  Level *and* shape were artifacts of the wrong-signed `gds`.
+- The two surviving misses are the **documented** failure classes, not new ones:
+  `small` TSMC7-NMOS fails on gain (2.03 dB) and magnitude (24.9 %) — an
+  under-capacity value surface on the steepest tech; `xl` TSMC5-NMOS fails on
+  pole placement (f3db ratio 2.51, gain and magnitude in-gate) —
+  output-capacitance under-prediction.
+- **The production curriculum improved the charge surface, not just the current
+  surface.** Same tier, same architecture: `v660clean@large` fails TSMC5-NMOS
+  AC (f3db 1.78) where the `crit30f` weights that replaced it are 8/8. `crit30`
+  was designed to fix ring *period* error; it also moved an output-cap pole.
+- **"The opamp open-loop AC gate is 0/4 everywhere for every family" — false.**
+  DirectNet `small` banks TSMC16 (1.78 dB / GBW 0.962 / PM 0.32°), BSIM-AR
+  `small` (0.54 dB) and `medium` bank it too, and BSIM-AR `large` banks TSMC7
+  (0.12 dB). All with un-railed operating points.
+
+### Finding: the opamp open-loop AC gate has a bias-resolution defect
+
+Not fixed here — changing an accuracy gate changes the accuracy record, and that
+should be a decision, not a side effect of a docs pass.
+
+`verify_complex_opamp_ac` linearizes about the peak-gain bias, found as
+`argmax |dVout/dVin|` over a DC sweep with a **2 mV** step. A two-stage Miller
+opamp with 33–48 dB of gain has a transition ~3–14 mV wide, so the "peak-gain"
+sample lands off-centre. The **NGSPICE reference's own** output at that bias is
+outside the harness's own 15–85 %·VDD validity window on three of four techs —
+TSMC5 3.2 %, TSMC12 90.2 %, TSMC16 85.6 % (TSMC7 77.9 % is the only one inside)
+— and `op_valid` is applied to the NN only. BSIM-AR `small` on TSMC5 lands
+0.39 dB / GBW 1.19 / PM err 14.3°, inside all three *gated* criteria, and is
+scored `FAIL [OP-MISBIAS]`. Fix proposal in the plan file §5.
+
+### TSMC6 — restored as a controlled repeat, not as a technology
+
+The V6.13.0 finding stands unchanged: TSMC6 *is* TSMC7 relabelled under
+BSIM-CMG (datasets `array_equal` over 1.8 M / 2.2 M rows; every differing PDK
+key a TMI extension with zero occurrences in the Verilog-A). It is registered
+again because a bit-identical duplicate is the only instrument this project has
+for measuring run-to-run variance with the data held exactly fixed — and the
+first repeat already showed a **68.2 % vs 2.0 %** SRAM disagreement collapsing
+to **5.2 % vs 6.2 %** once the gds bug was fixed, i.e. most of the "training
+lottery" that recipes were ranked against was the wrong Jacobian.
+
+- Registry restored on both sides (parent + PyCMG submodule); tail codes 22-24,
+  so nothing is renumbered and every existing checkpoint stays valid.
+- `assert_tech_is_distinct()` is **kept** and still flags the collision;
+  `tsmc6`↔`tsmc7` is the sole entry in the new `ACKNOWLEDGED_DUPLICATE_TECHS`,
+  so it prints loudly and continues instead of raising.
+- **Scoring rule: TSMC6 is its own /4 column, never folded into the /16.**
+  A duplicate in the headline denominator inflates every total.
+- `scripts/tsmc6_restore_campaign.sh` regenerates the datasets from the kept
+  vendor PDK and trains DirectNet → BSIM-AR → PFN, 4 sizes × 2 devices each.
+
+### PFN `xl` — the fourth scale
+
+`("tabpfn","xl")`: embed 192, n_inducing 64, dist/agg 4/4, ICL 9 blocks, 12
+heads → **14,856,877 params**, mirroring BSIM-AR xl's 14.81 M with ICL width
+`embed_dim × n_cls_tokens` = 384 = BSIM-AR xl's `d_model`, so the top of the
+capacity axis is comparable across families. lr 3e-4 rather than large's 4e-4:
+the V6.10 large wave logged 8 divergence collapses, 5 of them at 4e-4, and this
+stack is 50 % deeper on the ICL side.
+
+### The restructure
+
+| file | role |
+|---|---|
+| `README.md` | index, the single scoreboard, what is open |
+| `methodology.md` | gates, thresholds, strict-OMP, isolation, the **code-state ladder** (pre-fix / V6.13.0 / V7.1.0), the gds fix, the TSMC6 rule, standing caveats |
+| `by-tech.md` | TSMC5/7/12/16 + TSMC6: per-tech cell-difficulty census over all 27 re-gated groups, per-tech matrices, device fidelity |
+| `by-scale.md` | small/medium/large/xl: params, the three capacity curves and which survived the fix, strict determinism, device + AC |
+| `by-recipe.md` | the recipe catalogue from `recipe_train.sh`, recipe → gates per family, the durable laws, the dead-end register |
+| `{DirectNet-L73,BSIM-AR-L74,PFN-L75}-accuracy.md` | family-specific only |
+| `archive-pre-gds-fix.md` | frozen pre-fix tables + the register of every retracted claim |
+
+The three pivots are the single source of truth for anything spanning families;
+the family reports no longer restate the cross-family scoreboard, the TSMC6
+section (previously duplicated verbatim three times) or the methodology.
+
+---
+
 ## V7.0.0–V7.0.4 — NN compact-model performance (2026-07-25)
 
 **Scan of the NN inference and training paths, then four infra changes.
