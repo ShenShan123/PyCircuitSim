@@ -26,7 +26,7 @@ BASE = ROOT / "results" / "benchmark_sml"
 # to collect instead.
 _SIZE_ORDER = ["small", "medium", "large", "xl"]
 SIZES = [s for s in _SIZE_ORDER if (BASE / s).is_dir()]
-TECHS = ["tsmc5", "tsmc7", "tsmc12", "tsmc16"]
+TECHS = ["tsmc5", "tsmc6", "tsmc7", "tsmc12", "tsmc16"]
 DEV_SUITES = ["verify_nn_multi_tech_dc", "verify_nn_multi_tech_tran"]
 CPX_SUITES = ["verify_complex_ring_osc", "verify_complex_opamp",
               "verify_complex_sram_snm", "verify_complex_switchcap"]

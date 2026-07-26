@@ -32,7 +32,15 @@ The authoritative accuracy number for a checkpoint set. Verdict = the
 | **sram_snm** — 6T read-SNM butterfly | `verify_complex_sram_snm.py` | all lobes positive **and** lobe NRMSE ≤ **10 %**, across the NFIN corners |
 | **switchcap** — switched-cap unit cell | `verify_complex_switchcap.py` | charge-transfer error ≤ **5 % of VDD** and hold droop ≤ max(10 % of the NGSPICE droop, 0.1 % of VDD) |
 
-Techs: **TSMC5, TSMC7, TSMC12, TSMC16**. (TSMC6 was retired 2026-07-24 — §7.)
+Techs: **TSMC5, TSMC7, TSMC12, TSMC16** — the four electrically distinct ones.
+
+> **TSMC6 is scored separately, never folded into the /16.** It was retired in
+> V6.13.0 and restored in V7.1.0 (§7), but it remains TSMC7 relabelled, so
+> adding it to the headline denominator would double-count one technology and
+> inflate every total by a duplicate column. TSMC6 is reported as its own
+> **/4 repeat column** per (family, tier). Harness defaults that iterate every
+> registered tech therefore produce **/20**; the authoritative NN number is the
+> /16 subset plus the /4 repeat, quoted separately.
 
 The four circuits are chosen to load different parts of the NN surface: the ring
 loads the switching edge, the opamp the high-gain fixed point (output
@@ -104,9 +112,12 @@ Metrics reported per Rule 13: **MRE %, R², NRMSE, Max error**, per tech.
   V6.6.6). `PYCIRCUITSIM_NN_FORCE_LEVEL={74,75}` retargets a LEVEL=73 deck to
   BSIM-AR / PFN so the whole gate infrastructure runs any family with zero deck
   changes.
-* **Denominators.** The authoritative complex matrix is **/16** and the device
-  AC suite **/8**. Text from before the TSMC6 retire reports **/20** and **/10**
-  (and AC as /12): those carried a TSMC6 column that duplicates TSMC7 (§7).
+* **Denominators.** The authoritative complex matrix is **/16**
+  (4 circuits × TSMC5/7/12/16) and the device AC suite **/8** (4 techs × N/P).
+  A run that lets the harness iterate every registered tech yields /20 and /10
+  because TSMC6 is registered again — split that extra column out rather than
+  reporting the larger total (§2). Older text reporting /20, /10 or /12 carries
+  exactly the same duplicate.
 
 ## 6. Code-state ladder — which numbers are comparable to which
 
@@ -164,10 +175,11 @@ high-gain OP is made of — and cancels at the Newton fixed point everywhere els
 device-DC numbers remain valid*; pre-fix **AC**, **transient** and **opamp**
 numbers do not.
 
-## 7. TSMC6 ≡ TSMC7 relabelled — retired 2026-07-24
+## 7. TSMC6 ≡ TSMC7 relabelled — retired, then carried deliberately
 
-TSMC6 was never an independent technology under BSIM-CMG. Four independent lines
-of evidence (`../2026-07-21-systematic-audit.md` §D1, re-verified at deletion):
+**The finding has not been softened.** TSMC6 is not an independent technology
+under BSIM-CMG. Four independent lines of evidence
+(`../2026-07-21-systematic-audit.md` §D1, re-verified at deletion):
 
 * `tsmc6_{nmos,pmos}.npz` were `array_equal` to `tsmc7_*` in `inputs`,
   `geometry`, `outputs` and `sample_class` over 1,816,830 / 2,187,292 rows —
@@ -179,19 +191,30 @@ of evidence (`../2026-07-21-systematic-audit.md` §D1, re-verified at deletion):
   Verilog-A sources, `toxp` and `phig` are present and all five TMI keys absent.
 * Two LEVEL=72 Id-Vgs sweeps at identical geometry matched to the last digit.
 
-Deleted: 22 checkpoints, both datasets, `results/tsmc6_gate`, registry / driver /
-test entries (git history keeps them; last present at `a96112a`). TSMC6 held
-tail codes 22-24, so nothing was renumbered.
+**What changed is the disposition, not the physics.** V6.13.0 deleted TSMC6
+(22 checkpoints, both datasets, registry entries). **V7.1.0 restored it by
+explicit decision** and re-trains all three families at all four scales on
+regenerated data. Read every TSMC6 number as *a second training run on the
+TSMC7 data* — a repeat experiment, not a sixth technology. Any TSMC6-vs-TSMC7
+difference is training-run luck plus NR-basin luck, and that is precisely what
+makes it useful: it is the only place in this project where the run-to-run
+variance of the whole pipeline can be measured with the data held exactly fixed.
 
-**The guard:** `bsimar.config.assert_tech_is_distinct(tech)` compares resolved
-modelcards restricted to the parameters BSIM-CMG implements and refuses a tech
-that collides with an existing one. It flags `tsmc6`↔`tsmc7` and confirms
-tsmc5/7/12/16 are genuinely distinct. **Run it before onboarding a technology** —
-the V6.9.0 onboarding gated TSMC6 9/9 DC and 14/14 transient, and passing those
-gates told us nothing, because they were TSMC7's gates.
+TSMC6 holds tail codes 22-24, so its presence or absence renumbers nothing
+(`NUM_TOTAL_CODES` 25 with it, 22 without); every other checkpoint and label
+sidecar stays valid either way.
 
-What the TSMC6 rows are still good for is in `by-tech.md` §TSMC6: an accidental
-controlled experiment on training-run variance.
+**The guard stays.** `bsimar.config.assert_tech_is_distinct(tech)` compares
+resolved modelcards restricted to the parameters BSIM-CMG implements and
+refuses a tech that collides with an existing one. It still flags
+`tsmc6`↔`tsmc7` — but that pair is now in `ACKNOWLEDGED_DUPLICATE_TECHS`, so it
+prints the collision loudly and continues instead of raising. Nothing else is
+on that list, and nothing else should be added to it to silence a genuine
+onboarding mistake. **Run the guard before onboarding a technology, not after
+gating one** — the V6.9.0 onboarding gated TSMC6 9/9 DC and 14/14 transient,
+and passing those gates told us nothing, because they were TSMC7's gates.
+
+What the TSMC6 rows are actually good for is in `by-tech.md` §TSMC6.
 
 ## 8. Standing measurement caveats
 

@@ -58,7 +58,7 @@ baseline (§4).
 ### Integration surface
 
 * `bsimar`: `models/tabpfn.py`, `TabPFNConfig`, `train_tabpfn` +
-  `_stratified_context`, CLI `--model tabpfn` + S/M/L presets + guards (aux
+  `_stratified_context`, CLI `--model tabpfn` + S/M/L/XL presets + guards (aux
   losses rejected in phase 1), tag `pfn`.
 * Simulator: `pycircuitsim/models/mosfet_pfn.py` — reads the **required**
   `_config.npz` sidecar (the arch cannot be rebuilt without it),
@@ -79,9 +79,18 @@ baseline (§4).
 | **small** | 64 | 32 | 2 | 2 | 2 | 128 | 3 | 4 | **686 k** | 1024 | 80 | 6e-4 |
 | medium | 96 | 32 | 3 | 3 | 2 | 192 | 4 | 6 | 2.03 M | 2048 | 150 | 5e-4 |
 | large | 128 | 48 | 3 | 3 | 2 | 256 | 6 | 8 | 4.65 M | 2048 | 150 (+amp) | 4e-4 |
+| **xl** (V7.1.0) | 192 | 64 | 4 | 4 | 2 | **384** | 9 | 12 | **14.86 M** | 2048 | 150 (+amp) | 3e-4 |
+
+The **xl** tier is new in V7.1.0 and completes the family's 4-scale capacity
+curve. Its 14.86 M mirrors BSIM-AR xl's 14.81 M, and W = embed_dim ×
+n_cls_tokens = 384 equals BSIM-AR xl's `d_model`, so the top of the capacity
+axis is directly comparable across families. lr is 3e-4 rather than large's
+4e-4 because of the instability below: 5 of the 8 large-tier collapses were at
+4e-4, and the xl ICL stack is 50 % deeper.
 
 Clean recipe throughout (`--apply-filter off --swa-mode ema --seed 42`), per-tech
-scope, 24 checkpoints (4 techs × N/P × 3 sizes). Small/medium are
+scope: 24 checkpoints at S/M/L (4 techs × N/P × 3 sizes), +8 for the V7.1.0 xl
+tier, +8 more for the restored TSMC6 (`by-tech.md` §5). Small/medium are
 dataloader-bound (~118 s/epoch on shared 4090s); large is compute-bound (~12 min
 /epoch at 2 jobs/GPU) and trains a 150-epoch cosine with bf16 autocast.
 EMA-buffer audit: the frozen context buffers are bit-exact through the EMA wrap.
@@ -162,6 +171,7 @@ from-scratch PFN-small. **The from-scratch port beats the 58 M pretrained model
 | **small** | **0.69 M** | **11/16** | **11/16, zero flips** |
 | medium | 2.03 M | 11/16 | not swept |
 | large | 4.65 M | 9/16 | not swept |
+| xl | 14.86 M | *training (V7.1.0)* | — |
 
 Margins at `small`: tsmc12 ring 2.9–4.3 %, opamp 0.57 %, sram ≤1.5 %; tsmc16
 ring 2.7–3.1 %, opamp 3.66 %, switchcap 3.8 %. `tsmc12-switchcap` sits at
@@ -183,15 +193,21 @@ determinism.
 
 ## 6. Open work, in priority order
 
-1. **The corridor curriculum has never been run on PFN.** `MODEL=tabpfn
+1. **The `xl` tier's gate result** — the first data point on whether PFN's
+   *declining* capacity curve keeps declining past `large` or turns over. The
+   other two families disagree here (DirectNet peaks at `large` then partially
+   recovers under a curriculum at `xl`; BSIM-AR is flat), so PFN's answer is
+   not predictable from them.
+2. **The corridor curriculum has never been run on PFN.** `MODEL=tabpfn
    RECIPES=corroft SIZES=small` is fully wired. It is the lever that took
    BSIM-AR from 13 to 15/16 and it aims at exactly the four tsmc5/tsmc7 cells
    PFN fails. If the flip-free property survives the curriculum, PFN-small could
    contend with production at ~1/5 the parameters.
-2. **Context enrichment for the NFIN gap** (re-freeze, no retrain) + denser NFIN
+3. **Context enrichment for the NFIN gap** (re-freeze, no retrain) + denser NFIN
    sampling at data generation.
-3. **`tsmc12-switchcap` is 0.3 pp from its gate.**
-4. **Stabilize the large tier** (attention-logit clamp / warmup).
+4. **`tsmc12-switchcap` is 0.3 pp from its gate.**
+5. **Stabilize the large tier** (attention-logit clamp / warmup) — and watch
+   whether `xl` inherits the same collapse mode.
 
 ## 7. Reproduction
 

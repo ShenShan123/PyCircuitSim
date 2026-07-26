@@ -18,9 +18,12 @@ compact-model families on one solver, all gated against NGSPICE ground truth:
 
 The three NN families share one data / normalization / loss / training / eval
 pipeline via the unified `bsimar` package (`external_compact_models/bsimar/`).
-Supports **`.op` / `.dc` / `.ac` / `.tran`** for all model types. Five techs:
-ASAP7 + TSMC5/7/12/16. (TSMC6 was retired 2026-07-24 — it is TSMC7 relabelled
-under BSIM-CMG; see `docs/2026-07-21-systematic-audit.md` §D1.)
+Supports **`.op` / `.dc` / `.ac` / `.tran`** for all model types. Techs:
+ASAP7 + TSMC5/7/12/16, plus **TSMC6** — which is *TSMC7 relabelled* under
+BSIM-CMG (`docs/2026-07-21-systematic-audit.md` §D1), retired for that in
+V6.13.0 and **restored in V7.1.0 as a deliberate controlled repeat**: same data,
+same recipe, different training run. Score it in its own /4 column, never inside
+the /16 (`docs/accuracy/methodology.md` §7).
 
 **Core Principles:** pure Python; Solver ↔ Device Models decoupled; production-grade
 compact models via PyCMG/OSDI; basic HSPICE netlist compatibility.
@@ -111,7 +114,7 @@ DirectNet is production; BSIM-AR is the higher-fidelity option; PFN is research.
   zero flips** (V6.13.0 re-gate; was 15/16). The old "tsmc7-opamp is the T3-solver-only
   cell" claim is **RETRACTED** — BSIM-AR passes it at every size, and DirectNet's
   `crit15m@xl` also sweeps 16/16 strict. AR inference is ~30–100× slower on CPU, so
-  DirectNet stays production. Per-tech `tsmc{X}_tf_{small,medium,large}_{nmos,pmos}` (+ recipe
+  DirectNet stays production. Per-tech `tsmc{X}_tf_{small,medium,large,xl}_{nmos,pmos}` (+ recipe
   variants); parser LEVEL=74 preempt cascade + `PYCIRCUITSIM_NN_FORCE_LEVEL=74`
   hook. Report: `docs/accuracy/BSIM-AR-L74-accuracy.md`.
 - **PFN / TabPFN (75)** — faithful scaled-down port of TabPFN-v3's in-context
@@ -121,7 +124,7 @@ DirectNet is production; BSIM-AR is the higher-fidelity option; PFN is research.
   autograd). Clean `small` = 11/16 strict; capacity curve declines s→m→l
   (11/11/9 post-gds-fix; was 11/10/8). PFN's old "only flip-free family" claim is
   **overtaken** — since the V6.13.0 gds fix every family is flip-free. Per-tech
-  `tsmc{X}_pfn_{small,medium,large}_{nmos,pmos}`;
+  `tsmc{X}_pfn_{small,medium,large,xl}_{nmos,pmos}` (xl = 14.86 M, V7.1.0);
   env pins `PYCIRCUITSIM_NN_CHECKPOINT_PFN_{NMOS,PMOS}`, hook
   `PYCIRCUITSIM_NN_FORCE_LEVEL=75`, drivers take `MODEL=tabpfn`. The `_config.npz`
   sidecar is **required** to rebuild the arch. Report: `docs/accuracy/PFN-L75-accuracy.md`.
@@ -151,7 +154,8 @@ reasonable numerical tolerance. Never use simplified/self-defined equations as r
 
 > **Accuracy evidence lives in `docs/accuracy/`** (index + scoreboard:
 > `README.md`). Restructured V7.1.0 into **three cross-cutting pivots** —
-> `by-tech.md` (TSMC5/7/12/16 + retired TSMC6), `by-scale.md` (small→xl),
+> `by-tech.md` (TSMC5/7/12/16 + TSMC6, the controlled repeat), `by-scale.md`
+> (small→xl),
 > `by-recipe.md` (the recipe catalogue and its levers) — plus one **family**
 > report each (`DirectNet-L73`, `BSIM-AR-L74`, `PFN-L75`) for what is specific
 > to one model. The pivots are the single source of truth for any number that
@@ -269,9 +273,10 @@ checkpoint is streamed, not with FLOPs. Measurements + dead ends:
 
 ### NN training (per-tech, LEVEL=73/74/75)
 
-Dedicated per-tech NMOS/PMOS checkpoints for **TSMC5/7/12/16** (all three families
-trained at every scale; every checkpoint on disk re-gated in V6.13.0 after the gds
-fix — see the accuracy reports). `--tech-scope` ∈ `{tsmc5,tsmc7,tsmc12,tsmc16,universal}`;
+Dedicated per-tech NMOS/PMOS checkpoints for **TSMC5/7/12/16 (+ TSMC6)** — all
+three families at **all four scales** (PFN's `xl` preset landed in V7.1.0; every
+checkpoint on disk was re-gated in V6.13.0 after the gds fix — see the accuracy
+reports). `--tech-scope` ∈ `{tsmc5,tsmc6,tsmc7,tsmc12,tsmc16,universal}`;
 `--size` ∈ `{small,medium,large,xl}`. Curriculum recipes (incl. the production crit30)
 train via `scripts/recipe_train.sh` (warm-start from the clean same-size base — at
 `large` the `v660clean` archive, injected automatically).
@@ -279,7 +284,7 @@ train via `scripts/recipe_train.sh` (warm-start from the clean same-size base �
 ```bash
 # 1. Per-tech data (one .npz per tech+device). --enable-inv-trip adds the inverter-trip
 #    overlay; the grid sampler carries the reverse-Vds corridor. --tech ∈ {tsmc5,
-#    tsmc7,tsmc12,tsmc16,asap7,all}. Repeat per tech.
+#    tsmc6,tsmc7,tsmc12,tsmc16,asap7,all}. Repeat per tech.
 conda run -n pycircuitsim python external_compact_models/PyCMG/scripts/generate_nn_data.py \
     --device both --tech tsmc5 --enable-inv-trip --n-workers 8
 
@@ -351,8 +356,10 @@ references in `tests/references/`.
   · L2 `..._comprehensive.py` (67) · L3 `verify_multi_tech_dc.py` (44); tran L1
   `verify_bsimcmg_tran.py` (1) · L2 `..._comprehensive.py` (37) · L3
   `verify_multi_tech_tran.py` (72); AC `verify_ac.py` (2/2, ~machine precision).
-  Counts dropped from 81/53/45/86 when TSMC6 was retired in V6.13.0 — same
-  coverage, one fewer (duplicate) tech column. L3 DC currently reports 43 PASS +
+  Counts dropped from 81/53/45/86 when TSMC6 was retired in V6.13.0 and grow
+  back when it is registered — same coverage either way, one duplicate tech
+  column (see `docs/accuracy/methodology.md` §2 on denominators; quote the
+  TSMC6 column separately). L3 DC currently reports 43 PASS +
   **1 known ERROR** (`TSMC5_lvt_inv_l_24nm`, internal-node NR divergence in the
   pure BSIM-CMG path — pre-existing, unrelated to the NN surface).
 - **DirectNet (73):** `verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16 [--inverter-only]`

@@ -58,7 +58,7 @@ from tests.common.nn import nrmse as _nrmse_pct, mre as _mre_pct
 # Benchmark techs — only the four with V6.3.1 DirectNet checkpoints.
 # ASAP7 is out of scope; LEVEL=74 BSIMAR out of scope.
 # ---------------------------------------------------------------------------
-BENCH_TECHS: List[str] = ["TSMC5", "TSMC7", "TSMC12", "TSMC16"]
+BENCH_TECHS: List[str] = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 
 REFERENCES_DIR = PROJECT_ROOT / "tests" / "references" / "complex"
 # RESULTS_BASE is env-overridable so parallel sweeps (e.g. the V6.5.4 checkpoint
@@ -124,9 +124,9 @@ def _resolve_bench_tech(name: str) -> BenchTech:
 
     The checkpoint VT must match what the parser preempt cascade resolves; the
     verify_nn_dc_tran.py per-tech table is the source of truth:
-      TSMC5 -> lvt, TSMC7 -> ulvt, TSMC12 -> svt, TSMC16 -> svt.
+      TSMC5 -> lvt, TSMC6 -> ulvt, TSMC7 -> ulvt, TSMC12 -> svt, TSMC16 -> svt.
     """
-    ckpt_vt = {"TSMC5": "lvt", "TSMC7": "ulvt",
+    ckpt_vt = {"TSMC5": "lvt", "TSMC6": "ulvt", "TSMC7": "ulvt",
                "TSMC12": "svt", "TSMC16": "svt"}[name]
     prof = ALL_TECHS[name]
     vp = prof.get_vt_pair(ckpt_vt)

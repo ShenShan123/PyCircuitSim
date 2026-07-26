@@ -110,7 +110,7 @@ for recipe in "${recipes[@]}"; do
   # tally the 4 circuit gates only (SUMMARY may also carry opamp_ac lines)
   np="$(grep -cE ' (ring_osc|opamp|sram_snm|switchcap) \| rc=0 PASS' "$dir/SUMMARY.txt" 2>/dev/null || echo 0)"
   # denominator = the matrix actually run this invocation (techs x circuits):
-  # 16 for the default 4-tech matrix, 4 for a single-tech TECHS=TSMC5 gate.
+  # 16 for the default 4-tech matrix, 4 for a single-tech TECHS=TSMC6 gate, 20 for 5.
   ncell=$(( ${#techs[@]} * ${#circuits[@]} ))
   echo "  === $recipe : ${np}/${ncell} ==="
   cat "$dir/SUMMARY.txt" 2>/dev/null

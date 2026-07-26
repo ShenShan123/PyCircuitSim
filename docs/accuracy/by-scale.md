@@ -14,11 +14,17 @@ Cross-family view along the **capacity** axis. Companion pivots:
 | **small** | 128 × 3 ≈ **0.06 M** | 0.67 M | 0.69 M |
 | **medium** | 256 × 5 ≈ **0.40 M** | 1.94 M | 2.03 M |
 | **large** | 384 × 6 ≈ **0.92 M** | 5.02 M | 4.65 M |
-| **xl** | 512 × 8 ≈ **2.13 M** | 384 × 8L × ff1536 = **14.81 M** | *(no xl preset)* |
+| **xl** | 512 × 8 ≈ **2.13 M** | 384 × 8L × ff1536 = **14.81 M** | 192 × (4+4+9) blocks = **14.86 M** |
 
 The three families do **not** share a parameter scale: BSIM-AR `small` is bigger
 than DirectNet `large`, and PFN `small` is bigger than DirectNet `medium`. Tier
 names compare a family with itself, never across families.
+
+PFN's `xl` tier is new in V7.1.0 — the family had only three scales until then.
+Its 14.86 M mirrors BSIM-AR xl's 14.81 M and its ICL width
+(embed_dim × n_cls_tokens = 384) equals BSIM-AR xl's `d_model`, so the top of
+the capacity axis is comparable across families. Training in progress; the rows
+below fill in as the checkpoints and their gates land.
 
 CPU cost (1 thread, the gate configuration): DirectNet large **1.5 ms/eval**,
 DirectNet xl 3.4 ms, PFN small 15.6 ms, BSIM-AR medium 61.5 ms. Cost is
@@ -113,6 +119,10 @@ re-measured below.
 | DirectNet | large | 54/55 | 1.91 / 1.21 / 1.69 / 1.01 |
 | DirectNet | xl | 53/55 | 2.91 / 2.35 / 2.73 / 1.52 |
 | BSIM-AR | small | 54/55 | 2.54 / 1.24 / 0.82 / 1.61 |
+| BSIM-AR | medium | 53/55 | 1.77 / 1.46 / 1.34 / 1.57 |
+| BSIM-AR | large | 52/55 | 1.80 / 1.21 / 1.67 / 1.58 |
+| BSIM-AR | xl | 55/55 | 1.94 / 2.92 / 1.08 / 1.07 |
+| PFN | small | 54/55 | 2.14 / 1.58 / 0.56 / 1.12 |
 
 **Parametric transient — `verify_nn_multi_tech_tran`, 64 configs**
 
@@ -123,14 +133,19 @@ re-measured below.
 | DirectNet | large | 64/64 | 1.67 / 1.46 / 1.49 / 1.47 |
 | DirectNet | xl | 64/64 | 1.66 / 1.45 / 1.52 / 1.48 |
 | BSIM-AR | small | 64/64 | 2.54 / 1.47 / 1.53 / 1.60 |
+| BSIM-AR | medium | 64/64 | 1.80 / 1.52 / 1.52 / 1.50 |
 
 **Non-tier (recipe) stems measured in the same pass**
 
 | stem | device AC | opamp AC | DC | tran |
 |---|---|---|---|---|
+| `dn/corroft_xl` | 4/6 | 0/3 | — | — |
 | `dn/crit15m_xl` | 2/2 | 0/0 | — | — |
-| `dn/v660clean_large` | 3/4 | 0/2 | — | — |
+| `dn/crit30f_large` | 8/8 | 0/4 | 54/55 | 64/64 |
+| `dn/csob_large` | 8/8 | 1/4 | 55/55 | 64/64 |
+| `dn/v660clean_large` | 7/8 | 0/4 | 54/55 | 64/64 |
 | `tf/corroft_large` | 0/0 | 0/0 | — | — |
+| `tf/corroft_medium` | 2/4 | 2/4 | — | — |
 
 Reading the DC column: **`medium` is the best device fit for DirectNet**, and
 `large`'s slightly worse device numbers are the price of the curriculum
@@ -159,8 +174,12 @@ pre-fix measurement until now.
 | DirectNet | medium | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
 | DirectNet | large | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
 | DirectNet | xl | **7/8** | TSMC5: n✗ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
-| BSIM-AR | small | **6/6** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: — · TSMC16: n✓ p✓ |
-| PFN | small | **4/4** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: — · TSMC16: — |
+| BSIM-AR | small | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
+| BSIM-AR | medium | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
+| BSIM-AR | large | **2/2** | TSMC5: n✓ p✓ · TSMC7: — · TSMC12: — · TSMC16: — |
+| BSIM-AR | xl | **0/2** | TSMC5: — · TSMC7: n✗ p✗ · TSMC12: — · TSMC16: — |
+| PFN | small | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
+| PFN | large | **4/4** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: — · TSMC16: — |
 
 **Opamp open-loop AC (gate: DC-gain err ≤3 dB, GBW ratio ∈[0.6,1.67], PM err ≤15°, and a non-railed NN OP; magNRMSE reported, not gated). The number shown is the DC-gain error**
 
@@ -172,9 +191,11 @@ pre-fix measurement until now.
 | DirectNet | xl | **0/4** | FAIL 14.72 dB | FAIL 31.48 dB | FAIL 208.73 dB | FAIL 3.73 dB |
 | BSIM-AR | small | **1/4** | FAIL 0.39 dB | FAIL 11.33 dB | FAIL 10.27 dB | PASS 0.54 dB |
 | BSIM-AR | medium | **1/4** | FAIL 4.63 dB | FAIL 11.13 dB | FAIL 0.17 dB | PASS 2.62 dB |
-| BSIM-AR | large | **1/1** | — | PASS 0.12 dB | — | — |
-| PFN | small | **0/2** | FAIL 16.04 dB | FAIL 30.04 dB | — | — |
-| PFN | large | **0/1** | FAIL 5.32 dB | — | — | — |
+| BSIM-AR | large | **2/4** | FAIL 2.54 dB | PASS 0.12 dB | FAIL 4.34 dB | PASS 0.33 dB |
+| BSIM-AR | xl | **1/4** | FAIL 24.95 dB | FAIL 3.86 dB | FAIL 5.18 dB | PASS 0.97 dB |
+| PFN | small | **0/4** | FAIL 16.04 dB | FAIL 30.04 dB | FAIL 8.46 dB | FAIL 4.44 dB |
+| PFN | medium | **0/1** | FAIL 15.61 dB | — | — | — |
+| PFN | large | **0/2** | FAIL 5.32 dB | FAIL 30.99 dB | — | — |
 
 ### What this changes
 

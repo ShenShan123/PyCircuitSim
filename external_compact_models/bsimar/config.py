@@ -12,7 +12,7 @@ tests) should import from here.
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Optional, Sequence, Tuple
+from typing import Dict, FrozenSet, List, Optional, Sequence, Tuple
 
 # ── Project paths ────────────────────────────────────────────────────────────
 # Path hierarchy (after path-depth collapse):
@@ -48,9 +48,9 @@ TechConfig = NNTechConfig
 
 # ── Tech-Variant Code Registry ──────────────────────────────────────────────
 # Each (tech, variant) pair gets a stable integer ID for the tech embedding.
-# TSMC codes occupy 0-16, UNKNOWN is 17, ASAP7 codes are 18-21.
-# Total vocabulary size: 22. (Codes 22-24 were TSMC6, retired 2026-07-24 —
-# see the TSMC6 note below; nothing was renumbered.)
+# TSMC codes occupy 0-16, UNKNOWN is 17, ASAP7 codes are 18-21,
+# TSMC6 codes are 22-24 (appended in V6.9.0 — see note below).
+# Total vocabulary size: 25.
 #
 # During TSMC-only pre-training the model sees codes 0-16 + 17 (UNKNOWN).
 # ASAP7 codes (18-21) are added when fine-tuning on ASAP7 data.
@@ -81,10 +81,9 @@ def _build_tech_variant_codes() -> Tuple[
     # slot 17 = UNKNOWN (reserved, not in the list)
     for variant in TECH_CONFIGS["asap7"].variant_names:
         ordered.append(("asap7", variant))
-    # V6.9.0 appended TSMC6 here as codes 22-24; removed 2026-07-24 because
-    # TSMC6 is TSMC7 relabelled under BSIM-CMG (see TSMC6 note below). The
-    # codes were tail-appended, so dropping them renumbers nothing: codes
-    # 0-21 are unchanged and every existing checkpoint/sidecar stays valid.
+    # V6.9.0: TSMC6 onboarded after the ASAP7 block -> codes 22-24.
+    for variant in TECH_CONFIGS["tsmc6"].variant_names:
+        ordered.append(("tsmc6", variant))
 
     forward: Dict[Tuple[str, str], int] = {}
     reverse: Dict[int, Tuple[str, str]] = {}
@@ -108,24 +107,23 @@ TECH_VARIANT_CODES, CODE_TO_TECH_VARIANT, _TECH_VARIANT_ORDER = (
 UNKNOWN_CODE_ID: int = 17
 NUM_TSMC_CODES: int = 17           # codes 0-16 (legacy TSMC block only)
 NUM_TSMC_CODES_WITH_UNKNOWN: int = 18  # codes 0-17 (pre-train vocab)
-NUM_TOTAL_CODES: int = 22          # codes 0-21 (incl. ASAP7 18-21)
+NUM_TOTAL_CODES: int = 25          # codes 0-24 (incl. ASAP7 18-21, TSMC6 22-24)
 
-# ── TSMC6 is NOT a supported tech scope ──────────────────────────────────────
-# TSMC6 was onboarded in V6.9.0 as a sixth technology and removed on
-# 2026-07-24. It is TSMC7 relabelled as far as BSIM-CMG is concerned:
+# ── TSMC6: a knowingly-duplicated tech scope ────────────────────────────────
+# TSMC6 was onboarded in V6.9.0, retired on 2026-07-24 (audit D1) and restored
+# in V7.1.0 by explicit decision. The retirement finding still stands and has
+# not been softened: as far as BSIM-CMG is concerned TSMC6 *is* TSMC7.
 # tsmc6_{nmos,pmos}.npz were bit-identical to tsmc7_* in inputs, geometry,
 # outputs and sample_class (1,816,830 / 2,187,292 rows) with only
 # meta_tech_name differing, and two LEVEL=72 Id-Vgs sweeps matched to the last
 # printed digit. The raw PDKs do differ, but every differing key
 # (tmi_ver_lod, tmi_ver_isocpode, sfxmin, samax_c, wodx5akvth0) is a TSMC
-# TMI-proprietary extension with zero occurrences in the BSIM-CMG Verilog-A,
-# so the model cannot see any of it. Evidence:
-# docs/2026-07-21-systematic-audit.md D1.
+# TMI-proprietary extension with zero occurrences in the BSIM-CMG Verilog-A.
 #
-# Before onboarding a new tech, diff its resolved modelcard against the
-# BSIM-CMG Verilog-A parameter list and confirm at least one *implemented*
-# parameter differs from every existing tech. ``assert_tech_is_distinct``
-# below does exactly that check.
+# So a TSMC6 checkpoint is a *second training run on the TSMC7 data*, and any
+# TSMC6-vs-TSMC7 difference is training-run luck, not tech fidelity. It is
+# carried because it is the project's only controlled repeat experiment.
+# TSMC6 holds tail codes 22-24, so its presence or absence renumbers nothing.
 
 # Input layout: 7 continuous features (no process params)
 INPUT_COLUMNS: List[str] = [
@@ -154,7 +152,7 @@ def tech_variant_to_code(tech: str, variant: str) -> int:
 # model — the universal code would index out-of-range or pick the wrong row.
 
 VALID_TECH_SCOPES: Tuple[str, ...] = (
-    "universal", "tsmc5", "tsmc7", "tsmc12", "tsmc16",
+    "universal", "tsmc5", "tsmc6", "tsmc7", "tsmc12", "tsmc16",
 )
 
 
@@ -165,6 +163,7 @@ def _build_local_codes(tech_name: str) -> Dict[Tuple[str, str], int]:
 
 LOCAL_VARIANT_CODES: Dict[str, Dict[Tuple[str, str], int]] = {
     "tsmc5":  _build_local_codes("tsmc5"),
+    "tsmc6":  _build_local_codes("tsmc6"),
     "tsmc7":  _build_local_codes("tsmc7"),
     "tsmc12": _build_local_codes("tsmc12"),
     "tsmc16": _build_local_codes("tsmc16"),
@@ -191,6 +190,14 @@ def local_variant_code(scope: str, tech: str, variant: str) -> int:
         (tech.lower(), variant.lower()),
         LOCAL_UNKNOWN_CODE_ID[scope],
     )
+
+
+# Tech pairs this project knowingly carries as duplicates. Only tsmc6/tsmc7 is
+# on the list, for the reasons above. Do NOT add a pair here to silence a
+# genuine onboarding mistake — the whole point of the guard is that a PDK can
+# differ substantially on disk while every differing key is inert.
+ACKNOWLEDGED_DUPLICATE_TECHS: FrozenSet[Tuple[str, str]] = frozenset(
+    {("tsmc6", "tsmc7"), ("tsmc7", "tsmc6")})
 
 
 def _bsimcmg_implemented_params() -> frozenset:
@@ -232,8 +239,13 @@ def assert_tech_is_distinct(tech: str, against: Optional[Sequence[str]] = None,
     implements. Techs sharing an identical implemented-parameter fingerprint on
     every device are the same technology as far as this simulator is concerned.
 
+    A pair listed in ``ACKNOWLEDGED_DUPLICATE_TECHS`` is reported loudly and
+    allowed through, so that a deliberately-carried duplicate (tsmc6/tsmc7)
+    does not require disabling the guard for every other tech.
+
     Raises:
-        ValueError: if ``tech`` collides with any tech in ``against``.
+        ValueError: if ``tech`` collides with a tech that is not an
+            acknowledged duplicate.
     """
     from pycmg.parser import parse_modelcard      # noqa: E402
     from pycmg.tech import resolve_modelcard       # noqa: E402
@@ -268,14 +280,20 @@ def assert_tech_is_distinct(tech: str, against: Optional[Sequence[str]] = None,
             continue
         if set(mine) == set(theirs) and all(
                 mine[k] == theirs[k] for k in mine):
+            msg = (f"Technology {tech!r} is electrically identical to "
+                   f"{other!r} under BSIM-CMG: every device's "
+                   f"implemented-parameter fingerprint matches, so both train "
+                   f"on the same data. The PDKs may differ on disk, but only "
+                   f"in keys the open BSIM-CMG does not implement "
+                   f"(docs/2026-07-21-systematic-audit.md D1).")
+            if (tech.lower(), other.lower()) in ACKNOWLEDGED_DUPLICATE_TECHS:
+                print(f"[tech-guard] ACKNOWLEDGED DUPLICATE: {msg} "
+                      f"Carried deliberately; its rows are a repeat run, not a "
+                      f"sixth technology.")
+                continue
             raise ValueError(
-                f"Technology {tech!r} is electrically identical to {other!r} "
-                f"under BSIM-CMG: every device's implemented-parameter "
-                f"fingerprint matches, so both would train on the same data. "
-                f"The PDKs may differ on disk, but only in keys the open "
-                f"BSIM-CMG does not implement. Do not onboard {tech!r} as a "
-                f"separate technology (this is exactly how TSMC6 entered the "
-                f"registry; see docs/2026-07-21-systematic-audit.md D1).")
+                msg + f" Do not onboard {tech!r} as a separate technology "
+                      f"(this is exactly how TSMC6 entered the registry).")
 
 
 def tech_scope_vocab_size(scope: str) -> int:

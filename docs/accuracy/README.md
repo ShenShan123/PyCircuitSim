@@ -8,7 +8,7 @@ model — never a simplified or self-defined reference.
 | file | what it answers |
 |---|---|
 | **[`methodology.md`](methodology.md)** | What a "gate" is, the thresholds, strict-OMP discipline, isolation, and **which code state produced which number**. Read before comparing any two numbers. |
-| **[`by-tech.md`](by-tech.md)** | *"How does TSMC5 / 7 / 12 / 16 behave, across families and scales?"* — plus TSMC6, retired. |
+| **[`by-tech.md`](by-tech.md)** | *"How does TSMC5 / 7 / 12 / 16 behave, across families and scales?"* — plus **TSMC6**, the deliberate duplicate-of-TSMC7 repeat experiment. |
 | **[`by-scale.md`](by-scale.md)** | *"What does small / medium / large / xl buy?"* — the capacity laws, and which ones survived the re-gate. |
 | **[`by-recipe.md`](by-recipe.md)** | *"What does each training recipe do?"* — the catalogue, the corridor/anchor levers, the dead ends. |
 | [`DirectNet-L73-accuracy.md`](DirectNet-L73-accuracy.md) | The production family: architecture, production state, universal-scope study. |

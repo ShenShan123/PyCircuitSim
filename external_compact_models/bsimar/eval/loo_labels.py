@@ -18,18 +18,17 @@ geometry block the labels were built from.
 
 V6.9.0 — per-tech scope filter + collision guard:
 
-* A dataset whose stem starts with a known tech scope (``tsmc7_nmos.npz``)
+* TSMC6 core devices were copied from N7 by TSMC (153/204 core ``.model``
+  blocks byte-identical to the N7 card), so tsmc6 and tsmc7 bins share
+  identical fingerprints and are NOT distinguishable by this labeller.
+  tsmc6 is therefore excluded from the no-filter (universal) fingerprint
+  map (``_TECH_ORDER``) and is labelled only through the per-tech path:
+  a dataset whose stem starts with a known tech scope (``tsmc6_nmos.npz``)
   is labelled against that tech's fingerprints alone. Universal datasets
-  are labelled by the full scan, or carry sidecars concatenated from
-  per-tech ones by ``scripts/uni_concat_npz.py``.
-* ``_build_fingerprint_map`` raises on a cross-(tech, variant) fingerprint
-  collision instead of silently keeping the last writer. This guard was
-  added for TSMC6, whose N7-copied bins were fingerprint-identical to
-  TSMC7's; TSMC6 was retired on 2026-07-24 once it turned out to be TSMC7
-  relabelled outright (docs/2026-07-21-systematic-audit.md D1), but the
-  guard stays — a silent collision is how that went unnoticed for two
-  campaigns. ``bsimar.config.assert_tech_is_distinct`` is the stronger,
-  earlier check to run before onboarding a tech at all.
+  that mix tsmc6 must carry sidecars built by ``scripts/uni_concat_npz.py``
+  (which concatenates per-tech sidecars), never by this fingerprint scan.
+* ``_build_fingerprint_map`` now raises on a cross-(tech, variant)
+  fingerprint collision instead of silently keeping the last writer.
 """
 
 from __future__ import annotations
@@ -52,8 +51,9 @@ from pycmg.nn_config import extract_process_params  # noqa: E402
 from pycmg.parser import parse_modelcard  # noqa: E402
 
 
-# Universal (no-filter) fingerprint scan order. Per-tech datasets are
-# labelled via the tech_filter path instead.
+# Universal (no-filter) fingerprint scan order. Deliberately EXCLUDES
+# tsmc6: its N7-copied bins collide with tsmc7 fingerprints (see module
+# docstring). Per-tech datasets are labelled via the tech_filter path.
 _TECH_ORDER: List[str] = ["asap7", "tsmc5", "tsmc7", "tsmc12", "tsmc16"]
 _FINGERPRINT_SIG_FIGS: int = 8
 
@@ -173,7 +173,7 @@ def _label_samples(
 def _infer_tech_filter(stem: str) -> str | None:
     """Infer a per-tech scope from a dataset filename stem.
 
-    ``tsmc7_nmos`` -> ``"tsmc7"``; anything whose leading token is not a
+    ``tsmc6_nmos`` -> ``"tsmc6"``; anything whose leading token is not a
     known tech (``universal_nmos``, ``u716_...``) -> ``None`` (full scan).
     """
     head = stem.split("_", 1)[0].lower()
@@ -328,6 +328,8 @@ def get_or_build_tech_variant_labels(
     Per-tech datasets (stem ``<tech>_<device>``) are labelled against
     their own tech's fingerprints only, which keeps a per-tech run
     independent of whether any two techs share a fingerprint globally.
+    That scoping is *required* for tsmc6, whose N7-copied bins are
+    indistinguishable from tsmc7 in a full scan.
 
     A cached sidecar is validated against the dataset before it is
     trusted (``_validate_cached_sidecar``); a mismatch raises rather than
