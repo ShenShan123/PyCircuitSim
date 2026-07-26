@@ -414,5 +414,76 @@ class DirectNet(nn.Module):
                 [id_col.unsqueeze(-1), out[:, self._ID_COL + 1 :]], dim=-1)
         return out
 
+    def supports_fused_jacobian(self) -> bool:
+        """True when ``forward_with_jacobian`` can serve this instance.
+
+        The EKV core and the monotone residual both re-compose the ``id``
+        column through their own sub-networks, which the closed-form
+        propagation below does not model. Those variants keep the autograd
+        path.
+        """
+        return self.core is None and self.mono is None
+
+    def forward_with_jacobian(
+        self,
+        x: torch.Tensor,
+        tech_codes: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """Value **and** ∂out/∂x[:, :4] in a single weight-streaming pass.
+
+        V7.0.3. The simulator needs the Jacobian of the outputs w.r.t. the
+        4 terminal voltages every Newton iteration, and gets it today from
+        three ``autograd.grad`` calls — each of which re-streams the entire
+        weight matrix. For a plain MLP the Jacobian can instead be
+        propagated *forward* alongside the value in closed form: carry
+        ``[h ; ∂h/∂v]`` as 5 rows and issue one GEMM per layer.
+
+        One weight stream instead of four. Measured on DirectNet-large,
+        batch 1, 1 thread: **1610 us -> 748 us**, and this returns the full
+        13x4 Jacobian where the autograd path returns 3 rows of it.
+
+        Returns ``(out, J)`` with ``out`` (B, output_dim) and ``J``
+        (B, 4, output_dim), so ``J[:, :, k]`` matches the shape of
+        ``autograd.grad(out[:, k].sum(), x_v)``.
+
+        **Not bit-identical to autograd** — same mathematics, different
+        summation order (values ~5e-7 abs, ∂id/∂V ~4e-6 relative). Gated
+        behind ``PYCIRCUITSIM_NN_FUSED_JAC=1`` on the simulator side until
+        a full complex-gate re-gate clears it.
+        """
+        assert tech_codes is not None, "DirectNet requires tech_codes"
+        if not self.supports_fused_jacobian():
+            raise NotImplementedError(
+                "forward_with_jacobian does not model the EKV core / "
+                "monotone residual; use the autograd path.")
+
+        emb = self.tech_embedding(tech_codes)
+        h = torch.cat([x, emb], dim=-1)                    # (B, D)
+        bsz, d_in = h.shape
+
+        # Row 0 carries the value; rows 1..4 carry ∂/∂v_k, seeded with the
+        # identity on the 4 voltage columns.
+        blk = h.new_zeros(bsz, 5, d_in)
+        blk[:, 0] = h
+        for k in range(4):
+            blk[:, 1 + k, k] = 1.0
+
+        n_lin = len(self.net)
+        for i in range(0, n_lin - 1, 2):
+            lin = self.net[i]                               # Linear
+            blk = (blk.reshape(bsz * 5, -1) @ lin.weight.t()).reshape(
+                bsz, 5, -1)
+            pre = blk[:, 0] + lin.bias                      # bias: value only
+            sig = torch.sigmoid(pre)
+            # d/dz SiLU(z) = sigmoid(z) * (1 + z * (1 - sigmoid(z)))
+            dact = sig * (1.0 + pre * (1.0 - sig))
+            blk = torch.cat(
+                [(pre * sig).unsqueeze(1), blk[:, 1:] * dact.unsqueeze(1)],
+                dim=1)
+
+        lin = self.net[n_lin - 1]                           # output Linear
+        blk = (blk.reshape(bsz * 5, -1) @ lin.weight.t()).reshape(bsz, 5, -1)
+        return blk[:, 0] + lin.bias, blk[:, 1:]
+
     def count_parameters(self) -> int:
         return sum(p.numel() for p in self.parameters() if p.requires_grad)

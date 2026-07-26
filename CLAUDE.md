@@ -232,6 +232,36 @@ Mn1 3 2 0 0 nmos1 L=30n NFIN=10
 - `.ic V(node)=...` (hard initial condition; reaches subckt-internal nodes via
   `V(X1.n1)`) and `.include` are also supported.
 
+### NN performance knobs (V7.0.x)
+
+The NN eval is roughly half of an NN simulation's runtime, and it is
+**memory-bandwidth-bound on the weights** — cost scales with how many times a
+checkpoint is streamed, not with FLOPs. Measurements + dead ends:
+`docs/plans/2026-07-25-v700-nn-perf.md`.
+
+- **DC/OP skips the charge Jacobians** (V7.0.1, always on, bit-identical). The
+  qg/qd autograd sweeps only feed the 5 capacitances, which only
+  `TransientSolver` / `ACSolver` read — those two declare `_require_nn_caps`;
+  a `.dc`/`.op` run pays 1 backward instead of 3. **Adding a third caps
+  consumer means calling `_require_nn_caps` in it** (`get_capacitances`
+  self-heals, so the failure mode is slow, never wrong).
+- `PYCIRCUITSIM_NN_FUSED_JAC=1` — closed-form Jacobian for DirectNet
+  (V7.0.3). **Default off, and must stay off until a 16-gate re-gate clears
+  it**: same math, different summation order. Helps transient/AC (~1.4×) only —
+  for DC the charge-skip above already wins.
+- `PYCIRCUITSIM_NN_AR_CACHE=1` — BSIM-AR (LEVEL=74) prefix cache (V7.0.4).
+  The AR loop re-encoded the whole growing prefix once per step (60
+  token-passes for 11 hidden states); the cache keeps per-layer K/V and
+  encodes each token once. **Default off pending a 16-gate
+  `MODEL=transformer` re-gate**: exact in real arithmetic but not in float32,
+  because `F.linear` is not row-stable on CPU (0/96 shapes) — so *no*
+  incremental form can be bit-identical. 1.60× DC / 1.56× tran / 1.21× AC,
+  4.3× on `no_grad` batch-2048 eval; deviation ≤1.6 µV on solved nodes.
+- `BSIMAR_LOADER=torch|device|auto` — training batch source (V7.0.2, default
+  `auto` = GPU-resident when it fits). `torch` restores the legacy
+  `DataLoader` to reproduce a historical run.
+- `NN_BATCHED_EVAL=0` — pre-existing opt-out of the batched multi-device eval.
+
 ### NN training (per-tech, LEVEL=73/74/75)
 
 Dedicated per-tech NMOS/PMOS checkpoints for **TSMC5/7/12/16** (all three families
@@ -332,6 +362,12 @@ references in `tests/references/`.
   `complex_sweep.py` (baseline-gated, sha256-pinned); `verify_complex_sweep_canaries.py`
   guards single-point ↔ sweep equivalence. Opamp AC `verify_complex_opamp_ac.py`
   (two-stage Miller open-loop; RO+SRAM AC-excluded).
+- **AR prefix cache (74):** `verify_ar_cache.py` — 10 checks, no NGSPICE (the
+  reference is the stock PyTorch AR loop). Guards the V7.0.4 opt-in path, which
+  no accuracy gate can reach while it is default-off: flag default is OFF and
+  the off path is bit-identical; cached == stock within 1e-4 rel on outputs +
+  autograd Jacobians over 5 checkpoints × 3 batch sizes; the primer chunk is
+  bit-identical; training mode falls back; the lever still pays (>1.15×).
 - **Diagnostics** (`tests/diag_*.py`, **not** gates — L72-in-PyCircuitSim reference):
   `diag_l72_complex_control.py`, `diag_l72_switchcap_control.py`/`_uic_control.py`
   (prove L72-in-PyCircuitSim ≈ NGSPICE, isolating NN-surface gaps);

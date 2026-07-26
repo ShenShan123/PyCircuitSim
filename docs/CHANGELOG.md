@@ -8,6 +8,187 @@ lives in git history.)
 
 ---
 
+## V7.0.0–V7.0.4 — NN compact-model performance (2026-07-25)
+
+**Scan of the NN inference and training paths, then four infra changes.
+Inference DC solve 1.68× with byte-identical output; training 4.9× per epoch;
+BSIM-AR 1.6× behind an opt-in flag. Full measurements, routing and dead ends:
+`docs/plans/2026-07-25-v700-nn-perf.md`.**
+
+The governing constraint throughout: shipped checkpoints and gate results are
+the product, and this repo has repeatedly watched a last-bit NN perturbation
+land a different NR basin in a high-gain circuit. So every change is
+classified **bit-identical** (ships default-on) or **perturbing** (ships
+default-off behind an env flag, promoted only after a full 16-gate re-gate).
+
+### V7.0.0 — the scan
+
+Measured, not estimated. DirectNet `large` (907,565 params), 1 thread, batch
+1 — the gate configuration.
+
+**Inference is bandwidth-bound, not FLOP-bound.** 907k fp32 params = 3.6 MB;
+one forward streams that in 290 µs ≈ 12.5 GB/s, at the single-core ceiling.
+The shipped path streams the weights **four times** — 1 forward + 3 backwards
+(id, qg, qd) = 1610 µs/eval. Profiling a 70-point NN inverter DC sweep:
+`run_backward` 0.674 s tottime of a 2.64 s run, `batch_eval` 1.285 s cumtime.
+**Half the simulation is the NN eval, and the backward engine is the largest
+single line item.**
+
+**Training is dominated by the data loader, not the model.** Per step at batch
+2048: shipped `DataLoader(TensorDataset, num_workers=8)` 11.00 ms → GPU-resident
+index slicing 3.29 ms → + fused AdamW **1.77 ms**.
+
+### V7.0.1 — inference, bit-identical (DC solve 1.68×)
+
+- **DC/OP skips the charge Jacobians.** The qg / qd autograd sweeps exist only
+  to produce the 5 capacitances, which are read in exactly two places —
+  `TransientSolver` and `ACSolver`. A `.dc` / `.op` run computed both and threw
+  them away. `_caps_required` now defaults False and the two cap consumers
+  declare it via `_require_nn_caps` at construction; `get_capacitances`
+  self-heals (latch + recompute) for any other caller, so the flag is a
+  performance hint and never a correctness precondition. 1610 → 784 µs/eval.
+- **Per-eval Python overhead.** `_stats_col` did a `list.index` per scalar,
+  13× per eval, to rediscover constants fixed at construction; `_denorm` /
+  `_denorm_deriv` re-read numpy arrays per scalar. Both now use values resolved
+  in `__init__`. The arithmetic is reproduced in its **original association
+  order** — folding `out_std / in_std` would round differently — and `np.sinh`
+  is deliberately kept over `math.sinh` (libm and numpy may disagree in the
+  last ulp, and this feeds every stamped current). `math.sqrt` does replace
+  `np.sqrt`: IEEE-correctly-rounded, so bit-identical.
+- **`_mosfet_types()` / `_pmos_types()` / `_nn_mosfet_types()` memoized.** They
+  re-ran four `try: import` blocks on every call — 4462 + 2596 calls in a
+  70-point sweep.
+
+Verified: DC, transient and AC CSVs **sha256-identical** to the pre-change
+baseline. Gates: NN inverter 2/2, `verify_nn_ac` 8/8, `verify_complex_ring_osc`
+4/4, L72 op 3/3 + dc 2/2 + tran 1/1, `verify_subckt` 11/11.
+
+### V7.0.2 — training, 4.9× per epoch (no shipped checkpoint touched)
+
+- **`_DeviceBatches`** — the splits are already in-memory tensors, but were
+  wrapped in a `TensorDataset` behind a `DataLoader` with 8 workers: 2048
+  `__getitem__` calls, a collate and an IPC copy per batch, to deliver one
+  contiguous slice of a tensor that already existed. Now a permutation + index
+  slice on-device. `_pick_loader` checks free GPU memory (needs < 50 % of free)
+  and falls back to the `DataLoader` otherwise; `BSIMAR_LOADER=torch|device`
+  overrides.
+- **Fused AdamW** on CUDA — the step is launch-overhead-bound at these sizes.
+- **No per-step host sync** — losses accumulate on-device, `.item()` once per
+  epoch instead of ~800 times.
+
+Measured on the real CLI (DirectNet large, TSMC5, 640k train rows, incl.
+validation): **3.4 s/epoch → 0.7 s/epoch**. DirectNet, Transformer and TabPFN
+all train through the shared loop.
+
+These change the shuffle order, so a **re-train** produces different weights.
+No checkpoint on disk is touched, so no gate moves until someone retrains, and
+`BSIMAR_LOADER=torch` reproduces the legacy path.
+
+### V7.0.3 — fused analytic Jacobian, opt-in, DEFAULT OFF
+
+`DirectNet.forward_with_jacobian` propagates the Jacobian *forward* in closed
+form alongside the value — carry `[h ; ∂h/∂v]` as 5 rows, one GEMM per layer,
+one weight stream instead of four — returning the full 13×4 Jacobian.
+Behind `PYCIRCUITSIM_NN_FUSED_JAC=1`. Falls back to autograd for the EKV-core
+and monotone-residual variants, which re-compose the `id` column.
+
+**Scope correction found during implementation:** the isolated 2.16× is against
+the *old* 3-backward path. After V7.0.1 a DC eval is already 784 µs vs the
+fused pass's 748 µs, and the fused pass computes the whole Jacobian whether or
+not caps are wanted — so it cannot exploit DC mode. End-to-end: **DC 1.48 →
+1.64 s (slightly slower), transient 3.04 → 2.20 s (1.38× faster)**. It is a
+transient/AC lever only; I1 is strictly better for DC.
+
+Not bit-identical (same math, different summation order): max |ΔV| = 7e-7 (DC)
+and 4e-7 (transient) on the inverter — but the inverter is the benign case, and
+the opamps are what a re-gate must clear. **Stays off until that re-gate runs.**
+With the flag off, the three CSVs remain sha256-identical.
+
+### V7.0.4 — LEVEL=74 AR prefix cache, opt-in, DEFAULT OFF
+
+The BSIM-AR inference loop re-ran the **entire encoder over the whole growing
+prefix, once per AR step** — 8 passes over 4, 5, … 11 tokens = 60 token-passes
+to produce 11 hidden states. Under the causal mask a prefix hidden state cannot
+change once computed, so 49 of the 60 were pure waste. `_encoder_append` now
+streams each token through the stack once, keeping per-layer K/V so the new
+token still attends to the whole prefix. Behind `PYCIRCUITSIM_NN_AR_CACHE=1`.
+
+Delivered **1.60× DC / 1.56× transient / 1.21× AC** end-to-end, and **4.3× at
+batch 2048** in the trainer's `no_grad` AR metrics (that regime is genuinely
+FLOP-bound). Gains grow with device count — 2.06× at batch 4.
+
+**Routing correction: I4 was classified "exact in exact arithmetic"; the
+bit-wise verification refuted it, and the cause is a hard floor.** `F.linear`
+is not row-stable on this CPU — a 1-row GEMV accumulates in a different order
+than the same row of an L-row GEMM (measured **0/96 shapes stable**, up to
+8e-6 abs). *Any* formulation computing fewer rows than the stock recompute
+moves the last bits, however attention is arranged. That also kills the
+rescue of caching Q/K/V and replaying the identical full-prefix SDPA call:
+attention is only ~1 % of the cost, and the projections holding the other
+99 % are exactly what cannot be shrunk exactly. So I4 ships default-off like
+V7.0.3, promoted only on a full 16-gate `MODEL=transformer` re-gate.
+
+Deviation is small but real: outputs ≤ 5.3e-6, autograd Jacobians ≤ 1.6e-6,
+solved node voltages ≤ 1.6 µV.
+
+**Why 1.6× and not the 5.45× the token count implies:** the encoder is
+weight-bandwidth-bound like DirectNet, and the weight stream is paid *per
+encoder call, not per token* — 8 AR steps means 8 streams either way. The
+cache removes the redundant arithmetic, not the traffic, and the 8 sequential
+streams are the autoregressive data dependence itself.
+
+Two PyTorch behaviours found and recorded:
+
+- `nn.TransformerEncoder` runs `_detect_is_causal_mask` on the mask it is
+  given and forwards `is_causal=True` with `attn_mask=None`, so the stock call
+  reaches SDPA's **fused causal** kernel. Rebuilding an equivalent triangular
+  mask selects the math kernel and shifts the primer by 7e-7 for nothing;
+  `_encoder_append` matches the hint.
+- `TransformerEncoderLayer.forward` has a second fused fast path
+  (`torch._transformer_encoder_layer_fwd`) that fires **only under `no_grad`** —
+  it is disqualified whenever grad is enabled and a parameter requires grad,
+  because the fused op is not differentiable. Every simulator eval wraps the
+  forward in `torch.enable_grad()` for the Jacobian, so the shipped LEVEL=74
+  surface has never touched it.
+
+Verified — flag off: LEVEL=74 DC/tran/AC CSVs **sha256-identical** to the
+pre-change baseline; L72 op 3/3 + dc 2/2 + tran 1/1, `verify_ac` 2/2,
+`verify_subckt` 11/11, DirectNet L73 inverter **8/8** across four techs.
+Flag on: LEVEL=74 TSMC5 inverter gate vs NGSPICE **2/2 PASS with identical
+scores** (VTC 1.09 %, inverter transient 0.97 %), and the LEVEL=74 device AC
+gate — the derivative-sensitive one, whose caps are the autograd dQ/dV of the
+predicted charges — **2/2 PASS with every metric identical to the last printed
+digit** (NMOS 0.435 dB / f3db 1.259 / 4.67 % / 67.40°; PMOS 0.189 dB / 0.891 /
+2.08 % / 79.58°). The perturbation is far below gate resolution.
+
+### Dead ends (measured, rejected — do not retry)
+
+- **TF32** 1.77 → 1.92 ms/step, **`torch.compile`** → 2.00, **bf16 autocast**
+  → 2.61. All *slower*: DirectNet is launch-overhead-bound, so every one of
+  them adds conversion or guard work to a matmul that was never the cost.
+  (Worth re-testing for the Transformer/PFN families, which are genuinely
+  compute-bound.)
+- **Replica-batch trick for the 3 inference gradients** — replicate the input
+  3× and take one backward with a column-selecting seed. Only 1.53× (vs 2.16×
+  for the analytic Jacobian) **and** not bit-identical: GEMV→GEMM changes the
+  summation order, grads differ 4e-6 at N=1 and 1.8e-4 at N=10. Strictly
+  dominated.
+- **Larger training batch** (8192/16384 → 0.43 s/epoch, the largest raw number
+  measured) is a *recipe* change, not infra: it needs LR rescaling and would
+  invalidate every recipe comparison. Deliberately excluded.
+
+### Open / not started
+
+**I4 — the LEVEL=74 AR prefix cache.** `TransformerEncoderModel`'s inference
+branch re-runs the *entire* encoder over the whole growing prefix 8 times, with
+no KV cache. Under a causal mask the prefix hidden states cannot change once
+computed, so the recompute is pure waste — and it is why BSIM-AR is 30–100×
+slower than DirectNet. Estimated 3–4×. Requires hand-rolling incremental
+attention against `nn.TransformerEncoderLayer`'s pre-LN math, so it is real
+work and needs bit-level verification before it could ship default-on.
+
+---
+
 ## V6.13.1 — systematic-audit fix wave 1: 22 gate-neutral findings (2026-07-24)
 
 **Closed the 22 findings from `docs/2026-07-21-systematic-audit.md` that cannot
