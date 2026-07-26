@@ -123,6 +123,15 @@ new in V7.1.0 (`by-scale.md` §1) and is training as this is written.
 
 ---
 
+> ⚠ **Before ranking anything below by one cell, read the noise floor.** The
+> V7.1.0 TSMC6 controlled repeat (`by-tech.md` §5) measured this pipeline's
+> run-to-run variance on bit-identical data: **ring_osc ±4 pp across a 5 % gate**
+> and **opamp bimodal** (good basin or 100 % rail), while sram_snm and switchcap
+> reproduce to ≤0.3 pp. Differences of one ring or opamp cell between two recipes
+> in the tables above are therefore **not** evidence that one recipe is better.
+> The laws in §3 survive because they move cells by far more than that, or move
+> many cells at once.
+
 ## 3. What survives the re-gate — the durable recipe laws
 
 **1. The corridor is the ring lever, and the only one.** Every recipe that

@@ -40,6 +40,19 @@ Strict = passes at OMP ∈ {1, 2, 4}. Complex matrix = 4 circuits × 4 techs.
   earlier campaign was a wrong-signed Jacobian entry, not a property of
   high-gain circuits (`methodology.md` §6).
 
+## The finding that governs how to read everything else
+
+The V7.1.0 TSMC6 repeat retrained one recipe on **bit-identical rows** and
+compared strict verdicts (`by-tech.md` §5). Gate *counts* reproduced at three of
+four tiers — but **which** cells passed swapped: `ring_osc` carries **±4 pp** of
+run-to-run scatter across a **5 %** gate, and `opamp` is **bimodal** (a
+1.8–7.1 % basin or a 100 % rail). `sram_snm` and `switchcap` reproduce to
+≤0.3 pp and never flip.
+
+**A recipe promoted on a single ring or opamp margin is inside the noise.** The
+same claim resting on SRAM or switchcap is not, and neither are the family-level
+counts here, which aggregate 16 cells. Read `by-recipe.md` with that in mind.
+
 ## What is actually open
 
 1. **The low-VDD rings** (`tsmc5-ring`, `tsmc7-ring`) for every *clean* recipe —
