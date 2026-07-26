@@ -52,6 +52,13 @@ if [ "${1:-}" = "_one" ]; then
   fi
 
   export CUDA_VISIBLE_DEVICES="" NGSPICE_BIN="$NG"
+  # An OMP>1 cell on a box that is already oversubscribed spends most of its
+  # time in busy-wait barriers: measured here, a DirectNet ring cell that takes
+  # 21 s at OMP=1 exceeded 10 min at OMP=4 while accumulating CPU at only ~50 %
+  # of ONE core. Make idle threads sleep instead of spin. This changes how
+  # threads wait, never how work is partitioned or reduced, so it is
+  # numerically neutral — the strict-OMP probe still varies the thread count.
+  export OMP_WAIT_POLICY=passive KMP_BLOCKTIME=0
   case "$tag" in
     tf)  export PYCIRCUITSIM_NN_CHECKPOINT_TF_NMOS="$sn"  PYCIRCUITSIM_NN_CHECKPOINT_TF_PMOS="$sp"
          export PYCIRCUITSIM_NN_FORCE_LEVEL=74 ;;

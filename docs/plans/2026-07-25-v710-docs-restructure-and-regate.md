@@ -177,6 +177,16 @@ TSMC5's cell as unreachable by construction.
 * The box ran at loadavg 1500–1900 from other users all session; gate cells took
   8–30 min each instead of 20–50 s. Plan wall-clock from measured in-flight job
   age (`ps -o etimes`), not from an idle-box estimate.
+* **OMP>1 cells are the bottleneck, and oversubscription is why.** Measured: a
+  DirectNet ring cell runs in **21 s at OMP=1** and **>10 min at OMP=4** on this
+  box, while accumulating CPU at only ~50 % of *one* core for a 4-thread job —
+  i.e. the threads are spinning in barriers, not computing. BSIM-AR ring cells
+  at OMP=4 reached **19 h**. `scripts/v710_regate.sh` now exports
+  `OMP_WAIT_POLICY=passive` + `KMP_BLOCKTIME=0` so idle threads sleep; this
+  changes how threads wait, never how work is partitioned, so the strict-OMP
+  probe is unaffected. Cells already in flight keep the old behaviour.
+  **Corollary for planning a strict sweep: its cost is dominated by the OMP=2/4
+  runs, and on a contended box that factor is far worse than 2–4×.**
 * **Editing code mid-campaign cost one cell.** The TSMC6 restore spans two
   repos (parent + PyCMG submodule); a job that started between the two commits
   died with `KeyError('tsmc6')` and was scored FAIL. Additive registry edits are
