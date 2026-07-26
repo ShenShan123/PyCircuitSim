@@ -330,6 +330,54 @@ same measurement. PFN, by contrast, read flat 2/4 across all three sizes on the
 duplicated data, agreeing with its TSMC7 rows — the reassuring case, and the
 family whose gates were already flip-free.
 
+### The repeat, measured
+
+Both runs are the **clean** recipe at the matching tier, on identical rows, with
+the same code — so every difference below is run-to-run variance of the whole
+pipeline (weight init, GPU nondeterminism, then NR basin selection), not tech
+fidelity. Verdicts are strict (OMP ∈ {1,2,4}) for opamp and ring_osc.
+
+| run | /4 | ring_osc | opamp | sram_snm | switchcap |
+|---|---|---|---|---|---|
+| DirectNet `small` | **2/4** | PASS 4.32% | FAIL 11.15% | PASS 1.68% | FAIL 2.27% |
+| ↳ TSMC7 same tier | 2/4 | FAIL 5.94% | PASS 1.81% | PASS 1.91% | FAIL 2.34% |
+| DirectNet `medium` | **2/4** | FAIL 9.37% | FAIL 100.00% | PASS 2.10% | PASS 2.75% |
+| ↳ TSMC7 same tier | 2/4 | FAIL 10.86% | FAIL 100.00% | PASS 2.22% | PASS 2.81% |
+| DirectNet `large` | **3/4** | FAIL 9.04% | PASS 7.12% | PASS 1.58% | PASS 2.52% |
+| ↳ TSMC7 same tier | 3/4 | PASS 4.82% | FAIL 100.00% | PASS 1.28% | PASS 2.45% |
+| DirectNet `xl` | **2/4** | partial 15.05% | FAIL 100.00% | PASS 1.86% | PASS 2.65% |
+| ↳ TSMC7 same tier | 3/4 | FAIL 13.59% | PASS 4.20% | PASS 1.92% | PASS 2.67% |
+
+**Cells whose verdict differs between the two runs on identical data:** DirectNet `small`: ring_osc, opamp; DirectNet `large`: ring_osc, opamp; DirectNet `xl`: opamp.
+
+#### What it measures — and it is the most consequential number in this file
+
+Read the pairs, not the totals. The **counts agree** at three of four tiers
+(2/2, 2/2, 3/3) while the **identity of the passing cells swaps**: at `small`
+and at `large`, ring_osc and opamp trade places between two runs on identical
+rows. Per-cell:
+
+* **`ring_osc` has ±4 pp of run-to-run scatter** — 4.82 % vs 9.04 % at `large`,
+  5.94 % vs 4.32 % at `small`, 13.59 % vs 15.05 % at `xl`. **The 5 % gate sits
+  inside that scatter.**
+* **`opamp` is bimodal**: it either finds a good basin (1.81 / 4.20 / 7.12 %) or
+  rails at 100 %. Which one a run gets is not reproducible.
+* **`sram_snm` and `switchcap` reproduce tightly** — 1.58 vs 1.28 %, 2.52 vs
+  2.45 %, i.e. ≤0.3 pp — and their verdicts never differ.
+
+So the pipeline's run-to-run variance is not small, and it is **concentrated in
+exactly the two cells this project has always ranked recipes on.** Every
+"recipe A beats recipe B by one cell" claim in `by-recipe.md` that turns on a
+ring or an opamp is, on this evidence, within noise; the same claim resting on a
+SRAM or switchcap cell is not. That is the discriminator this project lacked,
+and it is why a known-duplicate technology was worth the GPU time.
+
+It does **not** invalidate the family-level conclusions, which rest on many
+cells at once — production DirectNet at 15/16 strict, BSIM-AR `corroft@medium`
+at 16/16 — nor the corridor law, which moves rings by 8 pp against a 4 pp noise
+floor. What it retires is the practice of promoting a recipe on a single-cell
+margin.
+
 ### V7.1.0 status
 
 Datasets regenerated from the kept vendor PDK and **verified `array_equal` to

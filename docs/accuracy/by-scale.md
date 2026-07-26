@@ -116,6 +116,7 @@ unmeasured cells is shown against its measured denominator, not 16.
 | `dn/small` | 10/16 | 0 | — |
 | `dn/v660clean_large` | 13/16 | 0 | — |
 | `dn/xl` | 12/16 | 0 | — |
+| `tf/corroft_large` | 1/1 measured | 0 | 15 |
 | `pfn/large` | 7/9 measured | 0 | 7 |
 | `pfn/medium` | 3/3 measured | 0 | 13 |
 | `pfn/small` | 9/12 measured | 0 | 4 |

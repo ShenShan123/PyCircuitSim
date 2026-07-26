@@ -280,12 +280,75 @@ def strict_v710() -> str:
                        "|---|---|---|---|"] + rows)
 
 
+# ── the TSMC6 controlled repeat ──────────────────────────────────────────────
+# TSMC6's data is array_equal to TSMC7's, so a TSMC6-vs-TSMC7 difference is
+# run-to-run variance of the whole pipeline with the data held exactly fixed.
+# The TSMC7 side is the V6.13.0 clean group at the matching tier.
+TSMC7_CLEAN = {"dn": {"small": "dn/clean/small", "medium": "dn/clean/medium",
+                      "large": "dn/v660clean/large", "xl": "dn/clean/xl"},
+               "tf": {s: f"tf/clean/{s}" for s in TIERS},
+               "pfn": {s: f"pfn/clean/{s}" for s in TIERS}}
+
+
+def _strict6(tag, var, circ):
+    """(verdict, metric) for a TSMC6 cell — strict for opamp/ring, single else."""
+    c = V710.get(tag, {}).get(var, {}).get(f"verify_complex_{circ}", {}).get("TSMC6", {})
+    if not c:
+        return None, None
+    if circ in ("opamp", "ring_osc"):
+        vs = [c.get(f"omp{n}") for n in (1, 2, 4)]
+        if any(v is None for v in vs):
+            e = c.get("omp1")
+            return ("partial" if e else None), (e or {}).get("metric")
+        ok = [v["rc"] == "0" for v in vs]
+        v = "PASS" if all(ok) else ("FLIP" if any(ok) else "FAIL")
+        return v, vs[0].get("metric")
+    e = c.get("omp1")
+    if not e:
+        return None, None
+    return ("PASS" if e["rc"] == "0" else "FAIL"), e.get("metric")
+
+
+def tsmc6_repeat() -> str:
+    rows, notes = [], []
+    for tag in ("dn", "tf", "pfn"):
+        for var in TIERS:
+            cells6, cells7, n6, n7, diff = [], [], 0, 0, []
+            for circ in CIRCS:
+                v6, m6 = _strict6(tag, var, circ)
+                ref = A3.get(TSMC7_CLEAN[tag][var], {}).get(f"TSMC7/{circ}", "")
+                v7 = ref.split()[0] if ref else None
+                if v6 is None and v7 is None:
+                    continue
+                cells6.append("—" if v6 is None else
+                              f"{v6}" + (f" {m6:.2f}%" if m6 is not None else ""))
+                cells7.append(ref or "—")
+                n6 += v6 == "PASS"; n7 += v7 == "PASS"
+                if v6 in ("PASS", "FAIL") and v7 in ("PASS", "FAIL") and v6 != v7:
+                    diff.append(circ)
+            if not any(c != "—" for c in cells6):
+                continue
+            rows.append(f"| {FAM[tag]} `{var}` | **{n6}/4** | " + " | ".join(cells6) + " |")
+            rows.append(f"| ↳ TSMC7 same tier | {n7}/4 | " + " | ".join(cells7) + " |")
+            if diff:
+                notes.append(f"{FAM[tag]} `{var}`: {', '.join(diff)}")
+    if not rows:
+        return "*(TSMC6 gates not collected yet)*"
+    out = ["| run | /4 | " + " | ".join(CIRCS) + " |", "|---|---|" + "---|" * len(CIRCS)]
+    out += rows
+    if notes:
+        out += ["", "**Cells whose verdict differs between the two runs on identical "
+                "data:** " + "; ".join(notes) + "."]
+    return "\n".join(out)
+
+
 # ── build ───────────────────────────────────────────────────────────────────
 def main() -> int:
     t = (TPL / "by-tech.md.in").read_text()
     t = t.replace("<!--CENSUS-->", census())
     for tech in TECHS:
         t = t.replace(f"<!--MATRIX:{tech}-->", matrix(tech))
+    t = t.replace("<!--TSMC6REPEAT-->", tsmc6_repeat())
     t = t.replace("<!--DEVICE-->", "\n\n".join(x for x in (
         dev_by_tech("verify_nn_multi_tech_dc",
                     "Parametric DC — mean Id-Vgs NRMSE % per tech "
