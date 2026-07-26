@@ -81,9 +81,10 @@ fix, i.e. most of the "training lottery" was the wrong Jacobian.
   (`modelcards/TSMC6/cln6_1d8_sp_v1d0_2p2.l`).
 * `scripts/tsmc6_restore_campaign.sh` waits for the datasets, then trains
   DirectNet → BSIM-AR → PFN, 4 sizes × 2 devices each (24 checkpoints, clean
-  recipe). **Then they still need gating** — the 4-cell complex matrix + device
-  suites per family/size. Not yet scripted; `MODEL=… SIZE=… TECHS=tsmc6 bash
-  scripts/gate_matrix_iso.sh` is the shape.
+  recipe). Gating is chained: `scripts/tsmc6_gate_campaign.sh` (launched, PAR=10)
+  waits per family for its 8 `.complete` markers, then runs the 4-cell matrix +
+  the 4 device suites + OMP{1,2,4} on opamp/ring through the same V7.1.0 driver.
+  `tsmc6_nmos.npz` regenerated 22:03; pmos in progress (324 bins).
 
 ## 4. Thread D — PFN xl
 
@@ -93,9 +94,11 @@ ICL width 384 = its `d_model`. lr 3e-4 (large's 4e-4 produced 5 of the 8
 divergence collapses and this stack is deeper), 150 epochs, `--amp`.
 
 8 checkpoints training (4 techs × N/P). Measured ~10 min/epoch for a solo job;
-with 8 sharing 3 GPUs on a box at loadavg ~1840, expect **~2–3 days**. Then they
-need the 16-cell gate + device suites, and `by-scale.md` §2's PFN row updates
-from 3 tiers to 4.
+with 8 sharing 3 GPUs on a box at loadavg ~1840, expect **~2–3 days**. A gate
+watcher is armed (scratchpad `pfnxl_gate.sh` — fold it into `scripts/` if it is
+still needed next session): it waits for all 8 `.complete` markers, then gates
+the 4-cell matrix + device suites + strict OMP through the V7.1.0 driver. After
+that, `by-scale.md` §2's PFN row goes from 3 tiers to 4.
 
 ## 5. Finding: the opamp open-loop AC gate has a bias-resolution defect
 
@@ -130,11 +133,11 @@ TSMC5's cell as unreachable by construction.
 
 ## 6. Resume checklist
 
-1. `python scripts/v710_regate_collect.py && python scripts/v710_regate_control.py`
-   — refresh `results/v710_regate/REPORT.md`, confirm the control is still 0
-   disagreements, then re-run the doc injectors (the generators live in the
-   session scratchpad; regenerate or fold them into `scripts/` if they are
-   needed again).
+1. `python scripts/v710_regate_collect.py && python scripts/accuracy_docs_build.py
+   && python scripts/v710_regate_control.py` — refresh the raw report, rebuild
+   `by-tech.md` + `by-scale.md` from it, and confirm the control is still at 0
+   disagreements. The prose for both generated docs lives in
+   `scripts/accuracy_doc_templates/*.md.in`.
 2. Check `scripts/tsmc6_restore_campaign.sh` progress; when the 24 checkpoints
    carry `.complete`, gate them and fill `by-tech.md` §5's V7.1.0 tables.
 3. Check the PFN-xl logs for the divergence signature the `large` tier showed
