@@ -33,10 +33,18 @@ omp, resumable, isolated, CPU-pinned), job lists from
 into `results/v710_regate/REPORT.md` + `data.json`.
 
 **Control.** `scripts/v710_regate_control.py` compares every complex cell
-measured in both campaigns. At the last check: **46/46 agree** — HEAD (V7.0.x
+measured in both campaigns. At the last check: **150/150 agree** — HEAD (V7.0.x
 perf work + audit wave 1) reproduces the V6.13.0 (`d2ea720`) verdicts, so the
-two campaigns' numbers are interchangeable. Re-run it at the end over the full
-set and record the final count.
+two campaigns' numbers are interchangeable. Re-run it at the end and record the
+final count.
+
+It has already earned its keep: it caught **one** disagreement,
+`dn/corroft/xl` TSMC12 `sram_snm`, which turned out to be
+`KeyError('tsmc6')` — a job that ran inside the few-minute window when the
+parent repo had TSMC6 back in its registry but the PyCMG submodule did not.
+Log deleted, cell re-run, PASS, control clean. **The lesson is not "additive
+edits are safe" but "a two-repo edit has a window, and only a control finds
+what fell into it."**
 
 **Results so far** (all in `docs/accuracy/by-scale.md` §4–§5):
 
@@ -147,6 +155,10 @@ TSMC5's cell as unreachable by construction.
 * The box ran at loadavg 1500–1900 from other users all session; gate cells took
   8–30 min each instead of 20–50 s. Plan wall-clock from measured in-flight job
   age (`ps -o etimes`), not from an idle-box estimate.
-* Editing `tests/common/*.py` mid-campaign is safe **only** for additive
-  registry changes and only because every job passes `--tech` explicitly; the
-  TSMC6 restore did exactly that, and the HEAD-vs-`d2ea720` control covers it.
+* **Editing code mid-campaign cost one cell.** The TSMC6 restore spans two
+  repos (parent + PyCMG submodule); a job that started between the two commits
+  died with `KeyError('tsmc6')` and was scored FAIL. Additive registry edits are
+  otherwise safe here because every job passes `--tech` explicitly — but the
+  cross-repo window is not, and the only reason it was noticed is the
+  HEAD-vs-`d2ea720` control. Prefer the V6.13.0 discipline: run long campaigns
+  from a frozen snapshot of the tree.

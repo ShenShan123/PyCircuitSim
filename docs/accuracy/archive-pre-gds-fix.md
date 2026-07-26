@@ -40,7 +40,8 @@
 | "The **three-basin simultaneous hold (5+12+16) is the open 15/16 target**." | DN §6.2 | `crit15m@xl` holds all **four** opamp basins with no recipe change. |
 | "`csob@large` is the documented complex-gate alternate." | DN alternates table | **Withdrawn** — post-fix it is 11/16 (the campaign's only regression) and now fails tsmc16-opamp, which production banks. Still the device/AC alternate. |
 | "`crit10@xl` covers tsmc16-opamp." | DN alternates table | **Withdrawn** — post-fix it fails that exact cell (gain err 100 %). Superseded by `crit15m@xl`. |
-| "The opamp **open-loop AC** gate is 0/4 at every tier for every family." | DN §8/§12.1, TF §6, PFN §7 | Falsified by the V7.1.0 re-gate — see `by-scale.md` §AC. |
+| "**AC pass-rate peaks at SMALL**" — a dQ/dV pole property that wants the opposite capacity to DC fixed points. | DN §8 (V6.6.5), TF §7, PFN §7 | **Retracted.** DirectNet device CS-amp AC is 7/8 · 8/8 · 8/8 · 7/8 across small→xl in the V7.1.0 re-gate: saturated at every capacity. The pre-fix 5/12 · 4/12 · 4/12 · 4/12 had both the level and the shape wrong. `by-scale.md` §5. |
+| "The opamp **open-loop AC** gate is 0/4 at every tier for every family." | DN §8/§12.1, TF §6, PFN §7 | **Falsified.** DirectNet `small` and BSIM-AR `small`/`medium` bank TSMC16; BSIM-AR `large` banks TSMC7. And part of the remaining denominator is unreachable by construction — `by-scale.md` §5's bias-resolution defect. |
 
 ---
 
