@@ -234,10 +234,12 @@ gds bug distorted recipe rankings.
 | DirectNet `xl` | 2.91 | 2.35 | 2.73 (16/18) | 1.52 |
 | DirectNet `v660clean_large` | 2.60 | 1.31 | 1.72 (17/18) | 0.93 |
 | DirectNet `csob_large` | 2.29 | 1.58 | 0.43 | 1.15 |
+| DirectNet `corroft_xl` | 2.39 | 1.52 | — | 1.39 |
 | BSIM-AR `small` | 2.54 | 1.24 | 0.82 | 1.61 (13/14) |
 | BSIM-AR `medium` | 1.77 | 1.46 | 1.34 (17/18) | 1.57 (13/14) |
 | BSIM-AR `large` | 1.80 | 1.21 | 1.67 (16/18) | 1.58 (13/14) |
 | BSIM-AR `xl` | 1.94 | 2.92 | 1.08 | 1.07 |
+| BSIM-AR `corroft_medium` | — | 1.00 | — | — |
 | PFN `small` | 2.14 | 1.58 | 0.56 | 1.12 (13/14) |
 | PFN `large` | 2.65 | 1.52 | — | — |
 
@@ -251,10 +253,11 @@ gds bug distorted recipe rankings.
 | DirectNet `xl` | 1.66 | 1.45 | 1.52 | 1.48 |
 | DirectNet `v660clean_large` | 1.68 | 1.46 | 1.50 | 1.47 |
 | DirectNet `csob_large` | 1.69 | 1.46 | 1.50 | 1.47 |
+| DirectNet `corroft_xl` | 1.68 | 1.46 | — | — |
 | BSIM-AR `small` | 2.54 | 1.47 | 1.53 | 1.60 |
 | BSIM-AR `medium` | 1.80 | 1.52 | 1.52 | 1.50 |
-| PFN `small` | 1.88 | 1.44 | 1.50 | — |
-| PFN `large` | 2.23 | — | — | — |
+| PFN `small` | 1.88 | 1.44 | 1.50 | 1.48 |
+| PFN `large` | 2.23 | 1.49 | — | — |
 
 **Device CS-amp AC — NMOS / PMOS verdicts**
 
@@ -266,13 +269,15 @@ gds bug distorted recipe rankings.
 | DirectNet `xl` | ✗ f3db 2.51 / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
 | DirectNet `v660clean_large` | ✗ f3db 1.78 / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
 | DirectNet `csob_large` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
+| DirectNet `corroft_xl` | ✓ / ✓ | ✓ / ✓ | ✗ f3db nan / ✗ f3db nan | ✓ / ✓ |
 | DirectNet `crit15m_xl` | ✓ / ✓ | — | — | — |
 | BSIM-AR `small` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
 | BSIM-AR `medium` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
-| BSIM-AR `large` | ✓ / ✓ | — | — | — |
+| BSIM-AR `large` | ✓ / ✓ | — | — | ✓ / ✓ |
 | BSIM-AR `xl` | — | ✗ f3db nan / ✗ f3db nan | — | — |
-| BSIM-AR `corroft_medium` | ✓ / ✓ | ✗ f3db nan / ✗ f3db nan | — | — |
+| BSIM-AR `corroft_medium` | ✓ / ✓ | ✓ / ✓ | — | — |
 | PFN `small` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
+| PFN `medium` | ✓ / ✓ | — | — | — |
 | PFN `large` | ✓ / ✓ | ✓ / ✓ | — | — |
 
 ## 5. TSMC6 — the controlled repeat

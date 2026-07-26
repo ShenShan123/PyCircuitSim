@@ -1,0 +1,208 @@
+# Accuracy by technology — TSMC5 / 7 / 12 / 16, and TSMC6
+
+Cross-family, cross-scale view along the **technology** axis. Companion pivots:
+[`by-scale.md`](by-scale.md) (capacity), [`by-recipe.md`](by-recipe.md)
+(training recipe). Gate definitions and the code-state ladder:
+[`methodology.md`](methodology.md).
+
+---
+
+## 1. The technologies
+
+| tech | VDD | VT variants | local vocab | gate VT | what makes it hard |
+|---|---|---|---|---|---|
+| **TSMC5** | **0.65 V** | svt, lvt, ulvt, elvt | 5 (4 + UNKNOWN) | lvt | Lowest supply, steepest transfer curve. The ring's switching edge sits where the NN under-drives, and the opamp bias is the most fragile of the four. |
+| **TSMC7** | **0.75 V** | svt, lvt, ulvt | 4 (3 + UNKNOWN) | ulvt | The other steep low-VDD tech. Carries the single hardest cell in the project (`tsmc7-opamp` at DirectNet `large`) and the worst device-DC NMOS surface of the four. |
+| **TSMC12** | 0.80 V | svt, lvt, ulvt, hvt, lnvt | 6 (5 + UNKNOWN) | svt | Comfortable on rings and opamps; its weak cell is **switchcap** (the charge/off-state surface), which is where PFN loses it. Off-grid NFIN=10 also probes its 6→21 sampling gap. |
+| **TSMC16** | 0.80 V | svt, lvt, ulvt, hvt, lnvt | 6 (5 + UNKNOWN) | svt | The easiest of the four on rings; its opamp basin is tier-dependent and was the last cell production banked (V6.13.0, 7.69 %). |
+| **TSMC6** ⚠ | 0.75 V | svt, lvt, ulvt | 4 (3 + UNKNOWN) | ulvt | **Not a fifth technology — TSMC7 relabelled** (§5). Carried as a deliberate repeat experiment, scored in its own /4 column and never folded into the /16. |
+
+The split that matters is **VDD**: TSMC5/7 at 0.65–0.75 V behave as one class and
+TSMC12/16 at 0.80 V as another, on every axis in this file. TSMC6 sits, by
+construction, exactly on top of TSMC7.
+
+## 2. Which cells are actually hard
+
+Every post-fix single-run verdict, over the 27 checkpoint groups re-gated in
+V6.13.0 (all three families, every recipe and tier on disk). TSMC6 is excluded
+here — it has no post-fix groups yet, and including a duplicate of TSMC7 would
+bias the census (§5).
+
+
+<!--CENSUS-->
+
+Read column-wise:
+
+* **`sram_snm` is solved.** 27/27 in every tech — 108/108 cells across every
+  family, recipe and tier.
+  (Caveat: the `force_ic` half of that probe is currently a no-op —
+  `methodology.md` §8.2 — but the butterfly/positivity half is real.)
+* **Rings are a VDD story, not a tech story.** TSMC12 and TSMC16 pass 27/27;
+  TSMC5 and TSMC7 pass roughly half — and **every single ring failure, in all
+  three families, is a recipe without the corridor**. The converse is nearly
+  exact too: of the 27 ring passes on TSMC5/7, exactly one comes from a
+  non-corridor recipe (DirectNet `v660clean@large` on TSMC7, 4.82 % against a
+  5 % gate). See `by-recipe.md` §3.
+* **Opamps are the hard class everywhere** (18–23 of 27) but no longer
+  concentrated on one tech — that concentration was the gds bug
+  (`methodology.md` §6).
+* **Switchcap has only 7 failures in 108 cells, and they are two different
+  faults.** Three are PFN's TSMC12 **charge-half** near-misses (5.10–5.32 %
+  against a 5.0 % gate — the closest open cells in the project). The other four
+  are **droop-half** failures whose charge error is comfortably inside gate:
+  DirectNet `clean@small` on TSMC7 / TSMC12 / TSMC16 (TSMC12: charge 4.09 %,
+  droop 1.036 mV = 130 % of a 0.800 mV allowance) and PFN `large` on TSMC16
+  (4.99 %). TSMC5 never fails a switchcap cell.
+
+## 3. Per-tech detail — every re-gated checkpoint group
+
+Post-fix (V6.13.0, `d2ea720`), single-run OMP=1, verdict = gate exit code.
+The number is the gate's headline metric: ring period error %, opamp DC-gain
+error %, worst SRAM lobe NRMSE %, switchcap charge error % of VDD. Reproduced
+verbatim from `results/a3_regate/REPORT.md`.
+
+
+### TSMC5
+
+**TSMC5 in one line:** the ring is the wall — 13/27 groups pass it, and every
+pass has a corridor in its recipe. The opamp is *reachable* at every capacity
+(DirectNet `crit30f@large` 9.54 %, `crit15m@xl` 3.41 %, BSIM-AR 2.4–4.2 % at
+every tier), but DirectNet's 9.54 % production margin against a 10 % gate is the
+thinnest number in the whole matrix. SRAM and switchcap never fail.
+
+<!--MATRIX:TSMC5-->
+
+### TSMC7
+
+**TSMC7 in one line:** the only tech where a cell is open at production —
+`tsmc7-opamp` fails at DirectNet `large` and passes at DirectNet `small`
+(1.81 %), DirectNet `xl` (4.20 %) and *every* BSIM-AR tier (0.55–7.3 %), so it
+is a basin property of that one tier, not a fidelity wall. Its ring behaves like
+TSMC5's. It also owns the worst device-DC surface: BSIM-AR's tsmc7-NMOS NRMSE
+*grows* with capacity (3.37 → 4.07 → 4.77 % small→large).
+
+<!--MATRIX:TSMC7-->
+
+### TSMC12
+
+**TSMC12 in one line:** rings are free (27/27) and opamps are the most reliable
+of the four (23/27), but it owns the **switchcap** weakness — PFN misses it at
+all three tiers by 0.1–0.3 pp, which is the single closest open cell in the
+project. It is also the tech whose off-grid NFIN=10 case exposes PFN's
+context-anchored geometry interpolation (`PFN-L75-accuracy.md` §3).
+
+<!--MATRIX:TSMC12-->
+
+### TSMC16
+
+**TSMC16 in one line:** the easiest tech on rings (27/27, margins 1.5–3.2 %) and
+the cell production banked last — `tsmc16-opamp` closed in V6.13.0 at 7.69 %
+strict, after being the cell that every pre-fix recipe study fought over. Two
+alternates (`csob@large`, `crit10@xl`) were documented *because* they held this
+basin and both now fail it, which is the cleanest illustration of how much the
+gds bug distorted recipe rankings.
+
+<!--MATRIX:TSMC16-->
+
+
+## 4. Device-level fidelity by technology
+
+<!--DEVICE-->
+
+## 5. TSMC6 — the controlled repeat
+
+**TSMC6 is TSMC7 relabelled.** That is settled, and restoring it does not
+reopen it: `tsmc6_{nmos,pmos}.npz` are `array_equal` to `tsmc7_*` over
+1.8 M / 2.2 M rows, every differing PDK key is a TSMC TMI extension with zero
+occurrences in the BSIM-CMG Verilog-A, and two LEVEL=72 Id-Vgs sweeps match to
+the last printed digit (`methodology.md` §7).
+
+It was deleted in V6.13.0 for exactly that reason, and **restored in V7.1.0 by
+explicit decision** — because a duplicate technology is the one thing this
+project has never been able to buy any other way: **a controlled repeat.** Same
+data, same recipe, same code, different training run. Every "recipe A beats
+recipe B by one cell" claim in this repo has an unmeasured run-to-run variance
+underneath it, and TSMC6 is the only instrument that measures it.
+
+`assert_tech_is_distinct()` still flags the collision; `tsmc6`↔`tsmc7` is the
+sole entry in `ACKNOWLEDGED_DUPLICATE_TECHS`, so the guard prints loudly and
+continues instead of raising. TSMC6 holds tail codes 22-24, so its presence
+renumbers nothing.
+
+**Scoring rule: TSMC6 is a /4 column of its own, never part of the /16.**
+Folding a duplicate into the headline denominator would inflate every total.
+
+### What the first repeat already showed
+
+The V6.11.0 run against the V6.13.0 re-gate of TSMC7 is the sharpest evidence in
+the project that pre-fix rankings were unreliable: the two disagreed by **68.2 %
+vs 2.0 %** on SRAM SNM error at NFIN=2, which the project had been reading as
+per-tech difficulty. After the gds fix the same comparison lands at 5.2 % vs
+6.2 % — a 66.2 pp gap collapsing to **1.0 pp**. *Part of the "training lottery"
+variance that recipes were ranked against was the wrong Jacobian, not
+stochasticity.*
+
+The other casualty is the recorded claim *"BSIM-AR is the only family to bank
+the tsmc6 opamp (9.83 %) while tsmc7-opamp is the universal ceiling"*: 9.83 % is
+the *same number* as BSIM-AR's tsmc7-opamp clean-medium pass, because it was the
+same measurement. PFN, by contrast, read flat 2/4 across all three sizes on the
+duplicated data, agreeing with its TSMC7 rows — the reassuring case, and the
+family whose gates were already flip-free.
+
+### V7.1.0 status
+
+Datasets regenerated from the kept vendor PDK; all three families are being
+re-trained at **all four scales** (24 checkpoints, one clean recipe) and will be
+gated on the same 4-cell matrix. Driver: `scripts/tsmc6_restore_campaign.sh`.
+Until those land, the tables below are the **V6.11.0 pre-fix** run, recovered
+from commit `a96112a`, and are the "before" half of the repeat.
+
+**DirectNet** — complex 4-cell, and device/inverter (pre-fix):
+
+| size | complex | ring period_err% | opamp gain_err% | sram lobeNRMSE% | switchcap chg_err% |
+|---|---|---|---|---|---|
+| small | 1/4 | 5.94 ✗ | 10.33 ✗ | 3.66 ✓ | 2.34 ✗ (droop) |
+| medium | 2/4 | 10.86 ✗ | rails ✗ | 3.31 ✓ | 2.81 ✓ |
+| **large** | **3/4** | **4.82 ✓** | rails ✗ | 3.61 ✓ | 2.45 ✓ |
+| xl | 2/4 | 14.31 ✗ | rails ✗ | 2.93 ✓ | 2.67 ✓ |
+
+| size | NMOS DC nrmse/mre% | PMOS DC nrmse/mre% | inv VTC% | inv tran% | dev-AC |
+|---|---|---|---|---|---|
+| small | 3.88 / 17.47 | 0.91 / 5.39 | 2.62 | 1.20 | 2/3 |
+| medium | 6.84 / 17.49 | 0.06 / 0.46 | 2.48 | 1.19 | 1/3 |
+| large | 2.02 / 5.70 | 0.04 / 0.61 | 1.79 | 0.98 | 2/3 |
+| xl | 6.69 / 17.31 | 0.04 / 0.62 | 1.19 | 0.78 | 1/3 |
+
+**BSIM-AR** — complex 4-cell, and device/inverter (pre-fix):
+
+| size | complex | ring period_err% | opamp gain_err% | sram lobeNRMSE% | switchcap chg_err% |
+|---|---|---|---|---|---|
+| small | 2/4 | 5.97 ✗ | 13.61 ✗ | 2.10 ✓ | 2.46 ✓ |
+| **medium** | **3/4** | 7.41 ✗ | **9.83 ✓** | 2.19 ✓ | 2.62 ✓ |
+| large | 2/4 | 11.19 ✗ | 12.78 ✗ | 3.22 ✓ | 2.64 ✓ |
+| xl | 2/4 | 12.55 ✗ | 10.13 ✗ | 2.21 ✓ | 2.73 ✓ |
+
+| size | NMOS DC nrmse/mre% | PMOS DC nrmse/mre% | inv VTC% | inv tran% |
+|---|---|---|---|---|
+| small | 3.37 / 11.32 | 0.56 / 2.29 | 1.48 | 1.21 |
+| medium | 4.07 / 11.71 | 0.16 / 0.85 | 2.97 | 1.15 |
+| large | 4.77 / 12.54 | 0.10 / 0.55 | 2.35 | 1.18 |
+| xl | 6.41 / 16.79 | 0.06 / 0.15 | 1.78 | 1.00 |
+
+**PFN** — complex 4-cell, and device/inverter (pre-fix; the V6.11.0 run had no
+xl tier, which V7.1.0's `("tabpfn","xl")` preset closes):
+
+| size | complex | ring period_err% | opamp gain_err% | sram lobeNRMSE% | switchcap chg_err% |
+|---|---|---|---|---|---|
+| small | 2/4 | 8.22 ✗ | rails ✗ | 2.29 ✓ | 2.94 ✓ |
+| medium | 2/4 | 9.93 ✗ | rails ✗ | 1.75 ✓ | 2.94 ✓ |
+| large | 2/4 | 12.38 ✗ | rails ✗ | 4.92 ✓ | 2.85 ✓ |
+| xl | *(V7.1.0, training)* | | | | |
+
+| size | NMOS DC nrmse/mre% | PMOS DC nrmse/mre% | inv VTC% | inv tran% | dev-AC |
+|---|---|---|---|---|---|
+| small | 3.57 / 10.24 | 0.04 / 0.40 | 1.07 | 1.15 | 2/3 |
+| medium | 3.80 / 8.01 | 0.05 / 0.59 | 1.06 | 0.97 | 1/3 |
+| large | 4.75 / 11.22 | 0.03 / 0.64 | 1.06 | 1.17 | 2/3 |
+
+PFN's inverter VTC (~1.06 %) is the tightest of the three families on this data.

@@ -110,41 +110,7 @@ Parametric DC is **gds-invariant** (`methodology.md` §6), so DC numbers are
 comparable across the whole campaign history; transient and AC are not, and are
 re-measured below.
 
-**Parametric DC — `verify_nn_multi_tech_dc`, 55 configs**
-
-| family | tier | pass | mean NRMSE % — TSMC5 / 7 / 12 / 16 |
-|---|---|---|---|
-| DirectNet | small | 55/55 | 2.39 / 1.81 / 0.57 / 0.62 |
-| DirectNet | medium | 55/55 | 1.48 / 1.46 / 0.56 / 0.58 |
-| DirectNet | large | 54/55 | 1.91 / 1.21 / 1.69 / 1.01 |
-| DirectNet | xl | 53/55 | 2.91 / 2.35 / 2.73 / 1.52 |
-| BSIM-AR | small | 54/55 | 2.54 / 1.24 / 0.82 / 1.61 |
-| BSIM-AR | medium | 53/55 | 1.77 / 1.46 / 1.34 / 1.57 |
-| BSIM-AR | large | 52/55 | 1.80 / 1.21 / 1.67 / 1.58 |
-| BSIM-AR | xl | 55/55 | 1.94 / 2.92 / 1.08 / 1.07 |
-| PFN | small | 54/55 | 2.14 / 1.58 / 0.56 / 1.12 |
-
-**Parametric transient — `verify_nn_multi_tech_tran`, 64 configs**
-
-| family | tier | pass | mean NRMSE % — TSMC5 / 7 / 12 / 16 |
-|---|---|---|---|
-| DirectNet | small | 64/64 | 2.99 / 1.53 / 2.07 / 1.62 |
-| DirectNet | medium | 64/64 | 1.90 / 1.48 / 1.52 / 1.47 |
-| DirectNet | large | 64/64 | 1.67 / 1.46 / 1.49 / 1.47 |
-| DirectNet | xl | 64/64 | 1.66 / 1.45 / 1.52 / 1.48 |
-| BSIM-AR | small | 64/64 | 2.54 / 1.47 / 1.53 / 1.60 |
-| BSIM-AR | medium | 64/64 | 1.80 / 1.52 / 1.52 / 1.50 |
-| PFN | small | 64/64 | 1.88 / 1.44 / 1.50 / 1.48 |
-
-**Non-tier (recipe) stems measured in the same pass**
-
-| stem | device AC | opamp AC | DC | tran |
-|---|---|---|---|---|
-| `dn/v660clean_large` | 7/8 | 0/4 | 54/55 | 64/64 |
-| `dn/csob_large` | 8/8 | 1/4 | 55/55 | 64/64 |
-| `dn/corroft_xl` | 6/8 | 0/4 | — | — |
-| `dn/crit15m_xl` | 2/2 | 0/0 | — | — |
-| `tf/corroft_medium` | 4/4 | 2/4 | — | — |
+<!--V710-DEV-->
 
 Reading the DC column: **`medium` is the best device fit for DirectNet**, and
 `large`'s slightly worse device numbers are the price of the curriculum
@@ -165,37 +131,7 @@ pre-fix measurement until now.
 > their (much slower) cells complete. A row reading `1/1` is one measured cell,
 > not a complete tier. Raw per-cell data: `results/v710_regate/REPORT.md`.
 
-**Device CS-amp AC (gate: gain0 ≤1.5 dB, f3db ratio ∈[0.7,1.43], magNRMSE ≤10 %)**
-
-| family | tier | pass | per-tech (n = NMOS, p = PMOS) |
-|---|---|---|---|
-| DirectNet | small | **7/8** | TSMC5: n✓ p✓ · TSMC7: n✗ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
-| DirectNet | medium | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
-| DirectNet | large | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
-| DirectNet | xl | **7/8** | TSMC5: n✗ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
-| BSIM-AR | small | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
-| BSIM-AR | medium | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
-| BSIM-AR | large | **4/4** | TSMC5: n✓ p✓ · TSMC7: — · TSMC12: — · TSMC16: n✓ p✓ |
-| BSIM-AR | xl | **0/2** | TSMC5: — · TSMC7: n✗ p✗ · TSMC12: — · TSMC16: — |
-| PFN | small | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
-| PFN | medium | **2/2** | TSMC5: n✓ p✓ · TSMC7: — · TSMC12: — · TSMC16: — |
-| PFN | large | **4/4** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: — · TSMC16: — |
-
-**Opamp open-loop AC (gate: DC-gain err ≤3 dB, GBW ratio ∈[0.6,1.67], PM err ≤15°, and a non-railed NN OP; magNRMSE reported, not gated). The number shown is the DC-gain error**
-
-| family | tier | pass | TSMC5 | TSMC7 | TSMC12 | TSMC16 |
-|---|---|---|---|---|---|---|
-| DirectNet | small | **1/4** | FAIL 2.41 dB | FAIL 19.50 dB | FAIL 42.27 dB | PASS 1.78 dB |
-| DirectNet | medium | **0/4** | FAIL 22.02 dB | FAIL 29.46 dB | FAIL 27.69 dB | FAIL 35.11 dB |
-| DirectNet | large | **0/4** | FAIL 3.31 dB | FAIL 31.88 dB | FAIL 6.44 dB | FAIL 4.98 dB |
-| DirectNet | xl | **0/4** | FAIL 14.72 dB | FAIL 31.48 dB | FAIL 208.73 dB | FAIL 3.73 dB |
-| BSIM-AR | small | **1/4** | FAIL 0.39 dB | FAIL 11.33 dB | FAIL 10.27 dB | PASS 0.54 dB |
-| BSIM-AR | medium | **1/4** | FAIL 4.63 dB | FAIL 11.13 dB | FAIL 0.17 dB | PASS 2.62 dB |
-| BSIM-AR | large | **2/4** | FAIL 2.54 dB | PASS 0.12 dB | FAIL 4.34 dB | PASS 0.33 dB |
-| BSIM-AR | xl | **1/4** | FAIL 24.95 dB | FAIL 3.86 dB | FAIL 5.18 dB | PASS 0.97 dB |
-| PFN | small | **0/4** | FAIL 16.04 dB | FAIL 30.04 dB | FAIL 8.46 dB | FAIL 4.44 dB |
-| PFN | medium | **1/2** | FAIL 15.61 dB | PASS 0.84 dB | — | — |
-| PFN | large | **0/2** | FAIL 5.32 dB | FAIL 30.99 dB | — | — |
+<!--V710-AC-->
 
 ### What this changes
 
