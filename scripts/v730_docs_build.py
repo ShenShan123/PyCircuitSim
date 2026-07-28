@@ -459,15 +459,53 @@ def scoreboard(_tag=None, _recipes=None) -> str:
         r = f"{rl} **{rp}/{rn}**" if rn else "*(none trained)*"
         out.append(f"| {lvl} | **{FAM[tag]}** | {role} | {c} | {r} | {cost} |")
     out.append("")
-    out.append("Strict = passes at OMP ∈ {1, 2, 4}. Clean groups score **/20** "
-               "(4 circuits × 5 techs); recipe groups score **/16** because "
-               "curriculum checkpoints exist for the four original techs only. "
-               "Compare the fractions, not the counts.")
+    out.append("Strict = passes at OMP ∈ {1, 2, 4}. " + denominator_note(None, None))
     return "\n".join(out)
+
+
+def _techs_measured(tag: str, recipes: bool) -> List[str]:
+    """Techs with at least one measured complex cell in this report's groups."""
+    got = []
+    for tech in TECHS:
+        for _, key in _groups(tag, recipes):
+            if any(strict(tag, _variant(tag, key, tech, recipes), c, tech)[0]
+                   for c in CIRCS):
+                got.append(tech)
+                break
+    return got
+
+
+def denominator_note(tag: Optional[str], recipes: Optional[bool]) -> str:
+    """State the denominator the tables actually use, never the intended one.
+
+    TSMC6 recipe checkpoints are trained in V7.3.0, so a recipe report is /16
+    before that wave lands and /20 after. Writing either number into the prose
+    guarantees it is wrong half the time; deriving it cannot be.
+    """
+    if tag is None:
+        scopes = [(t, r) for t in ("dn", "tf", "pfn") for r in (False, True)]
+    else:
+        scopes = [(tag, bool(recipes))]
+    sizes = {len(_techs_measured(t, r)) * 4 for t, r in scopes}
+    sizes.discard(0)
+    if sizes == {20}:
+        return ("Totals are **/20** — 4 circuits × 5 techs, TSMC6 included "
+                "(`methodology.md` §2). Earlier reports scored /16 over four "
+                "techs, so a "
+                "/20 total here and a /16 total there can be the same "
+                "measurement.")
+    if not sizes:
+        return "No complex cells measured yet."
+    lo, hi = min(sizes), max(sizes)
+    span = f"**/{lo}**" if lo == hi else f"**/{lo}–/{hi}**"
+    return (f"Totals are {span}, against the /20 these reports target "
+            f"(4 circuits × 5 techs): some groups have no TSMC6 checkpoint "
+            f"measured yet. **Compare the fractions, not the counts.**")
 
 
 BUILDERS = {
     "SCOREBOARD": lambda tag, recipes: scoreboard(),
+    "DENOM": denominator_note,
     "HEADLINE": headline,
     "TESTCASE": testcase_tables,
     "BYTECH": by_tech_rollup,
