@@ -116,6 +116,47 @@ _SHARED_NORM_STATS: Dict[Tuple[str, int, int], NormStats] = {}
 # process; staleness is caught by the (mtime, size) part of the keys.
 _RESOLVED_PATH_CACHE: Dict[str, str] = {}
 
+# V7.2.0 Phase 2c — shared per-(norm file, device) inference tensors.
+# ``_setup_gpu`` used to allocate 6 identical small tensors per device
+# instance (~43k redundant allocations at 6144 devices). All are
+# read-only inputs to elementwise ops, so sharing is bit-identical.
+_SHARED_NORM_TENSORS: Dict[Tuple, Tuple[torch.Tensor, ...]] = {}
+_SHARED_GEO_TENSORS: Dict[Tuple, torch.Tensor] = {}
+_SHARED_CODE_TENSORS: Dict[Tuple, torch.Tensor] = {}
+
+# V7.2.0 Phase 2c — per-model cache of the stacked (N, 3) geometry and
+# (N,) tech-code tensors ``batch_eval`` rebuilt from Python lists every
+# NR iteration (plan §3.3b). Keyed on the row VALUES (NFIN, L, T,
+# tech_code per member, in order), not on device identity: group
+# membership varies per iteration (warm-cached devices are skipped), and
+# a value key makes any same-shaped membership share one entry — on a
+# geometry-uniform SRAM array every subset of size N collapses to a
+# single key. The stats behind ``_geo_norm_t`` are fixed per model
+# (checkpoint and norm file are 1:1), so the key fully determines the
+# rows and a hit is bit-identical to a rebuild.
+_STACK_CACHE_CAP = 64
+
+
+def _stacked_group_inputs(
+    model: torch.nn.Module, devs: List["_MOSFETNNBase"],
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    key = tuple(
+        (m.NFIN, m.L, m.temperature, m._tech_code) for m in devs)
+    cache = getattr(model, "_pcs_stack_cache", None)
+    if cache is None:
+        cache = {}
+        model._pcs_stack_cache = cache
+    hit = cache.get(key)
+    if hit is None:
+        if len(cache) >= _STACK_CACHE_CAP:
+            cache.clear()
+        hit = (
+            torch.stack([m._geo_norm_t for m in devs], dim=0),
+            torch.cat([m._tech_code_tensor for m in devs], dim=0),
+        )
+        cache[key] = hit
+    return hit
+
 
 def _resolve_path_cached(path: Path) -> str:
     s = str(path)
@@ -365,24 +406,48 @@ class _MOSFETNNBase(Component):
         # The shared module was already moved to this device when it was
         # built (Phase 1c) — the device is a process singleton, so no
         # per-instance ``model.to`` is needed.
-        self._tech_code_tensor = self._tech_code_tensor.to(self._device)
+        dev_key = str(self._device)
+
+        # V7.2.0 Phase 2c: all constant tensors below are shared per
+        # distinct value key — they used to be allocated per device
+        # instance. Read-only by contract (elementwise-op inputs only).
+        code_key = (self._tech_code, dev_key)
+        code_t = _SHARED_CODE_TENSORS.get(code_key)
+        if code_t is None:
+            code_t = self._tech_code_tensor.to(self._device)
+            _SHARED_CODE_TENSORS[code_key] = code_t
+        self._tech_code_tensor = code_t
+
+        geo_key = (
+            self._norm_key, dev_key, self.NFIN, self.L, self.temperature)
+        geo_t = _SHARED_GEO_TENSORS.get(geo_key)
+        if geo_t is None:
+            geo_t = torch.tensor(
+                self._geo_norm, dtype=torch.float32, device=self._device)
+            _SHARED_GEO_TENSORS[geo_key] = geo_t
+        self._geo_norm_t = geo_t
 
         s = self._norm_stats
-        self._geo_norm_t = torch.tensor(
-            self._geo_norm, dtype=torch.float32, device=self._device)
-        v_std = s.input_std[:4].copy()
-        v_std[v_std < 1e-12] = 1.0
-        self._v_mean = torch.tensor(
-            s.input_mean[:4], dtype=torch.float32, device=self._device)
-        self._v_std_t = torch.tensor(
-            v_std, dtype=torch.float32, device=self._device)
-        self._v_min = torch.tensor(
-            s.input_min[:4], dtype=torch.float32, device=self._device)
-        self._v_max = torch.tensor(
-            s.input_max[:4], dtype=torch.float32, device=self._device)
-        v_range = torch.clamp(self._v_max - self._v_min, min=0.01)
-        # Smooth-clamp sharpness; margin = 5% of per-dim training range
-        self._clamp_beta = (1.0 / (0.05 * v_range)).to(self._device)
+        norm_key = (self._norm_key, dev_key)
+        shared = _SHARED_NORM_TENSORS.get(norm_key)
+        if shared is None:
+            v_std = s.input_std[:4].copy()
+            v_std[v_std < 1e-12] = 1.0
+            v_mean = torch.tensor(
+                s.input_mean[:4], dtype=torch.float32, device=self._device)
+            v_std_t = torch.tensor(
+                v_std, dtype=torch.float32, device=self._device)
+            v_min = torch.tensor(
+                s.input_min[:4], dtype=torch.float32, device=self._device)
+            v_max = torch.tensor(
+                s.input_max[:4], dtype=torch.float32, device=self._device)
+            v_range = torch.clamp(v_max - v_min, min=0.01)
+            # Smooth-clamp sharpness; margin = 5% of per-dim training range
+            clamp_beta = (1.0 / (0.05 * v_range)).to(self._device)
+            shared = (v_mean, v_std_t, v_min, v_max, clamp_beta)
+            _SHARED_NORM_TENSORS[norm_key] = shared
+        (self._v_mean, self._v_std_t, self._v_min, self._v_max,
+         self._clamp_beta) = shared
 
     # ── Voltage prep: source shift + smooth clamp + z-score ──────────
 
@@ -633,10 +698,8 @@ class _MOSFETNNBase(Component):
                 raw_v[key], dtype=torch.float32, device=ref._device)
             v_norm = ref._clamp_norm_voltages(v_raw)
             x_v = v_norm.detach().requires_grad_(True)
-            x_g = torch.stack([m._geo_norm_t for m in devs], dim=0)
+            x_g, tech_codes = _stacked_group_inputs(ref._nn_model, devs)
             x_full = torch.cat([x_v, x_g], dim=1)
-            tech_codes = torch.cat(
-                [m._tech_code_tensor for m in devs], dim=0)
 
             need_caps = any(m._caps_required for m in devs)
             id_col = ref._mcol("id")
@@ -648,6 +711,8 @@ class _MOSFETNNBase(Component):
                     out, grad_id, grad_qg, grad_qd = ref._fused_eval(
                         ref._nn_model, x_full, tech_codes,
                         id_col, qg_col, qd_col, need_caps)
+                out, grad_id, grad_qg, grad_qd = ref._to_host_block(
+                    out, grad_id, grad_qg, grad_qd)
                 for i, m in enumerate(devs):
                     v_d_nn, _, v_s_nn, _ = raw_v[key][i]
                     m._eval_cache = m._unpack_eval(
@@ -683,6 +748,8 @@ class _MOSFETNNBase(Component):
                         out[:, qd_col].sum(), x_v,
                         create_graph=False, retain_graph=False)[0]
 
+            out, grad_id, grad_qg, grad_qd = ref._to_host_block(
+                out, grad_id, grad_qg, grad_qd)
             rows = raw_v[key]
             tuples = v_tuples[key]
             for i, m in enumerate(devs):
@@ -696,6 +763,40 @@ class _MOSFETNNBase(Component):
                 m._cache_has_caps = need_caps
 
     # — small helpers —
+
+    @staticmethod
+    def _to_host_block(
+        out: torch.Tensor,
+        grad_id: torch.Tensor,
+        grad_qg: Optional[torch.Tensor],
+        grad_qd: Optional[torch.Tensor],
+    ) -> Tuple[torch.Tensor, torch.Tensor,
+               Optional[torch.Tensor], Optional[torch.Tensor]]:
+        """V7.2.0 Phase 2a-lite: one D2H move for the whole result block.
+
+        The per-device unpack loop calls ``.tolist()`` per row; on a CUDA
+        tensor every row is a separate device sync — the measured reason
+        the unmodified latent GPU path gained ~nothing (plan §3.3). Here
+        the (N, 13) outputs and the (N, 4) Jacobian rows are concatenated
+        and moved to the host in a single transfer, then sliced back.
+
+        On CPU this returns the inputs untouched (no copy, no reorder).
+        The CUDA path copies values exactly (a transfer, not arithmetic),
+        so unpacked results are bit-identical to per-row readback.
+        """
+        if out.device.type == "cpu":
+            return out, grad_id, grad_qg, grad_qd
+        ncols = out.shape[1]
+        parts = [out.detach(), grad_id.detach()]
+        if grad_qg is not None and grad_qd is not None:
+            parts += [grad_qg.detach(), grad_qd.detach()]
+        blk = torch.cat(parts, dim=1).cpu()
+        out_h = blk[:, :ncols]
+        grad_id_h = blk[:, ncols:ncols + 4]
+        if grad_qg is not None and grad_qd is not None:
+            return (out_h, grad_id_h,
+                    blk[:, ncols + 4:ncols + 8], blk[:, ncols + 8:ncols + 12])
+        return out_h, grad_id_h, None, None
 
     def _forward_model(self, x_full: torch.Tensor) -> torch.Tensor:
         """Override in BSIMAR subclass to call the AR-inference forward."""
