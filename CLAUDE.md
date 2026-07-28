@@ -271,6 +271,36 @@ checkpoint is streamed, not with FLOPs. Measurements + dead ends:
   `DataLoader` to reproduce a historical run.
 - `NN_BATCHED_EVAL=0` — pre-existing opt-out of the batched multi-device eval.
 
+### V7.2.0 array-scaling knobs (SRAM-array workloads)
+
+Always-on bit-identical (V7.2.0 sessions 1–2): O(devices+checkpoints)
+parse; single-D2H result block; value-keyed stacked-input cache; the
+**batched denorm tail** (`_unpack_eval_batch` — §8.1 constraints: masked
+per-element `math.exp` + float64 casts, gated bit-exact by
+`tests/verify_batched_tail.py`); vectorised NR node loops + topology
+caches (`Circuit.invalidate_topology` — call it after any direct
+`components` mutation) + one LIL→CSR conversion per NR iteration.
+
+Perturbing opt-ins, **default OFF by scoreboard discipline** (fidelity
+is a CPU flag-off property). The CPU bundle {commit, stamp,
+order=NATURAL} **passed its §8.4 gates**: T3 16-gate = 15/16 strict,
+0 flips, binding cells 0.00 pp vs baseline — the production scoreboard
+cell-for-cell; T4 latch-basin 8/8, 0 flips in every config
+(`results/v720_gpu_regate/t3_cpu_bundle/VERDICT.md`). The GPU-axis T3
+pass is still pending:
+
+- `PYCIRCUITSIM_TRAN_BATCH_COMMIT=1` — batch the transient commit-path
+  eval (the 75–85 %-of-wall pathology; 4.2× on a 4×4 write op).
+- `PYCIRCUITSIM_NN_DEVICE=cuda[:N]` — GPU NN eval (default cpu; the
+  runtime enforces the T0 determinism pins on the CUDA path).
+- `PYCIRCUITSIM_BATCHED_STAMP=1` — NN devices stamp as one COO block
+  per NR iteration (7× on the stamp step at 16×16); LEVEL=72 stays
+  scalar.
+- `PYCIRCUITSIM_MNA_ORDERING=NATURAL` — explicit-splu column ordering.
+  **On real MNA matrices NATURAL wins 2.4–30× and MMD_AT_PLUS_A is
+  slower than shipped** — the synthetic-matrix §5.2 fill-explosion
+  claim is refuted (`scripts/bench_gpu/bench_ordering_real.py`).
+
 ### NN training (per-tech, LEVEL=73/74/75)
 
 Dedicated per-tech NMOS/PMOS checkpoints for **TSMC5/7/12/16 (+ TSMC6)** — all
@@ -384,6 +414,18 @@ references in `tests/references/`.
   the off path is bit-identical; cached == stock within 1e-4 rel on outputs +
   autograd Jacobians over 5 checkpoints × 3 batch sizes; the primer chunk is
   bit-identical; training mode falls back; the lever still pays (>1.15×).
+- **Batched denorm tail (V7.2.0 2a-full):** `verify_batched_tail.py` — 22
+  checks, no NGSPICE (the reference is the scalar `_unpack_eval` tail).
+  Demands **exact bit equality per element** across all 3 families ×
+  polarity × caps on/off over an adversarial Vds box; trips if the §8.1
+  constraints (masked libm `math.exp`, float64 casts) leave the shipped
+  code; covers the mixed-polarity (env double-pin) group and the
+  end-to-end `batch_eval` wiring.
+- **Latch-basin gate (V7.2.0 §8.4 T4):** `verify_latch_basin_gpu.py
+  --config {commit,gpu,stamp,order,…}` — full 6T latch, both stored
+  states, all 4 techs, per perturbing-flag config; 100 % same-basin
+  binding (the failure mode the flags could cause that no other gate
+  tests).
 - **Diagnostics** (`tests/diag_*.py`, **not** gates — L72-in-PyCircuitSim reference):
   `diag_l72_complex_control.py`, `diag_l72_switchcap_control.py`/`_uic_control.py`
   (prove L72-in-PyCircuitSim ≈ NGSPICE, isolating NN-surface gaps);

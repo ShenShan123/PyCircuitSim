@@ -8,6 +8,109 @@ lives in git history.)
 
 ---
 
+## V7.2.0 — GPU for large-scale SRAM transient, execution session 2 (2026-07-28)
+
+**The remaining implementation phases landed — the bit-identical NR-loop
+work (2a-full, 2d, 4a) ships default-on, the two remaining perturbing
+levers (3b batched stamping, 4a′ ordering) ship default-off behind
+flags, and the §8.4 gating machinery ran: T4 latch-basin passes every
+new config 8/8 with zero flips, and the T3 16-gate CPU-bundle campaign
+was built and executed.** Box loadavg ~1260–1290 throughout (the V7.3.0
+re-gate ran concurrently); all bit-comparisons and counts exact, walls
+±40 %.
+
+### Landed (branch `v720-gpu-scaling`, one commit per phase)
+
+- **Phase 2a-full (bit-identical, default-on)** `e6f8154` — the
+  per-device `_unpack_eval` loop in `batch_eval` became one float64
+  numpy pass over the (N, out_dim)+Jacobian block, shared by all three
+  NN families. The §8.1 constraints are enforced in code, not
+  convention: the Vds-correction exponential is per-element libm
+  `math.exp` over the masked subset (`np.exp` differs 1 ULP on ~4.6 %
+  of args, amplified ~60× by the `1−exp` cancellation exactly in the
+  SRAM off-device regime), and everything casts to float64 before any
+  arithmetic (NEP-50 keeps float32 → ~2e-7 rel, worse than VNTOL) with
+  dtype asserts. The 2c stacked-input cache now carries per-member
+  `_is_pmos`, so an env double-pin aliasing both polarities onto one
+  module still unpacks per-device. New gate
+  `tests/verify_batched_tail.py`: **22/22** — exact bit equality per
+  element (DN/AR/PFN × N/P × caps on/off, adversarial Vds box), §8.1
+  source tripwires, a 20k-point cancellation-regime sweep, the
+  mixed-polarity group, end-to-end wiring. Byte-identity A/B vs HEAD
+  (isolated ref-tree): DN/PFN/AR inverter DC + 4×4 SRAM write
+  transient, 2t flag off AND on — all sha256-equal.
+- **Phase 2d + 4a (bit-identical, default-on)** `1a576ed` — both NR
+  loops' per-node Python loops (current-iterate, NN trust-region,
+  deltas, snapshot, damped update, convergence test) vectorised over a
+  maintained `v_arr`; VS-constrained sets hoisted out of the iteration;
+  `Circuit` caches `get_nodes`/`get_node_map` behind
+  `invalidate_topology()` (+ a topology version counter; every in-repo
+  direct `components` mutation hooked; solver-side caches key on
+  `(version, len)` as belt-and-braces); `_nn_mosfets`/`_has_nn_device`
+  cached; one LIL→CSR conversion per NR iteration shared by residual +
+  solve + LM ladder. Same A/B set byte-identical **plus L72 inverter
+  OP + tran**; suite green; T4 `commit` 8/8.
+- **Phase 3b (perturbing, default OFF)** `4e9c396`,
+  `PYCIRCUITSIM_BATCHED_STAMP=1` — NN devices' DC + transcap stamps
+  assemble as one COO from cached static index arrays + the 2d voltage
+  vector; `A = lil.tocsr() + coo.tocsr()`; LEVEL=72/passives stay
+  scalar. Both §4.3 hazards handled (per-device `max(g_ds,gmin)`
+  before accumulation; the `abs(g_mb)>1e-12` dynamic mask reproduced).
+  **7.0×/6.1× (16×16/32×32) on the MOSFET stamp+convert step**
+  (101→14.4 ms, 409→66.6 ms, transient regime). The perturbation is
+  real but last-bit: on a real 4×4 transient matrix, 100/359 entries
+  differ at max rel 3.0e-15 — invisible at CSV precision, which is why
+  naive CSV A/Bs read "identical".
+- **Phase 4a′ (perturbing, default OFF)** `4e9c396`,
+  `PYCIRCUITSIM_MNA_ORDERING=<spec>` — explicit `splu` ordering. **The
+  plan-mandated re-measure on real matrices REFUTED §5.2's
+  synthetic-matrix claim**: on live-captured MNA systems (SRAM `.op`
+  16×16→128×64 + a true transcap-stamped write-transient matrix,
+  `scripts/bench_gpu/bench_ordering_real.py`) COLAMD fill is a benign
+  1.2–1.3× (the 399× blow-up was an artefact of
+  `bench_spsolve.build`), `MMD_AT_PLUS_A` is **0.2–0.7× — slower than
+  the shipped spsolve**, and **NATURAL wins 2.4–30×** (128×64 `.op`:
+  152.9 ms → 4.7 ms factor + 0.4 ms solve) at flat 1.3× fill, ≤5e-9
+  rel. Recommended spec: NATURAL. Consequence: 4b (KLU-class) demoted
+  again — under NATURAL the factorisation is ~7 ms/iter at 128×64.
+- **§8.4 gating — the CPU flag bundle is now GATED AND PASSING.**
+  T4 latch-basin: all five configs (`commit`, `stamp`, `order`,
+  `commit+stamp`, `commit+stamp+order`) **8/8, 0 basin flips**,
+  max|ΔV| ≤ 60 µV. T3 16-gate campaign
+  (`scripts/v720_t3_flag_bundle.sh`, 48 cells = 4 suites × 4 techs ×
+  OMP∈{1,2,4}, production DirectNet stems, per-cell isolated scratch):
+  **15/16 strict, 0 flips — the production scoreboard cell-for-cell.**
+  Binding sram_snm + switchcap deviate 0.00 pp from the flag-off
+  baseline at every tech and OMP; opamps match to 0.01 pp
+  (tsmc7-opamp stays its known consistent FAIL); rings match except
+  TSMC12 (2.68→3.49 %, inside the documented ±4 pp ring noise);
+  Rule-2 canary PASS. Verdict + raw logs:
+  `results/v720_gpu_regate/t3_cpu_bundle/VERDICT.md`. Per scoreboard
+  discipline the flags stay **default-off opt-ins** (fidelity remains
+  a CPU flag-off property); the GPU-axis T3 pass is the remaining
+  gate.
+- The T1 "branch-disagreement counter" roadmap item is resolved by the
+  Phase-0 §8 hit-rate measurement (`8a2a18b`): guard-F's boundary is
+  the **bulk regime** of an SRAM array (37 % of evals), so a
+  disagreement count can never bind — T2 (NR-tolerance agreement) and
+  T4 (basin agreement) are the binding tiers.
+
+### The number that summarises the session
+
+Same 4×4 write op, same box, same command: **146 s (session-1 baseline)
+→ 100.3 s flag-off (the bit-identical work, default-on for everyone) →
+20.3 s with {commit, stamp} = 7.2× total**, latch basins 8/8 preserved
+in every T4 config. Ordering is neutral at N=610 (22.7 s) — its 8–30×
+is the 128×64+ solver regime.
+
+### Still open after this session
+
+Phase 0 quiet-box re-run (box still contended); the GPU-axis T3 pass
+(`PYCIRCUITSIM_NN_DEVICE=cuda` + bundle — T4 `commit+gpu` 8/8 from
+session 1 stands); Track B (9a–9c, Vt-mismatch blocker unchanged).
+
+---
+
 ## V7.2.0 — GPU for large-scale SRAM transient, execution session 1 (2026-07-27)
 
 **The plan (`docs/plans/2026-07-26-v720-gpu-scaling.md`, rev 5 + status
