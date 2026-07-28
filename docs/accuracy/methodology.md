@@ -1,282 +1,275 @@
 # Accuracy methodology — the contract every number in `docs/accuracy/` obeys
 
-One file, so no report has to restate it and no two reports can drift. If a
-number anywhere in `docs/accuracy/` is not accompanied by an explicit exception,
-it was produced exactly as described here.
+One file, so no report restates it and no two reports drift. If a number
+anywhere in `docs/accuracy/` carries no explicit exception, it was produced
+exactly as described here.
 
 ---
 
 ## 1. Ground truth
 
-**NGSPICE on the *identical* BSIM-CMG (LEVEL=72) OSDI model**, repo build
+**NGSPICE on the *identical* BSIM-CMG (LEVEL=72) OSDI model** — repo build
 `tools/ngspice-45.2/bin/ngspice` (honoured via `NGSPICE_BIN`), modelcards
-resolved by `pycmg.tech`. Never a simplified, hand-derived or self-defined
-reference — the same netlist topology, the same geometry, the same supply, with
-only the MOSFET model swapped.
+resolved by `pycmg.tech`. Same netlist, same geometry, same supply; only the
+MOSFET model is swapped. Never a simplified, hand-derived or self-defined
+reference.
 
-BSIM-CMG itself is therefore never *graded* in these reports; it is the yardstick.
-Its own gate record (DC/tran/AC vs NGSPICE, five techs) lives in `../CHANGELOG.md`.
+BSIM-CMG is therefore never *graded* in these reports — it is the yardstick.
+Its own record against NGSPICE lives in `../CHANGELOG.md`. The three graded
+families are the NN compact models: **DirectNet** (73), **BSIM-AR** (74),
+**PFN** (75).
 
-The three graded families are the NN compact models: **DirectNet** (LEVEL=73),
-**BSIM-AR** (LEVEL=74), **PFN** (LEVEL=75).
-
-## 2. The complex-circuit gate matrix — 4 circuits × 4 techs = 16 cells
+## 2. The complex-circuit gate matrix — 4 circuits × 5 techs = 20 cells
 
 The authoritative accuracy number for a checkpoint set. Verdict = the
 `verify_complex_*` script's **exit code**, never a metric read by eye.
 
 | circuit | script | gate |
 |---|---|---|
-| **ring_osc** — 5-stage ring oscillator | `verify_complex_ring_osc.py` | oscillation period error ≤ **5 %** |
+| **ring_osc** — 5-stage ring oscillator | `verify_complex_ring_osc.py` | period error ≤ **5 %** |
 | **opamp** — two-stage Miller, DC sweep | `verify_complex_opamp.py` | open-loop DC gain error ≤ **10 %** (trip shift reported, not gated) |
 | **sram_snm** — 6T read-SNM butterfly | `verify_complex_sram_snm.py` | all lobes positive **and** lobe NRMSE ≤ **10 %**, across the NFIN corners |
-| **switchcap** — switched-cap unit cell | `verify_complex_switchcap.py` | charge-transfer error ≤ **5 % of VDD** and hold droop ≤ max(10 % of the NGSPICE droop, 0.1 % of VDD) |
+| **switchcap** — switched-cap unit cell | `verify_complex_switchcap.py` | charge-transfer error ≤ **5 % of VDD** **and** hold droop ≤ max(10 % of the NGSPICE droop, 0.1 % of VDD) |
 
-Techs: **TSMC5, TSMC7, TSMC12, TSMC16** — the four electrically distinct ones.
+Two gates have a **second criterion their headline metric cannot show** —
+switchcap's droop and sram_snm's lobe positivity. A cell can therefore FAIL
+with its reported number inside the threshold; the reports mark those with a
+dagger rather than leaving them looking self-contradictory.
 
-> **TSMC6 is scored separately, never folded into the /16.** It was retired in
-> V6.13.0 and restored in V7.1.0 (§7), but it remains TSMC7 relabelled, so
-> adding it to the headline denominator would double-count one technology and
-> inflate every total by a duplicate column. TSMC6 is reported as its own
-> **/4 repeat column** per (family, tier). Harness defaults that iterate every
-> registered tech therefore produce **/20**; the authoritative NN number is the
-> /16 subset plus the /4 repeat, quoted separately.
+Techs: **TSMC5, TSMC6, TSMC7, TSMC12, TSMC16**.
 
-The four circuits are chosen to load different parts of the NN surface: the ring
-loads the switching edge, the opamp the high-gain fixed point (output
-conductance), the SRAM the bistable latch, the switchcap the charge/off-state
-surface. A family can be excellent on three and fail the fourth; see
-`by-tech.md` for which cells actually separate the families.
+> **The denominator changed in V7.3.0.** TSMC6 is now folded into the headline,
+> so complex totals are **/20**, device AC **/10**, opamp AC **/5**. Every
+> report before V7.3.0 scored /16, /8 and /4 over the four electrically
+> distinct techs and quoted TSMC6 separately. **No total in the current reports
+> is comparable to a total in an older one without rescaling** — a V7.3.0
+> "16/20" and a V7.1.0 "13/16" can be the same measurement.
+>
+> This is a presentation decision, not a retraction: §7's finding that TSMC6 is
+> TSMC7 relabelled is unchanged, and the duplication is still a reason to read
+> a TSMC6-vs-TSMC7 difference as training-run luck.
+
+The four circuits load different parts of the NN surface — the ring the
+switching edge, the opamp the high-gain fixed point, the SRAM the bistable
+latch, the switchcap the charge/off-state surface. A family can be excellent on
+three and fail the fourth, which is why every report carries a per-testcase
+view.
 
 ## 3. Strict determinism — OMP ∈ {1, 2, 4}
 
 The opamp and ring cells sit on multistable fixed points, and GEMM thread count
-perturbs the last bits enough to land a different Newton basin. So:
+perturbs the last bits enough to land a different Newton basin. So every such
+cell is measured at
 
-```bash
+```
 OMP_NUM_THREADS = MKL_NUM_THREADS = PYCIRCUITSIM_TORCH_THREADS ∈ {1, 2, 4}
 ```
 
-* **strict PASS** = passes at all three thread counts.
-* **FLIP** = passes some, fails others. A FLIP is **not bankable** and is
-  counted as a fail; a single-run pass on a FLIP cell is an artifact.
+* **strict PASS** = passes at all three.
+* **FLIP** = passes some, fails others. Not bankable, counted as a fail; a
+  single-run pass on a FLIP cell is an artifact.
 * `sram_snm` and `switchcap` are deterministic under the thread pin and are
   taken from the single run.
 
-Since the V6.6.6 harness thread-pin, `OMP_NUM_THREADS` alone no longer moves
-torch's GEMM threading — `PYCIRCUITSIM_TORCH_THREADS` is what makes the probe
-exercise the multistability axis. Drivers: `scripts/opamp_sweep_def.sh`,
-`scripts/recipe_multirun_gate.sh`, `scripts/a3_omp_one.sh` (one OMP value per
-invocation, resumable), `scripts/v710_regate.sh`.
+`OMP_NUM_THREADS` alone stopped moving torch's GEMM threading at the V6.6.6
+harness thread-pin — `PYCIRCUITSIM_TORCH_THREADS` is what makes the probe
+exercise the multistability axis.
 
-> Since the V6.13.0 `gds` fix (§6) **every** re-measured group is flip-free.
-> FLIPs were a symptom of a wrong-signed Jacobian entry, not an intrinsic
-> property of high-gain circuits.
+Since the V6.13.0 `gds` fix (§6) flips became rare rather than endemic; they
+were a symptom of a wrong-signed Jacobian entry, not an intrinsic property of
+high-gain circuits. They are not extinct — treat a nonzero flip count in any
+report table as unbankable and re-measure.
 
 ## 4. Device-level suites
 
 | suite | what it gates |
 |---|---|
-| `verify_nn_dc_tran` | single-point resolver-path DC + transient (production checkpoints, 24 configs) |
+| `verify_nn_dc_tran` | single-point resolver-path DC + transient |
 | `verify_nn_multi_tech_dc` | parametric Id-Vgs over the full L / NFIN / VT sweep — NRMSE < **10 %** per config |
 | `verify_nn_multi_tech_tran` | parametric inverter transient, same sweep |
 | `verify_nn_ac` | device CS-amp small-signal: gain0 err ≤ **1.5 dB**, f3db ratio ∈ **[0.7, 1.43]**, magnitude NRMSE ≤ **10 %** (in-band phase reported, **not** gated) |
-| `verify_complex_opamp_ac` | two-stage Miller **open-loop AC**: DC-gain err ≤ **3 dB**, GBW ratio ∈ **[0.6, 1.67]**, PM err ≤ **15°** (magNRMSE reported, **not** gated) |
+| `verify_complex_opamp_ac` | two-stage Miller **open-loop AC**: DC-gain err ≤ **3 dB**, GBW ratio ∈ **[0.6, 1.67]**, PM err ≤ **15°**, non-railed OP |
 | `verify_nn_lifted_source_dc` | Rule 2 canary — source-relative frame, NRMSE ≤ 10 % |
 
-The AC suites are the ones that read the NN's **autograd charge derivatives**
-(`cgd = ∂qg/∂Vd`, …) rather than its current surface, so they move independently
-of the DC gates — a distinction that recurs throughout `by-scale.md`.
+The AC suites read the NN's **autograd charge derivatives** (`cgd = ∂qg/∂Vd`, …)
+rather than its current surface, so they move independently of the DC gates.
 
 Metrics reported per Rule 13: **MRE %, R², NRMSE, Max error**, per tech.
 
-## 5. Uniformity contract, isolation, hygiene
+## 5. Uniformity, isolation, hygiene
 
 * **Uniformity.** A recipe is *one identical addendum applied to every
   (tech × device × size) checkpoint* — never a per-tech or per-gate special.
   Curriculum recipes warm-start from **their own tier's** clean checkpoint,
   which is mechanical, not per-case. The V6.5.x hand-tuned per-case
-  interventions were retired in V6.6.0 for exactly this reason: they answered
-  "can a tuned checkpoint pass this gate?" instead of "how faithful is the model
-  under one recipe?".
+  interventions were retired in V6.6.0 because they answered "can a tuned
+  checkpoint pass this gate?" instead of "how faithful is the model under one
+  recipe?".
 * **Isolation.** Every cell gets its own `PYCIRCUITSIM_COMPLEX_RESULTS` /
-  `PYCIRCUITSIM_NN_RESULTS`; the harness scratch dirs are keyed by
+  `PYCIRCUITSIM_NN_RESULTS`. The harness scratch dirs are keyed by
   (circuit, tech) only, so parallel cells without isolation silently collide.
-* **CPU, never CUDA.** `CUDA_VISIBLE_DEVICES=""`. The fragile opamp fixed points
-  land in different NR basins under CUDA float.
+* **CPU, never CUDA.** `CUDA_VISIBLE_DEVICES=""`. Fragile opamp fixed points
+  land in different Newton basins under CUDA float.
 * **Checkpoint completion.** A bare `_best.pt` is *not* evidence of a finished
-  run — completed runs carry `*_best.pt.complete`. V6.6.5 found and retrained 22
-  killed-run checkpoints this way.
-* **Checkpoint selection.** Env pins `PYCIRCUITSIM_NN_CHECKPOINT_{DN,TF,PFN}_{NMOS,PMOS}`
-  are read first and **raise** if the stem is absent (no silent fallback, since
-  V6.6.6). `PYCIRCUITSIM_NN_FORCE_LEVEL={74,75}` retargets a LEVEL=73 deck to
-  BSIM-AR / PFN so the whole gate infrastructure runs any family with zero deck
-  changes.
-* **Denominators.** The authoritative complex matrix is **/16**
-  (4 circuits × TSMC5/7/12/16) and the device AC suite **/8** (4 techs × N/P).
-  A run that lets the harness iterate every registered tech yields /20 and /10
-  because TSMC6 is registered again — split that extra column out rather than
-  reporting the larger total (§2). Older text reporting /20, /10 or /12 carries
-  exactly the same duplicate.
+  run — the trainer writes it at every validation improvement. Completed runs
+  carry `*_best.pt.complete`. V6.6.5 found and retrained 22 killed-run
+  checkpoints this way.
+* **Checkpoint selection.** Env pins
+  `PYCIRCUITSIM_NN_CHECKPOINT_{DN,TF,PFN}_{NMOS,PMOS}` are read first and
+  **raise** if the stem is absent — no silent fallback.
+  `PYCIRCUITSIM_NN_FORCE_LEVEL={74,75}` retargets a LEVEL=73 deck at BSIM-AR or
+  PFN, so the whole gate infrastructure runs any family with zero deck changes.
+* **Thread-wait policy.** Gates export `OMP_WAIT_POLICY=passive` and
+  `KMP_BLOCKTIME=0`. On an oversubscribed host an OMP>1 cell otherwise spends
+  its time in busy-wait barriers — measured, a ring cell that takes 21 s at
+  OMP=1 exceeded 10 min at OMP=4 while accumulating CPU at ~50 % of one core.
+  This changes how threads wait, never how work is partitioned, so it is
+  numerically neutral.
 
-## 6. Code-state ladder — which numbers are comparable to which
+## 6. Code-state ladder — which numbers compare to which
 
-Three code states produced the numbers in these reports. **Comparisons across
-states are only valid where stated.**
+**Comparisons across states are only valid where stated.**
 
 | state | commit | what it is |
 |---|---|---|
-| **pre-fix** | ≤ `a96112a` | Everything up to V6.12.x. Measured with the **`gds` sign bug** present. |
-| **V6.13.0 post-fix** | `d2ea720` | The gds sign + guard fix (`8ed35bd`). Full re-gate: complex matrix for all 28 on-disk checkpoint groups + 10 strict-OMP sweeps + the resolver-default device suites. |
-| **V7.1.0** | HEAD | Post V7.0.x performance work (opt-in perf flags OFF, so numerics are the V6.13.0 numerics) + audit fix wave 1. Re-measures the **per-size / per-recipe device and AC suites** the V6.13.0 campaign did not reach, and extends the strict-OMP sweeps. |
+| **pre-fix** | ≤ `a96112a` | everything up to V6.12.x, measured with the `gds` sign bug present |
+| **V6.13.0** | `d2ea720` | the gds sign + guard fix; full complex re-gate of all on-disk groups |
+| **V7.1.0** | — | device + AC + strict-OMP re-gate; V7.0.x perf flags default-off, so the numerics are V6.13.0's |
+| **V7.3.0** | HEAD | this campaign: the BSIM-AR complex matrix, PFN `xl`, the surviving recipes, and PFN's first curriculum arm |
 
 ### The `gds` sign bug (fixed in `8ed35bd`, V6.13.0)
 
 Inference negated `gm`/`gmb` but **not** `gds`. All three are derivatives of the
 same signed `id`, so the sign comes from `id`'s convention, not from which
 variable is differentiated. The two-sided floor `max(gds, |id|·0.5)` then
-asserted an Early voltage ≤ 2 V — below the true median of every device (OSDI
-amplifying p50 3.3–9.8 V) — and overrode the learned output conductance at
-**90.9 %** of amplifying points. The floor was load-bearing **only because it
-masked the sign error**.
+asserted an Early voltage ≤ 2 V — below the true median of every device — and
+overrode the learned output conductance at **90.9 %** of amplifying points. The
+floor was load-bearing **only because it masked the sign error**.
 
-The fix is two changes that must ship together (measured: sign alone is
-bit-identical; the guard alone regresses device AC 8/10 → 5/10):
+The fix is two changes that must ship together (sign alone is bit-identical;
+the guard alone regresses device AC):
 
-1. **sign** — negate `gds` with `gm`/`gmb`. Autograd `d(id)/dVd` vs `-gds_head`
-   = 0.12 rel err, vs `+gds_head` = 2.08 (2.0 being the arithmetic signature of a
-   pure sign flip). OSDI `-d(id)/dVd` is positive at 100.0000 % of conducting
-   points over 111,630 evals across all 10 production devices.
+1. **sign** — negate `gds` with `gm`/`gmb`. OSDI `-d(id)/dVd` is positive at
+   100.0000 % of conducting points over 111,630 evaluations across all ten
+   production devices.
 2. **guard F** (`_floor_gds` → `_guard_gds`) — positives pass through
    **bit-identical**; only negatives clamp, to `|id|/50 V`. 50 V is above the
    measured maximum true Early voltage (43.4 V), so the guard cannot bind on a
-   physically correct value. `PYCIRCUITSIM_GDS_FLOOR_K` is now rejected loudly;
-   the knob is `PYCIRCUITSIM_GDS_GUARD_K` (default 0.02).
-
-**What moved, measured on production DirectNet:**
-
-| axis | pre-fix | post-fix |
-|---|---|---|
-| complex matrix, production `large` | 14/16 | **15/16** strict, zero FLIPs |
-| device AC (audit A3 arm, 5-tech basket) | 8/10 | **10/10** |
-| device AC (`verify_nn_ac`, 4-tech basket) | — | **8/8** |
-| `force_ic` SRAM latch probe | 2/5 | **5/5** |
-| parametric DC (55 configs) | 54/55 | **54/55, bit-identical** |
-| parametric transient (64 configs) | mean NRMSE 1.876 % | **1.512 %** (51 improved / 12 worsened) |
-| opamp OP | railed (TSMC16 `vout = 0.000`) | **un-railed** (`vout = 0.496`) |
+   physically correct value. The knob is `PYCIRCUITSIM_GDS_GUARD_K`;
+   `PYCIRCUITSIM_GDS_FLOOR_K` is now rejected loudly.
 
 **The structural signature: every cell the fix gained is an opamp.** Not one
-ring, SRAM or switchcap cell moved, across DirectNet's 4 sizes, BSIM-AR's 4 and
-PFN's 3. `gds` sets the small-signal output resistance — which is what a
-high-gain OP is made of — and cancels at the Newton fixed point everywhere else.
+ring, SRAM or switchcap cell moved, across all three families and every tier.
+`gds` sets the small-signal output resistance — what a high-gain operating
+point is made of — and cancels at the Newton fixed point everywhere else.
 
-**Corollary — DC is exactly invariant.** The one parametric-DC failure
-(`TSMC12_pmos_nfin_10`) is bit-identical pre- and post-fix. So *pre-fix
-device-DC numbers remain valid*; pre-fix **AC**, **transient** and **opamp**
-numbers do not.
+**Corollary — DC is exactly invariant**, so *pre-fix device-DC numbers remain
+valid*. Pre-fix **AC**, **transient** and **opamp** numbers do not.
 
-## 7. TSMC6 ≡ TSMC7 relabelled — retired, then carried deliberately
+## 7. TSMC6 ≡ TSMC7 relabelled
 
-**The finding has not been softened.** TSMC6 is not an independent technology
-under BSIM-CMG. Four independent lines of evidence
-(`../2026-07-21-systematic-audit.md` §D1, re-verified at deletion):
+**The finding is unchanged, and folding TSMC6 into the headline (§2) does not
+soften it.** TSMC6 is not an independent technology under BSIM-CMG. Four
+independent lines of evidence:
 
-* `tsmc6_{nmos,pmos}.npz` were `array_equal` to `tsmc7_*` in `inputs`,
+* `tsmc6_{nmos,pmos}.npz` are `array_equal` to `tsmc7_*` in `inputs`,
   `geometry`, `outputs` and `sample_class` over 1,816,830 / 2,187,292 rows —
-  only `meta_tech_name` differed.
+  only `meta_tech_name` differs.
 * The raw PDKs genuinely differ, but every differing key (`tmi_ver_lod`,
   `tmi_ver_isocpode`, `sfxmin`, `samax_c`, `wodx5akvth0`) is a TSMC
-  TMI-proprietary extension with **zero occurrences** in the BSIM-CMG Verilog-A.
-  Reproduced mechanically: of 871 implemented parameter names parsed from the
-  Verilog-A sources, `toxp` and `phig` are present and all five TMI keys absent.
-* Two LEVEL=72 Id-Vgs sweeps at identical geometry matched to the last digit.
-* **Reproduced independently in V7.1.0**: the datasets were regenerated from the
-  kept vendor PDK with today's generator and came out `array_equal` to
-  `tsmc7_*` again — 1,816,830 nmos / 2,187,292 pmos rows, matching on `inputs`,
-  `geometry`, `outputs` *and* `sample_class`. The original finding compared
-  files generated in 2026-06; this one re-derives it from the PDK.
+  TMI-proprietary extension with **zero occurrences** in the BSIM-CMG
+  Verilog-A. Of 871 implemented parameter names parsed from those sources,
+  `toxp` and `phig` are present and all five TMI keys absent.
+* Two LEVEL=72 Id-Vgs sweeps at identical geometry match to the last digit.
+* **V7.3.0 adds a fourth, at the corridor level:** the ring-only `corro`
+  corridor, which did not previously exist for TSMC6, was harvested by
+  *running the ring oscillator* under LEVEL=72 and came out `array_equal` to
+  TSMC7's. Identical rows there mean the two techs' *circuits follow the same
+  trajectory*, not merely that their datasets match.
 
-**What changed is the disposition, not the physics.** V6.13.0 deleted TSMC6
-(22 checkpoints, both datasets, registry entries). **V7.1.0 restored it by
-explicit decision** and re-trains all three families at all four scales on
-regenerated data. Read every TSMC6 number as *a second training run on the
-TSMC7 data* — a repeat experiment, not a sixth technology. Any TSMC6-vs-TSMC7
-difference is training-run luck plus NR-basin luck, and that is precisely what
-makes it useful: it is the only place in this project where the run-to-run
-variance of the whole pipeline can be measured with the data held exactly fixed.
+**What this buys.** A duplicate technology is the one thing this project cannot
+get any other way: **a controlled repeat.** Same data, same recipe, same code,
+different training run. Read every TSMC6-vs-TSMC7 difference as training-run
+luck plus Newton-basin luck — that is exactly what makes it the instrument for
+§8.4's noise floor.
 
-TSMC6 holds tail codes 22-24, so its presence or absence renumbers nothing
-(`NUM_TOTAL_CODES` 25 with it, 22 without); every other checkpoint and label
-sidecar stays valid either way.
+`bsimar.config.assert_tech_is_distinct()` still flags the collision;
+`tsmc6`↔`tsmc7` is the sole entry in `ACKNOWLEDGED_DUPLICATE_TECHS`, so the
+guard prints loudly and continues instead of raising. Nothing else is on that
+list and nothing else should be, to silence a genuine onboarding mistake.
+**Run the guard before onboarding a technology, not after gating one** — the
+V6.9.0 onboarding gated TSMC6 9/9 DC and 14/14 transient, and passing those
+told us nothing, because they were TSMC7's gates.
 
-**The guard stays.** `bsimar.config.assert_tech_is_distinct(tech)` compares
-resolved modelcards restricted to the parameters BSIM-CMG implements and
-refuses a tech that collides with an existing one. It still flags
-`tsmc6`↔`tsmc7` — but that pair is now in `ACKNOWLEDGED_DUPLICATE_TECHS`, so it
-prints the collision loudly and continues instead of raising. Nothing else is
-on that list, and nothing else should be added to it to silence a genuine
-onboarding mistake. **Run the guard before onboarding a technology, not after
-gating one** — the V6.9.0 onboarding gated TSMC6 9/9 DC and 14/14 transient,
-and passing those gates told us nothing, because they were TSMC7's gates.
-
-What the TSMC6 rows are actually good for is in `by-tech.md` §TSMC6.
+TSMC6 holds tail codes 22-24, so its presence renumbers nothing.
 
 ## 8. Standing measurement caveats
 
-1. **The validation split cannot measure what the gates measure.** `dataset.py`
-   takes a uniform random row permutation over a *dense per-bin lattice*, so
-   every (variant, L, NFIN, T) bin appears in train, val **and** test. Measured
-   on tsmc5 NMOS: grid pitch 44.8 mV, median val→train nearest-neighbour
-   distance **28.4 mV** (below the pitch), 10.75 % of val rows within 10 mV of a
-   train row. Device test-split metrics are optimistic relative to gate
-   behaviour; a grouped / held-out-L split is the open follow-up (audit D2).
-2. **The SRAM `force_ic` residual half is a no-op.** The latch probe prints
-   `resid=3e-08 thr=8e-03 (resid_ok=True)`, but the residual is built with the
-   V-source branch-current slots left at zero, so it floors at the supply
-   current and `resid_ok` is always True (audit B2). The *rail* half of that
-   gate is real; the residual half currently gates nothing.
-3. **`verify_nn_ac` prints a DirectNet banner and a `DN=` column even under
-   `FORCE_LEVEL=74/75`.** `nn_ac_tf.log` / `nn_ac_pfn.log` therefore *read* as
-   DirectNet results while measuring BSIM-AR / PFN. Cosmetic, unfixed, and the
-   reason to trust the log's path rather than its header.
+1. **The validation split cannot measure what the gates measure.**
+   `dataset.py` takes a uniform random row permutation over a *dense per-bin
+   lattice*, so every (variant, L, NFIN, T) bin appears in train, val **and**
+   test. On tsmc5 NMOS: grid pitch 44.8 mV, median val→train nearest-neighbour
+   distance **28.4 mV** — below the pitch. Device test-split metrics are
+   optimistic relative to gate behaviour; a grouped / held-out-L split is the
+   open follow-up.
+2. **The SRAM `force_ic` residual half is a no-op.** The residual is built with
+   the V-source branch-current slots left at zero, so it floors at the supply
+   current and `resid_ok` is always True. The *rail* half of that probe is
+   real; the residual half currently gates nothing.
+3. **`verify_nn_ac` prints a DirectNet banner even under `FORCE_LEVEL=74/75`.**
+   `nn_ac_tf.log` / `nn_ac_pfn.log` therefore *read* as DirectNet results while
+   measuring BSIM-AR / PFN. Cosmetic, unfixed — trust the log's path, not its
+   header.
 4. **Single-cell rankings are inside the pipeline's own run-to-run noise —
-   measured, not asserted.** The V7.1.0 TSMC6 repeat (`by-tech.md` §5) retrains
-   the same recipe on bit-identical rows and compares strict verdicts. The gate
-   *counts* agree at three of four tiers, but **which** cells pass swaps:
-   `ring_osc` carries **±4 pp** of scatter across a **5 %** gate (4.82 % vs
-   9.04 % at `large`), and `opamp` is **bimodal** — a good basin (1.81–7.12 %)
-   or a 100 % rail, unpredictably. `sram_snm` and `switchcap` reproduce to
-   ≤0.3 pp and never flip.
+   measured, not asserted.** The TSMC6 repeat retrains the same recipe on
+   bit-identical rows and compares strict verdicts. Gate *counts* agreed at
+   three of four tiers, but **which** cells passed swapped: `ring_osc` carries
+   **±4 pp** of scatter across a **5 %** gate, and `opamp` is **bimodal** — a
+   good basin (1.8–7.1 %) or a 100 % rail. `sram_snm` and `switchcap` reproduce
+   to ≤0.3 pp and never flip.
    **So a recipe promoted on one ring or opamp cell is not a result; the same
    claim on a SRAM or switchcap cell is.** Family-level counts over many cells,
-   and levers whose effect clears the noise floor (the corridor moves rings by
-   ~8 pp), are unaffected. Pre-fix single-cell rankings are doubly suspect: the
-   same repeat showed a 66.2 pp SRAM gap that collapsed to 1.0 pp once the gds
-   sign bug was fixed, so part of that era's "training lottery" was a wrong
-   Jacobian on top of this noise.
+   and levers whose effect clears the floor (the corridor moves rings by
+   ~8 pp), are unaffected.
+   Reproducibility is also **family-dependent** — BSIM-AR reproduced all
+   sixteen compared verdicts, DirectNet eleven, PFN ten of twelve.
+5. **The opamp open-loop AC gate has a bias-resolution defect.**
+   `verify_complex_opamp_ac` linearizes about `argmax |dVout/dVin|` found on a
+   **2 mV** grid, but a two-stage Miller opamp with 33–48 dB of gain has a
+   transition only **3–14 mV** wide. On three of four techs the **NGSPICE
+   reference's own** output at the chosen bias falls outside the gate's
+   15–85 %·VDD window — and that window is applied to the **NN only**, so a
+   model faithfully reproducing the reference is scored
+   `FAIL [OP-MISBIAS]`. **Treat the opamp-AC row as a lower bound.** The fix has
+   two parts (refine the sweep near the transition; judge `op_valid` against
+   the reference's operating point) and is deliberately **not** applied here:
+   changing an accuracy gate changes the accuracy record, which is a separate
+   decision.
+
+**A gate result is a reproducible property of a checkpoint; it is not a
+reproducible property of a recipe.** Re-gating the same weights is
+deterministic — 223/223 complex cells agreed between two passes on different
+days. Retraining the same recipe on the same rows is not.
 
 ## 9. Reproducing
 
 ```bash
-# train one recipe wave (see by-recipe.md for the recipe catalogue)
-RECIPES="corroft crit30" SIZES=large GPUS="0 1 2" NSTREAMS=6 bash scripts/recipe_train.sh
+# what is measured, by which pass, and what is missing
+python scripts/v730_coverage.py --set clean
+python scripts/v730_coverage.py --set recipes --emit-jobs /tmp/jobs.txt
 
-# complex matrix for one (model, size), isolated + CPU-pinned
-SIZE=large MODEL=direct bash scripts/gate_matrix_iso.sh
+# run the gaps (resumable; a job whose log carries ===V710_DONE is skipped)
+V710_OUT=results/v730_regate PAR=12 JOBS=/tmp/jobs.txt bash scripts/v710_regate.sh
 
-# strict OMP probe, one cell
-bash scripts/recipe_multirun_gate.sh crit30 large TSMC16 verify_complex_opamp
+# collect and rebuild the reports
+python scripts/v710_regate_collect.py --root results/v730_regate
+python scripts/v730_docs_build.py            # --check to verify, not write
 
-# device + AC suites for an arbitrary checkpoint variant (V7.1.0 driver)
-python scripts/v710_regate_jobs.py /tmp/v710jobs
-PAR=20 JOBS=/tmp/v710jobs/jobs_dn.txt bash scripts/v710_regate.sh
-python scripts/v710_regate_collect.py          # -> results/v710_regate/REPORT.md
-
-# capacity sweep end-to-end
-scripts/benchmark_gen_data.sh -> benchmark_train_sml.sh -> benchmark_run_tests.sh
-                              -> benchmark_collect.py   # results/benchmark_sml/REPORT.md
+# train one recipe wave
+MODEL=tabpfn RECIPES=corroft SIZES=small GPUS="0 1 2" NSTREAMS=6 \
+  bash scripts/recipe_train.sh
 ```
 
-Raw evidence directories: `results/a3_regate/` (V6.13.0, `REPORT.md` +
-`OMP_REPORT.md`), `results/a3_regate_uni/` (universal), `results/v710_regate/`
-(V7.1.0), `results/recipe_bench/`, `results/bsimar_bench/`, `results/uni_bench/`.
+Raw evidence: `results/v730_regate/` (V7.3.0), `results/v710_regate/` (V7.1.0),
+`results/a3_regate/` + `a3_regate_uni/` (V6.13.0), `results/recipe_bench/`,
+`results/bsimar_bench/`, `results/uni_bench/`.
