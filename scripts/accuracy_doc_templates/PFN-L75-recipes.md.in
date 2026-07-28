@@ -1,0 +1,80 @@
+# PFN (LEVEL=75) — recipe variants
+
+Until V7.3.0 this file could not have existed. PFN had only ever been trained
+`clean`: the curriculum recipes were fully wired — every driver accepts
+`MODEL=tabpfn` — but none had been run, so the family's entire accuracy record
+rested on a single training configuration.
+
+This campaign runs the one arm that is aimed squarely at the cells PFN fails.
+
+> **Read the noise floor first.** `ring_osc` carries ±4 pp of run-to-run
+> scatter across a 5 % gate and PFN's `opamp` is bimodal — a good basin or a
+> 100 % rail (`methodology.md` §7). With a single recipe and one training run
+> per cell, a one-cell difference below is **not** a result. What would be a
+> result is a consistent move across many ring cells, which is the size of
+> effect the corridor produces in the other two families.
+
+> **Denominators.** `corroft` was trained for all five techs, so its totals are
+> **/20** — the same base as the clean report.
+
+---
+
+## 1. The arm
+
+| recipe | tier | class weights | warm start | data |
+|---|---|---|---|---|
+| **`corroft`** | `small` | `traj_corridor=3.0` | own clean `small` | ring-only `corro` |
+
+120-epoch fine-tune at lr 3e-4, patience 40, `--amp`, seed 42 — the identical
+addendum the other two families use, applied to every (tech × device) pair. No
+per-tech special.
+
+`small` is the tier because it is PFN's best clean tier: its capacity curve
+declines past `medium`, `large` is optimization-unstable and `xl` mostly banked
+early (`PFN-L75-clean.md` §4). Fine-tuning the strongest base is the
+mechanical choice, not a tuned one.
+
+**Why this arm and not another.** The corridor is the only lever in this
+project that has ever closed a low-VDD ring, in either other family, at any
+tier — and low-VDD rings plus opamps are exactly what PFN fails. It is also
+`gds`-invariant, so the result cannot be an artifact of the bug that distorted
+the pre-fix recipe rankings.
+
+The corridor dataset for TSMC6 did not exist before this campaign and was
+harvested for it. It came out `array_equal` to TSMC7's — a third independent
+reproduction of the TSMC6-is-TSMC7 finding, and the first at the corridor
+level rather than on base data: the corridor is harvested by *running the ring
+oscillator* under LEVEL=72, so identical rows mean the two techs' circuits
+follow the same trajectory, not merely that their datasets match.
+
+## 2. Gates by recipe
+
+<!--HEADLINE-->
+
+## 3. What the corridor changed against clean
+
+<!--RECIPEDELTA-->
+
+## 4. Per testcase
+
+<!--TESTCASE-->
+
+## 5. Device fidelity and AC
+
+The corridor is a *data* lever — it adds a bias tube along the circuits'
+own trajectories and upweights it — so its risk to the device suites is that
+concentrating loss mass on 0.3 % of the rows degrades the rest of the surface.
+The device tables below are the check on that.
+
+<!--DEVICE-->
+
+## 6. Untried arms
+
+Recorded so the next campaign does not have to rediscover the list. All are
+wired and none has been run on PFN:
+
+| arm | why it might matter |
+|---|---|
+| `crit30` / `crit15m` (corridor + `inv_trip`) | The anchor composes with the corridor on DirectNet and is inert on BSIM-AR. PFN would be the third data point, and the first that could distinguish "MLP vs everything else" from "architecture-specific". |
+| `csob` (charge-Sobolev) | Supervises the ∂q/∂V surface. PFN's one distinctive failure — `tsmc12-switchcap` by 0.1–0.3 pp — is a charge/off-state miss, which is what this lever targets. The closest open cell in the project meeting the lever aimed at it is the highest-value untried combination here. |
+| `corroft` at other tiers | Would separate "the corridor helps PFN" from "the corridor helps PFN at `small`", and the tier axis is where PFN behaves least like the others. |

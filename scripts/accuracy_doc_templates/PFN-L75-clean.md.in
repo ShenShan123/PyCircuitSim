@@ -1,0 +1,129 @@
+# PFN (LEVEL=75) — the clean recipe
+
+**What it is.** A faithful scaled-down port of TabPFN-v3's in-context
+transformer, used as a compact model: the tech code enters as an eighth column
+token and predictions are conditioned on a table of context rows rather than on
+weights alone. It shares the `bsimar` data, normalization, loss, training and
+evaluation pipeline with the other two families.
+
+**Two deliberate deviations from TabPFN**, both forced by the solver:
+
+1. **A frozen learned context.** A stratified K-row buffer is baked into the
+   checkpoint and its attention keys/values are cached at inference. A compact
+   model is called millions of times inside Newton-Raphson; re-attending to a
+   live context each call is not affordable.
+2. **A direct 13-output value head** instead of TabPFN's distributional head.
+   Newton needs a smooth surface it can differentiate, and a
+   bucketed/sampled output is neither smooth nor cheap to differentiate.
+
+The `_config.npz` sidecar is **required** to rebuild the architecture — a
+checkpoint without it cannot be loaded.
+
+**Status: research.** PFN is not production and is not the fidelity option; it
+is here because it is a genuinely different inductive bias on the same problem,
+and because it is ~4× cheaper than BSIM-AR at ~15.6 ms/eval.
+
+Gate definitions and the code ladder: [`methodology.md`](methodology.md).
+
+| tier | shape | params |
+|---|---|---|
+| `small` | — | **0.69 M** |
+| `medium` | — | 2.03 M |
+| `large` | — | 4.65 M |
+| `xl` | 192 × (4+4+9) blocks | 14.86 M |
+
+The `xl` tier is new in V7.1.0 — the family had three scales until then. Its
+14.86 M mirrors BSIM-AR `xl`'s 14.81 M and its in-context width equals that
+model's `d_model`, so the top of the capacity axis is comparable across
+families.
+
+> **Denominators changed in V7.3.0.** TSMC6 folds into the headline: complex
+> totals are **/20**, device AC **/10**, opamp AC **/5**. No total here is
+> comparable to a pre-V7.3.0 total without rescaling.
+
+---
+
+## 1. Headline — complex gates by tier
+
+Strict: a cell passes only if it passes at OMP ∈ {1, 2, 4}.
+
+<!--HEADLINE-->
+
+## 2. By testcase
+
+<!--TESTCASE-->
+
+## 3. By technology
+
+<!--BYTECH-->
+
+PFN's distinctive failure is **`switchcap` on TSMC12**, which it misses by a
+tenth to a third of a percentage point — the closest open cells in the project.
+It is a charge/off-state-surface miss, and it is the one place where PFN is
+weaker than both other families rather than merely smaller.
+
+TSMC12 is also the tech whose off-grid NFIN=10 case probes the sampling gap
+between the PDK's 6 and 21 fin bins, which is where an in-context model's
+geometry interpolation is most exposed: PFN interpolates by attending to
+context rows, so a bin with no near neighbour has nothing to attend to.
+
+## 4. By scale
+
+<!--BYSCALE-->
+
+**PFN declines past `medium`, and the decline survived the `gds` fix.** Two
+things are going on and they should not be conflated:
+
+* The capacity story proper — the same "beyond the sweet spot, extra capacity
+  buys a tighter fit and loses fixed points" law that both other families obey.
+* **`large` is optimization-unstable**: its training runs recorded eight
+  divergence-collapse events. Part of that tier's weakness is that its runs are
+  not reliably converging, which is a trainability problem, not a capacity one.
+
+`xl` should be read with a caveat of its own: six of its eight runs banked
+before epoch 50 of 150, so it is not a fully-converged tier either.
+
+## 5. Device-level suites
+
+<!--DEVICE-->
+
+Device-level, PFN is competitive with both other families — its weakness is
+entirely at the circuit level. That is the same pattern the whole project
+shows, and it is worth stating once more here because PFN is the family where
+someone is most likely to reach for device metrics as evidence: they will look
+fine, and they do not predict the gates.
+
+## 6. Determinism
+
+PFN was for a while the project's only flip-free family, which was read as a
+property of the architecture. That reading is **retired**: after the V6.13.0
+`gds` fix every family became flip-free, so the earlier uniqueness was a
+statement about the other two families' bug exposure, not about PFN.
+
+The V7.1.0 strict sweep then recorded a flip at two PFN tiers — so "every group
+in every family is flip-free" is *also* too strong. The flip count in §1 is the
+current measurement; treat any group with a flip as unbankable, per
+`methodology.md` §3, regardless of what it scores single-run.
+
+## 7. What is open
+
+| open | reading |
+|---|---|
+| **`tsmc12-switchcap`** | Misses by 0.1–0.3 pp at every tier. The closest open cell in the project and the one most likely to fall to a targeted charge-surface lever. |
+| **Low-VDD rings and opamps** | The same cells the other families fail, and the corridor curriculum is the known lever — see the recipes report, where it is run on PFN for the first time. |
+| **`large` trainability** | Divergence-collapse events, not a capacity ceiling. Worth separating before drawing a capacity conclusion about this tier. |
+| **`xl` convergence** | Most runs banked before a third of the schedule. |
+
+## 8. Reproducing
+
+```bash
+# every driver takes MODEL=tabpfn; the gate driver's tag is pfn
+bash scripts/v710_regate.sh _one pfn small TSMC12 verify_complex_switchcap 1
+python scripts/v730_coverage.py --set clean --tag pfn
+```
+
+Checkpoints (gitignored): `tsmc{5,6,7,12,16}_pfn_{small,medium,large,xl}_{nmos,pmos}`,
+each with `_norm.npz` and a **required** `_config.npz`. Env pins
+`PYCIRCUITSIM_NN_CHECKPOINT_PFN_{NMOS,PMOS}`; hook
+`PYCIRCUITSIM_NN_FORCE_LEVEL=75` retargets a LEVEL=73 deck at PFN, so the whole
+gate infrastructure runs this family with zero deck changes.

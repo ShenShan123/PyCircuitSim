@@ -1,0 +1,131 @@
+# BSIM-AR (LEVEL=74) — the clean recipe
+
+**What it is.** An autoregressive Transformer that emits the thirteen outputs
+one token at a time, each conditioned on the ones already produced. It shares
+DirectNet's data, normalization, loss, training and evaluation pipeline
+entirely — the `bsimar` package — so the only variable against
+[`DirectNet-L73-clean.md`](DirectNet-L73-clean.md) is the architecture.
+
+**What it costs.** The autoregressive loop re-enters the network once per
+output token, and inference is memory-bandwidth-bound on the weights, so cost
+tracks *parameters × times the checkpoint is streamed*. That is why BSIM-AR
+runs ~40× DirectNet rather than ~5×, and why DirectNet stays production
+regardless of which family scores higher.
+
+**What "clean" means.** One training run, no addendum:
+`--apply-filter off --swa-mode ema --seed 42`. Unlike DirectNet, BSIM-AR's
+production slots `tsmc{X}_tf_{size}_*` **are** the clean checkpoints — the
+curriculum variants live under their own stems and are covered in
+[`BSIM-AR-L74-recipes.md`](BSIM-AR-L74-recipes.md).
+
+Gate definitions, the strict-OMP rule and the code ladder:
+[`methodology.md`](methodology.md).
+
+| tier | shape | params | CPU cost, 1 thread |
+|---|---|---|---|
+| `small` | — | 0.67 M | — |
+| `medium` | — | **1.94 M** | **61.5 ms/eval** |
+| `large` | — | 5.02 M | — |
+| `xl` | 384 × 8L, ff1536 | 14.81 M | — |
+
+Tier names compare a family with itself, never across families: BSIM-AR
+`small` is already larger than DirectNet `large`.
+
+> **Denominators changed in V7.3.0.** TSMC6 folds into the headline, so complex
+> totals are **/20**, device AC **/10**, opamp AC **/5**, where every earlier
+> report said /16, /8 and /4. No total here is comparable to a pre-V7.3.0 total
+> without rescaling.
+
+---
+
+## 1. Headline — complex gates by tier
+
+Strict: a cell passes only if it passes at OMP ∈ {1, 2, 4}.
+
+<!--HEADLINE-->
+
+## 2. By testcase
+
+<!--TESTCASE-->
+
+## 3. By technology
+
+<!--BYTECH-->
+
+BSIM-AR's failures concentrate on the low-VDD rings, exactly as DirectNet's do,
+and for the same reason: the corridor curriculum is the only lever that has
+ever moved them, and clean has no corridor. Where it differs sharply from
+DirectNet is the **opamp column**, which it holds broadly rather than
+sporadically.
+
+## 4. By scale
+
+<!--BYSCALE-->
+
+**BSIM-AR is flat.** It scores the same at every tier and fails the same two
+cells each time. The pre-fix reading — "capacity peaks at medium" — was largely
+a `gds` artifact; what the fix bought was the entire opamp column at all four
+sizes, not a change in shape. The practical consequence is that the smallest
+tier that clears the bar is the right one, and `xl` costs 7.7× `medium`'s
+parameters and roughly eleven days of training to tie it.
+
+## 5. Device-level suites
+
+<!--DEVICE-->
+
+One counter-intuitive row deserves attention: **BSIM-AR's TSMC7-NMOS parametric
+DC error *grows* with capacity**. It is the worst device-DC surface in the
+project, on the tech that also carries the hardest circuit cell, and it moves
+the wrong way as the model gets bigger — the clearest single instance of extra
+capacity buying a tighter fit to the training distribution and worse
+generalization.
+
+## 6. Reproducibility — the reason to prefer this family for fidelity work
+
+The TSMC6 controlled repeat retrains one recipe on **bit-identical rows** and
+compares strict verdicts, which measures the whole pipeline's run-to-run
+variance with the data held exactly fixed (`methodology.md` §7).
+
+**BSIM-AR is the stable family.** Across the repeat, all sixteen of its
+compared verdicts reproduced, its rings never crossed the gate in either
+direction, and its opamps never railed in either run. DirectNet reproduced
+eleven of sixteen and PFN ten of twelve, both with bimodal opamps.
+
+That is a practical argument for BSIM-AR as the fidelity option **on top of**
+its gate score: a number measured on a BSIM-AR checkpoint is more likely to
+survive a retrain than the same number measured on the other two families.
+
+## 7. The AR prefix cache
+
+`PYCIRCUITSIM_NN_AR_CACHE=1` keeps per-layer K/V across the autoregressive loop
+so each token is encoded once, instead of re-encoding the whole growing prefix
+at every step. It is worth 1.2–1.6× in the solver and 4.3× on `no_grad` batch
+evaluation.
+
+**It is default-off and stays off until a full re-gate clears it.** It is exact
+in real arithmetic but not in float32, because `F.linear` is not row-stable on
+CPU — so *no* incremental formulation can be bit-identical, and the deviation
+(≤1.6 µV on solved nodes) has to be shown harmless rather than argued away.
+`tests/verify_ar_cache.py` guards the lever with 10 checks, since no accuracy
+gate can reach the path while it is off.
+
+## 8. What is open
+
+| open | reading |
+|---|---|
+| **Low-VDD rings under every clean tier** | Deterministic. The corridor curriculum closes them — see the recipes report. |
+| **Inference cost** | ~40× DirectNet per evaluation. Structural, not a tuning matter: it is the token count times the weight stream. |
+| **TSMC7-NMOS device DC** | Grows with capacity. Unexplained. |
+| **Opamp open-loop AC** | BSIM-AR passes this gate more often than either other family, but part of the denominator is unreachable by construction — see the caveat in `DirectNet-L73-clean.md` §6. |
+
+## 9. Reproducing
+
+```bash
+# BSIM-AR runs through the same drivers; the tag selects LEVEL=74
+bash scripts/v710_regate.sh _one tf medium TSMC7 verify_complex_opamp 4
+python scripts/v730_coverage.py --set clean --tag tf
+```
+
+Checkpoints (gitignored): `tsmc{5,6,7,12,16}_tf_{small,medium,large,xl}_{nmos,pmos}`,
+each with `_norm.npz` and a **required** `_config.npz` sidecar.
+Raw runs: `results/v730_regate/`, `results/v710_regate/`, `results/a3_regate/`.
