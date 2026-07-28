@@ -139,9 +139,16 @@ _STACK_CACHE_CAP = 64
 
 def _stacked_group_inputs(
     model: torch.nn.Module, devs: List["_MOSFETNNBase"],
-) -> Tuple[torch.Tensor, torch.Tensor]:
+) -> Tuple[torch.Tensor, torch.Tensor, np.ndarray]:
+    # V7.2.0 Phase 2a-full: the cached value also carries the per-member
+    # ``_is_pmos`` flags (as a bool ndarray) for the batched denorm tail.
+    # Groups are keyed on model identity, and in practice one checkpoint
+    # serves one device type — but an env double-pin CAN alias NMOS and
+    # PMOS onto one module, so the tail takes the flags per member rather
+    # than assuming uniformity. Read-only, like the tensors.
     key = tuple(
-        (m.NFIN, m.L, m.temperature, m._tech_code) for m in devs)
+        (m.NFIN, m.L, m.temperature, m._tech_code, m._is_pmos)
+        for m in devs)
     cache = getattr(model, "_pcs_stack_cache", None)
     if cache is None:
         cache = {}
@@ -153,6 +160,8 @@ def _stacked_group_inputs(
         hit = (
             torch.stack([m._geo_norm_t for m in devs], dim=0),
             torch.cat([m._tech_code_tensor for m in devs], dim=0),
+            np.fromiter(
+                (m._is_pmos for m in devs), dtype=bool, count=len(devs)),
         )
         cache[key] = hit
     return hit
@@ -720,7 +729,8 @@ class _MOSFETNNBase(Component):
                 v_raw = v_raw.to(ref._device)
             v_norm = ref._clamp_norm_voltages(v_raw)
             x_v = v_norm.detach().requires_grad_(True)
-            x_g, tech_codes = _stacked_group_inputs(ref._nn_model, devs)
+            x_g, tech_codes, pmos_arr = _stacked_group_inputs(
+                ref._nn_model, devs)
             x_full = torch.cat([x_v, x_g], dim=1)
 
             need_caps = any(m._caps_required for m in devs)
@@ -735,14 +745,13 @@ class _MOSFETNNBase(Component):
                         id_col, qg_col, qd_col, need_caps)
                 out, grad_id, grad_qg, grad_qd = ref._to_host_block(
                     out, grad_id, grad_qg, grad_qd)
+                results = ref._unpack_eval_batch(
+                    ref, out, grad_id, grad_qg, grad_qd,
+                    raw_v[key], pmos_arr)
+                tuples = v_tuples[key]
                 for i, m in enumerate(devs):
-                    v_d_nn, _, v_s_nn, _ = raw_v[key][i]
-                    m._eval_cache = m._unpack_eval(
-                        out[i], grad_id[i],
-                        grad_qg[i] if grad_qg is not None else None,
-                        grad_qd[i] if grad_qd is not None else None,
-                        v_d_nn, v_s_nn)
-                    m._cache_voltages = v_tuples[key][i]
+                    m._eval_cache = results[i]
+                    m._cache_voltages = tuples[i]
                     m._cache_has_caps = need_caps
                 continue
 
@@ -772,17 +781,208 @@ class _MOSFETNNBase(Component):
 
             out, grad_id, grad_qg, grad_qd = ref._to_host_block(
                 out, grad_id, grad_qg, grad_qd)
-            rows = raw_v[key]
+            results = ref._unpack_eval_batch(
+                ref, out, grad_id, grad_qg, grad_qd, raw_v[key], pmos_arr)
             tuples = v_tuples[key]
             for i, m in enumerate(devs):
-                v_d_nn, _, v_s_nn, _ = rows[i]
-                m._eval_cache = m._unpack_eval(
-                    out[i], grad_id[i],
-                    grad_qg[i] if grad_qg is not None else None,
-                    grad_qd[i] if grad_qd is not None else None,
-                    v_d_nn, v_s_nn)
+                m._eval_cache = results[i]
                 m._cache_voltages = tuples[i]
                 m._cache_has_caps = need_caps
+
+    @staticmethod
+    def _unpack_eval_batch(
+        ref: "_MOSFETNNBase",
+        out: torch.Tensor,
+        grad_id: torch.Tensor,
+        grad_qg: Optional[torch.Tensor],
+        grad_qd: Optional[torch.Tensor],
+        raw_rows: List[Tuple[float, float, float, float]],
+        is_pmos: np.ndarray,
+    ) -> List[Dict[str, float]]:
+        """V7.2.0 Phase 2a-full: the whole ``_unpack_eval`` tail for a
+        group, vectorised in float64 numpy — bit-identical per element to
+        N calls of the scalar tail (gated by ``tests/verify_batched_tail.py``).
+
+        ``ref`` supplies the group-shared denorm constants (all derived
+        from the checkpoint/norm file that keyed the group); the only
+        per-device non-voltage input, ``_is_pmos``, arrives as an array.
+        Every arithmetic expression below reproduces the scalar tail's
+        association order — do not "simplify" (regrouping rounds
+        differently, and this feeds every stamped current).
+
+        The two §8.1 constraints are acceptance criteria, not style:
+
+        1. The Vds-correction exponential is evaluated with per-element
+           libm ``math.exp`` over the boolean-masked subset that reaches
+           the exp branch. ``np.exp`` / any SIMD exponential is
+           PROHIBITED here — it mismatches libm by 1 ULP on ~4.6 % of
+           arguments, and the downstream ``1 − exp`` cancellation
+           amplifies that ~60× exactly in the SRAM off-device regime.
+           (``np.sinh`` in the denorm is fine: measured bit-equal to the
+           scalar path, which itself uses ``np.sinh``.)
+        2. Everything is cast to float64 BEFORE any arithmetic. The
+           tensors arrive float32; under NEP-50 a float32 array times a
+           Python float STAYS float32, which silently runs the chain at
+           ~2e-7 relative error — worse than VNTOL. The dtype asserts are
+           load-bearing.
+        """
+        o = out.detach().cpu().numpy().astype(np.float64)
+        gi = grad_id.detach().cpu().numpy().astype(np.float64)
+        with_caps = grad_qg is not None and grad_qd is not None
+        if with_caps:
+            gqg = grad_qg.detach().cpu().numpy().astype(np.float64)
+            gqd = grad_qd.detach().cpu().numpy().astype(np.float64)
+        raw = np.asarray(raw_rows, dtype=np.float64)
+        vds = raw[:, 0] - raw[:, 2]
+        n = o.shape[0]
+        assert (o.dtype == np.float64 and gi.dtype == np.float64
+                and vds.dtype == np.float64), "batched tail must be float64"
+
+        out_std = ref._out_std_f
+        out_mean = ref._out_mean_f
+        asinh = ref._asinh_f
+        in_std_f = ref._in_std_f
+
+        def _dn(name: str, col: np.ndarray) -> np.ndarray:
+            # mirrors ``_denorm``: u = v*std + mean; asinh → scale*sinh(u)
+            u = col * out_std[name] + out_mean[name]
+            if asinh:
+                return asinh[name] * np.sinh(u)
+            return u
+
+        def _dd(out_name: str, in_col: int,
+                dcol: np.ndarray, phys: np.ndarray) -> np.ndarray:
+            # mirrors ``_denorm_deriv``: d*out_std*factor/in_std, with
+            # factor ≡ 1.0 (exact identity) in the non-asinh mode.
+            in_s = in_std_f[in_col]
+            if in_s < 1e-12:
+                return np.zeros_like(dcol)
+            o_s = out_std[out_name]
+            if asinh:
+                sc = asinh[out_name]
+                fac = np.sqrt(sc * sc + phys * phys)
+                return dcol * o_s * fac / in_s
+            return dcol * o_s / in_s
+
+        id_p = _dn("id", o[:, ref._mcol("id")])
+        qg_p = _dn("qg", o[:, ref._mcol("qg")])
+        qd_p = _dn("qd", o[:, ref._mcol("qd")])
+        qb_p = _dn("qb", o[:, ref._mcol("qb")])
+        qs_p = -(qg_p + qd_p + qb_p)  # charge conservation
+
+        # Conductances: negate all three (see the scalar tail's sign note).
+        gm = -_dd("id", 1, gi[:, 1], id_p)
+        gds = -_dd("id", 0, gi[:, 0], id_p)
+        gmb = -_dd("id", 3, gi[:, 3], id_p)
+        # guard F (negative-only; positives pass through bit-identical)
+        gds = np.where(
+            gds > 0.0, gds,
+            np.maximum(np.abs(id_p) * _GDS_GUARD_K, 1e-12))
+
+        if with_caps:
+            cgg = _dd("qg", 1, gqg[:, 1], qg_p)
+            cgd = _dd("qg", 0, gqg[:, 0], qg_p)
+            cgs = _dd("qg", 2, gqg[:, 2], qg_p)
+            cdg = _dd("qd", 1, gqd[:, 1], qd_p)
+            cdd = _dd("qd", 0, gqd[:, 0], qd_p)
+
+        # ── ``_apply_vds_correction``, vectorised ────────────────────
+        VDD_train = ref._vdd_estimate
+        VT = max(0.06 * VDD_train, 0.026)
+        a = np.abs(vds)
+        normal = np.where(is_pmos, vds < 0.0, vds > 0.0)
+
+        # (a) rail-restoring extrapolation
+        m_ext = a > VDD_train
+        if m_ext.any():
+            overshoot = a - VDD_train
+            g_max = 1.0e-3
+            x_ref = 0.5 * VDD_train
+            x_cap = 5.0 * x_ref
+            lin = overshoot > x_cap
+            id_extra = np.where(
+                lin,
+                0.5 * g_max * x_cap * x_cap / x_ref
+                + g_max * x_cap / x_ref * (overshoot - x_cap),
+                0.5 * g_max * overshoot * overshoot / x_ref)
+            g_extra = np.where(
+                lin, g_max * x_cap / x_ref, g_max * overshoot / x_ref)
+            delta_ext = np.where(is_pmos, id_extra, -id_extra)
+            id_p = np.where(m_ext & normal, id_p + delta_ext, id_p)
+            gds = np.where(m_ext, np.maximum(gds, g_extra), gds)
+
+        # Fast path: well into the normal-direction regime — those rows
+        # keep their post-(a) values (composed via ``fast`` at the end).
+        fast = normal & (a > 20.0 * VT)
+
+        # (b) §8.1 Constraint 1: masked per-element libm math.exp.
+        exp_sym = np.zeros(n)
+        need = np.flatnonzero(a <= 20.0 * VT)
+        if need.size:
+            args = ((-a[need]) / VT).tolist()
+            exp_sym[need] = [math.exp(v) for v in args]
+        f_sym = 1.0 - exp_sym
+
+        # reverse-conduction taper, mirroring ``_reverse_taper``'s branch
+        # order (a ≤ x0 wins over a ≥ x1, relevant only if the env knobs
+        # invert the window)
+        x0 = _REV_TAPER_X0 * VDD_train
+        x1 = _REV_TAPER_X1 * VDD_train
+        taper = np.ones(n)
+        gt0 = a > x0
+        taper[gt0 & (a >= x1)] = 0.0
+        mid = gt0 & (a < x1)
+        if mid.any():
+            u = (a[mid] - x0) / (x1 - x0)
+            taper[mid] = 1.0 - u * u * (3.0 - 2.0 * u)
+        f_id = np.where(normal, f_sym, f_sym * taper)
+
+        id_new = id_p * f_id
+        gm_new = gm * f_id
+        gmb_new = gmb * f_id
+        # (c) symmetric gds factor + linear-region term, then guard F
+        gds_new = gds * f_sym + np.abs(id_p) * exp_sym / VT
+        gds_new = np.where(
+            gds_new > 0.0, gds_new,
+            np.maximum(np.abs(id_new) * _GDS_GUARD_K, 1e-12))
+
+        # (d) wrong-sign clamp, scoped by direction
+        neg = id_new < 0.0
+        pos = id_new > 0.0
+        wrong = np.where(
+            is_pmos,
+            np.where(normal, neg, pos),
+            np.where(normal, pos, neg))
+        id_new = np.where(wrong, 0.0, id_new)
+        gm_new = np.where(wrong, 0.0, gm_new)
+        gmb_new = np.where(wrong, 0.0, gmb_new)
+
+        id_f = np.where(fast, id_p, id_new)
+        gm_f = np.where(fast, gm, gm_new)
+        gmb_f = np.where(fast, gmb, gmb_new)
+        gds_f = np.where(fast, gds, gds_new)
+        assert (id_f.dtype == np.float64 and gds_f.dtype == np.float64
+                and qg_p.dtype == np.float64), "batched tail must be float64"
+
+        # ── Per-device result dicts (same keys, same order, Python
+        # floats via one C-level ``tolist`` per column) ────────────────
+        cols = [id_f, gm_f, gds_f, gmb_f, qg_p, qd_p, qs_p, qb_p]
+        if with_caps:
+            cols += [cgg, cgd, cgs, cdg, cdd]
+        lists = [c.tolist() for c in cols]
+        if with_caps:
+            return [
+                {"id": v0, "gm": v1, "gds": v2, "gmb": v3,
+                 "qg": v4, "qd": v5, "qs": v6, "qb": v7,
+                 "cgg": v8, "cgd": v9, "cgs": v10, "cdg": v11, "cdd": v12}
+                for v0, v1, v2, v3, v4, v5, v6, v7, v8, v9, v10, v11, v12
+                in zip(*lists)
+            ]
+        return [
+            {"id": v0, "gm": v1, "gds": v2, "gmb": v3,
+             "qg": v4, "qd": v5, "qs": v6, "qb": v7}
+            for v0, v1, v2, v3, v4, v5, v6, v7 in zip(*lists)
+        ]
 
     # — small helpers —
 
