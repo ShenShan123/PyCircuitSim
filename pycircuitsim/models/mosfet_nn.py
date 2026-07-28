@@ -189,6 +189,19 @@ def _get_nn_device() -> torch.device:
                 raise RuntimeError(
                     f"PYCIRCUITSIM_NN_DEVICE={want} requested but CUDA is "
                     "unavailable; refusing silent CPU fallback")
+            # §8.4 T0 determinism pins, enforced by the runtime rather than
+            # left to the gate harness: TF32 would silently trade the
+            # mantissa bits the T1/T4 tiers measure, and nondeterministic
+            # kernels would make "same hardware, same result" false. Set
+            # BEFORE the first cuBLAS call; asserted so a torch upgrade
+            # that renames a knob fails loud, not silently fast-and-loose.
+            os.environ.setdefault("CUBLAS_WORKSPACE_CONFIG", ":4096:8")
+            torch.backends.cuda.matmul.allow_tf32 = False
+            torch.backends.cudnn.allow_tf32 = False
+            torch.use_deterministic_algorithms(True)
+            assert not torch.backends.cuda.matmul.allow_tf32
+            assert not torch.backends.cudnn.allow_tf32
+            assert torch.are_deterministic_algorithms_enabled()
             _NN_DEVICE = torch.device(want)
         else:
             raise ValueError(
