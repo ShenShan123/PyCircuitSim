@@ -45,6 +45,66 @@
 
 ---
 
+# Part 0 — TSMC6, the V6.11.0 pre-fix run
+
+The "before" half of the TSMC6 controlled repeat, recovered from commit
+`a96112a`. Superseded by the V7.1.0 re-training and re-gate in
+[`by-tech.md`](by-tech.md) §5, which is post-fix and covers all four scales for
+all three families; these are kept because they are the only record of the
+first run.
+
+**DirectNet** — complex 4-cell, and device/inverter (pre-fix):
+
+| size | complex | ring period_err% | opamp gain_err% | sram lobeNRMSE% | switchcap chg_err% |
+|---|---|---|---|---|---|
+| small | 1/4 | 5.94 ✗ | 10.33 ✗ | 3.66 ✓ | 2.34 ✗ (droop) |
+| medium | 2/4 | 10.86 ✗ | rails ✗ | 3.31 ✓ | 2.81 ✓ |
+| **large** | **3/4** | **4.82 ✓** | rails ✗ | 3.61 ✓ | 2.45 ✓ |
+| xl | 2/4 | 14.31 ✗ | rails ✗ | 2.93 ✓ | 2.67 ✓ |
+
+| size | NMOS DC nrmse/mre% | PMOS DC nrmse/mre% | inv VTC% | inv tran% | dev-AC |
+|---|---|---|---|---|---|
+| small | 3.88 / 17.47 | 0.91 / 5.39 | 2.62 | 1.20 | 2/3 |
+| medium | 6.84 / 17.49 | 0.06 / 0.46 | 2.48 | 1.19 | 1/3 |
+| large | 2.02 / 5.70 | 0.04 / 0.61 | 1.79 | 0.98 | 2/3 |
+| xl | 6.69 / 17.31 | 0.04 / 0.62 | 1.19 | 0.78 | 1/3 |
+
+**BSIM-AR** — complex 4-cell, and device/inverter (pre-fix):
+
+| size | complex | ring period_err% | opamp gain_err% | sram lobeNRMSE% | switchcap chg_err% |
+|---|---|---|---|---|---|
+| small | 2/4 | 5.97 ✗ | 13.61 ✗ | 2.10 ✓ | 2.46 ✓ |
+| **medium** | **3/4** | 7.41 ✗ | **9.83 ✓** | 2.19 ✓ | 2.62 ✓ |
+| large | 2/4 | 11.19 ✗ | 12.78 ✗ | 3.22 ✓ | 2.64 ✓ |
+| xl | 2/4 | 12.55 ✗ | 10.13 ✗ | 2.21 ✓ | 2.73 ✓ |
+
+| size | NMOS DC nrmse/mre% | PMOS DC nrmse/mre% | inv VTC% | inv tran% |
+|---|---|---|---|---|
+| small | 3.37 / 11.32 | 0.56 / 2.29 | 1.48 | 1.21 |
+| medium | 4.07 / 11.71 | 0.16 / 0.85 | 2.97 | 1.15 |
+| large | 4.77 / 12.54 | 0.10 / 0.55 | 2.35 | 1.18 |
+| xl | 6.41 / 16.79 | 0.06 / 0.15 | 1.78 | 1.00 |
+
+**PFN** — complex 4-cell, and device/inverter (pre-fix; the V6.11.0 run had no
+xl tier, which V7.1.0's `("tabpfn","xl")` preset closes):
+
+| size | complex | ring period_err% | opamp gain_err% | sram lobeNRMSE% | switchcap chg_err% |
+|---|---|---|---|---|---|
+| small | 2/4 | 8.22 ✗ | rails ✗ | 2.29 ✓ | 2.94 ✓ |
+| medium | 2/4 | 9.93 ✗ | rails ✗ | 1.75 ✓ | 2.94 ✓ |
+| large | 2/4 | 12.38 ✗ | rails ✗ | 4.92 ✓ | 2.85 ✓ |
+| xl | *(V7.1.0, training)* | | | | |
+
+| size | NMOS DC nrmse/mre% | PMOS DC nrmse/mre% | inv VTC% | inv tran% | dev-AC |
+|---|---|---|---|---|---|
+| small | 3.57 / 10.24 | 0.04 / 0.40 | 1.07 | 1.15 | 2/3 |
+| medium | 3.80 / 8.01 | 0.05 / 0.59 | 1.06 | 0.97 | 1/3 |
+| large | 4.75 / 11.22 | 0.03 / 0.64 | 1.06 | 1.17 | 2/3 |
+
+PFN's inverter VTC (~1.06 %) is the tightest of the three families on this data.
+
+---
+
 # Part A — DirectNet recipe/size data tables (frozen 2026-07-05)
 
 Collector-generated tables, carried verbatim from the retired

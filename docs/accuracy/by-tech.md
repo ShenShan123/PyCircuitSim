@@ -403,31 +403,38 @@ it as variance.
 
 **Cells whose verdict differs between the two runs on identical data:** DirectNet `small`: ring_osc, opamp; DirectNet `large`: ring_osc, opamp; DirectNet `xl`: opamp; PFN `small`: ring_osc; PFN `medium`: opamp.
 
-Read the pairs, not the totals. The **counts agree** at three of four tiers
-(2/2, 2/2, 3/3) while the **identity of the passing cells swaps**: at `small`
-and at `large`, ring_osc and opamp trade places between two runs on identical
-rows. Per-cell:
+Read the pairs, not the totals — and read them **per family**, because that is
+where the result lives.
 
-* **`ring_osc` has ±4 pp of run-to-run scatter** — 4.82 % vs 9.04 % at `large`,
-  5.94 % vs 4.32 % at `small`, 13.59 % vs 15.05 % at `xl`. **The 5 % gate sits
-  inside that scatter.**
-* **`opamp` is bimodal**: it either finds a good basin (1.81 / 4.20 / 7.12 %) or
-  rails at 100 %. Which one a run gets is not reproducible.
-* **`sram_snm` and `switchcap` reproduce tightly** — 1.58 vs 1.28 %, 2.52 vs
-  2.45 %, i.e. ≤0.3 pp — and their verdicts never differ.
+| family | cells compared | verdicts agreeing | worst ring gap | opamp behaviour |
+|---|---|---|---|---|
+| DirectNet | 16 | 11 (69 %) | **4.2 pp** | bimodal — rails in one run, 7.12 % in the other |
+| **BSIM-AR** | 16 | **16 (100 %)** | 3.0 pp, never crossing | **never rails in either run** (4.21–5.39 %) |
+| PFN | 12 | 10 (83 %) | **4.9 pp** | bimodal |
 
-So the pipeline's run-to-run variance is not small, and it is **concentrated in
-exactly the two cells this project has always ranked recipes on.** Every
-"recipe A beats recipe B by one cell" claim in `by-recipe.md` that turns on a
-ring or an opamp is, on this evidence, within noise; the same claim resting on a
-SRAM or switchcap cell is not. That is the discriminator this project lacked,
-and it is why a known-duplicate technology was worth the GPU time.
+* **`ring_osc` carries up to ±4.9 pp of run-to-run scatter across a 5 % gate** —
+  DirectNet 4.82 % vs 9.04 % at `large`, PFN 9.72 % vs 4.83 % at `small`. **The
+  gate sits inside the scatter.**
+* **`opamp` is bimodal for DirectNet and PFN** — a good basin (1.81–7.12 %) or a
+  100 % rail, unpredictably — **and stable for BSIM-AR**, whose four opamps land
+  within 4 pp of their TSMC7 counterparts and never rail.
+* **`sram_snm` and `switchcap` reproduce tightly** (≤0.9 pp) and their verdicts
+  never differ, in any family.
 
-It does **not** invalidate the family-level conclusions, which rest on many
-cells at once — production DirectNet at 15/16 strict, BSIM-AR `corroft@medium`
-at 16/16 — nor the corridor law, which moves rings by 8 pp against a 4 pp noise
-floor. What it retires is the practice of promoting a recipe on a single-cell
-margin.
+Two conclusions follow. First, the pipeline's run-to-run variance is
+**concentrated in exactly the two cells this project has always ranked recipes
+on**: every "recipe A beats recipe B by one cell" claim in `by-recipe.md` that
+turns on a ring or an opamp is within noise, while the same claim resting on a
+SRAM or switchcap cell is not. Second, **reproducibility is family-dependent**,
+and BSIM-AR is the stable one — all 16 of its verdicts reproduce across two
+independent trainings, where production DirectNet reproduces 11. That is a
+practical argument for BSIM-AR as the fidelity option on top of its 16/16
+score, and a caution about DirectNet's.
+
+None of this touches the family-level conclusions, which rest on many cells at
+once (production DirectNet 15/16 strict, BSIM-AR `corroft@medium` 16/16), nor
+the corridor law, which moves rings by ~8 pp against a ~4 pp noise floor. What
+it retires is promoting a recipe on a single-cell margin.
 
 Datasets regenerated from the kept vendor PDK and **verified `array_equal` to
 `tsmc7_*`** — 1,816,830 nmos / 2,187,292 pmos rows matching on `inputs`,
@@ -437,61 +444,11 @@ duplicate finding: the audit compared files generated in June, this re-derives
 the same bytes from the PDK today.
 
 The campaign refuses to train unless that check passes
-(`scripts/tsmc6_restore_campaign.sh`) — it has already stopped one wave, when
-the first regeneration followed a documented recipe that omitted
-`--enable-subvt-off` and silently produced a set 4.7 % smaller. All three
-families are now training at **all four scales** (24 checkpoints, one clean
-recipe) and will be gated on the same 4-cell matrix by
-`scripts/tsmc6_gate_campaign.sh`.
-Until those land, the tables below are the **V6.11.0 pre-fix** run, recovered
-from commit `a96112a`, and are the "before" half of the repeat.
+(`scripts/tsmc6_restore_campaign.sh`) — it stopped one wave already, when the
+first regeneration followed a documented recipe that omitted
+`--enable-subvt-off` and silently produced a set 4.7 % smaller. All **24
+checkpoints** (3 families × 4 scales × 2 devices, one clean recipe) trained and
+were gated by `scripts/tsmc6_gate_campaign.sh`; the table above is that result.
+The superseded V6.11.0 pre-fix TSMC6 tables are in
+[`archive-pre-gds-fix.md`](archive-pre-gds-fix.md).
 
-**DirectNet** — complex 4-cell, and device/inverter (pre-fix):
-
-| size | complex | ring period_err% | opamp gain_err% | sram lobeNRMSE% | switchcap chg_err% |
-|---|---|---|---|---|---|
-| small | 1/4 | 5.94 ✗ | 10.33 ✗ | 3.66 ✓ | 2.34 ✗ (droop) |
-| medium | 2/4 | 10.86 ✗ | rails ✗ | 3.31 ✓ | 2.81 ✓ |
-| **large** | **3/4** | **4.82 ✓** | rails ✗ | 3.61 ✓ | 2.45 ✓ |
-| xl | 2/4 | 14.31 ✗ | rails ✗ | 2.93 ✓ | 2.67 ✓ |
-
-| size | NMOS DC nrmse/mre% | PMOS DC nrmse/mre% | inv VTC% | inv tran% | dev-AC |
-|---|---|---|---|---|---|
-| small | 3.88 / 17.47 | 0.91 / 5.39 | 2.62 | 1.20 | 2/3 |
-| medium | 6.84 / 17.49 | 0.06 / 0.46 | 2.48 | 1.19 | 1/3 |
-| large | 2.02 / 5.70 | 0.04 / 0.61 | 1.79 | 0.98 | 2/3 |
-| xl | 6.69 / 17.31 | 0.04 / 0.62 | 1.19 | 0.78 | 1/3 |
-
-**BSIM-AR** — complex 4-cell, and device/inverter (pre-fix):
-
-| size | complex | ring period_err% | opamp gain_err% | sram lobeNRMSE% | switchcap chg_err% |
-|---|---|---|---|---|---|
-| small | 2/4 | 5.97 ✗ | 13.61 ✗ | 2.10 ✓ | 2.46 ✓ |
-| **medium** | **3/4** | 7.41 ✗ | **9.83 ✓** | 2.19 ✓ | 2.62 ✓ |
-| large | 2/4 | 11.19 ✗ | 12.78 ✗ | 3.22 ✓ | 2.64 ✓ |
-| xl | 2/4 | 12.55 ✗ | 10.13 ✗ | 2.21 ✓ | 2.73 ✓ |
-
-| size | NMOS DC nrmse/mre% | PMOS DC nrmse/mre% | inv VTC% | inv tran% |
-|---|---|---|---|---|
-| small | 3.37 / 11.32 | 0.56 / 2.29 | 1.48 | 1.21 |
-| medium | 4.07 / 11.71 | 0.16 / 0.85 | 2.97 | 1.15 |
-| large | 4.77 / 12.54 | 0.10 / 0.55 | 2.35 | 1.18 |
-| xl | 6.41 / 16.79 | 0.06 / 0.15 | 1.78 | 1.00 |
-
-**PFN** — complex 4-cell, and device/inverter (pre-fix; the V6.11.0 run had no
-xl tier, which V7.1.0's `("tabpfn","xl")` preset closes):
-
-| size | complex | ring period_err% | opamp gain_err% | sram lobeNRMSE% | switchcap chg_err% |
-|---|---|---|---|---|---|
-| small | 2/4 | 8.22 ✗ | rails ✗ | 2.29 ✓ | 2.94 ✓ |
-| medium | 2/4 | 9.93 ✗ | rails ✗ | 1.75 ✓ | 2.94 ✓ |
-| large | 2/4 | 12.38 ✗ | rails ✗ | 4.92 ✓ | 2.85 ✓ |
-| xl | *(V7.1.0, training)* | | | | |
-
-| size | NMOS DC nrmse/mre% | PMOS DC nrmse/mre% | inv VTC% | inv tran% | dev-AC |
-|---|---|---|---|---|---|
-| small | 3.57 / 10.24 | 0.04 / 0.40 | 1.07 | 1.15 | 2/3 |
-| medium | 3.80 / 8.01 | 0.05 / 0.59 | 1.06 | 0.97 | 1/3 |
-| large | 4.75 / 11.22 | 0.03 / 0.64 | 1.06 | 1.17 | 2/3 |
-
-PFN's inverter VTC (~1.06 %) is the tightest of the three families on this data.
