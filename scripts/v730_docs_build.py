@@ -414,7 +414,60 @@ def recipe_delta(tag: str) -> str:
     return "\n".join(out)
 
 
+FAMILY_META = {
+    "dn": ("73", "**production**", "1.5 ms @ `large`"),
+    "tf": ("74", "higher fidelity", "61.5 ms @ `medium`"),
+    "pfn": ("75", "research", "15.6 ms @ `small`"),
+}
+
+
+def _score(tag: str, key: str, recipes: bool) -> Tuple[int, int]:
+    p = n = 0
+    for tech in TECHS:
+        for circ in CIRCS:
+            v, _ = strict(tag, _variant(tag, key, tech, recipes), circ, tech)
+            if v is None:
+                continue
+            n += 1
+            p += v == "PASS"
+    return p, n
+
+
+def _best(tag: str, recipes: bool) -> Tuple[str, int, int]:
+    """Highest strict pass *fraction*; ties go to the cheaper group.
+
+    A fraction, not a count, because recipe groups are scored /16 (no TSMC6
+    checkpoints) while clean groups are /20 — comparing the raw counts would
+    hand the win to whichever group happened to be measured on more techs.
+    """
+    best = ("—", 0, 0)
+    for label, key in _groups(tag, recipes):
+        p, n = _score(tag, key, recipes)
+        if n and (not best[2] or p / n > best[1] / best[2]):
+            best = (label, p, n)
+    return best
+
+
+def scoreboard(_tag=None, _recipes=None) -> str:
+    out = ["| LEVEL | family | role | best clean tier | best recipe | CPU cost |",
+           "|---|---|---|---|---|---|"]
+    for tag in ("dn", "tf", "pfn"):
+        lvl, role, cost = FAMILY_META[tag]
+        cl, cp, cn = _best(tag, False)
+        rl, rp, rn = _best(tag, True)
+        c = f"`{cl}` **{cp}/{cn}**" if cn else "—"
+        r = f"{rl} **{rp}/{rn}**" if rn else "*(none trained)*"
+        out.append(f"| {lvl} | **{FAM[tag]}** | {role} | {c} | {r} | {cost} |")
+    out.append("")
+    out.append("Strict = passes at OMP ∈ {1, 2, 4}. Clean groups score **/20** "
+               "(4 circuits × 5 techs); recipe groups score **/16** because "
+               "curriculum checkpoints exist for the four original techs only. "
+               "Compare the fractions, not the counts.")
+    return "\n".join(out)
+
+
 BUILDERS = {
+    "SCOREBOARD": lambda tag, recipes: scoreboard(),
     "HEADLINE": headline,
     "TESTCASE": testcase_tables,
     "BYTECH": by_tech_rollup,
@@ -445,6 +498,21 @@ def build(tag: str, recipes: bool, check: bool) -> bool:
     return True
 
 
+def build_readme(check: bool) -> bool:
+    tpl = TPL / "README.md.in"
+    if not tpl.exists():
+        return True
+    text = tpl.read_text().replace("<!--SCOREBOARD-->", scoreboard())
+    dest = DOCS / "README.md"
+    if check:
+        same = dest.exists() and dest.read_text() == text
+        print(f"  {dest.name}: {'up to date' if same else 'STALE'}")
+        return same
+    dest.write_text(text)
+    print(f"  wrote {dest.relative_to(ROOT)}  ({len(text.splitlines())} lines)")
+    return True
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="Build the six accuracy reports")
     ap.add_argument("--check", action="store_true",
@@ -455,6 +523,7 @@ def main() -> int:
     for tag in ("dn", "tf", "pfn"):
         for recipes in (False, True):
             ok &= build(tag, recipes, args.check)
+    ok &= build_readme(args.check)
     return 0 if ok else 1
 
 
