@@ -35,23 +35,35 @@ def sram_write_tran(rows, cols, vdd=0.75, tstep="0.05n", tstop="10n"):
 
 
 class _Instrument:
-    """Patch the module-level solver hooks; accumulate into a dict."""
+    """Patch the solver hooks; accumulate into a dict.
+
+    Buckets are additive: wall = batch + tran_stamp + tocsr + solve
+    + resid_extra + rest, where ``tran_stamp`` is the whole
+    ``_stamp_mosfet_transient`` (its inner ``_stamp_mosfet_dc`` share is
+    reported separately as ``stamp_dc``, so transcap = tran_stamp -
+    stamp_dc), and ``resid_extra`` is ``_transient_residual_at`` minus
+    the stamp time already counted inside it.
+    """
 
     def __init__(self, S):
         self.S = S
-        self.c = {"stamp": 0.0, "batch": 0.0, "solve": 0.0, "tocsr": 0.0,
-                  "n_solve": 0, "n_batch": 0}
+        self.c = {"stamp_dc": 0.0, "tran_stamp": 0.0, "batch": 0.0,
+                  "solve": 0.0, "tocsr": 0.0, "resid": 0.0,
+                  "resid_nested": 0.0, "n_solve": 0, "n_batch": 0,
+                  "n_resid": 0, "_in_tran_stamp": 0}
         self._orig = (S._stamp_mosfet_dc, S._batch_eval_nn_mosfets,
-                      S._solve_mna)
+                      S._solve_mna, S.TransientSolver._stamp_mosfet_transient,
+                      S.TransientSolver._transient_residual_at)
 
     def __enter__(self):
         S, c = self.S, self.c
-        orig_stamp, orig_batch, orig_solve = self._orig
+        (orig_stamp, orig_batch, orig_solve, orig_tran_stamp,
+         orig_resid) = self._orig
 
         def stamp(*a, **k):
             t = time.perf_counter()
             r = orig_stamp(*a, **k)
-            c["stamp"] += time.perf_counter() - t
+            c["stamp_dc"] += time.perf_counter() - t
             return r
 
         def batch(*a, **k):
@@ -72,31 +84,56 @@ class _Instrument:
             c["n_solve"] += 1
             return r
 
+        def tran_stamp(self_, *a, **k):
+            t = time.perf_counter()
+            r = orig_tran_stamp(self_, *a, **k)
+            dt = time.perf_counter() - t
+            if c["_in_tran_stamp"]:
+                c["resid_nested"] += dt
+            else:
+                c["tran_stamp"] += dt
+            return r
+
+        def resid(self_, *a, **k):
+            c["_in_tran_stamp"] += 1
+            t = time.perf_counter()
+            r = orig_resid(self_, *a, **k)
+            c["resid"] += time.perf_counter() - t
+            c["_in_tran_stamp"] -= 1
+            c["n_resid"] += 1
+            return r
+
         S._stamp_mosfet_dc = stamp
         S._batch_eval_nn_mosfets = batch
         S._solve_mna = solve
+        S.TransientSolver._stamp_mosfet_transient = tran_stamp
+        S.TransientSolver._transient_residual_at = resid
         return c
 
     def __exit__(self, *exc):
         (self.S._stamp_mosfet_dc, self.S._batch_eval_nn_mosfets,
-         self.S._solve_mna) = self._orig
+         self.S._solve_mna, self.S.TransientSolver._stamp_mosfet_transient,
+         self.S.TransientSolver._transient_residual_at) = self._orig
         return False
 
 
 def _report(tag, c, wall, nsteps=None):
-    other = wall - c["stamp"] - c["batch"] - c["solve"] - c["tocsr"]
+    # In the OP stage tran_stamp/resid never fire, so stamp = stamp_dc.
+    stamp = c["tran_stamp"] if c["tran_stamp"] > 0.0 else c["stamp_dc"]
+    rest = wall - stamp - c["batch"] - c["solve"] - c["tocsr"] - c["resid"]
     nb = max(1, c["n_batch"])
     line = (f"  {tag:<5} wall={wall:8.2f}s | nn={c['batch']:7.2f} "
-            f"stamp={c['stamp']:7.2f} tocsr={c['tocsr']:6.2f} "
-            f"spsolve={c['solve']:7.2f} other={other:7.2f} | "
-            f"nsolve={c['n_solve']} nbatch={c['n_batch']} "
-            f"LM_extra={c['n_solve'] - c['n_batch']}")
+            f"stamp={stamp:7.2f} (dc_part={c['stamp_dc']:6.2f}) "
+            f"tocsr={c['tocsr']:6.2f} spsolve={c['solve']:7.2f} "
+            f"resid={c['resid']:7.2f} (x{c['n_resid']}) "
+            f"rest={rest:7.2f} | nsolve={c['n_solve']} "
+            f"nbatch={c['n_batch']} LM_extra={c['n_solve'] - c['n_batch']}")
     if nsteps:
         line += f" steps={nsteps} NR/step={c['n_batch'] / nsteps:.2f}"
     line += (f" | per-iter: nn={1e3 * c['batch'] / nb:6.1f}ms "
-             f"stamp={1e3 * c['stamp'] / nb:6.1f}ms "
+             f"stamp={1e3 * stamp / nb:6.1f}ms "
              f"spsolve={1e3 * c['solve'] / nb:5.2f}ms "
-             f"other={1e3 * other / nb:5.1f}ms")
+             f"rest={1e3 * rest / nb:5.1f}ms")
     print(line, flush=True)
 
 
@@ -150,6 +187,11 @@ def run(rows, cols, tmpdir, tstep="0.05n", tstop="10n"):
                                  use_pseudo_transient=True,
                                  pseudo_transient_steps=10,
                                  pseudo_transient_cap=1e-12)
+        prof = None
+        if os.environ.get("PROF_TRAN_CPROFILE") == "1":
+            import cProfile
+            prof = cProfile.Profile()
+            prof.enable()
         t0 = time.perf_counter()
         try:
             tran.solve()
@@ -157,6 +199,10 @@ def run(rows, cols, tmpdir, tstep="0.05n", tstop="10n"):
         except Exception as e:  # noqa: BLE001
             ok = f"FAIL:{type(e).__name__}"
         wall_tr = time.perf_counter() - t0
+        if prof is not None:
+            prof.disable()
+            import pstats
+            pstats.Stats(prof).sort_stats("cumulative").print_stats(25)
     print(f"  TRAN {ok}", flush=True)
     _report("tran", c_tr, wall_tr, nsteps=nsteps)
     return c_tr
