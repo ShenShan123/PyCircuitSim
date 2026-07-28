@@ -14,7 +14,7 @@ This campaign runs the one arm that is aimed squarely at the cells PFN fails.
 > result is a consistent move across many ring cells, which is the size of
 > effect the corridor produces in the other two families.
 
-> **Denominators.** <!--DENOM-->
+> **Denominators.** Totals are **/20** — 4 circuits × 5 techs, TSMC6 included (`methodology.md` §2). Earlier reports scored /16 over four techs, so a /20 total here and a /16 total there can be the same measurement.
 
 ---
 
@@ -48,11 +48,15 @@ follow the same trajectory, not merely that their datasets match.
 
 ## 2. Gates by recipe
 
-<!--HEADLINE-->
+| group | strict /20 | ring_osc | opamp | sram_snm | switchcap | flips | open cells |
+|---|---|---|---|---|---|---|---|
+| `corroft`@small | **14/20** | 5/5 | 0/5 | 5/5 | 4/5 | 0 | tsmc5-opamp, tsmc6-opamp, tsmc7-opamp, tsmc12-opamp, tsmc16-opamp, tsmc12-switchcap |
 
 ## 3. What the corridor changed against clean
 
-<!--RECIPEDELTA-->
+| recipe | tier | cells gained vs clean | cells lost vs clean | net |
+|---|---|---|---|---|
+| `corroft` | small | tsmc5-ring_osc, tsmc7-ring_osc | tsmc12-opamp, tsmc16-opamp | **+0** |
 
 ### The result: the corridor closes every ring, and pays for it in opamps
 
@@ -92,7 +96,37 @@ points at, and §6 lists it first.
 
 ## 4. Per testcase
 
-<!--TESTCASE-->
+#### Ring oscillator
+
+*Verdict is the gate's exit code; the number is the period error %, gate ≤5 %.*
+
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
+|---|---|---|---|---|---|
+| `corroft`@small | **PASS** 4.33% | **PASS** 2.54% | **PASS** 3.66% | **PASS** 3.22% | **PASS** 2.47% |
+
+#### Two-stage Miller opamp (DC)
+
+*Verdict is the gate's exit code; the number is the open-loop gain error %, gate ≤10 %.*
+
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
+|---|---|---|---|---|---|
+| `corroft`@small | FAIL 100.00% | FAIL 100.00% | FAIL 100.00% | FAIL 100.00% | FAIL 10.16% |
+
+#### 6T SRAM read SNM
+
+*Verdict is the gate's exit code; the number is the worst lobe NRMSE %, gate ≤10 % and all lobes positive.*
+
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
+|---|---|---|---|---|---|
+| `corroft`@small | **PASS** 6.62% | **PASS** 1.55% | **PASS** 1.57% | **PASS** 1.57% | **PASS** 1.41% |
+
+#### Switched-capacitor cell
+
+*Verdict is the gate's exit code; the number is the charge error % of VDD, gate ≤5 %.*
+
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
+|---|---|---|---|---|---|
+| `corroft`@small | **PASS** 2.25% | **PASS** 2.13% | **PASS** 2.48% | FAIL 5.81% | **PASS** 3.97% |
 
 ## 5. Device fidelity and AC
 
@@ -101,7 +135,29 @@ own trajectories and upweights it — so its risk to the device suites is that
 concentrating loss mass on 0.3 % of the rows degrades the rest of the surface.
 The device tables below are the check on that.
 
-<!--DEVICE-->
+**Parametric DC — `verify_nn_multi_tech_dc`** *(mean Id-Vgs NRMSE %, config fails in brackets)*
+
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass |
+|---|---|---|---|---|---|---|
+| `corroft`@small | 1.80 | 2.02 (13/14) | 1.00 | 0.41 | 0.51 | 68/69 |
+
+**Parametric transient — `verify_nn_multi_tech_tran`** *(mean NRMSE %)*
+
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass |
+|---|---|---|---|---|---|---|
+| `corroft`@small | 1.72 | 1.51 | 1.52 | 1.56 | 1.57 | 80/80 |
+
+**Device CS-amp AC** — NMOS / PMOS *(gate: gain0 ≤1.5 dB, f3db ratio ∈[0.7, 1.43], magNRMSE ≤10 %)*
+
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass /10 |
+|---|---|---|---|---|---|---|
+| `corroft`@small | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | **10/10** |
+
+**Opamp open-loop AC** — DC-gain error *(gate: ≤3 dB, GBW ratio ∈[0.6, 1.67], PM err ≤15°, non-railed OP)*
+
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass /5 |
+|---|---|---|---|---|---|---|
+| `corroft`@small | FAIL 16.29 dB | FAIL 31.58 dB | FAIL 32.10 dB | FAIL 31.05 dB | **PASS** 1.72 dB | **1/5** |
 
 ## 6. Untried arms
 
