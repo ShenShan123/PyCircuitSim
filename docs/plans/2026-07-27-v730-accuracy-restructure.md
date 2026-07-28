@@ -76,14 +76,30 @@ shallow a `find` depth). Base data exists for all five techs; the ring-only
 
 ## 4. Waves
 
-| wave | work | state |
+| wave | work | state (2026-07-27 22:0x) |
 |---|---|---|
-| **A** | PFN clean@`xl` × TSMC5/7/12/16, full suite | inherited, in flight |
-| **B** | BSIM-AR clean × 4 tiers × 4 techs — ring+opamp at OMP {1,2,4}, sram+switchcap; 128 jobs | running, `results/v730_regate/` |
-| **C** | surviving-recipe gates: BSIM-AR complex strict + device/AC | queued behind B |
-| **D** | TSMC6 corridor harvest → TSMC6 recipe checkpoints | harvest running |
-| **E** | PFN corridor curriculum `corroft@small` × 4 techs × N/P | training, 3× RTX 4090 |
-| **F** | consistency control, doc generation, push | after A–E |
+| **A** | PFN clean@`xl` × TSMC5/7/12/16, full suite (48 jobs) | inherited pool, **40/48** |
+| **B** | BSIM-AR clean × 4 tiers × 4 techs — ring+opamp at OMP {1,2,4}, sram+switchcap (128 jobs) | **24/128**, PAR=12 |
+| **C** | surviving-recipe gates: 9 BSIM-AR groups, complex strict + device/AC (320 jobs) | **0/320**, PAR=8, longest-job-first so the device sweeps are all in flight |
+| **D** | TSMC6 corridor harvest | ✅ **done** — 6762 rows/device in 125 s, and `array_equal` to TSMC7's |
+| **E** | PFN corridor `corroft@small` × **5** techs × N/P (10 ckpts) | training, ~10/120 epochs, 3× RTX 4090 at ~95 % |
+| **F** | consistency control, final doc generation, retire old files, push | after A–E |
+
+Throughput is set by the shared host, not by the work: loadavg ~1380 on 192
+cores, almost all of it other users' Xyce. Wave B is landing ~14 jobs/hour.
+Expect A+B complete within a day, C within two, E within one.
+
+**Deliverables already landed:** `scripts/v730_coverage.py` (coverage/gap map
+over all three evidence passes), `scripts/v730_docs_build.py` (generates all six
+reports + the README scoreboard), the six templates, the rewritten
+`methodology.md`, the condensed archive, and the two DirectNet reports — whose
+data was already complete, so they are final.
+
+**Held back deliberately:** the rendered BSIM-AR / PFN reports and the README,
+because their tables would show partial gate coverage; and the deletion of
+`by-tech.md` / `by-scale.md` / `by-recipe.md` / the three `*-accuracy.md`, so
+the repo never has a window with no valid accuracy documentation. Both land in
+wave F.
 
 All gating goes through `scripts/v710_regate.sh` (resumable: a job whose log
 carries `===V710_DONE` is skipped) with `V710_OUT=results/v730_regate` so the
