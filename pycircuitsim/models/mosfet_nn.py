@@ -103,14 +103,57 @@ except (TypeError, ValueError):
 # size) so a re-trained checkpoint at the same path is not aliased.
 _SHARED_NN_MODULES: Dict[Tuple[str, int, int], torch.nn.Module] = {}
 
+# V7.2.0 Phase 1a — shared ``NormStats`` per norm.npz, same key scheme as
+# ``_SHARED_NN_MODULES``. The stats arrays are read-only by contract: every
+# simulator-side consumer copies before mutating (``_setup_gpu``,
+# ``_geo_norm``), so N devices sharing one object is bit-identical to N
+# private loads of the same file.
+_SHARED_NORM_STATS: Dict[Tuple[str, int, int], NormStats] = {}
+
+# V7.2.0 Phase 1c — ``Path.resolve()`` walks the filesystem (realpath
+# syscalls) and was called twice per device to build the cache keys:
+# ~1.2 s of a 32x32 parse. The str->resolved mapping is stable within a
+# process; staleness is caught by the (mtime, size) part of the keys.
+_RESOLVED_PATH_CACHE: Dict[str, str] = {}
+
+
+def _resolve_path_cached(path: Path) -> str:
+    s = str(path)
+    r = _RESOLVED_PATH_CACHE.get(s)
+    if r is None:
+        r = str(path.resolve())
+        _RESOLVED_PATH_CACHE[s] = r
+    return r
+
 
 def _get_nn_device() -> torch.device:
-    """Return the best available device (singleton)."""
+    """Resolve the NN eval device once per process (V7.2.0 Phase 1b).
+
+    Default **CPU**, even when CUDA is visible. Before V7.2.0 this
+    silently picked CUDA whenever it was available, so the *same command
+    line* produced different floats (and potentially a different NR basin
+    in a bistable circuit) depending on which box it ran on — a
+    provenance bug, since every gate result is defined as a CPU property.
+    GPU eval is now an explicit opt-in: ``PYCIRCUITSIM_NN_DEVICE=cuda``
+    (or ``cuda:N``). A requested-but-unavailable CUDA device raises —
+    no silent fallback (audit §B6 silent-green class).
+    """
     global _NN_DEVICE
     if _NN_DEVICE is None:
-        _NN_DEVICE = (
-            torch.device("cuda") if torch.cuda.is_available()
-            else torch.device("cpu"))
+        want = os.environ.get("PYCIRCUITSIM_NN_DEVICE", "cpu").strip().lower()
+        if want in ("", "cpu"):
+            _NN_DEVICE = torch.device("cpu")
+        elif want.startswith("cuda"):
+            if not torch.cuda.is_available():
+                raise RuntimeError(
+                    f"PYCIRCUITSIM_NN_DEVICE={want} requested but CUDA is "
+                    "unavailable; refusing silent CPU fallback")
+            _NN_DEVICE = torch.device(want)
+        else:
+            raise ValueError(
+                f"PYCIRCUITSIM_NN_DEVICE={want!r} not recognised "
+                "(use 'cpu', 'cuda' or 'cuda:N')")
+        print(f"[NN-device] NN eval device: {_NN_DEVICE}")
     return _NN_DEVICE
 
 
@@ -190,29 +233,51 @@ class _MOSFETNNBase(Component):
             raise FileNotFoundError(
                 f"Norm stats not found: {norm_path}")
 
-        state = torch.load(
-            str(model_path_obj), weights_only=True, map_location="cpu")
-
         # ── Build the model (subclass-supplied) and load weights ──────
         # Reuse a shared module for identical checkpoints so the Phase-5
         # batched path can stack devices that load the same .pt into one
         # forward. The module is stateless in eval() mode → safe to share.
+        #
+        # V7.2.0 Phase 1a: consult the cache BEFORE ``torch.load``. The
+        # old order deserialised the checkpoint unconditionally and threw
+        # it away on a hit — 55 % of parse wall at array sizes (one
+        # ``torch.load`` per device; ~22 GB of redundant unpickling at
+        # 6144 devices). Parse is now O(devices + checkpoints).
         assert model_factory is not None, (
             "_MOSFETNNBase requires model_factory")
         st = model_path_obj.stat()
         self._model_key: Tuple[str, int, int] = (
-            str(model_path_obj.resolve()), int(st.st_mtime_ns), int(st.st_size))
+            _resolve_path_cached(model_path_obj),
+            int(st.st_mtime_ns), int(st.st_size))
         cached = _SHARED_NN_MODULES.get(self._model_key)
         if cached is not None:
             self._nn_model = cached
         else:
+            state = torch.load(
+                str(model_path_obj), weights_only=True, map_location="cpu")
             self._nn_model = model_factory(state)
             self._nn_model.load_state_dict(state)
             self._nn_model.eval()
+            # V7.2.0 Phase 1c: move the module once, when it is built.
+            # ``_setup_gpu`` used to call ``model.to(device)`` per DEVICE
+            # INSTANCE — a no-op data-wise on a warm module, but the
+            # module-tree ``_apply`` walk alone was ~2.6 s of a 32x32
+            # parse (6,144 walks over the same 18 modules).
+            self._nn_model.to(_get_nn_device())
             _SHARED_NN_MODULES[self._model_key] = self._nn_model
 
         # ── Norm stats + normalizer ───────────────────────────────────
-        self._norm_stats: NormStats = NormStats.load(str(norm_path))
+        # V7.2.0 Phase 1a: shared per-file (was one ``NormStats.load``
+        # per device, ~8 s of parse at 6144 devices).
+        nst = norm_path.stat()
+        self._norm_key: Tuple[str, int, int] = (
+            _resolve_path_cached(norm_path),
+            int(nst.st_mtime_ns), int(nst.st_size))
+        stats = _SHARED_NORM_STATS.get(self._norm_key)
+        if stats is None:
+            stats = NormStats.load(str(norm_path))
+            _SHARED_NORM_STATS[self._norm_key] = stats
+        self._norm_stats: NormStats = stats
         self._normalizer = normalizer_from_stats(self._norm_stats)
 
         # ── Tech code ────────────────────────────────────────────────
@@ -297,7 +362,9 @@ class _MOSFETNNBase(Component):
 
     def _setup_gpu(self) -> None:
         self._device = _get_nn_device()
-        self._nn_model.to(self._device)
+        # The shared module was already moved to this device when it was
+        # built (Phase 1c) — the device is a process singleton, so no
+        # per-instance ``model.to`` is needed.
         self._tech_code_tensor = self._tech_code_tensor.to(self._device)
 
         s = self._norm_stats

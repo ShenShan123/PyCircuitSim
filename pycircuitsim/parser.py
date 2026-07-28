@@ -75,6 +75,69 @@ from pycircuitsim.models import (
 from pycircuitsim.config import BSIMCMG_OSDI_PATH, GENERIC_MODELCARD_DIR, ASAP7_MODELCARD_DIR
 
 
+# ── V7.2.0 Phase 1a: per-file caches + collapsed per-device logging ──────
+#
+# The NN resolver runs once per MOSFET *instance*. On an SRAM array that
+# used to mean one `[NN-resolver]` stdout line and (for LEVEL=74) one
+# norm.npz deserialisation per device — 6,144 lines / loads for a 32×32
+# array resolving to the same two checkpoints. The caches below make the
+# per-device cost O(1) after the first device; the log collapse keeps the
+# resolution visible (first occurrence prints immediately, unchanged
+# format) while `_flush_resolver_log` emits one `[xN devices]` summary
+# per distinct resolution at the end of the parse.
+
+_PHYS_METRIC_CACHE: Dict[Tuple[str, int, int], bool] = {}
+_RESOLVER_LOG_COUNTS: Dict[Tuple, list] = {}
+# Memo for the cascade itself (~10 Path.exists() per device otherwise).
+# Lives for ONE parse: cleared in `_flush_resolver_log`, so a checkpoint
+# landing on disk between parses is picked up, and mid-parse env changes
+# are impossible (parse is single-threaded).
+_RESOLUTION_MEMO: Dict[Tuple, Tuple[str, int, str, str]] = {}
+
+
+def _phys_best_trustworthy(phys_path: Path, norm_path: Path) -> bool:
+    """Whether ``phys_path`` may be preferred over the plain ``_best.pt``:
+    true iff the sibling norm.npz declares the median phys aggregator
+    (post-2026-05-03 fix). Cached per (path, mtime, size) — this used to
+    re-load the norm.npz once per device instance."""
+    if not (phys_path.exists() and norm_path.exists()):
+        return False
+    try:
+        st = norm_path.stat()
+        key = (str(norm_path), int(st.st_mtime_ns), int(st.st_size))
+        hit = _PHYS_METRIC_CACHE.get(key)
+        if hit is None:
+            from bsimar.data.normalize import BSIMARNormStats
+            _ns = BSIMARNormStats.load(str(norm_path))
+            hit = (getattr(_ns, "phys_best_metric", "legacy_mean")
+                   == "median")
+            _PHYS_METRIC_CACHE[key] = hit
+        return hit
+    except Exception:
+        return False
+
+
+def _resolver_log(key: Tuple, first_line: str) -> None:
+    """Print ``first_line`` on the first occurrence of ``key``; count
+    repeats silently for the end-of-parse summary."""
+    entry = _RESOLVER_LOG_COUNTS.get(key)
+    if entry is None:
+        _RESOLVER_LOG_COUNTS[key] = [1, first_line]
+        print(first_line)
+    else:
+        entry[0] += 1
+
+
+def _flush_resolver_log() -> None:
+    """Emit one ``[xN devices]`` summary per resolution that repeated,
+    then reset (so a later parse in the same process logs afresh)."""
+    for _key, (count, first_line) in _RESOLVER_LOG_COUNTS.items():
+        if count > 1:
+            print(f"{first_line}  [x{count} devices]")
+    _RESOLVER_LOG_COUNTS.clear()
+    _RESOLUTION_MEMO.clear()
+
+
 def _resolve_nn_checkpoint(
     *,
     level: int,
@@ -85,6 +148,71 @@ def _resolve_nn_checkpoint(
     netlist_name: str,
 ) -> Tuple[str, int]:
     """Resolve checkpoint path and tech code for LEVEL=73/74/75.
+
+    V7.2.0 Phase 1c: memoizing wrapper. The cascade result cannot differ
+    between two devices with the same (level, polarity, tech, VT,
+    explicit path) within one parse, so the filesystem walk runs once per
+    distinct key; logging and the UNKNOWN-code check still run per device
+    so counts and strict-mode raises stay exact.
+    """
+    from bsimar.config import UNKNOWN_CODE_ID, LOCAL_UNKNOWN_CODE_ID
+
+    memo_key = (level, device_key, tech_key, vt_key, explicit_path)
+    hit = _RESOLUTION_MEMO.get(memo_key)
+    if hit is None:
+        hit = _resolve_nn_checkpoint_uncached(
+            level=level, device_key=device_key, tech_key=tech_key,
+            vt_key=vt_key, explicit_path=explicit_path)
+        _RESOLUTION_MEMO[memo_key] = hit
+    path, tech_code, chk_name, scope = hit
+
+    # Fail loud: log every NN checkpoint resolution so the .lis /
+    # stdout makes the universal-vs-per-tech choice and tech_code visible.
+    # V7.2.0 Phase 1a: collapsed — first device prints the full line
+    # (format unchanged; benchmark_collect's `-> <chk>` regex matches it),
+    # repeats are counted and summarised by `_flush_resolver_log` instead
+    # of printing 6,144 identical lines for a 32x32 array.
+    _resolver_log(
+        (level, tech_key, vt_key, chk_name, scope, tech_code),
+        f"[NN-resolver] L{level} {netlist_name} TECH={tech_key} VT={vt_key} "
+        f"-> {chk_name} (scope={scope}, tech_code={tech_code})")
+
+    # audit C6m: the UNKNOWN slot is per-vocab (universal 17; tsmc5 4,
+    # tsmc7 3, tsmc12/tsmc16 5), so the old `scope == "universal"` guard
+    # never fired for a per-tech checkpoint — an out-of-vocab VT, or a
+    # pinned per-tech checkpoint under a netlist declaring a different TECH,
+    # routed every device to the untrained UNKNOWN row in silence.
+    _unknown = (UNKNOWN_CODE_ID if scope == "universal"
+                else LOCAL_UNKNOWN_CODE_ID[scope])
+    if tech_code == _unknown:
+        msg = (f"MOSFET {netlist_name}: TECH={tech_key} VT={vt_key} maps to "
+               f"the UNKNOWN tech code ({_unknown}) in the '{scope}' vocab "
+               f"of {chk_name} — the model has no trained embedding row for "
+               f"this (tech, VT) pair, only the p_unknown dropout average. "
+               f"Predictions will be materially less accurate.")
+        if os.environ.get("PYCIRCUITSIM_NN_STRICT_TECH_CODE") == "1":
+            raise ValueError(msg)
+        import warnings
+        warnings.warn(msg)
+        # warnings.warn de-duplicates per call site, so only the first of N
+        # devices would ever surface; the print is what lands in the .lis /
+        # gate log. V7.2.0 Phase 1a: collapsed like the resolution line —
+        # first device prints in full, repeats are summarised at parse end.
+        _resolver_log(
+            ("unknown-code", level, tech_key, vt_key, chk_name, scope),
+            f"[NN-resolver] WARNING {msg}")
+    return path, tech_code
+
+
+def _resolve_nn_checkpoint_uncached(
+    *,
+    level: int,
+    device_key: str,
+    tech_key: str,
+    vt_key: str,
+    explicit_path: Optional[str],
+) -> Tuple[str, int, str, str]:
+    """Resolve (path, tech_code, chk_name, scope) for LEVEL=73/74/75.
 
     Cascade: explicit ``MODEL_PATH`` > v4 universal > per-tech > bare.
     For LEVEL=74 (BSIMAR) the universal cascade prefers ``_best.phys.pt``
@@ -159,16 +287,7 @@ def _resolve_nn_checkpoint(
             phys_path = CHECKPOINT_DIR / f"{base}_best.phys.pt"
             plain_path = CHECKPOINT_DIR / f"{base}_best.pt"
             norm_path = CHECKPOINT_DIR / f"{base}_norm.npz"
-            phys_trustworthy = False
-            if phys_path.exists() and norm_path.exists():
-                try:
-                    from bsimar.data.normalize import BSIMARNormStats
-                    _ns = BSIMARNormStats.load(str(norm_path))
-                    phys_trustworthy = (
-                        getattr(_ns, "phys_best_metric", "legacy_mean")
-                        == "median")
-                except Exception:
-                    phys_trustworthy = False
+            phys_trustworthy = _phys_best_trustworthy(phys_path, norm_path)
             if phys_trustworthy:
                 explicit_path = str(phys_path)
             elif plain_path.exists():
@@ -258,16 +377,7 @@ def _resolve_nn_checkpoint(
             phys_path = CHECKPOINT_DIR / f"{prefix}_{device_key}_best.phys.pt"
             plain_path = CHECKPOINT_DIR / f"{prefix}_{device_key}_best.pt"
             norm_path = CHECKPOINT_DIR / f"{prefix}_{device_key}_norm.npz"
-            phys_trustworthy = False
-            if phys_path.exists() and norm_path.exists():
-                try:
-                    from bsimar.data.normalize import BSIMARNormStats
-                    _ns = BSIMARNormStats.load(str(norm_path))
-                    phys_trustworthy = (
-                        getattr(_ns, "phys_best_metric", "legacy_mean")
-                        == "median")
-                except Exception:
-                    phys_trustworthy = False
+            phys_trustworthy = _phys_best_trustworthy(phys_path, norm_path)
             if phys_trustworthy:
                 return str(phys_path)
             if plain_path.exists():
@@ -319,33 +429,10 @@ def _resolve_nn_checkpoint(
             break
     tech_code = local_variant_code(scope, tech_key, vt_key)
 
-    # Fail loud: log every NN checkpoint resolution so the .lis /
-    # stdout makes the universal-vs-per-tech choice and tech_code visible.
-    print(f"[NN-resolver] L{level} {netlist_name} TECH={tech_key} VT={vt_key} "
-          f"-> {chk_name} (scope={scope}, tech_code={tech_code})")
-
-    # audit C6m: the UNKNOWN slot is per-vocab (universal 17; tsmc5 4,
-    # tsmc7 3, tsmc12/tsmc16 5), so the old `scope == "universal"` guard
-    # never fired for a per-tech checkpoint — an out-of-vocab VT, or a
-    # pinned per-tech checkpoint under a netlist declaring a different TECH,
-    # routed every device to the untrained UNKNOWN row in silence.
-    _unknown = (UNKNOWN_CODE_ID if scope == "universal"
-                else LOCAL_UNKNOWN_CODE_ID[scope])
-    if tech_code == _unknown:
-        msg = (f"MOSFET {netlist_name}: TECH={tech_key} VT={vt_key} maps to "
-               f"the UNKNOWN tech code ({_unknown}) in the '{scope}' vocab "
-               f"of {chk_name} — the model has no trained embedding row for "
-               f"this (tech, VT) pair, only the p_unknown dropout average. "
-               f"Predictions will be materially less accurate.")
-        if os.environ.get("PYCIRCUITSIM_NN_STRICT_TECH_CODE") == "1":
-            raise ValueError(msg)
-        import warnings
-        warnings.warn(msg)
-        # warnings.warn de-duplicates per call site, so only the first of N
-        # devices would ever surface; the print is what lands in the .lis /
-        # gate log for every device.
-        print(f"[NN-resolver] WARNING {msg}")
-    return path, tech_code
+    # Logging and the UNKNOWN-code check live in the memoizing wrapper
+    # (`_resolve_nn_checkpoint`) so they run per device while this
+    # cascade runs once per distinct key.
+    return path, tech_code, chk_name, scope
 
 
 class Parser:
@@ -530,6 +617,12 @@ class Parser:
             # Skip .model and .include (already processed)
             if not line.lower().startswith(('.model', '.include')):
                 self.parse_line(line)
+
+        # V7.2.0 Phase 1a: emit the per-(resolution, count) summaries for
+        # NN-resolver lines suppressed after their first occurrence. An
+        # early flush from a recursive `.include` parse only splits a
+        # summary across two lines; counts stay exact.
+        _flush_resolver_log()
 
     def parse_line(self, line: str) -> None:
         """
@@ -964,8 +1057,11 @@ class Parser:
             import os as _os
             _force = _os.environ.get("PYCIRCUITSIM_NN_FORCE_LEVEL")
             if _force and int(_force) in (73, 74, 75) and int(_force) != level:
-                print(f"[NN-resolver] FORCE LEVEL {level}->{_force} "
-                      f"(PYCIRCUITSIM_NN_FORCE_LEVEL) for {name}")
+                # V7.2.0 Phase 1a: collapsed — was one line per M instance.
+                _resolver_log(
+                    ("force-level", level, _force),
+                    f"[NN-resolver] FORCE LEVEL {level}->{_force} "
+                    f"(PYCIRCUITSIM_NN_FORCE_LEVEL) for {name}")
                 level = int(_force)
             label = {73: "NN", 74: "BSIM-AR", 75: "TabPFN"}[level]
             if NFIN is None:

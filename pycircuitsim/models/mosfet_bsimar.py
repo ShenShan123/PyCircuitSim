@@ -53,9 +53,13 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
         if not config_path.exists():
             raise FileNotFoundError(
                 f"BSIMAR architecture config not found: {config_path}")
-        cfg = np.load(str(config_path))
 
         def _build(_state: Dict[str, torch.Tensor]) -> torch.nn.Module:
+            # V7.2.0 Phase 1a: loaded lazily — the factory only runs on a
+            # shared-module cache miss, so N devices sharing a checkpoint
+            # read the sidecar once instead of N times (the existence
+            # check above stays eager so a missing sidecar fails loud).
+            cfg = np.load(str(config_path))
             return TransformerEncoderModel(
                 input_dim=int(cfg["input_dim"]),
                 target_dim=int(cfg["target_dim"]),
