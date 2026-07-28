@@ -123,9 +123,14 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tech", default=",".join(DEFAULT_TECHS))
     ap.add_argument("--config", default="commit",
-                    choices=["commit", "gpu", "commit+gpu"])
+                    choices=["commit", "gpu", "commit+gpu", "stamp",
+                             "order", "commit+stamp", "stamp+order",
+                             "commit+stamp+order", "commit+gpu+stamp",
+                             "commit+gpu+stamp+order"])
     ap.add_argument("--gpu", default="0",
                     help="CUDA_VISIBLE_DEVICES for gpu configs")
+    ap.add_argument("--ordering", default="NATURAL",
+                    help="permc_spec for 'order' configs (Phase 4a')")
     args = ap.parse_args()
     techs = [t.strip().upper() for t in args.tech.split(",") if t.strip()]
 
@@ -135,6 +140,10 @@ def main() -> int:
     if "gpu" in args.config:
         cand_env["PYCIRCUITSIM_NN_DEVICE"] = "cuda"
         cand_env["CUDA_VISIBLE_DEVICES"] = args.gpu
+    if "stamp" in args.config:
+        cand_env["PYCIRCUITSIM_BATCHED_STAMP"] = "1"
+    if "order" in args.config:
+        cand_env["PYCIRCUITSIM_MNA_ORDERING"] = args.ordering
 
     print(f"T4 latch-basin gate — candidate config '{args.config}' "
           f"env={cand_env}")

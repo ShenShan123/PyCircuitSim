@@ -32,10 +32,24 @@ from typing import Dict, List, Tuple, Optional
 from pathlib import Path
 import numpy as np
 from scipy.sparse import lil_matrix, issparse
-from scipy.sparse.linalg import spsolve
+from scipy.sparse.linalg import spsolve, splu
 from pycircuitsim.circuit import Circuit
 from pycircuitsim.models.passive import VoltageSource, Capacitor
 from pycircuitsim.logger import Logger, IterationInfo
+
+# V7.2.0 Phase 4a' — opt-in sparse-LU column ordering
+# (plan §5.2). scipy's spsolve default (COLAMD) can blow up fill on these
+# structurally-symmetric MNA matrices; MMD_AT_PLUS_A holds fill flat.
+# PERTURBING: a different pivot order rounds differently, so this ships
+# default-off and gates with the Phase-3 flag bundle (§8.4). Unset (the
+# default) leaves the spsolve path byte-identical. Unknown values raise
+# at first use — no silent fallback (audit §B6 silent-green class).
+_MNA_ORDERING = os.environ.get("PYCIRCUITSIM_MNA_ORDERING", "").strip()
+_VALID_ORDERINGS = ("NATURAL", "MMD_ATA", "MMD_AT_PLUS_A", "COLAMD")
+if _MNA_ORDERING and _MNA_ORDERING not in _VALID_ORDERINGS:
+    raise ValueError(
+        f"PYCIRCUITSIM_MNA_ORDERING={_MNA_ORDERING!r} not one of "
+        f"{_VALID_ORDERINGS}")
 
 
 def _create_mna_matrix(size: int) -> lil_matrix:
@@ -59,7 +73,20 @@ def _solve_mna(mna_matrix, rhs: np.ndarray) -> np.ndarray:
     (which were written for it) actually reachable.
     """
     if issparse(mna_matrix):
-        solution = spsolve(mna_matrix.tocsr(), rhs)
+        if _MNA_ORDERING:
+            # Phase 4a' opt-in: explicit LU with the chosen column
+            # ordering. splu raises on exactly-singular input; the
+            # non-finite check below still guards near-singular results,
+            # mirroring the spsolve path's contract.
+            try:
+                lu = splu(mna_matrix.tocsc(), permc_spec=_MNA_ORDERING)
+                solution = lu.solve(rhs)
+            except RuntimeError as e:  # singular factorisation
+                raise np.linalg.LinAlgError(
+                    f"Singular MNA matrix (splu/{_MNA_ORDERING}): {e}"
+                ) from e
+        else:
+            solution = spsolve(mna_matrix.tocsr(), rhs)
         if not np.all(np.isfinite(solution)):
             raise np.linalg.LinAlgError(
                 "Singular MNA matrix: sparse solve returned a non-finite "
@@ -428,6 +455,239 @@ def _stamp_mosfet_dc(
         rhs[node_map[drain]] -= i_eq
     if source != "0" and source in node_map:
         rhs[node_map[source]] += i_eq
+
+
+# ─────────────────────────────────────────────────────────────────────
+# V7.2.0 Phase 3b — batched COO stamping for NN MOSFETs (opt-in)
+#
+# PYCIRCUITSIM_BATCHED_STAMP=1 replaces the per-device lil_matrix writes
+# for LEVEL>=73 devices with one COO assembly per NR iteration:
+# A = lil.tocsr() + coo.tocsr(). LEVEL=72 (OSDI) and all passives stay
+# on the scalar path. PERTURBING: summing duplicate coordinates in
+# CSR-conversion order is a different float accumulation order than
+# sequential lil writes — deterministic run-to-run, but not bit-equal to
+# the scalar path — so this ships default-off and gates with the §8.4
+# flag bundle. The two §4.3 hazards are handled explicitly below:
+# max(g_ds, gmin) is applied per device BEFORE accumulation, and the
+# dynamic abs(g_mb) > 1e-12 stamp mask reproduces the scalar branch.
+# ─────────────────────────────────────────────────────────────────────
+_BATCHED_STAMP = os.environ.get("PYCIRCUITSIM_BATCHED_STAMP", "0") == "1"
+
+
+def _nn_stamp_indices(circuit: Circuit, node_map: Dict[str, int]):
+    """Static per-NN-device index arrays for the batched stamp.
+
+    Topology-invariant, so cached on the circuit keyed by ``_topo_key``
+    (``node_map`` is itself topology-cached, so the key covers it).
+    Ground ("0"/"GND") and absent nodes map to -1.
+    """
+    key = _topo_key(circuit)
+    cached = getattr(circuit, "_pcs_stamp_idx_cache", None)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    devs = _nn_mosfets(circuit)
+    n = len(devs)
+    d_i = np.empty(n, dtype=np.int64)
+    g_i = np.empty(n, dtype=np.int64)
+    s_i = np.empty(n, dtype=np.int64)
+    b_i = np.empty(n, dtype=np.int64)
+    sign = np.ones(n)          # +1 NMOS, -1 PMOS ("leaving drain" flip)
+    b_ne_s = np.empty(n, dtype=bool)
+    for i, m in enumerate(devs):
+        dn, gn, sn, bn = m.nodes
+        d_i[i] = node_map.get(dn, -1)
+        g_i[i] = node_map.get(gn, -1)
+        s_i[i] = node_map.get(sn, -1)
+        b_i[i] = node_map.get(bn, -1)
+        if _is_pmos(m):
+            sign[i] = -1.0
+        b_ne_s[i] = bn != sn
+    data = (devs, d_i, g_i, s_i, b_i, sign, b_ne_s)
+    circuit._pcs_stamp_idx_cache = (key, data)
+    return data
+
+
+def _stamp_nn_mosfets_batched(
+    circuit: Circuit,
+    node_map: Dict[str, int],
+    matrix_size: int,
+    rhs: np.ndarray,
+    voltages: Dict[str, float],
+    v_arr: np.ndarray,
+    gmin: float,
+    tran_solver=None,
+):
+    """Batched replacement for the per-NN-device stamp loop.
+
+    Accumulates the NR current sources into ``rhs`` (np.add.at, device
+    order) and returns the NN devices' conductance/transcap block as one
+    CSR matrix to be added to the lil-born CSR — or ``None`` when the
+    circuit has no NN device. When ``tran_solver`` is given, the
+    charge-companion (transcap) block of ``_stamp_mosfet_transient`` is
+    included; otherwise this is the DC stamp only.
+
+    The value expressions reproduce ``_stamp_mosfet_dc`` /
+    ``_stamp_mosfet_transient`` term for term; only the accumulation
+    order of coincident matrix entries differs (the documented
+    perturbation this flag gates).
+    """
+    from scipy.sparse import coo_matrix
+
+    idx_data = _nn_stamp_indices(circuit, node_map)
+    devs, d_i, g_i, s_i, b_i, sign, b_ne_s = idx_data
+    n = len(devs)
+    if n == 0:
+        return None
+
+    # Padded node-voltage vector: index -1 lands on the appended 0.0,
+    # matching ``voltages.get(node, 0.0)`` for ground/absent nodes.
+    v_pad = np.concatenate([v_arr, np.zeros(1)])
+
+    gds = np.empty(n)
+    gm = np.empty(n)
+    gmb = np.empty(n)
+    ids = np.empty(n)
+    for i, m in enumerate(devs):
+        gds[i], gm[i], gmb[i] = m.get_conductance(voltages)
+        ids[i] = m.calculate_current(voltages)
+    gds = np.maximum(gds, gmin)   # §4.3: per-device floor BEFORE any sum
+
+    v_d = v_pad[d_i]
+    v_g = v_pad[g_i]
+    v_s = v_pad[s_i]
+    v_b = v_pad[b_i]
+    v_ds = v_d - v_s
+    v_gs = v_g - v_s
+    v_bs = v_b - v_s
+
+    i_leaving = sign * ids
+    i_eq = i_leaving - gds * v_ds - gm * v_gs - gmb * v_bs
+
+    d_ok = d_i >= 0
+    g_ok = g_i >= 0
+    s_ok = s_i >= 0
+    b_ok = b_i >= 0
+    ds_ok = d_ok & s_ok
+
+    np.add.at(rhs, d_i[d_ok], -i_eq[d_ok])
+    np.add.at(rhs, s_i[s_ok], i_eq[s_ok])
+
+    rows: list = []
+    cols: list = []
+    vals: list = []
+
+    def _add(r: np.ndarray, c: np.ndarray, v: np.ndarray,
+             valid: np.ndarray) -> None:
+        if valid.any():
+            rows.append(r[valid])
+            cols.append(c[valid])
+            vals.append(v[valid])
+
+    # gds between drain and source (4 entries)
+    _add(d_i, d_i, gds, d_ok)
+    _add(s_i, s_i, gds, s_ok)
+    _add(d_i, s_i, -gds, ds_ok)
+    _add(s_i, d_i, -gds, ds_ok)
+    # g_m VCCS (4 entries)
+    _add(d_i, g_i, gm, g_ok & d_ok)
+    _add(d_i, s_i, -gm, ds_ok)
+    _add(s_i, g_i, -gm, g_ok & s_ok)
+    _add(s_i, s_i, gm, s_ok)
+    # g_mb VCCS (4 entries, dynamic mask mirrors the scalar branch)
+    mb = (np.abs(gmb) > 1e-12) & b_ne_s
+    _add(d_i, b_i, gmb, mb & b_ok & d_ok)
+    _add(d_i, s_i, -gmb, mb & ds_ok)
+    _add(s_i, b_i, -gmb, mb & b_ok & s_ok)
+    _add(s_i, s_i, gmb, mb & s_ok)
+
+    # ── transcap companion block (transient only) ────────────────────
+    if tran_solver is not None:
+        act = [i for i, m in enumerate(devs)
+               if getattr(m, "_q_prev", None) is not None]
+        if act:
+            k = len(act)
+            dt = tran_solver._current_dt
+            method = getattr(tran_solver, "_integration_method", "trap")
+            qg = np.empty(k)
+            qd = np.empty(k)
+            cgg = np.empty(k)
+            cgd = np.empty(k)
+            cgs = np.empty(k)
+            cdg = np.empty(k)
+            cdd = np.empty(k)
+            h_g = np.empty(k)
+            h_d = np.empty(k)
+            coeff = np.empty(k)
+            for j, i in enumerate(act):
+                m = devs[i]
+                charges = m.get_charges(voltages)
+                caps = m.get_capacitances(voltages)
+                qg[j] = charges["qg"]
+                qd[j] = charges["qd"]
+                cgg[j] = caps.get("cgg", 0.0)
+                cgd[j] = caps.get("cgd", 0.0)
+                cgs[j] = caps.get("cgs", 0.0)
+                cdg[j] = caps.get("cdg", 0.0)
+                cdd[j] = caps.get("cdd", 0.0)
+                q_prev = m._q_prev
+                q_prev2 = getattr(m, "_q_prev2", None)
+                if method == 'bdf2' and q_prev2 is not None:
+                    c_j = 1.5 / dt
+                    h_g[j] = (2.0 / dt) * q_prev["qg"] - (0.5 / dt) * q_prev2["qg"]
+                    h_d[j] = (2.0 / dt) * q_prev["qd"] - (0.5 / dt) * q_prev2["qd"]
+                elif method == 'trap' or (method == 'bdf2' and q_prev2 is None):
+                    c_j = 2.0 / dt
+                    h_g[j] = c_j * q_prev["qg"] + getattr(m, '_i_prev_gate', 0.0)
+                    h_d[j] = c_j * q_prev["qd"] + getattr(m, '_i_prev_drain', 0.0)
+                else:
+                    c_j = 1.0 / dt
+                    h_g[j] = c_j * q_prev["qg"]
+                    h_d[j] = c_j * q_prev["qd"]
+                coeff[j] = c_j
+
+            a = np.asarray(act)
+            da, ga, sa = d_i[a], g_i[a], s_i[a]
+            vg_a, vd_a, vs_a = v_pad[ga], v_pad[da], v_pad[sa]
+            i_g_cap = coeff * qg - h_g
+            i_d_cap = coeff * qd - h_d
+            cds = -(cdg + cdd)
+            csg = -(cgg + cdg)
+            csd = -(cgd + cdd)
+            css = -(cgs + cds)
+            if os.environ.get("NN_SYMMETRIC_CAPS", "0") == "1":
+                cgd = cdg = 0.5 * (cgd + cdg)
+                cgs = csg = 0.5 * (cgs + csg)
+                cds = csd = 0.5 * (cds + csd)
+                css = -(cgs + cds)
+            scale = coeff
+
+            ga_ok = ga >= 0
+            da_ok = da >= 0
+            sa_ok = sa >= 0
+            _add(ga, ga, scale * cgg, ga_ok)
+            _add(ga, da, scale * cgd, ga_ok & da_ok)
+            _add(ga, sa, scale * cgs, ga_ok & sa_ok)
+            _add(da, ga, scale * cdg, da_ok & ga_ok)
+            _add(da, da, scale * cdd, da_ok)
+            _add(da, sa, scale * cds, da_ok & sa_ok)
+            _add(sa, ga, scale * csg, sa_ok & ga_ok)
+            _add(sa, da, scale * csd, sa_ok & da_ok)
+            _add(sa, sa, scale * css, sa_ok)
+
+            e_g = i_g_cap - scale * (cgg * vg_a + cgd * vd_a + cgs * vs_a)
+            e_d = i_d_cap - scale * (cdg * vg_a + cdd * vd_a + cds * vs_a)
+            e_s = -(e_g + e_d)
+            np.add.at(rhs, ga[ga_ok], -e_g[ga_ok])
+            np.add.at(rhs, da[da_ok], -e_d[da_ok])
+            np.add.at(rhs, sa[sa_ok], -e_s[sa_ok])
+
+    if not rows:
+        return None
+    coo = coo_matrix(
+        (np.concatenate(vals),
+         (np.concatenate(rows), np.concatenate(cols))),
+        shape=(matrix_size, matrix_size))
+    return coo.tocsr()
 
 
 class DCSolver:
@@ -821,10 +1081,24 @@ class DCSolver:
                     # note (exact for group-of-one, e.g. the inverter).
                     _batch_eval_nn_mosfets(self.circuit, voltages)
 
-                    # Stamp MOSFET conductances and currents
-                    for component in self.circuit.components:
-                        if _is_mosfet(component):
-                            self._stamp_mosfet(component, mna_matrix, rhs, node_map, voltages)
+                    # Stamp MOSFET conductances and currents.
+                    # Phase 3b (opt-in): NN devices go through one COO
+                    # assembly; LEVEL=72/others stay scalar.
+                    nn_extra = None
+                    if _BATCHED_STAMP:
+                        nn_extra = _stamp_nn_mosfets_batched(
+                            self.circuit, node_map, matrix_size, rhs,
+                            voltages, v_arr, self.gmin)
+                        for component in self.circuit.components:
+                            if (_is_mosfet(component)
+                                    and not _is_nn_mosfet(component)):
+                                self._stamp_mosfet(
+                                    component, mna_matrix, rhs,
+                                    node_map, voltages)
+                    else:
+                        for component in self.circuit.components:
+                            if _is_mosfet(component):
+                                self._stamp_mosfet(component, mna_matrix, rhs, node_map, voltages)
 
                     # Handle voltage sources (B and C matrices)
                     self._stamp_voltage_sources(mna_matrix, rhs, node_map, num_nodes, voltages=voltages)
@@ -840,6 +1114,8 @@ class DCSolver:
                     mna_solve = (
                         mna_matrix.tocsr() if issparse(mna_matrix)
                         else mna_matrix)
+                    if nn_extra is not None:
+                        mna_solve = mna_solve + nn_extra
 
                     # Current iterate as a full MNA vector (node voltages in
                     # the leading slots; branch-current slots left at 0 —
@@ -1660,10 +1936,23 @@ class TransientSolver:
             # _batch_eval_nn_mosfets for the accuracy note.
             _batch_eval_nn_mosfets(self.circuit, voltages)
 
-            # Stamp MOSFETs at current voltage estimate
-            for component in self.circuit.components:
-                if _is_mosfet(component):
-                    self._stamp_mosfet_transient(component, mna_matrix, rhs, node_map, voltages)
+            # Stamp MOSFETs at current voltage estimate.
+            # Phase 3b (opt-in): NN devices go through one COO assembly
+            # (DC + transcap companion); LEVEL=72/others stay scalar.
+            nn_extra = None
+            if _BATCHED_STAMP:
+                nn_extra = _stamp_nn_mosfets_batched(
+                    self.circuit, node_map, matrix_size, rhs,
+                    voltages, v_arr, self.gmin, tran_solver=self)
+                for component in self.circuit.components:
+                    if (_is_mosfet(component)
+                            and not _is_nn_mosfet(component)):
+                        self._stamp_mosfet_transient(
+                            component, mna_matrix, rhs, node_map, voltages)
+            else:
+                for component in self.circuit.components:
+                    if _is_mosfet(component):
+                        self._stamp_mosfet_transient(component, mna_matrix, rhs, node_map, voltages)
 
             # Apply Gmin stepping (if enabled)
             if gmin > self.gmin_final:
@@ -1673,6 +1962,8 @@ class TransientSolver:
             # shared by the residual, the solve, and the LM ladder.
             mna_solve = (
                 mna_matrix.tocsr() if issparse(mna_matrix) else mna_matrix)
+            if nn_extra is not None:
+                mna_solve = mna_solve + nn_extra
 
             # Current iterate as a full MNA vector (Phase 6a/6b).
             current_iterate = np.zeros(matrix_size)
