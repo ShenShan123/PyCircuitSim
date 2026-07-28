@@ -43,8 +43,17 @@ transient wall.
   the solved voltages before the commit loop + before
   `init_charge_state`. Flag-off byte-identical (sha256). Flag-on 4×4
   write op: **146 s → 34.7 s (4.2×)**; worst node NRMSE 0.0000 %VDD,
-  latch end-states 32/32, max final ΔV 0.1 µV. 16×16 A/B (the
-  plan-specified acceptance) in flight at entry time.
+  latch end-states 32/32, max final ΔV 0.1 µV. **16×16 A/B (the
+  plan-specified acceptance): 26 min 15 s → 11 min 52 s (2.2× on the
+  loadavg-~1270 box), latch end-states 512/512 (100 %), max final ΔV
+  0.52 mV.** Worst waveform NRMSE 1.43 %VDD (`q6_0`, a half-selected
+  column-0 cell) is localized to a 1.5 ns window where the *flag-off
+  reference itself rings step-to-step* (±50 mV about 0.728 V) during
+  disturb recovery while the flag-on run sits smoothly on the same
+  mean — both end at 0.728 V. Why 2.2× not the ~6× the 85 % commit
+  share implies: un-decomposable on the contended box; the flag-on
+  residual (NR-loop per-device tail + stamping — the unfixed 2a-full/3b
+  terms) is first in line for the Phase 0 quiet-box profile.
 - **Phase 3a mechanics (perturbing, default OFF)** `2496b9a` —
   numpy-staged H2D (verified bit-equal to the list build), resident
   constants, single D2H; smoke on cuda:2 agrees with CPU flag-off to
