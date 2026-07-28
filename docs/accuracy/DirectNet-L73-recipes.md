@@ -1,0 +1,245 @@
+# DirectNet (LEVEL=73) — recipe variants
+
+A **recipe** is one identical training addendum applied to every
+(tech × device × size) checkpoint — never a per-tech or per-gate special
+(`methodology.md` §5). Everything here therefore compares like with like: the
+same data pipeline, the same gates, one flag change against the clean control
+in [`DirectNet-L73-clean.md`](DirectNet-L73-clean.md).
+
+**Production is a recipe, not the clean model.** The `tsmc{X}_dn_large_*` slots
+the resolver serves have carried `crit30f` since V6.6.4.
+
+> **Read the noise floor before ranking anything by one cell.** The TSMC6
+> controlled repeat measured this pipeline's run-to-run variance on
+> bit-identical rows: **`ring_osc` carries ±4 pp across a 5 % gate** and
+> **`opamp` is bimodal** — a good basin or a 100 % rail — while `sram_snm` and
+> `switchcap` reproduce to ≤0.3 pp. A one-cell ring or opamp difference between
+> two recipes is **not** evidence that one is better. The laws in §4 survive
+> because they move cells by far more than that, or move many cells at once.
+
+> **Denominators.** Recipe checkpoints exist for the four original techs only,
+> so recipe totals here are **/16** where the clean report's are /20. TSMC6 has
+> clean checkpoints at every tier but no curriculum ones.
+
+---
+
+## 1. The kept recipes
+
+Authoritative source: the `recipe_args` map in `scripts/recipe_train.sh`.
+Curriculum recipes are 120-epoch fine-tunes at lr 3e-4, patience 40,
+**warm-started from their own tier's clean checkpoint**, trained on the
+ring-only `corro` corridor dataset.
+
+| recipe | tier | flags | lever |
+|---|---|---|---|
+| **`crit30f`** | `large` | `traj_corridor=3.0, inv_trip=2.0` | **production.** Corridor + inverter-trip anchor |
+| **`crit15m`** | `xl` | `traj_corridor=1.5, inv_trip=3.0` | the only DirectNet stem that sweeps the matrix |
+| `corroft` | `xl` | `traj_corridor=3.0` | corridor alone, no anchor |
+| `csob` | `large` | `--charge-sobolev` | supervises the autograd ∂q/∂V the AC and transient solvers consume |
+
+`traj_corridor` is a harvested bias tube along each tech's **own** ground-truth
+circuit trajectories (sample class 12); `inv_trip` upweights the per-tech
+Vth-centred inverter-trip band (class 7).
+
+`crit30f` exists because the original `crit30` stragglers were killed at
+heterogeneous epochs 30–92 — that artifact was not a uniformly executed recipe.
+`crit30f` is the honest-contract re-run, and it reproduces the artifact cell for
+cell.
+
+Everything else that has ever been trained for DirectNet is in §6.
+
+## 2. Gates by recipe
+
+| group | strict /20 | ring_osc | opamp | sram_snm | switchcap | flips | open cells |
+|---|---|---|---|---|---|---|---|
+| `crit30f`@large | **15/16** | 4/4 | 3/4 | 4/4 | 4/4 | 0 | tsmc7-opamp |
+| `csob`@large | **11/16** | 2/4 | 1/4 | 4/4 | 4/4 | 0 | tsmc5-ring_osc, tsmc7-ring_osc, tsmc5-opamp, tsmc7-opamp, tsmc16-opamp |
+| `corroft`@xl | **15/16** | 4/4 | 3/4 | 4/4 | 4/4 | 0 | tsmc5-opamp |
+| `crit15m`@xl | **16/16** | 4/4 | 4/4 | 4/4 | 4/4 | 0 | — |
+
+## 3. What each recipe changed against clean
+
+Gains and losses are named rather than netted: a recipe that banks two opamps
+and drops two rings is not "unchanged", and the net count is the least
+trustworthy column given the noise floor.
+
+| recipe | tier | cells gained vs clean | cells lost vs clean | net |
+|---|---|---|---|---|
+| `crit30f` | large | tsmc5-ring_osc, tsmc16-opamp | — | **+2** |
+| `csob` | large | — | tsmc5-opamp, tsmc7-ring_osc | **-2** |
+| `corroft` | xl | tsmc5-ring_osc, tsmc7-ring_osc, tsmc12-opamp | — | **+3** |
+| `crit15m` | xl | tsmc5-ring_osc, tsmc5-opamp, tsmc7-ring_osc, tsmc12-opamp | — | **+4** |
+
+## 4. The durable recipe laws
+
+**1. The corridor is the ring lever, and the only one.** Every recipe that
+closes a low-VDD ring has `traj_corridor` in it; every recipe without it fails
+`tsmc5-ring` and/or `tsmc7-ring`, in every family at every tier. Rings are
+`gds`-invariant — not one ring cell moved in the post-fix re-gate — so this is a
+genuine value-surface result, and it clears the noise floor by roughly a factor
+of two.
+
+**2. `gds` moved opamps; the corridor moves rings; the two levers are
+independent.** This is the cleanest structural statement the campaign produced,
+and it explains why the pre-fix recipe rankings were so noisy: half the signal
+they ranked on was a Jacobian sign error.
+
+**3. The `inv_trip` anchor composes on DirectNet, and is discontinuous in
+weight.** `crit30` beats `corroft` by a deterministic `tsmc5-opamp` bank, and
+the corridor-weight → basin map is **non-monotone**: for `tsmc5-opamp`, w1.0
+flips, w1.5 and w2.0 fail deterministically, w3.0 passes deterministically. The
+anchor is what makes w3.0 safe where the corridor alone railed. `crit30a1`
+(anchor 1.0) reproduces `corroft` (anchor 0) almost exactly, so the basin hop
+happens between anchor 1.0 and 2.0.
+
+**4. Curricula relocate basins rather than composing them.** `csobcrit` — built
+to hold `csob`'s `tsmc16-opamp` *and* `crit30`'s `tsmc5`+`tsmc12` — landed
+below both: csob's deterministic hold degraded to a flip while tsmc12 was
+gained. The composition hypothesis is refuted, and the `gds` fix does not
+revive it; the mechanism, one shared `id` head with mutually competitive
+basins, is unchanged.
+
+**5. Recipe rankings do not transfer across capacity or scope.** `crit30` is the
+best recipe at `large` and mediocre at `xl`; `crit10`/`crit15m` peak at `xl`. At
+universal scope (§5) `csob`'s basin does not transfer at all. Three independent
+demonstrations — tier, scope, family — that the weight → basin map is not
+portable.
+
+## 5. Per testcase
+
+#### Ring oscillator
+
+*Verdict is the gate's exit code; the number is the period error %, gate ≤5 %.*
+
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
+|---|---|---|---|---|---|
+| `crit30f`@large | **PASS** 4.04% | — | **PASS** 2.40% | **PASS** 3.49% | **PASS** 2.78% |
+| `csob`@large | FAIL 10.31% | — | FAIL 5.09% | **PASS** 2.12% | **PASS** 2.18% |
+| `corroft`@xl | **PASS** 4.05% | — | **PASS** 2.42% | **PASS** 2.68% | **PASS** 2.76% |
+| `crit15m`@xl | **PASS** 4.05% | — | **PASS** 2.42% | **PASS** 2.68% | **PASS** 2.76% |
+
+#### Two-stage Miller opamp (DC)
+
+*Verdict is the gate's exit code; the number is the open-loop gain error %, gate ≤10 %.*
+
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
+|---|---|---|---|---|---|
+| `crit30f`@large | **PASS** 9.54% | — | FAIL 100.00% | **PASS** 6.26% | **PASS** 7.69% |
+| `csob`@large | FAIL 100.00% | — | FAIL 100.00% | **PASS** 5.84% | FAIL 100.00% |
+| `corroft`@xl | FAIL 100.00% | — | **PASS** 6.90% | **PASS** 6.25% | **PASS** 6.69% |
+| `crit15m`@xl | **PASS** 3.41% | — | **PASS** 7.56% | **PASS** 6.23% | **PASS** 6.48% |
+
+#### 6T SRAM read SNM
+
+*Verdict is the gate's exit code; the number is the worst lobe NRMSE %, gate ≤10 % and all lobes positive.*
+
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
+|---|---|---|---|---|---|
+| `crit30f`@large | **PASS** 6.32% | — | **PASS** 2.65% | **PASS** 1.96% | **PASS** 1.73% |
+| `csob`@large | **PASS** 6.33% | — | **PASS** 1.67% | **PASS** 1.86% | **PASS** 3.06% |
+| `corroft`@xl | **PASS** 6.21% | — | **PASS** 1.67% | **PASS** 4.28% | **PASS** 2.01% |
+| `crit15m`@xl | **PASS** 6.01% | — | **PASS** 1.49% | **PASS** 4.33% | **PASS** 2.24% |
+
+#### Switched-capacitor cell
+
+*Verdict is the gate's exit code; the number is the charge error % of VDD, gate ≤5 %.*
+
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
+|---|---|---|---|---|---|
+| `crit30f`@large | **PASS** 2.04% | — | **PASS** 2.17% | **PASS** 4.17% | **PASS** 3.32% |
+| `csob`@large | **PASS** 2.90% | — | **PASS** 2.42% | **PASS** 4.08% | **PASS** 3.35% |
+| `corroft`@xl | **PASS** 1.66% | — | **PASS** 2.26% | **PASS** 4.22% | **PASS** 3.48% |
+| `crit15m`@xl | **PASS** 2.25% | — | **PASS** 2.27% | **PASS** 4.22% | **PASS** 3.48% |
+
+## 6. Device fidelity and AC by recipe
+
+**Parametric DC — `verify_nn_multi_tech_dc`** *(mean Id-Vgs NRMSE %, config fails in brackets)*
+
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass |
+|---|---|---|---|---|---|---|
+| `crit30f`@large | 1.91 | — | 1.21 | 1.69 (17/18) | 1.01 | 54/55 |
+| `csob`@large | 2.29 | — | 1.58 | 0.43 | 1.15 | 55/55 |
+| `corroft`@xl | 2.39 | — | 1.52 | — | 1.39 | 37/37 |
+| `crit15m`@xl | 2.35 | — | 1.43 | 2.75 (16/18) | 1.48 | 53/55 |
+
+**Parametric transient — `verify_nn_multi_tech_tran`** *(mean NRMSE %)*
+
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass |
+|---|---|---|---|---|---|---|
+| `crit30f`@large | 1.67 | — | 1.46 | 1.49 | 1.47 | 64/64 |
+| `csob`@large | 1.69 | — | 1.46 | 1.50 | 1.47 | 64/64 |
+| `corroft`@xl | 1.68 | — | 1.46 | — | 1.46 | 48/48 |
+| `crit15m`@xl | 1.67 | — | 1.45 | 1.50 | 1.48 | 64/64 |
+
+**Device CS-amp AC** — NMOS / PMOS *(gate: gain0 ≤1.5 dB, f3db ratio ∈[0.7, 1.43], magNRMSE ≤10 %)*
+
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass /10 |
+|---|---|---|---|---|---|---|
+| `crit30f`@large | ✓ / ✓ | — | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | **8/8** |
+| `csob`@large | ✓ / ✓ | — | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | **8/8** |
+| `corroft`@xl | ✓ / ✓ | — | ✓ / ✓ | ✗ f3db nan / ✗ f3db nan | ✓ / ✓ | **6/8** |
+| `crit15m`@xl | ✓ / ✓ | — | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | **8/8** |
+
+**Opamp open-loop AC** — DC-gain error *(gate: ≤3 dB, GBW ratio ∈[0.6, 1.67], PM err ≤15°, non-railed OP)*
+
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass /5 |
+|---|---|---|---|---|---|---|
+| `crit30f`@large | FAIL 3.31 dB | — | FAIL 31.88 dB | FAIL 6.44 dB | FAIL 4.98 dB | **0/4** |
+| `csob`@large | FAIL 20.12 dB | — | FAIL 31.44 dB | **PASS** 1.19 dB | FAIL 33.50 dB | **1/4** |
+| `corroft`@xl | FAIL 15.08 dB | — | FAIL 8.49 dB | FAIL — dB | FAIL 4.48 dB | **0/4** |
+| `crit15m`@xl | FAIL 4.59 dB | — | FAIL 32.27 dB | FAIL 9.45 dB | FAIL 4.02 dB | **0/4** |
+
+`csob` earns its keep on the device and charge axis and is retained as a
+documented env-pin alternate **for device and AC work only**. Its complex-gate
+rationale is withdrawn: post-fix it fails the `tsmc16-opamp` it was documented
+to hold.
+
+## 7. Universal scope — one checkpoint, many techs
+
+Unique to DirectNet: a single 18-code-embedding model trained on TSMC16 + 12 + 7
+concatenated (6.92 M / 7.26 M rows). **Production impact: none** — every
+artifact uses `u716_*` stems reachable only by explicit env pin, and the
+per-tech resolver cascade is untouched. The calibration bar is 10/12 on the
+{ring, opamp, SRAM, SC} × {TSMC7, 12, 16} subset, which is what the per-tech
+recipes themselves score.
+
+**Universal is viable.** Device fidelity matches per-tech (id NRMSE ≤0.09 % per
+variant, R² ≥0.996) and `u716_dn_corroft_large` ties the per-tech bar with zero
+OMP flips. The corridor is the ring lever at universal scope too — `tsmc7-ring`
+14.89 % → 3.61 %.
+
+**Fine-tuning a universal trunk onto a new tech is a cheap onboarding path, not
+a serving path.** Onboarding TSMC5 by fine-tune needs ~1 M rows before the
+gates come alive — a 5.9 % device DC NRMSE is a device PASS and nowhere near
+enough for a circuit gate, so the gate threshold lags the device threshold. And
+retention collapses without replay: after a TSMC5-only fine-tune the model
+keeps 1–3 of 12 retention gates, with forgetting growing in fine-tune N. Two
+sharp edges: **n1M beats n-full** at the gates, so tier selection is itself a
+basin lottery; and zero-shot on untrained embedding rows scores 0/4, so
+embedding rows must be trained — there is no free lunch from the shared trunk.
+
+## 8. Dead ends — recorded because they cost real GPU time
+
+Pre-fix verdicts, and their checkpoints are gone, so none can be re-gated. They
+are listed to stop the arms being retried, not as current measurements.
+
+| arm | verdict |
+|---|---|
+| **`sob` (id-Sobolev)** | KILL — the worst recipe measured. Reproduces the standing "derivative fidelity ⟂ opamp" result: sharpening ∂id/∂V collapses the value-owned high-gain fixed point. |
+| **`ekv` / `ekvhi` / `csobekv`** | The EKV analytic core breaks tsmc12/16 SRAM and tsmc12 opamp and converges to a validation loss 10–40× worse than clean — the EKV core and charge-Sobolev fight over the shared `id` head. |
+| **Seed sweeps (`s7`/`s17`/`s123`)** | Each lands exactly two opamp basins, a *different* two. The seed axis cannot win; it only demonstrates the basins are a lottery. |
+| **`invtrip` alone** | Needs the corridor to matter. |
+| **`csobcrit`, `crit30a1`** | Both negative — §4, law 4. |
+| **`crit10`@xl** | **Withdrawn.** Post-fix it fails `tsmc16-opamp` outright, the exact cell it was documented to cover. |
+| **Full-corridor at `xl` (`cor`, `corft`, `corrft`)** | Collapses. The value surface overflows `sinh` → singular MNA → NR divergence at t = 2 ps. At `xl` the ring-only corridor is the only safe corridor. |
+| **µA-band loss reweighting** | KILL — do not reweight the µA DC loss band. |
+| **Tiny-tier fine-tunes (≤10 k rows)** | Diverge outright through the tier-refit normalizer (device NRMSE ~1e69). Any few-shot regime below ~50 k rows needs a frozen normalizer — a pipeline change, not a recipe. |
+
+## 9. Recommendations
+
+| use | checkpoint | why |
+|---|---|---|
+| **Production (fast path)** | `crit30f@large` = the `tsmc{X}_dn_large_*` slots | best gate score at 0.92 M params and ~1.5 ms/eval |
+| **Full-sweep DirectNet** | `crit15m@xl` (env-pin) | sweeps the matrix — but 2.3× the inference cost and no device-fidelity gain |
+| **Device / charge / AC work** | `csob@large` (env-pin) | best mean device NRMSE; **not** a complex-gate alternate |
+| **One checkpoint, many techs** | `u716_dn_corroft_large` (env-pin) | ties the per-tech bar at universal scope, zero flips |

@@ -1,0 +1,145 @@
+# DirectNet (LEVEL=73) — the clean recipe
+
+**What it is.** A feed-forward MLP compact model. Seven inputs (Vgs, Vds, Vbs,
+NFIN, L, T, and a tech code through `nn.Embedding`), thirteen outputs.
+`gm`/`gds`/`gmb` are the **autograd Jacobian** of the predicted `id`, and the
+small-signal capacitances are the `dQ/dV` autograd of the predicted terminal
+charges — nothing is fitted twice.
+
+**What "clean" means.** One training run, no addendum:
+`--apply-filter off --swa-mode ema --seed 42`. It is the control every recipe
+in [`DirectNet-L73-recipes.md`](DirectNet-L73-recipes.md) is measured against.
+DirectNet's production checkpoint is *not* clean — the `tsmc{X}_dn_large_*`
+slots have carried the `crit30f` curriculum since V6.6.4 — so the clean `large`
+row below reads the archived `v660clean_large` stems. On TSMC6, which never had
+a curriculum applied, `large` is itself clean.
+
+Gate definitions, the strict-OMP rule, the `gds`-fix code ladder and the
+measured noise floor: [`methodology.md`](methodology.md). Read it before
+comparing any two numbers here.
+
+| tier | width × depth | params | CPU cost, 1 thread |
+|---|---|---|---|
+| `small` | 128 × 3 | ≈ 0.06 M | — |
+| `medium` | 256 × 5 | ≈ 0.40 M | — |
+| `large` | 384 × 6 | **≈ 0.92 M** | **1.5 ms/eval** |
+| `xl` | 512 × 8 | ≈ 2.13 M | 3.4 ms/eval |
+
+> **Denominators changed in V7.3.0.** TSMC6 is now folded into the headline, so
+> complex totals are **/20**, device AC **/10** and opamp AC **/5**. Every
+> earlier report scored /16, /8 and /4 over the four electrically distinct
+> techs. **No total here is comparable to a pre-V7.3.0 total without
+> rescaling.** TSMC6 remains TSMC7 relabelled (`methodology.md` §7); what
+> changed is the denominator, not that finding.
+
+---
+
+## 1. Headline — complex gates by tier
+
+Strict: a cell passes only if it passes at OMP ∈ {1, 2, 4}.
+
+<!--HEADLINE-->
+
+## 2. By testcase
+
+The four circuits load different parts of the NN surface — the ring the
+switching edge, the opamp the high-gain fixed point, the SRAM the bistable
+latch, the switchcap the charge and off-state surface. A family can be
+excellent on three and fail the fourth, so the per-testcase view is the one
+that localizes a weakness.
+
+<!--TESTCASE-->
+
+## 3. By technology
+
+<!--BYTECH-->
+
+The split that matters is **supply voltage, not vendor node**. TSMC5 and TSMC7
+at 0.65–0.75 V behave as one class and TSMC12/16 at 0.80 V as another: the
+low-VDD pair own nearly every ring failure, because their transfer curves are
+steepest exactly where the NN under-drives. TSMC6 sits by construction on top
+of TSMC7, and the two disagree only by training-run luck — which is precisely
+what makes it useful (`methodology.md` §7).
+
+## 4. By scale
+
+<!--BYSCALE-->
+
+**DirectNet peaks at `large`.** Beyond it the model fits the training
+distribution roughly ten times tighter — validation loss ~2e-4 against
+`medium`'s ~2e-3 — and generalizes *worse* off-nominal. Extra capacity buys a
+tighter fit to the data and loses circuit fixed points. This is the one
+capacity curve in the project that survived the `gds` fix unchanged.
+
+## 5. Device-level suites
+
+Parametric DC is **`gds`-invariant**, so its numbers are comparable across the
+whole campaign history; transient and AC are not (`methodology.md` §6).
+
+<!--DEVICE-->
+
+Reading the DC column: **`medium` is the best device fit**, while `large` wins
+the *circuit* gates. That inversion is the central result of this project in
+one line — circuit gates measure the value surface at fixed points, not
+pointwise device accuracy. Device fidelity has never been the bind.
+
+## 6. What the AC gates actually diagnose
+
+DC gain is excellent everywhere, so the autograd `gm`/`gds` feeding the AC
+stamp are accurate, and the dominant cap-driven pole is faithful wherever the
+cell is well fit. Three limits are real and specific:
+
+1. The **Cgd-feedforward RHP zero** — high-frequency phase lag — is not
+   reproduced. It is *reported* by `verify_nn_ac` as a diagnostic and
+   deliberately not gated.
+2. Some cells **under-predict the output capacitance** (f3db ratio 1.1–2.5) and
+   miss the magnitude gate.
+3. The opamp AC inherits the DC value-surface fragility: where the operating
+   point lands in the good basin the NN nails GBW and phase margin, so the
+   *dynamics* are right and only the DC-gain *level* misses.
+
+These are value-surface and feedforward limits, **not** a charge-derivative
+deficiency — that would corrupt gain *and* pole everywhere, and it does not.
+
+> **The opamp open-loop AC row is a lower bound, not a result.**
+> `verify_complex_opamp_ac` picks its bias by `argmax |dVout/dVin|` on a 2 mV
+> grid, but a two-stage Miller opamp with 33–48 dB of gain has a transition
+> only 3–14 mV wide. On three of the four original techs the **NGSPICE
+> reference's own** operating point at the chosen bias falls outside the
+> gate's 15–85 %·VDD validity window, and that window is then applied to the NN
+> alone — so a model that faithfully reproduces the reference is scored
+> `OP-MISBIAS`. This is a gate-construction defect and is deliberately **not**
+> fixed here: changing an accuracy gate changes the accuracy record, which is a
+> separate decision.
+
+## 7. What is open
+
+| open | reading |
+|---|---|
+| **Low-VDD rings under every clean tier** | Deterministic, not marginal. Closed only by the corridor curriculum — see the recipes report. |
+| **`tsmc7-opamp` at `large`** | A tier-specific basin, not a family wall: DirectNet banks it at `small` and `xl`, and BSIM-AR at every size. |
+| **`tsmc5-opamp` margin at production** | The thinnest margin in the matrix. Treat any recipe change as a threat to it. |
+| **Opamp open-loop AC** | Partly unreachable by construction; see the caveat above. |
+
+Every one of these is a **value-surface / fixed-point** property — open-loop
+gain, oscillation period at a sharp edge — not a device-current or
+charge-derivative fidelity gap. Device DC, inverter, switchcap, SRAM and AC
+gain are all strong.
+
+## 8. Reproducing
+
+```bash
+# gate one (tier, tech) cell, isolated and CPU-pinned
+bash scripts/v710_regate.sh _one dn xl TSMC12 verify_complex_ring_osc 1
+
+# the coverage map: what is measured, by which pass, and what is missing
+python scripts/v730_coverage.py --set clean --tag dn
+
+# rebuild this file from the evidence
+python scripts/v710_regate_collect.py --root results/v730_regate
+python scripts/v730_docs_build.py
+```
+
+Checkpoints (gitignored): `tsmc{5,6,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}`,
+with the clean `large` control archived as `tsmc{X}_dn_v660clean_large_*`.
+Raw runs: `results/v710_regate/`, `results/v730_regate/`, `results/a3_regate/`.
