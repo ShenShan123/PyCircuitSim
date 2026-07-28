@@ -75,6 +75,7 @@ def _pseudo_transient_dc(circuit: Circuit):
             c for c in circuit.components
             if not getattr(c, "name", "").startswith("_pseudo_")
         ]
+        circuit.invalidate_topology()
 
     # Settling window: a few RC constants of the pseudo-caps against a
     # ~kΩ-scale node resistance. dt small enough for NR stability; the
@@ -615,11 +616,15 @@ def run_transient(
                 _vs = VoltageSource(f"_V_uic_{_node}", [_node, "0"], _val)
                 circuit.components.append(_vs)
                 _uic_temps.append(_vs)
+        if _uic_temps:
+            circuit.invalidate_topology()
     try:
         op_solver, op_solution = _solve_dc_with_retry(circuit, has_nn, _tran_op_solve)
     finally:
         for _vs in _uic_temps:
             circuit.components.remove(_vs)
+        if _uic_temps:
+            circuit.invalidate_topology()
     logger.info(f"DC operating point computed: {len(op_solution)} nodes")
 
     # STAGE 2: Use OP solution as initial guess for transient

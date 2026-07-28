@@ -263,10 +263,49 @@ def _has_non_linear(circuit: Circuit) -> bool:
     return any(_is_mosfet(c) for c in circuit.components)
 
 
+def _topo_key(circuit: Circuit):
+    """Cache key for component-membership scans (V7.2.0 Phase 4a).
+
+    ``Circuit._topo_version`` is bumped by ``add_component`` and by every
+    in-repo direct ``components`` mutation via ``invalidate_topology``;
+    ``len(components)`` is belt-and-braces against an un-hooked mutation
+    (every real add/remove pattern changes the length at the point where
+    the next solve begins).
+    """
+    return (getattr(circuit, "_topo_version", None), len(circuit.components))
+
+
+def _nn_mosfets(circuit: Circuit) -> list:
+    """The circuit's NN MOSFETs (LEVEL>=73), cached per topology state.
+
+    The per-NR-iteration ``[c for c in components if _is_nn_mosfet(c)]``
+    scan was pure per-device Python executed ~620x per write op (plan
+    Phase 4a hoist). Membership only changes when the component list
+    does, so the list is cached on the circuit keyed by ``_topo_key``.
+    """
+    key = _topo_key(circuit)
+    cached = getattr(circuit, "_pcs_nn_list_cache", None)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    lst = [c for c in circuit.components if _is_nn_mosfet(c)]
+    circuit._pcs_nn_list_cache = (key, lst)
+    return lst
+
+
 def _has_nn_device(circuit: Circuit) -> bool:
-    """Check if circuit contains any NN compact-model device (LEVEL>=73)."""
+    """Check if circuit contains any NN compact-model device (LEVEL>=73).
+
+    Cached per topology state (Phase 4a) — this is called several times
+    per NR iteration.
+    """
+    key = _topo_key(circuit)
+    cached = getattr(circuit, "_pcs_has_nn_cache", None)
+    if cached is not None and cached[0] == key:
+        return cached[1]
     from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase
-    return any(isinstance(c, _MOSFETNNBase) for c in circuit.components)
+    val = any(isinstance(c, _MOSFETNNBase) for c in circuit.components)
+    circuit._pcs_has_nn_cache = (key, val)
+    return val
 
 
 def _require_nn_caps(circuit: Circuit) -> None:
@@ -309,7 +348,7 @@ def _batch_eval_nn_mosfets(
     """
     if os.environ.get("NN_BATCHED_EVAL", "1") == "0":
         return  # opt out → per-device _eval fallback (bit-identical)
-    nn_mosfets = [c for c in circuit.components if _is_nn_mosfet(c)]
+    nn_mosfets = _nn_mosfets(circuit)  # cached scan (Phase 4a)
     if not nn_mosfets:
         return
     from pycircuitsim.models.mosfet_nn import _MOSFETNNBase
@@ -671,6 +710,8 @@ class DCSolver:
                     vs = VoltageSource(f"_V_ic_{node_name}", [node_name, "0"], voltage)
                     self.circuit.components.append(vs)
                     _ic_temp_sources.append(vs)
+            if _ic_temp_sources:
+                self.circuit.invalidate_topology()
 
         num_voltage_sources = self.circuit.count_voltage_sources()
         matrix_size = num_nodes + num_voltage_sources
@@ -738,6 +779,27 @@ class DCSolver:
                 lm_lambda = 0.0
                 prev_residual = float('inf')
 
+                # V7.2.0 Phase 2d — per-iteration node state as a vector.
+                # ``v_arr`` mirrors ``voltages[node] for node in nodes``
+                # and is maintained by the update step below; the
+                # VS-constrained set is topology-static, so it is built
+                # once per source step, not once per NR iteration.
+                n_nodes = len(nodes)
+                v_arr = np.fromiter(
+                    (voltages[nd] for nd in nodes), np.float64, n_nodes)
+                vs_constrained_nodes = set()
+                for component in self.circuit.components:
+                    if isinstance(component, VoltageSource):
+                        pos_node = component.nodes[0]
+                        neg_node = component.nodes[1]
+                        if neg_node == "0":
+                            vs_constrained_nodes.add(pos_node)
+                        elif pos_node == "0":
+                            vs_constrained_nodes.add(neg_node)
+                vs_mask = np.fromiter(
+                    (nd in vs_constrained_nodes for nd in nodes),
+                    bool, n_nodes)
+
                 # Newton-Raphson iteration for this source step
                 nr_converged = False
                 max_change = 0.0
@@ -771,21 +833,28 @@ class DCSolver:
                     if gmin_level > self.gmin:
                         self._apply_gmin_stepping(mna_matrix, node_map, gmin_level)
 
+                    # V7.2.0 Phase 4a — one LIL→CSR conversion per
+                    # iteration, shared by the residual, the solve, and
+                    # the LM ladder (``tocsr`` on a CSR input is a
+                    # no-op, so the callees are unchanged).
+                    mna_solve = (
+                        mna_matrix.tocsr() if issparse(mna_matrix)
+                        else mna_matrix)
+
                     # Current iterate as a full MNA vector (node voltages in
                     # the leading slots; branch-current slots left at 0 —
                     # they only scale the residual, not the descent test).
                     current_iterate = np.zeros(matrix_size)
-                    for idx, node in enumerate(nodes):
-                        current_iterate[idx] = voltages[node]
+                    current_iterate[:n_nodes] = v_arr
 
                     # MNA residual ‖b − A·v‖∞ at the current iterate
                     # (Phase 6b): the nonlinear KCL mismatch before the
                     # Newton step. LM uses this to detect overshoot.
-                    iter_residual = _mna_residual_inf(mna_matrix, rhs, current_iterate)
+                    iter_residual = _mna_residual_inf(mna_solve, rhs, current_iterate)
 
                     # Solve the MNA system
                     try:
-                        solution = _solve_mna(mna_matrix, rhs)
+                        solution = _solve_mna(mna_solve, rhs)
                     except (np.linalg.LinAlgError, RuntimeError) as e:
                         raise np.linalg.LinAlgError(
                             f"Circuit matrix is singular at source step {step + 1}, iteration {iteration + 1}. "
@@ -808,11 +877,11 @@ class DCSolver:
                         lm_lambda = lm_lambda if lm_lambda > 0.0 else 1e-9
                         for _ in range(8):
                             try:
-                                cand = _solve_mna(_lm_augment(mna_matrix, lm_lambda), rhs)
+                                cand = _solve_mna(_lm_augment(mna_solve, lm_lambda), rhs)
                             except (np.linalg.LinAlgError, RuntimeError):
                                 lm_lambda *= 10.0
                                 continue
-                            cand_residual = _mna_residual_inf(mna_matrix, rhs, cand)
+                            cand_residual = _mna_residual_inf(mna_solve, rhs, cand)
                             if cand_residual < iter_residual:
                                 solution = cand
                                 break
@@ -826,23 +895,25 @@ class DCSolver:
                         lm_lambda = lm_lambda / 3.0 if lm_lambda > 1e-12 else 0.0
 
                     # V5' trust-region: cap NN per-iteration |ΔV| at one supply rail to kill NR runaway.
+                    # (Phase 2d: vectorised; same per-element arithmetic.)
                     if _has_nn_device(self.circuit):
-                        for idx, node in enumerate(nodes):
-                            d = solution[idx] - voltages[node]
-                            if d > max_vs_voltage:
-                                solution[idx] = voltages[node] + max_vs_voltage
-                            elif d < -max_vs_voltage:
-                                solution[idx] = voltages[node] - max_vs_voltage
+                        d_head = solution[:n_nodes] - v_arr
+                        solution[:n_nodes] = np.where(
+                            d_head > max_vs_voltage,
+                            v_arr + max_vs_voltage,
+                            np.where(
+                                d_head < -max_vs_voltage,
+                                v_arr - max_vs_voltage,
+                                solution[:n_nodes]))
 
-                    # Calculate deltas
-                    max_delta = 0.0
-                    deltas: Dict[str, float] = {}
-                    for idx, node in enumerate(nodes):
-                        delta_v = solution[idx] - voltages[node]
-                        max_delta = max(max_delta, abs(delta_v))
+                    # Calculate deltas (undamped, for adaptive damping)
+                    sol_head = solution[:n_nodes]
+                    max_delta = (
+                        float(np.max(np.abs(sol_head - v_arr)))
+                        if n_nodes else 0.0)
 
                     # Track voltage history for oscillation detection
-                    voltage_snapshot = {node: solution[idx] for idx, node in enumerate(nodes)}
+                    voltage_snapshot = dict(zip(nodes, sol_head))
                     voltage_history.append(voltage_snapshot)
                     if len(voltage_history) > 5:
                         voltage_history.pop(0)
@@ -872,31 +943,17 @@ class DCSolver:
                     # descent test (Phase 6a).
                     prev_residual = iter_residual
 
-                    # Identify voltage-source-constrained nodes
-                    vs_constrained_nodes = set()
-                    for component in self.circuit.components:
-                        if isinstance(component, VoltageSource):
-                            pos_node = component.nodes[0]
-                            neg_node = component.nodes[1]
-                            if neg_node == "0":
-                                vs_constrained_nodes.add(pos_node)
-                            elif pos_node == "0":
-                                vs_constrained_nodes.add(neg_node)
-
-                    # Update voltages with damping
-                    max_change = 0.0
-                    for idx, node in enumerate(nodes):
-                        old_voltage = voltages[node]
-                        new_voltage_solution = solution[idx]
-
-                        if node in vs_constrained_nodes:
-                            new_voltage = new_voltage_solution
-                        else:
-                            new_voltage = damping * new_voltage_solution + (1.0 - damping) * old_voltage
-
-                        deltas[node] = abs(new_voltage - old_voltage)
-                        voltages[node] = new_voltage
-                        max_change = max(max_change, abs(new_voltage - old_voltage))
+                    # Update voltages with damping (Phase 2d: vectorised;
+                    # VS-constrained nodes take the solution directly,
+                    # free nodes the damped blend — same expressions).
+                    new_v = np.where(
+                        vs_mask, sol_head,
+                        damping * sol_head + (1.0 - damping) * v_arr)
+                    deltas_arr = np.abs(new_v - v_arr)
+                    max_change = (
+                        float(np.max(deltas_arr)) if n_nodes else 0.0)
+                    voltages.update(zip(nodes, new_v))
+                    v_arr = new_v
 
                     # Log iteration if logger is available
                     if self.logger:
@@ -920,21 +977,23 @@ class DCSolver:
                         iter_info = IterationInfo(
                             iteration=iteration,
                             voltages=voltages.copy(),
-                            deltas=deltas,
+                            deltas=dict(zip(nodes, deltas_arr)),
                             currents=currents,
                             conductances=conductances
                         )
                         self.logger.log_iteration(point_num=0, iter_info=iter_info)
 
                     # Check convergence: SPICE-standard RELTOL + VNTOL
-                    all_converged = True
-                    for node in nodes:
-                        dv = deltas.get(node, 0.0)
-                        v_new = voltages[node]
-                        threshold = self.vntol + self.reltol * max(abs(v_new), abs(v_new - dv))
-                        if dv >= threshold:
-                            all_converged = False
-                            break
+                    # (Phase 2d: vectorised — per node,
+                    # threshold = vntol + reltol·max(|v_new|, |v_new−dv|),
+                    # not converged if any dv ≥ threshold.)
+                    if n_nodes:
+                        conv_thr = self.vntol + self.reltol * np.maximum(
+                            np.abs(new_v), np.abs(new_v - deltas_arr))
+                        all_converged = bool(
+                            not np.any(deltas_arr >= conv_thr))
+                    else:
+                        all_converged = True
 
                     # --- Residual-norm acceptance OR-gate (Phase 6b) ---
                     # The SPICE |ΔV| test alone can declare a stalled
@@ -1062,6 +1121,7 @@ class DCSolver:
         if _ic_temp_sources:
             for vs in _ic_temp_sources:
                 self.circuit.components.remove(vs)
+            self.circuit.invalidate_topology()
             # Re-solve without IC constraints using constrained result as guess
             saved_force_ic = self.force_ic
             self.force_ic = False
@@ -1466,6 +1526,8 @@ class TransientSolver:
             self.circuit.components.append(cap)
             self._pseudo_capacitors.append(cap)
             pseudo_cap_idx += 1
+        if self._pseudo_capacitors:
+            self.circuit.invalidate_topology()
 
     def _remove_pseudo_capacitors(self) -> None:
         """
@@ -1474,6 +1536,8 @@ class TransientSolver:
         for cap in self._pseudo_capacitors:
             if cap in self.circuit.components:
                 self.circuit.components.remove(cap)
+        if self._pseudo_capacitors:
+            self.circuit.invalidate_topology()
         self._pseudo_capacitors.clear()
 
     def _apply_gmin_stepping(self, mna_matrix: np.ndarray, node_map: Dict[str, int], gmin: float) -> None:
@@ -1557,6 +1621,25 @@ class TransientSolver:
         # Debug: Track convergence behavior (if enabled)
         debug_log = [] if self.debug else None
 
+        # V7.2.0 Phase 2d — per-iteration node state as a vector (see
+        # the DC loop); the VS-constrained set is topology-static, so it
+        # is built once per timestep, not once per NR iteration.
+        n_nodes = len(nodes)
+        v_arr = np.fromiter(
+            (voltages[nd] for nd in nodes), np.float64, n_nodes)
+        vs_constrained_nodes = set()
+        for component in self.circuit.components:
+            if isinstance(component, VoltageSource):
+                pos_node = component.nodes[0]
+                neg_node = component.nodes[1]
+                # If one terminal is ground, the other is constrained
+                if neg_node == "0":
+                    vs_constrained_nodes.add(pos_node)
+                elif pos_node == "0":
+                    vs_constrained_nodes.add(neg_node)
+        vs_mask = np.fromiter(
+            (nd in vs_constrained_nodes for nd in nodes), bool, n_nodes)
+
         for iteration in range(max_iterations):
             # Build MNA matrix and RHS
             mna_matrix = _create_mna_matrix(matrix_size)
@@ -1586,17 +1669,21 @@ class TransientSolver:
             if gmin > self.gmin_final:
                 self._apply_gmin_stepping(mna_matrix, node_map, gmin)
 
+            # V7.2.0 Phase 4a — one LIL→CSR conversion per iteration,
+            # shared by the residual, the solve, and the LM ladder.
+            mna_solve = (
+                mna_matrix.tocsr() if issparse(mna_matrix) else mna_matrix)
+
             # Current iterate as a full MNA vector (Phase 6a/6b).
             current_iterate = np.zeros(matrix_size)
-            for idx, node in enumerate(nodes):
-                current_iterate[idx] = voltages[node]
+            current_iterate[:n_nodes] = v_arr
 
             # MNA residual ‖b−A·v‖∞ at the current iterate (Phase 6b).
-            iter_residual = _mna_residual_inf(mna_matrix, rhs, current_iterate)
+            iter_residual = _mna_residual_inf(mna_solve, rhs, current_iterate)
 
             # Solve for voltage updates
             try:
-                solution = _solve_mna(mna_matrix, rhs)
+                solution = _solve_mna(mna_solve, rhs)
             except (np.linalg.LinAlgError, RuntimeError):
                 raise RuntimeError(
                     f"Circuit matrix is singular at t={time:.6e}s during Newton-Raphson iteration {iteration+1}"
@@ -1614,11 +1701,11 @@ class TransientSolver:
                 lm_lambda = lm_lambda if lm_lambda > 0.0 else 1e-9
                 for _ in range(8):
                     try:
-                        cand = _solve_mna(_lm_augment(mna_matrix, lm_lambda), rhs)
+                        cand = _solve_mna(_lm_augment(mna_solve, lm_lambda), rhs)
                     except (np.linalg.LinAlgError, RuntimeError):
                         lm_lambda *= 10.0
                         continue
-                    cand_residual = _mna_residual_inf(mna_matrix, rhs, cand)
+                    cand_residual = _mna_residual_inf(mna_solve, rhs, cand)
                     if cand_residual < iter_residual:
                         solution = cand
                         break
@@ -1629,47 +1716,28 @@ class TransientSolver:
                 lm_lambda = lm_lambda / 3.0 if lm_lambda > 1e-12 else 0.0
 
             # V5' trust-region: cap NN per-iteration |ΔV| at one supply rail to kill NR runaway.
+            # (Phase 2d: vectorised; same per-element arithmetic.)
             if _has_nn_device(self.circuit):
                 vdd_cap = max(
                     (abs(c.voltage) for c in self.circuit.components if isinstance(c, VoltageSource)),
                     default=1.0,
                 ) or 1.0
-                for idx, node in enumerate(nodes):
-                    d = solution[idx] - voltages[node]
-                    if d > vdd_cap:
-                        solution[idx] = voltages[node] + vdd_cap
-                    elif d < -vdd_cap:
-                        solution[idx] = voltages[node] - vdd_cap
+                d_head = solution[:n_nodes] - v_arr
+                solution[:n_nodes] = np.where(
+                    d_head > vdd_cap, v_arr + vdd_cap,
+                    np.where(d_head < -vdd_cap, v_arr - vdd_cap,
+                             solution[:n_nodes]))
 
             # Extract voltages from solution (matches DC solver approach)
-            # Solution contains NEW voltages, not deltas (due to MNA formulation)
-            max_delta = 0.0
-            deltas = {}
-
-            # Identify voltage-source-constrained nodes (exempt from damping)
-            vs_constrained_nodes = set()
-            for component in self.circuit.components:
-                if isinstance(component, VoltageSource):
-                    pos_node = component.nodes[0]
-                    neg_node = component.nodes[1]
-                    # If one terminal is ground, the other is constrained
-                    if neg_node == "0":
-                        vs_constrained_nodes.add(pos_node)
-                    elif pos_node == "0":
-                        vs_constrained_nodes.add(neg_node)
-
-            # Calculate deltas for convergence check
-            for idx, node in enumerate(nodes):
-                old_voltage = voltages[node]
-                new_voltage_solution = solution[idx]  # Absolute voltage from MNA
-                delta_v = new_voltage_solution - old_voltage
-                deltas[node] = delta_v
-                max_delta = max(max_delta, abs(delta_v))
+            # Solution contains NEW voltages, not deltas (due to MNA
+            # formulation). Phase 2d: vectorised; the old per-node
+            # ``deltas`` dict was write-only in this loop and is gone.
+            sol_head = solution[:n_nodes]
+            dv_arr = np.abs(sol_head - v_arr)
+            max_delta = float(np.max(dv_arr)) if n_nodes else 0.0
 
             # Track voltage history for oscillation detection (store last 5 iterations)
-            voltage_snapshot = {}
-            for idx, node in enumerate(nodes):
-                voltage_snapshot[node] = solution[idx]
+            voltage_snapshot = dict(zip(nodes, sol_head))
             voltage_history.append(voltage_snapshot)
             if len(voltage_history) > 5:
                 voltage_history.pop(0)
@@ -1679,14 +1747,14 @@ class TransientSolver:
                 debug_log.append(f"  Iter {iteration}: max_delta={max_delta:.6e}, damping={damping:.2f}, gmin={gmin:.2e}")
 
             # Check convergence: SPICE-standard RELTOL + VNTOL
-            all_converged = True
-            for idx, node in enumerate(nodes):
-                dv = abs(solution[idx] - voltages[node])
-                v_abs = max(abs(solution[idx]), abs(voltages[node]))
-                threshold = self.vntol + self.reltol * v_abs
-                if dv >= threshold:
-                    all_converged = False
-                    break
+            # (Phase 2d: vectorised — dv = |sol−old| against
+            # vntol + reltol·max(|sol|, |old|), any violation fails.)
+            if n_nodes:
+                conv_thr = self.vntol + self.reltol * np.maximum(
+                    np.abs(sol_head), np.abs(v_arr))
+                all_converged = bool(not np.any(dv_arr >= conv_thr))
+            else:
+                all_converged = True
 
             # --- Residual-norm acceptance OR-gate (Phase 6b) ---
             # Reject a stalled iterate: small |ΔV| but large KCL
@@ -1702,8 +1770,7 @@ class TransientSolver:
 
             if all_converged:
                 # Converged! Use new voltages directly
-                for idx, node in enumerate(nodes):
-                    voltages[node] = solution[idx]
+                voltages.update(zip(nodes, sol_head))
                 self._last_nr_iterations = iteration + 1
                 if self.debug and debug_log is not None and len(debug_log) > 0:
                     print(f"\nDEBUG: Converged at t={time:.6e}s after {iteration+1} iterations")
@@ -1736,17 +1803,14 @@ class TransientSolver:
             # Record residual for the next LM descent test (Phase 6a).
             prev_residual = iter_residual
 
-            # Update voltages with damping (match DC solver approach)
-            for idx, node in enumerate(nodes):
-                old_voltage = voltages[node]
-                new_voltage_solution = solution[idx]
-
-                if node in vs_constrained_nodes:
-                    # Voltage source nodes: use solution directly
-                    voltages[node] = new_voltage_solution
-                else:
-                    # Free nodes: apply damping (blend old and new)
-                    voltages[node] = damping * new_voltage_solution + (1.0 - damping) * old_voltage
+            # Update voltages with damping (match DC solver approach;
+            # Phase 2d: vectorised — VS-constrained nodes take the
+            # solution directly, free nodes the damped blend).
+            new_v = np.where(
+                vs_mask, sol_head,
+                damping * sol_head + (1.0 - damping) * v_arr)
+            voltages.update(zip(nodes, new_v))
+            v_arr = new_v
         else:
             # Did not converge - check if it's "good enough"
             # For fast-switching circuits, accept solution if oscillating around stable point

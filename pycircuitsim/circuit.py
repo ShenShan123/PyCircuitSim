@@ -9,7 +9,7 @@ The Circuit class is responsible for:
 - Creating node mappings for MNA matrix construction
 - Counting voltage sources for matrix sizing
 """
-from typing import List, Set, Dict
+from typing import List, Optional, Set, Dict
 from pycircuitsim.models.base import Component
 
 
@@ -37,6 +37,30 @@ class Circuit:
         self.nodes: Set[str] = set()
         self.initial_conditions: Dict[str, float] = {}  # Node -> initial voltage
 
+        # V7.2.0 Phase 4a — topology caches. ``get_nodes`` re-sorted the
+        # whole node list on every call (per NR solve / per timestep at
+        # array sizes); the sorted list and the index map are invariant
+        # between topology changes, so they are cached and invalidated by
+        # ``add_component`` / ``invalidate_topology``. ``_topo_version``
+        # additionally lets solver-side caches (e.g. the NN-device list)
+        # key on the topology state. Callers treat the returned list/map
+        # as read-only — nothing in the repo mutates them.
+        self._topo_version: int = 0
+        self._nodes_cache: Optional[List[str]] = None
+        self._node_map_cache: Optional[Dict[str, int]] = None
+
+    def invalidate_topology(self) -> None:
+        """Drop topology caches after a direct ``components`` mutation.
+
+        ``add_component`` calls this automatically; the few sites that
+        mutate ``circuit.components`` in place (the force-IC temp-source
+        release, the transient cap re-wire, simulation-level component
+        filtering) must call it themselves.
+        """
+        self._topo_version += 1
+        self._nodes_cache = None
+        self._node_map_cache = None
+
     def add_component(self, component: Component) -> None:
         """
         Add a component to the circuit and auto-discover its nodes.
@@ -53,6 +77,7 @@ class Circuit:
         # Auto-discover nodes from the component
         for node in component.get_nodes():
             self.nodes.add(node)
+        self.invalidate_topology()
 
     def get_nodes(self) -> List[str]:
         """
@@ -63,10 +88,14 @@ class Circuit:
         appear in the MNA matrix.
 
         Returns:
-            List of node names (excluding ground), sorted for consistency
+            List of node names (excluding ground), sorted for consistency.
+            Cached between topology changes; treat as read-only.
         """
-        ground_nodes = {"0", "GND"}
-        return sorted([node for node in self.nodes if node not in ground_nodes])
+        if self._nodes_cache is None:
+            ground_nodes = {"0", "GND"}
+            self._nodes_cache = sorted(
+                [node for node in self.nodes if node not in ground_nodes])
+        return self._nodes_cache
 
     def get_node_map(self) -> Dict[str, int]:
         """
@@ -80,10 +109,14 @@ class Circuit:
         do not appear in the MNA matrix (ground is the reference).
 
         Returns:
-            Dictionary mapping node names to indices (0-based sequential)
+            Dictionary mapping node names to indices (0-based sequential).
+            Cached between topology changes; treat as read-only.
         """
-        nodes = self.get_nodes()
-        return {node: idx for idx, node in enumerate(nodes)}
+        if self._node_map_cache is None:
+            nodes = self.get_nodes()
+            self._node_map_cache = {
+                node: idx for idx, node in enumerate(nodes)}
+        return self._node_map_cache
 
     def count_voltage_sources(self) -> int:
         """

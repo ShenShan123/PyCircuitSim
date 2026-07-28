@@ -466,6 +466,8 @@ def run_directnet_transient(netlist_path: Path):
                     vs = VoltageSource(f"_V_uic_{node}", [node, "0"], val)
                     circuit.components.append(vs)
                     _uic_temps.append(vs)
+            if _uic_temps:
+                circuit.invalidate_topology()
         try:
             op = DCSolver(circuit, initial_guess=guess,
                           use_source_stepping=True, use_gmin_stepping=False)
@@ -481,6 +483,8 @@ def run_directnet_transient(netlist_path: Path):
         finally:
             for vs in _uic_temps:
                 circuit.components.remove(vs)
+            if _uic_temps:
+                circuit.invalidate_topology()
 
         solver = TransientSolver(
             circuit, t_stop=t_stop, dt=dt, initial_guess=op_sol,
