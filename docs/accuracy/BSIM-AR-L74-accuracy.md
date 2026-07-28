@@ -21,8 +21,8 @@ re-gate).
 
 ## 1. Architecture and cost
 
-Per-tech checkpoints `tsmc{5,7,12,16}_tf_{small,medium,large,xl}_{nmos,pmos}`
-(+ recipe variants), sharing DirectNet's data / normalization / loss / training /
+Per-tech checkpoints `tsmc{5,6,7,12,16}_tf_{small,medium,large,xl}_{nmos,pmos}`
+(+ recipe variants; `tsmc6` is the TSMC7 repeat, `by-tech.md` §5), sharing DirectNet's data / normalization / loss / training /
 eval pipeline through the `bsimar` package. Tech identity enters as an
 `nn.Embedding` code with a **local per-scope vocab** (Rule 16).
 
@@ -103,14 +103,17 @@ the simulator is an* output-layout *bug until proven otherwise.*
 
 ## 3. Current state
 
-| config | params | complex single-run | complex strict | device DC |
-|---|---|---|---|---|
-| **`corroft@medium`** | **1.9 M** | **16/16** | **16/16, zero flips** | 44/44 |
-| `corro15@xl` | 14.8 M | **16/16** | **16/16, zero flips** | 55/55 |
-| `corro15@medium` | 1.9 M | **16/16** | not swept | 44/44 |
-| `corroft` / `crit15m` / `crit30` @xl | 14.8 M | **16/16** each | not swept | 55/55 |
-| `corroft` / `crit15m` / `crit30` @large | 5.0 M | 15/16 each | not swept | 44/44 |
-| `clean` @ {small, medium, large, xl} | 0.67–14.8 M | **14/16 at every tier** | 14/16 (large), zero flips | 44/44 |
+`TSMC6 ⚠` is the repeat column — the same recipe retrained on bit-identical
+TSMC7 rows, scored /4, never inside the /16.
+
+| config | params | complex single-run | complex strict | TSMC6 ⚠ /4 | device DC |
+|---|---|---|---|---|---|
+| **`corroft@medium`** | **1.9 M** | **16/16** | **16/16, zero flips** | — | 44/44 |
+| `corro15@xl` | 14.8 M | **16/16** | **16/16, zero flips** | — | 55/55 |
+| `corro15@medium` | 1.9 M | **16/16** | not swept | — | 44/44 |
+| `corroft` / `crit15m` / `crit30` @xl | 14.8 M | **16/16** each | not swept | — | 55/55 |
+| `corroft` / `crit15m` / `crit30` @large | 5.0 M | 15/16 each | not swept | — | 44/44 |
+| `clean` @ {small, medium, large, xl} | 0.67–14.8 M | **14/16 at every tier** | 14/16 (large), zero flips | **3/4 at every tier** | 44/44 |
 
 Margins at `corroft@medium` are not marginal: opamp 2.52 / 6.73 / 5.32 / 5.82 %
 against a 10 % gate, ring 3.33 / 2.25 / 2.13 / 2.19 % against 5 %, switchcap
@@ -129,6 +132,13 @@ identical period error at OMP 1, 2 and 4 — against a 5 % gate, worsening with
 capacity (tsmc7-ring 5.97 % at small → 12.55 % at xl). Rings are gds-invariant,
 so this is a genuine value-surface gap, and the corridor curriculum is the lever
 that closes it (`by-recipe.md` §3).
+
+**BSIM-AR is the most reproducible family under retraining.** The TSMC6
+controlled repeat (`by-tech.md` §5) retrained the clean recipe on bit-identical
+rows: all **16 of BSIM-AR's verdicts reproduce**, and its opamps land within
+4 pp of their TSMC7 counterparts without ever railing, where DirectNet
+reproduces 11/16 and PFN 10/12 with bimodal opamps. On top of the 16/16 score,
+that stability is the second argument for BSIM-AR as the fidelity option.
 
 **BSIM-AR's device surface is excellent and capacity-insensitive** — 44/44
 configs at every clean tier, 55/55 at `corroft@xl`, with a single systematic

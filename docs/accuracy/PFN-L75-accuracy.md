@@ -90,7 +90,7 @@ axis is directly comparable across families. lr is 3e-4 rather than large's
 
 Clean recipe throughout (`--apply-filter off --swa-mode ema --seed 42`), per-tech
 scope: 24 checkpoints at S/M/L (4 techs × N/P × 3 sizes), +8 for the V7.1.0 xl
-tier, +8 more for the restored TSMC6 (`by-tech.md` §5). Small/medium are
+tier, +8 more for TSMC6 — the TSMC7 repeat (`by-tech.md` §5). Small/medium are
 dataloader-bound (~118 s/epoch on shared 4090s); large is compute-bound (~12 min
 /epoch at 2 jobs/GPU) and trains a 150-epoch cosine with bf16 autocast.
 EMA-buffer audit: the frozen context buffers are bit-exact through the EMA wrap.
@@ -166,12 +166,15 @@ from-scratch PFN-small. **The from-scratch port beats the 58 M pretrained model
 
 ## 5. Current state and runtime
 
-| tier | params | complex (single-run, post-fix) | strict |
-|---|---|---|---|
-| **small** | **0.69 M** | **11/16** | **11/16, zero flips** |
-| medium | 2.03 M | 11/16 | not swept |
-| large | 4.65 M | 9/16 | not swept |
-| xl | 14.86 M | *training (V7.1.0)* | — |
+`TSMC6 ⚠` is the repeat column — the same recipe retrained on bit-identical
+TSMC7 rows, scored /4, never inside the /16 (`by-tech.md` §5).
+
+| tier | params | complex (single-run, post-fix) | strict | TSMC6 ⚠ /4 |
+|---|---|---|---|---|
+| **small** | **0.69 M** | **11/16** | **11/16, zero flips** | 3 |
+| medium | 2.03 M | 11/16 | not swept | 2 |
+| large | 4.65 M | 9/16 | not swept | 2 |
+| xl | 14.86 M | *gating (V7.1.0)* | — | 3 |
 
 Margins at `small`: tsmc12 ring 2.9–4.3 %, opamp 0.57 %, sram ≤1.5 %; tsmc16
 ring 2.7–3.1 %, opamp 3.66 %, switchcap 3.8 %. `tsmc12-switchcap` sits at

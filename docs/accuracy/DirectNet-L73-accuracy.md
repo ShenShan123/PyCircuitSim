@@ -234,6 +234,7 @@ bash scripts/recipe_multirun_gate.sh crit30 large TSMC16 verify_complex_opamp
 ```
 
 * **Checkpoints** (gitignored): production `tsmc{X}_dn_large_{dev}`;
+  `tsmc6_dn_{small,medium,large,xl}_{dev}` — the TSMC7 repeat, `by-tech.md` §5;
   `v660clean_large` (warm-start base) + `crit30f_large` (production provenance);
   alternates `csob@large`, `corroft`/`crit10`/`crit15m`@xl; universal
   `u716_dn_{clean,csob,corroft,crit30u}_large` + `_{clean,corroft}_xl` + TSMC5
