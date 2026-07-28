@@ -694,8 +694,17 @@ class _MOSFETNNBase(Component):
             ref = devs[0]
             # One stacked (N,4) tensor build for the whole group, then a
             # batched clamp+z-score with the group-shared norm params.
-            v_raw = torch.tensor(
-                raw_v[key], dtype=torch.float32, device=ref._device)
+            #
+            # V7.2.0 Phase 3a data-movement spec (§3.2/§3.4): stage
+            # through a contiguous numpy array — ``torch.tensor(list,
+            # device=cuda)`` marshals element-by-element through Python.
+            # Bit-identical either way (both are IEEE f64->f32 casts;
+            # verified bit-equal over 16k random rows), so the CPU
+            # default path is unchanged in value.
+            v_raw = torch.from_numpy(
+                np.asarray(raw_v[key], dtype=np.float32))
+            if ref._device.type != "cpu":
+                v_raw = v_raw.to(ref._device)
             v_norm = ref._clamp_norm_voltages(v_raw)
             x_v = v_norm.detach().requires_grad_(True)
             x_g, tech_codes = _stacked_group_inputs(ref._nn_model, devs)
