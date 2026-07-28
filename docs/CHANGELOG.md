@@ -8,6 +8,82 @@ lives in git history.)
 
 ---
 
+## V7.2.0 — GPU for large-scale SRAM transient, execution session 1 (2026-07-27)
+
+**The plan (`docs/plans/2026-07-26-v720-gpu-scaling.md`, rev 5 + status
+appendix) moved from paper to code: parse is O(devices + checkpoints),
+the batched-eval block moves host-side in one transfer, the transient
+commit-path pathology has its ~10-line fix behind a default-off flag,
+the GPU NN-eval path is mechanically complete behind its own flag, and
+the missing bistable gate exists and passes.** Workload context: a
+200-step SRAM write op = 483 NR iterations + 200 commit points; the
+rev-4 discovery was that the post-step charge-history commit ran one
+cache-cold batch-1 eval per device per accepted step = 75–85 % of
+transient wall.
+
+### Landed (branch `v720-gpu-scaling`, one commit per phase)
+
+- **Phase 1 (parse, bit-identical, default-on)** `4d76c22` — cache-first
+  `torch.load`/`NormStats.load`/sidecars, memoized resolver cascade,
+  collapsed per-device `[NN-resolver]` stdout (first line + `[xN
+  devices]` summary), `PYCIRCUITSIM_NN_DEVICE` default **cpu** (the 1b
+  provenance bug: `_get_nn_device` silently picked CUDA when visible).
+  8×8: torch.load 384→2, parse 2.44→0.13 s. 32×32: ~44 s → 4.67 s. The
+  rev-4 "unexplained 18 s" routed: per-instance `model.to()` tree-walks,
+  per-device `Path.resolve`, per-device tensor builds, one-time torch
+  import (~2.5 s, the floor).
+- **Phase 2a-lite + 2c (bit-identical, default-on)** `146f05f` —
+  `_to_host_block` (one D2H for the (N,13)+Jacobian block; CPU path is
+  an identity), constant tensors deduped per (norm file, device), and
+  the per-iteration stacked geometry/tech-code rebuild replaced by a
+  value-keyed cache (uniform arrays collapse to one entry per group
+  size — sidesteps the membership-variation invalidation hazard).
+- **Phase 2t (perturbing, default OFF)** `d1b8e40` —
+  `PYCIRCUITSIM_TRAN_BATCH_COMMIT=1`: one `_batch_eval_nn_mosfets` at
+  the solved voltages before the commit loop + before
+  `init_charge_state`. Flag-off byte-identical (sha256). Flag-on 4×4
+  write op: **146 s → 34.7 s (4.2×)**; worst node NRMSE 0.0000 %VDD,
+  latch end-states 32/32, max final ΔV 0.1 µV. 16×16 A/B (the
+  plan-specified acceptance) in flight at entry time.
+- **Phase 3a mechanics (perturbing, default OFF)** `2496b9a` —
+  numpy-staged H2D (verified bit-equal to the list build), resident
+  constants, single D2H; smoke on cuda:2 agrees with CPU flag-off to
+  0.1 µV / 32/32 latch states. Movement-inclusive budget check needs the
+  idle GPU (Phase 0).
+- **§8.4 T4 gate + T0 pins** `38b6920` —
+  `tests/verify_latch_basin_gpu.py`: 6T retention latch (wordline OFF),
+  both states × 4 techs, 100 %-same-basin binding. First runs: `commit`
+  8/8 PASS 0 flips (≤60 µV); `commit+gpu` 8/8 PASS 0 flips (≤0.37 mV,
+  RTX 4090). Resolving `PYCIRCUITSIM_NN_DEVICE=cuda` now enforces T0 in
+  the runtime: TF32 off, `use_deterministic_algorithms(True)`,
+  `CUBLAS_WORKSPACE_CONFIG`, all asserted.
+- **Phase 0 (partial)** `8a2a18b` — `diag_branch_hits.py`: **the guard-F
+  discontinuity is the bulk regime of an SRAM array, not a corner**
+  (37.4 % of 46k evals hit the negative branch; 13.3 % emit an
+  exactly-zeroed id). Consequence: §8.4 T1 can never require zero branch
+  disagreements; the binding tiers are T2 solved-node tolerance and T4
+  basin agreement.
+
+### Regression state (CPU, flags unset — the production path)
+
+Byte-identical reference CSVs (TSMC5 NN inverter DC + 4×4 short write
+transient, sha256); `verify_subckt` 11/11; `verify_bsimcmg_{op,dc,tran}`
+PASS; `verify_ac` 2/2; `verify_nn_dc_tran --inverter-only` 8/8 (run
+twice, after Phase 1 and after Phase 2). Walls measured on a
+loadavg-~1270 box — counts exact, walls ±40 %.
+
+### Open (ranked)
+
+Phase 0 quiet-box re-run; 2a-full batched denorm tail under the §8.1
+bit-exactness constraints + `verify_batched_tail.py`; 2d; 3b batched COO
+stamping (transcap scope warning applies); Phase 4 solver
+(MMD/KLU — re-measure real matrices first); **the §8.4 T3 16-gate
+campaign for the {2t, 3a} bundle — both flags stay default-off and no
+scoreboard number changes until it passes**; Track B (9a–9c; the
+Vt-mismatch embedding blocker is the long pole).
+
+---
+
 ## V7.1.0 — accuracy docs restructured into pivots, the pre-fix device/AC suites re-measured, TSMC6 restored, PFN given an xl tier (2026-07-25)
 
 **Four threads. (1) `docs/accuracy/` reorganized from three chronological
