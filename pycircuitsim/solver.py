@@ -2084,6 +2084,14 @@ class TransientSolver:
                 initial_voltages[node] = 0.0
 
         # Initialize MOSFET charge state for intrinsic capacitance tracking
+        #
+        # V7.2.0 Phase 2t (opt-in): warm every NN device's eval cache with
+        # one batched call before the per-device init_charge_state loop —
+        # the same cold batch-1 pattern as the per-step commit below, paid
+        # once at t=0. PERTURBING (batched GEMM rows differ from single-row
+        # evals in float32), hence default-off; see the commit-loop note.
+        if os.environ.get("PYCIRCUITSIM_TRAN_BATCH_COMMIT", "0") == "1":
+            _batch_eval_nn_mosfets(self.circuit, initial_voltages)
         for component in self.circuit.components:
             if _is_mosfet(component) and hasattr(component, 'init_charge_state'):
                 component.init_charge_state(initial_voltages)
@@ -2230,6 +2238,27 @@ class TransientSolver:
                         for component in self.circuit.components:
                             if isinstance(component, Capacitor):
                                 component.update_voltage(timestep_voltages)
+
+                        # V7.2.0 Phase 2t (opt-in): batch the commit-path
+                        # eval. The solved voltages were never evaluated by
+                        # the NR-loop batch eval (it warms the *iterate*,
+                        # not the accepted solution), so every device below
+                        # runs a cache-cold batch-1 forward + backwards in
+                        # get_charges — measured 75-85% of transient wall
+                        # at 4x4..16x16 (plan §2.4t). One batched eval at
+                        # timestep_voltages makes those hits warm.
+                        # PERTURBING: a batched GEMM row != the single-row
+                        # eval at the last float32 bit, and the committed
+                        # charge history feeds every later step through the
+                        # companion model — so default OFF behind
+                        # PYCIRCUITSIM_TRAN_BATCH_COMMIT=1, gated with the
+                        # other perturbing phases (§8.4). Flag-unset path
+                        # is byte-identical. _require_nn_caps ran at solver
+                        # entry, so the warmed cache carries the charges.
+                        if os.environ.get(
+                                "PYCIRCUITSIM_TRAN_BATCH_COMMIT", "0") == "1":
+                            _batch_eval_nn_mosfets(
+                                self.circuit, timestep_voltages)
 
                         for component in self.circuit.components:
                             if _is_mosfet(component) and hasattr(component, 'update_charge_state'):
