@@ -1,0 +1,227 @@
+#!/usr/bin/env python3
+"""V7.3.0 — one coverage map over every accuracy measurement on disk.
+
+The accuracy campaign has run in three passes that each wrote their own tree:
+
+  results/a3_regate/    V6.13.0, complex matrix only, REPORT.md + OMP_REPORT.md
+  results/v710_regate/  V7.1.0, device + AC + strict OMP, data.json
+  results/v730_regate/  V7.3.0 (this campaign), same layout as v710
+
+Nothing so far could answer "is cell X measured, and by which pass?" without
+reading all three by eye. This tool answers it: it merges the passes with
+newest-wins precedence, compares the result against the coverage the new
+reports require, and emits the missing cells as a job file the gate driver
+(`scripts/v710_regate.sh`) consumes directly.
+
+    python scripts/v730_coverage.py                      # coverage report
+    python scripts/v730_coverage.py --emit-jobs jobs.txt # what is still missing
+    python scripts/v730_coverage.py --emit-jobs j.txt --tag tf --set recipes
+
+A cell with no checkpoint on disk is reported as NO-CKPT, never as a gap: it is
+work that cannot be run, not work that was forgotten.
+"""
+from __future__ import annotations
+
+import argparse
+import json
+import pathlib
+from typing import Dict, List, Optional, Tuple
+
+ROOT = pathlib.Path(__file__).resolve().parents[1]
+CKPT = ROOT / "external_compact_models" / "bsimar" / "checkpoints"
+
+TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
+FAM = {"dn": "DirectNet", "tf": "BSIM-AR", "pfn": "PFN"}
+
+# Suites, and the OMP settings each must be measured at. ring_osc and opamp sit
+# on multistable fixed points, so their verdict is only bankable if it holds at
+# every thread count (methodology.md §3); the rest are deterministic under the
+# thread pin and are taken from a single run.
+STRICT_OMP = ("1", "2", "4")
+SUITES: Dict[str, Tuple[str, ...]] = {
+    "verify_complex_ring_osc": STRICT_OMP,
+    "verify_complex_opamp": STRICT_OMP,
+    "verify_complex_sram_snm": ("1",),
+    "verify_complex_switchcap": ("1",),
+    "verify_nn_ac": ("1",),
+    "verify_complex_opamp_ac": ("1",),
+    "verify_nn_multi_tech_dc": ("1",),
+    "verify_nn_multi_tech_tran": ("1",),
+}
+
+# The clean control, per family. DirectNet's clean@large is NOT the production
+# `large` slot — that has carried the crit30f curriculum since V6.6.4 — so the
+# clean row reads from the v660clean archive. TSMC6 never had a curriculum
+# applied, so its `large` slot IS clean; the variant is therefore per-tech.
+CLEAN: Dict[str, Dict[str, str]] = {
+    "dn": {"small": "small", "medium": "medium",
+           "large": "v660clean_large", "xl": "xl"},
+    "tf": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
+    "pfn": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
+}
+CLEAN_TECH_OVERRIDE = {("dn", "large", "TSMC6"): "large"}
+
+# Recipes that survive the V7.3.0 filter (docs/plans/2026-07-27-...md §5).
+# Everything else is archive-only or demoted to the dead-end table.
+RECIPES: Dict[str, List[str]] = {
+    "dn": ["crit30f_large", "crit15m_xl", "corroft_xl", "csob_large"],
+    "tf": ["corroft_medium", "corro15_medium",
+           "corroft_large", "crit15m_large", "crit30_large",
+           "corroft_xl", "corro15_xl", "crit15m_xl", "crit30_xl"],
+    "pfn": ["corroft_small"],
+}
+
+# Newest pass wins: a cell re-measured in V7.3.0 supersedes its V7.1.0 value,
+# which supersedes the V6.13.0 one.
+PASSES = [("a3", ROOT / "results" / "a3_regate"),
+          ("v710", ROOT / "results" / "v710_regate"),
+          ("v730", ROOT / "results" / "v730_regate")]
+
+
+def load_json_pass(root: pathlib.Path) -> Dict:
+    p = root / "data.json"
+    if not p.exists():
+        return {}
+    try:
+        return json.loads(p.read_text())
+    except (OSError, ValueError):
+        return {}
+
+
+def scan_logs(root: pathlib.Path) -> Dict[Tuple[str, str, str, str, str], str]:
+    """Verdicts straight from the log tree, so a pass mid-flight still counts.
+
+    data.json is only rewritten when the collector runs; during a campaign the
+    logs are ahead of it. Reading both means a resumed pool never re-runs a job
+    that has already landed.
+    """
+    out: Dict[Tuple[str, str, str, str, str], str] = {}
+    for log in root.glob("*/*/*/*.omp*.log"):
+        suite, _, omp = log.name[:-4].partition(".omp")
+        try:
+            txt = log.read_text(errors="replace")
+        except OSError:
+            continue
+        marks = [ln for ln in txt.splitlines() if ln.startswith("===V710_DONE")]
+        if len(marks) != 1:
+            continue  # unfinished, or two dispatchers raced onto one job
+        rc = marks[0].split("rc=")[1].rstrip("=")
+        if rc in ("no-ckpt",):
+            continue
+        key = (log.parent.parent.parent.name, log.parent.parent.name,
+               log.parent.name.upper(), suite, omp)
+        out[key] = rc
+    return out
+
+
+def build_index() -> Dict[Tuple[str, str, str, str, str], str]:
+    """(tag, variant, TECH, suite, omp) -> which pass measured it."""
+    idx: Dict[Tuple[str, str, str, str, str], str] = {}
+    for name, root in PASSES:
+        for key in scan_logs(root):
+            idx[key] = name
+        data = load_json_pass(root)
+        for tag, variants in data.items():
+            for variant, suites in variants.items():
+                for suite, techs in suites.items():
+                    for tech, omps in techs.items():
+                        for omp in omps:
+                            if not omp.startswith("omp"):
+                                continue
+                            idx[(tag, variant, tech, suite, omp[3:])] = name
+    return idx
+
+
+def ckpt_exists(tag: str, variant: str, tech: str,
+                require_complete: bool = False) -> bool:
+    """Both devices present. `require_complete` also demands the done marker.
+
+    A bare `_best.pt` may be a run that was killed mid-training — the trainer
+    writes it at every val improvement — so gating one silently produces a
+    number for a checkpoint nobody finished. The marker is the discipline
+    (CLAUDE.md); it is opt-in here because checkpoints predating the marker are
+    genuinely complete and would otherwise be excluded.
+    """
+    t = tech.lower()
+    suffixes = ("_best.pt.complete",) if require_complete else ("_best.pt",)
+    return all((CKPT / f"{t}_{tag}_{variant}_{d}{sfx}").exists()
+               for d in ("nmos", "pmos") for sfx in suffixes)
+
+
+def variant_for(tag: str, group: str, tech: str, is_clean: bool) -> str:
+    if not is_clean:
+        return group
+    return CLEAN_TECH_OVERRIDE.get((tag, group, tech), CLEAN[tag][group])
+
+
+def groups(tag: str, which: str) -> List[Tuple[str, bool]]:
+    out: List[Tuple[str, bool]] = []
+    if which in ("clean", "all"):
+        out += [(g, True) for g in CLEAN[tag]]
+    if which in ("recipes", "all"):
+        out += [(g, False) for g in RECIPES[tag]]
+    return out
+
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="V7.3.0 accuracy coverage map")
+    ap.add_argument("--emit-jobs", type=pathlib.Path, default=None,
+                    help="Write missing cells as a v710_regate.sh job file")
+    ap.add_argument("--tag", default=None, choices=sorted(FAM),
+                    help="Restrict to one family")
+    ap.add_argument("--set", default="all", choices=["clean", "recipes", "all"])
+    ap.add_argument("--techs", default=None,
+                    help="Comma list, e.g. TSMC5,TSMC7 (default: all five)")
+    ap.add_argument("--require-complete", action="store_true",
+                    help="Only count a checkpoint that carries its "
+                         "*_best.pt.complete marker — use when a training "
+                         "wave for these stems is still running")
+    args = ap.parse_args()
+
+    techs = ([t.strip().upper() for t in args.techs.split(",")]
+             if args.techs else TECHS)
+    tags = [args.tag] if args.tag else ["dn", "tf", "pfn"]
+    idx = build_index()
+
+    jobs: List[str] = []
+    print(f"{'group':30s} {'tech':7s} {'measured':>9s} {'missing':>8s}  by")
+    print("-" * 72)
+    tot_have = tot_miss = tot_nockpt = 0
+    for tag in tags:
+        for group, is_clean in groups(tag, args.set):
+            label = f"{tag}/{'clean' if is_clean else 'recipe'}/{group}"
+            for tech in techs:
+                variant = variant_for(tag, group, tech, is_clean)
+                if not ckpt_exists(tag, variant, tech, args.require_complete):
+                    tot_nockpt += 1
+                    print(f"{label:30s} {tech:7s} {'':>9s} {'':>8s}  NO-CKPT")
+                    continue
+                have, miss, by = 0, [], set()
+                for suite, omps in SUITES.items():
+                    for omp in omps:
+                        src = idx.get((tag, variant, tech, suite, omp))
+                        if src:
+                            have += 1
+                            by.add(src)
+                        else:
+                            miss.append((suite, omp))
+                            jobs.append(f"{tag} {variant} {tech} {suite} {omp}")
+                tot_have += have
+                tot_miss += len(miss)
+                flag = "" if not miss else "  <-- gap"
+                print(f"{label:30s} {tech:7s} {have:>9d} {len(miss):>8d}  "
+                      f"{','.join(sorted(by)) or '-'}{flag}")
+
+    n_expect = sum(len(v) for v in SUITES.values())
+    print("-" * 72)
+    print(f"cells measured {tot_have}, missing {tot_miss}, "
+          f"no-checkpoint groups {tot_nockpt}  ({n_expect} runs per group-tech)")
+
+    if args.emit_jobs:
+        args.emit_jobs.write_text("".join(j + "\n" for j in jobs))
+        print(f"wrote {len(jobs)} jobs -> {args.emit_jobs}")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
