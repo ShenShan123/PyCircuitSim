@@ -51,7 +51,8 @@ from pycmg.nn_generate import SAMPLE_CLASS_NAMES, SAMPLE_CLASS_CODES  # noqa: E4
 DATA_DIR = ROOT / "external_compact_models" / "bsimar" / "data" / "datasets"
 FRAG_DIR = ROOT / "results" / "v6_4_7" / "s12_corridors"
 BACKUP_DIR = ROOT / "external_compact_models" / "bsimar" / "data" / "datasets_precor_backup"
-BENCH_VARIANT = {"tsmc5": "lvt", "tsmc7": "ulvt", "tsmc12": "svt", "tsmc16": "svt"}
+BENCH_VARIANT = {"tsmc5": "lvt", "tsmc6": "ulvt", "tsmc7": "ulvt",
+                 "tsmc12": "svt", "tsmc16": "svt"}
 CORRIDOR_CODE = SAMPLE_CLASS_CODES["traj_corridor"]  # 12
 
 

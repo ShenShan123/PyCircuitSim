@@ -86,7 +86,8 @@ OUT_DIR = ROOT / "results" / "v6_4_7" / "s12_corridors"
 LOG_DIR = ROOT / "results" / "v6_4_7" / "s12_harvest_logs"
 
 # Bench variant per tech (the checkpoint VT — matches BENCH + S12 build plan).
-BENCH_VARIANT = {"tsmc5": "lvt", "tsmc7": "ulvt", "tsmc12": "svt", "tsmc16": "svt"}
+BENCH_VARIANT = {"tsmc5": "lvt", "tsmc6": "ulvt", "tsmc7": "ulvt",
+                 "tsmc12": "svt", "tsmc16": "svt"}
 ROOM_T_K = 300.15
 NFIN = 2
 L_NMOS = 16e-9
