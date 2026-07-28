@@ -116,11 +116,13 @@ unmeasured cells is shown against its measured denominator, not 16.
 | `dn/small` | 10/16 | 0 | — |
 | `dn/v660clean_large` | 13/16 | 0 | — |
 | `dn/xl` | 12/16 | 0 | — |
-| `tf/corroft_large` | 1/2 measured | 0 | 14 |
-| `tf/crit30_large` | 2/2 measured | 0 | 14 |
-| `pfn/large` | 7/11 measured | 0 | 5 |
-| `pfn/medium` | 9/13 measured | 0 | 3 |
-| `pfn/small` | 11/15 measured | 0 | 1 |
+| `tf/corro15_medium` | 8/8 measured | 0 | 8 |
+| `tf/corroft_large` | 7/8 measured | 0 | 8 |
+| `tf/crit15m_large` | 7/8 measured | 0 | 8 |
+| `tf/crit30_large` | 7/8 measured | 0 | 8 |
+| `pfn/large` | 8/16 | 1 | — |
+| `pfn/medium` | 10/16 | 1 | — |
+| `pfn/small` | 11/16 | 0 | — |
 
 **Zero FLIPs everywhere, and every group V6.13.0 swept reproduces exactly.**
 Six DirectNet groups had a prior strict count and all six land on it again, on a
@@ -154,34 +156,34 @@ re-measured below.
 
 **Parametric DC — `verify_nn_multi_tech_dc`, 55 configs**
 
-| family | tier | pass | mean NRMSE % — TSMC5 / 7 / 12 / 16 |
-|---|---|---|---|
-| DirectNet | small | 55/55 | 2.39 / 1.81 / 0.57 / 0.62 |
-| DirectNet | medium | 55/55 | 1.48 / 1.46 / 0.56 / 0.58 |
-| DirectNet | large | 54/55 | 1.91 / 1.21 / 1.69 / 1.01 |
-| DirectNet | xl | 53/55 | 2.91 / 2.35 / 2.73 / 1.52 |
-| BSIM-AR | small | 54/55 | 2.54 / 1.24 / 0.82 / 1.61 |
-| BSIM-AR | medium | 53/55 | 1.77 / 1.46 / 1.34 / 1.57 |
-| BSIM-AR | large | 52/55 | 1.80 / 1.21 / 1.67 / 1.58 |
-| BSIM-AR | xl | 55/55 | 1.94 / 2.92 / 1.08 / 1.07 |
-| PFN | small | 54/55 | 2.14 / 1.58 / 0.56 / 1.12 |
-| PFN | medium | 53/55 | 2.36 / 1.62 / 1.95 / 2.65 |
-| PFN | large | 55/55 | 2.65 / 1.52 / 1.04 / 1.10 |
+| family | tier | pass (4 techs) | mean NRMSE % — TSMC5 / 7 / 12 / 16 | TSMC6 ⚠ |
+|---|---|---|---|---|
+| DirectNet | small | 55/55 | 2.39 / 1.81 / 0.57 / 0.62 | 2.06 |
+| DirectNet | medium | 55/55 | 1.48 / 1.46 / 0.56 / 0.58 | 2.21 |
+| DirectNet | large | 54/55 | 1.91 / 1.21 / 1.69 / 1.01 | 2.25 |
+| DirectNet | xl | 53/55 | 2.91 / 2.35 / 2.73 / 1.52 | 3.18 (13/14) |
+| BSIM-AR | small | 54/55 | 2.54 / 1.24 / 0.82 / 1.61 | 2.38 |
+| BSIM-AR | medium | 53/55 | 1.77 / 1.46 / 1.34 / 1.57 | 2.24 (13/14) |
+| BSIM-AR | large | 52/55 | 1.80 / 1.21 / 1.67 / 1.58 | 2.93 (13/14) |
+| BSIM-AR | xl | 55/55 | 1.94 / 2.92 / 1.08 / 1.07 | 3.16 |
+| PFN | small | 54/55 | 2.14 / 1.58 / 0.56 / 1.12 | 1.46 |
+| PFN | medium | 53/55 | 2.36 / 1.62 / 1.95 / 2.65 | 2.28 (13/14) |
+| PFN | large | 55/55 | 2.65 / 1.52 / 1.04 / 1.10 | 1.93 |
 
 **Parametric transient — `verify_nn_multi_tech_tran`, 64 configs**
 
-| family | tier | pass | mean NRMSE % — TSMC5 / 7 / 12 / 16 |
-|---|---|---|---|
-| DirectNet | small | 64/64 | 2.99 / 1.53 / 2.07 / 1.62 |
-| DirectNet | medium | 64/64 | 1.90 / 1.48 / 1.52 / 1.47 |
-| DirectNet | large | 64/64 | 1.67 / 1.46 / 1.49 / 1.47 |
-| DirectNet | xl | 64/64 | 1.66 / 1.45 / 1.52 / 1.48 |
-| BSIM-AR | small | 64/64 | 2.54 / 1.47 / 1.53 / 1.60 |
-| BSIM-AR | medium | 64/64 | 1.80 / 1.52 / 1.52 / 1.50 |
-| BSIM-AR | large | 64/64 | 1.66 / 1.48 / 1.51 / 1.49 |
-| PFN | small | 64/64 | 1.88 / 1.44 / 1.50 / 1.48 |
-| PFN | medium | 64/64 | 1.71 / 1.48 / 1.50 / 1.49 |
-| PFN | large | 64/64 | 2.23 / 1.49 / 1.50 / 1.51 |
+| family | tier | pass (4 techs) | mean NRMSE % — TSMC5 / 7 / 12 / 16 | TSMC6 ⚠ |
+|---|---|---|---|---|
+| DirectNet | small | 64/64 | 2.99 / 1.53 / 2.07 / 1.62 | 1.57 |
+| DirectNet | medium | 64/64 | 1.90 / 1.48 / 1.52 / 1.47 | 1.45 |
+| DirectNet | large | 64/64 | 1.67 / 1.46 / 1.49 / 1.47 | 1.45 |
+| DirectNet | xl | 64/64 | 1.66 / 1.45 / 1.52 / 1.48 | 1.46 |
+| BSIM-AR | small | 64/64 | 2.54 / 1.47 / 1.53 / 1.60 | 1.48 |
+| BSIM-AR | medium | 64/64 | 1.80 / 1.52 / 1.52 / 1.50 | 1.50 |
+| BSIM-AR | large | 64/64 | 1.66 / 1.48 / 1.51 / 1.49 | 1.50 |
+| PFN | small | 64/64 | 1.88 / 1.44 / 1.50 / 1.48 | 1.43 |
+| PFN | medium | 64/64 | 1.71 / 1.48 / 1.50 / 1.49 | 1.53 |
+| PFN | large | 64/64 | 2.23 / 1.49 / 1.50 / 1.51 | 1.43 |
 
 **Non-tier (recipe) stems measured in the same pass**
 
@@ -214,35 +216,35 @@ pre-fix measurement until now.
 
 **Device CS-amp AC (gate: gain0 ≤1.5 dB, f3db ratio ∈[0.7,1.43], magNRMSE ≤10 %)**
 
-| family | tier | pass | per-tech (n = NMOS, p = PMOS) |
+| family | tier | pass (4 techs) | per-tech (n = NMOS, p = PMOS; TSMC6 = the repeat, outside the count) |
 |---|---|---|---|
-| DirectNet | small | **7/8** | TSMC5: n✓ p✓ · TSMC7: n✗ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
-| DirectNet | medium | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
-| DirectNet | large | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
-| DirectNet | xl | **7/8** | TSMC5: n✗ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
-| BSIM-AR | small | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
-| BSIM-AR | medium | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
-| BSIM-AR | large | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
-| BSIM-AR | xl | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
-| PFN | small | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
-| PFN | medium | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
-| PFN | large | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ |
+| DirectNet | small | **7/8** | TSMC5: n✓ p✓ · TSMC7: n✗ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ · TSMC6: n✓ p✓ |
+| DirectNet | medium | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ · TSMC6: n✓ p✓ |
+| DirectNet | large | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ · TSMC6: n✓ p✓ |
+| DirectNet | xl | **7/8** | TSMC5: n✗ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ · TSMC6: n✓ p✓ |
+| BSIM-AR | small | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ · TSMC6: n✓ p✓ |
+| BSIM-AR | medium | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ · TSMC6: n✓ p✓ |
+| BSIM-AR | large | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ · TSMC6: n✓ p✓ |
+| BSIM-AR | xl | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ · TSMC6: n✓ p✓ |
+| PFN | small | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ · TSMC6: n✓ p✓ |
+| PFN | medium | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ · TSMC6: n✓ p✓ |
+| PFN | large | **8/8** | TSMC5: n✓ p✓ · TSMC7: n✓ p✓ · TSMC12: n✓ p✓ · TSMC16: n✓ p✓ · TSMC6: n✓ p✓ |
 
 **Opamp open-loop AC (gate: DC-gain err ≤3 dB, GBW ratio ∈[0.6,1.67], PM err ≤15°, and a non-railed NN OP; magNRMSE reported, not gated). The number shown is the DC-gain error**
 
-| family | tier | pass | TSMC5 | TSMC7 | TSMC12 | TSMC16 |
-|---|---|---|---|---|---|---|
-| DirectNet | small | **1/4** | FAIL 2.41 dB | FAIL 19.50 dB | FAIL 42.27 dB | PASS 1.78 dB |
-| DirectNet | medium | **0/4** | FAIL 22.02 dB | FAIL 29.46 dB | FAIL 27.69 dB | FAIL 35.11 dB |
-| DirectNet | large | **0/4** | FAIL 3.31 dB | FAIL 31.88 dB | FAIL 6.44 dB | FAIL 4.98 dB |
-| DirectNet | xl | **0/4** | FAIL 14.72 dB | FAIL 31.48 dB | FAIL 208.73 dB | FAIL 3.73 dB |
-| BSIM-AR | small | **1/4** | FAIL 0.39 dB | FAIL 11.33 dB | FAIL 10.27 dB | PASS 0.54 dB |
-| BSIM-AR | medium | **1/4** | FAIL 4.63 dB | FAIL 11.13 dB | FAIL 0.17 dB | PASS 2.62 dB |
-| BSIM-AR | large | **2/4** | FAIL 2.54 dB | PASS 0.12 dB | FAIL 4.34 dB | PASS 0.33 dB |
-| BSIM-AR | xl | **1/4** | FAIL 24.95 dB | FAIL 3.86 dB | FAIL 5.18 dB | PASS 0.97 dB |
-| PFN | small | **0/4** | FAIL 16.04 dB | FAIL 30.04 dB | FAIL 8.46 dB | FAIL 4.44 dB |
-| PFN | medium | **1/4** | FAIL 15.61 dB | PASS 0.84 dB | FAIL 3.29 dB | FAIL 33.44 dB |
-| PFN | large | **0/4** | FAIL 5.32 dB | FAIL 30.99 dB | FAIL 30.92 dB | FAIL 36.34 dB |
+| family | tier | pass | TSMC5 | TSMC7 | TSMC12 | TSMC16 | TSMC6 ⚠ |
+|---|---|---|---|---|---|---|---|
+| DirectNet | small | **1/4** | FAIL 2.41 dB | FAIL 19.50 dB | FAIL 42.27 dB | PASS 1.78 dB | FAIL 3.22 dB |
+| DirectNet | medium | **0/4** | FAIL 22.02 dB | FAIL 29.46 dB | FAIL 27.69 dB | FAIL 35.11 dB | FAIL 30.11 dB |
+| DirectNet | large | **0/4** | FAIL 3.31 dB | FAIL 31.88 dB | FAIL 6.44 dB | FAIL 4.98 dB | FAIL 31.67 dB |
+| DirectNet | xl | **0/4** | FAIL 14.72 dB | FAIL 31.48 dB | FAIL 208.73 dB | FAIL 3.73 dB | FAIL 30.35 dB |
+| BSIM-AR | small | **1/4** | FAIL 0.39 dB | FAIL 11.33 dB | FAIL 10.27 dB | PASS 0.54 dB | FAIL 9.82 dB |
+| BSIM-AR | medium | **1/4** | FAIL 4.63 dB | FAIL 11.13 dB | FAIL 0.17 dB | PASS 2.62 dB | PASS 1.23 dB |
+| BSIM-AR | large | **2/4** | FAIL 2.54 dB | PASS 0.12 dB | FAIL 4.34 dB | PASS 0.33 dB | FAIL 4.38 dB |
+| BSIM-AR | xl | **1/4** | FAIL 24.95 dB | FAIL 3.86 dB | FAIL 5.18 dB | PASS 0.97 dB | FAIL 4.60 dB |
+| PFN | small | **0/4** | FAIL 16.04 dB | FAIL 30.04 dB | FAIL 8.46 dB | FAIL 4.44 dB | FAIL 32.11 dB |
+| PFN | medium | **1/4** | FAIL 15.61 dB | PASS 0.84 dB | FAIL 3.29 dB | FAIL 33.44 dB | FAIL 31.53 dB |
+| PFN | large | **0/4** | FAIL 5.32 dB | FAIL 30.99 dB | FAIL 30.92 dB | FAIL 36.34 dB | FAIL 28.86 dB |
 
 ### What this changes
 

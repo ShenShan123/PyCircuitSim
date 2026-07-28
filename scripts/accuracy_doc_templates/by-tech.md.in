@@ -105,6 +105,15 @@ gds bug distorted recipe rankings.
 <!--MATRIX:TSMC16-->
 
 
+### TSMC6 ⚠
+
+**TSMC6 in one line:** not a fifth technology — TSMC7 relabelled (§5), carried as
+a *repeat* of it. Only the clean recipe exists here, at all four scales for all
+three families, so this matrix has 12 groups where the others have 27; read it
+against TSMC7's clean rows, never against its curriculum rows.
+
+<!--MATRIX:TSMC6-->
+
 ## 4. Device-level fidelity by technology
 
 <!--DEVICE-->
@@ -132,8 +141,6 @@ renumbers nothing.
 **Scoring rule: TSMC6 is a /4 column of its own, never part of the /16.**
 Folding a duplicate into the headline denominator would inflate every total.
 
-### What the first repeat already showed
-
 The V6.11.0 run against the V6.13.0 re-gate of TSMC7 is the sharpest evidence in
 the project that pre-fix rankings were unreliable: the two disagreed by **68.2 %
 vs 2.0 %** on SRAM SNM error at NFIN=2, which the project had been reading as
@@ -148,8 +155,6 @@ the *same number* as BSIM-AR's tsmc7-opamp clean-medium pass, because it was the
 same measurement. PFN, by contrast, read flat 2/4 across all three sizes on the
 duplicated data, agreeing with its TSMC7 rows — the reassuring case, and the
 family whose gates were already flip-free.
-
-### The repeat, measured
 
 Both runs are the **clean** recipe at the matching tier, on identical rows, with
 the same code — so every difference below is run-to-run variance of the whole
@@ -170,8 +175,6 @@ every tier) is that config difference, **not** run-to-run scatter — do not rea
 it as variance.
 
 <!--TSMC6REPEAT-->
-
-#### What it measures — and it is the most consequential number in this file
 
 Read the pairs, not the totals. The **counts agree** at three of four tiers
 (2/2, 2/2, 3/3) while the **identity of the passing cells swaps**: at `small`
@@ -198,8 +201,6 @@ cells at once — production DirectNet at 15/16 strict, BSIM-AR `corroft@medium`
 at 16/16 — nor the corridor law, which moves rings by 8 pp against a 4 pp noise
 floor. What it retires is the practice of promoting a recipe on a single-cell
 margin.
-
-### V7.1.0 status
 
 Datasets regenerated from the kept vendor PDK and **verified `array_equal` to
 `tsmc7_*`** — 1,816,830 nmos / 2,187,292 pmos rows matching on `inputs`,

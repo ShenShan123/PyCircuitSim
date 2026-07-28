@@ -71,17 +71,20 @@ Only checkpoints still on disk could be re-measured; the rest are in
 
 ### DirectNet (LEVEL=73)
 
-| recipe | tier | /16 | pre-fix | failing cells |
-|---|---|---|---|---|
-| `clean` | small | **10** | 7 | tsmc5-ring, tsmc7-ring, tsmc12-opamp, tsmc7/12/16-switchcap |
-| `clean` | medium | 10 | 10 | all 4 opamps, tsmc5-ring, tsmc7-ring |
-| `v660clean` | large | 13 | 13 | tsmc5-ring, tsmc7-opamp, tsmc16-opamp |
-| `clean` | xl | **12** | 10 | tsmc5-ring, tsmc7-ring, tsmc5-opamp, tsmc12-opamp |
-| `csob` | large | **11** | 12 | tsmc5-ring, tsmc7-ring, tsmc5/7/16-opamp |
-| **`crit30f`** | **large** | **15** | 14 | **tsmc7-opamp** |
-| `corroft` | xl | **15** | 14 | tsmc5-opamp |
-| `crit10` | xl | 14 | 14 | tsmc5-opamp, tsmc16-opamp |
-| **`crit15m`** | **xl** | **16** | 14 | — |
+`TSMC6 ⚠` is the *repeat* column — the same clean recipe retrained on
+bit-identical rows (`by-tech.md` §5), scored /4 and never folded into the /16.
+
+| recipe | tier | /16 | pre-fix | TSMC6 ⚠ /4 | failing cells |
+|---|---|---|---|---|---|
+| `clean` | small | **10** | 7 | 2 | tsmc5-ring, tsmc7-ring, tsmc12-opamp, tsmc7/12/16-switchcap |
+| `clean` | medium | 10 | 10 | 2 | all 4 opamps, tsmc5-ring, tsmc7-ring |
+| `v660clean` | large | 13 | 13 | 3 | tsmc5-ring, tsmc7-opamp, tsmc16-opamp |
+| `clean` | xl | **12** | 10 | 2 | tsmc5-ring, tsmc7-ring, tsmc5-opamp, tsmc12-opamp |
+| `csob` | large | **11** | 12 | — | tsmc5-ring, tsmc7-ring, tsmc5/7/16-opamp |
+| **`crit30f`** | **large** | **15** | 14 | — | **tsmc7-opamp** |
+| `corroft` | xl | **15** | 14 | — | tsmc5-opamp |
+| `crit10` | xl | 14 | 14 | — | tsmc5-opamp, tsmc16-opamp |
+| **`crit15m`** | **xl** | **16** | 14 | — | — |
 
 `dn/clean/large` is the production slot, which has carried the `crit30f` weights
 since V6.6.4; it and `dn/crit30f/large` are two independent re-measurements of
@@ -90,36 +93,37 @@ the same weights and agree cell for cell. The genuine clean@large is
 
 ### BSIM-AR (LEVEL=74)
 
-| recipe | tier | /16 | pre-fix | failing cells |
-|---|---|---|---|---|
-| `clean` | small | **14** | 12 | tsmc5-ring 6.53 %, tsmc7-ring 5.97 % |
-| `clean` | medium | 14 | 14 | tsmc5-ring 5.55 %, tsmc7-ring 7.41 % |
-| `clean` | large | **14** | 13 | tsmc5-ring 7.38 %, tsmc7-ring 8.63 % |
-| `clean` | xl | **14** | 13 | tsmc5-ring 7.61 %, tsmc7-ring 12.55 % |
-| `csob` | xl | **14** | 13 | tsmc5-ring, tsmc7-ring |
-| `invtrip` | large | **14** | 13 | tsmc5-ring, tsmc7-ring |
-| `corroft` | large | 15 | 15 | tsmc7-opamp |
-| `crit15m` | large | 15 | 15 | tsmc7-opamp |
-| `crit30` | large | 15 | 15 | tsmc7-opamp |
-| **`corroft`** | **medium** | **16** | 15 | — |
-| **`corro15`** | **medium** | **16** | — | — |
-| **`corroft`** | **xl** | **16** | 15 | — |
-| **`crit15m`** | **xl** | **16** | 15 | — |
-| **`crit30`** | **xl** | **16** | 14 | — |
-| **`corro15`** | **xl** | **16** | 15 | — |
+| recipe | tier | /16 | pre-fix | TSMC6 ⚠ /4 | failing cells |
+|---|---|---|---|---|---|
+| `clean` | small | **14** | 12 | 3 | tsmc5-ring 6.53 %, tsmc7-ring 5.97 % |
+| `clean` | medium | 14 | 14 | 3 | tsmc5-ring 5.55 %, tsmc7-ring 7.41 % |
+| `clean` | large | **14** | 13 | 3 | tsmc5-ring 7.38 %, tsmc7-ring 8.63 % |
+| `clean` | xl | **14** | 13 | 3 | tsmc5-ring 7.61 %, tsmc7-ring 12.55 % |
+| `csob` | xl | **14** | 13 | — | tsmc5-ring, tsmc7-ring |
+| `invtrip` | large | **14** | 13 | — | tsmc5-ring, tsmc7-ring |
+| `corroft` | large | 15 | 15 | — | tsmc7-opamp |
+| `crit15m` | large | 15 | 15 | — | tsmc7-opamp |
+| `crit30` | large | 15 | 15 | — | tsmc7-opamp |
+| **`corroft`** | **medium** | **16** | 15 | — | — |
+| **`corro15`** | **medium** | **16** | — | — | — |
+| **`corroft`** | **xl** | **16** | 15 | — | — |
+| **`crit15m`** | **xl** | **16** | 15 | — | — |
+| **`crit30`** | **xl** | **16** | 14 | — | — |
+| **`corro15`** | **xl** | **16** | 15 | — | — |
 
 ### PFN (LEVEL=75)
 
 Only `clean` has ever been trained for PFN — the curriculum recipes are wired
-(`MODEL=tabpfn` is supported by every driver) but untested. The `xl` tier is
-new in V7.1.0 (`by-scale.md` §1) and is training as this is written.
+(`MODEL=tabpfn` is supported by every driver) but untested. The `xl` tier is new
+in V7.1.0 (`by-scale.md` §1); read its row with that section's caveat, since six
+of its eight runs banked before epoch 50 of 150.
 
-| recipe | tier | /16 | pre-fix | failing cells |
-|---|---|---|---|---|
-| `clean` | small | 11 | 11 | tsmc5-ring/opamp, tsmc7-ring/opamp, tsmc12-switchcap |
-| `clean` | medium | **11** | 10 | tsmc5-ring/opamp, tsmc7-ring, tsmc16-opamp, tsmc12-switchcap |
-| `clean` | large | **9** | 8 | tsmc5-ring, tsmc7-ring/opamp, tsmc12-opamp/switchcap, tsmc16-opamp/switchcap |
-| `clean` | xl | *training (V7.1.0)* | — | — |
+| recipe | tier | /16 | pre-fix | TSMC6 ⚠ /4 | failing cells |
+|---|---|---|---|---|---|
+| `clean` | small | 11 | 11 | 3 | tsmc5-ring/opamp, tsmc7-ring/opamp, tsmc12-switchcap |
+| `clean` | medium | **11** | 10 | 2 | tsmc5-ring/opamp, tsmc7-ring, tsmc16-opamp, tsmc12-switchcap |
+| `clean` | large | **9** | 8 | 2 | tsmc5-ring, tsmc7-ring/opamp, tsmc12-opamp/switchcap, tsmc16-opamp/switchcap |
+| `clean` | xl (V7.1.0) | *gating* | — | 3 | — |
 
 ---
 

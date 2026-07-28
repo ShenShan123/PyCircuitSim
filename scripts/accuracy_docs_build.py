@@ -34,6 +34,9 @@ DOCS = ROOT / "docs" / "accuracy"
 
 CIRCS = ["ring_osc", "opamp", "sram_snm", "switchcap"]
 TECHS = ["TSMC5", "TSMC7", "TSMC12", "TSMC16"]
+# TSMC6 is TSMC7 relabelled: it appears as its own column in the per-tech
+# tables and never inside a /16 total (methodology.md §2, §7).
+TECHS6 = TECHS + ["TSMC6"]
 FAM = {"dn": "DirectNet", "tf": "BSIM-AR", "pfn": "PFN"}
 TIERS = ["small", "medium", "large", "xl"]
 
@@ -86,13 +89,33 @@ def cell(tag, var, suite, tech, key=None):
 
 # ── by-tech blocks ──────────────────────────────────────────────────────────
 def census() -> str:
-    out = ["| tech | ring_osc | opamp | sram_snm | switchcap | all 108 cells |",
-           "|---|---|---|---|---|---|"]
+    out = ["| tech | groups | ring_osc | opamp | sram_snm | switchcap | all cells |",
+           "|---|---|---|---|---|---|---|"]
     for t in TECHS:
         c = [sum(1 for g in ORDER if A3[g].get(f"{t}/{k}", "").startswith("PASS"))
              for k in CIRCS]
-        out.append(f"| **{t}** | {c[0]}/27 | {c[1]}/27 | {c[2]}/27 | {c[3]}/27 | "
+        out.append(f"| **{t}** | 27 | {c[0]}/27 | {c[1]}/27 | {c[2]}/27 | {c[3]}/27 | "
                    f"**{sum(c)}/108** |")
+    # TSMC6: the 12 clean groups trained in V7.1.0 (3 families x 4 tiers), strict.
+    n6 = [0, 0, 0, 0]; g6 = 0
+    for tag in ("dn", "tf", "pfn"):
+        for var in TIERS:
+            got = False
+            for i, circ in enumerate(CIRCS):
+                v, _ = _strict6(tag, var, circ)
+                if v is not None:
+                    got = True
+                    n6[i] += v == "PASS"
+            g6 += got
+    if g6:
+        out.append(f"| **TSMC6** ⚠ | {g6} | {n6[0]}/{g6} | {n6[1]}/{g6} | {n6[2]}/{g6} | "
+                   f"{n6[3]}/{g6} | {sum(n6)}/{4 * g6} |")
+        out.append("")
+        out.append("⚠ TSMC6 is TSMC7 relabelled (§5) and never enters a /16 total. Its 12 "
+                   "groups are **clean-only**, where the other columns' 27 include the "
+                   "curriculum recipes that close rings — so do not compare its ring and "
+                   "opamp fractions with theirs. The like-for-like comparison, clean "
+                   "against clean at matching tiers, is §5.")
     return "\n".join(out)
 
 
@@ -106,11 +129,11 @@ def matrix(tech: str) -> str:
 
 
 def dev_by_tech(suite: str, label: str) -> str:
-    out = [f"**{label}**", "", "| family / tier | " + " | ".join(TECHS) + " |",
-           "|---|" + "---|" * len(TECHS)]
+    out = [f"**{label}**", "", "| family / tier | " + " | ".join(TECHS6) + " |",
+           "|---|" + "---|" * len(TECHS6)]
     any_row = False
     for tag, var in DEV_ROWS:
-        vals = [cell(tag, var, suite, t) for t in TECHS]
+        vals = [cell(tag, var, suite, t) for t in TECHS6]
         if not any(v and "n" in v for v in vals):
             continue
         any_row = True
@@ -141,11 +164,11 @@ def _ac_why(r: dict) -> str:
 
 def ac_by_tech() -> str:
     out = ["**Device CS-amp AC — NMOS / PMOS verdicts**", "",
-           "| family / tier | " + " | ".join(TECHS) + " |",
-           "|---|" + "---|" * len(TECHS)]
+           "| family / tier | " + " | ".join(TECHS6) + " |",
+           "|---|" + "---|" * len(TECHS6)]
     for tag, var in DEV_ROWS:
         cells, any_c = [], False
-        for t in TECHS:
+        for t in TECHS6:
             e = cell(tag, var, "verify_nn_ac", t)
             if not e or "nmos" not in e:
                 cells.append("—"); continue
@@ -161,11 +184,12 @@ def ac_by_tech() -> str:
 def ac_by_tier() -> str:
     out = ["**Device CS-amp AC (gate: gain0 ≤1.5 dB, f3db ratio ∈[0.7,1.43], "
            "magNRMSE ≤10 %)**", "",
-           "| family | tier | pass | per-tech (n = NMOS, p = PMOS) |", "|---|---|---|---|"]
+           "| family | tier | pass (4 techs) | per-tech (n = NMOS, p = PMOS; "
+           "TSMC6 = the repeat, outside the count) |", "|---|---|---|---|"]
     for tag in ("dn", "tf", "pfn"):
         for var in TIERS:
             n = p = 0; det = []
-            for t in TECHS:
+            for t in TECHS6:
                 e = cell(tag, var, "verify_nn_ac", t)
                 if not e:
                     det.append(f"{t}: —"); continue
@@ -173,7 +197,8 @@ def ac_by_tier() -> str:
                 for d in ("nmos", "pmos"):
                     r = e.get(d)
                     if r:
-                        n += 1; p += r["status"] == "PASS"
+                        if t != "TSMC6":          # the duplicate never enters the count
+                            n += 1; p += r["status"] == "PASS"
                         s.append(f"{d[0]}{'✓' if r['status'] == 'PASS' else '✗'}")
                 det.append(f"{t}: {' '.join(s)}")
             if n:
@@ -182,16 +207,17 @@ def ac_by_tier() -> str:
     out += ["", "**Opamp open-loop AC (gate: DC-gain err ≤3 dB, GBW ratio ∈[0.6,1.67], "
             "PM err ≤15°, and a non-railed NN OP; magNRMSE reported, not gated). "
             "The number shown is the DC-gain error**", "",
-            "| family | tier | pass | TSMC5 | TSMC7 | TSMC12 | TSMC16 |",
-            "|---|---|---|---|---|---|---|"]
+            "| family | tier | pass | TSMC5 | TSMC7 | TSMC12 | TSMC16 | TSMC6 ⚠ |",
+            "|---|---|---|---|---|---|---|---|"]
     for tag in ("dn", "tf", "pfn"):
         for var in TIERS:
             n = p = 0; cells = []
-            for t in TECHS:
+            for t in TECHS6:
                 e = cell(tag, var, "verify_complex_opamp_ac", t)
                 if not e:
                     cells.append("—"); continue
-                n += 1; p += e["rc"] == "0"
+                if t != "TSMC6":
+                    n += 1; p += e["rc"] == "0"
                 cells.append(f"{'PASS' if e['rc'] == '0' else 'FAIL'} "
                              f"{e.get('dc_gain_err_db', '—')} dB")
             if n:
@@ -206,17 +232,22 @@ def dev_by_tier() -> str:
                          ("verify_nn_multi_tech_tran",
                           "Parametric transient — `verify_nn_multi_tech_tran`, 64 configs")):
         out = [f"**{label}**", "",
-               "| family | tier | pass | mean NRMSE % — TSMC5 / 7 / 12 / 16 |",
-               "|---|---|---|---|"]
+               "| family | tier | pass (4 techs) | mean NRMSE % — TSMC5 / 7 / 12 / 16 | TSMC6 ⚠ |",
+               "|---|---|---|---|---|"]
         for tag in ("dn", "tf", "pfn"):
             for var in TIERS:
                 g = {t: cell(tag, var, suite, t) for t in TECHS}
                 g = {t: e for t, e in g.items() if e and "n" in e}
                 if len(g) == 4:
+                    e6 = cell(tag, var, suite, "TSMC6")
+                    s6 = (f"{e6['mean_nrmse']:.2f}" +
+                          ("" if e6["n_pass"] == e6["n"] else f" ({e6['n_pass']}/{e6['n']})")
+                          ) if e6 and "n" in e6 else "—"
                     out.append(f"| {FAM[tag]} | {var} | "
                                f"{sum(e['n_pass'] for e in g.values())}/"
                                f"{sum(e['n'] for e in g.values())} | " +
-                               " / ".join(f"{g[t]['mean_nrmse']:.2f}" for t in TECHS) + " |")
+                               " / ".join(f"{g[t]['mean_nrmse']:.2f}" for t in TECHS) +
+                               f" | {s6} |")
         blocks.append("\n".join(out))
 
     out = ["**Non-tier (recipe) stems measured in the same pass**", "",
@@ -278,6 +309,22 @@ def strict_v710() -> str:
         return ""
     return "\n".join(["| group | strict PASS | FLIPs | cells not yet measured |",
                        "|---|---|---|---|"] + rows)
+
+
+def matrix6() -> str:
+    """TSMC6's own 12 clean groups, in the same shape as the other techs."""
+    out = ["| checkpoint group | ring_osc | opamp | sram_snm | switchcap |",
+           "|---|---|---|---|---|"]
+    for tag in ("dn", "tf", "pfn"):
+        for var in TIERS:
+            cells = []
+            for circ in CIRCS:
+                v, m = _strict6(tag, var, circ)
+                cells.append("—" if v is None else
+                             v + (f" {m:.2f}%" if m is not None else ""))
+            if any(c != "—" for c in cells):
+                out.append(f"| `{tag}/clean/{var}` | " + " | ".join(cells) + " |")
+    return "\n".join(out)
 
 
 # ── the TSMC6 controlled repeat ──────────────────────────────────────────────
@@ -348,6 +395,7 @@ def main() -> int:
     t = t.replace("<!--CENSUS-->", census())
     for tech in TECHS:
         t = t.replace(f"<!--MATRIX:{tech}-->", matrix(tech))
+    t = t.replace("<!--MATRIX:TSMC6-->", matrix6())
     t = t.replace("<!--TSMC6REPEAT-->", tsmc6_repeat())
     t = t.replace("<!--DEVICE-->", "\n\n".join(x for x in (
         dev_by_tech("verify_nn_multi_tech_dc",

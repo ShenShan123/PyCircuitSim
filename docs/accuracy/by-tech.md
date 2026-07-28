@@ -29,12 +29,15 @@ here — it has no post-fix groups yet, and including a duplicate of TSMC7 would
 bias the census (§5).
 
 
-| tech | ring_osc | opamp | sram_snm | switchcap | all 108 cells |
-|---|---|---|---|---|---|
-| **TSMC5** | 13/27 | 20/27 | 27/27 | 27/27 | **87/108** |
-| **TSMC7** | 14/27 | 18/27 | 27/27 | 26/27 | **85/108** |
-| **TSMC12** | 27/27 | 23/27 | 27/27 | 23/27 | **100/108** |
-| **TSMC16** | 27/27 | 21/27 | 27/27 | 25/27 | **100/108** |
+| tech | groups | ring_osc | opamp | sram_snm | switchcap | all cells |
+|---|---|---|---|---|---|---|
+| **TSMC5** | 27 | 13/27 | 20/27 | 27/27 | 27/27 | **87/108** |
+| **TSMC7** | 27 | 14/27 | 18/27 | 27/27 | 26/27 | **85/108** |
+| **TSMC12** | 27 | 27/27 | 23/27 | 27/27 | 23/27 | **100/108** |
+| **TSMC16** | 27 | 27/27 | 21/27 | 27/27 | 25/27 | **100/108** |
+| **TSMC6** ⚠ | 12 | 3/12 | 5/12 | 12/12 | 11/12 | 31/48 |
+
+⚠ TSMC6 is TSMC7 relabelled (§5) and never enters a /16 total. Its 12 groups are **clean-only**, where the other columns' 27 include the curriculum recipes that close rings — so do not compare its ring and opamp fractions with theirs. The like-for-like comparison, clean against clean at matching tiers, is §5.
 
 Read column-wise:
 
@@ -222,73 +225,98 @@ gds bug distorted recipe rankings.
 | `pfn/clean/large` | PASS 2.87% | FAIL 100.00% | PASS 0.84% | FAIL 4.99% |
 
 
+### TSMC6 ⚠
+
+**TSMC6 in one line:** not a fifth technology — TSMC7 relabelled (§5), carried as
+a *repeat* of it. Only the clean recipe exists here, at all four scales for all
+three families, so this matrix has 12 groups where the others have 27; read it
+against TSMC7's clean rows, never against its curriculum rows.
+
+| checkpoint group | ring_osc | opamp | sram_snm | switchcap |
+|---|---|---|---|---|
+| `dn/clean/small` | PASS 4.32% | FAIL 11.15% | PASS 1.68% | FAIL 2.27% |
+| `dn/clean/medium` | FAIL 9.37% | FAIL 100.00% | PASS 2.10% | PASS 2.75% |
+| `dn/clean/large` | FAIL 9.04% | PASS 7.12% | PASS 1.58% | PASS 2.52% |
+| `dn/clean/xl` | FAIL 15.05% | FAIL 100.00% | PASS 1.86% | PASS 2.65% |
+| `tf/clean/small` | FAIL 6.14% | PASS 4.49% | PASS 1.40% | PASS 2.72% |
+| `tf/clean/medium` | FAIL 6.66% | PASS 5.29% | PASS 1.70% | PASS 2.60% |
+| `tf/clean/large` | FAIL 11.61% | PASS 4.72% | PASS 2.32% | PASS 2.69% |
+| `tf/clean/xl` | FAIL 11.99% | PASS 4.21% | PASS 1.95% | PASS 2.74% |
+| `pfn/clean/small` | PASS 4.83% | FAIL 100.00% | PASS 1.59% | PASS 2.64% |
+| `pfn/clean/medium` | FAIL 7.21% | FAIL 100.00% | PASS 1.77% | PASS 3.74% |
+| `pfn/clean/large` | FAIL 9.12% | FAIL 100.00% | PASS 1.88% | PASS 2.83% |
+| `pfn/clean/xl` | PASS 0.08% | FAIL 100.00% | PASS 1.69% | PASS 2.65% |
+
 ## 4. Device-level fidelity by technology
 
 **Parametric DC — mean Id-Vgs NRMSE % per tech (config fails in brackets)**
 
-| family / tier | TSMC5 | TSMC7 | TSMC12 | TSMC16 |
-|---|---|---|---|---|
-| DirectNet `small` | 2.39 | 1.81 | 0.57 | 0.62 |
-| DirectNet `medium` | 1.48 | 1.46 | 0.56 | 0.58 |
-| DirectNet `large` | 1.91 | 1.21 | 1.69 (17/18) | 1.01 |
-| DirectNet `xl` | 2.91 | 2.35 | 2.73 (16/18) | 1.52 |
-| DirectNet `v660clean_large` | 2.60 | 1.31 | 1.72 (17/18) | 0.93 |
-| DirectNet `csob_large` | 2.29 | 1.58 | 0.43 | 1.15 |
-| DirectNet `corroft_xl` | 2.39 | 1.52 | — | 1.39 |
-| DirectNet `crit10_xl` | 2.25 | 1.40 | 2.73 (16/18) | 1.49 |
-| DirectNet `crit15m_xl` | 2.35 | 1.43 | 2.75 (16/18) | 1.48 |
-| BSIM-AR `small` | 2.54 | 1.24 | 0.82 | 1.61 (13/14) |
-| BSIM-AR `medium` | 1.77 | 1.46 | 1.34 (17/18) | 1.57 (13/14) |
-| BSIM-AR `large` | 1.80 | 1.21 | 1.67 (16/18) | 1.58 (13/14) |
-| BSIM-AR `xl` | 1.94 | 2.92 | 1.08 | 1.07 |
-| BSIM-AR `corroft_medium` | — | 1.00 | 1.15 (17/18) | 1.54 (13/14) |
-| PFN `small` | 2.14 | 1.58 | 0.56 | 1.12 (13/14) |
-| PFN `medium` | 2.36 | 1.62 | 1.95 (17/18) | 2.65 (13/14) |
-| PFN `large` | 2.65 | 1.52 | 1.04 | 1.10 |
+| family / tier | TSMC5 | TSMC7 | TSMC12 | TSMC16 | TSMC6 |
+|---|---|---|---|---|---|
+| DirectNet `small` | 2.39 | 1.81 | 0.57 | 0.62 | 2.06 |
+| DirectNet `medium` | 1.48 | 1.46 | 0.56 | 0.58 | 2.21 |
+| DirectNet `large` | 1.91 | 1.21 | 1.69 (17/18) | 1.01 | 2.25 |
+| DirectNet `xl` | 2.91 | 2.35 | 2.73 (16/18) | 1.52 | 3.18 (13/14) |
+| DirectNet `v660clean_large` | 2.60 | 1.31 | 1.72 (17/18) | 0.93 | — |
+| DirectNet `csob_large` | 2.29 | 1.58 | 0.43 | 1.15 | — |
+| DirectNet `corroft_xl` | 2.39 | 1.52 | — | 1.39 | — |
+| DirectNet `crit10_xl` | 2.25 | 1.40 | 2.73 (16/18) | 1.49 | — |
+| DirectNet `crit15m_xl` | 2.35 | 1.43 | 2.75 (16/18) | 1.48 | — |
+| BSIM-AR `small` | 2.54 | 1.24 | 0.82 | 1.61 (13/14) | 2.38 |
+| BSIM-AR `medium` | 1.77 | 1.46 | 1.34 (17/18) | 1.57 (13/14) | 2.24 (13/14) |
+| BSIM-AR `large` | 1.80 | 1.21 | 1.67 (16/18) | 1.58 (13/14) | 2.93 (13/14) |
+| BSIM-AR `xl` | 1.94 | 2.92 | 1.08 | 1.07 | 3.16 |
+| BSIM-AR `corroft_medium` | — | 1.00 | 1.15 (17/18) | 1.54 (13/14) | — |
+| PFN `small` | 2.14 | 1.58 | 0.56 | 1.12 (13/14) | 1.46 |
+| PFN `medium` | 2.36 | 1.62 | 1.95 (17/18) | 2.65 (13/14) | 2.28 (13/14) |
+| PFN `large` | 2.65 | 1.52 | 1.04 | 1.10 | 1.93 |
+| PFN `xl` | — | — | — | — | 2.53 |
 
 **Parametric transient — mean NRMSE % per tech**
 
-| family / tier | TSMC5 | TSMC7 | TSMC12 | TSMC16 |
-|---|---|---|---|---|
-| DirectNet `small` | 2.99 | 1.53 | 2.07 | 1.62 |
-| DirectNet `medium` | 1.90 | 1.48 | 1.52 | 1.47 |
-| DirectNet `large` | 1.67 | 1.46 | 1.49 | 1.47 |
-| DirectNet `xl` | 1.66 | 1.45 | 1.52 | 1.48 |
-| DirectNet `v660clean_large` | 1.68 | 1.46 | 1.50 | 1.47 |
-| DirectNet `csob_large` | 1.69 | 1.46 | 1.50 | 1.47 |
-| DirectNet `corroft_xl` | 1.68 | 1.46 | — | 1.46 |
-| DirectNet `crit10_xl` | 1.66 | 1.45 | 1.49 | 1.48 |
-| DirectNet `crit15m_xl` | 1.67 | 1.45 | 1.50 | 1.48 |
-| BSIM-AR `small` | 2.54 | 1.47 | 1.53 | 1.60 |
-| BSIM-AR `medium` | 1.80 | 1.52 | 1.52 | 1.50 |
-| BSIM-AR `large` | 1.66 | 1.48 | 1.51 | 1.49 |
-| BSIM-AR `xl` | 1.62 | 1.48 | 1.51 | — |
-| BSIM-AR `corroft_medium` | — | 1.53 | 1.50 | 1.49 |
-| PFN `small` | 1.88 | 1.44 | 1.50 | 1.48 |
-| PFN `medium` | 1.71 | 1.48 | 1.50 | 1.49 |
-| PFN `large` | 2.23 | 1.49 | 1.50 | 1.51 |
+| family / tier | TSMC5 | TSMC7 | TSMC12 | TSMC16 | TSMC6 |
+|---|---|---|---|---|---|
+| DirectNet `small` | 2.99 | 1.53 | 2.07 | 1.62 | 1.57 |
+| DirectNet `medium` | 1.90 | 1.48 | 1.52 | 1.47 | 1.45 |
+| DirectNet `large` | 1.67 | 1.46 | 1.49 | 1.47 | 1.45 |
+| DirectNet `xl` | 1.66 | 1.45 | 1.52 | 1.48 | 1.46 |
+| DirectNet `v660clean_large` | 1.68 | 1.46 | 1.50 | 1.47 | — |
+| DirectNet `csob_large` | 1.69 | 1.46 | 1.50 | 1.47 | — |
+| DirectNet `corroft_xl` | 1.68 | 1.46 | — | 1.46 | — |
+| DirectNet `crit10_xl` | 1.66 | 1.45 | 1.49 | 1.48 | — |
+| DirectNet `crit15m_xl` | 1.67 | 1.45 | 1.50 | 1.48 | — |
+| BSIM-AR `small` | 2.54 | 1.47 | 1.53 | 1.60 | 1.48 |
+| BSIM-AR `medium` | 1.80 | 1.52 | 1.52 | 1.50 | 1.50 |
+| BSIM-AR `large` | 1.66 | 1.48 | 1.51 | 1.49 | 1.50 |
+| BSIM-AR `xl` | 1.62 | 1.48 | 1.51 | — | 1.48 |
+| BSIM-AR `corroft_medium` | — | 1.53 | 1.50 | 1.49 | — |
+| PFN `small` | 1.88 | 1.44 | 1.50 | 1.48 | 1.43 |
+| PFN `medium` | 1.71 | 1.48 | 1.50 | 1.49 | 1.53 |
+| PFN `large` | 2.23 | 1.49 | 1.50 | 1.51 | 1.43 |
+| PFN `xl` | — | — | — | — | 1.56 |
 
 **Device CS-amp AC — NMOS / PMOS verdicts**
 
-| family / tier | TSMC5 | TSMC7 | TSMC12 | TSMC16 |
-|---|---|---|---|---|
-| DirectNet `small` | ✓ / ✓ | ✗ gain 2.026 dB, mag 24.89 % / ✓ | ✓ / ✓ | ✓ / ✓ |
-| DirectNet `medium` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
-| DirectNet `large` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
-| DirectNet `xl` | ✗ f3db 2.51 / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
-| DirectNet `v660clean_large` | ✗ f3db 1.78 / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
-| DirectNet `csob_large` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
-| DirectNet `corroft_xl` | ✓ / ✓ | ✓ / ✓ | ✗ f3db nan / ✗ f3db nan | ✓ / ✓ |
-| DirectNet `crit10_xl` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
-| DirectNet `crit15m_xl` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
-| BSIM-AR `small` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
-| BSIM-AR `medium` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
-| BSIM-AR `large` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
-| BSIM-AR `xl` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
-| BSIM-AR `corroft_medium` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
-| PFN `small` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
-| PFN `medium` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
-| PFN `large` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
+| family / tier | TSMC5 | TSMC7 | TSMC12 | TSMC16 | TSMC6 |
+|---|---|---|---|---|---|
+| DirectNet `small` | ✓ / ✓ | ✗ gain 2.026 dB, mag 24.89 % / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
+| DirectNet `medium` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
+| DirectNet `large` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
+| DirectNet `xl` | ✗ f3db 2.51 / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
+| DirectNet `v660clean_large` | ✗ f3db 1.78 / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | — |
+| DirectNet `csob_large` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | — |
+| DirectNet `corroft_xl` | ✓ / ✓ | ✓ / ✓ | ✗ f3db nan / ✗ f3db nan | ✓ / ✓ | — |
+| DirectNet `crit10_xl` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | — |
+| DirectNet `crit15m_xl` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | — |
+| BSIM-AR `small` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
+| BSIM-AR `medium` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
+| BSIM-AR `large` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
+| BSIM-AR `xl` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
+| BSIM-AR `corroft_medium` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | — |
+| PFN `small` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
+| PFN `medium` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
+| PFN `large` | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ |
+| PFN `xl` | — | — | — | — | ✓ / ✓ |
 
 ## 5. TSMC6 — the controlled repeat
 
@@ -313,8 +341,6 @@ renumbers nothing.
 **Scoring rule: TSMC6 is a /4 column of its own, never part of the /16.**
 Folding a duplicate into the headline denominator would inflate every total.
 
-### What the first repeat already showed
-
 The V6.11.0 run against the V6.13.0 re-gate of TSMC7 is the sharpest evidence in
 the project that pre-fix rankings were unreliable: the two disagreed by **68.2 %
 vs 2.0 %** on SRAM SNM error at NFIN=2, which the project had been reading as
@@ -329,8 +355,6 @@ the *same number* as BSIM-AR's tsmc7-opamp clean-medium pass, because it was the
 same measurement. PFN, by contrast, read flat 2/4 across all three sizes on the
 duplicated data, agreeing with its TSMC7 rows — the reassuring case, and the
 family whose gates were already flip-free.
-
-### The repeat, measured
 
 Both runs are the **clean** recipe at the matching tier, on identical rows, with
 the same code — so every difference below is run-to-run variance of the whole
@@ -360,10 +384,24 @@ it as variance.
 | ↳ TSMC7 same tier | 3/4 | PASS 4.82% | FAIL 100.00% | PASS 1.28% | PASS 2.45% |
 | DirectNet `xl` | **2/4** | FAIL 15.05% | FAIL 100.00% | PASS 1.86% | PASS 2.65% |
 | ↳ TSMC7 same tier | 3/4 | FAIL 13.59% | PASS 4.20% | PASS 1.92% | PASS 2.67% |
+| BSIM-AR `small` | **3/4** | FAIL 6.14% | PASS 4.49% | PASS 1.40% | PASS 2.72% |
+| ↳ TSMC7 same tier | 3/4 | FAIL 5.97% | PASS 0.55% | PASS 1.75% | PASS 2.46% |
+| BSIM-AR `medium` | **3/4** | FAIL 6.66% | PASS 5.29% | PASS 1.70% | PASS 2.60% |
+| ↳ TSMC7 same tier | 3/4 | FAIL 7.41% | PASS 4.12% | PASS 1.26% | PASS 2.62% |
+| BSIM-AR `large` | **3/4** | FAIL 11.61% | PASS 4.72% | PASS 2.32% | PASS 2.69% |
+| ↳ TSMC7 same tier | 3/4 | FAIL 8.63% | PASS 5.39% | PASS 1.47% | PASS 2.64% |
+| BSIM-AR `xl` | **3/4** | FAIL 11.99% | PASS 4.21% | PASS 1.95% | PASS 2.74% |
+| ↳ TSMC7 same tier | 3/4 | FAIL 12.55% | PASS 4.26% | PASS 1.95% | PASS 2.73% |
+| PFN `small` | **3/4** | PASS 4.83% | FAIL 100.00% | PASS 1.59% | PASS 2.64% |
+| ↳ TSMC7 same tier | 2/4 | FAIL 9.72% | FAIL 100.00% | PASS 1.54% | PASS 3.07% |
+| PFN `medium` | **2/4** | FAIL 7.21% | FAIL 100.00% | PASS 1.77% | PASS 3.74% |
+| ↳ TSMC7 same tier | 3/4 | FAIL 8.92% | PASS 5.45% | PASS 1.03% | PASS 2.59% |
+| PFN `large` | **2/4** | FAIL 9.12% | FAIL 100.00% | PASS 1.88% | PASS 2.83% |
+| ↳ TSMC7 same tier | 2/4 | FAIL 8.32% | FAIL 100.00% | PASS 1.35% | PASS 3.08% |
+| PFN `xl` | **3/4** | PASS 0.08% | FAIL 100.00% | PASS 1.69% | PASS 2.65% |
+| ↳ TSMC7 same tier | 0/4 | — | — | — | — |
 
-**Cells whose verdict differs between the two runs on identical data:** DirectNet `small`: ring_osc, opamp; DirectNet `large`: ring_osc, opamp; DirectNet `xl`: opamp.
-
-#### What it measures — and it is the most consequential number in this file
+**Cells whose verdict differs between the two runs on identical data:** DirectNet `small`: ring_osc, opamp; DirectNet `large`: ring_osc, opamp; DirectNet `xl`: opamp; PFN `small`: ring_osc; PFN `medium`: opamp.
 
 Read the pairs, not the totals. The **counts agree** at three of four tiers
 (2/2, 2/2, 3/3) while the **identity of the passing cells swaps**: at `small`
@@ -390,8 +428,6 @@ cells at once — production DirectNet at 15/16 strict, BSIM-AR `corroft@medium`
 at 16/16 — nor the corridor law, which moves rings by 8 pp against a 4 pp noise
 floor. What it retires is the practice of promoting a recipe on a single-cell
 margin.
-
-### V7.1.0 status
 
 Datasets regenerated from the kept vendor PDK and **verified `array_equal` to
 `tsmc7_*`** — 1,816,830 nmos / 2,187,292 pmos rows matching on `inputs`,

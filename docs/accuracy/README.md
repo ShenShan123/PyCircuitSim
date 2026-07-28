@@ -30,6 +30,9 @@ Strict = passes at OMP ∈ {1, 2, 4}. Complex matrix = 4 circuits × 4 techs.
 | 74 | **BSIM-AR** | higher fidelity | `corroft@medium` | 1.9 M | **16/16**, 0 flips | **8/8 at every tier** | 1–2/4 | 61.5 |
 | 75 | **PFN** | research | `clean@small` | 0.69 M | 11/16, 0 flips | **8/8 at every tier** | 0–1/4 | 15.6 |
 
+All four techs plus **TSMC6**, which is TSMC7 relabelled and appears throughout
+as a *repeat* column scored /4, never inside a /16 (`methodology.md` §7).
+
 Device AC is **86 of 88 cells** across all three families and every tier — the
 charge-derivative surface is no longer a differentiator, and "AC peaks at small"
 is retired (`by-scale.md` §5). The opamp open-loop AC gate is passed 7 times in
