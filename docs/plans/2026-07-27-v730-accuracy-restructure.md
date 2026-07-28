@@ -83,7 +83,20 @@ shallow a `find` depth). Base data exists for all five techs; the ring-only
 | **C** | surviving-recipe gates: 9 BSIM-AR groups, complex strict + device/AC (320 jobs) | **0/320**, PAR=8, longest-job-first so the device sweeps are all in flight |
 | **D** | TSMC6 corridor harvest | ✅ **done** — 6762 rows/device in 125 s, and `array_equal` to TSMC7's |
 | **E** | PFN corridor `corroft@small` × **5** techs × N/P (10 ckpts) | training, ~10/120 epochs, 3× RTX 4090 at ~95 % |
-| **F** | consistency control, final doc generation, retire old files, push | after A–E |
+| **D2** | TSMC6 recipe checkpoints (26) + their gates (156 jobs) | queued behind E, `scripts/tsmc6_recipe_campaign.sh` |
+| **F** | consistency control, final doc generation, retire old files, push | after A–E, D2 |
+
+**Wave D2 reverses a scoping decision, on purpose.** Folding TSMC6 into the
+headline (§2) left the recipe reports scoring /16 against the clean reports'
+/20 — a mixed denominator inside one document set. Closing it needs TSMC6
+checkpoints for every kept recipe, which was declined at planning time on a
+cost estimate that turned out to be wrong: the estimate assumed the training
+datasets had been deleted, and they had not. With the data on disk and the
+corridor harvested in wave D, the marginal cost is 26 fine-tunes.
+
+The denominator sentence in every report is **derived from the measured data**
+rather than written, so it reads /16 today and /20 when D2 lands. It cannot
+claim a denominator the tables do not have.
 
 Throughput is set by the shared host, not by the work: loadavg ~1380 on 192
 cores, almost all of it other users' Xyce. Wave B is landing ~14 jobs/hour.
