@@ -10,7 +10,7 @@ Pools (write one file each so they can be dispatched with different PAR):
 * ``pfn``  — PFN, all 3 variants, same shape (~10x DirectNet per eval).
 * ``tf_dev``    — BSIM-AR device suites only, 5 priority variants (~40x per eval).
 * ``tf_strict`` — BSIM-AR strict-OMP sweep for the `large` corridor recipes,
-                  the one gap BSIM-AR-L74-accuracy.md §5.1 flags explicitly.
+                  the one gap BSIM-AR-L74-clean.md flags explicitly.
 
 Usage: python scripts/v710_regate_jobs.py <outdir>
 """

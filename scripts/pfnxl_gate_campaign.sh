@@ -35,5 +35,5 @@ done
 echo "[pfnxl-gate] $(grep -c . "$JOBS") jobs $(date '+%F %T')"
 PAR="$PAR" JOBS="$JOBS" bash "$ROOT/scripts/v710_regate.sh"
 python "$ROOT/scripts/v710_regate_collect.py" || true
-python "$ROOT/scripts/accuracy_docs_build.py" || true
-echo "[pfnxl-gate] DONE $(date '+%F %T') — check by-scale.md §2's PFN xl row"
+python "$ROOT/scripts/v730_docs_build.py" || true
+echo "[pfnxl-gate] DONE $(date '+%F %T') — check the PFN clean report's xl row"
