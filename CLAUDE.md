@@ -106,9 +106,9 @@ DirectNet is production; BSIM-AR is the higher-fidelity option; PFN is research.
   OMP∈{1,2,4} with zero flips** (V6.13.0 re-gate; was 14/16 before the gds fix —
   `tsmc16-opamp` is now banked, `tsmc7-opamp` is the sole open cell at `large`)
   — one identical recipe per (tech × device), no per-case specials. Report:
-  `docs/accuracy/DirectNet-L73-accuracy.md` (family: production state, universal
-  scope, AC diagnosis); the cross-cutting numbers live in the axis files
-  `by-tech.md` / `by-scale.md` / `by-recipe.md`.
+  `docs/accuracy/DirectNet-L73-clean.md` (per tech / scale / testcase) +
+  `-recipes.md` (production state, universal scope, dead ends); anything
+  cross-cutting is in `methodology.md`.
 - **BSIM-AR (74)** — autoregressive Transformer sharing DirectNet's pipeline.
   Best config `corroft@medium` (corridor curriculum, 1.9M params) = **16/16 strict,
   zero flips** (V6.13.0 re-gate; was 15/16). The old "tsmc7-opamp is the T3-solver-only
@@ -116,7 +116,7 @@ DirectNet is production; BSIM-AR is the higher-fidelity option; PFN is research.
   `crit15m@xl` also sweeps 16/16 strict. AR inference is ~30–100× slower on CPU, so
   DirectNet stays production. Per-tech `tsmc{X}_tf_{small,medium,large,xl}_{nmos,pmos}` (+ recipe
   variants); parser LEVEL=74 preempt cascade + `PYCIRCUITSIM_NN_FORCE_LEVEL=74`
-  hook. Report: `docs/accuracy/BSIM-AR-L74-accuracy.md`.
+  hook. Report: `docs/accuracy/BSIM-AR-L74-{clean,recipes}.md`.
 - **PFN / TabPFN (75)** — faithful scaled-down port of TabPFN-v3's in-context
   transformer (tech code = 8th column token, local vocab), with two deviations: a
   **frozen learned context** (stratified K-row buffer baked into the checkpoint,
@@ -127,7 +127,7 @@ DirectNet is production; BSIM-AR is the higher-fidelity option; PFN is research.
   `tsmc{X}_pfn_{small,medium,large,xl}_{nmos,pmos}` (xl = 14.86 M, V7.1.0);
   env pins `PYCIRCUITSIM_NN_CHECKPOINT_PFN_{NMOS,PMOS}`, hook
   `PYCIRCUITSIM_NN_FORCE_LEVEL=75`, drivers take `MODEL=tabpfn`. The `_config.npz`
-  sidecar is **required** to rebuild the arch. Report: `docs/accuracy/PFN-L75-accuracy.md`.
+  sidecar is **required** to rebuild the arch. Report: `docs/accuracy/PFN-L75-{clean,recipes}.md`.
 
 ## Supported Features
 
@@ -153,15 +153,24 @@ Inverter circuit must PASS Transient Analysis against NGSPICE ground truth withi
 reasonable numerical tolerance. Never use simplified/self-defined equations as reference.
 
 > **Accuracy evidence lives in `docs/accuracy/`** (index + scoreboard:
-> `README.md`). Restructured V7.1.0 into **three cross-cutting pivots** —
-> `by-tech.md` (TSMC5/7/12/16 + TSMC6, the controlled repeat), `by-scale.md`
-> (small→xl),
-> `by-recipe.md` (the recipe catalogue and its levers) — plus one **family**
-> report each (`DirectNet-L73`, `BSIM-AR-L74`, `PFN-L75`) for what is specific
-> to one model. The pivots are the single source of truth for any number that
-> spans families. Gate definitions, strict-OMP discipline and the code-state
-> ladder (pre-fix / V6.13.0 / V7.1.0): **`methodology.md`**. Frozen pre-fix
-> tables + the register of retracted claims: `archive-pre-gds-fix.md`.
+> `README.md`). Restructured V7.3.0 into **two files per family** —
+> `{DirectNet-L73,BSIM-AR-L74,PFN-L75}-{clean,recipes}.md`. The *clean* report
+> is the control (one training run, no addendum) and answers **per tech, per
+> scale, per testcase**; the *recipes* report carries the training addenda
+> measured against it, filtered to the arms that earn a row. Everything
+> cross-cutting — gate definitions, strict-OMP discipline, the `gds` code-state
+> ladder, the TSMC6 repeat, the measured noise floor — is stated once in
+> **`methodology.md`**. Register of retracted claims: `archive-pre-gds-fix.md`.
+>
+> **All tables are generated** by `scripts/v730_docs_build.py` from the gate
+> logs, so they cannot drift from the evidence; `--check` fails if a committed
+> file is stale. `scripts/v730_coverage.py` reports what is measured and by
+> which pass, and emits the gaps as a runnable job file.
+>
+> **Denominators changed in V7.3.0:** TSMC6 folds into the headline, so complex
+> totals are **/20**, device AC **/10**, opamp AC **/5**. Older documents scored
+> /16, /8, /4 over four techs — *no total is comparable across that boundary
+> without rescaling*. TSMC6 is still TSMC7 relabelled (`methodology.md` §7).
 >
 > **Sprint history, version-by-version status, dead-ends, and the open known-issue
 > roadmap live in `docs/CHANGELOG.md` + `MEMORY.md`** — not duplicated here.
@@ -348,7 +357,7 @@ recipe): `scripts/benchmark_gen_data.sh` → `scripts/benchmark_train_sml.sh`
 - **Universal DirectNet (V6.7.0):** `u716_dn_{clean,csob,corroft,crit30u}_large` +
   `_{clean,corroft}_xl` + TSMC5 fine-tunes `u716f5_plain_n{1000000,full}_large` —
   18-code vocab, env-pin-only. Best = `u716_dn_corroft_large` (10/12 strict, 0 FLIPs).
-  See `docs/accuracy/DirectNet-L73-accuracy.md`.
+  See `docs/accuracy/DirectNet-L73-recipes.md` §7.
 - **Resolver cascade** (`pycircuitsim/parser.py`): env pin
   `PYCIRCUITSIM_NN_CHECKPOINT_{DN,PFN}_{NMOS,PMOS}` read FIRST (since V6.6.6 an absent
   pinned stem RAISES — no silent fallback); then per-tech `tsmc{X}_{dn,tf,pfn}_{large,

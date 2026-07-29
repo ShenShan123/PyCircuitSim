@@ -7,77 +7,71 @@ model — never a simplified or self-defined reference.
 
 | file | what it answers |
 |---|---|
-| **[`methodology.md`](methodology.md)** | What a "gate" is, the thresholds, strict-OMP discipline, isolation, and **which code state produced which number**. Read before comparing any two numbers. |
-| **[`by-tech.md`](by-tech.md)** | *"How does TSMC5 / 7 / 12 / 16 behave, across families and scales?"* — plus **TSMC6**, the deliberate duplicate-of-TSMC7 repeat experiment. |
-| **[`by-scale.md`](by-scale.md)** | *"What does small / medium / large / xl buy?"* — the capacity laws, and which ones survived the re-gate. |
-| **[`by-recipe.md`](by-recipe.md)** | *"What does each training recipe do?"* — the catalogue, the corridor/anchor levers, the dead ends. |
-| [`DirectNet-L73-accuracy.md`](DirectNet-L73-accuracy.md) | The production family: architecture, production state, universal-scope study. |
-| [`BSIM-AR-L74-accuracy.md`](BSIM-AR-L74-accuracy.md) | The high-fidelity family: AR transformer, its cost, its ceiling. |
-| [`PFN-L75-accuracy.md`](PFN-L75-accuracy.md) | The research family: TabPFN port, in-context inference. |
-| [`archive-pre-gds-fix.md`](archive-pre-gds-fix.md) | Frozen pre-fix data tables + the register of retracted claims. |
+| **[`methodology.md`](methodology.md)** | What a gate is, the thresholds, the strict-OMP rule, and **which code state produced which number**. Read before comparing any two numbers. |
+| [`DirectNet-L73-clean.md`](DirectNet-L73-clean.md) | The production family under one training run — per tech, per scale, per testcase. |
+| [`DirectNet-L73-recipes.md`](DirectNet-L73-recipes.md) | Its curriculum arms, the universal-scope study, and the dead ends. |
+| [`BSIM-AR-L74-clean.md`](BSIM-AR-L74-clean.md) | The autoregressive Transformer — the reproducible family. |
+| [`BSIM-AR-L74-recipes.md`](BSIM-AR-L74-recipes.md) | Its corridor arms, and why the `inv_trip` anchor is inert here. |
+| [`PFN-L75-clean.md`](PFN-L75-clean.md) | The in-context research family. |
+| [`PFN-L75-recipes.md`](PFN-L75-recipes.md) | Its first curriculum arm, new in V7.3.0. |
+| [`archive-pre-gds-fix.md`](archive-pre-gds-fix.md) | The register of retracted claims. |
 
-The three axis files are the **single source of truth** for cross-cutting
-numbers; the family files carry only what is specific to one family.
+**Two files per family: one clean, one recipes.** The clean report is the
+control — one training run, no addendum — and answers *per tech, per scale, per
+testcase* in one place. The recipes report carries the training addenda
+measured against that control. Anything cross-cutting — the `gds` fix, the
+corridor law, the TSMC6 repeat, the noise floor — lives in `methodology.md` so
+it is stated once.
 
 ## Scoreboard
 
-Strict = passes at OMP ∈ {1, 2, 4}. Complex matrix = 4 circuits × 4 techs.
+| LEVEL | family | role | best clean tier | best recipe | CPU cost |
+|---|---|---|---|---|---|
+| 73 | **DirectNet** | **production** | `large` **16/20** | `crit15m`@xl **16/16** | 1.5 ms @ `large` |
+| 74 | **BSIM-AR** | higher fidelity | `small` **17/20** | `corroft`@medium **16/16** | 61.5 ms @ `medium` |
+| 75 | **PFN** | research | `small` **14/20** | `corroft`@small **14/20** | 15.6 ms @ `small` |
 
-| LEVEL | family | role | best config | params | complex (strict) | device AC | opamp AC | CPU ms/eval |
-|---|---|---|---|---|---|---|---|---|
-| 73 | **DirectNet** | **production** | `crit30f@large` | 0.92 M | **15/16**, 0 flips | 8/8 | 0/4 | **1.5** |
-| 73 | DirectNet | best any tier | `crit15m@xl` | 2.13 M | **16/16**, 0 flips | 8/8 (xl 7/8) | 0/4 | 3.4 |
-| 74 | **BSIM-AR** | higher fidelity | `corroft@medium` | 1.9 M | **16/16**, 0 flips | **8/8 at every tier** | 1–2/4 | 61.5 |
-| 75 | **PFN** | research | `clean@small` | 0.69 M | 11/16, 0 flips | **8/8 at every tier** | 0–1/4 | 15.6 |
-
-All four techs plus **TSMC6**, which is TSMC7 relabelled and appears throughout
-as a *repeat* column scored /4, never inside a /16 (`methodology.md` §7).
-
-Device AC is **86 of 88 cells** across all three families and every tier — the
-charge-derivative surface is no longer a differentiator, and "AC peaks at small"
-is retired (`by-scale.md` §5). The opamp open-loop AC gate is passed 7 times in
-44, against a standing claim of never; part of its remaining denominator is
-unreachable by construction (same section).
-
-* **Production stays DirectNet.** 15/16 strict at 0.92 M params and ~40× BSIM-AR's
-  speed; the single open cell is `tsmc7-opamp` **at `large` only** — DirectNet
-  passes it at `small` (1.81 %) and `xl` (4.20 %).
-* **Two independent families now sweep 16/16 strict** with ordinary uniform data
-  recipes (`crit15m@xl`, `corroft@medium`), so the matrix no longer separates
-  them; inference cost and device-suite breadth do.
-* **Every family is flip-free.** The OMP multistability that plagued every
-  earlier campaign was a wrong-signed Jacobian entry, not a property of
-  high-gain circuits (`methodology.md` §6).
+Strict = passes at OMP ∈ {1, 2, 4}. Totals are **/16–/20**, against the /20 these reports target (4 circuits × 5 techs): some groups have no TSMC6 checkpoint measured yet. **Compare the fractions, not the counts.**
 
 ## The finding that governs how to read everything else
 
-The V7.1.0 TSMC6 repeat retrained one recipe on **bit-identical rows** and
-compared strict verdicts (`by-tech.md` §5). Gate *counts* reproduced at three of
-four tiers — but **which** cells passed swapped: `ring_osc` carries **±4 pp** of
-run-to-run scatter across a **5 %** gate, and `opamp` is **bimodal** (a
-1.8–7.1 % basin or a 100 % rail). `sram_snm` and `switchcap` reproduce to
-≤0.3 pp and never flip.
+The TSMC6 controlled repeat retrained one recipe on **bit-identical rows** and
+compared strict verdicts (`methodology.md` §7, §8.4). Gate *counts* reproduced
+at three of four tiers — but **which** cells passed swapped: `ring_osc` carries
+**±4 pp** of run-to-run scatter across a **5 %** gate, and `opamp` is
+**bimodal** (a 1.8–7.1 % basin, or a 100 % rail). `sram_snm` and `switchcap`
+reproduce to ≤0.3 pp and never flip.
 
 **A recipe promoted on a single ring or opamp margin is inside the noise.** The
-same claim resting on SRAM or switchcap is not, and neither are the family-level
-counts here, which aggregate 16 cells. Read `by-recipe.md` with that in mind.
+same claim resting on SRAM or switchcap is not, and neither are the
+family-level counts above, which aggregate twenty cells.
 
-## What is actually open
+Put beside the re-gate result, the picture completes: **the variance is in
+training, not in evaluation.** Re-gating *the same weights* is deterministic —
+223/223 complex cells agreed across two passes on different days. Retraining
+*the same recipe on the same rows* is not. A gate result is a reproducible
+property of a checkpoint, not of a recipe.
 
-1. **The low-VDD rings** (`tsmc5-ring`, `tsmc7-ring`) for every *clean* recipe —
-   deterministic failures at 5.5–13 % against a 5 % gate, closed only by the
-   corridor curriculum (`by-recipe.md` §3).
-2. **`tsmc7-opamp` at DirectNet `large`** — the sole cell keeping production off
-   a full sweep, and reachable at other tiers, so a basin problem rather than a
-   fidelity wall.
-3. **The opamp open-loop AC gate** — see `by-scale.md` §5 for the V7.1.0
-   re-measurement of a claim that stood as "0/4 everywhere".
-4. **PFN's clean-recipe ceiling** — the corridor curriculum has never been run on
-   PFN, and it is the lever that closes exactly the cells PFN fails.
+## Denominators changed in V7.3.0
 
-## Provenance in one line
+TSMC6 now counts toward the headline, so complex totals are **/20**, device AC
+**/10** and opamp AC **/5**. Every report before V7.3.0 scored /16, /8 and /4
+and quoted TSMC6 separately. **No total here is comparable to a total in an
+older document without rescaling** — a V7.3.0 "16/20" and a V7.1.0 "13/16" can
+be the same measurement. TSMC6 is still TSMC7 relabelled; what changed is the
+denominator, not the finding.
 
-Numbers carry one of three code states — **pre-fix** (≤ `a96112a`, `gds` sign
-bug present), **V6.13.0** (`d2ea720`, fix shipped, full complex re-gate),
-**V7.1.0** (HEAD, device/AC/strict re-gate). `methodology.md` §6 says exactly
-what each is comparable to; every table here is labelled.
+## Provenance
+
+Every number carries one of four code states — **pre-fix** (`gds` sign bug
+present), **V6.13.0** (fix shipped, complex re-gate), **V7.1.0** (device / AC /
+strict re-gate), **V7.3.0** (this campaign). `methodology.md` §6 says what each
+is comparable to.
+
+Tables in these files are **generated** from the gate logs, so they cannot
+drift from the evidence:
+
+```bash
+python scripts/v730_coverage.py            # what is measured, and what is not
+python scripts/v730_docs_build.py --check  # fail if any file is stale
+```

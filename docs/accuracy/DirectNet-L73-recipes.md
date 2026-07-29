@@ -17,9 +17,7 @@ the resolver serves have carried `crit30f` since V6.6.4.
 > two recipes is **not** evidence that one is better. The laws in §4 survive
 > because they move cells by far more than that, or move many cells at once.
 
-> **Denominators.** Recipe checkpoints exist for the four original techs only,
-> so recipe totals here are **/16** where the clean report's are /20. TSMC6 has
-> clean checkpoints at every tier but no curriculum ones.
+> **Denominators.** Totals are **/16**, against the /20 these reports target (4 circuits × 5 techs): some groups have no TSMC6 checkpoint measured yet. **Compare the fractions, not the counts.**
 
 ---
 
