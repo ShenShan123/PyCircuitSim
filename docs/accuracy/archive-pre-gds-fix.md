@@ -60,6 +60,7 @@ over five. A "13/16" and a "16/20" can be the same measurement.
 | "BSIM-AR is the only family to bank the **tsmc6 opamp**, while tsmc7-opamp is the universal ceiling." | V6.11.0 | Void by construction: TSMC6 **is** TSMC7 (`methodology.md` §7), so it was the same measurement quoted twice. |
 | "TSMC6 is a sixth technology." | V6.9.0 onboarding | **Retracted.** TSMC6 is TSMC7 relabelled, now on four independent lines of evidence. Its 9/9 DC and 14/14 transient onboarding gates told us nothing — they were TSMC7's gates. |
 | "The **recipe decides which opamp basin you get**" (BSIM-AR). | V6.6.x recipe study | Retracted **for BSIM-AR only**: post-fix its `large` curricula agree with each other and its `xl` curricula agree with each other, so the recipe discriminates only on rings there. It still discriminates on opamps in DirectNet, same tier, same data. |
+| "**`crit15m@xl` sweeps the matrix**" — DirectNet's full-sweep stem. | V6.13.0 re-gate, DirectNet alternates | **Retracted (V7.3.0).** It sweeps four techs and fails the fifth — `tsmc6-opamp`, whose data is `array_equal` to the `tsmc7-opamp` it passes. Nothing separates the two cells but the training run and the Newton basin, so the sweep was one lucky draw on a bimodal cell. A sweep a duplicate column can break was never a sweep. `corroft@medium` (BSIM-AR) is now the only checkpoint passing every cell, and it holds *both* copies of the duplicated tech. |
 
 ## A note on why this register exists
 

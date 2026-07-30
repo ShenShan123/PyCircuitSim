@@ -52,8 +52,18 @@ is what licenses mixing reused V7.1.0 numbers with V7.3.0 re-measurements.
   score, same open cells, zero flips, over a 22× capacity range. Previously
   only `large` was strict. The open set is the low-VDD ring column and nothing
   else; opamp, SRAM and switchcap are complete at every tier.
-* **`corroft@medium` and `corro15@medium` sweep 20/20** — the first full
-  sweeps recorded, TSMC6 included.
+* **`corroft@medium`, `corro15@medium` and all four corridor recipes at `xl`
+  sweep 20/20** — the first full sweeps recorded, TSMC6 included.
+  `corroft@medium` is the only checkpoint in the project passing every cell.
+* **TSMC6 retires DirectNet's sweep.** Folding the duplicate in put the
+  controlled repeat inside every row, and it immediately falsified a claim
+  carried for two campaigns: `crit15m@xl` passes `tsmc7-opamp` and **fails
+  `tsmc6-opamp`** — same technology, `array_equal` data, same recipe, same
+  code. The only difference is which training run made the weights and which
+  Newton basin the solver found. A sweep a duplicate column can break was never
+  a sweep. The pattern is systematic and lands where the noise floor predicts:
+  every such split is in the bimodal opamp column, none in `sram_snm` or
+  `switchcap`.
 * **PFN's first curriculum arm.** `corroft@small`, trained for all five techs,
   takes rings 3/5 → 5/5 (including the two low-VDD cells no PFN checkpoint had
   ever passed) and opamps 2/5 → 0/5. Total unchanged, failure set replaced —
