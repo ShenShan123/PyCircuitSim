@@ -37,6 +37,7 @@ Six technologies are supported: **ASAP7** and **TSMC5/6/7/12/16**.
 - [Python API](#python-api)
 - [Output Files](#output-files)
 - [NN Compact Models (LEVEL=73 / 74 / 75)](#nn-compact-models-level73--74--75)
+- [Performance & GPU Acceleration](#performance--gpu-acceleration)
 - [Verification](#verification)
 - [Architecture](#architecture)
 - [Algorithms](#algorithms)
@@ -188,29 +189,12 @@ options:
 
 ### Output Location
 
-Results are saved to `results/<circuit_name>/<analysis_type>/` by default:
-
-```
-results/
-└── bsimcmg_inverter_tran/
-    └── tran/
-        ├── bsimcmg_inverter_tran_simulation.lis    # Run summary log
-        ├── bsimcmg_inverter_tran_transient.csv     # Waveform data
-        └── bsimcmg_inverter_tran_transient.png     # Waveform plot
-```
-
-Artifacts by analysis type:
-
-| Analysis | Subdirectory | Files produced |
-|----------|--------------|----------------|
-| `.dc` | `dc/` | `_simulation.lis`, `_dc_sweep.csv`, `_dc_sweep.png` |
-| `.ac` | `ac/` | `_ac_sweep.csv`, Bode plot |
-| `.tran` | `tran/` | `_simulation.lis`, `_transient.csv`, `_transient.png` |
-| none (`.op`) | `dc_op/` | `_dc_op_point.txt`, `_dc_op_simulation.lis` |
-
-For programmatic access to waveforms without reading the CSV, drive
-`TransientSolver` through the [Python API](#python-api) — it returns the
-time vector and per-node arrays directly.
+Results are saved to `results/<circuit_name>/<analysis_type>/` by default —
+an HSPICE-like `.lis` log, the waveform CSV, and a Matplotlib plot per run.
+See [Output Files](#output-files) for the exact layout. For programmatic
+access to waveforms without reading the CSV, drive `TransientSolver` through
+the [Python API](#python-api) — it returns the time vector and per-node
+arrays directly.
 
 ---
 
@@ -245,17 +229,9 @@ Xinv in out vdd inv NF=10
 
 ### Value Suffixes
 
-| Suffix | Multiplier | Example |
-|--------|-----------|---------|
-| `T` | 10^12 | `1T` = 1,000,000,000,000 |
-| `G` | 10^9 | `1G` = 1,000,000,000 |
-| `M` (uppercase) | 10^6 | `1M` = 1,000,000 |
-| `k`, `K` | 10^3 | `1k` = 1,000 |
-| `m` (lowercase) | 10^-3 | `1m` = 0.001 |
-| `u`, `U` | 10^-6 | `1u` = 0.000001 |
-| `n`, `N` | 10^-9 | `1n` = 0.000000001 |
-| `p`, `P` | 10^-12 | `1p` = 10^-12 |
-| `f`, `F` | 10^-15 | `1f` = 10^-15 |
+Standard SPICE magnitude suffixes are supported:
+`T`(10^12) `G`(10^9) `M`(10^6, uppercase) `k`/`K`(10^3) `m`(10^-3, lowercase)
+`u`/`U`(10^-6) `n`/`N`(10^-9) `p`/`P`(10^-12) `f`/`F`(10^-15).
 
 ### Analysis Commands
 
@@ -602,13 +578,14 @@ per tech + device:
 ```bash
 conda run -n pycircuitsim python \
     external_compact_models/PyCMG/scripts/generate_nn_data.py \
-    --device both --tech tsmc5 --enable-inv-trip --n-workers 8
+    --device both --tech tsmc5 --enable-inv-trip --enable-subvt-off --n-workers 8
 ```
 
-`--tech` accepts `tsmc5`, `tsmc7`, `tsmc12`, `tsmc16`, `asap7`, or
-`all`. `--enable-inv-trip` adds the inverter-trip overlay; the grid sampler
-also carries the reverse-Vds corridor. Datasets land under
-`external_compact_models/bsimar/data/datasets/`.
+`--tech` accepts `tsmc5`, `tsmc6`, `tsmc7`, `tsmc12`, `tsmc16`, `asap7`, or
+`all`. `--enable-inv-trip` adds the inverter-trip overlay and
+`--enable-subvt-off` the off-state decades — **both are required to reproduce
+the production datasets**; the grid sampler also carries the reverse-Vds
+corridor. Datasets land under `external_compact_models/bsimar/data/datasets/`.
 
 Each sample is a **7-dim** input (`Vgs, Vds, Vbs, NFIN, L, T, tech_code`),
 where `tech_code` is a discrete index consumed by `nn.Embedding`, and a
@@ -655,8 +632,8 @@ Checkpoints live in `external_compact_models/bsimar/checkpoints/`, each as
 | `tsmc{5,6,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}` | DirectNet | Production = `large`; resolver is large-first |
 | `tsmc{X}_dn_v660clean_large_*` | DirectNet | Clean archive; warm-start base for curriculum runs |
 | `tsmc{X}_dn_crit30f_large_*` | DirectNet | Production provenance (crit30 curriculum) |
-| `tsmc{X}_tf_{small,medium,large}_{nmos,pmos}` | BSIM-AR | Best config `corroft@medium` |
-| `tsmc{X}_pfn_{small,medium,large}_{nmos,pmos}` | PFN | `_config.npz` required to rebuild arch |
+| `tsmc{X}_tf_{small,medium,large,xl}_{nmos,pmos}` | BSIM-AR | Best config `corroft@medium` |
+| `tsmc{X}_pfn_{small,medium,large,xl}_{nmos,pmos}` | PFN | `_config.npz` required to rebuild arch |
 | `u716_dn_*` | Universal DirectNet | 18-code vocab, env-pin only |
 
 A completed training run leaves a `*_best.pt.complete` marker — a bare
@@ -680,6 +657,63 @@ Newton-Raphson consistency, and the source-relative voltage frame (for
 
 The practical trade-off: **DirectNet** unless you specifically need
 BSIM-AR's extra fidelity and can absorb the AR inference cost.
+
+---
+
+## Performance & GPU Acceleration
+
+The NN eval is roughly half of an NN simulation's runtime and is
+**memory-bandwidth-bound on the weights** — cost scales with how many times a
+checkpoint is streamed, not with FLOPs. V7.0.x optimized the NN inference and
+training paths; V7.2.0 (branch `v720-gpu-scaling`) scaled the solver to
+SRAM-array transient workloads, where the per-step commit path used to be
+75–85 % of wall-clock. Measurements, routing, and dead ends:
+`docs/plans/2026-07-25-v700-nn-perf.md` and
+`docs/plans/2026-07-26-v720-gpu-scaling.md`.
+
+Every optimization is classified **bit-identical** (ships default-on) or
+**perturbing** (ships default-off behind an env flag). A last-bit NN
+perturbation can land a different Newton-Raphson basin in a high-gain circuit,
+so fidelity is defined as a *CPU, flags-off* property, and perturbing levers
+are promoted only after a full accuracy re-gate.
+
+### Always on (bit-identical)
+
+- **DC/OP skips the charge Jacobians** (V7.0.1) — a `.dc`/`.op` run pays 1
+  autograd backward per eval instead of 3; only `TransientSolver`/`ACSolver`
+  request capacitances.
+- **O(devices + checkpoints) parse** (V7.2.0) — checkpoint loads and resolver
+  results are cached, so a 32×32 SRAM array parses in ~4.7 s instead of ~44 s.
+- **Batched denorm tail** (V7.2.0) — one float64 numpy pass replaces the
+  per-device unpack loop for all three NN families, gated bit-exact per
+  element by `tests/verify_batched_tail.py` (22/22).
+- **Vectorised Newton-Raphson node loops**, circuit topology caches, and one
+  LIL→CSR conversion per NR iteration (V7.2.0).
+- **GPU-resident training batches** (V7.0.2) — 3.4 → 0.7 s/epoch;
+  `BSIMAR_LOADER=torch` reproduces the legacy `DataLoader` path.
+
+### Opt-in flags (default OFF)
+
+| Env flag | Effect | Measured gain |
+|---|---|---|
+| `PYCIRCUITSIM_TRAN_BATCH_COMMIT=1` | Batch the transient commit-path eval | 4.2× on a 4×4 SRAM write op; 2.2× at 16×16 |
+| `PYCIRCUITSIM_NN_DEVICE=cuda[:N]` | GPU NN eval (default `cpu`); the runtime enforces determinism pins (TF32 off, deterministic algorithms) | array-scale workloads |
+| `PYCIRCUITSIM_BATCHED_STAMP=1` | NN devices stamp as one COO block per NR iteration (LEVEL=72 stays scalar) | 7× on the stamp step at 16×16 |
+| `PYCIRCUITSIM_MNA_ORDERING=NATURAL` | Explicit `splu` column ordering | 2.4–30× on the factorisation at 128×64 |
+| `PYCIRCUITSIM_NN_FUSED_JAC=1` | Closed-form DirectNet Jacobian (V7.0.3) | ~1.4×, transient/AC only |
+| `PYCIRCUITSIM_NN_AR_CACHE=1` | BSIM-AR per-layer K/V prefix cache (V7.0.4) | 1.6× DC/transient |
+
+**Headline (V7.2.0):** the same 4×4 SRAM write transient runs
+**146 s → 100 s with the default-on work alone → 20.3 s with
+`{TRAN_BATCH_COMMIT, BATCHED_STAMP}` (7.2× total)**, with latch basins
+preserved 8/8 in every gated configuration.
+
+The CPU flag bundle {commit, stamp, order} **passed its accuracy gates**: the
+16-gate complex matrix reproduces the production scoreboard cell-for-cell
+(15/16 strict, 0 flips) and the latch-basin gate
+(`tests/verify_latch_basin_gpu.py` — full 6T latch, both stored states, all
+four techs) is 8/8 with zero basin flips in every config. The GPU-axis re-gate
+is still pending, which is why all perturbing flags remain opt-in.
 
 ---
 
@@ -737,83 +771,30 @@ CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
 python tests/verify_subckt.py
 ```
 
-### Verification Results
+### Verification Results (summary)
 
-#### Operating Point
+| Suite | Result |
+|-------|--------|
+| BSIM-CMG OP (NMOS / PMOS / inverter) | ≤0.01 % relative error |
+| BSIM-CMG DC Id-Vgs + inverter VTC (L1) | NRMSE ≤0.014 % |
+| BSIM-CMG transient baseline (L1) | NRMSE 0.20 %, max 7.6 mV |
+| BSIM-CMG comprehensive DC (L2/L3) | 67/67 · 43/44* |
+| BSIM-CMG comprehensive transient (L2/L3) | 37/37 · 72/72 |
+| AC (`verify_ac.py`, passive RC + CS-amp) | 2/2, ~machine precision |
+| Subcircuit hierarchy (`verify_subckt.py`) | 11/11 — subckt vs flat **bit-identical**; vs NGSPICE ≤0.87 % |
+| DirectNet device baseline (TSMC5/7/12/16) | inverter 8/8, DC 55/55, transient 64/64 |
+| Complex 16-gate matrix (4 circuits × 4 techs) | DirectNet **15/16** (16/16 at `crit15m@xl`), BSIM-AR **16/16**, PFN 11/16 — strict across OMP∈{1,2,4}, zero flips |
+| Batched denorm tail / latch basin (V7.2.0) | 22/22 bit-exact / 8/8, zero basin flips |
 
-| Test | Metric | Result |
-|------|--------|--------|
-| NMOS OP (Vgs=0.7V, Vds=0.5V) | Relative error | 0.00% |
-| PMOS OP (Vgs=-0.7V, Vds=-0.5V) | Relative error | 0.01% |
-| Inverter OP (Vin=0V) | Relative error | 0.00% |
-| Inverter OP (Vin=0.7V) | Relative error | 0.00% |
+\* one known pre-existing ERROR (`TSMC5_lvt_inv_l_24nm`, internal-node NR
+divergence in the pure BSIM-CMG path, unrelated to the NN surface). Counts are
+for the four distinct TSMC techs; TSMC6 (a controlled repeat of TSMC7) is
+scored in its own column.
 
-#### DC Sweep
-
-| Test | Metric | Result |
-|------|--------|--------|
-| NMOS Id-Vgs (Vds=0.5V, Vgs=0-0.7V) | NRMSE | 0.010% |
-| PMOS Id-Vgs (Vds=-0.5V, Vgs=0 to -0.7V) | NRMSE | 0.014% |
-| Inverter VTC (Vin=0-0.7V) | NRMSE | 0.002% |
-
-#### Transient (Baseline)
-
-| Metric | Value |
-|--------|-------|
-| NRMSE (post-settling) | 0.20% |
-| NRMSE (full-range) | 0.26% |
-| Max absolute error | 7.6 mV (1.1% of Vdd) |
-
-#### Comprehensive Transient
-
-Two suites, both **fully passing** as of the latest run:
-
-- `verify_bsimcmg_tran_comprehensive.py` (L2) — VT / L / NFIN sweep:
-  **37/37 PASS**
-- `verify_multi_tech_tran.py` (L3) — multi-tech parametric over VDD
-  (0.6–0.8 V), Cload (1–100 fF), input slew (10–500 ps), pulse width
-  (0.2–2.0 ns), and P/N ratio (0.5–2.0): **72/72 PASS**
-
-Worst case across both is 0.84% NRMSE / 42 mV at Cload=1fF — the smallest
-load, where the output slews fastest. Representative ASAP7 rows (L3):
-
-| Config | VDD | Cload | NRMSE(%) | MaxErr(mV) |
-|--------|-----|-------|----------|------------|
-| baseline | 0.70V | 10fF | 0.19 | 7.6 |
-| vdd_0p6 | 0.60V | 10fF | 0.17 | 6.1 |
-| vdd_0p8 | 0.80V | 10fF | 0.21 | 12.9 |
-| cload_1fF (worst) | 0.70V | 1fF | 0.84 | 42.0 |
-| cload_100fF | 0.70V | 100fF | 0.02 | 0.9 |
-| slew_500ps | 0.70V | 10fF | 0.05 | 3.8 |
-| pn_2p0 | 0.70V | 10fF | 0.23 | 12.9 |
-
-#### Subcircuit Hierarchy (V6.12.0)
-
-`tests/verify_subckt.py` — **11/11 PASS**. Level 0 covers the three loud
-parse errors; Levels 1–3 cover linear
-equivalence, an L72 inverter, and a nested buffer:
-
-| Check | Metric | Result |
-|-------|--------|--------|
-| RC-ladder `.tran`, subckt == flat | max abs dV | 0.000e+00 V |
-| RC-lowpass `.ac`, subckt == flat | max abs dMag / dPh | 0.000e+00 |
-| Nested subckt + `{expr}` params, DC OP | max abs dV | 0.000e+00 V |
-| L72 inverter `.tran`, subckt == flat | max abs dV | 0.000e+00 V |
-| L72 inverter subckt vs NGSPICE | NRMSE | 0.187% of VDD |
-| L72 nested buffer vs NGSPICE | NRMSE (out / mid) | 0.638% / 0.861% |
-
-Flattening is exactly equivalent, not merely close: the subckt-vs-flat
-checks are **bit-identical**.
-
-#### NN Compact Models (LEVEL=73, production)
-
-DirectNet production (`large` tier, crit30 curriculum) device-level baseline
-across TSMC5/7/12/16: **inverter 8/8, DC 55/55, transient 64/64**.
-
-On the 16 complex-circuit gates (4 circuits × 4 techs), scored strictly
-against NGSPICE: DirectNet **15/16** (16/16 at `crit15m@xl`), BSIM-AR **16/16**, PFN **11/16** — all strict across OMP∈{1,2,4} with zero flips since the V6.13.0 gds fix.
-The one cell no family passes is the TSMC7 opamp, which is reachable only
-via the T3 differentiable-DC-solver fine-tune.
+Worst comprehensive-transient case is 0.84 % NRMSE / 42 mV at Cload=1 fF —
+the smallest load, where the output slews fastest. The full per-tech,
+per-scale, and per-recipe evidence, gate definitions, and the scoreboard live
+in **`docs/accuracy/`**.
 
 ### Verification Scripts
 
@@ -1031,11 +1012,12 @@ PyCircuitSim is intentionally simplified for educational use.
 `.measure`, global `.param` (subcircuit-scoped parameters *are* supported —
 see [Subcircuits](#subcircuits-subckt-v6120)).
 
-**Known limits:** pure Python is ~10-100× slower than compiled
-simulators; tested on circuits with <100 components; strongly
-non-linear circuits may need source stepping. For production IC
-design, large netlists (>1000 components), or RF/high-frequency
-simulation, use ngspice / Xyce / Spectre.
+**Known limits:** pure Python is ~10-100× slower than compiled simulators;
+routinely verified on circuits with <100 components, and validated up to
+16×16 6T SRAM-array write transients with the V7.2.0 array-scaling path
+(see [Performance & GPU Acceleration](#performance--gpu-acceleration));
+strongly non-linear circuits may need source stepping. For production IC
+design or RF/high-frequency simulation, use ngspice / Xyce / Spectre.
 
 ## Future Work
 
@@ -1044,6 +1026,8 @@ simulation, use ngspice / Xyce / Spectre.
 - [x] Subcircuits (`.subckt` / `.ends` / `X` instances) — V6.12.0, 8/8 gate
 - [x] Expanded SRAM / ring-oscillator test suite — 16 complex-circuit gates
       plus parametric sweep mirrors
+- [x] Array-scale transient + opt-in GPU NN eval — V7.2.0 (GPU-axis re-gate
+      still pending)
 - [ ] Adaptive output timestep
 - [ ] Inductor support
 - [ ] Global `.param` / `.measure`

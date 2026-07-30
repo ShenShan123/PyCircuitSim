@@ -1,5 +1,12 @@
 # Project: PyCircuitSim
 
+> **Doc layout:** user-facing how-to (install, run, netlist syntax, examples,
+> output files, training commands, performance flags) lives in **`README.md`**;
+> sprint history, version-by-version verdicts and dead-ends live in
+> **`docs/CHANGELOG.md`**; accuracy evidence lives in **`docs/accuracy/`**.
+> CLAUDE.md holds only what those don't: durable architecture, current
+> production state, testing discipline, and the design rules learned from bugs.
+
 ## Overview
 
 Pure-Python SPICE-like circuit simulator emphasizing educational clarity and a
@@ -11,10 +18,9 @@ compact-model families on one solver, all gated against NGSPICE ground truth:
 - **DirectNet** (LEVEL=73) — feed-forward MLP; the **production** NN fast path.
 - **BSIM-AR Transformer** (LEVEL=74) — autoregressive Transformer; the validated
   **higher-fidelity** option (16/16 strict post-V6.13.0, ~30–100× slower AR inference).
-  Un-parked in V6.8.0.
 - **PFN / TabPFN** (LEVEL=75) — TabPFN-v3-style in-context transformer;
-  **research** family (V6.10.0; clean small 11/16 strict at only 0.69M params;
-  ~10× DN eval cost, 4× faster than BSIM-AR).
+  **research** family (clean small 11/16 strict at 0.69M params; ~10× DN eval
+  cost, 4× faster than BSIM-AR).
 
 The three NN families share one data / normalization / loss / training / eval
 pipeline via the unified `bsimar` package (`external_compact_models/bsimar/`).
@@ -23,129 +29,86 @@ ASAP7 + TSMC5/7/12/16, plus **TSMC6** — which is *TSMC7 relabelled* under
 BSIM-CMG (`docs/2026-07-21-systematic-audit.md` §D1), retired for that in
 V6.13.0 and **restored in V7.1.0 as a deliberate controlled repeat**: same data,
 same recipe, different training run. Score it in its own /4 column, never inside
-the /16 (`docs/accuracy/methodology.md` §7).
+the /16.
 
 **Core Principles:** pure Python; Solver ↔ Device Models decoupled; production-grade
 compact models via PyCMG/OSDI; basic HSPICE netlist compatibility.
 
 ## Architecture
 
-### Module Structure
+Full module tree + responsibilities: README §Architecture. The load-bearing map:
 
-```
-pycircuitsim/
-├── config.py           # Path configuration (OSDI binary, modelcards)
-├── simulation.py       # Orchestration (run_simulation, run_dc_sweep, run_transient)
-├── parser.py           # Two-pass netlist parsing, .model/.subckt/.ic directives
-├── circuit.py          # Circuit topology
-├── solver.py           # MNA matrix + Newton-Raphson; DC/Transient/AC solvers
-├── logger.py           # HSPICE-like .lis output
-├── visualizer.py       # Matplotlib plotting
-└── models/
-    ├── base.py               # Component abstract base
-    ├── passive.py            # R, C, V, I sources (PULSE)
-    ├── mosfet_cmg.py         # BSIM-CMG (LEVEL=72) via PyCMG
-    ├── mosfet_nn.py          # Shared _MOSFETNNBase (LEVEL=73/74/75) — voltage prep, autograd, Vds correction
-    ├── mosfet_directnet.py   # DirectNet (LEVEL=73, production)
-    ├── mosfet_bsimar.py      # BSIM-AR Transformer (LEVEL=74)
-    └── mosfet_pfn.py         # TabPFN-style PFN (LEVEL=75)
+- `pycircuitsim/solver.py` — MNA + Newton-Raphson; DC/Transient/AC solvers.
+- `pycircuitsim/parser.py` — two-pass netlist parsing, `.model`/`.subckt`/`.ic`,
+  subckt flattening, NN checkpoint resolver cascade.
+- `pycircuitsim/models/` — `mosfet_cmg.py` (L72), `mosfet_nn.py` (shared
+  `_MOSFETNNBase`: voltage prep, autograd, Vds correction), `mosfet_directnet.py`
+  (L73), `mosfet_bsimar.py` (L74), `mosfet_pfn.py` (L75), `passive.py`.
+- `external_compact_models/bsimar/` — the unified NN package (config, data,
+  models, losses, training, eval, `cli/train.py`, gitignored `checkpoints/`).
+- `external_compact_models/PyCMG/` — BSIM-CMG OSDI wrapper (git submodule);
+  OSDI binary at `build/osdi/bsimcmg.osdi`.
+- `tests/common/` — shared gate infra; `tests/references/` — NGSPICE decks.
 
-external_compact_models/
-├── bsimar/             # Unified NN compact model package (importable as `bsimar`)
-│   ├── config.py                   # NNTechConfig + TECH_CODE_MAP + local-vocab helpers
-│   ├── data/{normalize,dataset}.py
-│   ├── models/{direct_net,transformer,tabpfn}.py   # nn.Embedding tech-code
-│   ├── losses/bni_mae.py           # MAELoss + per-target LDS weights
-│   ├── training/trainer.py
-│   ├── eval/{metrics,loo_labels}.py
-│   ├── cli/train.py                # python -m bsimar.cli.train --model {direct,transformer,tabpfn}
-│   └── checkpoints/                # *.pt + _norm.npz (+ _config.npz for TF/PFN; gitignored)
-└── PyCMG/              # BSIM-CMG OSDI wrapper (git submodule)
-    ├── pycmg/{core,model,parser,osdi_types,tech}.py
-    ├── build/osdi/bsimcmg.osdi
-    └── modelcards/     # ASAP7/*.pm committed; TSMC{5,6,7,12,16}/cln*.l gitignored (IP)
-
-main.py · examples/*.sp · results/
-tests/
-├── common/             # Shared infra: base.py, bsimcmg_{dc,tran}.py, nn{,_sweep}.py, complex{,_sweep,_ac}.py
-├── references/         # NGSPICE reference netlists
-└── verify_*.py         # DC/tran/AC/subckt/NN/complex gates
-```
-
-### Key Algorithms
-
-* **MNA** — Sparse construction (scipy.sparse lil_matrix → CSR + spsolve).
-* **Newton-Raphson** — SPICE-standard convergence (RELTOL=1e-4 + VNTOL=1e-7).
-* **BE → Trap → BDF-2 integration** — Backward Euler step 1, Trapezoidal default, BDF-2 auto on stiffness.
-* **Source + GMIN stepping** — homotopy; GMIN stepping opt-in for bistable.
-* **LTE sub-stepping** — adaptive internal sub-steps (opt-in via `max_substeps`).
-* **Bistable convergence** — DC oscillation detection, adaptive damping, hard `.ic` mode.
-* **AC small-signal** — `ACSolver` linearizes about the DC OP and solves complex `Y = G + jωC` per frequency, including the full MOSFET transcapacitance stamp.
+Solver internals worth knowing (beyond README §Algorithms): BE step 1 → Trap
+step 2+ → BDF-2 auto on stiffness (NR>20, one-way); DC oscillation detection
+(5-snapshot ring, accepts averaged solution if variance < 10× tol);
+supply-relative adaptive damping with stuck-counter; hard `.ic` mode
+(`force_ic=True`) stamps `.ic` nodes as temporary V-source constraints then
+re-solves unconstrained — required for SRAM latches; LTE sub-stepping opt-in
+via `max_substeps`; NN circuits use `_solve_dc_with_retry` (fast path first,
+GMIN retry on `_last_solve_converged=False`) — BSIM-CMG never enters the retry
+branch; AC solves complex `Y = G + jωC` about the DC OP including the full
+MOSFET transcapacitance stamp.
 
 ### Key Compact Models
-
-Four families plug into the same solver (LEVEL 73/74/75 share the `bsimar`
-data/normalization/eval pipeline). BSIM-CMG is the authoritative ground truth;
-DirectNet is production; BSIM-AR is the higher-fidelity option; PFN is research.
 
 | LEVEL | Model                  | Implementation                          | Role                                   |
 | ----- | ---------------------- | --------------------------------------- | -------------------------------------- |
 | 72    | **BSIM-CMG**           | `models/mosfet_cmg.py` via PyCMG/OSDI   | FinFET **ground truth**                |
 | 73    | **DirectNet**          | `models/mosfet_directnet.py` (PyTorch)  | **Production** NN (fast path)          |
-| 74    | **BSIM-AR Transformer**| `models/mosfet_bsimar.py` (PyTorch)     | Higher-fidelity AR NN (un-parked V6.8.0)|
-| 75    | **PFN (TabPFN port)**  | `models/mosfet_pfn.py` (PyTorch)        | In-context NN (**research**, V6.10.0)  |
+| 74    | **BSIM-AR Transformer**| `models/mosfet_bsimar.py` (PyTorch)     | Higher-fidelity AR NN                  |
+| 75    | **PFN (TabPFN port)**  | `models/mosfet_pfn.py` (PyTorch)        | In-context NN (**research**)           |
 
 - **BSIM-CMG (72)** — the reference every NN trains against and is gated on;
-  all 5 techs at DC <0.1 % / transient ~0.2 % NRMSE vs NGSPICE. Never substitute
+  all techs at DC <0.1 % / transient ~0.2 % NRMSE vs NGSPICE. Never substitute
   simplified equations for it.
 - **DirectNet (73)** — single-shot MLP; 7-dim input (Vgs, Vds, Vbs, NFIN, L, T,
   tech_code with `nn.Embedding`). gm/gds/gmb are the **autograd Jacobian** of the
   predicted `id`; AC caps are the `dQ/dV` autograd of predicted charges; per-tech
   checkpoints use a local embedding vocab (Rule 16). **Production = uniform `large`
-  tier with the crit30 curriculum (V6.6.4) = 15/16 complex gates, strict across
-  OMP∈{1,2,4} with zero flips** (V6.13.0 re-gate; was 14/16 before the gds fix —
-  `tsmc16-opamp` is now banked, `tsmc7-opamp` is the sole open cell at `large`)
+  tier with the crit30 curriculum = 15/16 complex gates, strict across OMP∈{1,2,4}
+  with zero flips** (V6.13.0 re-gate; `tsmc7-opamp` is the sole open cell at
+  `large`; DirectNet's `crit15m@xl` sweeps 16/16 strict as an env-pin alternate)
   — one identical recipe per (tech × device), no per-case specials. Report:
-  `docs/accuracy/DirectNet-L73-accuracy.md` (family: production state, universal
-  scope, AC diagnosis); the cross-cutting numbers live in the axis files
+  `docs/accuracy/DirectNet-L73-accuracy.md`; cross-cutting numbers in
   `by-tech.md` / `by-scale.md` / `by-recipe.md`.
 - **BSIM-AR (74)** — autoregressive Transformer sharing DirectNet's pipeline.
   Best config `corroft@medium` (corridor curriculum, 1.9M params) = **16/16 strict,
-  zero flips** (V6.13.0 re-gate; was 15/16). The old "tsmc7-opamp is the T3-solver-only
-  cell" claim is **RETRACTED** — BSIM-AR passes it at every size, and DirectNet's
-  `crit15m@xl` also sweeps 16/16 strict. AR inference is ~30–100× slower on CPU, so
-  DirectNet stays production. Per-tech `tsmc{X}_tf_{small,medium,large,xl}_{nmos,pmos}` (+ recipe
-  variants); parser LEVEL=74 preempt cascade + `PYCIRCUITSIM_NN_FORCE_LEVEL=74`
+  zero flips**. The old "tsmc7-opamp is the T3-solver-only cell" claim is
+  **RETRACTED**. AR inference is ~30–100× slower on CPU, so DirectNet stays
+  production. Parser LEVEL=74 preempt cascade + `PYCIRCUITSIM_NN_FORCE_LEVEL=74`
   hook. Report: `docs/accuracy/BSIM-AR-L74-accuracy.md`.
 - **PFN / TabPFN (75)** — faithful scaled-down port of TabPFN-v3's in-context
   transformer (tech code = 8th column token, local vocab), with two deviations: a
   **frozen learned context** (stratified K-row buffer baked into the checkpoint,
-  context-KV cached at inference) and a direct 13-output value head (NR needs smooth
-  autograd). Clean `small` = 11/16 strict; capacity curve declines s→m→l
-  (11/11/9 post-gds-fix; was 11/10/8). PFN's old "only flip-free family" claim is
-  **overtaken** — since the V6.13.0 gds fix every family is flip-free. Per-tech
-  `tsmc{X}_pfn_{small,medium,large,xl}_{nmos,pmos}` (xl = 14.86 M, V7.1.0);
-  env pins `PYCIRCUITSIM_NN_CHECKPOINT_PFN_{NMOS,PMOS}`, hook
+  context-KV cached at inference) and a direct 13-output value head (NR needs
+  smooth autograd). Clean `small` = 11/16 strict; capacity curve declines s→m→l.
+  Env pins `PYCIRCUITSIM_NN_CHECKPOINT_PFN_{NMOS,PMOS}`, hook
   `PYCIRCUITSIM_NN_FORCE_LEVEL=75`, drivers take `MODEL=tabpfn`. The `_config.npz`
-  sidecar is **required** to rebuild the arch. Report: `docs/accuracy/PFN-L75-accuracy.md`.
+  sidecar is **required** to rebuild the arch. Report:
+  `docs/accuracy/PFN-L75-accuracy.md`.
 
 ## Supported Features
 
-* **Devices:** R, C; NMOS/PMOS LEVEL=72/73/74/75; DC + AC voltage/current sources (`AC=mag phase`), PULSE.
-* **Analyses:** `.op`, `.dc`, `.tran` (+ `uic`), `.ac`.
-* **Directives:** `.model` (LEVEL=72/73/74/75), `.include`, `.ic`, `.subckt`/`.ends` + hierarchical `X` instances (V6.12.0).
-* **Subcircuits (V6.12.0):** `.subckt <name> <ports...> [param=default ...]` … `.ends`;
-  instance `X<id> <nodes...> <name> [param=val ...]`. **Flattening at parse time**
-  (ngspice-style, so solver/circuit are untouched): internal nodes → `X1.n1`
-  (nested `X1.X2.n1`), devices → `M.X1.Mp1` (type char preserved for first-char
-  dispatch); ground `0`/`GND` stays global; ports map to connecting nodes. Params
-  resolve as bare names or `{expr}`/`'expr'` arithmetic (`+ - * /`, unit suffixes);
-  `.ic` in a body is node-remapped AND param-resolved, top-level `.ic V(X1.n1)=v`
-  reaches internal nodes, `uic`/`force_ic` consume them unchanged; `.model`/`.include`
-  in bodies are hoisted global; nested `.subckt` defs register globally. Loud errors
-  on unknown subckt, port-count mismatch, recursion (>64). Gate: `tests/verify_subckt.py`
-  (11 checks — subckt==flat bit-identical, L72 inverter + nested buffer vs NGSPICE).
-* Legacy LEVEL=1 (Shichman-Hodges) removed.
+Devices (R, C, V/I sources, PULSE, NMOS/PMOS L72–75, `X` subckt instances),
+analyses (`.op`/`.dc`/`.tran`+`uic`/`.ac`), directives (`.model`, `.include`,
+`.ic`, `.subckt`/`.ends`), and the full netlist syntax are documented in
+README §Features / §Netlist Syntax. Legacy LEVEL=1 removed. Subckt expansion is
+**flattening at parse time** (internal nodes → `X1.n1`, devices → `M.X1.Mp1`,
+ground stays global, `.model`/`.include` hoisted, loud errors on unknown
+subckt / port mismatch / recursion >64); gate: `tests/verify_subckt.py` (11
+checks, subckt ≡ flat bit-identical).
 
 ## Validation
 
@@ -153,283 +116,121 @@ Inverter circuit must PASS Transient Analysis against NGSPICE ground truth withi
 reasonable numerical tolerance. Never use simplified/self-defined equations as reference.
 
 > **Accuracy evidence lives in `docs/accuracy/`** (index + scoreboard:
-> `README.md`). Restructured V7.1.0 into **three cross-cutting pivots** —
-> `by-tech.md` (TSMC5/7/12/16 + TSMC6, the controlled repeat), `by-scale.md`
-> (small→xl),
-> `by-recipe.md` (the recipe catalogue and its levers) — plus one **family**
-> report each (`DirectNet-L73`, `BSIM-AR-L74`, `PFN-L75`) for what is specific
-> to one model. The pivots are the single source of truth for any number that
-> spans families. Gate definitions, strict-OMP discipline and the code-state
-> ladder (pre-fix / V6.13.0 / V7.1.0): **`methodology.md`**. Frozen pre-fix
-> tables + the register of retracted claims: `archive-pre-gds-fix.md`.
+> `README.md`): three cross-cutting pivots — `by-tech.md`, `by-scale.md`,
+> `by-recipe.md` — the single source of truth for any number that spans
+> families, plus one family report each and `methodology.md` (gates,
+> strict-OMP discipline, the code-state ladder) and `archive-pre-gds-fix.md`
+> (frozen pre-fix tables + retracted claims).
 >
 > **Sprint history, version-by-version status, dead-ends, and the open known-issue
 > roadmap live in `docs/CHANGELOG.md` + `MEMORY.md`** — not duplicated here.
-> CLAUDE.md tracks durable architecture, rules, and how-to-run.
 
-## Setup
+## How to Run
 
-```bash
-conda create -n pycircuitsim python=3.10 -y
-conda activate pycircuitsim
-pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
-pip install -i https://pypi.tuna.tsinghua.edu.cn/simple torch    # for LEVEL=73/74/75
-git submodule update --init --recursive
-```
-
-**Prerequisites:** NGSPICE 45.2+ (`/usr/local/ngspice-45.2/bin/ngspice`), OpenVAF
-23.5.0+ (`/usr/local/bin/openvaf`), BSIM-CMG OSDI binary
-(`external_compact_models/PyCMG/build/osdi/bsimcmg.osdi`).
-
-## Quick Start
+Setup, quick start, netlist syntax, examples, output layout, NN training
+commands, and the performance/GPU flags are all in **README.md**. Essentials:
 
 ```bash
-conda activate pycircuitsim
-python main.py examples/bsimcmg_inverter_tran.sp           # -> results/
-python main.py examples/rc_lowpass_ac.sp -o my_out -v      # custom output dir + verbose
+conda activate pycircuitsim          # env at /home/shenshan/.conda/envs/pycircuitsim
+python main.py examples/<deck>.sp    # analysis chosen by the directive in the deck
 ```
 
-The analysis is chosen by the directive **inside** the netlist (`.op`/`.dc`/`.tran`/`.ac`)
-— `main.py` takes only the netlist path, an optional `-o/--output` dir (default
-`results/`), and `-v/--verbose`. Ready-to-run decks live in `examples/`.
+**Prerequisites:** NGSPICE 45.2+ (`/usr/local/ngspice-45.2/bin/ngspice`; repo
+fallback `tools/ngspice-45.2/bin/ngspice` via `NGSPICE_BIN`), OpenVAF
+(`/usr/local/bin/openvaf`), OSDI binary
+`external_compact_models/PyCMG/build/osdi/bsimcmg.osdi`, PyTorch for L73/74/75.
 
-### Write a netlist (HSPICE-style)
+## Performance Discipline (V7.0.x / V7.2.0)
 
-Component lines + `.model` cards + one analysis directive, terminated by `.end`.
-Node `0` is ground; `*` starts a comment. RC low-pass `.ac` (`examples/rc_lowpass_ac.sp`):
+User-facing knob documentation: README §Performance & GPU Acceleration.
+The rules that bind development:
 
-```spice
-V1 in 0 DC=0 AC=1 0          * AC source: DC bias 0, |AC|=1V, phase 0 deg
-R1 in out 1k
-C1 out 0 159.155n
-.ac dec 20 10 1e6            * 20 pts/decade, 10 Hz .. 1 MHz
-.end
-```
+- Every perf change is **bit-identical** (ships default-on) or **perturbing**
+  (ships default-off behind an env flag, promoted only after a full re-gate).
+  Fidelity is a **CPU, flags-off property** — no scoreboard number changes
+  under a perturbing flag. The V7.2.0 CPU bundle {commit, stamp, order} passed
+  its §8.4 gates (T3 15/16 strict 0-flip = production cell-for-cell; T4
+  latch-basin 8/8); the **GPU-axis T3 pass is still pending**, so
+  `PYCIRCUITSIM_NN_DEVICE=cuda` stays opt-in.
+- **`_require_nn_caps` contract** (V7.0.1): DC/OP skips the charge Jacobians;
+  `TransientSolver`/`ACSolver` declare `_require_nn_caps`. Adding a third caps
+  consumer means calling it there too (`get_capacitances` self-heals, so the
+  failure mode is slow, never wrong).
+- **`Circuit.invalidate_topology()` contract** (V7.2.0): call it after any
+  direct `components` mutation — the node list/map and solver-side caches key
+  on the topology version.
+- `PYCIRCUITSIM_NN_FUSED_JAC=1` and `PYCIRCUITSIM_NN_AR_CACHE=1` **must stay
+  default-off until a 16-gate re-gate clears them** (same math, different
+  summation order; no incremental AR form can be bit-identical in float32 —
+  `F.linear` is not row-stable on CPU). `verify_ar_cache.py` /
+  `verify_batched_tail.py` guard the opt-in paths no accuracy gate reaches.
+- Measurements + dead ends (do not retry TF32/compile/bf16 for DirectNet):
+  `docs/plans/2026-07-25-v700-nn-perf.md`, `docs/plans/2026-07-26-v720-gpu-scaling.md`.
 
-**MOSFETs — pick a compact model by LEVEL.** Card
-`.model <name> {N|P}MOS (LEVEL=<72|73|74|75> [TECH=tsmc5 VT=lvt])`; instance
-`M<id> <drain> <gate> <source> <bulk> <name> L=30n NFIN=10` (geometry `L`, `NFIN`,
-optional `TFIN`/`HFIN`/`FPITCH`).
+## NN Training Notes (beyond README §NN Compact Models)
 
-- **72** — BSIM-CMG ground truth (`examples/bsimcmg_inverter_dc.sp`).
-- **73** — DirectNet; `TECH`/`VT` select the per-tech checkpoint (`examples/nn_inverter_dc.sp`).
-- **74** — BSIM-AR (per-tech `tsmc{X}_tf_*` checkpoints; `examples/bsimar_inverter_dc.sp`).
-- **75** — PFN/TabPFN (per-tech `tsmc{X}_pfn_*`; env-pin/`FORCE_LEVEL=75` driven; see above).
+Per-tech NMOS/PMOS checkpoints for TSMC5/7/12/16 (+ TSMC6), all three families
+at all four scales. `--tech-scope` ∈ `{tsmc5,tsmc6,tsmc7,tsmc12,tsmc16,universal}`;
+`--size` ∈ `{small,medium,large,xl}`. Traps and facts the README doesn't carry:
 
-CMOS inverter DC sweep (LEVEL=72, `examples/bsimcmg_inverter_dc.sp`):
-
-```spice
-Vdd 1 0 1.0
-Vin 2 0 0.0
-Mp1 3 2 1 1 pmos1 L=30n NFIN=10     * drain gate source bulk
-Mn1 3 2 0 0 nmos1 L=30n NFIN=10
-.model nmos1 NMOS (LEVEL=72)
-.model pmos1 PMOS (LEVEL=72)
-.dc Vin 0 1.0 0.01
-.end
-```
-
-### Analysis directives
-
-- `.op` — DC operating point.
-- `.dc <src> <start> <stop> <step>` — DC sweep.
-- `.tran <tstep> <tstop> [uic]` — transient; drive with `PULSE v1 v2 td tr tf pw period`.
-  `uic` (NGSPICE-style) starts from the `.ic` state — pins `.ic` nodes during the OP
-  so a high-impedance node (e.g. a switched-cap hold node) starts at its `.ic` value.
-  Default-off; non-`uic` decks are byte-identical.
-- `.ac {dec|oct|lin} <N> <fstart> <fstop>` — small-signal; requires `AC=mag phase` on a source.
-- `.ic V(node)=...` (hard initial condition; reaches subckt-internal nodes via
-  `V(X1.n1)`) and `.include` are also supported.
-
-### NN performance knobs (V7.0.x)
-
-The NN eval is roughly half of an NN simulation's runtime, and it is
-**memory-bandwidth-bound on the weights** — cost scales with how many times a
-checkpoint is streamed, not with FLOPs. Measurements + dead ends:
-`docs/plans/2026-07-25-v700-nn-perf.md`.
-
-- **DC/OP skips the charge Jacobians** (V7.0.1, always on, bit-identical). The
-  qg/qd autograd sweeps only feed the 5 capacitances, which only
-  `TransientSolver` / `ACSolver` read — those two declare `_require_nn_caps`;
-  a `.dc`/`.op` run pays 1 backward instead of 3. **Adding a third caps
-  consumer means calling `_require_nn_caps` in it** (`get_capacitances`
-  self-heals, so the failure mode is slow, never wrong).
-- `PYCIRCUITSIM_NN_FUSED_JAC=1` — closed-form Jacobian for DirectNet
-  (V7.0.3). **Default off, and must stay off until a 16-gate re-gate clears
-  it**: same math, different summation order. Helps transient/AC (~1.4×) only —
-  for DC the charge-skip above already wins.
-- `PYCIRCUITSIM_NN_AR_CACHE=1` — BSIM-AR (LEVEL=74) prefix cache (V7.0.4).
-  The AR loop re-encoded the whole growing prefix once per step (60
-  token-passes for 11 hidden states); the cache keeps per-layer K/V and
-  encodes each token once. **Default off pending a 16-gate
-  `MODEL=transformer` re-gate**: exact in real arithmetic but not in float32,
-  because `F.linear` is not row-stable on CPU (0/96 shapes) — so *no*
-  incremental form can be bit-identical. 1.60× DC / 1.56× tran / 1.21× AC,
-  4.3× on `no_grad` batch-2048 eval; deviation ≤1.6 µV on solved nodes.
-- `BSIMAR_LOADER=torch|device|auto` — training batch source (V7.0.2, default
-  `auto` = GPU-resident when it fits). `torch` restores the legacy
-  `DataLoader` to reproduce a historical run.
-- `NN_BATCHED_EVAL=0` — pre-existing opt-out of the batched multi-device eval.
-
-### V7.2.0 array-scaling knobs (SRAM-array workloads)
-
-Always-on bit-identical (V7.2.0 sessions 1–2): O(devices+checkpoints)
-parse; single-D2H result block; value-keyed stacked-input cache; the
-**batched denorm tail** (`_unpack_eval_batch` — §8.1 constraints: masked
-per-element `math.exp` + float64 casts, gated bit-exact by
-`tests/verify_batched_tail.py`); vectorised NR node loops + topology
-caches (`Circuit.invalidate_topology` — call it after any direct
-`components` mutation) + one LIL→CSR conversion per NR iteration.
-
-Perturbing opt-ins, **default OFF by scoreboard discipline** (fidelity
-is a CPU flag-off property). The CPU bundle {commit, stamp,
-order=NATURAL} **passed its §8.4 gates**: T3 16-gate = 15/16 strict,
-0 flips, binding cells 0.00 pp vs baseline — the production scoreboard
-cell-for-cell; T4 latch-basin 8/8, 0 flips in every config
-(`results/v720_gpu_regate/t3_cpu_bundle/VERDICT.md`). The GPU-axis T3
-pass is still pending:
-
-- `PYCIRCUITSIM_TRAN_BATCH_COMMIT=1` — batch the transient commit-path
-  eval (the 75–85 %-of-wall pathology; 4.2× on a 4×4 write op).
-- `PYCIRCUITSIM_NN_DEVICE=cuda[:N]` — GPU NN eval (default cpu; the
-  runtime enforces the T0 determinism pins on the CUDA path).
-- `PYCIRCUITSIM_BATCHED_STAMP=1` — NN devices stamp as one COO block
-  per NR iteration (7× on the stamp step at 16×16); LEVEL=72 stays
-  scalar.
-- `PYCIRCUITSIM_MNA_ORDERING=NATURAL` — explicit-splu column ordering.
-  **On real MNA matrices NATURAL wins 2.4–30× and MMD_AT_PLUS_A is
-  slower than shipped** — the synthetic-matrix §5.2 fill-explosion
-  claim is refuted (`scripts/bench_gpu/bench_ordering_real.py`).
-
-### NN training (per-tech, LEVEL=73/74/75)
-
-Dedicated per-tech NMOS/PMOS checkpoints for **TSMC5/7/12/16 (+ TSMC6)** — all
-three families at **all four scales** (PFN's `xl` preset landed in V7.1.0; every
-checkpoint on disk was re-gated in V6.13.0 after the gds fix — see the accuracy
-reports). `--tech-scope` ∈ `{tsmc5,tsmc6,tsmc7,tsmc12,tsmc16,universal}`;
-`--size` ∈ `{small,medium,large,xl}`. Curriculum recipes (incl. the production crit30)
-train via `scripts/recipe_train.sh` (warm-start from the clean same-size base — at
-`large` the `v660clean` archive, injected automatically).
-
-```bash
-# 1. Per-tech data (one .npz per tech+device). --enable-inv-trip adds the inverter-trip
-#    overlay and --enable-subvt-off the 1e-12..1e-6 A off-state decades
-#    (sample_class 11). BOTH are required to reproduce the production datasets —
-#    omitting --enable-subvt-off silently yields a set 4.7 % smaller that is
-#    otherwise class-for-class identical, which is exactly how it goes unnoticed.
-#    The grid sampler carries the reverse-Vds corridor. --tech ∈ {tsmc5,
-#    tsmc6,tsmc7,tsmc12,tsmc16,asap7,all}. Repeat per tech.
-conda run -n pycircuitsim python external_compact_models/PyCMG/scripts/generate_nn_data.py \
-    --device both --tech tsmc5 --enable-inv-trip --enable-subvt-off --n-workers 8
-
-# 2. Train. --tech-scope auto-sets --exclude-techs, --num-tech-codes (local vocab +
-#    UNKNOWN), the default --data path, and the save_prefix the parser resolver
-#    recognizes (tsmc{X}_{dn,tf,pfn}_<size>_<dev>).
-conda run -n pycircuitsim python -u -m bsimar.cli.train \
-    --model {direct,transformer,tabpfn} --size medium \
-    --device-type {nmos,pmos} --tech-scope {tsmc5,tsmc7,tsmc12,tsmc16} --cuda --overwrite
-```
-
-**Full capacity sweep** (DirectNet, 4 techs × N/P × 4 sizes = **32 ckpts**, one clean
-recipe): `scripts/benchmark_gen_data.sh` → `scripts/benchmark_train_sml.sh`
-(`GPUS="0 2"` pins a GPU subset, `NSTREAMS` sets concurrency) →
-`scripts/benchmark_run_tests.sh` → `scripts/benchmark_collect.py` (`results/benchmark_sml/REPORT.md`).
-
-**Checkpoints** (`external_compact_models/bsimar/checkpoints/`, each `*_best.pt` +
-`_norm.npz`, plus `_config.npz` for TF/PFN):
-
-- **DirectNet:** `tsmc{5,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}` — each a
-  local-vocab embedding (variants + 1 UNKNOWN; Rule 16). Production `large` carries
-  **crit30** since V6.6.4 (clean originals archived `..._v660clean_large_*`). Kept
-  beyond production:
+- **Data generation needs BOTH `--enable-inv-trip` AND `--enable-subvt-off`**
+  to reproduce the production datasets — omitting `--enable-subvt-off` silently
+  yields a set 4.7 % smaller that is otherwise class-for-class identical, which
+  is exactly how it goes unnoticed.
+- Curriculum recipes (incl. production crit30) train via
+  `scripts/recipe_train.sh` — warm-start from the clean same-size base (at
+  `large` the `v660clean` archive, injected automatically). Full capacity
+  sweep: `scripts/benchmark_gen_data.sh` → `benchmark_train_sml.sh` (`GPUS`,
+  `NSTREAMS`) → `benchmark_run_tests.sh` → `benchmark_collect.py`.
+- **Checkpoints kept beyond production** (`bsimar/checkpoints/`):
   `v660clean_large` (warm-start base), `crit30f_large` (production provenance),
   alternates `csob@large` (AC/device), `corroft`/`crit10`@xl + `crit15m@xl`
-  (tsmc16-opamp coverage). Also `tsmc{X}_tf_*` (BSIM-AR) + `tsmc{X}_pfn_*` (PFN).
-- **Universal DirectNet (V6.7.0):** `u716_dn_{clean,csob,corroft,crit30u}_large` +
-  `_{clean,corroft}_xl` + TSMC5 fine-tunes `u716f5_plain_n{1000000,full}_large` —
-  18-code vocab, env-pin-only. Best = `u716_dn_corroft_large` (10/12 strict, 0 FLIPs).
-  See `docs/accuracy/DirectNet-L73-accuracy.md`.
-- **Resolver cascade** (`pycircuitsim/parser.py`): env pin
-  `PYCIRCUITSIM_NN_CHECKPOINT_{DN,PFN}_{NMOS,PMOS}` read FIRST (since V6.6.6 an absent
-  pinned stem RAISES — no silent fallback); then per-tech `tsmc{X}_{dn,tf,pfn}_{large,
-  medium,small,xl}` (**large-first**) preempts the dormant universal fallback.
-  Completed runs carry a `*_best.pt.complete` marker (a bare `_best.pt` may be a
-  killed run). Resolutions log `[NN-resolver] L73 <name> TECH=.. VT=.. -> <chk> ...`.
-
-**Netlist usage:** `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with
-`L=16n NFIN=10`. Parser auto-resolves the checkpoint + local-vocab tech_code via
-`bsimar.config.local_variant_code(scope, tech, variant)`.
-
-### Output files
-
-`results/<circuit_name>/<analysis_type>/`: an HSPICE-like `*_simulation.lis` log, the
-data (`*_dc_sweep.csv` / `*_transient.csv` / `*_ac_sweep.csv`), and a Matplotlib plot.
+  (tsmc16-opamp coverage); universal `u716_dn_*` (18-code vocab, env-pin-only;
+  best `u716_dn_corroft_large` 10/12 strict, 0 FLIPs).
+- **Resolver cascade** (`parser.py`): env pin
+  `PYCIRCUITSIM_NN_CHECKPOINT_{DN,PFN}_{NMOS,PMOS}` read FIRST (an absent
+  pinned stem RAISES — no silent fallback); then per-tech
+  `tsmc{X}_{dn,tf,pfn}_{large,medium,small,xl}` (**large-first**) preempts the
+  dormant universal fallback. Completed runs carry a `*_best.pt.complete`
+  marker (a bare `_best.pt` may be a killed run). Resolutions log
+  `[NN-resolver] ...`.
 
 ## Testing & Verification
 
-All tests require `conda activate pycircuitsim`. Ground truth is **always** NGSPICE on
-the identical BSIM-CMG (LEVEL=72) OSDI model — never a simplified/self-defined
-reference. Gates are CPU-pinned (`CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1
-MKL_NUM_THREADS=1`) and honor `NGSPICE_BIN` (repo `tools/ngspice-45.2/bin/ngspice`
-when `/usr/local` is absent). Since V6.6.6 the complex/AC gate infra pins torch to 1
-thread by default (`PYCIRCUITSIM_TORCH_THREADS` overrides — used by the OMP
-multistability sweep).
+All tests require `conda activate pycircuitsim`. Ground truth is **always** NGSPICE
+on the identical BSIM-CMG (LEVEL=72) OSDI model. Gates are CPU-pinned
+(`CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`) and honor
+`NGSPICE_BIN`; the complex/AC gate infra pins torch to 1 thread
+(`PYCIRCUITSIM_TORCH_THREADS` overrides). Shared infra in `tests/common/`.
 
-**Shared infra** (`tests/common/`): `base.py`, `bsimcmg_{dc,tran}.py`,
-`nn.py`+`nn_sweep.py`, `complex.py`+`complex_sweep.py`+`complex_ac.py`;
-references in `tests/references/`.
-
-- **Subcircuit hierarchy (V6.12.0):** `verify_subckt.py` — L1 linear subckt==flat
-  equivalence (tran/AC/nested-OP/uic, no NGSPICE), L2 L72 inverter-in-subckt vs flat
-  vs NGSPICE, L3 nested 2-inverter buffer (X-in-X + params + `.ic` on internal node).
-  **11/11 PASS.** The PyCircuitSim-side test decks are now hierarchical (inverter,
-  complex builders, NN inverter, CS-amp AC); probed nodes stay top-level (ports) so
-  harness keys/baselines are unchanged; NGSPICE reference decks + single-device
-  Id-Vgs decks stay flat.
-- **BSIM-CMG (72):** OP `verify_bsimcmg_op.py` (<0.02%); DC L1 `verify_bsimcmg_dc.py` (2)
-  · L2 `..._comprehensive.py` (67) · L3 `verify_multi_tech_dc.py` (44); tran L1
-  `verify_bsimcmg_tran.py` (1) · L2 `..._comprehensive.py` (37) · L3
-  `verify_multi_tech_tran.py` (72); AC `verify_ac.py` (2/2, ~machine precision).
-  Counts dropped from 81/53/45/86 when TSMC6 was retired in V6.13.0 and grow
-  back when it is registered — same coverage either way, one duplicate tech
-  column (see `docs/accuracy/methodology.md` §2 on denominators; quote the
-  TSMC6 column separately). L3 DC currently reports 43 PASS +
-  **1 known ERROR** (`TSMC5_lvt_inv_l_24nm`, internal-node NR divergence in the
-  pure BSIM-CMG path — pre-existing, unrelated to the NN surface).
-- **DirectNet (73):** `verify_nn_dc_tran.py --tech TSMC5,TSMC7,TSMC12,TSMC16 [--inverter-only]`
-  (baseline inverter 8/8, DC 55/55, tran 64/64); `verify_nn_multi_tech_{dc,tran}.py`
-  (parametric, baseline-gated — pin OMP/MKL=1, VTC trip has ~±1% scatter);
-  `verify_nn_ac.py` (CS-amp gain/f3db/mag-NRMSE); `verify_nn_lifted_source_dc.py`
-  (NRMSE ≤10%, guards Rule 2).
-- **Complex circuits (4 × 4 = 16 gates):** `verify_complex_{ring_osc,opamp,sram_snm,switchcap}.py`
-  + `complex.py` (scored vs NGSPICE: ring period, opamp gain, switchcap charge/droop,
-  SRAM butterfly positivity + NRMSE). SRAM `force_ic` 6T-latch probe is a printed
-  **diagnostic**, not a gate. Parametric mirrors `verify_complex_*_sweep.py` +
-  `complex_sweep.py` (baseline-gated, sha256-pinned); `verify_complex_sweep_canaries.py`
-  guards single-point ↔ sweep equivalence. Opamp AC `verify_complex_opamp_ac.py`
-  (two-stage Miller open-loop; RO+SRAM AC-excluded).
-- **AR prefix cache (74):** `verify_ar_cache.py` — 10 checks, no NGSPICE (the
-  reference is the stock PyTorch AR loop). Guards the V7.0.4 opt-in path, which
-  no accuracy gate can reach while it is default-off: flag default is OFF and
-  the off path is bit-identical; cached == stock within 1e-4 rel on outputs +
-  autograd Jacobians over 5 checkpoints × 3 batch sizes; the primer chunk is
-  bit-identical; training mode falls back; the lever still pays (>1.15×).
-- **Batched denorm tail (V7.2.0 2a-full):** `verify_batched_tail.py` — 22
-  checks, no NGSPICE (the reference is the scalar `_unpack_eval` tail).
-  Demands **exact bit equality per element** across all 3 families ×
-  polarity × caps on/off over an adversarial Vds box; trips if the §8.1
-  constraints (masked libm `math.exp`, float64 casts) leave the shipped
-  code; covers the mixed-polarity (env double-pin) group and the
-  end-to-end `batch_eval` wiring.
-- **Latch-basin gate (V7.2.0 §8.4 T4):** `verify_latch_basin_gpu.py
-  --config {commit,gpu,stamp,order,…}` — full 6T latch, both stored
-  states, all 4 techs, per perturbing-flag config; 100 % same-basin
-  binding (the failure mode the flags could cause that no other gate
-  tests).
-- **Diagnostics** (`tests/diag_*.py`, **not** gates — L72-in-PyCircuitSim reference):
-  `diag_l72_complex_control.py`, `diag_l72_switchcap_control.py`/`_uic_control.py`
-  (prove L72-in-PyCircuitSim ≈ NGSPICE, isolating NN-surface gaps);
-  `diag_nn_jacobian_consistency.py` (autograd-Jacobian self-consistency).
+- **Subcircuit hierarchy:** `verify_subckt.py` — 11/11 (L1 subckt≡flat
+  bit-identical, L2 L72 inverter vs NGSPICE, L3 nested buffer).
+- **BSIM-CMG (72):** OP `verify_bsimcmg_op.py`; DC L1 `verify_bsimcmg_dc.py` ·
+  L2 `..._comprehensive.py` (67) · L3 `verify_multi_tech_dc.py` (43 PASS + 1
+  known ERROR `TSMC5_lvt_inv_l_24nm`, pre-existing pure-L72 NR divergence);
+  tran L1/L2/L3 (1/37/72); AC `verify_ac.py` (2/2). Counts grew/shrink with
+  TSMC6 registration — same coverage, one duplicate tech column; quote TSMC6
+  separately.
+- **DirectNet (73):** `verify_nn_dc_tran.py` (inverter 8/8, DC 55/55, tran
+  64/64); `verify_nn_multi_tech_{dc,tran}.py` (baseline-gated — pin OMP/MKL=1,
+  VTC trip has ~±1 % scatter); `verify_nn_ac.py`;
+  `verify_nn_lifted_source_dc.py` (NRMSE ≤10 %, guards Rule 2).
+- **Complex circuits (4 × 4 = 16 gates):** `verify_complex_{ring_osc,opamp,
+  sram_snm,switchcap}.py` scored vs NGSPICE (ring period, opamp gain, switchcap
+  charge/droop, SRAM butterfly positivity + NRMSE). SRAM `force_ic` probe is a
+  printed **diagnostic**, not a gate. Parametric mirrors
+  `verify_complex_*_sweep.py` (baseline-gated, sha256-pinned) +
+  `verify_complex_sweep_canaries.py`; opamp AC `verify_complex_opamp_ac.py`.
+- **Perf-path gates (no NGSPICE):** `verify_ar_cache.py` (10 checks — flag-off
+  bit-identical, cached ≡ stock within 1e-4, lever >1.15×);
+  `verify_batched_tail.py` (22 checks — exact bit equality per element across
+  all 3 families × polarity × caps, §8.1 source tripwires);
+  `verify_latch_basin_gpu.py --config {commit,gpu,stamp,order,…}` (full 6T
+  latch, both states, 4 techs, 100 %-same-basin binding — the failure mode the
+  perturbing flags could cause that no other gate tests).
+- **Diagnostics** (`tests/diag_*.py`, **not** gates): `diag_l72_*` controls
+  prove L72-in-PyCircuitSim ≈ NGSPICE, isolating NN-surface gaps;
+  `diag_nn_jacobian_consistency.py`.
 
 **Quick sanity:**
 
@@ -443,34 +244,20 @@ NGSPICE_BIN="$PWD/tools/ngspice-45.2/bin/ngspice" python tests/verify_ac.py   # 
 
 ## Development Guidelines
 
-**Coding standards:** type hints on all signatures; clear names (`v_gate`, `i_drain`);
-docstrings for complex algorithms; voltage clamping Vgs±5V, Vds±10V.
+**Coding standards:** type hints on all signatures; clear names (`v_gate`,
+`i_drain`); docstrings for complex algorithms; voltage clamping Vgs±5V, Vds±10V.
 
-**Separation principle:** `solver.py` builds MNA + executes NR (no device equations);
-`models/` computes current/conductances (no matrix ops); `simulation.py` orchestrates
-(parse → solve → visualize); all devices inherit from `Component`.
-
-**Key numerical techniques:**
-
-- Sparse MNA: `lil_matrix` assembly, CSR + `spsolve`. O(n) memory, O(n·log n) solve.
-- Convergence: `|ΔV| < VNTOL + RELTOL × max(|V_old|,|V_new|)` (RELTOL=1e-4, VNTOL=1e-7).
-- GMIN (1e-12 S) prevents singular matrices. DC GMIN stepping opt-in
-  (`use_gmin_stepping=True`, 2-level [1e-8, 1e-12]). NN circuits use
-  `_solve_dc_with_retry` (fast path first, GMIN retry on `_last_solve_converged=False`);
-  BSIM-CMG never enters the retry branch.
-- BE → Trap → BDF-2: BE step 1, Trap step 2+, BDF-2 auto on stiffness (NR>20); one-way.
-- Source stepping (20 steps); supply-relative adaptive damping with stuck-counter.
-- DC oscillation detection: 5-snapshot ring, accepts averaged solution if variance < 10× tol.
-- Hard `.ic` mode (`force_ic=True`): stamps `.ic` nodes as temporary V-source
-  constraints, re-solves unconstrained. Required for SRAM latches.
-- LTE sub-stepping (opt-in via `max_substeps`, default 1=disabled).
+**Separation principle:** `solver.py` builds MNA + executes NR (no device
+equations); `models/` computes current/conductances (no matrix ops);
+`simulation.py` orchestrates; all devices inherit from `Component`.
+Convergence: `|ΔV| < VNTOL + RELTOL × max(|V_old|,|V_new|)` (RELTOL=1e-4,
+VNTOL=1e-7); GMIN 1e-12 S; DC GMIN stepping opt-in (`use_gmin_stepping=True`).
 
 **Entry points:** CLI `main.py`; API `pycircuitsim.simulation.run_simulation()`;
 module exports (Circuit, Parser, Visualizer, run_simulation).
 
-**Environment & tools:** conda env `pycircuitsim` at
-`/home/shenshan/.conda/envs/pycircuitsim`; PyTorch 2.10.0 (CPU); OpenVAF
-`/usr/local/bin/openvaf`; NGSPICE `/usr/local/ngspice-45.2/bin/ngspice`.
+**Environment & tools:** conda env `pycircuitsim`; PyTorch 2.10.0 (CPU);
+OpenVAF `/usr/local/bin/openvaf`; NGSPICE `/usr/local/ngspice-45.2/bin/ngspice`.
 
 ---
 
@@ -516,8 +303,8 @@ cited in code.
    `(variant, NFIN=1)` bins fail OSDI convergence and are dropped per-bin, so NFIN≥2 trains.
 11. **Unified CLI** — `python -m bsimar.cli.train --model {direct,transformer,tabpfn}
     --size {small,medium,large,xl} --device-type {nmos,pmos} --tech-scope {...} ...`
-    (xl = 512×8 ~2.13M p, over-fit-boundary; production = large). Per-tech `--tech-scope`
-    → default save_prefix `tsmc{X}_{dn,tf,pfn}_<size>_<device>`. Flags (all default-off /
+    (xl = over-fit-boundary; production = large). Per-tech `--tech-scope` → default
+    save_prefix `tsmc{X}_{dn,tf,pfn}_<size>_<device>`. Flags (all default-off /
     behavior-preserving): `--swa-mode {none,ema,swa}`+`--ema-decay`; `--apply-filter
     {on,off}`+`--class-weights`; `--enable-subvt-off`; loss terms `--sobolev` /
     `--subthresh` / `--charge-sobolev`; EKV backbone `--ekv-core`/`--ekv-alpha`/`--ekv-hidden`.
