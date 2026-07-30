@@ -41,6 +41,21 @@ them would pad the table with rows that say nothing. They are recorded in §6.
 
 <!--RECIPEDELTA-->
 
+## 3a. Six groups sweep 20/20 — including the duplicate column
+
+`corroft`@`medium`, `corro15`@`medium` and all four corridor recipes at `xl`
+pass **every cell of the matrix**, TSMC6 included. These are the first full
+sweeps recorded in this project, and the fifth column is what makes them worth
+more than the old 16/16s: a sweep that includes a duplicate technology has
+survived the run-to-run lottery on both copies of it, which the DirectNet
+recipes did not (`DirectNet-L73-recipes.md` §4a — `crit15m@xl` passes
+`tsmc7-opamp` and fails its `tsmc6` twin).
+
+The one place BSIM-AR shows the same coin-flip is `crit15m`@`large`, which
+fails `tsmc6-opamp` where `corroft`@`large` and `crit30`@`large` — same tier,
+same data — do not. That is the exception that locates the rule: it is at
+`large`, the tier §4 already identifies as this family's worst corridor tier.
+
 ## 4. The recipe laws, as they apply to BSIM-AR
 
 **The corridor is the ring lever here too.** Every BSIM-AR recipe that closes a
@@ -87,10 +102,14 @@ weight → basin map is not portable across architectures.
 
 ## 8. Recommendation
 
-`corroft@medium` is the fidelity option: the best gate score this family
-reaches, at 1.94 M parameters, with comfortable margins and the family's
-reproducibility advantage behind it. `large` is the worst corridor tier and
-`xl` ties `medium` at many times the cost.
+`corroft@medium` is the fidelity option: a full 20/20 sweep at 1.94 M
+parameters, with comfortable margins and the family's reproducibility advantage
+behind it. `large` is the worst corridor tier, and `xl` sweeps too but ties
+`medium` at 7.7× the parameters — so `medium` wins on cost alone.
+
+**It is the only checkpoint in the project that passes every cell**, and the
+reason to trust that more than a bare score is §3a: it holds both copies of the
+duplicated technology, so it is not one lucky basin on a bimodal cell.
 
 It is **not** production, and the reason is cost alone: ~61.5 ms/eval against
 DirectNet's 1.5 ms. Use it where fidelity is worth ~40× the runtime.

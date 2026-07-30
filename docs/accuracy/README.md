@@ -27,11 +27,11 @@ it is stated once.
 
 | LEVEL | family | role | best clean tier | best recipe | CPU cost |
 |---|---|---|---|---|---|
-| 73 | **DirectNet** | **production** | `large` **16/20** | `crit15m`@xl **16/16** | 1.5 ms @ `large` |
-| 74 | **BSIM-AR** | higher fidelity | `small` **17/20** | `corroft`@medium **16/16** | 61.5 ms @ `medium` |
+| 73 | **DirectNet** | **production** | `large` **16/20** | `crit15m`@xl **19/20** | 1.5 ms @ `large` |
+| 74 | **BSIM-AR** | higher fidelity | `small` **17/20** | `corroft`@medium **20/20** | 61.5 ms @ `medium` |
 | 75 | **PFN** | research | `small` **14/20** | `corroft`@small **14/20** | 15.6 ms @ `small` |
 
-Strict = passes at OMP ∈ {1, 2, 4}. Totals are **/16–/20**, against the /20 these reports target (4 circuits × 5 techs): some groups have no TSMC6 checkpoint measured yet. **Compare the fractions, not the counts.**
+Strict = passes at OMP ∈ {1, 2, 4}. Totals are **/20** — 4 circuits × 5 techs, TSMC6 included (`methodology.md` §2). Earlier reports scored /16 over four techs, so a /20 total here and a /16 total there can be the same measurement.
 
 ## The finding that governs how to read everything else
 
