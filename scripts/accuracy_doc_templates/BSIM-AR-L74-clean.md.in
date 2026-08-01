@@ -13,10 +13,16 @@ runs ~40× DirectNet rather than ~5×, and why DirectNet stays production
 regardless of which family scores higher.
 
 **What "clean" means.** One training run, no addendum:
-`--apply-filter off --swa-mode ema --seed 42`. Unlike DirectNet, BSIM-AR's
-production slots `tsmc{X}_tf_{size}_*` **are** the clean checkpoints — the
-curriculum variants live under their own stems and are covered in
+`--apply-filter off --swa-mode ema --seed 42`. BSIM-AR's production slots
+`tsmc{X}_tf_{size}_*` **are** the clean checkpoints — the curriculum variants
+live under their own stems and are covered in
 [`BSIM-AR-L74-recipes.md`](BSIM-AR-L74-recipes.md).
+
+**Every number below is from the V7.4.0 rebuild.** Datasets, checkpoints and
+gate verdicts were all regenerated from scratch on new hardware, on exactly the
+same datasets and the same clean recipe DirectNet used, so the two clean
+reports remain a like-for-like architecture comparison. Nothing is inherited
+from an earlier pass.
 
 Gate definitions, the strict-OMP rule and the code ladder:
 [`methodology.md`](methodology.md).
@@ -35,6 +41,15 @@ Tier names compare a family with itself, never across families: BSIM-AR
 > totals are **/20**, device AC **/10**, opamp AC **/5**, where every earlier
 > report said /16, /8 and /4. No total here is comparable to a pre-V7.3.0 total
 > without rescaling.
+>
+> V7.4.0 makes `methodology.md` §7's TSMC6 finding exhaustive rather than
+> exemplary: of 1748 shared modelcard parameters exactly 11 differ in value,
+> plus 74 TSMC6-only and 12 TSMC7-only keys, and **all 97 have zero occurrences
+> anywhere in the BSIM-CMG Verilog-A** (against 333 of the 1737 identical keys
+> that do appear). All 97 belong to TSMC's TMI layout-dependent-effect layer
+> (LOD, ODX, isolated-CPODE); no core device-physics parameter differs. TSMC6
+> stays a **controlled repeat** whose sole degree of freedom is training
+> nondeterminism — see `DirectNet-L73-clean.md` for the full breakdown.
 
 ---
 
@@ -136,11 +151,18 @@ gate can reach the path while it is off.
 ## 9. Reproducing
 
 ```bash
-# BSIM-AR runs through the same drivers; the tag selects LEVEL=74
-bash scripts/v710_regate.sh _one tf medium TSMC7 verify_complex_opamp 4
-python scripts/v730_coverage.py --set clean --tag tf
+# train the clean control, all tiers, on GPU (same driver as DirectNet;
+# MODEL=transformer selects LEVEL=74 and the `_tf_` stems)
+MODEL=transformer RECIPES=clean TECHS='tsmc5 tsmc6 tsmc7 tsmc12 tsmc16' \
+  SIZES='small medium large xl' GPUS='1 1 0' NSTREAMS=8 TRAIN_OMP=4 \
+  bash scripts/recipe_train.sh
+
+# BSIM-AR gates through the same drivers; the tag selects LEVEL=74
+NN_PY=$(command -v python) bash scripts/v710_regate.sh \
+  _one tf medium TSMC7 verify_complex_opamp 4
+python scripts/v730_coverage.py --set clean --tag tf --require-complete
 ```
 
 Checkpoints (gitignored): `tsmc{5,6,7,12,16}_tf_{small,medium,large,xl}_{nmos,pmos}`,
 each with `_norm.npz` and a **required** `_config.npz` sidecar.
-Raw runs: `results/v730_regate/`, `results/v710_regate/`, `results/a3_regate/`.
+Raw runs: `results/v740_regate/`.

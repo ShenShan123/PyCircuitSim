@@ -49,17 +49,16 @@ SUITES: Dict[str, Tuple[str, ...]] = {
     "verify_nn_multi_tech_tran": ("1",),
 }
 
-# The clean control, per family. DirectNet's clean@large is NOT the production
-# `large` slot — that has carried the crit30f curriculum since V6.6.4 — so the
-# clean row reads from the v660clean archive. TSMC6 never had a curriculum
-# applied, so its `large` slot IS clean; the variant is therefore per-tech.
+# The clean control, per family. V7.4.0 retrained every tier of DirectNet and
+# BSIM-AR from scratch on the clean recipe, straight into the production slots,
+# so clean@large is now simply `large` for both — the v660clean archive detour
+# (needed while the DN `large` slot carried the crit30f curriculum) is gone.
 CLEAN: Dict[str, Dict[str, str]] = {
-    "dn": {"small": "small", "medium": "medium",
-           "large": "v660clean_large", "xl": "xl"},
+    "dn": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
     "tf": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
     "pfn": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
 }
-CLEAN_TECH_OVERRIDE = {("dn", "large", "TSMC6"): "large"}
+CLEAN_TECH_OVERRIDE: Dict[Tuple[str, str, str], str] = {}
 
 # Recipes that survive the V7.3.0 filter (docs/plans/2026-07-27-...md §5).
 # Everything else is archive-only or demoted to the dead-end table.
@@ -75,7 +74,8 @@ RECIPES: Dict[str, List[str]] = {
 # which supersedes the V6.13.0 one.
 PASSES = [("a3", ROOT / "results" / "a3_regate"),
           ("v710", ROOT / "results" / "v710_regate"),
-          ("v730", ROOT / "results" / "v730_regate")]
+          ("v730", ROOT / "results" / "v730_regate"),
+          ("v740", ROOT / "results" / "v740_regate")]
 
 
 def load_json_pass(root: pathlib.Path) -> Dict:

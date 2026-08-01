@@ -57,16 +57,16 @@ FAM = {"dn": "DirectNet", "tf": "BSIM-AR", "pfn": "PFN"}
 FILE_STEM = {"dn": "DirectNet-L73", "tf": "BSIM-AR-L74", "pfn": "PFN-L75"}
 STRICT_OMP = ("omp1", "omp2", "omp4")
 
-# Clean control per family; DirectNet's large slot carries crit30f in
-# production, so its clean row is the v660clean archive — except on TSMC6,
-# which never had a curriculum applied.
+# Clean control per family. V7.4.0 retrained DirectNet and BSIM-AR from scratch
+# on the clean recipe into the production slots at every tier, so clean@large is
+# simply `large` — the v660clean archive detour (needed while the DN `large`
+# slot carried the crit30f curriculum) no longer applies.
 CLEAN = {
-    "dn": {"small": "small", "medium": "medium",
-           "large": "v660clean_large", "xl": "xl"},
+    "dn": {t: t for t in TIERS},
     "tf": {t: t for t in TIERS},
     "pfn": {t: t for t in TIERS},
 }
-CLEAN_OVERRIDE = {("dn", "large", "TSMC6"): "large"}
+CLEAN_OVERRIDE: Dict[Tuple[str, str, str], str] = {}
 
 RECIPES: Dict[str, List[Tuple[str, str]]] = {
     "dn": [("crit30f", "large"), ("csob", "large"),
@@ -120,7 +120,8 @@ def load_json(name: str) -> Dict:
 
 
 A3 = load_a3()
-PASSES = [("V7.1.0", load_json("v710_regate")), ("V7.3.0", load_json("v730_regate"))]
+PASSES = [("V7.1.0", load_json("v710_regate")), ("V7.3.0", load_json("v730_regate")),
+          ("V7.4.0", load_json("v740_regate"))]
 
 
 def raw(tag: str, variant: str, suite: str, tech: str) -> Optional[Dict]:
@@ -556,12 +557,34 @@ def main() -> int:
     ap.add_argument("--check", action="store_true",
                     help="Verify the committed files match the evidence; "
                          "do not write. Exit 1 if any is stale.")
+    # A campaign lands one family at a time. Rebuilding all six from a
+    # half-measured tree would overwrite a valid report with tables whose
+    # cells are missing — indistinguishable, once written, from measured
+    # failures. --only keeps an in-flight family's report untouched until its
+    # evidence is complete.
+    ap.add_argument("--only", default=None,
+                    help="Comma list of families to build (dn,tf,pfn). "
+                         "Default: all. The README scoreboard spans families, "
+                         "so it is skipped unless all are built.")
+    ap.add_argument("--recipes", choices=["both", "clean", "recipes"],
+                    default="both", help="Which report of each family to build")
     args = ap.parse_args()
+
+    tags = ([t.strip() for t in args.only.split(",")] if args.only
+            else ["dn", "tf", "pfn"])
+    unknown = [t for t in tags if t not in FAM]
+    if unknown:
+        ap.error(f"unknown family {unknown}; choose from {sorted(FAM)}")
+    kinds = {"both": (False, True), "clean": (False,), "recipes": (True,)}[args.recipes]
+
     ok = True
-    for tag in ("dn", "tf", "pfn"):
-        for recipes in (False, True):
+    for tag in tags:
+        for recipes in kinds:
             ok &= build(tag, recipes, args.check)
-    ok &= build_readme(args.check)
+    if args.only is None and args.recipes == "both":
+        ok &= build_readme(args.check)
+    else:
+        print("[docs] README scoreboard skipped (partial build)")
     return 0 if ok else 1
 
 

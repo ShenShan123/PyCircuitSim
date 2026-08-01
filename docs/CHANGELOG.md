@@ -8,6 +8,104 @@ full original text lives in git history.)
 
 ---
 
+## V7.4.0 — clean rebuild of DirectNet + BSIM-AR from scratch on new hardware (branch `v720-gpu-scaling`, 2026-07-30/31)
+
+**IN FLIGHT.** DirectNet is complete and its report is rebuilt from measurement;
+BSIM-AR training is still running. Nothing in this entry is inherited from an
+earlier pass — datasets, checkpoints and gate verdicts were all regenerated.
+
+**Why.** The box changed (`memlab-gpu2`): a fresh clone with no datasets and no
+checkpoints, so every NN number had to be re-earned rather than re-read. Taken
+as an opportunity to re-measure the clean control end-to-end on one identical
+recipe (`--apply-filter off --swa-mode ema --seed 42`), all four tiers, all five
+techs, both polarities.
+
+**Discipline.** Training on GPU, **gating CPU-pinned** — fidelity remains a
+CPU/flags-off property (CLAUDE.md §Performance Discipline), so
+`PYCIRCUITSIM_NN_DEVICE=cuda` was not used for any scored number.
+
+### Landed
+
+- **Datasets** — all 10 regenerated (`--enable-inv-trip --enable-subvt-off`),
+  1.8–2.6 M rows each, ~25 min wall at 12 workers × 10 jobs.
+- **DirectNet** — 40/40 checkpoints, **240/240 gate cells**, report regenerated
+  and `--check` clean.
+- **Infra** — `scripts/v740_campaign.sh` (drain-loop orchestrator: gates each
+  tier as its checkpoints complete rather than waiting for all training),
+  `v740_tf_rescue.sh` (claims OOM-abandoned stems mid-wave), `v740_tf_fill.sh`
+  (post-wave gap refill + gate + collect). `v730_docs_build.py --only/--recipes`
+  so a half-measured family's report is never overwritten. `v740_regate`
+  registered as the newest evidence pass in both coverage and docs builders.
+- **DN clean@`large` remapping** — V7.4.0 trains clean into the production slots
+  at every tier, so the `v660clean_large` archive detour is retired from
+  `CLEAN`/`CLEAN_OVERRIDE` in both scripts.
+
+### Verdicts — three V7.3.0 claims retracted
+
+- **"DirectNet peaks at `large`" — RETRACTED.** The curve is monotonic:
+  11 → 12 → 14 → **15/20**, `xl` best. But decomposed it is weak: the ring
+  column is frozen at 2/5 across all four tiers and SRAM is saturated at 5/5,
+  so the whole climb is switchcap (saturating by `medium`) plus the noisy opamp
+  column. Safe statement: capacity does not *hurt* the clean recipe, and the
+  "over-fit boundary" story does not survive a retrain. `large` stays
+  production on cost (`xl` = 2.3× params and CPU for one cell).
+- **"`tsmc7-opamp` at `large` is open" — RETRACTED.** TSMC7 passes the opamp at
+  **all four tiers** (3.9–6.1 %) and is the strongest opamp column.
+- **"`tsmc5-opamp` is the thinnest margin" — RETRACTED.** 0/4: three tiers rail,
+  `large` misses at 11.6 % vs a 10 % gate.
+
+### Measured noise floor — the TSMC6 repeat paid off
+
+TSMC6/TSMC7 train on bit-identical rows, so every disagreement is training luck.
+They agree on **14/16** cells (all rings, all SRAMs, all switchcaps) and
+disagree twice, **both opamp** — worth a 2-cell spread in the per-tech totals
+(TSMC7 11/16, TSMC6 9/16). **A ≤2-cell opamp difference is therefore noise, not
+a result.** Applied immediately to this campaign's own finding: `tsmc16-opamp`
+went 0/4 (passed twice in V7.3.0) — exactly 2 cells, so it is flagged
+*not established pending a second seed* rather than reported as a regression.
+
+### New findings
+
+- **`xl` breaks parametric DC for the first time** — 66/69 configs (TSMC12
+  17/18, TSMC16 12/14) against a clean 69/69 at every other tier. Capacity now
+  visibly damages the device surface *while the circuit score climbs*, widening
+  the project's device-vs-circuit inversion: `medium` is the best device fit,
+  `xl` the best circuit tier.
+- **Low-VDD rings are an exception-free partition** — TSMC5/6/7 fail all 12 ring
+  cells, TSMC12/16 pass all 8. TSMC5 worsens with capacity (6.9 % → 14.4 %).
+- **`switchcap` at `small` fails 4/5 on hold droop**, not on the headline charge
+  metric.
+- **TSMC5 device AC reports `f3db = nan`** at `large`/`xl` — a degenerate fit,
+  flagged before `xl` is used for AC work.
+
+### TSMC6 ≡ TSMC7: §7 confirmed exhaustively, not softened
+
+`methodology.md` §7 named five differing PDK keys; this campaign enumerated all
+of them. Of 1748 shared modelcard parameters **11 differ in value**, plus 74
+TSMC6-only and 12 TSMC7-only keys = **97 total**, and **all 97 have zero
+occurrences anywhere in the BSIM-CMG Verilog-A** (vs 333 of the 1737 identical
+keys that do appear). All 97 belong to TSMC's TMI layout-dependent-effect layer
+(LOD, ODX OD-to-OD spacing, isolated-CPODE); **no core device-physics parameter
+differs** (vth0, u0, vsat, dvt0/1, eta0, phig, eot, toxp, hfin, cgso/cgdo).
+Over-determined mechanism: OpenVAF never compiles the TMI keys, *and*
+`pycmg/nn_generate.py:234` stamps only `{L, NFIN, TFIN, DEVTYPE}` so the
+instance-driven LDE terms never activate. Matches silicon — N6 is a
+design-rule-compatible EUV derivative of N7. The freshly generated
+`tsmc6_{nmos,pmos}.npz` are bit-identical to `tsmc7_*` bar `meta_tech_name`.
+
+### Dead end recorded
+
+- **Round-robining BSIM-AR training over `GPUS='1 1 0'`** — GPU 0 is shared with
+  a foreign 30.5 GB process leaving ~9.5 GB, so transformer `large`/`xl` jobs
+  OOM there. They fail at **epoch 0** (memory is claimed up front), so the cost
+  is seconds, not hours — which is why the wave was *not* restarted: killing it
+  would have discarded an in-flight job already 75 epochs deep. Recovery is
+  layered instead (rescue mid-wave → fill post-wave → `--require-complete`
+  gating so a killed run is never scored). Pin BSIM-AR `large`/`xl` to a GPU
+  with real headroom.
+
+---
+
 ## V7.2.0 — GPU-accelerated large-scale SRAM transient (branch `v720-gpu-scaling`, 2026-07-27/28)
 
 **All phases of `docs/plans/2026-07-26-v720-gpu-scaling.md` landed across two
