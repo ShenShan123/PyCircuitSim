@@ -36,7 +36,11 @@ else                             sn="${tlc}_${TAG}_${recipe}_${size}_nmos"; sp="
 [ -f "$CKPT/${sn}_best.pt" ] || { echo "MISSING $CKPT/${sn}_best.pt"; exit 1; }
 [ -f "$CKPT/${sp}_best.pt" ] || { echo "MISSING $CKPT/${sp}_best.pt"; exit 1; }
 
-export CUDA_VISIBLE_DEVICES="" NGSPICE_BIN="$NG"
+# Accuracy campaigns default to CPU.  The V7.2 GPU-axis fidelity campaign
+# opts in explicitly through GATE_CUDA_VISIBLE_DEVICES; keeping this selection
+# separate from the simulator's PYCIRCUITSIM_NN_DEVICE flag makes accidental
+# CUDA scoring impossible for every existing caller.
+export CUDA_VISIBLE_DEVICES="${GATE_CUDA_VISIBLE_DEVICES:-}" NGSPICE_BIN="$NG"
 if [ "$TAG" = "tf" ]; then
   export PYCIRCUITSIM_NN_CHECKPOINT_TF_NMOS="$sn" PYCIRCUITSIM_NN_CHECKPOINT_TF_PMOS="$sp"
   export PYCIRCUITSIM_NN_FORCE_LEVEL=74

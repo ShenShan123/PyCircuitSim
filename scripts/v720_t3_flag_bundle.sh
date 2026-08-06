@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # V7.2.0 §8.4 T3 — 16-gate complex campaign for the perturbing flag
-# bundle, CPU axis: {PYCIRCUITSIM_TRAN_BATCH_COMMIT=1,
+# bundle, CPU or GPU axis: {PYCIRCUITSIM_TRAN_BATCH_COMMIT=1,
 # PYCIRCUITSIM_BATCHED_STAMP=1, PYCIRCUITSIM_MNA_ORDERING=<spec>}.
 #
 # Runs the production DirectNet config (resolver-default stems, i.e.
@@ -11,15 +11,30 @@
 # ring_osc / opamp are REPORTED ONLY (their run-to-run noise exceeds the
 # gate). Evidence lands in results/v720_gpu_regate/t3_cpu_bundle/.
 #
-# Usage: bash scripts/v720_t3_flag_bundle.sh [ordering]
+# Usage:
+#   bash scripts/v720_t3_flag_bundle.sh [ordering]
+#   T3_AXIS=gpu GPU=1 bash scripts/v720_t3_flag_bundle.sh [ordering]
 #   ordering: PYCIRCUITSIM_MNA_ORDERING value (default NATURAL — the
 #   real-matrix winner; the plan's original MMD_AT_PLUS_A pick was
 #   refuted on real assembled matrices, see bench_ordering_real.py)
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ORDERING="${1:-NATURAL}"
+AXIS="${T3_AXIS:-cpu}"
+GPU="${GPU:-0}"
+PY="${NN_PY:-/data2/home/shenshan/.conda/envs/pycircuitsim/bin/python}"
+[ -x "$PY" ] || PY="$(command -v python)"
 
-OUT="$ROOT/results/v720_gpu_regate/t3_cpu_bundle"
+case "$AXIS" in
+  cpu) export GATE_CUDA_VISIBLE_DEVICES="" ;;
+  gpu)
+    export PYCIRCUITSIM_NN_DEVICE=cuda
+    export GATE_CUDA_VISIBLE_DEVICES="$GPU"
+    ;;
+  *) echo "unknown T3_AXIS=$AXIS (expected cpu or gpu)" >&2; exit 2 ;;
+esac
+
+OUT="$ROOT/results/v720_gpu_regate/t3_${AXIS}_bundle"
 mkdir -p "$OUT/logs"
 
 export PYCIRCUITSIM_TRAN_BATCH_COMMIT=1
@@ -28,7 +43,9 @@ export PYCIRCUITSIM_MNA_ORDERING="$ORDERING"
 export GATE_SCRATCH="$OUT/scratch"
 export OMP_WAIT_POLICY=passive KMP_BLOCKTIME=0
 
-echo "T3 CPU flag bundle: TRAN_BATCH_COMMIT=1 BATCHED_STAMP=1 MNA_ORDERING=$ORDERING"
+echo "T3 $AXIS flag bundle: TRAN_BATCH_COMMIT=1 BATCHED_STAMP=1 MNA_ORDERING=$ORDERING GPU=$GPU"
+echo "commit: $(git -C "$ROOT" rev-parse --short HEAD)"
+echo "python: $PY"
 echo "start: $(date '+%F %T')"
 
 # Binding (deterministic) suites first, report-only after.
@@ -56,9 +73,9 @@ export OUT ROOT
 xargs -P 3 -L1 bash -c 'run_one "$@"' _ < "$jobs_file"
 
 # Rule-2 canary with the bundle on (single run, OMP=1).
-export CUDA_VISIBLE_DEVICES="" NGSPICE_BIN="$ROOT/tools/ngspice-45.2/bin/ngspice"
+export CUDA_VISIBLE_DEVICES="$GATE_CUDA_VISIBLE_DEVICES" NGSPICE_BIN="$ROOT/tools/ngspice-45.2/bin/ngspice"
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYCIRCUITSIM_TORCH_THREADS=1 \
-  /data1/shenshan/.conda/envs/pycircuitsim/bin/python -u \
+  "$PY" -u \
   "$ROOT/tests/verify_nn_lifted_source_dc.py" \
   > "$OUT/logs/rule2_canary.log" 2>&1
 echo "rule2 canary rc=$?"
