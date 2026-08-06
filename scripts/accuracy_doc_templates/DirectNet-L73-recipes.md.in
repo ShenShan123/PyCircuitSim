@@ -31,7 +31,7 @@ ring-only `corro` corridor dataset.
 | recipe | tier | flags | lever |
 |---|---|---|---|
 | **`crit30f`** | `large` | `traj_corridor=3.0, inv_trip=2.0` | **production.** Corridor + inverter-trip anchor |
-| **`crit15m`** | `xl` | `traj_corridor=1.5, inv_trip=3.0` | the only DirectNet stem that sweeps the matrix |
+| **`crit15m`** | `xl` | `traj_corridor=1.5, inv_trip=3.0` | DirectNet's best; misses only `tsmc6-opamp` (§4a) |
 | `corroft` | `xl` | `traj_corridor=3.0` | corridor alone, no anchor |
 | `csob` | `large` | `--charge-sobolev` | supervises the autograd ∂q/∂V the AC and transient solvers consume |
 
@@ -57,6 +57,36 @@ and drops two rings is not "unchanged", and the net count is the least
 trustworthy column given the noise floor.
 
 <!--RECIPEDELTA-->
+
+## 4a. TSMC6 makes the training lottery visible in the table
+
+Folding TSMC6 in (V7.3.0) put the controlled repeat *inside* every row instead
+of in a footnote, and the consequence is immediate: **DirectNet's best recipe,
+`crit15m@xl`, passes `tsmc7-opamp` and fails `tsmc6-opamp`** — the same
+technology, `array_equal` data, the same recipe, the same code. Nothing
+separates those two cells except which training run produced the weights and
+which Newton basin the solver then found.
+
+That single pair says more than the score does:
+
+* **It is not a tech difference,** because there is no tech difference to have.
+  It is the run-to-run variance of the whole pipeline, displayed inline.
+* **It retires "`crit15m@xl` sweeps the matrix."** The sweep was real on four
+  techs and evaporated when the fifth column — a duplicate of one already
+  there — was added. A sweep that a duplicate can break was never a sweep; it
+  was a run that got lucky on one bimodal cell.
+* **The pattern is systematic, not a one-off.** `crit30f@large` (production)
+  fails both `tsmc6-` and `tsmc7-opamp`; `corroft@xl` fails `tsmc5-` and
+  `tsmc6-opamp`; on BSIM-AR, `crit15m@large` fails `tsmc6-opamp` while
+  `corroft@large` and `crit30@large` — same tier, same data — do not. Every one
+  of those splits is in the opamp column, which `methodology.md` §8.4 measured
+  as bimodal, and none is in `sram_snm` or `switchcap`, which it measured as
+  reproducing to ≤0.3 pp.
+
+**How to read the recipe scores in this file, then:** treat a difference of one
+opamp cell as noise unless it survives on both TSMC7 and TSMC6. The four
+columns that are not duplicates still carry real signal, and the ring column —
+where the corridor moves cells by twice the noise floor — carries the most.
 
 ## 4. The durable recipe laws
 
@@ -152,6 +182,6 @@ are listed to stop the arms being retried, not as current measurements.
 | use | checkpoint | why |
 |---|---|---|
 | **Production (fast path)** | `crit30f@large` = the `tsmc{X}_dn_large_*` slots | best gate score at 0.92 M params and ~1.5 ms/eval |
-| **Full-sweep DirectNet** | `crit15m@xl` (env-pin) | sweeps the matrix — but 2.3× the inference cost and no device-fidelity gain |
+| **Best DirectNet** | `crit15m@xl` (env-pin) | 19/20, the family's best — but 2.3× the inference cost and no device-fidelity gain, and its one miss is a coin-flip (§4a) |
 | **Device / charge / AC work** | `csob@large` (env-pin) | best mean device NRMSE; **not** a complex-gate alternate |
 | **One checkpoint, many techs** | `u716_dn_corroft_large` (env-pin) | ties the per-tech bar at universal scope, zero flips |

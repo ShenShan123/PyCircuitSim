@@ -12,6 +12,7 @@ beyond the preset.
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from pathlib import Path
 from typing import Dict, Optional
@@ -183,7 +184,23 @@ def _run(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     save_prefix = _make_save_prefix(args)
-    device_str = "cuda" if (args.cuda and torch.cuda.is_available()) else "cpu"
+    # --cuda is a demand, not a hint. Falling back to CPU silently costs ~50x
+    # wall-clock and is invisible in a campaign log — a V7.3.0 wave lost five
+    # hours to a run that had quietly degraded after a sibling GPU faulted and
+    # poisoned the driver for new contexts. Note that torch enumerates by
+    # CUDA_DEVICE_ORDER (FASTEST_FIRST by default), so the index pinned via
+    # CUDA_VISIBLE_DEVICES need not be the nvidia-smi index: a healthy-looking
+    # `nvidia-smi` is not evidence that the pinned device works.
+    if args.cuda and not torch.cuda.is_available():
+        print("ERROR: --cuda requested but torch.cuda.is_available() is False "
+              f"(CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '<unset>')!r}, "
+              f"device_count={torch.cuda.device_count()}). Refusing to fall "
+              "back to CPU. Check the pinned device with "
+              "`CUDA_VISIBLE_DEVICES=<n> python -c \"import torch; "
+              "print(torch.cuda.is_available())\"` — a faulted GPU can make "
+              "every new context fail while nvidia-smi still lists it.")
+        sys.exit(1)
+    device_str = "cuda" if args.cuda else "cpu"
 
     # Per-tech scope auto-derives the exclude set + the embedding vocab.
     # Explicit --exclude-techs / --num-tech-codes still win if both are set.

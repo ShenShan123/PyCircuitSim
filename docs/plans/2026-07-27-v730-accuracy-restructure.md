@@ -1,7 +1,36 @@
 # V7.3.0 — accuracy reports: condense, restructure, re-gate
 
-**Status:** IN FLIGHT (started 2026-07-27). Live routing document — update on
-every change. Executed history goes to `docs/CHANGELOG.md`, not here.
+**Status:** NEARLY DONE (2026-07-27 → 29). Structure landed and pushed; 1549 of
+1560 cells measured; the last 11 are the TSMC6 `crit30`@large gates.
+Live routing document — executed history goes to `docs/CHANGELOG.md`.
+
+## Closing notes — what cost time, so the next campaign does not repeat it
+
+1. **A faulted GPU that `nvidia-smi` did not obviously implicate.** One 4090
+   went to `[GPU requires reset]` mid-campaign and poisoned the driver for new
+   CUDA contexts. Two trainings died with `unspecified launch failure`; a third
+   silently became a CPU run and burned five hours at ~50× the wall clock.
+   **torch enumerates by `CUDA_DEVICE_ORDER` (FASTEST_FIRST), so the faulted
+   card was nvidia-smi index 1 and CUDA index 2** — pinning "GPU 2" hit the
+   broken device while `nvidia-smi` index 2 looked healthy. Probe the pinned
+   index directly:
+   `CUDA_VISIBLE_DEVICES=<n> python -c "import torch;print(torch.cuda.is_available())"`.
+   `--cuda` now refuses to fall back (`bsimar/cli/train.py`).
+2. **A running job is not a measured cell.** `v730_coverage.py` counts a cell
+   as measured only when its log carries the `===V710_DONE` marker, so emitting
+   a job file while a pool is in flight re-queues the running jobs and produces
+   the two-marker `RACED` logs the collector refuses to parse. Drain the pool,
+   or gate on a disjoint job set.
+3. **`--require-complete` earned itself.** Both CUDA-killed runs left a bare
+   20 MB `_best.pt` with no `.complete` marker — indistinguishable from a
+   finished checkpoint by size or name. No wrong number reached a report.
+4. **`/data1` filled to 0 bytes** during the campaign (another user's 471 GB).
+   Nothing here writes to it, but agent task-state does, so tooling fails in
+   confusing ways before the disk is the obvious suspect.
+5. **A concurrent session shares this working tree.** Stage explicitly; never
+   `git add -A <dir>`. One commit here swept two of that session's in-progress
+   files. See also the harness re-checking-out the session branch, which sent
+   three commits to the wrong branch before it was noticed.
 
 ---
 

@@ -50,4 +50,4 @@ for tag in dn tf pfn; do
 done
 
 echo "[tsmc6-gate] ALL FAMILIES GATED $(date '+%F %T')"
-echo "[tsmc6-gate] next: python scripts/accuracy_docs_build.py, then fill by-tech.md §5"
+echo "[tsmc6-gate] next: python scripts/v730_docs_build.py"

@@ -37,7 +37,7 @@ _REPORT_HEADER = (
     "authoritative exit-code gates + OMP determinism, large + xl tiers). "
     "**Part II — recipe×size matrix** (`scripts/recipe_collect.py`; the V6.6.5 "
     "13-recipe × 4-size sweep incl. device + AC suites). "
-    "Conclusions + production recommendation: `docs/accuracy/DirectNet-L73-accuracy.md`.\n")
+    "Conclusions + production recommendation: `docs/accuracy/DirectNet-L73-recipes.md`.\n")
 
 
 def write_report_section(marker: str, content: str) -> None:
@@ -405,7 +405,7 @@ def main():
          "Accuracy-first per plan §5: continuous metrics lead, X/16 is derived. "
          "`clean` = production control. Sections suffixed `(xl)` repeat the identical "
          "methodology at the `xl` tier for the recipes with xl checkpoints. "
-         "Conclusions + production recommendation: `docs/accuracy/DirectNet-L73-accuracy.md`.",
+         "Conclusions + production recommendation: `docs/accuracy/DirectNet-L73-recipes.md`.",
          ""]
     json_out = {}
     summary = []

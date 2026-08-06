@@ -17,9 +17,7 @@ the resolver serves have carried `crit30f` since V6.6.4.
 > two recipes is **not** evidence that one is better. The laws in §4 survive
 > because they move cells by far more than that, or move many cells at once.
 
-> **Denominators.** Recipe checkpoints exist for the four original techs only,
-> so recipe totals here are **/16** where the clean report's are /20. TSMC6 has
-> clean checkpoints at every tier but no curriculum ones.
+> **Denominators.** Totals are **/20** — 4 circuits × 5 techs, TSMC6 included (`methodology.md` §2). Earlier reports scored /16 over four techs, so a /20 total here and a /16 total there can be the same measurement.
 
 ---
 
@@ -33,7 +31,7 @@ ring-only `corro` corridor dataset.
 | recipe | tier | flags | lever |
 |---|---|---|---|
 | **`crit30f`** | `large` | `traj_corridor=3.0, inv_trip=2.0` | **production.** Corridor + inverter-trip anchor |
-| **`crit15m`** | `xl` | `traj_corridor=1.5, inv_trip=3.0` | the only DirectNet stem that sweeps the matrix |
+| **`crit15m`** | `xl` | `traj_corridor=1.5, inv_trip=3.0` | DirectNet's best; misses only `tsmc6-opamp` (§4a) |
 | `corroft` | `xl` | `traj_corridor=3.0` | corridor alone, no anchor |
 | `csob` | `large` | `--charge-sobolev` | supervises the autograd ∂q/∂V the AC and transient solvers consume |
 
@@ -52,10 +50,10 @@ Everything else that has ever been trained for DirectNet is in §6.
 
 | group | strict /20 | ring_osc | opamp | sram_snm | switchcap | flips | open cells |
 |---|---|---|---|---|---|---|---|
-| `crit30f`@large | **15/16** | 4/4 | 3/4 | 4/4 | 4/4 | 0 | tsmc7-opamp |
-| `csob`@large | **11/16** | 2/4 | 1/4 | 4/4 | 4/4 | 0 | tsmc5-ring_osc, tsmc7-ring_osc, tsmc5-opamp, tsmc7-opamp, tsmc16-opamp |
-| `corroft`@xl | **15/16** | 4/4 | 3/4 | 4/4 | 4/4 | 0 | tsmc5-opamp |
-| `crit15m`@xl | **16/16** | 4/4 | 4/4 | 4/4 | 4/4 | 0 | — |
+| `crit30f`@large | **18/20** | 5/5 | 3/5 | 5/5 | 5/5 | 0 | tsmc6-opamp, tsmc7-opamp |
+| `csob`@large | **15/20** | 3/5 | 2/5 | 5/5 | 5/5 | 0 | tsmc5-ring_osc, tsmc7-ring_osc, tsmc5-opamp, tsmc7-opamp, tsmc16-opamp |
+| `corroft`@xl | **18/20** | 5/5 | 3/5 | 5/5 | 5/5 | 0 | tsmc5-opamp, tsmc6-opamp |
+| `crit15m`@xl | **19/20** | 5/5 | 4/5 | 5/5 | 5/5 | 0 | tsmc6-opamp |
 
 ## 3. What each recipe changed against clean
 
@@ -65,10 +63,40 @@ trustworthy column given the noise floor.
 
 | recipe | tier | cells gained vs clean | cells lost vs clean | net |
 |---|---|---|---|---|
-| `crit30f` | large | tsmc5-ring_osc, tsmc16-opamp | — | **+2** |
-| `csob` | large | — | tsmc5-opamp, tsmc7-ring_osc | **-2** |
-| `corroft` | xl | tsmc5-ring_osc, tsmc7-ring_osc, tsmc12-opamp | — | **+3** |
-| `crit15m` | xl | tsmc5-ring_osc, tsmc5-opamp, tsmc7-ring_osc, tsmc12-opamp | — | **+4** |
+| `crit30f` | large | tsmc5-ring_osc, tsmc6-ring_osc, tsmc16-opamp | tsmc6-opamp | **+2** |
+| `csob` | large | tsmc6-ring_osc | tsmc5-opamp, tsmc7-ring_osc | **-1** |
+| `corroft` | xl | tsmc5-ring_osc, tsmc6-ring_osc, tsmc7-ring_osc, tsmc12-opamp | — | **+4** |
+| `crit15m` | xl | tsmc5-ring_osc, tsmc5-opamp, tsmc6-ring_osc, tsmc7-ring_osc, tsmc12-opamp | — | **+5** |
+
+## 4a. TSMC6 makes the training lottery visible in the table
+
+Folding TSMC6 in (V7.3.0) put the controlled repeat *inside* every row instead
+of in a footnote, and the consequence is immediate: **DirectNet's best recipe,
+`crit15m@xl`, passes `tsmc7-opamp` and fails `tsmc6-opamp`** — the same
+technology, `array_equal` data, the same recipe, the same code. Nothing
+separates those two cells except which training run produced the weights and
+which Newton basin the solver then found.
+
+That single pair says more than the score does:
+
+* **It is not a tech difference,** because there is no tech difference to have.
+  It is the run-to-run variance of the whole pipeline, displayed inline.
+* **It retires "`crit15m@xl` sweeps the matrix."** The sweep was real on four
+  techs and evaporated when the fifth column — a duplicate of one already
+  there — was added. A sweep that a duplicate can break was never a sweep; it
+  was a run that got lucky on one bimodal cell.
+* **The pattern is systematic, not a one-off.** `crit30f@large` (production)
+  fails both `tsmc6-` and `tsmc7-opamp`; `corroft@xl` fails `tsmc5-` and
+  `tsmc6-opamp`; on BSIM-AR, `crit15m@large` fails `tsmc6-opamp` while
+  `corroft@large` and `crit30@large` — same tier, same data — do not. Every one
+  of those splits is in the opamp column, which `methodology.md` §8.4 measured
+  as bimodal, and none is in `sram_snm` or `switchcap`, which it measured as
+  reproducing to ≤0.3 pp.
+
+**How to read the recipe scores in this file, then:** treat a difference of one
+opamp cell as noise unless it survives on both TSMC7 and TSMC6. The four
+columns that are not duplicates still carry real signal, and the ring column —
+where the corridor moves cells by twice the noise floor — carries the most.
 
 ## 4. The durable recipe laws
 
@@ -113,10 +141,10 @@ portable.
 
 | group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
 |---|---|---|---|---|---|
-| `crit30f`@large | **PASS** 4.04% | — | **PASS** 2.40% | **PASS** 3.49% | **PASS** 2.78% |
-| `csob`@large | FAIL 10.31% | — | FAIL 5.09% | **PASS** 2.12% | **PASS** 2.18% |
-| `corroft`@xl | **PASS** 4.05% | — | **PASS** 2.42% | **PASS** 2.68% | **PASS** 2.76% |
-| `crit15m`@xl | **PASS** 4.05% | — | **PASS** 2.42% | **PASS** 2.68% | **PASS** 2.76% |
+| `crit30f`@large | **PASS** 4.04% | **PASS** 2.45% | **PASS** 2.40% | **PASS** 3.49% | **PASS** 2.78% |
+| `csob`@large | FAIL 10.31% | **PASS** 4.37% | FAIL 5.09% | **PASS** 2.12% | **PASS** 2.18% |
+| `corroft`@xl | **PASS** 4.05% | **PASS** 2.39% | **PASS** 2.42% | **PASS** 2.68% | **PASS** 2.76% |
+| `crit15m`@xl | **PASS** 4.05% | **PASS** 2.45% | **PASS** 2.42% | **PASS** 2.68% | **PASS** 2.76% |
 
 #### Two-stage Miller opamp (DC)
 
@@ -124,10 +152,10 @@ portable.
 
 | group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
 |---|---|---|---|---|---|
-| `crit30f`@large | **PASS** 9.54% | — | FAIL 100.00% | **PASS** 6.26% | **PASS** 7.69% |
-| `csob`@large | FAIL 100.00% | — | FAIL 100.00% | **PASS** 5.84% | FAIL 100.00% |
-| `corroft`@xl | FAIL 100.00% | — | **PASS** 6.90% | **PASS** 6.25% | **PASS** 6.69% |
-| `crit15m`@xl | **PASS** 3.41% | — | **PASS** 7.56% | **PASS** 6.23% | **PASS** 6.48% |
+| `crit30f`@large | **PASS** 9.54% | FAIL 11.80% | FAIL 100.00% | **PASS** 6.26% | **PASS** 7.69% |
+| `csob`@large | FAIL 100.00% | **PASS** 5.52% | FAIL 100.00% | **PASS** 5.84% | FAIL 100.00% |
+| `corroft`@xl | FAIL 100.00% | FAIL 100.00% | **PASS** 6.90% | **PASS** 6.25% | **PASS** 6.69% |
+| `crit15m`@xl | **PASS** 3.41% | FAIL 100.00% | **PASS** 7.56% | **PASS** 6.23% | **PASS** 6.48% |
 
 #### 6T SRAM read SNM
 
@@ -135,10 +163,10 @@ portable.
 
 | group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
 |---|---|---|---|---|---|
-| `crit30f`@large | **PASS** 6.32% | — | **PASS** 2.65% | **PASS** 1.96% | **PASS** 1.73% |
-| `csob`@large | **PASS** 6.33% | — | **PASS** 1.67% | **PASS** 1.86% | **PASS** 3.06% |
-| `corroft`@xl | **PASS** 6.21% | — | **PASS** 1.67% | **PASS** 4.28% | **PASS** 2.01% |
-| `crit15m`@xl | **PASS** 6.01% | — | **PASS** 1.49% | **PASS** 4.33% | **PASS** 2.24% |
+| `crit30f`@large | **PASS** 6.32% | **PASS** 1.72% | **PASS** 2.65% | **PASS** 1.96% | **PASS** 1.73% |
+| `csob`@large | **PASS** 6.33% | **PASS** 1.51% | **PASS** 1.67% | **PASS** 1.86% | **PASS** 3.06% |
+| `corroft`@xl | **PASS** 6.21% | **PASS** 1.43% | **PASS** 1.67% | **PASS** 4.28% | **PASS** 2.01% |
+| `crit15m`@xl | **PASS** 6.01% | **PASS** 1.88% | **PASS** 1.49% | **PASS** 4.33% | **PASS** 2.24% |
 
 #### Switched-capacitor cell
 
@@ -146,10 +174,10 @@ portable.
 
 | group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
 |---|---|---|---|---|---|
-| `crit30f`@large | **PASS** 2.04% | — | **PASS** 2.17% | **PASS** 4.17% | **PASS** 3.32% |
-| `csob`@large | **PASS** 2.90% | — | **PASS** 2.42% | **PASS** 4.08% | **PASS** 3.35% |
-| `corroft`@xl | **PASS** 1.66% | — | **PASS** 2.26% | **PASS** 4.22% | **PASS** 3.48% |
-| `crit15m`@xl | **PASS** 2.25% | — | **PASS** 2.27% | **PASS** 4.22% | **PASS** 3.48% |
+| `crit30f`@large | **PASS** 2.04% | **PASS** 2.20% | **PASS** 2.17% | **PASS** 4.17% | **PASS** 3.32% |
+| `csob`@large | **PASS** 2.90% | **PASS** 2.37% | **PASS** 2.42% | **PASS** 4.08% | **PASS** 3.35% |
+| `corroft`@xl | **PASS** 1.66% | **PASS** 2.14% | **PASS** 2.26% | **PASS** 4.22% | **PASS** 3.48% |
+| `crit15m`@xl | **PASS** 2.25% | **PASS** 2.14% | **PASS** 2.27% | **PASS** 4.22% | **PASS** 3.48% |
 
 ## 6. Device fidelity and AC by recipe
 
@@ -157,37 +185,37 @@ portable.
 
 | group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass |
 |---|---|---|---|---|---|---|
-| `crit30f`@large | 1.91 | — | 1.21 | 1.69 (17/18) | 1.01 | 54/55 |
-| `csob`@large | 2.29 | — | 1.58 | 0.43 | 1.15 | 55/55 |
-| `corroft`@xl | 2.39 | — | 1.52 | — | 1.39 | 37/37 |
-| `crit15m`@xl | 2.35 | — | 1.43 | 2.75 (16/18) | 1.48 | 53/55 |
+| `crit30f`@large | 1.91 | 1.01 | 1.21 | 1.69 (17/18) | 1.01 | 68/69 |
+| `csob`@large | 2.29 | 1.34 | 1.58 | 0.43 | 1.15 | 69/69 |
+| `corroft`@xl | 2.39 | 1.70 | 1.52 | — | 1.39 | 51/51 |
+| `crit15m`@xl | 2.35 | 2.20 | 1.43 | 2.75 (16/18) | 1.48 | 67/69 |
 
 **Parametric transient — `verify_nn_multi_tech_tran`** *(mean NRMSE %)*
 
 | group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass |
 |---|---|---|---|---|---|---|
-| `crit30f`@large | 1.67 | — | 1.46 | 1.49 | 1.47 | 64/64 |
-| `csob`@large | 1.69 | — | 1.46 | 1.50 | 1.47 | 64/64 |
-| `corroft`@xl | 1.68 | — | 1.46 | — | 1.46 | 48/48 |
-| `crit15m`@xl | 1.67 | — | 1.45 | 1.50 | 1.48 | 64/64 |
+| `crit30f`@large | 1.67 | 1.45 | 1.46 | 1.49 | 1.47 | 80/80 |
+| `csob`@large | 1.69 | 1.47 | 1.46 | 1.50 | 1.47 | 80/80 |
+| `corroft`@xl | 1.68 | 1.46 | 1.46 | — | 1.46 | 64/64 |
+| `crit15m`@xl | 1.67 | 1.46 | 1.45 | 1.50 | 1.48 | 80/80 |
 
 **Device CS-amp AC** — NMOS / PMOS *(gate: gain0 ≤1.5 dB, f3db ratio ∈[0.7, 1.43], magNRMSE ≤10 %)*
 
 | group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass /10 |
 |---|---|---|---|---|---|---|
-| `crit30f`@large | ✓ / ✓ | — | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | **8/8** |
-| `csob`@large | ✓ / ✓ | — | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | **8/8** |
-| `corroft`@xl | ✓ / ✓ | — | ✓ / ✓ | ✗ f3db nan / ✗ f3db nan | ✓ / ✓ | **6/8** |
-| `crit15m`@xl | ✓ / ✓ | — | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | **8/8** |
+| `crit30f`@large | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | **10/10** |
+| `csob`@large | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | **10/10** |
+| `corroft`@xl | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✗ f3db nan / ✗ f3db nan | ✓ / ✓ | **8/10** |
+| `crit15m`@xl | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | **10/10** |
 
 **Opamp open-loop AC** — DC-gain error *(gate: ≤3 dB, GBW ratio ∈[0.6, 1.67], PM err ≤15°, non-railed OP)*
 
 | group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass /5 |
 |---|---|---|---|---|---|---|
-| `crit30f`@large | FAIL 3.31 dB | — | FAIL 31.88 dB | FAIL 6.44 dB | FAIL 4.98 dB | **0/4** |
-| `csob`@large | FAIL 20.12 dB | — | FAIL 31.44 dB | **PASS** 1.19 dB | FAIL 33.50 dB | **1/4** |
-| `corroft`@xl | FAIL 15.08 dB | — | FAIL 8.49 dB | FAIL — dB | FAIL 4.48 dB | **0/4** |
-| `crit15m`@xl | FAIL 4.59 dB | — | FAIL 32.27 dB | FAIL 9.45 dB | FAIL 4.02 dB | **0/4** |
+| `crit30f`@large | FAIL 3.31 dB | **PASS** 1.44 dB | FAIL 31.88 dB | FAIL 6.44 dB | FAIL 4.98 dB | **1/5** |
+| `csob`@large | FAIL 20.12 dB | FAIL 3.37 dB | FAIL 31.44 dB | **PASS** 1.19 dB | FAIL 33.50 dB | **1/5** |
+| `corroft`@xl | FAIL 15.08 dB | FAIL 31.41 dB | FAIL 8.49 dB | FAIL — dB | FAIL 4.48 dB | **0/5** |
+| `crit15m`@xl | FAIL 4.59 dB | FAIL 31.84 dB | FAIL 32.27 dB | FAIL 9.45 dB | FAIL 4.02 dB | **0/5** |
 
 `csob` earns its keep on the device and charge axis and is retained as a
 documented env-pin alternate **for device and AC work only**. Its complex-gate
@@ -240,6 +268,6 @@ are listed to stop the arms being retried, not as current measurements.
 | use | checkpoint | why |
 |---|---|---|
 | **Production (fast path)** | `crit30f@large` = the `tsmc{X}_dn_large_*` slots | best gate score at 0.92 M params and ~1.5 ms/eval |
-| **Full-sweep DirectNet** | `crit15m@xl` (env-pin) | sweeps the matrix — but 2.3× the inference cost and no device-fidelity gain |
+| **Best DirectNet** | `crit15m@xl` (env-pin) | 19/20, the family's best — but 2.3× the inference cost and no device-fidelity gain, and its one miss is a coin-flip (§4a) |
 | **Device / charge / AC work** | `csob@large` (env-pin) | best mean device NRMSE; **not** a complex-gate alternate |
 | **One checkpoint, many techs** | `u716_dn_corroft_large` (env-pin) | ties the per-tech bar at universal scope, zero flips |

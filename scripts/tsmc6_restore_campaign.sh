@@ -4,7 +4,7 @@
 #
 # TSMC6 was retired in V6.13.0 because it is TSMC7 relabelled under BSIM-CMG
 # (audit D1) — that finding is unchanged and is documented at the registry
-# entry in `bsimar/config.py` and in `docs/accuracy/by-tech.md`. It is being
+# entry in `bsimar/config.py` and in `docs/accuracy/methodology.md` §7. It is being
 # carried again by explicit decision, as the project's only controlled repeat
 # experiment: same data, same recipe, different training run.
 #

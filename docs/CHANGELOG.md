@@ -106,6 +106,101 @@ design-rule-compatible EUV derivative of N7. The freshly generated
 
 ---
 
+## V7.3.0 — accuracy reports restructured, and re-gated on one code state (2026-07-27 → 29)
+
+**The nine cross-cutting accuracy documents become two per model family — one
+for the clean control, one for the recipes measured against it — and every
+number in them is regenerated from the gate logs rather than transcribed.**
+Along the way the campaign closed the last measurement holes, gave PFN its
+first curriculum arm, and folded TSMC6 into the headline denominator.
+
+### The restructure
+
+`by-tech.md`, `by-scale.md`, `by-recipe.md` and the three `*-accuracy.md`
+family reports are retired, replaced by
+`{DirectNet-L73,BSIM-AR-L74,PFN-L75}-{clean,recipes}.md`. The clean report
+answers *per tech, per scale, per testcase*; the recipes report carries the
+addenda. Cross-cutting material lives once in `methodology.md`. The
+pre-fix archive drops its ~660 lines of frozen tables (recoverable with
+`git show 37cef77:docs/accuracy/archive-pre-gds-fix.md`) and keeps the
+register of retracted claims. 2173 → 1768 lines with more measurement behind
+them.
+
+**All tables are generated.** `scripts/v730_docs_build.py` builds the six
+reports and the README scoreboard from merged evidence; `--check` fails if a
+committed file is stale. `scripts/v730_coverage.py` merges the three
+measurement passes and reports what is measured, by which pass, and what is
+missing — emitting the remainder as a runnable job file.
+`scripts/v730_control.py` compares every jointly-measured cell.
+
+### Denominators: /16 → /20
+
+TSMC6 now counts. Complex totals are /20, device AC /10, opamp AC /5. **No
+total is comparable across that boundary without rescaling** — a V7.3.0 16/20
+and a V7.1.0 13/16 can be the same measurement. TSMC6 remains TSMC7
+relabelled; only the presentation changed.
+
+### What was measured
+
+1536 cells across 12 clean groups and 14 recipe groups, five techs. The
+control reports **176/176 jointly-measured cells reproducing at OMP=1**, which
+is what licenses mixing reused V7.1.0 numbers with V7.3.0 re-measurements.
+
+* **BSIM-AR clean is strict at all four tiers and identical at each** — same
+  score, same open cells, zero flips, over a 22× capacity range. Previously
+  only `large` was strict. The open set is the low-VDD ring column and nothing
+  else; opamp, SRAM and switchcap are complete at every tier.
+* **`corroft@medium`, `corro15@medium` and all four corridor recipes at `xl`
+  sweep 20/20** — the first full sweeps recorded, TSMC6 included.
+  `corroft@medium` is the only checkpoint in the project passing every cell.
+* **TSMC6 retires DirectNet's sweep.** Folding the duplicate in put the
+  controlled repeat inside every row, and it immediately falsified a claim
+  carried for two campaigns: `crit15m@xl` passes `tsmc7-opamp` and **fails
+  `tsmc6-opamp`** — same technology, `array_equal` data, same recipe, same
+  code. The only difference is which training run made the weights and which
+  Newton basin the solver found. A sweep a duplicate column can break was never
+  a sweep. The pattern is systematic and lands where the noise floor predicts:
+  every such split is in the bimodal opamp column, none in `sram_snm` or
+  `switchcap`.
+* **PFN's first curriculum arm.** `corroft@small`, trained for all five techs,
+  takes rings 3/5 → 5/5 (including the two low-VDD cells no PFN checkpoint had
+  ever passed) and opamps 2/5 → 0/5. Total unchanged, failure set replaced —
+  the cleanest instance yet of curricula *relocating* basins rather than
+  composing them, and the third architecture on which the corridor is the ring
+  lever.
+* **TSMC6 recipe checkpoints trained** (26) so the recipe tables reach /20.
+  Its ring-only corridor had never been harvested; the new one is
+  `array_equal` to TSMC7's, a fourth and stronger reproduction of the
+  duplicate finding — the corridor comes from *running the ring oscillator*
+  under LEVEL=72, so identical rows mean identical circuit trajectories.
+
+### Fixed
+
+* **`--cuda` no longer falls back to CPU silently** (`bsimar/cli/train.py`).
+  A 4090 faulted mid-campaign and poisoned the driver for new contexts; two
+  runs died outright and a third quietly became a ~50× slower CPU run that
+  would have been gated as if nothing happened. The guard exits 1 and prints
+  the pinned device, because the diagnosis is not obvious: torch enumerates by
+  `CUDA_DEVICE_ORDER` (FASTEST_FIRST), so the faulted card was nvidia-smi
+  index 1 and CUDA index 2 — `nvidia-smi` looked healthy for the device the
+  job was pinned to.
+* **`v730_coverage.py --require-complete`** keeps half-trained checkpoints out
+  of the gates. Both CUDA-killed runs left a bare 20 MB `_best.pt` with no
+  `.complete` marker; no wrong number reached a report.
+
+### Dead ends and non-fixes
+
+* **The opamp open-loop AC bias-resolution defect is documented, not fixed.**
+  The gate picks its bias on a 2 mV grid across a 3–14 mV transition, so on
+  three of four techs the NGSPICE reference's own operating point falls outside
+  the validity window — which is then applied to the NN only. Changing an
+  accuracy gate changes the accuracy record; that is a separate decision.
+* **"Every family is flip-free" is retracted a second time.** True after the
+  V6.13.0 gds fix, but the V7.1.0 sweep recorded a flip at two PFN tiers. The
+  rule is now "a nonzero flip count is unbankable, re-measure".
+
+---
+
 ## V7.2.0 — GPU-accelerated large-scale SRAM transient (branch `v720-gpu-scaling`, 2026-07-27/28)
 
 **All phases of `docs/plans/2026-07-26-v720-gpu-scaling.md` landed across two

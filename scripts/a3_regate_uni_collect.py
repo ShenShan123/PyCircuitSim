@@ -6,7 +6,7 @@ SUMMARY.tsv, so the result survives a dispatch that rewrites the summary, and
 reports both the single-run (OMP=1) count and the strict count (a cell counts
 strict only if it passes at every OMP it was swept at).
 
-Pre-fix baselines are the *strict* counts from DirectNet-L73-accuracy.md §9 —
+Pre-fix baselines are the *strict* counts from DirectNet-L73-recipes.md §7 —
 the universal campaign published strict, not single-run, so this is the
 like-for-like comparison.
 """

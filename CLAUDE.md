@@ -81,14 +81,17 @@ MOSFET transcapacitance stamp.
   with zero flips** (V6.13.0 re-gate; `tsmc7-opamp` is the sole open cell at
   `large`; DirectNet's `crit15m@xl` sweeps 16/16 strict as an env-pin alternate)
   — one identical recipe per (tech × device), no per-case specials. Report:
-  `docs/accuracy/DirectNet-L73-accuracy.md`; cross-cutting numbers in
-  `by-tech.md` / `by-scale.md` / `by-recipe.md`.
+  `docs/accuracy/DirectNet-L73-clean.md` (per tech / scale / testcase) +
+  `-recipes.md` (production state, universal scope, dead ends); anything
+  cross-cutting is in `methodology.md`.
 - **BSIM-AR (74)** — autoregressive Transformer sharing DirectNet's pipeline.
   Best config `corroft@medium` (corridor curriculum, 1.9M params) = **16/16 strict,
-  zero flips**. The old "tsmc7-opamp is the T3-solver-only cell" claim is
-  **RETRACTED**. AR inference is ~30–100× slower on CPU, so DirectNet stays
-  production. Parser LEVEL=74 preempt cascade + `PYCIRCUITSIM_NN_FORCE_LEVEL=74`
-  hook. Report: `docs/accuracy/BSIM-AR-L74-accuracy.md`.
+  zero flips** (V6.13.0 re-gate; was 15/16). The old "tsmc7-opamp is the T3-solver-only
+  cell" claim is **RETRACTED** — BSIM-AR passes it at every size, and DirectNet's
+  `crit15m@xl` also sweeps 16/16 strict. AR inference is ~30–100× slower on CPU, so
+  DirectNet stays production. Per-tech `tsmc{X}_tf_{small,medium,large,xl}_{nmos,pmos}` (+ recipe
+  variants); parser LEVEL=74 preempt cascade + `PYCIRCUITSIM_NN_FORCE_LEVEL=74`
+  hook. Report: `docs/accuracy/BSIM-AR-L74-{clean,recipes}.md`.
 - **PFN / TabPFN (75)** — faithful scaled-down port of TabPFN-v3's in-context
   transformer (tech code = 8th column token, local vocab), with two deviations: a
   **frozen learned context** (stratified K-row buffer baked into the checkpoint,
@@ -96,8 +99,7 @@ MOSFET transcapacitance stamp.
   smooth autograd). Clean `small` = 11/16 strict; capacity curve declines s→m→l.
   Env pins `PYCIRCUITSIM_NN_CHECKPOINT_PFN_{NMOS,PMOS}`, hook
   `PYCIRCUITSIM_NN_FORCE_LEVEL=75`, drivers take `MODEL=tabpfn`. The `_config.npz`
-  sidecar is **required** to rebuild the arch. Report:
-  `docs/accuracy/PFN-L75-accuracy.md`.
+  sidecar is **required** to rebuild the arch. Report: `docs/accuracy/PFN-L75-{clean,recipes}.md`.
 
 ## Supported Features
 
@@ -116,11 +118,24 @@ Inverter circuit must PASS Transient Analysis against NGSPICE ground truth withi
 reasonable numerical tolerance. Never use simplified/self-defined equations as reference.
 
 > **Accuracy evidence lives in `docs/accuracy/`** (index + scoreboard:
-> `README.md`): three cross-cutting pivots — `by-tech.md`, `by-scale.md`,
-> `by-recipe.md` — the single source of truth for any number that spans
-> families, plus one family report each and `methodology.md` (gates,
-> strict-OMP discipline, the code-state ladder) and `archive-pre-gds-fix.md`
-> (frozen pre-fix tables + retracted claims).
+> `README.md`). Restructured V7.3.0 into **two files per family** —
+> `{DirectNet-L73,BSIM-AR-L74,PFN-L75}-{clean,recipes}.md`. The *clean* report
+> is the control (one training run, no addendum) and answers **per tech, per
+> scale, per testcase**; the *recipes* report carries the training addenda
+> measured against it, filtered to the arms that earn a row. Everything
+> cross-cutting — gate definitions, strict-OMP discipline, the `gds` code-state
+> ladder, the TSMC6 repeat, the measured noise floor — is stated once in
+> **`methodology.md`**. Register of retracted claims: `archive-pre-gds-fix.md`.
+>
+> **All tables are generated** by `scripts/v730_docs_build.py` from the gate
+> logs, so they cannot drift from the evidence; `--check` fails if a committed
+> file is stale. `scripts/v730_coverage.py` reports what is measured and by
+> which pass, and emits the gaps as a runnable job file.
+>
+> **Denominators changed in V7.3.0:** TSMC6 folds into the headline, so complex
+> totals are **/20**, device AC **/10**, opamp AC **/5**. Older documents scored
+> /16, /8, /4 over four techs — *no total is comparable across that boundary
+> without rescaling*. TSMC6 is still TSMC7 relabelled (`methodology.md` §7).
 >
 > **Sprint history, version-by-version status, dead-ends, and the open known-issue
 > roadmap live in `docs/CHANGELOG.md` + `MEMORY.md`** — not duplicated here.
@@ -185,15 +200,26 @@ at all four scales. `--tech-scope` ∈ `{tsmc5,tsmc6,tsmc7,tsmc12,tsmc16,univers
 - **Checkpoints kept beyond production** (`bsimar/checkpoints/`):
   `v660clean_large` (warm-start base), `crit30f_large` (production provenance),
   alternates `csob@large` (AC/device), `corroft`/`crit10`@xl + `crit15m@xl`
-  (tsmc16-opamp coverage); universal `u716_dn_*` (18-code vocab, env-pin-only;
-  best `u716_dn_corroft_large` 10/12 strict, 0 FLIPs).
-- **Resolver cascade** (`parser.py`): env pin
-  `PYCIRCUITSIM_NN_CHECKPOINT_{DN,PFN}_{NMOS,PMOS}` read FIRST (an absent
-  pinned stem RAISES — no silent fallback); then per-tech
-  `tsmc{X}_{dn,tf,pfn}_{large,medium,small,xl}` (**large-first**) preempts the
-  dormant universal fallback. Completed runs carry a `*_best.pt.complete`
-  marker (a bare `_best.pt` may be a killed run). Resolutions log
-  `[NN-resolver] ...`.
+  (tsmc16-opamp coverage). Also `tsmc{X}_tf_*` (BSIM-AR) + `tsmc{X}_pfn_*` (PFN).
+- **Universal DirectNet (V6.7.0):** `u716_dn_{clean,csob,corroft,crit30u}_large` +
+  `_{clean,corroft}_xl` + TSMC5 fine-tunes `u716f5_plain_n{1000000,full}_large` —
+  18-code vocab, env-pin-only. Best = `u716_dn_corroft_large` (10/12 strict, 0 FLIPs).
+  See `docs/accuracy/DirectNet-L73-recipes.md` §7.
+- **Resolver cascade** (`pycircuitsim/parser.py`): env pin
+  `PYCIRCUITSIM_NN_CHECKPOINT_{DN,PFN}_{NMOS,PMOS}` read FIRST (since V6.6.6 an absent
+  pinned stem RAISES — no silent fallback); then per-tech `tsmc{X}_{dn,tf,pfn}_{large,
+  medium,small,xl}` (**large-first**) preempts the dormant universal fallback.
+  Completed runs carry a `*_best.pt.complete` marker (a bare `_best.pt` may be a
+  killed run). Resolutions log `[NN-resolver] L73 <name> TECH=.. VT=.. -> <chk> ...`.
+
+**Netlist usage:** `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with
+`L=16n NFIN=10`. Parser auto-resolves the checkpoint + local-vocab tech_code via
+`bsimar.config.local_variant_code(scope, tech, variant)`.
+
+### Output files
+
+`results/<circuit_name>/<analysis_type>/`: an HSPICE-like `*_simulation.lis` log, the
+data (`*_dc_sweep.csv` / `*_transient.csv` / `*_ac_sweep.csv`), and a Matplotlib plot.
 
 ## Testing & Verification
 
