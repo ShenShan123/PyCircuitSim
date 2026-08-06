@@ -108,8 +108,15 @@ Metrics reported per Rule 13: **MRE %, R², NRMSE, Max error**, per tech.
 * **Isolation.** Every cell gets its own `PYCIRCUITSIM_COMPLEX_RESULTS` /
   `PYCIRCUITSIM_NN_RESULTS`. The harness scratch dirs are keyed by
   (circuit, tech) only, so parallel cells without isolation silently collide.
-* **CPU, never CUDA.** `CUDA_VISIBLE_DEVICES=""`. Fragile opamp fixed points
-  land in different Newton basins under CUDA float.
+* **Scored CPU axis.** The headline reports pin `CUDA_VISIBLE_DEVICES=""`.
+  This preserves the historical numerical contract and keeps acceleration
+  changes out of the accuracy scoreboard.
+* **Separate GPU fidelity axis.** CUDA is evaluated only when explicitly
+  selected with `PYCIRCUITSIM_NN_DEVICE=cuda` and a pinned GPU. Its T3 bundle
+  repeats the complex gates with every acceleration feature enabled; its T4
+  gate probes the full latch basin. GPU verdicts are reported beside, never
+  substituted for, CPU-pinned results because CUDA arithmetic can relocate a
+  fragile Newton basin.
 * **Checkpoint completion.** A bare `_best.pt` is *not* evidence of a finished
   run — the trainer writes it at every validation improvement. Completed runs
   carry `*_best.pt.complete`. V6.6.5 found and retrained 22 killed-run
@@ -126,6 +133,17 @@ Metrics reported per Rule 13: **MRE %, R², NRMSE, Max error**, per tech.
   This changes how threads wait, never how work is partitioned, so it is
   numerically neutral.
 
+### V7.4 GPU-axis result
+
+The complete perturbing bundle — batched transient commit, CUDA NN evaluation,
+batched COO stamping and NATURAL MNA ordering — clears both binding gates on an
+RTX PRO 6000 Blackwell. T3 runs 48 cells (four electrically distinct techs ×
+four circuits × OMP {1,2,4}): SRAM + switchcap are **24/24**, Rule 2 is
+**15/15**, there are zero flips/runtime failures, and the full report-only
+basket is **12/16 strict**, exactly the V7.4 CPU clean-`large` basket. T4 is
+**8/8**, zero basin flips/errors, worst max|ΔV| 0.1206 mV and worst q-NRMSE
+0.0101% of VDD. Raw evidence is under `results/v720_gpu_regate/`.
+
 ## 6. Code-state ladder — which numbers compare to which
 
 **Comparisons across states are only valid where stated.**
@@ -135,7 +153,9 @@ Metrics reported per Rule 13: **MRE %, R², NRMSE, Max error**, per tech.
 | **pre-fix** | ≤ `a96112a` | everything up to V6.12.x, measured with the `gds` sign bug present |
 | **V6.13.0** | `d2ea720` | the gds sign + guard fix; full complex re-gate of all on-disk groups |
 | **V7.1.0** | — | device + AC + strict-OMP re-gate; V7.0.x perf flags default-off, so the numerics are V6.13.0's |
-| **V7.3.0** | HEAD | this campaign: the BSIM-AR complex matrix, PFN `xl`, the surviving recipes, and PFN's first curriculum arm |
+| **V7.3.0** | `73434d4` | five-tech report baseline: BSIM-AR, PFN `xl`, surviving recipes and PFN's first curriculum arm |
+| **V7.4.0** | `c2cab3d` | new-hardware, from-scratch clean rebuild of all DirectNet and BSIM-AR tiers; 480 measured suite runs, CPU-pinned |
+| **V7.4.0 GPU axis** | `5256d32` | opt-in CUDA T3 48/48 runs + T4 8/8 basin campaign; separate from the CPU scoreboard |
 
 ### The `gds` sign bug (fixed in `8ed35bd`, V6.13.0)
 
@@ -175,11 +195,13 @@ independent lines of evidence:
 * `tsmc6_{nmos,pmos}.npz` are `array_equal` to `tsmc7_*` in `inputs`,
   `geometry`, `outputs` and `sample_class` over 1,816,830 / 2,187,292 rows —
   only `meta_tech_name` differs.
-* The raw PDKs genuinely differ, but every differing key (`tmi_ver_lod`,
-  `tmi_ver_isocpode`, `sfxmin`, `samax_c`, `wodx5akvth0`) is a TSMC
-  TMI-proprietary extension with **zero occurrences** in the BSIM-CMG
-  Verilog-A. Of 871 implemented parameter names parsed from those sources,
-  `toxp` and `phig` are present and all five TMI keys absent.
+* The raw PDKs genuinely differ, but V7.4.0 exhaustively checked the complete
+  modelcard delta: of 1748 shared parameters, **11 differ in value**, with 74
+  keys unique to TSMC6 and 12 to TSMC7. All **97** differing/unique keys have
+  zero occurrences in the BSIM-CMG Verilog-A, while 333 of the 1737 identical
+  keys do occur. The entire delta is the TSMC TMI layout-stress layer (LOD,
+  ODX spacing and isolated-CPODE); core device parameters such as `vth0`,
+  `u0`, `vsat`, `eot`, `toxp`, `hfin` and `cgso/cgdo` are bit-identical.
 * Two LEVEL=72 Id-Vgs sweeps at identical geometry match to the last digit.
 * **V7.3.0 adds a fourth, at the corridor level:** the ring-only `corro`
   corridor, which did not previously exist for TSMC6, was harvested by
@@ -231,8 +253,10 @@ TSMC6 holds tail codes 22-24, so its presence renumbers nothing.
    claim on a SRAM or switchcap cell is.** Family-level counts over many cells,
    and levers whose effect clears the floor (the corridor moves rings by
    ~8 pp), are unaffected.
-   Reproducibility is also **family-dependent** — BSIM-AR reproduced all
-   sixteen compared verdicts, DirectNet eleven, PFN ten of twelve.
+   Reproducibility is also **family-dependent**. In the V7.4.0 clean rebuild,
+   BSIM-AR reproduced 15/16 TSMC6-vs-TSMC7 verdicts (the split was the small
+   ring) and DirectNet 14/16 (both splits were opamps). PFN's latest repeat is
+   still V7.3.0, at 10/12.
 5. **The opamp open-loop AC gate has a bias-resolution defect.**
    `verify_complex_opamp_ac` linearizes about `argmax |dVout/dVin|` found on a
    **2 mV** grid, but a two-stage Miller opamp with 33–48 dB of gain has a
@@ -254,22 +278,28 @@ days. Retraining the same recipe on the same rows is not.
 ## 9. Reproducing
 
 ```bash
-# what is measured, by which pass, and what is missing
-python scripts/v730_coverage.py --set clean
-python scripts/v730_coverage.py --set recipes --emit-jobs /tmp/jobs.txt
+# confirm the V7.4.0 clean checkpoint matrix is complete
+python scripts/v730_coverage.py --tag dn --set clean --require-complete
+python scripts/v730_coverage.py --tag tf --set clean --require-complete
 
-# run the gaps (resumable; a job whose log carries ===V710_DONE is skipped)
-V710_OUT=results/v730_regate PAR=12 JOBS=/tmp/jobs.txt bash scripts/v710_regate.sh
+# collect the completed new-hardware CPU gates
+python scripts/v710_regate_collect.py --root results/v740_regate
 
-# collect and rebuild the reports
-python scripts/v710_regate_collect.py --root results/v730_regate
-python scripts/v730_docs_build.py            # --check to verify, not write
+# rebuild/check only the V7.4.0 reports backed by local raw evidence
+python scripts/v730_docs_build.py --only dn,tf --recipes clean
+python scripts/v730_docs_build.py --check
 
-# train one recipe wave
-MODEL=tabpfn RECIPES=corroft SIZES=small GPUS="0 1 2" NSTREAMS=6 \
-  bash scripts/recipe_train.sh
+# GPU fidelity axis (opt-in; not part of the CPU scoreboard)
+T3_AXIS=gpu GPU=1 NN_PY=python \
+  bash scripts/v720_t3_flag_bundle.sh NATURAL
+python tests/verify_latch_basin_gpu.py \
+  --config commit+gpu+stamp+order --gpu 1 --ordering NATURAL
 ```
 
-Raw evidence: `results/v730_regate/` (V7.3.0), `results/v710_regate/` (V7.1.0),
-`results/a3_regate/` + `a3_regate_uni/` (V6.13.0), `results/recipe_bench/`,
-`results/bsimar_bench/`, `results/uni_bench/`.
+Local raw evidence: `results/v740_regate/` (V7.4.0 CPU clean) and
+`results/v720_gpu_regate/` (V7.4.0 GPU axis). The V7.3.0 raw recipe/PFN trees
+were not copied to the new machine; their rendered family reports are the
+durable historical record. The builder renders only from a complete pinned
+campaign pass. If that source is incomplete locally, it preserves the report
+only after its committed SHA-256 matches, rather than mixing passes or writing
+blank tables.

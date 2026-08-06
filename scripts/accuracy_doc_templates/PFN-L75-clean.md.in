@@ -25,6 +25,10 @@ and because it is ~4× cheaper than BSIM-AR at ~15.6 ms/eval.
 
 Gate definitions and the code ladder: [`methodology.md`](methodology.md).
 
+> **Evidence boundary.** PFN was not rebuilt in V7.4.0; no PFN checkpoints are
+> present in the new-hardware artifact set. All measurements in this file are
+> the latest available PFN evidence, retained from V7.3.0.
+
 | tier | shape | params |
 |---|---|---|
 | `small` | — | **0.69 M** |

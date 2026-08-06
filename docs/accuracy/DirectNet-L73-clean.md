@@ -15,9 +15,10 @@ gate verdicts were all regenerated from scratch on new hardware: the ten
 per-tech datasets rebuilt with `--enable-inv-trip --enable-subvt-off`, then all
 four tiers × five techs × both polarities trained clean on GPU straight into
 the production slots, then gated CPU-pinned. So the clean `large` row is now
-simply the `large` checkpoint — the `v660clean_large` archive detour, needed
-while the production `large` slot carried the `crit30f` curriculum, no longer
-applies. Nothing here is inherited from an earlier pass.
+simply the checkpoint served by the resolver. The `v660clean_large` archive
+detour and the `crit30f` production promotion belonged to the previous
+hardware generation; neither is present in the V7.4.0 artifact set. Nothing
+here is inherited from an earlier pass.
 
 Gate definitions, the strict-OMP rule, the `gds`-fix code ladder and the
 measured noise floor: [`methodology.md`](methodology.md). Read it before
@@ -164,7 +165,8 @@ and must not be read as a result.
 > best clean tier, not a degraded one. The retraction is about the *shape of
 > the capacity curve only*; `large` remains the production tier for cost
 > reasons (`xl` is 2.3× the parameters and 2.3× the CPU cost per eval for one
-> extra cell), and the recipes report is where production is actually decided.
+> extra cell). The recipe report is historical V7.3.0 evidence and was not
+> rebuilt or promoted over these clean V7.4.0 slots.
 
 What actually moves across the tiers is narrow. **The ring column is frozen at
 2/5 for all four tiers** and the SRAM column is saturated at 5/5, so neither
@@ -307,7 +309,30 @@ device-current or charge-derivative fidelity gaps. Device DC (69/69 below
 `xl`), transient (80/80 everywhere), SRAM (20/20) and switchcap above `small`
 are all strong. The one genuinely new device-level crack is `xl`'s 66/69.
 
-## 8. Reproducing
+## 8. GPU acceleration fidelity — separate from the CPU scoreboard
+
+The V7.4 GPU axis ran the resolver-visible clean `large` checkpoints with all
+perturbing acceleration levers enabled: batched transient commit, CUDA NN
+evaluation, batched COO stamping and NATURAL MNA ordering. T3 covered the four
+electrically distinct technologies × four circuits × OMP {1,2,4} (**48
+runs**).
+
+**Binding verdict: PASS.** SRAM and switchcap are 24/24 across OMP, all eight
+strict cells pass, Rule 2 is 15/15 on CUDA, and there are zero thread-count
+flips or runtime failures. The full report-only basket is **12/16 strict** —
+ring 2/4, opamp 2/4, SRAM 4/4, switchcap 4/4 — exactly the current V7.4 CPU
+clean-`large` basket. Every printed metric matches the CPU evidence except
+TSMC5 opamp OMP=1, which moves 11.61% → 11.59% without changing its FAIL
+verdict.
+
+T4 then compared the complete `{commit,gpu,stamp,order}` path directly with
+the flag-off reference on both 6T latch states × four technologies: **8/8
+PASS, zero basin flips, zero errors**, worst max|ΔV| **0.1206 mV** and worst
+q-NRMSE **0.0101% of VDD**. This clears the GPU fidelity gates; CUDA remains an
+explicit opt-in because the CPU/flags-off path is still the scored contract,
+not because a V7.4 mismatch remains.
+
+## 9. Reproducing
 
 ```bash
 # 1. datasets (10 = 5 techs x 2 polarities); BOTH flags are required
@@ -333,3 +358,5 @@ python scripts/v730_docs_build.py
 Checkpoints (gitignored): `tsmc{5,6,7,12,16}_dn_{small,medium,large,xl}_{nmos,pmos}`
 — clean at every tier, so no archive stem is needed.
 Raw runs: `results/v740_regate/`.
+GPU evidence: `results/v720_gpu_regate/t3_gpu_bundle/` and
+`results/v720_gpu_regate/t4_gpu_bundle/`.

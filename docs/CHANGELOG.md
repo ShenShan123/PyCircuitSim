@@ -8,11 +8,13 @@ full original text lives in git history.)
 
 ---
 
-## V7.4.0 — clean rebuild of DirectNet + BSIM-AR from scratch on new hardware (branch `v720-gpu-scaling`, 2026-07-30/31)
+## V7.4.0 — clean rebuild + GPU fidelity re-gate on new hardware (branch `v720-gpu-scaling`, 2026-07-30 → 2026-08-06)
 
-**IN FLIGHT.** DirectNet is complete and its report is rebuilt from measurement;
-BSIM-AR training is still running. Nothing in this entry is inherited from an
-earlier pass — datasets, checkpoints and gate verdicts were all regenerated.
+**COMPLETE for the CPU accuracy axis.** DirectNet and BSIM-AR are both trained,
+gated and regenerated from measurement. Nothing in their clean reports is
+inherited from an earlier pass — datasets, checkpoints and gate verdicts were
+all rebuilt. Recipe rows and PFN were deliberately not retrained; their reports
+are retained as explicitly labelled V7.3.0 evidence.
 
 **Why.** The box changed (`memlab-gpu2`): a fresh clone with no datasets and no
 checkpoints, so every NN number had to be re-earned rather than re-read. Taken
@@ -20,25 +22,38 @@ as an opportunity to re-measure the clean control end-to-end on one identical
 recipe (`--apply-filter off --swa-mode ema --seed 42`), all four tiers, all five
 techs, both polarities.
 
-**Discipline.** Training on GPU, **gating CPU-pinned** — fidelity remains a
-CPU/flags-off property (CLAUDE.md §Performance Discipline), so
-`PYCIRCUITSIM_NN_DEVICE=cuda` was not used for any scored number.
+**Discipline.** Training on GPU, **headline gating CPU-pinned** — fidelity
+remains a CPU/flags-off scoreboard property (CLAUDE.md §Performance
+Discipline). CUDA acceleration is re-gated as a separate T3/T4 axis and never
+substituted into those scores.
 
 ### Landed
 
 - **Datasets** — all 10 regenerated (`--enable-inv-trip --enable-subvt-off`),
   1.8–2.6 M rows each, ~25 min wall at 12 workers × 10 jobs.
-- **DirectNet** — 40/40 checkpoints, **240/240 gate cells**, report regenerated
+- **DirectNet** — 40/40 checkpoints, **240/240 suite runs**, report regenerated
   and `--check` clean.
+- **BSIM-AR** — 40/40 checkpoints, **240/240 suite runs**, including recovery
+  of the large/xl stems that OOMed on the shared low-headroom GPU; report
+  regenerated and `--check` clean.
 - **Infra** — `scripts/v740_campaign.sh` (drain-loop orchestrator: gates each
   tier as its checkpoints complete rather than waiting for all training),
   `v740_tf_rescue.sh` (claims OOM-abandoned stems mid-wave), `v740_tf_fill.sh`
   (post-wave gap refill + gate + collect). `v730_docs_build.py --only/--recipes`
-  so a half-measured family's report is never overwritten. `v740_regate`
-  registered as the newest evidence pass in both coverage and docs builders.
+  plus a complete-matrix guard, per-report pass pin, and SHA-256 manifest, so a
+  partial pass cannot overwrite a coherent report or silently drift preserved
+  history. `v740_regate` is registered as the V7.4 clean evidence pass in both
+  coverage and docs builders.
+  The campaign completion matcher now accepts the trainer's actual
+  `ALL RECIPE TRAINING COMPLETE` sentinel; the stale post-campaign poll loop
+  exposed by this rebuild is retired.
 - **DN clean@`large` remapping** — V7.4.0 trains clean into the production slots
   at every tier, so the `v660clean_large` archive detour is retired from
   `CLEAN`/`CLEAN_OVERRIDE` in both scripts.
+- **Evidence boundary** — the new machine has no V7.3 recipe/PFN raw result
+  trees or checkpoints. Their rendered reports remain the durable historical
+  evidence; full regeneration is intentionally avoided because an empty local
+  source cannot reconstruct those measured rows.
 
 ### Verdicts — three V7.3.0 claims retracted
 
@@ -77,6 +92,44 @@ went 0/4 (passed twice in V7.3.0) — exactly 2 cells, so it is flagged
   metric.
 - **TSMC5 device AC reports `f3db = nan`** at `large`/`xl` — a degenerate fit,
   flagged before `xl` is used for AC work.
+
+### BSIM-AR clean verdict — fidelity remains stronger, but not flat
+
+- The strict curve is **18 → 17 → 15 → 13/20** (`small`→`xl`), zero flips.
+  This retracts the V7.3.0 clean claim that BSIM-AR is flat across capacity.
+  `small` misses only TSMC5 switchcap (hold-droop criterion) and the noisy
+  TSMC7 ring; `xl` adds four ring failures and a three-cell TSMC12 collapse.
+- The capacity decline is a circuit-surface result, not wholesale device
+  damage: transient is **80/80 at every tier**, device AC is 9/10, 10/10,
+  10/10, 10/10, and parametric DC is 67/69, 68/69, 65/69, 67/69.
+- TSMC6/TSMC7 agree on **15/16** clean verdicts; the sole split is the small
+  ring (4.33 % pass vs 5.86 % fail), inside the measured ring noise. The old
+  claim that BSIM-AR reproduced all 16 controlled-repeat cells is retracted.
+- Historical V7.3.0 corridor recipes still record 20/20 groups, but they were
+  not retrained in V7.4.0 and cannot be treated as deltas against these new
+  clean controls or as the current artifact set.
+
+### GPU acceleration fidelity — remaining V7.2 gate closed
+
+- **T3 full bundle** (`commit+gpu+stamp+NATURAL`, DirectNet clean `large`) ran
+  all **48/48** cells: four electrically distinct techs × four circuits ×
+  OMP {1,2,4}. Binding SRAM + switchcap are **24/24**, Rule 2 is **15/15** on
+  CUDA, and there are zero thread-count flips, OOMs or runtime errors.
+- The report-only basket is **12/16 strict** (ring 2/4, opamp 2/4, SRAM 4/4,
+  switchcap 4/4), exactly the current V7.4 CPU clean-`large` basket. Printed
+  metrics are identical except TSMC5 opamp OMP=1, 11.61 % CPU → 11.59 % GPU,
+  with the same FAIL verdict.
+- **T4 full latch basin** is **8/8 PASS, zero basin flips, zero errors** across
+  both states × four techs; worst max|ΔV| **0.1206 mV**, worst q-NRMSE
+  **0.0101 % of VDD**. The remaining V7.2 GPU fidelity gate is closed.
+- CUDA stays opt-in and GPU results stay outside the CPU accuracy scoreboard;
+  this is the compatibility contract, not an unresolved numerical failure.
+  The T3 driver now pins one Python interpreter for every worker, removes stale
+  sidecars before a rerun, records all 48 return codes, and exits nonzero for
+  missing evidence, binding failure, OMP flips, infrastructure errors, or a
+  failed Rule-2 canary.
+  Evidence: `results/v720_gpu_regate/t3_gpu_bundle/` and
+  `t4_gpu_bundle/`.
 
 ### TSMC6 ≡ TSMC7: §7 confirmed exhaustively, not softened
 

@@ -6,12 +6,18 @@ clean model in [`BSIM-AR-L74-clean.md`](BSIM-AR-L74-clean.md); the recipe map
 is shared with DirectNet, so the same flags mean the same thing in both
 families — which is what makes the comparison in §4 possible at all.
 
+> **Evidence boundary.** Recipe rows in this file are retained from V7.3.0.
+> V7.4.0 rebuilt the clean BSIM-AR matrix on new hardware but did not retrain
+> these curricula, so recipe-to-clean deltas below refer to the V7.3.0 clean
+> controls. They must not be subtracted from the V7.4.0 clean table.
+
 > **Read the noise floor before ranking anything by one cell.** `ring_osc`
 > carries ±4 pp of run-to-run scatter across a 5 % gate and `opamp` is bimodal
 > for two of the three families; `sram_snm` and `switchcap` reproduce to
 > ≤0.3 pp (`methodology.md` §7). BSIM-AR happens to be the family where this
-> bites least — its repeat reproduced every verdict — but the recipes are still
-> ranked on the same noisy cells.
+> bit least in the V7.3.0 recipe campaign — that repeat reproduced every
+> verdict — but the recipes are still ranked on the same noisy cells. The
+> V7.4.0 clean repeat is 15/16 (`BSIM-AR-L74-clean.md` §6).
 
 > **Denominators.** Totals are **/20** — 4 circuits × 5 techs, TSMC6 included (`methodology.md` §2). Earlier reports scored /16 over four techs, so a /20 total here and a /16 total there can be the same measurement.
 

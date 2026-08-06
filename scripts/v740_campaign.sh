@@ -37,7 +37,7 @@ say () { echo "[v740] $(date '+%F %T') $*"; }
 # round — its cells are ~40x cheaper than BSIM-AR's, so the DirectNet report
 # unblocks while BSIM-AR is still grinding.
 trained () {  # master-log -> 0 once the wave has terminated, either way
-  grep -qE "ALL TRAINING COMPLETE|INFRASTRUCTURE FAILURE" "$1" 2>/dev/null
+  grep -qE "ALL (RECIPE )?TRAINING COMPLETE|INFRASTRUCTURE FAILURE" "$1" 2>/dev/null
 }
 
 round=0

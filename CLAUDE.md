@@ -17,10 +17,10 @@ compact-model families on one solver, all gated against NGSPICE ground truth:
   every NN trains against and is gated on.
 - **DirectNet** (LEVEL=73) — feed-forward MLP; the **production** NN fast path.
 - **BSIM-AR Transformer** (LEVEL=74) — autoregressive Transformer; the validated
-  **higher-fidelity** option (16/16 strict post-V6.13.0, ~30–100× slower AR inference).
+  **higher-fidelity** option (V7.4 clean best 18/20, ~30–100× slower AR inference).
 - **PFN / TabPFN** (LEVEL=75) — TabPFN-v3-style in-context transformer;
-  **research** family (clean small 11/16 strict at 0.69M params; ~10× DN eval
-  cost, 4× faster than BSIM-AR).
+  **research** family (latest evidence: V7.3 clean small 14/20 at 0.69M params;
+  ~10× DN eval cost, 4× faster than BSIM-AR).
 
 The three NN families share one data / normalization / loss / training / eval
 pipeline via the unified `bsimar` package (`external_compact_models/bsimar/`).
@@ -29,7 +29,8 @@ ASAP7 + TSMC5/7/12/16, plus **TSMC6** — which is *TSMC7 relabelled* under
 BSIM-CMG (`docs/2026-07-21-systematic-audit.md` §D1), retired for that in
 V6.13.0 and **restored in V7.1.0 as a deliberate controlled repeat**: same data,
 same recipe, different training run. Score it in its own /4 column, never inside
-the /16.
+the old /16 when reading pre-V7.3 reports; current reports deliberately fold it
+into /20 as an inline controlled repeat, not as an independent technology.
 
 **Core Principles:** pure Python; Solver ↔ Device Models decoupled; production-grade
 compact models via PyCMG/OSDI; basic HSPICE netlist compatibility.
@@ -76,27 +77,29 @@ MOSFET transcapacitance stamp.
 - **DirectNet (73)** — single-shot MLP; 7-dim input (Vgs, Vds, Vbs, NFIN, L, T,
   tech_code with `nn.Embedding`). gm/gds/gmb are the **autograd Jacobian** of the
   predicted `id`; AC caps are the `dQ/dV` autograd of predicted charges; per-tech
-  checkpoints use a local embedding vocab (Rule 16). **Production = uniform `large`
-  tier with the crit30 curriculum = 15/16 complex gates, strict across OMP∈{1,2,4}
-  with zero flips** (V6.13.0 re-gate; `tsmc7-opamp` is the sole open cell at
-  `large`; DirectNet's `crit15m@xl` sweeps 16/16 strict as an env-pin alternate)
-  — one identical recipe per (tech × device), no per-case specials. Report:
+  checkpoints use a local embedding vocab (Rule 16). **V7.4 production is the
+  freshly rebuilt clean `large` tier: 14/20 strict, zero flips; clean `xl` is
+  best at 15/20 but costs 2.3× more for one cell.** The V7.3 recipe results
+  (`crit15m@xl` 19/20 best) remain historical evidence and were neither
+  retrained nor promoted on the new hardware. Report:
   `docs/accuracy/DirectNet-L73-clean.md` (per tech / scale / testcase) +
   `-recipes.md` (production state, universal scope, dead ends); anything
   cross-cutting is in `methodology.md`.
 - **BSIM-AR (74)** — autoregressive Transformer sharing DirectNet's pipeline.
-  Best config `corroft@medium` (corridor curriculum, 1.9M params) = **16/16 strict,
-  zero flips** (V6.13.0 re-gate; was 15/16). The old "tsmc7-opamp is the T3-solver-only
-  cell" claim is **RETRACTED** — BSIM-AR passes it at every size, and DirectNet's
-  `crit15m@xl` also sweeps 16/16 strict. AR inference is ~30–100× slower on CPU, so
-  DirectNet stays production. Per-tech `tsmc{X}_tf_{small,medium,large,xl}_{nmos,pmos}` (+ recipe
-  variants); parser LEVEL=74 preempt cascade + `PYCIRCUITSIM_NN_FORCE_LEVEL=74`
-  hook. Report: `docs/accuracy/BSIM-AR-L74-{clean,recipes}.md`.
+  V7.4 rebuilt all clean tiers; `small` is best at **18/20 strict, zero flips**,
+  with capacity declining 18→17→15→13. V7.3 corridor recipes reached 20/20,
+  but those checkpoints were not rebuilt in V7.4 and are historical evidence,
+  not the current artifact set. AR inference is ~30–100× slower on CPU, so
+  DirectNet stays production. Per-tech
+  `tsmc{X}_tf_{small,medium,large,xl}_{nmos,pmos}`; parser LEVEL=74 preempt
+  cascade + `PYCIRCUITSIM_NN_FORCE_LEVEL=74` hook. Report:
+  `docs/accuracy/BSIM-AR-L74-{clean,recipes}.md`.
 - **PFN / TabPFN (75)** — faithful scaled-down port of TabPFN-v3's in-context
   transformer (tech code = 8th column token, local vocab), with two deviations: a
   **frozen learned context** (stratified K-row buffer baked into the checkpoint,
   context-KV cached at inference) and a direct 13-output value head (NR needs
-  smooth autograd). Clean `small` = 11/16 strict; capacity curve declines s→m→l.
+  smooth autograd). Latest clean `small` = 14/20 strict in V7.3; PFN was not
+  rebuilt and no PFN checkpoints are present on the V7.4 hardware.
   Env pins `PYCIRCUITSIM_NN_CHECKPOINT_PFN_{NMOS,PMOS}`, hook
   `PYCIRCUITSIM_NN_FORCE_LEVEL=75`, drivers take `MODEL=tabpfn`. The `_config.npz`
   sidecar is **required** to rebuild the arch. Report: `docs/accuracy/PFN-L75-{clean,recipes}.md`.
@@ -127,10 +130,13 @@ reasonable numerical tolerance. Never use simplified/self-defined equations as r
 > ladder, the TSMC6 repeat, the measured noise floor — is stated once in
 > **`methodology.md`**. Register of retracted claims: `archive-pre-gds-fix.md`.
 >
-> **All tables are generated** by `scripts/v730_docs_build.py` from the gate
-> logs, so they cannot drift from the evidence; `--check` fails if a committed
-> file is stale. `scripts/v730_coverage.py` reports what is measured and by
-> which pass, and emits the gaps as a runnable job file.
+> Tables are generated by `scripts/v730_docs_build.py` from gate logs. On the
+> V7.4 hardware, only DirectNet/BSIM-AR clean reports have local raw evidence;
+> each report is pinned to one complete campaign pass. The builder preserves
+> incomplete-source V7.3 recipe/PFN reports only when their committed SHA-256
+> matches, so partial data cannot mix passes and full `--check` stays valid.
+> `scripts/v730_coverage.py` reports coverage by pass and emits gaps as a
+> runnable job file.
 >
 > **Denominators changed in V7.3.0:** TSMC6 folds into the headline, so complex
 > totals are **/20**, device AC **/10**, opamp AC **/5**. Older documents scored
@@ -165,8 +171,12 @@ The rules that bind development:
   Fidelity is a **CPU, flags-off property** — no scoreboard number changes
   under a perturbing flag. The V7.2.0 CPU bundle {commit, stamp, order} passed
   its §8.4 gates (T3 15/16 strict 0-flip = production cell-for-cell; T4
-  latch-basin 8/8); the **GPU-axis T3 pass is still pending**, so
-  `PYCIRCUITSIM_NN_DEVICE=cuda` stays opt-in.
+  latch-basin 8/8). V7.4 closes the GPU axis on the rebuilt clean artifacts:
+  T3 is 48/48 executed, binding SRAM+switchcap 24/24, Rule 2 15/15, zero
+  flips/errors and **12/16 strict exactly matching the current CPU basket**;
+  full-bundle T4 is **8/8, zero basin flips**, worst max|ΔV| 0.1206 mV.
+  `PYCIRCUITSIM_NN_DEVICE=cuda` stays opt-in because CPU/flags-off remains the
+  scored compatibility contract, not because a GPU fidelity gate is open.
 - **`_require_nn_caps` contract** (V7.0.1): DC/OP skips the charge Jacobians;
   `TransientSolver`/`ACSolver` declare `_require_nn_caps`. Adding a third caps
   consumer means calling it there too (`get_capacitances` self-heals, so the
@@ -192,15 +202,15 @@ at all four scales. `--tech-scope` ∈ `{tsmc5,tsmc6,tsmc7,tsmc12,tsmc16,univers
   to reproduce the production datasets — omitting `--enable-subvt-off` silently
   yields a set 4.7 % smaller that is otherwise class-for-class identical, which
   is exactly how it goes unnoticed.
-- Curriculum recipes (incl. production crit30) train via
-  `scripts/recipe_train.sh` — warm-start from the clean same-size base (at
-  `large` the `v660clean` archive, injected automatically). Full capacity
+- Curriculum recipes train via `scripts/recipe_train.sh` — warm-start from the
+  clean same-size base. The `v660clean`/`crit30f` production detour is historical;
+  V7.4 serves newly rebuilt clean checkpoints. Full capacity
   sweep: `scripts/benchmark_gen_data.sh` → `benchmark_train_sml.sh` (`GPUS`,
   `NSTREAMS`) → `benchmark_run_tests.sh` → `benchmark_collect.py`.
-- **Checkpoints kept beyond production** (`bsimar/checkpoints/`):
-  `v660clean_large` (warm-start base), `crit30f_large` (production provenance),
-  alternates `csob@large` (AC/device), `corroft`/`crit10`@xl + `crit15m@xl`
-  (tsmc16-opamp coverage). Also `tsmc{X}_tf_*` (BSIM-AR) + `tsmc{X}_pfn_*` (PFN).
+- **Current V7.4 checkpoint set** (`bsimar/checkpoints/`): all 40 clean
+  DirectNet and all 40 clean BSIM-AR (five techs × four tiers × two polarities).
+  Recipe, universal and PFN rows in the reports are V7.3 historical evidence;
+  those checkpoint families are not present on the new hardware.
 - **Universal DirectNet (V6.7.0):** `u716_dn_{clean,csob,corroft,crit30u}_large` +
   `_{clean,corroft}_xl` + TSMC5 fine-tunes `u716f5_plain_n{1000000,full}_large` —
   18-code vocab, env-pin-only. Best = `u716_dn_corroft_large` (10/12 strict, 0 FLIPs).
@@ -241,7 +251,7 @@ on the identical BSIM-CMG (LEVEL=72) OSDI model. Gates are CPU-pinned
   64/64); `verify_nn_multi_tech_{dc,tran}.py` (baseline-gated — pin OMP/MKL=1,
   VTC trip has ~±1 % scatter); `verify_nn_ac.py`;
   `verify_nn_lifted_source_dc.py` (NRMSE ≤10 %, guards Rule 2).
-- **Complex circuits (4 × 4 = 16 gates):** `verify_complex_{ring_osc,opamp,
+- **Complex circuits (4 × 5 = 20 scored gates):** `verify_complex_{ring_osc,opamp,
   sram_snm,switchcap}.py` scored vs NGSPICE (ring period, opamp gain, switchcap
   charge/droop, SRAM butterfly positivity + NRMSE). SRAM `force_ic` probe is a
   printed **diagnostic**, not a gate. Parametric mirrors
@@ -329,7 +339,8 @@ cited in code.
    `(variant, NFIN=1)` bins fail OSDI convergence and are dropped per-bin, so NFIN≥2 trains.
 11. **Unified CLI** — `python -m bsimar.cli.train --model {direct,transformer,tabpfn}
     --size {small,medium,large,xl} --device-type {nmos,pmos} --tech-scope {...} ...`
-    (xl = over-fit-boundary; production = large). Per-tech `--tech-scope` → default
+    (production = `large`; V7.4 clean `xl` improves the circuit score by one
+    cell but costs 2.3× more). Per-tech `--tech-scope` → default
     save_prefix `tsmc{X}_{dn,tf,pfn}_<size>_<device>`. Flags (all default-off /
     behavior-preserving): `--swa-mode {none,ema,swa}`+`--ema-decay`; `--apply-filter
     {on,off}`+`--class-weights`; `--enable-subvt-off`; loss terms `--sobolev` /

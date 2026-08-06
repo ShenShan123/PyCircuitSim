@@ -67,4 +67,5 @@ hl="$(printf '%s\n' "$out" | grep -iE "period error|gain_err|gain error|charge_e
 # The orchestrator folds the sidecars back into <log> in OMP order at the end.
 echo "  OMP=$omp | $hl" > "${log}.omp${omp}"
 printf '%s\n' "$out" > "${log}.omp${omp}.full"
+printf '%s\n' "$rc" > "${log}.omp${omp}.rc"
 echo "[omp] $TAG/$recipe/$size/$tlc/$suite OMP=$omp rc=$rc"

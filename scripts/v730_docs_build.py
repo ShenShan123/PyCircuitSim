@@ -17,11 +17,12 @@ from the evidence. Markers:
     <!--RECIPES-->      recipe x tier gate table (recipes reports only)
     <!--RECIPEDELTA-->  per-testcase recipe-vs-clean deltas (recipes reports)
 
-Sources, oldest to newest — a cell measured by a later pass wins:
+Available sources (each rendered report is pinned to one complete pass):
 
     results/a3_regate/REPORT.md    V6.13.0, complex matrix, single-run
     results/v710_regate/data.json  V7.1.0, device + AC + strict OMP
-    results/v730_regate/data.json  V7.3.0, this campaign
+    results/v730_regate/data.json  V7.3.0, recipes + PFN campaign
+    results/v740_regate/data.json  V7.4.0, clean DN + BSIM-AR rebuild
 
 Run after any re-gate:
 
@@ -31,10 +32,12 @@ Run after any re-gate:
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
+import hashlib
 import json
 import pathlib
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Generator, List, Optional, Tuple
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TPL = ROOT / "scripts" / "accuracy_doc_templates"
@@ -56,6 +59,16 @@ TIERS = ["small", "medium", "large", "xl"]
 FAM = {"dn": "DirectNet", "tf": "BSIM-AR", "pfn": "PFN"}
 FILE_STEM = {"dn": "DirectNet-L73", "tf": "BSIM-AR-L74", "pfn": "PFN-L75"}
 STRICT_OMP = ("omp1", "omp2", "omp4")
+REPORT_SUITES: Dict[str, Tuple[str, ...]] = {
+    "verify_complex_ring_osc": STRICT_OMP,
+    "verify_complex_opamp": STRICT_OMP,
+    "verify_complex_sram_snm": ("omp1",),
+    "verify_complex_switchcap": ("omp1",),
+    "verify_nn_multi_tech_dc": ("omp1",),
+    "verify_nn_multi_tech_tran": ("omp1",),
+    "verify_nn_ac": ("omp1",),
+    "verify_complex_opamp_ac": ("omp1",),
+}
 
 # Clean control per family. V7.4.0 retrained DirectNet and BSIM-AR from scratch
 # on the clean recipe into the production slots at every tier, so clean@large is
@@ -122,10 +135,49 @@ def load_json(name: str) -> Dict:
 A3 = load_a3()
 PASSES = [("V7.1.0", load_json("v710_regate")), ("V7.3.0", load_json("v730_regate")),
           ("V7.4.0", load_json("v740_regate"))]
+PASS_DATA = dict(PASSES)
+ACTIVE_PASS: Optional[str] = None
+
+# Every report is rendered from one coherent campaign. A later partial pass is
+# never allowed to backfill itself from older cells and overwrite a complete
+# published report.
+REPORT_PASS: Dict[Tuple[str, bool], str] = {
+    ("dn", False): "V7.4.0",
+    ("tf", False): "V7.4.0",
+    ("pfn", False): "V7.3.0",
+    ("dn", True): "V7.3.0",
+    ("tf", True): "V7.3.0",
+    ("pfn", True): "V7.3.0",
+}
+
+# The new hardware does not carry the raw V7.3 recipe/PFN trees. These digests
+# make the retained rendered reports immutable and keep --check meaningful.
+PRESERVED_REPORT_SHA256: Dict[Tuple[str, bool], str] = {
+    ("dn", True): "cf5e72584234e4c4e15b3759bfc09d1cbbdef4742e5fe664cd501c000a241805",
+    ("tf", True): "c79255aabecd3e9b1b320e403e747d790482046a829b1c40c44299d6bd758a2e",
+    ("pfn", False): "e861078d23f489735f12363ab88909aac65c312662e6702fd7787fc55d5cf072",
+    ("pfn", True): "e48c24415a76876dcd1c62bb249fdddee772a7bc30fb1c60260b333cfdb554e7",
+}
+
+
+@contextmanager
+def evidence_pass(version: str) -> Generator[None, None, None]:
+    """Temporarily pin all table lookups to one campaign pass."""
+    global ACTIVE_PASS
+    previous = ACTIVE_PASS
+    ACTIVE_PASS = version
+    try:
+        yield
+    finally:
+        ACTIVE_PASS = previous
 
 
 def raw(tag: str, variant: str, suite: str, tech: str) -> Optional[Dict]:
-    """Newest pass that measured this cell, or None."""
+    """Measured cell from the active report pass, or newest legacy fallback."""
+    if ACTIVE_PASS is not None:
+        entry = (PASS_DATA.get(ACTIVE_PASS, {}).get(tag, {}).get(variant, {})
+                 .get(suite, {}).get(tech))
+        return entry if entry else None
     for _, data in reversed(PASSES):
         e = data.get(tag, {}).get(variant, {}).get(suite, {}).get(tech)
         if e:
@@ -421,6 +473,21 @@ FAMILY_META = {
     "pfn": ("75", "research", "15.6 ms @ `small`"),
 }
 
+# The new hardware carries the rendered V7.3 recipe/PFN reports but not their
+# pruned raw result trees. These values are the durable published fallback for
+# the README only; every fallback is labelled V7.3 so it cannot masquerade as
+# a locally regenerated V7.4 result.
+HISTORICAL_CLEAN: Dict[str, Tuple[str, int, int]] = {
+    "dn": ("large", 16, 20),
+    "tf": ("small", 17, 20),
+    "pfn": ("small", 14, 20),
+}
+HISTORICAL_RECIPE: Dict[str, Tuple[str, int, int]] = {
+    "dn": ("`crit15m`@xl", 19, 20),
+    "tf": ("`corroft`@medium", 20, 20),
+    "pfn": ("`corroft`@small", 14, 20),
+}
+
 
 def _score(tag: str, key: str, recipes: bool) -> Tuple[int, int]:
     p = n = 0
@@ -435,12 +502,7 @@ def _score(tag: str, key: str, recipes: bool) -> Tuple[int, int]:
 
 
 def _best(tag: str, recipes: bool) -> Tuple[str, int, int]:
-    """Highest strict pass *fraction*; ties go to the cheaper group.
-
-    A fraction, not a count, because recipe groups are scored /16 (no TSMC6
-    checkpoints) while clean groups are /20 — comparing the raw counts would
-    hand the win to whichever group happened to be measured on more techs.
-    """
+    """Highest strict pass fraction in the pinned pass; cheaper tie wins."""
     best = ("—", 0, 0)
     for label, key in _groups(tag, recipes):
         p, n = _score(tag, key, recipes)
@@ -449,15 +511,50 @@ def _best(tag: str, recipes: bool) -> Tuple[str, int, int]:
     return best
 
 
+def _matrix_complete_in_pass(tag: str, recipes: bool, version: str) -> bool:
+    """Whether one pass fully measured every table cell in this report."""
+    data = PASS_DATA.get(version, {})
+    if not data:
+        return False
+    for _, key in _groups(tag, recipes):
+        for tech in TECHS:
+            variant = _variant(tag, key, tech, recipes)
+            for suite, required in REPORT_SUITES.items():
+                entry = (data.get(tag, {}).get(variant, {})
+                         .get(suite, {}).get(tech))
+                if not entry or any(omp not in entry for omp in required):
+                    return False
+    return True
+
+
 def scoreboard(_tag=None, _recipes=None) -> str:
-    out = ["| LEVEL | family | role | best clean tier | best recipe | CPU cost |",
+    out = ["| LEVEL | family | role | current / best clean | historical best recipe | CPU cost |",
            "|---|---|---|---|---|---|"]
     for tag in ("dn", "tf", "pfn"):
         lvl, role, cost = FAMILY_META[tag]
-        cl, cp, cn = _best(tag, False)
-        rl, rp, rn = _best(tag, True)
-        c = f"`{cl}` **{cp}/{cn}**" if cn else "—"
-        r = f"{rl} **{rp}/{rn}**" if rn else "*(none trained)*"
+        clean_version = "V7.4.0" if tag in ("dn", "tf") else "V7.3.0"
+        clean_complete = _matrix_complete_in_pass(tag, False, clean_version)
+        recipe_complete = _matrix_complete_in_pass(tag, True, "V7.3.0")
+        if clean_complete:
+            with evidence_pass(clean_version):
+                cl, cp, cn = _best(tag, False)
+        else:
+            cl, cp, cn = HISTORICAL_CLEAN[tag]
+        if recipe_complete:
+            with evidence_pass("V7.3.0"):
+                rl, rp, rn = _best(tag, True)
+        else:
+            rl, rp, rn = HISTORICAL_RECIPE[tag]
+        if tag == "dn" and clean_complete:
+            with evidence_pass(clean_version):
+                served_pass, served_total = _score(tag, "large", False)
+            c = (f"V7.4 `large` **{served_pass}/{served_total}** served; "
+                 f"`{cl}` **{cp}/{cn}** best")
+        else:
+            version = ("V7.4" if clean_complete and clean_version == "V7.4.0"
+                       else "V7.3")
+            c = f"{version} `{cl}` **{cp}/{cn}**"
+        r = f"V7.3 {rl} **{rp}/{rn}**"
         out.append(f"| {lvl} | **{FAM[tag]}** | {role} | {c} | {r} | {cost} |")
     out.append("")
     out.append("Strict = passes at OMP ∈ {1, 2, 4}. " + denominator_note(None, None))
@@ -522,12 +619,23 @@ def build(tag: str, recipes: bool, check: bool) -> bool:
     if not tpl.exists():
         print(f"  no template for {FILE_STEM[tag]}-{kind}, skipped")
         return True
-    text = tpl.read_text()
-    for marker, fn in BUILDERS.items():
-        token = f"<!--{marker}-->"
-        if token in text:
-            text = text.replace(token, fn(tag, recipes))
+    version = REPORT_PASS[(tag, recipes)]
+    complete = _matrix_complete_in_pass(tag, recipes, version)
     dest = DOCS / f"{FILE_STEM[tag]}-{kind}.md"
+    if not complete:
+        expected = PRESERVED_REPORT_SHA256.get((tag, recipes))
+        actual = (hashlib.sha256(dest.read_bytes()).hexdigest()
+                  if dest.exists() else None)
+        preserved = expected is not None and actual == expected
+        state = "checksum verified" if preserved else "MISSING OR DRIFTED"
+        print(f"  {dest.name}: {version} raw matrix incomplete, {state}")
+        return preserved
+    with evidence_pass(version):
+        text = tpl.read_text()
+        for marker, fn in BUILDERS.items():
+            token = f"<!--{marker}-->"
+            if token in text:
+                text = text.replace(token, fn(tag, recipes))
     if check:
         same = dest.exists() and dest.read_text() == text
         print(f"  {dest.name}: {'up to date' if same else 'STALE'}")
@@ -557,11 +665,9 @@ def main() -> int:
     ap.add_argument("--check", action="store_true",
                     help="Verify the committed files match the evidence; "
                          "do not write. Exit 1 if any is stale.")
-    # A campaign lands one family at a time. Rebuilding all six from a
-    # half-measured tree would overwrite a valid report with tables whose
-    # cells are missing — indistinguishable, once written, from measured
-    # failures. --only keeps an in-flight family's report untouched until its
-    # evidence is complete.
+    # A campaign lands one family at a time. The per-report completeness guard
+    # prevents partial regeneration; --only remains a convenient way to limit
+    # output to the family currently being worked on.
     ap.add_argument("--only", default=None,
                     help="Comma list of families to build (dn,tf,pfn). "
                          "Default: all. The README scoreboard spans families, "

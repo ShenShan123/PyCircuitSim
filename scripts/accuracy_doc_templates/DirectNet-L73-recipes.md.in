@@ -6,8 +6,12 @@ A **recipe** is one identical training addendum applied to every
 same data pipeline, the same gates, one flag change against the clean control
 in [`DirectNet-L73-clean.md`](DirectNet-L73-clean.md).
 
-**Production is a recipe, not the clean model.** The `tsmc{X}_dn_large_*` slots
-the resolver serves have carried `crit30f` since V6.6.4.
+> **Evidence boundary.** Every recipe result in this file is retained from the
+> V7.3.0 campaign. V7.4.0 rebuilt only the clean DirectNet and BSIM-AR matrices
+> on the new hardware, directly into the resolver-visible slots; it did not
+> retrain or re-promote these recipe checkpoints. Treat the rows below as
+> historical recipe evidence, not as a comparison against the V7.4.0 clean
+> controls and not as the currently served artifact set.
 
 > **Read the noise floor before ranking anything by one cell.** The TSMC6
 > controlled repeat measured this pipeline's run-to-run variance on
@@ -30,7 +34,7 @@ ring-only `corro` corridor dataset.
 
 | recipe | tier | flags | lever |
 |---|---|---|---|
-| **`crit30f`** | `large` | `traj_corridor=3.0, inv_trip=2.0` | **production.** Corridor + inverter-trip anchor |
+| **`crit30f`** | `large` | `traj_corridor=3.0, inv_trip=2.0` | historical V7.3.0 production; corridor + inverter-trip anchor |
 | **`crit15m`** | `xl` | `traj_corridor=1.5, inv_trip=3.0` | DirectNet's best; misses only `tsmc6-opamp` (§4a) |
 | `corroft` | `xl` | `traj_corridor=3.0` | corridor alone, no anchor |
 | `csob` | `large` | `--charge-sobolev` | supervises the autograd ∂q/∂V the AC and transient solvers consume |
@@ -75,7 +79,7 @@ That single pair says more than the score does:
   techs and evaporated when the fifth column — a duplicate of one already
   there — was added. A sweep that a duplicate can break was never a sweep; it
   was a run that got lucky on one bimodal cell.
-* **The pattern is systematic, not a one-off.** `crit30f@large` (production)
+* **The pattern is systematic, not a one-off.** `crit30f@large` (historical V7.3.0 production)
   fails both `tsmc6-` and `tsmc7-opamp`; `corroft@xl` fails `tsmc5-` and
   `tsmc6-opamp`; on BSIM-AR, `crit15m@large` fails `tsmc6-opamp` while
   `corroft@large` and `crit30@large` — same tier, same data — do not. Every one
@@ -181,7 +185,8 @@ are listed to stop the arms being retried, not as current measurements.
 
 | use | checkpoint | why |
 |---|---|---|
-| **Production (fast path)** | `crit30f@large` = the `tsmc{X}_dn_large_*` slots | best gate score at 0.92 M params and ~1.5 ms/eval |
+| **Current fast path (V7.4.0)** | `clean@large` = the `tsmc{X}_dn_large_*` slots | newly rebuilt artifact set; 14/20 at 0.92 M params and ~1.5 ms/eval |
+| **Historical V7.3.0 production** | `crit30f@large` | retained result only; recipe checkpoints were not rebuilt or promoted in V7.4.0 |
 | **Best DirectNet** | `crit15m@xl` (env-pin) | 19/20, the family's best — but 2.3× the inference cost and no device-fidelity gain, and its one miss is a coin-flip (§4a) |
 | **Device / charge / AC work** | `csob@large` (env-pin) | best mean device NRMSE; **not** a complex-gate alternate |
 | **One checkpoint, many techs** | `u716_dn_corroft_large` (env-pin) | ties the per-tech bar at universal scope, zero flips |

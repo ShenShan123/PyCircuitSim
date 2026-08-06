@@ -7,6 +7,10 @@ rested on a single training configuration.
 
 This campaign runs the one arm that is aimed squarely at the cells PFN fails.
 
+> **Evidence boundary.** This recipe was measured in V7.3.0 and was not
+> retrained in V7.4.0. The new-hardware rebuild contains no PFN checkpoints, so
+> this is the latest available PFN recipe evidence rather than a V7.4.0 result.
+
 > **Read the noise floor first.** `ring_osc` carries ±4 pp of run-to-run
 > scatter across a 5 % gate and PFN's `opamp` is bimodal — a good basin or a
 > 100 % rail (`methodology.md` §7). With a single recipe and one training run
