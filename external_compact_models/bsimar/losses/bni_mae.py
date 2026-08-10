@@ -120,7 +120,7 @@ class MAELoss(nn.Module):
 # digits for both device types. The generator stores the raw opvar, so every
 # dataset's `gds` column is wrong-signed throughout the reverse corridor, and
 # the trained gds head reproduces the flip (84-99.8 % sign agreement with it).
-# See docs/2026-07-21-systematic-audit.md §A3-data.
+# See the 2026-07-21 systematic audit §A3-data (docs/CHANGELOG.md V6.13.x).
 #
 # Currently latent, and the guard below keeps it that way: no shipped or
 # documented checkpoint supervises the id-derivative channels. But the `sob`

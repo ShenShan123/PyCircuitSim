@@ -39,7 +39,7 @@ import numpy as np
 # trip are high-gain fixed points and multi-thread GEMM reduction perturbs the
 # NR basin — an unpinned casual run must land the same basin as the CPU-pinned
 # gate methodology. PYCIRCUITSIM_TORCH_THREADS overrides so the OMP fragility
-# sweep (opamp_sweep_def.sh) can still probe multistability deliberately.
+# sweep can still probe multistability deliberately.
 try:
     import torch
 

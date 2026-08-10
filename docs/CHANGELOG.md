@@ -25,16 +25,28 @@ the backup tarball — were untouched. README clone/setup instructions updated
 (no `--recurse-submodules`); future PyCMG upstream changes are now ordinary
 commits here, not pin bumps.
 
-**House-clean:** pruned 12 stale docs (11 closed-campaign `docs/plans/` files
-+ the V6.9.0 TSMC6 parse-audit doc; kept the two plans CLAUDE.md/README cite
-as dead-end registers and the 2026-07-21 systematic audit), tracked the
-previously untracked `scripts/v740_tf_reaper.sh` alongside its campaign
-siblings, and deleted untracked cruft (`__pycache__`, generated
-`tests/verify_*_results/`, finished-campaign master logs and stale V6.x bench
-dirs under `results/`). Evidence dirs `results/v740_regate/` and
-`results/v720_gpu_regate/` untouched. Tracked scripts were deliberately NOT
-pruned — the campaign scripts form a call web whose root drivers look
-unreferenced by grep.
+**House-clean (two waves, user-directed):** pruned 14 stale docs — 12
+closed-campaign `docs/plans/` files + the V6.9.0 TSMC6 parse-audit doc + the
+2026-07-21 systematic-audit register (verdicts live in the V6.12.1–V6.13.1
+entries; the six references in CLAUDE.md/README/code comments were redirected
+to CHANGELOG sections) — plus the V4-era `external_compact_models/bsimar/docs/`
+and `bsimar/results/` (2026-04 improvement plans, paper PDF, v3 LOO report).
+`docs/plans/2026-07-26-v720-gpu-scaling.md` is the one plan kept (still the
+cited dead-end register). Tracked the previously untracked
+`scripts/v740_tf_reaper.sh`; deleted 3 unreferenced example decks
+(`bsimcmg_{inverter_tran_verify,nmos_only,pmos_only}.sp`) and **24
+closed-campaign one-off scripts** (a3/tsmc6/uni/pfnxl campaign drivers and
+collectors, the V6.6.x gate-matrix/recipe-retest stack, `recipe_eval.sh`,
+`opamp_sweep_def.sh`, `v710_regate_control.py`), keeping the functional core:
+v730 docs/coverage/control, the v740 drivers, the `v710_regate` trio,
+`recipe_train.sh`, the benchmark suite, `v720_t3_flag_bundle.sh` +
+`a3_omp_one.sh` (a live dependency), `bench_gpu/`, and the corridor data
+pipeline `v6_4_7_s12_*` + its imported library `v6_4_7_s6_l72_ro_control.py`.
+Untracked cruft deleted (`__pycache__`, generated `tests/verify_*_results/`,
+finished-campaign master logs, stale V6.x bench dirs, and the 56 MB
+`t3_gpu_bundle/scratch/` work dirs). Evidence kept: `results/v740_regate/`
+whole (the docs-builder `--check` source) and the T3/T4 GPU-bundle
+VERDICTs/logs/return-codes.
 
 **Docs compacted:** CHANGELOG 1274 → ~800 lines (fourth condensation — every
 entry, verdict, retraction and dead-end retained); CLAUDE.md 395 → 366

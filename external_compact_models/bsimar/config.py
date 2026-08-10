@@ -285,7 +285,8 @@ def assert_tech_is_distinct(tech: str, against: Optional[Sequence[str]] = None,
                    f"implemented-parameter fingerprint matches, so both train "
                    f"on the same data. The PDKs may differ on disk, but only "
                    f"in keys the open BSIM-CMG does not implement "
-                   f"(docs/2026-07-21-systematic-audit.md D1).")
+                   f"(2026-07-21 systematic audit D1; docs/CHANGELOG.md "
+                   f"V6.13.0 / methodology.md §7).")
             if (tech.lower(), other.lower()) in ACKNOWLEDGED_DUPLICATE_TECHS:
                 print(f"[tech-guard] ACKNOWLEDGED DUPLICATE: {msg} "
                       f"Carried deliberately; its rows are a repeat run, not a "

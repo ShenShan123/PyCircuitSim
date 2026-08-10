@@ -47,7 +47,7 @@ import torch.nn.functional as F
 # that computes fewer rows than the stock recompute therefore moves the
 # last bits, no matter how attention is arranged. Measured end-to-end
 # deviation on shipped checkpoints: outputs <= 5.3e-6, autograd Jacobian
-# <= 1.6e-6 (see docs/plans/2026-07-25-v700-nn-perf.md).
+# <= 1.6e-6 (see docs/CHANGELOG.md §V7.0.4).
 _AR_CACHE = os.environ.get("PYCIRCUITSIM_NN_AR_CACHE", "0") == "1"
 
 

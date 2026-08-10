@@ -667,8 +667,8 @@ checkpoint is streamed, not with FLOPs. V7.0.x optimized the NN inference and
 training paths; V7.2.0 (branch `v720-gpu-scaling`) scaled the solver to
 SRAM-array transient workloads, where the per-step commit path used to be
 75–85 % of wall-clock. Measurements, routing, and dead ends:
-`docs/plans/2026-07-25-v700-nn-perf.md` and
-`docs/plans/2026-07-26-v720-gpu-scaling.md`.
+`docs/plans/2026-07-26-v720-gpu-scaling.md` and `docs/CHANGELOG.md`
+§V7.0.0–V7.0.4.
 
 Every optimization is classified **bit-identical** (ships default-on) or
 **perturbing** (ships default-off behind an env flag). A last-bit NN

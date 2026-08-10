@@ -165,7 +165,8 @@ The rules that bind development:
   summation order; no incremental AR form can be bit-identical in float32).
   `verify_ar_cache.py` / `verify_batched_tail.py` guard those opt-in paths.
 - Measurements + dead ends (do not retry TF32/compile/bf16 for DirectNet):
-  `docs/plans/2026-07-25-v700-nn-perf.md`, `docs/plans/2026-07-26-v720-gpu-scaling.md`.
+  `docs/plans/2026-07-26-v720-gpu-scaling.md`; the V7.0.x measurements live in
+  `docs/CHANGELOG.md` §V7.0.0–V7.0.4.
 
 ## NN Training Notes (beyond README §NN Compact Models)
 

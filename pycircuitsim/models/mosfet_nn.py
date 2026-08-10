@@ -580,7 +580,8 @@ class _MOSFETNNBase(Component):
         # negates all three. Verified: autograd d(id)/dVd vs -gds_head = 0.12 rel
         # err, vs +gds_head = 2.08 (a rel err of exactly 2.0 is the signature of a
         # pure sign flip); OSDI -d(id)/dVd is positive at 100.0000% of conducting
-        # points over 111,630 evals. See docs/2026-07-21-systematic-audit.md §A3.
+        # points over 111,630 evals. See the 2026-07-21 systematic audit §A3
+        # (docs/CHANGELOG.md V6.13.0).
         gm_phys = -self._denorm_deriv(
             "id", in_col=1, deriv_norm=gi[1], phys_val=id_phys)
         gds_phys = -self._denorm_deriv(
