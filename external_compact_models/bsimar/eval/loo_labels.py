@@ -89,12 +89,19 @@ def _fingerprint(
 def _build_fingerprint_map(
     device_type: str, verbose: bool = False,
     tech_filter: str | None = None,
+    max_l_ratio: float | None = None,
 ) -> Dict[Tuple[float, ...], Tuple[str, str]]:
     """Return ``{fingerprint: (tech, variant)}`` for every known bin.
 
     ``tech_filter`` restricts the scan to a single tech (per-tech
     datasets). Cross-(tech, variant) fingerprint collisions raise —
     a silent last-writer-wins here would mislabel training data.
+
+    ``max_l_ratio`` must match the value the dataset was generated with
+    (V7.4.2 intra-bin L sampling). L is part of the fingerprint, so a map
+    built on a coarser L grid than the data simply has no entry for the
+    interior rows and every one of them becomes a miss. Callers read it
+    from the dataset's own ``meta_max_l_ratio``.
     """
     t0 = time.time()
     out: Dict[Tuple[float, ...], Tuple[str, str]] = {}
@@ -104,7 +111,8 @@ def _build_fingerprint_map(
         tech = TECH_CONFIGS[tech_name]
         for variant in tech.variant_names:
             try:
-                combos = tech.get_geometry_combos(device_type, variant)
+                combos = tech.get_geometry_combos(
+                    device_type, variant, max_l_ratio=max_l_ratio)
             except Exception as exc:
                 if verbose:
                     print(f"  skip {tech_name}:{variant} "
@@ -139,14 +147,15 @@ def _build_fingerprint_map(
 
 def _label_samples(
     geometry: np.ndarray, device_type: str, verbose: bool = False,
-    tech_filter: str | None = None,
+    tech_filter: str | None = None, max_l_ratio: float | None = None,
 ) -> np.ndarray:
     """Return a ``(N,)`` int array of tech-variant codes."""
     assert geometry.ndim == 2 and geometry.shape[1] == 15, (
         f"Expected (N, 15) geometry, got {geometry.shape}")
 
     fp_map = _build_fingerprint_map(
-        device_type, verbose=verbose, tech_filter=tech_filter)
+        device_type, verbose=verbose, tech_filter=tech_filter,
+        max_l_ratio=max_l_ratio)
     n = geometry.shape[0]
     codes = np.empty(n, dtype=np.int64)
     misses: List[int] = []
@@ -164,9 +173,14 @@ def _label_samples(
             codes[i] = tech_variant_to_code(tv[0], tv[1])
 
     if misses:
+        miss_l = sorted({float(geometry[i][1]) for i in misses})
         raise AssertionError(
             f"Tech-variant labeller missed {len(misses)} / {n} samples. "
-            f"First miss idx={misses[0]}")
+            f"First miss idx={misses[0]}. Unmatched L values (nm): "
+            f"{[round(v * 1e9, 3) for v in miss_l[:12]]}. If those are "
+            f"intra-bin lengths, the dataset was generated with a "
+            f"--max-l-ratio the fingerprint map was not built for; the "
+            f"value is stored as meta_max_l_ratio in the .npz.")
     return codes
 
 
@@ -339,6 +353,12 @@ def get_or_build_tech_variant_labels(
     cache_path, meta_path = sidecar_paths(data_path_p)
     data = np.load(data_path_p, allow_pickle=True)
     geometry = data["geometry"]
+    # V7.4.2: L is part of the fingerprint, so the map has to be built on
+    # the same L grid the rows came from. 0.0 / absent = the legacy
+    # lower-corner-only grid.
+    _mlr = float(data["meta_max_l_ratio"]) if "meta_max_l_ratio" in data.files \
+        else 0.0
+    max_l_ratio = _mlr if _mlr > 1.0 else None
 
     # Inferred before the cache branch: the scope a filename implies is the
     # cheapest evidence that a sidecar belongs to this dataset (audit C6o).
@@ -359,7 +379,8 @@ def get_or_build_tech_variant_labels(
         print(f"  labelling against tech scope {tech_filter!r} "
               f"(inferred from filename)")
     codes = _label_samples(
-        geometry, device_type, verbose=verbose, tech_filter=tech_filter)
+        geometry, device_type, verbose=verbose, tech_filter=tech_filter,
+        max_l_ratio=max_l_ratio)
     np.save(cache_path, codes)
     write_sidecar_meta(data_path_p, geometry, codes)
     if verbose:

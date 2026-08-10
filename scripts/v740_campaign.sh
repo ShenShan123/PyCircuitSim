@@ -17,8 +17,13 @@
 # Usage: PAR=32 bash scripts/v740_campaign.sh
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT="$ROOT/results/v740_regate"
+# V7.4.2: overridable so a later pass writes its own evidence dir
+# instead of backfilling the published V7.4.0 one. Defaults keep
+# the V7.4.0 invocation byte-identical.
+OUT="${V740_OUT:-$ROOT/results/v740_regate}"
 SC="${V740_SCRATCH:-/tmp/v740_campaign}"
+DN_LOG="${V740_DN_LOG:-$ROOT/results/dn_train_master.log}"
+TF_LOG="${V740_TF_LOG:-$ROOT/results/tf_train_master.log}"
 PAR="${PAR:-32}"
 PY="${NN_PY:-/data2/home/shenshan/.conda/envs/pycircuitsim/bin/python}"
 [ -x "$PY" ] || PY="$(command -v python)"
@@ -47,7 +52,8 @@ while true; do
   for tag in dn tf; do
     jobs="$SC/jobs_${tag}.txt"
     "$PY" "$ROOT/scripts/v730_coverage.py" --set clean --tag "$tag" \
-          --require-complete --emit-jobs "$jobs" >/dev/null 2>&1 || continue
+          --require-complete --emit-jobs "$jobs" ${V740_COVERAGE_ARGS:-} \
+          >/dev/null 2>&1 || continue
     n="$(grep -cve '^\s*$' "$jobs" || true)"
     [ "$n" -gt 0 ] || continue
     dispatched=$((dispatched + n))
@@ -58,8 +64,8 @@ while true; do
     say "round $round / $tag: pool complete"
   done
 
-  if trained "$ROOT/results/dn_train_master.log" \
-     && trained "$ROOT/results/tf_train_master.log" \
+  if trained "$DN_LOG" \
+     && trained "$TF_LOG" \
      && [ "$dispatched" -eq 0 ]; then
     say "both training waves finished and no gateable cells remain"
     break

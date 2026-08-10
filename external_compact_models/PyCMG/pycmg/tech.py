@@ -169,11 +169,13 @@ class DeviceConfig:
         pdk_path: str | None = None,
         ref_pdk_path: str | None = None,
         ref_device_name: str | None = None,
+        max_l_ratio: float | None = None,
     ) -> list[tuple[float, float]]:
         """Return PDK-defined (L, NFIN) combinations for sweep.
 
-        For TSMC devices, returns all ``(lmin, nfin)`` points where
-        ``nfin`` is each of ``{nfinmin, nfinmax}`` per variant.
+        For TSMC devices, returns all ``(L, nfin)`` points where ``nfin`` is
+        each of ``{nfinmin, nfinmax}`` per variant and ``L`` is the bin's
+        sampled length(s) — its lower corner alone by default.
 
         For ASAP7 devices (no PDK binning), uses a reference TSMC device's
         NFIN boundaries combined with ASAP7's single L value.
@@ -183,13 +185,18 @@ class DeviceConfig:
             ref_pdk_path: Reference TSMC PDK path for ASAP7 NFIN boundaries.
             ref_device_name: Reference TSMC device name for ASAP7 NFIN
                 boundaries (e.g., ``"nch_svt_mac"`` for NMOS).
+            max_l_ratio: Sample inside each length bin so that no adjacent
+                pair of L knots differs by more than this ratio. ``None``
+                keeps the lower-corner-only grid. ASAP7 has no L binning, so
+                it is ignored there.
 
         Returns:
             Sorted list of ``(L, NFIN)`` tuples.
         """
         if self.pdk_device is not None and pdk_path is not None:
             resolved = str(_resolve_path(pdk_path))
-            return scan_pdk_geometry_combos(resolved, self.pdk_device)
+            return scan_pdk_geometry_combos(
+                resolved, self.pdk_device, max_l_ratio=max_l_ratio)
 
         # ASAP7: use reference TSMC device NFIN boundaries with ASAP7 L
         min_l = self.get_min_l(pdk_path)

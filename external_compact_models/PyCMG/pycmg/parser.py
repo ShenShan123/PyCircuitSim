@@ -12,6 +12,7 @@ Dependencies: osdi_types only (no core.py imports).
 
 from __future__ import annotations
 
+import math
 import re
 import sys
 from dataclasses import dataclass
@@ -340,15 +341,52 @@ def _find_length_variant(
     )
 
 
+def subdivide_l_bin(
+    lmin: float, lmax: float, max_l_ratio: Optional[float] = None,
+) -> List[float]:
+    """Geometric L knots inside ``[lmin, lmax)`` for one PDK length bin.
+
+    With ``max_l_ratio`` unset this returns ``[lmin]`` — the historical
+    behaviour, where a bin contributes only its lower corner. That leaves
+    the *interior* of the bin unsampled, and short-channel bins are wide:
+    TSMC5's shortest spans L in [6, 20] nm, a 3.3x ratio represented by the
+    single point L=6 nm. A model fitted on such a grid is unconstrained
+    between knots, and higher capacity makes the unconstrained interpolant
+    drift further (V7.4.2 investigation — the ring-oscillator bias).
+
+    With ``max_l_ratio`` set, the bin is split into the fewest equal
+    geometric steps whose ratio does not exceed it, and every knot except
+    the upper edge is returned. The upper edge is excluded because it is
+    the next bin's ``lmin`` and is contributed by that bin — for the
+    topmost bin it stays unsampled, exactly as before.
+
+    Args:
+        lmin: Bin lower length edge (m).
+        lmax: Bin upper length edge (m).
+        max_l_ratio: Largest allowed ratio between adjacent knots. ``None``
+            or <= 1.0 disables subdivision.
+
+    Returns:
+        Ascending list of L values, always starting with ``lmin``.
+    """
+    if (max_l_ratio is None or max_l_ratio <= 1.0
+            or lmax <= lmin or lmin <= 0.0):
+        return [lmin]
+    n_steps = max(1, math.ceil(math.log(lmax / lmin) / math.log(max_l_ratio)))
+    step = (lmax / lmin) ** (1.0 / n_steps)
+    return [lmin * step ** k for k in range(n_steps)]
+
+
 def scan_pdk_geometry_combos(
-    path: str, base_name: str,
+    path: str, base_name: str, max_l_ratio: Optional[float] = None,
 ) -> List[Tuple[float, float]]:
     """Return all PDK-defined (L, NFIN) sweep points for a device.
 
-    For each numbered variant, generates two points using the bin
-    boundaries: ``(lmin, nfinmin)`` and ``(lmin, nfinmax)``.  Both points
-    share the same modelcard (same variant binning coefficients); only the
-    NFIN instance parameter differs.
+    For each numbered variant, generates points at the bin's sampled
+    lengths crossed with its NFIN boundaries: ``(L, nfinmin)`` and
+    ``(L, nfinmax)``.  All points of one variant share the same modelcard
+    (same variant binning coefficients); only the L / NFIN instance
+    parameters differ.
 
     The result is deduplicated (adjacent NFIN groups share boundary
     values) and sorted ascending by ``(L, NFIN)``.
@@ -356,6 +394,10 @@ def scan_pdk_geometry_combos(
     Args:
         path: Path to TSMC PDK file.
         base_name: Base model name (e.g., ``"pch_lvt_mac"``).
+        max_l_ratio: When set, sample inside each length bin so no adjacent
+            pair of L knots differs by more than this ratio (see
+            ``subdivide_l_bin``). Unset reproduces the lower-corner-only
+            grid byte for byte.
 
     Returns:
         Sorted list of unique ``(L, NFIN)`` tuples.
@@ -364,10 +406,11 @@ def scan_pdk_geometry_combos(
 
     combos: set[Tuple[float, float]] = set()
     for v in variants:
-        if v.nfinmin is not None:
-            combos.add((v.lmin, v.nfinmin))
-        if v.nfinmax is not None:
-            combos.add((v.lmin, v.nfinmax))
+        for L in subdivide_l_bin(v.lmin, v.lmax, max_l_ratio):
+            if v.nfinmin is not None:
+                combos.add((L, v.nfinmin))
+            if v.nfinmax is not None:
+                combos.add((L, v.nfinmax))
 
     return sorted(combos)
 

@@ -75,7 +75,8 @@ RECIPES: Dict[str, List[str]] = {
 PASSES = [("a3", ROOT / "results" / "a3_regate"),
           ("v710", ROOT / "results" / "v710_regate"),
           ("v730", ROOT / "results" / "v730_regate"),
-          ("v740", ROOT / "results" / "v740_regate")]
+          ("v740", ROOT / "results" / "v740_regate"),
+          ("v742", ROOT / "results" / "v742_regate")]
 
 
 def load_json_pass(root: pathlib.Path) -> Dict:
@@ -114,10 +115,20 @@ def scan_logs(root: pathlib.Path) -> Dict[Tuple[str, str, str, str, str], str]:
     return out
 
 
-def build_index() -> Dict[Tuple[str, str, str, str, str], str]:
-    """(tag, variant, TECH, suite, omp) -> which pass measured it."""
+def build_index(
+    only: Optional[List[str]] = None,
+) -> Dict[Tuple[str, str, str, str, str], str]:
+    """(tag, variant, TECH, suite, omp) -> which pass measured it.
+
+    ``only`` restricts which passes count as coverage. A rebuild campaign
+    needs that: its cells were all measured by an EARLIER pass, so merging
+    every pass would report full coverage and emit zero jobs. Default
+    (``None``) merges everything, newest last, as before.
+    """
     idx: Dict[Tuple[str, str, str, str, str], str] = {}
     for name, root in PASSES:
+        if only is not None and name not in only:
+            continue
         for key in scan_logs(root):
             idx[key] = name
         data = load_json_pass(root)
@@ -172,6 +183,12 @@ def main() -> int:
     ap.add_argument("--set", default="all", choices=["clean", "recipes", "all"])
     ap.add_argument("--techs", default=None,
                     help="Comma list, e.g. TSMC5,TSMC7 (default: all five)")
+    ap.add_argument("--passes", default=None,
+                    help="Comma list of pass names that count as coverage "
+                         "(default: all of "
+                         + ",".join(n for n, _ in PASSES) + "). A rebuild "
+                         "campaign passes its OWN name so cells measured by "
+                         "an earlier pass are re-gated rather than inherited.")
     ap.add_argument("--require-complete", action="store_true",
                     help="Only count a checkpoint that carries its "
                          "*_best.pt.complete marker — use when a training "
@@ -181,7 +198,15 @@ def main() -> int:
     techs = ([t.strip().upper() for t in args.techs.split(",")]
              if args.techs else TECHS)
     tags = [args.tag] if args.tag else ["dn", "tf", "pfn"]
-    idx = build_index()
+    only = ([p.strip() for p in args.passes.split(",")]
+            if args.passes else None)
+    if only is not None:
+        known = {n for n, _ in PASSES}
+        bad = [p for p in only if p not in known]
+        if bad:
+            raise SystemExit(
+                f"--passes: unknown pass name(s) {bad}; known: {sorted(known)}")
+    idx = build_index(only)
 
     jobs: List[str] = []
     print(f"{'group':30s} {'tech':7s} {'measured':>9s} {'missing':>8s}  by")

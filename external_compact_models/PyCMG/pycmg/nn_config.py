@@ -169,8 +169,15 @@ class NNTechConfig:
 
     def get_geometry_combos(
         self, device_type: str, variant: str,
+        max_l_ratio: Optional[float] = None,
     ) -> List[Tuple[float, float]]:
         """Return legal (L, NFIN) combinations for this tech/device/variant.
+
+        ``max_l_ratio`` (V7.4.2) densifies the L axis *inside* each PDK
+        length bin so that no adjacent pair of knots differs by more than
+        the given ratio. Unset (the default) samples each bin's lower corner
+        only, which leaves wide short-channel bins — TSMC5's shortest spans
+        3.3x in L — represented by a single point.
 
         For TSMC techs: delegates to DeviceConfig.get_geometry_combos(pdk_path),
             which scans the PDK file for bin boundaries.
@@ -191,7 +198,8 @@ class NNTechConfig:
         pdk_path = self.pycmg_tech.pdk_path
 
         if dev.pdk_device is not None and pdk_path is not None:
-            combos = dev.get_geometry_combos(pdk_path=pdk_path)
+            combos = dev.get_geometry_combos(
+                pdk_path=pdk_path, max_l_ratio=max_l_ratio)
         else:
             nfin_list = self.fallback_nfin_values or DEFAULT_NFIN_VALUES
             l_list = (self.fallback_l_values

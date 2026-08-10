@@ -183,6 +183,21 @@ def main() -> None:
              "artifact); 1e-12 resolves the sub-nA band. 1e-14 is FP-limited.",
     )
 
+    # V7.4.2: intra-bin L sampling. The PDK grid gives one L per length
+    # bin (its lower corner), and short-channel bins are wide — TSMC5's
+    # shortest spans L in [6, 20] nm. Nothing constrains the model between
+    # knots, and higher capacity lets that interpolant drift further, which
+    # is what produced the "capacity hurts BSIM-AR" artifact (docs/plans/
+    # 2026-08-10-v742-bsimar-capacity.md). Default off = legacy grid.
+    parser.add_argument(
+        "--max-l-ratio", type=float, default=None,
+        help="Sample inside each PDK length bin so no adjacent pair of L "
+             "knots differs by more than this ratio (e.g. 1.35). Unset "
+             "(default) samples each bin's lower corner only, reproducing "
+             "the pre-V7.4.2 grid byte for byte. Costs roughly "
+             "log(bin span)/log(ratio) times the rows.",
+    )
+
     parser.add_argument("--data-dir", type=Path, default=None,
                         help="Output directory for .npz files")
     args = parser.parse_args()
@@ -232,6 +247,7 @@ def main() -> None:
         jitter_sigma_frac=args.jitter_sigma_frac,
         enable_inv_trip=args.enable_inv_trip,
         enable_subvt_off=args.enable_subvt_off,
+        max_l_ratio=args.max_l_ratio,
     )
 
     if args.universal:

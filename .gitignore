@@ -71,6 +71,9 @@ logs/
 v6_3_1_checkpoints/
 /tools/
 external_compact_models/bsimar/data/datasets_v2_backup/
+# V7.4.0 datasets + checkpoints, kept on disk as the control the V7.4.2
+# L-densified rebuild is measured against (docs/plans/2026-08-10-v742-*).
+external_compact_models/bsimar/v740_archive/
 
 # PyCMG (vendored in-repo since V7.4.1; was a git submodule).
 # PyCMG/.gitignore covers build*/ and the IP-protected TSMC modelcards;

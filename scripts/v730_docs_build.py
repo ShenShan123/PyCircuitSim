@@ -134,16 +134,22 @@ def load_json(name: str) -> Dict:
 
 A3 = load_a3()
 PASSES = [("V7.1.0", load_json("v710_regate")), ("V7.3.0", load_json("v730_regate")),
-          ("V7.4.0", load_json("v740_regate"))]
+          ("V7.4.0", load_json("v740_regate")),
+          ("V7.4.2", load_json("v742_regate"))]
 PASS_DATA = dict(PASSES)
 ACTIVE_PASS: Optional[str] = None
 
 # Every report is rendered from one coherent campaign. A later partial pass is
 # never allowed to backfill itself from older cells and overwrite a complete
 # published report.
+# V7.4.2 repins both clean reports: the V7.4.0 checkpoints were trained on a
+# grid that sampled L only at PDK bin corners, so their complex-circuit
+# numbers measure an unsampled interpolation rather than the model's fit
+# (docs/plans/2026-08-10-v742-bsimar-capacity.md). The V7.4.0 pass stays
+# loaded so the reports can quote what it said and mark it retracted.
 REPORT_PASS: Dict[Tuple[str, bool], str] = {
-    ("dn", False): "V7.4.0",
-    ("tf", False): "V7.4.0",
+    ("dn", False): "V7.4.2",
+    ("tf", False): "V7.4.2",
     ("pfn", False): "V7.3.0",
     ("dn", True): "V7.3.0",
     ("tf", True): "V7.3.0",

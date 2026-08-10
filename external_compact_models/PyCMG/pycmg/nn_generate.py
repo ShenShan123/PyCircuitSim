@@ -966,8 +966,14 @@ def enumerate_bins(
     overshoot_per_axis: int = DEFAULT_OVERSHOOT_PER_AXIS,
     n_vbs_lhs: int = DEFAULT_N_VBS_LHS,
     enable_subvt_off: bool = DEFAULT_SUBVT_OFF,
+    max_l_ratio: Optional[float] = None,
 ) -> List[BinSpec]:
-    """Enumerate every (variant, L, NFIN, T) bin spec for a tech/polarity."""
+    """Enumerate every (variant, L, NFIN, T) bin spec for a tech/polarity.
+
+    ``max_l_ratio`` (V7.4.2) densifies the L axis inside each PDK length
+    bin; see ``NNTechConfig.get_geometry_combos``. Unset reproduces the
+    lower-corner-only grid.
+    """
     variants = variant_names or tech.variant_names
     if not variants:
         raise ValueError(
@@ -977,7 +983,8 @@ def enumerate_bins(
     bins: List[BinSpec] = []
     counter = 0
     for variant in variants:
-        for L, NFIN in tech.get_geometry_combos(device_type, variant):
+        for L, NFIN in tech.get_geometry_combos(
+                device_type, variant, max_l_ratio=max_l_ratio):
             # V6.4.7 S9b: exclude NFIN<2. Project CLAUDE.md NN Rule 9 fixes the
             # data-generation NFIN range to [2,3,5,10,15,20,24] — NFIN=1 causes
             # OSDI convergence failures / degenerate modelcard resolution for
@@ -1146,6 +1153,7 @@ def generate_dataset(
     overshoot_per_axis: int = DEFAULT_OVERSHOOT_PER_AXIS,
     n_vbs_lhs: int = DEFAULT_N_VBS_LHS,
     enable_subvt_off: bool = DEFAULT_SUBVT_OFF,
+    max_l_ratio: Optional[float] = None,
 ) -> Dict[str, np.ndarray]:
     """Generate training data for one tech/polarity across all bins.
 
@@ -1183,6 +1191,7 @@ def generate_dataset(
         overshoot_per_axis=overshoot_per_axis,
         n_vbs_lhs=n_vbs_lhs,
         enable_subvt_off=enable_subvt_off,
+        max_l_ratio=max_l_ratio,
     )
 
     if verbose:
@@ -1221,6 +1230,8 @@ def generate_dataset(
         "overshoot_per_axis": int(overshoot_per_axis),
         "n_vbs_lhs": int(n_vbs_lhs),
         "enable_subvt_off": np.bool_(enable_subvt_off),
+        "max_l_ratio": np.float64(
+            max_l_ratio if max_l_ratio is not None else 0.0),
     }
     return _assemble(results, metadata, verbose=verbose)
 
@@ -1244,6 +1255,7 @@ def generate_universal_dataset(
     n_vbs_lhs: int = DEFAULT_N_VBS_LHS,
     enable_subvt_off: bool = DEFAULT_SUBVT_OFF,
     exclude_techs: Optional[Sequence[str]] = None,
+    max_l_ratio: Optional[float] = None,
 ) -> Dict[str, np.ndarray]:
     """Concatenate per-tech datasets across all 5 technologies and variants.
 
@@ -1277,6 +1289,7 @@ def generate_universal_dataset(
             overshoot_per_axis=overshoot_per_axis,
             n_vbs_lhs=n_vbs_lhs,
             enable_subvt_off=enable_subvt_off,
+            max_l_ratio=max_l_ratio,
         ))
 
     if verbose:
@@ -1311,5 +1324,7 @@ def generate_universal_dataset(
         "n_vbs_lhs": int(n_vbs_lhs),
         "enable_subvt_off": np.bool_(enable_subvt_off),
         "excluded_techs": np.array(sorted(excl)),
+        "max_l_ratio": np.float64(
+            max_l_ratio if max_l_ratio is not None else 0.0),
     }
     return _assemble(results, metadata, verbose=verbose)
