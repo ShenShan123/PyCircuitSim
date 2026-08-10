@@ -71,3 +71,8 @@ logs/
 v6_3_1_checkpoints/
 /tools/
 external_compact_models/bsimar/data/datasets_v2_backup/
+
+# PyCMG (vendored in-repo since V7.4.1; was a git submodule).
+# PyCMG/.gitignore covers build*/ and the IP-protected TSMC modelcards;
+# the modelcards archive (and local backups of it) must never be committed.
+external_compact_models/PyCMG/modelcards.tar.gz*

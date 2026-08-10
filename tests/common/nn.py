@@ -3,7 +3,7 @@
 Importing this module guarantees that:
 
 1. The ``bsimar`` package is on ``sys.path`` (so ``import bsimar`` works).
-2. The PyCMG submodule is on ``sys.path`` (so ``import pycmg`` works).
+2. The vendored PyCMG package is on ``sys.path`` (so ``import pycmg`` works).
 3. The reusable metrics (``nrmse`` / ``mre``) are computed identically in
    every verify script.
 

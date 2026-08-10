@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68.0", "wheel"]
+build-backend = "setuptools.backends._legacy:_Backend"
+
+[project]
+name = "pycmg"
+version = "0.1.0"
+description = "Python ctypes interface for BSIM-CMG OSDI compact model evaluation"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy>=1.24.0",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0.0",
+]
+
+[tool.pytest.ini_options]
+addopts = "--import-mode=prepend"
+testpaths = ["tests"]
+markers = [
+    "fast: quick smoke tests (single operating point)",
+    "slow: extended tests (temperature/voltage sweeps)",
+]
+
+[tool.setuptools.packages.find]
+include = ["pycmg*"]

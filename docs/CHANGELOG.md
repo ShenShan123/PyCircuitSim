@@ -8,6 +8,40 @@ pruned; the full original text lives in git history.)
 
 ---
 
+## V7.4.1 — housekeeping: PyCMG vendored in-repo, docs compacted, stale plans pruned (branch `v720-gpu-scaling`, 2026-08-10)
+
+**PyCMG is no longer a git submodule.** The gitlink, `.gitmodules` and the
+local module clone are gone; the 65 files PyCMG tracked (its full working tree
+minus `modelcards.tar.gz`) are tracked directly by this repo at
+`external_compact_models/PyCMG/`. The conversion was performed at the pinned
+commit `06a20b7` (verified pushed to `ShenShan123/PyCMG` first, no unpushed
+work on any branch). Guardrails preserved: PyCMG's own `.gitignore` still
+covers `build*/` and the IP-protected TSMC `cln*.l` cards (nested .gitignore
+files apply regardless of repo boundaries); the parent `.gitignore` adds
+`external_compact_models/PyCMG/modelcards.tar.gz*` so neither the archive nor
+the local `*-backup` tarball (the only copy holding the TSMC6 raw card) can be
+committed. All gitignored on-disk assets — TSMC modelcards, the OSDI binary,
+the backup tarball — were untouched. README clone/setup instructions updated
+(no `--recurse-submodules`); future PyCMG upstream changes are now ordinary
+commits here, not pin bumps.
+
+**House-clean:** pruned 12 stale docs (11 closed-campaign `docs/plans/` files
++ the V6.9.0 TSMC6 parse-audit doc; kept the two plans CLAUDE.md/README cite
+as dead-end registers and the 2026-07-21 systematic audit), tracked the
+previously untracked `scripts/v740_tf_reaper.sh` alongside its campaign
+siblings, and deleted untracked cruft (`__pycache__`, generated
+`tests/verify_*_results/`, finished-campaign master logs and stale V6.x bench
+dirs under `results/`). Evidence dirs `results/v740_regate/` and
+`results/v720_gpu_regate/` untouched. Tracked scripts were deliberately NOT
+pruned — the campaign scripts form a call web whose root drivers look
+unreferenced by grep.
+
+**Docs compacted:** CHANGELOG 1274 → ~800 lines (fourth condensation — every
+entry, verdict, retraction and dead-end retained); CLAUDE.md 395 → 366
+(model-family state and the TSMC6 story each told once).
+
+---
+
 ## V7.4.0 — clean rebuild + GPU fidelity re-gate on new hardware (branch `v720-gpu-scaling`, 2026-07-30 → 2026-08-06)
 
 **COMPLETE for the CPU accuracy axis.** The box changed (`memlab-gpu2`, fresh

@@ -99,8 +99,8 @@ LEVEL=72/73/74/75 are supported.
 ### Setting Up the Environment
 
 ```bash
-# Clone the repository with submodules
-git clone --recurse-submodules https://github.com/ShenShan123/PyCircuitSim.git
+# Clone the repository (PyCMG is vendored in-repo — no submodules)
+git clone https://github.com/ShenShan123/PyCircuitSim.git
 cd PyCircuitSim
 
 # Create and activate the conda environment
@@ -117,13 +117,12 @@ pip install torch
 
 ### BSIM-CMG Setup
 
-To use BSIM-CMG FinFET models (LEVEL=72), the PyCMG submodule and a compiled OSDI binary are required:
+To use BSIM-CMG FinFET models (LEVEL=72), a compiled OSDI binary is required
+(PyCMG itself ships in-repo under `external_compact_models/PyCMG/`):
 
 ```bash
-# Initialize the PyCMG submodule (if not cloned with --recurse-submodules)
-git submodule update --init --recursive
-
-# Verify the OSDI binary exists
+# Verify the OSDI binary exists (build it with OpenVAF if absent —
+# see external_compact_models/PyCMG/README.md)
 ls external_compact_models/PyCMG/build/osdi/bsimcmg.osdi
 ```
 
@@ -880,7 +879,7 @@ external_compact_models/            # External compact-model packages
 │   ├── checkpoints/                # Trained weights (gitignored)
 │   └── docs/, imgs/, README.md, LICENSE
 │
-└── PyCMG/                          # BSIM-CMG OSDI wrapper (git submodule)
+└── PyCMG/                          # BSIM-CMG OSDI wrapper (vendored in-repo)
     ├── pycmg/                      # Python ctypes-based OSDI interface
     ├── build/osdi/bsimcmg.osdi     # Compiled OSDI binary
     ├── modelcards/                 # Technology modelcards (ASAP7 + TSMC5/6/7/12/16)
