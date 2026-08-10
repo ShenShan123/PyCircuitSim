@@ -167,6 +167,28 @@ Cost: ~2.4× rows per (tech, device). Per-bin voltage sampling is left
 Ships behind an explicit flag (`--max-l-ratio`), default off — legacy
 regeneration stays byte-identical, per the project's perf/data discipline.
 
+## 5b. The fix, confirmed
+
+DirectNet `large` retrained on the densified data, probed at **epoch 14 of
+800** — deliberately undertrained, so the comparison to read is off-grid
+against on-grid *within this checkpoint*, not against a converged model:
+
+| L (nm) | on grid | V7.4.0 (converged) | V7.4.2 (epoch 14) |
+|---|---|---|---|
+| 6 | yes | −0.02 | −0.46 |
+| 7.63 | yes (new) | — | +0.11 |
+| 12.36 | yes (new) | — | +0.07 |
+| 15.72 | yes (new) | — | +0.34 |
+| **16** | **no** | **−9.89** | **+0.36** |
+| 18 | no | — | +0.62 |
+| 20 | yes | −0.06 | +0.38 |
+| 28 | no | −5.57 | −1.92 |
+
+The benchmark length is still a genuine interpolation — its nearest knot is
+15.72 nm — and the interpolant now tracks its neighbours (+0.34 → **+0.36**
+→ +0.38) instead of sagging 10 % below them. The on-grid/off-grid distinction
+has effectively disappeared, which is the whole claim.
+
 ## 6. Campaign
 
 | phase | work | where |

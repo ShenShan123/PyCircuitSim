@@ -166,7 +166,16 @@ def main() -> int:
     else:
         lengths = sorted(set(knots.tolist()) | {L_bench})
         lengths = [L for L in lengths if L <= 40e-9]
-    knot_set = {round(k * 1e9, 4) for k in knots.tolist()}
+
+    def _on_grid(L: float) -> bool:
+        """Within 0.1 % of a sampled knot.
+
+        Exact float equality would mislabel a hand-typed --lengths value
+        (7.63 vs the grid's 7.6296...) as off-grid, which is precisely the
+        distinction this diagnostic exists to report.
+        """
+        return bool(len(knots)) and bool(
+            np.min(np.abs(knots - L)) <= 1e-3 * L)
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print("=" * 96)
@@ -220,7 +229,7 @@ def main() -> int:
             e = ((np.abs(pred[good]) - np.abs(ref[good]))
                  / np.abs(ref[good]))
             cells.append(f"{100 * e.mean():+12.2f}")
-        on = "yes" if round(L * 1e9, 4) in knot_set else "NO"
+        on = "yes" if _on_grid(L) else "NO"
         mark = "  <-- benchmark" if abs(L - L_bench) < 1e-13 else ""
         print(f"{L * 1e9:8.2f} {on:>8s} | {np.abs(ref[good]).mean():13.4e} | "
               + " | ".join(cells) + mark)
