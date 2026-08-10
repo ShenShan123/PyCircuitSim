@@ -2,1272 +2,796 @@
 
 This is the long-form history of PyCircuitSim. CLAUDE.md keeps a one-paragraph
 "current state" summary; everything below is here so the conversation context
-isn't burdened with chronology. (Compressed 2026-07-03, re-condensed 2026-07-23
-and 2026-07-30 — every entry and verdict retained, verbose prose pruned; the
-full original text lives in git history.)
+isn't burdened with chronology. (Compressed 2026-07-03, re-condensed 2026-07-23,
+2026-07-30 and 2026-08-10 — every entry and verdict retained, verbose prose
+pruned; the full original text lives in git history.)
 
 ---
 
 ## V7.4.0 — clean rebuild + GPU fidelity re-gate on new hardware (branch `v720-gpu-scaling`, 2026-07-30 → 2026-08-06)
 
-**COMPLETE for the CPU accuracy axis.** DirectNet and BSIM-AR are both trained,
-gated and regenerated from measurement. Nothing in their clean reports is
-inherited from an earlier pass — datasets, checkpoints and gate verdicts were
-all rebuilt. Recipe rows and PFN were deliberately not retrained; their reports
-are retained as explicitly labelled V7.3.0 evidence.
+**COMPLETE for the CPU accuracy axis.** The box changed (`memlab-gpu2`, fresh
+clone, no datasets/checkpoints), so every NN number was re-earned: all 10
+datasets regenerated (`--enable-inv-trip --enable-subvt-off`), DirectNet and
+BSIM-AR rebuilt 40/40 checkpoints each on the one clean recipe
+(`--apply-filter off --swa-mode ema --seed 42`), 240/240 suite runs per family,
+reports regenerated and `--check` clean. Recipe rows and PFN were deliberately
+NOT retrained — their reports stand as labelled V7.3.0 historical evidence
+(an empty local source cannot reconstruct measured rows). Training ran on GPU;
+headline gating stayed CPU-pinned (fidelity is a CPU/flags-off property).
 
-**Why.** The box changed (`memlab-gpu2`): a fresh clone with no datasets and no
-checkpoints, so every NN number had to be re-earned rather than re-read. Taken
-as an opportunity to re-measure the clean control end-to-end on one identical
-recipe (`--apply-filter off --swa-mode ema --seed 42`), all four tiers, all five
-techs, both polarities.
-
-**Discipline.** Training on GPU, **headline gating CPU-pinned** — fidelity
-remains a CPU/flags-off scoreboard property (CLAUDE.md §Performance
-Discipline). CUDA acceleration is re-gated as a separate T3/T4 axis and never
-substituted into those scores.
-
-### Landed
-
-- **Datasets** — all 10 regenerated (`--enable-inv-trip --enable-subvt-off`),
-  1.8–2.6 M rows each, ~25 min wall at 12 workers × 10 jobs.
-- **DirectNet** — 40/40 checkpoints, **240/240 suite runs**, report regenerated
-  and `--check` clean.
-- **BSIM-AR** — 40/40 checkpoints, **240/240 suite runs**, including recovery
-  of the large/xl stems that OOMed on the shared low-headroom GPU; report
-  regenerated and `--check` clean.
-- **Infra** — `scripts/v740_campaign.sh` (drain-loop orchestrator: gates each
-  tier as its checkpoints complete rather than waiting for all training),
-  `v740_tf_rescue.sh` (claims OOM-abandoned stems mid-wave), `v740_tf_fill.sh`
-  (post-wave gap refill + gate + collect). `v730_docs_build.py --only/--recipes`
-  plus a complete-matrix guard, per-report pass pin, and SHA-256 manifest, so a
-  partial pass cannot overwrite a coherent report or silently drift preserved
-  history. `v740_regate` is registered as the V7.4 clean evidence pass in both
-  coverage and docs builders.
-  The campaign completion matcher now accepts the trainer's actual
-  `ALL RECIPE TRAINING COMPLETE` sentinel; the stale post-campaign poll loop
-  exposed by this rebuild is retired.
-- **DN clean@`large` remapping** — V7.4.0 trains clean into the production slots
-  at every tier, so the `v660clean_large` archive detour is retired from
-  `CLEAN`/`CLEAN_OVERRIDE` in both scripts.
-- **Evidence boundary** — the new machine has no V7.3 recipe/PFN raw result
-  trees or checkpoints. Their rendered reports remain the durable historical
-  evidence; full regeneration is intentionally avoided because an empty local
-  source cannot reconstruct those measured rows.
+**Infra:** `scripts/v740_campaign.sh` (drain-loop orchestrator),
+`v740_tf_rescue.sh` (claims OOM-abandoned stems mid-wave), `v740_tf_fill.sh`
+(post-wave refill), `v740_tf_reaper.sh` (two-cycle kill of dead-incomplete
+stems — a killed run's leftover `_best.pt` otherwise makes every retry SKIP;
+retrain is from scratch with `--force` so the control stays one uninterrupted
+run). `v730_docs_build.py` gained `--only/--recipes`, a complete-matrix guard,
+per-report pass pin and SHA-256 manifest, so a partial pass cannot overwrite a
+coherent report; `v740_regate` registered as the V7.4 evidence pass.
 
 ### Verdicts — three V7.3.0 claims retracted
 
-- **"DirectNet peaks at `large`" — RETRACTED.** The curve is monotonic:
-  11 → 12 → 14 → **15/20**, `xl` best. But decomposed it is weak: the ring
-  column is frozen at 2/5 across all four tiers and SRAM is saturated at 5/5,
-  so the whole climb is switchcap (saturating by `medium`) plus the noisy opamp
-  column. Safe statement: capacity does not *hurt* the clean recipe, and the
-  "over-fit boundary" story does not survive a retrain. `large` stays
-  production on cost (`xl` = 2.3× params and CPU for one cell).
-- **"`tsmc7-opamp` at `large` is open" — RETRACTED.** TSMC7 passes the opamp at
-  **all four tiers** (3.9–6.1 %) and is the strongest opamp column.
-- **"`tsmc5-opamp` is the thinnest margin" — RETRACTED.** 0/4: three tiers rail,
-  `large` misses at 11.6 % vs a 10 % gate.
+- **"DirectNet peaks at `large`" — RETRACTED.** Monotonic 11→12→14→**15/20**,
+  `xl` best; but the climb is switchcap+opamp only (ring frozen 2/5, SRAM
+  saturated 5/5). `large` stays production on cost (`xl` = 2.3× for one cell).
+- **"`tsmc7-opamp` at `large` is open" — RETRACTED.** TSMC7 passes the opamp
+  at all four tiers (3.9–6.1 %), strongest opamp column.
+- **"`tsmc5-opamp` is the thinnest margin" — RETRACTED.** 0/4: three tiers
+  rail, `large` misses 11.6 % vs the 10 % gate.
 
 ### Measured noise floor — the TSMC6 repeat paid off
 
-TSMC6/TSMC7 train on bit-identical rows, so every disagreement is training luck.
-They agree on **14/16** cells (all rings, all SRAMs, all switchcaps) and
-disagree twice, **both opamp** — worth a 2-cell spread in the per-tech totals
-(TSMC7 11/16, TSMC6 9/16). **A ≤2-cell opamp difference is therefore noise, not
-a result.** Applied immediately to this campaign's own finding: `tsmc16-opamp`
-went 0/4 (passed twice in V7.3.0) — exactly 2 cells, so it is flagged
-*not established pending a second seed* rather than reported as a regression.
+TSMC6/TSMC7 train on bit-identical rows; they agree 14/16 (all rings, SRAMs,
+switchcaps) and split twice, **both opamp** — a 2-cell spread in per-tech
+totals. **A ≤2-cell opamp difference is noise, not a result.** Applied
+immediately: `tsmc16-opamp` went 0/4 (passed twice in V7.3.0) — exactly 2
+cells, so flagged *not established pending a second seed*, not a regression.
 
 ### New findings
 
-- **`xl` breaks parametric DC for the first time** — 66/69 configs (TSMC12
-  17/18, TSMC16 12/14) against a clean 69/69 at every other tier. Capacity now
-  visibly damages the device surface *while the circuit score climbs*, widening
-  the project's device-vs-circuit inversion: `medium` is the best device fit,
-  `xl` the best circuit tier.
-- **Low-VDD rings are an exception-free partition** — TSMC5/6/7 fail all 12 ring
-  cells, TSMC12/16 pass all 8. TSMC5 worsens with capacity (6.9 % → 14.4 %).
-- **`switchcap` at `small` fails 4/5 on hold droop**, not on the headline charge
-  metric.
-- **TSMC5 device AC reports `f3db = nan`** at `large`/`xl` — a degenerate fit,
-  flagged before `xl` is used for AC work.
+- **`xl` breaks parametric DC for the first time** — 66/69 vs 69/69 at every
+  other tier: capacity now damages the device surface *while the circuit score
+  climbs* (device-vs-circuit inversion: `medium` best device fit, `xl` best
+  circuit tier).
+- **Low-VDD rings are an exception-free partition** — TSMC5/6/7 fail all 12
+  ring cells, TSMC12/16 pass all 8; TSMC5 worsens with capacity.
+- **`switchcap` at `small` fails 4/5 on hold droop**, not headline charge.
+- **TSMC5 device AC reports `f3db = nan` at `large`/`xl`** — degenerate fit.
 
-### BSIM-AR clean verdict — fidelity remains stronger, but not flat
+### BSIM-AR clean verdict — stronger, but not flat
 
-- The strict curve is **18 → 17 → 15 → 13/20** (`small`→`xl`), zero flips.
-  This retracts the V7.3.0 clean claim that BSIM-AR is flat across capacity.
-  `small` misses only TSMC5 switchcap (hold-droop criterion) and the noisy
-  TSMC7 ring; `xl` adds four ring failures and a three-cell TSMC12 collapse.
-- The capacity decline is a circuit-surface result, not wholesale device
-  damage: transient is **80/80 at every tier**, device AC is 9/10, 10/10,
-  10/10, 10/10, and parametric DC is 67/69, 68/69, 65/69, 67/69.
-- TSMC6/TSMC7 agree on **15/16** clean verdicts; the sole split is the small
-  ring (4.33 % pass vs 5.86 % fail), inside the measured ring noise. The old
-  claim that BSIM-AR reproduced all 16 controlled-repeat cells is retracted.
-- Historical V7.3.0 corridor recipes still record 20/20 groups, but they were
-  not retrained in V7.4.0 and cannot be treated as deltas against these new
-  clean controls or as the current artifact set.
+Strict curve **18→17→15→13/20** (`small`→`xl`), zero flips — retracts the
+V7.3.0 claim that BSIM-AR is flat across capacity. `small` misses only TSMC5
+switchcap (hold droop) + the noisy TSMC7 ring. The decline is circuit-surface,
+not device damage (transient 80/80 every tier; device AC 9–10/10; parametric DC
+65–68/69). TSMC6/TSMC7 agree 15/16 (sole split inside ring noise) — the old
+"all 16 repeat cells reproduce" claim is retracted. V7.3.0 corridor recipes
+still record 20/20 but were not retrained; they are historical evidence, not
+the current artifact set.
 
 ### GPU acceleration fidelity — remaining V7.2 gate closed
 
-- **T3 full bundle** (`commit+gpu+stamp+NATURAL`, DirectNet clean `large`) ran
-  all **48/48** cells: four electrically distinct techs × four circuits ×
-  OMP {1,2,4}. Binding SRAM + switchcap are **24/24**, Rule 2 is **15/15** on
-  CUDA, and there are zero thread-count flips, OOMs or runtime errors.
-- The report-only basket is **12/16 strict** (ring 2/4, opamp 2/4, SRAM 4/4,
-  switchcap 4/4), exactly the current V7.4 CPU clean-`large` basket. Printed
-  metrics are identical except TSMC5 opamp OMP=1, 11.61 % CPU → 11.59 % GPU,
-  with the same FAIL verdict.
-- **T4 full latch basin** is **8/8 PASS, zero basin flips, zero errors** across
-  both states × four techs; worst max|ΔV| **0.1206 mV**, worst q-NRMSE
-  **0.0101 % of VDD**. The remaining V7.2 GPU fidelity gate is closed.
-- CUDA stays opt-in and GPU results stay outside the CPU accuracy scoreboard;
-  this is the compatibility contract, not an unresolved numerical failure.
-  The T3 driver now pins one Python interpreter for every worker, removes stale
-  sidecars before a rerun, records all 48 return codes, and exits nonzero for
-  missing evidence, binding failure, OMP flips, infrastructure errors, or a
-  failed Rule-2 canary.
-  Evidence: `results/v720_gpu_regate/t3_gpu_bundle/` and
-  `t4_gpu_bundle/`.
+- **T3 full bundle** (`commit+gpu+stamp+NATURAL`, DirectNet clean `large`):
+  **48/48 executed** (4 techs × 4 circuits × OMP {1,2,4}); binding
+  SRAM+switchcap 24/24, Rule 2 15/15 on CUDA, zero flips/OOMs/errors.
+  Report-only basket 12/16 strict — exactly the V7.4 CPU clean-`large` basket,
+  metrics identical except one 0.02 pp opamp delta with the same verdict.
+- **T4 full latch basin: 8/8 PASS, zero basin flips**; worst max|ΔV|
+  0.1206 mV, worst q-NRMSE 0.0101 %VDD.
+- CUDA stays opt-in because CPU/flags-off remains the scored compatibility
+  contract, not because a gate is open. Evidence:
+  `results/v720_gpu_regate/t{3,4}_gpu_bundle/`.
 
-### TSMC6 ≡ TSMC7: §7 confirmed exhaustively, not softened
+### TSMC6 ≡ TSMC7: §7 confirmed exhaustively
 
-`methodology.md` §7 named five differing PDK keys; this campaign enumerated all
-of them. Of 1748 shared modelcard parameters **11 differ in value**, plus 74
-TSMC6-only and 12 TSMC7-only keys = **97 total**, and **all 97 have zero
-occurrences anywhere in the BSIM-CMG Verilog-A** (vs 333 of the 1737 identical
-keys that do appear). All 97 belong to TSMC's TMI layout-dependent-effect layer
-(LOD, ODX OD-to-OD spacing, isolated-CPODE); **no core device-physics parameter
-differs** (vth0, u0, vsat, dvt0/1, eta0, phig, eot, toxp, hfin, cgso/cgdo).
-Over-determined mechanism: OpenVAF never compiles the TMI keys, *and*
-`pycmg/nn_generate.py:234` stamps only `{L, NFIN, TFIN, DEVTYPE}` so the
-instance-driven LDE terms never activate. Matches silicon — N6 is a
-design-rule-compatible EUV derivative of N7. The freshly generated
-`tsmc6_{nmos,pmos}.npz` are bit-identical to `tsmc7_*` bar `meta_tech_name`.
+Of 1748 shared modelcard parameters 11 differ + 74 TSMC6-only + 12 TSMC7-only
+= **97 keys, all with zero occurrences in the BSIM-CMG Verilog-A** (vs 333 of
+the identical keys that do appear). All 97 are TSMC TMI layout-effect
+parameters; no core device-physics parameter differs. Over-determined: OpenVAF
+never compiles them AND `nn_generate.py` stamps only `{L, NFIN, TFIN,
+DEVTYPE}`. The regenerated `tsmc6_*.npz` are bit-identical to `tsmc7_*` bar
+the tech-name field.
 
 ### Dead end recorded
 
-- **Round-robining BSIM-AR training over `GPUS='1 1 0'`** — GPU 0 is shared with
-  a foreign 30.5 GB process leaving ~9.5 GB, so transformer `large`/`xl` jobs
-  OOM there. They fail at **epoch 0** (memory is claimed up front), so the cost
-  is seconds, not hours — which is why the wave was *not* restarted: killing it
-  would have discarded an in-flight job already 75 epochs deep. Recovery is
-  layered instead (rescue mid-wave → fill post-wave → `--require-complete`
-  gating so a killed run is never scored). Pin BSIM-AR `large`/`xl` to a GPU
-  with real headroom.
+- **Round-robining BSIM-AR training over a shared GPU** (`GPUS='1 1 0'`;
+  GPU 0 held ~9.5 GB free) — `large`/`xl` jobs OOM there at epoch 0. The wave
+  was not restarted (would discard a 75-epoch in-flight job); recovery layered
+  instead (rescue → fill → `--require-complete`). Pin big tiers to a GPU with
+  real headroom.
 
 ---
 
-## V7.3.0 — accuracy reports restructured, and re-gated on one code state (2026-07-27 → 29)
+## V7.3.0 — accuracy reports restructured, re-gated on one code state (2026-07-27 → 29)
 
-**The nine cross-cutting accuracy documents become two per model family — one
-for the clean control, one for the recipes measured against it — and every
-number in them is regenerated from the gate logs rather than transcribed.**
-Along the way the campaign closed the last measurement holes, gave PFN its
-first curriculum arm, and folded TSMC6 into the headline denominator.
+**Nine cross-cutting accuracy documents became two per family**
+(`{DirectNet-L73,BSIM-AR-L74,PFN-L75}-{clean,recipes}.md`): the clean report
+answers per tech/scale/testcase, the recipes report carries the addenda,
+cross-cutting material lives once in `methodology.md`, and the pre-fix archive
+keeps only the register of retracted claims (frozen tables recoverable via
+`git show 37cef77:docs/accuracy/archive-pre-gds-fix.md`). **All tables are
+generated**: `v730_docs_build.py` (`--check` fails on stale files),
+`v730_coverage.py` (coverage by pass + runnable gap job file),
+`v730_control.py` (cross-pass comparison). 2173 → 1768 lines with more
+measurement behind them.
 
-### The restructure
+**Denominators /16 → /20:** TSMC6 folds into the headline (complex /20, device
+AC /10, opamp AC /5). No total is comparable across the boundary without
+rescaling. TSMC6 remains TSMC7 relabelled; only presentation changed.
 
-`by-tech.md`, `by-scale.md`, `by-recipe.md` and the three `*-accuracy.md`
-family reports are retired, replaced by
-`{DirectNet-L73,BSIM-AR-L74,PFN-L75}-{clean,recipes}.md`. The clean report
-answers *per tech, per scale, per testcase*; the recipes report carries the
-addenda. Cross-cutting material lives once in `methodology.md`. The
-pre-fix archive drops its ~660 lines of frozen tables (recoverable with
-`git show 37cef77:docs/accuracy/archive-pre-gds-fix.md`) and keeps the
-register of retracted claims. 2173 → 1768 lines with more measurement behind
-them.
+**Measured** (1536 cells, 12 clean + 14 recipe groups; the control reproduced
+176/176 jointly-measured cells at OMP=1, licensing the V7.1.0 merge):
 
-**All tables are generated.** `scripts/v730_docs_build.py` builds the six
-reports and the README scoreboard from merged evidence; `--check` fails if a
-committed file is stale. `scripts/v730_coverage.py` merges the three
-measurement passes and reports what is measured, by which pass, and what is
-missing — emitting the remainder as a runnable job file.
-`scripts/v730_control.py` compares every jointly-measured cell.
+- **BSIM-AR clean strict at all four tiers, identical scores at each**, zero
+  flips over a 22× capacity range; the open set is the low-VDD ring column only.
+- **`corroft@medium`, `corro15@medium` and all four corridor recipes at `xl`
+  sweep 20/20** — `corroft@medium` the only checkpoint passing every cell.
+- **TSMC6 retires DirectNet's sweep:** `crit15m@xl` passes `tsmc7-opamp` and
+  fails `tsmc6-opamp` — same data, same recipe, different training run/basin.
+  A sweep a duplicate column can break was never a sweep. Every such split is
+  in the bimodal opamp column.
+- **PFN's first curriculum arm** (`corroft@small`): rings 3/5→5/5, opamps
+  2/5→0/5 — total unchanged, failure set replaced. Cleanest instance of
+  curricula *relocating* basins rather than composing them; third architecture
+  where the corridor is the ring lever.
+- TSMC6 recipe checkpoints trained (26); its freshly harvested ring corridor is
+  `array_equal` to TSMC7's — a fourth reproduction of the duplicate finding.
 
-### Denominators: /16 → /20
+**Fixed:** `--cuda` no longer silently falls back to CPU (a faulted 4090 turned
+a run into a 50× slower CPU run that would have been gated normally; guard
+exits 1 — note torch enumerates FASTEST_FIRST so nvidia-smi index ≠ CUDA
+index). `v730_coverage.py --require-complete` keeps half-trained checkpoints
+(bare `_best.pt`, no `.complete`) out of gates.
 
-TSMC6 now counts. Complex totals are /20, device AC /10, opamp AC /5. **No
-total is comparable across that boundary without rescaling** — a V7.3.0 16/20
-and a V7.1.0 13/16 can be the same measurement. TSMC6 remains TSMC7
-relabelled; only the presentation changed.
-
-### What was measured
-
-1536 cells across 12 clean groups and 14 recipe groups, five techs. The
-control reports **176/176 jointly-measured cells reproducing at OMP=1**, which
-is what licenses mixing reused V7.1.0 numbers with V7.3.0 re-measurements.
-
-* **BSIM-AR clean is strict at all four tiers and identical at each** — same
-  score, same open cells, zero flips, over a 22× capacity range. Previously
-  only `large` was strict. The open set is the low-VDD ring column and nothing
-  else; opamp, SRAM and switchcap are complete at every tier.
-* **`corroft@medium`, `corro15@medium` and all four corridor recipes at `xl`
-  sweep 20/20** — the first full sweeps recorded, TSMC6 included.
-  `corroft@medium` is the only checkpoint in the project passing every cell.
-* **TSMC6 retires DirectNet's sweep.** Folding the duplicate in put the
-  controlled repeat inside every row, and it immediately falsified a claim
-  carried for two campaigns: `crit15m@xl` passes `tsmc7-opamp` and **fails
-  `tsmc6-opamp`** — same technology, `array_equal` data, same recipe, same
-  code. The only difference is which training run made the weights and which
-  Newton basin the solver found. A sweep a duplicate column can break was never
-  a sweep. The pattern is systematic and lands where the noise floor predicts:
-  every such split is in the bimodal opamp column, none in `sram_snm` or
-  `switchcap`.
-* **PFN's first curriculum arm.** `corroft@small`, trained for all five techs,
-  takes rings 3/5 → 5/5 (including the two low-VDD cells no PFN checkpoint had
-  ever passed) and opamps 2/5 → 0/5. Total unchanged, failure set replaced —
-  the cleanest instance yet of curricula *relocating* basins rather than
-  composing them, and the third architecture on which the corridor is the ring
-  lever.
-* **TSMC6 recipe checkpoints trained** (26) so the recipe tables reach /20.
-  Its ring-only corridor had never been harvested; the new one is
-  `array_equal` to TSMC7's, a fourth and stronger reproduction of the
-  duplicate finding — the corridor comes from *running the ring oscillator*
-  under LEVEL=72, so identical rows mean identical circuit trajectories.
-
-### Fixed
-
-* **`--cuda` no longer falls back to CPU silently** (`bsimar/cli/train.py`).
-  A 4090 faulted mid-campaign and poisoned the driver for new contexts; two
-  runs died outright and a third quietly became a ~50× slower CPU run that
-  would have been gated as if nothing happened. The guard exits 1 and prints
-  the pinned device, because the diagnosis is not obvious: torch enumerates by
-  `CUDA_DEVICE_ORDER` (FASTEST_FIRST), so the faulted card was nvidia-smi
-  index 1 and CUDA index 2 — `nvidia-smi` looked healthy for the device the
-  job was pinned to.
-* **`v730_coverage.py --require-complete`** keeps half-trained checkpoints out
-  of the gates. Both CUDA-killed runs left a bare 20 MB `_best.pt` with no
-  `.complete` marker; no wrong number reached a report.
-
-### Dead ends and non-fixes
-
-* **The opamp open-loop AC bias-resolution defect is documented, not fixed.**
-  The gate picks its bias on a 2 mV grid across a 3–14 mV transition, so on
-  three of four techs the NGSPICE reference's own operating point falls outside
-  the validity window — which is then applied to the NN only. Changing an
-  accuracy gate changes the accuracy record; that is a separate decision.
-* **"Every family is flip-free" is retracted a second time.** True after the
-  V6.13.0 gds fix, but the V7.1.0 sweep recorded a flip at two PFN tiers. The
-  rule is now "a nonzero flip count is unbankable, re-measure".
+**Dead ends / non-fixes:** the opamp open-loop AC bias-resolution defect is
+documented, not fixed (gate changes are decisions, not side effects). "Every
+family is flip-free" retracted a second time — the rule is now "a nonzero flip
+count is unbankable, re-measure".
 
 ---
 
 ## V7.2.0 — GPU-accelerated large-scale SRAM transient (branch `v720-gpu-scaling`, 2026-07-27/28)
 
-**All phases of `docs/plans/2026-07-26-v720-gpu-scaling.md` landed across two
-execution sessions. The bit-identical work (parse, batched denorm tail,
-vectorised NR loops) ships default-on; the perturbing levers (batched transient
-commit, GPU NN eval, batched COO stamping, MNA ordering) ship default-off
-behind env flags; and the §8.4 gating machinery ran: the CPU flag bundle is
-gated and passing.** Workload context: a 200-step SRAM write op = 483 NR
-iterations + 200 commit points; the rev-4 discovery was that the post-step
-charge-history commit ran one cache-cold batch-1 eval per device per accepted
-step = **75–85 % of transient wall**. Every change is classified
-**bit-identical** (default-on) or **perturbing** (default-off flag, promoted
-only after a full re-gate) — the same discipline as V7.0.x.
+**All phases of `docs/plans/2026-07-26-v720-gpu-scaling.md` landed.**
+Bit-identical work ships default-on; perturbing levers ship default-off behind
+env flags (same discipline as V7.0.x). Workload context: a 200-step SRAM write
+op = 483 NR iterations + 200 commit points; the rev-4 discovery was the
+post-step charge-history commit running one cache-cold batch-1 eval per device
+per step = 75–85 % of transient wall.
 
-### Bit-identical, default-on (one commit per phase)
+### Bit-identical, default-on
 
-- **Phase 1, parse** `4d76c22` — O(devices + checkpoints): cache-first
-  `torch.load`/`NormStats.load`/sidecars, memoized resolver cascade, collapsed
-  per-device `[NN-resolver]` stdout. `PYCIRCUITSIM_NN_DEVICE` default **cpu**
-  (fixes the 1b provenance bug: `_get_nn_device` silently picked CUDA when
-  visible). 8×8: torch.load 384→2 calls, parse 2.44→0.13 s; 32×32: ~44 → 4.67 s.
-- **Phase 2a-lite + 2c** `146f05f` — `_to_host_block` (one D2H for the
-  (N,13)+Jacobian block; CPU path is an identity), constant tensors deduped per
-  (norm file, device), and the per-iteration stacked geometry/tech-code rebuild
-  replaced by a **value-keyed cache**.
-- **Phase 2a-full, batched denorm tail** `e6f8154` — the per-device
-  `_unpack_eval` loop became one float64 numpy pass over the (N,out_dim)+Jacobian
-  block, shared by all three NN families. The §8.1 bit-exactness constraints are
-  enforced in code, not convention: the Vds-correction exponential is
-  per-element libm `math.exp` over the masked subset (`np.exp` differs 1 ULP on
-  ~4.6 % of args, amplified ~60× by the `1−exp` cancellation exactly in the SRAM
-  off-device regime), and everything casts to float64 before any arithmetic,
-  with dtype asserts. The 2c cache carries per-member `_is_pmos`, so an env
-  double-pin aliasing both polarities still unpacks per-device. New gate
-  `tests/verify_batched_tail.py`: **22/22 exact bit equality per element**
-  (DN/AR/PFN × N/P × caps on/off, adversarial Vds box, source tripwires,
-  mixed-polarity group, end-to-end wiring). A/B vs HEAD sha256-equal.
-- **Phase 2d + 4a, NR-loop vectorisation** `1a576ed` — both NR loops' per-node
-  Python loops vectorised over a maintained `v_arr`; VS-constrained sets hoisted;
-  `Circuit` caches `get_nodes`/`get_node_map` behind `invalidate_topology()`
-  (+ a topology version counter; every in-repo direct `components` mutation
-  hooked); `_nn_mosfets`/`_has_nn_device` cached; **one LIL→CSR conversion per
-  NR iteration** shared by residual + solve + LM ladder. A/B byte-identical
-  incl. L72 inverter OP + tran.
+- **Phase 1, parse** `4d76c22` — cache-first `torch.load`/norm/sidecars,
+  memoized resolver. `PYCIRCUITSIM_NN_DEVICE` default **cpu** (fixes the
+  silent-CUDA provenance bug). 32×32 parse ~44 → 4.67 s.
+- **Phase 2a-lite + 2c** `146f05f` — one D2H block transfer, deduped constant
+  tensors, value-keyed geometry/tech-code cache.
+- **Phase 2a-full, batched denorm tail** `e6f8154` — per-device `_unpack_eval`
+  → one float64 numpy pass, all three families. §8.1 bit-exactness enforced in
+  code: per-element libm `math.exp` on the Vds-correction (np.exp differs 1 ULP
+  on ~4.6 % of args, amplified ~60× by the `1−exp` cancellation), float64
+  casts + dtype asserts. New gate `verify_batched_tail.py` 22/22 exact.
+- **Phase 2d + 4a, NR-loop vectorisation** `1a576ed` — per-node loops
+  vectorised; `Circuit` caches nodes/map behind `invalidate_topology()`; one
+  LIL→CSR conversion per NR iteration. A/B byte-identical.
 
 ### Perturbing, default OFF (env-flag opt-ins)
 
-- **Phase 2t** `d1b8e40`, `PYCIRCUITSIM_TRAN_BATCH_COMMIT=1` — one
-  `_batch_eval_nn_mosfets` at the solved voltages before the commit loop and
-  before `init_charge_state`. Flag-off byte-identical (sha256). Flag-on 4×4
-  write op: **146 → 34.7 s (4.2×)**; 16×16 acceptance: **26 min 15 s →
-  11 min 52 s (2.2× on the contended box), latch end-states 512/512, max final
-  ΔV 0.52 mV** — the worst waveform NRMSE (1.43 %VDD) is localized to a window
-  where the *flag-off reference itself rings step-to-step*.
-- **Phase 3a** `2496b9a` + `38b6920`, `PYCIRCUITSIM_NN_DEVICE=cuda[:N]` — GPU
-  NN eval: numpy-staged H2D (verified bit-equal to the list build), resident
-  constants, single D2H. Resolving the CUDA path **enforces the T0 determinism
-  pins in the runtime** (TF32 off, `use_deterministic_algorithms(True)`,
-  `CUBLAS_WORKSPACE_CONFIG`), all asserted. Smoke on cuda:2 agrees with CPU
-  flag-off to 0.1 µV / 32/32 latch states.
-- **Phase 3b** `4e9c396`, `PYCIRCUITSIM_BATCHED_STAMP=1` — NN devices' DC +
-  transcap stamps assemble as one COO from cached static index arrays;
-  `A = lil.tocsr() + coo.tocsr()`; LEVEL=72/passives stay scalar. Both §4.3
-  hazards handled (per-device `max(g_ds,gmin)` before accumulation; the
-  `abs(g_mb)>1e-12` dynamic mask reproduced). **7.0×/6.1× (16×16/32×32) on the
-  stamp+convert step.** The perturbation is real but last-bit (max rel 3.0e-15
-  — invisible at CSV precision, why naive CSV A/Bs read "identical").
-- **Phase 4a′** `4e9c396`, `PYCIRCUITSIM_MNA_ORDERING=<spec>` — explicit `splu`
-  ordering. **The re-measure on real matrices REFUTED §5.2's synthetic-matrix
-  claim**: on live-captured MNA systems (`scripts/bench_gpu/bench_ordering_real.py`)
-  COLAMD fill is a benign 1.2–1.3× (the 399× blow-up was an artefact of
-  `bench_spsolve.build`), `MMD_AT_PLUS_A` is **0.2–0.7× — slower than shipped**,
-  and **NATURAL wins 2.4–30×** (128×64 `.op`: 152.9 → 4.7 ms factor) at flat
-  1.3× fill, ≤5e-9 rel. Recommended spec: NATURAL. Consequence: Phase 4b
-  (KLU-class) demoted — under NATURAL the factorisation is ~7 ms/iter at 128×64.
+- **Phase 2t** `d1b8e40`, `PYCIRCUITSIM_TRAN_BATCH_COMMIT=1` — batch-eval the
+  commit loop. 4×4 write op 146 → 34.7 s (4.2×); 16×16 latch end-states
+  512/512, max final ΔV 0.52 mV.
+- **Phase 3a** `2496b9a`+`38b6920`, `PYCIRCUITSIM_NN_DEVICE=cuda[:N]` — GPU NN
+  eval with runtime-enforced T0 determinism pins (TF32 off, deterministic
+  algorithms, CUBLAS workspace).
+- **Phase 3b** `4e9c396`, `PYCIRCUITSIM_BATCHED_STAMP=1` — NN stamps as one
+  COO from cached index arrays; 7.0×/6.1× on stamp+convert; perturbation is
+  last-bit (max rel 3e-15).
+- **Phase 4a′** `4e9c396`, `PYCIRCUITSIM_MNA_ORDERING=<spec>` — explicit splu
+  ordering. **Re-measure on real matrices REFUTED §5.2's synthetic claim:**
+  COLAMD fill is benign, `MMD_AT_PLUS_A` is *slower* than shipped, and
+  **NATURAL wins 2.4–30×** (128×64 `.op` factor 152.9 → 4.7 ms). Phase 4b
+  (KLU-class) demoted.
 
-### §8.4 gating — the CPU flag bundle is GATED AND PASSING
+### §8.4 gating — CPU flag bundle GATED AND PASSING
 
-- **T4 latch-basin** (new gate `tests/verify_latch_basin_gpu.py`, 6T retention
-  latch, both states × 4 techs, 100 %-same-basin binding): all five CPU configs
-  (`commit`, `stamp`, `order`, `commit+stamp`, `commit+stamp+order`) **8/8,
-  0 basin flips**, max|ΔV| ≤ 60 µV; `commit+gpu` **8/8, 0 flips** (≤0.37 mV,
-  RTX 4090).
-- **T3 16-gate CPU-bundle campaign** (`scripts/v720_t3_flag_bundle.sh`, 48
-  cells = 4 suites × 4 techs × OMP∈{1,2,4}, production DirectNet stems,
-  per-cell isolated scratch): **15/16 strict, 0 flips — the production
-  scoreboard cell-for-cell.** Binding sram_snm + switchcap deviate 0.00 pp from
-  the flag-off baseline at every tech and OMP; opamps match to 0.01 pp; rings
-  match except TSMC12 (2.68→3.49 %, inside the documented ±4 pp ring noise);
-  Rule-2 canary PASS. Verdict + raw logs:
-  `results/v720_gpu_regate/t3_cpu_bundle/VERDICT.md`. Per scoreboard discipline
-  the flags stay **default-off opt-ins** (fidelity remains a CPU flag-off
-  property); the GPU-axis T3 pass is the remaining gate.
-- **Phase 0 (partial)** `8a2a18b`, `diag_branch_hits.py` — the guard-F
-  discontinuity is the **bulk regime** of an SRAM array, not a corner (37.4 % of
-  46k evals hit the negative branch; 13.3 % emit an exactly-zeroed id). So the
-  T1 "branch-disagreement counter" roadmap item is resolved: it can never bind;
-  the binding tiers are T2 (NR-tolerance agreement) and T4 (basin agreement).
+- **T4 latch-basin** (new gate `verify_latch_basin_gpu.py`): all five CPU flag
+  configs 8/8, 0 basin flips, ≤60 µV; `commit+gpu` 8/8 (≤0.37 mV, RTX 4090).
+- **T3 16-gate CPU-bundle campaign** (`v720_t3_flag_bundle.sh`, 48 cells):
+  **15/16 strict, 0 flips — production cell-for-cell**; binding sram+switchcap
+  deviate 0.00 pp. Flags stay default-off; the GPU-axis T3 pass remained open
+  (closed in V7.4.0).
+- **Phase 0 (partial)** `8a2a18b` — the guard-F discontinuity is the **bulk
+  regime** of an SRAM array (37.4 % of evals hit the negative branch), so the
+  T1 branch-disagreement counter can never bind; binding tiers are T2/T4.
 
-### The number that summarises the version
-
-Same 4×4 write op, same box, same command: **146 s (baseline) → 100.3 s
-flag-off (the bit-identical work, default-on for everyone) → 20.3 s with
-{commit, stamp} = 7.2× total**, latch basins 8/8 preserved in every T4 config.
-Ordering is neutral at N=610 — its 8–30× is the 128×64+ solver regime.
-
-### Regression state (CPU, flags unset — the production path)
-
-Byte-identical reference CSVs (TSMC5 NN inverter DC + 4×4 write transient,
-sha256); `verify_subckt` 11/11; `verify_bsimcmg_{op,dc,tran}` PASS; `verify_ac`
-2/2; `verify_nn_dc_tran --inverter-only` 8/8. Walls measured on a
-loadavg-~1260–1290 box (the V7.3.0 re-gate ran concurrently) — counts and
-bit-comparisons exact, walls ±40 %.
-
-### Open after this version
-
-Phase 0 quiet-box re-run; the GPU-axis T3 pass
-(`PYCIRCUITSIM_NN_DEVICE=cuda` + bundle — T4 `commit+gpu` 8/8 stands); Track B
-(9a–9c, Vt-mismatch blocker unchanged).
-
-### Docs consolidation (2026-07-30)
-
-README gained the **Performance & GPU Acceleration** section (the V7.0.x and
-V7.2.0 knobs, user-facing); CLAUDE.md was de-duplicated against README and this
-file; the two V7.2.0 session entries were merged into this one.
+**Version summary:** same 4×4 write op: 146 s baseline → 100.3 s flag-off
+(default-on work) → 20.3 s with {commit, stamp} = 7.2×, latch basins 8/8 in
+every T4 config. Regression state (CPU flags-off): reference CSVs
+sha256-identical; subckt 11/11; L72 op/dc/tran PASS; AC 2/2; inverter 8/8.
+Docs consolidation 2026-07-30: README gained §Performance & GPU Acceleration;
+CLAUDE.md de-duplicated.
 
 ---
 
-## V7.1.0 — accuracy docs restructured into pivots, the pre-fix device/AC suites re-measured, TSMC6 restored, PFN given an xl tier (2026-07-25)
+## V7.1.0 — accuracy pivots, pre-fix device/AC re-measure, TSMC6 restored, PFN xl (2026-07-25)
 
-**Four threads: (1) `docs/accuracy/` reorganized from per-family chronological
-reports into three cross-cutting pivots (`by-tech.md`, `by-scale.md`,
-`by-recipe.md`) + `methodology.md` + slimmed family reports +
-`archive-pre-gds-fix.md`; (2) every accuracy number still standing on
-pre-`gds`-fix code re-measured; (3) TSMC6 restored as a deliberate
-duplicate-of-TSMC7 repeat experiment; (4) a `("tabpfn","xl")` preset so all
-three NN families have a four-scale capacity curve.** Plan:
-`docs/plans/2026-07-25-v710-docs-restructure-and-regate.md`. New resumable
-driver `scripts/v710_regate{,_jobs,_collect,_control}`; the control confirmed
-HEAD reproduces the V6.13.0 `d2ea720` verdicts, making the comparison
-legitimate.
+Four threads: `docs/accuracy/` reorganized into cross-cutting pivots
+(by-tech/by-scale/by-recipe — retired again in V7.3.0); every number still
+standing on pre-`gds`-fix code re-measured (resumable driver
+`scripts/v710_regate*`; control confirmed HEAD reproduces the V6.13.0
+verdicts); TSMC6 restored; PFN gained an xl preset (14.86 M params, mirroring
+BSIM-AR xl; lr 3e-4 after the V6.10 divergence collapses).
 
-Why the re-measure: V6.13.0 re-gated complex cells for all checkpoint groups
-but ran device suites only for resolver-default stems — so every per-size and
-per-recipe AC number was still pre-fix, and AC is the axis the gds fix moved
-most (DC is exactly invariant). What changed:
-
-- **"AC peaks at SMALL" — retracted.** DirectNet device CS-amp AC is
-  7/8 · 8/8 · 8/8 · 7/8 across small→xl (pre-fix: 5/12 · 4/12 · 4/12 · 4/12).
-  Level *and* shape were artifacts of the wrong-signed gds. The two surviving
-  misses are the documented failure classes (small TSMC7-NMOS under-capacity;
-  xl TSMC5-NMOS pole placement).
-- **The production curriculum improved the charge surface, not just current:**
-  `v660clean@large` fails TSMC5-NMOS AC (f3db 1.78) where the `crit30f` weights
-  are 8/8 — crit30 was designed for ring period; it also moved an output-cap pole.
-- **"The opamp open-loop AC gate is 0/4 everywhere for every family" — false.**
-  DirectNet `small` banks TSMC16, BSIM-AR `small`/`medium` bank it too, and
-  BSIM-AR `large` banks TSMC7 — all with un-railed operating points.
-- **Finding (not fixed — gate changes are decisions, not side effects):** the
-  opamp open-loop AC gate has a bias-resolution defect. It linearizes at
-  `argmax |dVout/dVin|` on a 2 mV-step sweep while the 33–48 dB transition is
-  ~3–14 mV wide; the NGSPICE reference's own output at that bias is outside the
-  harness's 15–85 %·VDD validity window on 3 of 4 techs, and `op_valid` is
-  applied to the NN only. Fix proposal: plan file §5.
-
-**TSMC6 — restored as a controlled repeat, not a technology.** The V6.13.0
-finding stands (TSMC6 *is* TSMC7 relabelled under BSIM-CMG). It returns because
-a bit-identical duplicate is the only instrument for measuring run-to-run
-variance with data held fixed — the first repeat's 68.2 % vs 2.0 % SRAM
-disagreement collapsed to 5.2 % vs 6.2 % once gds was fixed, i.e. most of the
-"training lottery" was the wrong Jacobian. Registry restored both sides (tail
-codes 22–24, nothing renumbered); `assert_tech_is_distinct()` kept — tsmc6↔tsmc7
-is the sole `ACKNOWLEDGED_DUPLICATE_TECHS` entry (prints loudly, continues).
-**Scoring rule: TSMC6 is its own /4 column, never folded into the /16.**
-Campaign driver: `scripts/tsmc6_restore_campaign.sh`.
-
-**PFN xl:** embed 192, n_inducing 64, ICL 9 blocks → **14,856,877 params**,
-mirroring BSIM-AR xl (14.81 M; ICL width 384 = BSIM-AR xl `d_model`) so the top
-of the capacity axis is comparable across families. lr 3e-4 (the V6.10 large
-wave logged 8 divergence collapses, 5 at 4e-4).
+- **"AC peaks at SMALL" — retracted.** DirectNet device AC 7/8·8/8·8/8·7/8
+  across small→xl (pre-fix 5/12·4/12·4/12·4/12): level *and* shape were
+  artifacts of the wrong-signed gds.
+- **The production curriculum improved the charge surface too:**
+  `v660clean@large` fails TSMC5-NMOS AC where `crit30f` weights are 8/8.
+- **"Opamp open-loop AC is 0/4 everywhere" — false** (DirectNet `small` banks
+  TSMC16; BSIM-AR banks more, un-railed OPs).
+- **Finding (not fixed):** the opamp AC gate has a bias-resolution defect —
+  2 mV sweep grid across a 3–14 mV transition, `op_valid` applied to the NN
+  only.
+- **TSMC6 restored as a controlled repeat, not a technology** — a bit-identical
+  duplicate is the only instrument for run-to-run variance with data held
+  fixed (the first repeat's 68.2 % vs 2.0 % SRAM disagreement collapsed to
+  5.2 % vs 6.2 % once gds was fixed). Tail codes 22–24;
+  `assert_tech_is_distinct()` kept with tsmc6↔tsmc7 the sole acknowledged
+  duplicate. Scoring rule then: own /4 column, never folded into /16.
 
 ---
 
 ## V7.0.0–V7.0.4 — NN compact-model performance (2026-07-25)
 
-**Scan of the NN inference and training paths, then four infra changes.
-Inference DC solve 1.68× with byte-identical output; training 4.9× per epoch;
-BSIM-AR 1.6× behind an opt-in flag. Full measurements, routing and dead ends:
+**Inference DC solve 1.68× byte-identical; training 4.9×/epoch; BSIM-AR 1.6×
+behind an opt-in flag. Full measurements + dead ends:
 `docs/plans/2026-07-25-v700-nn-perf.md`.** Governing constraint: a last-bit NN
-perturbation can land a different NR basin in a high-gain circuit, so every
-change is **bit-identical** (default-on) or **perturbing** (default-off env
-flag, promoted only after a full 16-gate re-gate).
+perturbation can land a different NR basin, so every change is bit-identical
+(default-on) or perturbing (default-off flag, promoted only after a re-gate).
 
-- **V7.0.0 — the scan (measured, not estimated).** Inference is
-  **bandwidth-bound, not FLOP-bound**: DirectNet `large` = 3.6 MB of weights,
-  streamed **four times** per eval (1 forward + 3 backwards) = 1610 µs; half of
-  a 70-point DC sweep is the NN eval. Training is dominated by the data loader:
-  11.00 ms/step (`DataLoader`) → 3.29 (GPU-resident slicing) → **1.77** (+ fused
-  AdamW).
-- **V7.0.1 — inference, bit-identical (DC solve 1.68×).** DC/OP skips the
-  charge Jacobians: the qg/qd autograd sweeps only feed the 5 capacitances, read
-  only by `TransientSolver`/`ACSolver`, which now declare `_require_nn_caps`;
-  `get_capacitances` self-heals for any other caller (slow, never wrong).
-  1610 → 784 µs/eval. Per-eval Python overhead removed with the arithmetic kept
-  in its **original association order** (`np.sinh` deliberately kept; `math.sqrt`
-  is IEEE-correctly-rounded so it may replace `np.sqrt`). Type-enumeration
-  helpers memoized. DC/tran/AC CSVs **sha256-identical**; gates green.
-- **V7.0.2 — training, 4.9× per epoch.** `_DeviceBatches` (permutation + index
-  slice on-device replaces `DataLoader(TensorDataset, num_workers=8)`;
-  `BSIMAR_LOADER=torch|device|auto` overrides, `auto` needs <50 % of free GPU
-  mem), fused AdamW on CUDA, losses accumulate on-device (one `.item()` per
-  epoch). 3.4 → 0.7 s/epoch on the real CLI. Changes the shuffle order → a
-  retrain produces different weights; no on-disk checkpoint touched;
-  `BSIMAR_LOADER=torch` reproduces the legacy path.
-- **V7.0.3 — fused analytic Jacobian, `PYCIRCUITSIM_NN_FUSED_JAC=1`, DEFAULT
-  OFF.** Forward-propagates the full 13×4 Jacobian in closed form — one weight
-  stream instead of four. Scope correction from implementation: after V7.0.1 it
-  cannot exploit DC mode — **transient 1.38× faster, DC slightly slower**; it is
-  a transient/AC lever only. Not bit-identical (same math, different summation
-  order; max |ΔV| ~7e-7) — **stays off until a 16-gate re-gate clears it.**
-- **V7.0.4 — LEVEL=74 AR prefix cache, `PYCIRCUITSIM_NN_AR_CACHE=1`, DEFAULT
-  OFF.** The AR loop re-encoded the whole growing prefix once per step (60
-  token-passes for 11 hidden states); `_encoder_append` keeps per-layer K/V and
-  encodes each token once. **1.60× DC / 1.56× tran / 1.21× AC**, 4.3× on
-  `no_grad` batch-2048 eval. Routing correction: "exact in exact arithmetic" was
-  refuted bit-wise — `F.linear` is not row-stable on CPU (0/96 shapes), so *no*
-  incremental form can be bit-identical; deviation ≤1.6 µV on solved nodes.
-  Why 1.6× not 5.45×: the encoder is weight-bandwidth-bound and the 8 sequential
-  weight streams are the AR data dependence itself. Two PyTorch behaviours
-  recorded: the stock mask reaches SDPA's fused-causal kernel
-  (`_detect_is_causal_mask`), and the `no_grad`-only fused encoder-layer fast
-  path is never reachable from the simulator (Jacobians need `enable_grad`).
-  Flag-off sha256-identical; flag-on inverter + device-AC gates pass with
-  identical printed scores.
+- **V7.0.0 scan:** inference is **bandwidth-bound** (DirectNet `large` streams
+  3.6 MB of weights 4× per eval); training was loader-dominated.
+- **V7.0.1:** DC/OP skips charge Jacobians (`_require_nn_caps` contract;
+  `get_capacitances` self-heals). 1610 → 784 µs/eval; CSVs sha256-identical.
+- **V7.0.2:** `_DeviceBatches` on-device slicing + fused AdamW; 3.4 → 0.7
+  s/epoch. Changes shuffle order (retrain ≠ same weights); `BSIMAR_LOADER=torch`
+  reproduces legacy.
+- **V7.0.3:** fused analytic Jacobian `PYCIRCUITSIM_NN_FUSED_JAC=1`, DEFAULT
+  OFF — transient 1.38×, DC slightly slower (transient/AC lever only). Not
+  bit-identical; stays off until a 16-gate re-gate.
+- **V7.0.4:** LEVEL=74 AR prefix cache `PYCIRCUITSIM_NN_AR_CACHE=1`, DEFAULT
+  OFF — 1.60× DC / 1.56× tran. "Exact in exact arithmetic" refuted bit-wise:
+  `F.linear` is not row-stable on CPU, so **no incremental AR form can be
+  bit-identical in float32**; deviation ≤1.6 µV.
 
-**Dead ends (measured, rejected — do not retry):** TF32 / `torch.compile` /
-bf16 autocast all *slower* for DirectNet (launch-overhead-bound; worth
-re-testing for TF/PFN); replica-batch trick for the 3 gradients (1.53×, not
-bit-identical — strictly dominated by the analytic Jacobian); larger training
-batch (0.43 s/epoch but a *recipe* change that would invalidate every recipe
-comparison — excluded).
+**Dead ends (do not retry):** TF32 / `torch.compile` / bf16 autocast all
+*slower* for DirectNet (launch-overhead-bound); replica-batch gradient trick
+dominated by the analytic Jacobian; larger training batch excluded (a recipe
+change invalidating every comparison).
 
 ---
 
 ## V6.13.1 — systematic-audit fix wave 1: 22 gate-neutral findings (2026-07-24)
 
-**Closed the 22 findings from `docs/2026-07-21-systematic-audit.md` that cannot
-change a number any gate reports. The remaining 19 are gate-affecting and staged
-on `audit-fixes-wave2` behind a re-gate — triage and ordering in
-`docs/plans/2026-07-24-audit-fix-waves.md`.** All 43 open P1/P2 findings were
-first re-verified against `d2ea720`; three dropped on the evidence. Verified on
-the patched tree: op 3/3, dc 2/2, `verify_subckt` 11/11 byte-identical to
-baseline.
-
-- **Silent-wrong class (parser):** C1 — `+` continuation lines were buffered
-  only after `.model`; elsewhere the fragment was silently dropped (losing
-  X-params, `.ic`, geometry, even `AC=` stimulus). Now every logical line
-  buffers; an orphan `+` raises; replayed over 4442 deck/library files: 5
-  differ (all raw TSMC PDK cards this parser never opens), 0 raise. C6i —
-  ground globality was case-sensitive (`gnd` in a `.subckt` floated on GMIN);
-  canonicalized everywhere. C6h — duplicate `X` names silently merged internal
-  nodes; keyed on the full flattened path. C6j — duplicate `.model` names
-  overwrote retroactively; a conflicting redefinition now raises (identical
-  ones stay legal). C6l/C6m — polarity-mismatched env pin fell through to
-  production; UNKNOWN-tech-code warning covered only universal scope. Both loud
-  now (`PYCIRCUITSIM_NN_STRICT_TECH_CODE=1` escalates).
-- **Silent-green class (harness/dispatchers):** B3 — 11 dispatchers exited 0
-  regardless of sub-job outcome (workers `exit 0`, trailing `echo` clobbered
-  `$?`); workers now exit 3 for "no verdict", dispatchers check every cell
-  recorded a row. B4 — `benchmark_collect.py` published a report from an empty
-  tree. B5c — `verify_complex_opamp` had no minimum-gain guard (0.30-vs-0.31
-  "opamps" passed); ship gate now has `OPAMP_MIN_GAIN=5.0`. B5l — a typo'd
-  `--tech` SKIPped silently (closed at six sites). B5g — the three V6.12.0 loud
-  subckt errors had zero tests; a Level 0 batch covers them, gate total
-  8/8 → 11/11. B5h/B5j — `diag_l72_*` controls printed reassuring verdicts on
-  NaN / unconditionally. B5a — `train_per_tech_8cells.sh` wrote **production**
-  checkpoint slots with `--overwrite`; deleted. B5d/e/i/n/m — silent-SKIP on
-  absent pins, unscored checkpoint printed, empty-mask auto-pass, "0/0 PASSED",
-  resume-sentinel-in-marker.
-- **Data-pipeline integrity:** C6o — dataset sidecars were validated by row
-  count alone; every producer now writes a geometry-sha256 `.meta.npz`
-  fingerprint, and regens retire stale sidecars. C6q/C6r — universal vocab-size
-  disagreement guarded (not enlarged, which would change every universal
-  checkpoint's embedding); TabPFN `_ctx_cache` invalidated on `load_state_dict`
-  / EMA in-place writes (measured drift 4.0e-2).
-- **Dead ends recorded:** C2 dropped — the NaN mechanism is real but sits in no
-  autograd graph, and the audit's prescribed `F.softplus` rewrite is measurably
-  **not** forward-bit-identical (23/401 samples differ in the last fp32 bit);
-  the argument-clamp variant measured 401/401 bit-identical if hardening is
-  ever wanted. B5k and C6p closed in passing by the TSMC6 retire.
-  `scripts/gate_matrix_iso.sh` (the 12th B3 dispatcher) was deliberately left
-  byte-identical — it was driving the live V6.13.0 re-gate.
+Closed the 22 findings from `docs/2026-07-21-systematic-audit.md` that cannot
+change a gated number; the 19 gate-affecting ones staged behind a re-gate.
+Classes: **silent-wrong parser** (C1 `+` continuation lines dropped outside
+`.model` — now every logical line buffers, orphan `+` raises; case-sensitive
+ground; duplicate `X` names merging internal nodes; duplicate `.model`
+redefinition; polarity-mismatched env pins falling through); **silent-green
+harness** (11 dispatchers exited 0 regardless of sub-jobs; report published
+from an empty tree; opamp gate without a minimum-gain guard; typo'd `--tech`
+silently SKIPped; production checkpoint slots writable with `--overwrite` —
+deleted); **data-pipeline integrity** (geometry-sha256 `.meta.npz` sidecar
+fingerprints; universal vocab-size guard; TabPFN `_ctx_cache` invalidation on
+state-dict/EMA writes). **Dead end recorded:** the audit's prescribed
+`F.softplus` NaN rewrite is measurably NOT forward-bit-identical (23/401
+samples) — dropped; the argument-clamp variant measured 401/401 identical if
+ever wanted.
 
 ---
 
 ## V6.13.0 — gds sign + guard fix shipped, TSMC6 retired, every checkpoint re-gated (2026-07-24)
 
-**Shipped the audit's last P0 (`A3`, the NN `gds` sign bug), retired TSMC6 as a
-duplicate technology, then re-gated all 36 checkpoint sets on disk against
-NGSPICE. The fix moves production DirectNet 14 → 15/16 strict, closes
-`tsmc16-opamp`, eliminates every observed OMP flip in the universal set, and
-retracts the standing claim that `tsmc7-opamp` is unreachable.**
+**Shipped the audit's last P0 (`A3`, the NN `gds` sign bug), retired TSMC6,
+re-gated all 36 checkpoint sets. Production DirectNet 14 → 15/16 strict.**
 
-### The fix (`8ed35bd`)
+**The fix (`8ed35bd`):** inference negated `gm`/`gmb` but not `gds` — all
+three derive from the same signed `id`; the loss had negated all three since
+V6.4 and the correction never reached inference (autograd vs `-gds_head` =
+0.12 rel err, vs `+gds_head` = 2.08 — the signature of a pure sign flip). The
+old two-sided floor `max(gds, |id|*0.5)` asserted an Early voltage ≤2 V,
+overriding the learned conductance at 90.9 % of amplifying points — load-
+bearing only because it masked the sign error. Replaced by **guard F**:
+positives pass bit-identical, negatives clamp to `|id|/50 V` (OSDI −d(id)/dVd
+is positive at 100.0000 % of 111,630 conducting evals). **Sign and guard must
+ship together** — sign alone is bit-identical, guard alone regresses device AC.
 
-Inference negated `gm` and `gmb` but not `gds`. All three are derivatives of
-the same signed `id`, so the sign comes from `id`'s convention — the loss had
-negated all three since V6.4 and documented the "gds is the diagonal so no
-flip" rule as wrong; the correction never reached inference. Measured: autograd
-`d(id)/dVd` vs `-gds_head` = 0.12 rel err, vs `+gds_head` = 2.08 — the
-arithmetic signature of a pure sign flip. The two-sided floor
-`max(gds, |id|*0.5)` asserted an Early voltage ≤ 2 V (below every device's true
-median), overriding the learned output conductance at 90.9 % of amplifying
-points — load-bearing only because it masked the sign error. Replaced by
-**guard F**: positives pass through bit-identical, negatives clamp to
-`|id|/50 V` (above the measured max true Early voltage 43.4 V; OSDI
-`-d(id)/dVd` is positive at 100.0000 % of 111,630 conducting evals, so every
-negative is model error). `_floor_gds` → `_guard_gds`;
-`PYCIRCUITSIM_GDS_FLOOR_K` rejected loudly; new knob
-`PYCIRCUITSIM_GDS_GUARD_K` (default 0.02). **Sign and guard must ship
-together** — sign alone is bit-identical, guard alone regresses device AC
-8/10 → 5/10.
+**TSMC6 retired** (`38c47d8` + PyCMG `23b0ace`): audit §D1 — bit-identical
+datasets, identical L72 currents. 22 checkpoints + registry entries deleted;
+codes were tail so nothing renumbered. (Restored as a controlled repeat in
+V7.1.0.)
 
-### TSMC6 retired (`38c47d8` + PyCMG `23b0ace`)
+**Re-gate — one signature dominates: every gained cell is an opamp** (`gds`
+sets small-signal output resistance; it cancels at the Newton fixed point
+everywhere else). DirectNet production 14→15/16 strict zero flips
+(`tsmc16-opamp` closes; `tsmc7-opamp` sole open cell at `large`).
+**`crit15m@xl` = 16/16 STRICT, zero flips** — first full-matrix sweep under
+one uniform recipe; not promoted (2.3× inference, no device gain). Clean
+capacity curve 10/10/13/12. Universal: +3 strict and **all three OMP FLIPs
+eliminated** (a wrong-signed Jacobian entry was the thread-count sensitivity).
+PFN 11/11/9; device AC at `large` 5/8→8/8. **BSIM-AR clean 14/16 at every
+tier** — "capacity peaks at medium" was largely this bug; ceiling moved opamp
+→ ring. Corridor recipes: `corroft@medium`/`corro15@xl` 16/16 STRICT. **gds
+moved opamps, the corridor moves rings — independent levers.** DC confirmed
+exactly invariant (the single parametric-DC failure is bit-identical pre/post).
 
-Audit §D1: TSMC6 is TSMC7 relabelled under BSIM-CMG — bit-identical datasets
-and identical L72 currents (the differing PDK keys are TMI-proprietary, absent
-from the Verilog-A). Deleted 22 checkpoints, datasets, and every
-registry/driver/test entry; codes were the tail (22–24) so nothing renumbered.
-Added `bsimar.config.assert_tech_is_distinct()` (confirms 5/7/12/16 distinct).
-L72 suite counts drop with the duplicate column, same coverage: DC L2 81→67,
-DC L3 53→44, tran L2 45→37, tran L3 86→72. (Restored as a controlled repeat in
-V7.1.0 — see above.)
+**Retracted:** "`tsmc7-opamp` reachable only by the V6.5.9 T3 fine-tune"; "the
+three-basin simultaneous hold is the open 15/16 target"; BSIM-AR's
+capacity-peak-at-medium.
 
-### Re-gate — what moved
-
-All numbers measured at `d2ea720`, comparable to the pre-fix columns at
-`a96112a`. **One signature dominates: every gained cell is an opamp** — `gds`
-sets small-signal output resistance, which is what a high-gain operating point
-is made of, and cancels at the Newton fixed point everywhere else. Not one
-ring, SRAM or switchcap cell moved.
-
-- **DirectNet production** (crit30 weights): 14 → **15/16 strict, zero flips**.
-  `tsmc16-opamp` closes at 7.69 %; `tsmc7-opamp` is the sole open cell and only
-  at `large`; thinnest margin `tsmc5-opamp` 9.54 % vs a 10 % gate.
-- **`crit15m@xl` = 16/16 STRICT, zero flips** — the first DirectNet set ever to
-  sweep the full matrix under one uniform recipe. Not promoted (2.13 M params,
-  2.3× inference, no device-fidelity gain); documented env-pin alternate.
-- **DirectNet clean capacity curve** (s/m/l/xl): 7/10/13/10 → **10/10/13/12**.
-- **Universal DirectNet:** net +3 strict cells and **all three pre-existing OMP
-  FLIPs eliminated** — a FLIP meant the verdict depended on GEMM thread count,
-  and removing a wrong-signed Jacobian entry removed that sensitivity.
-- **PFN:** 11/11/9 (was 11/10/8); device AC at `large` 5/8 → **8/8**.
-- **BSIM-AR clean: 14/16 at every tier** (was 12/14/13/13 — "capacity peaks at
-  medium" was largely this bug). All four opamps pass at all four sizes; **the
-  ceiling moved opamp → ring** (the two low-VDD rings are not close, worsening
-  with capacity).
-- **BSIM-AR corridor recipes:** `corroft@medium` and `corro15@xl` are **16/16
-  STRICT, zero flips** (corroft@medium holds every cell with room). Every
-  corridor recipe at `xl` sweeps the matrix; at `large` all four sit at 15/16
-  missing only tsmc7-opamp. **gds moved opamps, the corridor moves rings, and
-  the two levers are independent.**
-
-**Device/parametric/L72 suites:** device AC DirectNet 8/8 and PFN 8/8;
-`verify_nn_dc_tran` 24/24; lifted-source canary 12/12; parametric tran 64/64;
-parametric DC 54/55 — the single failure is **bit-identical pre- and post-fix**,
-confirming DC is exactly invariant. `verify_multi_tech_dc` 43 PASS + 1
-pre-existing ERROR (`TSMC5_lvt_inv_l_24nm`, internal-node NR divergence in the
-pure BSIM-CMG path). `verify_complex_opamp_ac` 0/4 but the operating point
-un-rails (pre-fix 0/12 with nothing close).
-
-### What this retracts
-
-`tsmc7-opamp` as "the universal ceiling cell, reachable only by the V6.5.9 T3
-solver fine-tune" — DirectNet passes it at `small` and `xl`, `crit15m@xl`
-strict, BSIM-AR at every size; the gds floor was masking a railed operating
-point. Also retracted: "the three-basin simultaneous hold is the open 15/16
-target" and BSIM-AR's capacity-peak-at-medium reading.
-
-### Also in this version
-
-`SobolevIdLoss` raises on the reverse-corridor-corrupted gds column (latent —
-`--sobolev` default-off); `uni_gate_sweep.sh` SUMMARY-truncation fix; note that
-the collector's `dn_large` baseline slot carries crit30 (clean lives at
-`dn_v660clean_large`); campaign tooling `scripts/a3_regate_*_collect.py` +
-`a3_omp_one.sh` (resume one OMP value — worth ~40 BSIM-AR gate-hours).
-Methodology note: the resumed half of the re-gate ran from a **frozen rsync
-snapshot** of `d2ea720` (verified byte-identical), decoupling an 8-hour
-campaign from the working tree — worth repeating. Audit disposition: remaining
-43 P1/P2 re-verified, 3 dropped, rest split into gate-neutral wave 1
-(→ V6.13.1) and gate-affecting wave 2.
+**Also:** methodology note — the resumed re-gate half ran from a frozen rsync
+snapshot of `d2ea720` (verified byte-identical), decoupling an 8-hour campaign
+from the working tree; worth repeating.
 
 ---
 
-## V6.12.1 — silent-green P0 branch merged + accuracy reports consolidated per family (2026-07-24)
+## V6.12.1 — silent-green P0 branch merged + accuracy reports per family (2026-07-24)
 
-**Merged `fix/silent-green-p0` (fast-forward, 9 commits): (1) P0 silent-green
-fixes** — `tests/common/base.py` never checked NGSPICE's exit status, so a dead
-binary left a stale CSV and every downstream check passed against **stale
-ground truth** (reproduced with `NGSPICE_BIN=/bin/false` → 8/8 PASS); now
-unlink-before-invoke + raise on non-zero. `solver.py`: `spsolve` returns NaN
-rather than raising on singular matrices, so the `LinAlgError` guards were dead
-code; now detected and raised. **(2)** `docs/2026-07-21-systematic-audit.md` —
-the 5-area ~70-finding audit register, including the gds root-cause (§A3) and
-§D1 (TSMC6 ≡ TSMC7); the fix itself not yet shipped. **(3)** V6.8.1 xl-fill
-documentation. **Consolidation (new work):** seven per-version accuracy reports
-→ three per-family reports + index under `docs/accuracy/` (deleted files
-carried in full; every reference redirected; each report states the two
-cross-cutting caveats: pre-gds-fix numbers, TSMC6 = repeat run). Also:
-`recipe_train.sh` balanced round-robin (a `.complete` job no longer consumes a
-GPU slot on resume; fresh runs byte-identical).
+Merged `fix/silent-green-p0`: `tests/common/base.py` never checked NGSPICE's
+exit status — a dead binary left a stale CSV and everything passed against
+**stale ground truth** (reproduced with `NGSPICE_BIN=/bin/false` → 8/8 PASS);
+now unlink-before-invoke + raise. `solver.py`: `spsolve` returns NaN on
+singular matrices so the `LinAlgError` guards were dead code; now detected.
+Also landed the 5-area ~70-finding audit register
+(`docs/2026-07-21-systematic-audit.md`, incl. gds §A3 and TSMC6 §D1) and
+consolidated seven per-version accuracy reports into three per-family ones.
 
 ---
 
-## V6.12.0 — .subckt/.ends hierarchical netlists + hierarchical test-circuit conversion (2026-07-18)
+## V6.12.0 — .subckt/.ends hierarchical netlists (2026-07-18)
 
-**Added `.subckt`/`.ends` + hierarchical `X` instances (flattening at parse
-time, ngspice-style — solver/circuit untouched), extended `.ic` into subckt
-bodies, converted the project's test circuits to hierarchy, and re-ran the full
-matrix: zero regressions** (commit 1744b28; merged with V6.11.0 via `3dadb34`).
-Feature summary lives in CLAUDE.md/README (naming `X1.n1`/`M.X1.Mp1`, params
-with `{expr}` arithmetic, `.model`/`.include` hoisting, loud errors on unknown
-subckt / port mismatch / recursion >64). New gate `tests/verify_subckt.py`
-8/8 (→ 11/11 in V6.13.1): subckt ≡ flat at max|ΔV|=0, L72 inverter 0.187 %
-NRMSE vs NGSPICE, nested buffer 0.64/0.86 %.
-
-**Full re-run (CPU-pinned): 484/489 checks, all 5 non-passes
-pre-existing/documented** — complex matrix 17/20 = exactly the V6.11.0
-production state; hierarchical decks are numerically transparent (no pass-rate
-moved either direction).
-
-**Three pre-existing CLI/solver defects surfaced by README smoke-tests — all
-fixed, baselines bit-identical after:** (1) `simulation.py` logged a trace-keyed
-dict length as "time points"; now reports points *and* traces. (2)
-`run_transient` emitted only the `.png`; now also writes `_transient.csv` + a
-run-summary `_simulation.lis`. (3) duplicated final transient sample —
-`ceil(t_stop/dt)+1` with IEEE-754 quotients like 500.00000000000006; quotient
-now snapped within rel-eps 1e-9 (only float-error-integer decks change).
-README brought up to date in the same pass (was stranded pre-V6.5).
+Added `.subckt`/`.ends` + `X` instances (flattening at parse time,
+ngspice-style — solver untouched), `.ic` into subckt bodies, converted the
+test circuits to hierarchy, re-ran the full matrix: **zero regressions**
+(484/489 checks, all 5 non-passes pre-existing). New gate `verify_subckt.py`
+(8/8 → 11/11 in V6.13.1), subckt ≡ flat at max|ΔV|=0. Three pre-existing CLI
+defects surfaced by README smoke-tests fixed (trace-count log, missing
+transient CSV/lis, duplicated final sample from an IEEE-754 quotient — now
+snapped at rel-eps 1e-9); README brought up to date (was stranded pre-V6.5).
 
 ---
 
-## V6.11.0 — TSMC6 NN family: all three NN compact models trained + gated at every scale (2026-07-14/17)
+## V6.11.0 — TSMC6 NN family trained + gated at every scale (2026-07-14/17)
 
-**Completed the V6.9.0 NN-training deferral: trained + NGSPICE-gated all three NN
-families (DN/BSIM-AR/PFN) at every scale on the 6th tech TSMC6 (CLN6). 22
-clean-recipe ckpts (DN s/m/l/xl + PFN s/m/l + TF s/m/l/xl, each N/P), one control
-recipe (`--apply-filter off --swa-mode ema --seed 42`), per-tech local vocab
-(tsmc6 svt/lvt/ulvt = 0/1/2 + UNKNOWN; nn_vt=ulvt). Reports updated (DN
-V6.6.6 / TF V6.8.0 / PFN V6.10.0).** ⚠ Note: `MEMORY.md` later found TSMC6 data
-≡ TSMC7 (relabelled) — so the opamp-XOR-ring split below is a basin coin-flip, not
-distinct-tech fidelity.
-
-**Result — TSMC6 complex 4-cell matrix (ring/opamp/sram/switchcap) vs NGSPICE:**
-
-| family | small | medium | large | xl |
-|---|---|---|---|---|
-| DirectNet | 1/4 | 2/4 | **3/4** | 2/4 |
-| PFN       | 2/4 | 2/4 | 2/4 | — |
-| BSIM-AR   | 2/4 | **3/4** | 2/4 | 2/4 |
-
-- **DN peaks large 3/4** (ring 4.82% + sram + switchcap; opamp rails at every size)
-  — same curve as other techs (over-fits at xl). Production tier = large.
-- **BSIM-AR peaks medium 3/4, the ONLY family to pass the tsmc6 opamp (9.83%)** —
-  opamp gain non-collapsed even at small (13.61%) where DN/PFN rail; mirrors V6.8.0
-  (BSIM-AR's opamp basin). Over-fits large/xl (ring 7.4→11.2→12.6%).
-- **PFN flat 2/4** all sizes (sram+switchcap always; ring 8–12% + opamp fail) —
-  consistent with V6.10.0.
-- **opamp-XOR-ring split:** DN-large banks the ring, BSIM-AR-medium the opamp, none
-  takes all four. Device fidelity COMPLETE for all 11 cells (DN/PFN 6/6, BSIM-AR
-  11/11): PMOS DC <1% (best 0.03%), NMOS DC 2–7%, VTC ~1–3%, tran ~0.8–1.2%;
-  device-AC 0–2/3; opamp-AC fails (railed OP).
-
-**Harness wiring** (TSMC6 now first-class): `verify_nn_dc_tran.py` (TestTechConfig
-mirroring TSMC7 + stem sentinels), `nn_sweep.py`, `complex.py` (BENCH_TECHS + VT→ulvt),
-`recipe_eval.sh`/`gate_matrix_iso.sh` (TECHS-overridable, dynamic denominator), the
-5 collectors (dynamic `/16`→`/20`), new `scripts/tsmc6_collect.py`.
-
-**Bug fixed — `tech_code_in_vocab` rejected TSMC6 (`tests/common/nn.py`):** the
-ASAP7-guard checked the *universal* code against an 18-ceiling, so TSMC6
-(tail-appended at universal 22–24) silently SKIPPED even though per-tech uses a
-*local* vocab. Fixed: any tech in `LOCAL_VARIANT_CODES` passes; the ceiling now
-only gates ASAP7. Preserves tsmc5/7/12/16 + ASAP7 exactly.
-
-**Environment caveat (dead-end / partial):** campaign ran under sustained cluster
-overload (loadavg ~1400/192 cores for days). BSIM-AR **large+xl opamp** gates
-(AR inference ~30–100× DN) exceeded an 8 h cap but a 12 h retry completed both —
-**complex matrix 100% resolved** (large opamp 12.78%, xl 10.13%, both ✗). Only
-never-gated cells = the *secondary* large/xl opamp-AC diagnostics (not in the
-complex count; opamp-AC rails everywhere). Gate timeout raised 1800→7200s mid-run;
-parallel re-gate `scripts/tsmc6_regate.sh` recovered the rest. No conclusion
-depends on the two open opamp-AC cells (BSIM-AR already peaks at medium).
-
-## V6.10.0 — TabPFN port: the "PFN" compact-model family, LEVEL=75 (branch `worktree-tabpfn-pfn`, 2026-07-11/14)
-
-**Ported TabPFN v3 (Prior Labs' tabular ICL transformer) into the bsimar stack as
-a third NN family and ran the full scale campaign (24 ckpts: 4 techs × N/P ×
-s/m/l, clean recipe) on the V6.8.0 harness. Report:
-`docs/accuracy/PFN-L75-accuracy.md`.** (V6.9.0 = TSMC6, separate branch.)
-
-**Result — PFN clean small (0.69M) = 11/16 STRICT (OMP∈{1,2,4}) with ZERO flips**
-— the first family with no OMP multistability; strongest clean small on record
-(DN clean small 7/16); still below curriculum families (DN 14/16, TF 15/16).
-
-- **Architecture** (`tabpfn.py`, `TabPFNCompact`): faithful scaled-down port of
-  the three v3 stages (per-column induced-attention embedder / column aggregator
-  with CLS+RoPE / ICL transformer with context-only K/V) + two deviations: FROZEN
-  LEARNED CONTEXT (stratified K-row buffer baked into the ckpt, context-KV cached
-  at inference) and a direct 13-output value head (NR needs smooth autograd). Tech
-  code = 8th column token (local vocab).
-- **New identity:** LEVEL=75, `--model tabpfn`, tag `pfn`, stems `tsmc{X}_pfn_*`,
-  env pins `PYCIRCUITSIM_NN_CHECKPOINT_PFN_*`, `PYCIRCUITSIM_NN_FORCE_LEVEL=75`;
-  solver enumerators + parser cascade + all 5 drivers wired; DN/TF byte-identical.
-- **Gate curve DECLINES monotonically 11/10/8 (s/m/l)**; misses = tsmc5/7
-  ring+opamp (corridor cells, curriculum untested on PFN), tsmc12 switchcap
-  5.1–5.3% near-miss, tsmc16-opamp rails from medium up (all 4 at large). Device
-  fidelity peaks MEDIUM (id MRE 0.10–0.30%, best clean tier here); AC non-monotone
-  (5/0/5 of 8); opamp-AC 0/4 (OP-MISBIAS).
-- **Runtime:** 15.6 ms/eval CPU (DN 1.5, BSIM-AR medium 61.5) — 4× faster than BSIM-AR.
-- **Off-grid geometry (root-caused):** `nmos_nfin_10` DC fails at s/m on tsmc12/16
-  (NRMSE 27–31%, +20% flat over-pred) — NFIN=10 is OFF-GRID (data {2,3,4,6,20.9})
-  and the context-relative embedding interpolates the 6→21 gap poorly vs DN's MLP;
-  **capacity repairs it** (large ~6% PASS). Fix: denser NFIN or context re-freeze.
-- **Large-tier optimization instability:** 8 divergence-collapse events (train
-  0.02→0.77 at ep 25–80; both lr 4e-4 AND 3e-4; suspect unconstrained
-  SoftmaxScalingMLP logit scaling in the W=256 ICL stack). Diverged runs bank
-  pre-divergence EMA bests (val 0.0020–0.0029 = healthy band).
-- **Pretrained-TabPFN ICL baseline** (58M, zero training): charges 0.3–1.1% MRE
-  but id 3.2–5.7% — the from-scratch port beats it ~10× on id at 1.2% of params.
-  Not solver-viable.
-- **Dead ends:** fp32 large @300ep (killed ~ep50, 2.5 GPU-days/ckpt);
-  lr-3e-4-fixes-divergence (refuted); large epoch-budget flip-flop (150→300→150).
-- Production unchanged (DN crit30f@large). Highest-EV next: corridor `corroft@small`
-  on PFN (aimed at the tsmc5/7 cells), context enrichment for the NFIN gap.
+Completed the V6.9.0 deferral: all three NN families trained/gated on TSMC6
+(22 clean ckpts). ⚠ TSMC6 later found ≡ TSMC7 — the splits below are basin
+coin-flips, not distinct-tech fidelity. Complex 4-cell matrix: DN peaks
+`large` 3/4 (opamp rails at every size), BSIM-AR peaks `medium` 3/4 (the only
+family to pass the tsmc6 opamp), PFN flat 2/4. Device fidelity complete for
+all 11 cells. **Bug fixed:** `tech_code_in_vocab` rejected TSMC6 — the
+ASAP7-guard checked the *universal* code against an 18-ceiling, silently
+SKIPping per-tech TSMC6; now any tech in `LOCAL_VARIANT_CODES` passes.
+Campaign ran under sustained cluster overload (loadavg ~1400/192); gate
+timeout raised 1800→7200 s; complex matrix 100 % resolved.
 
 ---
 
-## V6.9.0 — TSMC6 (CLN6) onboarding + TSMC PDK parse audit (branch `feat/tsmc6-onboarding`, 2026-07-12)
+## V6.10.0 — TabPFN port: the "PFN" family, LEVEL=75 (2026-07-11/14)
 
-**Onboarded the TSMC N6 iPDK card (`cln6_1d8_sp_v1d0_2p2.l`, BSIM-CMG 106.1,
-0.75 V SVT/LVT/ULVT) as the sixth tech `TSMC6` — LEVEL=72 ground-truth + NN config
-plumbing + datasets (NN training deferred to V6.11.0) — and audited PyCMG's card
-parsing across all 5 TSMC cards. Report:
-`docs/V6.9.0-tsmc6-onboarding-pdk-parse-audit.md`.** ⚠ Later corrected: `MEMORY.md`
-found TSMC6 is TSMC7 relabelled (bit-identical datasets, identical L72 currents) —
-NOT a distinct 6th tech under BSIM-CMG.
-
-- **N6 = structural clone of N7:** identical section/model-name sets + binning (zero
-  grammar changes); 153/204 core blocks byte-identical to N7, but `.global`/`.30`/pch
-  bins differ → datasets md5-distinct.
-- **Wiring (PyCMG):** `TECH_REGISTRY["TSMC6"]` + `TSMC6_CONFIG` (mirror TSMC7: vdd
-  0.75, tfin 6n); generate/inv-trip/conftest (280→314 tests). Raw card gitignored (IP).
-- **Wiring (main repo):** universal codes **22/23/24 tail-appended** (0–21 + the
-  18-code pre-train vocab untouched, so all existing ckpts/sidecars stay valid);
-  `NUM_TOTAL_CODES` 22→25; `LOCAL_VARIANT_CODES` += tsmc6 (local vocab 4). Parser
-  needed NO change (config-map-driven resolver).
-- **Labeller collision FIXED (`loo_labels.py`)** — the one real defect: the 12-param
-  fingerprint labeller used silent last-writer-wins, and tsmc6↔tsmc7 fingerprints
-  collide **108/108** (N7-copied bins). Per-tech datasets now label against their own
-  tech (from the `<tech>_<device>.npz` stem); the universal scan keeps the legacy
-  5-tech order and RAISES on any cross-tech collision.
-- **Verification (all vs NGSPICE):** PyCMG pytest **314/314** (34 new TSMC6 PASS
-  first-run); `verify_multi_tech_dc --tech TSMC6` **9/9** (≤0.0097%), tran **14/14**
-  (≤0.64%); no empirical pruning needed (passes all 3 VTs × L=16/20/24nm, incl. cases
-  N7 fails). Full 6-tech regression: tran **86/86**, DC **52/53 + 1 ERROR**
-  (`TSMC5_lvt_inv_l_24nm` NR divergence, reproduced BIT-IDENTICALLY on main =
-  pre-existing).
-- **Datasets:** `tsmc6_{nmos,pmos}.npz` (1.82M/2.19M rows, 0 dropped) + sidecars.
-- **PDK parse audit (new tool `audit_pdk_parse.py`): PASS — 40 devices, 0 round-trip
-  mismatches.** Verdicts: (1) zero OSDI-known params among the expression-valued
-  assignments each device skips (all HSPICE corner/stat/aging scaffolding); (2)
-  mid-line `*` in blocks is expression multiplication NOT a comment — 1,112 legit
-  params ride after such expressions, so `_extract_model_params`'s no-strip is
-  load-bearing (do NOT unify with `parse_modelcard`'s comment stripping); (3) bin
-  selection inclusive-both-ends vs HSPICE's `lmin ≤ L < lmax` — 28–40 boundary points
-  ambiguous but self-consistent PyCMG↔NGSPICE, accepted; (4) ±999·10ⁿ sentinels only
-  in TSMC5, correctly dropped; (5) ~1.1–1.9k TMI/stat params per card unknown to OSDI,
-  ignored IDENTICALLY by PyCMG + NGSPICE, accepted.
-- **Follow-ups:** TSMC6 NN training (→V6.11.0); a universal+tsmc6 model needs
-  `num_tech_codes=25` + `uni_concat_npz.py` code-subset extension.
+Ported TabPFN v3 into the bsimar stack as a third family and ran the full
+scale campaign (24 ckpts). **PFN clean small (0.69 M) = 11/16 STRICT with ZERO
+flips** — the first family with no OMP multistability; strongest clean small
+on record. Architecture: faithful scaled-down port of the three v3 stages +
+two deviations (frozen learned context baked into the ckpt with context-KV
+caching; direct 13-output value head for smooth autograd). Gate curve
+**declines** 11/10/8 (s/m/l); device fidelity peaks medium; 15.6 ms/eval CPU
+(4× faster than BSIM-AR). Root-caused: `nmos_nfin_10` off-grid geometry fails
+at s/m (context-relative embedding interpolates the NFIN 6→21 gap poorly);
+capacity repairs it. 8 divergence-collapse events at `large` (both lr tried);
+diverged runs bank pre-divergence EMA bests. **Dead ends:** fp32 large @300ep;
+"lr 3e-4 fixes divergence" refuted. Pretrained 58 M TabPFN ICL baseline: not
+solver-viable (id 3.2–5.7 % — the from-scratch port beats it ~10× at 1.2 % of
+params).
 
 ---
 
-## V6.8.1 — BSIM-AR Transformer xl-tier fill (2026-07-11/23)
+## V6.9.0 — TSMC6 (CLN6) onboarding + TSMC PDK parse audit (2026-07-12)
 
-**Trained the untrained xl preset (384×8L×ff1536, 14.81M params — 3× tf-large,
-5.5× DN-xl) across the full Phase-B recipe mirror — 48 checkpoints (6 recipes ×
-4 techs × 2 devs), full 300/120-epoch fidelity — and gated vs NGSPICE. Report
-§9 in `docs/accuracy/BSIM-AR-L74-accuracy.md`; driver + logs in
-`results/recipe_bench/xl_campaign/`.**
-
-**Result — xl TIES medium at 15/16 strict, does NOT exceed it, and does NOT
-basin-shuffle.** Single-run complex gate (`gate_iso_xl_tf/`, 96 cells): corroft
-/ crit15m / corro15 = **15/16** (all miss ONLY tsmc7-opamp), crit30 14/16, clean
-& csob 13/16. corroft@xl OMP-strict-confirmed (opamps tsmc5 4.02 / tsmc12 5.90 /
-tsmc16 5.98% gain-err, OMP-invariant across {1,2,4}). **The DirectNet xl
-basin-shuffle (DN-xl banked tsmc16-opamp) does NOT replicate on the Transformer**
-— it already banks tsmc16-opamp at medium and just holds the same 15/16 basket at
-xl. Capacity ceiling = 15/16 across three tiers (medium/large/xl); tsmc7-opamp is
-genuinely a solver-only (T3/EKV) cell no capacity/recipe reaches.
-
-**AC COLLAPSES at xl** (the sharp negative result): **opamp-AC 0/4 every recipe**
-(tsmc5/16 rail on OP-misbias, tsmc12 GBW/PM good but magNRMSE 102%; tsmc7-opamp-AC
-does not converge — a ~6 h non-convergent solver spin, seed-skip it), **device
-nn_ac weak** (corroft 4/8 device-passes, csob 4/8, clean 2/8), and **csob's
-charge-Sobolev does NOT recover AC** — AC weakness at xl is a tier property, not
-recipe-fixable. Confirms the "AC peaks at small" law (xl = worst AC tier, like
-DN-xl→0). Device DC stays excellent: corroft@xl 55/55 configs PASS (baseline
-NRMSE 0.03–0.19%).
-
-**Dead-end / no-promote:** xl costs 3× params + ~30–100× AR inference for the
-*same* 15/16 as medium, with collapsed AC and zero basin gain. **corroft@medium
-(1.9M) remains the validated best BSIM-AR config; xl is not promoted.**
-
-**Ops notes (shared-box campaign):** ~11-day run under heavy co-tenancy
-(Xyce/Swin fleets + the TSMC6 campaign); reboot-resilient `setsid`+`@reboot`-cron
-driver with a `.complete`-gated idempotent resume and a 3→30 retry cap
-(exactly one transient SIGKILL all campaign, auto-recovered; cap never needed).
-Gate lesson: never reuse a `gate_iso_*` output dir across model families (a stale
-DirectNet `gate_iso_xl/` nearly contaminated the tally → fresh `gate_iso_xl_tf/`).
+Onboarded the N6 iPDK card as sixth tech (LEVEL=72 + NN plumbing + datasets;
+NN training deferred to V6.11.0) and audited PyCMG's card parsing across all 5
+TSMC cards. ⚠ Later corrected: TSMC6 is TSMC7 relabelled. Universal codes
+22–24 tail-appended (existing ckpts stay valid). **Real defect fixed:** the
+12-param fingerprint labeller (`loo_labels.py`) used silent last-writer-wins
+and tsmc6↔tsmc7 collide 108/108; per-tech datasets now label against their own
+tech and the universal scan raises on cross-tech collision. Verification:
+PyCMG pytest 314/314; TSMC6 DC 9/9, tran 14/14; full 6-tech regression clean
+bar the pre-existing `TSMC5_lvt_inv_l_24nm` ERROR. **Parse audit PASS** (40
+devices, 0 round-trip mismatches); durable verdicts: mid-line `*` in blocks is
+multiplication NOT a comment (`_extract_model_params`'s no-strip is
+load-bearing); bin selection inclusive-both-ends is self-consistent
+PyCMG↔NGSPICE; TMI/stat params ignored identically by both.
 
 ---
 
-## V6.8.0 — BSIM-AR Transformer (LEVEL=74) un-parked: recipe campaign (branch `V6.7`, 2026-07-06/07)
+## V6.8.1 — BSIM-AR xl-tier fill (2026-07-11/23)
 
-**Shipped the entire DirectNet training/recipe/eval stack to the parked BSIM-AR
-decode-only Transformer and ran the full scale × recipe campaign per tech, gated
-vs NGSPICE. Report: `docs/accuracy/BSIM-AR-L74-accuracy.md`.**
-
-**Result — BSIM-AR `corroft@medium` (corridor curriculum, 1.9M params) = 15/16
-STRICT (OMP∈{1,2,4}), beating DN production `crit30f@large` (14/16).** Better basket:
-banks tsmc16-opamp (DN FAILS it) + both low-VDD rings, all deterministic; misses
-ONLY tsmc7-opamp — the hard cell DN reached only via the V6.5.9 T3 solver fine-tune
-(out of scope here). Device DC 44/44 all tiers; AC peaks at small (7/8).
-
-- **Port (code, all default-off / behavior-preserving):** (1) `transformer.py`
-  `unknown_code_id` — was hardcoded universal 17; local vocab would CUDA-assert on
-  p_unknown → now `num_tech_codes-1`. (2) `init_from` warm-start. (3) Sobolev /
-  charge-Sobolev / subthreshold aux losses made model-agnostic; column-sum autograd
-  trick VERIFIED valid for the Transformer (grad diff 1.3e-7). Blocker fixed: fused
-  SDPA has no double-backward → aux losses force the MATH backend at forward. (4)
-  Transformer `xl` preset (14.8M). (5) `--amp` bf16. (6) Parser LEVEL=74 preempt
-  cascade `tsmc{X}_tf_{size}_{dev}` (large-first) + `_tf_` scope detection. (7)
-  `PYCIRCUITSIM_NN_FORCE_LEVEL=74` hook — retargets LEVEL=73 decks to BSIM-AR at
-  parse time (whole gate infra runs the Transformer, zero deck changes). (8)
-  `MODEL={direct,transformer}` in the 5 drivers. (9) Solver batched-eval includes
-  LEVEL=74 (per-ckpt grouped forward — biggest CPU-gate lever for the AR loop).
-- **Latent L74 bug fixed (`mosfet_nn.py`):** `_out_col` read outputs via
-  `norm_stats.output_columns` (canonical order) BEFORE the BSIMAR layout → qg
-  denormed as id (~5× current, 389% device NRMSE) though the module scored 0.38% on
-  the trainer's test set. Historical BSIM-AR norm files predate `output_columns` so
-  it never fired. Fixed: BSIMAR layout branch ranks first. Classic silent-green,
-  caught by the first real checkpoint.
-- **Scale study (clean, S/M/L):** complex 12→14→13 (peaks MEDIUM, one tier earlier
-  than DN); AC 7→4→4 of 8 (peaks small); device 44/44 all tiers (tsmc7-NMOS NRMSE
-  GROWS with capacity 3.37→4.77% — the tech whose opamp is unreachable).
-- **Recipe study:** 3 large corridor recipes (corroft, crit30, crit15m) all →15/16
-  single / 14/16 strict, all rail only tsmc7-opamp. **inv_trip anchor is INERT on
-  the Transformer** (corroft ≡ crit30 <0.5%/cell — opposite of DN). **corridor is
-  the whole ring lever** (invtrip-alone stays ~13/16). **tsmc7-ring ⊥ tsmc7-opamp
-  under the corridor at EVERY tier** (ring-open = opamp-kill perturbation) → ceiling
-  15/16. Strict best is MEDIUM (both rings deterministic), not large.
-- **Datasets:** existing `{tech}_{dev}.npz` + `_corro_` sets (no regen). Ckpts
-  `tsmc{X}_tf_{small,medium,large}_{nmos,pmos}` (24) + recipe variants. Production
-  unchanged (DN stays fast path; BSIM-AR un-parked as the higher-fidelity option).
+Trained the xl preset (14.81 M) across the full Phase-B recipe mirror (48
+ckpts) and gated. **xl TIES medium at 15/16 strict, does NOT exceed it, does
+NOT basin-shuffle** (the DirectNet xl shuffle does not replicate); tsmc7-opamp
+is the only miss for corroft/crit15m/corro15. **AC COLLAPSES at xl** (opamp-AC
+0/4 every recipe; device AC weak; charge-Sobolev does not recover it — a tier
+property, not recipe-fixable). **No-promote:** 3× params + ~30–100× AR
+inference for the same 15/16; `corroft@medium` remains the validated best.
+Ops lesson: never reuse a `gate_iso_*` output dir across model families.
 
 ---
 
-## V6.7.1 — house-clean after the V6.7.0 campaign (branch `V6.7`, 2026-07-05)
+## V6.8.0 — BSIM-AR Transformer (LEVEL=74) un-parked: recipe campaign (2026-07-06/07)
 
-**~12.7 G reclaimed; nothing load-bearing touched; retired checkpoints archived to
-`/data2/shenshan/v66x_v670_retired_ckpts_2026-07-05.tar.gz` (1.9 G) before deletion.**
-
-- **Checkpoints (2.5 G → 459 M):** pruned the V6.6.x recipe-study pool (all recorded
-  losers, verdicts in the accuracy reports): cor/corft/corr/corrft/corro15, crit*@large,
-  crit*@xl, csob@{s,m,xl}, csobcrit (relocation-not-composition), csobekv (EKV breaks
-  SRAM), cs7, ekv, invtrip (refuted as ring lever), s123/s17/s7, sob ×4 techs; + failed
-  V6.7.0 fine-tunes `u716f5_{plain,crit}_n{2k,10k,50k,200k}` (0/4; ≤10k DIVERGE) and
-  `u716f5_crit_n{1M,full}`. **Kept:** production s/m/l/xl, v660clean, crit30f@large,
-  alternates csob@large + corroft/crit10@xl, promote-candidate crit15m@xl (14/16 ties
-  production), 6 u716 universal bases, u716f5_plain_n{1M,full}.
-- **Datasets (26 G → 19 G):** deleted V6.7.0 `uni716_*` concats + `tsmc5ft_n*` (both
-  regenerable via seeded `uni_{concat,subsample}_npz.py`). KEPT `tsmc{X}_{cor,corr}_*`
-  (9.1 G, referenced by `recipe_train.sh`'s `cor*` arm — retrainability over reclaim).
-- **Generated outputs (~3.0 G):** `results/uni_bench/*/complex_omp*` work dirs (SUMMARY /
-  logs / transfer_curve.tsv kept) + `tests/verify_*_results/`.
-- **Docs:** removed the closed V6.6.2 campaign plan (git-recoverable; verdict preserved in
-  entries + memory). **Report merge (user request):** the 580-line collector output
-  `results/recipe_bench/ACCURACY_REPORT.md` merged verbatim into
-  `docs/accuracy/DirectNet-L73-accuracy.md` as Part II (Part I = analysis, Part II = all data
-  tables). The results path keeps a marker stub so collectors still regenerate in place.
-- Trap-list survivors re-verified (corridor pipeline scripts, base+corro datasets, PyCMG,
-  tools/ngspice); no orphan `_norm.npz`.
+Shipped the DirectNet training/recipe/eval stack to the parked AR Transformer
+and ran the full scale × recipe campaign. **`corroft@medium` (1.9 M) = 15/16
+STRICT, beating DN production (14/16)** — banks tsmc16-opamp + both low-VDD
+rings; misses only tsmc7-opamp. Port notes: `unknown_code_id` was hardcoded
+universal 17 (local vocab would CUDA-assert) → `num_tech_codes-1`; aux losses
+force the MATH SDPA backend (fused SDPA has no double-backward); LEVEL=74
+parser cascade + `PYCIRCUITSIM_NN_FORCE_LEVEL=74`. **Latent L74 bug fixed:**
+`_out_col` ranked the canonical column order before the BSIMAR layout → qg
+denormed as id (~5× current) though the module scored 0.38 % on the trainer's
+test set — classic silent-green, caught by the first real checkpoint. Scale
+study: complex peaks MEDIUM; AC peaks small; **inv_trip anchor is INERT on
+the Transformer** (opposite of DN); the corridor is the whole ring lever;
+tsmc7-ring ⊥ tsmc7-opamp under the corridor at every tier.
 
 ---
 
-## V6.7.0 — universal DirectNet + TSMC5 transfer study (branch `V6.6`, 2026-07-04/05)
+## V6.7.1 — house-clean after the V6.7.0 campaign (2026-07-05)
 
-**Campaign: resurrect the universal-scope DirectNet (retired V6.1) — ONE
-18-code-embedding model on TSMC16+12+7 (~7M rows), rank the Core-4 recipes
-(clean/csob/corroft/crit30u) on the 12 shared complex gates, then measure TSMC5
-few-shot transfer (fine-tune tiers N ∈ {2k…1M,full}).** Report:
-`docs/accuracy/DirectNet-L73-accuracy.md`. **No production change:** all artifacts use
-`u716_*`/`u716f5_*` stems (env-pin-only; per-tech resolution untouched). New standalone
-scripts (zero edits to existing): `uni_concat_npz.py`, `uni_subsample_npz.py`,
-`uni_train.sh`, `uni_gate_sweep.sh` (12 gates + zero-shot + OMP sweep + RESOLVER-MISS check).
-
-Executed (36 ckpts, 264 eval cells, zero RESOLVER-MISS, ~1.5 days). **Headlines:**
-(1) **universal is VIABLE** — device fidelity per-tech-grade (id NRMSE ≤0.09%, R²≥0.996)
-and **corroft = 10/12 strict, 0 FLIPs = per-tech parity with full OMP determinism** (which
-per-tech large never had); ranking corroft 10 > clean 9 > crit30u 9+FLIP > csob 8+FLIP;
-corridor fixes tsmc7-ring 14.89→3.61% (ring-lever confirmed at universal scope); anchor +
-csob basins do NOT survive the scope change (recipe→basin maps are SCOPE-dependent).
-(2) **TSMC5 onboarding = ~1M stratified rows: plain@n1M = 4/4 STRICT** (ties per-tech
-production at half the data); threshold sharp (0/4 ≤200k); ≤10k DIVERGE (tier-refit
-normalizer); n1M beats nfull (opamp basin non-monotone in N). (3) **No free retention** —
-source techs collapse at gate level (1–3/12); fine-tune = de-facto per-tech ckpt.
-**Phase 1b (xl) CLOSED:** clean@xl 8/12+1FLIP (banks both opamps, loses all rings),
-corroft@xl 8/12 (holds rings, all opamps rail) — the V6.6.1 opamps-XOR-rings wall reappears
-at universal xl → **corroft@large (10/12 strict, 0 FLIPs) = final best universal config.**
+~12.7 G reclaimed; nothing load-bearing touched; retired checkpoints archived
+to `/data2/shenshan/v66x_v670_retired_ckpts_2026-07-05.tar.gz` before deletion
+(recorded-loser recipe pool + failed fine-tunes pruned; production/alternates/
+universal bases kept). Datasets 26 G → 19 G (regenerable concats deleted;
+corridor sets kept — retrainability over reclaim). The 580-line collector
+output merged into the DirectNet accuracy report as Part II.
 
 ---
 
-## V6.6.7 — 15/16 hunt round 1: csobcrit + crit30a1 both 13/16 (branch `V6.6`, 2026-07-03)
+## V6.7.0 — universal DirectNet + TSMC5 transfer study (2026-07-04/05)
 
-**Both V6.6.6-routed arms trained (16 ckpts, `large`) and strict-gated: NEGATIVE — 13/16 strict
-each; production stays crit30f@large 14/16.** `csobcrit` (csob base + crit30 curriculum,
-`--charge-sobolev` retained, corro data): the curriculum **relocates rather than composes**
-basins — csob's deterministic tsmc16-opamp hold (1.28 %) degrades to a FLIP (OMP1 100 % /
-OMP2,4 7.49 %) while tsmc12-opamp is gained deterministically (5.80 %); plan-§5 P2a REFUTED.
-`crit30a1` (ring-only corridor w3.0 + HALF inv_trip anchor 1.0, v660clean base): reproduces
-corroft (anchor 0) almost exactly (tsmc16-opamp 7.34 % detPASS, identical rings) — anchor 1.0 is
-sub-threshold; **the {16} → {5,12} opamp-basin hop is DISCONTINUOUS in anchor weight ∈ (1.0,
-2.0)**. Remaining cheap arm: anchor ~1.5 at w3.0; otherwise the uniform lever is exhausted for
-the 5+12+16 triple → 15/16 routes to structural levers (T3 class). Harness: recipe map gained
-csobcrit/crit30a1; crit-family `--init-from` at `large` now redirects to the **v660clean
-archive** (the production slots carry crit30f since V6.6.4 — warm-starting from them would
-silently stack curricula). Reports consolidated (user request): `RETEST_ACCURACY.md` +
-`RECIPE_REPORT.md` merged into the single `results/recipe_bench/ACCURACY_REPORT.md` (RETEST +
-MATRIX marker sections, each regenerated in place by its collector). Same-day house-clean:
-CHANGELOG compressed, CLAUDE.md de-duplicated, `results/` pruned to the live evidence set.
+Resurrected the universal-scope DirectNet (ONE 18-code model on TSMC16+12+7),
+ranked the Core-4 recipes on the 12 shared complex gates, measured TSMC5
+few-shot transfer. Headlines: (1) **universal is VIABLE** — device fidelity
+per-tech-grade; **`corroft` = 10/12 strict, 0 FLIPs = per-tech parity with
+full OMP determinism** (which per-tech large never had); corridor fixes
+tsmc7-ring 14.89→3.61 %; anchor/csob basins do NOT survive the scope change
+(recipe→basin maps are SCOPE-dependent). (2) **TSMC5 onboarding = ~1 M
+stratified rows** (`plain@n1M` 4/4 STRICT at half the data; ≤10 k DIVERGE;
+n1M beats nfull). (3) **No free retention** — source techs collapse at gate
+level; fine-tune = de-facto per-tech ckpt. Phase 1b: the opamps-XOR-rings wall
+reappears at universal xl → `corroft@large` is the final best universal
+config. Env-pin-only; per-tech resolution untouched.
 
 ---
 
-## V6.6.6 — xl curriculum ties production at 14/16 strict + full test-infra audit (branch `V6.6`, 2026-07-03)
+## V6.6.7 — 15/16 hunt round 1: csobcrit + crit30a1 both 13/16 (2026-07-03)
 
-**The 9 curriculum recipes trained at `xl` (72 ckpts, warm-start clean xl) and
-strict-gated: `corroft`/`crit10`/`crit15m`@xl = 14/16 STRICT, tying production — all
-three bank the tsmc16-opamp deterministically (6.2–6.7%) which production FAILS**
-(crit15m also banks tsmc5-opamp). Production UNCHANGED; analysis:
-`docs/accuracy/DirectNet-L73-accuracy.md`. Also re-gated the 13 base recipes' xl ckpts (V6.6.3
-methodology, `SIZE`-parameterized) — reproduces V6.6.5 cell-for-cell; **xl basins are
-OMP-deterministic** (sole FLIP corft tsmc5-ring), unlike large's endemic opamp flips.
-Findings: curriculum warm-start rescues xl wholesale (clean@xl 10→14); the **weight→basin
-map is TIER-dependent** (crit30 14@large/12@xl; crit10/crit15m peak at xl); ring-only
-corridor is the only safe corridor at xl; tsmc7-opamp 0 over 22 recipes × 2 tiers;
-opamp-AC 0/4. **Every opamp basin except tsmc7 is individually reachable; none of the
-5+12+16 triple holds simultaneously = the 15/16 target.**
-
-**Test-infra audit — 17 verified fixes (4-agent sweep, every finding re-verified).**
-Silent-green class: `bsimcmg_dc` scored >100% divergences as ERROR-skip → exit 0 (now hard
-FAIL); all-ERROR suites exited 0 (now →1); **an absent `PYCIRCUITSIM_NN_CHECKPOINT_*` pin
-silently fell back to production `large`** — a recipe eval could report production numbers
-under the recipe's name (now FileNotFoundError); sweep ring/switchcap lacked the `not
-partial` guard; SRAM dropped errored NFIN corners; 4 mains exited 0 on empty results;
-flat-reference `nrmse()` returned 0 = auto-PASS (now inf); truncated transients now FAIL.
-Pipeline class: `gate_matrix_iso.sh` clobbered SUMMARY.txt on subset re-runs (had wiped the
-large tier's rc records — numbers stayed correct only because log-status ≡ rc) and broke
-`gate_grid.py` to 0/16 (now per-cell verdict files + non-destructive merge); `benchmark_collect`
-NUM regex dropped nan rows; the sweep drift manifest hashed `medium` while the resolver loads
-`large` (now resolver-consistent); train-resume trusted `_best.pt` (now `.complete` markers).
-**The v664-P0 thread-pin landed:** `torch.set_num_threads(PYCIRCUITSIM_TORCH_THREADS or 1)` in
-`complex.py`+`complex_ac.py` — verdict-neutral (tsmc12-opamp reproduces 6.25% exactly). Audited
-clean: NN-vs-NGSPICE deck parity in all 4 circuits, every collector regex, 512 ckpt-stem →
-local-vocab mappings. Accepted LOWs (documented, unfixed): non-inscribed-square SNM diagnostic,
-midpoint-touch crossing count, uic-vs-OP tran-start semantic, non-atomic modelcard bakes.
+Both routed arms NEGATIVE; production stays `crit30f@large` 14/16. `csobcrit`:
+the curriculum **relocates rather than composes** basins (csob's deterministic
+tsmc16-opamp hold degrades to a FLIP while tsmc12-opamp is gained). `crit30a1`
+(half anchor): reproduces corroft almost exactly — **the {16} → {5,12}
+opamp-basin hop is DISCONTINUOUS in anchor weight ∈ (1.0, 2.0)**; the uniform
+lever is exhausted for the 5+12+16 triple → 15/16 routes to structural levers.
+Harness: crit-family `--init-from` at `large` redirected to the v660clean
+archive (production slots carry crit30f — warm-starting from them would
+silently stack curricula).
 
 ---
 
-## V6.6.5 — Recipe×size matrix COMPLETED: all 13 recipes at all 4 sizes (branch `V6.6`, 2026-07-03)
+## V6.6.6 — xl curriculum ties production 14/16 strict + full test-infra audit (2026-07-03)
 
-**The V6.6.1 study became a FULL 13-recipe × 4-size matrix: the 27 large-only combos were
-uniform-trained (208 ckpts) and gated (864 eval cells, zero blanks; all logs audited
-rc∈{0,1}).** Findings: `clean@large` 13/16 stays the unbeaten in-matrix cell; **the corridor
-inverts the capacity curve** (`cor` 11/12/11/5 s→xl — dominates below `large` with the best
-device fits, collapses above — weight-space non-monotonicity now seen in capacity-space);
-**xl is basin-shuffled, not uniformly over-fit** (invtrip/s17 12/16@xl vs clean 10; sob, worst
-everywhere else, jumps 5→10); **AC pass-rate peaks at SMALL** across recipes; device-NRMSE
-bottoms at medium; tsmc7-opamp 0/52. Ops (uniformity discipline): 22 killed-run "best-so-far"
-ckpts quarantined + retrained to full spec (a `_best.pt` on disk is NOT evidence of a completed
-run — gate on the log tail); an eval-overlap incident truncated 17 xl logs → deleted + re-run
-serialized. Campaign driver `results/recipe_bench/fill_campaign.sh` (~24 h wall, 3×4090).
-
----
-
-## V6.6.4 — crit30f PROMOTED to production (branch `V6.6`, 2026-07-02)
-
-All 8 `tsmc{X}_dn_large_*` production slots replaced with bit-identical copies of the
-V6.6.3-validated `crit30f` checkpoints (clean base + one identical curriculum fine-tune
-`--class-weights traj_corridor=3.0,inv_trip=2.0 --lr 3e-4 --epochs 120 --patience 40
---init-from` own clean large, ring-only `corro` data); the clean originals archived as
-`tsmc{X}_dn_v660clean_large_*` (re-gateable as recipe `v660clean`); small/medium/xl stay clean.
-Post-promotion verification on the default resolver path (no env pins) reproduces the record —
-**14/16 deterministic** (tsmc5-ring 4.04 %, tsmc5-opamp 0.21 %, tsmc12-opamp 6.25 %; tsmc7 +
-tsmc16 opamp remain the FAILs). Production moves 13/16 (12 strict) → **14/16 strict**.
-Checkpoints are gitignored — this entry + CLAUDE.md are the record.
+`corroft`/`crit10`/`crit15m`@xl = 14/16 STRICT (all bank tsmc16-opamp which
+production fails); production unchanged. **The weight→basin map is
+TIER-dependent**; curriculum warm-start rescues xl wholesale (clean@xl 10→14);
+xl basins are OMP-deterministic unlike large's endemic opamp flips.
+**Test-infra audit — 17 verified fixes**, silent-green class: >100 %
+divergences scored as ERROR-skip → exit 0; all-ERROR suites exited 0; **an
+absent `PYCIRCUITSIM_NN_CHECKPOINT_*` pin silently fell back to production**
+(now raises); flat-reference `nrmse()` returned 0 = auto-PASS (now inf);
+SUMMARY clobbering on subset re-runs; train-resume trusted `_best.pt` (now
+`.complete` markers). The v664-P0 torch thread-pin landed in the complex
+harness (verdict-neutral).
 
 ---
 
-## V6.6.3 — Full-recipe re-test: crit30 supersedes crit15 at 14/16 STRICT (branch `V6.6`, 2026-07-02)
+## V6.6.5 — recipe×size matrix completed: 13 recipes × 4 sizes (2026-07-03)
 
-**All 22 on-disk uniform recipes re-tested under one discipline (16-cell isolated matrix +
-OMP∈{1,2,4} determinism sweep per recipe + opamp-AC + finalist device suites): best =
-`crit30` (`traj_corridor=3.0,inv_trip=2.0` curriculum) at 14/16 STRICT all-OMP — clean+2 —
-superseding V6.6.2's crit15 (13 strict).** Validated by `crit30f`: the original crit30 had been
-killed at heterogeneous epochs 30–92, so all 8 ckpts were retrained to full spec — the honest
-rerun reproduces the artifact cell-for-cell. crit30 banks deterministically: all 4 rings
-(tsmc5 12.66→4.04 %), all SRAM/switchcap, tsmc12-opamp 6.25 %, **and tsmc5-opamp 0.21 %** (a
-coin-flip in clean, detFAIL in crit15); device level ≥ clean everywhere (DC mean NRMSE
-1.64→1.46 %, device-AC 4/8→6/8). V6.6.2 single-run corrections: "crit20/30 collapse opamps" was
-a coin-flip read (crit20 13, crit30 14 strict); the corridor-weight → tsmc5-opamp basin map is
-**non-monotone** (w1.0 FLIP, w1.5/2.0 detFAIL, w3.0 detPASS — the inv_trip anchor makes w3.0
-safe where corroft alone railed). csob re-scoped: only tsmc16-opamp detPASS + only opamp-AC
-PASS + best tsmc12 device fit, but tsmc12-opamp flips at OMP=8 and 2 rings detFAIL → 12 strict
-(stays the AC/device alternative). tsmc7-opamp: 100 % across all 23 artifacts × all OMP. New
-infra: `scripts/{recipe_retest_collect,device_retest_collect}.py`, `device_matrix_iso.sh`,
-env-overridable results dirs; prior §14 runs archived as `*_v662_prior`.
+208 ckpts, 864 eval cells, zero blanks. `clean@large` 13/16 stays the unbeaten
+in-matrix cell; **the corridor inverts the capacity curve** (dominates below
+`large`, collapses above); **xl is basin-shuffled, not uniformly over-fit**;
+AC peaks at SMALL across recipes; device-NRMSE bottoms at medium; tsmc7-opamp
+0/52. Ops: 22 killed-run "best-so-far" ckpts quarantined + retrained (a
+`_best.pt` on disk is NOT evidence of a completed run — gate on the log tail).
 
 ---
 
-## V6.6.2 — The cross-wall combo breaks 13/16: crit15 = clean+1 (branch `V6.6`, 2026-07-02)
+## V6.6.4 — crit30f PROMOTED to production (2026-07-02)
 
-**REFUTED the V6.6.1/§13 "13/16 uniform ceiling": `crit15` (`traj_corridor=1.5,inv_trip=2.0`
-curriculum warm-start on the ring-only `corro` data — the corridor and inv_trip levers had only
-ever been tested SEPARATELY, on opposite sides of the shared-MLP wall) nets 14/16 single-run /
-13/16 strict = clean+1, the +1 being the DETERMINISTIC tsmc5-ring opening (12.66 → 4.0 %).**
-Confirmed live that the opamp gate is a multistable OMP coin-flip (tsmc5/tsmc16 flip 0–8 % ↔
-100 % across OMP∈{1,2,4} in both clean and crit15 — single-run opamp passes are unbankable;
-`opamp_sweep_def.sh` became the standing probe). Round-2 (crit15m/h, crit10, crit20,
-crit30-undertrained) read NEGATIVE on single runs — corrected by V6.6.3's strict re-test.
-Production unchanged (promotion deferred to user). New harnesses: `gate_matrix_iso.sh`,
-`opamp_sweep_def.sh`, `gate_grid.py`; `recipe_train.sh` gained the `crit*` family.
+All 8 `tsmc{X}_dn_large_*` production slots replaced with the V6.6.3-validated
+`crit30f` checkpoints (clean base + one curriculum fine-tune, ring-only
+`corro` data); clean originals archived as `tsmc{X}_dn_v660clean_large_*`.
+Production 13/16 (12 strict) → **14/16 strict**, verified on the default
+resolver path. Checkpoints are gitignored — this entry is the record.
 
 ---
 
-## V6.6.1 — Uniform-recipe comparison sweep (branch `V6.6`, 2026-07-01)
+## V6.6.3 — full-recipe re-test: crit30 supersedes crit15 at 14/16 STRICT (2026-07-02)
 
-**Swept uniform recipes (charge-Sobolev `csob`, Sobolev `sob`, EKV `ekv`, seeds `s7/s17/s123`,
-combos `csobekv`/`cs7`) across all 4 sizes: NO uniform recipe beats clean's 13/16 at `large`
-(csob 12 > cs7/s7/s17 11 > csobekv/ekv/s123 10 > sob 5).** The ceiling is a mutual exclusivity
-of value-surface basins — each recipe/seed lands a different subset (tsmc12-opamp passes only on
-seed-42); combo stacking is zero-sum (`csobekv` uniquely holds tsmc7-ring + tsmc16-opamp but the
-EKV core breaks tsmc12/16 SRAM → 10/16; it also converges 10–40× worse val-loss). **`csob` =
-best all-rounder** (best device NRMSE at `large` 1.50 vs 1.70, best AC, lands tsmc16-opamp, −1
-complex gate) → promoted to documented alternative; refutes the V6.5.x "charge-Sobolev dead on
-arrival" verdict (which was measured only at `medium`). `sob` reconfirms deriv-fidelity ⟂ opamp
-(5/16). Report: `docs/accuracy/DirectNet-L73-accuracy.md`. Infra: `scripts/recipe_{train,eval}.sh`
-+ `recipe_collect.py`; checkpoints saved `tsmc{X}_dn_{recipe}_{size}_{dev}` (clean never
-clobbered).
+All 22 on-disk recipes re-tested under one discipline (isolated matrix + OMP
+determinism sweep). Best = `crit30` 14/16 STRICT; validated by `crit30f` (all
+8 ckpts retrained to full spec — the honest rerun reproduces cell-for-cell).
+The corridor-weight → tsmc5-opamp basin map is **non-monotone** (w1.0 FLIP,
+w1.5/2.0 detFAIL, w3.0 detPASS — the inv_trip anchor makes w3.0 safe). csob
+re-scoped to the AC/device alternative (12 strict). tsmc7-opamp: 100 % FAIL
+across all 23 artifacts × all OMP.
 
 ---
 
-## V6.6.0 — House-clean + uniform-recipe reset (branch `V6.6`, 2026-06-29)
+## V6.6.2 — the cross-wall combo breaks 13/16: crit15 = clean+1 (2026-07-02)
 
-**Deliberate reset from V6.5.9's hand-tuned 16/16 to the honest uniform baseline: all 32
-DirectNet checkpoints retrained from scratch on ONE identical recipe (`--apply-filter off
---swa-mode ema --seed 42`); production = the uniform `large` tier at 13/16 complex gates
-(capacity curve 7/10/13/10 s→xl — peaks at `large`, over-fits at xl).** The 3 open gates
-(tsmc5 ring, tsmc7/tsmc16 opamp) are the true fidelity frontier the V6.5.x per-case specials
-had force-closed. Device 24/24, inverter 16/16 at every size, lifted-source canary 12/12, L72
-OP/DC/TRAN/AC all PASS post-clean. Report: `docs/accuracy/DirectNet-L73-accuracy.md`. House-clean:
-datasets purged of stale variants (16 GB → 4.5 GB); version-pinned results/plans/one-off
-scripts and 11 gate-specific diagnostics removed (4 reusable controls + all 23 `verify_*` gates
-kept); 2 dead `config.py` helpers removed; checkpoints dir cleared with the V6.5.x specials
-archived off-repo (`/data2/shenshan/v6.5.9_production_specials.tar.gz`; rollback = `git
-checkout V6.5.4` + untar); resolver now prefers per-tech `large` first;
-`benchmark_train_sml.sh` gained a `GPUS` override.
+REFUTED the V6.6.1 "13/16 uniform ceiling": `crit15` (corridor + inv_trip
+curriculum — the two levers had only ever been tested separately) nets 13/16
+strict = clean+1, the +1 the DETERMINISTIC tsmc5-ring opening (12.66→4.0 %).
+Confirmed live that the opamp gate is a multistable OMP coin-flip — single-run
+opamp passes are unbankable. Round-2 arms read NEGATIVE on single runs —
+corrected by V6.6.3's strict re-test.
 
 ---
 
-## V6.5.9 — ★ 16/16: T3 differentiable-DC-solver lands the tsmc7 opamp (branch `V6.5.4`, 2026-06-29)
+## V6.6.1 — uniform-recipe comparison sweep (2026-07-01)
 
-First-ever tsmc7 opamp PASS (DirectNet gain 178.0 vs NGSPICE 163.4, 8.92%) → production 16/16. Put the DC solve **inside the loss**: a differentiable unrolled Newton solver supervises the emergent transfer curve `Vout(Vin; θ)` against L72, so r_o is shaped by the gain target instead of the residual-minimisation shortcut that over-flattens it. This broke the V6.5.8 "gain stuck ~370" wall — the gain-163 root DOES exist on the ekvhr substrate; "370" was the gate's continuation landing on a different over-flattened branch. Findings: the gate gain is **bimodal + sampling-noisy** (peak |dVout/dVin| bounces 147–187 even on a 3%-NRMSE-faithful curve); the `--lam-lo-override` r_o cap is fine WITH curve supervision (it rails without it); **preservation (ring/switchcap), not existence, was the binding work** — the faithful good-curve root and a passing ring are mutually exclusive, so the shipped candidate sits on the ring-compatible shifted root. Installed `tsmc7_dn_t3` via the `tsmc7_dn_medium` symlink (retired in V6.6.0). Infra `scripts/v6_5_8_{harvest_opamp_topology,t3_solver_finetune,gate_t3,install_t3}`. Memory `[[v659-t3-solver-lands-opamp-16of16]]`.
-
----
-
-## Test-infrastructure correctness sprint — 11 bugs fixed (branch `V6.5.4`, 2026-06-28)
-
-Audit-driven fix of the verify harness; production pass-rates unchanged (NN device 24/24, complex 15/16), every fix re-checked vs NGSPICE. Durable fixes still in code: **B1 (CRITICAL)** — the per-tech device gates in `verify_nn_dc_tran.py` were pinning **tsmc5's** net (at UNKNOWN tech-code) for ALL techs; routed the 5 `model_path` sites through `_cascade_handles_stem` so each tech resolves its own checkpoint. **B3/B5** — SRAM scored PASS when every corner errored (`all([])==True`) and never compared to ground truth; now ANDs point-by-point NGSPICE-NRMSE tracking (≤10%), with `force_ic` reconciled as a printed **diagnostic** (not a gate; rails on TSMC7/12 only). **B4** — a diverged inverter transient could false-PASS (`_nr_partial` set-but-unread); now auto-FAIL. B2/B6–B11: sweep↔gate `uic` equivalence canary, ASAP7 skip (Rule 14), real-deck canary (32/32), `partial` gating, honest additive exit codes.
-
----
-
-## V6.5.8 — EKV high-r_o core + vout-weighted KCL breaks the tsmc7-opamp rail (branch `V6.5.4`, 2026-06-28)
-
-First non-railed tsmc7 opamp in the whole campaign — a high-r_o EKV **structural** core + a vout-weighted KCL existence fine-tune produced a real amplifying transfer curve (gain ~350–381), where every prior V6.4.x–V6.5.7 attempt railed to 0. **REFUTES the V6.5.6/7 "only T3 can create a reachable high-gain OP" verdict.** BUT gain ⟺ existence are **coupled through the output-stage r_o**: the reachable OP is over-gained (~2.2× the L72 target 163) and every calibration lever is a binary rail↔370 switch — vout-weight, lam-kcl, and (decisively) `--freeze-core` / `lam_lo`-cap all RAIL rather than lower the gain (the over-flattened r_o is *required* for reachability). ±10% gate not passed; nothing installed (15/16). Routes to T3 (V6.5.9), which sits on this EKV+KCL substrate. `_EKVCore` redesigned to floor-scaled physical `id_core + sqrt(id_core²+(κ·id_s)²)·α·tanh(trunk)` + exposed `--ekv-lam-lo`. Memory `[[v658-ekv-core-breaks-opamp-rail]]`.
+Swept uniform recipes (csob/sob/ekv/seeds/combos) across all 4 sizes: **NO
+uniform recipe beats clean's 13/16 at `large`**. The ceiling is mutual
+exclusivity of value-surface basins — each recipe/seed lands a different
+subset; combo stacking is zero-sum (EKV core breaks tsmc12/16 SRAM). `csob` =
+best all-rounder → documented alternative; refutes the V6.5.x "charge-Sobolev
+dead on arrival" verdict (measured only at `medium`). `sob` reconfirms
+deriv-fidelity ⟂ opamp.
 
 ---
 
-## V6.5.7 — panel-review correction of the V6.5.6 opamp verdict (branch `V6.5.4`, 2026-06-27)
+## V6.6.0 — house-clean + uniform-recipe reset (2026-06-29)
 
-A 5-agent adversarial review found V6.5.6's "no high-gain zero exists / probe-closed / only-T3" **over-strong**. The real bind is full-system STABLE EXISTENCE with **`vout` the never-supervised node** (T1 pinned only the stage-1 balance node `vo1i`; the solver-conditioning probe was 20 *cold* multistarts along a 1-D line — reachability, not an existence proof; the "vout residual at V*_L72" non-existence argument is falsified by the PASSING tsmc12 at F_rel≈0.19). The cheap vout-prioritized existence retrain was then RUN & **KILLED**: `vout` F_rel floors 0.062 (wrecks the base surface +492%) → 0.13 (preservation-safe) vs the ~0.006 a high-gain zero needs; 0 high-gain solutions on all candidates; opamp gain 0.0 FAIL ⇒ the soft-wall is near-hard for the KCL-loss family. **fetlim also dead** (the L72 control lands gain 163 on the same fetlim-less path — voltage-limiting is not what discards the NN's step). Routes to EKV/T3. `finetune_kcl.py --vout-weight/--vout-target`. Memory `[[v657-vout-existence-retrain-kill]]`.
-
----
-
-## V6.5.6 — 3-operator Phase-0 routing + T1 KCL-residual lever (branch `V6.5.4`, 2026-06-26)
-
-**Organizing frame — the 3-operator taxonomy (durable):** DirectNet emits ONE surface but the solver reads it through THREE operators, each owning a different gap + a structurally different fix-class — id-VALUES→KCL→NR fixed point (G1: opamp gain, ring period); autograd dQ/dV→pole (G3: f3db); off-diagonal cgd→RHP zero (G4: HF phase). Charge-head retrains are DC-safe; id-surface retrains are DC-unsafe; the recurring ledger failure is applying the wrong fix-class. Phase-0 (four zero-GPU diagnostics) routed the gaps: **D1 EXISTENCE** — at the L72 high-gain OP the net signed NN current is NOT a residual zero (tsmc7 vo1i F_rel 0.128 vs passing tsmc12 0.002); **G3 dead on arrival** — autograd ∂qd/∂Vd already == cdd head == OSDI ~0.1%, so f3db is OP-drift/value-surface owned; **Jacobian-blend closed analytically** — the fixed-point LOCATION is a pure function of `id` VALUES (gm/gds set only the Newton path). **T1 net-node KCL-residual loss SOLVED existence** (vo1i 0.128→0.007 — the corridor never did) but the OP is an **unstable Newton fixed point (contraction)**, and preservation is binding (any λ strong enough to move existence regresses the ring; N2 Sobolev blocks existence on the shared id head). Track B: ring-anchor WORKS (ring 6.44%→2.29% PASS). Not installed (15/16). ⚠ Its "only-T3 / no-zero-exists" conclusion was **corrected by V6.5.7**. Memory `[[v656-t1-existence-to-contraction]]`, `[[nn-accuracy-3operator-taxonomy]]`.
-
----
-
-## V6.5.5 — diagnostic-routed corridor retrain → 15/16 (branch `V6.5.4`, 2026-06-24/25)
-
-Three zero-risk diagnostics localized the V6.5.4 open gates and routed a targeted corridor retrain. **tsmc5 ring = NMOS-conduction-owned** (the pull-down under-drives id ~23% at the switching edge; the charge-ON transient reproduces the 12.66% gate, ~66% of the period error) → lifted 3/4→4/4 via `large`+ring-corridor+seed7 (`tsmc5_dn_corringL_s7`); **capacity was the bind** — medium trades ring↔opamp, large+seed threads both. **tsmc7 opamp = value-surface-owned** — seeding the NN sweep from the L72 ground-truth OP at every point STILL rails to gain 0 (the high-gain OP is unstable on the NN surface; PTC/homotopy/OP-seed cannot fix it), confirmed unrecoverable by corridor exhaustively. Net 14→15/16. Memory `[[v655-diagnostic-routing-verdicts]]`, `[[v655-corridor-retrain-15of16]]`.
+Deliberate reset from V6.5.9's hand-tuned 16/16 to the honest uniform
+baseline: all 32 DirectNet ckpts retrained on ONE recipe; production = uniform
+`large` at 13/16 (capacity curve 7/10/13/10 s→xl). The 3 open gates are the
+true fidelity frontier the V6.5.x per-case specials had force-closed.
+House-clean: datasets 16 G → 4.5 G; V6.5.x specials archived off-repo
+(`/data2/shenshan/v6.5.9_production_specials.tar.gz`; rollback = `git checkout
+V6.5.4` + untar); resolver prefers per-tech `large` first.
 
 ---
 
-## V6.5.4 — fresh full retrain + best-config-per-tech → 14/16 (branch `V6.5.4`, 2026-06-23/24)
+## V6.5.9 — ★ 16/16: T3 differentiable-DC-solver lands the tsmc7 opamp (2026-06-29)
 
-Retrained the entire capacity matrix from scratch on freshly regenerated data (32 models, one clean recipe `--apply-filter off --swa-mode ema --seed 42`), best config per tech → 14/16 (matching the V6.4.7 ship but clean, no stale/specialized checkpoints). **Native-L72 control (decisive new diagnostic, `tests/diag_l72_complex_control.py`):** running the exact gate circuits through PyCircuitSim's own solver with the ground-truth OSDI model (no NN) matches NGSPICE at ring 0.00% / opamp 0.00–0.10% ⇒ both remaining gaps are **genuinely NN-value-surface-owned**, not solver/harness (and the 2ps timestep is adequate). Residual 2 gates (tsmc5 ring, tsmc7 opamp) resist every clean-data size AND seed — the value-surface limit V6.4.7 only cleared with corridor-augmented data. Memory `[[v653-l72-control-ring-opamp-model-owned]]`.
-
----
-
-## V6.5.3 — ★ the switchcap gap was a HARNESS CLOCK BUG, not solver/NN-owned (branch `V6.5.2`, 2026-06-23)
-
-**Overturns V6.5.2.** The tsmc5 switchcap "11.84% over-charge" chased across the ENTIRE V6.4.x–V6.5.2 campaign (XL capacity, µA-band loss, charge-Sobolev, TG-corridor, EKV backbone, the "switchcap-is-solver-owned" verdict) was **two harness bugs**: (1) `render_directnet_netlist` rescaled `Vdd`/`=0.80` to the tech VDD but MISSED the space-delimited PULSE clock rail, so the DirectNet clock over-drove the tsmc5 pass gates to 0.80 V while the NGSPICE deck clocked to 0.65 V — exactly explaining the tech pattern (tsmc5 +0.15 over-drive → 11.8% FAIL; tsmc12/16 0.80 → no over-drive → PASS) → **11.84% FAIL → 1.56% PASS, switchcap 4/4**; (2) the "14.65% L72 floor" (V6.5.2) was a control DC-op with no `uic` pinning (the hold node seeded at the off-transistor leakage equilibrium). **LESSON (load-bearing): when an NN gate fails vs NGSPICE, FIRST diff the rendered NN netlist against the NGSPICE deck token-by-token — clock amplitude, supply rails, bias, sweep, geometry — BEFORE blaming the model or solver.** `uic` was also made first-class in the product path (`.tran ... uic` parsing + pinning in `run_transient`, default-off → non-uic decks byte-identical). Memory `[[v652-switchcap-is-harness-clock-bug]]`.
-
----
-
-## V6.5.2 — charge-derivative levers + the (later-refuted) switchcap-is-SOLVER-owned finding (branch `feat/ac-analysis`, 2026-06-22)
-
-> SUPERSEDED by V6.5.3 — the "switchcap is solver-owned / 14.65% L72 floor / not NN-fixable" conclusion was two harness bugs. The cap-fidelity sub-findings remain valid reference.
-
-Both candidate switchcap levers KILLED (correctly — there was no model gap): **charge-Sobolev** (`--charge-sobolev`, couples autograd dQ/dV to the supervised cgg/cgd/cdg/cdd) left the switchcap unmoved (11.84→11.32%) and did NOT move AC f3db (⇒ f3db is OP-drift / value-surface owned, not cap-under-prediction); **TG-corridor data-aug** fixed PMOS cdd 62%→5% yet the switchcap charge didn't move (the tell it was never cap/model-owned). Valid reference: the NN autograd caps match OSDI ~0.3–2.5%; per-channel sign map `+cgg,−cgd,−cdg,+cdd` (OSDI off-diagonals SPICE-negated). Kept default-off recoverable. Memory `[[v67-switchcap-is-solver-owned]]` (⚠ refuted).
+First-ever tsmc7 opamp PASS (gain 178.0 vs 163.4, 8.92 %) → production 16/16.
+Put the DC solve **inside the loss**: a differentiable unrolled Newton solver
+supervises the emergent transfer curve against L72, so r_o is shaped by the
+gain target. Broke the V6.5.8 "gain stuck ~370" wall — the gain-163 root DOES
+exist; "370" was the gate's continuation landing on an over-flattened branch.
+The gate gain is bimodal + sampling-noisy; **preservation, not existence, was
+the binding work**. Installed via symlink (retired in V6.6.0). Memory
+`[[v659-t3-solver-lands-opamp-16of16]]`.
 
 ---
 
-## V6.5.1 — XL capacity tier + µA-band loss lever (KILLED) (branch `feat/ac-analysis`, 2026-06-22)
+## Test-infrastructure correctness sprint — 11 bugs fixed (2026-06-28)
 
-**XL tier (512×8, 2.13M p) = the over-fit boundary:** complex-gate pass-rate PEAKS at `large` then DECLINES — **6→9→12→9/16 (S→M→L→XL)**; XL fits the device surface ~10× tighter (val 2e-4) yet has the WORST off-nominal NRMSE and **loses every value-surface-fragile gate `large` won** (tsmc5/tsmc12 opamp, tsmc7 ring flip PASS→FAIL) — the cleanest confirmation of V6.4.8-S1 ("capacity is not the bind"; more capacity over-fits and collapses the high-gain NR basins). **µA-band loss de-compression KILL (refutes the V6.4.8 roadmap):** retuning the default-off `SubthresholdIdLoss` to the µA band moved the tsmc5 switchcap <0.2% — the over-charge is sample-and-hold charge/transient behaviour, not µA-band-DC-current owned. Also fixed the `xargs -L1` trailing-blank silent job-collapse bug. Memory `[[v66-xl-overfit-and-uA-lever-kill]]`.
-
----
-
-## V6.5 — AC small-signal accuracy of the NN models (branch `feat/ac-analysis`, 2026-06-22)
-
-First time NN AC fidelity was gated against ground truth (NGSPICE `.ac` on the identical BSIM-CMG OSDI), across 24 DirectNet checkpoints + the opamp — the NN's small-signal caps are autograd dQ/dV of its predicted charges, the direct probe of the charge-surface derivatives no prior gate measured. AC **gain** excellent everywhere (24/24 gain0 err <1.5 dB ⇒ autograd gm/gds accurate); the cap-driven **pole** is good but tech-variable (device gate 13/24); the **Cgd-feedforward RHP-zero HF phase is NOT reproduced** (a transcapacitance-sign limitation, diagnostic); the **opamp AC inherits the DC value-surface fragility (0/12)** but where the OP lands well (tsmc12-large) GBW 0.97× / PM 1.3° — dynamics right, DC-gain level is the miss. **No retrain warranted** (a dQ/dV deficiency would show bad gain AND pole everywhere — the opposite). Harness `tests/common/complex_ac.py`, `verify_nn_ac.py`, `verify_complex_opamp_ac.py`. Memory `[[v65-nn-ac-accuracy]]`.
-
----
-
-## AC analysis — small-signal frequency-domain (branch `feat/ac-analysis`, 2026-06-21)
-
-Brought `.ac` from a ~60%-scaffolded, dead-on-arrival state to a working, NGSPICE-validated feature (`ACSolver` solves complex `Y = G + jωC` per swept frequency about the DC OP). Fatal fixes: `run_ac_sweep` imported an absent `pandas` (→ stdlib `csv`); `_stamp_mosfet_ac` skipped the MOSFET caps → added the **transcapacitance stamp** from the source-referenced 2-port `M=[[cgg,−cgd],[−cdg,cdd]]` embedded in the nodal 3×3 (charge-conserving, vanishing at ω→0). Validation `tests/verify_ac.py` 2/2 (passive RC 0.0000% NRMSE; BSIM-CMG NMOS CS-amp vs NGSPICE on the identical OSDI, gain err 5.4e-6 dB — transcapacitance sign confirmed). Gotcha: ngspice `wrdata vp()` emits radians (dump complex `v()`, compute phase in Python). Memory `[[ac-analysis-feature]]`.
+Production pass-rates unchanged; every fix re-checked vs NGSPICE. **B1
+(CRITICAL):** the per-tech device gates pinned **tsmc5's** net for ALL techs;
+routed through `_cascade_handles_stem`. **B3/B5:** SRAM scored PASS when every
+corner errored (`all([])==True`) and never compared to ground truth; now ANDs
+point-by-point NGSPICE tracking, `force_ic` reconciled as a printed
+diagnostic, not a gate. **B4:** a diverged inverter transient could
+false-PASS. Plus sweep↔gate `uic` canary, ASAP7 skip, real-deck canary,
+honest exit codes.
 
 ---
 
-## V6.4.9 — DirectNet small/medium/large capacity benchmark (branch `feat/v6.4.8`, 2026-06-21)
+## V6.5.8 — EKV high-r_o core breaks the tsmc7-opamp rail (2026-06-28)
 
-Clean single-recipe capacity study (24 ckpts, S 128×3 / M 256×5 / L 384×6). Circuit pass-rate rises with capacity **6→9→12/16 (S→M→L)** — but the composition is the finding: device Id-Vgs + inverter accuracy is excellent at EVERY size (NOT the bind; large slightly over-fits the device surface). The **opamp is the value-surface-fragile gate** (gain≈0 at S/M all techs; recovers only at `large`, and only tsmc5/tsmc12). Switchcap needs capacity (0→3/4; tsmc5 never); ring-osc tsmc12/16 every size + tsmc7 at large; SRAM butterfly 4/4 every size. More capacity does NOT close the recipe-sensitive gaps. Harness `scripts/benchmark_*`. Memory `[[v649-sml-capacity-benchmark]]`.
+First non-railed tsmc7 opamp of the campaign (structural EKV core +
+vout-weighted KCL fine-tune → real amplifying curve, gain ~350–381) —
+**REFUTES the V6.5.6/7 "only T3" verdict**. BUT gain ⟺ existence are coupled
+through the output-stage r_o: every calibration lever is a binary rail↔370
+switch (the over-flattened r_o is *required* for reachability). Nothing
+installed (15/16); routes to T3. Memory `[[v658-ekv-core-breaks-opamp-rail]]`.
 
 ---
 
-## V6.4.8+ — complex-circuit parametric sweep harness + TSMC7 broad retrain (KILL) (branch `feat/v6.4.8`, 2026-06-20)
+## V6.5.7 — panel-review correction of the V6.5.6 opamp verdict (2026-06-27)
 
-Built the complex-circuit parametric sweep harness (`tests/common/complex_sweep.py` + 4 `verify_complex_*_sweep.py`, per-circuit stimulus, baseline-gated, sha256-pinned). **TSMC7 broad retrain = KILL (confirms S1):** retraining `medium` on broad `tsmc7_v2` data (to widen the swept envelope) drove opamp **gain→0** — breadth fits the value surface but COLLAPSES the offset-dominated opamp; reverted to the specialized pivcor (8.63% PASS, 15/16 protected). Sweep envelope: the opamp holds gain under *load* perturbations but collapses under almost ANY OP change (VT/NFIN/VDD/vcm); ring/switchcap robust. Also fixed an L cache-key bug + a single-point switchcap clock-render bug (the same class V6.5.3 later traced as the real switchcap failure). Memory `[[v648-broad-retrain-collapses-opamp]]`.
+5-agent adversarial review found "no high-gain zero exists / only-T3"
+over-strong (the probe measured reachability, not existence). The cheap
+vout-prioritized existence retrain was then RUN & KILLED: the vout F_rel floor
+compatible with preservation is ~20× above what a high-gain zero needs — the
+soft-wall is near-hard for the KCL-loss family. fetlim also dead. Memory
+`[[v657-vout-existence-retrain-kill]]`.
 
 ---
 
-## V6.4.8 — value-surface accuracy campaign; ship the S2 win, 14 → 15/16 conditional (branch `feat/v6.4.8`, 2026-06-17→20)
+## V6.5.6 — 3-operator Phase-0 routing + T1 KCL-residual lever (2026-06-26)
 
-**Methodology locked: all gates run CPU** (the fragile opamp lands a different NR basin on CUDA — `[[v648-gate-cpu-vs-cuda-basin]]`). **S0 floor-k KILL** — gain is wildly non-monotone in the `_floor_gds` coeff (it hops NR basins, not a gain∝1/k lever; gds cancels at the fixed point; the k=2.0 "PASS" is a false-pass) `[[v648-gds-floor-inert-on-opamp-gain]]`. **S1 `--size large` KILL** — the larger net fits the value surface BETTER yet collapses the opamp; capacity is not the bind `[[v648-s1-capacity-not-the-bind]]`. **S2 continuation-first DC sweep KEEP (the sole win, load-bearing)** — `run_dc_sweep` solves warm-started NN points from the neighbour with source-stepping OFF (GMIN retry as fallback; gated on `has_nn` so BSIM-CMG is byte-identical); tsmc7 opamp 10.78% FAIL → 8.63% PASS deterministically; the win is **path-preservation**, not basin-de-fragilization `[[v648-s2-continuation-first-opamp]]`. **S3 EKV analytic backbone KILL** — the additive-in-asinh residual overwhelms the offset-dominated µA band, neutral on switchcap `[[v648-s3-ekv-backbone-kill]]`.
+**Durable organizing frame — the 3-operator taxonomy:** the solver reads the
+one NN surface through three operators, each owning a different gap:
+id-values→KCL→NR fixed point (opamp gain, ring period); autograd dQ/dV→pole
+(f3db); off-diagonal cgd→RHP zero (HF phase). Charge-head retrains are
+DC-safe; id-surface retrains are not; the recurring ledger failure is applying
+the wrong fix-class. Phase-0 diagnostics: existence (not conditioning) is the
+tsmc7 gap; f3db is OP-drift-owned (caps already match OSDI); the fixed-point
+LOCATION is a pure function of `id` VALUES. T1 KCL-residual loss solved
+existence but produced an unstable fixed point, and preservation is binding.
+⚠ Its "only-T3" conclusion corrected by V6.5.7. Memory
+`[[v656-t1-existence-to-contraction]]`, `[[nn-accuracy-3operator-taxonomy]]`.
+
+---
+
+## V6.5.5 — diagnostic-routed corridor retrain → 15/16 (2026-06-24/25)
+
+tsmc5 ring = NMOS-conduction-owned → lifted 3/4→4/4 via `large` + ring
+corridor + seed7 (capacity was the bind). tsmc7 opamp = value-surface-owned —
+seeding the sweep from the L72 ground-truth OP at every point STILL rails
+(the high-gain OP is unstable on the NN surface; PTC/homotopy/OP-seed cannot
+fix it). Net 14→15/16. Memory `[[v655-corridor-retrain-15of16]]`.
+
+---
+
+## V6.5.4 — fresh full retrain + best-config-per-tech → 14/16 (2026-06-23/24)
+
+Full capacity matrix retrained from scratch on regenerated data (one clean
+recipe); best config per tech → 14/16, clean. **Native-L72 control (decisive
+diagnostic, `diag_l72_complex_control.py`):** the exact gate circuits through
+PyCircuitSim's own solver with the OSDI model match NGSPICE at ring 0.00 % /
+opamp ≤0.10 % ⇒ the remaining gaps are genuinely NN-value-surface-owned, not
+solver/harness. Memory `[[v653-l72-control-ring-opamp-model-owned]]`.
+
+---
+
+## V6.5.3 — ★ the switchcap gap was a HARNESS CLOCK BUG (2026-06-23)
+
+**Overturns V6.5.2.** The tsmc5 switchcap "11.84 % over-charge" chased across
+the entire V6.4.x–V6.5.2 campaign was two harness bugs: (1)
+`render_directnet_netlist` rescaled supply rails but MISSED the
+space-delimited PULSE clock rail — the NN clock over-drove tsmc5 pass gates to
+0.80 V vs NGSPICE's 0.65 V → 11.84 % FAIL became 1.56 % PASS, switchcap 4/4;
+(2) the "14.65 % L72 floor" was a control op with no `uic` pinning. **LESSON
+(load-bearing): when an NN gate fails vs NGSPICE, FIRST diff the rendered NN
+netlist against the NGSPICE deck token-by-token BEFORE blaming the model or
+solver.** `uic` made first-class in the product path. Memory
+`[[v652-switchcap-is-harness-clock-bug]]`.
+
+---
+
+## V6.5.2 — charge-derivative levers + the (refuted) switchcap-is-SOLVER-owned finding (2026-06-22)
+
+> SUPERSEDED by V6.5.3 — the conclusion was two harness bugs.
+
+Both switchcap levers KILLED (correctly — there was no model gap):
+charge-Sobolev left switchcap unmoved and did NOT move f3db (⇒ OP-drift
+owned); TG-corridor fixed PMOS cdd 62 %→5 % yet the charge didn't move. Valid
+reference: NN autograd caps match OSDI ~0.3–2.5 %; per-channel sign map
+`+cgg,−cgd,−cdg,+cdd`.
+
+---
+
+## V6.5.1 — XL capacity tier + µA-band loss lever (KILLED) (2026-06-22)
+
+**XL (2.13 M) = the over-fit boundary:** pass-rate 6→9→12→9/16 (S→M→L→XL); XL
+fits the device surface ~10× tighter yet loses every value-surface-fragile
+gate `large` won. µA-band `SubthresholdIdLoss` retune KILL (moved switchcap
+<0.2 %). Also fixed the `xargs -L1` trailing-blank silent job-collapse bug.
+
+---
+
+## V6.5 — AC small-signal accuracy of the NN models (2026-06-22)
+
+First NN AC gate vs NGSPICE (24 ckpts + opamp): AC **gain** excellent
+everywhere (autograd gm/gds accurate); cap-driven pole good but tech-variable;
+the **Cgd-feedforward RHP-zero HF phase is NOT reproduced**; opamp AC inherits
+the DC value-surface fragility, but where the OP lands well GBW is 0.97× —
+dynamics right, DC-gain level the miss. No retrain warranted. Harness
+`complex_ac.py`, `verify_nn_ac.py`, `verify_complex_opamp_ac.py`.
+
+---
+
+## AC analysis — small-signal frequency-domain (2026-06-21)
+
+Brought `.ac` from dead-on-arrival to NGSPICE-validated: `ACSolver` solves
+complex `Y = G + jωC` about the DC OP; added the missing MOSFET
+**transcapacitance stamp** (source-referenced 2-port embedded in the nodal
+3×3, charge-conserving). `verify_ac.py` 2/2 (RC 0.0000 %; CS-amp gain err
+5.4e-6 dB). Gotcha: ngspice `wrdata vp()` emits radians.
+
+---
+
+## V6.4.9 — DirectNet S/M/L capacity benchmark (2026-06-21)
+
+Pass-rate rises 6→9→12/16 (S→M→L) but device accuracy is excellent at EVERY
+size (not the bind). The opamp is the value-surface-fragile gate (recovers
+only at `large`, only tsmc5/12); switchcap needs capacity; SRAM 4/4
+everywhere. More capacity does NOT close recipe-sensitive gaps.
+
+---
+
+## V6.4.8+ — parametric sweep harness + TSMC7 broad retrain (KILL) (2026-06-20)
+
+Built the complex-circuit parametric sweep harness (baseline-gated,
+sha256-pinned). **TSMC7 broad retrain = KILL:** breadth fits the value surface
+but COLLAPSES the offset-dominated opamp (gain→0); reverted. The opamp holds
+gain under load perturbations but collapses under almost ANY OP change.
+
+---
+
+## V6.4.8 — value-surface accuracy campaign; 14 → 15/16 conditional (2026-06-17→20)
+
+**Methodology locked: all gates run CPU** (the fragile opamp lands a different
+NR basin on CUDA). S0 floor-k KILL (gain non-monotone in the floor coeff — it
+hops NR basins; gds cancels at the fixed point). S1 capacity KILL (larger net
+fits better yet collapses the opamp). **S2 continuation-first DC sweep KEEP
+(the sole win, load-bearing):** warm-started NN points with source-stepping
+off, gated on `has_nn` so BSIM-CMG is byte-identical; tsmc7 opamp 10.78 %
+FAIL → 8.63 % PASS — the win is path-preservation. S3 EKV backbone KILL.
 
 ---
 
 ## V6.4.7 — serialized accuracy campaign; SHIP at 14/16 + force_ic 8/8 (2026-06-10→16)
 
-A strict serial S1–S19 chain (every lever committed-or-rewound before the next). Start = V6.4.4 canonical 8/16. **Durable behavioral changes still in the code:** S2 — the NMOS source-frame fix (NN Rule 2; `_raw_voltages` shifted only PMOS, so lifted-source NMOS saw phantom Vgs/Vds; new permanent canary `verify_nn_lifted_source_dc.py`, was 10–64% NRMSE, flipped tsmc12 opamp); S7 — the reverse-Vds clamp relaxation in `_apply_vds_correction` (C¹ taper, Id(Vds=0)=0 exact; shipped window 0.20/0.30·VDD_train — the wider 0.30/0.40 corridor was KILLED: tsmc5 opamp veto + force_ic collapse). **Key dead-ends / findings:** S6 — simulator EXONERATED (native-L72 ring-osc control = NGSPICE ratio 1.000); S9b — regen-v2 data + 2 load-bearing data-gen bug fixes: the `NN_DC_SOLVE_TOL` floor (legacy 1e-9 returned exact-0 for |id|<1e-9 → the zero-row artifact; 1e-12 for generation) + an atomic-write fix for a parallel modelcard-cache write race (partial card → degenerate, physically-wrong rows); S10 — Sobolev id-derivative KILL, MAJOR finding **derivative fidelity is ANTI-correlated with the opamp** (the Jacobian guides NR convergence but cancels at the fixed point; opamp gain / RO period are value-surface / NR-fixed-point owned) `[[v647-s10-deriv-fidelity-vs-opamp]]`; S12 — trajectory-corridor KEEP (11→14/16; harvest the bias tubes the transistors visit along the ground-truth trajectory, OSDI-label, append with `--class-weights` — the V6.5.5 corridor descends from this); S11 — subthreshold-id KILL (moved force_ic the wrong way); **S17c — force_ic 0/8→8/8 was a HARNESS BUG** (the 6T netlist pinned wordline=VDD with both bitlines forced = a non-physical read-disturb that exact OSDI physics ALSO fails; wordline-OFF retention → both NN and ground truth rail 8/8) — LESSON: run the native-L72 control before blaming the NN `[[v647-s11-subthreshold-vs-forceic]]`; S19 — replication discipline caught a bistable false-pass; trust the `verify_complex` gate, not the scorer proxy `[[v647-s19-scorer-vs-gate-opamp-replication]]`. Open at ship: tsmc5 switchcap 12.14% (later a clock-bug, V6.5.3), tsmc7 opamp 10.78%.
+Strict serial S1–S19 chain from the V6.4.4 canonical 8/16. **Durable changes
+still in code:** S2 — the NMOS source-frame fix (NN Rule 2; permanent canary
+`verify_nn_lifted_source_dc.py`); S7 — reverse-Vds clamp relaxation (C¹ taper;
+the wider corridor was KILLED: tsmc5 opamp veto). **Key findings:** S6
+simulator EXONERATED (native-L72 ring control ratio 1.000); S9b regen-v2 data
++ two load-bearing data-gen fixes (the `NN_DC_SOLVE_TOL` floor causing the
+zero-row artifact; an atomic-write fix for a modelcard-cache race); S10 —
+MAJOR: **derivative fidelity is ANTI-correlated with the opamp** (the Jacobian
+guides NR convergence but cancels at the fixed point)
+`[[v647-s10-deriv-fidelity-vs-opamp]]`; S12 — trajectory-corridor KEEP
+(11→14/16; ancestor of every later corridor recipe); S17c — the force_ic
+0/8→8/8 "gap" was a HARNESS BUG (non-physical read-disturb both NN and ground
+truth fail) — LESSON: run the native-L72 control before blaming the NN; S19 —
+trust the `verify_complex` gate, not the scorer proxy.
 
 ---
 
 ## Condensed history (pre-V6.4.7)
 
 > Full detail for these iterations lives in `git log` and `MEMORY.md`. Only the
-> durable outcomes are retained here; the verbose per-phase narratives and the
-> pre-V6.0 (v3/v4/v5) exploration logs were pruned in the 2026-06-20 slim.
+> durable outcomes are retained here.
 
 ### V6.4.6 — diagnosis-first iteration (2026-06-01/02, no behavioral change)
-Gated every GPU-spend behind a 0-GPU diagnostic. Closed the measurement framing of
-two gates (TSMC7 ring_osc, SRAM `force_ic`) and localised the RO error to the
-**id VALUE surface** (not the derivative). Probe/measurement fixes only; the
-inference path was unchanged. Set up the agenda V6.4.7 then executed.
+Gated every GPU-spend behind a 0-GPU diagnostic; localised the RO error to the
+**id VALUE surface** (not the derivative). Probe/measurement fixes only.
 
 ### V6.4.5 — Track A no-ship iteration (2026-05-29)
-Ran all 5 planned phases; **shipped nothing**. Built + validated the multi-circuit
-scorer (durable infra, reused later). Ruled out several value-surface levers and
-confirmed the RO/SRAM gaps were architectural, not tuning — feeding V6.4.6/7.
+Ran all 5 planned phases; shipped nothing. Built the multi-circuit scorer
+(durable infra); confirmed the RO/SRAM gaps were architectural, not tuning.
 
 ### V6.4.4 — DirectNet per-tech checkpoint mix (2026-05-28, inference-only)
-First per-tech medium checkpoint mix for TSMC5/7/12/16; complex-circuit pass rate
-+2 vs the V6.4.1 baseline (canonical 8/16). Restored the load-bearing V6.4.2
-Phase-7a `_MonotoneVgResidual` + `--monotonic` code (on-disk checkpoints carry
-`mono.*` state_dict keys; stock checkpoints route `mono=None`, no inference change).
+First per-tech medium checkpoint mix (canonical 8/16). Restored the
+load-bearing `_MonotoneVgResidual` + `--monotonic` code (on-disk checkpoints
+carry `mono.*` keys).
 
 ### V6.1 – V6.3.2 — per-tech DirectNet establishment (2026-05-12 → 05-15)
-- **V6.1**: per-tech dedicated DirectNet for TSMC5/7; destructive cleanup of the
-  universal `refac_*`/`v4_*` artifacts (deleted 2026-05-12).
-- **V6.2**: Rule 15(a) terminal-current sign fix; Rule 20 dead-band closed.
-- **V6.2.1**: per-tech TSMC12/TSMC16 extension (3 registry edits + data/train).
-- **V6.3 / V6.3.1**: inverter spike-removal sprint — dataset regen (`_inv_trip_points`
-  recenter on VDD/2 + `_reverse_vds_points` corridor); shipped V6.3.1 with one open
-  VTC MaxErr gate.
-- **V6.3.2**: ported the PyCMG L3 parametric DC/transient sweeps to DirectNet
-  (`tests/common/nn_sweep.py` + `verify_nn_multi_tech_{dc,tran}.py`).
+- **V6.1**: per-tech DirectNet for TSMC5/7; universal `refac_*`/`v4_*`
+  artifacts deleted.
+- **V6.2**: terminal-current sign fix; dead-band closed. **V6.2.1**:
+  TSMC12/16 extension.
+- **V6.3 / V6.3.1**: inverter spike-removal sprint (dataset regen with
+  inv-trip recenter + reverse-Vds corridor).
+- **V6.3.2**: PyCMG L3 parametric DC/transient sweeps ported to DirectNet.
 
 ### Pre-V6.0 (v3/v4/v5, package refactors, early milestones)
-The BSIMAR package refactors (2026-03/04), the v3 LOO cross-tech sprint, the v4
-tech-code migration, the analytical Vds-correction + rail-restoring fixes, and the
-v5 inverter-transient phases are recorded in `git log` and `MEMORY.md`. Legacy
-LEVEL=1 (Shichman-Hodges) was removed; LEVEL=72/73/74 are the supported models.
+The BSIMAR package refactors (2026-03/04), the v3 LOO cross-tech sprint, the
+v4 tech-code migration, the analytical Vds-correction + rail-restoring fixes,
+and the v5 inverter-transient phases are recorded in `git log` and
+`MEMORY.md`. Legacy LEVEL=1 (Shichman-Hodges) was removed; LEVEL=72/73/74/75
+are the supported models.
