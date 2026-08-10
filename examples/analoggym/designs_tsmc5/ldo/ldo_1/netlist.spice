@@ -1,0 +1,19 @@
+* ldo_1 -- AnalogGym LDO on TSMC5 BSIM-CMG (LEVEL=72)
+* Topology is the shipped one.  Geometry is re-designed for a 0.65 V
+* rail, and the mim caps / poly resistors become ideal C and R because
+* this TSMC5 view carries transistor models only.
+.subckt ldo_1 Vss Vdd vinn vout vfb vinp Ib
+NM8 vout net3 Vdd Vdd psvt_l8_f10 m=1694 $ pass device
+NM1 net1 net1 Vdd Vdd psvt_l135_f10 m=4
+NM0 net8 net1 Vdd Vdd psvt_l34_f4 m=2
+NM6 net3 net8 Vdd Vdd psvt_l20_f2 m=1
+NM7 net3 Ib Vss Vss nsvt_l68_f6 m=1
+NM5 Ib Ib Vss Vss nsvt_l34_f2 m=5
+NM4 net2 Ib Vss Vss nsvt_l34_f4 m=271
+NM3 net8 vinp net2 Vss nsvt_l6_f4 m=3
+NM2 net1 vinn net2 Vss nsvt_l20_f12 m=6
+r0 vout vfb 100000
+r1 vfb Vss 100000
+Ccomp net3 ncomp 2.4e-11
+Rcomp ncomp vout 5000
+.ends ldo_1

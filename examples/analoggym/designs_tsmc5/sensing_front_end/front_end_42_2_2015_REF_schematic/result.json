@@ -1,0 +1,31 @@
+{
+  "design": "front_end_42_2_2015_REF_schematic",
+  "score": 0.0,
+  "evals": 14,
+  "evals_seconds": 0.3,
+  "metrics": {
+    "vout0": 0.1950642,
+    "vout25": 0.2189744,
+    "vout50": 0.2515714,
+    "vout75": 0.4395898,
+    "vout100": 0.6234756,
+    "lsb_25_75c": 0.00441231,
+    "maxval": 0.6483573,
+    "minval": 0.1766463,
+    "ppval": 0.4717109,
+    "sweep_points": 281.0,
+    "mono_violations": 0.0,
+    "min_slope_25_75c": 0.000982741999999981,
+    "max_step_frac_25_75c": 0.03260919307505716,
+    "dc_fallback_points": 0.0
+  },
+  "pass": {
+    "monotonic": true,
+    "sensitivity": true,
+    "smooth": true,
+    "in_range": true
+  },
+  "polished_from": 0.5528079999999991,
+  "category": "sensing_front_end",
+  "errors": []
+}

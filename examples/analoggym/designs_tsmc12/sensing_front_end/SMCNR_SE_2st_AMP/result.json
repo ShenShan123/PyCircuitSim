@@ -1,0 +1,25 @@
+{
+  "design": "SMCNR_SE_2st_AMP",
+  "category": "sensing_front_end",
+  "metrics": {
+    "ivdd25": -2.618173e-06,
+    "power": 2.09454e-06,
+    "vout25": 0.2000395,
+    "dcgain": 72.46971,
+    "gain_bandwidth_product": 654111.9880080982,
+    "ph_rad": 2.116082,
+    "phase_in_deg": 121.242,
+    "pm_true": 121.24259410823532,
+    "ph_xover": 121.24259410823532,
+    "phase_ref": 180.0,
+    "phase_maxdev": 88.72483697963163
+  },
+  "pass": {
+    "gain": true,
+    "gbw": true,
+    "pm": true,
+    "power": true
+  },
+  "score": 0.0,
+  "errors": []
+}

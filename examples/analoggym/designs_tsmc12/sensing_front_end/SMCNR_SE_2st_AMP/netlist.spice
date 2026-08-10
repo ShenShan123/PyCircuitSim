@@ -1,0 +1,15 @@
+* SMCNR_SE_2st_AMP -- AnalogGym two-stage amplifier on TSMC12 BSIM-CMG (LEVEL=72)
+* Connectivity and the 1:2:10 mirror ratios are the shipped ones; geometry is re-designed for 0.8 V FinFET.
+.subckt SMCNR_SE_2st_AMP vdda gnda vin vip vout
+Nm1 outp outp gnda gnda nsvt_l240_f2 m=2   $ n_mirror
+Nm3 outn outp gnda gnda nsvt_l240_f2 m=2   $ n_mirror
+Nm7 ibias ibias vdda vdda psvt_l240_f2 m=2   $ p_bias 1x
+Nm6 net53 ibias vdda vdda psvt_l240_f2 m=4   $ p_bias 2x
+Nm5 vout ibias vdda vdda psvt_l240_f2 m=20   $ p_bias 10x
+Nm2 outn vip net53 vdda plvt_l240_f4 m=4   $ p_in
+Nm0 outp vin net53 vdda plvt_l240_f4 m=4   $ p_in
+Nm4 vout outn gnda gnda nsvt_l240_f2 m=20   $ n_mirror 10x
+ibias0 ibias 0 2e-07
+r0 net027 vout 100000
+c0 outn net027 2e-12
+.ends SMCNR_SE_2st_AMP

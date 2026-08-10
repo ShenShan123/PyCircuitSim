@@ -1,0 +1,34 @@
+* SMCNR_SE_2st_AMP -- AC gain / GBW / phase bench on TSMC7 BSIM-CMG
+* Measurements follow AnalogGym's TB_AC_SMCNR_SE_2st_AMP; supply, common mode and load
+* are the TSMC7 design point.  phase_in_deg is abs() of the principal value
+* at crossover (raw auditable reading); the gated margin is pm_true from the
+* runner's unwrapped full-sweep dump (tools/acstab.py).
+.include ./tsmc7_models.spice
+.include ./netlist.spice
+
+.PARAM supply_voltage = 0.75
+.PARAM VCM = 0.1875
+.PARAM PARAM_CLOAD = 1e-12
+Vvdda vdda 0 'supply_voltage'
+Vgnda gnda 0 0
+
+* Differential path, broken by a huge L/C so DC bias is preserved.  Both ends
+* of the 1T inductor are seeded: with vout alone the operating point falls
+* through gmin/source stepping into the transient fallback and never solves.
+Vin signal_in 0 dc 'VCM' ac 1
+Lfb vout vfb 1T
+Cin vfb signal_in 1T
+xi1 vdda gnda vfb vin_p vout SMCNR_SE_2st_AMP
+Vip vin_p 0 'VCM'
+Cload vout 0 'PARAM_CLOAD'
+* Internal seeds (rough rail fractions) let the cold end of the temperature
+* sweep solve directly instead of through the transient-op fallback.
+.nodeset V(vout)=0.1875 V(vfb)=0.1875
+.nodeset V(xi1.outp)=0.3375 V(xi1.outn)=0.3375 V(xi1.ibias)=0.3375
+.nodeset V(xi1.net53)=0.46875
+
+.measure ac dcgain find vdb(vout) at=0.1
+.measure ac gain_bandwidth_product when vdb(vout)=0
+.measure ac ph_rad find vp(vout) when vdb(vout)=0
+.measure ac phase_in_deg param='abs(ph_rad)*180/3.1416'
+.end

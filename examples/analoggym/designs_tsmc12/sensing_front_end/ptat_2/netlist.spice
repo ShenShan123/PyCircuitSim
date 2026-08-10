@@ -1,0 +1,10 @@
+* ptat_2 -- AnalogGym sensing front end on TSMC12 BSIM-CMG
+* Topology is the shipped one; geometry is re-designed for 0.8 V.
+.subckt ptat_2 GND VDD VOUT
+NM0 VDD net5 net5 GND nulvt_l60_f4 m=49
+NM1 net5 net5 net3 GND nulvt_l240_f6 m=6
+NM5 VOUT VOUT GND GND nulvt_l60_f2 m=1
+NM4 net1 VOUT VOUT GND nulvt_l36_f6 m=800
+NM3 net2 net2 net1 GND nulvt_l90_f20 m=1
+NM2 net3 net2 net2 GND nulvt_l60_f10 m=280
+.ends ptat_2

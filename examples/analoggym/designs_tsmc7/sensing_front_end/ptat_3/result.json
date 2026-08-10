@@ -1,0 +1,32 @@
+{
+  "design": "ptat_3",
+  "score": 0.0,
+  "evals": 14,
+  "evals_seconds": 2.3,
+  "metrics": {
+    "vout0": 0.191676,
+    "vout25": 0.204228,
+    "vout50": 0.2401137,
+    "vout75": 0.4098741,
+    "vout100": 0.6943455,
+    "lsb_25_75c": 0.00411292,
+    "maxval": 0.7223374,
+    "minval": 0.1823859,
+    "ppval": 0.5399515,
+    "sweep_points": 281.0,
+    "mono_violations": 0.0,
+    "min_slope_25_75c": 0.00042520000000001446,
+    "max_step_frac_25_75c": 0.025001826317535638,
+    "dc_fallback_points": 0.0
+  },
+  "pass": {
+    "monotonic": true,
+    "sensitivity": true,
+    "smooth": true,
+    "in_range": true
+  },
+  "error": "",
+  "polished_from": 0.2724740000000003,
+  "category": "sensing_front_end",
+  "errors": []
+}

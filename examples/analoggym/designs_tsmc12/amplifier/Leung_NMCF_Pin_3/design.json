@@ -1,0 +1,55 @@
+{
+  "cload": 5e-10,
+  "gbw_ideal": 1000000.0,
+  "passives": {
+    "CAPACITOR_0": 1.25e-11,
+    "CAPACITOR_1": 1.5625e-12,
+    "CURRENT_0_BIAS": 8.359183673469388e-07
+  },
+  "roles": {
+    "BIASCM_NMOS": {
+      "l_nm": 240,
+      "m": 18,
+      "nfin": 1,
+      "vt": "svt"
+    },
+    "BIASCM_PMOS": {
+      "l_nm": 240,
+      "m": 8,
+      "nfin": 1,
+      "vt": "svt"
+    },
+    "LOAD2_NMOS": {
+      "l_nm": 24,
+      "m": 240,
+      "nfin": 10,
+      "vt": "svt"
+    },
+    "gm1_PMOS": {
+      "l_nm": 184,
+      "m": 2,
+      "nfin": 8,
+      "vt": "svt"
+    },
+    "gm2_PMOS": {
+      "l_nm": 100,
+      "m": 72,
+      "nfin": 8,
+      "vt": "svt"
+    },
+    "gm3_NMOS": {
+      "l_nm": 35,
+      "m": 8,
+      "nfin": 4,
+      "vt": "svt"
+    },
+    "gmf2_PMOS": {
+      "l_nm": 16,
+      "m": 16,
+      "nfin": 10,
+      "vt": "svt"
+    }
+  },
+  "vcm": 0.275,
+  "vdd": 0.8
+}

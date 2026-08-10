@@ -1,0 +1,30 @@
+[
+  {
+    "category": "sensing_front_end",
+    "design": "PTAT_SENSOR",
+    "pass": "3/4",
+    "score": 5.0,
+    "seconds": 0.3
+  },
+  {
+    "category": "sensing_front_end",
+    "design": "PTAT_CLASSIC",
+    "pass": "4/4",
+    "score": 0.0,
+    "seconds": 1.9
+  },
+  {
+    "category": "sensing_front_end",
+    "design": "front_end_31_3T_schematic",
+    "pass": "3/4",
+    "score": 18.0,
+    "seconds": 2.2
+  },
+  {
+    "category": "sensing_front_end",
+    "design": "front_end_25_6T_schematic",
+    "pass": "3/4",
+    "score": 3.0,
+    "seconds": 58.0
+  }
+]

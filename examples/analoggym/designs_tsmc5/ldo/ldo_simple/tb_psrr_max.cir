@@ -1,0 +1,18 @@
+* ldo_simple -- PSRR, max load on TSMC5 BSIM-CMG
+* Measurement set is AnalogGym's TB_LDO_ACDC / TB_LDO_Tran.
+.include ./tsmc5_models.spice
+.include ./netlist.spice
+
+.PARAM supply_voltage = 0.65
+.PARAM Vref = 0.4875
+.PARAM VOUT_NOM = 0.4875
+V2 vss 0 0
+Vindc vref_in 0 'Vref'
+VVDDApsrr vddpsrr 0 'supply_voltage' AC=1
+.nodeset V(vp)=0.4875
+x2 vddpsrr vp vref_in vp_vb 0 vp ldo_simple
+V2_vb vp_vb 0 0.325
+CL2 vp 0 1e-07
+Iload2 vp 0 0.055
+.meas ac psrr_max find vdb(vp) at=0.1
+.end

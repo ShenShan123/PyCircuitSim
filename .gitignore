@@ -75,6 +75,19 @@ external_compact_models/bsimar/data/datasets_v2_backup/
 # L-densified rebuild is measured against (docs/plans/2026-08-10-v742-*).
 external_compact_models/bsimar/v740_archive/
 
+# AnalogGym designs (examples/analoggym/): the per-design BSIM-CMG libraries and
+# the naive modelcard cache are derived from the IP-protected TSMC PDK and are
+# regenerable via pycmg.tech.resolve_modelcard — keep them on disk, never in git.
+examples/analoggym/designs_tsmc*/models/cache/
+examples/analoggym/designs_tsmc*/**/*_models.spice
+# ...but the NGSPICE reference numbers are the comparison baseline and must be
+# tracked, against the global `results/` and `*.csv` rules above.
+!examples/analoggym/designs_tsmc*/results/
+!examples/analoggym/designs_tsmc*/results/**/
+!examples/analoggym/designs_tsmc*/results/**/*.json
+!examples/analoggym/designs_tsmc*/results/*.json
+!examples/analoggym/designs_tsmc*/results/*.csv
+
 # PyCMG (vendored in-repo since V7.4.1; was a git submodule).
 # PyCMG/.gitignore covers build*/ and the IP-protected TSMC modelcards;
 # the modelcards archive (and local backups of it) must never be committed.

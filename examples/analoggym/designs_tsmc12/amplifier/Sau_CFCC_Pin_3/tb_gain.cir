@@ -1,0 +1,35 @@
+* sau_cfcc_pin_3 -- open-loop gain bench on TSMC12 BSIM-CMG
+* Measurements are AnalogGym's TB_Amplifier_ACDC.cir verbatim; supply, common
+* mode and load are the TSMC12 design point.
+*
+* AnalogGym runs all five amplifier instances from one deck.  They share only
+* ideal supply rails, so they are electrically independent and splitting them
+* changes no measurement -- but five 90 dB loops in one matrix does not solve:
+* gmin, source stepping and the transient op all fail, and which groupings
+* happen to converge is luck of the Newton basin, not a rule.  One instance per
+* deck is the only robust structure.
+.include ./tsmc12_models.spice
+.include ./netlist.spice
+
+.PARAM supply_voltage = 0.8
+.PARAM VCM = 0.44
+.PARAM PARAM_CLOAD = 5e-10
+
+V1 vdd 0 'supply_voltage'
+V2 vss 0 0
+Vindc opin 0 'VCM'
+Vin signal_in 0 dc 'VCM' ac 1
+.nodeset V(opout)=0.44 V(opout_dc)=0.44
+
+Lfb opout opout_dc 1T
+Cin opout_dc signal_in 1T
+
+*    ADM TB
+Xop1 vss vdd opout_dc opin opout sau_cfcc_pin_3
+Cload1 opout 0 'PARAM_CLOAD'
+
+.meas ac dcgain find vdb(opout) at = 0.1
+.meas ac gain_bandwidth_product when vdb(opout)=0
+.meas ac phase_in_rad find vp(opout) when vdb(opout)=0
+.meas ac phase_in_deg param='phase_in_rad*180/3.1416'
+.end

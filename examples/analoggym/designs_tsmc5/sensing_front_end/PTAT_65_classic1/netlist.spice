@@ -1,0 +1,8 @@
+* PTAT_65_classic1 -- AnalogGym sensing front end on TSMC5 BSIM-CMG
+* Topology is the shipped one; geometry is re-designed for 0.65 V.
+.subckt PTAT_65_classic1 GND VDD VOUT
+NM1 net3 net3 GND GND nulvt_l60_f2 m=1
+NM0 VOUT net3 GND GND nulvt_l60_f2 m=4
+NM3 VOUT VOUT VDD VDD pulvt_l36_f12 m=16
+NM4 net3 VOUT VDD VDD pulvt_l36_f12 m=64
+.ends PTAT_65_classic1

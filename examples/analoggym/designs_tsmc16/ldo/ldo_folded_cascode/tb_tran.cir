@@ -1,0 +1,24 @@
+* ldo_folded_cascode -- load-step transient on TSMC16 BSIM-CMG
+* Measurement set is AnalogGym's TB_LDO_ACDC / TB_LDO_Tran.
+.include ./tsmc16_models.spice
+.include ./netlist.spice
+
+.PARAM supply_voltage = 0.8
+.PARAM Vref = 0.605
+.PARAM VOUT_NOM = 0.6
+V2 vss 0 0
+Vindc vref_in 0 'Vref'
+V1 vdd 0 'supply_voltage'
+.nodeset V(vo)=0.6
+x1 vdd vo vo_vb2 vref_in vo_vb1 0 vo ldo_folded_cascode
+V1_vb2 vo_vb2 0 0.106667
+V1_vb1 vo_vb1 0 0.48
+CL vo 0 1e-07
+.option cshunt=1e-15
+Iload vo 0 pulse(0.005 0.055 2u 100n 100n 20u 60u)
+.meas tran v_pre AVG v(vo) from=1u to=1.9u
+.meas tran v_min MIN v(vo) from=2u to=22u
+.meas tran v_max MAX v(vo) from=22u to=42u
+.meas tran undershoot param='v_pre-v_min'
+.meas tran overshoot param='max(0,v_max-v_pre)'
+.end

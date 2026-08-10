@@ -1,0 +1,32 @@
+{
+  "design": "front_end_25_6T_schematic",
+  "score": 0.0,
+  "evals": 131,
+  "evals_seconds": 53.3,
+  "metrics": {
+    "vout0": 0.08893214,
+    "vout25": 0.09904157,
+    "vout50": 0.1093786,
+    "vout75": 0.1201429,
+    "vout100": 0.1314267,
+    "lsb_25_75c": 0.000422026,
+    "maxval": 0.1408131,
+    "minval": 0.08086147,
+    "ppval": 0.05995161,
+    "sweep_points": 281.0,
+    "mono_violations": 0.0,
+    "min_slope_25_75c": 0.0004022340000000013,
+    "max_step_frac_25_75c": 0.010487934557987197,
+    "dc_fallback_points": 0.0
+  },
+  "pass": {
+    "monotonic": true,
+    "sensitivity": true,
+    "smooth": true,
+    "in_range": true
+  },
+  "error": "",
+  "polished_from": 1010.2795901153423,
+  "category": "sensing_front_end",
+  "errors": []
+}

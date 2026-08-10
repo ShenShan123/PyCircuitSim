@@ -1,0 +1,37 @@
+* hoilee_affc_pin_3 -- AnalogGym topology on TSMC7 BSIM-CMG (LEVEL=72)
+* Connectivity and mirror ratios are the shipped ones; geometry is re-designed for 0.75 V FinFET.
+.subckt hoilee_affc_pin_3 gnda vdda vinn vinp vout
+Nm62 net050 net2 VDDA VDDA psvt_l200_f2 m=3   $ HSBCM_PMOS
+Nm59 net2 net2 VDDA VDDA psvt_l200_f2 m=3   $ HSBCM_PMOS
+Nm12 VOUT net050 VDDA VDDA psvt_l36_f10 m=16   $ gmf2_PMOS
+Nm7 net049 net013 VDDA VDDA psvt_l240_f4 m=9   $ BIASCM_PMOS
+Nm11 net043 net050 VDDA VDDA psvt_l96_f13 m=21   $ gm2_PMOS
+Nm6 net050 VOUTN VDDA VDDA psvt_l240_f4 m=9   $ BIASCM_PMOS
+Nm5 VOUTN VOUTN VDDA VDDA psvt_l240_f4 m=9   $ BIASCM_PMOS
+Nm10 net063 VINP net31 net31 psvt_l60_f8 m=1   $ gm1_PMOS
+Nm9 DM_2 VINN net31 net31 psvt_l60_f8 m=1   $ gm1_PMOS
+Nm4 net31 net013 VDDA VDDA psvt_l240_f4 m=18   $ BIASCM_PMOS
+Nm3 VB3 net013 VDDA VDDA psvt_l240_f4 m=9   $ BIASCM_PMOS
+Nm2 DM_1 net013 VDDA VDDA psvt_l240_f4 m=9   $ BIASCM_PMOS
+Nm1 VB4 net013 VDDA VDDA psvt_l240_f4 m=9   $ BIASCM_PMOS
+Nm0 net013 net013 VDDA VDDA psvt_l240_f4 m=9   $ BIASCM_PMOS
+Nm64 net1 VB4 GNDA GNDA nsvt_l68_f3 m=12   $ BIASCM_NMOS
+Nm63 net050 VB3 net1 GNDA nsvt_l177_f4 m=11   $ gma_NMOS
+Nm61 net3 VB4 GNDA GNDA nsvt_l68_f3 m=12   $ BIASCM_NMOS
+Nm60 net2 VB3 net3 GNDA nsvt_l177_f4 m=11   $ gma_NMOS
+Nm25 VOUT net049 GNDA GNDA nsvt_l93_f3 m=11   $ gm3_NMOS
+Nm23 net049 net043 GNDA GNDA nsvt_l42_f3 m=9   $ LOAD2_NMOS
+Nm22 net043 net043 GNDA GNDA nsvt_l42_f3 m=9   $ LOAD2_NMOS
+Nm20 DM_2 VB4 GNDA GNDA nsvt_l68_f3 m=24   $ BIASCM_NMOS
+Nm16 VOUTN VB3 DM_2 GNDA nsvt_l68_f3 m=12   $ BIASCM_NMOS
+Nm21 net063 VB4 GNDA GNDA nsvt_l68_f3 m=24   $ BIASCM_NMOS
+Nm17 net050 VB3 net063 GNDA nsvt_l68_f3 m=12   $ BIASCM_NMOS
+Nm18 net54 VB4 GNDA GNDA nsvt_l68_f3 m=12   $ BIASCM_NMOS
+Nm15 VB3 VB3 GNDA GNDA nsvt_l68_f3 m=3   $ BIASCM_NMOS
+Nm13 VB4 VB3 net54 GNDA nsvt_l68_f3 m=12   $ BIASCM_NMOS
+Nm19 net56 VB4 GNDA GNDA nsvt_l68_f3 m=12   $ BIASCM_NMOS
+Nm14 DM_1 VB3 net56 GNDA nsvt_l68_f3 m=12   $ BIASCM_NMOS
+I0 net013 GNDA 5e-07
+C1 VOUT net1 2.5e-12
+C0 net049 VOUT 5e-12
+.ends hoilee_affc_pin_3

@@ -1,0 +1,29 @@
+* leung_dfcfc2_pin_3 -- PSRR+ bench on TSMC6 BSIM-CMG
+* Measurements are AnalogGym's TB_Amplifier_ACDC.cir verbatim; supply, common
+* mode and load are the TSMC6 design point.
+*
+* AnalogGym runs all five amplifier instances from one deck.  They share only
+* ideal supply rails, so they are electrically independent and splitting them
+* changes no measurement -- but five 90 dB loops in one matrix does not solve:
+* gmin, source stepping and the transient op all fail, and which groupings
+* happen to converge is luck of the Newton basin, not a rule.  One instance per
+* deck is the only robust structure.
+.include ./tsmc6_models.spice
+.include ./netlist.spice
+
+.PARAM supply_voltage = 0.75
+.PARAM VCM = 0.3
+.PARAM PARAM_CLOAD = 5e-10
+
+V1 vdd 0 'supply_voltage'
+V2 vss 0 0
+Vindc opin 0 'VCM'
+.nodeset V(ppsr1)=0.3
+
+*    PSRR+ TB
+VVDDApsrr vddpsrr 0 'supply_voltage' AC=1
+xop3 vss vddpsrr ppsr1 opin ppsr1 leung_dfcfc2_pin_3
+Cload3 ppsr1 0 'PARAM_CLOAD'
+
+.measure ac DCPSRp find vdb(ppsr1) at = 0.1
+.end

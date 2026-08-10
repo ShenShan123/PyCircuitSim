@@ -1,0 +1,31 @@
+* SMCNR_SE_2st_AMP -- DC / temperature / power bench on TSMC5 BSIM-CMG
+* Same closed-loop operating point as tb_ac.cir on the sensing_front_end
+* category's temperature sweep; power is the 25 C supply draw.
+.include ./tsmc5_models.spice
+.include ./netlist.spice
+
+.PARAM supply_voltage = 0.65
+.PARAM VCM = 0.1625
+.PARAM PARAM_CLOAD = 1e-12
+Vvdda vdda 0 'supply_voltage'
+Vgnda gnda 0 0
+
+* Differential path, broken by a huge L/C so DC bias is preserved.  Both ends
+* of the 1T inductor are seeded: with vout alone the operating point falls
+* through gmin/source stepping into the transient fallback and never solves.
+Vin signal_in 0 dc 'VCM'
+Lfb vout vfb 1T
+Cin vfb signal_in 1T
+xi1 vdda gnda vfb vin_p vout SMCNR_SE_2st_AMP
+Vip vin_p 0 'VCM'
+Cload vout 0 'PARAM_CLOAD'
+* Internal seeds (rough rail fractions) let the cold end of the temperature
+* sweep solve directly instead of through the transient-op fallback.
+.nodeset V(vout)=0.1625 V(vfb)=0.1625
+.nodeset V(xi1.outp)=0.2925 V(xi1.outn)=0.2925 V(xi1.ibias)=0.2925
+.nodeset V(xi1.net53)=0.40625
+
+.measure dc ivdd25 FIND I(Vvdda) AT=25
+.measure dc power param='-1*ivdd25*supply_voltage'
+.measure dc vout25 FIND V(vout) AT=25
+.end

@@ -1,0 +1,18 @@
+* ldo_folded_cascode -- AnalogGym LDO on TSMC5 BSIM-CMG (LEVEL=72)
+* Topology is the shipped one.  Geometry is re-designed for a 0.65 V
+* rail, and the mim caps / poly resistors become ideal C and R because
+* this TSMC5 view carries transistor models only.
+.subckt ldo_folded_cascode Vdd vinp Vb2 vinn Vb1 Vss Vreg
+NM10 Vreg vout1 Vdd Vdd pulvt_l6_f6 m=1500 $ pass device
+NM1 net2 vinp net4 Vss nulvt_l68_f10 m=12
+NM2 net3 vinn net4 Vss nulvt_l20_f10 m=12
+NM4 net3 net1 Vdd Vdd pulvt_l34_f6 m=12
+NM3 net2 net1 Vdd Vdd pulvt_l34_f6 m=12
+NM9 net4 Vb1 Vss Vss nulvt_l34_f6 m=12
+NM6 vout1 Vb2 net3 Vdd pulvt_l34_f10 m=36
+NM5 net1 Vb2 net2 Vdd pulvt_l34_f6 m=12
+NM7 net1 Vb1 Vss Vss nulvt_l34_f6 m=12
+NM8 vout1 Vb1 Vss Vss nulvt_l68_f6 m=12
+CCfb net2 Vreg 5.69531e-12   $ was XCfb (mim)
+RRfb net2 vout1 66666.7   $ was XRfb (poly)
+.ends ldo_folded_cascode

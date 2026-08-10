@@ -1,0 +1,31 @@
+{
+  "design": "PTAT_65_classic1",
+  "score": 0.0,
+  "evals": 14,
+  "evals_seconds": 0.2,
+  "metrics": {
+    "vout0": 0.2691063,
+    "vout25": 0.2819273,
+    "vout50": 0.2951618,
+    "vout75": 0.3088006,
+    "vout100": 0.3305439,
+    "lsb_25_75c": 0.000537465,
+    "maxval": 0.4165352,
+    "minval": 0.2591841,
+    "ppval": 0.1573511,
+    "sweep_points": 281.0,
+    "mono_violations": 0.0,
+    "min_slope_25_75c": 0.0005216300000000507,
+    "max_step_frac_25_75c": 0.010401571495992858,
+    "dc_fallback_points": 0.0
+  },
+  "pass": {
+    "monotonic": true,
+    "sensitivity": true,
+    "smooth": true,
+    "in_range": true
+  },
+  "polished_from": 0.04297666666666663,
+  "category": "sensing_front_end",
+  "errors": []
+}

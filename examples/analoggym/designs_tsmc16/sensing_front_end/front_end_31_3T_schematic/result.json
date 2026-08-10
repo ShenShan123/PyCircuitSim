@@ -1,0 +1,32 @@
+{
+  "design": "front_end_31_3T_schematic",
+  "score": 0.0,
+  "evals": 14,
+  "evals_seconds": 2.3,
+  "metrics": {
+    "vout0": 0.2236279,
+    "vout25": 0.2379999,
+    "vout50": 0.254625,
+    "vout75": 0.2730093,
+    "vout100": 0.294612,
+    "lsb_25_75c": 0.000700188,
+    "maxval": 0.3146594,
+    "minval": 0.2126622,
+    "ppval": 0.1019972,
+    "sweep_points": 281.0,
+    "mono_violations": 0.0,
+    "min_slope_25_75c": 0.0005953879999999745,
+    "max_step_frac_25_75c": 0.01133332082241568,
+    "dc_fallback_points": 0.0
+  },
+  "pass": {
+    "monotonic": true,
+    "sensitivity": true,
+    "smooth": true,
+    "in_range": true
+  },
+  "error": "",
+  "polished_from": 0.5408090000000001,
+  "category": "sensing_front_end",
+  "errors": []
+}

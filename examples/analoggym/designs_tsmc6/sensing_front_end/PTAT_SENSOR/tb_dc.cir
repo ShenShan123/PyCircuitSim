@@ -1,0 +1,20 @@
+* PTAT_SENSOR -- AnalogGym sensing front end DC/temperature bench on TSMC6
+* Measurements are the shipped TB_2T_sensor_core set; supply is the TSMC6 rail.
+.include ./tsmc6_models.spice
+.include ./netlist.spice
+
+.PARAM supply_voltage = 0.75
+Vvdd vdd 0 'supply_voltage'
+x0 vdd vout 0 PTAT_SENSOR
+c0 vout 0 0.2p
+
+.measure dc vout0   FIND V(vout) AT=0
+.measure dc vout25  FIND V(vout) AT=25
+.measure dc vout50  FIND V(vout) AT=50
+.measure dc vout75  FIND V(vout) AT=75
+.measure dc vout100 FIND V(vout) AT=100
+.measure dc lsb_25_75C param='(vout75-vout25)/50'
+.measure dc maxval MAX V(vout) from=-20 to=120
+.measure dc minval MIN V(vout) from=-20 to=120
+.measure dc ppval  PP  V(vout) from=-20 to=120
+.end

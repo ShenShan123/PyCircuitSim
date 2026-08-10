@@ -1,0 +1,33 @@
+{
+  "design": "dual_output_subthreshold_vref",
+  "outputs": [
+    "vref1",
+    "vref2"
+  ],
+  "evals": 50,
+  "evals_seconds": 104.9,
+  "score": 0.0,
+  "metrics": {
+    "vref1_at25": 0.2099782,
+    "vref1_max": 0.2182302,
+    "vref1_min": 0.2065289,
+    "vref1_pp": 0.01170128,
+    "vref1_avg": 0.2115464,
+    "vref1_tc": 335.231,
+    "vref2_at25": 0.3946959,
+    "vref2_max": 0.3988464,
+    "vref2_min": 0.3941199,
+    "vref2_pp": 0.004726512,
+    "vref2_avg": 0.3955295,
+    "vref2_tc": 72.4232
+  },
+  "pass": {
+    "outputs": true,
+    "tc": true,
+    "in_range": true
+  },
+  "error": "",
+  "polished_from": 0.13024059999999985,
+  "category": "voltage_reference",
+  "errors": []
+}

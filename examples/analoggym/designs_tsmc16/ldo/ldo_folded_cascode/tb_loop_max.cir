@@ -1,0 +1,25 @@
+* ldo_folded_cascode -- loop response, max load on TSMC16 BSIM-CMG
+* Measurement set is AnalogGym's TB_LDO_ACDC / TB_LDO_Tran.
+.include ./tsmc16_models.spice
+.include ./netlist.spice
+
+.PARAM supply_voltage = 0.8
+.PARAM Vref = 0.605
+.PARAM VOUT_NOM = 0.6
+V2 vss 0 0
+Vindc vref_in 0 'Vref'
+V1 vdd 0 'supply_voltage'
+.nodeset V(vo)=0.6
+x1 vdd vo_inp vo_vb2 vref_in vo_vb1 0 vo ldo_folded_cascode
+V1_vb2 vo_vb2 0 0.106667
+V1_vb1 vo_vb1 0 0.48
+CL vo 0 1e-07
+Iload vo 0 0.055
+Vin signal_in 0 dc 'Vref' ac 1
+Lfb vo_inp vo 1T
+Cfb vo_inp signal_in 1T
+.meas ac dcgain_max find vdb(vo) at=0.1
+.meas ac gbw_max when vdb(vo)=0
+.meas ac ph_rad_max find vp(vo) when vdb(vo)=0
+.meas ac pm_max param='abs(ph_rad_max)*180/3.1416'
+.end

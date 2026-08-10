@@ -1,0 +1,31 @@
+* yan_az_pin_3 -- AnalogGym topology on TSMC12 BSIM-CMG (LEVEL=72)
+* Connectivity and mirror ratios are the shipped ones; geometry is re-designed for 0.8 V FinFET.
+.subckt yan_az_pin_3 gnda vdda vinn vinp vout
+Nm67 net057 VOUTN VDDA VDDA psvt_l182_f2 m=1   $ BIASCM_PMOS
+Nm3 net078 VB1 VDDA VDDA psvt_l182_f2 m=4   $ BIASCM_PMOS
+Nm13 VOUT net050 VDDA VDDA psvt_l66_f16 m=3   $ gmf2_PMOS
+Nm11 net094 net050 VDDA VDDA psvt_l65_f20 m=6   $ gm2_PMOS
+Nm5 net050 VOUTN VDDA VDDA psvt_l182_f2 m=1   $ BIASCM_PMOS
+Nm4 VOUTN VOUTN VDDA VDDA psvt_l182_f2 m=1   $ BIASCM_PMOS
+Nm10 net063 VINP net019 net019 psvt_l150_f8 m=4   $ gm1_PMOS
+Nm9 DM_2 VINN net019 net019 psvt_l150_f8 m=4   $ gm1_PMOS
+Nm2 net019 VB1 VDDA VDDA psvt_l182_f2 m=2   $ BIASCM_PMOS
+Nm1 VB4 VB1 VDDA VDDA psvt_l182_f2 m=1   $ BIASCM_PMOS
+Nm0 VB1 VB1 VDDA VDDA psvt_l182_f2 m=1   $ BIASCM_PMOS
+Nm16 net077 DM_2 GNDA GNDA nsvt_l166_f1 m=1   $ gm5_NMOS
+Nm17 net082 net063 GNDA GNDA nsvt_l166_f1 m=1   $ gm5_NMOS
+Nm18 VOUT net057 GNDA GNDA nsvt_l218_f1 m=1   $ gm3_NMOS
+Nm22 net094 net051 GNDA GNDA nsvt_l104_f6 m=3   $ gmb1_NMOS
+Nm23 net057 net094 GNDA GNDA nsvt_l41_f6 m=3   $ gmb2_NMOS
+Nm20 DM_2 VB4 GNDA GNDA nsvt_l179_f1 m=1   $ BIASCM_NMOS
+Nm14 VOUTN net077 DM_2 GNDA nsvt_l240_f2 m=1   $ gm8_NMOS
+Nm21 net063 VB4 GNDA GNDA nsvt_l179_f1 m=1   $ BIASCM_NMOS
+Nm15 net050 net082 net063 GNDA nsvt_l240_f2 m=1   $ gm8_NMOS
+Nm19 VB4 VB4 GNDA GNDA nsvt_l179_f1 m=1   $ BIASCM_NMOS
+I0 VB1 GNDA 2e-06
+C1 net051 GNDA 4.8e-10
+C0 net063 VOUT 3e-11
+R2 net094 net051 40000
+R1 net078 net082 781250
+R0 net078 net077 195312
+.ends yan_az_pin_3

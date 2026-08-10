@@ -1,0 +1,31 @@
+* PLL_CHARGEPUMP -- AnalogGym charge-pump transient bench on TSMC7
+* Measurement set follows the shipped tran_27corner.sp nominal corner: average
+* source (up) and sink (down) current and their range over the pulse train.
+* vcp_net is clamped by the original 1 GF load so the ammeters inside the block
+* read the pump currents directly.
+.include ./tsmc7_models.spice
+.include ./netlist.spice
+
+.param vdd = 0.75
+.param vcp = 0.375
+.temp 25
+
+xi0 vcp_net dn_net dnb_net i10u_net i5u_net 0 vdd_net up_net upb_net vdd_net 0 PLL_CHARGEPUMP
+i10 vdd_net i10u_net DC=1e-05
+i5  vdd_net i5u_net  DC=5e-06
+v0  vdd_net 0 DC='vdd'
+c0  vcp_net 0 1e9
+.ic v(vcp_net)='vcp'
+
+vdn  dn_net  0 PULSE 0 '0.75' 10e-9 10e-12 10e-12 10e-9 20e-9
+vdnb dnb_net 0 PULSE 0 '0.75' 0     10e-12 10e-12 10e-9 20e-9
+vupb upb_net 0 PULSE 0 '0.75' 0     10e-12 10e-12 10e-9 20e-9
+vup  up_net  0 PULSE 0 '0.75' 10e-9 10e-12 10e-12 10e-9 20e-9
+
+.measure tran up_imin min i(v.xi0.vupper) from=20e-9 to=100e-9
+.measure tran up_iavg avg i(v.xi0.vupper) from=20e-9 to=180e-9
+.measure tran up_imax max i(v.xi0.vupper) from=20e-9 to=100e-9
+.measure tran lo_imin min i(v.xi0.vlower) from=20e-9 to=100e-9
+.measure tran lo_iavg avg i(v.xi0.vlower) from=20e-9 to=180e-9
+.measure tran lo_imax max i(v.xi0.vlower) from=20e-9 to=100e-9
+.end

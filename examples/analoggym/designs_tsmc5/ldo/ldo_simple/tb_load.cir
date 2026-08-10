@@ -1,0 +1,28 @@
+* ldo_simple -- load regulation / power / offset on TSMC5 BSIM-CMG
+* Measurement set is AnalogGym's TB_LDO_ACDC / TB_LDO_Tran.
+.include ./tsmc5_models.spice
+.include ./netlist.spice
+
+.PARAM supply_voltage = 0.65
+.PARAM Vref = 0.4875
+.PARAM VOUT_NOM = 0.4875
+V2 vss 0 0
+Vindc vref_in 0 'Vref'
+V1 vdd 0 'supply_voltage'
+.nodeset V(vo)=0.4875
+x1 vdd vo vref_in vo_vb 0 vo ldo_simple
+V1_vb vo_vb 0 0.325
+CL vo 0 1e-07
+Iload vo 0 0.005
+.meas dc lr_avg AVG V(vo) from=0.005 to=0.055
+.meas dc lr_pp  PP  V(vo) from=0.005 to=0.055
+.meas dc lr param='lr_pp/lr_avg/0.05'
+.meas dc ivdd_max FIND I(V1) AT=0.055
+.meas dc ivdd_min FIND I(V1) AT=0.005
+.meas dc power_max param='-1*ivdd_max*0.65'
+.meas dc power_min param='-1*ivdd_min*0.65'
+.meas dc vout_max FIND V(vo) AT=0.055
+.meas dc vout_min FIND V(vo) AT=0.005
+.meas dc vos_max param='vout_max-0.4875'
+.meas dc vos_min param='vout_min-0.4875'
+.end

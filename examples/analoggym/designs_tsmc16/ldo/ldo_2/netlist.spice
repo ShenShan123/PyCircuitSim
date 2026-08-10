@@ -1,0 +1,30 @@
+* ldo_2 -- AnalogGym LDO on TSMC16 BSIM-CMG (LEVEL=72)
+* Topology is the shipped one.  Geometry is re-designed for a 0.8 V
+* rail, and the mim caps / poly resistors become ideal C and R because
+* this TSMC16 view carries transistor models only.
+.subckt ldo_2 gnd vdd vref vout vfb vinp Ib
+NNM10 net42 Ib gnd gnd nulvt_l20_f2 m=2
+NNM9 net37 vref net42 gnd nulvt_l36_f16 m=3
+NNM8 net40 vinp net42 gnd nulvt_l90_f6 m=8
+NNM7 net32 Ib gnd gnd nulvt_l16_f6 m=1
+NNM6 net030 Ib gnd gnd nulvt_l90_f16 m=4
+NNM4 net049 net20 gnd gnd nulvt_l120_f10 m=16
+NNM3 net20 net20 gnd gnd nulvt_l180_f2 m=16
+NNM2 net17 vref net030 gnd nulvt_l60_f6 m=6
+NNM1 Ib Ib gnd gnd nulvt_l180_f6 m=3
+NNM0 net14 net7 gnd gnd nulvt_l36_f10 m=11
+NPM9 net40 net40 vdd vdd pulvt_l60_f3 m=4
+NPM8 net37 net40 vdd vdd pulvt_l36_f4 m=6
+NPM7 vfb net37 vdd vdd pulvt_l36_f10 m=4
+NPM6 net32 net32 vfb vfb pulvt_l120_f10 m=96
+NPM5 net030 net32 vout vout pulvt_l16_f6 m=11
+NPM4 vout net049 vdd vdd pulvt_l120_f20 m=6000 $ pass device
+NPM3 net049 net14 vdd vdd pulvt_l120_f6 m=32
+NPM2 net20 net17 vdd vdd pulvt_l36_f20 m=16
+NPM1 net17 net14 vdd vdd pulvt_l240_f16 m=5
+NPM0 net14 net14 vdd vdd pulvt_l60_f6 m=32
+RR0 Ib net7 100000   $ was XR0 (poly)
+CC4 net37 gnd 2e-12   $ was XC4 (mim)
+CC1 net17 vout 5.33333e-12   $ was XC1 (mim)
+CC0 vout net7 1.33333e-12   $ was XC0 (mim)
+.ends ldo_2

@@ -1,0 +1,6 @@
+* PTAT_SENSOR -- AnalogGym sensing front end on TSMC16 BSIM-CMG
+* Topology is the shipped one; geometry is re-designed for 0.8 V.
+.subckt PTAT_SENSOR VDDA vsense GNDA
+Nm0 vdda vsense vsense gnda nulvt_l90_f20 m=30
+Nm1 vsense vsense gnda gnda nlvt_l90_f6 m=1
+.ends PTAT_SENSOR

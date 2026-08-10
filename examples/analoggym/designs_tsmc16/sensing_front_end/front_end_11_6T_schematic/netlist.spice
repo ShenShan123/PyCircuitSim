@@ -1,0 +1,10 @@
+* front_end_11_6T_schematic -- AnalogGym sensing front end on TSMC16 BSIM-CMG
+* Topology is the shipped one; geometry is re-designed for 0.8 V.
+.subckt front_end_11_6T_schematic GND VDD VOUT
+NM5 VOUT net2 GND GND nulvt_l60_f10 m=1
+NM4 VDD net2 VOUT GND nulvt_l60_f10 m=1
+NM3 GND GND GND GND nulvt_l60_f10 m=1
+NM2 net2 net2 GND GND nulvt_l60_f10 m=1
+NM1 VDD net2 GND GND nulvt_l60_f10 m=1
+NM0 VDD VDD net2 GND nulvt_l60_f10 m=1
+.ends front_end_11_6T_schematic

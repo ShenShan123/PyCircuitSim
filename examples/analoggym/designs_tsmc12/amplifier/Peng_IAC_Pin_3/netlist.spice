@@ -1,0 +1,42 @@
+* peng_iac_pin_3 -- AnalogGym topology on TSMC12 BSIM-CMG (LEVEL=72)
+* Connectivity and mirror ratios are the shipped ones; geometry is re-designed for 0.8 V FinFET.
+.subckt peng_iac_pin_3 gnda vdda vinn vinp vout
+Nm66 net10 VB2 net049 VDDA psvt_l22_f5 m=1   $ gmt_PMOS
+Nm11 VOUT VOUTP VDDA VDDA psvt_l20_f8 m=2   $ gmf_PMOS
+Nm7 net049 VB1 VDDA VDDA psvt_l91_f4 m=32   $ BIASCM_PMOS
+Nm10 net043 VOUTP VDDA VDDA psvt_l20_f20 m=6   $ gm2_PMOS
+Nm57 VB1 VB2 net2 VDDA psvt_l91_f4 m=8   $ BIASCM_PMOS
+Nm65 VB2 VB2 VDDA VDDA psvt_l91_f4 m=2   $ BIASCM_PMOS
+Nm6 VOUTP VOUTN VDDA VDDA psvt_l91_f4 m=8   $ BIASCM_PMOS
+Nm5 VOUTN VOUTN VDDA VDDA psvt_l91_f4 m=8   $ BIASCM_PMOS
+Nm9 net063 VINP net31 net31 psvt_l28_f2 m=1   $ gm1_PMOS
+Nm8 DM_2 VINN net31 net31 psvt_l28_f2 m=1   $ gm1_PMOS
+Nm4 net31 VB1 VDDA VDDA psvt_l91_f4 m=16   $ BIASCM_PMOS
+Nm62 VB3 VB2 net8 VDDA psvt_l91_f4 m=8   $ BIASCM_PMOS
+Nm3 net8 VB1 VDDA VDDA psvt_l91_f4 m=8   $ BIASCM_PMOS
+Nm61 net7 VB2 net6 VDDA psvt_l91_f4 m=8   $ BIASCM_PMOS
+Nm2 net6 VB1 VDDA VDDA psvt_l91_f4 m=8   $ BIASCM_PMOS
+Nm58 VB4 VB2 net3 VDDA psvt_l91_f4 m=8   $ BIASCM_PMOS
+Nm1 net3 VB1 VDDA VDDA psvt_l91_f4 m=8   $ BIASCM_PMOS
+Nm0 net2 VB1 VDDA VDDA psvt_l91_f4 m=8   $ BIASCM_PMOS
+Nm23 VOUT net10 GNDA GNDA nsvt_l240_f6 m=1   $ gm3_NMOS
+Nm70 net1 net043 GNDA GNDA nsvt_l120_f4 m=1   $ BIASCM_NMOS
+Nm69 net10 net043 GNDA GNDA nsvt_l120_f4 m=1   $ BIASCM_NMOS
+Nm19 DM_2 VB4 GNDA GNDA nsvt_l120_f4 m=8   $ BIASCM_NMOS
+Nm15 VOUTN VB3 DM_2 GNDA nsvt_l120_f4 m=8   $ BIASCM_NMOS
+Nm20 net063 VB4 GNDA GNDA nsvt_l120_f4 m=8   $ BIASCM_NMOS
+Nm16 VOUTP VB3 net063 GNDA nsvt_l120_f4 m=8   $ BIASCM_NMOS
+Nm17 net54 VB4 GNDA GNDA nsvt_l120_f4 m=4   $ BIASCM_NMOS
+Nm67 net043 VB3 net1 GNDA nsvt_l120_f4 m=32   $ BIASCM_NMOS
+Nm14 VB3 VB3 GNDA GNDA nsvt_l120_f4 m=1   $ BIASCM_NMOS
+Nm12 VB4 VB3 net54 GNDA nsvt_l120_f4 m=4   $ BIASCM_NMOS
+Nm18 net56 VB4 GNDA GNDA nsvt_l120_f4 m=4   $ BIASCM_NMOS
+Nm13 net7 VB3 net56 GNDA nsvt_l120_f4 m=4   $ BIASCM_NMOS
+Nm64 net9 VB4 GNDA GNDA nsvt_l120_f4 m=4   $ BIASCM_NMOS
+Nm63 VB2 VB3 net9 GNDA nsvt_l120_f4 m=4   $ BIASCM_NMOS
+Nm68 net1 VB4 GNDA GNDA nsvt_l120_f4 m=1   $ BIASCM_NMOS
+I0 VB1 GNDA 1.25e-05
+C1 net10 net4 3.125e-12
+C0 VOUTP VOUT 2.5e-11
+R0 net4 GNDA 40000
+.ends peng_iac_pin_3

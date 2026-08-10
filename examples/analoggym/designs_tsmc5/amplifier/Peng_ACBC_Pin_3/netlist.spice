@@ -1,0 +1,34 @@
+* peng_acbc_pin_3 -- AnalogGym topology on TSMC5 BSIM-CMG (LEVEL=72)
+* Connectivity and mirror ratios are the shipped ones; geometry is re-designed for 0.65 V FinFET.
+.subckt peng_acbc_pin_3 gnda vdda vinn vinp vout
+Nm59 net1 net1 VDDA VDDA psvt_l21_f10 m=4   $ ma1_PMOS
+Nm12 VOUT net050 VDDA VDDA psvt_l51_f6 m=5   $ gmf2_PMOS
+Nm7 net049 net013 VDDA VDDA psvt_l6_f1 m=1   $ BIASCM_PMOS
+Nm11 net043 net050 VDDA VDDA psvt_l59_f4 m=2   $ gm2_PMOS
+Nm6 net050 VOUTN VDDA VDDA psvt_l6_f1 m=1   $ BIASCM_PMOS
+Nm5 VOUTN VOUTN VDDA VDDA psvt_l6_f1 m=1   $ BIASCM_PMOS
+Nm10 net063 VINP net31 net31 psvt_l86_f5 m=1   $ gm1_PMOS
+Nm9 DM_2 VINN net31 net31 psvt_l86_f5 m=1   $ gm1_PMOS
+Nm4 net31 net013 VDDA VDDA psvt_l6_f1 m=2   $ BIASCM_PMOS
+Nm3 VB3 net013 VDDA VDDA psvt_l6_f1 m=1   $ BIASCM_PMOS
+Nm2 DM_1 net013 VDDA VDDA psvt_l6_f1 m=1   $ BIASCM_PMOS
+Nm8 net1 net013 VDDA VDDA psvt_l6_f1 m=1   $ BIASCM_PMOS
+Nm1 VB4 net013 VDDA VDDA psvt_l6_f1 m=1   $ BIASCM_PMOS
+Nm0 net013 net013 VDDA VDDA psvt_l6_f1 m=1   $ BIASCM_PMOS
+Nm25 VOUT net049 GNDA GNDA nsvt_l135_f3 m=32   $ gm3_NMOS
+Nm23 net049 net043 GNDA GNDA nsvt_l68_f4 m=4   $ LOAD2_NMOS
+Nm22 net043 net043 GNDA GNDA nsvt_l68_f4 m=4   $ LOAD2_NMOS
+Nm20 DM_2 VB4 GNDA GNDA nsvt_l42_f4 m=8   $ BIASCM_NMOS
+Nm16 VOUTN VB3 DM_2 GNDA nsvt_l42_f4 m=4   $ BIASCM_NMOS
+Nm21 net063 VB4 GNDA GNDA nsvt_l42_f4 m=8   $ BIASCM_NMOS
+Nm17 net050 VB3 net063 GNDA nsvt_l42_f4 m=4   $ BIASCM_NMOS
+Nm18 net54 VB4 GNDA GNDA nsvt_l42_f4 m=4   $ BIASCM_NMOS
+Nm24 net1 net043 GNDA GNDA nsvt_l86_f8 m=3   $ gm4_NMOS
+Nm15 VB3 VB3 GNDA GNDA nsvt_l42_f4 m=1   $ BIASCM_NMOS
+Nm13 VB4 VB3 net54 GNDA nsvt_l42_f4 m=4   $ BIASCM_NMOS
+Nm19 net56 VB4 GNDA GNDA nsvt_l42_f4 m=4   $ BIASCM_NMOS
+Nm14 DM_1 VB3 net56 GNDA nsvt_l42_f4 m=4   $ BIASCM_NMOS
+I0 net013 GNDA 8e-07
+C1 net049 net1 4e-12
+C0 net050 VOUT 2e-12
+.ends peng_acbc_pin_3

@@ -1,0 +1,14 @@
+* ldo_simple -- AnalogGym LDO on TSMC7 BSIM-CMG (LEVEL=72)
+* Topology is the shipped one.  Geometry is re-designed for a 0.75 V
+* rail, and the mim caps / poly resistors become ideal C and R because
+* this TSMC7 view carries transistor models only.
+.subckt ldo_simple Vdd vinp vinn Vb Vss Vreg
+NM1 net1 vinp net2 Vss nsvt_l120_f16 m=12
+NM2 vout1 vinn net2 Vss nsvt_l60_f2 m=2
+NM3 vout1 net1 Vdd Vdd psvt_l120_f4 m=8
+NM4 net1 net1 Vdd Vdd psvt_l36_f2 m=16
+NM5 net2 Vb Vss Vss nsvt_l240_f2 m=8
+NM6 Vreg vout1 Vdd Vdd psvt_l10_f20 m=1500 $ pass device
+CCfb net22 Vreg 4.5e-12   $ was XCfb (mim)
+RRfb net22 vout1 100000   $ was XRfb (poly)
+.ends ldo_simple

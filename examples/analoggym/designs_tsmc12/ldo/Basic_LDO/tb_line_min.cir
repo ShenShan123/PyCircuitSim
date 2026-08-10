@@ -1,0 +1,17 @@
+* Basic_LDO -- line regulation, min load on TSMC12 BSIM-CMG
+* Measurement set is AnalogGym's TB_LDO_ACDC / TB_LDO_Tran.
+.include ./tsmc12_models.spice
+.include ./netlist.spice
+
+.PARAM supply_voltage = 0.8
+.PARAM Vref = 0.3
+.PARAM VOUT_NOM = 0.6
+V2 vss 0 0
+Vindc vref_in 0 'Vref'
+V1 vdd 0 'supply_voltage'
+.nodeset V(vo)=0.6
+x1 0 vdd vref_in vo vo_fb vo_fb vo_ib Basic_LDO
+I1_b vo_ib 0 8e-05
+CL vo 0 1e-07
+Iload vo 0 0.005
+.end

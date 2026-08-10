@@ -1,0 +1,13 @@
+* dual_output_subthreshold_vref -- AnalogGym voltage reference on TSMC7 BSIM-CMG
+* Topology is the shipped one; geometry is re-designed for 0.75 V.
+Nm1 net14 net14 vdda vdda psvt_l240_f2 m=1
+Nm2 net15 net14 vdda vdda psvt_l240_f2 m=1
+Nm3 vref2 net14 vdda vdda plvt_l120_f20 m=1
+Nm4 net15 net15 vref1 0 nulvt_l120_f6 m=20
+Nm5 net14 vref1 0 0 nlvt_l180_f2 m=1
+Nm7 vref2 vref2 0 0 nlvt_l180_f20 m=2
+Nm6 vref1 net15 0 0 nsvt_l120_f10 m=1
+
+* Third low-load output derived from the qualified vref2 core.
+R3top vref2 vref3 1e18
+R3bot vref3 0 1e18
