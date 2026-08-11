@@ -87,10 +87,14 @@ via `max_substeps`; NN circuits use `_solve_dc_with_retry` (fast path first,
 GMIN retry on `_last_solve_converged=False`); AC solves complex `Y = G + jωC`
 about the DC OP including the full MOSFET transcapacitance stamp.
 
-V7.5.0 (AnalogGym parity) added, for **LEVEL=72 only**: the full 4-terminal
-Newton stamp (all four terminal currents + the condensed OSDI Jacobian via
-`get_terminal_stamp` — junction/gate-leakage conductances participate in NR;
-the 3-conductance stamp remains for NN levels); SPICE-style damped limiting
+V7.5.0/V7.5.1 (AnalogGym parity) added, for **LEVEL=72 only**: the full
+4-terminal Newton stamp (all four terminal currents + the condensed OSDI
+Jacobian via `get_terminal_stamp` — junction/gate-leakage conductances
+participate in NR) **and the full 4-terminal charge companion**
+(`get_charge_stamp` from `condense_last_react` — the old 3×3 SPICE-cap
+expansion stamps SIGN-FLIPPED transcap off-diagonals for floating-bulk
+devices, which at small dt turns Newton into an ~15× error amplifier; the
+3-conductance/3×3 stamps remain the NN contract); SPICE-style damped limiting
 (`nr_limit_voltages`: fetlim/limvds/pnjlim in the NMOS-normalized frame,
 ±2.5 V window, retreat-to-anchor on eval failure; anchors reset per NR sweep;
 an iteration that limited is never accepted as converged); source-referenced
@@ -98,9 +102,12 @@ OSDI evaluation (the internal-node solve is not shift-robust); a wide DC gmin
 ladder (1e-2→GMIN) with an **automatic fallback** when a plain L72 solve
 fails (so "BSIM-CMG never retries" is no longer true — it has its own
 in-`DCSolver` ladder now, honest `final_converged` = last level/last source
-step only); and the transient retry ladder re-walks the interval with a
-locally halved dt (down to `dt·2⁻²⁴`) instead of stiffening companions
-against a fixed target time. `PYCIRCUITSIM_NR_TRACE=1` traces NR.
+step only); the transient retry ladder re-walks the interval with a locally
+halved dt (down to `dt·2⁻²⁴`) instead of stiffening companions against a
+fixed target time, with stagnation fail-fast; and the oscillation-average
+acceptance KCL gate covers L72, not just NN. Known follow-up: the AC solver
+still uses the 5-cap 3×3 expansion for L72 (same floating-bulk hazard in
+principle; AC gates green). `PYCIRCUITSIM_NR_TRACE=1` traces NR.
 
 ## Supported Features
 

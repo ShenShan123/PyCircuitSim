@@ -48,7 +48,19 @@ transient retry that actually subdivides the interval. Current pilot table
 | amplifier transient | `tb_tran` (stride 4) | **11/11**, 1101/1101 steps | 3.0 uV | 11/11 | 71 / 1.2 |
 | sensor dc temp | `ptat_1/tb_dc` | **13/13**, 0 mono violations | ~15 uV | 9/9 | **9.6** / 0.1 |
 | amplifier dc temp | `tb_dc` (stride 25 + fork recovery) | **15/15** | 2.6 uV | 15/15 | 67 / 2.1 |
-| charge pump transient | `tb_tran` (stride 20) | run in flight at press time | -- | 6/6 | -- / 30.7 |
+| charge pump transient | `tb_tran` (stride 4, BDF-2) | **5/6**, 25001/25001 steps | -- * | 6/6 | 1843 / 31 |
+
+\* The charge pump's `op_delta` is the pre-transient operating point of a
+switching circuit whose output node has no DC path — both simulators float it
+differently and the transient rails it immediately; the six scored metrics are
+the verdict. The sixth metric (`up_imin`) is a ±4 µA, ~10 ps current-reversal
+spike whose amplitude is integration-method sensitive: trapezoidal at the
+deck-native 2 ps grid catches the reversal but over-rings it 2×
+(−8.4 µA), BDF-2 damps it away (+3.2 µA), NGSPICE's LTE-adaptive trapezoidal
+reads −4.03 µA. The four averages/extrema that define pump function
+(`lo/up_iavg`, `lo_imin`, `up_imax`) agree to 8e-6…2e-2 under BDF-2. Fixed
+output grids versus NGSPICE's truncation-error timestep control is the one
+remaining fidelity axis this deck exposes.
 
 The former table (for the record of what the simulator work fixed): tb_tran
 2/6 at 119/221 steps, ptat 5/13 with 76 mV worst node and 67 monotonicity

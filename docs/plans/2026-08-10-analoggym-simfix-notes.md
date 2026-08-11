@@ -158,8 +158,36 @@ multiplier 6/6, ring_osc 5/5, sram 5/5, switchcap 5/5, canaries PASS,
 nn_dc_tran 30/30. verify_nn_ac RUNNING. opamp+opamp_ac 0/5 PRE-EXISTING at
 base (bit-identical repro with base solver files) — NN-side, out of scope.
 Docs committed (5c18101): CHANGELOG V7.5.1, RESULTS_TSMC.md (cp row pending),
-CLAUDE.md, README. Remaining: cp result + verify_nn_ac -> patch docs -> final
-commit. Worktree checkpoints SYMLINKED from main repo (gitignored path).
+CLAUDE.md, README. Worktree checkpoints SYMLINKED from main repo (gitignored).
+
+### Charge-pump saga part 2 (2026-08-11 morning; commits 97e8a42..4e42971)
+- verify_nn_ac 10/10, verify_nn_lifted_source_dc 15/15, canaries PASS.
+- Stride-20 cp ran 4.3 CPU-h without finishing; py-spy blocked (yama).
+- Fail-fast added to transient NR (97e8a42): bail to dt-cut when no 2x
+  progress in 30 its and max_delta > max(100*tol, 1e-2) — the 1e-2 floor
+  protects the oscillation-average path. Tran gates re-ran green.
+- Trace showed march stuck at t=1.5e-14s: acceptance-gate fix (e684bd9) —
+  KCL residual gate on oscillation-average acceptance extended to L72
+  (was NN-only; a quiet-garbage average could commit and poison the charge
+  history through 1/dt).
+- STILL stuck at fs scale: FD probe caught the real killer — the transient
+  transcap 3x3 block (SPICE 5-cap + conservation shortcuts, no bulk row/col)
+  stamps SIGN-FLIPPED off-diagonals for FLOATING-BULK devices (stamped
+  +0.758 S vs true -0.758 S at dt=1e-15). Wrong-signed Jacobian at small dt
+  => every NR iteration amplifies ~15x. Rail-tied bulks masked it in all
+  prior gates. FIX (4e42971): full 4-terminal charge companion for L72 from
+  Instance.condense_last_react() (== FD of (qd,qg,qs,qb), C[g,g]==cgg);
+  per-terminal BE/Trap/BDF2 histories (_i_prev_source/_i_prev_bulk added);
+  NN keeps 3x3 block bit-identically. Stamped system == FD to ~1e-6.
+- RESULT: cp stride-20 COMPLETES 5001/5001 in 443 s: 4/6 agree
+  (lo/up_iavg 7e-5/3.6e-4, lo_imin, up_imax); misses are lo_imax & up_imin
+  = 10ps switching-spike extrema unsampled on a 40ps grid (ng up_imin is a
+  -4uA reversal spike). Re-runs green: tran_comp 45/45, multi_tech_tran
+  86/86, amp tb_tran 11/11, switchcap 5/5, sram 5/5.
+- IN FLIGHT: cp stride-4 ($SCR/cp_s4.log) and stride-1 ($SCR/cp_s1.log) for
+  the spike metrics. Then: RESULTS cp row + CHANGELOG item 9 + final summary.
+- FOLLOW-UP (not this sprint): AC solver still uses the 5-cap 3x3 expansion
+  for L72 — same floating-bulk hazard in principle; AC gates green today.
 - [ ] Task 5: re-run 7 pilot decks + repo gates (incl. verify_bsimcmg_tran, ac,
       subckt, complex x4; L72 numbers all perturbed by tol+src-ref changes —
       expected within gate tolerances, sha256 sweep baselines may need rebase)

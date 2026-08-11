@@ -105,6 +105,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 import time
 from dataclasses import asdict, dataclass, replace
@@ -800,6 +801,12 @@ def _simulate_tran(td: TranslatedDeck, plan: AnalysisPlan, circuit,
     assert plan.t_step is not None and plan.t_stop is not None
     dt = plan.t_step * opts.stride
     method = "gear2" if (td.options.method or "").startswith("gear") else "auto"
+    # Diagnostic override (V7.5.1): compare integrators on one deck without
+    # editing it — e.g. trap ringing vs BDF-2 damping on switching-spike
+    # extrema. Not a scoring knob; deck `.options method` wins in campaigns.
+    method = os.environ.get("PYCIRCUITSIM_BENCH_TRAN_METHOD", method)
+    # Diagnostic (V7.5.1): opt-in LTE sub-stepping for the same comparison.
+    _substeps = int(os.environ.get("PYCIRCUITSIM_BENCH_TRAN_SUBSTEPS", "1"))
     solver = TransientSolver(
         circuit, t_stop=plan.t_stop, dt=dt,
         initial_guess={n: val for n, val in voltages.items()
@@ -808,6 +815,7 @@ def _simulate_tran(td: TranslatedDeck, plan: AnalysisPlan, circuit,
         dv_limit=dv_limit or None,
         reltol=td.options.reltol if td.options.reltol is not None else opts.reltol,
         vntol=td.options.vntol if td.options.vntol is not None else opts.vntol,
+        max_substeps=_substeps,
     )
     meta["integration_method"] = method
     meta["dt"] = dt

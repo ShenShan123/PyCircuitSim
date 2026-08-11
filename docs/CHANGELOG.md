@@ -12,12 +12,16 @@ pruned; the full original text lives in git history.)
 
 **Goal: every pilot deck of the V7.5.0 PyCircuitSim-vs-NGSPICE comparison
 agreeing, by fixing the simulator — NN models parked.** The three recorded
-causes in `RESULTS_TSMC.md` unwound into eight distinct defects across the
+causes in `RESULTS_TSMC.md` unwound into eleven distinct defects across the
 solver, the L72 wrapper, and PyCMG. Scoreboard movement (TSMC5 pilot):
 ptat_1 tb_dc **5/13 → 13/13** (9.6 s, was 74 s), amplifier tb_dc
 **0/15 → 15/15** (worst node 2.6 µV vs the diverged 9.75 V; 67 s, was 1250 s
 partial), amplifier tb_tran **2/6 → 11/11**, ldo tb_load 11/11 (5.2 s, was
-678 s — 130×), tb_loop_max 8/8, tb_gain 8/8.
+678 s — 130×), tb_loop_max 8/8, tb_gain 8/8, charge pump tb_tran
+**dead-at-step-0 → 5/6** (all 25001 steps solved; the sixth metric is a
+±4 µA 10 ps current-reversal spike whose amplitude is integration-method
+sensitive — trapezoidal over-rings it 2×, BDF-2 damps it out; the four
+current averages/extrema that define pump function agree to 8e-6…2e-2).
 
 1. **Subthreshold current floor** (blocked 75 weak-inversion decks): the PyCMG
    internal-node NR tolerance defaulted to 1e-9 A absolute, so any true
@@ -76,6 +80,35 @@ partial), amplifier tb_tran **2/6 → 11/11**, ldo tb_load 11/11 (5.2 s, was
    control does. First-attempt successes are expression-identical.
 8. **Critical Rule 4 violation removed**: `MOSFET_CMG.get_conductance` did
    `abs(gds)`; the floor lives at the stamp.
+9. **True 4-terminal charge companion** (found by the charge pump, day 2):
+   the transient transcap block rebuilt a 3×3 matrix from the five SPICE
+   cap variables plus charge-conservation shortcuts — no bulk row or
+   column. For FLOATING-BULK devices that stamps SIGN-FLIPPED
+   off-diagonals (measured +0.758 S against a true −0.758 S at
+   dt=1e-15), and a wrong-signed Jacobian at small dt makes every Newton
+   iteration AMPLIFY the error ~15× — the adaptive march then commits
+   femtosecond pieces forever (2 CPU-hours to reach t=15 fs). Rail-tied
+   bulks kept the old block honest enough to pass every prior transient
+   gate, which is why it survived. L72 now stamps the charge companion
+   from the condensed reactive OSDI Jacobian (`condense_last_react`,
+   verified == finite differences of (qd,qg,qs,qb) with C[g,g]==cgg),
+   all four terminal rows with their own BE/Trap/BDF-2 histories; the
+   stamped transient system matches finite differences to ~1e-6. The NN
+   3×3 block is untouched. **Follow-up recorded:** the AC solver still
+   expands the 5-cap view for L72 — same floating-bulk hazard in
+   principle; AC gates are green today.
+10. **Oscillation-average acceptance gated on KCL for L72 too**: the
+   Phase 6b residual gate was NN-scoped, so a pure-L72 circuit could
+   accept and COMMIT a quiet-but-garbage averaged point, poisoning every
+   later warm start through the 1/dt companion (this is what first wedged
+   the charge-pump march). Both DC and transient acceptance paths now
+   probe the residual whenever the circuit has NN or full-stamp devices.
+11. **Fail-fast out of stagnant transient NR** (perf, failure-path only):
+   a step that is going to fail used to burn all 200 iterations before
+   the march cut dt — hundreds of full NR runs per switching edge. NR now
+   bails to the dt-cut when a far-from-converged iterate makes no 2×
+   progress across 30 iterations (absolute 1e-2 V floor keeps this
+   strictly above the oscillation-average acceptance ceiling).
 
 **Harness (`pycircuitsim_bench`)**: `_op_worst` read a key `op_delta` never
 carried, silently disabling the recovery path (the narrow segment also ran
@@ -92,17 +125,23 @@ only commits successful pieces); a wide gmin ladder alone (converged=True at
 −666 V — that was the sticky-flag bug, not a cure); retreat-only limiting
 without junction Jacobians (NR limit-cycles no matter how small the step).
 
-**Verification (this hardware, CPU-pinned)**: verify_bsimcmg_op 3/3, dc 2/2,
+**Verification (this hardware, CPU-pinned; transient gates re-run after
+EVERY solver change, three times total)**: verify_bsimcmg_op 3/3, dc 2/2,
 dc_comprehensive 81/81, **multi_tech_dc 53/53 — the pre-V7.5 known-ERROR
 `TSMC5_lvt_inv_l_24nm` pure-L72 NR divergence is FIXED**, tran 1/1,
 tran_comprehensive 45/45, multi_tech_tran 86/86, verify_ac 2/2 (after the
 fallback learned to never undercut the primary result — the CS-amp OP is now
 honestly converged instead of sticky-masked), subckt 11/11, cmg_multiplier
 6/6, complex ring_osc 5/5 / sram_snm 5/5 / switchcap 5/5, sweep canaries
-PASS, verify_nn_dc_tran 30/30 (NN untouched). complex_opamp{,_ac} 0/5 on
+PASS, verify_nn_dc_tran 30/30, verify_nn_ac 10/10,
+verify_nn_lifted_source_dc 15/15 (NN untouched; the lifted-source canary
+also revalidates the source-referenced frame). complex_opamp{,_ac} 0/5 on
 this hardware **pre-exists at the branch base** (NN-side, reproduced with
 base-commit solver files bit-for-bit) and is out of this sprint's scope.
-`PYCIRCUITSIM_NR_TRACE=1` added (DC tail + gmin summary + transient NR).
+Diagnostics added: `PYCIRCUITSIM_NR_TRACE=1` (DC tail + gmin summary +
+transient NR), and harness-side `PYCIRCUITSIM_BENCH_TRAN_METHOD` /
+`PYCIRCUITSIM_BENCH_TRAN_SUBSTEPS` for integrator comparisons on one deck
+(the charge-pump spike bracketing above came from these).
 
 ---
 
