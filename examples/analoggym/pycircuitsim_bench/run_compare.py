@@ -1090,6 +1090,133 @@ def compare_translated(td: TranslatedDeck, work: Path,
     return out
 
 
+#: Recovery replaces the monolithic pass only when the primary sweep's worst
+#: node error exceeds this fraction of the supply rail.  For scale, on
+#: Alfio_RAFFC_Pin_3 (0.65 V) the qualified 25 C solve is off by 114 uV
+#: (0.02 %) while the diverged monolithic sweep is off by 9.75 V (1500 %), so
+#: any threshold in between separates them; 2 % is one part in fifty of the rail.
+RECOVERY_OP_FRACTION: float = 0.02
+
+#: What ``finalize.py``'s narrow third pass exists to recover: the 25 C readings,
+#: which need only a two-point window and so survive when the full range does not.
+RECOVERY_NARROW_KEYS: Tuple[str, ...] = ("power", "vos25", "vout25", "ivdd25")
+
+
+def _op_worst(row: Dict[str, Any]) -> Optional[float]:
+    """The worst node-voltage error a scored row recorded, if it recorded one."""
+    delta = row.get("op_delta")
+    if not isinstance(delta, dict):
+        return None
+    worst = delta.get("worst")
+    return float(worst) if isinstance(worst, (int, float)) else None
+
+
+def _needs_recovery(row: Dict[str, Any], td: TranslatedDeck) -> Optional[str]:
+    """Why the monolithic PyCircuitSim pass is unusable, or None when it is fine.
+
+    Deliberately gated on the operating-point delta rather than on the metrics:
+    the diverged monolithic sweep DOES produce a full set of plausible-looking
+    numbers (a ``tc`` of 0.014 against NGSPICE's 0.0044), so metric presence
+    cannot tell a converged sweep from a diverged one.  The node voltages can.
+    """
+    if row["pycircuitsim"]["error"]:
+        return f"monolithic pass failed: {row['pycircuitsim']['error']}"
+    worst = _op_worst(row)
+    if worst is None:
+        return None
+    supply = float(td.params.get("supply_voltage") or 0.0) or 1.0
+    if worst > RECOVERY_OP_FRACTION * supply:
+        return (f"monolithic pass operating point off by {worst:.4g} V, over "
+                f"{RECOVERY_OP_FRACTION:.0%} of the {supply:g} V rail")
+    return None
+
+
+def compare_with_recovery(td: TranslatedDeck, work: Path,
+                          opts: SimOptions = SimOptions(),
+                          rtol: float = 0.02) -> Dict[str, Any]:
+    """Score a deck, falling back to the reference's outward-from-25 C recovery.
+
+    A monolithic 165 C sweep can lose its Newton branch at its first point;
+    ``finalize.py`` answers that by sweeping OUTWARD from the qualified 25 C
+    point and recombining, and :func:`translate.recovery_decks` already emits
+    those segments.  The monolithic pass runs first regardless, so a row
+    reporting a monolithic sweep really is one, and ``notes`` always records
+    which path produced the numbers.
+
+    BOTH simulators are re-scored on the segments, never just PyCircuitSim.
+    :func:`measure.recombine_temp_segments` is intentionally bug-compatible with
+    the reference -- each segment's deck carries the other segment's window,
+    which collapses to the single 25 C point -- so a recombined ``maxval`` sits
+    far below the monolithic one (measured: 0.1933828 V versus 0.3699788 V).
+    Scoring a recombined column against a monolithic column would therefore
+    report a 2x disagreement that is pure bookkeeping. Matching the two columns
+    is what keeps a reported difference a real one.
+
+    Returns:
+        The monolithic row when it is sound or no recovery exists for this deck,
+        otherwise the recovery row, carrying the monolithic row under
+        ``recovery.monolithic`` so nothing is discarded.
+    """
+    row = compare_translated(td, work, opts, rtol=rtol)
+    segments = translate.recovery_decks(td)
+    reason = _needs_recovery(row, td)
+    if not segments or reason is None:
+        if segments:
+            row["notes"].append("monolithic pass sound; recovery not needed")
+        return row
+
+    seg_rows: Dict[str, Dict[str, Any]] = {}
+    for segment in segments:
+        label = segment.plans[0].label
+        seg_rows[label] = compare_translated(segment, work, opts, rtol=rtol)
+
+    if not {"hot", "cold"} <= set(seg_rows):
+        row["notes"].append(f"{reason}; recovery unavailable (segments missing)")
+        return row
+
+    out = dict(row)
+    out["notes"] = list(row["notes"]) + [
+        reason,
+        "metrics below are the recombined hot/cold recovery segments, for BOTH "
+        "simulators; they are NOT the monolithic sweep's",
+    ]
+    for side in ("pycircuitsim", "ngspice"):
+        recombined = measure_mod.recombine_temp_segments(
+            seg_rows["hot"][side]["metrics"], seg_rows["cold"][side]["metrics"])
+        narrow = seg_rows.get("narrow", {}).get(side, {}).get("metrics", {})
+        for key in RECOVERY_NARROW_KEYS:
+            if recombined.get(key) is None and narrow.get(key) is not None:
+                recombined[key] = narrow[key]
+        out[side] = dict(row[side])
+        out[side]["metrics"] = recombined
+        out[side]["seconds"] = row[side]["seconds"] + sum(
+            seg_rows[label][side]["seconds"] for label in seg_rows)
+        out[side]["sweeps"] = [summary for label in seg_rows
+                               for summary in seg_rows[label][side]["sweeps"]]
+        errors = [f"{label}: {seg_rows[label][side]['error']}"
+                  for label in seg_rows if seg_rows[label][side]["error"]]
+        out[side]["error"] = "; ".join(errors) if errors else None
+
+    out["recovery"] = {
+        "used": True,
+        "reason": reason,
+        "segments": {label: {"control": seg_rows[label]["control"],
+                             "op_delta": seg_rows[label]["op_delta"],
+                             "verdict": seg_rows[label]["verdict"]}
+                     for label in seg_rows},
+        "monolithic": {"pycircuitsim": row["pycircuitsim"]["metrics"],
+                       "ngspice": row["ngspice"]["metrics"],
+                       "op_delta": row["op_delta"],
+                       "verdict": row["verdict"]},
+    }
+    out["op_delta"] = seg_rows["cold"]["op_delta"]
+    out["compare"]["py_vs_ng"] = measure_mod.compare_metrics(
+        out["pycircuitsim"]["metrics"], out["ngspice"]["metrics"], rtol=rtol)
+    out["compare"]["ng_vs_ngmeas"] = {}
+    out["verdict"] = _verdict(out)
+    return out
+
+
 def _full_control(td: TranslatedDeck) -> str:
     """The deck's complete injected control block (all plans, let/echo tail)."""
     return translate.build_controls(td.category, td.design_dir)[td.deck]
@@ -1199,8 +1326,15 @@ def _verdict(out: Dict[str, Any]) -> Dict[str, Any]:
 def compare_deck(design_dir: Path, deck: str, *, tech: str, category: str,
                  work: Path, opts: SimOptions = SimOptions(),
                  control: Optional[str] = None,
-                 rtol: float = 0.02) -> Dict[str, Any]:
+                 rtol: float = 0.02,
+                 recovery: bool = True) -> Dict[str, Any]:
     """Translate one deck and score it under both simulators.
+
+    Args:
+        recovery: Allow the outward-from-25 C fallback when a monolithic
+            temperature sweep loses its Newton branch (see
+            :func:`compare_with_recovery`).  Only the amplifier ``tb_dc.cir``
+            bench has such a fallback; every other deck is unaffected.
 
     Raises:
         TranslateError: If the deck cannot be represented faithfully -- never
@@ -1208,6 +1342,8 @@ def compare_deck(design_dir: Path, deck: str, *, tech: str, category: str,
     """
     td = translate.translate_deck(design_dir, deck, tech=tech,
                                   category=category, control=control)
+    if recovery:
+        return compare_with_recovery(td, work, opts, rtol=rtol)
     return compare_translated(td, work, opts, rtol=rtol)
 
 
@@ -1337,6 +1473,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         help="NGSPICE timeout in seconds (default: %(default)s)")
     parser.add_argument("--rtol", type=float, default=0.02,
                         help="metric agreement tolerance (default: %(default)s)")
+    parser.add_argument("--no-recovery", action="store_true",
+                        help="do not fall back to the outward-from-25 C "
+                             "segments when a monolithic temperature sweep "
+                             "loses its Newton branch (amplifier tb_dc only)")
     args = parser.parse_args(argv)
 
     out_dir = args.out or (args.root / "pycircuitsim_bench_results")
@@ -1361,7 +1501,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             try:
                 row = compare_deck(design_dir, deck, tech=args.tech.lower(),
                                    category=args.category, work=work,
-                                   opts=opts, rtol=args.rtol)
+                                   opts=opts, rtol=args.rtol,
+                                   recovery=not args.no_recovery)
             except Exception as exc:                # noqa: BLE001 -- reported
                 failures += 1
                 print(f"\n=== {args.tech}/{args.category}/{design_dir.name}/"

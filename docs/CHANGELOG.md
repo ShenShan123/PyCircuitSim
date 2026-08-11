@@ -8,6 +8,136 @@ pruned; the full original text lives in git history.)
 
 ---
 
+## V7.5.0 — AnalogGym in-repo: 190 analog designs scored against NGSPICE (branch `feat/analoggym-migration`, 2026-08-10)
+
+**AnalogGym's five TSMC design trees are now `examples/analoggym/`.** 190
+designs (amplifier, ldo, sensing_front_end, voltage_reference, charge_pump)
+across TSMC5/6/7/12/16 with their 880 testbench decks, the shared `tools/`
+harness, and the NGSPICE reference numbers the comparison is scored against
+(`result.json` per design, `results/summary.csv`, `RESULTS_TSMC.md`). Tree names
+stay `designs_tsmc{N}` because `tools/pycmg_lib.py` derives the technology from
+the tree name; only `PYCMG_DIR`'s default changed, to the in-repo vendored
+PyCMG. Excluded: `work/` (891 MB of sizing scratch), run logs, `.sweep` dumps.
+The per-design `tsmc{N}_models.spice` and `models/cache/*.l` are PDK-derived and
+**gitignored** (318 MB on disk, regenerable via `resolve_modelcard`); 1627 files
+tracked. Migration verified by re-running tsmc5 `Alfio_RAFFC_Pin_3/tb_gain.cir`
+under NGSPICE in its new location: dcgain 75.87195 dB and phase 55.3409 deg
+reproduce the shipped reference exactly.
+
+**These decks needed real capability work — none of the 880 parsed before.**
+They are ngspice OSDI decks: geometry lives in per-geometry `.model` cards (the
+OSDI binding rejects instance parameters), devices carry the `N` prefix and an
+`m=` multiplier, values are `.param` expressions, metrics are `.meas`
+statements, and the analysis command is not in the deck at all — `finalize.py`
+injects it. Counts in one tree: 1029 `.meas`, 567 `.param`, 176 `.nodeset`,
+648 `N` devices, 29 inductors.
+
+**`examples/analoggym/pycircuitsim_bench/`** — the comparison harness, split so
+one measurement semantics scores both simulators:
+`__init__.py` (frozen contract + the CONTROLS tables), `translate.py`
+(deck → netlist + AnalysisPlan; **all 880 decks translate, 0 failures**, audited
+over 19405 emitted cards), `measure.py` (**all 5145 `.meas` cards in all five
+trees parse**, 20 distinct forms; agrees with ngspice's own `.meas` to ~1e-8 and
+reproduces the scored artifacts to ~1e-9), `run_compare.py` (drives both
+simulators, writes per-deck JSON).
+
+**Core support (`pycircuitsim/`):** an `Inductor` with its MNA branch row
+stamped in DC (short), AC (jwL) and transient — the decks' 1T L/C feedback break
+needs it; the BSIM-CMG `m=` multiplier, scaling the residual and both Jacobians
+while the eval cache stays raw so the NR Jacobian remains the derivative of the
+stamped residual; `N`-prefix dispatch (previously dropped **silently** at top
+level — a correctness hazard, not just a gap); and `dv_limit`, a per-iteration
+per-node trust-region cap on `DCSolver`/`TransientSolver`, **default `None` so
+existing behaviour is bit-identical**. Also fixed a **pre-existing bug**:
+`_solve_newton` restored the source-stepping ramp only on the returning path, so
+any raise left every `VoltageSource` at 1/N of nominal and the next solve ramped
+down again from there.
+
+**PyCMG (bit-identical, all three to make 880 decks tractable):** `apply_param`
+via a per-descriptor name→index map instead of a linear scan (was ~2.05 M string
+compares per device, 808.8 ms/device); `get_shared_model` memoising Models per
+(card, name, geometry), geometry in the key because L/NFIN/TFIN are MODEL-kind
+params in this OSDI build; `Instance.set_temperature` rebinding in place at
+0.255 ms/device versus 808.8 ms to rebuild.
+
+**Verdict per family** (tsmc5 pilots, PyCircuitSim vs NGSPICE 45.2 on the same
+OSDI model, `engine N/N` control passing on every deck so no row is a
+measurement artifact):
+
+| family | deck | result | worst OP error | py / ng seconds |
+| --- | --- | --- | --- | --- |
+| amplifier AC | `tb_gain` | **8/8 agree** (dcgain 3.9e-05) | 110 uV | 2.2 / 0.3 |
+| ldo dc source | `tb_load` | **11/11 agree** (1.9e-05) | 148 uV | 681 / 0.3 |
+| ldo AC | `tb_loop_max` | **8/8 agree** | 91 uV | 8.1 / 0.3 |
+| amplifier tran | `tb_tran` | 2/6, 119/221 steps | 111 uV | 105 / 1.1 |
+| sensor dc temp | `ptat_1/tb_dc` | 5/13 | 76 mV | 74 / 0.1 |
+| amplifier dc temp | `tb_dc` | 0/15 monolithic | 9.75 V | 1217 / 0.7 |
+| charge pump tran | `tb_tran` | dies at step 1 | 161 mV | — / 30.7 |
+
+The AC path is essentially exact: solved about NGSPICE's own operating point it
+returns dcgain within 0.004 dB. **Every failure above is the DC operating
+point**, and the two causes are distinct:
+
+- **Subthreshold current floor (blocks sensing_front_end + voltage_reference,
+  75 decks).** At NGSPICE's own operating point PyCircuitSim's LEVEL=72 returns
+  `id = 0.0 A` **exactly** at Vgs = 55.3 mV, and 2.16 nA at 61.9 mV. A
+  weak-inversion stack whose devices all read zero has no operating point.
+  Above ~50 C the same PTAT deck agrees to 2e-05. This is m-independent (m=1 and
+  m=4 both return hard zero; above 0.08 V they agree to 0.00 % and scale exactly
+  4x), so it is **not** the new multiplier — it is an OSDI/PyCMG evaluation gap
+  below ~60 mV Vgs. `verify_cmg_multiplier.py` is 5/6 for exactly this reason
+  and the failure is left visible rather than tolerance-hidden.
+- **Newton start, not the model (amplifier `tb_dc`, 85 decks).** That bench's
+  FIRST point is 125 C and it diverges there, after which the continuation
+  carries garbage down the sweep. The identical solve at 25 C is sound: op delta
+  114 uV, `vout6` 0.193383 versus 0.193383. `compare_with_recovery` ports
+  `finalize.py`'s outward-from-25 C recovery to address this — **implemented and
+  import-verified, but its end-to-end numbers are NOT yet measured**, so the
+  0/15 row above still stands as the recorded result for this family. It
+  re-scores **both**
+  simulators on the segments, because `recombine_temp_segments` is deliberately
+  bug-compatible with the reference (each segment's deck carries the other's
+  window, collapsing to the single 25 C point), so a recombined `maxval` sits at
+  0.1933828 V against the monolithic 0.3699788 V and scoring recombined against
+  monolithic would report a 2x difference that is pure bookkeeping.
+- **Transients need per-terminal limiting (charge_pump 5 decks dead, ~110
+  partial).** `dv_limit` bounds the Newton STEP, not the terminal voltage, so
+  capped iterations still walk a gate to -2.96 V and a drain to +3.94 V on a
+  0.65 V rail and OSDI rejects it. Dies at step 1 at every dt tried (2 ps, 20 ps,
+  200 ps, 1 ns). The fix is SPICE-style `fetlim`/`limvds` inside
+  `models/mosfet_cmg.py`, which does not exist — CLAUDE.md lists "voltage
+  clamping Vgs+/-5V, Vds+/-10V" as a standard the LEVEL=72 path never
+  implemented. Must be damped limiting, not a hard clamp: a clamp zeroes the
+  derivative and stalls NR.
+
+**Dead end, measured and reverted (do not retry):** extending the
+source-stepping homotopy to ramp CURRENT sources as well does **not** fix the
+divergence — same OSDI raise at g = -25261 V, i.e. 1/20 of the original step.
+The blow-up is the missing terminal limiting, not the homotopy's coverage.
+
+**Also measured:** PyCircuitSim's own RELTOL 1e-4 / VNTOL 1e-7 is 10x tighter
+than the NGSPICE it is scored against; the harness defaults to NGSPICE's
+1e-3/1e-6 (a deck's `.options` still wins), which took the LDO sweep from
+0/101 to 101/101 flag-converged with identical values. And `ok` is reported, not
+obeyed: that same sweep matched NGSPICE to 2e-05 while
+`_last_solve_converged` rejected all 101 points, so `op_delta` is the verdict.
+
+Gates after every change, CPU-pinned: `verify_subckt.py` 11/11,
+`verify_bsimcmg_dc.py` 2/2, `verify_ac.py` 2/2, `verify_bsimcmg_tran.py` 1/1
+(NRMSE 0.19 %), `verify_nn_ac.py` 10/10 (checkpoints symlinked in for the run;
+they are gitignored and absent from a fresh worktree).
+
+**Campaign cost, from measured rates:** 795 scored decks — 445 AC, 160 dc_temp,
+75 dc_source, 115 tran. AC ~0.7 h, sfe/vref dc_temp ~1.7 h, ldo dc_source ~12 h,
+amplifier tran ~90 h at the deck's own dt (extrapolated, not measured at full
+dt), amplifier dc_temp ~740 h as it stands, projected ~2 h if the recovery path
+restores the 25 C pass's 3.1 s/point rate (unverified — see above).
+Roughly 110 CPU-hours total, parallelisable per deck. What it scores today:
+~520 of 795 decks producing trustworthy metrics, with the three causes above
+naming the other 275.
+
+---
+
 ## V7.4.1 — housekeeping: PyCMG vendored in-repo, docs compacted, stale plans pruned (branch `v720-gpu-scaling`, 2026-08-10)
 
 **PyCMG is no longer a git submodule.** The gitlink, `.gitmodules` and the
