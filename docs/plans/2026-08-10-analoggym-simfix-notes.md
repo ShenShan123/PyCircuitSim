@@ -184,10 +184,24 @@ CLAUDE.md, README. Worktree checkpoints SYMLINKED from main repo (gitignored).
   = 10ps switching-spike extrema unsampled on a 40ps grid (ng up_imin is a
   -4uA reversal spike). Re-runs green: tran_comp 45/45, multi_tech_tran
   86/86, amp tb_tran 11/11, switchcap 5/5, sram 5/5.
-- IN FLIGHT: cp stride-4 ($SCR/cp_s4.log) and stride-1 ($SCR/cp_s1.log) for
-  the spike metrics. Then: RESULTS cp row + CHANGELOG item 9 + final summary.
+- Spike-metric sweep (integration-method sensitivity of the +-4uA/10ps
+  up_imin reversal spike; engine control 6/6 everywhere):
+  trap s20 4/6 (spike unsampled) | trap s4 2/6 (rings) | trap s1 2/6
+  (rings 2x: up_imin -8.4uA vs -4.03) | trap+LTE(8) s4 3/6 (-1.27uA) |
+  **gear2 s4 5/6 (BEST — iavg 8e-6, only up_imin damped away, +3.2uA)**.
+  Verdict: solver correct; fixed output grid vs NGSPICE LTE timestep
+  control is the remaining fidelity axis. Reported honestly in RESULTS.
 - FOLLOW-UP (not this sprint): AC solver still uses the 5-cap 3x3 expansion
   for L72 — same floating-bulk hazard in principle; AC gates green today.
+  Second follow-up: LTE-driven local refinement on OUTPUT steps (not just
+  NR-failure marching) would close the spike-amplitude axis.
+
+## SPRINT COMPLETE (2026-08-11 ~11:00)
+All 6 tasks done. Final commits: 544e9f4, 718b1b0, c96dd09, 48df5e9,
+2723cc5, 5c18101, 97e8a42, e684bd9, 4e42971, 64d5bf7 (+ final docs commit).
+Monitor bbi2mpkui stopped. Pilot: 6 decks fully agreeing + charge pump 5/6
+with the integration-sensitivity footnote. All repo gates green except the
+pre-existing (base-reproduced) NN opamp/opamp_ac 0/5 — out of scope.
 - [ ] Task 5: re-run 7 pilot decks + repo gates (incl. verify_bsimcmg_tran, ac,
       subckt, complex x4; L72 numbers all perturbed by tol+src-ref changes —
       expected within gate tolerances, sha256 sweep baselines may need rebase)

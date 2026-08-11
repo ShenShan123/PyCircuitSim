@@ -56,8 +56,9 @@ differently and the transient rails it immediately; the six scored metrics are
 the verdict. The sixth metric (`up_imin`) is a ±4 µA, ~10 ps current-reversal
 spike whose amplitude is integration-method sensitive: trapezoidal at the
 deck-native 2 ps grid catches the reversal but over-rings it 2×
-(−8.4 µA), BDF-2 damps it away (+3.2 µA), NGSPICE's LTE-adaptive trapezoidal
-reads −4.03 µA. The four averages/extrema that define pump function
+(−8.4 µA), BDF-2 damps it away (+3.2 µA), trapezoidal with 8× LTE
+sub-stepping lands between (−1.27 µA), and NGSPICE's LTE-adaptive
+trapezoidal reads −4.03 µA. The four averages/extrema that define pump function
 (`lo/up_iavg`, `lo_imin`, `up_imax`) agree to 8e-6…2e-2 under BDF-2. Fixed
 output grids versus NGSPICE's truncation-error timestep control is the one
 remaining fidelity axis this deck exposes.
