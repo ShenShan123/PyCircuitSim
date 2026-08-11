@@ -484,6 +484,29 @@ class Instance:
             caps["cdd"] = float(c_condensed[d, d])
         return caps
 
+    def condense_last_jacobian(self) -> np.ndarray:
+        """Condense the resistive Jacobian ALREADY LOADED by ``eval_dc``.
+
+        V7.5.0 — the full-terminal Newton stamp needs dI/dV for all four
+        terminals at every circuit-NR iteration; re-running
+        ``get_jacobian_matrix`` would repeat the whole OSDI evaluation.
+        This condenses the buffers the eval_dc call just filled. Same
+        sign convention as ``get_jacobian_matrix`` (dI/dV of the currents
+        eval_dc reports).
+        """
+        g_full = self._build_full_jacobian(self._sim, self._sim.jacobian_resist)
+        ext = self._sim.terminal_indices
+        intn = self._sim.internal_indices
+        g_condensed = self._schur_condense(g_full, ext, intn)
+        if g_condensed is None:
+            ne = len(ext)
+            g_ee = np.zeros((ne, ne))
+            for r in range(ne):
+                for c in range(ne):
+                    g_ee[r, c] = g_full[ext[r], ext[c]]
+            return -g_ee
+        return -g_condensed
+
     def get_jacobian_matrix(self, nodes: Dict[str, float]) -> np.ndarray:
         """Extract the condensed 4x4 resistive Jacobian matrix.
 
@@ -574,6 +597,19 @@ class Instance:
         _dc_tol = float(os.environ.get("NN_DC_SOLVE_TOL", "1e-12"))
         converged = self._inst.solve_internal_nodes(self._model.model, self._sim, 200, _dc_tol)
         if not converged:
+            # V7.5.0 — the internal state is a RATCHET: a diverging solve
+            # leaves the internal nodes hundreds of clamped 0.2 V steps
+            # into garbage, and every later eval then starts from there
+            # (the warm start that normally helps becomes poison). Retry
+            # once from the cold state a fresh Instance would have; if
+            # even that fails, still leave the cold state behind so THIS
+            # failure cannot cascade into the next evaluation.
+            for idx in self._sim.internal_indices:
+                self._sim.solve[idx] = 0.0
+            converged = self._inst.solve_internal_nodes(self._model.model, self._sim, 200, _dc_tol)
+        if not converged:
+            for idx in self._sim.internal_indices:
+                self._sim.solve[idx] = 0.0
             raise RuntimeError(
                 "Internal node NR failed to converge at "
                 + ", ".join(f"{k}={nodes.get(k, 0.0):.4f}" for k in ("d", "g", "s", "e"))

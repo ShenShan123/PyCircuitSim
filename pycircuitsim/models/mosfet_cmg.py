@@ -16,6 +16,7 @@ Terminal order: [drain, gate, source, bulk]
 """
 
 from typing import List, Dict, Tuple, Optional
+import math
 import sys
 from pathlib import Path
 
@@ -238,6 +239,14 @@ class MOSFET_CMG(Component):
                 f"{exc} [device {self.name}, L={self.L:g}, "
                 f"NFIN={self.NFIN:g}, m={self.m:g}]") from exc
 
+        # V7.5.0 — condense the just-loaded resistive Jacobian for the
+        # full-terminal Newton stamp. The channel-only gm/gds/gmb opvars
+        # miss the body-junction conductances entirely, which at high
+        # temperature carry the drain current (measured at 125 C:
+        # id = +1.8 mA against gds = 4.3e-13 S) — a Jacobian blind to
+        # them locks circuit NR into a limit cycle.
+        result["jac4"] = self._pycmg_instance.condense_last_jacobian()
+
         # Update cache
         self._eval_cache = result
         self._cache_voltages = v_tuple
@@ -311,6 +320,9 @@ class MOSFET_CMG(Component):
     #: Threshold estimate for the fetlim shape (normalized frame). Only
     #: shapes step sizes — the converged answer never depends on it.
     _NR_LIM_VTO: float = 0.25
+    #: Critical body-junction voltage for pnjlim. Only shapes step sizes;
+    #: identity for converged (small-step) iterations.
+    _NR_LIM_VCRIT: float = 0.6
 
     @staticmethod
     def _fetlim(vnew: float, vold: float, vto: float) -> float:
@@ -350,6 +362,23 @@ class MOSFET_CMG(Component):
                         vnew = vold + vtstlo
                 else:
                     vnew = vtemp
+        return vnew
+
+    @staticmethod
+    def _pnjlim(vnew: float, vold: float, vt: float, vcrit: float) -> float:
+        """SPICE3 DEVpnjlim: logarithmic limiting of a forward junction step.
+
+        Beyond vcrit a junction current is exponential in the bias, so a
+        volt-scale Newton step means amp-scale currents (measured: a PMOS
+        drain-body junction at +2.5 V / 125 C evaluates to 542 A). Steps
+        past vcrit are compressed to thermal-voltage log increments.
+        """
+        if vnew > vcrit and abs(vnew - vold) > vt + vt:
+            if vold > 0.0:
+                arg = 1.0 + (vnew - vold) / vt
+                vnew = vold + vt * math.log(arg) if arg > 0.0 else vcrit
+            else:
+                vnew = vt * math.log(vnew / vt)
         return vnew
 
     @staticmethod
@@ -395,9 +424,13 @@ class MOSFET_CMG(Component):
         Returns the new terminal mapping, or None when there is no anchor
         (first evaluation of a solve) or no meaningful room left.
         """
-        anchor = getattr(self, "_v_lim_anchor", None)
-        if anchor is None or self._v_lim_prev is None:
+        if self._v_lim_prev is None:
             return None
+        anchor = getattr(self, "_v_lim_anchor", None)
+        if anchor is None:
+            # First evaluation of a solve (anchors were just reset):
+            # retreat toward zero bias, which always evaluates.
+            anchor = (0.0, 0.0, 0.0)
         cur = self._v_lim_prev
         span = max(abs(c - a) for c, a in zip(cur, anchor))
         if span < 1e-6:
@@ -462,6 +495,19 @@ class MOSFET_CMG(Component):
             dbs = raw["bs"] - old_map["bs"]
             lim["bs"] = (old_map["bs"] + (1.0 if dbs > 0.0 else -1.0)
                          if abs(dbs) > 1.0 else raw["bs"])
+            # Junction limiting (V7.5.0): the body diodes sit on the
+            # (b,s) and (b,d) pairs, both forward at POSITIVE normalized
+            # bias for either polarity. The b-d limit is honoured by
+            # adjusting ds while keeping bs, mirroring SPICE's
+            # vds = vbs - vbd reconstruction.
+            vt_th = 8.617333262e-5 * self.temperature
+            vcrit = self._NR_LIM_VCRIT
+            lim["bs"] = self._pnjlim(lim["bs"], old_map["bs"], vt_th, vcrit)
+            xbd_new = lim["bs"] - lim["ds"]
+            xbd_old = old_map["bs"] - old_map["ds"]
+            xbd_lim = self._pnjlim(xbd_new, xbd_old, vt_th, vcrit)
+            if xbd_lim != xbd_new:
+                lim["ds"] = lim["bs"] - xbd_lim
             for key in ("gs", "ds", "bs"):
                 lim[key] = min(max(lim[key], -win), win)
             # Aliased terminals (e.g. diode-connected gate==drain) must
@@ -521,12 +567,32 @@ class MOSFET_CMG(Component):
         g_m = result.get("gm", 0.0)
         g_mb = result.get("gmb", 0.0)
 
-        # IMPORTANT: gds should always be positive (output conductance)
-        # Negative gds (negative resistance) causes divergence
-        # gm and gmb are signed transconductances, preserve their signs
-        g_ds = abs(g_ds)
-
+        # Critical Design Rule 4: never abs(gds) — flipping a legitimately
+        # negative gds to large-positive biases the Jacobian away from the
+        # stamped current's true derivative, and NR settles into a limit
+        # cycle around a residual it can never cancel (measured on the
+        # 125 C amplifier start: a permanent 1.4 mA KCL violation with
+        # vout bouncing +-30 mV forever). The gmin FLOOR lives at the
+        # stamp (`max(g_ds, gmin)`), which handles the negative case.
         return (g_ds * self.m, g_m * self.m, g_mb * self.m)
+
+    def get_terminal_stamp(self, voltages: Dict[str, float]):
+        """Full 4-terminal Newton companion: currents + Jacobian (x m).
+
+        Returns ``(i_out, g4)`` where ``i_out[t]`` is the current LEAVING
+        node t into the device (A) and ``g4[t, j] = d i_out[t] / d V_j``
+        (S), terminal order [d, g, s, b]. PyCMG reports currents in the
+        opposite orientation and ``jac4`` is their derivative, so both
+        are negated here; the [d,:] row of ``g4`` reproduces the classic
+        (gds, gm, gmb) opvars exactly when junctions are off, and keeps
+        the junction/gate-leakage terms the opvars never carried.
+        """
+        result = self._eval_dc(voltages)
+        m = self.m
+        i_out = [-result["id"] * m, -result["ig"] * m,
+                 -result["is"] * m, -result["ie"] * m]
+        g4 = result["jac4"] * (-m)
+        return i_out, g4
 
     def get_capacitances(self, voltages: Dict[str, float]) -> Dict[str, float]:
         """Get terminal capacitances for AC analysis (x instance multiplier)."""

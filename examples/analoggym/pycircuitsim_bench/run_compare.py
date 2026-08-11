@@ -107,7 +107,7 @@ import json
 import math
 import sys
 import time
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
@@ -1102,12 +1102,27 @@ RECOVERY_OP_FRACTION: float = 0.02
 RECOVERY_NARROW_KEYS: Tuple[str, ...] = ("power", "vos25", "vout25", "ivdd25")
 
 
+class _OpDeltaShape(RuntimeError):
+    """``op_delta`` did not carry the key this module gates recovery on."""
+
+
 def _op_worst(row: Dict[str, Any]) -> Optional[float]:
-    """The worst node-voltage error a scored row recorded, if it recorded one."""
+    """The worst node-voltage error a scored row recorded, if it recorded one.
+
+    ``worst_abs`` is the key both producers write (:func:`op_delta` and
+    :func:`sweep_delta`).  An ``op_delta`` that is present but carries no
+    recognised key RAISES rather than returning None: reading the wrong key
+    silently reports "no error measured", which reads as "the pass was fine" and
+    quietly disables recovery on exactly the decks that need it.  That is not a
+    hypothetical -- it is the bug this function shipped with.
+    """
     delta = row.get("op_delta")
-    if not isinstance(delta, dict):
-        return None
-    worst = delta.get("worst")
+    if not isinstance(delta, dict) or "error" in delta:
+        return None                      # no comparison was possible at all
+    if "worst_abs" not in delta:
+        raise _OpDeltaShape(
+            f"op_delta has no 'worst_abs'; keys are {sorted(delta)}")
+    worst = delta["worst_abs"]
     return float(worst) if isinstance(worst, (int, float)) else None
 
 
@@ -1168,7 +1183,11 @@ def compare_with_recovery(td: TranslatedDeck, work: Path,
     seg_rows: Dict[str, Dict[str, Any]] = {}
     for segment in segments:
         label = segment.plans[0].label
-        seg_rows[label] = compare_translated(segment, work, opts, rtol=rtol)
+        # The narrow pass is three points (30/25/20 C) and exists solely to
+        # recover the 25 C readings; a stride throws that point away and with it
+        # the whole purpose of the segment, so it always runs unstrided.
+        seg_opts = replace(opts, stride=1) if label == "narrow" else opts
+        seg_rows[label] = compare_translated(segment, work, seg_opts, rtol=rtol)
 
     if not {"hot", "cold"} <= set(seg_rows):
         row["notes"].append(f"{reason}; recovery unavailable (segments missing)")

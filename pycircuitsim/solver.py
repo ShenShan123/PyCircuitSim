@@ -433,6 +433,41 @@ def _stamp_mosfet_dc(
                     raise
                 voltages = retreat
 
+    # --- Full 4-terminal stamp (V7.5.0, LEVEL=72) ---
+    # The classic 3-conductance companion below linearizes only the
+    # channel: its Jacobian comes from the gm/gds/gmb opvars and its
+    # current routes drain-to-source. BSIM-CMG terminal currents also
+    # carry body-junction and gate-leakage components — dominant at high
+    # temperature — that the opvars know nothing about, so circuit NR
+    # cycles around a residual its Jacobian cannot see. Devices exposing
+    # get_terminal_stamp() stamp all four KCL rows from the condensed
+    # OSDI Jacobian instead, exactly as NGSPICE loads the model.
+    full_stamp = getattr(mosfet, "get_terminal_stamp", None)
+    if full_stamp is not None:
+        i_out, g4 = full_stamp(voltages)
+        idx = [node_map.get(n) if n not in ("0", "GND") else None
+               for n in mosfet.nodes]
+        v_eval = [voltages.get(n, 0.0) for n in mosfet.nodes]
+        # SPICE GMIN across d-s and both body junctions (d-b, s-b):
+        # keeps every terminal row invertible when the device is off.
+        for a, b in ((0, 2), (0, 3), (2, 3)):
+            g4[a, a] += gmin
+            g4[b, b] += gmin
+            g4[a, b] -= gmin
+            g4[b, a] -= gmin
+        for t in range(4):
+            row = idx[t]
+            if row is None:
+                continue
+            i_eq = i_out[t]
+            for j in range(4):
+                i_eq -= g4[t, j] * v_eval[j]
+                col = idx[j]
+                if col is not None:
+                    mna_matrix[row, col] += g4[t, j]
+            rhs[row] -= i_eq
+        return
+
     # Get conductances (3-tuple: g_ds, g_m, g_mb)
     g_ds, g_m, g_mb = mosfet.get_conductance(voltages)
 
@@ -1084,12 +1119,26 @@ class DCSolver:
         # cells that need it (TSMC5 BSIMAR-M VTC trip-point overflow)
         # while halving the slow-path cost.
         if self.use_gmin_stepping:
-            gmin_schedule = [1e-8, self.gmin]
+            if _has_nn_device(self.circuit):
+                # V5 Phase A 2-level schedule (NN VTC trip-point path) —
+                # unchanged, so the NN retry cost stays what was measured.
+                gmin_schedule = [1e-8, self.gmin]
+            else:
+                # V7.5.0 — BSIM-CMG hard starts (hot-temperature operating
+                # points with forward body junctions) need a real homotopy:
+                # a large node shunt nearly linearizes the first solve and
+                # each decade walks the solution down by continuation, as
+                # NGSPICE's dynamic gmin stepping does. The 2-level
+                # schedule jumped from a solved 1e-8 world straight to
+                # 1e-12 and lost the 125 C amplifier start.
+                gmin_schedule = [1e-2, 1e-3, 1e-4, 1e-5, 1e-6, 1e-7,
+                                 1e-8, 1e-9, 1e-10, 1e-11, self.gmin]
         else:
             gmin_schedule = [self.gmin]
 
         voltages: Dict[str, float] = {}
         final_converged = False
+        _gmin_last_good: Optional[Dict[str, float]] = None
 
         for gmin_level in gmin_schedule:
             # Source stepping: gradually increase voltage source values
@@ -1297,6 +1346,15 @@ class DCSolver:
                         float(np.max(np.abs(sol_head - v_arr)))
                         if n_nodes else 0.0)
 
+                    if _NR_TRACE and n_nodes and iteration % 50 == 0 or iteration >= self.max_iterations // num_steps - 6:
+                        worst_i = int(np.argmax(np.abs(sol_head - v_arr)))
+                        limited = [c.name for c in self.circuit.components
+                                   if getattr(c, "_nr_limited", False)]
+                        print(f"[DCNR g={gmin_level:.0e}] it={iteration} "
+                              f"node={nodes[worst_i]} v {v_arr[worst_i]:+.4f}->"
+                              f"{sol_head[worst_i]:+.4f} dmax={max_delta:.3e} "
+                              f"resid={iter_residual:.3e} lim={limited[:6]}")
+
                     # Track voltage history for oscillation detection
                     voltage_snapshot = dict(zip(nodes, sol_head))
                     voltage_history.append(voltage_snapshot)
@@ -1476,12 +1534,27 @@ class DCSolver:
                             voltages["GND"] = 0.0
                             nr_converged = True
 
-                if nr_converged:
-                    final_converged = True
+                # V7.5.0 — the verdict of a homotopy is its LAST level at
+                # the true GMIN, full sources. The old sticky OR let an
+                # intermediate gmin level mark the whole solve converged
+                # even when the final level then diverged (observed on the
+                # 125 C amplifier: flag True with nodes at -666 V).
+                if step == num_steps - 1:
+                    final_converged = nr_converged
 
-            # GMIN continuation: use converged solution as initial guess for next level
+            # GMIN continuation: use converged solution as initial guess
+            # for the next level; a FAILED level restarts the next one
+            # from the last good homotopy point instead of its own wreck.
             if final_converged:
                 self.initial_guess = voltages.copy()
+                _gmin_last_good = voltages.copy()
+            elif _gmin_last_good is not None:
+                voltages = _gmin_last_good.copy()
+            if _NR_TRACE:
+                vmax = max((abs(v) for k, v in voltages.items()
+                            if k not in ("0", "GND")), default=0.0)
+                print(f"[GMIN {gmin_level:.0e}] converged={final_converged} "
+                      f"max|V|={vmax:.3f}")
 
         # Restore original voltage source values
         vs_idx = 0

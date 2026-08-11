@@ -80,7 +80,36 @@ TSMC5 pilot. Three root causes recorded there:
          cap v_prev/v_prev2/_i_prev + mosfet _q_prev/_q_prev2/_v_prev_tran/
          _i_prev_gate/_i_prev_drain on failure). n=0 path byte-identical.
       5. Diagnostic added: PYCIRCUITSIM_NR_TRACE=1 traces transient NR.
-- [ ] Task 4: 125C DC start (test after task 3; limiting may fix)
+- [~] Task 4 (in progress) — full failure chain unwound:
+      a. Eval RuntimeErrors at 125C: internal-solve tol 1e-12 ABS unreachable in
+         float64 when junction currents ~1e2 A (542A forward d-b diode at 2.5V/
+         125C, pch_svt_mac l26 nfin2). FIXED: voltage-delta acceptance in
+         solve_internal_nodes (accept step<1e-9 AFTER >=1 NR step; floor safe).
+      b. Internal-state RATCHET: failed internal solves leave sim.solve garbage
+         poisoning later evals. FIXED: reset internal nodes to cold + retry once;
+         also reset before raising (pycmg/model.py eval_dc).
+      c. pnjlim added on (b,s) & (b,d) pairs (normalized frame; b-d honored by
+         adjusting ds), vcrit=0.6, vt from device T. _NR_LIM_VCRIT const.
+      d. abs(gds) removed from get_conductance (Critical Rule 4; floor at stamp).
+      e. gmin ladder widened for non-NN: [1e-2..1e-11, gmin] (NN keeps V5 2-level).
+         FIXED pre-existing sticky final_converged bug (intermediate gmin level
+         could mark whole solve converged → flag True with nodes at -666V);
+         verdict now = last level, last source step; failed level restarts from
+         last good homotopy point. NOTE: DCSolver default use_source_stepping=
+         True/20 steps DIVIDES max_iterations (500//20=25 its/step) — harness
+         passes False; probes must too.
+      f. STILL failing at gmin<=1e-3: NR limit cycle, vout6 residual pinned
+         +0.1716 A. ROOT CAUSE FOUND: stamp uses channel-only gds/gm/gmb opvars
+         but id includes JUNCTION currents at 125C (measured M.xop5.Mm8:
+         i_ds=+1.8e-3 A with gds=4.3e-13 S — d(i_junction)/dv ~ 0.07 S missing
+         from Jacobian; also junction current d->b not routed to bulk terminal).
+         NGSPICE stamps the FULL OSDI Jacobian. FIX IN PROGRESS: 4-terminal
+         stamp for L72 via PyCMG get_jacobian_matrix (condensed 4x4 dI/dV,
+         already NGSPICE-verified) + all four terminal currents (id,ig,is,ie),
+         evaluated at the limited bias; NN path keeps 3-cond stamp.
+         Sign conventions MUST be verified numerically (finite diff + inverter).
+- [x] NR trace diagnostics: PYCIRCUITSIM_NR_TRACE=1 (transient + DC tails + gmin
+      per-level summary).
 - [ ] Task 5: re-run 7 pilot decks + repo gates (incl. verify_bsimcmg_tran, ac,
       subckt, complex x4; L72 numbers all perturbed by tol+src-ref changes —
       expected within gate tolerances, sha256 sweep baselines may need rebase)

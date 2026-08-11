@@ -548,11 +548,12 @@ class OsdiInstance:
     def load_jacobian_tran(self, model: OsdiModel, sim: OsdiSimulation, alpha: float) -> None:
         self._desc.load_jacobian_tran(self._buf.ptr, model.data(), alpha)
 
-    def _nr_step(self, sim: OsdiSimulation, residual_vec: List[float]) -> bool:
+    def _nr_step(self, sim: OsdiSimulation,
+                 residual_vec: List[float]) -> Optional[float]:
         """Single Newton-Raphson step: build system, solve, clamp update.
 
-        Returns True if the linear solve succeeded and node voltages were
-        updated, False on singular Jacobian.
+        Returns the largest |clamped update| applied to an internal node,
+        or None on a singular Jacobian.
         """
         internal_pos = {idx: i for i, idx in enumerate(sim.internal_indices)}
         n = len(sim.internal_indices)
@@ -566,11 +567,14 @@ class OsdiInstance:
         try:
             delta = np.linalg.solve(a, b)
         except np.linalg.LinAlgError:
-            return False
+            return None
+        max_update = 0.0
         for i, idx in enumerate(sim.internal_indices):
             update = max(-0.2, min(0.2, float(delta[i])))
             sim.solve[idx] = sim.solve[idx] + update
-        return True
+            if abs(update) > max_update:
+                max_update = abs(update)
+        return max_update
 
     def solve_internal_nodes(self, model: OsdiModel, sim: OsdiSimulation,
                              max_iter: int, tol: float) -> bool:
@@ -587,8 +591,18 @@ class OsdiInstance:
             norm = max(abs(sim.residual_resist[idx]) for idx in sim.internal_indices)
             if norm < tol:
                 return True
-            if not self._nr_step(sim, list(sim.residual_resist)):
+            step = self._nr_step(sim, list(sim.residual_resist))
+            if step is None:
                 return False
+            # V7.5.0 — voltage-delta acceptance, checked only AFTER a step
+            # was taken (never on the warm-started entry state, which is
+            # what the residual-floor bug exploited): with amp-scale
+            # currents (forward junctions at high T) an absolute residual
+            # of 1e-12 A demands ~15 significant digits and float64
+            # cannot get there, while the Newton update collapses to
+            # sub-nV. Tiny update == converged at this current scale.
+            if step < 1e-9:
+                return True
         return False
 
     def solve_internal_nodes_tran(self, model: OsdiModel, sim: OsdiSimulation,
@@ -613,8 +627,12 @@ class OsdiInstance:
             norm = max(abs(total_residual[idx]) for idx in sim.internal_indices)
             if norm < tol:
                 return True
-            if not self._nr_step(sim, total_residual):
+            step = self._nr_step(sim, total_residual)
+            if step is None:
                 return False
+            # Voltage-delta acceptance after a taken step; see the DC twin.
+            if step < 1e-9:
+                return True
         return False
 
     def _collapse_nodes(self, connected_terminals: int) -> List[int]:
