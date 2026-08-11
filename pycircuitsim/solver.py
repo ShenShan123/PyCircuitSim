@@ -1346,7 +1346,9 @@ class DCSolver:
                         float(np.max(np.abs(sol_head - v_arr)))
                         if n_nodes else 0.0)
 
-                    if _NR_TRACE and n_nodes and iteration % 50 == 0 or iteration >= self.max_iterations // num_steps - 6:
+                    if _NR_TRACE and n_nodes and (
+                            iteration % 50 == 0
+                            or iteration >= self.max_iterations // num_steps - 6):
                         worst_i = int(np.argmax(np.abs(sol_head - v_arr)))
                         limited = [c.name for c in self.circuit.components
                                    if getattr(c, "_nr_limited", False)]
@@ -1674,12 +1676,27 @@ class DCSolver:
                 and not getattr(self, "_in_gmin_fallback", False)
                 and any(hasattr(c, "get_terminal_stamp")
                         for c in self.circuit.components)):
+            # The ladder replaces source stepping (two homotopies at once
+            # just splits the NR budget 20 ways) and needs a real
+            # iteration budget of its own. If the ladder ALSO fails, the
+            # primary iterate is returned — the fallback must never
+            # replace a near-solution with its own wreck. The convergence
+            # flag stays honest either way.
             self._in_gmin_fallback = True
+            prev_src = self.use_source_stepping
+            prev_maxit = self.max_iterations
             self.use_gmin_stepping = True
+            self.use_source_stepping = False
+            self.max_iterations = max(200, prev_maxit)
             try:
-                return self.solve(skip_header=True)
+                fallback_voltages = self.solve(skip_header=True)
+                if self._last_solve_converged:
+                    return fallback_voltages
+                return voltages
             finally:
                 self.use_gmin_stepping = False
+                self.use_source_stepping = prev_src
+                self.max_iterations = prev_maxit
                 self._in_gmin_fallback = False
 
         return voltages
