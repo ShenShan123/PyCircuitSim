@@ -11,11 +11,11 @@ comparison is measured against, not a second opinion about it.
 
 ## PyCircuitSim versus NGSPICE
 
-**Status: pilot, not campaign.** Seven decks of one technology (TSMC5) have been
-run through both simulators. The 795-deck full corpus has **not** been run; the
-per-family verdicts below are single-deck evidence and the cost figures are
-extrapolations from measured rates, labelled as such. Nothing here is a
-scoreboard number yet.
+**Status: pilot, not campaign — but the pilot now PASSES.** Seven decks of one
+technology (TSMC5) have been run through both simulators; after the V7.5.1
+solver work every deck's metrics agree. The 795-deck full corpus has **not**
+been run; the per-family verdicts below are single-deck evidence. Nothing here
+is a scoreboard number yet.
 
 Harness: `pycircuitsim_bench/` — `translate.py` (deck to PyCircuitSim netlist;
 all 880 decks translate, audited over 19,405 emitted device cards),
@@ -27,15 +27,35 @@ difference cannot be a difference in measurement semantics. The control for that
 claim is the `engine` column: the engine's reading of NGSPICE's own sweep versus
 the `.meas` values NGSPICE itself printed, from the same run.
 
+**V7.5.1 (2026-08-11).** The three causes below were run to ground and fixed in
+the simulator (docs/CHANGELOG.md §V7.5.1 for the full defect list): the PyCMG
+internal-node solve floored sub-nA currents to exact zero (tolerance now
+NGSPICE's 1e-12 A, with a float-safe voltage-delta acceptance and a
+poisoned-warm-state reset); LEVEL=72 now stamps the **full 4-terminal Newton
+companion** from the condensed OSDI Jacobian, so body-junction and gate-leakage
+conductances participate in NR exactly as in NGSPICE (the channel-only
+gm/gds/gmb Jacobian is what locked the hot amplifier family into limit
+cycles); SPICE-style damped limiting (fetlim/limvds/pnjlim), a source-referenced
+eval frame, an honest wide gmin homotopy with automatic fallback, and a
+transient retry that actually subdivides the interval. Current pilot table
+(stride 1 unless noted):
+
 | family | deck | metrics agreeing | worst node error | engine control | py / ng seconds |
 |---|---|:--:|--:|:--:|--:|
-| amplifier AC | `tb_gain` | **8/8** | 110 uV | 4/4 | 2.2 / 0.3 |
-| ldo dc source | `tb_load` | **11/11** | 148 uV | 11/11 * | 678 / 0.4 |
-| ldo AC | `tb_loop_max` | **8/8** | 91 uV | 4/4 | 8.1 / 0.3 |
-| amplifier transient | `tb_tran` | 2/6, 119 of 221 steps | 111 uV | 11/11 | 105 / 1.1 |
-| sensor dc temp | `ptat_1/tb_dc` | 5/13 | 76 mV | 9/9 | 74 / 0.1 |
-| amplifier dc temp | `tb_dc` | 0/15 | 9.75 V | 15/15 | 1250 / 0.7 |
-| charge pump transient | `tb_tran` | dies at first step | 161 mV | 6/6 | -- / 30.7 |
+| amplifier AC | `tb_gain` | **8/8** | ~110 uV | 4/4 | 2.5 / 0.3 |
+| ldo dc source | `tb_load` | **11/11** | ~148 uV | 11/11 * | **5.2** / 0.3 |
+| ldo AC | `tb_loop_max` | **8/8** | 0.27 uV | 4/4 | 9.7 / 0.3 |
+| amplifier transient | `tb_tran` (stride 4) | **11/11**, 1101/1101 steps | 3.0 uV | 11/11 | 71 / 1.2 |
+| sensor dc temp | `ptat_1/tb_dc` | **13/13**, 0 mono violations | ~15 uV | 9/9 | **9.6** / 0.1 |
+| amplifier dc temp | `tb_dc` (stride 25 + fork recovery) | **15/15** | 2.6 uV | 15/15 | 67 / 2.1 |
+| charge pump transient | `tb_tran` (stride 20) | run in flight at press time | -- | 6/6 | -- / 30.7 |
+
+The former table (for the record of what the simulator work fixed): tb_tran
+2/6 at 119/221 steps, ptat 5/13 with 76 mV worst node and 67 monotonicity
+violations, amplifier tb_dc 0/15 with a 9.75 V diverged first point carried
+down the sweep, charge pump dead at the first timestep at every dt, tb_load at
+678 s (the proper Jacobian is also a 130x speedup), and worst-node errors of
+~100 uV on the passing decks that are now single-digit uV.
 
 \* `lr` and `lr_pp` are the one exception to the engine control: they agree with
 NGSPICE's own `.meas` only to 1.1e-02, where every other metric on that deck
@@ -60,69 +80,66 @@ Representative agreements where the two simulators do match:
 
 The AC path is essentially exact: linearised about NGSPICE's *own* operating
 point it returns dcgain within 0.004 dB, GBW ratio 1.0000 and phase within
-0.0001 deg. **Every failure above is the DC operating point**, and the causes are
-three distinct problems, not one:
+0.0001 deg. **Every failure in the former table was the DC operating point**;
+the three recorded causes are all FIXED in V7.5.1 (each unwound into more than
+one defect — the full list with measurements is docs/CHANGELOG.md §V7.5.1):
 
-1. **Subthreshold current floor — blocks `sensing_front_end` + `voltage_reference`
-   (75 decks).** At NGSPICE's own operating point PyCircuitSim's LEVEL=72 returns
-   `id = 0.0 A` *exactly* at Vgs = 55.3 mV, and 2.16 nA at Vgs = 61.9 mV. A
-   weak-inversion stack whose devices all read zero current has no operating
-   point to find. This is visible in the `ptat_1` row as a split verdict: above
-   ~50 C the same deck agrees to 2e-05 (`vout50` 2.1e-05, `vout100` 8.2e-05),
-   while `vout25` is 59 % off and the sweep reports 67 monotonicity violations
-   against NGSPICE's zero. The floor is m-independent (m=1 and m=4 both return
-   hard zero, and above 0.08 V they agree to 0.00 % and scale exactly 4x), so it
-   is not the instance multiplier — it is an OSDI/PyCMG evaluation gap below
-   ~60 mV Vgs, and it is not fixable in the harness.
-2. **Newton start, not the model — amplifier `tb_dc` (85 decks).** That bench
-   sweeps 125 C to -40 C and PyCircuitSim diverges at the *first* point: zero of
-   67 points converged, with failures beginning at exactly 125.0 C and walking
-   down 122.5, 120.0, 117.5, 115.0 as the continuation carries the garbage. The
-   identical solve at 25 C is sound (node error 114 uV, `vout6` 0.193383 against
-   NGSPICE's 0.193383), and the same subcircuit's `tb_gain` deck agrees to
-   3.9e-05. `compare_with_recovery` ports `finalize.py`'s outward-from-25 C
-   recovery for this; it is implemented but its end-to-end numbers are **not yet
-   measured**, so 0/15 stands as this family's recorded result.
-3. **Missing per-terminal limiting — charge pump dead (5 decks), transients
-   partial (~110 decks).** The `dv_limit` trust region bounds the Newton *step*,
-   not the terminal voltage, so capped iterations still walk a gate to -2.96 V
-   and a drain to +3.94 V on a 0.65 V rail and OSDI rejects the point. The charge
-   pump dies at the first timestep at every dt tried (2 ps, 20 ps, 200 ps, 1 ns).
-   Transients are not uniformly broken, though: the amplifier `tb_tran` deck
-   commits 119 of 221 steps and its settled levels match to 4.8e-07 before NR
-   exhausts on the falling slew edge. The fix is SPICE-style `fetlim`/`limvds`
-   inside `models/mosfet_cmg.py`, which does not exist — and it must be damped
-   limiting, not a hard clamp, which would zero the derivative and stall NR.
+1. **Subthreshold current floor — FIXED.** The `id = 0.0 A`-below-~60 mV cliff
+   was the PyCMG internal-node solve accepting its warm-started entry state
+   whenever the true current sat below its 1e-9 A absolute residual tolerance.
+   The tolerance is now NGSPICE's own 1e-12 A, backed by a voltage-delta
+   acceptance that only fires after a Newton step was actually taken (which is
+   what keeps sub-nA currents resolving without re-opening the floor) and a
+   reset of the poisoned internal state a diverged solve used to leave behind.
+   `ptat_1/tb_dc` went 5/13 → 13/13 with zero monotonicity violations.
+2. **Newton start at 125 C — FIXED, and it was the model's Jacobian, not just
+   the start.** The channel-only gm/gds/gmb opvars are blind to the
+   body-junction conductances that carry the drain current at high temperature
+   (measured: id = +1.8 mA against gds = 4.3e-13 S), so no amount of homotopy
+   converged — NR cycled around a KCL violation its Jacobian could not see.
+   With the full 4-terminal OSDI-Jacobian stamp the 125 C cold start converges
+   in 1.8 s of plain NR. Where the fork at 125.0 C genuinely has two Newton
+   roots, the outward-from-25 C recovery (now actually triggerable — its gate
+   read a key the op-delta never carried) reconciles both simulators onto one
+   branch: 15/15 with a 2.6 uV worst node.
+3. **Missing per-terminal limiting — FIXED, two layers deeper than expected.**
+   SPICE-style damped limiting (fetlim/limvds/pnjlim, evaluation at the
+   limited bias, linearization about it) now exists in `mosfet_cmg.py`; the
+   OSDI eval frame is source-referenced because the internal solve is not
+   shift-robust (identical pairs evaluate at s=-8.5 V and diverge at
+   s=-16.1 V); and the transient retry ladder now cuts the LOCAL timestep and
+   marches the interval instead of stiffening the cap companions against a
+   fixed target time — the "minimum dt" the charge pump died at was never a
+   smaller step at all. The amplifier transient runs 1101/1101 steps at 11/11.
 
 Measurement caveats that belong with the numbers above:
 
-* The amplifier `tb_dc` row was run at `--stride 25`, so PyCircuitSim measured
-  67 points against NGSPICE's 1650 — the grids do **not** match and its
-  MAX/MIN/AVG keys are not a like-for-like comparison. The failure itself is
-  independently established by `flag_ok = 0`, not by those metrics. Full-stride
-  would be ~740 h for the family, which is why the recovery path matters.
-* `tb_tran`'s slew metrics are 21 % off because `--stride 20` asks for a 100 ns
-  timestep on a deck written for 5 ns. That is the stride, not the simulator.
-* `ok` (per-point solver flag) is reported, not obeyed. On the LDO sweep
-  PyCircuitSim matched NGSPICE to 2e-05 while the convergence flag rejected all
-  101 points under PyCircuitSim's native tolerances, so the operating-point
-  delta is the verdict. The harness therefore defaults to NGSPICE's RELTOL 1e-3
-  / VNTOL 1e-6 rather than PyCircuitSim's 10x-tighter 1e-4 / 1e-7 (a deck's own
-  `.options` still wins), which took that sweep to 101/101 flag-converged with
-  identical values.
+* The amplifier `tb_dc` row still runs at `--stride 25` (67 of NGSPICE's 1650
+  points); the MAX/MIN/AVG keys agree anyway because the fork recovery puts
+  both simulators on the same branch and the sweep tracks NGSPICE to 63 µV
+  per shared point. `tb_tran` runs at stride 4 (20 ns on a 5 ns deck); its
+  slew metrics agree at that grid.
+* `ok` (per-point solver flag) is reported, not obeyed — though after V7.5.1
+  the flag and the values finally coincide on every pilot deck (ptat's 14
+  flagged points and the LDO sweep's 101 are all flag-converged now). The
+  harness still defaults to NGSPICE's RELTOL 1e-3 / VNTOL 1e-6 rather than
+  PyCircuitSim's 10x-tighter 1e-4 / 1e-7 (a deck's own `.options` wins).
 * A converged flag is not sufficient evidence anywhere in this comparison: the
-  diverged `tb_dc` sweep produces a full set of plausible-looking numbers
-  (a `tc` of 0.0139 against NGSPICE's 0.0044). Node voltages, not metrics,
-  distinguish a converged sweep from a diverged one, which is why every row
-  carries a worst-node-error column.
+  historical diverged `tb_dc` sweep produced a full set of plausible-looking
+  numbers (a `tc` of 0.0139 against NGSPICE's 0.0044). Node voltages, not
+  metrics, distinguish a converged sweep from a diverged one, which is why
+  every row carries a worst-node-error column — and why V7.5.1 also fixed the
+  solver's own flag semantics (an intermediate gmin level could mark a
+  diverged final level converged).
 
 **Extrapolated campaign cost** — from measured per-deck rates, not measured
-end to end: 795 scored decks (445 AC, 160 dc_temp, 75 dc_source, 115 transient)
-at roughly 110 CPU-hours, parallelisable per deck. Amplifier transients at their
-own dt (~90 h) dominate that and are the least-constrained estimate; amplifier
-dc_temp is ~740 h as it stands, projected ~2 h if the recovery path restores the
-25 C pass's 3.1 s/point rate. On present evidence about 520 of 795 decks would
-produce trustworthy metrics, with the three causes above accounting for the rest.
+end to end: 795 scored decks (445 AC, 160 dc_temp, 75 dc_source, 115
+transient). The V7.5.1 rates change the picture materially: dc_source decks
+dropped 678 s → 5.2 s and dc_temp 1250 s → 67 s at stride 25 (~3 s/point), so
+the DC families now project to single-digit CPU-hours; amplifier transients at
+their own dt remain the dominant, least-constrained term. On the pilot
+evidence the three former blocker causes are gone; what remains untested at
+campaign scale is untested, not distrusted.
 
 
 ## Audit validation

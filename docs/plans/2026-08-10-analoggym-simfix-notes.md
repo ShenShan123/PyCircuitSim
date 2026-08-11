@@ -108,8 +108,45 @@ TSMC5 pilot. Three root causes recorded there:
          already NGSPICE-verified) + all four terminal currents (id,ig,is,ie),
          evaluated at the limited bias; NN path keeps 3-cond stamp.
          Sign conventions MUST be verified numerically (finite diff + inverter).
+      g. FULL STAMP LANDED (commit c96dd09): PyCMG Instance.condense_last_jacobian
+         (no re-eval condensation, == finite diff of (id,ig,is,ie) wrt (d,g,s,e));
+         MOSFET_CMG.get_terminal_stamp -> (i_out, g4) with i_out=-I_pycmg*m,
+         g4=-jac4*m; _stamp_mosfet_dc full 4x4 branch with gmin across d-s/d-b/
+         s-b, i_eq about limited eval point. RESULT: 125C plain-NR cold start
+         converges in 1.8 s; Alfio tb_dc stride50 no-recovery 11/15 (4 misses =
+         hot-end branch difference vs NGSPICE monolithic), WITH recovery 15/15,
+         worst node 2.6 uV, 41 s. verify_bsimcmg_{op,dc} green.
 - [x] NR trace diagnostics: PYCIRCUITSIM_NR_TRACE=1 (transient + DC tails + gmin
       per-level summary).
+
+## Task 5 status (2026-08-11)
+Batches launched via $SCR/run_batches.sh {cp,bench1,bench2,gatesA,gatesB,gatesC,nn}
+logs at $SCR/batch_<name>.log where SCR=/tmp/claude-1001/-data2-home-shenshan-
+PyCircuitSim/2c8d61c4-d247-4adb-b589-7f06d9d42622/scratchpad.
+- cp: chargepump tb_tran stride 20 (LONG; watch for SimStepLimit)
+- bench1: ptat_1 full stride, ldo_1 tb_load + tb_loop_max stride 1
+- bench2: amp tb_gain stride1, tb_dc stride25+recovery, tb_tran stride4
+- gatesA: op/dc/dc_comprehensive/multi_tech_dc/tran/subckt/cmg_multiplier/ac
+- gatesB: tran_comprehensive, multi_tech_tran
+- gatesC: complex ring_osc/opamp/sram_snm/switchcap/opamp_ac
+- nn: verify_nn_dc_tran (NN path expected untouched)
+Amp tb_dc 15/15 evidence already at $SCR/amp_dc3.json.
+
+### Results so far (2026-08-11)
+- bench2: tb_gain 8/8 | tb_dc 15/15 (recovery, engine 0/0 segments) | tb_tran
+  stride4 11/11 (was 2/6). ALL GREEN.
+- bench1 first pass: ptat_1 full-stride 13/13 (was 5/13; mono_violations 0,
+  9.6s vs 74s) | tb_load 11/11 (5.2s vs 678s!) | tb_loop_max REGRESSED 0/1
+  (OP fell into fake equilibrium vo=-3.9V; plain NR cycle, honest flag).
+  FIX: auto GMIN-homotopy fallback in DCSolver.solve (commit after c96dd09);
+  loop_max back to 8/8, OP worst 2.7e-7V. bench1 rerunning.
+- gatesA: op PASS, dc 2/2, dc_comprehensive 81/81 PASS... (running)
+- gatesB: tran_comprehensive 45/45 PASS; multi_tech_tran running.
+- gatesC/nn: first run void (worktree lacked bsimar/checkpoints — SYMLINKED
+  to main repo copy), rerunning.
+- cp (chargepump stride 20): running, watch $SCR/batch_cp.log.
+NOTE monitor task bbi2mpkui already marked bench1/gatesC/nn done (old runs) —
+track reruns manually.
 - [ ] Task 5: re-run 7 pilot decks + repo gates (incl. verify_bsimcmg_tran, ac,
       subckt, complex x4; L72 numbers all perturbed by tol+src-ref changes —
       expected within gate tolerances, sha256 sweep baselines may need rebase)

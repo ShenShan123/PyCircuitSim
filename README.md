@@ -946,11 +946,24 @@ PyCircuitSim uses MNA to construct circuit equations:
 
 For non-linear circuits (MOSFETs):
 
-1. Linearize devices at current operating point (compute gds, gm, gmb)
-2. Construct MNA matrix with linearized conductances
-3. Solve for voltage update dv
-4. Apply adaptive damping: `v_new = v_old + alpha * dv`
-5. Repeat until SPICE-standard convergence: `|dv| < VNTOL + RELTOL × max(|V_old|, |V_new|)` for all nodes (RELTOL=1e-4, VNTOL=1e-7)
+1. Linearize devices at the current operating point. **BSIM-CMG (LEVEL=72)
+   devices stamp the full 4-terminal companion (V7.5.0)**: all four terminal
+   currents (id, ig, is, ie) plus the condensed OSDI Jacobian, so body-junction
+   and gate-leakage conductances participate in NR exactly as they do in
+   NGSPICE. NN devices (LEVEL≥73) keep the classic gds/gm/gmb channel stamp.
+2. Apply SPICE-style damped limiting per device (V7.5.0): fetlim on vgs,
+   sign-symmetric limvds on vds, pnjlim on both body-junction pairs, inside a
+   ±2.5 V evaluation window. The device is *evaluated* at the limited bias and
+   the companion linearizes about it; the limiter is the identity near a
+   solution, so converged results are unaffected.
+3. Construct MNA matrix with linearized conductances
+4. Solve for voltage update dv
+5. Apply adaptive damping: `v_new = v_old + alpha * dv`
+6. Repeat until SPICE-standard convergence: `|dv| < VNTOL + RELTOL × max(|V_old|, |V_new|)` for all nodes (RELTOL=1e-4, VNTOL=1e-7). An iteration whose
+   stamps were limited is never accepted as converged.
+
+Set `PYCIRCUITSIM_NR_TRACE=1` to print per-iteration NR diagnostics (worst
+node, delta, residual, active limiters) for the DC tail and transient loops.
 
 ### Source Stepping
 
@@ -975,11 +988,21 @@ Trapezoidal (step 2+):    i(t+dt) = (2C/dt) * [v(t+dt) - v(t)] - i(t)
 - Also stamps BSIM-CMG/NN intrinsic capacitances (Cgd, Cgs, Cdd) as companion models
 - Charge state tracking via `get_charges()`, `init_charge_state()`, `update_charge_state()`
 - LTE-based adaptive sub-stepping available (opt-in, `max_substeps > 1`)
+- **Adaptive retry march (V7.5.0)**: when a timestep's NR fails, the interval
+  is re-walked with a locally halved dt (down to `dt·2⁻²⁴`, doubling back
+  after successes) — a genuinely smaller step, committed piece by piece, as
+  NGSPICE's timestep control does
 
 ### Convergence Aids
 
 - **SPICE-standard GMIN**: Minimum channel conductance (1e-12 S, matching NGSPICE)
-- **Gmin stepping**: Exponentially decaying minimum conductance (1e-9 to 1e-12)
+- **Gmin ladder (V7.5.0)**: for BSIM-CMG circuits, `use_gmin_stepping=True`
+  walks a node-shunt homotopy from 1e-2 S down to GMIN decade by decade;
+  a failed plain DC solve of an L72 circuit retries this ladder
+  **automatically**. NN circuits keep the measured 2-level schedule.
+- **Damped device limiting (V7.5.0)**: fetlim/limvds/pnjlim per LEVEL=72
+  device (see Newton-Raphson above) — evaluation-point limiting with
+  consistent linearization, never a hard clamp
 - **Pseudo-transient initialization**: Artificial capacitances for startup (auto-scaled to 5x max circuit cap)
 - **Adaptive damping**: Oscillation detection with supply-relative threshold
 - **Voltage clamping**: Vgs +/-5V, Vds +/-10V to prevent numerical overflow

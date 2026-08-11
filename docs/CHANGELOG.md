@@ -8,6 +8,104 @@ pruned; the full original text lives in git history.)
 
 ---
 
+## V7.5.1 — AnalogGym parity: the solver learns real SPICE robustness (branch `feat/analoggym-migration`, 2026-08-11)
+
+**Goal: every pilot deck of the V7.5.0 PyCircuitSim-vs-NGSPICE comparison
+agreeing, by fixing the simulator — NN models parked.** The three recorded
+causes in `RESULTS_TSMC.md` unwound into eight distinct defects across the
+solver, the L72 wrapper, and PyCMG. Scoreboard movement (TSMC5 pilot):
+ptat_1 tb_dc **5/13 → 13/13** (9.6 s, was 74 s), amplifier tb_dc
+**0/15 → 15/15** (worst node 2.6 µV vs the diverged 9.75 V; 67 s, was 1250 s
+partial), amplifier tb_tran **2/6 → 11/11**, ldo tb_load 11/11 (5.2 s, was
+678 s — 130×), tb_loop_max 8/8, tb_gain 8/8.
+
+1. **Subthreshold current floor** (blocked 75 weak-inversion decks): the PyCMG
+   internal-node NR tolerance defaulted to 1e-9 A absolute, so any true
+   |id| < ~1 nA "converged" without moving the internal nodes and returned
+   exactly 0.0 A — the V6.4.7 zero-row artifact, patched then only inside the
+   data generator. Default now 1e-12 (NGSPICE's ABSTOL), `NN_DC_SOLVE_TOL`
+   still wins. ptat_1 vout25 went 59 % off → 8e-05.
+2. **Full 4-terminal L72 Newton stamp** (the big one; blocked the 125 °C
+   amplifier family): the 3-conductance companion linearizes only the channel
+   — the gm/gds/gmb opvars are blind to body-junction and gate-leakage
+   conductances, which at 125 °C carry the drain current (measured id=+1.8 mA
+   vs gds=4.3e-13 S), so NR cycled around a permanent 1.4 mA KCL violation.
+   L72 now stamps all four KCL rows from the condensed OSDI Jacobian (new
+   `Instance.condense_last_jacobian`, no re-eval, verified == finite
+   differences of (id,ig,is,ie)); GMIN across d-s/d-b/s-b. The 125 °C cold
+   start converges in 1.8 s with plain NR. NN levels keep the 3-cond stamp.
+3. **SPICE-style damped NR limiting for L72**: fetlim (vgs), sign-symmetric
+   limvds (vds), pnjlim (both body-junction pairs) in the NMOS-normalized
+   frame inside a ±2.5 V window; the device is EVALUATED at the limited bias
+   and the companion linearizes about it (hard clamps zero the derivative);
+   an iteration that limited is never accepted as converged (incl. both
+   oscillation-average paths); anchors reset per NR sweep — a stale anchor
+   distorts the retry's first evals and the charge companion amplifies that
+   by 1/dt (measured ~1e2 A phantom residuals at a good OP); on eval failure
+   the stamp bisects toward the last evaluable anchor (or zero bias).
+4. **Source-referenced OSDI evaluation**: BSIM-CMG physics is pair-driven but
+   the OSDI internal solve is NOT shift-robust — the identical
+   (vgs,vds,vbs)=(2.5,2.5,2.5) evaluates at s=−8.5 V and diverges at
+   s=−16.1 V (warm or cold). Eval frame now pinned to the source terminal
+   (mirrors NN Rule 2). Eval errors carry device name/L/NFIN/m.
+5. **Internal-solve float wall + state ratchet** (PyCMG): an absolute 1e-12 A
+   residual is beyond float64 at amp-scale junction currents (a forward
+   drain-body diode at 2.5 V/125 °C evaluates to 542 A), so the internal NR
+   now also accepts a sub-nV voltage step — but only AFTER at least one step,
+   which is what keeps the fix floor-safe. And a diverged internal solve used
+   to leave the internal nodes hundreds of clamped steps into garbage,
+   poisoning every later eval (the warm start became poison): failed solves
+   now retry once from the cold state and always leave a cold state behind.
+6. **Honest gmin homotopy**: wide ladder for non-NN circuits (1e-2 → GMIN
+   decade by decade; NN keeps the measured V5 2-level schedule); fixed the
+   PRE-EXISTING sticky `final_converged` (an intermediate gmin level could
+   mark a diverged final level converged — observed flag=True with nodes at
+   −666 V); the verdict is now the last level / last source step only, and a
+   failed level restarts from the last good homotopy point. When a plain L72
+   DC solve fails, `DCSolver` now retries the ladder **automatically** —
+   with source stepping off (one homotopy at a time, not a 20-way split of
+   the NR budget) and ≥200 iterations, returning the primary iterate if the
+   ladder itself fails (never replace a near-solution with a wreck).
+7. **Transient retry = a genuinely smaller step**: the old ladder halved the
+   companion dt while keeping the SAME target time — the cap companions then
+   demand the full interval's dV inside dt/2ⁿ, so every "halving" made the
+   system STIFFER (charge pump: residual pinned ~2e3 A at "minimum dt"). The
+   interval is now re-walked with a locally halved dt (down to `dt·2⁻²⁴`,
+   doubling back after successes, 4096-piece budget via `SimStepLimit`),
+   committing charge state piece by piece, exactly as NGSPICE's timestep
+   control does. First-attempt successes are expression-identical.
+8. **Critical Rule 4 violation removed**: `MOSFET_CMG.get_conductance` did
+   `abs(gds)`; the floor lives at the stamp.
+
+**Harness (`pycircuitsim_bench`)**: `_op_worst` read a key `op_delta` never
+carried, silently disabling the recovery path (the narrow segment also ran
+strided, discarding the 25 °C point it exists to recover); and a **branch-fork
+trigger** — with the solver fixed, the monolithic temperature sweep tracks
+NGSPICE to 63 µV everywhere except the first point, where two valid Newton
+roots exist; a metric disagreement on a dc_temp deck with the engine control
+holding now triggers the outward-from-25 °C continuation on both simulators.
+
+**Dead ends recorded**: fixed 2ⁿ-piece re-subdivision of the whole interval
+(replaced by the adaptive march — exponential cost, still fails on bistable
+chatter); interval-subdivision rollback snapshots (unnecessary once the march
+only commits successful pieces); a wide gmin ladder alone (converged=True at
+−666 V — that was the sticky-flag bug, not a cure); retreat-only limiting
+without junction Jacobians (NR limit-cycles no matter how small the step).
+
+**Verification (this hardware, CPU-pinned)**: verify_bsimcmg_op 3/3, dc 2/2,
+dc_comprehensive 81/81, **multi_tech_dc 53/53 — the pre-V7.5 known-ERROR
+`TSMC5_lvt_inv_l_24nm` pure-L72 NR divergence is FIXED**, tran 1/1,
+tran_comprehensive 45/45, multi_tech_tran 86/86, verify_ac 2/2 (after the
+fallback learned to never undercut the primary result — the CS-amp OP is now
+honestly converged instead of sticky-masked), subckt 11/11, cmg_multiplier
+6/6, complex ring_osc 5/5 / sram_snm 5/5 / switchcap 5/5, sweep canaries
+PASS, verify_nn_dc_tran 30/30 (NN untouched). complex_opamp{,_ac} 0/5 on
+this hardware **pre-exists at the branch base** (NN-side, reproduced with
+base-commit solver files bit-for-bit) and is out of this sprint's scope.
+`PYCIRCUITSIM_NR_TRACE=1` added (DC tail + gmin summary + transient NR).
+
+---
+
 ## V7.5.0 — AnalogGym in-repo: 190 analog designs scored against NGSPICE (branch `feat/analoggym-migration`, 2026-08-10)
 
 **AnalogGym's five TSMC design trees are now `examples/analoggym/`.** 190

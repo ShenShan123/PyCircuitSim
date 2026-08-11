@@ -84,9 +84,23 @@ supply-relative adaptive damping with stuck-counter; hard `.ic` mode
 (`force_ic=True`) stamps `.ic` nodes as temporary V-source constraints then
 re-solves unconstrained — required for SRAM latches; LTE sub-stepping opt-in
 via `max_substeps`; NN circuits use `_solve_dc_with_retry` (fast path first,
-GMIN retry on `_last_solve_converged=False`) — BSIM-CMG never enters the retry
-branch; AC solves complex `Y = G + jωC` about the DC OP including the full
-MOSFET transcapacitance stamp.
+GMIN retry on `_last_solve_converged=False`); AC solves complex `Y = G + jωC`
+about the DC OP including the full MOSFET transcapacitance stamp.
+
+V7.5.0 (AnalogGym parity) added, for **LEVEL=72 only**: the full 4-terminal
+Newton stamp (all four terminal currents + the condensed OSDI Jacobian via
+`get_terminal_stamp` — junction/gate-leakage conductances participate in NR;
+the 3-conductance stamp remains for NN levels); SPICE-style damped limiting
+(`nr_limit_voltages`: fetlim/limvds/pnjlim in the NMOS-normalized frame,
+±2.5 V window, retreat-to-anchor on eval failure; anchors reset per NR sweep;
+an iteration that limited is never accepted as converged); source-referenced
+OSDI evaluation (the internal-node solve is not shift-robust); a wide DC gmin
+ladder (1e-2→GMIN) with an **automatic fallback** when a plain L72 solve
+fails (so "BSIM-CMG never retries" is no longer true — it has its own
+in-`DCSolver` ladder now, honest `final_converged` = last level/last source
+step only); and the transient retry ladder re-walks the interval with a
+locally halved dt (down to `dt·2⁻²⁴`) instead of stiffening companions
+against a fixed target time. `PYCIRCUITSIM_NR_TRACE=1` traces NR.
 
 ## Supported Features
 
@@ -216,10 +230,13 @@ NGSPICE on the identical BSIM-CMG (LEVEL=72) OSDI model. Gates are CPU-pinned
 
 - **Subcircuit hierarchy:** `verify_subckt.py` — 11/11.
 - **BSIM-CMG (72):** OP `verify_bsimcmg_op.py`; DC `verify_bsimcmg_dc.py` /
-  `..._comprehensive.py` (67) / `verify_multi_tech_dc.py` (43 PASS + 1 known
-  ERROR `TSMC5_lvt_inv_l_24nm`, pre-existing pure-L72 NR divergence); tran
-  L1/L2/L3 (1/37/72); AC `verify_ac.py` (2/2). Counts move with TSMC6
-  registration — same coverage, one duplicate column; quote TSMC6 separately.
+  `..._comprehensive.py` (81) / `verify_multi_tech_dc.py` (**53 PASS, 0
+  ERROR since V7.5.0** — the former known-ERROR `TSMC5_lvt_inv_l_24nm` NR
+  divergence is fixed by the full-terminal stamp); tran
+  `verify_bsimcmg_tran{,_comprehensive}.py` (1/45) +
+  `verify_multi_tech_tran.py` (86); AC `verify_ac.py` (2/2). Counts move with
+  TSMC6 registration — same coverage, one duplicate column; quote TSMC6
+  separately.
 - **DirectNet (73):** `verify_nn_dc_tran.py` (inverter 8/8, DC 55/55, tran
   64/64); `verify_nn_multi_tech_{dc,tran}.py` (baseline-gated — pin OMP/MKL=1,
   VTC trip has ~±1 % scatter); `verify_nn_ac.py`;
@@ -283,7 +300,17 @@ wrong results.
    rhs[d_idx] -= i_eq    # same for NMOS and PMOS
    rhs[s_idx] += i_eq
    ```
+   **LEVEL=72 does NOT use this path since V7.5.0** — it stamps the full
+   4-terminal companion (`get_terminal_stamp`: i_out = −I_pycmg·m,
+   G = −jac4·m; the [d,:] row reproduces gds/gm/gmb when junctions are off).
+   The channel-only opvars are blind to junction/gate-leakage conductances,
+   which at 125 °C carry the drain current (measured id=+1.8 mA vs
+   gds=4.3e-13 S) — a 3-conductance Jacobian locks NR into a limit cycle.
+   The 3-conductance stamp above remains the NN (LEVEL≥73) contract.
 4. **gds floor** for stamping: `max(gds, 1e-12)`. Never `abs(gds)` — it flips large-negative to large-positive and diverges NR. Preserve gm/gmb signs.
+   (V7.5.0 removed a violating `abs(gds)` from `MOSFET_CMG.get_conductance`;
+   the floor lives at the stamp, and the full-J stamp adds GMIN across
+   d-s/d-b/s-b instead.)
 5. **Update `_is_mosfet()`** in `solver.py` when adding new device types.
 6. **Test both NMOS and PMOS** vs NGSPICE: single OP, DC sweep, inverter VTC, inverter transient.
 
