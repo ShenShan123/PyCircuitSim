@@ -560,14 +560,18 @@ class Instance:
             >>> print(f"Transconductance: {result['gm']:.6e} S")
         """
         self._set_node_voltages(nodes, True)
-        # V6.4.7 S9b generator floor fix: the internal-node NR tolerance is
-        # env-overridable via ``NN_DC_SOLVE_TOL``. The legacy default (1e-9)
-        # lets a warm-started solve satisfy the residual test WITHOUT moving
-        # the internal nodes for any true |id| < ~1e-9 A, so deep-subthreshold
-        # / OFF-state rows came back as EXACT 0.0 (the 6-8 % zero-row
-        # artifact). NN data generation exports ``NN_DC_SOLVE_TOL=1e-12`` so
-        # sub-nA currents resolve; ``Instance.eval_dc`` default is unchanged.
-        _dc_tol = float(os.environ.get("NN_DC_SOLVE_TOL", "1e-9"))
+        # Internal-node NR tolerance (absolute residual, Amps), env-overridable
+        # via ``NN_DC_SOLVE_TOL``. Default is 1e-12 — NGSPICE's own ABSTOL — as
+        # of V7.5: the former 1e-9 default let a warm-started solve satisfy the
+        # residual test WITHOUT moving the internal nodes for any true
+        # |id| < ~1e-9 A, so deep-subthreshold / OFF-state points came back as
+        # EXACT 0.0 A. That floor was first seen as the V6.4.7 "6-8 % zero-row"
+        # NN-dataset artifact (patched then by pinning the env var in the
+        # generator only); the AnalogGym weak-inversion benches (PTAT stacks,
+        # subthreshold references biased at Vgs ~ 55 mV) showed the same floor
+        # denies whole circuits an operating point, so the default itself
+        # now matches NGSPICE.
+        _dc_tol = float(os.environ.get("NN_DC_SOLVE_TOL", "1e-12"))
         converged = self._inst.solve_internal_nodes(self._model.model, self._sim, 200, _dc_tol)
         if not converged:
             raise RuntimeError(
