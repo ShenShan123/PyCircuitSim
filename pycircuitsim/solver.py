@@ -1661,6 +1661,27 @@ class DCSolver:
         )
         self._last_solve_converged = bool(final_converged and finite_voltages)
 
+        # V7.5.0 — automatic GMIN-homotopy fallback for BSIM-CMG circuits.
+        # A cold plain-NR start can fall into an extrapolation-made hole
+        # (measured on the LDO loop bench: a 5 mA load drags the output
+        # below ground before the error amp biases up, and NR locks into
+        # a fake equilibrium at vo=-3.9 V). The wide gmin ladder walks in
+        # from a nearly-linear world and recovers the physical branch
+        # (worst node 0.0 V vs NGSPICE, 2.7 s). NN circuits keep their own
+        # `_solve_dc_with_retry` orchestration unchanged.
+        if (not self._last_solve_converged
+                and not self.use_gmin_stepping
+                and not getattr(self, "_in_gmin_fallback", False)
+                and any(hasattr(c, "get_terminal_stamp")
+                        for c in self.circuit.components)):
+            self._in_gmin_fallback = True
+            self.use_gmin_stepping = True
+            try:
+                return self.solve(skip_header=True)
+            finally:
+                self.use_gmin_stepping = False
+                self._in_gmin_fallback = False
+
         return voltages
 
     def _stamp_mosfet(
