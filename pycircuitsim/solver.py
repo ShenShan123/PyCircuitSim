@@ -2225,6 +2225,18 @@ class TransientSolver:
         vs_mask = np.fromiter(
             (nd in vs_constrained_nodes for nd in nodes), bool, n_nodes)
 
+        # V7.5.1 — fail-fast bookkeeping. A step that is going to fail
+        # used to burn all `max_iterations` before the adaptive march cut
+        # dt; on switching edges (charge pump) that is hundreds of
+        # 200-iteration NR runs per edge. Track the best |ΔV| seen in a
+        # trailing window; a stagnant far-from-converged iterate bails to
+        # the dt-cut early. Failure-path only: any iterate still making
+        # 2x progress per window — and any within 100x of tolerance — is
+        # untouched, so converging trajectories are bit-identical.
+        _ff_window = 30
+        _ff_best = float("inf")
+        _ff_best_at = 0
+
         for iteration in range(max_iterations):
             # Build MNA matrix and RHS
             mna_matrix = _create_mna_matrix(matrix_size)
@@ -2355,6 +2367,24 @@ class TransientSolver:
                       f"v {v_arr[worst_i]:+.4f}->{sol_head[worst_i]:+.4f} "
                       f"dmax={max_delta:.3e} resid={iter_residual:.3e} "
                       f"lim={limited[:6]}")
+
+            # V7.5.1 fail-fast (see the bookkeeping above the loop).
+            if max_delta < _ff_best * 0.5:
+                _ff_best = max_delta
+                _ff_best_at = iteration
+            elif (iteration - _ff_best_at >= _ff_window
+                  and iteration >= 2 * _ff_window
+                  and max_delta > max(100.0 * tolerance, 1e-2)):
+                # The 1e-2 V floor keeps this strictly above the
+                # oscillation-average acceptance ceiling (10x the
+                # vntol + reltol·|v| threshold, sub-mV on these rails),
+                # so a fast-switcher that would be accepted by averaging
+                # is never stolen from that path.
+                raise RuntimeError(
+                    f"Newton-Raphson stagnant at t={time:.6e}s: no 2x "
+                    f"progress in {iteration - _ff_best_at} iterations "
+                    f"(max delta {max_delta:.2e}); failing fast to the "
+                    f"timestep-cut ladder")
 
             # Track voltage history for oscillation detection (store last 5 iterations)
             voltage_snapshot = dict(zip(nodes, sol_head))
