@@ -2,6 +2,127 @@
 
 This is a strict NGSPICE/PyCMG audit of every generated design. Topologies are checked against their source (or, for the derived three-output reference, its qualified two-output core), dimensions are constrained to each modelcard, and every available DC, AC, temperature, PSRR, line/load-regulation and transient gate is included. A result is fully passing only when every gate passes and the simulator reports no analysis error. `!` marks a partial result with one or more simulator/evaluator errors. Per-tree details: `designs_<tech>/RESULTS.md`.
 
+Since the migration into PyCircuitSim (`examples/analoggym/`, V7.5.0) this file
+carries **two** axes. The next section scores **PyCircuitSim against NGSPICE**
+on the identical BSIM-CMG (LEVEL=72) OSDI model. Everything after it is the
+original NGSPICE/PyCMG design audit, unchanged — that audit is the reference the
+comparison is measured against, not a second opinion about it.
+
+
+## PyCircuitSim versus NGSPICE
+
+**Status: pilot, not campaign.** Seven decks of one technology (TSMC5) have been
+run through both simulators. The 795-deck full corpus has **not** been run; the
+per-family verdicts below are single-deck evidence and the cost figures are
+extrapolations from measured rates, labelled as such. Nothing here is a
+scoreboard number yet.
+
+Harness: `pycircuitsim_bench/` — `translate.py` (deck to PyCircuitSim netlist;
+all 880 decks translate, audited over 19,405 emitted device cards),
+`measure.py` (the `.meas` engine; all 5,145 cards in all five trees parse),
+`run_compare.py` (drives both simulators, writes per-deck JSON).
+
+The engine scores **both** simulators through one code path, so a reported
+difference cannot be a difference in measurement semantics. The control for that
+claim is the `engine` column: the engine's reading of NGSPICE's own sweep versus
+the `.meas` values NGSPICE itself printed, from the same run.
+
+| family | deck | metrics agreeing | worst node error | engine control | py / ng seconds |
+|---|---|:--:|--:|:--:|--:|
+| amplifier AC | `tb_gain` | **8/8** | 110 uV | 4/4 | 2.2 / 0.3 |
+| ldo dc source | `tb_load` | **11/11** | 148 uV | 11/11 * | 678 / 0.4 |
+| ldo AC | `tb_loop_max` | **8/8** | 91 uV | 4/4 | 8.1 / 0.3 |
+| amplifier transient | `tb_tran` | 2/6, 119 of 221 steps | 111 uV | 11/11 | 105 / 1.1 |
+| sensor dc temp | `ptat_1/tb_dc` | 5/13 | 76 mV | 9/9 | 74 / 0.1 |
+| amplifier dc temp | `tb_dc` | 0/15 | 9.75 V | 15/15 | 1250 / 0.7 |
+| charge pump transient | `tb_tran` | dies at first step | 161 mV | 6/6 | -- / 30.7 |
+
+\* `lr` and `lr_pp` are the one exception to the engine control: they agree with
+NGSPICE's own `.meas` only to 1.1e-02, where every other metric on that deck
+agrees to 1e-08 or better. PyCircuitSim's `lr` (0.0137316) is in fact *closer* to
+NGSPICE's own `.meas` (0.0137973) than the engine's reading of NGSPICE's sweep
+is (0.0139486). The 1.6 % `lr` gap is therefore mostly a load-regulation
+measurement-definition difference, not a simulator difference, and those two
+keys should not be quoted as accuracy evidence until reconciled.
+
+Representative agreements where the two simulators do match:
+
+| deck | metric | PyCircuitSim | NGSPICE | rel. error |
+|---|---|--:|--:|--:|
+| `tb_gain` | dcgain (dB) | 75.8749 | 75.8719 | 3.9e-05 |
+| `tb_gain` | GBW (Hz) | 541384 | 541380 | 6.9e-06 |
+| `tb_gain` | pm_true (deg) | 55.3411 | 55.3411 | 3.1e-07 |
+| `tb_load` | vout_max (V) | 0.476883 | 0.476874 | 1.9e-05 |
+| `tb_load` | ivdd_max (A) | -0.055017 | -0.055017 | 7.9e-09 |
+| `tb_loop_max` | GBW (Hz) | 1.04792e7 | 1.04647e7 | 1.4e-03 |
+| `tb_tran` | v_high (V) | 0.228067 | 0.228067 | 4.8e-07 |
+| `ptat_1/tb_dc` | vout50 (V) | 0.0716231 | 0.0716246 | 2.1e-05 |
+
+The AC path is essentially exact: linearised about NGSPICE's *own* operating
+point it returns dcgain within 0.004 dB, GBW ratio 1.0000 and phase within
+0.0001 deg. **Every failure above is the DC operating point**, and the causes are
+three distinct problems, not one:
+
+1. **Subthreshold current floor — blocks `sensing_front_end` + `voltage_reference`
+   (75 decks).** At NGSPICE's own operating point PyCircuitSim's LEVEL=72 returns
+   `id = 0.0 A` *exactly* at Vgs = 55.3 mV, and 2.16 nA at Vgs = 61.9 mV. A
+   weak-inversion stack whose devices all read zero current has no operating
+   point to find. This is visible in the `ptat_1` row as a split verdict: above
+   ~50 C the same deck agrees to 2e-05 (`vout50` 2.1e-05, `vout100` 8.2e-05),
+   while `vout25` is 59 % off and the sweep reports 67 monotonicity violations
+   against NGSPICE's zero. The floor is m-independent (m=1 and m=4 both return
+   hard zero, and above 0.08 V they agree to 0.00 % and scale exactly 4x), so it
+   is not the instance multiplier — it is an OSDI/PyCMG evaluation gap below
+   ~60 mV Vgs, and it is not fixable in the harness.
+2. **Newton start, not the model — amplifier `tb_dc` (85 decks).** That bench
+   sweeps 125 C to -40 C and PyCircuitSim diverges at the *first* point: zero of
+   67 points converged, with failures beginning at exactly 125.0 C and walking
+   down 122.5, 120.0, 117.5, 115.0 as the continuation carries the garbage. The
+   identical solve at 25 C is sound (node error 114 uV, `vout6` 0.193383 against
+   NGSPICE's 0.193383), and the same subcircuit's `tb_gain` deck agrees to
+   3.9e-05. `compare_with_recovery` ports `finalize.py`'s outward-from-25 C
+   recovery for this; it is implemented but its end-to-end numbers are **not yet
+   measured**, so 0/15 stands as this family's recorded result.
+3. **Missing per-terminal limiting — charge pump dead (5 decks), transients
+   partial (~110 decks).** The `dv_limit` trust region bounds the Newton *step*,
+   not the terminal voltage, so capped iterations still walk a gate to -2.96 V
+   and a drain to +3.94 V on a 0.65 V rail and OSDI rejects the point. The charge
+   pump dies at the first timestep at every dt tried (2 ps, 20 ps, 200 ps, 1 ns).
+   Transients are not uniformly broken, though: the amplifier `tb_tran` deck
+   commits 119 of 221 steps and its settled levels match to 4.8e-07 before NR
+   exhausts on the falling slew edge. The fix is SPICE-style `fetlim`/`limvds`
+   inside `models/mosfet_cmg.py`, which does not exist — and it must be damped
+   limiting, not a hard clamp, which would zero the derivative and stall NR.
+
+Measurement caveats that belong with the numbers above:
+
+* The amplifier `tb_dc` row was run at `--stride 25`, so PyCircuitSim measured
+  67 points against NGSPICE's 1650 — the grids do **not** match and its
+  MAX/MIN/AVG keys are not a like-for-like comparison. The failure itself is
+  independently established by `flag_ok = 0`, not by those metrics. Full-stride
+  would be ~740 h for the family, which is why the recovery path matters.
+* `tb_tran`'s slew metrics are 21 % off because `--stride 20` asks for a 100 ns
+  timestep on a deck written for 5 ns. That is the stride, not the simulator.
+* `ok` (per-point solver flag) is reported, not obeyed. On the LDO sweep
+  PyCircuitSim matched NGSPICE to 2e-05 while the convergence flag rejected all
+  101 points under PyCircuitSim's native tolerances, so the operating-point
+  delta is the verdict. The harness therefore defaults to NGSPICE's RELTOL 1e-3
+  / VNTOL 1e-6 rather than PyCircuitSim's 10x-tighter 1e-4 / 1e-7 (a deck's own
+  `.options` still wins), which took that sweep to 101/101 flag-converged with
+  identical values.
+* A converged flag is not sufficient evidence anywhere in this comparison: the
+  diverged `tb_dc` sweep produces a full set of plausible-looking numbers
+  (a `tc` of 0.0139 against NGSPICE's 0.0044). Node voltages, not metrics,
+  distinguish a converged sweep from a diverged one, which is why every row
+  carries a worst-node-error column.
+
+**Extrapolated campaign cost** — from measured per-deck rates, not measured
+end to end: 795 scored decks (445 AC, 160 dc_temp, 75 dc_source, 115 transient)
+at roughly 110 CPU-hours, parallelisable per deck. Amplifier transients at their
+own dt (~90 h) dominate that and are the least-constrained estimate; amplifier
+dc_temp is ~740 h as it stands, projected ~2 h if the recovery path restores the
+25 C pass's 3.1 s/point rate. On present evidence about 520 of 795 decks would
+produce trustworthy metrics, with the three causes above accounting for the rest.
 
 
 ## Audit validation
