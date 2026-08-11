@@ -1137,12 +1137,32 @@ def _needs_recovery(row: Dict[str, Any], td: TranslatedDeck) -> Optional[str]:
     if row["pycircuitsim"]["error"]:
         return f"monolithic pass failed: {row['pycircuitsim']['error']}"
     worst = _op_worst(row)
-    if worst is None:
-        return None
-    supply = float(td.params.get("supply_voltage") or 0.0) or 1.0
-    if worst > RECOVERY_OP_FRACTION * supply:
-        return (f"monolithic pass operating point off by {worst:.4g} V, over "
-                f"{RECOVERY_OP_FRACTION:.0%} of the {supply:g} V rail")
+    if worst is not None:
+        supply = float(td.params.get("supply_voltage") or 0.0) or 1.0
+        if worst > RECOVERY_OP_FRACTION * supply:
+            return (f"monolithic pass operating point off by {worst:.4g} V, "
+                    f"over {RECOVERY_OP_FRACTION:.0%} of the {supply:g} V "
+                    f"rail")
+    # V7.5.0 — branch-fork trigger. The op-delta gate above cannot see a
+    # SINGLE ambiguous point: at a first-point branch fork (the 125 C
+    # amplifier start has two valid Newton roots) both simulators produce
+    # self-consistent sweeps whose shared-grid node voltages agree to
+    # microvolts everywhere except the fork, yet the MAX-family metrics
+    # differ by the branch gap. A metric disagreement is trusted as a
+    # recovery signal ONLY on a temperature sweep (where the outward
+    # continuation is defined) and ONLY when the engine control confirms
+    # the reading of NGSPICE's own sweep, so it cannot be a
+    # measurement-semantics artifact.
+    if any(plan.kind == "dc_temp" for plan in td.plans):
+        eng_rows = row["compare"].get("ng_vs_ngmeas") or {}
+        for key, entry in (row["compare"].get("py_vs_ng") or {}).items():
+            if entry.get("ok") or key == "sweep_points":
+                continue                     # grid size is a stride artifact
+            eng = eng_rows.get(key)
+            if eng is not None and not eng.get("ok"):
+                continue                     # NGSPICE disagrees with itself
+            return (f"metric '{key}' disagrees on a dc_temp sweep while the "
+                    f"engine control holds (branch fork)")
     return None
 
 
