@@ -344,6 +344,21 @@ def _has_nn_device(circuit: Circuit) -> bool:
     return val
 
 
+def _has_full_stamp_device(circuit: Circuit) -> bool:
+    """Any device with the V7.5.0 full 4-terminal stamp (BSIM-CMG L72)?
+
+    Cached per topology state like ``_has_nn_device`` — consulted by the
+    oscillation-average acceptance gates each time NR exhausts.
+    """
+    key = _topo_key(circuit)
+    cached = getattr(circuit, "_pcs_has_l72_cache", None)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    val = any(hasattr(c, "get_terminal_stamp") for c in circuit.components)
+    circuit._pcs_has_l72_cache = (key, val)
+    return val
+
+
 def _require_nn_caps(circuit: Circuit) -> None:
     """Tell every NN device in ``circuit`` that this analysis reads caps.
 
@@ -1518,7 +1533,13 @@ class DCSolver:
                         )
                         rhs_scale = avg_residual[1]
                         resid_threshold = max(_RESID_ABS_FLOOR, 100.0 * self.reltol * rhs_scale)
-                        residual_ok = (not _has_nn_device(self.circuit)
+                        # V7.5.1: the KCL gate now also covers BSIM-CMG
+                        # circuits — a quiet-but-garbage average that gets
+                        # accepted poisons every later warm start (measured
+                        # on the charge pump: one such commit at t~0 wedged
+                        # the transient march at femtosecond scale forever).
+                        residual_ok = (not (_has_nn_device(self.circuit)
+                                            or _has_full_stamp_device(self.circuit))
                                        or avg_residual[0] <= resid_threshold)
                         # V7.5.0: never average-accept while NR limiting
                         # was clamping a device — the recent iterates are
@@ -2500,7 +2521,13 @@ class TransientSolver:
                 # MNA residual test (Phase 6b) — a small variance does
                 # not prove the average is a physical fixed point.
                 residual_ok = True
-                if max_rel_variance < 10.0 and _has_nn_device(self.circuit):
+                if max_rel_variance < 10.0 and (
+                        _has_nn_device(self.circuit)
+                        or _has_full_stamp_device(self.circuit)):
+                    # V7.5.1: gate extended to BSIM-CMG circuits — an
+                    # averaged garbage point that commits here corrupts the
+                    # charge history and, through the 1/dt companion, every
+                    # subsequent piece of the march (see the DC twin).
                     avg_resid, rhs_scale = self._transient_residual_at(
                         avg_voltages, node_map, nodes, num_nodes,
                         matrix_size, gmin, time,
