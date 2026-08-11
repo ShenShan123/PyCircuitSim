@@ -2604,6 +2604,55 @@ class TransientSolver:
         # Supports BE, Trapezoidal, and BDF-2 integration methods.
         # Theory: I_t(n+1) = coeff * Q_t(n+1) - history_terms
         drain, gate, source, bulk = mosfet.nodes
+
+        # V7.5.1 — full 4-terminal charge companion for LEVEL=72. The 3x3
+        # block below rebuilds a transcap matrix from the 5 SPICE cap
+        # variables plus charge-conservation shortcuts; for floating-bulk
+        # devices that produces SIGN-FLIPPED off-diagonals (measured
+        # stamped +0.758 S vs true -0.758 S at dt=1e-15 on the charge
+        # pump), and a wrong-signed Jacobian at small dt makes every
+        # Newton iteration AMPLIFY the error ~15x. Devices exposing
+        # get_charge_stamp stamp the condensed reactive OSDI Jacobian
+        # directly — true dQ/dV, bulk row and column included.
+        full_q = getattr(mosfet, "get_charge_stamp", None)
+        if full_q is not None:
+            if getattr(mosfet, "_q_prev", None) is None:
+                return
+            q4, c4 = full_q(voltages)
+            dt = self._current_dt
+            method = getattr(self, '_integration_method', 'trap')
+            qp = mosfet._q_prev
+            qp2 = getattr(mosfet, "_q_prev2", None)
+            keys = ("qd", "qg", "qs", "qb")
+            iprev = (getattr(mosfet, "_i_prev_drain", 0.0),
+                     getattr(mosfet, "_i_prev_gate", 0.0),
+                     getattr(mosfet, "_i_prev_source", 0.0),
+                     getattr(mosfet, "_i_prev_bulk", 0.0))
+            if method == 'bdf2' and qp2 is not None:
+                coeff = 1.5 / dt
+                hist = [(2.0 / dt) * qp[k] - (0.5 / dt) * qp2[k] for k in keys]
+            elif method == 'trap' or (method == 'bdf2' and qp2 is None):
+                coeff = 2.0 / dt
+                hist = [coeff * qp[k] + ip for k, ip in zip(keys, iprev)]
+            else:  # 'be'
+                coeff = 1.0 / dt
+                hist = [coeff * qp[k] for k in keys]
+            idx = [node_map.get(n) if n not in ("0", "GND") else None
+                   for n in mosfet.nodes]
+            v_eval = [voltages.get(n, 0.0) for n in mosfet.nodes]
+            for t in range(4):
+                row = idx[t]
+                if row is None:
+                    continue
+                e_t = coeff * q4[t] - hist[t]
+                for j in range(4):
+                    e_t -= coeff * c4[t, j] * v_eval[j]
+                    col = idx[j]
+                    if col is not None:
+                        mna_matrix[row, col] += coeff * c4[t, j]
+                rhs[row] -= e_t
+            return
+
         if hasattr(mosfet, '_q_prev') and mosfet._q_prev is not None:
             charges = mosfet.get_charges(voltages)
             caps = mosfet.get_capacitances(voltages)
@@ -3117,6 +3166,19 @@ class TransientSolver:
                                         h_d = coeff * component._q_prev["qd"]
                                     terminal_currents["i_gate"] = coeff * charges_new["qg"] - h_g
                                     terminal_currents["i_drain"] = coeff * charges_new["qd"] - h_d
+                                    # V7.5.1: the full 4-terminal charge
+                                    # companion needs source/bulk history too.
+                                    if hasattr(component, "get_charge_stamp"):
+                                        for key, name in (("qs", "i_source"),
+                                                          ("qb", "i_bulk")):
+                                            if method == 'bdf2' and hasattr(component, '_q_prev2') and component._q_prev2 is not None:
+                                                h_t = (2.0 / dt_eff) * component._q_prev[key] - (0.5 / dt_eff) * component._q_prev2[key]
+                                            elif method == 'trap':
+                                                h_t = coeff * component._q_prev[key] + getattr(
+                                                    component, f"_i_prev_{name[2:]}", 0.0)
+                                            else:
+                                                h_t = coeff * component._q_prev[key]
+                                            terminal_currents[name] = coeff * charges_new[key] - h_t
                                 component.update_charge_state(timestep_voltages, terminal_currents)
 
                         # Advance the march; leave when the interval is done.

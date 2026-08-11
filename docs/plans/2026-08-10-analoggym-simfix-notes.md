@@ -147,6 +147,19 @@ Amp tb_dc 15/15 evidence already at $SCR/amp_dc3.json.
 - cp (chargepump stride 20): running, watch $SCR/batch_cp.log.
 NOTE monitor task bbi2mpkui already marked bench1/gatesC/nn done (old runs) —
 track reruns manually.
+
+### FINAL STATE (2026-08-11, after fallback+trigger fixes; commits through 5c18101)
+Pilot: tb_gain 8/8 | tb_load 11/11 5.2s | tb_loop_max 8/8 (0.27uV) | ptat 13/13
+| amp tb_dc 15/15 (branch-fork recovery trigger added to harness) | amp tb_tran
+11/11 (1101/1101 steps) | chargepump STILL RUNNING (b81m96jr3 watches).
+Gates: op 3/3, dc 2/2, dc_comp 81/81, multi_tech_dc 53/53 (known ERROR FIXED),
+tran 1/1, tran_comp 45/45, multi_tech_tran 86/86, ac 2/2, subckt 11/11,
+multiplier 6/6, ring_osc 5/5, sram 5/5, switchcap 5/5, canaries PASS,
+nn_dc_tran 30/30. verify_nn_ac RUNNING. opamp+opamp_ac 0/5 PRE-EXISTING at
+base (bit-identical repro with base solver files) — NN-side, out of scope.
+Docs committed (5c18101): CHANGELOG V7.5.1, RESULTS_TSMC.md (cp row pending),
+CLAUDE.md, README. Remaining: cp result + verify_nn_ac -> patch docs -> final
+commit. Worktree checkpoints SYMLINKED from main repo (gitignored path).
 - [ ] Task 5: re-run 7 pilot decks + repo gates (incl. verify_bsimcmg_tran, ac,
       subckt, complex x4; L72 numbers all perturbed by tol+src-ref changes —
       expected within gate tolerances, sha256 sweep baselines may need rebase)

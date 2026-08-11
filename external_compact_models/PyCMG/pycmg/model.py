@@ -484,6 +484,24 @@ class Instance:
             caps["cdd"] = float(c_condensed[d, d])
         return caps
 
+    def condense_last_react(self) -> np.ndarray:
+        """Condense the reactive Jacobian ALREADY LOADED by ``eval_dc``.
+
+        V7.5.1 — the full-terminal charge companion needs the TRUE
+        dQ/dV for all four terminals (bulk row and column included).
+        The SPICE-convention 5-cap view (`_condense_caps`) drops the
+        bulk entirely and sign-flips off-diagonals; reconstructing a
+        capacitance matrix from it is exactly what put sign-flipped
+        transcap entries into the transient Newton matrix for
+        floating-bulk devices. Raw KCL convention, matching
+        ``get_charges``' charge orientation.
+        """
+        g_full = self._build_full_jacobian(self._sim, self._sim.jacobian_resist)
+        c_full = self._build_full_jacobian(self._sim, self._sim.jacobian_react)
+        return self._condense_capacitance(g_full, c_full,
+                                          self._sim.terminal_indices,
+                                          self._sim.internal_indices)
+
     def condense_last_jacobian(self) -> np.ndarray:
         """Condense the resistive Jacobian ALREADY LOADED by ``eval_dc``.
 

@@ -246,6 +246,12 @@ class MOSFET_CMG(Component):
         # id = +1.8 mA against gds = 4.3e-13 S) — a Jacobian blind to
         # them locks circuit NR into a limit cycle.
         result["jac4"] = self._pycmg_instance.condense_last_jacobian()
+        # ... and its reactive twin: the TRUE dQ/dV (verified == finite
+        # differences of (qd,qg,qs,qb), bulk row/column included). The
+        # SPICE 5-cap view reconstructed a transcap matrix with flipped
+        # signs for floating-bulk devices, which at small dt turns the
+        # transient Newton iteration into an amplifier.
+        result["cjac4"] = self._pycmg_instance.condense_last_react()
 
         # Update cache
         self._eval_cache = result
@@ -594,6 +600,25 @@ class MOSFET_CMG(Component):
         g4 = result["jac4"] * (-m)
         return i_out, g4
 
+    def get_charge_stamp(self, voltages: Dict[str, float]):
+        """Full 4-terminal charge companion: charges + dQ/dV (x m).
+
+        Returns ``(q4, c4)`` in terminal order [d, g, s, b]: ``q4[t]`` is
+        the SPICE terminal charge (Coulombs) and ``c4[t, j] = dq4[t]/dV_j``
+        (Farads), the condensed reactive OSDI Jacobian — bulk row and
+        column included, signs exact (verified against finite differences
+        of the reported charges). Charges keep PyCMG's orientation: the
+        gate-row companion the old 3x3 block built from qg/cgg passes the
+        NGSPICE transient gates, so +q with +dq/dV is the node-consistent
+        pairing.
+        """
+        result = self._eval_dc(voltages)
+        m = self.m
+        q4 = [result["qd"] * m, result["qg"] * m,
+              result["qs"] * m, result["qb"] * m]
+        c4 = result["cjac4"] * m
+        return q4, c4
+
     def get_capacitances(self, voltages: Dict[str, float]) -> Dict[str, float]:
         """Get terminal capacitances for AC analysis (x instance multiplier)."""
         result = self._eval_dc(voltages)
@@ -643,6 +668,9 @@ class MOSFET_CMG(Component):
         # At DC operating point, dQ/dt = 0, so all initial currents are 0
         self._i_prev_gate = 0.0
         self._i_prev_drain = 0.0
+        # V7.5.1 full charge companion tracks all four terminals.
+        self._i_prev_source = 0.0
+        self._i_prev_bulk = 0.0
 
     def update_charge_state(self, voltages: Dict[str, float],
                             cap_currents: Optional[Dict[str, float]] = None) -> None:
@@ -659,6 +687,8 @@ class MOSFET_CMG(Component):
         if cap_currents is not None:
             self._i_prev_gate = cap_currents.get("i_gate", 0.0)
             self._i_prev_drain = cap_currents.get("i_drain", 0.0)
+            self._i_prev_source = cap_currents.get("i_source", 0.0)
+            self._i_prev_bulk = cap_currents.get("i_bulk", 0.0)
 
 
 class NMOS_CMG(MOSFET_CMG):
