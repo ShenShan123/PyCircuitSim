@@ -52,6 +52,15 @@ if _MNA_ORDERING and _MNA_ORDERING not in _VALID_ORDERINGS:
         f"{_VALID_ORDERINGS}")
 
 
+class SimStepLimit(Exception):
+    """A transient sub-interval exceeded its sub-piece budget (V7.5.0).
+
+    Deliberately NOT a RuntimeError: the adaptive-march retry ladder in
+    ``TransientSolver.solve`` catches RuntimeError to shrink the local
+    timestep, and a budget blow-out must escape that ladder, not feed it.
+    """
+
+
 def _create_mna_matrix(size: int) -> lil_matrix:
     """Create a sparse MNA matrix (LIL format for efficient element-by-element assembly)."""
     return lil_matrix((size, size), dtype=np.float64)
@@ -389,14 +398,40 @@ def _stamp_mosfet_dc(
     node_map: Dict[str, int],
     voltages: Dict[str, float],
     gmin: float,
+    limit: bool = True,
 ) -> None:
     """Stamp MOSFET conductance and NR current source to MNA matrix.
 
     Shared by DCSolver._stamp_mosfet and TransientSolver._stamp_mosfet_transient.
     The NR linearization stamps g_ds, g_m, g_mb conductances and the equivalent
     current source i_eq = I_leaving(V0) - g_ds*V_ds0 - g_m*V_gs0 - g_mb*V_bs0.
+
+    Devices exposing ``nr_limit_voltages`` (LEVEL=72) are EVALUATED at the
+    limited bias V0' that method returns, and the whole companion —
+    conductances AND i_eq — linearizes about V0' (V7.5.0, SPICE-style
+    damped limiting). The extrapolated line keeps the true derivative, so
+    the fixed point is unchanged; the limiter is the identity for small
+    steps, so circuits that never stray stamp bit-identically.
+    ``limit=False`` (residual probes) evaluates at ``voltages`` as given.
     """
     drain, gate, source, bulk = mosfet.nodes
+
+    limiter = getattr(mosfet, "nr_limit_voltages", None) if limit else None
+    if limiter is not None:
+        voltages = limiter(voltages)
+        # Even the limited bias can defeat the OSDI internal-node solve
+        # for some geometries. Bisect back toward the last evaluable
+        # anchor until the model evaluates; the convergence guard sees
+        # _nr_limited=True, so such an iteration is never accepted.
+        for _ in range(8):
+            try:
+                mosfet.get_conductance(voltages)
+                break
+            except RuntimeError:
+                retreat = mosfet.nr_retreat_voltages()
+                if retreat is None:
+                    raise
+                voltages = retreat
 
     # Get conductances (3-tuple: g_ds, g_m, g_mb)
     g_ds, g_m, g_mb = mosfet.get_conductance(voltages)
@@ -472,6 +507,10 @@ def _stamp_mosfet_dc(
 # dynamic abs(g_mb) > 1e-12 stamp mask reproduces the scalar branch.
 # ─────────────────────────────────────────────────────────────────────
 _BATCHED_STAMP = os.environ.get("PYCIRCUITSIM_BATCHED_STAMP", "0") == "1"
+
+#: V7.5.0 diagnostic: PYCIRCUITSIM_NR_TRACE=1 prints one line per NR
+#: iteration (worst node, delta, active limiters) in the transient loop.
+_NR_TRACE = os.environ.get("PYCIRCUITSIM_NR_TRACE", "0") == "1"
 
 
 def _nn_stamp_indices(circuit: Circuit, node_map: Dict[str, int]):
@@ -988,6 +1027,14 @@ class DCSolver:
         # Reset damping to default for each solve
         self.damping_factor = 1.0
 
+        # V7.5.0: forget NR-limiting anchors from a previous solve — the
+        # first iteration then evaluates at the (window-clamped) initial
+        # guess, which for sweep continuations is the previous solution.
+        for component in self.circuit.components:
+            reset = getattr(component, "reset_nr_limits", None)
+            if reset is not None:
+                reset()
+
         # Get circuit topology
         nodes = self.circuit.get_nodes()
         node_map = self.circuit.get_node_map()
@@ -1073,6 +1120,15 @@ class DCSolver:
                 prev_max_delta = float('inf')
                 stuck_counter = 0
                 voltage_history: List[Dict[str, float]] = []
+
+                # V7.5.0: fresh NR-limiting anchors per NR sweep — a stale
+                # anchor from a failed gmin level / source step distorts
+                # the first evaluations of this one (see the transient
+                # solver's reset for the measured failure mode).
+                for component in self.circuit.components:
+                    reset = getattr(component, "reset_nr_limits", None)
+                    if reset is not None:
+                        reset()
 
                 # --- Levenberg-Marquardt damping state (Phase 6a) ---
                 # lm_lambda is the current λ; prev_residual is ‖F(x)‖∞ at
@@ -1352,6 +1408,18 @@ class DCSolver:
                         if iter_residual > resid_threshold:
                             all_converged = False
 
+                    # --- NR-limiting acceptance gate (V7.5.0) ---
+                    # An iteration whose matrix was stamped about LIMITED
+                    # device biases is a linear extrapolation, not the
+                    # circuit: never declare convergence on it. The
+                    # limiter is the identity near a true solution, so
+                    # this only delays acceptance while limiting is live.
+                    if all_converged:
+                        for component in self.circuit.components:
+                            if getattr(component, "_nr_limited", False):
+                                all_converged = False
+                                break
+
                     if all_converged:
                         if self.logger:
                             self.logger.log_convergence(
@@ -1392,6 +1460,14 @@ class DCSolver:
                         resid_threshold = max(_RESID_ABS_FLOOR, 100.0 * self.reltol * rhs_scale)
                         residual_ok = (not _has_nn_device(self.circuit)
                                        or avg_residual[0] <= resid_threshold)
+                        # V7.5.0: never average-accept while NR limiting
+                        # was clamping a device — the recent iterates are
+                        # extrapolations, not near-solutions.
+                        if residual_ok:
+                            for component in self.circuit.components:
+                                if getattr(component, "_nr_limited", False):
+                                    residual_ok = False
+                                    break
                         if residual_ok:
                             # Oscillating within tolerance — accept averaged solution
                             for node in nodes:
@@ -1521,9 +1597,11 @@ class DCSolver:
         rhs: np.ndarray,
         node_map: Dict[str, int],
         voltages: Dict[str, float],
+        limit: bool = True,
     ) -> None:
         """Stamp MOSFET conductance and NR current source to MNA matrix (DC)."""
-        _stamp_mosfet_dc(mosfet, mna_matrix, rhs, node_map, voltages, self.gmin)
+        _stamp_mosfet_dc(mosfet, mna_matrix, rhs, node_map, voltages, self.gmin,
+                         limit=limit)
 
     def _dc_residual_at(
         self,
@@ -1562,7 +1640,11 @@ class DCSolver:
                 component.stamp_rhs(rhs, node_map)
         for component in self.circuit.components:
             if _is_mosfet(component):
-                self._stamp_mosfet(component, mna, rhs, node_map, voltages)
+                # limit=False: a residual probe wants the TRUE KCL residual
+                # at the candidate voltages, and must not advance the
+                # NR-limiting anchor of the surrounding solve.
+                self._stamp_mosfet(component, mna, rhs, node_map, voltages,
+                                   limit=False)
         self._stamp_voltage_sources(mna, rhs, node_map, num_nodes, voltages=voltages)
         if gmin_level > self.gmin:
             self._apply_gmin_stepping(mna, node_map, gmin_level)
@@ -1970,6 +2052,16 @@ class TransientSolver:
         # solve can never commit stale branch currents.
         self._last_solution_tail = None
 
+        # V7.5.0: fresh NR-limiting anchors for THIS solve. An anchor left
+        # at the limiting window by a failed attempt would distort the
+        # first evaluations of the retry near the (good) starting point,
+        # and the charge companion amplifies any eval distortion by 1/dt —
+        # measured as ~1e2 A phantom residuals at the operating point.
+        for component in self.circuit.components:
+            reset = getattr(component, "reset_nr_limits", None)
+            if reset is not None:
+                reset()
+
         # Use previous timestep's voltages as initial guess
         voltages = initial_voltages.copy()
 
@@ -2144,6 +2236,15 @@ class TransientSolver:
             dv_arr = np.abs(sol_head - v_arr)
             max_delta = float(np.max(dv_arr)) if n_nodes else 0.0
 
+            if _NR_TRACE and n_nodes:
+                worst_i = int(np.argmax(dv_arr))
+                limited = [c.name for c in self.circuit.components
+                           if getattr(c, "_nr_limited", False)]
+                print(f"[NR t={time:.3e}] it={iteration} node={nodes[worst_i]} "
+                      f"v {v_arr[worst_i]:+.4f}->{sol_head[worst_i]:+.4f} "
+                      f"dmax={max_delta:.3e} resid={iter_residual:.3e} "
+                      f"lim={limited[:6]}")
+
             # Track voltage history for oscillation detection (store last 5 iterations)
             voltage_snapshot = dict(zip(nodes, sol_head))
             voltage_history.append(voltage_snapshot)
@@ -2175,6 +2276,15 @@ class TransientSolver:
                 resid_threshold = max(_RESID_ABS_FLOOR, 100.0 * self.reltol * rhs_scale)
                 if iter_residual > resid_threshold:
                     all_converged = False
+
+            # --- NR-limiting acceptance gate (V7.5.0) ---
+            # Same rule as the DC loop: a timestep stamped about limited
+            # device biases is an extrapolation — do not accept it.
+            if all_converged:
+                for component in self.circuit.components:
+                    if getattr(component, "_nr_limited", False):
+                        all_converged = False
+                        break
 
             if all_converged:
                 # Converged! Use new voltages directly
@@ -2256,6 +2366,13 @@ class TransientSolver:
                     )
                     resid_threshold = max(_RESID_ABS_FLOOR, 100.0 * self.reltol * rhs_scale)
                     residual_ok = avg_resid <= resid_threshold
+                # V7.5.0: never average-accept while NR limiting was
+                # clamping a device — those iterates are extrapolations.
+                if residual_ok:
+                    for component in self.circuit.components:
+                        if getattr(component, "_nr_limited", False):
+                            residual_ok = False
+                            break
 
                 if max_rel_variance < 10.0 and residual_ok:
                     if self.debug:
@@ -2298,10 +2415,22 @@ class TransientSolver:
         rhs: np.ndarray,
         node_map: Dict[str, int],
         voltages: Dict[str, float],
+        limit: bool = True,
     ) -> None:
         """Stamp MOSFET conductance/current (DC part) + charge-based capacitance for transient."""
         # DC conductance + NR current source stamping (shared with DCSolver)
-        _stamp_mosfet_dc(mosfet, mna_matrix, rhs, node_map, voltages, self.gmin)
+        _stamp_mosfet_dc(mosfet, mna_matrix, rhs, node_map, voltages, self.gmin,
+                         limit=limit)
+
+        # The charge companion below must linearize about the SAME bias
+        # the resistive companion evaluated at: when NR limiting clamped
+        # this device (V7.5.0), pick up the limited mapping it cached.
+        # Identity case returns the original dict, so this is bit-neutral
+        # for every unclamped iteration and for all non-L72 devices.
+        if limit:
+            v_lim = getattr(mosfet, "_nr_v_eval", None)
+            if v_lim is not None:
+                voltages = v_lim
 
         # --- Charge-based intrinsic capacitance stamping ---
         # Supports BE, Trapezoidal, and BDF-2 integration methods.
@@ -2450,7 +2579,10 @@ class TransientSolver:
         self._stamp_voltage_sources(mna, rhs, node_map, num_nodes, time, voltages)
         for component in self.circuit.components:
             if _is_mosfet(component):
-                self._stamp_mosfet_transient(component, mna, rhs, node_map, voltages)
+                # limit=False: residual probes must see the true KCL residual
+                # and must not advance the NR-limiting anchor (V7.5.0).
+                self._stamp_mosfet_transient(component, mna, rhs, node_map,
+                                             voltages, limit=False)
         if gmin > self.gmin_final:
             self._apply_gmin_stepping(mna, node_map, gmin)
         iterate = np.zeros(matrix_size)
@@ -2483,6 +2615,14 @@ class TransientSolver:
         node_map = self.circuit.get_node_map()
         num_nodes = len(nodes)
         num_voltage_sources = self.circuit.count_voltage_sources()
+
+        # V7.5.0: fresh NR-limiting anchors for this analysis. They then
+        # persist ACROSS timesteps (SPICE semantics: the anchor is the
+        # previous accepted evaluation), not per step.
+        for component in self.circuit.components:
+            reset = getattr(component, "reset_nr_limits", None)
+            if reset is not None:
+                reset()
 
         # Calculate number of timesteps.
         #
@@ -2618,12 +2758,13 @@ class TransientSolver:
             self._add_pseudo_capacitors()
 
         # Step 3: Adaptive time-stepping with LTE-based sub-stepping
-        # V5 Phase A — A3: NN circuits use a 4-halve cap (16x sub-resolution)
-        # with explicit event logging. BSIM-CMG keeps the original 5-halve
-        # behaviour to preserve byte-identical verify_bsimcmg_* output.
+        # V7.5.0: the retry ladder is an adaptive march (see below); the
+        # local piece may shrink to sub_dt·2⁻²⁴ before a step is declared
+        # unconvergable. (The V5 Phase A 4/5-halve caps applied to the old
+        # fixed-target ladder, which made the companions stiffer instead
+        # of the step smaller and is gone.)
         has_non_linear = self._has_non_linear_components()
         is_nn_circuit = self._has_nn_devices()
-        max_dt_reductions = 4 if is_nn_circuit else 5
 
         # LTE-adaptive sub-stepping: uses constructor parameters
         adaptive_substeps = 1
@@ -2683,18 +2824,42 @@ class TransientSolver:
                 sub_time = time[step - 1] + (sub_idx + 1) * sub_dt
                 self._current_dt = sub_dt
 
-                # Retry loop for NR convergence failures
-                dt_reduction_count = 0
-                current_sub_dt = sub_dt
+                # Retry loop for NR convergence failures.
+                #
+                # V7.5.0 — a failed attempt now CUTS THE LOCAL TIMESTEP
+                # and marches through the interval adaptively: halve the
+                # piece from the last committed time on failure, double
+                # it back (up to sub_dt) after success. The old ladder
+                # halved the companion dt while keeping the SAME target
+                # time, which is not a smaller step at all — the cap
+                # companions then demand the full interval's dV inside
+                # dt/2^n, so every "halving" made the system STIFFER
+                # (measured on the AnalogGym charge pump: residual pinned
+                # at ~2e3 A at "minimum dt"). A bistable element mid-
+                # transition (the same deck's quench comparator) needs
+                # fs-scale local steps for the capacitive terms to
+                # dominate its loop gain, exactly as NGSPICE's timestep
+                # control provides. A step that converges on the first
+                # attempt takes the exact old code path, so never-failing
+                # circuits are byte-identical.
+                t_now = sub_time - sub_dt
+                dt_try = sub_dt
+                min_piece_dt = sub_dt * 2.0 ** -24
+                pieces_done = 0
+                halvings = 0
+                _MAX_PIECES = 4096
 
-                while dt_reduction_count <= max_dt_reductions:
+                while True:
+                    remaining = sub_time - t_now
+                    piece_dt = dt_try if dt_try < remaining else remaining
+                    t_k = sub_time if piece_dt >= remaining else t_now + piece_dt
                     try:
-                        self._current_dt = current_sub_dt
+                        self._current_dt = piece_dt
 
                         # Update capacitor companion models
                         for component in self.circuit.components:
                             if isinstance(component, Capacitor):
-                                component.get_companion_model(current_sub_dt, component.v_prev)
+                                component.get_companion_model(piece_dt, component.v_prev)
 
                         # Solve for node voltages
                         if has_non_linear:
@@ -2704,7 +2869,7 @@ class TransientSolver:
                                 num_nodes=num_nodes,
                                 num_voltage_sources=num_voltage_sources,
                                 initial_voltages=current_voltages,
-                                time=sub_time,
+                                time=t_k,
                                 step_index=step - 1,
                                 use_gmin=effective_use_gmin
                             )
@@ -2716,15 +2881,15 @@ class TransientSolver:
                             for component in self.circuit.components:
                                 component.stamp_conductance(mna_matrix, node_map)
                                 self._stamp_component_rhs(
-                                    component, rhs, node_map, sub_time)
+                                    component, rhs, node_map, t_k)
 
-                            self._stamp_voltage_sources(mna_matrix, rhs, node_map, num_nodes, sub_time)
+                            self._stamp_voltage_sources(mna_matrix, rhs, node_map, num_nodes, t_k)
 
                             try:
                                 solution = _solve_mna(mna_matrix, rhs)
                             except (np.linalg.LinAlgError, RuntimeError) as e:
                                 raise np.linalg.LinAlgError(
-                                    f"Circuit matrix is singular at t={sub_time:.6f}s. "
+                                    f"Circuit matrix is singular at t={t_k:.6f}s. "
                                     f"Check for floating nodes or short circuits."
                                 ) from e
 
@@ -2737,7 +2902,7 @@ class TransientSolver:
                             self._last_solution_tail = np.array(
                                 solution[num_nodes:])
 
-                        # Sub-step succeeded — commit state
+                        # Piece succeeded — commit state
                         for component in self.circuit.components:
                             if isinstance(component, Capacitor):
                                 component.update_voltage(timestep_voltages)
@@ -2768,7 +2933,7 @@ class TransientSolver:
                                 terminal_currents = {}
                                 if hasattr(component, '_q_prev') and component._q_prev is not None:
                                     charges_new = component.get_charges(timestep_voltages)
-                                    dt_eff = current_sub_dt
+                                    dt_eff = piece_dt
                                     method = self._integration_method
                                     if method == 'bdf2' and hasattr(component, '_q_prev2') and component._q_prev2 is not None:
                                         coeff = 1.5 / dt_eff
@@ -2786,33 +2951,47 @@ class TransientSolver:
                                     terminal_currents["i_drain"] = coeff * charges_new["qd"] - h_d
                                 component.update_charge_state(timestep_voltages, terminal_currents)
 
+                        # Advance the march; leave when the interval is done.
                         current_voltages = timestep_voltages
-                        break
+                        t_now = t_k
+                        pieces_done += 1
+                        if t_k >= sub_time:
+                            break
+                        if pieces_done >= _MAX_PIECES:
+                            raise SimStepLimit(
+                                f"Timestep at t={sub_time:.2e}s needed more "
+                                f"than {_MAX_PIECES} sub-pieces")
+                        # Recover the piece size after success.
+                        dt_try = piece_dt * 2.0
+                        if dt_try > sub_dt:
+                            dt_try = sub_dt
 
                     except RuntimeError as e:
-                        dt_reduction_count += 1
-                        if dt_reduction_count > max_dt_reductions:
+                        halvings += 1
+                        dt_try = piece_dt * 0.5
+                        if dt_try < min_piece_dt:
                             raise RuntimeError(
                                 f"Failed to converge at t={sub_time:.2e}s even with minimum dt. "
                                 f"Original error: {e}"
                             ) from e
-                        dt_before = current_sub_dt
-                        current_sub_dt = sub_dt / (2 ** dt_reduction_count)
                         # V5 Phase A — A3: log every dt-halve event so
                         # verification scripts can flag cells that needed
                         # >1 halving (escalates as a model-fit issue).
+                        # V7.5.0: sim_time is the local march position, and
+                        # dt_after the piece the march will retry with.
                         self._dt_halve_events.append({
                             "step": step,
                             "sub_idx": sub_idx,
-                            "sim_time": float(sub_time),
-                            "halve_num": dt_reduction_count,
-                            "dt_before": float(dt_before),
-                            "dt_after": float(current_sub_dt),
+                            "sim_time": float(t_now),
+                            "halve_num": halvings,
+                            "dt_before": float(piece_dt),
+                            "dt_after": float(dt_try),
                             "is_nn_circuit": bool(is_nn_circuit),
                             "error_msg": str(e),
                         })
                         if self.debug:
-                            print(f"  WARNING: Convergence failed at t={sub_time:.2e}s, reducing dt to {current_sub_dt:.2e}")
+                            print(f"  WARNING: Convergence failed at t={t_now + piece_dt:.2e}s, "
+                                  f"retrying from t={t_now:.2e}s with dt={dt_try:.2e}s")
 
             # Store at output point
             for node in nodes:

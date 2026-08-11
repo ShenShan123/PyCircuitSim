@@ -57,10 +57,35 @@ TSMC5 pilot. Three root causes recorded there:
 - Gates CPU-pinned: CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 
 ## Progress log
-- [x] Read RESULTS_TSMC.md, mosfet_cmg.py, core.py internal solve, located tol.
-- [ ] Task 1: repro subthreshold floor (single device PyCMG vs NGSPICE, Vgs 0-100mV)
-- [ ] Task 2: fix floor
-- [ ] Task 3: per-terminal limiting in solver NR
-- [ ] Task 4: 125C DC start
-- [ ] Task 5: re-run 7 pilot decks + repo gates
-- [ ] Task 6: docs (RESULTS_TSMC.md, CLAUDE.md, CHANGELOG.md, README.md)
+- [x] Task 1: root cause = PyCMG internal-solve tol 1e-9 A abs (model.py); NGSPICE ABSTOL=1e-12.
+- [x] Task 2: default tol -> 1e-12 (committed 544e9f4). ptat_1 5/13 -> 9/13 @stride10
+      (rest = stride artifacts + hot-end flags 115/120C, recheck full stride).
+- [~] Task 3 (in progress), findings chain:
+      1. Added fetlim/limvds pair-space limiting + eval about limited point in
+         _stamp_mosfet_dc (limit kwarg; probes pass limit=False), _nr_limited
+         convergence gates in DC+tran loops + both oscillation-acceptance paths,
+         reset at DCSolver.solve + TransientSolver.solve entry, retreat-to-anchor
+         loop (8x bisect) on eval RuntimeError. PMOS via _nr_sign=-1.
+      2. Charge pump STILL died: eval fails at pairs (2.5,2.5,2.5) when ABSOLUTE
+         source = -16.1V. Probe (nch_svt_mac l68n nfin4): same pairs eval OK at
+         s=0 / s=-8.5, FAIL s=-16.1 warm AND cold => OSDI internal solve not
+         shift-robust. FIX: _eval_dc now evaluates SOURCE-REFERENCED (subtract
+         v_s; mirrors NN Rule 2). Device name/L/NFIN/m now appended to eval errors.
+      3. Next failure: pure NR ping-pong +-0.65V (dv cap) at t=4e-11, resid
+         pins at 2.048e3 at "min dt". ROOT CAUSE: dt-cut ladder halves
+         current_sub_dt but keeps SAME target sub_time => companion demands
+         full-interval dV in dt/2^n => STIFFER each halving. Broken by design.
+      4. IN PROGRESS: rewrite retry ladder as true interval subdivision
+         (2^n pieces walked sequentially, commit per piece, snapshot/rollback
+         cap v_prev/v_prev2/_i_prev + mosfet _q_prev/_q_prev2/_v_prev_tran/
+         _i_prev_gate/_i_prev_drain on failure). n=0 path byte-identical.
+      5. Diagnostic added: PYCIRCUITSIM_NR_TRACE=1 traces transient NR.
+- [ ] Task 4: 125C DC start (test after task 3; limiting may fix)
+- [ ] Task 5: re-run 7 pilot decks + repo gates (incl. verify_bsimcmg_tran, ac,
+      subckt, complex x4; L72 numbers all perturbed by tol+src-ref changes —
+      expected within gate tolerances, sha256 sweep baselines may need rebase)
+- [ ] Task 6: docs
+
+## Uncommitted so far (beyond 544e9f4)
+- mosfet_cmg.py: limiter (+fetlim/limvds/reset/retreat), src-ref eval, err context
+- solver.py: limit kwarg plumbing, convergence gates, resets, NR_TRACE, (ladder WIP)

@@ -162,6 +162,23 @@ class MOSFET_CMG(Component):
         self._eval_cache: Optional[Dict[str, float]] = None
         self._cache_voltages: Optional[Tuple[float, float, float, float]] = None
 
+        # --- SPICE-style NR voltage-limiting state (V7.5.0) ---
+        # (vgs, vds, vbs) this device was last EVALUATED at, in the
+        # NMOS-normalized frame (PMOS pairs are negated). None until the
+        # first limited stamp of a solve; solvers reset it at solve entry.
+        self._v_lim_prev: Optional[Tuple[float, float, float]] = None
+        # True while the last nr_limit_voltages() call actually clamped —
+        # the solvers refuse to declare convergence on such an iteration.
+        self._nr_limited: bool = False
+        # The terminal-voltage mapping of the last limited evaluation
+        # (the ORIGINAL dict object when limiting was a no-op, so the
+        # inactive path stays bit-identical).
+        self._nr_v_eval: Optional[Dict[str, float]] = None
+        # Retreat state for nr_retreat_voltages(): the previous anchor
+        # pairs and the source reference of the current eval frame.
+        self._v_lim_anchor: Optional[Tuple[float, float, float]] = None
+        self._v_lim_source: float = 0.0
+
         # Charge state for transient analysis
         self._q_prev: Optional[Dict[str, float]] = None
         self._q_prev2: Optional[Dict[str, float]] = None  # Two-step-ago charges (BDF-2)
@@ -200,13 +217,26 @@ class MOSFET_CMG(Component):
         if self._cache_voltages == v_tuple and self._eval_cache is not None:
             return self._eval_cache
 
-        # Call PyCMG eval_dc
-        result = self._pycmg_instance.eval_dc({
-            "d": v_d,
-            "g": v_g,
-            "s": v_s,
-            "e": v_b  # Bulk terminal is 'e' in BSIM-CMG
-        })
+        # Call PyCMG eval_dc in the SOURCE-REFERENCED frame (V7.5.0).
+        # BSIM-CMG physics depends on terminal differences only, but the
+        # OSDI internal-node solve is NOT robust at large absolute
+        # offsets: measured on nch_svt_mac l68n/nfin4, the identical
+        # (vgs,vds,vbs)=(2.5,2.5,2.5) bias evaluates at s=-8.5 V and
+        # diverges at s=-16.1 V (warm or cold). Newton runaway in a
+        # floating subcircuit can park absolute levels anywhere, so the
+        # eval frame is pinned to the source terminal. This mirrors NN
+        # Rule 2 (source-relative frame; shift invariance makes it exact).
+        try:
+            result = self._pycmg_instance.eval_dc({
+                "d": v_d - v_s,
+                "g": v_g - v_s,
+                "s": 0.0,
+                "e": v_b - v_s  # Bulk terminal is 'e' in BSIM-CMG
+            })
+        except RuntimeError as exc:
+            raise RuntimeError(
+                f"{exc} [device {self.name}, L={self.L:g}, "
+                f"NFIN={self.NFIN:g}, m={self.m:g}]") from exc
 
         # Update cache
         self._eval_cache = result
@@ -255,6 +285,215 @@ class MOSFET_CMG(Component):
         """
         self._eval_cache = None
         self._cache_voltages = None
+
+    # ------------------------------------------------------------------
+    # SPICE-style Newton-Raphson voltage limiting (V7.5.0)
+    #
+    # The solver's dv_limit trust region caps the per-iteration NODE step
+    # but does nothing about where the device is EVALUATED: capped
+    # iterations can still walk a gate to -3 V on a 0.65 V rail, at which
+    # point the OSDI internal-node solve diverges and the whole timestep
+    # dies (AnalogGym charge pump, amplifier slew edges). The classic
+    # SPICE answer is damped limiting: evaluate the device at a limited
+    # bias derived from the last evaluation point, and let the stamp
+    # linearize about THAT point. The linear extrapolation keeps the
+    # true derivative (a hard clamp would zero it and stall NR), and the
+    # limit functions are the identity for small steps, so the converged
+    # fixed point is bit-identical for every circuit that never strays.
+    # ------------------------------------------------------------------
+
+    #: NMOS-normalized polarity sign; PMOS_CMG overrides with -1.0.
+    _nr_sign: float = 1.0
+    #: Absolute |Vgs|/|Vds|/|Vbs| evaluation window (V). Legit FinFET
+    #: operating points (incl. 2xVDD charge-pump boosts on 0.65-0.8 V
+    #: rails) stay well inside; the OSDI internal solve stays sane inside.
+    _NR_LIM_WINDOW: float = 2.5
+    #: Threshold estimate for the fetlim shape (normalized frame). Only
+    #: shapes step sizes — the converged answer never depends on it.
+    _NR_LIM_VTO: float = 0.25
+
+    @staticmethod
+    def _fetlim(vnew: float, vold: float, vto: float) -> float:
+        """SPICE3 DEVfetlim: damped limiting for a FET gate-source step."""
+        vtsthi = abs(2.0 * (vold - vto)) + 2.0
+        vtstlo = 0.5 * vtsthi + 2.0
+        vtox = vto + 3.5
+        delv = vnew - vold
+        if vold >= vto:
+            if vold >= vtox:
+                if delv <= 0.0:
+                    # Going off
+                    if vnew >= vtox:
+                        if -delv > vtstlo:
+                            vnew = vold - vtstlo
+                    else:
+                        vnew = max(vnew, vto + 2.0)
+                else:
+                    # Staying on
+                    if delv >= vtsthi:
+                        vnew = vold + vtsthi
+            else:
+                # Middle region
+                if delv <= 0.0:
+                    vnew = max(vnew, vto - 0.5)
+                else:
+                    vnew = min(vnew, vto + 4.0)
+        else:
+            # Off
+            if delv <= 0.0:
+                if -delv > vtsthi:
+                    vnew = vold - vtsthi
+            else:
+                vtemp = vto + 0.5
+                if vnew <= vtemp:
+                    if delv > vtstlo:
+                        vnew = vold + vtstlo
+                else:
+                    vnew = vtemp
+        return vnew
+
+    @staticmethod
+    def _limvds(vnew: float, vold: float) -> float:
+        """SPICE3 DEVlimvds, sign-symmetric.
+
+        Classic SPICE swaps drain/source so vds >= 0 always; this
+        simulator does not, and BSIM-CMG legitimately sees negative vds.
+        Applying the classic function in the sign frame of ``vold``
+        preserves its behaviour on the positive side and mirrors it on
+        the negative side; a zero-crossing lands at most 0.5 V past zero
+        per iteration (the classic -0.5 floor).
+        """
+        s = 1.0 if vold >= 0.0 else -1.0
+        an, ao = s * vnew, s * vold
+        if ao >= 3.5:
+            if an > ao:
+                an = min(an, 3.0 * ao + 2.0)
+            elif an < 3.5:
+                an = max(an, 2.0)
+        else:
+            if an > ao:
+                an = min(an, 4.0)
+            else:
+                an = max(an, -0.5)
+        return s * an
+
+    def reset_nr_limits(self) -> None:
+        """Forget the limiting anchor; solvers call this at solve entry."""
+        self._v_lim_prev = None
+        self._nr_limited = False
+        self._nr_v_eval = None
+        self._v_lim_anchor = None
+        self._v_lim_source = 0.0
+
+    def nr_retreat_voltages(self) -> Optional[Dict[str, float]]:
+        """Halve the last limited step back toward the previous anchor.
+
+        Called by the stamp when the OSDI evaluation at the limited bias
+        still failed (internal-node NR divergence at extreme bias). The
+        anchor is the previous iteration's evaluation point, which did
+        evaluate; bisecting toward it always reaches evaluable territory.
+        Returns the new terminal mapping, or None when there is no anchor
+        (first evaluation of a solve) or no meaningful room left.
+        """
+        anchor = getattr(self, "_v_lim_anchor", None)
+        if anchor is None or self._v_lim_prev is None:
+            return None
+        cur = self._v_lim_prev
+        span = max(abs(c - a) for c, a in zip(cur, anchor))
+        if span < 1e-6:
+            return None
+        mid = tuple(0.5 * (c + a) for c, a in zip(cur, anchor))
+        self._v_lim_prev = mid
+        self._nr_limited = True
+        sgn = self._nr_sign
+        drain, gate, source, bulk = self.nodes
+        v_s = self._v_lim_source
+        v_eval = {
+            source: v_s,
+            drain: v_s + sgn * mid[1],
+            gate: v_s + sgn * mid[0],
+            bulk: v_s + sgn * mid[2],
+        }
+        v_eval[source] = v_s
+        self._nr_v_eval = v_eval
+        return v_eval
+
+    def nr_limit_voltages(self, voltages: Dict[str, float]) -> Dict[str, float]:
+        """Return the terminal-voltage mapping to EVALUATE this device at.
+
+        Applies fetlim to vgs, sign-symmetric limvds to vds, a plain step
+        cap to vbs — all in the NMOS-normalized frame relative to the
+        last evaluation point — then clamps every pair into the absolute
+        window. Terminals sharing one node (diode-connected devices)
+        are reconciled to a single value (the most-limited proposal).
+
+        Side effects: records the accepted pairs as the next anchor,
+        sets ``_nr_limited``, and caches the returned mapping in
+        ``_nr_v_eval``. Returns the ORIGINAL dict object when nothing
+        was clamped, keeping the inactive path bit-identical.
+        """
+        drain, gate, source, bulk = self.nodes
+        v_d = voltages.get(drain, 0.0)
+        v_g = voltages.get(gate, 0.0)
+        v_s = voltages.get(source, 0.0)
+        v_b = voltages.get(bulk, 0.0)
+
+        sgn = self._nr_sign
+        raw = {
+            "gs": sgn * (v_g - v_s),
+            "ds": sgn * (v_d - v_s),
+            "bs": sgn * (v_b - v_s),
+        }
+
+        win = self._NR_LIM_WINDOW
+        lim: Dict[str, float] = {}
+        old = self._v_lim_prev
+        # Retreat anchor for nr_retreat_voltages(): the pairs of the last
+        # evaluation, plus the source reference the eval frame hangs off.
+        self._v_lim_anchor = old
+        self._v_lim_source = v_s
+        if old is None:
+            for key in ("gs", "ds", "bs"):
+                lim[key] = min(max(raw[key], -win), win)
+        else:
+            old_map = {"gs": old[0], "ds": old[1], "bs": old[2]}
+            lim["gs"] = self._fetlim(raw["gs"], old_map["gs"], self._NR_LIM_VTO)
+            lim["ds"] = self._limvds(raw["ds"], old_map["ds"])
+            dbs = raw["bs"] - old_map["bs"]
+            lim["bs"] = (old_map["bs"] + (1.0 if dbs > 0.0 else -1.0)
+                         if abs(dbs) > 1.0 else raw["bs"])
+            for key in ("gs", "ds", "bs"):
+                lim[key] = min(max(lim[key], -win), win)
+            # Aliased terminals (e.g. diode-connected gate==drain) must
+            # evaluate at ONE voltage: keep the most-limited proposal.
+            groups: Dict[str, list] = {}
+            for key, node in (("gs", gate), ("ds", drain), ("bs", bulk)):
+                groups.setdefault(node, []).append(key)
+            for keys in groups.values():
+                if len(keys) > 1:
+                    chosen = min(keys, key=lambda k: abs(lim[k] - old_map[k]))
+                    for k in keys:
+                        lim[k] = lim[chosen]
+
+        self._v_lim_prev = (lim["gs"], lim["ds"], lim["bs"])
+        if lim == raw:
+            self._nr_limited = False
+            self._nr_v_eval = voltages
+            return voltages
+
+        self._nr_limited = True
+        v_eval = {
+            source: v_s,
+            drain: v_s + sgn * lim["ds"],
+            gate: v_s + sgn * lim["gs"],
+            bulk: v_s + sgn * lim["bs"],
+        }
+        # Source overwrites any alias above it in construction order;
+        # rebuild with source last so a drain/gate/bulk tied to the
+        # source node keeps the source reference exact.
+        v_eval[source] = v_s
+        self._nr_v_eval = v_eval
+        return v_eval
 
     def calculate_current(self, voltages: Dict[str, float]) -> float:
         """Calculate drain terminal current. Must be overridden by subclass."""
@@ -404,6 +643,9 @@ class PMOS_CMG(MOSFET_CMG):
 
     Terminal order: [drain, gate, source, bulk]
     """
+
+    #: NR limiting works in the NMOS-normalized frame; PMOS pairs negate.
+    _nr_sign: float = -1.0
 
     def __init__(
         self,
