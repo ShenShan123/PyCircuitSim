@@ -25,7 +25,7 @@ if str(PYCMG_PATH) not in sys.path:
     sys.path.insert(0, str(PYCMG_PATH))
 
 try:
-    from pycmg import Model, Instance
+    from pycmg import Instance, get_shared_model
 except ImportError as e:
     raise ImportError(
         f"Failed to import PyCMG: {e}. "
@@ -63,6 +63,7 @@ class MOSFET_CMG(Component):
         temperature: float = DEFAULT_TEMPERATURE,
         model_card_name: Optional[str] = None,
         device_label: str = "MOSFET_CMG",
+        multiplier: float = 1.0,
     ):
         """Initialize a BSIM-CMG FinFET device.
 
@@ -81,9 +82,17 @@ class MOSFET_CMG(Component):
             model_card_name: Name of the model in the modelcard file (e.g., "nmos_rvt").
                 If None, falls back to model_name.
             device_label: Label for error messages (e.g., "NMOS_CMG", "PMOS_CMG")
+            multiplier: Instance multiplier `m=` — the number of IDENTICAL
+                devices in parallel (default 1.0 == a single device).
+                Measured on ngspice-45.2 (nsvt_l109_f2, m=1 vs m=4): i(vd)
+                scales exactly x4 while @nm[gm] / @nm[cgg] are IDENTICAL, i.e.
+                m multiplies the residual and the resistive/reactive Jacobian
+                and does NOT change device physics. It is therefore applied in
+                the accessors below, never inside `_eval_dc` (whose cache must
+                stay raw), and never via NFIN or parallel copies.
 
         Raises:
-            ValueError: If node count is not 4, or L/NFIN are invalid
+            ValueError: If node count is not 4, or L/NFIN/multiplier are invalid
             FileNotFoundError: If OSDI binary or modelcard not found
         """
         super().__init__(name, nodes, None)
@@ -97,6 +106,9 @@ class MOSFET_CMG(Component):
             raise ValueError(f"Channel length L must be positive, got {L}")
         if NFIN <= 0:
             raise ValueError(f"Number of fins NFIN must be positive, got {NFIN}")
+        if multiplier <= 0:
+            raise ValueError(
+                f"Instance multiplier m must be positive, got {multiplier}")
 
         # Validate file paths
         if not Path(osdi_path).exists():
@@ -111,17 +123,7 @@ class MOSFET_CMG(Component):
         self.HFIN = float(HFIN) if HFIN is not None else None
         self.FPITCH = float(FPITCH) if FPITCH is not None else None
         self.temperature = float(temperature)
-
-        # Create PyCMG model (loads modelcard parameters)
-        # model_card_name overrides model_name for modelcard lookup
-        # This allows netlist model names (e.g., "nmos1") to differ from
-        # modelcard model names (e.g., "nmos_rvt" in ASAP7)
-        self._pycmg_model = Model(
-            osdi_path=osdi_path,
-            modelcard_path=modelcard_path,
-            model_name=model_card_name or model_name,
-            model_card_name=model_card_name,
-        )
+        self.m = float(multiplier)
 
         # Build instance parameters dictionary
         inst_params = {"L": self.L, "NFIN": self.NFIN}
@@ -131,6 +133,23 @@ class MOSFET_CMG(Component):
             inst_params["HFIN"] = self.HFIN
         if self.FPITCH is not None:
             inst_params["FPITCH"] = self.FPITCH
+
+        # Get the PyCMG model (loads modelcard parameters).
+        # model_card_name overrides model_name for modelcard lookup: this
+        # allows netlist model names (e.g., "nmos1") to differ from modelcard
+        # model names (e.g., "nmos_rvt" in ASAP7).
+        #
+        # Memoised on (osdi, card, resolved name, geometry) — one 444 KB card
+        # parse per distinct card instead of one per DEVICE. The geometry is
+        # part of the key because L/NFIN/TFIN are MODEL-kind OSDI params living
+        # in the shared model buffer (see pycmg.model.get_shared_model).
+        self._pycmg_model = get_shared_model(
+            osdi_path=osdi_path,
+            modelcard_path=modelcard_path,
+            model_name=model_name,
+            model_card_name=model_card_name,
+            geometry=inst_params,
+        )
 
         # Create PyCMG instance
         self._pycmg_instance = Instance(
@@ -195,6 +214,40 @@ class MOSFET_CMG(Component):
 
         return result
 
+    def set_temperature(self, temperature_kelvin: float) -> None:
+        """Rebind this device at a new temperature, in place.
+
+        Temperature is otherwise a CONSTRUCTION parameter, so a temperature
+        sweep would have to rebuild every device per point (measured 818.7 ms
+        per device). Rebinding the PyCMG instance is measured at 0.255 ms per
+        device and bit-identical to a fresh instance at that temperature.
+
+        The ``clear_cache()`` below is MANDATORY, not hygiene: ``_eval_cache``
+        is keyed on (v_d, v_g, v_s, v_b) only, so a temperature change at
+        unchanged voltages would otherwise return the STALE result — a silent
+        wrong answer. The transient charge history is reset for the same
+        reason (it belongs to the old temperature).
+
+        Args:
+            temperature_kelvin: New device temperature in KELVIN
+
+        Raises:
+            ValueError: If the value looks like Celsius (<= 200 K)
+        """
+        if temperature_kelvin <= 200.0:
+            raise ValueError(
+                f"Temperature must be in Kelvin (> 200 K), got "
+                f"{temperature_kelvin}. Use temp_K = temp_C + 273.15.")
+
+        self.temperature = float(temperature_kelvin)
+        self._pycmg_instance.set_temperature(self.temperature)
+
+        # Voltage-keyed caches and charge history are temperature-stale now.
+        self.clear_cache()
+        self._q_prev = None
+        self._q_prev2 = None
+        self._v_prev_tran = None
+
     def clear_cache(self) -> None:
         """Clear evaluation cache.
 
@@ -215,6 +268,11 @@ class MOSFET_CMG(Component):
         - g_m = dI_ds/dV_gs (transconductance)
         - g_mb = dI_ds/dV_bs (bulk transconductance)
 
+        All three are scaled by the instance multiplier ``m`` — they are the
+        derivative of the (also m-scaled) stamped residual, so current,
+        conductance, capacitance and charge MUST scale together or the NR
+        Jacobian stops being the derivative of what is stamped.
+
         Returns:
             Tuple of (g_ds, g_m, g_mb) in siemens
         """
@@ -229,32 +287,38 @@ class MOSFET_CMG(Component):
         # gm and gmb are signed transconductances, preserve their signs
         g_ds = abs(g_ds)
 
-        return (g_ds, g_m, g_mb)
+        return (g_ds * self.m, g_m * self.m, g_mb * self.m)
 
     def get_capacitances(self, voltages: Dict[str, float]) -> Dict[str, float]:
-        """Get terminal capacitances for AC analysis."""
+        """Get terminal capacitances for AC analysis (x instance multiplier)."""
         result = self._eval_dc(voltages)
+        m = self.m
 
         return {
-            "cgg": result.get("cgg", 0.0),
-            "cgd": result.get("cgd", 0.0),
-            "cgs": result.get("cgs", 0.0),
-            "cdg": result.get("cdg", 0.0),
-            "cdd": result.get("cdd", 0.0),
+            "cgg": result.get("cgg", 0.0) * m,
+            "cgd": result.get("cgd", 0.0) * m,
+            "cgs": result.get("cgs", 0.0) * m,
+            "cdg": result.get("cdg", 0.0) * m,
+            "cdd": result.get("cdd", 0.0) * m,
         }
 
     def get_charges(self, voltages: Dict[str, float]) -> Dict[str, float]:
-        """Get terminal charges from BSIM-CMG eval_dc().
+        """Get terminal charges from BSIM-CMG eval_dc() (x instance multiplier).
+
+        This is the ONLY route into ``init_charge_state`` /
+        ``update_charge_state``, so the transient companion model inherits the
+        multiplier from here.
 
         Returns:
             Dictionary with keys: qg, qd, qs, qb (Coulombs)
         """
         result = self._eval_dc(voltages)
+        m = self.m
         return {
-            "qg": result.get("qg", 0.0),
-            "qd": result.get("qd", 0.0),
-            "qs": result.get("qs", 0.0),
-            "qb": result.get("qb", 0.0),
+            "qg": result.get("qg", 0.0) * m,
+            "qd": result.get("qd", 0.0) * m,
+            "qs": result.get("qs", 0.0) * m,
+            "qb": result.get("qb", 0.0) * m,
         }
 
     def init_charge_state(self, voltages: Dict[str, float]) -> None:
@@ -312,15 +376,16 @@ class NMOS_CMG(MOSFET_CMG):
         FPITCH: Optional[float] = None,
         temperature: float = DEFAULT_TEMPERATURE,
         model_card_name: Optional[str] = None,
+        multiplier: float = 1.0,
     ):
         super().__init__(
             name, nodes, osdi_path, modelcard_path, model_name,
             L, NFIN, TFIN, HFIN, FPITCH, temperature, model_card_name,
-            device_label="NMOS_CMG",
+            device_label="NMOS_CMG", multiplier=multiplier,
         )
 
     def calculate_current(self, voltages: Dict[str, float]) -> float:
-        """Calculate drain terminal current.
+        """Calculate drain terminal current (x instance multiplier).
 
         For NMOS ON: PyCMG id < 0 (SPICE: current OUT of drain), so -id > 0.
         The solver expects positive values; NMOS/PMOS sign difference is
@@ -331,7 +396,7 @@ class NMOS_CMG(MOSFET_CMG):
         """
         result = self._eval_dc(voltages)
         # NMOS: negate SPICE id (negative when ON) to get positive value
-        return -result["id"]
+        return -result["id"] * self.m
 
 
 class PMOS_CMG(MOSFET_CMG):
@@ -354,15 +419,16 @@ class PMOS_CMG(MOSFET_CMG):
         FPITCH: Optional[float] = None,
         temperature: float = DEFAULT_TEMPERATURE,
         model_card_name: Optional[str] = None,
+        multiplier: float = 1.0,
     ):
         super().__init__(
             name, nodes, osdi_path, modelcard_path, model_name,
             L, NFIN, TFIN, HFIN, FPITCH, temperature, model_card_name,
-            device_label="PMOS_CMG",
+            device_label="PMOS_CMG", multiplier=multiplier,
         )
 
     def calculate_current(self, voltages: Dict[str, float]) -> float:
-        """Calculate drain terminal current.
+        """Calculate drain terminal current (x instance multiplier).
 
         For PMOS ON: PyCMG id > 0 (SPICE: current INTO drain), so id > 0.
         The solver expects positive values; PMOS RHS stamping in solver.py
@@ -373,4 +439,4 @@ class PMOS_CMG(MOSFET_CMG):
         """
         result = self._eval_dc(voltages)
         # PMOS: id is already positive when ON (SPICE: current INTO drain)
-        return result["id"]
+        return result["id"] * self.m

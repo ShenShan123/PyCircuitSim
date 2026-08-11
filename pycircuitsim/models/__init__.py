@@ -3,7 +3,8 @@ PyCircuitSim Device Models Package.
 
 This package contains all circuit component models including:
 - Base abstract class (Component)
-- Passive components (Resistor, VoltageSource, CurrentSource, Capacitor)
+- Passive components (Resistor, VoltageSource, CurrentSource, Capacitor,
+  Inductor — DC/AC only)
 - Active components:
   - NMOS_CMG, PMOS_CMG (LEVEL=72) — BSIM-CMG via PyCMG/OSDI
   - NMOS_NN, PMOS_NN (LEVEL=73) — DirectNet MLP
@@ -15,7 +16,8 @@ from pycircuitsim.models.passive import (
     Resistor,
     VoltageSource,
     CurrentSource,
-    Capacitor
+    Capacitor,
+    Inductor
 )
 
 __all__ = [
@@ -24,4 +26,5 @@ __all__ = [
     'VoltageSource',
     'CurrentSource',
     'Capacitor',
+    'Inductor',
 ]

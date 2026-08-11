@@ -71,6 +71,7 @@ from pycircuitsim.models import (
     Capacitor,
     VoltageSource,
     CurrentSource,
+    Inductor,
 )
 from pycircuitsim.config import BSIMCMG_OSDI_PATH, GENERIC_MODELCARD_DIR, ASAP7_MODELCARD_DIR
 
@@ -653,6 +654,8 @@ class Parser:
             self._parse_resistor(line)
         elif first_char == 'C':
             self._parse_capacitor(line)
+        elif first_char == 'L':
+            self._parse_inductor(line)
         elif first_char == 'V':
             self._parse_voltage_source(line)
         elif first_char == 'I':
@@ -677,6 +680,15 @@ class Parser:
             self._parse_model(line)
         elif line.lower().startswith('.include'):
             self._parse_include(line)
+        elif first_char.isalpha():
+            # An unhandled DEVICE letter used to fall through this dispatch
+            # into silence, so a top-level `Nm1 ...` (ngspice OSDI prefix) or
+            # `L1 ...` parsed to a circuit with the device simply GONE — the
+            # one failure mode that yields a plausible-looking wrong number
+            # instead of an error. Unknown `.`-directives stay ignored (repo
+            # decks carry `.end`, `.option`, `.measure`, ...).
+            raise ValueError(
+                f"Unrecognized device card (unsupported device type): {line}")
         # Ignore other directives (.option, .measure, etc.)
 
     def _parse_value(self, value_str: str) -> float:
@@ -766,6 +778,30 @@ class Parser:
         capacitor = Capacitor(name, nodes, value)
         self.circuit.add_component(capacitor)
 
+    def _parse_inductor(self, line: str) -> None:
+        """
+        Parse an inductor line: L<name> <n1> <n2> <value>.
+
+        Mirrors ``_parse_resistor``. The device is DC/AC only (see
+        ``models.passive.Inductor``); a transient run containing one raises.
+
+        Args:
+            line: Inductor definition line
+
+        Raises:
+            ValueError: If the line has invalid syntax
+        """
+        parts = line.split()
+        if len(parts) < 4:
+            raise ValueError(f"Invalid inductor syntax: {line}")
+
+        name = parts[0]
+        nodes = [self._canon_node(parts[1]), self._canon_node(parts[2])]
+        value = self._parse_value(parts[3])
+
+        inductor = Inductor(name, nodes, value)
+        self.circuit.add_component(inductor)
+
     def _parse_voltage_source(self, line: str) -> None:
         """
         Parse a voltage source line: V<name> <n+> <n-> <value> or V<name> <n+> <n-> PULSE <params>.
@@ -841,10 +877,12 @@ class Parser:
 
         Supports:
         - DC current source: I1 n+ n- 1m
+        - PULSE source: I1 n+ n- PULSE 0 1m 1n 0.1n 0.1n 5n 10n
         - AC current source: I1 n+ n- DC=0 AC=1 0 (DC bias, AC magnitude, AC phase in degrees)
 
         The AC keyword form mirrors the voltage-source parser so that `.ac`
-        analysis can be driven by a current stimulus (e.g. transimpedance).
+        analysis can be driven by a current stimulus (e.g. transimpedance);
+        the PULSE form mirrors it likewise (space-separated only).
 
         Args:
             line: Current source definition line
@@ -858,6 +896,26 @@ class Parser:
 
         name = parts[0]
         nodes = [self._canon_node(parts[1]), self._canon_node(parts[2])]
+
+        # Check if it's a PULSE source (mirrors _parse_voltage_source)
+        if parts[3].upper() == 'PULSE':
+            # PULSE source: I1 n+ n- PULSE I1 I2 TD TR TF PW PER
+            if len(parts) < 11:
+                raise ValueError(f"PULSE source requires 8 parameters: {line}")
+
+            from pycircuitsim.models.passive import PulseCurrentSource
+
+            i1 = self._parse_value(parts[4])
+            i2 = self._parse_value(parts[5])
+            td = self._parse_value(parts[6])
+            tr = self._parse_value(parts[7])
+            tf = self._parse_value(parts[8])
+            pw = self._parse_value(parts[9])
+            per = self._parse_value(parts[10])
+
+            pulse_source = PulseCurrentSource(name, nodes, i1, i2, td, tr, tf, pw, per)
+            self.circuit.add_component(pulse_source)
+            return
 
         # Check for the AC specification form: DC=x AC=y phase
         dc_value = None
@@ -917,6 +975,7 @@ class Parser:
         TFIN = None
         HFIN = None
         FPITCH = None
+        MULT = 1.0
 
         for part in parts[6:]:
             if part.startswith('L='):
@@ -931,6 +990,12 @@ class Parser:
                 HFIN = self._parse_value(part[5:])
             elif part.startswith('FPITCH='):
                 FPITCH = self._parse_value(part[7:])
+            elif part[:2].upper() == 'M=':
+                # Instance multiplier: N identical devices in parallel.
+                # Case-insensitive because SPICE decks write both `m=` and
+                # `M=`; the geometry keys above stay case-sensitive
+                # (unchanged behaviour — `M=` cannot collide with them).
+                MULT = self._parse_value(part[2:])
 
         # L is always required
         if L is None:
@@ -1026,6 +1091,7 @@ class Parser:
                     HFIN=HFIN,
                     FPITCH=FPITCH,
                     model_card_name=model_card_name,
+                    multiplier=MULT,
                 )
             elif model_type.upper() == 'PMOS':
                 mosfet = PMOS_CMG(
@@ -1040,6 +1106,7 @@ class Parser:
                     HFIN=HFIN,
                     FPITCH=FPITCH,
                     model_card_name=model_card_name,
+                    multiplier=MULT,
                 )
             else:
                 raise ValueError(f"Unknown MOSFET model type: {model_type}")
@@ -1345,7 +1412,7 @@ class Parser:
 
     #: Node-token count per component type letter (nodes come right after
     #: the name token; everything later is values/params/model refs).
-    _NODE_COUNT = {'R': 2, 'C': 2, 'V': 2, 'I': 2, 'M': 4}
+    _NODE_COUNT = {'R': 2, 'C': 2, 'L': 2, 'V': 2, 'I': 2, 'M': 4}
 
     def _collect_subckt_defs(self, lines: list) -> list:
         """Extract .subckt/.ends blocks from a processed-line stream.

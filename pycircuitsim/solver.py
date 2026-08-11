@@ -711,7 +711,8 @@ class DCSolver:
                  source_stepping_steps: int = 20,
                  damping_factor: float = 1.0,
                  reltol: float = 1e-4, vntol: float = 1e-7, gmin: float = 1e-12,
-                 use_gmin_stepping: bool = False, force_ic: bool = False):
+                 use_gmin_stepping: bool = False, force_ic: bool = False,
+                 dv_limit: Optional[float] = None):
         """
         Initialize the DC Solver.
 
@@ -730,6 +731,28 @@ class DCSolver:
             gmin: Minimum MOSFET channel conductance (SPICE GMIN, default: 1e-12 S)
             use_gmin_stepping: Enable DC GMIN stepping for bistable convergence (default: False)
             force_ic: Enforce .ic as voltage constraints, not just initial guess (default: False)
+            dv_limit: Per-iteration, per-node |ΔV| trust-region cap in volts
+                (default None = OFF, historical behaviour). There is otherwise
+                NO voltage limiting on the LEVEL=72 path: `mosfet_cmg.py` hands
+                raw node voltages to OSDI, so one bad Newton step (measured:
+                a 2 µA current source into a node still at the 1e-12 S gds
+                floor asks for ΔV ≈ 2e6 V) reaches the compact model as
+                `g=-505225 V` and OSDI's internal-node solve raises. Capping
+                the step is SPICE's own answer to this. NN circuits (LEVEL
+                73/74/75) already cap at one supply rail unconditionally; a
+                value here overrides that cap for them too.
+                PERTURBING, hence default-off: the cap changes the Newton PATH
+                (not the fixed point), so it is not bit-identical on a circuit
+                where it engages.
+
+                MEASURED DEAD END, kept here so it is not retried: also
+                ramping the CURRENT sources with the source-stepping homotopy
+                (source stepping scales only VoltageSource, so the full bias
+                current is applied while the rails sit at 1/N of nominal) does
+                NOT fix that blow-up on its own — the same OSDI raise comes
+                back with g = -25261 V instead of -505225 V, i.e. 1/20 of the
+                step, still 4 orders of magnitude past the rail. Limiting the
+                step is the fix; scaling the excitation only rescales it.
         """
         self.circuit = circuit
         self.tolerance = tolerance
@@ -745,6 +768,7 @@ class DCSolver:
         self.gmin = gmin
         self.use_gmin_stepping = use_gmin_stepping
         self.force_ic = force_ic
+        self.dv_limit = dv_limit
         self.last_solution: Optional[Dict[str, float]] = None
         self._owns_logger = False  # Track if we created the logger (for cleanup)
         # V5 Phase A retry-design: True if the last `solve()` reached
@@ -825,8 +849,26 @@ class DCSolver:
         has_non_linear = self._has_non_linear_components()
 
         if has_non_linear:
-            # Use Newton-Raphson for non-linear circuits
-            solution = self._solve_newton()
+            # Use Newton-Raphson for non-linear circuits.
+            #
+            # `_solve_newton` restores the source-stepping ramp on its way out,
+            # but only on the path that RETURNS: a raise (NR blow-up, singular
+            # matrix, a compact model rejecting a wild voltage) leaves every
+            # VoltageSource at 1/N of nominal. The next solve on the same
+            # circuit then reads those as its "original" values and ramps them
+            # DOWN AGAIN — measured on the AnalogGym amplifier bench: one
+            # failed solve, and the following one converged happily with
+            # vdd = 0.65/400 V. A silent wrong answer that survives across
+            # every remaining point of a sweep, so the snapshot is restored
+            # here on the exception path. The success path is untouched.
+            _saved_v = [(c, c.voltage) for c in self.circuit.components
+                        if isinstance(c, VoltageSource)]
+            try:
+                solution = self._solve_newton()
+            except BaseException:
+                for _comp, _value in _saved_v:
+                    _comp.voltage = _value
+                raise
         else:
             # Direct solve for linear circuits
             solution = self._solve_linear()
@@ -1172,14 +1214,25 @@ class DCSolver:
 
                     # V5' trust-region: cap NN per-iteration |ΔV| at one supply rail to kill NR runaway.
                     # (Phase 2d: vectorised; same per-element arithmetic.)
-                    if _has_nn_device(self.circuit):
+                    #
+                    # `dv_limit` opens the SAME cap to non-NN circuits (and
+                    # overrides the rail for NN ones) — see __init__. With
+                    # dv_limit None the cap value and the arithmetic below are
+                    # exactly what they were, so the NN path is bit-identical.
+                    if self.dv_limit is not None:
+                        dv_cap = self.dv_limit
+                    elif _has_nn_device(self.circuit):
+                        dv_cap = max_vs_voltage
+                    else:
+                        dv_cap = None
+                    if dv_cap is not None:
                         d_head = solution[:n_nodes] - v_arr
                         solution[:n_nodes] = np.where(
-                            d_head > max_vs_voltage,
-                            v_arr + max_vs_voltage,
+                            d_head > dv_cap,
+                            v_arr + dv_cap,
                             np.where(
-                                d_head < -max_vs_voltage,
-                                v_arr - max_vs_voltage,
+                                d_head < -dv_cap,
+                                v_arr - dv_cap,
                                 solution[:n_nodes]))
 
                     # Calculate deltas (undamped, for adaptive damping)
@@ -1683,7 +1736,9 @@ class TransientSolver:
                  pseudo_transient_cap: float = 1e-12,
                  nr_tolerance: float = 1e-7,
                  reltol: float = 1e-4, vntol: float = 1e-7, gmin: float = 1e-12,
-                 max_substeps: int = 1, lte_safety_factor: float = 0.5):
+                 max_substeps: int = 1, lte_safety_factor: float = 0.5,
+                 integration_method: str = 'auto',
+                 dv_limit: Optional[float] = None):
         """
         Initialize the Transient Solver.
 
@@ -1706,14 +1761,39 @@ class TransientSolver:
             gmin: Minimum MOSFET channel conductance (SPICE GMIN, default: 1e-12 S)
             max_substeps: Max LTE-adaptive sub-steps per output interval (1=disabled, default: 1)
             lte_safety_factor: LTE acceptance threshold (default: 0.5)
+            integration_method: 'auto' (default) reproduces the historical
+                ladder BE(step 1) -> Trap(step 2+) -> BDF-2 on stiffness;
+                'gear2' keeps BE for step 1 (as ngspice does) and then pins
+                Gear-2/BDF-2 for every later step with the stiffness trip
+                disabled — for decks carrying `.options method=gear maxord=2`,
+                where trapezoid ringing corrupts slew/overshoot metrics.
+            dv_limit: Per-iteration, per-node |ΔV| trust-region cap in volts,
+                applied at EVERY timestep (default None = OFF, historical
+                behaviour). The transient twin of ``DCSolver(dv_limit=...)``;
+                see there for why it exists and why it is default-off.
 
         Raises:
-            ValueError: If dt or t_stop is not positive
+            ValueError: If dt or t_stop is not positive, or integration_method
+                is not one of {'auto', 'gear2'}
+            NotImplementedError: If the circuit contains an Inductor (DC/AC
+                only — a silent DC short in a transient run would be a wrong
+                answer, so it must be loud)
         """
         if dt <= 0:
             raise ValueError(f"Timestep dt must be positive, got {dt}")
         if t_stop <= 0:
             raise ValueError(f"Stop time t_stop must be positive, got {t_stop}")
+        if integration_method not in ('auto', 'gear2'):
+            raise ValueError(
+                f"Unknown integration_method '{integration_method}'. "
+                "Supported: 'auto' (BE->Trap->BDF-2 on stiffness), 'gear2'")
+
+        from pycircuitsim.models.passive import Inductor
+        for _component in circuit.components:
+            if isinstance(_component, Inductor):
+                raise NotImplementedError(
+                    f"Inductor is DC/AC only; {_component.name} has no "
+                    "transient companion model")
 
         self.circuit = circuit
         self.t_stop = t_stop
@@ -1753,8 +1833,30 @@ class TransientSolver:
         # Active internal timestep (may differ from self.dt during sub-stepping)
         self._current_dt = dt
 
+        # Requested integrator policy ('auto' | 'gear2'); the per-step method
+        # actually in force is self._integration_method below.
+        self.integration_method = integration_method
+
+        # Per-iteration |ΔV| trust-region cap (None = off); see __init__ docs.
+        self.dv_limit = dv_limit
+
         # Integration method: 'be', 'trap', or 'bdf2'
         self._integration_method = 'be'
+
+        # C6a — per-committed-step branch currents of every VoltageSource
+        # (name -> array aligned with the returned "time" vector). Populated
+        # by solve(); deliberately NOT added to solve()'s returned dict,
+        # because run_transient builds its CSV columns from that dict.
+        self.source_currents: Dict[str, np.ndarray] = {}
+
+        # Number of committed steps whose branch currents could not be read
+        # from a solution vector (the oscillation-averaged acceptance path has
+        # none): those entries are NaN, never a plausible-looking zero.
+        self._branch_current_gaps = 0
+
+        # Voltage-source tail (solution[num_nodes:]) of the last accepted
+        # sub-step solve, or None when the step was accepted without one.
+        self._last_solution_tail: Optional[np.ndarray] = None
 
         # Store pseudo-capacitor references for cleanup
         self._pseudo_capacitors: List = []
@@ -1864,6 +1966,10 @@ class TransientSolver:
         # Matrix size: num_nodes + num_voltage_sources
         matrix_size = num_nodes + num_voltage_sources
 
+        # C6a — drop any tail from an earlier sub-step so a failed/averaged
+        # solve can never commit stale branch currents.
+        self._last_solution_tail = None
+
         # Use previous timestep's voltages as initial guess
         voltages = initial_voltages.copy()
 
@@ -1925,7 +2031,7 @@ class TransientSolver:
             for component in self.circuit.components:
                 if not _is_mosfet(component):
                     component.stamp_conductance(mna_matrix, node_map)
-                    component.stamp_rhs(rhs, node_map)
+                    self._stamp_component_rhs(component, rhs, node_map, time)
 
             # Stamp voltage sources (with time-varying support)
             self._stamp_voltage_sources(mna_matrix, rhs, node_map, num_nodes, time, voltages)
@@ -2008,11 +2114,22 @@ class TransientSolver:
 
             # V5' trust-region: cap NN per-iteration |ΔV| at one supply rail to kill NR runaway.
             # (Phase 2d: vectorised; same per-element arithmetic.)
-            if _has_nn_device(self.circuit):
+            #
+            # `dv_limit` opens the same cap to non-NN circuits — the DC
+            # counterpart, same rationale (see DCSolver.__init__), needed at
+            # every timestep and not only at the operating point because a
+            # transient NR step blows up the same way. With dv_limit None the
+            # cap and the arithmetic are unchanged.
+            if self.dv_limit is not None:
+                vdd_cap = self.dv_limit
+            elif _has_nn_device(self.circuit):
                 vdd_cap = max(
                     (abs(c.voltage) for c in self.circuit.components if isinstance(c, VoltageSource)),
                     default=1.0,
                 ) or 1.0
+            else:
+                vdd_cap = None
+            if vdd_cap is not None:
                 d_head = solution[:n_nodes] - v_arr
                 solution[:n_nodes] = np.where(
                     d_head > vdd_cap, v_arr + vdd_cap,
@@ -2062,6 +2179,9 @@ class TransientSolver:
             if all_converged:
                 # Converged! Use new voltages directly
                 voltages.update(zip(nodes, sol_head))
+                # C6a — keep the voltage-source branch-current tail of the
+                # accepted iterate; solve() reads it when it commits the step.
+                self._last_solution_tail = np.array(solution[num_nodes:])
                 self._last_nr_iterations = iteration + 1
                 if self.debug and debug_log is not None and len(debug_log) > 0:
                     print(f"\nDEBUG: Converged at t={time:.6e}s after {iteration+1} iterations")
@@ -2146,6 +2266,9 @@ class TransientSolver:
                         voltages[node] = avg_voltages[node]
                     voltages["0"] = 0.0
                     voltages["GND"] = 0.0
+                    # C6a — there is no solution vector behind an averaged
+                    # acceptance, so this step has no branch currents.
+                    self._last_solution_tail = None
                     return voltages
 
             # Not good enough - print debug log and raise error
@@ -2382,6 +2505,19 @@ class TransientSolver:
         time = np.zeros(num_steps)
         voltages_over_time = {node: np.zeros(num_steps) for node in nodes}
 
+        # C6a — per-step voltage-source branch currents, in the SAME ordinal
+        # order as _stamp_voltage_sources / _store_source_currents walks the
+        # component list. Index 0 is the pre-transient state (t=0): there is no
+        # transient solve behind it, so it carries whatever the caller's DC
+        # operating-point solve stored on the source (0.0 if there was none).
+        vsources = [c for c in self.circuit.components
+                    if isinstance(c, VoltageSource)]
+        self.source_currents = {
+            c.name: np.full(num_steps, np.nan) for c in vsources}
+        self._branch_current_gaps = 0
+        for c in vsources:
+            self.source_currents[c.name][0] = c.calculate_current({})
+
         # V5 Phase A — A3.2: track the highest committed step so the
         # verify_nn_dc_tran inverter-tran runner can recover a partial
         # waveform when NR exhausts mid-transient (turns ERROR row into
@@ -2508,9 +2644,17 @@ class TransientSolver:
                     print(f"Removing pseudo-capacitors at step {step}")
                 self._remove_pseudo_capacitors()
 
-            # Integration method selection: BE (step 1) → Trap (step 2+) → BDF-2 (on stiffness)
+            # Integration method selection.
+            #   'auto'  : BE (step 1) → Trap (step 2+) → BDF-2 (on stiffness)
+            #   'gear2' : BE (step 1, as ngspice does) → BDF-2 pinned from
+            #             step 2 on, stiffness trip irrelevant. Matches
+            #             `.options method=gear maxord=2` decks, where the
+            #             trapezoid's ringing corrupts exactly the measured
+            #             quantities (slew crossing time, over/undershoot).
             if step == 1:
                 self._integration_method = 'be'
+            elif self.integration_method == 'gear2':
+                self._integration_method = 'bdf2'
             elif _stiff_switched:
                 self._integration_method = 'bdf2'
             else:
@@ -2571,7 +2715,8 @@ class TransientSolver:
 
                             for component in self.circuit.components:
                                 component.stamp_conductance(mna_matrix, node_map)
-                                component.stamp_rhs(rhs, node_map)
+                                self._stamp_component_rhs(
+                                    component, rhs, node_map, sub_time)
 
                             self._stamp_voltage_sources(mna_matrix, rhs, node_map, num_nodes, sub_time)
 
@@ -2588,6 +2733,9 @@ class TransientSolver:
                                 timestep_voltages[node] = float(solution[idx])
                             timestep_voltages["0"] = 0.0
                             timestep_voltages["GND"] = 0.0
+                            # C6a — branch-current tail of this linear solve.
+                            self._last_solution_tail = np.array(
+                                solution[num_nodes:])
 
                         # Sub-step succeeded — commit state
                         for component in self.circuit.components:
@@ -2669,11 +2817,22 @@ class TransientSolver:
             # Store at output point
             for node in nodes:
                 voltages_over_time[node][step] = current_voltages[node]
+            # C6a — commit this step's branch currents (NaN + a counted gap
+            # when the accepted solve produced no solution vector).
+            tail = self._last_solution_tail
+            if tail is None:
+                self._branch_current_gaps += 1
+            else:
+                for vs_idx, comp in enumerate(vsources):
+                    if vs_idx < len(tail):
+                        self.source_currents[comp.name][step] = float(tail[vs_idx])
             # V5 Phase A — A3.2: track committed step for partial-recovery.
             self._last_committed_step = step
 
             # Stiffness detection: if NR took > 20 iterations, switch to BDF-2
+            # (disabled under 'gear2', which is already pinned to BDF-2).
             if (not _stiff_switched and has_non_linear and step > 2
+                    and self.integration_method != 'gear2'
                     and getattr(self, '_last_nr_iterations', 0) > 20):
                 _stiff_switched = True
                 if self.debug:
@@ -2783,6 +2942,34 @@ class TransientSolver:
 
                 # Move to next voltage source
                 voltage_source_index += 1
+
+    def _stamp_component_rhs(
+        self,
+        component,
+        rhs: np.ndarray,
+        node_map: Dict[str, int],
+        time: float,
+    ) -> None:
+        """Stamp a non-voltage-source component's RHS at the current time.
+
+        Identical to ``component.stamp_rhs`` except that a PULSE current
+        source is evaluated AT ``time`` — symmetric to the PulseVoltageSource
+        special case in ``_stamp_voltage_sources``. Every other component
+        (resistor, capacitor companion, DC current source) is time-less, so
+        this is a pure pass-through for them.
+
+        Args:
+            component: Component to stamp
+            rhs: RHS vector to modify (in-place)
+            node_map: Mapping from node names to matrix indices
+            time: Current simulation time in seconds
+        """
+        from pycircuitsim.models.passive import PulseCurrentSource
+
+        if isinstance(component, PulseCurrentSource):
+            component.stamp_rhs_at_time(rhs, node_map, time)
+        else:
+            component.stamp_rhs(rhs, node_map)
 
     def __repr__(self) -> str:
         """String representation of the solver."""
@@ -2903,7 +3090,7 @@ class ACSolver:
                         mosfet_ss[id(component)])
 
             # Stamp voltage sources (DC sources become short circuits, AC sources become AC stimulus)
-            self._stamp_voltage_sources_ac(mna_matrix, rhs, node_map, num_nodes)
+            self._stamp_voltage_sources_ac(mna_matrix, rhs, node_map, num_nodes, omega)
 
             # Solve the complex linear system
             try:
@@ -2989,16 +3176,17 @@ class ACSolver:
             # to the RHS. The DC bias current is set to zero in small-signal
             # AC analysis (independent DC sources are suppressed), so only the
             # ac_magnitude contributes. Sign convention matches the DC
-            # CurrentSource.stamp_rhs: +I into node_i, -I into node_j.
+            # CurrentSource.stamp_rhs (NGSPICE): the current is DRAWN out of
+            # node_i (the + terminal) and pushed into node_j.
             ac_mag = getattr(component, "ac_magnitude", 0.0)
             if ac_mag != 0.0:
                 ac_phase_rad = np.deg2rad(getattr(component, "ac_phase", 0.0))
                 i_ac = ac_mag * np.exp(1j * ac_phase_rad)
                 node_i, node_j = component.nodes[0], component.nodes[1]
                 if node_i != "0" and node_i in node_map:
-                    rhs[node_map[node_i]] += i_ac
+                    rhs[node_map[node_i]] -= i_ac
                 if node_j != "0" and node_j in node_map:
-                    rhs[node_map[node_j]] -= i_ac
+                    rhs[node_map[node_j]] += i_ac
 
         # VoltageSource handled separately in _stamp_voltage_sources_ac
 
@@ -3194,7 +3382,8 @@ class ACSolver:
         mna_matrix: np.ndarray,
         rhs: np.ndarray,
         node_map: Dict[str, int],
-        num_nodes: int
+        num_nodes: int,
+        omega: float = 0.0
     ) -> None:
         """
         Stamp voltage sources for AC analysis.
@@ -3207,12 +3396,19 @@ class ACSolver:
         - B/C matrix blocks (same as DC)
         - RHS: AC magnitude with phase for AC sources, 0 for DC-only sources
 
+        An Inductor is a 0 V source (DC short) that additionally carries its
+        reactance on its OWN branch row, turning that row into
+        ``V_pos - V_neg - jwL*I_L = 0`` — an open circuit at high frequency.
+
         Args:
             mna_matrix: Complex MNA matrix to modify (in-place)
             rhs: Complex RHS vector to modify (in-place)
             node_map: Mapping from node names to matrix indices
             num_nodes: Number of non-ground nodes
+            omega: Angular frequency (2*pi*f) in rad/s — only used by Inductor
         """
+        from pycircuitsim.models.passive import Inductor
+
         voltage_source_index = 0
 
         for component in self.circuit.components:
@@ -3245,6 +3441,13 @@ class ACSolver:
                 v_ac = ac_mag * np.exp(1j * ac_phase_rad)
 
                 rhs[vs_row] = v_ac
+
+                # Inductor: add the branch reactance to its own diagonal, so
+                # the branch row reads V_pos - V_neg - jwL*I_L = 0. (The
+                # branch current I_L is oriented pos -> neg through the
+                # device by the B/C incidence rows above.)
+                if isinstance(component, Inductor):
+                    mna_matrix[vs_row, vs_row] -= 1j * omega * component.inductance
 
                 # Move to next voltage source
                 voltage_source_index += 1

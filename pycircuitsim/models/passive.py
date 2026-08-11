@@ -442,22 +442,27 @@ class PulseVoltageSource(VoltageSource):
 
 class CurrentSource(Component):
     """
-    Ideal DC current source.
+    Ideal DC current source, NGSPICE sign convention.
 
-    A current source maintains a fixed current flow from its positive terminal
-    to its negative terminal. In MNA formulation, current sources contribute
-    directly to the RHS vector:
+    ``I<name> n+ n- <val>`` DRAWS ``val`` out of ``n+`` and pushes it into
+    ``n-`` (SPICE: the current flows through the source from the + terminal to
+    the - terminal). In MNA formulation, current sources contribute directly to
+    the RHS vector, whose entries are currents INJECTED into a node:
 
-    - Adds +I to the source node (node[0], where current flows from)
-    - Adds -I to the sink node (node[1], where current flows to)
+    - Adds -I to node[0] (the + terminal, current is drawn out of it)
+    - Adds +I to node[1] (the - terminal, current is pushed into it)
+
+    Measured against ngspice-45.2: ``I1 a 0 1e-3`` with ``R1 a 0 1k`` gives
+    ``v(a) = -1.0 V``. The opposite (pre-V7.5) sign silently returned +1.0 V.
 
     Current sources do not contribute to the conductance matrix since they
     are independent sources (not dependent on voltage).
 
     Attributes:
         name: Component identifier (e.g., 'I1', 'I_bias')
-        nodes: List of two node names [source, sink]
-        current: Current value in amperes (flows from node[0] to node[1])
+        nodes: List of two node names [+ terminal, - terminal]
+        current: Current value in amperes — a live view of ``self.value``, so a
+            DC sweep that assigns ``comp.value`` changes what gets stamped
         ac_magnitude: AC magnitude for AC analysis (amperes, default 0)
         ac_phase: AC phase for AC analysis (degrees, default 0)
     """
@@ -483,19 +488,32 @@ class CurrentSource(Component):
         if len(nodes) != 2:
             raise ValueError(f"CurrentSource must have exactly 2 nodes, got {len(nodes)}")
 
-        # Store current value
-        self.current = float(value)
-
         # AC analysis parameters (mirror VoltageSource)
         self.ac_magnitude = float(ac_magnitude)
         self.ac_phase = float(ac_phase)
+
+    @property
+    def current(self) -> float:
+        """Get current value (references self.value for consistency).
+
+        A dead ``self.current = float(value)`` copy was a silent wrong answer:
+        the stamps read ``self.current`` while a DC sweep (or the harness)
+        assigns ``comp.value``, so every swept point solved at the initial
+        current. Mirrors ``VoltageSource.voltage``.
+        """
+        return float(self.value) if self.value is not None else 0.0
+
+    @current.setter
+    def current(self, value: float) -> None:
+        """Set current value (updates self.value for consistency)."""
+        self.value = float(value)
 
     def get_nodes(self) -> List[str]:
         """
         Return list of node names this current source connects to.
 
         Returns:
-            List of two node names [source, sink]
+            List of two node names [+ terminal, - terminal]
         """
         return self.nodes
 
@@ -505,11 +523,12 @@ class CurrentSource(Component):
 
     def stamp_rhs(self, rhs: np.ndarray, node_map: Dict[str, int]) -> None:
         """
-        Add current source terms to the RHS vector.
+        Add current source terms to the RHS vector (NGSPICE sign).
 
-        For a current source from node_i to node_j:
-        - Add +I to node_i (current flows out of source node)
-        - Add -I to node_j (current flows into sink node)
+        For ``I<name> n+ n- <val>`` the current is DRAWN out of n+ and pushed
+        into n-, and RHS entries are node current injections, so:
+        - Add -I to node_i (the + terminal)
+        - Add +I to node_j (the - terminal)
 
         Ground node (node "0") is not in the node_map and is skipped.
 
@@ -517,17 +536,32 @@ class CurrentSource(Component):
             rhs: The RHS vector to modify (in-place)
             node_map: Mapping from node names to matrix indices
         """
+        self._stamp_current(rhs, node_map, self.current)
+
+    def _stamp_current(self, rhs: np.ndarray, node_map: Dict[str, int],
+                       current: float) -> None:
+        """Stamp one current value to the RHS (single definition of the sign).
+
+        Shared by ``stamp_rhs`` and by the time-aware transient stamp of
+        ``PulseCurrentSource``, so the NGSPICE sign convention lives in exactly
+        one place.
+
+        Args:
+            rhs: The RHS vector to modify (in-place)
+            node_map: Mapping from node names to matrix indices
+            current: Current in amperes, drawn out of nodes[0]
+        """
         node_i, node_j = self.nodes[0], self.nodes[1]
 
-        # Add +I to source node (current flows out)
+        # Draw I out of the + terminal
         if node_i != "0" and node_i in node_map:
             idx_i = node_map[node_i]
-            rhs[idx_i] += self.current
+            rhs[idx_i] -= current
 
-        # Add -I to sink node (current flows in)
+        # Push I into the - terminal
         if node_j != "0" and node_j in node_map:
             idx_j = node_map[node_j]
-            rhs[idx_j] -= self.current
+            rhs[idx_j] += current
 
     def calculate_current(self, voltages: Dict[str, float]) -> float:
         """
@@ -536,6 +570,11 @@ class CurrentSource(Component):
         For an ideal current source, the current is fixed regardless of
         the voltage across its terminals. This method returns the
         specified current value.
+
+        Sign matches the ``stamp_rhs`` convention and the R/C/VoltageSource
+        convention in this module: positive means current flowing INTO the +
+        terminal (node[0]) and through the device to node[1] — which for
+        ``I n+ n- val`` with val > 0 is exactly +val.
 
         Args:
             voltages: Dictionary mapping node names to voltage values
@@ -550,6 +589,181 @@ class CurrentSource(Component):
     def __repr__(self) -> str:
         """String representation of the current source."""
         return f"CurrentSource({self.name}, nodes={self.nodes}, I={self.current}A)"
+
+
+class PulseCurrentSource(CurrentSource):
+    """
+    PULSE current source for transient analysis.
+
+    Literal transcription of ``PulseVoltageSource`` in the current domain
+    (same period-from-TD semantics, which already match ngspice), so the two
+    stimulus families share one waveform definition:
+
+    - I1: Initial value, I2: Pulsed value
+    - TD: Delay, TR: Rise time, TF: Fall time, PW: Pulse width, PER: Period
+
+    Attributes:
+        name: Component identifier (e.g., 'Iload')
+        nodes: List of two node names [+ terminal, - terminal]
+        i1: Initial current value (amperes)
+        i2: Pulsed current value (amperes)
+        td: Delay time before first pulse (seconds)
+        tr: Rise time (seconds)
+        tf: Fall time (seconds)
+        pw: Pulse width at I2 (seconds)
+        per: Period of the waveform (seconds)
+    """
+
+    def __init__(
+        self,
+        name: str,
+        nodes: List[str],
+        i1: float,
+        i2: float,
+        td: float,
+        tr: float,
+        tf: float,
+        pw: float,
+        per: float
+    ):
+        """
+        Initialize a PULSE current source.
+
+        Args:
+            name: Component identifier (e.g., 'Iload')
+            nodes: List of exactly two node names [+ terminal, - terminal]
+            i1: Initial current value in amperes
+            i2: Pulsed current value in amperes
+            td: Delay time in seconds
+            tr: Rise time in seconds
+            tf: Fall time in seconds
+            pw: Pulse width in seconds
+            per: Period in seconds
+
+        Raises:
+            ValueError: If nodes count is not 2, or if timing parameters are invalid
+        """
+        if len(nodes) != 2:
+            raise ValueError(f"PulseCurrentSource must have exactly 2 nodes, got {len(nodes)}")
+
+        # Initialize with i1 as the DC/initial value
+        super().__init__(name, nodes, i1)
+
+        self.i1 = float(i1)
+        self.i2 = float(i2)
+        self.td = float(td)
+        self.tr = float(tr)
+        self.tf = float(tf)
+        self.pw = float(pw)
+        self.per = float(per)
+
+        # Validate timing parameters (identical rules to PulseVoltageSource)
+        if self.td < 0:
+            raise ValueError(f"Delay time TD must be non-negative, got {td}")
+        if self.tr <= 0:
+            raise ValueError(f"Rise time TR must be positive, got {tr}")
+        if self.tf <= 0:
+            raise ValueError(f"Fall time TF must be positive, got {tf}")
+        if self.pw <= 0:
+            raise ValueError(f"Pulse width PW must be positive, got {pw}")
+        if self.per <= 0:
+            raise ValueError(f"Period PER must be positive, got {per}")
+        if self.per < (self.pw + self.tr + self.tf):
+            raise ValueError(f"Period ({per}) must be >= PW+TR+TF ({self.pw + self.tr + self.tf})")
+
+    def get_current_at_time(self, time: float) -> float:
+        """
+        Get the current value at a specific time.
+
+        The PULSE waveform follows this pattern:
+        - 0 <= t < TD: I1 (initial delay)
+        - TD <= t < TD+TR: Ramp from I1 to I2 (rising edge)
+        - TD+TR <= t < TD+TR+PW: I2 (pulse high)
+        - TD+TR+PW <= t < TD+TR+PW+TF: Ramp from I2 to I1 (falling edge)
+        - TD+TR+PW+TF <= t < PER: I1 (off time)
+        - Pattern repeats every PER (measured from TD, as in ngspice)
+
+        Args:
+            time: Time in seconds
+
+        Returns:
+            Current value at the given time
+        """
+        # Handle negative time (use initial value)
+        if time < 0:
+            return self.i1
+
+        # Check if we're still in initial delay
+        if time < self.td:
+            return self.i1
+
+        # Time since delay ended (only compute after delay!)
+        t_since_delay = time - self.td
+        t_in_pulse_period = t_since_delay % self.per
+
+        # Rising edge
+        if t_in_pulse_period < self.tr:
+            fraction = t_in_pulse_period / self.tr
+            return self.i1 + fraction * (self.i2 - self.i1)
+
+        # Pulse high
+        elif t_in_pulse_period < (self.tr + self.pw):
+            return self.i2
+
+        # Falling edge
+        elif t_in_pulse_period < (self.tr + self.pw + self.tf):
+            t_fall = t_in_pulse_period - (self.tr + self.pw)
+            fraction = t_fall / self.tf
+            return self.i2 + fraction * (self.i1 - self.i2)
+
+        # Off time (back to I1)
+        else:
+            return self.i1
+
+    def stamp_rhs_at_time(self, rhs: np.ndarray, node_map: Dict[str, int],
+                          time: float) -> None:
+        """Stamp the pulse current at a specific time (transient RHS).
+
+        Called by ``TransientSolver`` instead of the time-less ``stamp_rhs``,
+        symmetrically to the ``PulseVoltageSource`` special case in
+        ``_stamp_voltage_sources``.
+
+        Args:
+            rhs: The RHS vector to modify (in-place)
+            node_map: Mapping from node names to matrix indices
+            time: Current simulation time in seconds
+        """
+        self._stamp_current(rhs, node_map, self.get_current_at_time(time))
+
+    @property
+    def current(self) -> float:
+        """
+        Get current value for DC/OP analysis.
+
+        For time-varying sources this returns the initial value (i1), which is
+        also the t=0 value. Use ``get_current_at_time(t)`` in transient.
+        """
+        return self.i1
+
+    @current.setter
+    def current(self, value: float) -> None:
+        """
+        Set current value for DC analysis compatibility.
+
+        Scales the pulse waveform, mirroring ``PulseVoltageSource.voltage``.
+        """
+        if self.i1 != 0:
+            scale = value / self.i1
+            self.i1 = float(value)
+            self.i2 = self.i2 * scale
+        else:
+            self.i1 = float(value)
+
+    def __repr__(self) -> str:
+        """String representation of the PULSE current source."""
+        return (f"PulseCurrentSource({self.name}, nodes={self.nodes}, "
+                f"I1={self.i1}A, I2={self.i2}A, TD={self.td}s, "
+                f"TR={self.tr}s, TF={self.tf}s, PW={self.pw}s, PER={self.per}s)")
 
 
 class Capacitor(Component):
@@ -753,3 +967,62 @@ class Capacitor(Component):
     def __repr__(self) -> str:
         """String representation of the capacitor."""
         return f"Capacitor({self.name}, nodes={self.nodes}, C={self.capacitance}F)"
+
+
+class Inductor(VoltageSource):
+    """Inductor for DC and AC analysis only (no transient companion model).
+
+    Implemented as a **0 V voltage source that carries a reactance on its own
+    branch row**, which is exactly the idiom every inductor in the AnalogGym
+    corpus uses: the DC-short / AC-open feedback break ``Lfb <a> <b> 1T``
+    inside an ``.ac``/``.dc`` bench (29 sites, none in a transient deck).
+
+    Why subclass VoltageSource rather than build branch bookkeeping:
+
+    * Being a 0 V source gives the exact DC short ``V_pos - V_neg = 0`` from
+      ``DCSolver._stamp_voltage_sources`` for free, with no new stamp.
+    * ``Circuit.count_voltage_sources()`` already sizes the augmented MNA
+      matrix and allocates this device's branch row/column, and
+      ``_store_source_currents`` already reports i(L) through
+      ``calculate_current()``.
+    * AC only has to add the branch impedance on the branch diagonal:
+      row ``V_pos - V_neg - jwL*I_L = 0`` (see
+      ``ACSolver._stamp_voltage_sources_ac``), i.e. an open circuit at high
+      frequency for a large L.
+
+    There is deliberately NO transient companion model — ``TransientSolver``
+    raises ``NotImplementedError`` when a circuit contains an Inductor,
+    because a silent DC short in a transient run is the one wrong-answer
+    failure mode this shortcut could produce.
+
+    Attributes:
+        name: Component identifier (e.g., 'Lfb')
+        nodes: List of two node names [positive, negative]
+        inductance: Inductance value in henries
+    """
+
+    def __init__(self, name: str, nodes: List[str], inductance: float):
+        """Initialize an inductor.
+
+        Args:
+            name: Component identifier (e.g., 'L1', 'Lfb')
+            nodes: List of exactly two node names (e.g., ['a', 'b'])
+            inductance: Inductance value in henries (must be positive)
+
+        Raises:
+            ValueError: If nodes count is not 2 or inductance is not positive
+        """
+        if len(nodes) != 2:
+            raise ValueError(f"Inductor must have exactly 2 nodes, got {len(nodes)}")
+        if inductance is None or inductance <= 0:
+            raise ValueError(f"Inductance must be positive, got {inductance}")
+
+        # 0 V DC source with no AC stimulus: the branch equation is
+        # V_pos - V_neg = 0 in DC and V_pos - V_neg = jwL*I_L in AC.
+        super().__init__(name, nodes, value=0.0, ac_magnitude=0.0, ac_phase=0.0)
+
+        self.inductance = float(inductance)
+
+    def __repr__(self) -> str:
+        """String representation of the inductor."""
+        return f"Inductor({self.name}, nodes={self.nodes}, L={self.inductance}H)"

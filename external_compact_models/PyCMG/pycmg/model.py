@@ -9,7 +9,7 @@ from __future__ import annotations
 import ctypes
 import os
 import warnings
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -100,6 +100,59 @@ class Model:
     @property
     def modelcard_params(self) -> Dict[str, float]:
         return dict(self._modelcard_params)
+
+
+#: Memoised Models, keyed by (osdi_path, modelcard_path, resolved model name,
+#: geometry). Building a Model re-parses the 444 KB modelcard, which a deck
+#: pays once per DEVICE without this cache.
+#:
+#: Geometry is PART OF THE KEY on purpose: in this OSDI build L / NFIN / TFIN /
+#: HFIN / FPITCH are MODEL-kind parameters (probed on bsimcmg.osdi: indices
+#: 1/6/3/53/4, all PARA_KIND MODEL), so they land in the SHARED OsdiModel
+#: buffer. Two Instances of one Model with different geometry would silently
+#: both use the geometry written last — the documented "each (L, NFIN) bin gets
+#: its own Model()" rule. Same card + same geometry is the supported sharing
+#: case (only differing ``model_overrides`` are warned about), and it is what
+#: every real deck does.
+_MODEL_CACHE: Dict[Tuple, Model] = {}
+
+
+def get_shared_model(osdi_path: str, modelcard_path: str, model_name: str,
+                     model_card_name: Optional[str] = None,
+                     geometry: Optional[Dict[str, float]] = None) -> Model:
+    """Return a Model for this (card, name, geometry), building it once.
+
+    Args:
+        osdi_path: Path to the OSDI binary
+        modelcard_path: Path to the modelcard file
+        model_name: Model name from the netlist
+        model_card_name: Name of the model inside the modelcard, if different
+        geometry: The instance parameters the caller will apply (L, NFIN, ...).
+            MUST be passed whenever they vary between devices — see
+            ``_MODEL_CACHE``.
+
+    Returns:
+        A Model, possibly shared with earlier callers
+    """
+    geom_key: Tuple = tuple(sorted(
+        (k.lower(), float(v)) for k, v in (geometry or {}).items()))
+    key = (str(osdi_path), str(modelcard_path),
+           str(model_card_name or model_name), geom_key)
+    model = _MODEL_CACHE.get(key)
+    if model is None:
+        model = Model(
+            osdi_path=osdi_path,
+            modelcard_path=modelcard_path,
+            model_name=model_card_name or model_name,
+            model_card_name=model_card_name,
+        )
+        _MODEL_CACHE[key] = model
+    return model
+
+
+def clear_model_cache() -> None:
+    """Drop every memoised Model (frees the parsed modelcards)."""
+    _MODEL_CACHE.clear()
 
 
 class Instance:
@@ -207,6 +260,43 @@ class Instance:
             self._prev_qd = 0.0
             self._prev_qs = 0.0
             self._prev_qb = 0.0
+
+    def set_temperature(self, temperature: float) -> None:
+        """Rebind this instance at a new temperature, IN PLACE.
+
+        Temperature is a bind-time property of the OSDI simulation, so it used
+        to require rebuilding the whole Instance (measured 808.8 ms/device,
+        dominated by re-applying the ~2350 modelcard params). Rebinding runs
+        the same OSDI code path with the already-applied params and is measured
+        at 0.255 ms/device and BIT-IDENTICAL to a freshly constructed instance
+        at that temperature (id 8.236716e-06 both ways, relative difference
+        exactly 0.0) — which is what makes the corpus' 176 temperature-sweep
+        decks (281-1651 points each) tractable.
+
+        Solve/charge history is dropped: it belongs to the old temperature.
+
+        Args:
+            temperature: New operating temperature in KELVIN
+        """
+        if temperature < 200.0:
+            warnings.warn(
+                f"Temperature {temperature} K is very low (< 200 K). "
+                f"Did you pass Celsius instead of Kelvin? "
+                f"Use temp_K = temp_C + 273.15 to convert.",
+                stacklevel=2,
+            )
+        self._temperature = float(temperature)
+        self._sim = OsdiSimulation()
+        self._inst.bind_simulation(
+            self._sim, self._model.model, self._connected_terminals,
+            self._temperature)
+        self._cache_terminal_positions()
+        self._has_prev_solve = False
+        self._has_prev_q = False
+        self._prev_qg = 0.0
+        self._prev_qd = 0.0
+        self._prev_qs = 0.0
+        self._prev_qb = 0.0
 
     def internal_node_count(self) -> int:
         return len(self._sim.internal_indices)

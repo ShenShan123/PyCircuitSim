@@ -655,6 +655,40 @@ class OsdiInstance:
 # Parameter application
 # ---------------------------------------------------------------------------
 
+#: Per-descriptor {lower-cased param name -> param index} maps, keyed by the
+#: descriptor's C address (a ctypes.Structure read out of the shared library is
+#: re-wrapped on every access, so ``id(desc)`` is NOT a stable identity while
+#: ``ctypes.addressof`` is). Built once per descriptor.
+#:
+#: Rationale: ``apply_param`` used to linearly scan all 872 OSDI params for EACH
+#: of a modelcard's ~2350 params, i.e. ~2.05 M string comparisons per device
+#: (measured 808.8 ms/device, ~19.4 s to build ONE 24-device deck). The map
+#: makes it an O(1) dict hit. Values applied, their order and the
+#: model/instance buffer routing below are untouched, so results are
+#: bit-identical by construction.
+_PARAM_INDEX_MAPS: Dict[int, Dict[str, int]] = {}
+
+
+def _param_index_map(desc: OsdiDescriptor) -> Dict[str, int]:
+    """Return (and cache) the name->index map for one OSDI descriptor.
+
+    First index wins for a repeated name, matching the ``break``-on-first-match
+    semantics of the original linear scan.
+    """
+    key = ctypes.addressof(desc)
+    table = _PARAM_INDEX_MAPS.get(key)
+    if table is None:
+        table = {}
+        for i in range(desc.num_params):
+            param = desc.param_opvar[i]
+            param_name = (param.name[0].decode("utf-8", errors="replace")
+                          if param.name else "")
+            if param_name:
+                table.setdefault(param_name.lower(), i)
+        _PARAM_INDEX_MAPS[key] = table
+    return table
+
+
 def apply_param(desc: OsdiDescriptor,
                 inst: Optional[OsdiInstance],
                 model: Optional[OsdiModel],
@@ -662,11 +696,9 @@ def apply_param(desc: OsdiDescriptor,
                 value: float,
                 from_modelcard: bool) -> bool:
     applied = False
-    for i in range(desc.num_params):
+    i = _param_index_map(desc).get(name.lower())
+    if i is not None:
         param = desc.param_opvar[i]
-        param_name = param.name[0].decode("utf-8", errors="replace") if param.name else ""
-        if not param_name or name.lower() != param_name.lower():
-            continue
         ptr = None
         if (param.flags & PARA_KIND_MASK) == PARA_KIND_INST:
             if inst is None:
@@ -690,7 +722,6 @@ def apply_param(desc: OsdiDescriptor,
             if not from_modelcard:
                 raise RuntimeError(f"string parameter not supported: {name}")
             applied = True
-        break
     if not applied and not from_modelcard:
         raise RuntimeError(f"parameter not found: {name}")
     return applied
