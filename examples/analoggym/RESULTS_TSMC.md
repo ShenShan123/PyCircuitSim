@@ -119,9 +119,10 @@ inside under V7.5.2's accepted-step pattern sit just outside under
 charge-LTE's, while every flags-off miss those designs had is *improved*
 by refine (DFCFC2 7.3 % → 4.6 %). Every remaining miss in the category is
 a slew/edge-timing metric on a never-validated design; the refine cost is
-1.2–3× (one pathological deck, `Qu_LEC`, pays ~30×+ for a 1 ns edge —
-V7.5.2 refine read 5/11 at 1872 s; under charge-LTE it exceeds the
-campaign's 1 h deck budget, re-run pending).
+1.2–3× (one pathological deck, `Qu_LEC`, pays ~30× for its 1 ns edge —
+**5/11 at 944 s** after the opvar memoization, the identical verdict
+V7.5.2 read at 1872 s: its six misses are genuine slew-edge residuals,
+sr_fall 31 %, stable across every step-control policy tried).
 `Qu2017_AZC` was diagnosed in V7.5.3 as an **NGSPICE Newton-basin
 artifact**: NGSPICE fails every transient-op homotopy from the deck's
 primary `.nodeset` (which sits 0.6 mV from the true OP; four of six probed
@@ -145,7 +146,7 @@ missing, both engines produced data:
 | AC (9 deck kinds) | **88/89** | `Fan_SMC/tb_cmrr` 0/1 — NGSPICE-side (see below) |
 | dc_source | **14/15** | `ldo_2/tb_load` 9/11 — `lr`/`lr_pp` on a ~110 µV-flat replica-regulated curve (py holds it 16× flatter; a genuine small residual amplified by a peak-to-peak-of-flat-curve metric) |
 | dc_temp | **28/31** + 1 timeout | 3 sensors miss only `min_slope_25_75c` (2.1–11 % — a per-step derivative at the µV node-agreement floor); `front_end_25_6T` exceeds the 1 h budget (~11 s/point, open solver finding below) |
-| transient | **11/22** + 1 over budget | 10 amplifiers on slew/edge metrics (above; incl. the two marginal crossings), `Qu_LEC` over the 1 h budget under charge-LTE; `ldo_1` 3/5 and `ldo_2` 1/5 (load-step excursions — ldo_2's differ 11–57 %, a genuine open item on the corpus's delicate local-loop design); charge pump **6/6** |
+| transient | **11/23** | 10 amplifiers on slew/edge metrics (above; incl. the two marginal crossings and `Qu_LEC` 5/11 — genuine 1 ns-edge residuals); `ldo_1` 3/5 and `ldo_2` 1/5 (load-step excursions — ldo_2's differ 11–57 %, a genuine open item on the corpus's delicate local-loop design); charge pump **6/6** |
 
 The `Fan_SMC/tb_cmrr` miss is the REFERENCE side: its `cmrrdc` is a −CMRR
 residual behind a 108 dB loop at 9.7 dB/mV operating-point sensitivity, and
@@ -156,6 +157,29 @@ tolerance ladder converges there (reltol ≤ 3e-4); PyCircuitSim's answer is
 seed-independent to 0.002 dB, and its AC engine reproduces NGSPICE's own
 value to 2 µdB when linearised about NGSPICE's OP. One cell of 85; the deck
 is untouched and the metric carries this caveat.
+
+**All five techs, AC + DC families** (the same driver, per-tech runs;
+tsmc5 additionally ran the transient family above):
+
+| tech | AC | dc_source | dc_temp |
+|---|:--:|:--:|:--:|
+| TSMC5 | 88/89 | 14/15 | 28/31 (+1 timeout) |
+| TSMC6 | **89/89** | 12/15 | 26/32 |
+| TSMC7 | **89/89** | 12/15 | 26/32 |
+| TSMC12 | **89/89** | 13/15 | 30/32 |
+| TSMC16 | **89/89** | 14/15 | **31/32** |
+
+**650 of 679 scored decks fully agree (95.7 %)**; AC is 444/445 with the
+single miss being the NGSPICE-side Fan_SMC cmrrdc above. TSMC6 and TSMC7
+produce **identical verdicts and identical miss relative-errors to four
+decimals across all 136 decks** — the relabelled-tech control
+(methodology.md §7) holding at campaign scale. Every one of the 29 misses
+falls into four already-classified families: `min_slope_25_75c` (18 —
+a per-0.5 °C derivative at the µV node-agreement floor),
+`lr`/`lr_pp`/`lnr*` (10 — peak-to-peak-of-flat-curve cancellation, worst
+on `ldo_2` everywhere), the `front_end_25_6T` cold-end cluster (its deck
+completes on tsmc12/16 and passes outright on tsmc16), and the tsmc5
+timeout. No new failure class appeared beyond tsmc5.
 
 Open findings the campaign surfaced (the point of running it):
 

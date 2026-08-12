@@ -99,14 +99,19 @@ nn_dc_tran 30/30, nn_ac 10/10, lifted_source 15/15).
    per tech, pilot stride policy, N worker subprocesses, resumable,
    summary.md. First full tsmc5 pass under the fixed harness (per-deck
    JSONs preserved untracked in `examples/analoggym/
-   pycircuitsim_bench_results/v753_campaign_tsmc5/`; summary tables in
-   RESULTS_TSMC.md):
-   **AC 88/89, dc_source 14/15, dc_temp 28/31 scored (+1 timeout), tran
-   family first-ever scores**. The residual misses are each classified:
-   Fan_SMC cmrrdc (NGSPICE-side early stop, item 7), ldo_2 lr (genuine
-   ~1e-4 V flat-curve residual, pre-existing), min_slope_25_75c on three
-   sensors (derivative metric at the µV node-agreement floor),
-   front_end_25_6T timeout (item 8).
+   pycircuitsim_bench_results/v753_campaign_tsmc{5,6,7,12,16}/`; summary
+   tables in RESULTS_TSMC.md). tsmc5: **AC 88/89, dc_source 14/15,
+   dc_temp 28/31 (+1 timeout), tran family first-ever scores (11/23,
+   charge pump 6/6)**. Then ALL FIVE techs for the AC/DC families:
+   **650/679 scored decks fully agree (95.7 %)** — AC 444/445 (the one
+   miss is item 7), and **TSMC6 ≡ TSMC7 verdict-identical to four
+   decimals across all 136 decks** (the relabelled-tech control at
+   campaign scale). Every miss falls into four classified families:
+   min_slope_25_75c (18 — per-step derivative at the µV agreement
+   floor), lr/lr_pp/lnr* cancellation metrics (10, worst on ldo_2
+   everywhere), the front_end_25_6T cold-end cluster (completes on
+   tsmc12/16, passes on tsmc16), the tsmc5 timeout. No new failure
+   class beyond tsmc5.
 7. **Fan_SMC tb_cmrr caveat — the reference is the unconverged side**: the
    one AC miss (cmrrdc 2.27 % vs the 2 % gate) is NGSPICE's
    default-tolerance early stop from the deck's own `.nodeset`: six-seed

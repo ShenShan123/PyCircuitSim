@@ -354,8 +354,12 @@ reconciled). What the campaign surfaced in their place:
 5. **min_slope_25_75c on 3 sensors** (2.1-11%) — per-step derivative at
    the uV node-agreement floor; metric-sensitivity class, consider a
    wider-baseline slope or a documented caveat.
-6. **Campaign is one tech deep** — tsmc5 done (159 decks); tsmc6/7/12/16
-   remain (campaign.py takes --tech). Refine promotion to default-on
+6. **Campaign: AC/DC families done on ALL FIVE techs** (650/679 full
+   agreement, 95.7%; tsmc6==tsmc7 verdict-identical — the relabelling
+   control at campaign scale; evidence in pycircuitsim_bench_results/
+   v753_campaign_*). Remaining: the TRANSIENT family on tsmc6/7/12/16
+   (4 x 23 decks; run refine only after the step-controller fix in
+   item 2, or budget ~1 h/ldo deck), and refine promotion to default-on
    still requires the perf-discipline re-gate.
 7. **Fan_SMC tb_cmrr** — reference-side caveat (NGSPICE default-tolerance
    early stop; py seed-independent, matches converged NGSPICE to 1e-4 dB).
