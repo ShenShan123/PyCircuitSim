@@ -3392,9 +3392,24 @@ class TransientSolver:
                         if refine:
                             _force_be_piece = False
                             if _on_bp:
+                                # Restart scale after a corner: the LOCAL
+                                # breakpoint spacing (a PULSE edge is two
+                                # corners tr/tf apart), NOT the stride —
+                                # sub_dt/64 at a coarse stride gave a
+                                # first BE piece spanning a third of the
+                                # charge pump's 10 ps reversal spike and
+                                # clipped its peak to -3.47 of -4.03 uA.
+                                _gap = sub_dt
+                                if _bp_idx > 0:
+                                    _gap = min(_gap, _bps[_bp_idx]
+                                               - _bps[_bp_idx - 1])
+                                if _bp_idx + 1 < len(_bps):
+                                    _gap = min(_gap, _bps[_bp_idx + 1]
+                                               - _bps[_bp_idx])
                                 _bp_idx += 1
                                 _force_be_piece = True
-                                dt_try = max(sub_dt * _RESTART_FRAC,
+                                dt_try = max(min(sub_dt * _RESTART_FRAC,
+                                                 _gap / 8.0),
                                              min_piece_dt)
                             else:
                                 # LTE-scaled growth, at most 2x per piece.
