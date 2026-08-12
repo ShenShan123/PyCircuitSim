@@ -310,6 +310,7 @@ openvaf -I bsim-cmg-va/code -o bsimcmg.osdi bsim-cmg-va/code/bsimcmg_main.va
 - **`model_overrides` writes to a shared `OsdiModel` buffer.** Creating multiple Instances from the same Model with different `model_overrides` will silently corrupt earlier Instances. For per-instance process variation, create a separate `Model()` per override set.
 - **Device polarity must come from `DeviceConfig.inst_params["DEVTYPE"]`**, not from substring matching on device names. `DEVTYPE=1` is NMOS, `DEVTYPE=0` is PMOS.
 - **Cache terminal index lookups** (`_term_g`, `_term_d`, `_term_s`) after `bind_simulation`. Do not re-scan `terminal_indices` on every `eval_dc` call.
+- **Never rescan the OSDI descriptor per read.** `_read_opvar` used to linearly scan all 942 `param_opvar` entries (UTF-8-decoding every candidate name) on every call — measured 169 µs/read × 8 reads/eval = 67 % of a circuit-level L72 transient's wall time. The `(name, alias) → index` map is a static property of the model descriptor: it is memoized per `Model` (`_opvar_index_cache`, shared by all its Instances) while the `access()` pointer read stays per-call, so `set_params` rebinds are unaffected. Bit-identical by construction and verified by sha256 over solved waveforms.
 
 ### NN Data Generation
 - Legal (L, NFIN) combos come from `DeviceConfig.get_geometry_combos(pdk_path)` for TSMC, or a fallback NFIN list for ASAP7.

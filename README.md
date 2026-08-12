@@ -443,6 +443,16 @@ Since V6.12.0 the inverter, NN, and complex decks are written
 **hierarchically** with `.subckt` + `X` instances. Probed nodes are kept at
 top level (they are ports), so results and tooling are unchanged.
 
+**AnalogGym benchmark corpus** (V7.5.x): `examples/analoggym/` carries 190
+generated analog designs (amplifiers, LDOs, sensor front ends, voltage
+references, a charge pump) across five TSMC nodes, plus a
+PyCircuitSim-vs-NGSPICE scoring harness
+(`pycircuitsim_bench/run_compare.py` for one deck,
+`pycircuitsim_bench/campaign.py` for a whole tech). Current verdicts and
+per-metric evidence: `examples/analoggym/RESULTS_TSMC.md` — 650/679 scored
+AC/DC decks fully agree as of V7.5.3, ground truth NGSPICE on the identical
+BSIM-CMG OSDI binary.
+
 ### Sample: BSIM-CMG FinFET Inverter Transient (ASAP7 7nm)
 
 ```spice
@@ -690,6 +700,9 @@ are promoted only after a full accuracy re-gate.
   LIL→CSR conversion per NR iteration (V7.2.0).
 - **GPU-resident training batches** (V7.0.2) — 3.4 → 0.7 s/epoch;
   `BSIMAR_LOADER=torch` reproduces the legacy `DataLoader` path.
+- **OSDI opvar index memoization** (V7.5.3) — PyCMG no longer rescans the
+  942-entry descriptor per operating-variable read; **~3–4× on every
+  LEVEL=72 transient**, bit-identical (sha256-verified waveforms).
 
 ### Opt-in flags (default OFF)
 
@@ -701,6 +714,11 @@ are promoted only after a full accuracy re-gate.
 | `PYCIRCUITSIM_MNA_ORDERING=NATURAL` | Explicit `splu` column ordering | 2.4–30× on the factorisation at 128×64 |
 | `PYCIRCUITSIM_NN_FUSED_JAC=1` | Closed-form DirectNet Jacobian (V7.0.3) | ~1.4×, transient/AC only |
 | `PYCIRCUITSIM_NN_AR_CACHE=1` | BSIM-AR per-layer K/V prefix cache (V7.0.4) | 1.6× DC/transient |
+| `PYCIRCUITSIM_TRAN_REFINE=1` | **Fidelity, not speed** (V7.5.2/V7.5.3): LTE-driven transient output refinement — every committed march piece is emitted (non-uniform time axis), PULSE corners become breakpoints with an order-1 restart, and each piece passes voltage **and per-device charge-state** truncation-error control with rollback. Costs 1.2–3× (LDO load-step decks currently up to ~20×, see CHANGELOG §V7.5.3 item 10) | captured a ±4 µA/10 ps spike to 1.5 % that every fixed grid got qualitatively wrong; API: `TransientSolver(refine_output=True)` |
+
+`TransientSolver(integration_method=...)` accepts `'auto'` (default ladder),
+`'gear2'` (pinned BDF-2, matches `.options method=gear maxord=2` decks) and
+`'trap'` (pinned trapezoid, NGSPICE's default integrator; V7.5.2).
 
 **Headline (V7.2.0):** the same 4×4 SRAM write transient runs
 **146 s → 100 s with the default-on work alone → 20.3 s with
