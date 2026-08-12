@@ -3614,6 +3614,29 @@ class ACSolver:
         for component in self.circuit.components:
             if not _is_mosfet(component):
                 continue
+            # V7.5.2 — full 4-terminal small-signal block for LEVEL=72.
+            # The 3-conductance + 3x3-cap path below linearizes only the
+            # channel about (g, d, s): junction/gate-leakage conductances
+            # are invisible (the DC solve stopped trusting those opvars in
+            # V7.5.0 for exactly that reason), and the 3x3 cap expansion
+            # stamps SIGN-FLIPPED transcap off-diagonals for devices whose
+            # bulk is not tied to the source rail (the V7.5.1 transient
+            # defect, same hazard). Devices exposing get_terminal_stamp
+            # carry Y = G4 + jw*C4 from the condensed OSDI Jacobians,
+            # evaluated once at the DC OP — exactly NGSPICE's AC load.
+            if hasattr(component, "get_terminal_stamp"):
+                _, g4 = component.get_terminal_stamp(self.dc_solution)
+                _, c4 = component.get_charge_stamp(self.dc_solution)
+                # NO external gmin here: the DC stamp's gmin across
+                # d-s/d-b/s-b is a Newton convergence aid; NGSPICE's AC
+                # load carries only the model's own Jacobian (the OSDI
+                # model handles gmin internally via $simparam). An extra
+                # 1e-12 S across the junctions injects a measurable
+                # spurious signal into high-impedance bulk nodes
+                # (measured: 6% on a 100k-tied NMOS bulk, and a fake
+                # 2.5e-7 V response on a PMOS bulk NGSPICE holds at zero).
+                ss[id(component)] = ("full4", g4, c4)
+                continue
             conductance_result = component.get_conductance(self.dc_solution)
             if len(conductance_result) == 2:
                 g_ds, g_m = conductance_result
@@ -3717,6 +3740,24 @@ class ACSolver:
         gate = mosfet.nodes[1]
         source = mosfet.nodes[2]
         bulk = mosfet.nodes[3]
+
+        # V7.5.2 — full 4-terminal admittance for LEVEL=72 (see
+        # _precompute_mosfet_small_signal): Y[t,j] = G4[t,j] + jw*C4[t,j]
+        # over terminal order [d, g, s, b], ground rows/cols dropped.
+        if ss[0] == "full4":
+            _, g4, c4 = ss
+            jw = 1j * omega
+            idx = [node_map.get(n) if n not in ("0", "GND") else None
+                   for n in mosfet.nodes]
+            for t in range(4):
+                row = idx[t]
+                if row is None:
+                    continue
+                for j in range(4):
+                    col = idx[j]
+                    if col is not None:
+                        mna_matrix[row, col] += g4[t, j] + jw * c4[t, j]
+            return
 
         # Small-signal conductances + capacitances (precomputed once at the OP)
         g_ds, g_m, g_mb, caps = ss

@@ -15,6 +15,14 @@ Two levels, both gated against ground truth (never a self-defined equation):
              source so the source-referenced condensed capacitance matrix is
              exact.
 
+  Level 3 -- floating-bulk CS amplifiers (NMOS bulk behind 100k to ground,
+             PMOS bulk behind 100k to VDD).  Every prior AC gate tied the
+             bulk to a rail, which masked both V7.5.2 AC defects: the 3x3
+             cap expansion has no bulk row/column (the same sign-flip
+             hazard that broke the charge-pump transient in V7.5.1) and
+             the 3-conductance stamp is blind to junction conductances.
+             Gates v(out) AND the bulk node itself against NGSPICE.
+
 Run CPU-pinned, with the repo ngspice (CLAUDE.md gate methodology):
 
     CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \\
@@ -331,6 +339,117 @@ def merged_baked(config, work_dir: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# Level 3 -- floating-bulk CS amplifiers (bulk NOT tied to a rail)
+# ---------------------------------------------------------------------------
+def _floating_bulk_case(work_dir: Path, polarity: str) -> bool:
+    """One floating-bulk CS amp (NMOS or PMOS) gated on v(out) and v(bulk)."""
+    tech = ALL_TECHS["ASAP7"]
+    config = make_baseline(tech, nfin_n=2, nfin_p=2)
+    vt = config.vt
+    merged = get_merged_modelcard(config, work_dir)
+    baked = merged_baked(config, work_dir)
+
+    vdd, rd, rb = 0.7, "50k", "100k"
+    tfin_nm = tech.tfin * 1e9
+    ac_card = "ac dec 20 1e3 1e12"
+    freqs = dec_frequencies(20, 1e3, 1e12)
+
+    if polarity == "nmos":
+        model, l_nm, nfin, vbias = (
+            vt.nmos_model, config.l_nmos * 1e9, config.nfin_n, 0.35)
+        # Bulk floats behind Rb to ground; junction caps couple it in.
+        core = (
+            f"RD vdd out {rd}\n"
+            f"Rb vb 0 {rb}\n"
+            f"M1 out in 0 vb {model} L={l_nm:.0f}n NFIN={nfin} "
+            f"TFIN={tfin_nm:.1f}n\n")
+        ng_core = (
+            f"RD vdd out {rd}\n"
+            f"Rb vb 0 {rb}\n"
+            f"N1 out in 0 vb {model}\n")
+        model_card = f".model {model} NMOS (LEVEL=72)\n"
+    else:
+        model, l_nm, nfin, vbias = (
+            vt.pmos_model, config.l_pmos * 1e9, config.nfin_p, 0.35)
+        core = (
+            f"RD out 0 {rd}\n"
+            f"Rb vb vdd {rb}\n"
+            f"M1 out in vdd vb {model} L={l_nm:.0f}n NFIN={nfin} "
+            f"TFIN={tfin_nm:.1f}n\n")
+        ng_core = (
+            f"RD out 0 {rd}\n"
+            f"Rb vb vdd {rb}\n"
+            f"N1 out in vdd vb {model}\n")
+        model_card = f".model {model} PMOS (LEVEL=72)\n"
+
+    py_deck = (
+        f"* BSIM-CMG floating-bulk CS amp AC ({polarity}, PyCircuitSim)\n"
+        f"VDD vdd 0 {vdd}\n"
+        f"Vin in 0 DC={vbias} AC=1 0\n"
+        + core + model_card
+        + f".ac {ac_card.split(' ', 1)[1]}\n.end\n"
+    )
+    ng_deck = (
+        f"* BSIM-CMG floating-bulk CS amp AC ({polarity}, NGSPICE)\n"
+        f'.include "{baked}"\n'
+        ".temp 27\n"
+        f"VDD vdd 0 {vdd}\n"
+        f"Vin in 0 dc {vbias} ac 1\n"
+        + ng_core + ".end\n"
+    )
+
+    print(f"  [{polarity.upper()}] model={model} L={l_nm:.0f}nm NFIN={nfin} "
+          f"Rb={rb} to {'gnd' if polarity == 'nmos' else 'vdd'}")
+
+    ok = True
+    for node in ("out", "vb"):
+        v_py = run_pycircuitsim_ac(
+            py_deck, work_dir, f"fb_{polarity}", freqs, node,
+            modelcard_path=str(merged),
+            model_name_map={"NMOS": vt.nmos_model, "PMOS": vt.pmos_model})
+        f_ng, v_ng_raw = run_ngspice_ac(
+            ng_deck, work_dir, f"fb_{polarity}_{node}", ac_card, node)
+        v_ng = _interp_to(freqs, f_ng, v_ng_raw)
+        if node == "out":
+            m = ac_metrics(freqs, v_py, v_ng)
+            node_ok = (m["mag_nrmse"] < L2_MAG_NRMSE
+                       and m["gain_maxerr_db"] < L2_GAIN_MAXERR_DB
+                       and m["phase_maxerr_deg"] < L2_PHASE_MAXERR)
+            print(f"    v({node}): mag NRMSE={m['mag_nrmse']*100:.4f}%  "
+                  f"gain maxerr={m['gain_maxerr_db']:.4f} dB  "
+                  f"phase maxerr={m['phase_maxerr_deg']:.4f} deg  "
+                  f"-> {'PASS' if node_ok else 'FAIL'}")
+        else:
+            # The bulk node can be a genuinely zero response (the PMOS
+            # junctions inject nothing at this OP -- NGSPICE reads 1e-83,
+            # pure roundoff), where dB/phase of noise is meaningless.
+            # Gate the complex residual against 3% of the reference peak
+            # with a 1 pV absolute floor: catches BOTH a wrong bulk
+            # response and a spurious injection into a quiet bulk (the
+            # bug class this level exists for).
+            peak_ng = float(np.max(np.abs(v_ng)))
+            resid = float(np.max(np.abs(v_py - v_ng)))
+            limit = max(L2_MAG_NRMSE * peak_ng, 1e-12)
+            node_ok = resid <= limit
+            print(f"    v({node}): peak|ng|={peak_ng:.3e} V  "
+                  f"max|py-ng|={resid:.3e} V  (limit {limit:.3e})  "
+                  f"-> {'PASS' if node_ok else 'FAIL'}")
+        ok = ok and node_ok
+    return ok
+
+
+def test_floating_bulk(work_dir: Path) -> bool:
+    print("\n" + "=" * 70)
+    print("  Level 3: floating-bulk CS amps  (PyCircuitSim vs NGSPICE)")
+    print("=" * 70)
+    ok_n = _floating_bulk_case(work_dir, "nmos")
+    ok_p = _floating_bulk_case(work_dir, "pmos")
+    ok = ok_n and ok_p
+    print(f"  -> {'PASS' if ok else 'FAIL'}")
+    return ok
+
+
+# ---------------------------------------------------------------------------
 def main() -> int:
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     print("\n" + "*" * 70)
@@ -340,6 +459,7 @@ def main() -> int:
     results = {
         "L1 RC low-pass": test_rc_lowpass(RESULTS_DIR),
         "L2 CS amplifier": test_cs_amp(RESULTS_DIR),
+        "L3 floating bulk": test_floating_bulk(RESULTS_DIR),
     }
 
     print("\n" + "=" * 70)
