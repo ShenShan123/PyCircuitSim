@@ -632,8 +632,18 @@ class Instance:
         # subthreshold references biased at Vgs ~ 55 mV) showed the same floor
         # denies whole circuits an operating point, so the default itself
         # now matches NGSPICE.
+        # V7.5.4 — and 1e-12 A is still a fixed CURRENT, so it kept failing
+        # one decade lower: a FinFET in deep subthreshold carries ~1e-13 A
+        # per unit device (AnalogGym's 2T sensor cores, m=360..1728 of them),
+        # the test passed on the ENTRY state, and the internal nodes were
+        # never solved -- 3 of 7 sweep points non-converged with an 8 mV
+        # error on the sensor output. `_dc_tol` is now a CEILING and the
+        # binding test is RELTOL x the device's own terminal current, so the
+        # tolerance follows the bias point instead of a hard-coded scale.
         _dc_tol = float(os.environ.get("NN_DC_SOLVE_TOL", "1e-12"))
-        converged = self._inst.solve_internal_nodes(self._model.model, self._sim, 200, _dc_tol)
+        _dc_reltol = float(os.environ.get("NN_DC_SOLVE_RELTOL", "1e-9"))
+        converged = self._inst.solve_internal_nodes(self._model.model, self._sim, 200, _dc_tol,
+                                                    reltol=_dc_reltol)
         if not converged:
             # V7.5.0 — the internal state is a RATCHET: a diverging solve
             # leaves the internal nodes hundreds of clamped 0.2 V steps
@@ -644,7 +654,8 @@ class Instance:
             # failure cannot cascade into the next evaluation.
             for idx in self._sim.internal_indices:
                 self._sim.solve[idx] = 0.0
-            converged = self._inst.solve_internal_nodes(self._model.model, self._sim, 200, _dc_tol)
+            converged = self._inst.solve_internal_nodes(self._model.model, self._sim, 200, _dc_tol,
+                                                        reltol=_dc_reltol)
         if not converged:
             for idx in self._sim.internal_indices:
                 self._sim.solve[idx] = 0.0

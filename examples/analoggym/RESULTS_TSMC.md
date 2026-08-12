@@ -145,7 +145,7 @@ missing, both engines produced data:
 |---|:--:|---|
 | AC (9 deck kinds) | **88/89** | `Fan_SMC/tb_cmrr` 0/1 — NGSPICE-side (see below) |
 | dc_source | **14/15** | `ldo_2/tb_load` 9/11 — `lr`/`lr_pp` on a ~110 µV-flat replica-regulated curve (py holds it 16× flatter; a genuine small residual amplified by a peak-to-peak-of-flat-curve metric) |
-| dc_temp | **28/31** + 1 timeout | 3 sensors miss only `min_slope_25_75c` (2.1–11 % — a per-step derivative at the µV node-agreement floor); `front_end_25_6T` exceeds the 1 h budget (~11 s/point, open solver finding below) |
+| dc_temp | **28/31** + 1 timeout → **29/32 measurable** in V7.5.4 | 3 sensors miss only `min_slope_25_75c` (2.1–11 % — a per-step derivative at the µV node-agreement floor); `front_end_25_6T` exceeded the 1 h budget here (~11 s/point) and **is fixed in V7.5.4** — 281/281 points converged in 3.2 s, now 11/13, missing only that same `min_slope_25_75c`/`max_step_frac_25_75c` derivative pair |
 | transient | **11/23** | 10 amplifiers on slew/edge metrics (above; incl. the two marginal crossings and `Qu_LEC` 5/11 — genuine 1 ns-edge residuals); `ldo_1` 3/5 and `ldo_2` 1/5 (load-step excursions — ldo_2's differ 11–57 %, a genuine open item on the corpus's delicate local-loop design); charge pump **6/6** |
 
 The `Fan_SMC/tb_cmrr` miss is the REFERENCE side: its `cmrrdc` is a −CMRR
@@ -183,22 +183,38 @@ timeout. No new failure class appeared beyond tsmc5.
 
 Open findings the campaign surfaced (the point of running it):
 
-* **`front_end_25_6T` cold-end robustness** — ~11 s/point at full stride
-  with 3/7 stride-50 probe points flagged non-converged (values kept), and
-  a genuine 2–8 mV disagreement at the cold end of the sweep. The successor
-  to the closed V7.5.1 subthreshold-floor class: a cold sensor OP the
-  solver only holds approximately. Open.
-* **`Basic_LDO/tb_tran` refine cost** — 2684 s against 28 s flags-off
-  (96×), for a **5/5** verdict that captures the 3 mV load-step overshoot
-  flags-off reads as exactly zero (and the gain is march accuracy, not
-  output density: +0.61 mV of the recovered undershoot vs +0.28 mV).
-  Diagnosed (CHANGELOG §V7.5.3 item 10): 67 % of the wall was a PyCMG
-  descriptor-scan tax on every L72 transient — fixed bit-identically in
-  V7.5.3 (~3×) — and the rest is a stable ~1 ns equilibrium in the
-  refine step controller (its shrink/grow laws assume the LTE ratio
-  falls as h³; measured h^1.05 because the estimator is noise-limited
-  at these step sizes). Controller fix path recorded; needs a
-  charge-pump re-gate before it ships.
+* **`front_end_25_6T` cold-end robustness — CLOSED in V7.5.4.** It was
+  indeed the successor to the V7.5.1 subthreshold-floor class, and the same
+  defect: PyCMG's internal-node solve accepted on an **absolute** 1e-12 A
+  residual evaluated before any Newton step, so this deck's
+  deep-subthreshold nulvt cores (~1e-13 A per unit device, m=360/1728) had
+  their internal nodes rubber-stamped. The test is now scaled to the
+  device's own terminal current (CHANGELOG §V7.5.4). Was: ~11 s/point,
+  3/7 probe points non-converged, 8 mV cold error, >1 h budget overrun.
+  Now: **281/281 points converged in 3.2 s, worst node 0.28 mV, 11/13** —
+  the two remaining misses are the `min_slope_25_75c` /
+  `max_step_frac_25_75c` derivative pair (the metric class below), and the
+  seed bisection that diagnosed it now returns the same answer from the
+  deck's nodesets and from NGSPICE's own solution. Answer-preserving on
+  every other deck: all 15 previously scored `sensing_front_end` /
+  `voltage_reference` decks are verdict- and op_delta-identical.
+* **`Basic_LDO/tb_tran` refine cost — STILL OPEN, and re-diagnosed in
+  V7.5.4.** Two corrections to the V7.5.3 record. (a) The verdict under
+  refine is **4/5, not 5/5**: overshoot reads 1.11 mV against NGSPICE's
+  3.04 mV (rel 0.634). (b) The march does not park at ~1 ns — measured over
+  0–6 µs (gear2, dt=20 ns) it runs 100 pieces at the full 20 ns grid before
+  the load step, 991 pieces across 2.0–2.5 µs, then **12 868 pieces at
+  median 47 ps** for the remaining 3.5 µs with **zero** NR failures. The
+  mechanism is a **dead zone in the growth law**, not a noise-limited
+  estimator: `min(2, max(1, 0.9·r^(-1/3)))` exceeds 1 only when r < 0.9³ =
+  0.729, so any accepted ratio in [0.729, 1) freezes dt exactly. The V7.5.3
+  fix path was implemented and **reverted**: it holds the charge pump at 6/6
+  (both strides) but costs 3.3× more (630 s → 2067 s, 19 897 → 78 298
+  pieces) and flips no verdict, though it does improve overshoot 8.5×
+  (rel 0.634 → 0.074) — which also means refine at HEAD **under-resolves
+  this deck ~4×** on that metric. Moving the safety factor inside the
+  exponent shrinks the dead zone to [0.9, 1) but is worth only ~6 % in dt.
+  See CHANGELOG §V7.5.4 before re-attempting.
 
 Representative agreements where the two simulators do match:
 

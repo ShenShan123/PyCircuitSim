@@ -299,6 +299,24 @@ openvaf -I bsim-cmg-va/code -o bsimcmg.osdi bsim-cmg-va/code/bsimcmg_main.va
 - **Always check `EVAL_RET_FLAG_FATAL` (bit 1) on the return value of `eval()` / `eval_with_time()`.** If set, residual and Jacobian buffers contain undefined values — raise an error rather than reading garbage.
 - **Always null-guard `info.errors` before iterating** in `_check_init_result`. A malformed OSDI binary may set `num_errors > 0` with a null pointer.
 - **Always check `solve_internal_nodes` return value.** `eval_dc` raises `RuntimeError` on convergence failure — callers that sweep bias points (data generation) must catch this to avoid garbage data (id=40 kA, NaN derivatives). `eval_tran` uses a relaxed tolerance (1e-3 vs 1e-9) and warns instead of raising, because the circuit-level NR provides outer convergence.
+- **Never gate the internal-node solve on an ABSOLUTE current.** This defect
+  has now been fixed twice at two different hard-coded scales (1e-9 A in
+  V7.5.1, 1e-12 A in V7.5.4): the residual test runs on the ENTRY state
+  before any Newton step, so any device whose terminal current sits below the
+  constant passes instantly with its internal nodes never solved — sub-nA
+  bias points came back as exactly 0 A at 1e-9, and deep-subthreshold FinFETs
+  (~1e-13 A per unit device) came back 8 mV wrong at 1e-12. `eval_dc` now
+  passes `reltol=` (`NN_DC_SOLVE_RELTOL`, default 1e-9) so the binding test is
+  `min(tol, max(1e-18, RELTOL·max|i_terminal|))` — `NN_DC_SOLVE_TOL` is only a
+  ceiling and the tolerance follows the bias point. **The scaling is opt-in
+  per call site and must stay that way:** `eval_tran`'s stateless branch and
+  `solve_internal_nodes_tran` must NOT request it, because there the internal
+  residual saturates at ~|Id| (the internal-only Jacobian cannot null the
+  external coupling term), making an |Id|-proportional target unreachable by
+  construction — measured as 80 spurious non-convergence warnings and 15× the
+  wall on `tests/test_transient.py`. The float64 ceiling at the opposite end
+  (amp-scale forward junctions at 125 °C) is handled by the voltage-delta
+  acceptance, which is the real convergence test.
 - **NFIN=1 causes convergence failure** for certain TSMC process variants (e.g., tsmc5:ulvt, tsmc16:lnvt) where BSIM-CMG instance parameters (ETA0_i, U0_i, UA_i) become negative. When `solve_internal_nodes` diverges, the internal drain node drifts to ~40 V (200 iterations × 0.2 V clamp), producing `id ≈ 40 kA` and NaN for all derivatives. Avoid NFIN=1 in data generation; use NFIN ≥ 2.
 
 ### ctypes Buffer Safety

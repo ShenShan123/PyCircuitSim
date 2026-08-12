@@ -142,6 +142,27 @@ corroborated fork recovery, explicit NGSPICE-failure recovery, altns
 fallback, honest `ng_ran` verdicts) — see CHANGELOG §V7.5.3 and
 RESULTS_TSMC.md before quoting any bench number.
 
+V7.5.4 fixed the last known **subthreshold operating-point** defect at its
+root, in PyCMG rather than the solver: the internal-node solve accepted on an
+**absolute** current residual tested before any Newton step, so any device
+quieter than the constant kept its internal nodes unsolved. That constant had
+already been re-tuned once (1e-9 → 1e-12 in V7.5.1) and simply failed one
+decade lower on deep-subthreshold FinFETs. `eval_dc` now binds on
+`min(tol, max(1e-18, RELTOL·max|i_terminal|))` (`NN_DC_SOLVE_RELTOL`, default
+1e-9), making `NN_DC_SOLVE_TOL` a ceiling the test can only tighten past; the
+scaling is **opt-in per call site** and must not be requested by the transient
+paths (their residual saturates at ~|Id| by construction — see PyCMG
+CLAUDE.md). `front_end_25_6T` went from a >1 h timeout with 3-of-7 points
+non-converged to 281/281 converged in 3.2 s, and all 15 other previously
+scored `sensing_front_end`/`voltage_reference` decks are verdict- **and**
+op_delta-identical. V7.5.4 also **implemented, measured and reverted** the
+refine step-controller fix path V7.5.3 had recorded: it holds the charge pump
+at 6/6 but makes Basic_LDO 3.3× slower while flipping no verdict, and the real
+mechanism is a dead zone in the growth law (`0.9·r^(-1/3)` exceeds 1 only for
+r < 0.729, so any accepted r in [0.729, 1) freezes dt) worth only ~6 % in dt.
+Refine-mode cost on LDO load-step decks stays **open**; see CHANGELOG §V7.5.4
+before re-attempting it.
+
 ## Supported Features
 
 Devices (R, C, V/I sources, PULSE, NMOS/PMOS L72–75, `X` subckt instances),

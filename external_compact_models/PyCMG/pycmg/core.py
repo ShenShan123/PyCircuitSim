@@ -576,8 +576,51 @@ class OsdiInstance:
                 max_update = abs(update)
         return max_update
 
+    # V7.5.4 — floor of the current-scaled internal-node test (see
+    # _internal_tol). Below this the residual is float64 noise on any
+    # FinFET terminal current.
+    _INT_ABSTOL = 1e-18
+
+    def _internal_tol(self, sim: OsdiSimulation, residual_vec, tol: float,
+                      reltol: float) -> float:
+        """Effective internal-node residual tolerance for this bias point.
+
+        With ``reltol == 0`` this is just the caller's absolute ``tol``.
+        Otherwise the test is additionally scaled by the DEVICE'S OWN
+        largest terminal current (terminal residuals ARE the terminal
+        currents, cf. ``Instance._read_current``) and clamped by ``tol``,
+        so it can only ever TIGHTEN: an absolute current tolerance is
+        meaningless across the range this model is asked to cover. A
+        FinFET biased deep in subthreshold carries ~1e-13 A per unit
+        device, so a 1e-12 A test was satisfied by the ENTRY state and the
+        internal nodes never moved -- the same defect V7.5.1 fixed at the
+        1e-9 level, one decade lower. The float64 ceiling at the other end
+        (amp-scale forward junctions at 125 C, where no absolute residual
+        is reachable) stays with the voltage-delta acceptance, which is
+        the real convergence test.
+
+        Scaling is opt-in per CALL SITE because only the caller knows
+        whether its residual can reach a current-proportional tolerance:
+        ``eval_dc`` asks for it, while ``eval_tran``'s stateless branch
+        must not (its internal-node residual saturates at ~|Id| since the
+        internal-only Jacobian cannot null the external coupling term, so
+        a |Id|-proportional target is unreachable by construction --
+        measured as 80 spurious non-convergence warnings and 15x the wall
+        on PyCMG's own test_transient).
+        """
+        if reltol <= 0.0:
+            return tol
+        i_scale = 0.0
+        for idx in sim.terminal_indices:
+            if idx < len(residual_vec):
+                mag = abs(residual_vec[idx])
+                if mag > i_scale:
+                    i_scale = mag
+        return min(tol, max(self._INT_ABSTOL, reltol * i_scale))
+
     def solve_internal_nodes(self, model: OsdiModel, sim: OsdiSimulation,
-                             max_iter: int, tol: float) -> bool:
+                             max_iter: int, tol: float,
+                             reltol: float = 0.0) -> bool:
         if not sim.internal_indices:
             return True
         for _ in range(max_iter):
@@ -589,7 +632,7 @@ class OsdiInstance:
             self.load_residuals(model, sim)
             self.load_jacobian(model, sim)
             norm = max(abs(sim.residual_resist[idx]) for idx in sim.internal_indices)
-            if norm < tol:
+            if norm < self._internal_tol(sim, sim.residual_resist, tol, reltol):
                 return True
             step = self._nr_step(sim, list(sim.residual_resist))
             if step is None:

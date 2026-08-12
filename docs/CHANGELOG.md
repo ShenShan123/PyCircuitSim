@@ -8,6 +8,119 @@ pruned; the full original text lives in git history.)
 
 ---
 
+## V7.5.4 — the internal-solve current floor, fixed dimensionally; the refine-controller fix path measured and rejected (branch `feat/analoggym-migration`, 2026-08-12)
+
+**Goal: the two top V7.5.3 open issues.** One closed at the root, one measured
+and honestly rejected. Full gate basket re-run green (op, dc 2, dc_comp 81,
+multi_dc 53, subckt 11, multiplier 6, tran 1, tran_comp 45, multi_tran 86,
+AC 3, ring_osc/switchcap/sram_snm all-PASS, canaries, nn_dc_tran 30,
+lifted_source 15, PyCMG's own 314) plus the 7-deck AnalogGym pilot.
+
+1. **`front_end_25_6T`'s cold end was the 1e-12 A residual floor, one decade
+   below where V7.5.1 left it — now dimensionally impossible**. The
+   diagnostic that cracked it: solve each sweep temperature twice, once from
+   the deck's `.nodeset` and once seeded from NGSPICE's own answer.
+   `x0.net13` agreed to 2–8 µV at EVERY temperature and only `vout`
+   disagreed; at −20/80 °C the NGSPICE seed landed on NGSPICE's value (so
+   that root is one our solver holds — a Newton artifact), while at 5 °C
+   BOTH seeds returned the same 8 mV-off value, which is a device-evaluation
+   difference, not a basin problem. Root cause: PyCMG
+   `solve_internal_nodes` accepted on an **absolute** 1e-12 A residual
+   tested on the **entry state, before any Newton step**. A FinFET in deep
+   subthreshold carries ~1e-13 A per unit device (this deck is nulvt 2T
+   sensor cores at m=360/1728), so the test passed immediately and the
+   internal nodes were never solved — the exact defect V7.5.1 fixed at the
+   1e-9 level (§V7.5.1, `544e9f4`), reappearing one decade lower because
+   the cure was another hard-coded current. **Fix:** the DC internal-node
+   test is scaled to the device's own largest terminal current,
+   `tol_eff = min(tol, max(1e-18, RELTOL·max|i_terminal|))` with RELTOL=1e-9
+   (`NN_DC_SOLVE_RELTOL`); `NN_DC_SOLVE_TOL` becomes a **ceiling**, so the
+   test can only ever tighten, and the float64 limit at the other end
+   (amp-scale forward junctions at 125 °C) stays with the V7.5.1
+   voltage-delta acceptance, which is the real convergence test.
+   **Evidence:** stride 50 **8/13 → 13/13**, flag_ok 4/7 → 7/7, op_delta
+   worst 7.99 mV → 0.115 mV, 15.0 s → 1.35 s. Full stride: the **>1 h
+   timeout is gone** — 281/281 points converged in **3.2 s**, worst node
+   0.28 mV, **11/13**, the two remaining misses being
+   `min_slope_25_75c`/`max_step_frac_25_75c`, the known
+   per-step-derivative metric class. On the back-to-back stride-50 probe it
+   is also **11× faster, not slower** (15.0 s → 1.35 s): the outer NR had
+   been thrashing against an unsolved device model.
+   **Answer-preserving everywhere else**, which is the claim that matters
+   for a change touching every L72 evaluation. Re-running both
+   subthreshold-heavy tsmc5 categories deck by deck against the V7.5.3
+   campaign JSONs: all 15 previously-scored `sensing_front_end` +
+   `voltage_reference` decks come back **verdict-identical AND
+   op_delta-identical to the printed µV** (e.g. ptat_2 13/13 at 0.365 mV
+   both times, PTAT_SENSOR 12/13 at 0.051 mV, three_output_vref 18/18 at
+   0.017 mV), with `front_end_25_6T` the single changed row — absent
+   (timeout) → 11/13. The 7-deck pilot is likewise unchanged (tb_gain 8/8,
+   tb_load 11/11, tb_loop_max 8/8, ptat_1 13/13 with 0 mono violations,
+   amp tb_dc 15/15, amp tb_tran 11/11) and the charge pump reproduces
+   V7.5.3's numbers to the printed digit under refine+trap (stride 100:
+   6/6, up_imin 1.489e-02; stride 20: 6/6, 1.837e-02) because µA-scale
+   decks never reach the ceiling. *Wall-clock differences against the
+   campaign JSONs are NOT attributed to this fix — that campaign ran N-way
+   parallel, so its per-deck seconds are contention-inflated.*
+2. **Scoping matters, and I got it wrong once (dead end, recorded):**
+   applying the current-scaled test to `eval_tran`'s stateless branch and
+   to `solve_internal_nodes_tran` produced **80 spurious non-convergence
+   warnings and 15× the wall** on PyCMG's own `test_transient` — that
+   branch's internal residual **saturates at ~|Id|** (the internal-only
+   Jacobian cannot null the external coupling term, as its own comment
+   says), so a |Id|-proportional target is unreachable by construction.
+   The scaling is therefore **opt-in per call site**: `eval_dc` asks for it,
+   the transient paths do not. PyCMG's suite went 314 passed/122 warnings
+   → **314 passed/1 warning** after scoping. PyCircuitSim's circuit-level
+   L72 path only ever calls `eval_dc`, which is where the defect bit.
+3. **The V7.5.3 refine step-controller "fix path" does not do what it says
+   — implemented, measured, REVERTED.** Both recorded halves were built
+   (secant-matched controller exponent from the last two (h, r) samples of
+   a reject sequence; disarm both LTE tests on states whose per-piece move
+   is below the tolerance the piece was solved to), entirely inside
+   refine-only code, **flags-off byte-identical** (sha256 over the full
+   float64 waveform, plus tran 1/45/86 and AC 3/3). The charge-pump gate
+   held: **6/6 at stride 100 (up_imin 1.80 %) and stride 20 (1.29 %, vs
+   V7.5.3's 1.84 %)**, stride-independence intact. But the stated goal —
+   making refine affordable — is **not met**: Basic_LDO tb_tran went
+   19 897 → 78 298 pieces and 630 s → 2067 s (**3.3× SLOWER**), buying an
+   8.5× better binding metric (overshoot rel 0.634 → 0.074) that **flips
+   no verdict** (4/5 before and after). A change that flips nothing and
+   triples the cost of the one deck that IS the cost problem does not ship;
+   reverted, with the numbers kept here.
+4. **Baseline correction to §V7.5.3 item 8(b):** Basic_LDO tb_tran under
+   refine scores **4/5**, not 5/5, on this hardware — overshoot 1.11 mV
+   against NGSPICE's 3.04 mV (rel 0.634). The V7.5.3 "5/5" does not
+   reproduce. The fixed PyCMG changes neither the cost nor the verdict here
+   (662 s, 19 595 pieces, overshoot rel 0.720), so the LDO refine grind and
+   the internal-solve floor are **independent** problems.
+5. **What the LDO march actually does, measured** (0–6 µs window, gear2,
+   dt=20 ns): 100 pieces at the full 20 ns grid before the load step, 991
+   pieces across 2.0–2.5 µs, then **12 868 pieces at median 47 ps** for the
+   remaining 3.5 µs with **zero** NR failures. It collapses at the load step
+   and never recovers — and it parks 20× finer than the "~1 ns" V7.5.3
+   reported. The mechanism is a **dead zone in the growth law**, not a noise
+   floor: `_grow = min(2, max(1, 0.9·r^(-1/3)))` exceeds 1 only when
+   r < 0.9³ = 0.729, so any accepted r in [0.729, 1) freezes dt exactly,
+   with no escape path. (That is the same line V7.5.3 reported as "growth
+   clamps at 1.0 for 32 % of accepted pieces".) Putting the safety factor
+   inside the exponent — `(0.9/r)^(1/p)` — shrinks the dead zone to
+   [0.9, 1), but for order 3 that is worth only ~6 % in dt, so it is not
+   the cost lever either. Recorded, not implemented. And since finer steps
+   monotonically improve overshoot toward NGSPICE, refine at HEAD is
+   **under-resolving this deck by ~4×** on that metric — a fidelity finding
+   independent of the cost question.
+6. **Methodology trap worth not repeating:** a probe script placed inside
+   the worktree cannot compare two code states — `sys.path[0]` is the
+   script's own directory (and cwd for `-m`/`-c`), so a PYTHONPATH-staged
+   package copy is silently ignored and the two states measure
+   bit-identically. It produced one wrong conclusion here before being
+   caught. Probes now run from the scratchpad through a wrapper that
+   inserts the chosen package at `sys.path[0]` and prints the resolved
+   `solver.__file__`.
+
+---
+
 ## V7.5.3 — pilot closed 7/7; the campaign begins and the harness learns to compare fairly (branch `feat/analoggym-migration`, 2026-08-12)
 
 **Goal: the V7.5.2 open issues** — charge-state LTE for the last charge-pump
