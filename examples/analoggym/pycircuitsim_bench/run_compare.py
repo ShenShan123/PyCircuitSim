@@ -155,12 +155,17 @@ for _p in (str(REPO_ROOT), str(BENCH_ROOT), str(_TOOLS_DIR.parent), str(_TOOLS_D
 #: nothing once ``dv_limit`` is on), so this is the per-point budget.
 DEFAULT_MAX_ITERATIONS: int = 500
 
-#: Absolute agreement floors for offset-DIFFERENCE metrics, keyed by metric
-#: name (V7.5.3).  ``vos25 = vout25 - 0.195`` subtracts two near-equal
-#: numbers: the underlying node agrees to a few uV (rel ~4e-6) yet the
-#: difference reaches the 2 % gate at ~1e4 amplification.  10 uV is ~15 ppm
-#: of the 0.65-0.8 V rails — far below any real disagreement worth flagging.
-METRIC_ATOL: Dict[str, float] = {"vos25": 1e-5}
+#: Absolute agreement floors for metrics whose RELATIVE comparison explodes
+#: on near-zero values (V7.5.3).  ``vos25 = vout25 - 0.195`` subtracts two
+#: near-equal numbers: the underlying node agrees to a few uV (rel ~4e-6)
+#: yet the difference reaches the 2 % gate at ~1e4 amplification; 10 uV is
+#: ~15 ppm of the 0.65-0.8 V rails.  The LDO load-step ``overshoot`` /
+#: ``undershoot`` are mV-scale excursions when they exist at all —
+#: ldo_folded_cascode reports 2.4e-10 V against NGSPICE's 8.0e-10 V (rel
+#: 0.70, both meaning "the output does not move"); below a microvolt the
+#: two simulators are saying the same thing.
+METRIC_ATOL: Dict[str, float] = {"vos25": 1e-5,
+                                 "overshoot": 1e-6, "undershoot": 1e-6}
 
 #: NGSPICE-45.2's own DC convergence tolerances.  PyCircuitSim defaults to
 #: RELTOL=1e-4 / VNTOL=1e-7 -- TEN TIMES TIGHTER than the simulator it is being
