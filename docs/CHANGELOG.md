@@ -62,6 +62,17 @@ lifted_source 15, PyCMG's own 314) plus the 7-deck AnalogGym pilot.
    decks never reach the ceiling. *Wall-clock differences against the
    campaign JSONs are NOT attributed to this fix — that campaign ran N-way
    parallel, so its per-deck seconds are contention-inflated.*
+   **It generalizes across techs, and the metric gates had been hiding how
+   wrong that deck's operating point was.** Re-running `sensing_front_end`
+   on tsmc16 and tsmc12: **every** deck verdict-identical on tsmc16 (14/14)
+   and 13 of 14 on tsmc12, with `front_end_25_6T` the only change
+   (**8/13 → 11/13** on tsmc12) — but its **op_delta collapses from
+   49.29 mV to 0.249 mV on tsmc16 (198×) and 9.97 mV to 0.303 mV on
+   tsmc12 (33×)**. On tsmc16 that deck was already scoring 13/13 while
+   sitting ~49 mV off NGSPICE's operating point: the `.meas` set simply
+   does not probe the node that was wrong, which is exactly why
+   `op_delta` is a first-class output of this harness and not
+   `_last_solve_converged`.
 2. **Scoping matters, and I got it wrong once (dead end, recorded):**
    applying the current-scaled test to `eval_tran`'s stateless branch and
    to `solve_internal_nodes_tran` produced **80 spurious non-convergence
@@ -109,7 +120,9 @@ lifted_source 15, PyCMG's own 314) plus the 7-deck AnalogGym pilot.
    the cost lever either. Recorded, not implemented. And since finer steps
    monotonically improve overshoot toward NGSPICE, refine at HEAD is
    **under-resolving this deck by ~4×** on that metric — a fidelity finding
-   independent of the cost question.
+   independent of the cost question. Re-measured on top of the fixed PyCMG
+   for completeness: 2138 s, 77 571 pieces, overshoot rel 0.096 — the same
+   picture, confirming the two problems are independent.
 6. **`min_slope_25_75c` characterized — it measures the REFERENCE's noise,
    and the campaign's largest miss family (18 decks) is a caveat, not a
    gap.** The metric is a *minimum over 100 adjacent steps* of a 0.5 °C

@@ -196,8 +196,16 @@ Open findings the campaign surfaced (the point of running it):
   `max_step_frac_25_75c` derivative pair (the metric class below), and the
   seed bisection that diagnosed it now returns the same answer from the
   deck's nodesets and from NGSPICE's own solution. Answer-preserving on
-  every other deck: all 15 previously scored `sensing_front_end` /
+  every other deck: all 15 previously scored tsmc5 `sensing_front_end` /
   `voltage_reference` decks are verdict- and op_delta-identical.
+  **Cross-tech, and the metric set had been hiding the size of it:** on
+  tsmc16 all 14 sensing decks stay verdict-identical while this deck's
+  `op_delta` falls **49.29 mV → 0.249 mV** (it was scoring 13/13 while
+  sitting 49 mV off NGSPICE's operating point — the `.meas` cards simply do
+  not probe the node that was wrong); on tsmc12, 13 of 14 unchanged and
+  this deck goes **8/13 → 11/13** with `op_delta` 9.97 mV → 0.303 mV. This
+  is the case for `op_delta` being a first-class harness output rather than
+  trusting `_last_solve_converged` or the metric columns alone.
 * **`Basic_LDO/tb_tran` refine cost — STILL OPEN, and re-diagnosed in
   V7.5.4.** Two corrections to the V7.5.3 record. (a) The verdict under
   refine is **4/5, not 5/5**: overshoot reads 1.11 mV against NGSPICE's
