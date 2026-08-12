@@ -338,20 +338,19 @@ class Instance:
             return -float(self._sim.residual_resist[idx_internal])
         return self._read_current(term)
 
-    def _read_opvar(self, name: str, alias: str) -> Optional[float]:
+    def _find_opvar_index(self, name_lower: str,
+                          alias_lower: str) -> Optional[int]:
+        """First descriptor index whose opvar name/alias matches, or None."""
         desc = self._model.descriptor
-        name_lower = name.lower()
-        alias_lower = alias.lower()
         total = int(desc.num_params + desc.num_opvars)
         for i in range(total):
             param = desc.param_opvar[i]
             if (param.flags & PARA_KIND_MASK) != PARA_KIND_OPVAR:
                 continue
-            matched = False
             if param.num_alias == 0:
                 if param.name and param.name[0]:
                     if param.name[0].decode("utf-8", errors="replace").lower() == name_lower:
-                        matched = True
+                        return i
             else:
                 for a in range(param.num_alias):
                     alias_name = param.name[a]
@@ -359,20 +358,41 @@ class Instance:
                         continue
                     alias_str = alias_name.decode("utf-8", errors="replace").lower()
                     if alias_str in (name_lower, alias_lower):
-                        matched = True
-                        break
-            if not matched:
-                continue
-            ptr = desc.access(self._inst.data(), self._model.model.data(), i,
-                              ACCESS_FLAG_SET | ACCESS_FLAG_INSTANCE)
-            if not ptr:
-                return None
-            ty = param.flags & PARA_TY_MASK
-            if ty == PARA_TY_INT:
-                return float(ctypes.cast(ptr, ctypes.POINTER(ctypes.c_int32))[0])
-            if ty == PARA_TY_REAL:
-                return float(ctypes.cast(ptr, ctypes.POINTER(ctypes.c_double))[0])
+                        return i
+        return None
+
+    def _read_opvar(self, name: str, alias: str) -> Optional[float]:
+        # V7.5.3 — memoized descriptor index. The linear scan is 942
+        # entries with a UTF-8 decode per candidate name and measured at
+        # 169 us per read, 8 reads per eval_dc = 67 % of an L72 transient's
+        # WALL TIME (cProfile, AnalogGym Basic_LDO). The (name, alias) ->
+        # index map is a static property of the model descriptor, shared
+        # by every instance of the Model; only the index is cached — the
+        # access() pointer read stays per-call, so set_params rebinds and
+        # per-instance buffers behave exactly as before.
+        model = self._model
+        cache = getattr(model, "_opvar_index_cache", None)
+        if cache is None:
+            cache = model._opvar_index_cache = {}
+        key = (name, alias)
+        if key in cache:
+            i = cache[key]
+        else:
+            i = cache[key] = self._find_opvar_index(name.lower(),
+                                                    alias.lower())
+        if i is None:
             return None
+        desc = model.descriptor
+        param = desc.param_opvar[i]
+        ptr = desc.access(self._inst.data(), model.model.data(), i,
+                          ACCESS_FLAG_SET | ACCESS_FLAG_INSTANCE)
+        if not ptr:
+            return None
+        ty = param.flags & PARA_TY_MASK
+        if ty == PARA_TY_INT:
+            return float(ctypes.cast(ptr, ctypes.POINTER(ctypes.c_int32))[0])
+        if ty == PARA_TY_REAL:
+            return float(ctypes.cast(ptr, ctypes.POINTER(ctypes.c_double))[0])
         return None
 
     @staticmethod
