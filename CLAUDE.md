@@ -120,12 +120,27 @@ preserved exactly), PULSE corners become breakpoints (land-on + small
 BE restart scaled to the local corner gap — kills trapezoid corner ring),
 and each piece is LTE-checked (TRTOL=7, voltage state) with depth-1
 un-commit rollback. `integration_method='trap'` pins the trapezoid (no
-stiffness swap). Charge pump: 5/6 stride-independent with `up_imin`
-within 4.7 % (was sign-flipped under BDF-2 / 2×-rung under fixed trap);
-the residual is integrator-policy sensitivity, not grid — see
-RESULTS_TSMC.md. Dead ends recorded in CHANGELOG §V7.5.2: post-corner
+stiffness swap). Dead ends recorded in CHANGELOG §V7.5.2: post-corner
 hold window (over-rings), branch-current LTE (NR-noise d³ is
-dt-independent → thrash; charge-based LTE is the faithful follow-up).
+dt-independent → thrash).
+
+V7.5.3 added **per-device charge-state LTE** to the refine mode (still
+opt-in, flags-off byte-identical): NGSPICE-CKTterr-shaped truncation
+control on MOSFET terminal-charge states — solver-side 3-deep accepted
+(t, q[4], i_cap[4]) histories, trap LTE as a current error, the CKTterr
+`/h` charge loosener disarming the test where DD3 is NR-noise (exactly
+the V7.5.2 branch-current dead end), CHGTOL=1e-18 because the stock
+1e-14 floor sits 100× above a FinFET terminal charge and never fires
+(stock NGSPICE marches fast spikes via ITL4 iteration cuts, not charge
+terr — measured from cktterr.c). Charge pump: **6/6 stride-independent**
+(`up_imin` 1.49 %/1.84 %). Known cost: LDO load-step decks grind under
+refine (96× on Basic_LDO for a correct 5/5) — open pathology, do not run
+campaign-wide refine-on until fixed. The AnalogGym bench harness also
+became NGSPICE-exact in V7.5.3 (sample-exact `.meas` windows, dctrcurv.c
+grid rule with Kelvin accumulation, grid-matched strided extrema,
+corroborated fork recovery, explicit NGSPICE-failure recovery, altns
+fallback, honest `ng_ran` verdicts) — see CHANGELOG §V7.5.3 and
+RESULTS_TSMC.md before quoting any bench number.
 
 ## Supported Features
 

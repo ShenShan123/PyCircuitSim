@@ -5,30 +5,44 @@ pass gate, metrics match NGSPICE. Fix simulator (solver / parser / BSIM-CMG
 L72 path) — NN models parked. Then update CLAUDE.md, CHANGELOG.md, README.md.
 User: workflows allowed, max 5 agents.
 
-## CURRENT STATUS (2026-08-12) — read this first, the rest is history
+## CURRENT STATUS (2026-08-12 evening) — read this first, the rest is history
 
-Two sprints complete on this branch: **V7.5.1** (2026-08-10/11) fixed the
-three root causes below (11 defects; CHANGELOG §V7.5.1); **V7.5.2**
-(2026-08-11) closed both follow-ups it left open (AC full 4-terminal stamp,
-LTE output refinement; CHANGELOG §V7.5.2). Last commit ae277b2; working
-tree clean; all repo gates green (ledger under "Final state (V7.5.2)").
+Three sprints complete on this branch: **V7.5.1** (root causes, 11 defects),
+**V7.5.2** (AC full stamp + LTE output refinement), **V7.5.3** (2026-08-12:
+pilot closed 7/7 + first full-tech campaign + comparison-fairness harness
+fixes; CHANGELOG §V7.5.3). All repo gates green (V7.5.3 basket: op/dc 2/2/
+dc_comp 81/multi_dc 53/tran 1/tran_comp 45/multi_tran 86/subckt 11/mult 6/
+ac 3/ring 5/switchcap 5/sram 5/canaries/nn_dc_tran 30/nn_ac 10/lifted 15).
 
-Pilot deck status NOW (details + caveats in RESULTS_TSMC.md):
+Pilot deck status FINAL (details + caveats in RESULTS_TSMC.md):
 
 | deck | was (2026-08-10) | now |
 |---|---|---|
-| amplifier tb_gain | 8/8 | **8/8**, dcgain rel 1.5e-07 (250x tighter) |
-| ldo tb_load | 11/11 | **11/11**, 5.2s (was 678s) |
-| ldo tb_loop_max | 8/8 | **8/8**, GBW rel 7.4e-06 (200x tighter) |
+| amplifier tb_gain | 8/8 | **8/8**, dcgain rel 1.5e-07 |
+| ldo tb_load | 11/11 | **11/11**, lr reconciled (engine ctl 1.6e-06, py-ng 0.18%) |
+| ldo tb_loop_max | 8/8 | **8/8**, GBW rel 7.4e-06 |
 | amplifier tb_tran | 2/6 | **11/11** flags-off |
 | ptat_1 tb_dc | 5/13 | **13/13**, 0 mono violations |
-| amplifier tb_dc | 0/15 | **15/15** (fork recovery) |
-| chargepump tb_tran | dead | **5/6** stride-independent (refine+trap); up_imin at 4.7% |
+| amplifier tb_dc | 0/15 | **15/15 monolithic** (recovery not needed since the grid fix) |
+| chargepump tb_tran | dead | **6/6** — charge-state LTE; up_imin 1.49%@s100 / 1.84%@s20 |
 
-Everything still open is in "OPEN ISSUES at close (2026-08-12)" at the end
-of this file: charge-state LTE for the last cp metric, pilot→campaign
-expansion (refine promotion needs a re-gate), three deck-level anomalies,
-and the out-of-charter NN opamp gates.
+V7.5.3 in one paragraph: per-device charge-state LTE (CKTterr shape,
+CHGTOL=1e-18 device-scale, true trap error — stock NGSPICE marches the
+spike via ITL4 instead, measured from cktterr.c) closed cp to 6/6 both
+strides. Qu2017_AZC = NGSPICE Newton-basin artifact; wired the shipped
+altns fallback (4/85 primary tb_tran decks across techs need it) + honest
+ng_ran verdicts. lr/lr_pp gap = ONE endpoint sample (NGSPICE .meas windows
+are sample-exact; our grid overshot to= by 6 ulp) → sample-exact windows,
+also killed a 1ns-absolute tolerance eating 1000 ps-scale samples.
+plan_points now reproduces NGSPICE's dctrcurv.c termination rule with
+KELVIN accumulation for temp sweeps (bit-verified vs dumps). Strided
+extremum comparison is grid-matched; fork-recovery trigger needs
+per-point corroboration; METRIC_ATOL for vos25/overshoot/undershoot
+cancellation blowups; NGSPICE-side monolithic dc_temp failures (Song_DACFC,
+Qu_LEC at 45.7C) recover via outward segments explicitly. First tsmc5
+campaign (159 decks, campaign.py driver): AC 88/89, dc_source 14/15,
+dc_temp 28/31+1 timeout, tran 11/22+1 over budget — every miss classified
+(RESULTS_TSMC.md §campaign).
 
 ---
 
@@ -306,36 +320,42 @@ Both V7.5.1 follow-ups closed; all gates green; pilot fully green with
 cp 5/6 stride-independent (up_imin 4.7%, integrator-policy axis remains,
 charge-state LTE is the recorded faithful next step).
 
-## OPEN ISSUES at close (2026-08-12), in decreasing substance
+## OPEN ISSUES at close of V7.5.3 (2026-08-12 evening), in decreasing substance
 
-1. **cp `up_imin` at 4.7% (gate needs <=2%)** — the one pilot metric still
-   missing. Spike captured (right sign/width); remainder is integrator-
-   POLICY sensitivity (which accepted-step pattern marches the 10 ps
-   spike). Faithful fix: NGSPICE-style truncation control on PER-DEVICE
-   CHARGE states — needs 4-deep q histories per device (now 2-deep).
-   Both shortcuts are measured dead ends (CHANGELOG §V7.5.2 item 6):
-   hold window -> -5.70u over-ring; branch-current LTE -> dt-independent
-   NR-noise thrash. Well-scoped, moderate effort; only matters if 6/6
-   must close.
-2. **795-deck corpus is still a pilot, not a campaign.** Scored so far:
-   7 pilot decks + the 17-design amplifier tb_tran sweep. That sweep
-   previews campaign findings: 10/17 designs still miss slew-edge
-   metrics WITH refine (never-validated designs; mix of measurement-
-   definition gaps and genuine residuals — undiagnosed per-design).
-   Also: refine is opt-in per-run (PYCIRCUITSIM_BENCH_TRAN_REFINE=1);
-   promoting it default-on requires a full re-gate under the perf
-   discipline.
-3. **Deck-level anomalies (campaign items, not solver gaps):**
-   - Qu2017_AZC: NGSPICE's OWN run returns no data (ng 0s, engine 0/0)
-     — inspect the deck, not the simulator.
-   - ldo tb_load `lr`/`lr_pp`: pre-existing load-regulation measurement-
-     definition gap (1.6%); excluded from accuracy evidence until
-     reconciled (RESULTS_TSMC.md footnote).
-   - Qu_LEC: 30x runtime under refine for a 1 ns edge (63s -> 1872s) —
-     correct but a perf sore spot if the campaign runs refine-on.
-4. **Pre-existing, out of charter:** NN-side verify_complex_opamp{,_ac}
+The V7.5.2 list is fully closed: cp 6/6 (charge-state LTE), campaign
+scripted + first tech swept (campaign.py), Qu2017_AZC (NGSPICE basin
+artifact, altns fallback wired), lr/lr_pp (one-sample window rule,
+reconciled). What the campaign surfaced in their place:
+
+1. **front_end_25_6T tb_dc cold-end robustness** — ~11 s/point at full
+   stride (>1 h, only unscored tsmc5 deck), stride-50 probe: 3/7 points
+   flagged non-converged (values kept), worst node 8 mV at the COLD end,
+   vout0 off 7%. Successor to the closed subthreshold-floor class: a cold
+   sensor OP the solver only holds approximately. Solver item.
+2. **Refine-mode runtime pathology on LDO load-step decks** — Basic_LDO
+   2684 s vs 28 s flags-off (96x) for a 5/5 verdict (captures the 3 mV
+   overshoot flags-off reads as 0); ldo_2 3006 s; Qu_LEC blows the 1 h
+   budget (V7.5.2 refine: 1872 s). Diagnosis was delegated (agent report:
+   see below if appended) — step-control pathology, not fidelity. Fix
+   before campaign-wide refine-on runs.
+3. **ldo_2 disagrees on BOTH benches** — tb_load lr on a ~110 uV-flat
+   replica-regulated curve (py 16x flatter); tb_tran excursions 11-57%.
+   The corpus's delicate local-loop design (see audit corrections);
+   genuine open comparison item, deck-level first.
+4. **Slew-edge metrics on ~10 amplifier tb_tran decks** miss under any
+   step pattern tried (never-validated designs); two marginal 2%-gate
+   crossings flipped V7.5.2->V7.5.3 (DFCFC2 sr_rise 2.45%, IAC sr_fall
+   2.17%). Diminishing returns; integrator-policy axis.
+5. **min_slope_25_75c on 3 sensors** (2.1-11%) — per-step derivative at
+   the uV node-agreement floor; metric-sensitivity class, consider a
+   wider-baseline slope or a documented caveat.
+6. **Campaign is one tech deep** — tsmc5 done (159 decks); tsmc6/7/12/16
+   remain (campaign.py takes --tech). Refine promotion to default-on
+   still requires the perf-discipline re-gate.
+7. **Fan_SMC tb_cmrr** — reference-side caveat (NGSPICE default-tolerance
+   early stop; py seed-independent, matches converged NGSPICE to 1e-4 dB).
+   Documented in RESULTS; optional deck-hygiene fix (.options) would move
+   reference numbers, so it stays a caveat.
+8. **Pre-existing, out of charter:** NN-side verify_complex_opamp{,_ac}
    0/5, reproduced bit-identically at base BEFORE this work — NN-model
    gap, not solver (NN parked for this task).
-
-Suggested order: charge-state LTE (closes pilot to 6/6), then scripted
-category-by-category campaign expansion mirroring the amplifier sweep.

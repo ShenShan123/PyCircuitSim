@@ -8,6 +8,141 @@ pruned; the full original text lives in git history.)
 
 ---
 
+## V7.5.3 — pilot closed 7/7; the campaign begins and the harness learns to compare fairly (branch `feat/analoggym-migration`, 2026-08-12)
+
+**Goal: the V7.5.2 open issues** — charge-state LTE for the last charge-pump
+metric, campaign expansion beyond the 7-deck pilot, and the three deck-level
+anomalies. All closed or precisely classified; full gate basket re-run green
+(81+53+45+86 comprehensive suites, complex/NN/subckt/canaries, AC 3/3,
+nn_dc_tran 30/30, nn_ac 10/10, lifted_source 15/15).
+
+1. **Per-device charge-state LTE closes the charge pump to 6/6** (`6421c79`):
+   NGSPICE-CKTterr-shaped truncation control on MOSFET terminal-charge states
+   inside `refine_output` — solver-side 3-deep accepted (t, q[4], i_cap[4])
+   histories, third-divided-difference trap LTE converted to a current error,
+   `tol = max(ABSTOL + RELTOL·max|i|, RELTOL·max(|q|,CHGTOL)/h)`. The /h
+   loosener is what the V7.5.2 branch-current dead end was missing: below the
+   h where DD3 is NR-noise-dominated it grows as 1/h and disarms the test.
+   Two measured deviations from stock NGSPICE, both deliberate: CHGTOL=1e-18
+   (stock 1e-14 sits 100× ABOVE a FinFET terminal charge, the test never
+   fired — up_imin unchanged at 5.2 %; 1e-17 → 2.06 %), and the true trap
+   error (h³/12)|6·DD3| (~7× tighter than CKTterr's factor·|DD3| +
+   0.9·√ reject rule — reading `cktterr.c` settled that stock NGSPICE
+   resolves the spike via ITL4 iteration-count timestep control, not charge
+   terr; the tightened charge test is this solver's equivalent). **Charge
+   pump refine+trap: 6/6 at BOTH strides** — up_imin −3.971 µA vs −4.031 µA
+   (1.49 %) at stride 100/417 s, 1.84 % at stride 20/670 s. Flags-off
+   byte-identical (all new code behind `refine`). **The 7-deck pilot is
+   fully closed.**
+2. **Qu2017_AZC was an NGSPICE Newton-basin artifact — the fallback existed,
+   unwired** (`71237cc`): NGSPICE fails every transient-op homotopy from the
+   deck's PRIMARY `.nodeset` seed (0.6 mV from the true OP — proximity does
+   not predict basin membership; four of six probed seeds INCLUDING no seed
+   at all land on the answer), while PyCircuitSim solves BOTH seeds with
+   metrics agreeing to 1.7e-7. Blast radius 4/85 primary tb_tran decks
+   (tsmc5 Qu2017_AZC, tsmc6+tsmc7 Yan_AZ — the relabelling confirming
+   itself — tsmc16 Leung_DFCFC2), all recovered by the shipped
+   `tb_tran_altns.cir` twin the reference runner falls back to;
+   `translate.altns_deck()` existed with zero callers. Wired: on an
+   NGSPICE-side failure the twin is scored, the row keeps the primary name,
+   `altns`/`notes` record which seed won — 11/11. Verdicts also gain
+   `ng_ran`: a run where the REFERENCE produced nothing used to read
+   `ran=True, engine_ok=True, 0/0` and exit 0.
+3. **The lr/lr_pp "definition gap" was one dropped sample** (`e021afd`):
+   NGSPICE reduces `.meas` windows over the SAMPLES enclosed by [from,to]
+   with exact double comparisons; the engine interpolated the window edges
+   into the trace. The accumulated dc grid's last abscissa sits six ulp
+   above `to=0.055`, NGSPICE drops it, and V(vo) is monotone so that sample
+   IS the minimum: 1.1 % engine-control error on lr_pp, and the exclusion
+   footnote on lr. Sample-exact windows: engine control 1.2e-07/1.6e-06,
+   and the py-vs-ng lr gap collapses 1.6 % → **0.18 %** (both simulators
+   drop the point symmetrically) — lr/lr_pp are evidence again. Bonus kill:
+   the old 1e-9 edge tolerance was ABSOLUTE 1 ns on a seconds axis and
+   replaced 1000 real samples of the charge pump's ps-scale grid with two
+   chords (the source of lo_iavg's 4.9e-05 control error). NGSPICE's window
+   bound parsing is spelling-dependent at the ulp (0.0055 ≠ 5.5e-3 ≠ 5.5m),
+   measured and accepted as the bit-exactness limit.
+4. **Comparison fairness** (`a04a40c`, `7c9387e`) — what the HoiLee tb_dc
+   "12/15" unwound into (no fork existed; 15/15 monolithic now, recovery
+   not even needed):
+   - `plan_points` reproduces NGSPICE's sweep loop (`dctrcurv.c`): emit
+     while sgn(step)·(value−stop) ≤ 1000·DBL_EPSILON, temperature sweeps
+     accumulated in KELVIN (`CKTtemp += step`). The old
+     floor((stop−start)/step)+1 gave 1651 points against NGSPICE's 1650 on
+     `dc temp 125 -40 -0.1`, the extra endpoint a few ulp outside the
+     deck's own `.meas from=-40` edge. Verified point-for-point against
+     dumps (worst deviation = one Kelvin ulp = rawfile print precision).
+   - Extremum/PP metrics compare on the SHARED grid when py runs strided
+     (ng re-measured on py's abscissae; `ngspice.metrics` and the engine
+     control stay full-grid): HoiLee's max_hot "2.84 %" was the 0.62 V
+     peak at 38.4 °C falling between 2.5 °C samples — 1.29e-5 grid-matched.
+   - The V7.5.0 branch-fork recovery trigger demands per-point
+     corroboration (op-delta worst >1 % of rail, or asymmetric point sets)
+     — it had fired on a 206 µV/0.03 %-of-rail stride artifact and the
+     segments then traded one grid artifact for another.
+   - `METRIC_ATOL` for relative-comparison blowups on near-zero values:
+     vos25 (= vout25 − 0.195, ~1e4 cancellation amplification of a µV-scale
+     node agreement) gets 10 µV; LDO overshoot/undershoot get 1 µV
+     (ldo_folded_cascode: 2.4e-10 V vs 8.0e-10 V, rel 0.70, both meaning
+     "the output does not move").
+5. **NGSPICE-side monolithic failure is an explicit recovery case**
+   (`0f7f3d2`): NGSPICE's own 125 °C cold start dies mid-sweep on
+   Song_DACFC and Qu_LEC tb_dc ("DC: Timestep too small; temp = 45.7")
+   while PyCircuitSim solves 67/67. The old code recovered these
+   accidentally — the fork trigger fired on the None-vs-number entries of
+   the empty NGSPICE column — and the corroboration gate closed that path.
+   The reference flow itself re-runs wide sweeps as two continuations from
+   25 °C, so the failure now names itself as the recovery reason and both
+   sides re-score on segments: 15/15 each.
+6. **Campaign driver + first tsmc5 campaign** (`d2368d3`):
+   `python -m examples.analoggym.pycircuitsim_bench.campaign` — 159 decks
+   per tech, pilot stride policy, N worker subprocesses, resumable,
+   summary.md. First full tsmc5 pass under the fixed harness (per-deck
+   JSONs preserved untracked in `examples/analoggym/
+   pycircuitsim_bench_results/v753_campaign_tsmc5/`; summary tables in
+   RESULTS_TSMC.md):
+   **AC 88/89, dc_source 14/15, dc_temp 28/31 scored (+1 timeout), tran
+   family first-ever scores**. The residual misses are each classified:
+   Fan_SMC cmrrdc (NGSPICE-side early stop, item 7), ldo_2 lr (genuine
+   ~1e-4 V flat-curve residual, pre-existing), min_slope_25_75c on three
+   sensors (derivative metric at the µV node-agreement floor),
+   front_end_25_6T timeout (item 8).
+7. **Fan_SMC tb_cmrr caveat — the reference is the unconverged side**: the
+   one AC miss (cmrrdc 2.27 % vs the 2 % gate) is NGSPICE's
+   default-tolerance early stop from the deck's own `.nodeset`: six-seed
+   probe lands NGSPICE on PyCircuitSim's −36.0255 dB for four seeds
+   including NO seed, and its own tolerance ladder converges to it
+   (reltol ≤ 3e-4); py's answer is seed-independent to 0.002 dB and its AC
+   engine reproduces NGSPICE's own value to 2 µdB when evaluated at
+   NGSPICE's OP. cmrrdc is a −CMRR residual at 9.7 dB/mV OP sensitivity —
+   quoted with that caveat, deck untouched (one cell of ~85).
+8. **New findings from the campaign, open**: (a) front_end_25_6T tb_dc
+   grinds at ~11 s/point full-stride (>1 h timeout; stride-50 probe: 3/7
+   points flagged non-converged with values kept, worst node 8 mV at the
+   COLD end — a genuine cold-end sensor OP robustness gap, the successor
+   to the closed V7.5.1 subthreshold-floor class); (b) Basic_LDO tb_tran
+   under refine costs 2684 s vs 28 s flags-off (96×) — but scores **5/5**,
+   capturing the 3 mV load-step overshoot flags-off reads as exactly zero
+   (rel error 1.0); the grind is a refine-mode step-control pathology
+   under diagnosis; (c) the amplifier refine sweep holds at **7/17
+   designs fully agreeing** with the composition shifted net-positive:
+   Fan_SMC/Leung_DFCFC1/Yan_AZ improved 5→8 metrics each, Qu2017_AZC went
+   0/0→**11/11** via the altns fallback, against two marginal
+   gate-crossings the other way (Leung_DFCFC2 sr_rise 1.88 %→2.45 %,
+   Peng_IAC sr_fall 1.93 %→2.17 % — slew metrics that sat just inside the
+   2 % gate under V7.5.2's step pattern sit just outside under
+   charge-LTE's; every underlying flags-off miss those decks had is
+   IMPROVED by refine, e.g. DFCFC2 7.3 %→4.6 %); (d) ldo_2 disagrees on
+   BOTH its benches (tb_load lr on a ~110 µV-flat replica-regulated
+   curve; tb_tran excursions 11–57 % at 3006 s refine) — the corpus's
+   delicate local-loop design is a genuine open comparison item.
+9. **Dead ends (recorded):** CHGTOL=1e-14 (stock) — charge test never
+   binds at FinFET scales, up_imin unchanged; CHGTOL=1e-17 — binds but
+   stops at 2.06 % against the 2 % gate. Neither reverted so much as
+   walked through; 1e-18 shipped.
+
+---
+
 ## V7.5.2 — the two V7.5.1 follow-ups closed: AC full stamp + LTE output refinement (branch `feat/analoggym-migration`, 2026-08-11)
 
 **Goal: close the two follow-ups V7.5.1 recorded** — the AC solver still used
