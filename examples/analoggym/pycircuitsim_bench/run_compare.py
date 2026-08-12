@@ -807,6 +807,10 @@ def _simulate_tran(td: TranslatedDeck, plan: AnalysisPlan, circuit,
     method = os.environ.get("PYCIRCUITSIM_BENCH_TRAN_METHOD", method)
     # Diagnostic (V7.5.1): opt-in LTE sub-stepping for the same comparison.
     _substeps = int(os.environ.get("PYCIRCUITSIM_BENCH_TRAN_SUBSTEPS", "1"))
+    # V7.5.2: opt-in LTE output refinement (breakpoint-aligned adaptive
+    # march, every committed piece emitted) — the fixed-output-grid vs
+    # NGSPICE-timestep-control fidelity axis the charge pump exposed.
+    _refine = os.environ.get("PYCIRCUITSIM_BENCH_TRAN_REFINE", "0") == "1"
     solver = TransientSolver(
         circuit, t_stop=plan.t_stop, dt=dt,
         initial_guess={n: val for n, val in voltages.items()
@@ -816,9 +820,11 @@ def _simulate_tran(td: TranslatedDeck, plan: AnalysisPlan, circuit,
         reltol=td.options.reltol if td.options.reltol is not None else opts.reltol,
         vntol=td.options.vntol if td.options.vntol is not None else opts.vntol,
         max_substeps=_substeps,
+        refine_output=_refine,
     )
     meta["integration_method"] = method
     meta["dt"] = dt
+    meta["refine_output"] = _refine
     try:
         raw = solver.solve()
         truncated = None
@@ -847,9 +853,11 @@ def _simulate_tran(td: TranslatedDeck, plan: AnalysisPlan, circuit,
     i = {name: arr[:len(times)] for name, arr in i.items()}
     # `points` is what the run was ASKED for and `solved` what came back, so a
     # transient recovered at step N does not report itself as complete.
+    # Refine mode legitimately returns MORE points than asked (the emitted
+    # march pieces), so `failed` floors at zero rather than going negative.
     meta["points"] = len(plan_points(plan, opts.stride))
     meta["solved"] = len(times)
-    meta["failed"] = meta["points"] - len(times)
+    meta["failed"] = max(0, meta["points"] - len(times))
     meta["branch_current_gaps"] = solver._branch_current_gaps
     return SweepResult(kind="tran", x_name="time", x=times, v=v, i=i, ok=None,
                        source="pycircuitsim", meta=meta)

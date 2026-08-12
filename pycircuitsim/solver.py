@@ -1952,7 +1952,8 @@ class TransientSolver:
                  reltol: float = 1e-4, vntol: float = 1e-7, gmin: float = 1e-12,
                  max_substeps: int = 1, lte_safety_factor: float = 0.5,
                  integration_method: str = 'auto',
-                 dv_limit: Optional[float] = None):
+                 dv_limit: Optional[float] = None,
+                 refine_output: bool = False):
         """
         Initialize the Transient Solver.
 
@@ -1985,6 +1986,26 @@ class TransientSolver:
                 applied at EVERY timestep (default None = OFF, historical
                 behaviour). The transient twin of ``DCSolver(dv_limit=...)``;
                 see there for why it exists and why it is default-off.
+            refine_output: V7.5.2 — LTE-driven local refinement ON THE
+                OUTPUT AXIS (default False = OFF, byte-identical; env
+                ``PYCIRCUITSIM_TRAN_REFINE=1`` also enables). The fixed
+                output grid records only interval endpoints, so fast
+                events between grid points (the AnalogGym charge pump's
+                ±4 µA / ~10 ps switching-current spike) are invisible to
+                any downstream ``.meas`` no matter how accurately the
+                march resolved them — NGSPICE saves every LTE-accepted
+                internal point, so its .meas sees the spike. When on:
+                every committed march piece is emitted into the returned
+                waveform (time axis becomes non-uniform; the fixed grid
+                points all remain present exactly); PULSE source corners
+                become breakpoints (piece boundaries land on them, the
+                following piece restarts small and integrates BE, as
+                NGSPICE restarts after a breakpoint — this is what stops
+                trapezoidal corner ringing); and each committed piece is
+                LTE-checked (trapezoidal 3rd-divided-difference estimate,
+                NGSPICE TRTOL=7) with depth-1 rollback: a piece whose
+                LTE exceeds tolerance is rejected, device charge/voltage
+                histories restored, and re-marched with a smaller dt.
 
         Raises:
             ValueError: If dt or t_stop is not positive, or integration_method
@@ -2080,6 +2101,98 @@ class TransientSolver:
         # error_msg}. Read by verification scripts after a transient run
         # to flag cells that needed >1 halving.
         self._dt_halve_events: List[Dict] = []
+
+        # V7.5.2 — opt-in LTE-driven output refinement (see __init__ docs).
+        self.refine_output = (refine_output or
+                              os.environ.get("PYCIRCUITSIM_TRAN_REFINE",
+                                             "0") == "1")
+        # NGSPICE's transient truncation-error tolerance multiplier.
+        self._refine_trtol = 7.0
+
+    def _collect_breakpoints(self) -> List[float]:
+        """PULSE source corner times in (0, t_stop), sorted, deduplicated.
+
+        Corners per period k: td + k*per + {0, tr, tr+pw, tr+pw+tf} — the
+        four slope discontinuities of the PULSE waveform. Only used by the
+        refine_output mode; a deck without PULSE sources yields [].
+        """
+        from pycircuitsim.models.passive import (PulseVoltageSource,
+                                                 PulseCurrentSource)
+        bps: set = set()
+        for c in self.circuit.components:
+            if not isinstance(c, (PulseVoltageSource, PulseCurrentSource)):
+                continue
+            corners = (0.0, c.tr, c.tr + c.pw, c.tr + c.pw + c.tf)
+            k = 0
+            while c.td + k * c.per < self.t_stop:
+                for corner in corners:
+                    t = c.td + k * c.per + corner
+                    if 0.0 < t < self.t_stop:
+                        bps.add(t)
+                k += 1
+        return sorted(bps)
+
+    def _snapshot_tran_state(self) -> List[tuple]:
+        """Depth-1 snapshot of every device's committed transient history.
+
+        Captures exactly the state the commit path mutates (Capacitor
+        ``update_voltage``: v_prev/v_prev2/_i_prev; MOSFET
+        ``update_charge_state``: _q_prev/_q_prev2/_v_prev_tran/_i_prev_*),
+        so a piece rejected on LTE can be un-committed. Refine mode only.
+        """
+        snap: List[tuple] = []
+        for c in self.circuit.components:
+            if isinstance(c, Capacitor):
+                snap.append((c, "cap", c.v_prev, c.v_prev2, c._i_prev))
+            elif _is_mosfet(c) and hasattr(c, "update_charge_state"):
+                qp = getattr(c, "_q_prev", None)
+                qp2 = getattr(c, "_q_prev2", None)
+                vpt = getattr(c, "_v_prev_tran", None)
+                snap.append((
+                    c, "mos",
+                    qp.copy() if qp is not None else None,
+                    qp2.copy() if qp2 is not None else None,
+                    vpt.copy() if vpt is not None else None,
+                    getattr(c, "_i_prev_gate", 0.0),
+                    getattr(c, "_i_prev_drain", 0.0),
+                    getattr(c, "_i_prev_source", 0.0),
+                    getattr(c, "_i_prev_bulk", 0.0)))
+        return snap
+
+    def _restore_tran_state(self, snap: List[tuple]) -> None:
+        """Undo one committed piece (see _snapshot_tran_state)."""
+        for entry in snap:
+            c, kind = entry[0], entry[1]
+            if kind == "cap":
+                c.v_prev, c.v_prev2, c._i_prev = entry[2], entry[3], entry[4]
+            else:
+                (c._q_prev, c._q_prev2, c._v_prev_tran, c._i_prev_gate,
+                 c._i_prev_drain, c._i_prev_source, c._i_prev_bulk) = entry[2:]
+
+    def _refine_lte_ratio(self, hist: List[tuple], t_new: float,
+                          v_new: np.ndarray) -> float:
+        """Worst-node LTE / (TRTOL·tol) for the candidate point.
+
+        Trapezoidal per-step LTE = (h³/12)·|v'''|, with v''' estimated as
+        6× the third divided difference over the last three ACCEPTED fine
+        points plus the candidate (non-uniform spacing handled exactly).
+        Ratio > 1 means the piece exceeds NGSPICE-equivalent truncation
+        tolerance (TRTOL=7) and should be re-marched with a smaller dt.
+        """
+        (t0, v0), (t1, v1), (t2, v2) = hist[-3], hist[-2], hist[-1]
+        h = t_new - t2
+        if h <= 0.0:
+            return 0.0
+        dd01 = (v1 - v0) / (t1 - t0)
+        dd12 = (v2 - v1) / (t2 - t1)
+        dd23 = (v_new - v2) / h
+        dd012 = (dd12 - dd01) / (t2 - t0)
+        dd123 = (dd23 - dd12) / (t_new - t1)
+        dd0123 = np.abs(dd123 - dd012) / (t_new - t0)
+        lte = 0.5 * h ** 3 * dd0123          # (h³/12)·|6·DD3|
+        tol = self._refine_trtol * (
+            self.reltol * np.maximum(np.abs(v_new), np.abs(v2)) + self.vntol)
+        return float(np.max(lte / tol))
 
     def _has_non_linear_components(self) -> bool:
         """Check if circuit contains non-linear components (MOSFETs)."""
@@ -2991,6 +3104,24 @@ class TransientSolver:
         # Stiffness tracking for BDF-2 auto-switching
         _stiff_switched = False  # Once True, stays on BDF-2
 
+        # V7.5.2 — refine_output state (see __init__ docs). All of it must
+        # live ACROSS output intervals: the adaptive piece size, the LTE
+        # history and the breakpoint cursor survive interval boundaries,
+        # or the refinement would re-seed ringing at every grid point.
+        refine = self.refine_output
+        _r = 0.0
+        if refine:
+            _bps = self._collect_breakpoints()
+            _bp_idx = 0
+            _v_init_vec = np.array([voltages_over_time[n][0] for n in nodes])
+            _lte_hist: List[tuple] = [(0.0, _v_init_vec)]
+            _dense_t: List[float] = [0.0]
+            _dense_v: List[np.ndarray] = [_v_init_vec]
+            _dense_i: List[Optional[np.ndarray]] = [None]
+            _refine_dt_carry = self.dt
+            _force_be_piece = False
+            _RESTART_FRAC = 2.0 ** -6  # piece restart after a breakpoint
+
         for step in range(1, num_steps):
             # Current output time
             current_time = step * self.dt
@@ -3025,6 +3156,10 @@ class TransientSolver:
                 if isinstance(component, Capacitor):
                     component._use_trapezoidal = use_trap
                     component._method = self._integration_method
+            # V7.5.2 — the step-level method; refine-mode pieces may
+            # deviate to BE right after a breakpoint and must know what
+            # to restore for the pieces that follow.
+            _step_method = self._integration_method
 
             # Starting voltages for this output interval
             current_voltages = {}
@@ -3060,16 +3195,45 @@ class TransientSolver:
                 # attempt takes the exact old code path, so never-failing
                 # circuits are byte-identical.
                 t_now = sub_time - sub_dt
-                dt_try = sub_dt
+                dt_try = min(sub_dt, _refine_dt_carry) if refine else sub_dt
                 min_piece_dt = sub_dt * 2.0 ** -24
                 pieces_done = 0
                 halvings = 0
+                _rejects = 0
                 _MAX_PIECES = 4096
 
                 while True:
                     remaining = sub_time - t_now
                     piece_dt = dt_try if dt_try < remaining else remaining
                     t_k = sub_time if piece_dt >= remaining else t_now + piece_dt
+                    _on_bp = False
+                    if refine:
+                        # Advance past any breakpoint at/behind the march
+                        # position, then clamp the piece so it LANDS on the
+                        # next one instead of integrating across the slope
+                        # discontinuity.
+                        while (_bp_idx < len(_bps)
+                               and _bps[_bp_idx] <= t_now + min_piece_dt):
+                            _bp_idx += 1
+                        if _bp_idx < len(_bps) and _bps[_bp_idx] <= t_k:
+                            _on_bp = True
+                            if _bps[_bp_idx] < t_k:
+                                t_k = _bps[_bp_idx]
+                                piece_dt = t_k - t_now
+                        # BE for the piece FOLLOWING a breakpoint: the
+                        # trapezoid's current history from before the
+                        # corner is inconsistent across the discontinuity
+                        # and is what seeds the corner ringing (NGSPICE
+                        # likewise restarts at order 1 after breakpoints).
+                        piece_method = ('be' if _force_be_piece
+                                        else _step_method)
+                        if self._integration_method != piece_method:
+                            self._integration_method = piece_method
+                            _piece_trap = piece_method == 'trap'
+                            for component in self.circuit.components:
+                                if isinstance(component, Capacitor):
+                                    component._use_trapezoidal = _piece_trap
+                                    component._method = piece_method
                     try:
                         self._current_dt = piece_dt
 
@@ -3120,6 +3284,8 @@ class TransientSolver:
                                 solution[num_nodes:])
 
                         # Piece succeeded — commit state
+                        if refine:
+                            _pre_commit = self._snapshot_tran_state()
                         for component in self.circuit.components:
                             if isinstance(component, Capacitor):
                                 component.update_voltage(timestep_voltages)
@@ -3181,20 +3347,68 @@ class TransientSolver:
                                             terminal_currents[name] = coeff * charges_new[key] - h_t
                                 component.update_charge_state(timestep_voltages, terminal_currents)
 
+                        if refine:
+                            _v_vec = np.array(
+                                [timestep_voltages[n] for n in nodes])
+                            _r = 0.0
+                            if (len(_lte_hist) >= 3
+                                    and piece_dt > min_piece_dt
+                                    and _rejects < 8):
+                                _r = self._refine_lte_ratio(
+                                    _lte_hist, t_k, _v_vec)
+                                if _r > 1.0:
+                                    # Reject: un-commit the piece and
+                                    # re-march it with a smaller dt
+                                    # (NGSPICE-style truncation-error
+                                    # timestep control; _rejects caps a
+                                    # pathological reject loop).
+                                    self._restore_tran_state(_pre_commit)
+                                    _rejects += 1
+                                    dt_try = max(
+                                        piece_dt * max(
+                                            0.25, 0.9 * _r ** (-1.0 / 3.0)),
+                                        min_piece_dt)
+                                    continue
+                            _rejects = 0
+                            _lte_hist.append((t_k, _v_vec))
+                            if len(_lte_hist) > 4:
+                                _lte_hist.pop(0)
+                            _dense_t.append(float(t_k))
+                            _dense_v.append(_v_vec)
+                            _tail = self._last_solution_tail
+                            _dense_i.append(None if _tail is None
+                                            else np.asarray(_tail).copy())
+
                         # Advance the march; leave when the interval is done.
                         current_voltages = timestep_voltages
                         t_now = t_k
                         pieces_done += 1
+                        if refine:
+                            _force_be_piece = False
+                            if _on_bp:
+                                _bp_idx += 1
+                                _force_be_piece = True
+                                dt_try = max(sub_dt * _RESTART_FRAC,
+                                             min_piece_dt)
+                            else:
+                                # LTE-scaled growth, at most 2x per piece.
+                                _grow = 2.0
+                                if _r > 0.0:
+                                    _grow = min(2.0, max(
+                                        1.0, 0.9 * _r ** (-1.0 / 3.0)))
+                                dt_try = min(piece_dt * _grow, sub_dt)
+                            _refine_dt_carry = dt_try
                         if t_k >= sub_time:
                             break
                         if pieces_done >= _MAX_PIECES:
                             raise SimStepLimit(
                                 f"Timestep at t={sub_time:.2e}s needed more "
                                 f"than {_MAX_PIECES} sub-pieces")
-                        # Recover the piece size after success.
-                        dt_try = piece_dt * 2.0
-                        if dt_try > sub_dt:
-                            dt_try = sub_dt
+                        if not refine:
+                            # Recover the piece size after success.
+                            dt_try = piece_dt * 2.0
+                            if dt_try > sub_dt:
+                                dt_try = sub_dt
 
                     except RuntimeError as e:
                         halvings += 1
@@ -3276,6 +3490,32 @@ class TransientSolver:
                         print(f"  LTE={max_lte_ratio:.1f} eff={effective_lte:.2f} at t={current_time:.2e}s -> substeps={adaptive_substeps}")
 
         # Prepare results dictionary
+        if refine:
+            # V7.5.2 — emit every committed piece (non-uniform time axis;
+            # the fixed grid points all remain present exactly). Branch
+            # currents follow the same axis; index 0 keeps the
+            # pre-transient value, exactly like the fixed-grid path.
+            dense_time = np.asarray(_dense_t)
+            dense_mat = np.vstack(_dense_v)
+            results = {"time": dense_time}
+            for j, node in enumerate(nodes):
+                results[node] = dense_mat[:, j]
+            n_dense = len(_dense_t)
+            sc = {c.name: np.full(n_dense, np.nan) for c in vsources}
+            self._branch_current_gaps = 0
+            for c in vsources:
+                sc[c.name][0] = c.calculate_current({})
+            for k in range(1, n_dense):
+                tail_k = _dense_i[k]
+                if tail_k is None:
+                    self._branch_current_gaps += 1
+                    continue
+                for vs_idx, comp in enumerate(vsources):
+                    if vs_idx < len(tail_k):
+                        sc[comp.name][k] = float(tail_k[vs_idx])
+            self.source_currents = sc
+            return results
+
         results = {"time": time}
         for node in nodes:
             results[node] = voltages_over_time[node]
