@@ -155,6 +155,13 @@ for _p in (str(REPO_ROOT), str(BENCH_ROOT), str(_TOOLS_DIR.parent), str(_TOOLS_D
 #: nothing once ``dv_limit`` is on), so this is the per-point budget.
 DEFAULT_MAX_ITERATIONS: int = 500
 
+#: Absolute agreement floors for offset-DIFFERENCE metrics, keyed by metric
+#: name (V7.5.3).  ``vos25 = vout25 - 0.195`` subtracts two near-equal
+#: numbers: the underlying node agrees to a few uV (rel ~4e-6) yet the
+#: difference reaches the 2 % gate at ~1e4 amplification.  10 uV is ~15 ppm
+#: of the 0.65-0.8 V rails — far below any real disagreement worth flagging.
+METRIC_ATOL: Dict[str, float] = {"vos25": 1e-5}
+
 #: NGSPICE-45.2's own DC convergence tolerances.  PyCircuitSim defaults to
 #: RELTOL=1e-4 / VNTOL=1e-7 -- TEN TIMES TIGHTER than the simulator it is being
 #: compared against -- and on these decks the tighter test is what fails, not the
@@ -265,14 +272,35 @@ def plan_points(plan: AnalysisPlan, stride: int = 1) -> np.ndarray:
     elif plan.kind in ("dc_source", "dc_temp"):
         assert plan.start is not None and plan.stop is not None
         assert plan.step is not None
-        n_steps = int(math.floor((plan.stop - plan.start) / plan.step))
-        if n_steps < 0:
-            raise SimFailure(f"Sweep step points away from stop: {plan.control}")
-        out = [plan.start]
-        value = plan.start
-        for _ in range(n_steps):
+        # V7.5.3 — NGSPICE's own termination rule (dctrcurv.c): accumulate
+        # the swept value and emit while sgn(step)*(value - stop) <=
+        # 1000*DBL_EPSILON, an ABSOLUTE tolerance. Temperature sweeps
+        # accumulate in KELVIN (CKTtemp += step; the recorded point is
+        # CKTtemp - 273.15), so their accumulated error is Kelvin-scale
+        # (~5.7e-14 per step) and the same rule drops an endpoint a source
+        # sweep keeps. The former floor((stop-start)/step)+1 count matched
+        # dumps only while the quotient floated below the next integer:
+        # `dc temp 125 -40 -0.1` produced 1651 points against NGSPICE's
+        # 1650, with a final abscissa a few ulp OUTSIDE the deck's
+        # `.meas from=-40` edge (= a whole endpoint sample lost to the
+        # sample-exact window rule). Verified point-for-point against real
+        # dumps: HoiLee tb_dc 1650/1650 (worst deviation one Kelvin ulp =
+        # the rawfile's print precision), ldo tb_load 101/101 keeping the
+        # 0.05500000000000004 endpoint, `dc temp 25 20 -0.1` still stops
+        # at 20.1, exact-step sweeps (0.5 C) keep their endpoints exactly.
+        sgn = 1.0 if plan.step > 0 else -1.0
+        tol = 1e3 * sys.float_info.epsilon
+        kelvin = 273.15 if plan.kind == "dc_temp" else 0.0
+        value = plan.start + kelvin
+        out = []
+        while True:
+            point = value - kelvin
+            if sgn * (point - plan.stop) > tol:
+                break
+            out.append(point)
             value = value + plan.step
-            out.append(value)
+        if not out:
+            raise SimFailure(f"Sweep step points away from stop: {plan.control}")
         points = np.array(out, dtype=np.float64)
 
     elif plan.kind == "tran":
@@ -1098,8 +1126,45 @@ def compare_translated(td: TranslatedDeck, work: Path,
     for py_sweep, ng_sweep in zip(py_sweeps, ng_sweeps):
         out["grid"].append(grid_report(py_sweep, ng_sweep))
 
+    # V7.5.3 — grid-matched comparison column. PyCircuitSim simulates the
+    # STRIDED grid while NGSPICE always dumps the full one, so extremum/PP
+    # metrics differ by the curve's variation over one stride even when the
+    # simulators agree at every shared point (measured: HoiLee tb_dc
+    # max_hot 2.84 % at stride 25, 1.29e-5 grid-matched — the peak sits at
+    # 38.4 C, between the 2.5 C samples). The py-vs-ng column therefore
+    # re-measures NGSPICE's sweep ON py's abscissae when a dc sweep is
+    # strided; ngspice.metrics and the ng_vs_ngmeas control keep the full
+    # dump (the control answers to NGSPICE's own full-grid .meas).
+    ng_cmp = ng_metrics
+    if (opts.stride > 1 and py_sweeps
+            and len(py_sweeps) == len(ng_sweeps)
+            and out["pycircuitsim"]["error"] is None
+            and out["ngspice"]["error"] is None
+            and all(p.kind in ("dc_source", "dc_temp") for p in td.plans)):
+        try:
+            sub_metrics: MetricDict = {}
+            subs: List[SweepResult] = []
+            for plan, ng_sw, py_sw in zip(td.plans, ng_sweeps, py_sweeps):
+                idx = np.abs(ng_sw.x[None, :]
+                             - py_sw.x[:, None]).argmin(axis=1)
+                sub = replace(
+                    ng_sw, x=ng_sw.x[idx],
+                    v={k: arr[idx] for k, arr in ng_sw.v.items()},
+                    i={k: arr[idx] for k, arr in ng_sw.i.items()},
+                    ok=None if ng_sw.ok is None else ng_sw.ok[idx])
+                subs.append(sub)
+                sub_metrics = measure_result(td, plan, sub, seed=sub_metrics)
+            ng_cmp = _combine_segments(td, subs, sub_metrics)
+            out["notes"].append(
+                f"py_vs_ng measured on the shared strided grid "
+                f"({len(py_sweeps[0].x)} of {len(ng_sweeps[0].x)} points); "
+                f"ngspice.metrics and the engine control stay full-grid")
+        except Exception as exc:                    # noqa: BLE001 -- data
+            out["notes"].append(
+                f"grid-matched comparison failed ({type(exc).__name__}: "
+                f"{exc}); py_vs_ng uses NGSPICE's full grid")
     out["compare"]["py_vs_ng"] = measure_mod.compare_metrics(
-        py_metrics, ng_metrics, rtol=rtol)
+        py_metrics, ng_cmp, rtol=rtol, atol_by_key=METRIC_ATOL)
     out["compare"]["ng_vs_ngmeas"] = measure_mod.compare_metrics(
         ng_metrics, ng_own, rtol=rtol) if ng_own else {}
     out["verdict"] = _verdict(out)
@@ -1170,6 +1235,22 @@ def _needs_recovery(row: Dict[str, Any], td: TranslatedDeck) -> Optional[str]:
     # the reading of NGSPICE's own sweep, so it cannot be a
     # measurement-semantics artifact.
     if any(plan.kind == "dc_temp" for plan in td.plans):
+        # V7.5.3 — corroboration gate: a bare metric mismatch is NOT fork
+        # evidence. HoiLee tb_dc fired this trigger on a strided-extremum
+        # artifact (per-point agreement 4.4 uV worst, no fork anywhere) and
+        # the recovery segments then traded one grid artifact for another.
+        # A real single-point fork leaves per-point evidence: either the
+        # compared operating point carries the branch gap (worst_abs at
+        # percent-of-rail scale) or one simulator failed to solve the
+        # forked point at all (asymmetric point sets).
+        delta = row.get("op_delta") or {}
+        supply = float(td.params.get("supply_voltage") or 0.0) or 1.0
+        asymmetric = bool(delta.get("only_pycircuitsim")
+                          or delta.get("only_ngspice"))
+        corroborated = asymmetric or (
+            worst is not None and worst > 0.01 * supply)
+        if not corroborated:
+            return None
         eng_rows = row["compare"].get("ng_vs_ngmeas") or {}
         for key, entry in (row["compare"].get("py_vs_ng") or {}).items():
             if entry.get("ok") or key == "sweep_points":
@@ -1178,7 +1259,8 @@ def _needs_recovery(row: Dict[str, Any], td: TranslatedDeck) -> Optional[str]:
             if eng is not None and not eng.get("ok"):
                 continue                     # NGSPICE disagrees with itself
             return (f"metric '{key}' disagrees on a dc_temp sweep while the "
-                    f"engine control holds (branch fork)")
+                    f"engine control holds and the operating-point delta "
+                    f"corroborates (branch fork)")
     return None
 
 
@@ -1266,7 +1348,8 @@ def compare_with_recovery(td: TranslatedDeck, work: Path,
     }
     out["op_delta"] = seg_rows["cold"]["op_delta"]
     out["compare"]["py_vs_ng"] = measure_mod.compare_metrics(
-        out["pycircuitsim"]["metrics"], out["ngspice"]["metrics"], rtol=rtol)
+        out["pycircuitsim"]["metrics"], out["ngspice"]["metrics"], rtol=rtol,
+        atol_by_key=METRIC_ATOL)
     out["compare"]["ng_vs_ngmeas"] = {}
     out["verdict"] = _verdict(out)
     return out
