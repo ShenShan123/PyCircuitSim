@@ -2018,10 +2018,11 @@ class TransientSolver:
             raise ValueError(f"Timestep dt must be positive, got {dt}")
         if t_stop <= 0:
             raise ValueError(f"Stop time t_stop must be positive, got {t_stop}")
-        if integration_method not in ('auto', 'gear2'):
+        if integration_method not in ('auto', 'gear2', 'trap'):
             raise ValueError(
                 f"Unknown integration_method '{integration_method}'. "
-                "Supported: 'auto' (BE->Trap->BDF-2 on stiffness), 'gear2'")
+                "Supported: 'auto' (BE->Trap->BDF-2 on stiffness), 'gear2', "
+                "'trap' (BE step 1, trapezoid pinned, no stiffness switch)")
 
         from pycircuitsim.models.passive import Inductor
         for _component in circuit.components:
@@ -3144,6 +3145,11 @@ class TransientSolver:
                 self._integration_method = 'be'
             elif self.integration_method == 'gear2':
                 self._integration_method = 'bdf2'
+            elif self.integration_method == 'trap':
+                # V7.5.2: pinned trapezoid (NGSPICE's default method) —
+                # the stiffness trip must not silently swap the
+                # integrator mid-run when comparing methods.
+                self._integration_method = 'trap'
             elif _stiff_switched:
                 self._integration_method = 'bdf2'
             else:
@@ -3453,9 +3459,10 @@ class TransientSolver:
             self._last_committed_step = step
 
             # Stiffness detection: if NR took > 20 iterations, switch to BDF-2
-            # (disabled under 'gear2', which is already pinned to BDF-2).
+            # (only under 'auto'; 'gear2' is already pinned to BDF-2 and
+            # 'trap' is pinned by request).
             if (not _stiff_switched and has_non_linear and step > 2
-                    and self.integration_method != 'gear2'
+                    and self.integration_method == 'auto'
                     and getattr(self, '_last_nr_iterations', 0) > 20):
                 _stiff_switched = True
                 if self.debug:

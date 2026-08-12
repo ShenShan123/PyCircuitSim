@@ -210,3 +210,47 @@ pre-existing (base-reproduced) NN opamp/opamp_ac 0/5 — out of scope.
 ## Uncommitted so far (beyond 544e9f4)
 - mosfet_cmg.py: limiter (+fetlim/limvds/reset/retreat), src-ref eval, err context
 - solver.py: limit kwarg plumbing, convergence gates, resets, NR_TRACE, (ladder WIP)
+
+---
+
+# V7.5.2 follow-up session (2026-08-11 afternoon)
+
+Task: the two follow-ups the V7.5.1 sprint left open. Max 4 agents.
+
+## Done
+1. **AC full 4-terminal stamp for L72** (commit cd4a106): ACSolver was the
+   last 3-conductance + 5-cap-3x3 consumer (junction-blind + floating-bulk
+   sign hazard). Now Y = G4 + jw*C4 from get_terminal_stamp/get_charge_stamp
+   at the OP. NO external gmin in AC — measured 6% error on a 100k-tied NMOS
+   bulk and a fake 250nV response on a quiet PMOS bulk (NGSPICE holds it at
+   1e-83); gmin stays a DC Newton aid only. verify_ac.py gains Level 3
+   (floating-bulk NMOS+PMOS CS amps, gates v(out) AND v(bulk); bulk gate =
+   complex residual with 1pV floor since the PMOS bulk response is genuinely
+   zero). 3/3 PASS; L2+L3 v(out) exact to printed precision.
+2. **LTE-driven output refinement, opt-in** (commit 6b92f1a):
+   refine_output=True / PYCIRCUITSIM_TRAN_REFINE=1 / bench
+   PYCIRCUITSIM_BENCH_TRAN_REFINE=1. Emits every committed march piece
+   (non-uniform axis, grid points kept exactly); PULSE corners = breakpoints
+   (land on them, restart small + BE piece after — kills trap corner ring at
+   the seed); per-piece LTE (trap 3rd divided difference, TRTOL=7) with
+   depth-1 un-commit rollback (_snapshot/_restore_tran_state) and
+   0.9*r^(-1/3) dt scaling. Flags-off byte-identical (probe + tran gate).
+   Probe (L72 inverter 10ps edges, 40ps grid vs 2.5ps ref): fixed 147mV max/
+   30mV rms err -> refine 0.50mV max/58uV rms (~500x), 526 vs 151 points.
+3. **integration_method='trap'** now accepted (pinned trap, no stiffness
+   swap; the V7.5.1 "trap" sweep rows are otherwise unreproducible —
+   PYCIRCUITSIM_BENCH_TRAN_METHOD=trap used to raise ValueError, so those
+   rows must have been produced with a local edit).
+4. Bench: meta["failed"] floors at 0 (refine returns more points than asked);
+   meta["refine_output"] recorded. NOTE --out is a DIRECTORY.
+
+## In flight
+- cp smoke: stride 100 refine+trap (b1wsv9oi8).
+- Then: cp stride 20 refine x {trap, auto}, full gate re-run fan-out
+  (workflow, 4 agents short gates; long batches as background tasks).
+
+## Open questions / risks
+- Does refine+trap reproduce NGSPICE up_imin -4.0306uA within 2%? (BDF2
+  damped it to +3.2u, fixed-grid trap rang to -8.4u.)
+- AC numbers on tb_gain/tb_loop_max shift with the full AC stamp — expected
+  within tolerance, must re-run (worst-node uV-scale before).
