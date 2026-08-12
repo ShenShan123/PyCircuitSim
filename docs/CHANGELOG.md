@@ -8,6 +8,80 @@ pruned; the full original text lives in git history.)
 
 ---
 
+## V7.5.2 — the two V7.5.1 follow-ups closed: AC full stamp + LTE output refinement (branch `feat/analoggym-migration`, 2026-08-11)
+
+**Goal: close the two follow-ups V7.5.1 recorded** — the AC solver still used
+the 5-cap 3×3 expansion for L72, and fixed output grids could not see what
+NGSPICE's LTE timestep control records. Both closed; every gate re-run green
+(45+81+53+86 comprehensive suites, all complex/NN/subckt/canary gates, AC 3/3).
+
+1. **Full 4-terminal AC stamp for L72** (`cd4a106`): ACSolver was the last
+   consumer of channel-only gds/gm/gmb + the 3×3 transcap expansion — blind to
+   junction/gate-leakage conductances and carrying the same floating-bulk
+   sign-flip hazard the transient fix killed. Devices exposing
+   `get_terminal_stamp` now stamp `Y = G4 + jωC4` once at the OP, exactly
+   NGSPICE's AC load. Measured effect on the pilot AC decks: tb_gain dcgain
+   3.9e-05 → **1.5e-07** rel, tb_loop_max GBW 1.4e-03 → **7.4e-06** (≈200×);
+   both 8/8. NN AC path bit-identical (verify_nn_ac 10/10).
+2. **No external gmin in the AC load** (same commit): the first cut mirrored
+   the DC stamp's gmin across d-s/d-b/s-b and it *measurably polluted* the
+   small-signal answer — 5.8 % NRMSE on an NMOS bulk behind 100k (1e-12 S
+   against a true junction conductance of ~2e-11 S) and a fake 250 nV bulk
+   response on a PMOS whose bulk NGSPICE holds at 1e-83 V. gmin is a Newton
+   convergence aid; NGSPICE's AC load carries only the model Jacobian (OSDI
+   handles gmin internally). `verify_ac.py` Level 3 (floating-bulk NMOS+PMOS,
+   gating v(out) AND v(bulk) with a 1 pV-floor complex-residual check) now
+   guards this permanently — every pre-V7.5.2 AC gate rail-tied the bulk.
+3. **LTE-driven output refinement, opt-in** (`6b92f1a`, `58d01a4`):
+   `refine_output=True` / `PYCIRCUITSIM_TRAN_REFINE=1` / bench
+   `PYCIRCUITSIM_BENCH_TRAN_REFINE=1`; default off, flags-off byte-identical.
+   Three mechanisms: (a) every committed march piece is emitted into the
+   returned waveform — non-uniform time axis, all fixed grid points present
+   exactly, branch currents on the same axis (NGSPICE saves every accepted
+   internal point, so its `.meas` sees 10 ps events a fixed grid cannot);
+   (b) PULSE corners become breakpoints — pieces land on them, and the next
+   piece restarts small (min(sub_dt/64, local-corner-gap/8) — the gap scale
+   matters: sub_dt/64 alone left the first piece spanning a third of the
+   charge pump's spike) and integrates BE, since the trapezoid's current
+   history is inconsistent across a slope discontinuity (this is what seeds
+   corner ringing; NGSPICE restarts at order 1 the same way); (c) per-piece
+   LTE (trap third divided difference on the non-uniform fine history,
+   TRTOL=7) with depth-1 un-commit rollback (`_snapshot/_restore_tran_state`)
+   and 0.9·r^(−1/3) dt scaling. Probe (L72 inverter, 10 ps edges, 40 ps output
+   grid, vs 2.5 ps reference): fixed grid errs 147 mV max / 30 mV rms at
+   shared points; refine 0.50 mV / 58 µV — **~500× rms** at 526 vs 151 points.
+4. **`integration_method='trap'`** (`67930f9`): pinned trapezoid (BE step 1,
+   no stiffness swap), mirroring `gear2` — NGSPICE's default integrator was
+   not directly selectable, and 'auto' swaps to BDF-2 exactly on the decks
+   where the comparison matters.
+5. **Charge pump verdict** (refine+trap): **5/6 at stride 20 AND stride 100**
+   — the fixed-grid axis is gone (V7.5.1 needed BDF-2 damping and still
+   missed spike extrema; stride 20 previously lost `lo_imax` too). All four
+   pump-defining averages/extrema at 3e-6…1.8e-3; `up_imin` (the ±4 µA,
+   ~10 ps reversal spike) is now **captured at −3.84 µA vs NGSPICE's
+   −4.031 µA (4.7 %)** — right sign, right width, amplitude just outside the
+   2 % gate. What remains is integrator-policy sensitivity, not grid.
+6. **Dead ends (recorded, reverted):** (a) *post-corner hold window* — pinning
+   the restart dt for 2 local gaps after each corner over-resolved the spike
+   into trapezoid micro-ringing: up_imin −5.70 µA (41 % OVER) and lo_imin
+   regressed; fine uniform trap through a discontinuity response rings just
+   like the fixed 2 ps grid did (−8.4 µA). (b) *branch-current LTE* — adding
+   the V-source tail currents to the LTE state (reltol·|i|+1e-12 A) thrashed
+   into the 4096-piece cap: NR-tolerance-level noise on MNA tail currents has
+   a dt-INDEPENDENT third divided difference, so rejection never converges.
+   NGSPICE runs its truncation control on smooth per-device CHARGE states;
+   a charge-based LTE (needs 4-deep q histories per device) is the faithful
+   follow-up if the last 4.7 % ever matters.
+7. **Bonus visibility — full amplifier tb_tran category** (17 designs, first
+   run beyond the pilot): flags-off stride 4, 5/17 fully agree (Alfio pilot
+   regression intact at 11/11); the misses are slew-edge metrics on the
+   coarse grid — the exact axis refine addresses (refine sweep in
+   RESULTS_TSMC.md). One deck-level anomaly: Qu2017_AZC's NGSPICE run
+   produces no data (ng 0 s, engine 0/0) — a campaign item, not a
+   PyCircuitSim gap.
+
+---
+
 ## V7.5.1 — AnalogGym parity: the solver learns real SPICE robustness (branch `feat/analoggym-migration`, 2026-08-11)
 
 **Goal: every pilot deck of the V7.5.0 PyCircuitSim-vs-NGSPICE comparison

@@ -244,13 +244,27 @@ Task: the two follow-ups the V7.5.1 sprint left open. Max 4 agents.
 4. Bench: meta["failed"] floors at 0 (refine returns more points than asked);
    meta["refine_output"] recorded. NOTE --out is a DIRECTORY.
 
-## In flight
-- cp smoke: stride 100 refine+trap (b1wsv9oi8).
-- Then: cp stride 20 refine x {trap, auto}, full gate re-run fan-out
-  (workflow, 4 agents short gates; long batches as background tasks).
-
-## Open questions / risks
-- Does refine+trap reproduce NGSPICE up_imin -4.0306uA within 2%? (BDF2
-  damped it to +3.2u, fixed-grid trap rang to -8.4u.)
-- AC numbers on tb_gain/tb_loop_max shift with the full AC stamp — expected
-  within tolerance, must re-run (worst-node uV-scale before).
+## Final state (V7.5.2, 2026-08-11 evening)
+- Charge pump refine+trap: **5/6 at stride 20 AND 100** (609s / 341s),
+  up_imin CAPTURED -3.84u vs -4.031u (4.7%, was sign-flipped/2x-rung);
+  other five metrics 3e-6..1.8e-3. Stride-independence achieved = the
+  fixed-grid axis is closed; remainder is integrator-policy sensitivity.
+- Restart scale fix (58d01a4): sub_dt/64 clipped the spike at coarse
+  strides; now min(sub_dt/64, local-corner-gap/8).
+- DEAD ENDS (reverted, in CHANGELOG §V7.5.2): post-corner hold window
+  (over-rings, -5.70u = 41% OVER, lo_imin regressed); branch-current LTE
+  (NR-noise d3 is dt-independent -> 4096-piece thrash). Faithful next step
+  if 4.7% ever matters: charge-state LTE (needs 4-deep q histories).
+- AC decks after full stamp: tb_gain 8/8 dcgain 1.5e-07 (was 3.9e-05);
+  tb_loop_max 8/8 GBW 7.4e-06 (was 1.4e-03).
+- Full re-gate GREEN: tran_comp 45/45, dc_comp 81/81, multi_tech_dc 53/53,
+  multi_tech_tran 86/86, verify_ac 3/3 (new L3 floating-bulk), nn_ac 10/10
+  (log: $SCR/gate2_nn_ac.log), op 3/3, dc 2/2, tran 1/1, subckt 11/11,
+  multiplier 6/6, ring_osc 5/5, switchcap 5/5, sram 5/5, canaries PASS,
+  nn_dc_tran 30/30, lifted_source 15/15. Amp tb_tran pilot regression
+  11/11 flags-off (42s).
+- BONUS: first full amplifier-category tb_tran sweep (17 designs, stride 4
+  flags-off): 5/17 fully agree; misses are slew-edge metrics on the coarse
+  grid; Qu2017_AZC = NGSPICE-side anomaly (ng 0s, engine 0/0), campaign
+  item. Refine sweep of the same 17 in flight at session close — table
+  to be appended to RESULTS when done.

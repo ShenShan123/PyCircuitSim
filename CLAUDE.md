@@ -105,9 +105,27 @@ in-`DCSolver` ladder now, honest `final_converged` = last level/last source
 step only); the transient retry ladder re-walks the interval with a locally
 halved dt (down to `dt·2⁻²⁴`) instead of stiffening companions against a
 fixed target time, with stagnation fail-fast; and the oscillation-average
-acceptance KCL gate covers L72, not just NN. Known follow-up: the AC solver
-still uses the 5-cap 3×3 expansion for L72 (same floating-bulk hazard in
-principle; AC gates green). `PYCIRCUITSIM_NR_TRACE=1` traces NR.
+acceptance KCL gate covers L72, not just NN. `PYCIRCUITSIM_NR_TRACE=1`
+traces NR.
+
+V7.5.2 closed both V7.5.1 follow-ups: **AC now stamps the full 4-terminal
+`Y = G4 + jωC4`** for L72 from the same condensed OSDI Jacobians (the 3×3
+expansion + channel-only conductances are gone from AC too; NO external
+gmin in the AC load — it measurably pollutes high-impedance bulk nodes —
+gmin remains a DC Newton aid only; NN AC path unchanged), and transients
+gained **opt-in LTE-driven output refinement** (`refine_output=True` /
+`PYCIRCUITSIM_TRAN_REFINE=1`, default off = byte-identical): every
+committed march piece is emitted (non-uniform time axis, grid points
+preserved exactly), PULSE corners become breakpoints (land-on + small
+BE restart scaled to the local corner gap — kills trapezoid corner ring),
+and each piece is LTE-checked (TRTOL=7, voltage state) with depth-1
+un-commit rollback. `integration_method='trap'` pins the trapezoid (no
+stiffness swap). Charge pump: 5/6 stride-independent with `up_imin`
+within 4.7 % (was sign-flipped under BDF-2 / 2×-rung under fixed trap);
+the residual is integrator-policy sensitivity, not grid — see
+RESULTS_TSMC.md. Dead ends recorded in CHANGELOG §V7.5.2: post-corner
+hold window (over-rings), branch-current LTE (NR-noise d³ is
+dt-independent → thrash; charge-based LTE is the faithful follow-up).
 
 ## Supported Features
 
@@ -241,7 +259,10 @@ NGSPICE on the identical BSIM-CMG (LEVEL=72) OSDI model. Gates are CPU-pinned
   ERROR since V7.5.0** — the former known-ERROR `TSMC5_lvt_inv_l_24nm` NR
   divergence is fixed by the full-terminal stamp); tran
   `verify_bsimcmg_tran{,_comprehensive}.py` (1/45) +
-  `verify_multi_tech_tran.py` (86); AC `verify_ac.py` (2/2). Counts move with
+  `verify_multi_tech_tran.py` (86); AC `verify_ac.py` (**3/3 since V7.5.2**
+  — L3 = floating-bulk NMOS+PMOS CS amps gating v(out) AND the bulk node;
+  every earlier AC gate rail-tied the bulk, masking the 3×3-expansion
+  hazard). Counts move with
   TSMC6 registration — same coverage, one duplicate column; quote TSMC6
   separately.
 - **DirectNet (73):** `verify_nn_dc_tran.py` (inverter 8/8, DC 55/55, tran

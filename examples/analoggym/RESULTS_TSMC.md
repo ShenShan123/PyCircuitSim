@@ -37,31 +37,46 @@ conductances participate in NR exactly as in NGSPICE (the channel-only
 gm/gds/gmb Jacobian is what locked the hot amplifier family into limit
 cycles); SPICE-style damped limiting (fetlim/limvds/pnjlim), a source-referenced
 eval frame, an honest wide gmin homotopy with automatic fallback, and a
-transient retry that actually subdivides the interval. Current pilot table
+transient retry that actually subdivides the interval.
+
+**V7.5.2 (2026-08-11) closed the two follow-ups V7.5.1 left open**
+(docs/CHANGELOG.md §V7.5.2): AC now stamps the **full 4-terminal
+`Y = G4 + jωC4`** for L72 (the AC rows below tightened by 1–3 orders of
+magnitude), and transients gained **opt-in LTE-driven output refinement**
+(`PYCIRCUITSIM_BENCH_TRAN_REFINE=1`): every committed march piece is emitted
+into the waveform, PULSE corners are breakpoints with a small BE restart, and
+each piece is LTE-checked with rollback — so `.meas` finally sees the same
+events NGSPICE's saved adaptive timepoints carry. Current pilot table
 (stride 1 unless noted):
 
 | family | deck | metrics agreeing | worst node error | engine control | py / ng seconds |
 |---|---|:--:|--:|:--:|--:|
-| amplifier AC | `tb_gain` | **8/8** | ~110 uV | 4/4 | 2.5 / 0.3 |
+| amplifier AC | `tb_gain` | **8/8** (dcgain 1.5e-07, GBW 1.0e-06) | 2.2 uV op | 4/4 | 2.7 / 0.3 |
 | ldo dc source | `tb_load` | **11/11** | ~148 uV | 11/11 * | **5.2** / 0.3 |
-| ldo AC | `tb_loop_max` | **8/8** | 0.27 uV | 4/4 | 9.7 / 0.3 |
-| amplifier transient | `tb_tran` (stride 4) | **11/11**, 1101/1101 steps | 3.0 uV | 11/11 | 71 / 1.2 |
+| ldo AC | `tb_loop_max` | **8/8** (GBW 7.4e-06, was 1.4e-03) | 0.27 uV | 4/4 | 9.9 / 0.3 |
+| amplifier transient | `tb_tran` (stride 4) | **11/11**, 1101/1101 steps | 3.0 uV | 11/11 | 42 / 1.1 |
 | sensor dc temp | `ptat_1/tb_dc` | **13/13**, 0 mono violations | ~15 uV | 9/9 | **9.6** / 0.1 |
 | amplifier dc temp | `tb_dc` (stride 25 + fork recovery) | **15/15** | 2.6 uV | 15/15 | 67 / 2.1 |
-| charge pump transient | `tb_tran` (stride 4, BDF-2) | **5/6**, 25001/25001 steps | -- * | 6/6 | 1843 / 31 |
+| charge pump transient | `tb_tran` (stride 20, refine+trap) | **5/6**, up_imin at 4.7 % | -- * | 6/6 | 609 / 31 |
 
 \* The charge pump's `op_delta` is the pre-transient operating point of a
 switching circuit whose output node has no DC path — both simulators float it
 differently and the transient rails it immediately; the six scored metrics are
 the verdict. The sixth metric (`up_imin`) is a ±4 µA, ~10 ps current-reversal
-spike whose amplitude is integration-method sensitive: trapezoidal at the
-deck-native 2 ps grid catches the reversal but over-rings it 2×
-(−8.4 µA), BDF-2 damps it away (+3.2 µA), trapezoidal with 8× LTE
-sub-stepping lands between (−1.27 µA), and NGSPICE's LTE-adaptive
-trapezoidal reads −4.03 µA. The four averages/extrema that define pump function
-(`lo/up_iavg`, `lo_imin`, `up_imax`) agree to 8e-6…2e-2 under BDF-2. Fixed
-output grids versus NGSPICE's truncation-error timestep control is the one
-remaining fidelity axis this deck exposes.
+spike. Under V7.5.1's fixed grids its amplitude was qualitatively wrong in
+every configuration (BDF-2 damped it to **+3.2 µA — sign flipped**; fixed
+2 ps trapezoid over-rang it 2× to −8.4 µA; NGSPICE's LTE-adaptive trapezoid
+reads −4.031 µA). With V7.5.2 refinement the spike is **captured at
+−3.84 µA (4.7 %) — and the verdict is stride-independent**: 5/6 with nearly
+identical numbers at stride 20 (609 s) and stride 100 (341 s), where V7.5.1
+stride 20 also lost `lo_imax`. The four pump-defining averages/extrema agree
+to 3e-6…1.8e-3. What remains on `up_imin` is integrator-policy sensitivity
+(which accepted step pattern marches the 10 ps spike), no longer the output
+grid; the faithful next step, if 4.7 % ever matters, is NGSPICE-style
+truncation control on per-device charge states (CHANGELOG §V7.5.2 records
+two rejected shortcuts: a post-corner hold window over-rings to −5.70 µA,
+and branch-current LTE thrashes on NR-noise whose third difference is
+dt-independent).
 
 The former table (for the record of what the simulator work fixed): tb_tran
 2/6 at 119/221 steps, ptat 5/13 with 76 mV worst node and 67 monotonicity
