@@ -1222,6 +1222,17 @@ def _needs_recovery(row: Dict[str, Any], td: TranslatedDeck) -> Optional[str]:
     """
     if row["pycircuitsim"]["error"]:
         return f"monolithic pass failed: {row['pycircuitsim']['error']}"
+    # V7.5.3 — an NGSPICE-side monolithic failure is recovery's own case:
+    # the reference flow itself re-runs wide temperature sweeps as two
+    # continuations from 25 C, and NGSPICE's 125 C cold start genuinely
+    # dies mid-sweep on some decks (Song_DACFC / Qu_LEC tb_dc: "DC:
+    # Timestep too small; temp = 45.7"). Both sides are re-scored on the
+    # segments, so the comparison stays column-matched. Before the
+    # corroboration gate below this was recovered ACCIDENTALLY: the fork
+    # trigger fired on the None-vs-number metric entries of the empty
+    # NGSPICE column.
+    if row["ngspice"]["error"]:
+        return f"NGSPICE monolithic pass failed: {row['ngspice']['error']}"
     worst = _op_worst(row)
     if worst is not None:
         supply = float(td.params.get("supply_voltage") or 0.0) or 1.0
