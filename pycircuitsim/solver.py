@@ -2195,6 +2195,54 @@ class TransientSolver:
             self.reltol * np.maximum(np.abs(v_new), np.abs(v2)) + self.vntol)
         return float(np.max(lte / tol))
 
+    # V7.5.3 — tolerance constants for the per-device charge-state LTE test
+    # (NGSPICE CKTterr shape): ABSTOL is the current-dimension floor, CHGTOL
+    # the charge-dimension floor of the loosener term. NGSPICE's stock
+    # CHGTOL=1e-14 C is calibrated for pF-scale board circuits; a FinFET
+    # terminal charge is ~1e-16 C, so the stock floor over-loosens the test
+    # by ~100x and it never binds (measured: charge pump up_imin unchanged).
+    # 1e-18 C sits below the device charge scale, letting the physical
+    # RELTOL*|q|/h term govern while still flooring near-zero charge states
+    # (1e-17 left the charge pump's up_imin at 2.06 %, a hair over the gate).
+    _REFINE_ABSTOL_I = 1e-12
+    _REFINE_CHGTOL = 1e-18
+
+    def _refine_charge_lte_ratio(self, hist: List[tuple], t_new: float,
+                                 q_new: np.ndarray,
+                                 i_new: np.ndarray) -> float:
+        """Worst charge-state LTE / (TRTOL·tol) for one device's candidate.
+
+        NGSPICE-style truncation control on the device's terminal-charge
+        states (CKTterr): the trapezoidal charge LTE (h³/12)·|q'''| becomes
+        a current error via /h and is compared against
+        ``tol = max(ABSTOL + RELTOL·max(|i_new|,|i_prev|),
+        RELTOL·max(|q_new|,|q_prev|,CHGTOL)/h)``. The second term is
+        NGSPICE's loosener: at timesteps small enough that the third
+        divided difference is NR-noise-dominated it grows as 1/h and
+        switches the test off — the branch-current-LTE dead end
+        (CHANGELOG §V7.5.2, dt-independent noise d³ → 4096-piece thrash)
+        is exactly what it prevents. ``hist`` holds the last three
+        ACCEPTED (t, q[4], i[4]) entries in terminal order [g, d, s, b].
+        """
+        (t0, q0, _), (t1, q1, _), (t2, q2, i2) = hist[-3], hist[-2], hist[-1]
+        h = t_new - t2
+        if h <= 0.0:
+            return 0.0
+        dd01 = (q1 - q0) / (t1 - t0)
+        dd12 = (q2 - q1) / (t2 - t1)
+        dd23 = (q_new - q2) / h
+        dd012 = (dd12 - dd01) / (t2 - t0)
+        dd123 = (dd23 - dd12) / (t_new - t1)
+        dd0123 = np.abs(dd123 - dd012) / (t_new - t0)
+        err_i = 0.5 * h ** 2 * dd0123        # (h³/12)·|6·DD3| / h
+        tol = np.maximum(
+            self._REFINE_ABSTOL_I
+            + self.reltol * np.maximum(np.abs(i_new), np.abs(i2)),
+            self.reltol * np.maximum(
+                np.maximum(np.abs(q_new), np.abs(q2)),
+                self._REFINE_CHGTOL) / h)
+        return float(np.max(err_i / (self._refine_trtol * tol)))
+
     def _has_non_linear_components(self) -> bool:
         """Check if circuit contains non-linear components (MOSFETs)."""
         return _has_non_linear(self.circuit)
@@ -3122,6 +3170,18 @@ class TransientSolver:
             _refine_dt_carry = self.dt
             _force_be_piece = False
             _RESTART_FRAC = 2.0 ** -6  # piece restart after a breakpoint
+            # V7.5.3 — per-device charge-state LTE: accepted (t, q[4], i[4])
+            # histories, 3-deep + the candidate = the four points DD3 needs.
+            # Seeded at the DC point exactly like _lte_hist (dQ/dt = 0 there).
+            _QKEYS = ("qg", "qd", "qs", "qb")
+            _IKEYS = ("i_gate", "i_drain", "i_source", "i_bulk")
+            _q_hist: Dict[int, List[tuple]] = {}
+            for c in self.circuit.components:
+                if _is_mosfet(c) and getattr(c, "_q_prev", None) is not None:
+                    _q_hist[id(c)] = [(0.0, np.array(
+                        [c._q_prev.get(k, 0.0) for k in _QKEYS]),
+                        np.zeros(len(_IKEYS)))]
+            _cand_q: List[tuple] = []
 
         for step in range(1, num_steps):
             # Current output time
@@ -3317,6 +3377,8 @@ class TransientSolver:
                             _batch_eval_nn_mosfets(
                                 self.circuit, timestep_voltages)
 
+                        if refine:
+                            _cand_q = []
                         for component in self.circuit.components:
                             if _is_mosfet(component) and hasattr(component, 'update_charge_state'):
                                 terminal_currents = {}
@@ -3351,6 +3413,14 @@ class TransientSolver:
                                             else:
                                                 h_t = coeff * component._q_prev[key]
                                             terminal_currents[name] = coeff * charges_new[key] - h_t
+                                    # V7.5.3 — candidate charge states for
+                                    # the per-device LTE test below.
+                                    if refine:
+                                        _cand_q.append((component, np.array(
+                                            [charges_new.get(k, 0.0)
+                                             for k in _QKEYS]), np.array(
+                                            [terminal_currents.get(k, 0.0)
+                                             for k in _IKEYS])))
                                 component.update_charge_state(timestep_voltages, terminal_currents)
 
                         if refine:
@@ -3362,6 +3432,18 @@ class TransientSolver:
                                     and _rejects < 8):
                                 _r = self._refine_lte_ratio(
                                     _lte_hist, t_k, _v_vec)
+                                # V7.5.3 — per-device charge-state LTE:
+                                # the node-voltage test alone accepts step
+                                # patterns that stride the fast charge
+                                # transitions of switching devices (the
+                                # charge pump's 10 ps reversal spike).
+                                for _comp, _q_new, _i_new in _cand_q:
+                                    _dh = _q_hist.get(id(_comp))
+                                    if _dh is not None and len(_dh) >= 3:
+                                        _r = max(
+                                            _r,
+                                            self._refine_charge_lte_ratio(
+                                                _dh, t_k, _q_new, _i_new))
                                 if _r > 1.0:
                                     # Reject: un-commit the piece and
                                     # re-march it with a smaller dt
@@ -3379,6 +3461,11 @@ class TransientSolver:
                             _lte_hist.append((t_k, _v_vec))
                             if len(_lte_hist) > 4:
                                 _lte_hist.pop(0)
+                            for _comp, _q_new, _i_new in _cand_q:
+                                _dh = _q_hist.setdefault(id(_comp), [])
+                                _dh.append((t_k, _q_new, _i_new))
+                                if len(_dh) > 3:
+                                    _dh.pop(0)
                             _dense_t.append(float(t_k))
                             _dense_v.append(_v_vec)
                             _tail = self._last_solution_tail
