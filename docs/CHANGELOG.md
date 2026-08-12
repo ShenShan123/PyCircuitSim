@@ -110,7 +110,27 @@ lifted_source 15, PyCMG's own 314) plus the 7-deck AnalogGym pilot.
    monotonically improve overshoot toward NGSPICE, refine at HEAD is
    **under-resolving this deck by ~4×** on that metric — a fidelity finding
    independent of the cost question.
-6. **Methodology trap worth not repeating:** a probe script placed inside
+6. **`min_slope_25_75c` characterized — it measures the REFERENCE's noise,
+   and the campaign's largest miss family (18 decks) is a caveat, not a
+   gap.** The metric is a *minimum over 100 adjacent steps* of a 0.5 °C
+   staircase whose steps are ~225 µV, so one bad sample sets the whole
+   statistic. On `front_end_25_6T` NGSPICE's own curve moves **83.8 µV**
+   across 31.5→32.0 °C where its neighbours move 234/226/279 µV — a
+   one-sample ~100 µV wobble in the reference's own DC solution, dropping
+   its `min_slope` to 1.68e-4 against our smooth 4.27e-4. The
+   `Fan_SMC/tb_cmrr` treatment (re-run the reference tighter) does NOT
+   rescue it: at `reltol=1e-5` NGSPICE's `min_slope` goes **negative**
+   (−4.08e-4 — the curve becomes locally non-monotone), so the quantity is
+   not tolerance-stable on the reference side at all. The **median** slope
+   — the same physical property, robustly estimated — agrees to **0.5 %**
+   across all three runs (4.485e-4 default, 4.461e-4 tightened, ours
+   ~4.4e-4), `mono_violations` is 0 both sides, and the 281-point operating
+   point agrees to 0.28 mV worst over 1124 node comparisons. Our curve is
+   also smoothed by per-point continuation seeding (NGSPICE continues too,
+   but converges each point only to its own default tolerance). Recorded as
+   a quoting rule in RESULTS_TSMC.md: read the median slope, do not chase
+   this in the solver, and do not tighten the reference to chase it.
+7. **Methodology trap worth not repeating:** a probe script placed inside
    the worktree cannot compare two code states — `sys.path[0]` is the
    script's own directory (and cwd for `-m`/`-c`), so a PYTHONPATH-staged
    package copy is silently ignored and the two states measure

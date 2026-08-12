@@ -216,6 +216,28 @@ Open findings the campaign surfaced (the point of running it):
   exponent shrinks the dead zone to [0.9, 1) but is worth only ~6 % in dt.
   See CHANGELOG §V7.5.4 before re-attempting.
 
+* **`min_slope_25_75c` — CHARACTERIZED in V7.5.4 as a reference-noise
+  statistic, not a solver gap.** It is a *minimum over 100 adjacent steps*
+  of a 0.5 °C staircase whose steps are ~225 µV, so a single bad sample
+  sets the whole number. On `front_end_25_6T` NGSPICE's own curve moves
+  only **83.8 µV** across 31.5→32.0 °C where its neighbours move
+  234/226/279 µV — a one-sample ~100 µV wobble in the reference's own DC
+  solution, which drops its `min_slope` to 1.68e-4 against our smooth
+  4.27e-4. The `Fan_SMC/tb_cmrr` treatment (re-run the reference tighter)
+  does **not** rescue it: at `reltol=1e-5` NGSPICE's `min_slope` goes
+  *negative* (−4.08e-4 — its curve becomes locally non-monotone), so the
+  quantity is not tolerance-stable on the reference side at all. The
+  **median** slope, the same physical property robustly estimated, agrees
+  to **0.5 %** across all three runs (4.485e-4 default, 4.461e-4 at
+  reltol=1e-5, ours ~4.4e-4); `mono_violations` is 0 on both sides and the
+  281-point operating point agrees to 0.28 mV worst over 1124 node
+  comparisons. Our curve is additionally smoothed by per-point continuation
+  seeding (NGSPICE continues too, but converges each point only to its own
+  default tolerance). **Quote this pair with the caveat and read the median
+  slope instead; do not chase it in the solver, and do not "fix" it by
+  tightening the reference.** This is the campaign's largest miss family
+  (18 decks).
+
 Representative agreements where the two simulators do match:
 
 | deck | metric | PyCircuitSim | NGSPICE | rel. error |
