@@ -41,7 +41,8 @@ Semantics that are load-bearing and were verified against real runs:
   width -- a range-weighted mean, not ``sum/N``.  The plain arithmetic mean
   that the LDO line-regulation control block uses lives in
   :func:`combine_line_segments`, deliberately not here.
-* window endpoints are interpolated into the trace before reducing, and the
+* a reduction's window is the set of SAMPLES the card encloses, tested with
+  exact double comparisons and never interpolated -- ngspice 45.2's rule.  The
   window is direction-independent (the amplifier sweeps 125 -> -40 while its
   cards say ``from=-40 to=125``).
 * ``vp()`` is RADIANS (principal value).  ``vdb()`` is ``20*log10|V|``.
@@ -489,19 +490,28 @@ def _sample_at_weight(y: np.ndarray, index: int, t: float,
 def _windowed(x: np.ndarray, y: np.ndarray,
               window: Optional[Tuple[Optional[float], Optional[float]]]
               ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
-    """Ascending (abscissa, value) trace clipped to a closed window.
+    """Ascending (abscissa, value) samples the window encloses.
 
-    Both endpoints are interpolated into the trace before any reduction runs,
-    and the window is direction-independent: the amplifier temperature bench
-    sweeps 125 -> -40 while its cards say ``from=-40 to=125``.  Endpoints are
-    inclusive within ``1e-9*max(1,|x|)`` so a float endpoint like
-    ``-39.99999999999747`` is not excluded.
+    ngspice 45.2 reduces over the SAMPLES inside ``[from, to]`` -- tested with
+    exact double comparisons, with no interpolated edges and no tolerance.
+    Measured on ldo_1/tb_load (``dc Iload 0.005 0.055 0.0005``): a dc grid is
+    accumulated by repeated addition, so its last abscissa is
+    5.500000000000004e-02, six ulp ABOVE the ``to=0.055`` the card names, and
+    ngspice drops that sample.  Interpolating an edge at ``to`` keeps it, and
+    since V(vo) is monotone the dropped sample IS the minimum: PP comes out
+    3.326958e-04 against ngspice's own 3.290893e-04, 1.1 % high, which
+    propagates into ``lr``.  Two more measurements pin the rule: an edge
+    strictly between grid points is NOT interpolated (``from=0.00525
+    to=0.00775`` gives PP 2.073332e-05, the sample-only value, not the
+    2.621315e-05 an interpolated window gives, and MAX reports
+    ``at=5.500000e-03``, a sample), and the window is direction-independent
+    (the amplifier sweeps 125 -> -40 while its cards say ``from=-40 to=125``).
 
-    A window that overhangs the solved data is CLAMPED to it, not rejected --
-    that is measured ngspice behaviour: on a sweep that stops at -39.9 the card
-    ``from=-40 to=125`` still reports, over -39.9..125.  A clamp that collapses
-    to a single point is left as one point; :func:`_reduce` then decides, as
-    ngspice does (MAX/MIN report it, AVG fails).
+    A window that overhangs the solved data still reports, over the samples it
+    does enclose: on a sweep that stops at -39.9 the card ``from=-40 to=125``
+    measures -39.9..125.  A window enclosing one sample returns one point;
+    :func:`_reduce` then decides, as ngspice does (MAX/MIN report it, AVG
+    fails).  A window enclosing none returns ``None`` -- ngspice's ``failed``.
     """
     if len(x) == 0:
         return None
@@ -512,22 +522,10 @@ def _windowed(x: np.ndarray, y: np.ndarray,
     hi = float(xs[-1]) if window is None or window[1] is None else float(window[1])
     if hi < lo:
         lo, hi = hi, lo
-    lo = max(lo, float(xs[0]))
-    hi = min(hi, float(xs[-1]))
-    if hi < lo:
+    keep = (xs >= lo) & (xs <= hi)
+    if not keep.any():
         return None
-    tol_lo = 1e-9 * max(1.0, abs(lo))
-    tol_hi = 1e-9 * max(1.0, abs(hi))
-    v_lo = _interp_at(xs, ys, lo, False)
-    v_hi = _interp_at(xs, ys, hi, False)
-    if v_lo is None or v_hi is None:
-        return None
-    if hi - lo <= max(tol_lo, tol_hi):
-        return np.array([lo]), np.asarray([v_lo])
-    mask = (xs > lo + tol_lo) & (xs < hi - tol_hi)
-    xw = np.concatenate(([lo], xs[mask], [hi]))
-    yw = np.concatenate(([v_lo], ys[mask], [v_hi]))
-    return xw, yw
+    return xs[keep], ys[keep]
 
 
 def _reduce(kind: str, xw: np.ndarray, yw: np.ndarray) -> Optional[float]:
