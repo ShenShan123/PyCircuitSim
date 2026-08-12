@@ -93,6 +93,20 @@ is (0.0139486). The 1.6 % `lr` gap is therefore mostly a load-regulation
 measurement-definition difference, not a simulator difference, and those two
 keys should not be quoted as accuracy evidence until reconciled.
 
+**First category sweep beyond the pilot (V7.5.2):** all 17 amplifier
+`tb_tran` decks at stride 4, flags-off versus refine (`--no-recovery`,
+single-deck evidence per design — this is visibility, not a scoreboard):
+
+| config | designs fully agreeing | movement |
+|---|:--:|---|
+| fixed grid (flags off) | 4/17 | pilot regression `Alfio` stays 11/11 |
+| + output refinement | **7/17** | `Peng_ACBC/IAC/TCFC` 8→11, `Leung_DFCFC2` 5→8; **no design regressed** |
+
+Every remaining miss is a slew/edge-timing metric on a never-validated
+design; the refine cost is 1.2–3× (one pathological deck, `Qu_LEC`, pays
+30× for a 1 ns edge). `Qu2017_AZC` is an NGSPICE-side anomaly (its own run
+returns no data: ng 0 s, engine 0/0) — a campaign item, not a simulator gap.
+
 Representative agreements where the two simulators do match:
 
 | deck | metric | PyCircuitSim | NGSPICE | rel. error |

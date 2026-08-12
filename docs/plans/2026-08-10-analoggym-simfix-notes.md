@@ -263,8 +263,16 @@ Task: the two follow-ups the V7.5.1 sprint left open. Max 4 agents.
   multiplier 6/6, ring_osc 5/5, switchcap 5/5, sram 5/5, canaries PASS,
   nn_dc_tran 30/30, lifted_source 15/15. Amp tb_tran pilot regression
   11/11 flags-off (42s).
-- BONUS: first full amplifier-category tb_tran sweep (17 designs, stride 4
-  flags-off): 5/17 fully agree; misses are slew-edge metrics on the coarse
-  grid; Qu2017_AZC = NGSPICE-side anomaly (ng 0s, engine 0/0), campaign
-  item. Refine sweep of the same 17 in flight at session close — table
-  to be appended to RESULTS when done.
+- BONUS: first full amplifier-category tb_tran sweep (17 designs, stride 4):
+  flags-off 4/17 fully agree -> refine **7/17** (Peng_ACBC/IAC/TCFC 8->11,
+  Leung_DFCFC2 5->8, NO design regressed; cost 1.2-3x, Qu_LEC pays 30x for
+  a 1ns edge). Qu2017_AZC = NGSPICE-side anomaly (ng 0s, engine 0/0),
+  campaign item. Remaining misses = slew-edge metrics on never-validated
+  designs. Table in RESULTS_TSMC.md.
+
+## SESSION COMPLETE (2026-08-11 evening)
+Commits: cd4a106 (AC full stamp + L3 gate), 6b92f1a (refine mode),
+67930f9 (trap method), 58d01a4 (restart scale), da6d2c3 + final (docs).
+Both V7.5.1 follow-ups closed; all gates green; pilot fully green with
+cp 5/6 stride-independent (up_imin 4.7%, integrator-policy axis remains,
+charge-state LTE is the recorded faithful next step).
