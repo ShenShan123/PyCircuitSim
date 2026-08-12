@@ -1368,6 +1368,10 @@ def _verdict(out: Dict[str, Any]) -> Dict[str, Any]:
     op = out.get("op_delta") or {}
     return {
         "ran": out["pycircuitsim"]["error"] is None,
+        # V7.5.3 — a total NGSPICE failure used to read as ran=True,
+        # engine_ok=True (vacuously), 0/0: a row where the REFERENCE
+        # produced nothing was not counted as a failure anywhere.
+        "ng_ran": out["ngspice"]["error"] is None,
         "measured": measured, "agree": agree,
         "missing_py": missing_py, "extra_py": extra_py,
         "engine_measured": eng_measured, "engine_agree": eng_agree,
@@ -1398,8 +1402,48 @@ def compare_deck(design_dir: Path, deck: str, *, tech: str, category: str,
     td = translate.translate_deck(design_dir, deck, tech=tech,
                                   category=category, control=control)
     if recovery:
-        return compare_with_recovery(td, work, opts, rtol=rtol)
-    return compare_translated(td, work, opts, rtol=rtol)
+        row = compare_with_recovery(td, work, opts, rtol=rtol)
+    else:
+        row = compare_translated(td, work, opts, rtol=rtol)
+    return _with_altns_fallback(row, td, work, opts, rtol)
+
+
+def _with_altns_fallback(row: Dict[str, Any], td: TranslatedDeck, work: Path,
+                         opts: SimOptions, rtol: float) -> Dict[str, Any]:
+    """Score the alternate-nodeset twin when NGSPICE produced nothing.
+
+    Four of the 85 amplifier ``tb_tran.cir`` decks (V7.5.3 sweep: tsmc5
+    Qu2017_AZC, tsmc6+tsmc7 Yan_AZ, tsmc16 Leung_DFCFC2) fail NGSPICE's
+    transient-op homotopies from the PRIMARY ``.nodeset`` seed — a Newton
+    basin artifact, not a deck defect: the shipped seed sits 0.6 mV from the
+    true operating point and still fails, while PyCircuitSim solves both
+    seeds (metrics agree to 1.7e-7). The corpus ships ``tb_tran_altns.cir``
+    for exactly this and the reference runner falls back to it
+    (``finalize.py``), so its committed evidence came from the altns seed;
+    :func:`translate.altns_deck` existed but was never wired in. The
+    returned row keeps the primary deck's name (aggregation keys on it);
+    ``notes`` and ``altns`` record which seed actually produced it, and the
+    failed primary row is carried, never discarded.
+    """
+    if row["ngspice"]["error"] is None:
+        return row
+    alt = translate.altns_deck(td)
+    if alt is None:
+        return row
+    alt_row = compare_translated(alt, work, opts, rtol=rtol)
+    if alt_row["ngspice"]["error"] is not None:
+        row["notes"].append(
+            "ngspice failed on BOTH nodeset seeds "
+            f"(altns: {alt_row['ngspice']['error']})")
+        return row
+    alt_row["notes"].append(
+        f"primary .nodeset seed failed in NGSPICE "
+        f"({row['ngspice']['error']}); scored the tb_tran_altns.cir twin, "
+        f"as the reference runner does")
+    alt_row["altns"] = {"used": True, "deck": alt.deck,
+                        "reason": row["ngspice"]["error"], "primary": row}
+    alt_row["deck"] = td.deck
+    return alt_row
 
 
 def write_result(row: Dict[str, Any], out_dir: Path) -> Path:
@@ -1566,7 +1610,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 continue
             _print_row(row)
             write_result(row, out_dir)
-            if not row["verdict"]["ran"]:
+            if not row["verdict"]["ran"] or not row["verdict"]["ng_ran"]:
                 failures += 1
     return 1 if failures else 0
 
