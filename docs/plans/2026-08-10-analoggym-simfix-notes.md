@@ -5,7 +5,34 @@ pass gate, metrics match NGSPICE. Fix simulator (solver / parser / BSIM-CMG
 L72 path) — NN models parked. Then update CLAUDE.md, CHANGELOG.md, README.md.
 User: workflows allowed, max 5 agents.
 
-## Source of truth
+## CURRENT STATUS (2026-08-12) — read this first, the rest is history
+
+Two sprints complete on this branch: **V7.5.1** (2026-08-10/11) fixed the
+three root causes below (11 defects; CHANGELOG §V7.5.1); **V7.5.2**
+(2026-08-11) closed both follow-ups it left open (AC full 4-terminal stamp,
+LTE output refinement; CHANGELOG §V7.5.2). Last commit ae277b2; working
+tree clean; all repo gates green (ledger under "Final state (V7.5.2)").
+
+Pilot deck status NOW (details + caveats in RESULTS_TSMC.md):
+
+| deck | was (2026-08-10) | now |
+|---|---|---|
+| amplifier tb_gain | 8/8 | **8/8**, dcgain rel 1.5e-07 (250x tighter) |
+| ldo tb_load | 11/11 | **11/11**, 5.2s (was 678s) |
+| ldo tb_loop_max | 8/8 | **8/8**, GBW rel 7.4e-06 (200x tighter) |
+| amplifier tb_tran | 2/6 | **11/11** flags-off |
+| ptat_1 tb_dc | 5/13 | **13/13**, 0 mono violations |
+| amplifier tb_dc | 0/15 | **15/15** (fork recovery) |
+| chargepump tb_tran | dead | **5/6** stride-independent (refine+trap); up_imin at 4.7% |
+
+Everything still open is in "OPEN ISSUES at close (2026-08-12)" at the end
+of this file: charge-state LTE for the last cp metric, pilot→campaign
+expansion (refine promotion needs a re-gate), three deck-level anomalies,
+and the out-of-charter NN opamp gates.
+
+---
+
+## Source of truth (original 2026-08-10 problem statement — all three FIXED in V7.5.1)
 `examples/analoggym/RESULTS_TSMC.md` §"PyCircuitSim versus NGSPICE" — 7-deck
 TSMC5 pilot. Three root causes recorded there:
 
@@ -25,7 +52,8 @@ TSMC5 pilot. Three root causes recorded there:
    rail, OSDI rejects point. Need damped fetlim/limvds-style limiting for L72
    in solver NR loop (NOT hard clamp — kills derivative).
 
-## Key files
+## Key files (2026-08-10 survey — line numbers and defect notes are
+## historical; the abs(gds) and tol defects below are fixed)
 - `pycircuitsim/solver.py` (3457 lines) — MNA+NR, dv_limit, retry ladder.
 - `pycircuitsim/models/mosfet_cmg.py` (442) — L72 wrapper; `_eval_dc` cache;
   NOTE line 288: `g_ds = abs(g_ds)` (contradicts CLAUDE.md rule "never abs")..
@@ -39,7 +67,7 @@ TSMC5 pilot. Three root causes recorded there:
   `worst_abs` (was `worst` = always None, silently disabled recovery), narrow
   segment forced stride=1.
 
-## Pilot deck status (from RESULTS_TSMC.md)
+## Pilot deck status (ORIGINAL 2026-08-10 baseline — current table is at top)
 | deck | agree | note |
 |---|---|---|
 | amplifier tb_gain | 8/8 | OK |
@@ -60,7 +88,7 @@ TSMC5 pilot. Three root causes recorded there:
 - [x] Task 1: root cause = PyCMG internal-solve tol 1e-9 A abs (model.py); NGSPICE ABSTOL=1e-12.
 - [x] Task 2: default tol -> 1e-12 (committed 544e9f4). ptat_1 5/13 -> 9/13 @stride10
       (rest = stride artifacts + hot-end flags 115/120C, recheck full stride).
-- [~] Task 3 (in progress), findings chain:
+- [x] Task 3 (DONE in V7.5.1 — kept as findings chain):
       1. Added fetlim/limvds pair-space limiting + eval about limited point in
          _stamp_mosfet_dc (limit kwarg; probes pass limit=False), _nr_limited
          convergence gates in DC+tran loops + both oscillation-acceptance paths,
@@ -80,7 +108,7 @@ TSMC5 pilot. Three root causes recorded there:
          cap v_prev/v_prev2/_i_prev + mosfet _q_prev/_q_prev2/_v_prev_tran/
          _i_prev_gate/_i_prev_drain on failure). n=0 path byte-identical.
       5. Diagnostic added: PYCIRCUITSIM_NR_TRACE=1 traces transient NR.
-- [~] Task 4 (in progress) — full failure chain unwound:
+- [x] Task 4 (DONE in V7.5.1) — full failure chain unwound:
       a. Eval RuntimeErrors at 125C: internal-solve tol 1e-12 ABS unreachable in
          float64 when junction currents ~1e2 A (542A forward d-b diode at 2.5V/
          125C, pch_svt_mac l26 nfin2). FIXED: voltage-delta acceptance in
@@ -202,12 +230,13 @@ All 6 tasks done. Final commits: 544e9f4, 718b1b0, c96dd09, 48df5e9,
 Monitor bbi2mpkui stopped. Pilot: 6 decks fully agreeing + charge pump 5/6
 with the integration-sensitivity footnote. All repo gates green except the
 pre-existing (base-reproduced) NN opamp/opamp_ac 0/5 — out of scope.
-- [ ] Task 5: re-run 7 pilot decks + repo gates (incl. verify_bsimcmg_tran, ac,
-      subckt, complex x4; L72 numbers all perturbed by tol+src-ref changes —
-      expected within gate tolerances, sha256 sweep baselines may need rebase)
-- [ ] Task 6: docs
+- [x] Task 5: re-run 7 pilot decks + repo gates — DONE (see "FINAL STATE"
+      above and the V7.5.2 re-gate ledger below; sha256 sweep baselines did
+      NOT need a rebase — canaries pass).
+- [x] Task 6: docs — DONE (5c18101 for V7.5.1; da6d2c3/58b854f for V7.5.2).
 
-## Uncommitted so far (beyond 544e9f4)
+## Uncommitted so far (HISTORICAL snapshot mid-V7.5.1 — everything below
+## was committed in c96dd09..5c18101; working tree is clean as of ae277b2)
 - mosfet_cmg.py: limiter (+fetlim/limvds/reset/retreat), src-ref eval, err context
 - solver.py: limit kwarg plumbing, convergence gates, resets, NR_TRACE, (ladder WIP)
 
