@@ -276,3 +276,37 @@ Commits: cd4a106 (AC full stamp + L3 gate), 6b92f1a (refine mode),
 Both V7.5.1 follow-ups closed; all gates green; pilot fully green with
 cp 5/6 stride-independent (up_imin 4.7%, integrator-policy axis remains,
 charge-state LTE is the recorded faithful next step).
+
+## OPEN ISSUES at close (2026-08-12), in decreasing substance
+
+1. **cp `up_imin` at 4.7% (gate needs <=2%)** — the one pilot metric still
+   missing. Spike captured (right sign/width); remainder is integrator-
+   POLICY sensitivity (which accepted-step pattern marches the 10 ps
+   spike). Faithful fix: NGSPICE-style truncation control on PER-DEVICE
+   CHARGE states — needs 4-deep q histories per device (now 2-deep).
+   Both shortcuts are measured dead ends (CHANGELOG §V7.5.2 item 6):
+   hold window -> -5.70u over-ring; branch-current LTE -> dt-independent
+   NR-noise thrash. Well-scoped, moderate effort; only matters if 6/6
+   must close.
+2. **795-deck corpus is still a pilot, not a campaign.** Scored so far:
+   7 pilot decks + the 17-design amplifier tb_tran sweep. That sweep
+   previews campaign findings: 10/17 designs still miss slew-edge
+   metrics WITH refine (never-validated designs; mix of measurement-
+   definition gaps and genuine residuals — undiagnosed per-design).
+   Also: refine is opt-in per-run (PYCIRCUITSIM_BENCH_TRAN_REFINE=1);
+   promoting it default-on requires a full re-gate under the perf
+   discipline.
+3. **Deck-level anomalies (campaign items, not solver gaps):**
+   - Qu2017_AZC: NGSPICE's OWN run returns no data (ng 0s, engine 0/0)
+     — inspect the deck, not the simulator.
+   - ldo tb_load `lr`/`lr_pp`: pre-existing load-regulation measurement-
+     definition gap (1.6%); excluded from accuracy evidence until
+     reconciled (RESULTS_TSMC.md footnote).
+   - Qu_LEC: 30x runtime under refine for a 1 ns edge (63s -> 1872s) —
+     correct but a perf sore spot if the campaign runs refine-on.
+4. **Pre-existing, out of charter:** NN-side verify_complex_opamp{,_ac}
+   0/5, reproduced bit-identically at base BEFORE this work — NN-model
+   gap, not solver (NN parked for this task).
+
+Suggested order: charge-state LTE (closes pilot to 6/6), then scripted
+category-by-category campaign expansion mirroring the amplifier sweep.
