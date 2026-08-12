@@ -140,6 +140,43 @@ nn_dc_tran 30/30, nn_ac 10/10, lifted_source 15/15).
    binds at FinFET scales, up_imin unchanged; CHGTOL=1e-17 — binds but
    stops at 2.06 % against the 2 % gate. Neither reverted so much as
    walked through; 1e-18 shipped.
+10. **The LDO refine grind, diagnosed — and 67 % of every L72 transient
+    recovered** (`59aadb7`). Instrumented on Basic_LDO (0–8 µs: 6,126
+    solves, 2,100 rejects, median piece 1.1 ns): the slowdown is two
+    independent multipliers. (a) *Per-solve cost, unrelated to refine*:
+    PyCMG `_read_opvar` linearly scanned 942 OSDI descriptor entries
+    with a UTF-8 decode per candidate on every read — 169 µs/read ×
+    8 reads/eval = **67 % of total wall on every L72 transient,
+    flags-off included**. Fixed: the (name, alias)→index map is now
+    memoized per Model (bit-identical by sha256 over all solved
+    waveforms; inverter probe 1.08 s → 0.38 s; charge pump stride-100
+    refine 417 s → **94 s** with float-identical metrics, on a loaded
+    box). (b) *A stable ~1 ns
+    equilibrium in the refine step controller*: the 0.9·r^(−1/3)
+    shrink/grow laws assume the LTE ratio falls as h³, but measured
+    within reject sequences it falls as h^1.05 — the voltage-LTE
+    estimator is noise-limited (once all history spacings equal h, a
+    noise floor ε gives DD3 ≈ ε/6h³ and an h-INDEPENDENT error
+    estimate ε/12; the binding node moves 6× less per piece than the
+    tolerance the piece was solved to), and the charge test improves
+    only as h¹ through its /h loosener. So rejects shrink too little
+    (r=1.5 → r=1.13, 3–7 reject sequences routine), growth clamps at
+    1.0 for 32 % of accepted pieces, and the march parks at ~1 ns for
+    the remaining 42 µs. NOT charge-test-specific: charge test off =
+    only 1.6× cheaper; the voltage plateau carries the rest. NGSPICE
+    marches the same deck in 4,141 steps at median 7.2 ns — refine
+    takes ~10× the steps at 6.5× smaller median. Recorded fix path
+    (not yet implemented, needs a charge-pump re-gate): match the
+    controller exponent to the measured local order (secant on the
+    last two (h, r) samples), and disarm both LTE tests on states
+    whose per-piece move is below the tolerance the solve resolved
+    (preserves the charge pump exactly — its spike moves charge
+    orders of magnitude above RELTOL·|q|). Raising CHGTOL is NOT the
+    fix (1.4×, forfeits the 6/6). Also measured: refine's accuracy
+    gain on this deck is march accuracy, not output density (+0.61 mV
+    of the recovered undershoot vs +0.28 mV), and fixed-dt is not a
+    safe substitute — its error is non-monotone in dt under BDF-2
+    (dt=20 ns reads WORSE than 80 ns).
 
 ---
 

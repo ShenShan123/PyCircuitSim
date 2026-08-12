@@ -77,7 +77,8 @@ every configuration (BDF-2 damped it to **+3.2 µA — sign flipped**; fixed
 2 ps trapezoid over-rang it 2× to −8.4 µA; NGSPICE's LTE-adaptive trapezoid
 reads −4.031 µA). V7.5.2 refinement captured it at −3.84 µA (4.7 %);
 V7.5.3's per-device charge-state LTE closes it: **−3.97 µA, 1.49 % at
-stride 100 (417 s) and 1.84 % at stride 20 (670 s)** — inside the 2 % gate
+stride 100 (94 s after the V7.5.3 PyCMG opvar memoization; 417 s before)
+and 1.84 % at stride 20 (670 s pre-memoization)** — inside the 2 % gate
 at both strides, the other five metrics at 4e-6…1.2e-3. The charge test is
 NGSPICE's CKTterr shape with two measured deviations (CHANGELOG §V7.5.3
 item 1): CHGTOL=1e-18 C — the stock 1e-14 floor sits 100× above a FinFET
@@ -165,8 +166,15 @@ Open findings the campaign surfaced (the point of running it):
   solver only holds approximately. Open.
 * **`Basic_LDO/tb_tran` refine cost** — 2684 s against 28 s flags-off
   (96×), for a **5/5** verdict that captures the 3 mV load-step overshoot
-  flags-off reads as exactly zero. A refine-mode step-control pathology
-  (under diagnosis), not a fidelity gap.
+  flags-off reads as exactly zero (and the gain is march accuracy, not
+  output density: +0.61 mV of the recovered undershoot vs +0.28 mV).
+  Diagnosed (CHANGELOG §V7.5.3 item 10): 67 % of the wall was a PyCMG
+  descriptor-scan tax on every L72 transient — fixed bit-identically in
+  V7.5.3 (~3×) — and the rest is a stable ~1 ns equilibrium in the
+  refine step controller (its shrink/grow laws assume the LTE ratio
+  falls as h³; measured h^1.05 because the estimator is noise-limited
+  at these step sizes). Controller fix path recorded; needs a
+  charge-pump re-gate before it ships.
 
 Representative agreements where the two simulators do match:
 

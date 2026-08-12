@@ -332,11 +332,16 @@ reconciled). What the campaign surfaced in their place:
    flagged non-converged (values kept), worst node 8 mV at the COLD end,
    vout0 off 7%. Successor to the closed subthreshold-floor class: a cold
    sensor OP the solver only holds approximately. Solver item.
-2. **Refine-mode runtime pathology on LDO load-step decks** — Basic_LDO
-   2684 s vs 28 s flags-off (96x) for a 5/5 verdict (captures the 3 mV
-   overshoot flags-off reads as 0); ldo_2 3006 s; Qu_LEC blows the 1 h
-   budget (V7.5.2 refine: 1872 s). Diagnosis was delegated (agent report:
-   see below if appended) — step-control pathology, not fidelity. Fix
+2. **Refine-mode runtime pathology on LDO load-step decks — DIAGNOSED**
+   (CHANGELOG §V7.5.3 item 10). Two multipliers: (a) PyCMG _read_opvar
+   descriptor scan = 67% of ALL L72 transient wall — FIXED (59aadb7,
+   bit-identical, ~3x); (b) the refine step controller has a stable
+   ~1 ns equilibrium: shrink/grow assume r~h^3 but measured r~h^1.05
+   (voltage-LTE is noise-limited: DD3 of NR slop is h-independent;
+   charge test improves only h^1 via its /h loosener). Fix path
+   recorded, NOT yet implemented (needs cp re-gate): secant-matched
+   controller exponent + disarm LTE on states moving below the solved
+   tolerance. NOT the fix: raising CHGTOL (forfeits cp 6/6). Do this
    before campaign-wide refine-on runs.
 3. **ldo_2 disagrees on BOTH benches** — tb_load lr on a ~110 uV-flat
    replica-regulated curve (py 16x flatter); tb_tran excursions 11-57%.
