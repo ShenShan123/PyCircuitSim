@@ -73,12 +73,20 @@ under another tech. `PYCMG_DIR` moves `parents[4]`→`[3]`; `pipeline.sh` no
 longer `cd`s to its own parent (that parent is now the tree-of-trees).
 
 **Three decks eliminated as measured-redundant** (CPU-pinned, 1 thread):
-`bsimar_inverter_dc.sp` at 47.6 s was half the hand-written basket's entire
-runtime, and L74 stays covered by `bsimar_nmos_dc.sp` (11.3 s) while the
-inverter stays covered at `.dc` by L72 and L73; `directnet_nmos_op.sp` (2.2 s)
-and the old `bsimcmg_inverter_op.sp` (2.1 s) were the same family AND topology
-as the `.dc` deck beside each, which solves an OP per sweep point. Basket
-runtime ~-55 %.
+`bsimar_inverter_dc.sp` (47.6 s), `directnet_nmos_op.sp` (2.2 s) and the old
+`bsimcmg_inverter_op.sp` (2.1 s). L74 stays covered by `bsimar_nmos_dc.sp`
+(9 s) and the inverter stays covered at `.dc` by L72 and L73; the two OP decks
+were the same family AND topology as the `.dc` deck beside each, which solves
+an OP per sweep point.
+
+That is **51.9 s off a 385 s basket — about 13 %**, not the ~55 % first
+recorded here. The 55 % was 51.9/94.3 against only the thirteen cheap decks
+that fit in one measurement window; it excluded the four expensive complex
+decks, which is where the time actually is. Measured properly afterwards, all
+16 surviving decks run clean in 338 s total and **`directnet_ring_osc_tran.sp`
+alone is 219 s of it — 65 %**. Eliminating decks is not where this basket's
+cost lives; the ring oscillator's 5 ns / 1 ps NN march is. Anyone optimizing
+example-suite runtime should start there and ignore everything else.
 
 **Docs condensed to their stated roles.** CLAUDE.md 525→~390 lines: the
 V7.5.0–V7.5.6 per-version narratives were deleted outright — every one has a
