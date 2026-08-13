@@ -1,0 +1,9 @@
+* tsmc16 runner (tb_tran)
+.control
+set noaskquit
+set num_threads=1
+osdi /data2/home/shenshan/PyCircuitSim/.claude/worktrees/analoggym-migration/external_compact_models/PyCMG/build/osdi/bsimcmg.osdi
+source /data2/home/shenshan/PyCircuitSim/.claude/worktrees/analoggym-migration/examples/complex_circuits/designs_tsmc12/charge_pump/chargepump/tb_tran.cir
+tran 2p 200n
+.endc
+.end

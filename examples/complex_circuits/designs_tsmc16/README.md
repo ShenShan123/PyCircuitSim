@@ -18,16 +18,16 @@ designs_tsmc16/
   sensing_front_end/<design>/  netlist.spice  tb_dc.cir
   voltage_reference/<design>/  netlist.spice  tb_dc.cir
   charge_pump/chargepump/      netlist.spice  tb_tran.cir
-  run_all.py                   runs everything, writes results/summary.csv
+  ../run_all.py                runs everything, writes results/summary.csv
   RESULTS.md                   the numbers
 ```
 
 ## Running
 
 ```sh
-python3 run_all.py                    # everything
-python3 run_all.py amplifier ldo      # selected categories
-NGSPICE=/path/to/ngspice python3 run_all.py
+python3 ../run_all.py                 # everything
+python3 ../run_all.py amplifier ldo   # selected categories
+NGSPICE=/path/to/ngspice python3 ../run_all.py
 ```
 
 Requirements: **ngspice 45.2+** (needs OSDI) and the OSDI binary at
@@ -206,8 +206,7 @@ trees `../designs_tsmc5`, `../designs_tsmc6`, `../designs_tsmc7` and
 
 ```sh
 rsync -a --exclude __pycache__ tools ../designs_<tech>/
-cp run_all.py ../designs_<tech>/
-cd ../designs_<tech> && sh tools/pipeline.sh
+cd ../designs_<tech> && sh ../tools/pipeline.sh
 ```
 
 The pipeline ports this tree's design vectors (`tools/port_tech.py`: sizes

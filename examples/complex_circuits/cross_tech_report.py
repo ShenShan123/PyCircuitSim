@@ -3,7 +3,7 @@
 
 One row per design, one column per tech, showing gates passed; plus per-tech
 coverage and headline-metric tables.  Run from the repository root after the
-per-tech pipelines (tools/pipeline.sh in each tree) have finished.
+per-tech pipelines (`sh ../tools/pipeline.sh` in each tree) have finished.
 
 CAUTION: this OVERWRITES RESULTS_TSMC.md in full, and that file now carries
 hand-written sections this script cannot regenerate (the V7.5.6 basket

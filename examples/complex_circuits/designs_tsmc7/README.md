@@ -18,15 +18,19 @@ AnalogGym's circuits on **TSMC7 at 0.75 V**, produced from the TSMC16 tree
    one only when its full-bench score improves.
 
 The tech is auto-detected from this directory's name (`designs_tsmc7`);
-the same `tools/` source runs unchanged in every per-tech tree.
+one shared `../tools/` source serves every per-tech tree.
 
 ## Running
 
 ```sh
-python3 run_all.py                    # every design, writes results/summary.csv
-python3 run_all.py amplifier ldo      # selected categories
-sh tools/pipeline.sh                  # regenerate this tree from designs_tsmc16
+python3 ../run_all.py                 # every design, writes results/summary.csv
+python3 ../run_all.py amplifier ldo   # selected categories
+sh ../tools/pipeline.sh               # regenerate this tree from designs_tsmc16
 ```
+
+Run these from inside this directory — one shared `../tools/` serves all five
+techs since V7.5.8, so the working directory is what selects the tech (or set
+`AG_TECH=tsmc5` and run from anywhere).
 
 Requirements: **ngspice 45.2+** (OSDI) and the BSIM-CMG OSDI binary from
 `PyCircuitSim/external_compact_models/PyCMG` (override with `PYCMG_DIR`).

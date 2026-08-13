@@ -148,6 +148,6 @@ plus a decision about the campaign stride policy; nothing here requires it.
   `PYCIRCUITSIM_BENCH_DUMP_WAVE=<path>.npz` — py transient axes from
   run_compare. The bench can pin `PYCIRCUITSIM_BENCH_TRAN_TMAX=1` to apply
   the tmax rule from the native tstep.
-- When probing NGSPICE by hand, go through `designs_tsmc5/tools/meas.run_deck`
+- When probing NGSPICE by hand, go through `tools/meas.run_deck`
   (it preloads the OSDI binary and pins `num_threads=1`); a bare
   `ngspice -b` run rejects every `.model ... bsimcmg` card.

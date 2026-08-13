@@ -10,7 +10,7 @@ each other:
     ``measure`` over PyCircuitSim's own solve.
 ``ng``
     ``measure`` over NGSPICE's solve, read back from an ASCII rawfile dumped by
-    the reference runner (``designs_tsmc5/tools/meas.run_deck``).
+    the reference runner (``tools/meas.run_deck``).
 ``ng_meas``
     NGSPICE's OWN ``.meas`` values from the same run.
 
@@ -139,7 +139,7 @@ REPO_ROOT: Path = BENCH_ROOT.parents[1]
 #: the OSDI path, which is resolved from the repo root.  Importing it (rather
 #: than reimplementing ``ngspice -b`` invocation) is deliberate: the ``ng``
 #: column has to come from the same code path the scored artifacts came from.
-_TOOLS_DIR: Path = BENCH_ROOT / "designs_tsmc5" / "tools"
+_TOOLS_DIR: Path = BENCH_ROOT / "tools"
 
 for _p in (str(REPO_ROOT), str(BENCH_ROOT), str(_TOOLS_DIR.parent), str(_TOOLS_DIR)):
     if _p not in sys.path:

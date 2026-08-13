@@ -177,7 +177,7 @@ MetricDict = Dict[str, Optional[float]]
 
 
 #: Analysis control per (category, deck), verbatim from
-#: ``designs_tsmc5/tools/finalize.py`` CONTROLS. ``None`` means the control is
+#: ``tools/finalize.py`` CONTROLS. ``None`` means the control is
 #: computed per design (LDO sweep limits from ``design.json``, the amplifier
 #: transient step from the design's target GBW).
 CONTROLS: Dict[str, Dict[str, Optional[str]]] = {
