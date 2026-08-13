@@ -2,10 +2,16 @@
 
 The V7.5.x pilot scored 7 hand-picked decks; this module is the scripted
 category-by-category expansion (open issue #2 of the 2026-08-10 notes). It
-enumerates the same corpus ``run_compare`` sees (159 decks per tech: 89 AC,
-32 dc_temp, 15 dc_source, 23 transient), applies the pilot's per-deck stride
-policy, fans the decks out over N worker subprocesses, and aggregates the
-per-deck JSON rows into one summary table.
+enumerates the same corpus ``run_compare`` sees (**75 decks per tech since
+the V7.5.6 curation**: 41 AC, 14 dc_temp, 9 dc_source, 11 transient; the
+pre-V7.5.6 corpus was 159 = 89/32/15/23), applies the pilot's per-deck
+stride policy, fans the decks out over N worker subprocesses, and aggregates
+the per-deck JSON rows into one summary table.
+
+The basket is the tree: there is no selection flag here, because V7.5.6
+removed the redundant designs from ``designs_tsmc*/`` outright. What is in
+the basket, and why each survivor is there, is RESULTS_TSMC.md §"The curated
+core basket".
 
 One deck = one ``run_compare`` subprocess (crash isolation: a diverging deck
 cannot take the campaign down) with its own work directory (two decks of the

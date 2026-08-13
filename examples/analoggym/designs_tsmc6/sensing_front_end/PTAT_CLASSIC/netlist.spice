@@ -1,9 +1,0 @@
-* PTAT_CLASSIC -- AnalogGym sensing front end on TSMC6 BSIM-CMG
-* Topology is the shipped one; geometry is re-designed for 0.75 V.
-.subckt PTAT_CLASSIC VDDA vsense GNDA
-Nm0 vsense net1 net12 net12 nsvt_l180_f4 m=16
-Nm1 net1 net1 gnda gnda nsvt_l180_f4 m=16
-Nm3 vsense vsense VDDA VDDA psvt_l90_f20 m=16
-Nm4 net1 vsense VDDA VDDA psvt_l90_f20 m=64
-r0 net12 gnda 1000
-.ends PTAT_CLASSIC

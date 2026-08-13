@@ -33,7 +33,10 @@ from pycmg_lib import (L_CHOICES_LONG, L_MAX_NM, MODELS_FILE, TECH, VT_FLAVORS,
 ROOT = Path(__file__).resolve().parents[1]
 SKY = ROOT.parent / "designs" / "voltage_reference"
 
-PORTABLE = ["dual_output_subthreshold_vref", "three_output_vref"]
+# V7.5.6: three_output_vref removed from the basket (its MOS core is
+# byte-identical to the dual-output core; the third output was an ideal
+# 1e18-ohm divider onto a node never qualified for load drive).
+PORTABLE = ["dual_output_subthreshold_vref"]
 BLOCKED = {"bandgap_vref": "needs an NPN (vnpn_0p54x2_sm062)",
            "subthreshold_vref": "needs a PNP (pbhvnwpsub2_ga)"}
 

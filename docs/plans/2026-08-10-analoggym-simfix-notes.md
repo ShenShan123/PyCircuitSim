@@ -123,7 +123,10 @@ plus a decision about the campaign stride policy; nothing here requires it.
   (679 decks, layouts differ: tsmc5 nests under `acdc/`, `tran/`, `pilot/`)
   **plus the V7.5.5 sweeps** `v755_campaign_tsmc{6,7,12,16}_tran/` (flags-off)
   and `v755_campaign_tsmc{5,6,7,12,16}_tran_refine/`. Copy them out before
-  any worktree cleanup.
+  any worktree cleanup. These are **pre-V7.5.6 full-corpus** records: 420 of
+  the 794 scored deck records they hold belong to designs the V7.5.6
+  curation removed, so they are the only surviving measurements of those
+  decks — and their denominators do not match a post-V7.5.6 run.
 - `run_compare.py --out` is a **directory**. Per-deck JSON carries `verdict`,
   `op_delta` and `notes`; `op_delta` (worst node vs NGSPICE) is the field to
   trust, not `_last_solve_converged` and not the metric columns alone — see

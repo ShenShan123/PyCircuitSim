@@ -189,6 +189,27 @@ dumps a per-piece march trace. The ldo_2/Basic_LDO residual misses are
 characterized reference-tolerance artifacts (NGSPICE's own reltol ladder
 brackets our values) — see RESULTS_TSMC.md §V7.5.5 before quoting them.
 
+**V7.5.6 curated the corpus itself.** `examples/analoggym/designs_tsmc*/`
+now ships **18 designs / 75 scored decks per tech** (was 38 / 159): 7
+amplifiers, 3 LDOs, 6 sensors, 1 voltage reference, the charge pump —
+90 design instances and 375 scored decks across five techs, **3.35 CPU-h
+instead of 5.32**. Removed on measured evidence (CHANGELOG §V7.5.6): two
+byte-identical duplicates (`ptat_6`≡`ptat_2`; `three_output_vref`'s MOS core
+≡ `dual_output_subthreshold_vref`, the derived unqualified output dropped
+and its generator `derive_three_vref.py` with it), six 2-to-4-MOSFET sensor
+stacks, two LDOs, and 10 of 17 identically-benched three-stage amplifiers.
+**The basket IS the tree** — no selection flag; `campaign.corpus()`
+enumerates whatever `designs_tsmc*/` holds. Retained by construction: all
+three analysis types, all 18 metric classes, 29/31 ever-missing metric
+names, the full NFIN vocabulary and all three Vt flavors (L bins 33/45).
+**`designs_tsmc6` was deliberately NOT pruned** despite being an exact L72
+simulation duplicate of tsmc7 (159/159 identical verdicts) — the two techs
+have separately trained NN checkpoints, so it is the training-run-variance
+control on the NN axis. Two traps: **pre-V7.5.6 numbers (`/159`, `/679`,
+`/795`, 38/38, 17/17, 13/13) are not comparable to post-V7.5.6 runs**, and
+`cross_tech_report.py` **overwrites RESULTS_TSMC.md wholesale**, destroying
+its hand-written sections — splice its tables in, do not run it blind.
+
 ## Supported Features
 
 Devices (R, C, V/I sources, PULSE, NMOS/PMOS L72–75, `X` subckt instances),

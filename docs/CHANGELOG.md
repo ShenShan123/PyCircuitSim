@@ -8,6 +8,83 @@ pruned; the full original text lives in git history.)
 
 ---
 
+## V7.5.6 — the AnalogGym corpus curated to a core basket (branch `feat/analoggym-migration`, 2026-08-12)
+
+**Goal: make the evaluation corpus fast enough to run routinely without
+losing what it measures.** The corpus was built (V7.5.0) to *audit AnalogGym
+designs* and it finished that job — 38/38 on every tech. As an *accuracy
+benchmark for compact models*, which is what it is now used for, it was
+degenerate. Pruned **38 designs / 159 scored decks per tech → 18 / 75**
+(190 → 90 design instances, 795 → 375 scored decks, 880 → 410 deck files).
+
+**Measured, not estimated.** Every claim below comes from the on-disk
+campaign JSONs in `pycircuitsim_bench_results/` (794 scored deck records
+across 14 campaign dirs), with the four pre-V7.5.4 `front_end_25_6T` records
+(1742–3042 s each) corrected to that deck's documented post-fix 3.2 s so the
+saving is not inflated by a bug that is already gone.
+
+* **Cost: 5.32 → 3.35 CPU-h (37 %) for a 53 % deck cut.** The gap is
+  deliberate — the pruning kept the expensive discriminating decks
+  (`Qu_LEC` at 627 s, the charge pump, both hard LDOs) and dropped cheap
+  saturated ones. The dominant remaining lever is stride policy, not deck
+  count.
+* **Two literal duplicates found and removed.** `ptat_6` is **byte-identical
+  to `ptat_2`** — netlist and bench differ only in the subckt name.
+  `three_output_vref`'s MOS core is **byte-identical to
+  `dual_output_subthreshold_vref`**; its third output is that core plus two
+  ideal 1e18 Ω resistors onto a node the audit itself records as "not
+  qualified for load drive". The derived design went, the qualified core
+  stayed, and the now-dead generator `derive_three_vref.py` went with it.
+* **Degenerate families thinned on evidence:** 17 → 7 amplifiers (all 17 are
+  three-stage Miller-class `Pin_3` designs on one identical 6-bench
+  structure — 48 % of corpus cost), 13 → 6 sensors (six were 2-to-4-MOSFET
+  self-biased stacks with a single DC bench and no unique device-space
+  cell), 5 → 3 LDOs.
+* **What is provably retained:** all three analysis types (AC 41 / DC 23 /
+  TRAN 11 decks per tech); **all 18 `(category, deck)` metric classes**;
+  **29 of the 31 metric names that have ever missed** (the two lost,
+  `lnrmin`/`lnr_ppmin` on `ldo_simple`, are the same flat-curve cancellation
+  class `lr`/`lr_pp` retain 6/6 elsewhere); the **complete NFIN vocabulary**
+  {1,2,3,4,5,6,7,8,10,12} and all three Vt flavors. L-bin coverage drops
+  33/45 — the 12 lost are single-instance bins inside the densely covered
+  amplifier mid-range.
+* **The tech axis was NOT pruned, and that was a real decision.**
+  `designs_tsmc6` is an exact simulation duplicate of `designs_tsmc7` under
+  LEVEL=72: identical netlists, modelcards differing only in TMI
+  layout-effect keys the Verilog-A never reads (memory + methodology §7
+  confirmed all 97 differing PDK keys are TMI), and 159/159 decks with
+  identical verdicts in the campaign records. Deleting it would have cut
+  another 0.70 CPU-h. It stays because the two techs carry **separately
+  trained NN checkpoints**, so on the NN accuracy axis — the axis this
+  corpus now serves — tsmc6 is the training-run-variance control, not a
+  duplicate.
+* **Verification:** `verify_tsmc_sizing.py` re-audits clean at the new size
+  (90/90 designs, 1,695 MOS, 779/779 sizing vectors, 612/612 model aliases,
+  0 problems); `campaign.corpus()` enumerates 75 decks on every tech; and a
+  one-deck-per-family re-run at stride 1 on tsmc5 reproduces every
+  pre-prune verdict exactly (`tb_gain` 8/8, `ldo_1/tb_load` 11/11,
+  `ptat_1/tb_dc` 13/13, vref `tb_dc` 12/12).
+
+**Denominator warning.** Every pre-V7.5.6 number in `RESULTS_TSMC.md` and in
+the V7.5.0–V7.5.5 entries below (`/159`, `/679`, `/795`, `650/679`, 38/38,
+17/17, 13/13) was measured on the full corpus and is kept as the historical
+record. None of them is comparable to a post-V7.5.6 run without rescaling.
+The amplifier medians table moved for the same reason — median over 7
+designs, not 17 — with no design's own numbers changing.
+
+**Not done (deliberate):** the legacy hand-written decks in `examples/*.sp`
+and `examples/complex/*.sp` were left alone. They are 17 tiny files with no
+measurable runtime, every one documented in README §Examples, several
+load-bearing as gate templates (`verify_complex_opamp.py` reads
+`miller_opamp_directnet.sp`), and the LEVEL 72/73/74 triplets among them
+(`{bsimcmg,nn,bsimar}_{nmos_dc,inverter_dc}.sp`) are the project's
+cross-family comparison axis, not redundancy. `rc_transient.sp` /
+`rc_lowpass_ac.sp` carry no transistor and so contribute nothing to NN
+evaluation, but they are the passive-only control that isolates a solver
+fault from a device-model fault — kept for that.
+
+---
+
 ## V7.5.5 — the refine controller rebuilt on dctran semantics; the 2026-08-10 open list closed (branch `feat/analoggym-migration`, 2026-08-12)
 
 **Goal: close open issues 1–4 of the session notes.** All four closed or

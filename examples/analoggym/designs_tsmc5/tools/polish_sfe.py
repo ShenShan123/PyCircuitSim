@@ -39,8 +39,7 @@ from sfe import (DC_CONTROL, DC_CONTROL_FAST, SfeDesign, SfeTargets, emit,
                  group_key, ports_roles, run_sfe_dc, sfe_report, sfe_score)
 from size_sfe import BAD, L_CHOICES, NFIN_CHOICES, ROOT, SKY, _unvec, _vec
 
-DEFAULT_NAMES = ["front_end_25_6T_schematic", "front_end_31_3T_schematic",
-                 "front_end_42_2_2015_REF_schematic"]
+DEFAULT_NAMES = ["front_end_25_6T_schematic"]
 from pycmg_lib import VT_FLAVORS as _TECH_VTS
 VT_FLAVORS = [v for v in ("svt", "lvt", "ulvt", "hvt") if v in _TECH_VTS]
 

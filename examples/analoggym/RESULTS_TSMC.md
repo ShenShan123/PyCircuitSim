@@ -1,12 +1,82 @@
 # AnalogGym across TSMC FinFET nodes
 
-This is a strict NGSPICE/PyCMG audit of every generated design. Topologies are checked against their source (or, for the derived three-output reference, its qualified two-output core), dimensions are constrained to each modelcard, and every available DC, AC, temperature, PSRR, line/load-regulation and transient gate is included. A result is fully passing only when every gate passes and the simulator reports no analysis error. `!` marks a partial result with one or more simulator/evaluator errors. Per-tree details: `designs_<tech>/RESULTS.md`.
+This is a strict NGSPICE/PyCMG audit of every generated design. Topologies are checked against their source, dimensions are constrained to each modelcard, and every available DC, AC, temperature, PSRR, line/load-regulation and transient gate is included. A result is fully passing only when every gate passes and the simulator reports no analysis error. `!` marks a partial result with one or more simulator/evaluator errors. Per-tree details: `designs_<tech>/RESULTS.md`.
 
 Since the migration into PyCircuitSim (`examples/analoggym/`, V7.5.0) this file
 carries **two** axes. The next section scores **PyCircuitSim against NGSPICE**
 on the identical BSIM-CMG (LEVEL=72) OSDI model. Everything after it is the
 original NGSPICE/PyCMG design audit, unchanged — that audit is the reference the
 comparison is measured against, not a second opinion about it.
+
+
+## The curated core basket (V7.5.6)
+
+The corpus was pruned from **38 designs / 159 scored decks per tech** to
+**18 / 75** — 90 design instances and 375 scored decks across the five techs,
+down from 190 and 795. Every deck below this line that quotes a `/159`,
+`/679` or `/795` denominator is a **pre-V7.5.6 measurement on the full
+corpus** and is kept as the historical record; do not compare it directly
+against a post-V7.5.6 run.
+
+Why prune: the corpus was built to audit *AnalogGym designs*, and it did that
+job (38/38 on every tech). As an *accuracy benchmark for compact models* it
+was heavily degenerate — 17 amplifiers of one topology class sharing one
+6-bench structure, seven 2-to-6-transistor sensor stacks sharing one DC
+bench, and two literal duplicates. Measured on the V7.5.4-corrected per-deck
+times from `pycircuitsim_bench_results/`, the full corpus costs **5.32 CPU-h**
+and the basket **3.35 CPU-h — a 37 % saving for a 53 % deck cut**, the gap
+being deliberate: the pruning kept the expensive hard decks and dropped the
+cheap saturated ones.
+
+What was removed, and the evidence for each:
+
+| removed | n | evidence |
+|---|:--:|---|
+| `ptat_6` | 1 | **byte-identical** to `ptat_2` — netlist and bench differ only in the subckt name |
+| `three_output_vref` | 1 | its MOS core is byte-identical to `dual_output_subthreshold_vref`; the third output is that core plus two ideal 1e18 Ω resistors onto a node the audit itself records as *"intentionally high impedance and not qualified for load drive"*. The qualified core is the one kept |
+| 6 sensor stacks | 6 | `PTAT_SENSOR` (2 MOS), `front_end_31_3T` (3), `PTAT_65_classic1`, `PTAT_CLASSIC`, `ptat_3`, `front_end_42_2_2015_REF` (4 each) — single DC bench, no unique L or NFIN bin, all subsumed by the 6-and-8-MOS sensors kept |
+| 2 LDOs | 2 | `ldo_simple` (6 MOS) and `ldo_folded_cascode` (10 MOS, L ⊂ `ldo_1`'s) |
+| 10 amplifiers | 10 | all 17 are three-stage Miller-class `Pin_3` designs on one 6-bench structure; the 7 kept span 24→37 MOS and five distinct numerical stress modes |
+
+The 7 amplifiers kept, each for a named reason:
+
+| design | MOS | why it is in the basket |
+|---|--:|---|
+| `Alfio_RAFFC_Pin_3` | 24 | the pilot/regression anchor quoted in every row below |
+| `Fan_SMC_Pin_3` | 24 | sole source of NFIN=7 and L=67; carries the one known AC miss (`tb_cmrr`, reference-side) |
+| `Leung_NMCNR_Pin_3` | 24 | slew-limited class-A — distinct slew physics, needed its bias raised to pass the slew gate |
+| `Qu2017_AZC_Pin_3` | 25 | the NGSPICE Newton-basin case; the only kept deck that exercises the `tb_tran_altns` fallback path |
+| `Peng_IAC_Pin_3` | 34 | 27 nodes; the AC-pathological design that forced the `pm_true` wrap-aware rework |
+| `Qu_LEC_Pin_3` | 30 | hardest known transient — a 1 ns edge with genuine 31 % `sr_fall` residual, 5/11 |
+| `Song_DACFC_Pin_3` | 37 | largest amplifier; the open multi-OP basin case (0.30–0.50 V OP split on tsmc6/7/12/16) |
+
+What the basket provably retains:
+
+* **All three analysis types**, per tech: AC 41 decks, DC 23 (14 dc_temp +
+  9 dc_source), transient 11.
+* **All 18 `(category, deck)` metric classes** — no measurement kind is lost.
+* **29 of the 31 metric names that have ever missed.** The two lost
+  (`lnrmin`, `lnr_ppmin`, both on `ldo_simple` at 2.6–2.8 %) belong to the
+  same flat-curve cancellation class that `lr`/`lr_pp` retain 6/6 on
+  `ldo_2` and `Basic_LDO`.
+* **The complete NFIN vocabulary** {1,2,3,4,5,6,7,8,10,12} and all three Vt
+  flavors. Channel-length coverage drops to **33 of 45 L bins**: the 12 lost
+  (12, 21, 30, 35, 40, 59, 75, 78, 86, 89, 96, 113 nm) were single-instance
+  bins inside the densely-covered amplifier mid-range, no gap wider than
+  ~10 nm.
+
+**The tech axis was not pruned.** `designs_tsmc6` is an exact simulation
+duplicate of `designs_tsmc7` for LEVEL=72 — identical netlists, modelcards
+differing only in TMI layout-effect keys the BSIM-CMG Verilog-A does not
+read, and 159/159 decks with identical verdicts — but the two techs have
+separately trained NN checkpoints, so on the NN accuracy axis tsmc6 is the
+training-run-variance control (`methodology.md` §7), not a duplicate. It
+stays.
+
+Post-prune health check (`--stride 1`, one deck per family, tsmc5): `tb_gain`
+8/8, `ldo_1/tb_load` 11/11, `ptat_1/tb_dc` 13/13,
+`dual_output_subthreshold_vref/tb_dc` 12/12 — every verdict identical to its
+pre-prune value.
 
 
 ## PyCircuitSim versus NGSPICE
@@ -17,10 +87,12 @@ solver work every deck's metrics agree. The 795-deck full corpus has **not**
 been run; the per-family verdicts below are single-deck evidence. Nothing here
 is a scoreboard number yet.
 
-Harness: `pycircuitsim_bench/` — `translate.py` (deck to PyCircuitSim netlist;
-all 880 decks translate, audited over 19,405 emitted device cards),
-`measure.py` (the `.meas` engine; all 5,145 cards in all five trees parse),
-`run_compare.py` (drives both simulators, writes per-deck JSON).
+Harness: `pycircuitsim_bench/` — `translate.py` (deck to PyCircuitSim netlist),
+`measure.py` (the `.meas` engine), `run_compare.py` (drives both simulators,
+writes per-deck JSON). Re-audited over the V7.5.6 basket: **all 410 deck
+files translate with zero failures**, over 9,530 emitted device cards, and
+all 2,280 `.meas` cards in all five trees parse. (Pre-V7.5.6 full corpus:
+880 decks, 19,405 device cards, 5,145 `.meas` cards.)
 
 The engine scores **both** simulators through one code path, so a reported
 difference cannot be a difference in measurement semantics. The control for that
@@ -373,17 +445,22 @@ untracked, on disk.
 
 ## Audit validation
 
+Re-run over the V7.5.6 basket (`verify_tsmc_sizing.py`, 0 problems):
+
 | check | result |
 |---|---:|
-| generated designs simulated | 190/190 |
-| source/qualified-core topology checks | 190/190 |
-| generated MOS instances checked | 3,240 |
-| sizing vectors inside modelcard envelopes | 1,417/1,417 |
-| referenced local PyCMG model aliases valid | 1,155/1,155 |
+| generated designs simulated | 90/90 |
+| source/qualified-core topology checks | 90/90 |
+| generated MOS instances checked | 1,695 |
+| sizing vectors inside modelcard envelopes | 779/779 |
+| referenced local PyCMG model aliases valid | 612/612 |
+
+The pre-V7.5.6 full corpus audited clean at the same rate: 190/190 designs,
+3,240 MOS, 1,417/1,417 vectors, 1,155/1,155 aliases.
 
 Topology checks cover MOS/passive connectivity, channel type, amplifier mirror
 ratios, the retained charge-pump hierarchy, the permitted `ldo_1` compensation
-network, and the derived reference core. Geometry checks cover L, NFIN,
+network, and the subthreshold reference core. Geometry checks cover L, NFIN,
 multiplicity, local model definition, and every model used by a generated MOS.
 
 ## Corrections made in this audit
@@ -465,12 +542,12 @@ temperature sweeps, not statistical mismatch or full foundry-corner signoff.
 
 | category | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
 |---|--:|--:|--:|--:|--:|
-| amplifier | 17/17 | 17/17 | 17/17 | 17/17 | 17/17 |
-| ldo | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 |
-| sensing_front_end | 13/13 | 13/13 | 13/13 | 13/13 | 13/13 |
-| voltage_reference | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 |
+| amplifier | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 |
+| ldo | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 |
+| sensing_front_end | 6/6 | 6/6 | 6/6 | 6/6 | 6/6 |
+| voltage_reference | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 |
 | charge_pump | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 |
-| **total** | **38/38** | **38/38** | **38/38** | **38/38** | **38/38** |
+| **total** | **18/18** | **18/18** | **18/18** | **18/18** | **18/18** |
 
 
 ## Gates passed, per design and tech
@@ -482,21 +559,11 @@ temperature sweeps, not statistical mismatch or full foundry-corner signoff.
 |---|:--:|:--:|:--:|:--:|:--:|
 | Alfio_RAFFC_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
 | Fan_SMC_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
-| HoiLee_AFFC_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
-| Leung_DFCFC1_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
-| Leung_DFCFC2_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
-| Leung_NMCF_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
 | Leung_NMCNR_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
-| Peng_ACBC_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
 | Peng_IAC_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
-| Peng_TCFC_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
 | Qu2017_AZC_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
 | Qu_LEC_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
-| Ramos_PFC_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
-| Sau_CFCC_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
 | Song_DACFC_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
-| Tan_CLIA_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
-| Yan_AZ_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
 
 
 ### ldo
@@ -506,27 +573,18 @@ temperature sweeps, not statistical mismatch or full foundry-corner signoff.
 | Basic_LDO | 9/9 | 9/9 | 9/9 | 9/9 | 9/9 |
 | ldo_1 | 9/9 | 9/9 | 9/9 | 9/9 | 9/9 |
 | ldo_2 | 9/9 | 9/9 | 9/9 | 9/9 | 9/9 |
-| ldo_folded_cascode | 9/9 | 9/9 | 9/9 | 9/9 | 9/9 |
-| ldo_simple | 9/9 | 9/9 | 9/9 | 9/9 | 9/9 |
 
 
 ### sensing_front_end
 
 | design | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
 |---|:--:|:--:|:--:|:--:|:--:|
-| PTAT_65_classic1 | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 |
-| PTAT_CLASSIC | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 |
-| PTAT_SENSOR | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 |
 | SMCNR_SE_2st_AMP | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 |
 | front_end_11_6T_schematic | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 |
 | front_end_25_6T_schematic | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 |
-| front_end_31_3T_schematic | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 |
-| front_end_42_2_2015_REF_schematic | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 |
 | ptat_1 | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 |
 | ptat_2 | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 |
-| ptat_3 | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 |
 | ptat_4 | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 |
-| ptat_6 | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 |
 
 
 ### voltage_reference
@@ -534,7 +592,6 @@ temperature sweeps, not statistical mismatch or full foundry-corner signoff.
 | design | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
 |---|:--:|:--:|:--:|:--:|:--:|
 | dual_output_subthreshold_vref | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 |
-| three_output_vref | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 |
 
 
 ### charge_pump
@@ -548,11 +605,15 @@ temperature sweeps, not statistical mismatch or full foundry-corner signoff.
 
 | tech | VDD | gain (dB) | GBW | power | PM (deg) |
 |---|--:|--:|--:|--:|--:|
-| TSMC5 | 0.65 V | 93.7 | 541 kHz | 15.4 uW | 56.9 |
-| TSMC6 | 0.75 V | 117.1 | 674 kHz | 20.9 uW | 68.0 |
-| TSMC7 | 0.75 V | 117.1 | 674 kHz | 20.9 uW | 68.0 |
-| TSMC12 | 0.80 V | 113.6 | 601 kHz | 13.1 uW | 57.5 |
-| TSMC16 | 0.80 V | 113.2 | 618 kHz | 21.8 uW | 61.0 |
+| TSMC5 | 0.65 V | 105.6 | 561 kHz | 15.3 uW | 69.8 |
+| TSMC6 | 0.75 V | 117.1 | 744 kHz | 20.6 uW | 68.2 |
+| TSMC7 | 0.75 V | 117.1 | 744 kHz | 20.6 uW | 68.2 |
+| TSMC12 | 0.80 V | 112.7 | 856 kHz | 21.8 uW | 82.9 |
+| TSMC16 | 0.80 V | 114.1 | 1.17 MHz | 21.8 uW | 59.3 |
+
+These are medians over the **7 basket amplifiers**, not the former 17, so
+they moved (TSMC5 93.7 → 105.6 dB, PM 56.9 → 69.8) purely by change of
+population. No design's own numbers changed.
 
 
 ## Remaining partial designs

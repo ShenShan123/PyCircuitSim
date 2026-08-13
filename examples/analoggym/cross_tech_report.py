@@ -4,6 +4,12 @@
 One row per design, one column per tech, showing gates passed; plus per-tech
 coverage and headline-metric tables.  Run from the repository root after the
 per-tech pipelines (tools/pipeline.sh in each tree) have finished.
+
+CAUTION: this OVERWRITES RESULTS_TSMC.md in full, and that file now carries
+hand-written sections this script cannot regenerate (the V7.5.6 basket
+rationale and the whole PyCircuitSim-versus-NGSPICE narrative).  Splice the
+generated tables in instead of running this blind, or restore those sections
+from git afterwards.
 """
 
 from __future__ import annotations
@@ -76,7 +82,7 @@ def main() -> None:
     parts.append(
         "This is a strict NGSPICE/PyCMG audit of every generated design. "
         "Topologies are checked against their source (or, for the derived "
-        "three-output reference, its qualified two-output core), dimensions "
+        "dimensions "
         "are constrained to each modelcard, and every available DC, AC, "
         "temperature, PSRR, line/load-regulation and transient gate is "
         "included. A result is fully passing only when every gate passes and "
@@ -89,15 +95,15 @@ def main() -> None:
 
 | check | result |
 |---|---:|
-| generated designs simulated | 190/190 |
-| source/qualified-core topology checks | 190/190 |
-| generated MOS instances checked | 3,240 |
-| sizing vectors inside modelcard envelopes | 1,417/1,417 |
-| referenced local PyCMG model aliases valid | 1,155/1,155 |
+| generated designs simulated | 90/90 |
+| source/qualified-core topology checks | 90/90 |
+| generated MOS instances checked | 1,695 |
+| sizing vectors inside modelcard envelopes | 779/779 |
+| referenced local PyCMG model aliases valid | 612/612 |
 
 Topology checks cover MOS/passive connectivity, channel type, amplifier mirror
 ratios, the retained charge-pump hierarchy, the permitted `ldo_1` compensation
-network, and the derived reference core. Geometry checks cover L, NFIN,
+network, and the subthreshold reference core. Geometry checks cover L, NFIN,
 multiplicity, local model definition, and every model used by a generated MOS.
 
 ## Corrections made in this audit
@@ -114,10 +120,10 @@ multiplicity, local model definition, and every model used by a generated MOS.
 * Amplifier verdicts now include PSRR-, temperature coefficient, and both slew
   directions. Wide temperature sweeps retry as two continuations from 25 C,
   and slew crossings are restricted to the commanded input-edge windows.
-* `three_output_vref` now uses the qualified dual-output core and derives a
-  third low-load output at half `vref2`; all 15 derived outputs meet their
-  voltage and temperature gates. The third output is intentionally high
-  impedance and is not qualified for load drive.
+* `three_output_vref` used the qualified dual-output core and derived a third
+  low-load output at half `vref2`. That output was intentionally high
+  impedance and never qualified for load drive; V7.5.6 dropped the derived
+  design and kept `dual_output_subthreshold_vref`, the qualified core.
 * `ldo_2`'s error amp again regulates the exposed replica node (the source
   bench ties `vinp` to `vfb`); the delivered output keeps its own local loop
   whose setpoint derives from the replica. Closing the error amp around the

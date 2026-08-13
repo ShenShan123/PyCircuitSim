@@ -443,15 +443,21 @@ Since V6.12.0 the inverter, NN, and complex decks are written
 **hierarchically** with `.subckt` + `X` instances. Probed nodes are kept at
 top level (they are ports), so results and tooling are unchanged.
 
-**AnalogGym benchmark corpus** (V7.5.x): `examples/analoggym/` carries 190
-generated analog designs (amplifiers, LDOs, sensor front ends, voltage
-references, a charge pump) across five TSMC nodes, plus a
-PyCircuitSim-vs-NGSPICE scoring harness
+**AnalogGym benchmark corpus** (V7.5.x): `examples/analoggym/` carries a
+curated basket of **18 analog designs per tech across five TSMC nodes** —
+90 design instances, 75 scored decks per tech (41 AC, 23 DC, 11 transient) —
+covering amplifiers, LDOs, sensor front ends, a subthreshold voltage
+reference and a charge pump, plus a PyCircuitSim-vs-NGSPICE scoring harness
 (`pycircuitsim_bench/run_compare.py` for one deck,
-`pycircuitsim_bench/campaign.py` for a whole tech). Current verdicts and
-per-metric evidence: `examples/analoggym/RESULTS_TSMC.md` — 650/679 scored
-AC/DC decks fully agree as of V7.5.3, ground truth NGSPICE on the identical
-BSIM-CMG OSDI binary.
+`pycircuitsim_bench/campaign.py` for a whole tech). Ground truth is NGSPICE
+on the identical BSIM-CMG OSDI binary.
+
+V7.5.6 cut the corpus from 38 designs / 159 decks per tech: two designs were
+literal duplicates and the rest were degenerate repeats of one topology
+class. The basket keeps every analysis type, all 18 metric classes and the
+full NFIN vocabulary while running in **3.35 CPU-h instead of 5.32**. What
+survived, why, and the pre-V7.5.6 campaign record (650/679 scored decks
+agreeing as of V7.5.3): `examples/analoggym/RESULTS_TSMC.md`.
 
 ### Sample: BSIM-CMG FinFET Inverter Transient (ASAP7 7nm)
 

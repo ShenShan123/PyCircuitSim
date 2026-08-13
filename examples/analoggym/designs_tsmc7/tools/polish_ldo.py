@@ -45,8 +45,7 @@ from size_ldo import (BAD, CORE_GATES, DECK_ORDER, FAST_ORDER, IBIAS, L_CHOICES,
                       has_resistive_divider, ldo_core_score, ldo_report,
                       ldo_score, wiring)
 
-DEFAULT_NAMES = ["Basic_LDO", "ldo_1", "ldo_2", "ldo_folded_cascode",
-                 "ldo_simple"]
+DEFAULT_NAMES = ["Basic_LDO", "ldo_1", "ldo_2"]
 SLOW_ORDER = [deck for deck in DECK_ORDER if deck not in FAST_ORDER]
 CandidateKey = Tuple[int, int, float, float]
 Metrics = Dict[str, float]

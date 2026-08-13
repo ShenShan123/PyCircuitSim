@@ -105,7 +105,9 @@ class AnalysisPlan:
 class DeckOptions:
     """``.options``/``.option`` values a deck sets as convergence aids.
 
-    These eight keys are the complete set present across all 880 decks.
+    These eight keys were the complete set present across all 880 decks of
+    the pre-V7.5.6 corpus, so they remain complete over the 410 decks the
+    curated basket ships.
     """
 
     cshunt: Optional[float] = None

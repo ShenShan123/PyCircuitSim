@@ -1,8 +1,0 @@
-* front_end_42_2_2015_REF_schematic -- AnalogGym sensing front end on TSMC12 BSIM-CMG
-* Topology is the shipped one; geometry is re-designed for 0.8 V.
-.subckt front_end_42_2_2015_REF_schematic GND VDD VOUT
-NM4 VDD net12 net12 GND nulvt_l90_f6 m=2
-NM3 net12 net12 GND GND nulvt_l90_f6 m=8
-NM1 VOUT VOUT net12 GND nulvt_l90_f6 m=32
-NM0 VDD VOUT VOUT GND nulvt_l90_f6 m=128
-.ends front_end_42_2_2015_REF_schematic
