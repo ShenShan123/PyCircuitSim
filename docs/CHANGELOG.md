@@ -8,6 +8,124 @@ pruned; the full original text lives in git history.)
 
 ---
 
+## V7.5.8 — one circuit library, one taxonomy; gates stop carrying netlists (branch `feat/analoggym-migration`, 2026-08-13)
+
+**Goal: `examples/` becomes the single source of every circuit, and `tests/`
+mirrors it.** House-cleaning turned up that the two directories disagreed
+about who owned a topology, and the disagreement was already producing stale
+documentation.
+
+**`tests/references/` was dead.** Eight `.cir` decks, zero readers — the only
+thing pointing at them was `REFERENCES_DIR` in `tests/common/complex.py`,
+itself unused. Four of them carried `<PLACEHOLDER>` tokens and *described* the
+topology that the four complex gates rebuilt inline as f-strings. Two copies,
+one never executed. It had already drifted: `directnet_sram_6t_op.sp` still
+documented the WL-asserted read bias that V6.4.7 measured as wrong (native
+L72 fails it 0/8 and passes the hold 8/8, identically to the NN) and that the
+gate had stopped using.
+
+**`tests.common.base.render_reference_deck`** now renders a deck from
+`examples/`: strip comments and blank lines, collapse interior whitespace (so
+templates can be column-aligned without moving a byte of what NGSPICE sees),
+then substitute `<TOKEN>`s. It raises on an unsupplied token **and on a
+substitution the deck does not use** — a stale key means the caller believes
+it parameterizes something it does not, which is the failure being designed
+out. Full decks keep exactly one title line: NGSPICE consumes line 1 of a deck
+as the title and would otherwise silently swallow the `.include`.
+
+New live decks in `examples/simple_circuits/`: `bsimcmg_{opamp_miller_dc,
+ring_osc_tran,switchcap_tran,sram_snm_dc}.cir` (the NGSPICE reference halves),
+`directnet_sram_snm_dc.sp` (the SNM gate's scored half-cell, previously an
+f-string only), and `bsimcmg_inverter_op.{sp,cir}`. `directnet_sram_6t_op.sp`
+corrected to the hold condition and wired to the force_ic probe.
+
+The parametric sweep builders stay programmatic — ring-osc sweeps its stage
+count, so no fixed deck expresses it. `verify_complex_sweep_canaries.py` gets
+**stronger**: it now holds those builders line-for-line against a committed
+deck instead of against a second f-string.
+
+**Three tiers, shared by `examples/` and `tests/`:** `single_devices/`,
+`simple_circuits/`, `complex_circuits/` (the AnalogGym corpus), flat inside
+each. `tests/perf/` and `tests/diag/` stay outside the tier axis on purpose —
+perf gates run no NGSPICE, and `diag_*` reference L72-in-PyCircuitSim rather
+than NGSPICE, which is what makes them controls and why they can never be
+quoted as gate results. Each package states this in its `__init__`.
+
+Two gates spanned tiers and were split. `verify_bsimcmg_op.py` → NMOS/PMOS in
+`single_devices/` + `simple_circuits/verify_bsimcmg_inverter_op.py`, sharing
+`tests/common/bsimcmg_op.py`; both keep the SAME ASAP7 geometry (L=30 nm,
+NFIN=10, 0.7 V) deliberately, since that is what makes an inverter
+disagreement attributable to the circuit rather than the device.
+`verify_nn_dc_tran.py` (3420 lines) → body relocated **verbatim** to
+`tests/common/nn_gate.py` with its flag-selected `main()` becoming
+`run_gate(...)`, plus two thin tier entry points. Hand-cutting a 3400-line
+gate invites exactly the silent coverage loss this sprint removes;
+`--inverter-only` had already proved the halves independently runnable.
+
+**One shared AnalogGym `tools/`.** The five `designs_tsmc*/tools/` were
+byte-identical (md5-verified) — 150 tracked files doing the work of 30. They
+were duplicated because the tools inferred their tech from their own location.
+`pycmg_lib._resolve_tree()` now resolves it from `AG_TREE`, else `AG_TECH`,
+else the working directory, and **raises when none resolve**: the old code
+silently fell back to TSMC16 on an unrecognized directory name, so a
+mis-invocation produced a full set of confidently-wrong TSMC16 numbers filed
+under another tech. `PYCMG_DIR` moves `parents[4]`→`[3]`; `pipeline.sh` no
+longer `cd`s to its own parent (that parent is now the tree-of-trees).
+
+**Three decks eliminated as measured-redundant** (CPU-pinned, 1 thread):
+`bsimar_inverter_dc.sp` at 47.6 s was half the hand-written basket's entire
+runtime, and L74 stays covered by `bsimar_nmos_dc.sp` (11.3 s) while the
+inverter stays covered at `.dc` by L72 and L73; `directnet_nmos_op.sp` (2.2 s)
+and the old `bsimcmg_inverter_op.sp` (2.1 s) were the same family AND topology
+as the `.dc` deck beside each, which solves an OP per sweep point. Basket
+runtime ~-55 %.
+
+**Docs condensed to their stated roles.** CLAUDE.md 525→~390 lines: the
+V7.5.0–V7.5.6 per-version narratives were deleted outright — every one has a
+full entry in this file — leaving only what survives as a *rule* (L72 stamps
+the full 4-terminal companion and the 3×3 form is the NN contract only; L72
+does retry now, so `final_converged` is narrower than it reads; ITL4 control
+is measured dead on this corpus; the corpus IS the tree). Gate inventories and
+counts left CLAUDE.md for README; the stale "Verification Results" table left
+README for `docs/accuracy/`, which generates its tables from gate logs behind
+a committed-SHA guard. Verbatim cross-document duplication is now one line.
+
+**Verification.** A 165-deck snapshot (5 techs × ship/sweep/off-baseline
+corners) before and after the template migration: **every electrical line
+byte-identical**, the only diff being comment lines added to two SRAM decks.
+Gates re-run CPU-pinned: sweep canaries all-pass; `verify_complex_sram_snm`
+TSMC12 3/3 NFIN corners + both force_ic states; single-device OP 2/2; inverter
+OP 2/2; `verify_subckt` 11/11; `verify_ar_cache` 10/10; `verify_nn_inverter`
+TSMC12 2/2 (VTC 1.01 %, tran 1.09 %); `verify_nn_dc` TSMC12 4/4;
+`verify_nn_lifted_source_dc` 3/3. AnalogGym: tree resolution checked in all
+three modes for all five techs and from outside (fails loud), all 27 tool
+modules import, and `voltage_reference` on tsmc5/7/12 + `charge_pump` on
+tsmc12 (a real 26.7 s ngspice transient) 3/3 each with **no per-design
+`result.json` changed by a byte**.
+
+`verify_batched_tail` reports 6/7 — Level 1 raises on a missing
+`tsmc5_pfn_small_nmos_config.npz`. **Pre-existing and environmental:** 0 PFN
+checkpoints on this hardware against 264 DirectNet/BSIM-AR, and the only
+change to that file was a `parents[]` depth.
+
+### Left open deliberately
+
+1. **`designs_tsmc16/` has a nested `.gitignore` ignoring `results/`** while
+   the other four trees commit theirs (first flagged V7.5.7). Resolving it
+   adds or removes files from version control — the corpus owner's call.
+2. **tsmc6/7/16's committed `result.json` carry a stale legacy `"error": ""`**
+   that `finalize` pops on sight (`out.pop("error", None)`, with a comment on
+   why a carried copy goes stale); tsmc5/12 already lack it. Normalizing means
+   re-finalizing every tree — a campaign run, not housekeeping — so the one
+   file a verification run touched was reverted.
+3. **`verify_complex_opamp` remains 0/5** against a documented `large`
+   baseline of 2/5, unchanged from V7.5.7 and still unexplained. The first
+   thing to check is still whether the recorded 2/5 was taken at a different
+   tier: the resolver picks `tsmc*_dn_large` while
+   `render_directnet_netlist`'s docstring says `tsmc{X}_dn_medium`.
+
+---
+
 ## V7.5.7 — `examples/` restructured by circuit scale; five decks were silently broken (branch `feat/analoggym-migration`, 2026-08-13)
 
 **Goal: make `examples/` navigable and make every deck in it actually run.**

@@ -1,11 +1,16 @@
 # Project: PyCircuitSim
 
-> **Doc layout:** user-facing how-to (install, run, netlist syntax, examples,
-> output files, training commands, performance flags) lives in **`README.md`**;
-> sprint history, version-by-version verdicts and dead-ends live in
-> **`docs/CHANGELOG.md`**; accuracy evidence lives in **`docs/accuracy/`**.
-> CLAUDE.md holds only what those don't: durable architecture, current
-> production state, testing discipline, and the design rules learned from bugs.
+> **Doc layout — four documents, four jobs, no overlap.** Say a thing once.
+>
+> | Where | What it holds |
+> | --- | --- |
+> | **`README.md`** | The tutorial: install, run, netlist syntax, the deck library, the Python API, output files, training commands, performance flags, the gate inventory and how to run it. |
+> | **`docs/CHANGELOG.md`** | The evolution: one entry per version, what it measured, and **every dead end that was reverted** — those are as load-bearing as the successes. |
+> | **`docs/accuracy/`** | The scores. Tables are *generated* from gate logs; never hand-edited. |
+> | **CLAUDE.md** (here) | The goal, the rules, and the lessons. Current production state, and the design rules learned from specific bugs — each one with the failure it prevents, because a rule without its reason gets optimized away. |
+>
+> If something here reads like history, it belongs in the CHANGELOG. If it
+> reads like instructions, it belongs in the README.
 
 ## Overview
 
@@ -89,180 +94,67 @@ via `max_substeps`; NN circuits use `_solve_dc_with_retry` (fast path first,
 GMIN retry on `_last_solve_converged=False`); AC solves complex `Y = G + jωC`
 about the DC OP including the full MOSFET transcapacitance stamp.
 
-V7.5.0/V7.5.1 (AnalogGym parity) added, for **LEVEL=72 only**: the full
-4-terminal Newton stamp (all four terminal currents + the condensed OSDI
-Jacobian via `get_terminal_stamp` — junction/gate-leakage conductances
-participate in NR) **and the full 4-terminal charge companion**
-(`get_charge_stamp` from `condense_last_react` — the old 3×3 SPICE-cap
-expansion stamps SIGN-FLIPPED transcap off-diagonals for floating-bulk
-devices, which at small dt turns Newton into an ~15× error amplifier; the
-3-conductance/3×3 stamps remain the NN contract); SPICE-style damped limiting
-(`nr_limit_voltages`: fetlim/limvds/pnjlim in the NMOS-normalized frame,
-±2.5 V window, retreat-to-anchor on eval failure; anchors reset per NR sweep;
-an iteration that limited is never accepted as converged); source-referenced
-OSDI evaluation (the internal-node solve is not shift-robust); a wide DC gmin
-ladder (1e-2→GMIN) with an **automatic fallback** when a plain L72 solve
-fails (so "BSIM-CMG never retries" is no longer true — it has its own
-in-`DCSolver` ladder now, honest `final_converged` = last level/last source
-step only); the transient retry ladder re-walks the interval with a locally
-halved dt (down to `dt·2⁻²⁴`) instead of stiffening companions against a
-fixed target time, with stagnation fail-fast; and the oscillation-average
-acceptance KCL gate covers L72, not just NN. `PYCIRCUITSIM_NR_TRACE=1`
-traces NR.
+**V7.5.x reshaped the LEVEL=72 solver for AnalogGym parity.** The per-version
+narrative — what each change was, what it measured, and every dead end that
+was reverted — is `docs/CHANGELOG.md` §V7.5.0–V7.5.7. What survives as a rule:
 
-V7.5.2 closed both V7.5.1 follow-ups: **AC now stamps the full 4-terminal
-`Y = G4 + jωC4`** for L72 from the same condensed OSDI Jacobians (the 3×3
-expansion + channel-only conductances are gone from AC too; NO external
-gmin in the AC load — it measurably pollutes high-impedance bulk nodes —
-gmin remains a DC Newton aid only; NN AC path unchanged), and transients
-gained **opt-in LTE-driven output refinement** (`refine_output=True` /
-`PYCIRCUITSIM_TRAN_REFINE=1`, default off = byte-identical): every
-committed march piece is emitted (non-uniform time axis, grid points
-preserved exactly), PULSE corners become breakpoints (land-on + small
-BE restart scaled to the local corner gap — kills trapezoid corner ring),
-and each piece is LTE-checked (TRTOL=7, voltage state) with depth-1
-un-commit rollback. `integration_method='trap'` pins the trapezoid (no
-stiffness swap). Dead ends recorded in CHANGELOG §V7.5.2: post-corner
-hold window (over-rings), branch-current LTE (NR-noise d³ is
-dt-independent → thrash).
-
-V7.5.3 added **per-device charge-state LTE** to the refine mode (still
-opt-in, flags-off byte-identical): NGSPICE-CKTterr-shaped truncation
-control on MOSFET terminal-charge states — solver-side 3-deep accepted
-(t, q[4], i_cap[4]) histories, trap LTE as a current error, the CKTterr
-`/h` charge loosener disarming the test where DD3 is NR-noise (exactly
-the V7.5.2 branch-current dead end), CHGTOL=1e-18 because the stock
-1e-14 floor sits 100× above a FinFET terminal charge and never fires
-(stock NGSPICE marches fast spikes via ITL4 iteration cuts, not charge
-terr — measured from cktterr.c). Charge pump: **6/6 stride-independent**
-(`up_imin` 1.49 %/1.84 %). Known cost: LDO load-step decks grind under
-refine (96× on Basic_LDO for a correct 5/5) — open pathology, do not run
-campaign-wide refine-on until fixed. The AnalogGym bench harness also
-became NGSPICE-exact in V7.5.3 (sample-exact `.meas` windows, dctrcurv.c
-grid rule with Kelvin accumulation, grid-matched strided extrema,
-corroborated fork recovery, explicit NGSPICE-failure recovery, altns
-fallback, honest `ng_ran` verdicts) — see CHANGELOG §V7.5.3 and
-RESULTS_TSMC.md before quoting any bench number.
-
-V7.5.4 fixed the last known **subthreshold operating-point** defect at its
-root, in PyCMG rather than the solver: the internal-node solve accepted on an
-**absolute** current residual tested before any Newton step, so any device
-quieter than the constant kept its internal nodes unsolved. That constant had
-already been re-tuned once (1e-9 → 1e-12 in V7.5.1) and simply failed one
-decade lower on deep-subthreshold FinFETs. `eval_dc` now binds on
-`min(tol, max(1e-18, RELTOL·max|i_terminal|))` (`NN_DC_SOLVE_RELTOL`, default
-1e-9), making `NN_DC_SOLVE_TOL` a ceiling the test can only tighten past; the
-scaling is **opt-in per call site** and must not be requested by the transient
-paths (their residual saturates at ~|Id| by construction — see PyCMG
-CLAUDE.md). `front_end_25_6T` went from a >1 h timeout with 3-of-7 points
-non-converged to 281/281 converged in 3.2 s, and all 15 other previously
-scored `sensing_front_end`/`voltage_reference` decks are verdict- **and**
-op_delta-identical. V7.5.4 also **implemented, measured and reverted** the
-refine step-controller fix path V7.5.3 had recorded: it holds the charge pump
-at 6/6 but makes Basic_LDO 3.3× slower while flipping no verdict, and the real
-mechanism is a dead zone in the growth law (`0.9·r^(-1/3)` exceeds 1 only for
-r < 0.729, so any accepted r in [0.729, 1) freezes dt) worth only ~6 % in dt.
-Refine-mode cost on LDO load-step decks stayed open through V7.5.4; see
-CHANGELOG §V7.5.4 for the rejected fix path.
-
-V7.5.5 closed it by rebuilding the refine dt-controller on **ngspice
-dctran.c semantics**: open-water marching uses CKTterr-exact charge-state
-error (factor 1/12 trap / 2/9 gear-2 on the raw DD3 — the old `0.5·h²·DD3`
-was ngspice's ORDER-1 coefficient applied to order-2 marches, 6×/2.25×
-tighter than the equivalence it claimed), per-test timestep suggestions with
-order-matched exponents (voltage r^(-1/3), charge r^(-1/2)), accept while
-the suggestion exceeds 0.9·h, and the suggestion becomes the next dt
-verbatim (2× CKTtrunc cap) — killing the [0.729,1) frozen-dt dead zone and
-a 34 % LTE-reject waste. A **corner-guard window** (2 local corner gaps
-past every PULSE breakpoint, pieces capped at gap/8) retains the V7.5.3
-controller flavor — the only one measured to hold the charge pump's 10 ps
-reversal spike at BOTH strides (up_imin now stride-independent,
-1.42 %/1.43 %). Guard-integrator alternatives all measured and reverted
-(BE hold flattens the spike, BDF-2 hold stride-scatters, loose-test trap
-zigzags at 2Δt); ngspice's tmax rule is available as a diagnostic
-(`refine_max_dt` / `PYCIRCUITSIM_TRAN_REFINE_MAXDT`) but is a 100k-piece
-march on the charge pump and still misses. ITL4 iteration-count control is
-measured DEAD on this corpus (damped NR never exceeds 6 iterations).
-Measured: Basic_LDO 540→329 s, ldo_2 3005→208 s (1/5→3/5), amplifier decks
-3–7×. Transient-family campaign now covers all five techs in both modes
-(flags-off 1/1/6/2 of 23 on tsmc6/7/12/16; refine 10/8/8/8/9 of 23 —
-tsmc6 ≡ tsmc7 verdict-identical in both). `PYCIRCUITSIM_REFINE_TRACE`
-dumps a per-piece march trace. The ldo_2/Basic_LDO residual misses are
-characterized reference-tolerance artifacts (NGSPICE's own reltol ladder
-brackets our values) — see RESULTS_TSMC.md §V7.5.5 before quoting them.
-
-**V7.5.6 curated the corpus itself.** `examples/complex_circuits/designs_tsmc*/`
-now ships **18 designs / 75 scored decks per tech** (was 38 / 159): 7
-amplifiers, 3 LDOs, 6 sensors, 1 voltage reference, the charge pump —
-90 design instances and 375 scored decks across five techs, **3.35 CPU-h
-instead of 5.32**. Removed on measured evidence (CHANGELOG §V7.5.6): two
-byte-identical duplicates (`ptat_6`≡`ptat_2`; `three_output_vref`'s MOS core
-≡ `dual_output_subthreshold_vref`, the derived unqualified output dropped
-and its generator `derive_three_vref.py` with it), six 2-to-4-MOSFET sensor
-stacks, two LDOs, and 10 of 17 identically-benched three-stage amplifiers.
-**The basket IS the tree** — no selection flag; `campaign.corpus()`
-enumerates whatever `designs_tsmc*/` holds. Retained by construction: all
-three analysis types, all 18 metric classes, 29/31 ever-missing metric
-names, the full NFIN vocabulary and all three Vt flavors (L bins 33/45).
-**`designs_tsmc6` was deliberately NOT pruned** despite being an exact L72
-simulation duplicate of tsmc7 (159/159 identical verdicts) — the two techs
-have separately trained NN checkpoints, so it is the training-run-variance
-control on the NN axis. Two traps: **pre-V7.5.6 numbers (`/159`, `/679`,
-`/795`, 38/38, 17/17, 13/13) are not comparable to post-V7.5.6 runs**, and
-`cross_tech_report.py` **overwrites RESULTS_TSMC.md wholesale**, destroying
-its hand-written sections — splice its tables in, do not run it blind.
-
-## Supported Features
-
-Devices (R, C, V/I sources, PULSE, NMOS/PMOS L72–75, `X` subckt instances),
-analyses (`.op`/`.dc`/`.tran`+`uic`/`.ac`), directives (`.model`, `.include`,
-`.ic`, `.subckt`/`.ends`) — full syntax in README §Features / §Netlist Syntax.
-Legacy LEVEL=1 removed. Subckt expansion is **flattening at parse time**
-(internal nodes → `X1.n1`, devices → `M.X1.Mp1`, ground global,
-`.model`/`.include` hoisted, loud errors on unknown subckt / port mismatch /
-recursion >64); gate: `tests/simple_circuits/verify_subckt.py` (11 checks, subckt ≡ flat
-bit-identical).
+- **LEVEL=72 stamps the full 4-terminal companion**, both conductance
+  (`get_terminal_stamp`) and charge (`get_charge_stamp` from
+  `condense_last_react`). The channel-only 3-conductance/3×3 form is the
+  **NN contract only** — using it for L72 is a bug, not an approximation:
+  the 3×3 expansion sign-flips transcap off-diagonals on floating-bulk
+  devices, which at small dt makes Newton a ~15× error amplifier. AC stamps
+  the same condensed Jacobians (`Y = G4 + jωC4`), and takes **no external
+  gmin** — it measurably pollutes high-impedance bulk nodes; gmin is a DC
+  Newton aid only.
+- **"BSIM-CMG never retries" is no longer true.** L72 has its own wide DC gmin
+  ladder (1e-2→GMIN) with automatic fallback, so `final_converged` is honest
+  about the last level / last source step only.
+- **OSDI evaluation is source-referenced** — the internal-node solve is not
+  shift-robust.
+- **An NR iteration that limited is never accepted as converged**
+  (`nr_limit_voltages`: fetlim/limvds/pnjlim, ±2.5 V window, anchors reset
+  per sweep). `PYCIRCUITSIM_NR_TRACE=1` traces NR.
+- **Transient refinement is opt-in and flags-off byte-identical**
+  (`refine_output=True` / `PYCIRCUITSIM_TRAN_REFINE=1`): LTE on voltage AND
+  per-device charge state, PULSE corners as breakpoints, ngspice dctran.c
+  step-control semantics. `PYCIRCUITSIM_REFINE_TRACE` dumps a march trace.
+  **ITL4 iteration-count control is measured dead on this corpus** (damped NR
+  never exceeds 6 iterations) — do not re-derive it.
+- **The AnalogGym corpus IS the tree** — `campaign.corpus()` enumerates
+  whatever `examples/complex_circuits/designs_tsmc*/` holds; there is no
+  selection flag. Two traps that outlive their sprint: **pre-V7.5.6 totals
+  (`/159`, `/679`, `/795`, 38/38, 17/17, 13/13) are not comparable to
+  anything after it**, and `cross_tech_report.py` **overwrites
+  RESULTS_TSMC.md wholesale**, destroying its hand-written sections — splice
+  its tables in, never run it blind. `designs_tsmc6` is kept despite being an
+  exact L72 duplicate of tsmc7 (159/159 identical verdicts): the two have
+  separately trained checkpoints, so it is the training-variance control on
+  the NN axis.
 
 ## Validation
 
-Inverter circuit must PASS Transient Analysis against NGSPICE ground truth
-within reasonable numerical tolerance. Never use simplified/self-defined
-equations as reference.
+**Ground truth is ALWAYS NGSPICE on the identical BSIM-CMG (LEVEL=72) OSDI
+model. Never a simplified or self-defined equation, ever, for any purpose.**
+The inverter transient in particular must pass against it.
 
-> **Accuracy evidence lives in `docs/accuracy/`** (index + scoreboard:
-> `README.md`): two files per family — the *clean* report (the control: one
-> training run, per tech / scale / testcase) and the *recipes* report (the
-> training addenda measured against it). Cross-cutting material — gate
-> definitions, strict-OMP discipline, the `gds` code-state ladder, the TSMC6
-> repeat, the measured noise floor — is stated once in **`methodology.md`**;
-> retracted claims in `archive-pre-gds-fix.md`. Tables are generated by
-> `scripts/v730_docs_build.py` from gate logs (each report pinned to one
-> complete campaign pass; committed-SHA guard so partial data cannot mix
-> passes); `scripts/v730_coverage.py` reports coverage and emits gaps as a
-> runnable job file. On the V7.4 hardware only DirectNet/BSIM-AR clean reports
-> have local raw evidence.
->
-> **Denominators changed in V7.3.0:** TSMC6 folds into the headline — complex
-> totals /20, device AC /10, opamp AC /5 (older docs: /16, /8, /4). *No total
-> is comparable across that boundary without rescaling.*
->
-> Sprint history, dead-ends, and the open known-issue roadmap live in
-> **`docs/CHANGELOG.md` + `MEMORY.md`** — not duplicated here.
+Accuracy evidence lives in `docs/accuracy/` (index + scoreboard: its
+`README.md`; cross-cutting gate definitions and the measured noise floor once
+in `methodology.md`; retracted claims in `archive-pre-gds-fix.md`). Two traps
+there:
 
-## How to Run
+- **Denominators changed in V7.3.0** — TSMC6 folded into the headline, so
+  complex totals are /20, device AC /10, opamp AC /5 (older docs: /16, /8,
+  /4). *No total crosses that boundary without rescaling.*
+- Tables are **generated** by `scripts/v730_docs_build.py` from gate logs,
+  each report pinned to one complete campaign pass with a committed-SHA guard
+  so partial data cannot mix passes. Do not hand-edit them.
+  `scripts/v730_coverage.py` emits gaps as a runnable job file. On this
+  hardware only the DirectNet/BSIM-AR *clean* reports have local raw evidence.
 
-Setup, quick start, netlist syntax, examples, output layout, NN training
-commands, and performance/GPU flags: **README.md**. Essentials:
-
-```bash
-conda activate pycircuitsim          # env at /home/shenshan/.conda/envs/pycircuitsim
-python main.py examples/<group>/<deck>.sp   # analysis chosen by the deck's directive
-```
-
-**Prerequisites:** NGSPICE 45.2+ (`/usr/local/ngspice-45.2/bin/ngspice`; repo
-fallback `tools/ngspice-45.2/bin/ngspice` via `NGSPICE_BIN`), OpenVAF
-(`/usr/local/bin/openvaf`), OSDI binary
-`external_compact_models/PyCMG/build/osdi/bsimcmg.osdi`, PyTorch for L73/74/75.
+**Subckt expansion is flattening at parse time** (internal nodes → `X1.n1`,
+devices → `M.X1.Mp1`, ground global, `.model`/`.include` hoisted, loud errors
+on unknown subckt / port mismatch / recursion >64). Legacy LEVEL=1 is removed.
 
 ## Performance Discipline (V7.0.x / V7.2.0)
 
@@ -334,84 +226,56 @@ at all four scales. `--tech-scope` ∈ `{tsmc5,tsmc6,tsmc7,tsmc12,tsmc16,univers
 > decks until V7.5.7. ASAP7 is out of scope for the NN families (Rule 14),
 > so an untagged NN deck is always wrong, never merely imprecise.
 
-**`examples/` layout** (V7.5.7): grouped by circuit scale —
-`passive/` (no transistor: isolates a solver fault from a model fault),
-`device/`, `circuit/`, `complex/`, `analoggym/` — named
-`<family>_<circuit>_<analysis>.sp` so the LEVEL 72/73/74 triplets sit
-adjacent. **Three `complex/` decks are verify-gate TEMPLATEs** read verbatim
-by `verify_complex_{opamp,ring_osc,switchcap}.py` (editing them changes what
-those gates run); `complex/directnet_sram_6t_op.sp` is **not** — the SNM gate
-builds its netlist programmatically in `tests/common/complex.py`.
-
-### Output files
-
-`results/<circuit_name>/<analysis_type>/`: an HSPICE-like `*_simulation.lis`
-log, the data CSV, and a Matplotlib plot.
+**`examples/` is the circuit library, and it is load-bearing** (V7.5.8): three
+tiers — `single_devices/`, `simple_circuits/`, `complex_circuits/` (the
+AnalogGym corpus) — named `<family>_<circuit>_<analysis>.{sp,cir}` so the
+LEVEL 72/73/74 triplets sit adjacent, with `.cir` the NGSPICE ground-truth
+half of a pair. **Editing a deck changes what a gate runs.** The `.cir` files
+are templates carrying `<TOKEN>` placeholders; the `.sp` files are runnable
+decks authored at one tech that the harness rewrites per run.
 
 ## Testing & Verification
 
-All tests require `conda activate pycircuitsim`. Ground truth is **always**
-NGSPICE on the identical BSIM-CMG (LEVEL=72) OSDI model. Gates are CPU-pinned
-(`CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`) and honor
-`NGSPICE_BIN`; the complex/AC gate infra pins torch to 1 thread
-(`PYCIRCUITSIM_TORCH_THREADS` overrides). Shared infra in `tests/common/`.
+Per-gate inventory, counts and how to run them: **README §Verification**.
+Scores: `docs/accuracy/`. The rules that bind development:
 
-- **Subcircuit hierarchy:** `verify_subckt.py` — 11/11.
-- **BSIM-CMG (72):** OP `verify_bsimcmg_op.py`; DC `verify_bsimcmg_dc.py` /
-  `..._comprehensive.py` (81) / `verify_multi_tech_dc.py` (**53 PASS, 0
-  ERROR since V7.5.0** — the former known-ERROR `TSMC5_lvt_inv_l_24nm` NR
-  divergence is fixed by the full-terminal stamp); tran
-  `verify_bsimcmg_tran{,_comprehensive}.py` (1/45) +
-  `verify_multi_tech_tran.py` (86); AC `verify_ac.py` (**3/3 since V7.5.2**
-  — L3 = floating-bulk NMOS+PMOS CS amps gating v(out) AND the bulk node;
-  every earlier AC gate rail-tied the bulk, masking the 3×3-expansion
-  hazard). Counts move with
-  TSMC6 registration — same coverage, one duplicate column; quote TSMC6
-  separately.
-- **DirectNet (73):** `verify_nn_dc_tran.py` (inverter 8/8, DC 55/55, tran
-  64/64); `verify_nn_multi_tech_{dc,tran}.py` (baseline-gated — pin OMP/MKL=1,
-  VTC trip has ~±1 % scatter); `verify_nn_ac.py`;
-  `verify_nn_lifted_source_dc.py` (NRMSE ≤10 %, guards Rule 2).
-- **Complex circuits (4 × 5 = 20 scored gates):** `verify_complex_{ring_osc,
-  opamp,sram_snm,switchcap}.py` scored vs NGSPICE (ring period, opamp gain,
-  switchcap charge/droop, SRAM butterfly positivity + NRMSE). SRAM `force_ic`
-  probe is a printed **diagnostic**, not a gate. Parametric mirrors
-  `verify_complex_*_sweep.py` (baseline-gated, sha256-pinned) +
-  `verify_complex_sweep_canaries.py`; opamp AC `verify_complex_opamp_ac.py`.
-- **Perf-path gates (no NGSPICE):** `verify_ar_cache.py` (10 checks),
-  `verify_batched_tail.py` (22 checks — exact bit equality per element),
-  `verify_latch_basin_gpu.py --config {commit,gpu,stamp,order,…}` (full 6T
-  latch, both states, 4 techs, 100 %-same-basin binding).
-- **Diagnostics** (`tests/diag_*.py`, **not** gates): `diag_l72_*` controls
-  prove L72-in-PyCircuitSim ≈ NGSPICE, isolating NN-surface gaps;
-  `diag_nn_jacobian_consistency.py`.
-
-**Quick sanity:**
-
-```bash
-python tests/single_devices/verify_bsimcmg_op.py && python tests/single_devices/verify_bsimcmg_dc.py && python tests/simple_circuits/verify_bsimcmg_tran.py
-python tests/simple_circuits/verify_subckt.py
-NGSPICE_BIN="$PWD/tools/ngspice-45.2/bin/ngspice" python tests/simple_circuits/verify_ac.py   # if /usr/local absent
-```
+- **Gates carry no netlists.** Every circuit a gate simulates is a deck under
+  `examples/`, rendered by `tests.common.base.render_reference_deck` (V7.5.8).
+  A topology that lives in both a deck and an f-string will drift, and the
+  deck is the copy nobody re-runs. If you add a gate, add its deck.
+- **`examples/` and `tests/` share one taxonomy** — `single_devices/`,
+  `simple_circuits/`, `complex_circuits/` — so a gate sits in the tier of the
+  circuit it gates. `tests/perf/` and `tests/diag/` sit outside it
+  deliberately: perf gates run no NGSPICE, and `diag_*` reference
+  L72-in-PyCircuitSim rather than NGSPICE, which makes them **controls that
+  must never be quoted as gate results**.
+- **Gates are CPU-pinned** (`CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1
+  MKL_NUM_THREADS=1`) and honor `NGSPICE_BIN`; complex/AC infra pins torch to
+  one thread (`PYCIRCUITSIM_TORCH_THREADS` overrides). This is not optional —
+  the opamp gain and SRAM/VTC trips are high-gain fixed points and a
+  multi-threaded GEMM reduction order moves the NR basin (~±1 % VTC scatter).
+- **Quote TSMC6 separately.** Counts move with its registration: same
+  coverage, one duplicate column.
+- The SRAM `force_ic` probe is a printed **diagnostic**, not a gate.
 
 ---
 
 ## Development Guidelines
 
-**Coding standards:** type hints on all signatures; clear names (`v_gate`,
-`i_drain`); docstrings for complex algorithms; voltage clamping Vgs±5V, Vds±10V.
+Architecture, entry points, design principles and the algorithm walkthroughs:
+**README §Architecture / §Algorithms / §Python API**. Setup and tool paths:
+**README §Installation**. What binds development beyond those:
 
-**Separation principle:** `solver.py` builds MNA + executes NR (no device
-equations); `models/` computes current/conductances (no matrix ops);
-`simulation.py` orchestrates; all devices inherit from `Component`.
-Convergence: `|ΔV| < VNTOL + RELTOL × max(|V_old|,|V_new|)` (RELTOL=1e-4,
-VNTOL=1e-7); GMIN 1e-12 S; DC GMIN stepping opt-in (`use_gmin_stepping=True`).
-
-**Entry points:** CLI `main.py`; API `pycircuitsim.simulation.run_simulation()`;
-module exports (Circuit, Parser, Visualizer, run_simulation).
-
-**Environment & tools:** conda env `pycircuitsim`; PyTorch 2.10.0 (CPU);
-OpenVAF `/usr/local/bin/openvaf`; NGSPICE `/usr/local/ngspice-45.2/bin/ngspice`.
+- **Type hints on every signature**; clear names (`v_gate`, `i_drain`);
+  docstrings for anything non-obvious. Voltage clamping Vgs±5 V, Vds±10 V.
+- **The separation is a hard boundary, not a preference:** `solver.py` builds
+  MNA and runs NR and contains **no device equations**; `models/` computes
+  currents/conductances and does **no matrix ops**; `simulation.py`
+  orchestrates. A device equation in the solver is the bug class this rule
+  exists to prevent.
+- Convergence: `|ΔV| < VNTOL + RELTOL × max(|V_old|,|V_new|)` (RELTOL=1e-4,
+  VNTOL=1e-7); GMIN 1e-12 S; DC GMIN stepping opt-in
+  (`use_gmin_stepping=True`).
 
 ---
 

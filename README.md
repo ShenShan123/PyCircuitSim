@@ -423,12 +423,21 @@ side:
 
 ```
 examples/
-├── single_devices/        one device, one bias — the model surface itself
-├── simple_circuits/
-│   ├── inverters/         the CMOS inverter, across model families
-│   └── other/             RC networks, a gain stage, the multi-stage cells
-└── complex_circuits/      the curated AnalogGym benchmark corpus (see below)
+├── single_devices/    one device, one bias — the model surface itself
+├── simple_circuits/   RC networks, inverters, a gain stage, the four cells
+└── complex_circuits/  the curated AnalogGym benchmark corpus (see below)
 ```
+
+Two file extensions, and the difference matters: **`.sp` is a PyCircuitSim
+deck, `.cir` is its NGSPICE BSIM-CMG ground-truth counterpart.** Where a
+verification gate scores one against the other, both halves are here under
+the same stem — `directnet_opamp_miller_dc.sp` is scored against
+`bsimcmg_opamp_miller_dc.cir`.
+
+**These decks are load-bearing.** The gates do not carry netlists; they render
+these files. Editing one changes what its gate simulates. The `.cir` templates
+carry `<TOKEN>` placeholders the harness substitutes; the `.sp` decks are
+runnable as-authored at one technology and rewritten per run.
 
 | File | Analysis | Models used | What it demonstrates |
 |------|----------|-------------|----------------------|
@@ -436,16 +445,18 @@ examples/
 | `single_devices/bsimcmg_pmos_dc.sp` | DC sweep | LEVEL=72 | PMOS Id-Vgs — the opposite polarity, which is where sign-convention bugs surface |
 | `single_devices/directnet_nmos_dc.sp` | DC sweep | LEVEL=73 | DirectNet NMOS Id-Vgs |
 | `single_devices/bsimar_nmos_dc.sp` | DC sweep | LEVEL=74 | BSIM-AR NMOS Id-Vgs |
-| `simple_circuits/inverters/bsimcmg_inverter_dc.sp` | DC sweep | LEVEL=72 | Inverter VTC at the ASAP7 rail (0.7 V, L=7n) |
-| `simple_circuits/inverters/bsimcmg_inverter_tran.sp` | Transient | LEVEL=72 | FinFET inverter pulse response |
-| `simple_circuits/inverters/directnet_inverter_dc.sp` | DC sweep | LEVEL=73 | DirectNet inverter VTC |
-| `simple_circuits/other/rc_lowpass_ac.sp` | AC sweep | passives | Single-pole RC `.ac` reference (exact analytic anchor) |
-| `simple_circuits/other/rc_transient.sp` | Transient | passives | Two-stage RC step response |
-| `simple_circuits/other/bsimcmg_cs_amp_ac.sp` | AC sweep | LEVEL=72 | Common-source amp Bode response |
-| `simple_circuits/other/directnet_opamp_miller_dc.sp` | DC | LEVEL=73 | Two-stage Miller opamp — **gate template** |
-| `simple_circuits/other/directnet_ring_osc_tran.sp` | Transient | LEVEL=73 | 5-stage ring oscillator — **gate template** |
-| `simple_circuits/other/directnet_switchcap_tran.sp` | Transient | LEVEL=73 | Switched-capacitor unit cell — **gate template** |
-| `simple_circuits/other/directnet_sram_6t_op.sp` | OP | LEVEL=73 | 6T SRAM bitcell, hold state — **gate template** |
+| `simple_circuits/bsimcmg_inverter_dc.sp` | DC sweep | LEVEL=72 | Inverter VTC at the ASAP7 rail (0.7 V, L=7n) |
+| `simple_circuits/bsimcmg_inverter_op.sp` + `.cir` | OP | LEVEL=72 | Inverter bias point at both rail ends — **gate pair** |
+| `simple_circuits/bsimcmg_inverter_tran.sp` | Transient | LEVEL=72 | FinFET inverter pulse response |
+| `simple_circuits/directnet_inverter_dc.sp` | DC sweep | LEVEL=73 | DirectNet inverter VTC |
+| `simple_circuits/rc_lowpass_ac.sp` | AC sweep | passives | Single-pole RC `.ac` reference (exact analytic anchor) |
+| `simple_circuits/rc_transient.sp` | Transient | passives | Two-stage RC step response |
+| `simple_circuits/bsimcmg_cs_amp_ac.sp` | AC sweep | LEVEL=72 | Common-source amp Bode response |
+| `simple_circuits/directnet_opamp_miller_dc.sp` + `bsimcmg_opamp_miller_dc.cir` | DC | 73 vs 72 | Two-stage Miller opamp — **gate pair** |
+| `simple_circuits/directnet_ring_osc_tran.sp` + `bsimcmg_ring_osc_tran.cir` | Transient | 73 vs 72 | 5-stage ring oscillator — **gate pair** |
+| `simple_circuits/directnet_switchcap_tran.sp` + `bsimcmg_switchcap_tran.cir` | Transient | 73 vs 72 | Switched-capacitor unit cell — **gate pair** |
+| `simple_circuits/directnet_sram_snm_dc.sp` + `bsimcmg_sram_snm_dc.cir` | DC | 73 vs 72 | 6T SRAM read-SNM half-cell — **gate pair** |
+| `simple_circuits/directnet_sram_6t_op.sp` | OP | LEVEL=73 | Full 6T bitcell, hold state; drives the `force_ic` retention probe |
 
 The two RC decks carry no transistor, so a failure there is a solver fault,
 never a model fault — start any convergence investigation with them.
@@ -765,17 +776,35 @@ against PyCMG/NGSPICE as the ground truth.
 
 ### Test Harness Layout
 
+`tests/` mirrors `examples/`: a gate lives in the tier of the circuit it
+gates, so the deck and the gate that scores it are easy to pair up.
+
 ```
 tests/
-├── __init__.py
-├── common/                        # Shared test infrastructure (subpackage)
-│   ├── base.py                    # PROJECT_ROOT, OSDI_PATH, TechProfile, VtPair, NGSPICE runner
-│   ├── bsimcmg_dc.py              # DC-specific runners, metrics, plots
-│   ├── bsimcmg_tran.py            # Transient-specific runners, metrics, plots
-│   └── nn.py                      # NN helpers (nrmse, mre, checkpoint resolution, path bootstrap)
-├── references/                    # NGSPICE reference netlists (ngspice_*.cir)
-└── verify_*.py                    # Flat verification scripts
+├── common/                 # shared infrastructure (no gates here)
+│   ├── base.py             #   paths, NGSPICE runner, TechProfile,
+│   │                       #   render_reference_deck  <- reads examples/
+│   ├── bsimcmg_dc.py       #   DC runners, metrics, plots (LEVEL=72)
+│   ├── bsimcmg_tran.py     #   transient runners, metrics, plots
+│   ├── bsimcmg_op.py       #   OP plumbing shared by the two OP gates
+│   ├── complex*.py         #   the four multi-stage cells + their sweeps
+│   ├── nn.py / nn_sweep.py #   NN helpers
+│   └── nn_gate.py          #   the NN device+inverter suite bodies
+├── single_devices/         # one device, one bias — a failure is the model
+├── simple_circuits/        # inverters, RC, gain stage, the four cells
+├── perf/                   # perf-path gates — these run NO NGSPICE
+└── diag/                   # diagnostics — NOT pass/fail gates
 ```
+
+**Gates carry no netlists.** Every circuit a gate simulates is a deck under
+`examples/`, rendered per technology by `tests.common.base
+.render_reference_deck`. Editing a deck changes what its gate runs.
+
+`perf/` and `diag/` sit outside the tier axis on purpose. Perf gates check
+that an optimization is bit-identical, not that physics is right. And every
+`diag_*` script references LEVEL=72-in-PyCircuitSim rather than NGSPICE —
+that is what makes them controls, and it is also why a `diag_*` result can
+never be quoted as a gate result.
 
 ### Running Verification
 
@@ -811,42 +840,41 @@ CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
 python tests/simple_circuits/verify_subckt.py
 ```
 
-### Verification Results (summary)
+### Where the scores live
 
-| Suite | Result |
-|-------|--------|
-| BSIM-CMG OP (NMOS / PMOS / inverter) | ≤0.01 % relative error |
-| BSIM-CMG DC Id-Vgs + inverter VTC (L1) | NRMSE ≤0.014 % |
-| BSIM-CMG transient baseline (L1) | NRMSE 0.20 %, max 7.6 mV |
-| BSIM-CMG comprehensive DC (L2/L3) | 67/67 · 43/44* |
-| BSIM-CMG comprehensive transient (L2/L3) | 37/37 · 72/72 |
-| AC (`verify_ac.py`, passive RC + CS-amp) | 2/2, ~machine precision |
-| Subcircuit hierarchy (`verify_subckt.py`) | 11/11 — subckt vs flat **bit-identical**; vs NGSPICE ≤0.87 % |
-| DirectNet device baseline (TSMC5/7/12/16) | inverter 8/8, DC 55/55, transient 64/64 |
-| Complex 16-gate matrix (4 circuits × 4 techs) | DirectNet **15/16** (16/16 at `crit15m@xl`), BSIM-AR **16/16**, PFN 11/16 — strict across OMP∈{1,2,4}, zero flips |
-| Batched denorm tail / latch basin (V7.2.0) | 22/22 bit-exact / 8/8, zero basin flips |
+**Every number is in `docs/accuracy/`** — start at its `README.md` for the
+scoreboard, then the per-family *clean* report (one training run per tech /
+scale / testcase) and *recipes* report (training addenda measured against
+that control). Gate definitions and the measured noise floor are stated once
+in `methodology.md`.
 
-\* one known pre-existing ERROR (`TSMC5_lvt_inv_l_24nm`, internal-node NR
-divergence in the pure BSIM-CMG path, unrelated to the NN surface). Counts are
-for the four distinct TSMC techs; TSMC6 (a controlled repeat of TSMC7) is
-scored in its own column.
+They are **not** reproduced here, because a hand-copied summary is the first
+thing to go stale — and those tables are *generated* by
+`scripts/v730_docs_build.py` from gate logs, each pinned to one complete
+campaign pass behind a committed-SHA guard so partial data cannot mix passes.
 
-Worst comprehensive-transient case is 0.84 % NRMSE / 42 mV at Cload=1 fF —
-the smallest load, where the output slews fastest. The full per-tech,
-per-scale, and per-recipe evidence, gate definitions, and the scoreboard live
-in **`docs/accuracy/`**.
+Two things to know before quoting any total:
+
+- **Denominators changed in V7.3.0.** TSMC6 folded into the headline, so
+  complex totals are /20, device AC /10 and opamp AC /5 (older documents say
+  /16, /8, /4). No total crosses that boundary without rescaling.
+- **TSMC6 is TSMC7 relabelled** under BSIM-CMG — a deliberate controlled
+  repeat, kept because the two have separately trained NN checkpoints, which
+  makes it the training-run-variance control on the NN axis. It is never an
+  independent technology.
 
 ### Verification Scripts
 
 | Script | Purpose |
 |--------|---------|
-| `tests/single_devices/verify_bsimcmg_op.py` | OP analysis: PyCircuitSim vs NGSPICE for NMOS, PMOS, inverter |
+| `tests/single_devices/verify_bsimcmg_op.py` | OP analysis: NMOS + PMOS vs NGSPICE |
+| `tests/simple_circuits/verify_bsimcmg_inverter_op.py` | OP analysis: inverter vs NGSPICE, same geometry as the device gate |
 | `tests/single_devices/verify_bsimcmg_dc.py` | DC sweep L1: Id-Vgs (ASAP7 baseline) |
-| `tests/single_devices/verify_bsimcmg_dc_comprehensive.py` | DC sweep L2: 67-config multi-tech VT/L/NFIN sweep |
-| `tests/simple_circuits/verify_multi_tech_dc.py` | DC sweep L3: 44-config inverter VTC + parametric |
+| `tests/single_devices/verify_bsimcmg_dc_comprehensive.py` | DC sweep L2: multi-tech VT/L/NFIN sweep |
+| `tests/simple_circuits/verify_multi_tech_dc.py` | DC sweep L3: inverter VTC + parametric |
 | `tests/simple_circuits/verify_bsimcmg_tran.py` | Transient L1: single inverter baseline |
-| `tests/simple_circuits/verify_bsimcmg_tran_comprehensive.py` | Transient L2: 37-config VT/L/NFIN sweep |
-| `tests/simple_circuits/verify_multi_tech_tran.py` | Transient L3: 72-config multi-tech parametric |
+| `tests/simple_circuits/verify_bsimcmg_tran_comprehensive.py` | Transient L2: VT/L/NFIN sweep |
+| `tests/simple_circuits/verify_multi_tech_tran.py` | Transient L3: multi-tech parametric |
 | `tests/simple_circuits/verify_ac.py` | AC L1 passive RC + L2 BSIM-CMG common-source amp |
 | `tests/simple_circuits/verify_subckt.py` | Subcircuit hierarchy: equivalence, L72 inverter, nested buffer (11 checks) |
 
@@ -854,14 +882,17 @@ NN compact models (LEVEL=73/74/75):
 
 | Script | Purpose |
 |--------|---------|
-| `tests/verify_nn_dc_tran.py` | NN device + inverter gate across TSMC techs (`--tech`, `--inverter-only`) |
-| `tests/single_devices/verify_nn_multi_tech_dc.py` | Parametric Id-Vgs over L / NFIN / VT (55 configs) |
+| `tests/single_devices/verify_nn_dc.py` | NN device gate: NMOS/PMOS DC + NMOS transient (`--tech`, `--pmos-only`) |
+| `tests/simple_circuits/verify_nn_inverter.py` | NN inverter gate: VTC + transient (`--tech`, `--vtc-only`) |
+| `tests/single_devices/verify_nn_multi_tech_dc.py` | Parametric Id-Vgs over L / NFIN / VT |
 | `tests/simple_circuits/verify_nn_multi_tech_tran.py` | Parametric inverter over P/N ratio, VDD, Cload, slew, pulse width |
 | `tests/simple_circuits/verify_nn_ac.py` | NN CS-amp AC: gain / f3db / magnitude NRMSE |
 | `tests/single_devices/verify_nn_lifted_source_dc.py` | Lifted-source canary — guards the source-relative frame |
 
-Complex circuits (4 circuits × 4 techs = 16 gates), scored against NGSPICE
-BSIM-CMG ground truth:
+The four multi-stage cells, each scored per technology against NGSPICE
+BSIM-CMG ground truth. Both halves of every pair are decks in
+`examples/simple_circuits/` — a `directnet_*.sp` and its `bsimcmg_*.cir`
+reference:
 
 | Script | Purpose |
 |--------|---------|
@@ -879,8 +910,16 @@ L72-in-PyCircuitSim as reference rather than NGSPICE):
 | `tests/diag/diag_l72_complex_control.py` | Proves L72-in-PyCircuitSim matches NGSPICE, isolating NN-surface gaps |
 | `tests/diag/diag_l72_switchcap_control.py` / `_uic_control.py` | Same control for the switched-cap cell (incl. `uic`) |
 | `tests/diag/diag_nn_jacobian_consistency.py` | FD-vs-autograd Jacobian consistency check |
+| `tests/diag/diag_l_grid_interp.py` | Probes the training grid's L-interpolation between PDK bins |
 
-Each script generates comparison plots and detailed metrics in `tests/verify_*_results/`.
+Perf-path gates (`tests/perf/`) run **no NGSPICE** — they check that an
+optimization is bit-identical, or that a perturbing one stays behind its env
+flag: `verify_ar_cache.py`, `verify_batched_tail.py` (exact bit equality per
+element), `verify_latch_basin_gpu.py --config {commit,gpu,stamp,order,…}`
+(full 6T latch, both states, same-basin binding).
+
+Each script writes comparison plots and per-config metrics under
+`tests/verify_*_results/`.
 
 ---
 
