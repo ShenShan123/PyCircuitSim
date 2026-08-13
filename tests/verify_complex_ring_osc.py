@@ -48,7 +48,7 @@ PERIOD_TOL = 0.05          # +/-5% gate
 TRAN_TSTEP = 2e-12
 TRAN_TSTOP = 1.2e-9
 SETTLE = 0.3e-9           # ignore the startup transient before measuring
-TEMPLATE = PROJECT_ROOT / "examples" / "complex" / "ring_osc_5stage_directnet.sp"
+TEMPLATE = PROJECT_ROOT / "examples" / "complex" / "directnet_ring_osc_tran.sp"
 
 
 def _period_from_wave(t: np.ndarray, v: np.ndarray, mid: float,

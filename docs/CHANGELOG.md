@@ -8,6 +8,121 @@ pruned; the full original text lives in git history.)
 
 ---
 
+## V7.5.7 — `examples/` restructured by circuit scale; five decks were silently broken (branch `feat/analoggym-migration`, 2026-08-13)
+
+**Goal: make `examples/` navigable and make every deck in it actually run.**
+V7.5.6 curated the AnalogGym corpus and explicitly left the hand-written
+decks alone; this entry is that deferred work, and running them turned up a
+real defect the previous entry's reasoning had assumed away.
+
+**Five of the seventeen decks could not run, and had not been able to for
+some time.** Every LEVEL≥73 deck outside `complex/` omitted `TECH=`/`VT=`.
+The parser defaults to `TECH=asap7` (`parser.py`, `model_params.get('TECH')
+or "asap7"`), which for the NN levels does two bad things at once: asap7 maps
+to the **UNKNOWN embedding row** of the universal vocab (code 17 for L73,
+18 for L74 — a warning, not an error), and it resolves the **universal-scope
+checkpoint** `nmos_best.pt` / `ar_nmos_best.pt`, a family that was never
+rebuilt in V7.4 and does not exist on this hardware. The runs died at parse
+time with `NN model not found`. Affected: `nn_nmos_dc.sp`, `nn_nmos_op.sp`,
+`nn_inverter_dc.sp`, `bsimar_nmos_dc.sp`, `bsimar_inverter_dc.sp` — every
+LEVEL=73/74 example the README advertised, including the two the Quick Start
+told users to run. They also violated NN Rule 14 (ASAP7 is out of scope for
+the NN families). **Repaired, not deleted:** each now pins
+`TECH=tsmc5 VT=svt` at the tsmc5 0.65 V rail and resolves a real per-tech
+checkpoint (`tsmc5_dn_large_*`, `tsmc5_tf_large_*`), which is also what
+CLAUDE.md's documented netlist usage always said to write. All five verified
+running.
+
+**Restructured by circuit scale**, so the same circuit under different model
+families sits side by side (`device/bsimcmg_nmos_dc.sp` next to
+`device/directnet_nmos_dc.sp` next to `device/bsimar_nmos_dc.sp`) — the
+LEVEL 72/73/74 comparison axis V7.5.6 identified as the reason to keep these
+decks is now visible in the tree:
+
+```
+examples/{passive,device,circuit,complex,analoggym}/
+```
+
+`passive/` (2 decks) carries no transistor and isolates a solver fault from a
+model fault; `device/` (5) is one device at one bias; `circuit/` (6) is
+inverters plus the CS gain stage; `complex/` (4) is multi-stage.
+
+**Naming made consistent** as `<family>_<circuit>_<analysis>.sp`. The family
+tag moved from a suffix to a prefix in `complex/` (`miller_opamp_directnet.sp`
+→ `directnet_opamp_miller_dc.sp`), `nn_*` became `directnet_*` (the project
+calls the model DirectNet everywhere else; "nn" is ambiguous across three NN
+families), and two names that were simply wrong were fixed:
+
+* `bsimcmg_inverter_dc.sp` has **no analysis directive** at all — it is an
+  operating-point demo → `circuit/bsimcmg_inverter_op.sp`.
+* `bsimcmg_inverter_dc_asap7_ref.sp` → `circuit/bsimcmg_inverter_dc.sp`. The
+  `_asap7_ref` suffix claimed a distinction that does not exist: **every**
+  untagged LEVEL=72 deck falls back to the ASAP7 modelcard (`parser.py`
+  ASAP7_MODELCARD_FILES), so the suffix marked nothing. This is a name swap
+  between two files; both halves are independently correct and git tracks
+  the renames.
+
+**Gate templates repointed and re-run.** Three of the four `complex/` decks
+are read verbatim by verify gates
+(`verify_complex_{opamp,ring_osc,switchcap}.py` rewrite `TECH=`/`VT=`/`VDD`
+per tech). Their `TEMPLATE` paths and two comment references in
+`tests/common/complex.py` were updated, and all three gates were re-run to
+confirm. The fourth, `directnet_sram_6t_op.sp`, is **not** a template — the
+SNM gate builds its netlist programmatically in `tests/common/complex.py`
+(`directnet_sram_lobe` / `directnet_sram_6t`), so that deck is documentation
+only and can drift from the gate without anything catching it. Both facts are
+now stated in the README table rather than left to be rediscovered.
+
+**Stale V7.5.6 leftovers swept.** The curation removed 100 design directories
+but left their measurements behind in the per-tree summary artifacts, which
+`RESULTS_TSMC.md` explicitly promises cannot contradict the per-design
+verdicts. Filtered to the 18 kept designs, preserving every surviving row
+byte-for-byte (the kept designs' `result.json` files were never touched, and
+`tools/report.py` already regenerates `RESULTS.md` from those): `run_all.json`
+38 → 18 records and `summary.csv` 446 → 209 rows in all five trees, plus
+tsmc5 `retune.json` 4 → 1 and, on tsmc16, `amplifier_sizing.json` 17 → 7,
+`sfe_sizing.json` 12 → 5, `ldo_sizing.json` 5 → 3, `vref_sizing.json` 2 → 1,
+`sfe_polish.json` 2 → 1, `vref_polish.json` 1 → 0. Also deleted **100 stale
+per-design log directories** under `designs_*/results/<category>/<design>/`.
+
+**Verification:** all 17 decks run clean at their new paths (was 12/17);
+`verify_complex_ring_osc` and `verify_complex_switchcap` pass on their renamed
+templates; no reference to an old path survives anywhere in
+`*.py`/`*.sh`/`*.md`, and no removed-design name survives anywhere under
+`designs_*/results/`.
+
+### Two pre-existing problems this surfaced — neither caused here, neither fixed here
+
+1. **`verify_complex_opamp` is 0/5 on every tech, against a documented `large`
+   baseline of 2/5** (`DirectNet-L73-clean.md` §strict table). Every cell reads
+   `DN gain = 0.0` with NRMSE ~70 % — the DirectNet DC sweep returns a flat
+   output curve, so this is not a scoring shortfall but a dead result.
+   **Established as pre-existing, not a side effect of the rename:** the
+   template is byte-identical across the move (`git show HEAD:<old> | diff -`),
+   `TEMPLATE.read_text()` is the only use of the path, the rest of the diff to
+   `tests/common/complex.py` is comments — and the gate was re-run **at HEAD in
+   a detached worktree** and reproduced 0/5 with identical per-tech numbers
+   (TSMC5 trip shift 80.00 mV, NRMSE 70.59 %, …). Note the resolver picks
+   `tsmc*_dn_large` (large-first cascade) while `render_directnet_netlist`'s
+   docstring still says `tsmc{X}_dn_medium`; whether the recorded 2/5 was taken
+   against a different tier is the first thing to check. Needs its own
+   investigation.
+2. **`designs_tsmc16/` carries a nested `.gitignore` that ignores `results/`
+   wholesale; the other four trees do not** — so the source tree's summary
+   artifacts are untracked while the four derived trees' are committed. Both
+   sets were cleaned here, but the tracking asymmetry is left as-is rather than
+   resolved by guesswork: choosing which way to make it consistent adds or
+   removes files from version control and is a call for whoever owns the
+   corpus flow.
+
+**Nothing was deleted.** V7.5.6 pruned the AnalogGym corpus because it was
+degenerate; these 17 decks are not — every one covers a distinct
+(family, circuit, analysis) cell, and the two passive decks that contribute
+nothing to NN evaluation are the control that separates a solver fault from a
+model fault. The house-cleaning here was repair and naming, not removal.
+
+---
+
 ## V7.5.6 — the AnalogGym corpus curated to a core basket (branch `feat/analoggym-migration`, 2026-08-12)
 
 **Goal: make the evaluation corpus fast enough to run routinely without

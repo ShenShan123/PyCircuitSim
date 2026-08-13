@@ -155,22 +155,22 @@ for training and inference details.
 conda activate pycircuitsim
 
 # Run a BSIM-CMG (LEVEL=72) inverter transient simulation
-python main.py examples/bsimcmg_inverter_tran.sp
+python main.py examples/circuit/bsimcmg_inverter_tran.sp
 
 # Run a BSIM-CMG NMOS DC sweep
-python main.py examples/bsimcmg_nmos_dc.sp
+python main.py examples/device/bsimcmg_nmos_dc.sp
 
 # Run a DirectNet (LEVEL=73) NMOS DC sweep (requires a trained checkpoint)
-python main.py examples/nn_nmos_dc.sp
+python main.py examples/device/directnet_nmos_dc.sp
 
 # Run a BSIM-AR (LEVEL=74) inverter DC sweep
-python main.py examples/bsimar_inverter_dc.sp
+python main.py examples/circuit/bsimar_inverter_dc.sp
 
 # Specify a custom output directory
-python main.py examples/bsimcmg_inverter_tran.sp -o my_results
+python main.py examples/circuit/bsimcmg_inverter_tran.sp -o my_results
 
 # Enable verbose logging (shows Newton-Raphson iterations)
-python main.py examples/bsimcmg_inverter_tran.sp -v
+python main.py examples/circuit/bsimcmg_inverter_tran.sp -v
 ```
 
 ### CLI Options
@@ -416,28 +416,50 @@ dispatch still works, so no circuit or solver changes were needed.
 
 ## Examples
 
-All example netlists live in `examples/`. The files below cover the three
-compact-model families plus a passive-only RC reference:
+Example netlists live in `examples/`, grouped by circuit scale so the same
+circuit under different compact-model families sits side by side:
+
+```
+examples/
+├── passive/    no transistor — isolates a solver fault from a model fault
+├── device/     one device, one bias — the model surface itself
+├── circuit/    a handful of devices — inverters, a gain stage
+├── complex/    multi-stage; three of these are verify-gate templates
+└── analoggym/  the curated AnalogGym benchmark corpus (see below)
+```
 
 | File | Analysis | Models used | What it demonstrates |
 |------|----------|-------------|----------------------|
-| `examples/bsimcmg_nmos_dc.sp` | DC sweep | LEVEL=72 | NMOS Id-Vgs against PyCMG/OSDI |
-| `examples/bsimcmg_pmos_dc.sp` | DC sweep | LEVEL=72 | PMOS Id-Vgs against PyCMG/OSDI |
-| `examples/bsimcmg_inverter_dc.sp` | OP (no directive) | LEVEL=72 | Inverter bias point; hierarchical `.subckt` form |
-| `examples/bsimcmg_inverter_tran.sp` | Transient | LEVEL=72 | FinFET inverter pulse response |
-| `examples/bsimcmg_inverter_dc_asap7_ref.sp` | DC sweep | LEVEL=72 | ASAP7 reference configuration |
-| `examples/nn_nmos_op.sp` | OP | LEVEL=73 | DirectNet single-point NMOS |
-| `examples/nn_nmos_dc.sp` | DC sweep | LEVEL=73 | DirectNet NMOS Id-Vgs |
-| `examples/nn_inverter_dc.sp` | DC sweep | LEVEL=73 | DirectNet inverter VTC |
-| `examples/bsimar_nmos_dc.sp` | DC sweep | LEVEL=74 | BSIM-AR NMOS Id-Vgs |
-| `examples/bsimar_inverter_dc.sp` | DC sweep | LEVEL=74 | BSIM-AR inverter VTC |
-| `examples/bsimcmg_cs_amp_ac.sp` | AC sweep | LEVEL=72 | Common-source amp Bode response |
-| `examples/rc_lowpass_ac.sp` | AC sweep | passives | Single-pole RC `.ac` reference |
-| `examples/rc_transient.sp` | Transient | passives | Pure RC reference |
-| `examples/complex/miller_opamp_directnet.sp` | DC | LEVEL=73 | Two-stage Miller opamp |
-| `examples/complex/ring_osc_5stage_directnet.sp` | Transient | LEVEL=73 | 5-stage ring oscillator |
-| `examples/complex/sram_6t_directnet.sp` | DC | LEVEL=73 | 6T SRAM butterfly / SNM |
-| `examples/complex/switchcap_unitcell_directnet.sp` | Transient | LEVEL=73 | Switched-capacitor unit cell |
+| `passive/rc_lowpass_ac.sp` | AC sweep | passives | Single-pole RC `.ac` reference (exact analytic anchor) |
+| `passive/rc_transient.sp` | Transient | passives | Two-stage RC step response |
+| `device/bsimcmg_nmos_dc.sp` | DC sweep | LEVEL=72 | NMOS Id-Vgs against PyCMG/OSDI |
+| `device/bsimcmg_pmos_dc.sp` | DC sweep | LEVEL=72 | PMOS Id-Vgs against PyCMG/OSDI |
+| `device/directnet_nmos_dc.sp` | DC sweep | LEVEL=73 | DirectNet NMOS Id-Vgs |
+| `device/directnet_nmos_op.sp` | OP | LEVEL=73 | DirectNet single-point NMOS |
+| `device/bsimar_nmos_dc.sp` | DC sweep | LEVEL=74 | BSIM-AR NMOS Id-Vgs |
+| `circuit/bsimcmg_inverter_op.sp` | OP (no directive) | LEVEL=72 | Inverter bias point; no directive ⇒ operating-point solve |
+| `circuit/bsimcmg_inverter_dc.sp` | DC sweep | LEVEL=72 | Inverter VTC at the ASAP7 rail (0.7 V, L=7n) |
+| `circuit/bsimcmg_inverter_tran.sp` | Transient | LEVEL=72 | FinFET inverter pulse response |
+| `circuit/bsimcmg_cs_amp_ac.sp` | AC sweep | LEVEL=72 | Common-source amp Bode response |
+| `circuit/directnet_inverter_dc.sp` | DC sweep | LEVEL=73 | DirectNet inverter VTC |
+| `circuit/bsimar_inverter_dc.sp` | DC sweep | LEVEL=74 | BSIM-AR inverter VTC |
+| `complex/directnet_opamp_miller_dc.sp` | DC | LEVEL=73 | Two-stage Miller opamp — **gate template** |
+| `complex/directnet_ring_osc_tran.sp` | Transient | LEVEL=73 | 5-stage ring oscillator — **gate template** |
+| `complex/directnet_switchcap_tran.sp` | Transient | LEVEL=73 | Switched-capacitor unit cell — **gate template** |
+| `complex/directnet_sram_6t_op.sp` | OP | LEVEL=73 | 6T SRAM bitcell (illustration; the SNM gate builds its own netlist) |
+
+**Two conventions worth knowing.** The three decks marked *gate template* are
+read verbatim by `tests/verify_complex_{opamp,ring_osc,switchcap}.py`, which
+rewrite `TECH=`/`VT=`/`VDD` per technology — editing them changes what those
+gates run. `directnet_sram_6t_op.sp` is *not* a template: the SNM gate builds
+its netlist programmatically in `tests/common/complex.py`, so that deck is
+documentation only.
+
+**Every LEVEL≥73 deck must pin `TECH=` and `VT=`.** Without them the parser
+defaults to `TECH=asap7`, which maps to the UNKNOWN embedding row and resolves
+a universal-scope checkpoint that is not built on this hardware — the run
+fails at parse time. The `device/` and `circuit/` NN decks pin `TECH=tsmc5`;
+the `complex/` decks pin `TECH=tsmc12`.
 
 Since V6.12.0 the inverter, NN, and complex decks are written
 **hierarchically** with `.subckt` + `X` instances. Probed nodes are kept at
@@ -462,7 +484,7 @@ agreeing as of V7.5.3): `examples/analoggym/RESULTS_TSMC.md`.
 ### Sample: BSIM-CMG FinFET Inverter Transient (ASAP7 7nm)
 
 ```spice
-* examples/bsimcmg_inverter_tran.sp — hierarchical (.subckt) version
+* examples/circuit/bsimcmg_inverter_tran.sp — hierarchical (.subckt) version
 Vdd 1 0 1.0
 Vin 2 0 PULSE 0 1.0 0.5n 0.1n 0.1n 0.8n 2n
 
@@ -484,7 +506,7 @@ Mn1 o i 0 0 nmos1 L=30n NFIN=10
 .end
 ```
 
-Run any example with `python main.py examples/<file>.sp`.
+Run any example with `python main.py examples/<group>/<file>.sp`.
 
 ---
 
@@ -493,7 +515,7 @@ Run any example with `python main.py examples/<file>.sp`.
 ```python
 # High-level: parse + solve + plot in one call
 from pycircuitsim.simulation import run_simulation
-run_simulation('examples/bsimcmg_inverter_tran.sp',
+run_simulation('examples/circuit/bsimcmg_inverter_tran.sp',
                output_dir='my_results', verbose=True)
 
 # Low-level: drive the solver directly (this is how you get waveform arrays)
@@ -501,7 +523,7 @@ from pycircuitsim import Parser
 from pycircuitsim.solver import DCSolver, TransientSolver
 
 parser = Parser()
-parser.parse_file('examples/bsimcmg_inverter_tran.sp')
+parser.parse_file('examples/circuit/bsimcmg_inverter_tran.sp')
 circuit = parser.circuit
 
 # DC operating point -> {node_name: voltage}
@@ -911,6 +933,11 @@ external_compact_models/            # External compact-model packages
 
 main.py                             # CLI entry point
 examples/                           # Example netlists (.sp files)
+├── passive/                        # No transistor — solver-only controls
+├── device/                         # Single-device characterization
+├── circuit/                        # Inverters, gain stage
+├── complex/                        # Multi-stage; 3 are verify-gate templates
+└── analoggym/                      # Curated AnalogGym benchmark corpus
 tests/                              # NGSPICE verification scripts
 ├── common/                         # Shared test infrastructure
 └── references/                     # NGSPICE reference netlists

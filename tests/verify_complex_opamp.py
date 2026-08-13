@@ -47,7 +47,7 @@ GAIN_TOL = 0.10            # +/-10% open-loop DC gain gate
 # certify it. Mirrors the parametric twin (tests/common/complex_sweep.py
 # OPAMP_MIN_GAIN). The shipped cells sit at 160-190 V/V, ~30x above the floor.
 OPAMP_MIN_GAIN = 5.0
-TEMPLATE = PROJECT_ROOT / "examples" / "complex" / "miller_opamp_directnet.sp"
+TEMPLATE = PROJECT_ROOT / "examples" / "complex" / "directnet_opamp_miller_dc.sp"
 
 
 def _bias(bt: BenchTech) -> Tuple[float, float, float]:

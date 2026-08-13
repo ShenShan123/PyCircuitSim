@@ -254,7 +254,7 @@ commands, and performance/GPU flags: **README.md**. Essentials:
 
 ```bash
 conda activate pycircuitsim          # env at /home/shenshan/.conda/envs/pycircuitsim
-python main.py examples/<deck>.sp    # analysis chosen by the directive in the deck
+python main.py examples/<group>/<deck>.sp   # analysis chosen by the deck's directive
 ```
 
 **Prerequisites:** NGSPICE 45.2+ (`/usr/local/ngspice-45.2/bin/ngspice`; repo
@@ -322,6 +322,24 @@ at all four scales. `--tech-scope` ∈ `{tsmc5,tsmc6,tsmc7,tsmc12,tsmc16,univers
 **Netlist usage:** `.model nmos_nn NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)` with
 `L=16n NFIN=10`. Parser auto-resolves checkpoint + local-vocab tech_code via
 `bsimar.config.local_variant_code(scope, tech, variant)`.
+
+> **`TECH=` is not optional on LEVEL≥73 — omitting it fails at parse time.**
+> The parser defaults to `TECH=asap7` (`model_params.get('TECH') or "asap7"`),
+> which maps to the **UNKNOWN embedding row** (a warning, not an error) *and*
+> resolves the **universal-scope** stem `nmos_best.pt` / `ar_nmos_best.pt` —
+> a checkpoint family not built on this hardware, so the run dies with
+> `NN model not found`. This silently broke all five LEVEL=73/74 example
+> decks until V7.5.7. ASAP7 is out of scope for the NN families (Rule 14),
+> so an untagged NN deck is always wrong, never merely imprecise.
+
+**`examples/` layout** (V7.5.7): grouped by circuit scale —
+`passive/` (no transistor: isolates a solver fault from a model fault),
+`device/`, `circuit/`, `complex/`, `analoggym/` — named
+`<family>_<circuit>_<analysis>.sp` so the LEVEL 72/73/74 triplets sit
+adjacent. **Three `complex/` decks are verify-gate TEMPLATEs** read verbatim
+by `verify_complex_{opamp,ring_osc,switchcap}.py` (editing them changes what
+those gates run); `complex/directnet_sram_6t_op.sp` is **not** — the SNM gate
+builds its netlist programmatically in `tests/common/complex.py`.
 
 ### Output files
 

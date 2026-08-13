@@ -56,7 +56,7 @@ DROOP_FLOOR_FRAC = 1e-3    # absolute floor on the droop gate: 0.1% of VDD
 TRAN_TSTEP = 5e-12
 TRAN_TSTOP = 12e-9
 CLK_PER = 4e-9
-TEMPLATE = PROJECT_ROOT / "examples" / "complex" / "switchcap_unitcell_directnet.sp"
+TEMPLATE = PROJECT_ROOT / "examples" / "complex" / "directnet_switchcap_tran.sp"
 
 # sample-window end (just before the 1st sample phase closes) and a hold-window
 # pair to measure droop. The clock: td=0.5n, sample (phi high) pw=1.9n.
