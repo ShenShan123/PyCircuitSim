@@ -1,473 +1,238 @@
-# AnalogGym simulator-fix session notes (2026-08-10)
+# AnalogGym simulator-fix notes (opened 2026-08-10, branch `feat/analoggym-migration`)
 
-**Task:** worktree `feat/analoggym-migration`. Make all AnalogGym test circuits
-pass gate, metrics match NGSPICE. Fix simulator (solver / parser / BSIM-CMG
-L72 path) — NN models parked. Then update CLAUDE.md, CHANGELOG.md, README.md.
-User: workflows allowed, max 5 agents.
+**Task:** make the AnalogGym test circuits agree with NGSPICE by fixing the
+*simulator* (solver / parser / BSIM-CMG L72 path) — never by weakening a gate or
+editing a deck. NN models (L73/74/75) are parked. Docs to update on each
+version: `docs/CHANGELOG.md`, `CLAUDE.md`, `README.md`,
+`examples/analoggym/RESULTS_TSMC.md`.
 
-## CURRENT STATUS (2026-08-12 evening) — read this first, the rest is history
+> **This file is the working scratchpad: current state + what is still open.**
+> The narrative history, every dead end and all per-version evidence live in
+> **`docs/CHANGELOG.md` §V7.5.0–V7.5.4** — that is the record, and it is not
+> duplicated here.
 
-Three sprints complete on this branch: **V7.5.1** (root causes, 11 defects),
-**V7.5.2** (AC full stamp + LTE output refinement), **V7.5.3** (2026-08-12:
-pilot closed 7/7 + first full-tech campaign + comparison-fairness harness
-fixes; CHANGELOG §V7.5.3). All repo gates green (V7.5.3 basket: op/dc 2/2/
-dc_comp 81/multi_dc 53/tran 1/tran_comp 45/multi_tran 86/subckt 11/mult 6/
-ac 3/ring 5/switchcap 5/sram 5/canaries/nn_dc_tran 30/nn_ac 10/lifted 15).
+## Current state (end of V7.5.4, 2026-08-12)
 
-Pilot deck status FINAL (details + caveats in RESULTS_TSMC.md):
+Four sprints done on this branch: **V7.5.1** (11 root-caused defects),
+**V7.5.2** (AC full stamp + opt-in LTE output refinement), **V7.5.3**
+(charge-state LTE, campaign driver, comparison-fairness harness fixes),
+**V7.5.4** (the internal-solve current floor; two record corrections).
 
-| deck | was (2026-08-10) | now |
+Pilot decks — **7/7 fully agreeing**, and they are a regression basket now:
+
+| deck | 2026-08-10 | now |
 |---|---|---|
-| amplifier tb_gain | 8/8 | **8/8**, dcgain rel 1.5e-07 |
-| ldo tb_load | 11/11 | **11/11**, lr reconciled (engine ctl 1.6e-06, py-ng 0.18%) |
-| ldo tb_loop_max | 8/8 | **8/8**, GBW rel 7.4e-06 |
-| amplifier tb_tran | 2/6 | **11/11** flags-off |
-| ptat_1 tb_dc | 5/13 | **13/13**, 0 mono violations |
-| amplifier tb_dc | 0/15 | **15/15 monolithic** (recovery not needed since the grid fix) |
-| chargepump tb_tran | dead | **6/6** — charge-state LTE; up_imin 1.49%@s100 / 1.84%@s20 |
+| amplifier `tb_gain` | 8/8 | **8/8** (dcgain rel 1.5e-07) |
+| ldo_1 `tb_load` | 11/11 | **11/11** (lr reconciled, py-ng 0.18 %) |
+| ldo_1 `tb_loop_max` | 8/8 | **8/8** (GBW rel 7.4e-06) |
+| amplifier `tb_tran` | 2/6 | **11/11** flags-off |
+| ptat_1 `tb_dc` | 5/13 | **13/13**, 0 mono violations |
+| amplifier `tb_dc` | 0/15 | **15/15** monolithic |
+| chargepump `tb_tran` | dead | **6/6** refine+trap, stride 100 *and* 20 |
+| *(new)* front_end_25_6T `tb_dc` | >1 h timeout | **11/13**, 281/281 pts in 3.2 s |
 
-V7.5.3 in one paragraph: per-device charge-state LTE (CKTterr shape,
-CHGTOL=1e-18 device-scale, true trap error — stock NGSPICE marches the
-spike via ITL4 instead, measured from cktterr.c) closed cp to 6/6 both
-strides. Qu2017_AZC = NGSPICE Newton-basin artifact; wired the shipped
-altns fallback (4/85 primary tb_tran decks across techs need it) + honest
-ng_ran verdicts. lr/lr_pp gap = ONE endpoint sample (NGSPICE .meas windows
-are sample-exact; our grid overshot to= by 6 ulp) → sample-exact windows,
-also killed a 1ns-absolute tolerance eating 1000 ps-scale samples.
-plan_points now reproduces NGSPICE's dctrcurv.c termination rule with
-KELVIN accumulation for temp sweeps (bit-verified vs dumps). Strided
-extremum comparison is grid-matched; fork-recovery trigger needs
-per-point corroboration; METRIC_ATOL for vos25/overshoot/undershoot
-cancellation blowups; NGSPICE-side monolithic dc_temp failures (Song_DACFC,
-Qu_LEC at 45.7C) recover via outward segments explicitly. First tsmc5
-campaign (159 decks, campaign.py driver): AC 88/89, dc_source 14/15,
-dc_temp 28/31+1 timeout, tran 11/22+1 over budget — every miss classified
-(RESULTS_TSMC.md §campaign).
+Gate basket, all green at V7.5.4: op PASS · dc 2/2 · dc_comp 81/81 ·
+multi_tech_dc 53/53 · subckt 11/11 · cmg_multiplier 6/6 · tran 1/1 ·
+tran_comp 45/45 · multi_tech_tran 86/86 · ac 3/3 · ring_osc 10/10 ·
+switchcap 10/10 · sram_snm 12/12 · sweep canaries PASS · nn_dc_tran 30/30 ·
+nn_lifted_source 15/15 · PyCMG's own suite 314 passed. (`verify_nn_ac` 10/10
+last verified in V7.5.3, not re-run in V7.5.4 — the NN path is untouched.)
 
 ---
 
-## Source of truth (original 2026-08-10 problem statement — all three FIXED in V7.5.1)
-`examples/analoggym/RESULTS_TSMC.md` §"PyCircuitSim versus NGSPICE" — 7-deck
-TSMC5 pilot. Three root causes recorded there:
+## Done, condensed (detail in CHANGELOG)
 
-1. **Subthreshold current floor** (blocks sensing_front_end + voltage_reference,
-   75 decks): L72-in-PyCircuitSim returns id=0.0 *exactly* at Vgs=55.3mV,
-   2.16nA at 61.9mV; NGSPICE (same OSDI) nonzero. m-independent. Suspect
-   PyCMG internal-node solve: `pycmg/core.py solve_internal_nodes` (200 it,
-   tol from env NN_DC_SOLVE_TOL default **1e-9 A absolute residual**, NR step
-   clamp ±0.2V) — at sub-nA current levels the 1e-9 A tolerance accepts the
-   initial guess / wrong internal-node state. `model.py:570` reads the tol.
-2. **Amplifier tb_dc 125C first-point divergence** (85 decks): sweep 125→-40C,
-   0/67 points; same solve at 25C fine. Newton start problem.
-   Harness has unmeasured recovery (`compare_with_recovery`), but goal is
-   simulator-side fix.
-3. **No per-terminal limiting** (charge pump dead 5 decks, transients partial
-   ~110): `dv_limit` bounds Newton step only; gate walks to -2.96V on 0.65V
-   rail, OSDI rejects point. Need damped fetlim/limvds-style limiting for L72
-   in solver NR loop (NOT hard clamp — kills derivative).
+**V7.5.1** — the three original root causes and everything they unwound into:
+the subthreshold current floor (PyCMG internal-solve tolerance), the 125 °C
+first-point divergence, and the missing per-terminal limiting. What shipped:
+the **full 4-terminal Newton stamp** for L72 (channel-only opvars are blind to
+junction/gate-leakage conductances, which at 125 °C carry the drain current —
+measured id=+1.8 mA against gds=4.3e-13 S); the **full 4-terminal charge
+companion** (the old 3×3 SPICE-cap expansion stamps sign-flipped transcap
+off-diagonals for floating-bulk devices → a ~15× Newton error amplifier at
+small dt); SPICE-style damped limiting (fetlim/limvds/pnjlim, retreat-to-anchor
+on eval failure); **source-referenced OSDI evaluation** (the internal solve is
+not shift-robust); a wide DC gmin ladder with automatic fallback and honest
+`final_converged`; and a transient retry ladder that re-walks the interval with
+a locally halved dt instead of stiffening companions against a fixed target
+time. `abs(gds)` removed (Critical Rule 4). `PYCIRCUITSIM_NR_TRACE=1` added.
 
-## Key files (2026-08-10 survey — line numbers and defect notes are
-## historical; the abs(gds) and tol defects below are fixed)
-- `pycircuitsim/solver.py` (3457 lines) — MNA+NR, dv_limit, retry ladder.
-- `pycircuitsim/models/mosfet_cmg.py` (442) — L72 wrapper; `_eval_dc` cache;
-  NOTE line 288: `g_ds = abs(g_ds)` (contradicts CLAUDE.md rule "never abs")..
-- `external_compact_models/PyCMG/pycmg/core.py` — `solve_internal_nodes`
-  (line 575), `_nr_step` clamp ±0.2 (line 571), INIT_LIM set EVERY iteration
-  (suspicious; should be first-iter only?).
-- `external_compact_models/PyCMG/pycmg/model.py:533` `eval_dc` — tol env
-  `NN_DC_SOLVE_TOL` default 1e-9; raises RuntimeError on internal divergence.
-- Harness: `examples/analoggym/pycircuitsim_bench/{translate,measure,run_compare}.py`.
-- Uncommitted (pre-existing, keep): run_compare.py fix — `_op_worst` reads
-  `worst_abs` (was `worst` = always None, silently disabled recovery), narrow
-  segment forced stride=1.
+**V7.5.2** — **AC stamps the full `Y = G4 + jωC4`** for L72 (no external gmin
+in AC: it measurably pollutes high-impedance bulk nodes); **opt-in LTE output
+refinement** (`PYCIRCUITSIM_TRAN_REFINE=1`, flags-off byte-identical) with
+PULSE corners as breakpoints and depth-1 un-commit rollback;
+`integration_method='trap'` pinnable. `verify_ac.py` gained the L3
+floating-bulk case that earlier AC gates had masked by rail-tying every bulk.
 
-## Pilot deck status (ORIGINAL 2026-08-10 baseline — current table is at top)
-| deck | agree | note |
-|---|---|---|
-| amplifier tb_gain | 8/8 | OK |
-| ldo tb_load | 11/11 | lr/lr_pp measurement-definition gap only |
-| ldo tb_loop_max | 8/8 | OK |
-| amplifier tb_tran | 2/6 | NR exhausts on falling slew edge (cause 3) |
-| ptat_1 tb_dc | 5/13 | subthreshold floor (cause 1), splits at ~50C |
-| amplifier tb_dc | 0/15 | 125C first-point divergence (cause 2) |
-| chargepump tb_tran | dead | first step, all dt (cause 3) |
+**V7.5.3** — **per-device charge-state LTE** (CKTterr shape, CHGTOL=1e-18
+because the stock 1e-14 sits 100× above a FinFET terminal charge and never
+fires) closed the charge pump to 6/6 stride-independently; the **campaign
+driver** (`campaign.py`, 159 decks/tech) and the AC/DC families swept on all
+five techs (650/679 fully agreeing; **tsmc6 ≡ tsmc7 verdict-identical across
+all 136 decks** — the relabelled-tech control at campaign scale); and the
+harness became NGSPICE-exact (sample-exact `.meas` windows, `dctrcurv.c` grid
+rule with Kelvin accumulation, grid-matched strided extrema, corroborated fork
+recovery, `altns` fallback for NGSPICE-side basin failures, honest `ng_ran`).
+Also `59aadb7`: PyCMG's `_read_opvar` descriptor rescan was **67 % of every
+L72 transient's wall** — memoized, bit-identical, ~3×.
 
-## Env facts
-- conda env `pycircuitsim` at /home/shenshan/.conda/envs/pycircuitsim
-- NGSPICE /usr/local/ngspice-45.2/bin/ngspice; worktree at
-  /data2/home/shenshan/PyCircuitSim/.claude/worktrees/analoggym-migration
-- Gates CPU-pinned: CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
-
-## Progress log
-- [x] Task 1: root cause = PyCMG internal-solve tol 1e-9 A abs (model.py); NGSPICE ABSTOL=1e-12.
-- [x] Task 2: default tol -> 1e-12 (committed 544e9f4). ptat_1 5/13 -> 9/13 @stride10
-      (rest = stride artifacts + hot-end flags 115/120C, recheck full stride).
-- [x] Task 3 (DONE in V7.5.1 — kept as findings chain):
-      1. Added fetlim/limvds pair-space limiting + eval about limited point in
-         _stamp_mosfet_dc (limit kwarg; probes pass limit=False), _nr_limited
-         convergence gates in DC+tran loops + both oscillation-acceptance paths,
-         reset at DCSolver.solve + TransientSolver.solve entry, retreat-to-anchor
-         loop (8x bisect) on eval RuntimeError. PMOS via _nr_sign=-1.
-      2. Charge pump STILL died: eval fails at pairs (2.5,2.5,2.5) when ABSOLUTE
-         source = -16.1V. Probe (nch_svt_mac l68n nfin4): same pairs eval OK at
-         s=0 / s=-8.5, FAIL s=-16.1 warm AND cold => OSDI internal solve not
-         shift-robust. FIX: _eval_dc now evaluates SOURCE-REFERENCED (subtract
-         v_s; mirrors NN Rule 2). Device name/L/NFIN/m now appended to eval errors.
-      3. Next failure: pure NR ping-pong +-0.65V (dv cap) at t=4e-11, resid
-         pins at 2.048e3 at "min dt". ROOT CAUSE: dt-cut ladder halves
-         current_sub_dt but keeps SAME target sub_time => companion demands
-         full-interval dV in dt/2^n => STIFFER each halving. Broken by design.
-      4. IN PROGRESS: rewrite retry ladder as true interval subdivision
-         (2^n pieces walked sequentially, commit per piece, snapshot/rollback
-         cap v_prev/v_prev2/_i_prev + mosfet _q_prev/_q_prev2/_v_prev_tran/
-         _i_prev_gate/_i_prev_drain on failure). n=0 path byte-identical.
-      5. Diagnostic added: PYCIRCUITSIM_NR_TRACE=1 traces transient NR.
-- [x] Task 4 (DONE in V7.5.1) — full failure chain unwound:
-      a. Eval RuntimeErrors at 125C: internal-solve tol 1e-12 ABS unreachable in
-         float64 when junction currents ~1e2 A (542A forward d-b diode at 2.5V/
-         125C, pch_svt_mac l26 nfin2). FIXED: voltage-delta acceptance in
-         solve_internal_nodes (accept step<1e-9 AFTER >=1 NR step; floor safe).
-      b. Internal-state RATCHET: failed internal solves leave sim.solve garbage
-         poisoning later evals. FIXED: reset internal nodes to cold + retry once;
-         also reset before raising (pycmg/model.py eval_dc).
-      c. pnjlim added on (b,s) & (b,d) pairs (normalized frame; b-d honored by
-         adjusting ds), vcrit=0.6, vt from device T. _NR_LIM_VCRIT const.
-      d. abs(gds) removed from get_conductance (Critical Rule 4; floor at stamp).
-      e. gmin ladder widened for non-NN: [1e-2..1e-11, gmin] (NN keeps V5 2-level).
-         FIXED pre-existing sticky final_converged bug (intermediate gmin level
-         could mark whole solve converged → flag True with nodes at -666V);
-         verdict now = last level, last source step; failed level restarts from
-         last good homotopy point. NOTE: DCSolver default use_source_stepping=
-         True/20 steps DIVIDES max_iterations (500//20=25 its/step) — harness
-         passes False; probes must too.
-      f. STILL failing at gmin<=1e-3: NR limit cycle, vout6 residual pinned
-         +0.1716 A. ROOT CAUSE FOUND: stamp uses channel-only gds/gm/gmb opvars
-         but id includes JUNCTION currents at 125C (measured M.xop5.Mm8:
-         i_ds=+1.8e-3 A with gds=4.3e-13 S — d(i_junction)/dv ~ 0.07 S missing
-         from Jacobian; also junction current d->b not routed to bulk terminal).
-         NGSPICE stamps the FULL OSDI Jacobian. FIX IN PROGRESS: 4-terminal
-         stamp for L72 via PyCMG get_jacobian_matrix (condensed 4x4 dI/dV,
-         already NGSPICE-verified) + all four terminal currents (id,ig,is,ie),
-         evaluated at the limited bias; NN path keeps 3-cond stamp.
-         Sign conventions MUST be verified numerically (finite diff + inverter).
-      g. FULL STAMP LANDED (commit c96dd09): PyCMG Instance.condense_last_jacobian
-         (no re-eval condensation, == finite diff of (id,ig,is,ie) wrt (d,g,s,e));
-         MOSFET_CMG.get_terminal_stamp -> (i_out, g4) with i_out=-I_pycmg*m,
-         g4=-jac4*m; _stamp_mosfet_dc full 4x4 branch with gmin across d-s/d-b/
-         s-b, i_eq about limited eval point. RESULT: 125C plain-NR cold start
-         converges in 1.8 s; Alfio tb_dc stride50 no-recovery 11/15 (4 misses =
-         hot-end branch difference vs NGSPICE monolithic), WITH recovery 15/15,
-         worst node 2.6 uV, 41 s. verify_bsimcmg_{op,dc} green.
-- [x] NR trace diagnostics: PYCIRCUITSIM_NR_TRACE=1 (transient + DC tails + gmin
-      per-level summary).
-
-## Task 5 status (2026-08-11)
-Batches launched via $SCR/run_batches.sh {cp,bench1,bench2,gatesA,gatesB,gatesC,nn}
-logs at $SCR/batch_<name>.log where SCR=/tmp/claude-1001/-data2-home-shenshan-
-PyCircuitSim/2c8d61c4-d247-4adb-b589-7f06d9d42622/scratchpad.
-- cp: chargepump tb_tran stride 20 (LONG; watch for SimStepLimit)
-- bench1: ptat_1 full stride, ldo_1 tb_load + tb_loop_max stride 1
-- bench2: amp tb_gain stride1, tb_dc stride25+recovery, tb_tran stride4
-- gatesA: op/dc/dc_comprehensive/multi_tech_dc/tran/subckt/cmg_multiplier/ac
-- gatesB: tran_comprehensive, multi_tech_tran
-- gatesC: complex ring_osc/opamp/sram_snm/switchcap/opamp_ac
-- nn: verify_nn_dc_tran (NN path expected untouched)
-Amp tb_dc 15/15 evidence already at $SCR/amp_dc3.json.
-
-### Results so far (2026-08-11)
-- bench2: tb_gain 8/8 | tb_dc 15/15 (recovery, engine 0/0 segments) | tb_tran
-  stride4 11/11 (was 2/6). ALL GREEN.
-- bench1 first pass: ptat_1 full-stride 13/13 (was 5/13; mono_violations 0,
-  9.6s vs 74s) | tb_load 11/11 (5.2s vs 678s!) | tb_loop_max REGRESSED 0/1
-  (OP fell into fake equilibrium vo=-3.9V; plain NR cycle, honest flag).
-  FIX: auto GMIN-homotopy fallback in DCSolver.solve (commit after c96dd09);
-  loop_max back to 8/8, OP worst 2.7e-7V. bench1 rerunning.
-- gatesA: op PASS, dc 2/2, dc_comprehensive 81/81 PASS... (running)
-- gatesB: tran_comprehensive 45/45 PASS; multi_tech_tran running.
-- gatesC/nn: first run void (worktree lacked bsimar/checkpoints — SYMLINKED
-  to main repo copy), rerunning.
-- cp (chargepump stride 20): running, watch $SCR/batch_cp.log.
-NOTE monitor task bbi2mpkui already marked bench1/gatesC/nn done (old runs) —
-track reruns manually.
-
-### FINAL STATE (2026-08-11, after fallback+trigger fixes; commits through 5c18101)
-Pilot: tb_gain 8/8 | tb_load 11/11 5.2s | tb_loop_max 8/8 (0.27uV) | ptat 13/13
-| amp tb_dc 15/15 (branch-fork recovery trigger added to harness) | amp tb_tran
-11/11 (1101/1101 steps) | chargepump STILL RUNNING (b81m96jr3 watches).
-Gates: op 3/3, dc 2/2, dc_comp 81/81, multi_tech_dc 53/53 (known ERROR FIXED),
-tran 1/1, tran_comp 45/45, multi_tech_tran 86/86, ac 2/2, subckt 11/11,
-multiplier 6/6, ring_osc 5/5, sram 5/5, switchcap 5/5, canaries PASS,
-nn_dc_tran 30/30. verify_nn_ac RUNNING. opamp+opamp_ac 0/5 PRE-EXISTING at
-base (bit-identical repro with base solver files) — NN-side, out of scope.
-Docs committed (5c18101): CHANGELOG V7.5.1, RESULTS_TSMC.md (cp row pending),
-CLAUDE.md, README. Worktree checkpoints SYMLINKED from main repo (gitignored).
-
-### Charge-pump saga part 2 (2026-08-11 morning; commits 97e8a42..4e42971)
-- verify_nn_ac 10/10, verify_nn_lifted_source_dc 15/15, canaries PASS.
-- Stride-20 cp ran 4.3 CPU-h without finishing; py-spy blocked (yama).
-- Fail-fast added to transient NR (97e8a42): bail to dt-cut when no 2x
-  progress in 30 its and max_delta > max(100*tol, 1e-2) — the 1e-2 floor
-  protects the oscillation-average path. Tran gates re-ran green.
-- Trace showed march stuck at t=1.5e-14s: acceptance-gate fix (e684bd9) —
-  KCL residual gate on oscillation-average acceptance extended to L72
-  (was NN-only; a quiet-garbage average could commit and poison the charge
-  history through 1/dt).
-- STILL stuck at fs scale: FD probe caught the real killer — the transient
-  transcap 3x3 block (SPICE 5-cap + conservation shortcuts, no bulk row/col)
-  stamps SIGN-FLIPPED off-diagonals for FLOATING-BULK devices (stamped
-  +0.758 S vs true -0.758 S at dt=1e-15). Wrong-signed Jacobian at small dt
-  => every NR iteration amplifies ~15x. Rail-tied bulks masked it in all
-  prior gates. FIX (4e42971): full 4-terminal charge companion for L72 from
-  Instance.condense_last_react() (== FD of (qd,qg,qs,qb), C[g,g]==cgg);
-  per-terminal BE/Trap/BDF2 histories (_i_prev_source/_i_prev_bulk added);
-  NN keeps 3x3 block bit-identically. Stamped system == FD to ~1e-6.
-- RESULT: cp stride-20 COMPLETES 5001/5001 in 443 s: 4/6 agree
-  (lo/up_iavg 7e-5/3.6e-4, lo_imin, up_imax); misses are lo_imax & up_imin
-  = 10ps switching-spike extrema unsampled on a 40ps grid (ng up_imin is a
-  -4uA reversal spike). Re-runs green: tran_comp 45/45, multi_tech_tran
-  86/86, amp tb_tran 11/11, switchcap 5/5, sram 5/5.
-- Spike-metric sweep (integration-method sensitivity of the +-4uA/10ps
-  up_imin reversal spike; engine control 6/6 everywhere):
-  trap s20 4/6 (spike unsampled) | trap s4 2/6 (rings) | trap s1 2/6
-  (rings 2x: up_imin -8.4uA vs -4.03) | trap+LTE(8) s4 3/6 (-1.27uA) |
-  **gear2 s4 5/6 (BEST — iavg 8e-6, only up_imin damped away, +3.2uA)**.
-  Verdict: solver correct; fixed output grid vs NGSPICE LTE timestep
-  control is the remaining fidelity axis. Reported honestly in RESULTS.
-- FOLLOW-UP (not this sprint): AC solver still uses the 5-cap 3x3 expansion
-  for L72 — same floating-bulk hazard in principle; AC gates green today.
-  Second follow-up: LTE-driven local refinement on OUTPUT steps (not just
-  NR-failure marching) would close the spike-amplitude axis.
-
-## SPRINT COMPLETE (2026-08-11 ~11:00)
-All 6 tasks done. Final commits: 544e9f4, 718b1b0, c96dd09, 48df5e9,
-2723cc5, 5c18101, 97e8a42, e684bd9, 4e42971, 64d5bf7 (+ final docs commit).
-Monitor bbi2mpkui stopped. Pilot: 6 decks fully agreeing + charge pump 5/6
-with the integration-sensitivity footnote. All repo gates green except the
-pre-existing (base-reproduced) NN opamp/opamp_ac 0/5 — out of scope.
-- [x] Task 5: re-run 7 pilot decks + repo gates — DONE (see "FINAL STATE"
-      above and the V7.5.2 re-gate ledger below; sha256 sweep baselines did
-      NOT need a rebase — canaries pass).
-- [x] Task 6: docs — DONE (5c18101 for V7.5.1; da6d2c3/58b854f for V7.5.2).
-
-## Uncommitted so far (HISTORICAL snapshot mid-V7.5.1 — everything below
-## was committed in c96dd09..5c18101; working tree is clean as of ae277b2)
-- mosfet_cmg.py: limiter (+fetlim/limvds/reset/retreat), src-ref eval, err context
-- solver.py: limit kwarg plumbing, convergence gates, resets, NR_TRACE, (ladder WIP)
+**V7.5.4** — the internal-node solve accepted on an **absolute** current
+residual (1e-12 A) evaluated on the entry state *before any Newton step*, so
+any device quieter than that constant kept its internal nodes unsolved. Same
+defect V7.5.1 had "fixed" by re-tuning 1e-9 → 1e-12; it simply failed one
+decade lower on deep-subthreshold FinFETs. `eval_dc` now binds on
+`min(tol, max(1e-18, RELTOL·max|i_terminal|))` (`NN_DC_SOLVE_RELTOL`, default
+1e-9), making `NN_DC_SOLVE_TOL` a ceiling the test can only tighten past.
+front_end_25_6T: >1 h timeout → 281/281 converged in 3.2 s, worst node
+0.28 mV, and seed-independent. Answer-preserving elsewhere (tsmc5 15/15,
+tsmc16 14/14, tsmc12 13/14 verdict-identical), but it also revealed that on
+tsmc16 that deck had been scoring **13/13 while 49 mV off** NGSPICE's OP —
+the `.meas` cards do not probe the node that was wrong. Two corrections to the
+record are folded in: Basic_LDO under refine is **4/5, not 5/5**, and
+`min_slope_25_75c` measures the *reference's* noise (see open item 5).
 
 ---
 
-# V7.5.2 follow-up session (2026-08-11 afternoon)
+## OPEN ISSUES
 
-Task: the two follow-ups the V7.5.1 sprint left open. Max 4 agents.
+Ordered by substance. Each says what is wrong, what the numbers are, what has
+already been ruled out, and what to try next.
 
-## Done
-1. **AC full 4-terminal stamp for L72** (commit cd4a106): ACSolver was the
-   last 3-conductance + 5-cap-3x3 consumer (junction-blind + floating-bulk
-   sign hazard). Now Y = G4 + jw*C4 from get_terminal_stamp/get_charge_stamp
-   at the OP. NO external gmin in AC — measured 6% error on a 100k-tied NMOS
-   bulk and a fake 250nV response on a quiet PMOS bulk (NGSPICE holds it at
-   1e-83); gmin stays a DC Newton aid only. verify_ac.py gains Level 3
-   (floating-bulk NMOS+PMOS CS amps, gates v(out) AND v(bulk); bulk gate =
-   complex residual with 1pV floor since the PMOS bulk response is genuinely
-   zero). 3/3 PASS; L2+L3 v(out) exact to printed precision.
-2. **LTE-driven output refinement, opt-in** (commit 6b92f1a):
-   refine_output=True / PYCIRCUITSIM_TRAN_REFINE=1 / bench
-   PYCIRCUITSIM_BENCH_TRAN_REFINE=1. Emits every committed march piece
-   (non-uniform axis, grid points kept exactly); PULSE corners = breakpoints
-   (land on them, restart small + BE piece after — kills trap corner ring at
-   the seed); per-piece LTE (trap 3rd divided difference, TRTOL=7) with
-   depth-1 un-commit rollback (_snapshot/_restore_tran_state) and
-   0.9*r^(-1/3) dt scaling. Flags-off byte-identical (probe + tran gate).
-   Probe (L72 inverter 10ps edges, 40ps grid vs 2.5ps ref): fixed 147mV max/
-   30mV rms err -> refine 0.50mV max/58uV rms (~500x), 526 vs 151 points.
-3. **integration_method='trap'** now accepted (pinned trap, no stiffness
-   swap; the V7.5.1 "trap" sweep rows are otherwise unreproducible —
-   PYCIRCUITSIM_BENCH_TRAN_METHOD=trap used to raise ValueError, so those
-   rows must have been produced with a local edit).
-4. Bench: meta["failed"] floors at 0 (refine returns more points than asked);
-   meta["refine_output"] recorded. NOTE --out is a DIRECTORY.
+### 1. Refine-mode cost on LDO load-step decks — solver, blocks the campaign
 
-## Final state (V7.5.2, 2026-08-11 evening)
-- Charge pump refine+trap: **5/6 at stride 20 AND 100** (609s / 341s),
-  up_imin CAPTURED -3.84u vs -4.031u (4.7%, was sign-flipped/2x-rung);
-  other five metrics 3e-6..1.8e-3. Stride-independence achieved = the
-  fixed-grid axis is closed; remainder is integrator-policy sensitivity.
-- Restart scale fix (58d01a4): sub_dt/64 clipped the spike at coarse
-  strides; now min(sub_dt/64, local-corner-gap/8).
-- DEAD ENDS (reverted, in CHANGELOG §V7.5.2): post-corner hold window
-  (over-rings, -5.70u = 41% OVER, lo_imin regressed); branch-current LTE
-  (NR-noise d3 is dt-independent -> 4096-piece thrash). Faithful next step
-  if 4.7% ever matters: charge-state LTE (needs 4-deep q histories).
-- AC decks after full stamp: tb_gain 8/8 dcgain 1.5e-07 (was 3.9e-05);
-  tb_loop_max 8/8 GBW 7.4e-06 (was 1.4e-03).
-- Full re-gate GREEN: tran_comp 45/45, dc_comp 81/81, multi_tech_dc 53/53,
-  multi_tech_tran 86/86, verify_ac 3/3 (new L3 floating-bulk), nn_ac 10/10
-  (log: $SCR/gate2_nn_ac.log), op 3/3, dc 2/2, tran 1/1, subckt 11/11,
-  multiplier 6/6, ring_osc 5/5, switchcap 5/5, sram 5/5, canaries PASS,
-  nn_dc_tran 30/30, lifted_source 15/15. Amp tb_tran pilot regression
-  11/11 flags-off (42s).
-- BONUS: first full amplifier-category tb_tran sweep (17 designs, stride 4):
-  flags-off 4/17 fully agree -> refine **7/17** (Peng_ACBC/IAC/TCFC 8->11,
-  Leung_DFCFC2 5->8, NO design regressed; cost 1.2-3x, Qu_LEC pays 30x for
-  a 1ns edge). Qu2017_AZC = NGSPICE-side anomaly (ng 0s, engine 0/0),
-  campaign item. Remaining misses = slew-edge metrics on never-validated
-  designs. Table in RESULTS_TSMC.md.
+**Symptom.** `ldo/Basic_LDO/tb_tran` under `PYCIRCUITSIM_BENCH_TRAN_REFINE=1`
+costs **662 s / 19 595 pieces** against NGSPICE's 4 141 steps in 1.9 s, and
+still scores **4/5**: `overshoot` reads 0.85–1.11 mV against NGSPICE's
+3.04 mV (rel 0.63–0.72). Flags-off is 28 s but reads overshoot as ~0 (rel 1.0),
+so refine is the only mode that sees the feature at all. `ldo_2/tb_tran` is
+worse (~3000 s).
 
-## SESSION COMPLETE (2026-08-11 evening)
-Commits: cd4a106 (AC full stamp + L3 gate), 6b92f1a (refine mode),
-67930f9 (trap method), 58d01a4 (restart scale), da6d2c3 + final (docs).
-Both V7.5.1 follow-ups closed; all gates green; pilot fully green with
-cp 5/6 stride-independent (up_imin 4.7%, integrator-policy axis remains,
-charge-state LTE is the recorded faithful next step).
+**Measured march** (0–6 µs window, gear2, dt=20 ns): 100 pieces at the full
+20 ns grid before the load step, 991 pieces across 2.0–2.5 µs, then
+**12 868 pieces at median 47 ps** for the remaining 3.5 µs, with **zero** NR
+failures. It collapses at the load step and never recovers — and it parks 20×
+finer than the "~1 ns" V7.5.3 reported.
 
----
+**Mechanism** (this is the correction to V7.5.3's diagnosis): a **dead zone in
+the growth law**, not a noise-limited estimator.
+`_grow = min(2, max(1, 0.9·r^(-1/3)))` exceeds 1 only when r < 0.9³ = 0.729,
+so **any accepted ratio in [0.729, 1) freezes dt exactly**, with no escape
+path. That is the same line V7.5.3 reported as "growth clamps at 1.0 for 32 %
+of accepted pieces".
 
-# V7.5.4 session (2026-08-12, continuing) — issue 1 CLOSED, issue 2 re-diagnosed
+**Already ruled out — do not retry:**
+- The V7.5.3 recorded fix path (secant-matched exponent + disarm the LTE tests
+  on states moving below the solved tolerance). Built, measured, **reverted**:
+  it holds cp 6/6 at both strides and is flags-off bit-identical, but costs
+  **3.3×** (630 s → 2067 s, 19 897 → 78 298 pieces) and **flips no verdict**.
+  Re-measured on the fixed PyCMG: 2138 s, overshoot rel 0.096 — same picture.
+- Raising CHGTOL (V7.5.3): 1.4×, and it forfeits the charge pump's 6/6.
+- The PyCMG internal-solve fix: independent of this (HEAD controller + fixed
+  PyCMG = 662 s, overshoot rel 0.720). Same numbers, different problem.
+- Moving the safety factor inside the exponent (`(0.9/r)^(1/p)`) shrinks the
+  dead zone to [0.9, 1) but is worth only **~6 %** in dt at order 3 — correct,
+  but not the cost lever.
 
-## Issue 1 (front_end_25_6T cold end) — ROOT CAUSE FOUND AND FIXED
+**Worth knowing:** finer steps move overshoot monotonically toward NGSPICE
+(3.28 mV at 78 k pieces vs 0.85 mV at 19.6 k), so **refine at HEAD is
+under-resolving this deck ~4×** on that metric. This is a fidelity finding
+independent of the cost question — the cheap answer is not "march coarser".
 
-**Diagnostic that cracked it** (`$SCR/probe_fe_cold.py`): solve each temperature
-twice, once from the deck's nodesets and once seeded from NGSPICE's own answer.
-`x0.net13` agreed to 2–8 µV at EVERY temperature; only `vout` disagreed. At
-−20/80 °C the NGSPICE seed landed on NGSPICE's value (so that root is one our
-solver holds — a Newton artifact); at 5 °C BOTH seeds returned the same
-8 mV-off value, i.e. the device evaluation itself differed.
+**Next candidates:** NGSPICE-style **ITL4 iteration-count** timestep control
+(stock NGSPICE resolves fast features that way, not via charge terr — measured
+from `cktterr.c` in V7.5.3); or a genuine local-order estimate feeding both
+shrink *and* growth; or accept the cost, budget ~1 h/LDO deck, and say so.
+Any attempt must re-gate the charge pump at **both** strides.
 
-**Root cause:** PyCMG `solve_internal_nodes` accepted on an **absolute
-1e-12 A** residual, tested on the **entry state before any Newton step**. A
-FinFET in deep subthreshold carries ~1e-13 A per unit device (this deck is
-nulvt 2T sensor cores at m=360/1728), so the test passed immediately and the
-internal nodes were never solved. Exactly the defect V7.5.1 fixed at the
-1e-9 level, one decade lower.
+**Blocks:** campaign-wide refine-on runs, and promoting refine to default-on
+(which additionally needs the §Performance-Discipline re-gate).
 
-**Fix:** the DC internal-node test is scaled to the device's own largest
-terminal current — `tol_eff = min(tol, max(1e-18, RELTOL·max|i_terminal|))`,
-RELTOL=1e-9 (`NN_DC_SOLVE_RELTOL`). `NN_DC_SOLVE_TOL` is now only a CEILING,
-so the test can never loosen. Scaling is **opt-in per call site**: `eval_dc`
-asks for it, `eval_tran`'s stateless branch must NOT — its internal residual
-saturates at ~|Id| (the internal-only Jacobian cannot null the external
-coupling term), so a |Id|-proportional target is unreachable by construction.
-Measured when I wrongly applied it there: 80 spurious non-convergence
-warnings and 15× the wall on PyCMG's own `test_transient`.
+### 2. `ldo_2` disagrees on both its benches — deck-level, untouched
 
-**Evidence:** stride 50 **8/13 → 13/13**, flag_ok 4/7 → 7/7, op_delta worst
-7.99 mV → 0.115 mV, 15.0 s → **1.35 s**. Full stride: the **>1 h timeout is
-gone** — 281/281 points converged in **3.2 s**, worst node 0.28 mV, **11/13**.
-The 2 remaining misses are `min_slope_25_75c` / `max_step_frac_25_75c`, the
-known per-step-derivative metric class (open item 5) — now the only miss left
-on this deck. Also 11× FASTER, not slower: the outer NR had been thrashing
-against an unsolved device model.
+`tb_load` `lr` sits on a ~110 µV-flat replica-regulated curve (py holds it
+**16× flatter** than NGSPICE, so a genuine small residual is amplified by a
+peak-to-peak-of-a-flat-curve metric); `tb_tran` excursions differ **11–57 %**.
+The corpus's most delicate local-loop design. Start at the deck level — read
+the loop's own stability, not the solver — and only then decide whether this is
+a comparison artifact or a real gap.
 
-## Issue 2 (refine step controller) — the recorded fix path does NOT do what it says
+### 3. Slew-edge metrics on ~10 amplifier `tb_tran` decks — integrator policy
 
-Implemented exactly as recorded (secant-matched exponent from the last two
-(h, r) samples of a reject sequence + disarm both LTE tests on states whose
-per-piece move is under the tolerance the piece was solved to). All of it is
-inside refine-only code; **flags-off byte-identical** (sha256 over the full
-float64 waveform, plus tran 1/45/86 and AC 3/3).
+**7/17** designs fully agree under refine (up from 4/17 flags-off, composition
+net-positive: Fan_SMC / Leung_DFCFC1 / Yan_AZ each 5→8 metrics, Qu2017_AZC
+0/0→11/11 via the `altns` fallback). Two marginal 2 %-gate crossings went the
+other way under charge-LTE's step pattern: Leung_DFCFC2 `sr_rise`
+1.88 %→2.45 %, Peng_IAC `sr_fall` 1.93 %→2.17 %. Every underlying flags-off
+miss is *improved* by refine (DFCFC2 7.3 %→4.6 %). These are never-validated
+designs on the same integrator-policy axis as item 1; diminishing returns until
+item 1 is settled.
 
-- **cp gate holds:** 6/6 at stride 100 (up_imin 1.80 %) AND stride 20
-  (1.29 %, vs V7.5.3's 1.84 %) — stride-independence preserved.
-- **The cost goal is NOT met.** Basic_LDO tb_tran refine: 19 897 → 78 298
-  pieces, 630 s → 2067 s (**3.3× SLOWER**), while the binding metric improved
-  8.5× (overshoot rel 0.634 → 0.074). It is an accuracy change, not a cost fix.
-- **Baseline correction:** Basic_LDO tb_tran under refine scores **4/5** at
-  HEAD on this box, not the 5/5 in CHANGELOG §V7.5.3 item 8(b) — overshoot
-  1.11 mV vs NGSPICE 3.04 mV, rel 0.634. That 5/5 does not reproduce.
-- **What the march actually does** (measured 0–6 µs, gear2, dt=20 ns): 100
-  pieces at the full 20 ns grid before the load step, 991 pieces in
-  2.0–2.5 µs, then **12 868 pieces at median 47 ps** for the remaining
-  3.5 µs, with **zero** NR failures. It collapses at the load step and never
-  recovers — it does not "park at ~1 ns", it parks 20× finer than that.
-- **Mechanism, and it is not the noise floor:** the growth law
-  `_grow = min(2, max(1, 0.9·r^(-1/3)))` exceeds 1 only when r < 0.9³ =
-  0.729, so any accepted r in [0.729, 1) freezes dt **exactly**. That is a
-  stable attractor with no escape path, and it is the same line the V7.5.3
-  diagnosis reported as "growth clamps at 1.0 for 32 % of accepted pieces".
-  The safety factor belongs INSIDE the exponent — `(0.9/r)^(1/p)` grows
-  whenever r < 0.9 — which shrinks the dead zone to [0.9, 1). Not yet
-  implemented or measured.
+### 4. Campaign coverage gap: the transient family on tsmc6/7/12/16 — compute
 
-**DECISION: reverted** (`git checkout -- pycircuitsim/solver.py`). It flips no
-verdict anywhere (cp 6/6 → 6/6, LDO 4/5 → 4/5) and triples the cost of the one
-deck that IS the cost problem, so it does not ship. Both halves and all the
-numbers are in CHANGELOG §V7.5.4 for whoever picks this up; the staged
-variants used for attribution are `$SCR/pkg_{head,secant,disarm}`.
+AC/DC families are done on all five techs. Remaining: **4 techs × 23 transient
+decks**. Runnable **flags-off today**; refine-on is gated behind item 1 (or
+budget ~1 h per LDO deck). Driver:
+`python -m examples.analoggym.pycircuitsim_bench.campaign` (resumable, N
+workers, writes `summary.md`).
 
-Also measured: **the PyCMG fix does not touch this problem.** HEAD controller +
-fixed PyCMG = 662 s, 19 595 pieces, overshoot rel 0.720 — i.e. the LDO refine
-grind and the internal-solve floor are independent.
+### 5. Metric-definition caveats — characterized, NOT solver work
 
-**Gate basket for the shipped PyCMG fix, all green:** op PASS, dc 2/2,
-dc_comp 81/81, multi_dc 53/53, subckt 11/11, multiplier 6/6, tran 1/1,
-tran_comp 45/45, multi_tran 86/86, AC 3/3, ring_osc 10/10, switchcap 10/10,
-sram_snm 12/12, canaries PASS, nn_dc_tran 30/30, lifted_source 15/15, PyCMG's
-own suite 314 passed / 1 warning (was 122 warnings before the call-site
-scoping). Pilot: tb_gain 8/8, tb_load 11/11, tb_loop_max 8/8, ptat_1 13/13
-(0 mono violations), amp tb_dc 15/15, amp tb_tran 11/11, cp refine+trap 6/6 at
-stride 100 (up_imin 1.489e-02) and stride 20 (1.837e-02) — both reproducing
-V7.5.3 to the printed digit. `verify_complex_opamp{,_ac}` remain 0/5,
-pre-existing NN-side and untouched (they do not call PyCMG).
+Quote these with the caveat; do not chase them in the solver.
 
-**Methodology trap worth keeping:** a probe script placed IN the worktree
-cannot compare code states — `sys.path[0]` is the script's own directory (and
-`''`/cwd for `-m` and `-c`), so a PYTHONPATH-staged package copy is silently
-ignored and two "different" states measure bit-identically. It cost me one
-wrong conclusion. Run probes from the scratchpad via `$SCR/run_bench.py`,
-which inserts `PROBE_PKG` at `sys.path[0]` and prints the resolved
-`solver.__file__`.
+- **`min_slope_25_75c` / `max_step_frac_25_75c`** (18 decks — the campaign's
+  largest miss family). A *minimum over 100 adjacent steps* of a 0.5 °C
+  staircase whose steps are ~225 µV, so one bad sample sets the statistic. On
+  front_end_25_6T, NGSPICE's own curve moves **83.8 µV** across 31.5→32.0 °C
+  where its neighbours move 234/226/279 µV — a one-sample ~100 µV wobble in
+  the *reference's* DC solution, dropping its `min_slope` to 1.68e-4 against
+  our smooth 4.27e-4. The Fan_SMC treatment (re-run the reference tighter)
+  does **not** rescue it: at `reltol=1e-5` NGSPICE's value goes **negative**
+  (−4.08e-4), so it is not tolerance-stable on the reference side at all.
+  The **median** slope — same physical property, robustly estimated — agrees
+  to **0.5 %** (4.485e-4 / 4.461e-4 / ours ~4.4e-4), `mono_violations` is 0
+  both sides, and the 281-point OP agrees to 0.28 mV worst over 1124 node
+  comparisons. **Read the median slope; do not tighten the reference to chase
+  it.** (Our curve is also smoothed by per-point continuation seeding —
+  NGSPICE continues too, but converges each point only to its own default
+  tolerance.)
+- **`Fan_SMC/tb_cmrr`** (1 deck). `cmrrdc` 2.27 % against the 2 % gate is
+  NGSPICE's default-tolerance early stop from the deck's own `.nodeset`: a
+  six-seed probe lands NGSPICE on our −36.0255 dB for four seeds including no
+  seed, and its own tolerance ladder converges to it (reltol ≤ 3e-4). Ours is
+  seed-independent to 0.002 dB. A deck-hygiene `.options` fix would move
+  reference numbers, so it stays a caveat.
+
+### 6. Pre-existing, out of charter
+
+`verify_complex_opamp` and `verify_complex_opamp_ac` are **0/5**, reproduced
+bit-identically at base *before* any of this work. NN-model gap (L73), not
+solver, and they do not call PyCMG. NN is parked for this task.
 
 ---
 
-## OPEN ISSUES at close of V7.5.3 (2026-08-12 evening), in decreasing substance
+## Env facts, artifacts, and traps
 
-The V7.5.2 list is fully closed: cp 6/6 (charge-state LTE), campaign
-scripted + first tech swept (campaign.py), Qu2017_AZC (NGSPICE basin
-artifact, altns fallback wired), lr/lr_pp (one-sample window rule,
-reconciled). What the campaign surfaced in their place:
-
-1. ~~**front_end_25_6T tb_dc cold-end robustness**~~ — **CLOSED in V7.5.4**
-   (see the session section above). Root cause was PyCMG's absolute-current
-   internal-node acceptance, not the solver.
-2. **Refine-mode runtime pathology on LDO load-step decks — RE-DIAGNOSED in
-   V7.5.4, STILL OPEN.** The V7.5.3 fix path below was implemented, measured
-   and reverted: it costs 3.3× and flips no verdict. The real mechanism is the
-   growth-law dead zone (r in [0.729, 1) freezes dt exactly), worth only ~6 %
-   in dt; and the deck's HEAD verdict is 4/5, not 5/5. The V7.5.3 text is kept
-   below as the historical record — read the session section above first.
-   *(historical)* **DIAGNOSED**
-   (CHANGELOG §V7.5.3 item 10). Two multipliers: (a) PyCMG _read_opvar
-   descriptor scan = 67% of ALL L72 transient wall — FIXED (59aadb7,
-   bit-identical, ~3x); (b) the refine step controller has a stable
-   ~1 ns equilibrium: shrink/grow assume r~h^3 but measured r~h^1.05
-   (voltage-LTE is noise-limited: DD3 of NR slop is h-independent;
-   charge test improves only h^1 via its /h loosener). Fix path
-   recorded, NOT yet implemented (needs cp re-gate): secant-matched
-   controller exponent + disarm LTE on states moving below the solved
-   tolerance. NOT the fix: raising CHGTOL (forfeits cp 6/6). Do this
-   before campaign-wide refine-on runs.
-3. **ldo_2 disagrees on BOTH benches** — tb_load lr on a ~110 uV-flat
-   replica-regulated curve (py 16x flatter); tb_tran excursions 11-57%.
-   The corpus's delicate local-loop design (see audit corrections);
-   genuine open comparison item, deck-level first.
-4. **Slew-edge metrics on ~10 amplifier tb_tran decks** miss under any
-   step pattern tried (never-validated designs); two marginal 2%-gate
-   crossings flipped V7.5.2->V7.5.3 (DFCFC2 sr_rise 2.45%, IAC sr_fall
-   2.17%). Diminishing returns; integrator-policy axis.
-5. **min_slope_25_75c on 3 sensors** (2.1-11%) — per-step derivative at
-   the uV node-agreement floor; metric-sensitivity class, consider a
-   wider-baseline slope or a documented caveat.
-6. **Campaign: AC/DC families done on ALL FIVE techs** (650/679 full
-   agreement, 95.7%; tsmc6==tsmc7 verdict-identical — the relabelling
-   control at campaign scale; evidence in pycircuitsim_bench_results/
-   v753_campaign_*). Remaining: the TRANSIENT family on tsmc6/7/12/16
-   (4 x 23 decks; run refine only after the step-controller fix in
-   item 2, or budget ~1 h/ldo deck), and refine promotion to default-on
-   still requires the perf-discipline re-gate.
-7. **Fan_SMC tb_cmrr** — reference-side caveat (NGSPICE default-tolerance
-   early stop; py seed-independent, matches converged NGSPICE to 1e-4 dB).
-   Documented in RESULTS; optional deck-hygiene fix (.options) would move
-   reference numbers, so it stays a caveat.
-8. **Pre-existing, out of charter:** NN-side verify_complex_opamp{,_ac}
-   0/5, reproduced bit-identically at base BEFORE this work — NN-model
-   gap, not solver (NN parked for this task).
+- conda env `pycircuitsim` at `/home/shenshan/.conda/envs/pycircuitsim`;
+  NGSPICE `/usr/local/ngspice-45.2/bin/ngspice`; worktree at
+  `/data2/home/shenshan/PyCircuitSim/.claude/worktrees/analoggym-migration`.
+- Gates CPU-pinned: `CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1
+  MKL_NUM_THREADS=1`. `bsimar/checkpoints` is a symlink to the main repo copy
+  (gitignored) so the NN gates can run here.
+- **Campaign evidence is untracked and only on disk:** per-deck JSONs under
+  `examples/analoggym/pycircuitsim_bench_results/v753_campaign_tsmc{5,6,7,12,16}/`
+  (679 decks). Copy them out before any worktree cleanup. Note the layouts
+  differ: tsmc5 nests them under `acdc/`, `tran/`, `pilot/`; the other techs
+  keep them flat.
+- `run_compare.py --out` is a **directory**. Per-deck JSON carries `verdict`,
+  `op_delta` and `notes`; `op_delta` (worst node vs NGSPICE) is the field to
+  trust, not `_last_solve_converged` and not the metric columns alone — see
+  the tsmc16 front_end case in V7.5.4.
+- **Comparing two code states: never put the probe script inside the
+  worktree.** `sys.path[0]` is the script's own directory (and cwd for `-m` /
+  `-c`), so a PYTHONPATH-staged package copy is silently ignored and the two
+  states measure bit-identically. It produced one wrong conclusion in V7.5.4.
+  Run probes from the scratchpad through a wrapper that inserts the chosen
+  package at `sys.path[0]` and **prints the resolved `solver.__file__`** as
+  proof.
+- Bit-identity of a flags-off change is checked by sha256 over the full
+  float64 waveform (time axis + every node), not by eyeballing metrics.
