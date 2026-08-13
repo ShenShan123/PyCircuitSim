@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Parametric sweep driver — sram (DirectNet LEVEL=73 vs NGSPICE BSIM-CMG).
 
-Thin wrapper over tests.common.complex_sweep (plan
-docs/plans/2026-06-20-directnet-complex-circuit-sweeps.md). Sweeps tech / VT
+Thin wrapper over tests.common.complex_sweep (docs/CHANGELOG.md §V6.4.8+).
+Sweeps tech / VT
 (sym + asym N/P) / geometry (L / NFIN / P-N ratio) / VDD / per-circuit stimulus,
 baseline-gated, with a 3-state exit code (0=all-pass, 1=any-fail,
 2=could-not-characterize). The single-point verify_complex_sram.py ship gate is

@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Benchmark 3a — 5-stage CMOS ring oscillator: DirectNet vs NGSPICE BSIM-CMG.
 
-Part of the DirectNet V6.4 sprint, Phase 3 benchmark harness
-(docs/plans/2026-05-15-directnet-complex-circuits.md).
+Part of the DirectNet V6.4 sprint, Phase 3 benchmark harness.
 
 Measures the oscillation period of a 5-stage ring oscillator built from
 DirectNet (LEVEL=73) inverters (PyCircuitSim transient) and compares it to the

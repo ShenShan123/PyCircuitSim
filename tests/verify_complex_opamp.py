@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Benchmark 3b — two-stage Miller opamp: DirectNet vs NGSPICE BSIM-CMG.
 
-Part of the DirectNet V6.4 sprint, Phase 3 benchmark harness
-(docs/plans/2026-05-15-directnet-complex-circuits.md).
+Part of the DirectNet V6.4 sprint, Phase 3 benchmark harness.
 
 Runs a DC transfer sweep of a two-stage Miller opamp built from DirectNet
 (LEVEL=73) transistors and compares against the NGSPICE BSIM-CMG (LEVEL=72)

@@ -1,6 +1,6 @@
 """Parametric sweep harness for the four DirectNet complex circuits.
 
-Plan ``docs/plans/2026-06-20-directnet-complex-circuit-sweeps.md``. Mirrors the
+Built in V6.4.8+ (``docs/CHANGELOG.md``). Mirrors the
 inverter sweep harness (``tests/common/nn_sweep.py``) but for the opamp /
 ring-oscillator / switched-cap / 6T-SRAM benchmarks. Sweeps technology, VT
 (symmetric + asymmetric N/P), geometry (L / NFIN / P-N fin ratio), VDD, and

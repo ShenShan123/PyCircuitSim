@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Benchmark 3c — 6T SRAM read SNM: DirectNet vs NGSPICE BSIM-CMG.
 
-Part of the DirectNet V6.4 sprint, Phase 3 benchmark harness
-(docs/plans/2026-05-15-directnet-complex-circuits.md).
+Part of the DirectNet V6.4 sprint, Phase 3 benchmark harness.
 
 Traces the read static-noise-margin (SNM) butterfly of a 6T SRAM bitcell.
 Each butterfly lobe is the voltage-transfer curve of one half-cell under read

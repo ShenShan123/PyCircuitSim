@@ -1,7 +1,6 @@
 """Shared infrastructure for the DirectNet complex-circuit benchmark harness.
 
-Phase 3 of the DirectNet V6.4 sprint
-(``docs/plans/2026-05-15-directnet-complex-circuits.md``).
+Phase 3 of the DirectNet V6.4 sprint.
 
 Four benchmark circuits exercise DirectNet (LEVEL=73) on larger topologies than
 a single inverter:

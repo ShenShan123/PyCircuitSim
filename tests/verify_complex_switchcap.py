@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
 """Benchmark 3d — switched-capacitor unit cell: DirectNet vs NGSPICE BSIM-CMG.
 
-Part of the DirectNet V6.4 sprint, Phase 3 benchmark harness
-(docs/plans/2026-05-15-directnet-complex-circuits.md).
+Part of the DirectNet V6.4 sprint, Phase 3 benchmark harness.
 
 A CMOS transmission gate samples a DC input onto a hold capacitor under a
 PULSE clock. The harness measures:
