@@ -445,21 +445,27 @@ runnable as-authored at one technology and rewritten per run.
 | `single_devices/bsimcmg_pmos_dc.sp` | DC sweep | LEVEL=72 | PMOS Id-Vgs — the opposite polarity, which is where sign-convention bugs surface |
 | `single_devices/directnet_nmos_dc.sp` | DC sweep | LEVEL=73 | DirectNet NMOS Id-Vgs |
 | `single_devices/bsimar_nmos_dc.sp` | DC sweep | LEVEL=74 | BSIM-AR NMOS Id-Vgs |
-| `simple_circuits/bsimcmg_inverter_dc.sp` | DC sweep | LEVEL=72 | Inverter VTC at the ASAP7 rail (0.7 V, L=7n) |
 | `simple_circuits/bsimcmg_inverter_op.sp` + `.cir` | OP | LEVEL=72 | Inverter bias point at both rail ends — **gate pair** |
 | `simple_circuits/bsimcmg_inverter_tran.sp` | Transient | LEVEL=72 | FinFET inverter pulse response |
 | `simple_circuits/directnet_inverter_dc.sp` | DC sweep | LEVEL=73 | DirectNet inverter VTC |
-| `simple_circuits/rc_lowpass_ac.sp` | AC sweep | passives | Single-pole RC `.ac` reference (exact analytic anchor) |
-| `simple_circuits/rc_transient.sp` | Transient | passives | Two-stage RC step response |
-| `simple_circuits/bsimcmg_cs_amp_ac.sp` | AC sweep | LEVEL=72 | Common-source amp Bode response |
+| `simple_circuits/rc_lowpass_ac.sp` + `.cir` | AC sweep | passives | Single-pole RC `.ac` reference (exact analytic anchor) — **gate pair** |
+| `simple_circuits/bsimcmg_cs_amp_ac.sp` + `.cir` | AC sweep | LEVEL=72 | Common-source amp Bode response — **gate pair** |
 | `simple_circuits/directnet_opamp_miller_dc.sp` + `bsimcmg_opamp_miller_dc.cir` | DC | 73 vs 72 | Two-stage Miller opamp — **gate pair** |
 | `simple_circuits/directnet_ring_osc_tran.sp` + `bsimcmg_ring_osc_tran.cir` | Transient | 73 vs 72 | 5-stage ring oscillator — **gate pair** |
 | `simple_circuits/directnet_switchcap_tran.sp` + `bsimcmg_switchcap_tran.cir` | Transient | 73 vs 72 | Switched-capacitor unit cell — **gate pair** |
 | `simple_circuits/directnet_sram_snm_dc.sp` + `bsimcmg_sram_snm_dc.cir` | DC | 73 vs 72 | 6T SRAM read-SNM half-cell — **gate pair** |
 | `simple_circuits/directnet_sram_6t_op.sp` | OP | LEVEL=73 | Full 6T bitcell, hold state; drives the `force_ic` retention probe |
 
-The two RC decks carry no transistor, so a failure there is a solver fault,
-never a model fault — start any convergence investigation with them.
+The RC pair carries no transistor, so a failure there is a solver fault, never
+a model fault — start any convergence investigation with it.
+
+V7.5.9 removed two decks that no gate read: `rc_transient.sp` (a second
+passive-only demo, on an axis the RC pair already anchors) and
+`bsimcmg_inverter_dc.sp` (an inverter VTC at the one geometry no other deck
+uses, L=7 nm, while `verify_multi_tech.py --analysis dc` sweeps inverter VTCs
+across five technologies). In the same pass the RC and CS-amp decks stopped
+being documentation-only: `verify_ac.py` now renders them instead of carrying
+its own copies of the same two circuits.
 
 **Every LEVEL≥73 deck must pin `TECH=` and `VT=`.** Without them the parser
 defaults to `TECH=asap7`, which maps to the UNKNOWN embedding row and resolves
@@ -472,20 +478,35 @@ Since V6.12.0 the inverter, NN, and complex decks are written
 top level (they are ports), so results and tooling are unchanged.
 
 **AnalogGym benchmark corpus** (V7.5.x): `examples/complex_circuits/` carries a
-curated basket of **18 analog designs per tech across five TSMC nodes** —
-90 design instances, 75 scored decks per tech (41 AC, 23 DC, 11 transient) —
+curated basket of **12 analog designs per tech across five TSMC nodes** —
+60 design instances, 51 scored decks per tech (28 AC, 15 DC, 8 transient) —
 covering amplifiers, LDOs, sensor front ends, a subthreshold voltage
 reference and a charge pump, plus a PyCircuitSim-vs-NGSPICE scoring harness
 (`pycircuitsim_bench/run_compare.py` for one deck,
 `pycircuitsim_bench/campaign.py` for a whole tech). Ground truth is NGSPICE
 on the identical BSIM-CMG OSDI binary.
 
-V7.5.6 cut the corpus from 38 designs / 159 decks per tech: two designs were
-literal duplicates and the rest were degenerate repeats of one topology
-class. The basket keeps every analysis type, all 18 metric classes and the
-full NFIN vocabulary while running in **3.35 CPU-h instead of 5.32**. What
-survived, why, and the pre-V7.5.6 campaign record (650/679 scored decks
-agreeing as of V7.5.3): `examples/complex_circuits/RESULTS_TSMC.md`.
+```bash
+# One tech, every family, transients in the scored refine mode
+python -m examples.complex_circuits.pycircuitsim_bench.campaign \
+    --tech tsmc5 --families ac,dc_source,dc_temp,tran --jobs 12 --refine \
+    --out <results-dir>
+```
+
+Skip `tsmc6` here: under LEVEL=72 it is an exact duplicate of `tsmc7` (75/75
+decks identical in verdict and in every miss magnitude to four decimals), so
+it costs a fifth of the campaign to learn nothing. It stays in the tree
+because the NN families train separately on it, which makes it the
+training-variance control on *that* axis.
+
+Two curations got here. V7.5.6 cut 38 designs → 18 on structure (literal
+duplicates and degenerate repeats of one topology class). V7.5.9 cut 18 → 12
+on **measured discrimination** — every removed design either never disagreed
+with NGSPICE anywhere or had its distinguishing failure carried more cheaply
+by a survivor. The pruned basket runs in **1.77 CPU-h instead of 3.35 (1.39 h
+skipping tsmc6)** and reproduces all 255 surviving decks bit-for-bit. What
+survived, why, and the current gap against NGSPICE (203/255 decks fully
+agreeing): `examples/complex_circuits/RESULTS_TSMC.md`.
 
 ### Sample: BSIM-CMG FinFET Inverter Transient (ASAP7 7nm)
 
@@ -814,20 +835,25 @@ conda activate pycircuitsim
 # Operating point verification (NMOS, PMOS, Inverter)
 python tests/single_devices/verify_bsimcmg_op.py
 
-# DC sweep verification (Id-Vgs)
-python tests/single_devices/verify_bsimcmg_dc.py
+# DC sweep verification (Id-Vgs) — one tech, one sweep, seconds
+python tests/single_devices/verify_bsimcmg_dc_comprehensive.py --tech ASAP7 --sweep vt
 
-# Transient verification (single baseline config)
-python tests/simple_circuits/verify_bsimcmg_tran.py
+# Transient verification (same shape)
+python tests/simple_circuits/verify_bsimcmg_tran_comprehensive.py --tech ASAP7 --sweep vt
 
 # Subcircuit hierarchy gate (11 checks)
 python tests/simple_circuits/verify_subckt.py
 
-# Run L1 smoke suite in one line
+# Run the smoke suite in one line
 python tests/single_devices/verify_bsimcmg_op.py && \
-python tests/single_devices/verify_bsimcmg_dc.py && \
-python tests/simple_circuits/verify_bsimcmg_tran.py
+python tests/single_devices/verify_bsimcmg_dc_comprehensive.py --tech ASAP7 --sweep vt && \
+python tests/simple_circuits/verify_bsimcmg_tran_comprehensive.py --tech ASAP7 --sweep vt
 ```
+
+The former `verify_bsimcmg_dc.py` / `verify_bsimcmg_tran.py` "Level 1" gates
+were removed in V7.5.9: their configs were the `vt_rvt` members of the
+comprehensive matrices above, so the `--tech ASAP7 --sweep vt` invocation runs
+the same circuits and a superset of the checks.
 
 Gates are **CPU-pinned** and honor `NGSPICE_BIN` (use the repo-local ngspice
 when `/usr/local/ngspice-45.2` is absent). The high-gain VTC trip has ~±1%
@@ -869,13 +895,10 @@ Two things to know before quoting any total:
 |--------|---------|
 | `tests/single_devices/verify_bsimcmg_op.py` | OP analysis: NMOS + PMOS vs NGSPICE |
 | `tests/simple_circuits/verify_bsimcmg_inverter_op.py` | OP analysis: inverter vs NGSPICE, same geometry as the device gate |
-| `tests/single_devices/verify_bsimcmg_dc.py` | DC sweep L1: Id-Vgs (ASAP7 baseline) |
-| `tests/single_devices/verify_bsimcmg_dc_comprehensive.py` | DC sweep L2: multi-tech VT/L/NFIN sweep |
-| `tests/simple_circuits/verify_multi_tech_dc.py` | DC sweep L3: inverter VTC + parametric |
-| `tests/simple_circuits/verify_bsimcmg_tran.py` | Transient L1: single inverter baseline |
-| `tests/simple_circuits/verify_bsimcmg_tran_comprehensive.py` | Transient L2: VT/L/NFIN sweep |
-| `tests/simple_circuits/verify_multi_tech_tran.py` | Transient L3: multi-tech parametric |
-| `tests/simple_circuits/verify_ac.py` | AC L1 passive RC + L2 BSIM-CMG common-source amp |
+| `tests/single_devices/verify_bsimcmg_dc_comprehensive.py` | DC sweep L2: multi-tech VT/L/NFIN sweep (`--tech`, `--sweep`) |
+| `tests/simple_circuits/verify_bsimcmg_tran_comprehensive.py` | Transient L2: VT/L/NFIN sweep (`--tech`, `--sweep`) |
+| `tests/simple_circuits/verify_multi_tech.py` | L3 inverter, multi-tech parametric (`--analysis dc,tran`) |
+| `tests/simple_circuits/verify_ac.py` | AC L1 passive RC + L2 BSIM-CMG common-source amp + L3 floating bulk |
 | `tests/simple_circuits/verify_subckt.py` | Subcircuit hierarchy: equivalence, L72 inverter, nested buffer (11 checks) |
 
 NN compact models (LEVEL=73/74/75):
@@ -896,10 +919,11 @@ reference:
 
 | Script | Purpose |
 |--------|---------|
-| `tests/simple_circuits/verify_complex_opamp.py` / `_ac.py` / `_sweep.py` | Two-stage Miller opamp: gain, open-loop AC, parametric |
-| `tests/simple_circuits/verify_complex_ring_osc.py` / `verify_complex_ringosc_sweep.py` | Ring-oscillator period + parametric mirror |
-| `tests/simple_circuits/verify_complex_switchcap.py` / `_sweep.py` | Switched-capacitor charge / droop |
-| `tests/simple_circuits/verify_complex_sram_snm.py` / `verify_complex_sram_sweep.py` | 6T SRAM butterfly positivity + NRMSE tracking |
+| `tests/simple_circuits/verify_complex_opamp.py` / `_ac.py` | Two-stage Miller opamp: DC gain, open-loop AC |
+| `tests/simple_circuits/verify_complex_ring_osc.py` | Ring-oscillator period |
+| `tests/simple_circuits/verify_complex_switchcap.py` | Switched-capacitor charge / droop |
+| `tests/simple_circuits/verify_complex_sram_snm.py` | 6T SRAM butterfly positivity + NRMSE tracking |
+| `tests/simple_circuits/verify_complex_sweep.py` `<circuit>` | Parametric mirror of all four (`opamp`/`ringosc`/`switchcap`/`sram`) |
 | `tests/simple_circuits/verify_complex_sweep_canaries.py` | Guards single-point ↔ sweep equivalence |
 
 Diagnostics (reusable controls, **not** pass/fail gates — they use
@@ -908,7 +932,7 @@ L72-in-PyCircuitSim as reference rather than NGSPICE):
 | Script | Purpose |
 |--------|---------|
 | `tests/diag/diag_l72_complex_control.py` | Proves L72-in-PyCircuitSim matches NGSPICE, isolating NN-surface gaps |
-| `tests/diag/diag_l72_switchcap_control.py` / `_uic_control.py` | Same control for the switched-cap cell (incl. `uic`) |
+| `tests/diag/diag_l72_switchcap_uic_control.py` | Same control for the switched-cap cell, with the `uic` pinning the NN path and NGSPICE both use |
 | `tests/diag/diag_nn_jacobian_consistency.py` | FD-vs-autograd Jacobian consistency check |
 | `tests/diag/diag_l_grid_interp.py` | Probes the training grid's L-interpolation between PDK bins |
 
@@ -966,15 +990,16 @@ external_compact_models/            # External compact-model packages
     └── scripts/generate_nn_data.py # NN training-data generator
 
 main.py                             # CLI entry point
-examples/                           # Example netlists (.sp files)
-├── passive/                        # No transistor — solver-only controls
-├── device/                         # Single-device characterization
-├── circuit/                        # Inverters, gain stage
-├── complex/                        # Multi-stage; 3 are verify-gate templates
-└── analoggym/                      # Curated AnalogGym benchmark corpus
+examples/                           # The circuit library — gates render from it
+├── single_devices/                 # One device at one bias
+├── simple_circuits/                # RC, inverters, gain stage, the 4 cells
+└── complex_circuits/               # Curated AnalogGym benchmark corpus
 tests/                              # NGSPICE verification scripts
+├── single_devices/                 # ) gates, in the tier of the circuit
+├── simple_circuits/                # ) they gate — mirrors examples/
 ├── common/                         # Shared test infrastructure
-└── references/                     # NGSPICE reference netlists
+├── perf/                           # Perf-path gates (run no NGSPICE)
+└── diag/                           # Controls — NOT gates (L72 as reference)
 results/                            # Simulation output (generated at runtime)
 ```
 

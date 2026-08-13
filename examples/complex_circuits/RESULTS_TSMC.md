@@ -9,14 +9,83 @@ original NGSPICE/PyCMG design audit, unchanged — that audit is the reference t
 comparison is measured against, not a second opinion about it.
 
 
-## The curated core basket (V7.5.6)
+## The curated core basket (V7.5.9)
 
-The corpus was pruned from **38 designs / 159 scored decks per tech** to
-**18 / 75** — 90 design instances and 375 scored decks across the five techs,
-down from 190 and 795. Every deck below this line that quotes a `/159`,
-`/679` or `/795` denominator is a **pre-V7.5.6 measurement on the full
-corpus** and is kept as the historical record; do not compare it directly
-against a post-V7.5.6 run.
+Two curations, one direction. V7.5.6 took the corpus from **38 designs / 159
+scored decks per tech to 18 / 75**; V7.5.9 takes it to **12 / 51** — 60 design
+instances and 255 scored decks across the five techs, down from 190 and 795
+originally.
+
+**Denominators, in one place.** `/159`, `/679`, `/795`, 38/38, 17/17, 13/13 are
+the original corpus. `/75`, `/375`, 18/18 are V7.5.6. `/51`, `/255`, 12/12 are
+V7.5.9. Sections below this line are dated and keep the denominator they were
+measured with; none of them is comparable to another without rescaling.
+
+### What V7.5.9 removed, and how it was chosen
+
+The V7.5.6 cut was argued from **structure** — topology class, device count,
+byte-identical netlists. V7.5.9 ran the whole basket through both simulators at
+HEAD first (`v759_baseline_*`, 375 decks) and cut on **measured
+discrimination**: how many decks a design disagrees with NGSPICE on, against
+what it costs to find that out. The two rankings disagree, which is the point.
+
+| removed | decks agreeing | cost (5 techs) | why |
+|---|:--:|--:|---|
+| `ptat_2` | 5/5 | 22 s | never disagreed anywhere; 6 MOS, and every one of its (Vt, L, NFIN) cells is carried by another design |
+| `front_end_11_6T_schematic` | 5/5 | 25 s | never disagreed anywhere; **six devices of one model card** (`nulvt_l60_f10`) on 4 nodes — the least discriminating circuit in the corpus. `front_end_25_6T` is the same 6T class and disagrees on 4 of 5 techs |
+| `SMCNR_SE_2st_AMP` | 10/10 | 63 s | never disagreed anywhere; an 8-MOS amplifier filed under sensors, whose `tb_ac` metric set is `amplifier/tb_gain`'s eight with `phase_in_rad` spelled `ph_rad`. Five 24–37-MOS amplifiers carry that bench |
+| `Alfio_RAFFC_Pin_3` | 27/30 | 303 s | the shallowest amplifier residuals in the basket (≤3.6 %); 24 MOS, structurally the same three-stage Miller cell as `Fan_SMC`, which is additionally the sole NFIN=7 / L=67 carrier and holds the corpus's only AC miss |
+| `Qu_LEC_Pin_3` | 25/30 | **3145 s (28 %)** | see below |
+| `Basic_LDO` | 35/39 | 1316 s (12 %) | 24 MOS; its two miss classes (`overshoot`/`undershoot`) are held by both surviving LDOs, and V7.5.5 characterized all three as reference-tolerance artifacts |
+
+`Qu_LEC` is the interesting one. V7.5.6 kept it as "the hardest known
+transient" and it was: 5/11 with a 31 % `sr_fall` residual, then the only deck
+that deep. It is no longer. On this pass `Leung_NMCNR` reads **0–1/11 with
+29–30 % slew residuals on four of five techs at a fifth of the cost**, and
+`Song_DACFC` reads 3/11 at 12–15 %. `Qu_LEC` was buying 28 % of the campaign
+to say something two cheaper decks now say louder.
+
+**The pruning is measurement-preserving, and that is measured, not asserted.**
+The same campaign was re-run over the pruned tree (`v759_basket_*`): all
+**255 surviving decks are identical to their pre-prune run — same verdict,
+same miss set, and every miss's relative error equal to six decimal places.**
+
+| | designs/tech | decks/tech | 5-tech cost | speed-up |
+|---|:--:|:--:|--:|--:|
+| V7.5.6 basket, at V7.5.9 HEAD | 18 | 75 | 3.35 CPU-h | — |
+| V7.5.9 basket | 12 | 51 | **1.77 CPU-h** | 1.89× |
+| V7.5.9 basket, tsmc6 skipped | 12 | 51 | **1.39 CPU-h** | **2.41×** |
+
+What the basket provably retains, checked against the same 375-deck pass:
+
+* **All four analysis families** (AC 28 decks/tech, dc_temp 9, dc_source 6,
+  transient 8) and 17 of the 18 `(category, deck)` metric classes — the one
+  lost is `sensing_front_end/tb_ac`, which measures the same eight quantities
+  as `amplifier/tb_gain` under one renamed key.
+* **Every metric name that has ever disagreed with NGSPICE — 34 of 34 — is
+  still measured by a surviving deck.**
+* **The complete NFIN vocabulary** {1,2,3,4,5,6,7,8,10,12} and **all six Vt
+  flavors** (nsvt/nlvt/nulvt/psvt/plvt/pulvt). Channel length drops to
+  **31 of 33 L bins**; the two lost (110, 128 nm) are single-instance bins and
+  the widest resulting gap is 120→135 nm.
+* Every design that disagrees with NGSPICE anywhere. Nothing removed was a
+  known-miss carrier.
+
+### The tech axis: run four, not five
+
+`designs_tsmc6` stays on disk and is **not** run by the L72 bench. Under
+LEVEL=72 it is an exact simulation duplicate of `designs_tsmc7` — identical
+netlists, modelcards differing only in TMI layout-effect keys the BSIM-CMG
+Verilog-A never reads. Re-measured at V7.5.9 HEAD: **75/75 decks identical in
+verdict AND in every miss's relative error to four decimal places.** It costs a
+fifth of the campaign to learn nothing.
+
+It is kept as a directory because the NN families train **separately** on it,
+which makes it the training-run-variance control on the NN accuracy axis
+(`methodology.md` §7) — a different axis, where it is not a duplicate. Score
+`--tech tsmc5,tsmc7,tsmc12,tsmc16` and quote tsmc6 as the repeat.
+
+### Historical: what V7.5.6 removed
 
 Why prune: the corpus was built to audit *AnalogGym designs*, and it did that
 job (38/38 on every tech). As an *accuracy benchmark for compact models* it
@@ -38,48 +107,115 @@ What was removed, and the evidence for each:
 | 2 LDOs | 2 | `ldo_simple` (6 MOS) and `ldo_folded_cascode` (10 MOS, L ⊂ `ldo_1`'s) |
 | 10 amplifiers | 10 | all 17 are three-stage Miller-class `Pin_3` designs on one 6-bench structure; the 7 kept span 24→37 MOS and five distinct numerical stress modes |
 
-The 7 amplifiers kept, each for a named reason:
-
-| design | MOS | why it is in the basket |
-|---|--:|---|
-| `Alfio_RAFFC_Pin_3` | 24 | the pilot/regression anchor quoted in every row below |
-| `Fan_SMC_Pin_3` | 24 | sole source of NFIN=7 and L=67; carries the one known AC miss (`tb_cmrr`, reference-side) |
-| `Leung_NMCNR_Pin_3` | 24 | slew-limited class-A — distinct slew physics, needed its bias raised to pass the slew gate |
-| `Qu2017_AZC_Pin_3` | 25 | the NGSPICE Newton-basin case; the only kept deck that exercises the `tb_tran_altns` fallback path |
-| `Peng_IAC_Pin_3` | 34 | 27 nodes; the AC-pathological design that forced the `pm_true` wrap-aware rework |
-| `Qu_LEC_Pin_3` | 30 | hardest known transient — a 1 ns edge with genuine 31 % `sr_fall` residual, 5/11 |
-| `Song_DACFC_Pin_3` | 37 | largest amplifier; the open multi-OP basin case (0.30–0.50 V OP split on tsmc6/7/12/16) |
-
-What the basket provably retains:
-
-* **All three analysis types**, per tech: AC 41 decks, DC 23 (14 dc_temp +
-  9 dc_source), transient 11.
-* **All 18 `(category, deck)` metric classes** — no measurement kind is lost.
-* **29 of the 31 metric names that have ever missed.** The two lost
-  (`lnrmin`, `lnr_ppmin`, both on `ldo_simple` at 2.6–2.8 %) belong to the
-  same flat-curve cancellation class that `lr`/`lr_pp` retain 6/6 on
-  `ldo_2` and `Basic_LDO`.
-* **The complete NFIN vocabulary** {1,2,3,4,5,6,7,8,10,12} and all three Vt
-  flavors. Channel-length coverage drops to **33 of 45 L bins**: the 12 lost
-  (12, 21, 30, 35, 40, 59, 75, 78, 86, 89, 96, 113 nm) were single-instance
-  bins inside the densely-covered amplifier mid-range, no gap wider than
-  ~10 nm.
-
-**The tech axis was not pruned.** `designs_tsmc6` is an exact simulation
-duplicate of `designs_tsmc7` for LEVEL=72 — identical netlists, modelcards
-differing only in TMI layout-effect keys the BSIM-CMG Verilog-A does not
-read, and 159/159 decks with identical verdicts — but the two techs have
-separately trained NN checkpoints, so on the NN accuracy axis tsmc6 is the
-training-run-variance control (`methodology.md` §7), not a duplicate. It
-stays.
-
-Post-prune health check (`--stride 1`, one deck per family, tsmc5): `tb_gain`
-8/8, `ldo_1/tb_load` 11/11, `ptat_1/tb_dc` 13/13,
+V7.5.6 kept 7 amplifiers, retained all 18 metric classes and 29 of the 31
+metric names that had ever missed, the complete NFIN vocabulary, and 33 of 45
+L bins. Post-prune health check (`--stride 1`, one deck per family, tsmc5):
+`tb_gain` 8/8, `ldo_1/tb_load` 11/11, `ptat_1/tb_dc` 13/13,
 `dual_output_subthreshold_vref/tb_dc` 12/12 — every verdict identical to its
 pre-prune value.
 
+### The 12 designs in the basket, each for a named reason
 
-## PyCircuitSim versus NGSPICE
+| category | design | MOS | why it is here |
+|---|---|--:|---|
+| amplifier | `Fan_SMC_Pin_3` | 24 | sole source of NFIN=7 and L=67; carries the corpus's only AC miss (`tb_cmrr`, reference-side) |
+| amplifier | `Qu2017_AZC_Pin_3` | 25 | the NGSPICE Newton-basin case; the only deck that exercises the `tb_tran_altns` alternate-seed fallback |
+| amplifier | `Leung_NMCNR_Pin_3` | 24 | **the deepest transient residual in the basket** — 0–1/11 at 29–30 % slew on four techs, 11/11 on tsmc5 |
+| amplifier | `Peng_IAC_Pin_3` | 34 | 27 nodes; the AC-pathological design that forced the `pm_true` wrap-aware rework |
+| amplifier | `Song_DACFC_Pin_3` | 37 | largest amplifier; the open multi-OP basin case, and the only design whose basin split reaches the **AC** benches (tsmc12 `tb_gain` 0/1) |
+| ldo | `ldo_1` | 9 | the `tb_load` anchor; sole carrier of the two shortest L bins (6, 8 nm) |
+| ldo | `ldo_2` | 20 | the hardest LDO — carries every LDO miss class (`lr`/`lr_pp`, `lnrmax`, load-step excursions) |
+| sensing_front_end | `ptat_1` | 6 | the V7.5.1 subthreshold-floor regression anchor (5/13 → 13/13) |
+| sensing_front_end | `ptat_4` | 8 | widest sensor geometry (8 cells, 3 Vt flavors); `min_slope` miss carrier |
+| sensing_front_end | `front_end_25_6T_schematic` | 6 | the V7.5.4 deep-subthreshold case (m=360/1728 nulvt cores); misses on 4 of 5 techs |
+| voltage_reference | `dual_output_subthreshold_vref` | 7 | the only design carrying **all six** Vt flavors; sole `voltage_reference` metric class |
+| charge_pump | `chargepump` | 41 | the only switching circuit; the 10 ps current-reversal spike that drove the whole refine-controller line of work |
+
+
+## The gap between PyCircuitSim and NGSPICE (V7.5.9, all five techs)
+
+**This is the current number. Everything in the sections after it is older.**
+Both simulators run the identical BSIM-CMG (LEVEL=72) OSDI model; both are
+scored by one measurement engine, so a reported difference cannot be a
+difference in `.meas` semantics. Transients run refine-on (the scored mode
+since V7.5.5); stride policy unchanged (amplifier `tb_dc` @25, `tb_tran` @4,
+charge pump @20 refine+trap, everything else full grid). Evidence:
+`pycircuitsim_bench_results/v759_basket_tsmc{5,6,7,12,16}/`, untracked, on
+disk.
+
+| tech | AC | dc_source | dc_temp | transient | total |
+|---|:--:|:--:|:--:|:--:|:--:|
+| TSMC5 | 27/28 | 5/6 | 7/9 | 4/8 | **43/51** |
+| TSMC6 | 28/28 | 3/6 | 6/9 | 2/8 | 39/51 |
+| TSMC7 | 28/28 | 3/6 | 6/9 | 2/8 | 39/51 |
+| TSMC12 | 25/28 | 5/6 | 7/9 | 2/8 | 39/51 |
+| TSMC16 | 28/28 | 6/6 | 8/9 | 1/8 | **43/51** |
+| **all** | **136/140** | **22/30** | **34/45** | **11/40** | **203/255 (79.6 %)** |
+
+A deck counts only when every metric both simulators produced agrees inside
+the 2 % gate and none is missing. TSMC6 and TSMC7 are verdict-identical and
+miss-magnitude-identical on all 51 decks, as they must be.
+
+Three numbers that qualify the table:
+
+* **Operating-point agreement, which the metric columns can hide** (V7.5.4's
+  lesson): over 253 decks the worst node error is **median 4.9 µV, p90
+  0.26 mV**. The single 0.495 V outlier is `Song_DACFC` on tsmc6/7/12/16 — a
+  genuine multi-OP basin difference, flagged below, not a convergence failure.
+* **Engine control: 255/255 decks clean.** Our reader of NGSPICE's own sweep
+  reproduces the `.meas` values NGSPICE printed from that same run — so the
+  disagreements below are simulator differences, not measurement differences.
+* **Cost: 1.77 CPU-h for the five techs, 13× NGSPICE's 0.13 CPU-h.** Two
+  thirds of that is the transient family (66.6 %), and `ldo_2/tb_tran` alone
+  is a quarter of the whole pass.
+
+### Where the 52 disagreements are
+
+**AC is essentially exact: 136/140.** The four misses are two known cases.
+`Fan_SMC/tb_cmrr` (tsmc5, 2.3 %) is the **reference side** — a −CMRR residual
+behind a 108 dB loop at 9.7 dB/mV OP sensitivity, where NGSPICE's number is a
+default-tolerance early stop from the deck's own `.nodeset`; probed over six
+seeds it lands on our value for four of them including no seed at all, and its
+own tolerance ladder converges there at reltol ≤ 3e-4. The other three are
+`Song_DACFC` on tsmc12 (`tb_gain` 0/1 with 7 metrics unmeasured, `tb_psrrn`,
+`tb_psrrp`) — the same multi-OP basin that shows up in that design's `op_delta`,
+now reaching the AC benches. **This is the one genuinely open item in the
+table and the first thing to look at next.**
+
+**Transient is the weak family: 11/40**, and every miss is a slew or
+edge-timing metric (`sr_fall`/`sr_rise`/`t_fall`/`t_rise` and their
+`_edge` variants). Depth, per design, worst over techs:
+
+| design | verdicts | worst residual | reading |
+|---|---|--:|---|
+| `Leung_NMCNR` | 11/11 tsmc5, 0–1/11 elsewhere | 30.0 % | slew-limited class-A; the deepest and most tech-dependent residual in the corpus |
+| `Song_DACFC` | 8/11 tsmc5, 3/11 elsewhere | 15.4 % + `v_pre` 83 % | the `v_pre` figure is the multi-OP basin, not a slew error |
+| `Qu2017_AZC` | 8/11, 5/11 tsmc16 | 12.7 % | |
+| `Fan_SMC` | 8/11, 5/11 tsmc5 | 6.6 % | |
+| `Peng_IAC` | 8/11, 5/11 tsmc16 | 6.6 % | |
+| `chargepump` | 5/6 tsmc6/7, 3/6 tsmc12, 4/6 tsmc16, **6/6 tsmc5** | `up_imin` 45.6 % | the 10 ps reversal spike; the tsmc5 tuning does not transfer to the other nodes |
+| `ldo_1` / `ldo_2` | 3/5 and 2–3/5 | `overshoot` 41 % | load-step excursions; V7.5.5 probed NGSPICE's own reltol ladder moving these ±40 % and bracketing our values |
+
+**dc_temp 34/45**, and all 11 misses are the same two metrics:
+`min_slope_25_75c` and `max_step_frac_25_75c`. V7.5.4 characterized this pair
+as a **reference-noise statistic, not a solver gap** — a minimum over 100
+adjacent steps of a 0.5 °C staircase whose steps are ~225 µV, so one bad
+reference sample sets the whole number; at reltol=1e-5 NGSPICE's own
+`min_slope` goes *negative*. Read the median slope instead (it agrees to
+0.5 %), and do not chase it in the solver.
+
+**dc_source 22/30**: `lr`/`lr_pp` on `ldo_2` (39–98 %) and `ldo_1` (2.0 %), and
+`lnrmax`/`lnr_ppmax` on `ldo_2` (3.4 %) — all the peak-to-peak-of-a-flat-curve
+cancellation class, where `lr_pp` is a sub-mV difference of two ~0.48 V
+endpoints that agree to 2e-5 each.
+
+**Summary of what is actually open:** `Song_DACFC`'s operating-point basin
+(now visible in AC), the transient slew family, and the charge pump's spike
+away from tsmc5. Everything else in the table is a characterized
+reference-side or cancellation artifact with its own diagnosis above.
+
+
+## PyCircuitSim versus NGSPICE (V7.5.1–V7.5.3 pilot — historical)
 
 **Status: pilot, not campaign — but the pilot now PASSES.** Seven decks of one
 technology (TSMC5) have been run through both simulators; after the V7.5.1
@@ -445,18 +581,19 @@ untracked, on disk.
 
 ## Audit validation
 
-Re-run over the V7.5.6 basket (`verify_tsmc_sizing.py`, 0 problems):
+Re-run over the V7.5.9 basket (`verify_tsmc_sizing.py`, 0 problems):
 
 | check | result |
 |---|---:|
-| generated designs simulated | 90/90 |
-| source/qualified-core topology checks | 90/90 |
-| generated MOS instances checked | 1,695 |
-| sizing vectors inside modelcard envelopes | 779/779 |
-| referenced local PyCMG model aliases valid | 612/612 |
+| generated designs simulated | 60/60 |
+| source/qualified-core topology checks | 60/60 |
+| generated MOS instances checked | 1,205 |
+| sizing vectors inside modelcard envelopes | 604/604 |
+| referenced local PyCMG model aliases valid | 456/456 |
 
-The pre-V7.5.6 full corpus audited clean at the same rate: 190/190 designs,
-3,240 MOS, 1,417/1,417 vectors, 1,155/1,155 aliases.
+Both earlier corpora audited clean at the same rate: V7.5.6's basket 90/90
+designs, 1,695 MOS, 779/779 vectors, 612/612 aliases; the original full corpus
+190/190 designs, 3,240 MOS, 1,417/1,417 vectors, 1,155/1,155 aliases.
 
 Topology checks cover MOS/passive connectivity, channel type, amplifier mirror
 ratios, the retained charge-pump hierarchy, the permitted `ldo_1` compensation
@@ -542,12 +679,12 @@ temperature sweeps, not statistical mismatch or full foundry-corner signoff.
 
 | category | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
 |---|--:|--:|--:|--:|--:|
-| amplifier | 7/7 | 7/7 | 7/7 | 7/7 | 7/7 |
-| ldo | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 |
-| sensing_front_end | 6/6 | 6/6 | 6/6 | 6/6 | 6/6 |
+| amplifier | 5/5 | 5/5 | 5/5 | 5/5 | 5/5 |
+| ldo | 2/2 | 2/2 | 2/2 | 2/2 | 2/2 |
+| sensing_front_end | 3/3 | 3/3 | 3/3 | 3/3 | 3/3 |
 | voltage_reference | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 |
 | charge_pump | 1/1 | 1/1 | 1/1 | 1/1 | 1/1 |
-| **total** | **18/18** | **18/18** | **18/18** | **18/18** | **18/18** |
+| **total** | **12/12** | **12/12** | **12/12** | **12/12** | **12/12** |
 
 
 ## Gates passed, per design and tech
@@ -557,12 +694,10 @@ temperature sweeps, not statistical mismatch or full foundry-corner signoff.
 
 | design | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
 |---|:--:|:--:|:--:|:--:|:--:|
-| Alfio_RAFFC_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
 | Fan_SMC_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
 | Leung_NMCNR_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
 | Peng_IAC_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
 | Qu2017_AZC_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
-| Qu_LEC_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
 | Song_DACFC_Pin_3 | 10/10 | 10/10 | 10/10 | 10/10 | 10/10 |
 
 
@@ -570,7 +705,6 @@ temperature sweeps, not statistical mismatch or full foundry-corner signoff.
 
 | design | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
 |---|:--:|:--:|:--:|:--:|:--:|
-| Basic_LDO | 9/9 | 9/9 | 9/9 | 9/9 | 9/9 |
 | ldo_1 | 9/9 | 9/9 | 9/9 | 9/9 | 9/9 |
 | ldo_2 | 9/9 | 9/9 | 9/9 | 9/9 | 9/9 |
 
@@ -579,11 +713,8 @@ temperature sweeps, not statistical mismatch or full foundry-corner signoff.
 
 | design | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
 |---|:--:|:--:|:--:|:--:|:--:|
-| SMCNR_SE_2st_AMP | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 |
-| front_end_11_6T_schematic | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 |
 | front_end_25_6T_schematic | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 |
 | ptat_1 | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 |
-| ptat_2 | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 |
 | ptat_4 | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 |
 
 
@@ -608,12 +739,15 @@ temperature sweeps, not statistical mismatch or full foundry-corner signoff.
 | TSMC5 | 0.65 V | 105.6 | 561 kHz | 15.3 uW | 69.8 |
 | TSMC6 | 0.75 V | 117.1 | 744 kHz | 20.6 uW | 68.2 |
 | TSMC7 | 0.75 V | 117.1 | 744 kHz | 20.6 uW | 68.2 |
-| TSMC12 | 0.80 V | 112.7 | 856 kHz | 21.8 uW | 82.9 |
+| TSMC12 | 0.80 V | 112.7 | 633 kHz | 21.8 uW | 55.8 |
 | TSMC16 | 0.80 V | 114.1 | 1.17 MHz | 21.8 uW | 59.3 |
 
-These are medians over the **7 basket amplifiers**, not the former 17, so
-they moved (TSMC5 93.7 → 105.6 dB, PM 56.9 → 69.8) purely by change of
-population. No design's own numbers changed.
+These are medians over the **5 basket amplifiers** (V7.5.6: 7, originally 17).
+Only TSMC12 moved from the V7.5.6 table — GBW 856 → 633 kHz and PM 82.9 →
+55.8° — because dropping two of seven designs moves which one sits at the
+median. **No design's own numbers changed**, on any tech; the V7.5.9 campaign
+re-measured all 255 surviving decks and reproduced every pre-prune verdict and
+every miss magnitude to six decimal places.
 
 
 ## Remaining partial designs

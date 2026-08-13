@@ -2,16 +2,24 @@
 
 The V7.5.x pilot scored 7 hand-picked decks; this module is the scripted
 category-by-category expansion (open issue #2 of the 2026-08-10 notes). It
-enumerates the same corpus ``run_compare`` sees (**75 decks per tech since
-the V7.5.6 curation**: 41 AC, 14 dc_temp, 9 dc_source, 11 transient; the
-pre-V7.5.6 corpus was 159 = 89/32/15/23), applies the pilot's per-deck
-stride policy, fans the decks out over N worker subprocesses, and aggregates
-the per-deck JSON rows into one summary table.
+enumerates the same corpus ``run_compare`` sees (**51 decks per tech since
+the V7.5.9 curation**: 28 AC, 9 dc_temp, 6 dc_source, 8 transient; V7.5.6 was
+75 = 41/14/9/11 and the original corpus 159 = 89/32/15/23), applies the
+pilot's per-deck stride policy, fans the decks out over N worker
+subprocesses, and aggregates the per-deck JSON rows into one summary table.
 
-The basket is the tree: there is no selection flag here, because V7.5.6
-removed the redundant designs from ``designs_tsmc*/`` outright. What is in
-the basket, and why each survivor is there, is RESULTS_TSMC.md §"The curated
-core basket".
+The basket is the tree: there is no selection flag here, because the
+curations removed the redundant designs from ``designs_tsmc*/`` outright.
+What is in the basket, and why each survivor is there, is RESULTS_TSMC.md
+§"The curated core basket".
+
+**``tsmc6`` is a duplicate on THIS axis.** Under LEVEL=72 it is an exact
+simulation copy of ``tsmc7`` — measured again at V7.5.9 HEAD, 75/75 decks
+identical in verdict AND in every miss's relative error to four decimals. It
+is still a tech directory because the NN families train separate checkpoints
+on it, so it is the training-variance control there; but running it here buys
+nothing and costs a fifth of the campaign. Run ``--tech tsmc5,tsmc7,tsmc12,
+tsmc16`` unless you are re-validating the duplication itself.
 
 One deck = one ``run_compare`` subprocess (crash isolation: a diverging deck
 cannot take the campaign down) with its own work directory (two decks of the

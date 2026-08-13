@@ -54,7 +54,12 @@ HEADLINE: Dict[str, List[str]] = {
     "sensing_front_end": ["vout25", "lsb_25_75c", "ppval", "vout0", "vout100",
                           "mono_violations", "min_slope_25_75c",
                           "max_step_frac_25_75c", "dc_fallback_points",
-                          # SMCNR_SE_2st_AMP (AC bench) only:
+                          # A sensor with an AC bench (tb_ac.cir). The basket
+                          # has had none since V7.5.9 dropped
+                          # SMCNR_SE_2st_AMP, so these columns stay unfilled;
+                          # they are kept because the list is a filter, and
+                          # re-adding such a design should not also require
+                          # re-deriving which metrics it emits.
                           "dcgain", "gain_bandwidth_product", "phase_in_deg",
                           "pm_true", "power"],
     "voltage_reference": ["vref1_at25", "vref1_tc", "vref2_at25", "vref2_tc",

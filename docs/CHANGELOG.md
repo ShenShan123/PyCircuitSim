@@ -8,6 +8,169 @@ pruned; the full original text lives in git history.)
 
 ---
 
+## V7.5.9 — the evaluation set cut to its discriminating core, on measurements (branch `feat/analoggym-migration`, 2026-08-13)
+
+**Goal: make the accuracy evaluation cheap enough to run every time, without
+losing a single thing it measures.** Three axes were pruned — the AnalogGym
+corpus, the hand-written decks, and the gate scripts — and one V7.5.8
+regression was found in the process that had made the whole AnalogGym
+comparison unrunnable.
+
+### The V7.5.8 regression: every campaign deck was dead
+
+`run_compare` dies at `from meas import run_deck` with *"Cannot tell which
+design tree to use"*. V7.5.8 replaced the five per-tech `designs_tsmc*/tools/`
+copies with one shared directory, so `pycmg_lib._resolve_tree()` stopped
+inferring the tech from its own location and now reads `AG_TREE`, then
+`AG_TECH`, then the working directory, **raising when none resolve** — which
+was the right call. But the bench runs as `python -m examples...` from the
+repository root, which is none of those. Every deck of a 375-deck campaign
+returned `rc=1` with an empty log.
+
+It went undetected because no campaign was run between the refactor and this
+sprint: V7.5.8's verification exercised the tools *directly* (where cwd
+resolves the tree) and the gates, not the bench. Fixed by
+`run_compare._pin_design_tree`, which sets `AG_TREE` from `--tech` before the
+lazy import can fire. `AG_TREE` beats `AG_TECH` in the resolver, so it also
+overrides a stale `AG_TECH` inherited from the caller — otherwise one tech's
+decks score against another's modelcards, silently. **The rule that survives:
+a module resolving global state at import time needs its caller to set that
+state explicitly, not to happen to be in the right directory.**
+
+### AnalogGym: 18 designs / 75 decks per tech → 12 / 51
+
+V7.5.6 argued from structure (topology class, device count, byte-identical
+netlists). This pass ran the whole basket through both simulators at HEAD
+first — `v759_baseline_*`, 375 decks, 3.35 CPU-h — and cut on **measured
+discrimination**. The two rankings disagree, and the measurement won twice:
+
+* **Two designs the structural argument had marked for removal were
+  rescued.** `Leung_NMCNR` ("slew-limited class-A, distinct physics" — but a
+  24-MOS member of a 24-MOS trio) turns out to be **the deepest transient
+  residual in the corpus**: 0–1/11 at 29–30 % slew on four of five techs, at a
+  fifth of `Qu_LEC`'s cost. `Song_DACFC`'s basin split reaches the **AC**
+  benches on tsmc12 (`tb_gain` 0/1, 7 metrics unmeasured) — a fact no
+  structural reading would have produced.
+* **`Qu_LEC` was cut, having been V7.5.6's headline keep.** It was "the
+  hardest known transient" and it was: 5/11 at 31 % `sr_fall`, then the only
+  deck that deep. Two cheaper decks now say the same thing louder, and it was
+  buying **28 % of the whole campaign** to repeat it.
+
+Removed: `ptat_2`, `front_end_11_6T_schematic`, `SMCNR_SE_2st_AMP` (each
+5/5–10/10 — never disagreed with NGSPICE anywhere, on any tech),
+`Alfio_RAFFC_Pin_3` (shallowest amplifier residuals, ≤3.6 %),
+`Basic_LDO` (miss classes held by both surviving LDOs), `Qu_LEC_Pin_3`.
+Per-design evidence table: `RESULTS_TSMC.md` §"What V7.5.9 removed".
+
+**Measurement-preserving, and measured as such.** Re-running the campaign over
+the pruned tree (`v759_basket_*`) reproduces **all 255 surviving decks
+identically — same verdict, same miss set, every miss's relative error equal to
+six decimal places.** Retained: all four analysis families, 17 of 18
+`(category, deck)` metric classes (the lost one, `sensing_front_end/tb_ac`,
+measures `amplifier/tb_gain`'s eight quantities under one renamed key),
+**34 of 34 metric names that have ever disagreed**, the complete NFIN
+vocabulary and all six Vt flavors, and 31 of 33 L bins (widest new gap
+120→135 nm). `verify_tsmc_sizing.py` re-audits clean: 60/60 designs, 1,205
+MOS, 604/604 vectors, 456/456 aliases, 0 problems.
+
+**Cost: 3.35 → 1.77 CPU-h (1.89×), or 1.39 CPU-h (2.41×) with tsmc6 skipped.**
+tsmc6 was re-measured against tsmc7 at HEAD: **75/75 decks identical in verdict
+AND in every miss's relative error to four decimals**. It stays on disk (the NN
+families train separately on it — the training-variance control) but the L72
+bench should run `--tech tsmc5,tsmc7,tsmc12,tsmc16`. Two thirds of the
+remaining cost is the transient family; `ldo_2/tb_tran` alone is a quarter of
+the pass.
+
+### Where PyCircuitSim and NGSPICE actually differ (V7.5.9, 5 techs, 255 decks)
+
+**203/255 decks fully agree (79.6 %)**, engine control 255/255 clean,
+operating-point agreement median 4.9 µV / p90 0.26 mV. Full breakdown with
+per-deck residuals: `RESULTS_TSMC.md` §"The gap between PyCircuitSim and
+NGSPICE".
+
+| family | agreeing | what the misses are |
+|---|:--:|---|
+| AC | **136/140** | `Fan_SMC/tb_cmrr` (reference-side, diagnosed V7.5.3) + `Song_DACFC` tsmc12 ×3 — the multi-OP basin, now reaching AC. **The one genuinely open item.** |
+| dc_source | 22/30 | `lr`/`lr_pp`/`lnrmax` — peak-to-peak-of-a-flat-curve cancellation |
+| dc_temp | 34/45 | all 11 are `min_slope_25_75c` / `max_step_frac_25_75c`, characterized in V7.5.4 as reference noise, not a solver gap |
+| transient | 11/40 | every miss is a slew/edge metric; `Leung_NMCNR` 30 %, `Song_DACFC` 15 %, charge pump's `up_imin` away from tsmc5 |
+
+### `examples/` and `tests/`: one gate per question
+
+Two decks removed — `rc_transient.sp` (a second passive-only demo on an axis
+the RC pair already anchors) and `bsimcmg_inverter_dc.sp` (an ungated inverter
+VTC at L=7 nm, while `verify_multi_tech.py --analysis dc` sweeps inverter VTCs
+across five techs). Neither was read by a gate.
+
+In the same pass the two decks that *were* only documentation stopped being
+so: `verify_ac.py` now renders `rc_lowpass_ac.sp` and `bsimcmg_cs_amp_ac.sp`
+(with new `.cir` reference halves) instead of carrying its own f-string copies
+of the same two circuits — the V7.5.8 rule it had been exempt from. Level 1
+reads R and C off the deck through the simulator's own suffix table, so the
+analytic reference cannot disagree with the circuit about what `159.155n`
+means. Gate re-runs 3/3 with mag NRMSE unchanged at 0.000 %.
+
+Gate scripts 23 → 19, with **no configuration lost**:
+
+* `verify_bsimcmg_dc.py` and `verify_bsimcmg_tran.py` deleted — their "Level 1"
+  configs are exactly the `vt_rvt` members of the comprehensive matrices
+  (ASAP7's default VT), so they re-ran them. `--tech ASAP7 --sweep vt` is the
+  quick check they were.
+* The four `verify_complex_*_sweep.py` (33 lines each, differing only in the
+  string handed to `driver_main`) → one `verify_complex_sweep.py <circuit>`.
+* `verify_multi_tech_{dc,tran}.py` → `verify_multi_tech.py --analysis dc,tran`;
+  both parametric builders moved verbatim, and each analysis keeps its own
+  results directory so existing baselines still resolve.
+* `diag_l72_switchcap_control.py` deleted — its own successor's docstring
+  recorded it as superseded on arrival (it ran a plain DC op with no `uic`
+  pinning, i.e. a circuit neither the NN path nor NGSPICE runs).
+
+### Verification
+
+Full suite, CPU-pinned, one thread: **`verify_ac` 3/3, `verify_bsimcmg_op`
+2/2, `verify_bsimcmg_inverter_op` 1/1, `verify_bsimcmg_dc_comprehensive`
+81/81, `verify_bsimcmg_tran_comprehensive` 45/45, `verify_multi_tech` 86/86,
+`verify_subckt` 11/11, `verify_cmg_multiplier` 6/6, `verify_nn_dc` 20/20,
+`verify_nn_inverter` 10/10, `verify_nn_ac` 10/10, `verify_nn_lifted_source_dc`
+15/15, `verify_nn_multi_tech_tran` 80/80, `verify_complex_ring_osc` 5/5,
+`verify_complex_sram_snm` 5/5, `verify_complex_switchcap` 5/5,
+`verify_complex_sweep_canaries` all-pass, `verify_ar_cache` 10/10.**
+
+Four gates report failures; **all four are pre-existing and none is caused
+here**:
+
+1. `verify_complex_opamp` 0/5 and `verify_complex_opamp_ac` 0/5 — the V7.5.7
+   open item, reproduced **byte-identically** (TSMC5 trip shift 80.00 mV,
+   NRMSE 70.59 %). The AC gate names the mechanism the DC gate's write-up
+   left open: `OP-MISBIAS: NN opamp output railed → value-surface collapse`.
+   Still needs its own investigation.
+2. `verify_data_geometry_coverage` 0/10 — needs the training `.npz` datasets,
+   which are not on this hardware.
+3. `verify_nn_multi_tech_dc` 66/69 — three NFIN=10 off-bin points, which that
+   gate's own docstring calls expected extrapolation behaviour.
+4. `verify_batched_tail` 6/7 — no PFN `_config.npz` on this hardware
+   (documented at V7.5.8).
+
+### Dead ends
+
+* **Deck-level pruning inside kept designs** — dropping the saturated
+  `tb_cmrr`/`tb_psrrp`/`tb_psrrn` benches from three of five amplifiers and
+  `tb_psrr_{max,min}` from one LDO. Built and scored: **23 fewer decks for
+  5 % less runtime**, because those benches are 3–5 s each. It would also have
+  cost three `(category, deck)` metric classes and invalidated every surviving
+  design's `result.json`, `RESULTS.md` and audit gate count — a full corpus
+  re-audit for a rounding error. **The cost lives in the transient family, not
+  in deck count.** Reverted; the prune is design-level only.
+* **Dropping `SMCNR_SE_2st_AMP` while keeping the 13-design basket** — scored
+  at 19 s saved (0.6 %) for the loss of a metric class, then re-evaluated and
+  removed anyway once `Qu_LEC` went, because the class it holds is
+  `amplifier/tb_gain`'s under a renamed key. The 0.6 % was never the argument.
+* **Keeping `Basic_LDO` and dropping `ldo_1` instead** (the larger design, the
+  usual instinct): 17 % saved instead of 26 %, and it loses the corpus's two
+  shortest L bins (6 and 8 nm), which only `ldo_1` carries.
+
+---
+
 ## V7.5.8 — one circuit library, one taxonomy; gates stop carrying netlists (branch `feat/analoggym-migration`, 2026-08-13)
 
 **Goal: `examples/` becomes the single source of every circuit, and `tests/`

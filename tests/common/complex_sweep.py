@@ -538,6 +538,11 @@ _RUNNERS: Dict[str, Callable] = {
     "switchcap": run_single_switchcap, "sram": run_single_sram,
 }
 
+#: The circuits ``driver_main`` accepts, in the order the driver lists them.
+#: Public because the single sweep driver (V7.5.9) validates its first
+#: argument against it instead of the four per-circuit wrappers it replaced.
+CIRCUITS: Tuple[str, ...] = tuple(_RUNNERS)
+
 
 # ===========================================================================
 # Checkpoint pin (plan m1)
@@ -746,7 +751,7 @@ def exit_code(results: List[Dict[str, Any]], tech_keys: List[str]) -> int:
 
 
 # ===========================================================================
-# Thin-driver entry point (shared by the four verify_complex_*_sweep.py)
+# Thin-driver entry point (shared by verify_complex_sweep.py's four circuits)
 # ===========================================================================
 def driver_main(circuit: str) -> int:
     import argparse

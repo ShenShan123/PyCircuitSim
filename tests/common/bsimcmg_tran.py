@@ -1,10 +1,14 @@
 """Shared infrastructure for BSIM-CMG transient verification.
 
 Provides transient-specific test configuration, NGSPICE/PyCircuitSim runners,
-comparison metrics, and plotting for the 3-level verification suite:
-  Level 1: verify_bsimcmg_tran.py          (simple baseline)
+comparison metrics, and plotting for the two-level verification suite:
   Level 2: verify_bsimcmg_tran_comprehensive.py (VT/L/NFIN sweeps)
-  Level 3: verify_multi_tech_tran.py        (multi-tech, P/N ratios, geometry)
+  Level 3: verify_multi_tech.py --analysis tran (multi-tech, P/N, geometry)
+
+The former Level 1 (``verify_bsimcmg_tran.py``: one ASAP7 inverter at the
+default VT/L/NFIN) was removed in V7.5.9 — its single config is the ``vt_rvt``
+member of Level 2's VT sweep. ``verify_bsimcmg_tran_comprehensive.py --tech
+ASAP7 --sweep vt`` is the quick check it used to be.
 
 Technology profiles (TechProfile, VtPair, ALL_TECHS) and generic helpers
 are imported from test_common.

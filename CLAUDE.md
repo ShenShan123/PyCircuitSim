@@ -123,14 +123,38 @@ was reverted — is `docs/CHANGELOG.md` §V7.5.0–V7.5.7. What survives as a ru
   never exceeds 6 iterations) — do not re-derive it.
 - **The AnalogGym corpus IS the tree** — `campaign.corpus()` enumerates
   whatever `examples/complex_circuits/designs_tsmc*/` holds; there is no
-  selection flag. Two traps that outlive their sprint: **pre-V7.5.6 totals
-  (`/159`, `/679`, `/795`, 38/38, 17/17, 13/13) are not comparable to
-  anything after it**, and `cross_tech_report.py` **overwrites
-  RESULTS_TSMC.md wholesale**, destroying its hand-written sections — splice
-  its tables in, never run it blind. `designs_tsmc6` is kept despite being an
-  exact L72 duplicate of tsmc7 (159/159 identical verdicts): the two have
-  separately trained checkpoints, so it is the training-variance control on
-  the NN axis.
+  selection flag. Curating the basket means deleting design directories and
+  filtering the per-tree artifacts, never adding a filter to the driver.
+  Three traps that outlive their sprint:
+  - **Totals are not comparable across a curation.** `/159`, `/679`, `/795`,
+    38/38, 17/17, 13/13 are the original corpus; `/75`, `/375`, 18/18 are
+    V7.5.6; `/51`, `/255`, 12/12 are V7.5.9. Rescale or don't compare.
+  - `cross_tech_report.py` **overwrites RESULTS_TSMC.md wholesale**,
+    destroying its hand-written sections — splice its tables in, never run it
+    blind.
+  - **`designs_tsmc6` is an exact L72 duplicate of tsmc7** — re-measured at
+    V7.5.9, 75/75 decks identical in verdict *and* in every miss's relative
+    error to four decimals. It stays on disk because the NN families train
+    separate checkpoints on it (the training-variance control), but running
+    it in the **L72 bench** buys nothing and costs a fifth of the campaign.
+    Score `tsmc5,tsmc7,tsmc12,tsmc16` and quote tsmc6 as the repeat.
+- **`run_compare` must pin `AG_TREE` before the lazy `from meas import
+  run_deck`** (`_pin_design_tree`). The shared `tools/` resolve their tech
+  from `AG_TREE`/`AG_TECH`/cwd and RAISE otherwise, and the bench runs from
+  the repository root, which is none of those — V7.5.8 shipped with every
+  campaign deck dying at that import, undetected because no campaign was run
+  between the refactor and V7.5.9. A module that resolves global state at
+  import time needs its caller to set that state explicitly, not to happen to
+  be in the right directory.
+
+- **Prune on measured discrimination, not on structure.** A design that
+  agrees with NGSPICE on every deck of every tech is paying for itself with
+  nothing; a design that misses is the reason the corpus exists. V7.5.9's
+  removals are the four fully-saturated designs plus the two whose
+  distinguishing property another survivor now carries more cheaply — and
+  the pass that justified them is also the pass that *rescued* two designs
+  the structural argument had marked for removal. Measure first; the
+  saturated set is not the set you would guess.
 
 ## Validation
 
@@ -243,6 +267,13 @@ Scores: `docs/accuracy/`. The rules that bind development:
   `examples/`, rendered by `tests.common.base.render_reference_deck` (V7.5.8).
   A topology that lives in both a deck and an f-string will drift, and the
   deck is the copy nobody re-runs. If you add a gate, add its deck.
+- **One gate per question** (V7.5.9). A gate whose configs are a *subset* of
+  another gate's matrix, or that differs from its neighbour only by a string
+  argument, is not extra coverage — it is the same measurement paid for
+  twice, and it dilutes the suite's signal. Merge behind a flag and record in
+  the survivor's docstring what it absorbed, so the next reader does not
+  re-add it. Same rule for `examples/`: a deck no gate reads is documentation,
+  and it has to earn that on its own.
 - **`examples/` and `tests/` share one taxonomy** — `single_devices/`,
   `simple_circuits/`, `complex_circuits/` — so a gate sits in the tier of the
   circuit it gates. `tests/perf/` and `tests/diag/` sit outside it

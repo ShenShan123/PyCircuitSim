@@ -238,7 +238,7 @@ def build_inv_parametric(tech_key: str, analysis: str) -> List[NNInvSweepConfig]
 
     The P/N-ratio sweep is bounded by the TSMC naive-modelcard NFIN-group rule
     (``nfin_p > nfin+1`` skipped) exactly as the BSIM-CMG harness
-    (``verify_multi_tech_tran.py``) — with default NFIN=2 this admits a single
+    (``verify_multi_tech.py``) — with default NFIN=2 this admits a single
     point, ``nfin_p=3``. The limiter is the modelcard, not the NN model.
     """
     base = ALL_TEST_TECHS[tech_key]

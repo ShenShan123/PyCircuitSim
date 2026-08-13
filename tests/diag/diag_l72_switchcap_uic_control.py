@@ -1,8 +1,10 @@
-"""CORRECTED native-L72 switchcap control — with uic pinning.
+"""Native-L72 switchcap control — with uic pinning.
 
-diag_l72_switchcap_control.py runs the L72 ground-truth switchcap through a
-PLAIN DC op (no uic pinning), so the high-impedance hold node vsamp seeds at
-the leakage equilibrium (~vin) instead of the .ic 0 V. The NN path
+Its predecessor (``diag_l72_switchcap_control.py``, removed in V7.5.9) ran the
+L72 ground-truth switchcap through a PLAIN DC op with no uic pinning, so the
+high-impedance hold node vsamp seeded at the leakage equilibrium (~vin)
+instead of the .ic 0 V — it answered a question about a circuit neither the NN
+path nor NGSPICE runs, and this file superseded it on arrival. The NN path
 (run_directnet_transient, V6.4.7 S5b) pins .ic nodes with temporary ideal
 sources during the OP so the transient starts at .ic exactly — matching
 NGSPICE `tran ... uic`. This control replicates THAT uic pinning with the L72

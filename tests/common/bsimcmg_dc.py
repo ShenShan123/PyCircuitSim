@@ -1,10 +1,15 @@
 """Shared infrastructure for BSIM-CMG DC sweep verification.
 
 Provides DC-specific test configuration, NGSPICE/PyCircuitSim DC runners,
-comparison metrics, and plotting for the 3-level DC verification suite:
-  Level 1: verify_bsimcmg_dc.py              (simple NMOS/PMOS Id-Vgs)
+comparison metrics, and plotting for the two-level DC verification suite:
   Level 2: verify_bsimcmg_dc_comprehensive.py (VT/L/NFIN sweeps, all techs)
-  Level 3: verify_multi_tech_dc.py            (inverter VTC, multi-tech parametric)
+  Level 3: verify_multi_tech.py --analysis dc (inverter VTC, multi-tech parametric)
+
+The former Level 1 (``verify_bsimcmg_dc.py``: ASAP7 NMOS+PMOS Id-Vgs at the
+default VT/L/NFIN) was removed in V7.5.9 — its two configs are exactly the
+``vt_rvt`` members of Level 2's VT sweep, so it re-ran them rather than
+covering anything. ``verify_bsimcmg_dc_comprehensive.py --tech ASAP7 --sweep vt``
+is the quick check it used to be.
 
 Technology profiles (TechProfile, VtPair, ALL_TECHS) and generic helpers
 are imported from test_common.

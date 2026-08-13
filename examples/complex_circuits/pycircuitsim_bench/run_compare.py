@@ -432,6 +432,25 @@ def raw_to_sweep(path: Path, kind: str) -> SweepResult:
                                                "rawfile": str(path)})
 
 
+def _pin_design_tree(root: Path, tech: str) -> None:
+    """Tell the shared ``tools/`` which design tree this run is scoring.
+
+    V7.5.8 replaced the five per-tech ``designs_tsmc*/tools/`` copies with one
+    shared directory, so ``pycmg_lib._resolve_tree()`` no longer infers the
+    tech from its own location: it reads ``AG_TREE``, then ``AG_TECH``, then
+    the working directory, and RAISES when none resolve. ``run_compare`` is
+    invoked from the repository root (``python -m examples...``), which is
+    none of those — so every deck died at ``from meas import run_deck`` with
+    "Cannot tell which design tree to use" until V7.5.9. ``--tech`` already
+    names the tree unambiguously; pin it before the lazy import can fire.
+
+    ``AG_TREE`` wins over ``AG_TECH`` in the resolver, so setting it here also
+    overrides a stale ``AG_TECH`` inherited from the caller's environment,
+    which would otherwise score one tech's decks against another's modelcards.
+    """
+    os.environ["AG_TREE"] = str((root / f"designs_{tech.lower()}").resolve())
+
+
 def _run_ngspice(deck: Path, control: str, work: Path, tag: str,
                  timeout: float) -> MetricDict:
     """``tools/meas.run_deck``, imported lazily so the module stays importable.
@@ -1697,6 +1716,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                              "segments when a monolithic temperature sweep "
                              "loses its Newton branch (amplifier tb_dc only)")
     args = parser.parse_args(argv)
+    _pin_design_tree(args.root, args.tech)
 
     out_dir = args.out or (args.root / "pycircuitsim_bench_results")
     work_root = args.work or (out_dir / "work")

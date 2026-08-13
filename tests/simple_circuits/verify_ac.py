@@ -41,7 +41,12 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from tests.common.base import OSDI_PATH, run_ngspice_subprocess
+from tests.common.base import (
+    OSDI_PATH,
+    SIMPLE_DECKS,
+    render_reference_deck,
+    run_ngspice_subprocess,
+)
 from tests.common.bsimcmg_tran import (
     ALL_TECHS,
     get_merged_modelcard,
@@ -49,6 +54,15 @@ from tests.common.bsimcmg_tran import (
 )
 
 RESULTS_DIR = PROJECT_ROOT / "tests" / "verify_ac_results"
+
+# Levels 1 and 2 own stimulus and tolerances, not topology: both circuits are
+# decks in examples/ (V7.5.9 — they had been f-strings here AND decks there,
+# the drift hazard tests/__init__ names). Level 3's floating-bulk pair stays
+# programmatic: it sweeps polarity, so no single deck expresses it.
+RC_TEMPLATE = SIMPLE_DECKS / "rc_lowpass_ac.sp"
+RC_NG_TEMPLATE = SIMPLE_DECKS / "rc_lowpass_ac.cir"
+CS_TEMPLATE = SIMPLE_DECKS / "bsimcmg_cs_amp_ac.sp"
+CS_NG_TEMPLATE = SIMPLE_DECKS / "bsimcmg_cs_amp_ac.cir"
 
 # Acceptance thresholds.  L1 is purely linear so it must match tightly; L2
 # carries the OP match (~0.05% from the DC suite) plus the cap condensation.
@@ -205,6 +219,37 @@ def minus3db_corner(freq: np.ndarray, v: np.ndarray) -> float:
     return float(freq[below[0]]) if below.size else float("nan")
 
 
+def _deck_card(deck: str, name: str) -> List[str]:
+    """The whitespace-split card named ``name``, e.g. ``R1 in out 1k``."""
+    for line in deck.splitlines():
+        parts = line.split()
+        if parts and parts[0].lower() == name.lower():
+            return parts
+    raise KeyError(f"no card named {name!r} in the rendered deck")
+
+
+def _deck_token(deck: str, name: str) -> str:
+    """The value token of a two-terminal card: field 3, verbatim."""
+    return _deck_card(deck, name)[3]
+
+
+def _deck_value(deck: str, name: str) -> float:
+    """That token as a number, through the simulator's OWN suffix table —
+    so the analytic reference cannot disagree with the deck about what
+    ``159.155n`` means."""
+    from pycircuitsim.parser import Parser                   # noqa: PLC0415
+
+    return Parser()._parse_value(_deck_token(deck, name))
+
+
+def _deck_param(deck: str, name: str, key: str) -> str:
+    """A ``KEY=value`` field on a card, e.g. ``Vin``'s ``DC=`` bias."""
+    for tok in _deck_card(deck, name):
+        if tok.upper().startswith(f"{key.upper()}="):
+            return tok.split("=", 1)[1]
+    raise KeyError(f"card {name!r} carries no {key}= field")
+
+
 # ---------------------------------------------------------------------------
 # Level 1 -- passive RC low-pass
 # ---------------------------------------------------------------------------
@@ -213,26 +258,17 @@ def test_rc_lowpass(work_dir: Path) -> bool:
     print("  Level 1: Passive RC low-pass  (PyCircuitSim vs NGSPICE vs analytic)")
     print("=" * 70)
 
-    R, C = 1e3, 159.155e-9
+    # R/C are read off the deck rather than declared here: the closed form is
+    # only a valid reference if it is the transfer function of the circuit the
+    # simulators were actually handed.
+    py_deck = render_reference_deck(RC_TEMPLATE, {})
+    ng_deck = render_reference_deck(RC_NG_TEMPLATE, {})
+    R = _deck_value(py_deck, "R1")
+    C = _deck_value(py_deck, "C1")
     fc = 1.0 / (2 * np.pi * R * C)
     freqs = dec_frequencies(20, 10.0, 1e6)
+    print(f"  deck: {RC_TEMPLATE.name} / {RC_NG_TEMPLATE.name}")
     print(f"  R={R:.0f}ohm  C={C*1e9:.3f}nF  ->  fc = {fc:.2f} Hz")
-
-    py_deck = (
-        "* RC low-pass AC (PyCircuitSim)\n"
-        "V1 in 0 DC=0 AC=1 0\n"
-        "R1 in out 1k\n"
-        f"C1 out 0 {C}\n"
-        ".ac dec 20 10 1e6\n"
-        ".end\n"
-    )
-    ng_deck = (
-        "* RC low-pass AC (NGSPICE)\n"
-        "V1 in 0 dc 0 ac 1\n"
-        "R1 in out 1k\n"
-        f"C1 out 0 {C}\n"
-        ".end\n"
-    )
 
     v_py = run_pycircuitsim_ac(py_deck, work_dir, "rc", freqs, "out")
     f_ng, v_ng_raw = run_ngspice_ac(ng_deck, work_dir, "rc",
@@ -271,41 +307,30 @@ def test_cs_amp(work_dir: Path) -> bool:
     vt = config.vt
     merged = get_merged_modelcard(config, work_dir)
 
-    vdd, vbias, rd, cload = 0.7, 0.35, "50k", "5f"
-    l_nm = config.l_nmos * 1e9
-    tfin_nm = tech.tfin * 1e9
-    nfin = config.nfin_n
     ac_card = "ac dec 20 1e3 1e12"
     freqs = dec_frequencies(20, 1e3, 1e12)
 
-    print(f"  Tech=ASAP7 VT={vt.vt_name}  L={l_nm:.0f}nm NFIN={nfin}  "
-          f"VDD={vdd}V Vbias={vbias}V RD={rd} Cload={cload}")
+    # Topology and geometry come from the deck; the gate supplies only what
+    # the reference half cannot express on an OSDI instance line (the bake)
+    # plus the bias the two halves must share.
+    py_deck = render_reference_deck(CS_TEMPLATE, {})
+    vdd = _deck_value(py_deck, "VDD")
+    vbias = _deck_param(py_deck, "Vin", "DC")
+    rd = _deck_token(py_deck, "RD")
+    cload = _deck_token(py_deck, "Cload")
+    ng_deck = render_reference_deck(CS_NG_TEMPLATE, {
+        "BAKED_LIB": str(merged_baked(config, work_dir)),
+        "VDD": f"{vdd}",
+        "VBIAS": f"{vbias}",
+        "RD": rd,
+        "CLOAD": cload,
+        "NMOS": vt.nmos_model,
+    })
 
-    py_deck = (
-        "* BSIM-CMG CS amp AC (PyCircuitSim) — hierarchical (V6.12.0)\n"
-        f"VDD vdd 0 {vdd}\n"
-        f"Vin in 0 DC={vbias} AC=1 0\n"
-        f"Xamp in out vdd csamp\n"
-        f"Cload out 0 {cload}\n"
-        f".subckt csamp in out vdd\n"
-        f"RD vdd out {rd}\n"
-        f"Mn1 out in 0 0 {vt.nmos_model} L={l_nm:.0f}n NFIN={nfin} TFIN={tfin_nm:.1f}n\n"
-        f".ends\n"
-        f".model {vt.nmos_model} NMOS (LEVEL=72)\n"
-        f".ac {ac_card.split(' ', 1)[1]}\n"
-        ".end\n"
-    )
-    ng_deck = (
-        "* BSIM-CMG CS amp AC (NGSPICE)\n"
-        f'.include "{merged_baked(config, work_dir)}"\n'
-        ".temp 27\n"
-        f"VDD vdd 0 {vdd}\n"
-        f"Vin in 0 dc {vbias} ac 1\n"
-        f"RD vdd out {rd}\n"
-        f"Nn1 out in 0 0 {vt.nmos_model}\n"
-        f"Cload out 0 {cload}\n"
-        ".end\n"
-    )
+    print(f"  deck: {CS_TEMPLATE.name} / {CS_NG_TEMPLATE.name}")
+    print(f"  Tech=ASAP7 VT={vt.vt_name}  L={config.l_nmos*1e9:.0f}nm "
+          f"NFIN={config.nfin_n}  VDD={vdd}V Vbias={vbias}V "
+          f"RD={rd} Cload={cload}")
 
     v_py = run_pycircuitsim_ac(
         py_deck, work_dir, "cs_amp", freqs, "out",
