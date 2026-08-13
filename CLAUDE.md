@@ -160,8 +160,34 @@ refine step-controller fix path V7.5.3 had recorded: it holds the charge pump
 at 6/6 but makes Basic_LDO 3.3× slower while flipping no verdict, and the real
 mechanism is a dead zone in the growth law (`0.9·r^(-1/3)` exceeds 1 only for
 r < 0.729, so any accepted r in [0.729, 1) freezes dt) worth only ~6 % in dt.
-Refine-mode cost on LDO load-step decks stays **open**; see CHANGELOG §V7.5.4
-before re-attempting it.
+Refine-mode cost on LDO load-step decks stayed open through V7.5.4; see
+CHANGELOG §V7.5.4 for the rejected fix path.
+
+V7.5.5 closed it by rebuilding the refine dt-controller on **ngspice
+dctran.c semantics**: open-water marching uses CKTterr-exact charge-state
+error (factor 1/12 trap / 2/9 gear-2 on the raw DD3 — the old `0.5·h²·DD3`
+was ngspice's ORDER-1 coefficient applied to order-2 marches, 6×/2.25×
+tighter than the equivalence it claimed), per-test timestep suggestions with
+order-matched exponents (voltage r^(-1/3), charge r^(-1/2)), accept while
+the suggestion exceeds 0.9·h, and the suggestion becomes the next dt
+verbatim (2× CKTtrunc cap) — killing the [0.729,1) frozen-dt dead zone and
+a 34 % LTE-reject waste. A **corner-guard window** (2 local corner gaps
+past every PULSE breakpoint, pieces capped at gap/8) retains the V7.5.3
+controller flavor — the only one measured to hold the charge pump's 10 ps
+reversal spike at BOTH strides (up_imin now stride-independent,
+1.42 %/1.43 %). Guard-integrator alternatives all measured and reverted
+(BE hold flattens the spike, BDF-2 hold stride-scatters, loose-test trap
+zigzags at 2Δt); ngspice's tmax rule is available as a diagnostic
+(`refine_max_dt` / `PYCIRCUITSIM_TRAN_REFINE_MAXDT`) but is a 100k-piece
+march on the charge pump and still misses. ITL4 iteration-count control is
+measured DEAD on this corpus (damped NR never exceeds 6 iterations).
+Measured: Basic_LDO 540→329 s, ldo_2 3005→208 s (1/5→3/5), amplifier decks
+3–7×. Transient-family campaign now covers all five techs in both modes
+(flags-off 1/1/6/2 of 23 on tsmc6/7/12/16; refine 10/8/8/8/9 of 23 —
+tsmc6 ≡ tsmc7 verdict-identical in both). `PYCIRCUITSIM_REFINE_TRACE`
+dumps a per-piece march trace. The ldo_2/Basic_LDO residual misses are
+characterized reference-tolerance artifacts (NGSPICE's own reltol ladder
+brackets our values) — see RESULTS_TSMC.md §V7.5.5 before quoting them.
 
 ## Supported Features
 

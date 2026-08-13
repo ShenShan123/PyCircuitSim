@@ -8,6 +8,127 @@ pruned; the full original text lives in git history.)
 
 ---
 
+## V7.5.5 — the refine controller rebuilt on dctran semantics; the 2026-08-10 open list closed (branch `feat/analoggym-migration`, 2026-08-12)
+
+**Goal: close open issues 1–4 of the session notes.** All four closed or
+characterized, each on measurements. New diagnostic infra:
+`PYCIRCUITSIM_REFINE_TRACE=<path>` (per-piece march trace: t, dt, r_voltage,
+r_charge, NR iters, reject flag, binding device) and
+`PYCIRCUITSIM_BENCH_DUMP_WAVE` (py transient axes to .npz) — both were
+load-bearing for the diagnosis below.
+
+1. **Issue 1 (refine cost on LDO load-step decks) — CLOSED. The controller
+   was wrong in three independent, measured ways**, and the march trace
+   corrected the V7.5.4 record before anything was designed:
+   - *The record correction first.* At true HEAD the Basic_LDO refine march
+     was 21 370 NR solves (not "19 595 pieces"), of which **34 % were
+     LTE-rejected and discarded**; the tail marched at ~1.1 ns median (not
+     47 ps); the verdict was 4/5 with overshoot rel 4.7 % (not 0.63–0.72).
+     And NR iterations were **median 3, max 6, never above 10 anywhere on
+     the corpus** (charge pump included) — so the V7.5.3-recorded "ITL4
+     iteration-count control" candidate is **dead on arrival**: with our
+     damped/limited Newton there is no iteration-count signal to read.
+   - *The three defects.* (a) The charge-state test used `0.5·h²·|DD3|` —
+     which is exactly NGSPICE's ORDER-1 cktterr coefficient applied to
+     order-2 marches; real CKTterr uses the raw divided difference with
+     factor 1/12 (trap) / 2/9 (gear-2), i.e. our test ran 6× (trap) / 2.25×
+     (gear2) tighter than the NGSPICE-equivalence it claimed. (b) The
+     growth law `min(2, max(1, 0.9·r^(-1/3)))` froze dt for any accepted r
+     in [0.729, 1) — the dead zone — and its exponent was order-mismatched
+     for the h²-scaling charge error. (c) Reject-at-r>1 with noisy r wasted
+     a third of all solves.
+   - *What shipped* (`f372112`): open-water marching now follows
+     **ngspice dctran.c exactly** — CKTterr factors, per-test timestep
+     suggestions with order-matched exponents (voltage r^(-1/3), charge
+     r^(-1/2)), accept while the combined suggestion exceeds 0.9·h, and the
+     suggestion becomes the next dt *verbatim*, capped at 2× (CKTtrunc).
+     Inside a **corner-guard window** (2 local corner gaps past every PULSE
+     breakpoint, pieces capped at gap/8) the march keeps the **legacy
+     V7.5.3 flavor** (honest 0.5 factor, reject at r>1, shallow
+     0.25-floored cuts, dead-zone growth — pinned-small dt is exactly what
+     a corner window wants), because that flavor is the only one measured
+     to hold the charge pump's 10 ps reversal spike at both strides.
+   - *Measured (tsmc5, refine-on):* charge pump **6/6 at BOTH strides with
+     stride-independent up_imin (1.42 %/1.43 %**, was 1.84/1.49 — every
+     intermediate design read 0.99–7.1 % *depending on stride*), same cost;
+     **Basic_LDO 540 s → 329 s** (11 395 solves vs 21 370), 4/5 with
+     undershoot 0.3 %→0.14 %; **ldo_2 3 005 s → 208 s (14.5×), 1/5 → 3/5**;
+     amplifier family 3–7× cheaper per deck (~4 090 s → ~1 155 s).
+   - *Dead ends, all built and measured on the charge-pump gate before
+     rejection:* **ngspice's tmax rule** (`refine_max_dt`, kept as a
+     diagnostic knob + `PYCIRCUITSIM_TRAN_REFINE_MAXDT`) — on this deck's
+     `tran 2p 200n` it IS what ngspice does (its 30 s there is a 100k-step
+     march) but at pure-Python cost it runs 1 500+ s and *still* missed
+     (7.1 %); **CKTterr-loose factors inside the guard** — guard-pinned
+     trap pieces develop a 2Δt odd–even branch-current oscillation through
+     the reversal (waveform-dumped: i(vupper) alternating ±2.5 µA,
+     reading the −4.03 µA spike as −5.63 µA); **a BE hold through the
+     guard** — dissipative, flattens the genuine spike to −3.78 µA; **a
+     BDF-2 hold through the guard** — stride-scattered (−3.82/−4.13);
+     **the honest factor everywhere** (no guard) — 575 s on Basic_LDO
+     (worse than baseline) *and* 3/5: under the new 0.9h accept band the
+     tight charge test marches fine yet accumulates a systematic 2.7 %
+     undershoot bias, while the loose factor hands the tail to the
+     voltage test, which directly protects the measured node.
+
+2. **Issue 2 (`ldo_2` disagreeing on both benches) — CHARACTERIZED as a
+   reference-tolerance artifact; no solver work, no deck edit.** Deck-level
+   probes through the same runner as the scored artifacts: (a) the loop
+   itself agrees between engines — both AC benches 8/8 at ≤0.2 %
+   (59 dB, 12–16 MHz GBW); (b) `tb_load`'s `lr`/`lr_pp`: NGSPICE's
+   110 µV peak-to-peak is its own forward-sweep first-point
+   default-tolerance transient — sweeping the SAME deck in reverse at
+   default tolerance gives 6.927 µV, reltol=1e-6 gives 6.975 µV, both
+   collapsing onto PyCircuitSim's 6.924 µV (<1 %); the op_delta table had
+   said as much (worst nodes all at the first sweep point). (c) `tb_tran`:
+   NGSPICE at default reltol is not settled (its pre-step average sits
+   1.4 mV above its own DC solve); at reltol 1e-4/1e-5 its v_min/v_max/
+   undershoot move to within 1–5 % of ours and its overshoot ladder
+   (0.0119 → 0.0185 → 0.0325) **brackets** our 0.0275 — not
+   tolerance-stable on the reference side. `method=trap` kills NGSPICE
+   outright on this deck. Same standing as the Fan_SMC cmrrdc caveat.
+   **Basic_LDO's surviving overshoot miss is the same class**: NGSPICE's
+   own reltol ladder swings it 3.04 → 1.83 → 2.62 mV (±40 %), and our
+   values across controller variants (1.45–2.89 mV) sit inside that
+   scatter; the V7.5.4 "refine under-resolves overshoot ~4×" claim was
+   calibrated against the unstable default-tolerance value and is hereby
+   softened.
+
+3. **Issue 3 (amplifier slew-edge metrics) — both V7.5.3 marginal
+   regressions fixed; composition at the 2 % gate is scatter-dominated.**
+   tsmc5 refine, per-deck vs the V7.5.3 rows: Leung_DFCFC2 5/11 → **11/11**
+   (its sr_rise 2.45 % crossing gone) and Peng_IAC 8/11 → **11/11** (its
+   sr_fall 2.17 % gone); four decks picked up NEW 2.2–2.7 % crossings
+   (Fan_SMC, Peng_ACBC, Peng_TCFC, Yan_AZ) — all shallow-margin, where the
+   V7.5.3 misses ran as deep as 4.6–7.3 %. Fully-agreeing amplifiers stay
+   7/17 with a different composition at 3–7× less cost. These are
+   never-validated designs whose slew metrics sit at the gate's noise
+   floor; chasing individual ±0.5 % crossings is not solver work.
+
+4. **Issue 4 (transient campaign on the other techs) — DONE, both modes.**
+   Flags-off: tsmc6 1/23, tsmc7 1/23, tsmc12 6/23, tsmc16 2/23 (slew
+   metrics need refine, as on tsmc5). Refine-on (V7.5.5 controller):
+   tsmc5 **10/23**, tsmc6 **8/23**, tsmc7 **8/23**, tsmc12 **8/23**,
+   tsmc16 **9/23** — refine is net-positive on every tech (+7/+7/+2/+7
+   decks vs flags-off). **tsmc6 ≡ tsmc7 verdict-identical across all 23
+   decks in BOTH modes** — the relabelled-tech control now holds for the
+   transient family too. New per-deck flags from the sweep:
+   `Song_DACFC` solves to an operating point 0.30–0.50 V away from
+   NGSPICE's on tsmc6/7/12/16 while agreeing to 9.6e-05 V on tsmc5
+   (basin/multi-OP difference on a never-validated design; `Sau_CFCC`
+   shows the same on tsmc6 only at 0.07 V); the tsmc12 charge pump under
+   refine reads 3/6 — its first-ever number on that tech (the cp gate has
+   always been tsmc5), recorded as coverage, not regression. Campaign
+   evidence: `v755_campaign_tsmc{5,6,7,12,16}_tran{,_refine}/` (untracked,
+   on-disk).
+
+**Gate basket re-run green** at the shipped controller: op PASS, dc 2/2,
+dc_comp 81/81, tran 1/1, tran_comp 45/45, subckt 11/11, ac 3/3 — flags-off
+is untouched by construction (every controller change sits under
+`refine_output`); the charge-pump refine gate holds at both strides.
+
+---
+
 ## V7.5.4 — the internal-solve current floor, fixed dimensionally; the refine-controller fix path measured and rejected (branch `feat/analoggym-migration`, 2026-08-12)
 
 **Goal: the two top V7.5.3 open issues.** One closed at the root, one measured

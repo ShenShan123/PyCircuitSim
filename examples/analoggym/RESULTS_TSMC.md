@@ -222,7 +222,10 @@ Open findings the campaign surfaced (the point of running it):
   (rel 0.634 → 0.074) — which also means refine at HEAD **under-resolves
   this deck ~4×** on that metric. Moving the safety factor inside the
   exponent shrinks the dead zone to [0.9, 1) but is worth only ~6 % in dt.
-  See CHANGELOG §V7.5.4 before re-attempting.
+  **CLOSED in V7.5.5** — controller rebuilt on ngspice dctran semantics
+  with a legacy corner guard (see the V7.5.5 section below and CHANGELOG
+  §V7.5.5.1; the ~4×-under-resolving claim was itself calibrated against a
+  reference-unstable overshoot and is softened there).
 
 * **`min_slope_25_75c` — CHARACTERIZED in V7.5.4 as a reference-noise
   statistic, not a solver gap.** It is a *minimum over 100 adjacent steps*
@@ -322,6 +325,51 @@ their own dt remain the dominant, least-constrained term. On the pilot
 evidence the three former blocker causes are gone; what remains untested at
 campaign scale is untested, not distrusted.
 
+
+## Transient family, all five techs (V7.5.5)
+
+The V7.5.5 refine controller (dctran-exact open water + a legacy corner
+guard, CHANGELOG §V7.5.5.1) closed the LDO-cost blocker, so the transient
+family now has campaign coverage on every tech, in both modes. Same driver,
+same stride policy (amplifier/ldo `tb_tran` @4, charge pump @20 refine+trap).
+
+| tech | flags-off | refine-on |
+|---|:--:|:--:|
+| TSMC5 | — (V7.5.3 ran refine only) | **10/23** |
+| TSMC6 | 1/23 | **8/23** |
+| TSMC7 | 1/23 | **8/23** |
+| TSMC12 | 6/23 | **8/23** |
+| TSMC16 | 2/23 | **9/23** |
+
+Refine is net-positive on every tech, and **TSMC6 ≡ TSMC7 verdict-identical
+across all 23 decks in both modes** — the relabelled-tech control extends to
+the transient family. Per-deck notes that belong with these numbers:
+
+* **tsmc5 vs the V7.5.3 rows, per deck:** `ldo_2` 1/5 → 3/5 at 3 006 s →
+  214 s; `Basic_LDO` at its honest (V7.5.4-corrected) 4/5, 563 s → 340 s;
+  both V7.5.3 marginal slew regressions fixed (`Leung_DFCFC2` 5/11 → 11/11,
+  `Peng_IAC` 8/11 → 11/11); four decks picked up NEW 2.2–2.7 % slew
+  crossings (`Fan_SMC`, `Peng_ACBC`, `Peng_TCFC`, `Yan_AZ`) — shallow-margin
+  scatter at the 2 % gate where the V7.5.3 misses ran 4.6–7.3 % deep.
+  Amplifiers fully agreeing: 7/17 in both passes, different composition,
+  at 3–7× less cost per deck (family ~4 090 s → ~1 155 s).
+* **`ldo_2`'s two residual misses and `Basic_LDO`'s overshoot are
+  reference-tolerance artifacts** (probed in V7.5.5): NGSPICE's own reltol
+  ladder moves each by ±40 % or more, brackets our values, and its default
+  run is demonstrably unsettled (tb_tran pre-step average 1.4 mV above its
+  own DC; tb_load's 110 µV `lr_pp` collapses onto ours when the SAME deck
+  is swept in reverse). The loop itself agrees 8/8 on both AC benches.
+* **`Song_DACFC` solves to an operating point 0.30–0.50 V from NGSPICE's on
+  tsmc6/7/12/16** while agreeing to 9.6e-05 V on tsmc5 — a basin/multi-OP
+  difference on a never-validated design (`Sau_CFCC` shows a 0.07 V version
+  on tsmc6 only). Flagged, not scored as a solver defect.
+* **tsmc12 charge pump under refine: 3/6** — the first cp number on any
+  tech but tsmc5 (the gate deck has always been tsmc5-pinned). Coverage,
+  not regression.
+
+Evidence: `pycircuitsim_bench_results/v755_campaign_tsmc{6,7,12,16}_tran/`
+(flags-off) and `v755_campaign_tsmc{5,6,7,12,16}_tran_refine/` (refine-on),
+untracked, on disk.
 
 ## Audit validation
 
