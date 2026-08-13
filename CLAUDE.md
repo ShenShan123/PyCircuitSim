@@ -75,7 +75,9 @@ Full module tree + responsibilities: README §Architecture. The load-bearing map
   models, losses, training, eval, `cli/train.py`, gitignored `checkpoints/`).
 - `external_compact_models/PyCMG/` — BSIM-CMG OSDI wrapper;
   OSDI binary at `build/osdi/bsimcmg.osdi`.
-- `tests/common/` — shared gate infra; `tests/references/` — NGSPICE decks.
+- `tests/common/` — shared gate infra. Gates carry no netlists: every circuit
+  they simulate is a deck in `examples/`, rendered by
+  `tests.common.base.render_reference_deck` (V7.5.8).
 
 Solver internals worth knowing (beyond README §Algorithms): BE step 1 → Trap
 step 2+ → BDF-2 auto on stiffness (NR>20, one-way); DC oscillation detection
@@ -189,7 +191,7 @@ dumps a per-piece march trace. The ldo_2/Basic_LDO residual misses are
 characterized reference-tolerance artifacts (NGSPICE's own reltol ladder
 brackets our values) — see RESULTS_TSMC.md §V7.5.5 before quoting them.
 
-**V7.5.6 curated the corpus itself.** `examples/analoggym/designs_tsmc*/`
+**V7.5.6 curated the corpus itself.** `examples/complex_circuits/designs_tsmc*/`
 now ships **18 designs / 75 scored decks per tech** (was 38 / 159): 7
 amplifiers, 3 LDOs, 6 sensors, 1 voltage reference, the charge pump —
 90 design instances and 375 scored decks across five techs, **3.35 CPU-h

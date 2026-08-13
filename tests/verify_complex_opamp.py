@@ -34,6 +34,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tests"))
 
+from tests.common.base import SIMPLE_DECKS, render_reference_deck  # noqa: E402
 from tests.common.complex import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech,
     get_baked_modelcard, run_ngspice_wrdata,
@@ -46,7 +47,8 @@ GAIN_TOL = 0.10            # +/-10% open-loop DC gain gate
 # certify it. Mirrors the parametric twin (tests/common/complex_sweep.py
 # OPAMP_MIN_GAIN). The shipped cells sit at 160-190 V/V, ~30x above the floor.
 OPAMP_MIN_GAIN = 5.0
-TEMPLATE = PROJECT_ROOT / "examples" / "complex" / "directnet_opamp_miller_dc.sp"
+TEMPLATE = SIMPLE_DECKS / "directnet_opamp_miller_dc.sp"
+NG_TEMPLATE = SIMPLE_DECKS / "bsimcmg_opamp_miller_dc.cir"
 
 
 def _bias(bt: BenchTech) -> Tuple[float, float, float]:
@@ -95,21 +97,25 @@ def _verdict(ng_gain: float, dn_gain: float) -> Tuple[float, bool, str]:
 def ngspice_opamp_body(bt: BenchTech, baked: Path) -> Dict[str, str]:
     """Single-point NGSPICE opamp ground-truth deck body (no .control/.end).
 
+    The topology is NOT here — it is ``examples/simple_circuits/
+    bsimcmg_opamp_miller_dc.cir``, rendered per tech. This function owns the
+    bias and the sweep window, nothing else.
+
     Pure (returns text) so verify_complex_sweep_canaries can diff it against the
     parametric ``tests.common.complex.ngspice_opamp`` builder (bug report B8).
     """
     vcm, vbn, vbp = _bias(bt)
-    n, p = bt.nmos_model, bt.pmos_model
-    body = [f'.include "{baked}"', ".temp 27", f"Vdd vdd 0 {bt.vdd}",
-            f"Vbn vbn 0 {vbn}", f"Vbp vbp 0 {vbp}",
-            f"Vinn inn 0 {vcm}", f"Vinp inp 0 {vcm}",
-            f"Nn1 n1 inp vtail 0 {n}", f"Nn2 vo1i inn vtail 0 {n}",
-            f"Np3 n1 n1 vdd vdd {p}", f"Np4 vo1i n1 vdd vdd {p}",
-            f"Nn5 vtail vbn 0 0 {n}",
-            f"Np6 vout vo1i vdd vdd {p}", f"Nn7 vout vbn 0 0 {n}",
-            "Cc vo1i vout 20f", "CL vout 0 50f"]
+    body = render_reference_deck(NG_TEMPLATE, {
+        "BAKED_LIB": str(baked),
+        "VDD": f"{bt.vdd}",
+        "VBN": f"{vbn}",
+        "VBP": f"{vbp}",
+        "VCM": f"{vcm}",
+        "NMOS": bt.nmos_model,
+        "PMOS": bt.pmos_model,
+    }, body_only=True)
     lo, hi = round(vcm - 0.15, 3), round(vcm + 0.15, 3)
-    return {"body": "\n".join(body), "signals": "v(vout)",
+    return {"body": body, "signals": "v(vout)",
             "analysis": f"dc Vinp {lo} {hi} 0.002"}
 
 

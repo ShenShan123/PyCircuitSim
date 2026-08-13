@@ -33,6 +33,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tests"))
 
+from tests.common.base import SIMPLE_DECKS, render_reference_deck  # noqa: E402
 from tests.common.complex import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech,
     get_baked_modelcard, run_ngspice_wrdata,
@@ -47,7 +48,8 @@ PERIOD_TOL = 0.05          # +/-5% gate
 TRAN_TSTEP = 2e-12
 TRAN_TSTOP = 1.2e-9
 SETTLE = 0.3e-9           # ignore the startup transient before measuring
-TEMPLATE = PROJECT_ROOT / "examples" / "complex" / "directnet_ring_osc_tran.sp"
+TEMPLATE = SIMPLE_DECKS / "directnet_ring_osc_tran.sp"
+NG_TEMPLATE = SIMPLE_DECKS / "bsimcmg_ring_osc_tran.cir"
 
 
 def _period_from_wave(t: np.ndarray, v: np.ndarray, mid: float,
@@ -72,17 +74,22 @@ def _period_from_wave(t: np.ndarray, v: np.ndarray, mid: float,
 def ngspice_ring_body(bt: BenchTech, baked: Path) -> Dict[str, str]:
     """Single-point NGSPICE ring-osc ground-truth deck body (no .control/.end).
 
+    The topology is NOT here — it is ``examples/simple_circuits/
+    bsimcmg_ring_osc_tran.cir``, rendered per tech. This function owns the
+    supply, the seed and the transient window, nothing else.
+
     Pure (returns text) so verify_complex_sweep_canaries can diff it against the
     parametric ``tests.common.complex.ngspice_ringosc`` builder (bug report B8).
+    The parametric twin sweeps the stage count, so it still builds its ring in
+    code; the canary is what holds the two identical at 5 stages.
     """
-    nd = ["n1", "n2", "n3", "n4", "n5"]
-    body = [f'.include "{baked}"', ".temp 27", f"Vdd vdd 0 {bt.vdd}"]
-    for i in range(5):
-        body += [f"Np{i} {nd[i]} {nd[i-1]} vdd vdd {bt.pmos_model}",
-                 f"Nn{i} {nd[i]} {nd[i-1]} 0 0 {bt.nmos_model}",
-                 f"Cl{i} {nd[i]} 0 0.5f"]
-    body.append(f".ic v(n1)=0 v(n2)={bt.vdd} v(n3)=0 v(n4)={bt.vdd} v(n5)=0")
-    return {"body": "\n".join(body), "signals": "v(n5)",
+    body = render_reference_deck(NG_TEMPLATE, {
+        "BAKED_LIB": str(baked),
+        "VDD": f"{bt.vdd}",
+        "NMOS": bt.nmos_model,
+        "PMOS": bt.pmos_model,
+    }, body_only=True)
+    return {"body": body, "signals": "v(n5)",
             "analysis": f"tran {TRAN_TSTEP:.1e} {TRAN_TSTOP:.1e} uic"}
 
 

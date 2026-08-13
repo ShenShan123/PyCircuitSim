@@ -4,7 +4,7 @@
 *simulator* (solver / parser / BSIM-CMG L72 path) — never by weakening a gate or
 editing a deck. NN models (L73/74/75) are parked. Docs to update on each
 version: `docs/CHANGELOG.md`, `CLAUDE.md`, `README.md`,
-`examples/analoggym/RESULTS_TSMC.md`.
+`examples/complex_circuits/RESULTS_TSMC.md`.
 
 > **This file is the working scratchpad: current state + what is still open.**
 > The narrative history, every dead end and all per-version evidence live in
@@ -119,7 +119,7 @@ plus a decision about the campaign stride policy; nothing here requires it.
   MKL_NUM_THREADS=1`. `bsimar/checkpoints` is a symlink to the main repo copy
   (gitignored) so the NN gates can run here.
 - **Campaign evidence is untracked and only on disk:** per-deck JSONs under
-  `examples/analoggym/pycircuitsim_bench_results/v753_campaign_tsmc{5,6,7,12,16}/`
+  `examples/complex_circuits/pycircuitsim_bench_results/v753_campaign_tsmc{5,6,7,12,16}/`
   (679 decks, layouts differ: tsmc5 nests under `acdc/`, `tran/`, `pilot/`)
   **plus the V7.5.5 sweeps** `v755_campaign_tsmc{6,7,12,16}_tran/` (flags-off)
   and `v755_campaign_tsmc{5,6,7,12,16}_tran_refine/`. Copy them out before

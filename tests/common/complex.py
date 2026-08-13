@@ -59,7 +59,6 @@ from tests.common.nn import nrmse as _nrmse_pct, mre as _mre_pct
 # ---------------------------------------------------------------------------
 BENCH_TECHS: List[str] = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 
-REFERENCES_DIR = PROJECT_ROOT / "tests" / "references" / "complex"
 # RESULTS_BASE is env-overridable so parallel sweeps (e.g. the V6.5.4 checkpoint
 # bake-off) can give each worker an isolated output dir — otherwise concurrent
 # runs of the same (gate, tech) clobber each other's baked modelcards / NGSPICE
@@ -406,7 +405,7 @@ def render_directnet_netlist(template_path: Path, bt: BenchTech,
                              out_path: Path) -> Path:
     """Write a per-tech DirectNet netlist from an examples/ template.
 
-    The examples/complex/directnet_*.sp files carry TSMC12/svt/0.80 V
+    The examples/simple_circuits/directnet_*.sp files carry TSMC12/svt/0.80 V
     placeholders; this swaps in the benchmark tech's TECH= / VT= / VDD so the
     parser preempt cascade resolves the right ``tsmc{X}_dn_medium`` checkpoint.
     """

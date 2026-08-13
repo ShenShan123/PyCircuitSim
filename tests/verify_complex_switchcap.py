@@ -43,6 +43,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tests"))
 
+from tests.common.base import SIMPLE_DECKS, render_reference_deck  # noqa: E402
 from tests.common.complex import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech,
     get_baked_modelcard, run_ngspice_wrdata,
@@ -55,7 +56,8 @@ DROOP_FLOOR_FRAC = 1e-3    # absolute floor on the droop gate: 0.1% of VDD
 TRAN_TSTEP = 5e-12
 TRAN_TSTOP = 12e-9
 CLK_PER = 4e-9
-TEMPLATE = PROJECT_ROOT / "examples" / "complex" / "directnet_switchcap_tran.sp"
+TEMPLATE = SIMPLE_DECKS / "directnet_switchcap_tran.sp"
+NG_TEMPLATE = SIMPLE_DECKS / "bsimcmg_switchcap_tran.cir"
 
 # sample-window end (just before the 1st sample phase closes) and a hold-window
 # pair to measure droop. The clock: td=0.5n, sample (phi high) pw=1.9n.
@@ -75,17 +77,20 @@ def _at(t: np.ndarray, v: np.ndarray, t0: float) -> float:
 def ngspice_sc_body(bt: BenchTech, baked: Path) -> Dict[str, str]:
     """Single-point NGSPICE switched-cap ground-truth deck body.
 
+    The topology is NOT here — it is ``examples/simple_circuits/
+    bsimcmg_switchcap_tran.cir``, rendered per tech. This function owns the
+    sampled level and the transient window, nothing else.
+
     Pure (returns text) so verify_complex_sweep_canaries can diff it against the
     parametric ``tests.common.complex.ngspice_switchcap`` builder (B8)."""
-    n, p = bt.nmos_model, bt.pmos_model
-    vin = _vin(bt)
-    body = [f'.include "{baked}"', ".temp 27", f"Vdd vdd 0 {bt.vdd}",
-            f"Vin vin 0 {vin}",
-            f"Vphi phi 0 PULSE(0 {bt.vdd} 0.5n 0.1n 0.1n 1.9n 4n)",
-            f"Npc phib phi vdd vdd {p}", f"Nnc phib phi 0 0 {n}",
-            f"Nnt vin phi vsamp 0 {n}", f"Npt vin phib vsamp vdd {p}",
-            "Csample vsamp 0 100f", f".ic v(vsamp)=0 v(phib)={bt.vdd}"]
-    return {"body": "\n".join(body), "signals": "v(vsamp)",
+    body = render_reference_deck(NG_TEMPLATE, {
+        "BAKED_LIB": str(baked),
+        "VDD": f"{bt.vdd}",
+        "VIN": f"{_vin(bt)}",
+        "NMOS": bt.nmos_model,
+        "PMOS": bt.pmos_model,
+    }, body_only=True)
+    return {"body": body, "signals": "v(vsamp)",
             "analysis": f"tran {TRAN_TSTEP:.1e} {TRAN_TSTOP:.1e} uic"}
 
 

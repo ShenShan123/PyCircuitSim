@@ -42,6 +42,12 @@ MODELCARDS_DIR = (
 NGSPICE_BIN = os.environ.get(
     "NGSPICE_BIN", "/usr/local/ngspice-45.2/bin/ngspice")
 
+#: Every circuit a gate simulates is a file under here — gates render these,
+#: they never carry a topology of their own. See ``render_reference_deck``.
+EXAMPLES_DIR = PROJECT_ROOT / "examples"
+DEVICE_DECKS = EXAMPLES_DIR / "single_devices"
+SIMPLE_DECKS = EXAMPLES_DIR / "simple_circuits"
+
 from helpers import bake_inst_params  # noqa: E402
 
 
@@ -231,6 +237,77 @@ TECH_COLORS: Dict[str, str] = {
     "TSMC12": "tab:purple",
     "TSMC16": "tab:red",
 }
+
+
+# ---------------------------------------------------------------------------
+# examples/ reference-deck rendering
+# ---------------------------------------------------------------------------
+_DECK_TOKEN_RE = re.compile(r"<([A-Z][A-Z0-9_]*)>")
+
+
+def render_reference_deck(template_path: Path, subs: Dict[str, str], *,
+                          body_only: bool = False) -> str:
+    """Render a deck from ``examples/`` into runnable netlist text.
+
+    The gates own stimulus and tolerances; they do NOT own topology. Every
+    circuit a gate simulates is a file under ``examples/``, and this is how it
+    gets read. Keeping one copy is the point: a topology that lives in both a
+    documentation deck and an f-string builder drifts, silently, and the
+    ``examples/`` copy is the one nobody re-runs.
+
+    The template is a real deck annotated with ``<TOKEN>`` placeholders for the
+    values that vary per technology (``<VDD>``, ``<NMOS>``, the baked-modelcard
+    path, ...). Rendering:
+
+    * drops blank lines and ``*`` comments, so the templates can carry the
+      commentary that makes them readable as examples;
+    * collapses interior whitespace runs, so columns can be aligned in the file
+      without changing a single byte of what NGSPICE is handed;
+    * substitutes ``<TOKEN>`` **after** normalizing, so a substituted value may
+      legitimately contain spaces (a work-dir path, a PULSE argument list).
+
+    ``body_only`` additionally drops the trailing ``.end``, yielding the bare
+    circuit body that ``run_ngspice_wrdata`` embeds in a runner deck. Full
+    decks keep their title line, because NGSPICE consumes the first line of a
+    deck as the title and would otherwise silently eat ``.include``.
+
+    Raises on a token the caller did not supply AND on a substitution the
+    template does not use — a stale key means the caller believes it is
+    parameterizing something it is not, which is the exact failure this
+    function exists to prevent.
+    """
+    lines: List[str] = []
+    saw_title = False
+    for raw in template_path.read_text().splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("*"):
+            # Full decks keep exactly one title line (NGSPICE eats line 1).
+            if body_only or saw_title:
+                continue
+            saw_title = True
+            lines.append(" ".join(stripped.split()))
+            continue
+        if body_only and stripped.lower() == ".end":
+            continue
+        lines.append(" ".join(stripped.split()))
+
+    text = "\n".join(lines)
+    found = set(_DECK_TOKEN_RE.findall(text))
+    missing = found - set(subs)
+    if missing:
+        raise KeyError(
+            f"{template_path.name}: no substitution for "
+            f"{sorted(missing)} (supplied: {sorted(subs)})")
+    unused = set(subs) - found
+    if unused:
+        raise KeyError(
+            f"{template_path.name}: substitutions {sorted(unused)} match no "
+            f"token in the deck — the template changed under the caller")
+
+    rendered = _DECK_TOKEN_RE.sub(lambda m: subs[m.group(1)], text)
+    return rendered if body_only else rendered + "\n"
 
 
 # ---------------------------------------------------------------------------

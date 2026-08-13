@@ -38,6 +38,7 @@ from __future__ import annotations
 import argparse
 import functools
 import logging
+import re
 import sys
 from pathlib import Path
 from typing import Dict, List
@@ -51,9 +52,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tests"))
 
+from tests.common.base import SIMPLE_DECKS, render_reference_deck  # noqa: E402
 from tests.common.complex import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech,
     get_baked_modelcard, run_ngspice_wrdata, parse_netlist, full_metrics,
+    render_directnet_text,
 )
 
 DEFAULT_NFINS = [2, 5, 10]
@@ -66,6 +69,10 @@ DEFAULT_NFINS = [2, 5, 10]
 # as diagnostics but are NOT part of the verdict (bug report B5).
 SRAM_NRMSE_TOL = 0.10
 
+NG_TEMPLATE = SIMPLE_DECKS / "bsimcmg_sram_snm_dc.cir"
+TEMPLATE = SIMPLE_DECKS / "directnet_sram_snm_dc.sp"
+SIXT_TEMPLATE = SIMPLE_DECKS / "directnet_sram_6t_op.sp"
+
 
 # ---------------------------------------------------------------------------
 # Half-cell butterfly lobe
@@ -73,14 +80,21 @@ SRAM_NRMSE_TOL = 0.10
 def ngspice_sram_lobe_body(bt: BenchTech, nfin: int, baked: Path) -> Dict[str, str]:
     """Single-point NGSPICE SRAM half-cell ground-truth deck body.
 
+    The topology is NOT here — it is ``examples/simple_circuits/
+    bsimcmg_sram_snm_dc.cir``, rendered per tech. This function owns the read
+    bias and the sweep, nothing else. ``nfin`` reaches the devices through the
+    baked modelcard, which is why it appears in the signature but not in the
+    substitutions.
+
     Pure (returns text) so verify_complex_sweep_canaries can diff it against the
     parametric ``tests.common.complex.ngspice_sram_lobe`` builder (B7/B8)."""
-    n, p = bt.nmos_model, bt.pmos_model
-    body = [f'.include "{baked}"', ".temp 27", f"Vdd vdd 0 {bt.vdd}",
-            f"Vwl wl 0 {bt.vdd}", f"Vbl bl 0 {bt.vdd}", "Vq q 0 0.0",
-            f"Npl qb q vdd vdd {p}", f"Nnl qb q 0 0 {n}",
-            f"Nna bl wl qb 0 {n}"]
-    return {"body": "\n".join(body), "signals": "v(qb)",
+    body = render_reference_deck(NG_TEMPLATE, {
+        "BAKED_LIB": str(baked),
+        "VDD": f"{bt.vdd}",
+        "NMOS": bt.nmos_model,
+        "PMOS": bt.pmos_model,
+    }, body_only=True)
+    return {"body": body, "signals": "v(qb)",
             "analysis": f"dc Vq 0 {bt.vdd} 0.005"}
 
 
@@ -95,26 +109,22 @@ def ngspice_lobe(bt: BenchTech, nfin: int, work_dir: Path) -> Dict[str, np.ndarr
 
 def directnet_sram_lobe_deck(bt: BenchTech, nfin: int) -> str:
     """Single-point DirectNet SRAM half-cell ship-gate deck text (broken
-    feedback). Pure text so the canary diffs the REAL deck against the sweep
-    builder (B7/B8)."""
-    n_l = bt.l_nmos * 1e9
-    p_l = bt.l_pmos * 1e9
-    return (
-        f"* SRAM read-SNM half-cell — DirectNet ({bt.name} NFIN={nfin})\n"
-        f"Vdd vdd 0 {bt.vdd}\n"
-        f"Vwl wl 0 {bt.vdd}\n"
-        f"Vbl bl 0 {bt.vdd}\n"
-        f"Vq q 0 0.0\n"
-        f"Xinv q qb vdd sraminv NF={nfin}\n"
-        f"Mna bl wl qb 0 nmos_nn L={n_l:.0f}n NFIN={nfin}\n"
-        f".subckt sraminv i o vdd NF=1\n"
-        f"Mpl o i vdd vdd pmos_nn L={p_l:.0f}n NFIN=NF\n"
-        f"Mnl o i 0   0   nmos_nn L={n_l:.0f}n NFIN=NF\n"
-        f".ends\n"
-        f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.vt})\n"
-        f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.vt})\n"
-        f".dc Vq 0 {bt.vdd} 0.005\n"
-        f".end\n")
+    feedback).
+
+    The topology is NOT here — it is ``examples/simple_circuits/
+    directnet_sram_snm_dc.sp``, the same arrangement the other three complex
+    gates already use. Until V7.5.8 this gate was the one that carried its own
+    copy, which is exactly why its ``examples/`` deck had been free to drift
+    (and had: the 6T deck still documented a read bias the gate stopped using
+    in V6.4.7).
+
+    Pure text so the canary diffs the REAL deck against the sweep builder
+    (B7/B8)."""
+    text = render_directnet_text(TEMPLATE.read_text(), bt)
+    # The template is authored at NFIN=2; the gate sweeps the fin count.
+    # "NF=2" and "NFIN=2" are distinct substrings, and `.subckt ... NF=1` and
+    # the `NFIN=NF` bodies carry neither, so both replaces are unambiguous.
+    return text.replace("NF=2", f"NF={nfin}").replace("NFIN=2", f"NFIN={nfin}")
 
 
 def _directnet_halfcell_netlist(bt: BenchTech, nfin: int, path: Path) -> Path:
@@ -179,29 +189,18 @@ def _directnet_6t_netlist(bt: BenchTech, q_init: float, qb_init: float,
     # is the correction (ground truth passes it). Read-stability is separately
     # covered by the butterfly SNM gate. `wl_on=True` reproduces the old
     # read-disturb probe for diagnostics. See results/v6_4_7/S17c_forceic_harness_fix.md.
+    # Topology + the hold bias come from examples/simple_circuits/
+    # directnet_sram_6t_op.sp. Only the two things that genuinely vary per
+    # call are rewritten here: the storage state and the word line. Both are
+    # whole-line substitutions, so they do not care what the per-tech render
+    # put in the values.
     wl_v = bt.vdd if wl_on else 0.0
-    # Geometry from the BenchTech (was hardcoded L=20n/16n — equal to the
-    # benchmark default so verdict-neutral, but a latent trap if l_pmos/l_nmos
-    # are ever swept; the half-cell + sweep builders already parameterize).
-    lp, ln = bt.l_pmos * 1e9, bt.l_nmos * 1e9
-    path.write_text(
-        f"* 6T SRAM cell — DirectNet ({bt.name}) wl={'ON/read' if wl_on else 'OFF/hold'}\n"
-        f"Vdd vdd 0 {bt.vdd}\n"
-        f"Vwl wl 0 {wl_v}\n"
-        f"Vbl bl 0 {bt.vdd}\n"
-        f"Vblb blb 0 {bt.vdd}\n"
-        f".ic V(q)={q_init} V(qb)={qb_init}\n"
-        f"Xl q qb vdd sraminv NF={bt.nfin}\n"
-        f"Xr qb q vdd sraminv NF={bt.nfin}\n"
-        f"Mal bl  wl q  0 nmos_nn L={ln:.0f}n NFIN={bt.nfin}\n"
-        f"Mar blb wl qb 0 nmos_nn L={ln:.0f}n NFIN={bt.nfin}\n"
-        f".subckt sraminv i o vdd NF=1\n"
-        f"Mpl o i vdd vdd pmos_nn L={lp:.0f}n NFIN=NF\n"
-        f"Mnl o i 0   0   nmos_nn L={ln:.0f}n NFIN=NF\n"
-        f".ends\n"
-        f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.vt})\n"
-        f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.vt})\n"
-        f".op\n.end\n")
+    text = render_directnet_text(SIXT_TEMPLATE.read_text(), bt)
+    text = re.sub(r"^\.ic .*$", f".ic V(q)={q_init} V(qb)={qb_init}",
+                  text, count=1, flags=re.M)
+    text = re.sub(r"^Vwl wl 0 .*$", f"Vwl wl 0 {wl_v}",
+                  text, count=1, flags=re.M)
+    path.write_text(text)
     return path
 
 

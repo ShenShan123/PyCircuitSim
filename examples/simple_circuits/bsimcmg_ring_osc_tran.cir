@@ -1,0 +1,46 @@
+* 5-stage CMOS ring oscillator — NGSPICE BSIM-CMG (LEVEL=72) ground truth
+*
+* The reference half of the ring-oscillator gate.
+* `tests/verify_complex_ring_osc.py` renders this deck per technology and
+* scores the oscillation period of `directnet_ring_osc_tran.sp` against it.
+* Ground truth is ALWAYS NGSPICE on the identical BSIM-CMG OSDI model
+* (CLAUDE.md Validation rule).
+*
+* <TOKEN> placeholders are substituted by tests.common.base
+* :: render_reference_deck. <BAKED_LIB> is the merged modelcard with
+* L / NFIN / TFIN / DEVTYPE baked in. OSDI devices take the N prefix.
+*
+* Five stages, 0.5 fF per node. The .tran statement is supplied by the runner.
+* The parametric mirror in tests/common/complex.py sweeps the stage count, so
+* it builds its ring programmatically; verify_complex_sweep_canaries.py holds
+* it line-for-line identical to THIS deck at the 5-stage baseline.
+
+.include "<BAKED_LIB>"
+.temp 27
+
+Vdd vdd 0 <VDD>
+
+Np0 n1 n5 vdd vdd <PMOS>
+Nn0 n1 n5 0   0   <NMOS>
+Cl0 n1 0 0.5f
+
+Np1 n2 n1 vdd vdd <PMOS>
+Nn1 n2 n1 0   0   <NMOS>
+Cl1 n2 0 0.5f
+
+Np2 n3 n2 vdd vdd <PMOS>
+Nn2 n3 n2 0   0   <NMOS>
+Cl2 n3 0 0.5f
+
+Np3 n4 n3 vdd vdd <PMOS>
+Nn3 n4 n3 0   0   <NMOS>
+Cl3 n4 0 0.5f
+
+Np4 n5 n4 vdd vdd <PMOS>
+Nn4 n5 n4 0   0   <NMOS>
+Cl4 n5 0 0.5f
+
+* An alternating seed kicks the loop off its unstable DC point.
+.ic v(n1)=0 v(n2)=<VDD> v(n3)=0 v(n4)=<VDD> v(n5)=0
+
+.end
