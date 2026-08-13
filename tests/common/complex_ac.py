@@ -16,7 +16,7 @@ The free-running ring oscillator (astable, no stable OP) and the 6T SRAM
 ground truth.
 
 The AC metric primitives (decade grid, NGSPICE `.ac` runner, complex interp,
-mag/phase agreement, −3 dB corner) live in ``tests/verify_ac.py`` and are reused
+mag/phase agreement, −3 dB corner) live in ``tests/simple_circuits/verify_ac.py`` and are reused
 here verbatim (single code path). This module adds:
 
   * ``run_directnet_ac``      — NN-aware DC OP (retry path) + ACSolver sweep,
@@ -46,7 +46,7 @@ except (ImportError, ValueError):  # pragma: no cover
 # Reuse the AC primitives from the shipping single-point AC gate (DRY — one
 # code path for the complex-MNA / NGSPICE-runner / metric logic). verify_ac has
 # no import side effects (its main() is __main__-guarded).
-from tests.verify_ac import (  # noqa: E402
+from tests.simple_circuits.verify_ac import (  # noqa: E402
     dec_frequencies,
     run_ngspice_ac,
     _interp_to,

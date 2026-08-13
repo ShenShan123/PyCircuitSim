@@ -220,7 +220,7 @@ analyses (`.op`/`.dc`/`.tran`+`uic`/`.ac`), directives (`.model`, `.include`,
 Legacy LEVEL=1 removed. Subckt expansion is **flattening at parse time**
 (internal nodes → `X1.n1`, devices → `M.X1.Mp1`, ground global,
 `.model`/`.include` hoisted, loud errors on unknown subckt / port mismatch /
-recursion >64); gate: `tests/verify_subckt.py` (11 checks, subckt ≡ flat
+recursion >64); gate: `tests/simple_circuits/verify_subckt.py` (11 checks, subckt ≡ flat
 bit-identical).
 
 ## Validation
@@ -389,9 +389,9 @@ NGSPICE on the identical BSIM-CMG (LEVEL=72) OSDI model. Gates are CPU-pinned
 **Quick sanity:**
 
 ```bash
-python tests/verify_bsimcmg_op.py && python tests/verify_bsimcmg_dc.py && python tests/verify_bsimcmg_tran.py
-python tests/verify_subckt.py
-NGSPICE_BIN="$PWD/tools/ngspice-45.2/bin/ngspice" python tests/verify_ac.py   # if /usr/local absent
+python tests/single_devices/verify_bsimcmg_op.py && python tests/single_devices/verify_bsimcmg_dc.py && python tests/simple_circuits/verify_bsimcmg_tran.py
+python tests/simple_circuits/verify_subckt.py
+NGSPICE_BIN="$PWD/tools/ngspice-45.2/bin/ngspice" python tests/simple_circuits/verify_ac.py   # if /usr/local absent
 ```
 
 ---

@@ -83,7 +83,7 @@ pool_rc=$?
 export CUDA_VISIBLE_DEVICES="$GATE_CUDA_VISIBLE_DEVICES" NGSPICE_BIN="$ROOT/tools/ngspice-45.2/bin/ngspice"
 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 PYCIRCUITSIM_TORCH_THREADS=1 \
   "$PY" -u \
-  "$ROOT/tests/verify_nn_lifted_source_dc.py" \
+  "$ROOT/tests/single_devices/verify_nn_lifted_source_dc.py" \
   > "$OUT/logs/rule2_canary.log" 2>&1
 rule2_rc=$?
 echo "rule2 canary rc=$rule2_rc"

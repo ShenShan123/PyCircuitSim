@@ -292,7 +292,7 @@ python scripts/v730_docs_build.py --check
 # GPU fidelity axis (opt-in; not part of the CPU scoreboard)
 T3_AXIS=gpu GPU=1 NN_PY=python \
   bash scripts/v720_t3_flag_bundle.sh NATURAL
-python tests/verify_latch_basin_gpu.py \
+python tests/perf/verify_latch_basin_gpu.py \
   --config commit+gpu+stamp+order --gpu 1 --ordering NATURAL
 ```
 

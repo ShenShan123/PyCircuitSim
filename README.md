@@ -718,7 +718,7 @@ are promoted only after a full accuracy re-gate.
   results are cached, so a 32×32 SRAM array parses in ~4.7 s instead of ~44 s.
 - **Batched denorm tail** (V7.2.0) — one float64 numpy pass replaces the
   per-device unpack loop for all three NN families, gated bit-exact per
-  element by `tests/verify_batched_tail.py` (22/22).
+  element by `tests/perf/verify_batched_tail.py` (22/22).
 - **Vectorised Newton-Raphson node loops**, circuit topology caches, and one
   LIL→CSR conversion per NR iteration (V7.2.0).
 - **GPU-resident training batches** (V7.0.2) — 3.4 → 0.7 s/epoch;
@@ -751,7 +751,7 @@ preserved 8/8 in every gated configuration.
 The CPU flag bundle {commit, stamp, order} **passed its accuracy gates**: the
 16-gate complex matrix reproduces the production scoreboard cell-for-cell
 (15/16 strict, 0 flips) and the latch-basin gate
-(`tests/verify_latch_basin_gpu.py` — full 6T latch, both stored states, all
+(`tests/perf/verify_latch_basin_gpu.py` — full 6T latch, both stored states, all
 four techs) is 8/8 with zero basin flips in every config. The GPU-axis re-gate
 is still pending, which is why all perturbing flags remain opt-in.
 
@@ -783,21 +783,21 @@ tests/
 conda activate pycircuitsim
 
 # Operating point verification (NMOS, PMOS, Inverter)
-python tests/verify_bsimcmg_op.py
+python tests/single_devices/verify_bsimcmg_op.py
 
 # DC sweep verification (Id-Vgs)
-python tests/verify_bsimcmg_dc.py
+python tests/single_devices/verify_bsimcmg_dc.py
 
 # Transient verification (single baseline config)
-python tests/verify_bsimcmg_tran.py
+python tests/simple_circuits/verify_bsimcmg_tran.py
 
 # Subcircuit hierarchy gate (11 checks)
-python tests/verify_subckt.py
+python tests/simple_circuits/verify_subckt.py
 
 # Run L1 smoke suite in one line
-python tests/verify_bsimcmg_op.py && \
-python tests/verify_bsimcmg_dc.py && \
-python tests/verify_bsimcmg_tran.py
+python tests/single_devices/verify_bsimcmg_op.py && \
+python tests/single_devices/verify_bsimcmg_dc.py && \
+python tests/simple_circuits/verify_bsimcmg_tran.py
 ```
 
 Gates are **CPU-pinned** and honor `NGSPICE_BIN` (use the repo-local ngspice
@@ -808,7 +808,7 @@ optional for reproducible NN results:
 ```bash
 NGSPICE_BIN="$PWD/tools/ngspice-45.2/bin/ngspice" \
 CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
-python tests/verify_subckt.py
+python tests/simple_circuits/verify_subckt.py
 ```
 
 ### Verification Results (summary)
@@ -840,45 +840,45 @@ in **`docs/accuracy/`**.
 
 | Script | Purpose |
 |--------|---------|
-| `tests/verify_bsimcmg_op.py` | OP analysis: PyCircuitSim vs NGSPICE for NMOS, PMOS, inverter |
-| `tests/verify_bsimcmg_dc.py` | DC sweep L1: Id-Vgs (ASAP7 baseline) |
-| `tests/verify_bsimcmg_dc_comprehensive.py` | DC sweep L2: 67-config multi-tech VT/L/NFIN sweep |
-| `tests/verify_multi_tech_dc.py` | DC sweep L3: 44-config inverter VTC + parametric |
-| `tests/verify_bsimcmg_tran.py` | Transient L1: single inverter baseline |
-| `tests/verify_bsimcmg_tran_comprehensive.py` | Transient L2: 37-config VT/L/NFIN sweep |
-| `tests/verify_multi_tech_tran.py` | Transient L3: 72-config multi-tech parametric |
-| `tests/verify_ac.py` | AC L1 passive RC + L2 BSIM-CMG common-source amp |
-| `tests/verify_subckt.py` | Subcircuit hierarchy: equivalence, L72 inverter, nested buffer (11 checks) |
+| `tests/single_devices/verify_bsimcmg_op.py` | OP analysis: PyCircuitSim vs NGSPICE for NMOS, PMOS, inverter |
+| `tests/single_devices/verify_bsimcmg_dc.py` | DC sweep L1: Id-Vgs (ASAP7 baseline) |
+| `tests/single_devices/verify_bsimcmg_dc_comprehensive.py` | DC sweep L2: 67-config multi-tech VT/L/NFIN sweep |
+| `tests/simple_circuits/verify_multi_tech_dc.py` | DC sweep L3: 44-config inverter VTC + parametric |
+| `tests/simple_circuits/verify_bsimcmg_tran.py` | Transient L1: single inverter baseline |
+| `tests/simple_circuits/verify_bsimcmg_tran_comprehensive.py` | Transient L2: 37-config VT/L/NFIN sweep |
+| `tests/simple_circuits/verify_multi_tech_tran.py` | Transient L3: 72-config multi-tech parametric |
+| `tests/simple_circuits/verify_ac.py` | AC L1 passive RC + L2 BSIM-CMG common-source amp |
+| `tests/simple_circuits/verify_subckt.py` | Subcircuit hierarchy: equivalence, L72 inverter, nested buffer (11 checks) |
 
 NN compact models (LEVEL=73/74/75):
 
 | Script | Purpose |
 |--------|---------|
 | `tests/verify_nn_dc_tran.py` | NN device + inverter gate across TSMC techs (`--tech`, `--inverter-only`) |
-| `tests/verify_nn_multi_tech_dc.py` | Parametric Id-Vgs over L / NFIN / VT (55 configs) |
-| `tests/verify_nn_multi_tech_tran.py` | Parametric inverter over P/N ratio, VDD, Cload, slew, pulse width |
-| `tests/verify_nn_ac.py` | NN CS-amp AC: gain / f3db / magnitude NRMSE |
-| `tests/verify_nn_lifted_source_dc.py` | Lifted-source canary — guards the source-relative frame |
+| `tests/single_devices/verify_nn_multi_tech_dc.py` | Parametric Id-Vgs over L / NFIN / VT (55 configs) |
+| `tests/simple_circuits/verify_nn_multi_tech_tran.py` | Parametric inverter over P/N ratio, VDD, Cload, slew, pulse width |
+| `tests/simple_circuits/verify_nn_ac.py` | NN CS-amp AC: gain / f3db / magnitude NRMSE |
+| `tests/single_devices/verify_nn_lifted_source_dc.py` | Lifted-source canary — guards the source-relative frame |
 
 Complex circuits (4 circuits × 4 techs = 16 gates), scored against NGSPICE
 BSIM-CMG ground truth:
 
 | Script | Purpose |
 |--------|---------|
-| `tests/verify_complex_opamp.py` / `_ac.py` / `_sweep.py` | Two-stage Miller opamp: gain, open-loop AC, parametric |
-| `tests/verify_complex_ring_osc.py` / `verify_complex_ringosc_sweep.py` | Ring-oscillator period + parametric mirror |
-| `tests/verify_complex_switchcap.py` / `_sweep.py` | Switched-capacitor charge / droop |
-| `tests/verify_complex_sram_snm.py` / `verify_complex_sram_sweep.py` | 6T SRAM butterfly positivity + NRMSE tracking |
-| `tests/verify_complex_sweep_canaries.py` | Guards single-point ↔ sweep equivalence |
+| `tests/simple_circuits/verify_complex_opamp.py` / `_ac.py` / `_sweep.py` | Two-stage Miller opamp: gain, open-loop AC, parametric |
+| `tests/simple_circuits/verify_complex_ring_osc.py` / `verify_complex_ringosc_sweep.py` | Ring-oscillator period + parametric mirror |
+| `tests/simple_circuits/verify_complex_switchcap.py` / `_sweep.py` | Switched-capacitor charge / droop |
+| `tests/simple_circuits/verify_complex_sram_snm.py` / `verify_complex_sram_sweep.py` | 6T SRAM butterfly positivity + NRMSE tracking |
+| `tests/simple_circuits/verify_complex_sweep_canaries.py` | Guards single-point ↔ sweep equivalence |
 
 Diagnostics (reusable controls, **not** pass/fail gates — they use
 L72-in-PyCircuitSim as reference rather than NGSPICE):
 
 | Script | Purpose |
 |--------|---------|
-| `tests/diag_l72_complex_control.py` | Proves L72-in-PyCircuitSim matches NGSPICE, isolating NN-surface gaps |
-| `tests/diag_l72_switchcap_control.py` / `_uic_control.py` | Same control for the switched-cap cell (incl. `uic`) |
-| `tests/diag_nn_jacobian_consistency.py` | FD-vs-autograd Jacobian consistency check |
+| `tests/diag/diag_l72_complex_control.py` | Proves L72-in-PyCircuitSim matches NGSPICE, isolating NN-surface gaps |
+| `tests/diag/diag_l72_switchcap_control.py` / `_uic_control.py` | Same control for the switched-cap cell (incl. `uic`) |
+| `tests/diag/diag_nn_jacobian_consistency.py` | FD-vs-autograd Jacobian consistency check |
 
 Each script generates comparison plots and detailed metrics in `tests/verify_*_results/`.
 

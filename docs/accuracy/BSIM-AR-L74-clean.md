@@ -231,7 +231,7 @@ evaluation.
 in real arithmetic but not in float32, because `F.linear` is not row-stable on
 CPU — so *no* incremental formulation can be bit-identical, and the deviation
 (≤1.6 µV on solved nodes) has to be shown harmless rather than argued away.
-`tests/verify_ar_cache.py` guards the lever with 10 checks, since no accuracy
+`tests/perf/verify_ar_cache.py` guards the lever with 10 checks, since no accuracy
 gate can reach the path while it is off.
 
 ## 8. What is open

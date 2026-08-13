@@ -29,7 +29,7 @@ conducting decades goes 2.2 % → 0.8 % → 0.3 % → 0.3 %; `cgg` 1.0 → 0.4 �
 0.2 %. There is no band where a larger tier is worse.
 
 **The solver / harness — refuted.** The native-L72 control
-(`tests/diag_l72_complex_control.py`) runs the byte-identical ring deck through
+(`tests/diag/diag_l72_complex_control.py`) runs the byte-identical ring deck through
 PyCircuitSim's own solver with the ground-truth OSDI model: TSMC5 and TSMC7
 match NGSPICE to **0.00 %**, TSMC12/16 to 0.77 %/0.64 %. The gap is entirely
 model-surface-owned.
@@ -194,7 +194,7 @@ has effectively disappeared, which is the whole claim.
 | phase | work | where |
 |---|---|---|
 | P1 | `--max-l-ratio` in the PDK scan → `get_geometry_combos` → `enumerate_bins` → generator CLI | PyCMG |
-| P2 | Coverage guard: every `BenchTech` geometry within `max_l_ratio` of a sampled knot, fails loud | `tests/verify_data_geometry_coverage.py` |
+| P2 | Coverage guard: every `BenchTech` geometry within `max_l_ratio` of a sampled knot, fails loud | `tests/single_devices/verify_data_geometry_coverage.py` |
 | P3 | Regenerate 10 datasets (5 techs × 2 polarities) at `--max-l-ratio 1.35`; old datasets preserved | 152 cores |
 | P4 | Retrain 40 clean BSIM-AR checkpoints | GPUs 1–4 |
 | P5 | Re-gate: complex ×20 strict-OMP, device DC/tran/AC, opamp AC | CPU-pinned |
