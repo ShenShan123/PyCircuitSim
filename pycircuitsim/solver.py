@@ -1953,7 +1953,8 @@ class TransientSolver:
                  max_substeps: int = 1, lte_safety_factor: float = 0.5,
                  integration_method: str = 'auto',
                  dv_limit: Optional[float] = None,
-                 refine_output: bool = False):
+                 refine_output: bool = False,
+                 refine_max_dt: Optional[float] = None):
         """
         Initialize the Transient Solver.
 
@@ -2109,6 +2110,22 @@ class TransientSolver:
                                              "0") == "1")
         # NGSPICE's transient truncation-error tolerance multiplier.
         self._refine_trtol = 7.0
+        # V7.5.5 — NGSPICE's tmax rule for the refine march: dctran never
+        # takes a step larger than min(tstep, span/50) NO MATTER what its
+        # (deliberately loose) LTE would allow, and that ceiling is what
+        # keeps fast features resolved on a strided output grid. Callers
+        # marching a strided grid (sub_dt = stride·tstep) pass the NATIVE
+        # tstep-based cap here; None keeps the sub_dt-only cap. Refine
+        # mode only — the fixed-grid path never reads it.
+        _env_maxdt = os.environ.get("PYCIRCUITSIM_TRAN_REFINE_MAXDT", "")
+        self._refine_max_dt: Optional[float] = (
+            refine_max_dt if refine_max_dt is not None
+            else (float(_env_maxdt) if _env_maxdt else None))
+        # V7.5.5 — opt-in per-piece march trace (diagnostic, refine mode
+        # only): JSONL rows (t_k, piece_dt, r_voltage, r_charge, nr_iters,
+        # rejected, charge_argmax_device) written to the given path.
+        self._refine_trace_path = os.environ.get(
+            "PYCIRCUITSIM_REFINE_TRACE", "")
 
     def _collect_breakpoints(self) -> List[float]:
         """PULSE source corner times in (0, t_stop), sorted, deduplicated.
@@ -2207,15 +2224,24 @@ class TransientSolver:
     _REFINE_ABSTOL_I = 1e-12
     _REFINE_CHGTOL = 1e-18
 
+    # V7.5.5 — CKTterr's per-method error coefficient for the (order+1)-th
+    # divided difference (ngspice cktterr.c: trapCoeff/gearCoeff indexed by
+    # order-1). NGSPICE deliberately uses the RAW divided difference as the
+    # derivative estimate — NOT the textbook q''' ≈ 6·DD3 — so its order-2
+    # charge test is 6× (trap) / 2.25× (gear2) looser than the V7.5.3 form
+    # this replaces (which was, exactly, NGSPICE's ORDER-1 coefficient 0.5
+    # applied to order-2 marches).
+    _CKTTERR_FACTOR = {"be": 0.5, "trap": 1.0 / 12.0, "bdf2": 2.0 / 9.0}
+
     def _refine_charge_lte_ratio(self, hist: List[tuple], t_new: float,
-                                 q_new: np.ndarray,
-                                 i_new: np.ndarray) -> float:
+                                 q_new: np.ndarray, i_new: np.ndarray,
+                                 factor: float) -> float:
         """Worst charge-state LTE / (TRTOL·tol) for one device's candidate.
 
-        NGSPICE-style truncation control on the device's terminal-charge
-        states (CKTterr): the trapezoidal charge LTE (h³/12)·|q'''| becomes
-        a current error via /h and is compared against
-        ``tol = max(ABSTOL + RELTOL·max(|i_new|,|i_prev|),
+        NGSPICE CKTterr, exactly: the charge-state truncation error as a
+        current, ``err_i = factor·h²·|DD3|`` with ``factor`` the method's
+        cktterr.c coefficient (see :data:`_CKTTERR_FACTOR`), compared
+        against ``tol = max(ABSTOL + RELTOL·max(|i_new|,|i_prev|),
         RELTOL·max(|q_new|,|q_prev|,CHGTOL)/h)``. The second term is
         NGSPICE's loosener: at timesteps small enough that the third
         divided difference is NR-noise-dominated it grows as 1/h and
@@ -2223,6 +2249,9 @@ class TransientSolver:
         (CHANGELOG §V7.5.2, dt-independent noise d³ → 4096-piece thrash)
         is exactly what it prevents. ``hist`` holds the last three
         ACCEPTED (t, q[4], i[4]) entries in terminal order [g, d, s, b].
+        Because err_i scales as h², the matching timestep suggestion is
+        ``h·r^(-1/2)`` (CKTterr's order-2 sqrt), not the voltage test's
+        cube root.
         """
         (t0, q0, _), (t1, q1, _), (t2, q2, i2) = hist[-3], hist[-2], hist[-1]
         h = t_new - t2
@@ -2234,7 +2263,7 @@ class TransientSolver:
         dd012 = (dd12 - dd01) / (t2 - t0)
         dd123 = (dd23 - dd12) / (t_new - t1)
         dd0123 = np.abs(dd123 - dd012) / (t_new - t0)
-        err_i = 0.5 * h ** 2 * dd0123        # (h³/12)·|6·DD3| / h
+        err_i = factor * h ** 2 * dd0123
         tol = np.maximum(
             self._REFINE_ABSTOL_I
             + self.reltol * np.maximum(np.abs(i_new), np.abs(i2)),
@@ -3158,7 +3187,6 @@ class TransientSolver:
         # history and the breakpoint cursor survive interval boundaries,
         # or the refinement would re-seed ringing at every grid point.
         refine = self.refine_output
-        _r = 0.0
         if refine:
             _bps = self._collect_breakpoints()
             _bp_idx = 0
@@ -3167,7 +3195,18 @@ class TransientSolver:
             _dense_t: List[float] = [0.0]
             _dense_v: List[np.ndarray] = [_v_init_vec]
             _dense_i: List[Optional[np.ndarray]] = [None]
-            _refine_dt_carry = self.dt
+            _refine_cap = (self.dt if self._refine_max_dt is None
+                           else min(self.dt, self._refine_max_dt))
+            _refine_dt_carry = _refine_cap
+            # V7.5.5 — corner guard: hold pieces at the breakpoint-restart
+            # scale until 2 local corner gaps past the corner. A PULSE
+            # switching spike (the charge pump's 10 ps reversal) lives in
+            # [corner, corner + 2·gap]; letting the growth law race out at
+            # 2×/piece makes its peak sampling a phase lottery across
+            # strides and controller variants (measured: up_imin scatter
+            # 1.3–5.2 % over otherwise-passing marches).
+            _bp_guard_until = 0.0
+            _bp_guard_cap = float("inf")
             _force_be_piece = False
             _RESTART_FRAC = 2.0 ** -6  # piece restart after a breakpoint
             # V7.5.3 — per-device charge-state LTE: accepted (t, q[4], i[4])
@@ -3182,6 +3221,8 @@ class TransientSolver:
                         [c._q_prev.get(k, 0.0) for k in _QKEYS]),
                         np.zeros(len(_IKEYS)))]
             _cand_q: List[tuple] = []
+            _trace: Optional[List[tuple]] = (
+                [] if self._refine_trace_path else None)
 
         for step in range(1, num_steps):
             # Current output time
@@ -3291,6 +3332,16 @@ class TransientSolver:
                         # corner is inconsistent across the discontinuity
                         # and is what seeds the corner ringing (NGSPICE
                         # likewise restarts at order 1 after breakpoints).
+                        # V7.5.5 — guard-window integrator experiments,
+                        # all measured on the charge-pump reversal spike
+                        # (−4.03 µA reference) and all REVERTED: a BE hold
+                        # flattens it to −3.78 µA; a BDF-2 hold reads
+                        # −3.82/−4.13 µA depending on stride; guard-pinned
+                        # trap pieces under the LOOSE charge test zigzag
+                        # to −5.63 µA. What holds both strides is the
+                        # step method plus the LEGACY (V7.5.3) LTE flavor
+                        # inside the guard window — see the guard branch
+                        # in the LTE section below.
                         piece_method = ('be' if _force_be_piece
                                         else _step_method)
                         if self._integration_method != piece_method:
@@ -3426,38 +3477,93 @@ class TransientSolver:
                         if refine:
                             _v_vec = np.array(
                                 [timestep_voltages[n] for n in nodes])
-                            _r = 0.0
+                            # V7.5.5 — NGSPICE dctran.c semantics: each LTE
+                            # test yields a timestep SUGGESTION (its own
+                            # order exponent); the piece is accepted while
+                            # the combined suggestion exceeds 0.9·h, and
+                            # the suggestion is then used EXACTLY (capped
+                            # at 2×) — no safety multiplier on growth and
+                            # no max(1,·) clamp. The V7.5.3 growth law
+                            # `0.9·r^(-1/3)` froze dt for any accepted r in
+                            # [0.729, 1) (the item-1 dead zone) and its
+                            # r>1 reject threshold discarded 34 % of all NR
+                            # solves on the Basic_LDO march.
+                            # V7.5.5 — the corner-guard window keeps the
+                            # LEGACY (V7.5.3) controller: honest 0.5·h²·DD3
+                            # charge error, reject at r>1 with the shallow
+                            # 0.25-floored cut, dead-zone growth. That
+                            # flavor is the only one measured to hold the
+                            # charge-pump reversal at BOTH strides; its
+                            # cost pathology is bounded here by the 2·gap
+                            # window. Open water gets the NGSPICE
+                            # semantics (CKTterr factors, per-test
+                            # suggestions, 0.9h accept band).
+                            _in_guard = t_now < _bp_guard_until
+                            _r_v = 0.0
+                            _r_q = 0.0
+                            _r_q_dev = ""
+                            _h_sugg = float("inf")
                             if (len(_lte_hist) >= 3
                                     and piece_dt > min_piece_dt
                                     and _rejects < 8):
-                                _r = self._refine_lte_ratio(
+                                _r_v = self._refine_lte_ratio(
                                     _lte_hist, t_k, _v_vec)
+                                if _r_v > 0.0:
+                                    _h_sugg = piece_dt * _r_v ** (-1.0 / 3.0)
                                 # V7.5.3 — per-device charge-state LTE:
                                 # the node-voltage test alone accepts step
                                 # patterns that stride the fast charge
                                 # transitions of switching devices (the
                                 # charge pump's 10 ps reversal spike).
+                                _factor = (0.5 if _in_guard
+                                           else self._CKTTERR_FACTOR[
+                                               self._integration_method])
                                 for _comp, _q_new, _i_new in _cand_q:
                                     _dh = _q_hist.get(id(_comp))
                                     if _dh is not None and len(_dh) >= 3:
-                                        _r = max(
-                                            _r,
+                                        _rq1 = \
                                             self._refine_charge_lte_ratio(
-                                                _dh, t_k, _q_new, _i_new))
-                                if _r > 1.0:
+                                                _dh, t_k, _q_new, _i_new,
+                                                _factor)
+                                        if _rq1 > _r_q:
+                                            _r_q = _rq1
+                                            _r_q_dev = _comp.name
+                                if _r_q > 0.0:
+                                    _h_sugg = min(
+                                        _h_sugg,
+                                        piece_dt * _r_q ** (-1.0 / 2.0))
+                                _r = max(_r_v, _r_q)
+                                _reject = (_r > 1.0 if _in_guard
+                                           else _h_sugg <= 0.9 * piece_dt)
+                                if _reject:
                                     # Reject: un-commit the piece and
-                                    # re-march it with a smaller dt
-                                    # (NGSPICE-style truncation-error
-                                    # timestep control; _rejects caps a
-                                    # pathological reject loop).
+                                    # re-march it smaller (guard: legacy
+                                    # shallow cut; open water: NGSPICE
+                                    # re-walks with newdelta; _rejects
+                                    # caps a pathological reject loop).
                                     self._restore_tran_state(_pre_commit)
                                     _rejects += 1
-                                    dt_try = max(
-                                        piece_dt * max(
-                                            0.25, 0.9 * _r ** (-1.0 / 3.0)),
-                                        min_piece_dt)
+                                    if _trace is not None:
+                                        _trace.append((
+                                            t_k, piece_dt, _r_v, _r_q,
+                                            getattr(self,
+                                                    "_last_nr_iterations",
+                                                    0), 1, _r_q_dev))
+                                    if _in_guard:
+                                        dt_try = max(
+                                            piece_dt * max(
+                                                0.25,
+                                                0.9 * _r ** (-1.0 / 3.0)),
+                                            min_piece_dt)
+                                    else:
+                                        dt_try = max(_h_sugg, min_piece_dt)
                                     continue
                             _rejects = 0
+                            if _trace is not None:
+                                _trace.append((
+                                    t_k, piece_dt, _r_v, _r_q,
+                                    getattr(self, "_last_nr_iterations", 0),
+                                    0, _r_q_dev))
                             _lte_hist.append((t_k, _v_vec))
                             if len(_lte_hist) > 4:
                                 _lte_hist.pop(0)
@@ -3498,13 +3604,37 @@ class TransientSolver:
                                 dt_try = max(min(sub_dt * _RESTART_FRAC,
                                                  _gap / 8.0),
                                              min_piece_dt)
-                            else:
-                                # LTE-scaled growth, at most 2x per piece.
+                                # V7.5.5 corner guard: for 2 local corner
+                                # gaps past a breakpoint the march keeps
+                                # the LEGACY (V7.5.3) controller flavor —
+                                # see the guard branch in the LTE section.
+                                _bp_guard_until = t_now + 2.0 * _gap
+                                _bp_guard_cap = max(_gap / 8.0,
+                                                    min_piece_dt)
+                            elif t_now < _bp_guard_until:
+                                # Corner guard: legacy dead-zone growth —
+                                # its frozen-dt behavior is exactly what
+                                # a corner window wants — capped at the
+                                # restart scale.
                                 _grow = 2.0
-                                if _r > 0.0:
+                                if _r_v > 0.0 or _r_q > 0.0:
                                     _grow = min(2.0, max(
-                                        1.0, 0.9 * _r ** (-1.0 / 3.0)))
-                                dt_try = min(piece_dt * _grow, sub_dt)
+                                        1.0, 0.9 * max(_r_v, _r_q)
+                                        ** (-1.0 / 3.0)))
+                                dt_try = max(min(piece_dt * _grow, sub_dt,
+                                                 _bp_guard_cap),
+                                             min_piece_dt)
+                            else:
+                                # NGSPICE dctran.c: the accepted piece's
+                                # LTE suggestion becomes the next dt
+                                # exactly, capped at 2× (CKTtrunc) and at
+                                # the tmax rule (min(sub_dt, native-tstep
+                                # cap)). A suggestion in (0.9h, h) shrinks
+                                # dt while accepting — that is NGSPICE's
+                                # behavior too, and it is what removes the
+                                # frozen-dt dead zone.
+                                dt_try = min(2.0 * piece_dt, _h_sugg,
+                                             sub_dt, _refine_cap)
                             _refine_dt_carry = dt_try
                         if t_k >= sub_time:
                             break
@@ -3600,6 +3730,11 @@ class TransientSolver:
 
         # Prepare results dictionary
         if refine:
+            if _trace is not None:
+                import json as _json
+                with open(self._refine_trace_path, "w") as _fh:
+                    for _row in _trace:
+                        _fh.write(_json.dumps(_row) + "\n")
             # V7.5.2 — emit every committed piece (non-uniform time axis;
             # the fixed grid points all remain present exactly). Branch
             # currents follow the same axis; index 0 keeps the

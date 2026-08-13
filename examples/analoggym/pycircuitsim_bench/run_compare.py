@@ -844,6 +844,18 @@ def _simulate_tran(td: TranslatedDeck, plan: AnalysisPlan, circuit,
     # march, every committed piece emitted) — the fixed-output-grid vs
     # NGSPICE-timestep-control fidelity axis the charge pump exposed.
     _refine = os.environ.get("PYCIRCUITSIM_BENCH_TRAN_REFINE", "0") == "1"
+    # V7.5.5 — NGSPICE's tmax rule (dctran: delta never exceeds
+    # min(tstep, span/50)) applied to the refine march from the NATIVE
+    # tstep, so the piece ceiling is stride-independent. Diagnostic-only
+    # (PYCIRCUITSIM_BENCH_TRAN_TMAX=1): NGSPICE-exact, but on a deck like
+    # the charge pump's `tran 2p 200n` it forces a 100k-piece march
+    # (exactly what NGSPICE does — its 30 s on that deck IS this rule) at
+    # pure-Python step cost. The default marching contract stays
+    # LTE-governed.
+    _refine_max_dt = (min(plan.t_step, plan.t_stop / 50.0)
+                      if _refine and os.environ.get(
+                          "PYCIRCUITSIM_BENCH_TRAN_TMAX", "0") == "1"
+                      else None)
     solver = TransientSolver(
         circuit, t_stop=plan.t_stop, dt=dt,
         initial_guess={n: val for n, val in voltages.items()
@@ -854,10 +866,12 @@ def _simulate_tran(td: TranslatedDeck, plan: AnalysisPlan, circuit,
         vntol=td.options.vntol if td.options.vntol is not None else opts.vntol,
         max_substeps=_substeps,
         refine_output=_refine,
+        refine_max_dt=_refine_max_dt,
     )
     meta["integration_method"] = method
     meta["dt"] = dt
     meta["refine_output"] = _refine
+    meta["refine_max_dt"] = _refine_max_dt
     try:
         raw = solver.solve()
         truncated = None
@@ -892,6 +906,13 @@ def _simulate_tran(td: TranslatedDeck, plan: AnalysisPlan, circuit,
     meta["solved"] = len(times)
     meta["failed"] = max(0, meta["points"] - len(times))
     meta["branch_current_gaps"] = solver._branch_current_gaps
+    # Diagnostic (V7.5.5): dump the py-side transient axes to an .npz for
+    # waveform-level comparison against the NGSPICE rawfile.
+    _dump = os.environ.get("PYCIRCUITSIM_BENCH_DUMP_WAVE", "")
+    if _dump:
+        np.savez(_dump, time=times,
+                 **{f"v_{k}": arr for k, arr in v.items()},
+                 **{f"i_{k}": arr for k, arr in i.items()})
     return SweepResult(kind="tran", x_name="time", x=times, v=v, i=i, ok=None,
                        source="pycircuitsim", meta=meta)
 
