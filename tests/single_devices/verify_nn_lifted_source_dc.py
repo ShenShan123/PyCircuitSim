@@ -47,7 +47,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from tests.common.nn_sweep import NN_TECHS, curve_metrics  # noqa: E402
-from tests.verify_nn_dc_tran import (  # noqa: E402
+from tests.common.nn_gate import (  # noqa: E402
     ALL_TEST_TECHS,
     NGSPICE_BIN,
     OSDI_PATH,

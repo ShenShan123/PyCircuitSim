@@ -11,7 +11,7 @@ Two driver scripts consume this module:
 Device geometry / VT / VDD sweeps ride on ``dataclasses.replace()`` of the
 existing ``TestTechConfig``; only the inverter-transient circuit knobs and the
 P/N-ratio NFIN split needed a behaviour-preserving refactor of
-``verify_nn_dc_tran.py`` (see ``InvCircuitParams`` there).
+``tests/common/nn_gate.py`` (see ``InvCircuitParams`` there).
 
 Reproducibility note: run against a *stable* checkpoint set. The inverter VTC
 has gain ~-15..-30 at the trip point, so any perturbation of the NN weights —
@@ -45,7 +45,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from tests.common.base import ALL_TECHS  # noqa: E402  (base.py TechProfile registry)
 from tests.common.nn import mre, nrmse  # noqa: E402
-from tests.verify_nn_dc_tran import (  # noqa: E402
+from tests.common.nn_gate import (  # noqa: E402
     ALL_TEST_TECHS,
     INV_TRAN_TD,
     INV_TRAN_TF,

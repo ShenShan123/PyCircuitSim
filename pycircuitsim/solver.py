@@ -3067,7 +3067,7 @@ class TransientSolver:
             self.source_currents[c.name][0] = c.calculate_current({})
 
         # V5 Phase A — A3.2: track the highest committed step so the
-        # verify_nn_dc_tran inverter-tran runner can recover a partial
+        # the NN inverter-tran runner can recover a partial
         # waveform when NR exhausts mid-transient (turns ERROR row into
         # numeric FAIL row).
         self._last_committed_step = 0

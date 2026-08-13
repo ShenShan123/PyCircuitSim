@@ -24,13 +24,15 @@ Strategy:
 Metrics: NRMSE (%) and MRE (%).
 
 Usage:
-    conda run -n pycircuitsim python tests/verify_nn_dc_tran.py
-    conda run -n pycircuitsim python tests/verify_nn_dc_tran.py --tech ASAP7
-    conda run -n pycircuitsim python tests/verify_nn_dc_tran.py --tech ASAP7,TSMC12
-    conda run -n pycircuitsim python tests/verify_nn_dc_tran.py --dc-only
-    conda run -n pycircuitsim python tests/verify_nn_dc_tran.py --tran-only
-    conda run -n pycircuitsim python tests/verify_nn_dc_tran.py --pmos-only
-    conda run -n pycircuitsim python tests/verify_nn_dc_tran.py --inverter-only
+    conda run -n pycircuitsim python tests/single_devices/verify_nn_dc.py
+    conda run -n pycircuitsim python tests/single_devices/verify_nn_dc.py --tech TSMC5
+    conda run -n pycircuitsim python tests/single_devices/verify_nn_dc.py --pmos-only
+    conda run -n pycircuitsim python tests/simple_circuits/verify_nn_inverter.py
+    conda run -n pycircuitsim python tests/simple_circuits/verify_nn_inverter.py --vtc-only
+
+This module is the shared body, not an entry point — run one of the two gate
+scripts above. `RESULTS_BASE` keeps its historical `verify_nn_dc_tran_results`
+name so the accuracy reports' raw evidence stays where they pinned it.
 """
 from __future__ import annotations
 
@@ -59,7 +61,7 @@ if "PYTHONUNBUFFERED" not in os.environ:
 # ``tests.common.nn`` import below resolves; ``tests.common.nn`` itself
 # appends the bsimar / pycmg directories.
 # ---------------------------------------------------------------------------
-PROJECT_ROOT = Path(__file__).resolve().parents[1]
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
@@ -3265,64 +3267,30 @@ def run_idvds_diagnostic(
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
-def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="NN compact model verification: BSIMAR + DirectNet vs BSIM-CMG",
-    )
-    parser.add_argument(
-        "--tech", type=str, default=",".join(TECH_ORDER),
-        help="Comma-separated tech names (default: all)",
-    )
-    parser.add_argument(
-        "--dc-only", action="store_true",
-        help="Run NMOS DC tests only",
-    )
-    parser.add_argument(
-        "--tran-only", action="store_true",
-        help="Run NMOS transient tests only",
-    )
-    parser.add_argument(
-        "--pmos-only", action="store_true",
-        help="Run PMOS DC tests only",
-    )
-    parser.add_argument(
-        "--inverter-only", action="store_true",
-        help="Run inverter tests only (VTC + transient)",
-    )
-    parser.add_argument(
-        "--sign-diagnostic", action="store_true",
-        help="Run sign pre-screen diagnostic (Vgs=0 bias points)",
-    )
-    parser.add_argument(
-        "--idvds-diagnostic", action="store_true",
-        help="Run Id-Vds curve diagnostic at Vgs=0",
-    )
-    args = parser.parse_args()
+def run_gate(tech_names: List[str], *,
+             nmos_dc: bool = False, pmos_dc: bool = False,
+             nmos_tran: bool = False, inverter_vtc: bool = False,
+             inverter_tran: bool = False, sign_diag: bool = False,
+             idvds_diag: bool = False, title: str = "NN Compact Model Verification") -> int:
+    """Run a selection of the NN suites and return a process exit code.
 
-    tech_names = [t.strip() for t in args.tech.split(",")]
+    Factored out of the former ``main()`` in V7.5.8 so the device suites and
+    the inverter suites can be invoked from their own tier packages
+    (``tests/single_devices/verify_nn_dc.py`` and
+    ``tests/simple_circuits/verify_nn_inverter.py``) without duplicating any
+    of the setup, scoring or reporting. The suite bodies, thresholds and
+    verdict logic below are unchanged from when this was one flat gate.
+    """
     for t in tech_names:
         if t not in ALL_TEST_TECHS:
             print(f"ERROR: Unknown tech '{t}'. "
                   f"Available: {list(ALL_TEST_TECHS.keys())}")
             return 1
 
-    # Determine which test suites to run
-    explicit_filter = (args.dc_only or args.tran_only or
-                       args.pmos_only or args.inverter_only or
-                       args.sign_diagnostic or args.idvds_diagnostic)
-    run_nmos_dc = args.dc_only or not explicit_filter
-    run_nmos_tran = args.tran_only or not explicit_filter
-    run_pmos_dc = args.pmos_only or not explicit_filter
-    run_inverter_vtc = args.inverter_only or not explicit_filter
-    run_inverter_tran = args.inverter_only or not explicit_filter
-    run_sign_diag = args.sign_diagnostic
-    run_idvds_diag = args.idvds_diagnostic
-
-    # Create results directory
     RESULTS_BASE.mkdir(parents=True, exist_ok=True)
 
-    # Check available checkpoints. A pinned-but-absent stem is fatal
-    # (audit B5d) — report it as a clean red instead of a traceback.
+    # A pinned-but-absent stem is fatal (audit B5d) — report it as a clean
+    # red instead of a traceback.
     try:
         checkpoints = get_available_checkpoints()
     except FileNotFoundError as exc:
@@ -3330,23 +3298,19 @@ def main() -> int:
         return 1
 
     print("=" * 70)
-    print("  NN Compact Model Verification")
+    print(f"  {title}")
     print("  BSIMAR (LEVEL=74) + DirectNet (LEVEL=73) vs BSIM-CMG (LEVEL=72)")
     print("=" * 70)
     print(f"\n  Technologies: {', '.join(tech_names)}")
-    print(f"  Suites: NMOS_DC={run_nmos_dc}  PMOS_DC={run_pmos_dc}  "
-          f"INV_VTC={run_inverter_vtc}  NMOS_TRAN={run_nmos_tran}  "
-          f"INV_TRAN={run_inverter_tran}  "
-          f"SIGN_DIAG={run_sign_diag}  IDVDS_DIAG={run_idvds_diag}")
+    print(f"  Suites: NMOS_DC={nmos_dc}  PMOS_DC={pmos_dc}  "
+          f"INV_VTC={inverter_vtc}  NMOS_TRAN={nmos_tran}  "
+          f"INV_TRAN={inverter_tran}  "
+          f"SIGN_DIAG={sign_diag}  IDVDS_DIAG={idvds_diag}")
     print(f"\n  Checkpoint availability:")
-    # Show non-alias keys only
     for name, path in checkpoints.items():
         if name in ("bsimar_v4", "directnet_v4"):
             continue  # skip backward-compat aliases
-        if path is not None:
-            print(f"    {name:20s}: {path.name}")
-        else:
-            print(f"    {name:20s}: NOT FOUND")
+        print(f"    {name:20s}: {path.name if path is not None else 'NOT FOUND'}")
 
     if all(v is None for v in checkpoints.values()):
         print("\n  ERROR: No NN checkpoints found. Nothing to test.")
@@ -3357,44 +3321,33 @@ def main() -> int:
     print(f"  VTC acceptance: NRMSE < {VTC_NRMSE_THRESHOLD*100:.0f}%")
     print(f"  Tran acceptance: NRMSE < {TRAN_NRMSE_THRESHOLD*100:.0f}% of Vdd")
 
-    # Run tests
     dc_results: List[TestResult] = []
     tran_results: List[TestResult] = []
 
-    if run_nmos_dc:
+    if nmos_dc:
         dc_results.extend(run_dc_tests(tech_names, checkpoints))
-
-    if run_pmos_dc:
+    if pmos_dc:
         dc_results.extend(run_pmos_dc_tests(tech_names, checkpoints))
-
-    if run_inverter_vtc:
+    if inverter_vtc:
         dc_results.extend(run_inverter_vtc_tests(tech_names, checkpoints))
-
-    if run_nmos_tran:
+    if nmos_tran:
         tran_results.extend(run_tran_tests(tech_names, checkpoints))
-
-    if run_inverter_tran:
+    if inverter_tran:
         tran_results.extend(run_inverter_tran_tests(tech_names, checkpoints))
 
-    # Diagnostics
     diag_results: List[TestResult] = []
-
-    if run_sign_diag:
+    if sign_diag:
         diag_results.extend(run_sign_diagnostic(tech_names, checkpoints))
-
-    if run_idvds_diag:
+    if idvds_diag:
         diag_results.extend(run_idvds_diagnostic(tech_names, checkpoints))
 
-    # Summary (include diagnostics in tran_results for display)
     all_tran_and_diag = tran_results + diag_results
     n_pass, n_fail, n_error = print_summary(dc_results, all_tran_and_diag)
 
-    # Save CSV
-    csv_path = RESULTS_BASE / "summary.csv"
-    save_summary_csv(dc_results, all_tran_and_diag, csv_path)
+    save_summary_csv(dc_results, all_tran_and_diag, RESULTS_BASE / "summary.csv")
 
-    # a run that scored no NN rows (checkpoints missing / polarity skipped)
-    # must not exit green on the CMG/NGSPICE reference rows alone
+    # A run that scored no NN rows (checkpoints missing / polarity skipped)
+    # must not exit green on the CMG/NGSPICE reference rows alone.
     nn_scored = [r for r in dc_results + all_tran_and_diag
                  if "directnet" in r.model or "bsimar" in r.model]
     if not nn_scored:
@@ -3403,18 +3356,23 @@ def main() -> int:
               "reference-only; nothing under test")
         return 1
 
-    # Final verdict
     total = n_pass + n_fail + n_error
     print(f"\n{'='*70}")
-
     if n_fail > 0 or n_error > 0:
         print(f"  RESULT: {n_pass} PASS, {n_fail} FAIL, {n_error} ERROR "
               f"out of {total} tests")
         return 1
-    else:
-        print(f"  RESULT: ALL {n_pass} tests PASSED out of {total}")
-        return 0
+    print(f"  RESULT: ALL {n_pass} tests PASSED out of {total}")
+    return 0
 
 
-if __name__ == "__main__":
-    sys.exit(main())
+def tech_arg_parser(description: str) -> argparse.ArgumentParser:
+    """Argument parser carrying the --tech selector both gate scripts share."""
+    ap = argparse.ArgumentParser(description=description)
+    ap.add_argument("--tech", type=str, default=",".join(TECH_ORDER),
+                    help="Comma-separated tech names (default: all)")
+    return ap
+
+
+def parse_techs(args: argparse.Namespace) -> List[str]:
+    return [t.strip() for t in args.tech.split(",")]

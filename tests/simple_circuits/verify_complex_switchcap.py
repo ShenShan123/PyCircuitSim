@@ -194,7 +194,7 @@ def main() -> int:
     techs = [t.strip() for t in args.tech.split(",")]
     # audit B5l: an unknown tech used to print SKIP and never enter `results`,
     # so `--tech TSMC5,TSMC7X` reported 1/1 and exited 0. Reject up front
-    # (same pattern as verify_nn_dc_tran.py).
+    # (same pattern as tests/common/nn_gate.py).
     unknown = [t for t in techs if t not in BENCH]
     if unknown:
         print(f"ERROR: unknown tech(s) {unknown}. Available: {list(BENCH)}")

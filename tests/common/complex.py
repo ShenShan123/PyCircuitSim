@@ -121,7 +121,7 @@ def _resolve_bench_tech(name: str) -> BenchTech:
     """Build a BenchTech from the shared TechProfile + the V6.3.1 checkpoint VT.
 
     The checkpoint VT must match what the parser preempt cascade resolves; the
-    verify_nn_dc_tran.py per-tech table is the source of truth:
+    tests.common.nn_gate per-tech table is the source of truth:
       TSMC5 -> lvt, TSMC6 -> ulvt, TSMC7 -> ulvt, TSMC12 -> svt, TSMC16 -> svt.
     """
     ckpt_vt = {"TSMC5": "lvt", "TSMC6": "ulvt", "TSMC7": "ulvt",
@@ -421,7 +421,7 @@ def run_directnet_transient(netlist_path: Path):
     Returns ``(results_dict, partial_flag, err_msg)``. On a mid-transient NR
     failure the committed waveform is recovered (partial_flag=True) so the
     harness can still report a numeric gap (fail loud, not silent).
-    Mirrors the retry design in verify_nn_dc_tran.py / simulation.py.
+    Mirrors the retry design in tests/common/nn_gate.py / simulation.py.
     """
     import logging
     import numpy as np

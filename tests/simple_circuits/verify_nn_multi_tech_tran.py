@@ -87,7 +87,7 @@ def main() -> int:
     results = []
     # audit B5d — get_available_checkpoints() now RAISES on a pinned-but-absent
     # stem instead of printing a SKIP with no result row. Catch it here so this
-    # gate reports the same clean "ERROR: ... / rc 1" as verify_nn_dc_tran.py
+    # gate reports the same clean "ERROR: ... / rc 1" as tests/common/nn_gate.py
     # rather than a traceback.
     try:
         for analysis in analyses:
