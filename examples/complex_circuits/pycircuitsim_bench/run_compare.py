@@ -620,12 +620,22 @@ def _sweep_target(circuit, name: str):
 
 
 def _dc_solve(circuit, td: TranslatedDeck, opts: SimOptions,
-              guess: Optional[Dict[str, float]], dv_limit: float):
+              guess: Optional[Dict[str, float]], dv_limit: float,
+              nodesets: Optional[Dict[str, float]] = None):
     """One DC solve.  Returns ``(voltages, converged, error_or_None)``.
 
     Never raises: a diverged point is data.  ``converged`` is ``DCSolver``'s own
     flag AND finiteness -- it is deliberately NOT trusted as evidence of the
     RIGHT root; that is what the operating-point delta is for.
+
+    ``nodesets`` gets NGSPICE's ``.nodeset`` treatment inside ``DCSolver``
+    (1 S clamp, converge, release — spice3 MODEINITFIX), which is NOT the same
+    thing as passing the values via ``guess``: seeding Newton with the raw
+    values lands Song_DACFC 0.457 V from NGSPICE's operating point (a
+    dead-amplifier basin), clamp-then-release reproduces it to 4e-7 V.  Pass
+    the deck's nodesets HERE for the first solve of an analysis; continuation
+    points pass only ``guess``, exactly as NGSPICE applies nodesets to the
+    first point of a sweep and never again.
     """
     from pycircuitsim.solver import DCSolver                    # noqa: PLC0415
 
@@ -637,6 +647,7 @@ def _dc_solve(circuit, td: TranslatedDeck, opts: SimOptions,
         dv_limit=dv_limit or None,
         reltol=td.options.reltol if td.options.reltol is not None else opts.reltol,
         vntol=td.options.vntol if td.options.vntol is not None else opts.vntol,
+        nodesets=nodesets or None,
     )
     try:
         voltages = solver.solve(skip_header=True)
@@ -662,7 +673,8 @@ def _pinned_operating_point(circuit, td: TranslatedDeck, opts: SimOptions,
 
     if not td.ic:
         return _dc_solve(circuit, td, opts,
-                         dict(td.nodesets) or None, dv_limit)
+                         dict(td.nodesets) or None, dv_limit,
+                         nodesets=dict(td.nodesets) or None)
 
     table = _node_table(circuit)
     pins = []
@@ -676,7 +688,10 @@ def _pinned_operating_point(circuit, td: TranslatedDeck, opts: SimOptions,
     try:
         guess = dict(td.nodesets)
         guess.update(td.ic)
-        return _dc_solve(circuit, td, opts, guess, dv_limit)
+        # Nodesets still clamp NGSPICE-style while the .ic nodes are pinned;
+        # a nodeset on a pinned node is a 1 Ohm across an ideal source, inert.
+        return _dc_solve(circuit, td, opts, guess, dv_limit,
+                         nodesets=dict(td.nodesets) or None)
     finally:
         for pin in pins:
             circuit.components.remove(pin)
@@ -741,7 +756,8 @@ def _simulate_ac(td: TranslatedDeck, plan: AnalysisPlan, circuit,
 
     dc_started = time.perf_counter()
     voltages, converged, error = _dc_solve(circuit, td, opts,
-                                           dict(td.nodesets) or None, dv_limit)
+                                           dict(td.nodesets) or None, dv_limit,
+                                           nodesets=dict(td.nodesets) or None)
     meta["dc_seconds"] = time.perf_counter() - dc_started
     meta["dc_converged"] = converged
     if voltages is None:
@@ -787,8 +803,12 @@ def _simulate_dc(td: TranslatedDeck, plan: AnalysisPlan, circuit,
             _apply_temperature(circuit, float(point))
         else:
             setattr(target, attr, float(point))
-        voltages, converged, error = _dc_solve(circuit, td, opts, guess,
-                                               dv_limit)
+        # The deck's .nodeset clamps only the sweep's FIRST point (NGSPICE
+        # applies nodesets in the initial CKTop, never on continuation
+        # points, which start MODEINITPRED from the previous solution).
+        voltages, converged, error = _dc_solve(
+            circuit, td, opts, guess, dv_limit,
+            nodesets=(dict(td.nodesets) or None) if idx == 0 else None)
         if voltages is None:
             meta["failed"] += 1
             if len(meta["failures"]) < 5:

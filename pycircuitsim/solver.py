@@ -801,7 +801,8 @@ class DCSolver:
                  damping_factor: float = 1.0,
                  reltol: float = 1e-4, vntol: float = 1e-7, gmin: float = 1e-12,
                  use_gmin_stepping: bool = False, force_ic: bool = False,
-                 dv_limit: Optional[float] = None):
+                 dv_limit: Optional[float] = None,
+                 nodesets: Optional[Dict[str, float]] = None):
         """
         Initialize the DC Solver.
 
@@ -842,6 +843,16 @@ class DCSolver:
                 back with g = -25261 V instead of -505225 V, i.e. 1/20 of the
                 step, still 4 orders of magnitude past the rail. Limiting the
                 step is the fix; scaling the excitation only rescales it.
+            nodesets: SPICE ``.nodeset`` hints, node -> volts (default None).
+                These are NOT an initial guess: NGSPICE (spice3 MODEINITFIX)
+                holds each nodeset node with a 1 S Thevenin clamp to its
+                target (diag += 1 S, rhs += value * 1 S), converges the
+                clamped system, releases the clamps, and re-converges from
+                there. Seeding Newton with the raw values instead lands in a
+                different basin (measured V7.5.10: the AnalogGym Song_DACFC
+                amplifier's .nodeset-as-guess start converges 0.457 V from
+                NGSPICE's operating point — a dead-amplifier root — while
+                clamp-then-release reproduces NGSPICE to 4e-7 V).
         """
         self.circuit = circuit
         self.tolerance = tolerance
@@ -858,6 +869,10 @@ class DCSolver:
         self.use_gmin_stepping = use_gmin_stepping
         self.force_ic = force_ic
         self.dv_limit = dv_limit
+        self.nodesets = nodesets
+        # True while the clamped (MODEINITFIX) pre-solve is running, so the
+        # released re-solve and the gmin-fallback recursion do not re-enter it.
+        self._in_nodeset_clamp: bool = False
         self.last_solution: Optional[Dict[str, float]] = None
         self._owns_logger = False  # Track if we created the logger (for cleanup)
         # V5 Phase A retry-design: True if the last `solve()` reached
@@ -950,6 +965,8 @@ class DCSolver:
             # vdd = 0.65/400 V. A silent wrong answer that survives across
             # every remaining point of a sweep, so the snapshot is restored
             # here on the exception path. The success path is untouched.
+            if self.nodesets and not self._in_nodeset_clamp:
+                self._presolve_nodesets()
             _saved_v = [(c, c.voltage) for c in self.circuit.components
                         if isinstance(c, VoltageSource)]
             try:
@@ -973,6 +990,69 @@ class DCSolver:
     def _has_non_linear_components(self) -> bool:
         """Check if circuit contains non-linear components (MOSFETs)."""
         return _has_non_linear(self.circuit)
+
+    def _presolve_nodesets(self) -> None:
+        """SPICE ``.nodeset`` semantics: clamp, converge, release.
+
+        spice3's MODEINITFIX phase stamps ``diag += 1 S`` and
+        ``rhs += 1 S * value`` on every nodeset node until the clamped system
+        converges, then floats the nodes and re-converges. The clamp is the
+        Norton pair (1 Ohm to ground + value/1 Ohm injected), added as
+        temporary components so the whole existing NR machinery (limiting,
+        damping, dv_limit, the L72 gmin-ladder fallback) applies to the
+        clamped solve unchanged.
+
+        On success the clamped solution replaces ``initial_guess`` and the
+        caller's normal (released) solve continues from it. On any failure the
+        original guess is kept — a nodeset hint must never make a solve worse
+        than it would have been without one.
+        """
+        from pycircuitsim.models.passive import (              # noqa: PLC0415
+            Component, CurrentSource, Resistor)
+
+        # Nodeset names resolve case-insensitively, as in NGSPICE; hints
+        # naming no live node are ignored (NGSPICE warns and continues).
+        actual = {node.lower(): node for node in self.circuit.get_nodes()}
+        clamps: List[Component] = []
+        targets: Dict[str, float] = {}
+        for name, value in self.nodesets.items():
+            node = actual.get(str(name).lower())
+            if node is None:
+                continue
+            targets[node] = float(value)
+            clamps.append(Resistor(f"_R_ns_{node}", [node, "0"], 1.0))
+            clamps.append(CurrentSource(f"_I_ns_{node}", ["0", node],
+                                        float(value)))
+        if not clamps:
+            return
+
+        saved_guess = self.initial_guess
+        guess = dict(saved_guess or {})
+        guess.update(targets)
+        self.initial_guess = guess
+        self._in_nodeset_clamp = True
+        for clamp in clamps:
+            self.circuit.add_component(clamp)
+        _saved_v = [(c, c.voltage) for c in self.circuit.components
+                    if isinstance(c, VoltageSource)]
+        try:
+            clamped = self._solve_newton()
+            finite = all(np.isfinite(v) and abs(v) < 1.0e10
+                         for v in clamped.values())
+            if finite:
+                self.initial_guess = {n: v for n, v in clamped.items()
+                                      if n not in ("0", "GND")}
+            else:
+                self.initial_guess = saved_guess
+        except BaseException:                       # noqa: BLE001 -- hint only
+            for _comp, _value in _saved_v:
+                _comp.voltage = _value
+            self.initial_guess = saved_guess
+        finally:
+            for clamp in clamps:
+                self.circuit.components.remove(clamp)
+            self.circuit.invalidate_topology()
+            self._in_nodeset_clamp = False
 
     def _solve_linear(self) -> Dict[str, float]:
         """
