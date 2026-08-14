@@ -2208,11 +2208,20 @@ class TransientSolver:
             "PYCIRCUITSIM_REFINE_TRACE", "")
 
     def _collect_breakpoints(self) -> List[float]:
-        """PULSE source corner times in (0, t_stop), sorted, deduplicated.
+        """PULSE source corner times in (0, t_stop), sorted, coalesced.
 
         Corners per period k: td + k*per + {0, tr, tr+pw, tr+pw+tf} — the
         four slope discontinuities of the PULSE waveform. Only used by the
         refine_output mode; a deck without PULSE sources yields [].
+
+        Corners closer than ``_breakpoint_min_break()`` are coalesced onto
+        one time, as NGSPICE's CKTbreakSet does with CKTminBreak. The SAME
+        nominal instant computed from two different sources' (td, k·per)
+        float paths lands ~1 ulp apart (measured on the charge pump: two
+        40.01 ns corners 6.7e-24 s apart) — kept distinct, the pair
+        collapses the corner-restart gap and the V7.5.5 guard window to
+        attoseconds, so the guard never engages where the switching spike
+        lives.
         """
         from pycircuitsim.models.passive import (PulseVoltageSource,
                                                  PulseCurrentSource)
@@ -2228,7 +2237,28 @@ class TransientSolver:
                     if 0.0 < t < self.t_stop:
                         bps.add(t)
                 k += 1
-        return sorted(bps)
+        min_break = self._breakpoint_min_break()
+        merged: List[float] = []
+        for t in sorted(bps):
+            if merged and t - merged[-1] < min_break:
+                continue
+            merged.append(t)
+        return merged
+
+    def _breakpoint_min_break(self) -> float:
+        """NGSPICE's CKTminBreak: 5e-5 of the max step (our output dt).
+
+        Doubles as the on-breakpoint match tolerance in the refine march.
+        The output-grid time is an accumulated sum while a corner is
+        td + k·per + corner, so the same nominal instant differs by ~1 ulp
+        (~1e-23 s at 40 ns) between the two; an EXACT <= comparison misses
+        the corner, skipping the BE restart and the corner guard, and the
+        march then crosses the whole source edge in one accepted piece
+        (measured on the charge pump: an 8.6 ps piece across the 10 ps
+        fall, up_imin fabricated 46% deep). 5e-5·dt is orders above the
+        dust and orders below any restart scale (2^-6·dt).
+        """
+        return 5.0e-5 * self.dt
 
     def _snapshot_tran_state(self) -> List[tuple]:
         """Depth-1 snapshot of every device's committed transient history.
@@ -3269,6 +3299,7 @@ class TransientSolver:
         refine = self.refine_output
         if refine:
             _bps = self._collect_breakpoints()
+            _min_break = self._breakpoint_min_break()
             _bp_idx = 0
             _v_init_vec = np.array([voltages_over_time[n][0] for n in nodes])
             _lte_hist: List[tuple] = [(0.0, _v_init_vec)]
@@ -3398,11 +3429,19 @@ class TransientSolver:
                         # Advance past any breakpoint at/behind the march
                         # position, then clamp the piece so it LANDS on the
                         # next one instead of integrating across the slope
-                        # discontinuity.
+                        # discontinuity. Matching is tolerant to
+                        # _min_break (NGSPICE CKTminBreak): the grid time
+                        # is an accumulated sum and the corner is
+                        # td + k·per + corner, ~1 ulp apart for the same
+                        # nominal instant — an exact compare misses the
+                        # corner and the march leaps the source edge (see
+                        # _breakpoint_min_break).
                         while (_bp_idx < len(_bps)
-                               and _bps[_bp_idx] <= t_now + min_piece_dt):
+                               and _bps[_bp_idx] <= t_now
+                               + max(min_piece_dt, _min_break)):
                             _bp_idx += 1
-                        if _bp_idx < len(_bps) and _bps[_bp_idx] <= t_k:
+                        if (_bp_idx < len(_bps)
+                                and _bps[_bp_idx] <= t_k + _min_break):
                             _on_bp = True
                             if _bps[_bp_idx] < t_k:
                                 t_k = _bps[_bp_idx]
