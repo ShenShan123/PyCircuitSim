@@ -1,12 +1,32 @@
 # AnalogGym across TSMC FinFET nodes
 
-This is a strict NGSPICE/PyCMG audit of every generated design. Topologies are checked against their source, dimensions are constrained to each modelcard, and every available DC, AC, temperature, PSRR, line/load-regulation and transient gate is included. A result is fully passing only when every gate passes and the simulator reports no analysis error. `!` marks a partial result with one or more simulator/evaluator errors. Per-tree details: `designs_<tech>/RESULTS.md`.
+This file carries **two axes**, and they are easy to confuse:
 
-Since the migration into PyCircuitSim (`examples/complex_circuits/`, V7.5.0) this file
-carries **two** axes. The next section scores **PyCircuitSim against NGSPICE**
-on the identical BSIM-CMG (LEVEL=72) OSDI model. Everything after it is the
-original NGSPICE/PyCMG design audit, unchanged — that audit is the reference the
-comparison is measured against, not a second opinion about it.
+1. **The design audit.** A strict NGSPICE/PyCMG check of every generated
+   design — topologies against their source, dimensions inside each
+   modelcard, and every available DC, AC, temperature, PSRR,
+   line/load-regulation and transient gate. A design is fully passing only
+   when every gate passes and the simulator reports no analysis error. This
+   is the **reference**, not a second opinion about the comparison below.
+2. **PyCircuitSim versus NGSPICE**, on the identical BSIM-CMG (LEVEL=72) OSDI
+   model, added when the corpus moved into PyCircuitSim at V7.5.0. This is
+   what the basket is curated *for*.
+
+Per-tree design detail: `designs_<tech>/RESULTS.md`.
+
+**Which numbers are current** (last measured 2026-08-13, V7.5.9):
+
+| section | what it holds | dated? |
+|---|---|---|
+| [The curated core basket](#the-curated-core-basket-v759) | the 12 designs, why each is here, what pruning cost | **current** |
+| [The gap between PyCircuitSim and NGSPICE](#the-gap-between-pycircuitsim-and-ngspice-v759-all-five-techs) | 203/255 decks, every disagreement, where the runtime goes | **current** |
+| [Audit validation](#audit-validation) · [Fully-passing designs](#fully-passing-designs-per-tech) · [Gates passed](#gates-passed-per-design-and-tech) · [Amplifier medians](#amplifier-medians-per-tech) | the design audit over the current basket | **current** |
+| [Corrections made in this audit](#corrections-made-in-this-audit) | what the audit changed in the designs themselves | cumulative record |
+| everything between the gap section and Audit validation | V7.5.1–V7.5.5 pilots and campaigns | **historical** — superseded, kept for the record of what each fix bought |
+
+**Denominators changed twice.** `/159`, `/679`, `/795`, 38/38, 17/17, 13/13 are
+the original corpus; `/75`, `/375`, 18/18 are V7.5.6; `/51`, `/255`, 12/12 are
+V7.5.9. No total crosses those boundaries without rescaling.
 
 
 ## The curated core basket (V7.5.9)
@@ -214,6 +234,45 @@ endpoints that agree to 2e-5 each.
 away from tsmc5. Everything else in the table is a characterized
 reference-side or cancellation artifact with its own diagnosis above.
 
+### Where the runtime goes
+
+Cost and agreement per deck kind, from the same pass. Read it before
+proposing to make the evaluation faster by removing decks: **the four AC
+amplifier benches are 20 of the 51 decks per tech and 14 % of the time**,
+while three transient deck kinds are 8 decks and **67 %**.
+
+| deck | family | per tech | agreeing | s/tech | share |
+|---|---|--:|:--:|--:|--:|
+| `amplifier/tb_tran` | tran | 5 | 4/25 | 406 | 31.8 % |
+| `ldo/tb_tran` | tran | 2 | 6/10 | 289 | 22.6 % |
+| `charge_pump/tb_tran` | tran | 1 | 1/5 | 156 | 12.2 % |
+| `amplifier/tb_dc` | dc_temp | 5 | 25/25 | 145 | 11.3 % |
+| `amplifier/tb_gain` | ac | 5 | 24/25 | 51 | 4.0 % |
+| `amplifier/tb_cmrr` | ac | 5 | 24/25 | 46 | 3.6 % |
+| `amplifier/tb_psrrp` | ac | 5 | 24/25 | 41 | 3.2 % |
+| `amplifier/tb_psrrn` | ac | 5 | 24/25 | 40 | 3.1 % |
+| `sensing_front_end/tb_dc` | dc_temp | 3 | 4/15 | 15 | 1.2 % |
+| `ldo/tb_line_max` | dc_source | 2 | 8/10 | 15 | 1.2 % |
+| `ldo/tb_load` | dc_source | 2 | 4/10 | 15 | 1.2 % |
+| `ldo/tb_line_min` | dc_source | 2 | 10/10 | 13 | 1.0 % |
+| `ldo/tb_loop_max` | ac | 2 | 10/10 | 11 | 0.9 % |
+| `ldo/tb_loop_min` | ac | 2 | 10/10 | 11 | 0.8 % |
+| `ldo/tb_psrr_min` | ac | 2 | 10/10 | 10 | 0.8 % |
+| `ldo/tb_psrr_max` | ac | 2 | 10/10 | 10 | 0.8 % |
+| `voltage_reference/tb_dc` | dc_temp | 1 | 5/5 | 5 | 0.4 % |
+| **total** | | **51** | **203/255** | **1277** | |
+
+Single most expensive design: `ldo_2` at 24.7 % of the pass, almost all of it
+`tb_tran`. `amplifier/tb_dc` is the one expensive deck kind that is fully
+saturated (25/25) — it is 11 % of the time for a family that has agreed
+everywhere since V7.5.1, and it is kept because it is the regression gate for
+that fix (it read 0/15 before it).
+
+The remaining levers, in order of size, are **stride policy** and the
+**transient refine cost**, not deck count. V7.5.9 tried the deck-count lever
+and measured it: dropping the saturated AC benches removes 23 decks for 5 % of
+the runtime (CHANGELOG §V7.5.9 dead ends).
+
 
 ## PyCircuitSim versus NGSPICE (V7.5.1–V7.5.3 pilot — historical)
 
@@ -341,7 +400,13 @@ bench now does the same and records which seed won (4/85 primary decks
 across the five techs need it: tsmc5 Qu2017_AZC, tsmc6+tsmc7 Yan_AZ,
 tsmc16 Leung_DFCFC2).
 
-## First full-tech campaign (V7.5.3, tsmc5, 159 decks)
+## First full-tech campaign (V7.5.3, tsmc5, 159 decks) — historical
+
+**Superseded by the V7.5.9 section above**; the `/159` and `/679` totals here
+are the pre-curation corpus and are not comparable to it. Kept because the
+per-miss diagnoses below are still the diagnoses — `min_slope_25_75c`,
+`lr`/`lr_pp` cancellation, and the `front_end_25_6T` cold end are all
+characterized here and still cited by the current section.
 
 Run by `pycircuitsim_bench/campaign.py` (pilot stride policy: amplifier
 `tb_dc` @25, `tb_tran` @4, charge pump @20 refine+trap, everything else
@@ -534,7 +599,13 @@ evidence the three former blocker causes are gone; what remains untested at
 campaign scale is untested, not distrusted.
 
 
-## Transient family, all five techs (V7.5.5)
+## Transient family, all five techs (V7.5.5) — historical
+
+**Superseded by the V7.5.9 section above** (its `/23` denominator is the
+V7.5.6 basket's 23 transient decks; the current basket has 8 per tech). Kept
+for what the refine controller bought, deck by deck, and for the
+reference-tolerance probes on `ldo_2` and `Basic_LDO` that the current section
+still cites.
 
 The V7.5.5 refine controller (dctran-exact open water + a legacy corner
 guard, CHANGELOG §V7.5.5.1) closed the LDO-cost blocker, so the transient
@@ -601,6 +672,14 @@ network, and the subthreshold reference core. Geometry checks cover L, NFIN,
 multiplicity, local model definition, and every model used by a generated MOS.
 
 ## Corrections made in this audit
+
+The cumulative record of what the audit changed in the *designs and the
+measurement flow* — not in the simulator. Every entry still applies to the
+designs it names that are in the basket. Five entries name designs the V7.5.6
+or V7.5.9 curations removed (`three_output_vref`, `ldo_folded_cascode`,
+`Basic_LDO`, `SMCNR_SE_2st_AMP`); they are kept verbatim because each records
+*why* a class of gate exists — re-adding one of those designs without its
+correction would silently reproduce the defect it fixed.
 
 * NGSPICE analysis failures are now fatal even when NGSPICE exits with status
   zero; partial AC/DC/transient runs can no longer be reported as successes.
@@ -752,9 +831,17 @@ every miss magnitude to six decimal places.
 
 ## Remaining partial designs
 
-Every generated design now passes every gate on every node with no simulator analysis errors. The table below lists any design that regresses in a future re-run.
-
+All 12 basket designs pass every audit gate on all five nodes with no
+simulator analysis errors — 60/60 design instances, re-measured at V7.5.9.
+The table below lists any design that regresses in a future re-run.
 
 | tech | category/design | failed gates | analysis errors |
 |---|---|---|--:|
 | -- | all designs | -- | 0 |
+
+**This table is the design audit, not the simulator comparison.** A design can
+pass all its audit gates here and still appear in the disagreement list above:
+the audit asks whether the *design* meets its specification under NGSPICE, and
+the comparison asks whether *PyCircuitSim* reproduces NGSPICE on the same
+deck. `Leung_NMCNR` is 10/10 in the table above and 0–1/11 against NGSPICE on
+four techs — both readings are correct and they answer different questions.
