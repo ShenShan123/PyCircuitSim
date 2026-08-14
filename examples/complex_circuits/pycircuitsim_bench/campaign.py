@@ -75,12 +75,34 @@ FAMILIES: Dict[Tuple[str, str], str] = {
     ("charge_pump", "tb_tran.cir"): "tran",
 }
 
-#: Pilot stride policy (RESULTS_TSMC.md): full grids where they are cheap,
-#: the pilot's measured strides where they are not.
+#: Stride policy: full grids everywhere except the one sweep that is
+#: genuinely expensive and genuinely subsampled.
+#:
+#: **The transient family carries no stride, and must not** (V7.5.11). On a
+#: sweep a stride subsamples the abscissa and both simulators are then scored
+#: on the shared grid, so it costs resolution and nothing else. On a TRANSIENT
+#: it multiplies the solver's timestep (``run_compare``: ``dt = t_step *
+#: stride``) — it is a fidelity knob wearing a cost knob's name. The pilot's
+#: ``tb_tran @4`` therefore marched PyCircuitSim at 20 ns while NGSPICE marched
+#: the deck's own 5 ns, and 15 of the 20 transient disagreements V7.5.10
+#: reported were that 4x, not the simulator: at stride 1, ``Leung_NMCNR``
+#: goes 0/11 -> 11/11 on tsmc7 and 1/11 -> 11/11 on tsmc12, ``Fan_SMC`` 5/11
+#: -> 11/11 on tsmc5, and ``Song_DACFC``/``Peng_IAC``/``Qu2017_AZC`` close on
+#: five more tech cells. It cost 4x the transient runtime to learn that.
+#:
+#: **The charge pump is the exception, and it is an exception BECAUSE it was
+#: measured.** Its ``@20`` was validated across strides when it was set
+#: (V7.5.3: ``up_imin`` 1.49 % at stride 100, 1.84 % at stride 20), and
+#: V7.5.11 re-measured it at stride 1 — 102k committed pieces against
+#: NGSPICE's 100k, i.e. matched resolution — where it gets **worse**, not
+#: better: 6/6 -> 4/6 on tsmc7 and tsmc16, 5/6 -> 4/6 on tsmc12, with
+#: ``up_imin`` blowing from ~1 % to 6-61 %, at 15x the cost (2.2 ks/deck
+#: against 0.15 ks). A +-4 uA 10 ps current-reversal spike whose amplitude
+#: does not converge as dt approaches the deck's own tstep is an open item in
+#: our step controller (RESULTS_TSMC.md), not a resolution deficit — so this
+#: entry stays, and stays quoted with that measurement next to it.
 STRIDES: Dict[Tuple[str, str], int] = {
     ("amplifier", "tb_dc.cir"): 25,
-    ("amplifier", "tb_tran.cir"): 4,
-    ("ldo", "tb_tran.cir"): 4,
     ("charge_pump", "tb_tran.cir"): 20,
 }
 
@@ -148,29 +170,43 @@ def summarize(tech: str, out: Path, families: List[str]) -> str:
             rows.append((cat, design, stem,
                          json.loads(path.read_text())["verdict"]))
         lines += [f"## {fam} ({len(rows)} decks)", "",
-                  "| deck | agree | engine | op worst (V) | py / ng s |",
-                  "|---|:--:|:--:|--:|--:|"]
-        full = 0
+                  "| deck | agree | quarantined | engine | op worst (V) "
+                  "| py / ng s |",
+                  "|---|:--:|:--:|:--:|--:|--:|"]
+        full = scored = 0
         for cat, design, stem, v in rows:
             name = f"{cat}/{design}/{stem}"
             if v is None:
-                lines.append(f"| {name} | MISSING | | | |")
+                lines.append(f"| {name} | MISSING | | | | |")
                 continue
+            # A deck whose every metric is quarantined asks no question of
+            # this version, so it is neither a pass nor a fail: it leaves the
+            # denominator and is counted in `quarantined` instead.
+            whole = v["measured"] == 0 and v.get("not_comparable", 0) > 0
+            scored += not whole
             ok = v["ran"] and v["measured"] > 0 and \
                 v["agree"] == v["measured"] and v["missing_py"] == 0
             full += ok
             op = v.get("op_worst_abs")
             missing = ("" if v["missing_py"] == 0
                        else f" (+{v['missing_py']} unmeasured)")
+            nc = v.get("not_comparable", 0)
+            score = "--" if whole else f"{v['agree']}/{v['measured']}"
             lines.append(
-                f"| {name} | {v['agree']}/{v['measured']}{missing} "
+                f"| {name} | {score}{missing} "
+                f"| {nc if nc else ''} "
                 f"| {'ok' if v['engine_ok'] else 'FAIL'} "
                 f"| {'' if op is None else format(op, '.2e')} "
                 f"| {v['py_seconds']:.1f} / {v['ng_seconds']:.1f} |")
-        fam_tot[fam] = [full, len(rows)]
-        lines += ["", f"**{fam}: {full}/{len(rows)} decks fully agree**", ""]
+        fam_tot[fam] = [full, scored, len(rows)]
+        quarantined = len(rows) - scored
+        lines += ["", f"**{fam}: {full}/{scored} decks fully agree**"
+                  + (f" ({quarantined} quarantined as invalid test examples "
+                     f"— see run_compare.NOT_COMPARABLE)" if quarantined
+                     else ""), ""]
     lines += ["## Totals", ""] + [
-        f"- {fam}: {n}/{d}" for fam, (n, d) in fam_tot.items()]
+        f"- {fam}: {n}/{s}" + (f" ({d - s} quarantined)" if d != s else "")
+        for fam, (n, s, d) in fam_tot.items()]
     return "\n".join(lines) + "\n"
 
 

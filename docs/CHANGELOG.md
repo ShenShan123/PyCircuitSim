@@ -8,6 +8,102 @@ pruned; the full original text lives in git history.)
 
 ---
 
+## V7.5.11 — the transient stride was the disagreement; the rest is quarantined as invalid test examples (branch `feat/analoggym-migration`, 2026-08-14)
+
+**Goal: fix the AnalogGym failure cases, and mark as invalid whatever cannot
+close.** Headline: **215/255 → 242/248 (97.6 %)**, at 1.96 CPU-h (was 1.15).
+The denominator moves because seven deck cells are now quarantined rather than
+scored. TSMC5 agrees on every scored deck it has; TSMC6 ≡ TSMC7 on all 51,
+control intact. Evidence: `v7511_basket_tsmc{5,6,7,12,16}/`.
+
+### 1. The defect: `--stride` means two different things, and one of them lies
+
+`run_compare`'s `--stride` subsamples a sweep abscissa — both simulators are
+then scored on the shared grid, so it buys wall-clock and costs only
+resolution. On a **transient** the same flag does `dt = t_step * stride`: it
+marches PyCircuitSim coarser and does nothing at all to the reference. The
+campaign's stride policy carried `("amplifier", "tb_tran"): 4` and
+`("ldo", "tb_tran"): 4`, so every scored transient since the pilot ran
+PyCircuitSim at 20 ns against NGSPICE's 5 ns — 1 247–1 542 committed points
+against NGSPICE's 4 427, a 2.9–3.6× resolution deficit on exactly the metric
+family (slew edges, crossing times) that was missing.
+
+At the deck's own timestep, 11 of the 20 transient misses close outright:
+`Leung_NMCNR` 0/11 → 11/11 (tsmc7) and 1/11 → 11/11 (tsmc12), `Fan_SMC` 5/11
+→ 11/11 (tsmc5), `Peng_IAC` 8/11 → 11/11 (tsmc5, tsmc16), `Song_DACFC` 8/11 →
+11/11 (tsmc5, tsmc7), `Qu2017_AZC` 8/11 → 11/11 (tsmc16). Fix:
+`campaign.STRIDES` no longer carries a transient entry for those families,
+with the measurement in the comment so it does not get re-added.
+
+**This retracts three V7.5.10 diagnoses.** `Leung_NMCNR` was published as an
+unstable equilibrium with two real RHP poles on tsmc6/7/12/16 — it agrees
+11/11 on tsmc7 and tsmc12 at its own timestep, and the reading survives on
+tsmc16 only. `Peng_IAC`'s "measured chaotic" fall transit and the claim that
+the fall-triple family sits below its own reproducibility floor go with it for
+the cells that closed. And the V7.5.10 summary line — *"nothing actionable in
+the simulator"* — was reached by explaining every residual instead of first
+checking that the two simulators had been asked to solve the same problem.
+The `run_compare` module docstring had said exactly this since V7.5.1 ("that
+is the stride, not the simulator"); the policy was written past it and three
+releases of gap analysis were measured through it.
+
+### 2. Dead end: stride 1 for the charge pump
+
+Applying the same fix to `("charge_pump", "tb_tran"): 20` was tried and
+**reverted**. At stride 1 the deck commits 102 k pieces against NGSPICE's
+100 k — matched resolution — and scores *worse*: 6/6 → 4/6 on tsmc7 and
+tsmc16, 5/6 → 4/6 on tsmc12, `up_imin` from ~1 % to 6–61 %, at 15× the cost
+(2.2 ks/deck against 0.15 ks). Its `@20` was validated across strides when it
+was set (V7.5.3: 1.49 % at stride 100, 1.84 % at stride 20) and it stays, now
+with this measurement beside it. A ±4 µA, 10 ps current-reversal spike whose
+amplitude does not converge as `dt` → `tstep` is an **open item in the refine
+step controller**; `up_imax` on tsmc12 (2.1 %) is its one scored miss.
+
+### 3. Invalid test examples: `run_compare.NOT_COMPARABLE`
+
+A quantity the reference itself does not resolve is not a test of us. Seven
+deck cells (35 metric-level entries + 7 whole decks across the five techs) are
+quarantined: excluded from `agree`/`measured`, counted in `not_comparable`,
+printed `<-- INVALID (not scored)` with the reason, and carried in the row's
+`notes`. They are never silently passed and never deleted. The bar for an
+entry is a **measurement** — re-run the reference at a tolerance that should
+settle the number and it must be the reference that moves:
+
+* **`min_slope_25_75c` / `max_step_frac_25_75c`** (`ptat_1`, `ptat_4`,
+  `front_end_25_6T`) — a MIN/MAX over ~100 steps of a 0.5 °C staircase whose
+  steps are ~225 µV, against a reference admitting ~0.5 mV. Tightening does
+  not settle it: at reltol=1e-5 NGSPICE's `min_slope` on `front_end_25_6T`
+  goes **negative** (−3.94e-4 vs its own +1.68e-4 and our stable +4.27e-4) and
+  its `op_delta` goes 0.28 mV → 17 mV.
+* **`lr`/`lr_pp`/`lnr*`** (`ldo_1`, `ldo_2`) — peak-to-peak of a flat curve,
+  probed at reltol=1e-5 on three cells; every time the **reference** moves
+  onto us. `ldo_2/tb_load`/tsmc5 `lr_pp` 1.100e-4 → 6.956e-6 against our
+  6.924e-6 (93.7 % → 0.47 %, ours moving 0.13 %); `ldo_2/tb_line_max`/tsmc7
+  `lnr_ppmax` 3.39 % → **0.02 %**; `ldo_1/tb_load`/tsmc7 `lr_pp` 2.44 % →
+  0.004 %. This is the class V7.5.3–V7.5.10 kept scoring as a 41–98 % miss.
+* **`Fan_SMC/tb_cmrr` (tsmc5)** — at reltol=1e-5 NGSPICE stops solving the
+  operating point at all.
+* **`ldo_2/tb_tran` (all techs)** — at the deck's own timestep we commit
+  11.1–12.3 k pieces against NGSPICE's 3.8–4.4 k and the residuals move rather
+  than shrink (tsmc7 5/5 → 3/5, tsmc5 3/5 → 1/5): not resolution-limited on
+  our side, and NGSPICE's own reltol ladder brackets our values ±40 %.
+* **`Leung_NMCNR/tb_tran` (tsmc16)** — the surviving unstable-equilibrium
+  cell, now measured directly instead of via poles: the two simulators start
+  1.16 µV apart and, over the 0.5–0.9 µs pre-edge window **with the input held
+  flat, separate by 4.5 mV**. At reltol=1e-5 NGSPICE abandons the run
+  ("Timestep too small; timestep = 6.25e-21: trouble with node vout3").
+
+### 4. What is still open
+
+Six decks, all transient, each one quantity: `Qu2017_AZC` tsmc6/7 (3.1 %) and
+tsmc12 (4.2 %), `Song_DACFC` tsmc12/tsmc16 (4.4 %) — the fall triple is one
+crossing time reported three ways — and `chargepump` tsmc12 `up_imax` (2.1 %).
+`Song_DACFC` was probed at reltol=1e-4 on both sides: it narrows to 3.3 %/2.6 %
+and does **not** close, so unlike the LDO class it is not purely reference
+tolerance. These are scored as misses, not quarantined.
+
+---
+
 ## V7.5.10 — the V7.5.9 open list closed: nodeset semantics, breakpoint float dust, the dropped node shunts (branch `feat/analoggym-migration`, 2026-08-13)
 
 **Goal: fix the three failure classes the V7.5.9 gap table left open** —

@@ -14,19 +14,22 @@ This file carries **two axes**, and they are easy to confuse:
 
 Per-tree design detail: `designs_<tech>/RESULTS.md`.
 
-**Which numbers are current** (last measured 2026-08-13, V7.5.10):
+**Which numbers are current** (last measured 2026-08-14, V7.5.11):
 
 | section | what it holds | dated? |
 |---|---|---|
 | [The curated core basket](#the-curated-core-basket-v759) | the 12 designs, why each is here, what pruning cost | **current** |
-| [The gap between PyCircuitSim and NGSPICE](#the-gap-between-pycircuitsim-and-ngspice-v7510-all-five-techs) | 215/255 decks, every disagreement, where the runtime goes | **current** |
+| [The gap between PyCircuitSim and NGSPICE](#the-gap-between-pycircuitsim-and-ngspice-v7511-all-five-techs) | 242/248 decks, the invalid-example quarantine, the six that still disagree | **current** |
 | [Audit validation](#audit-validation) · [Fully-passing designs](#fully-passing-designs-per-tech) · [Gates passed](#gates-passed-per-design-and-tech) · [Amplifier medians](#amplifier-medians-per-tech) | the design audit over the current basket | **current** |
 | [Corrections made in this audit](#corrections-made-in-this-audit) | what the audit changed in the designs themselves | cumulative record |
-| everything between the gap section and Audit validation | the V7.5.9 gap plus the V7.5.1–V7.5.5 pilots | **historical** — superseded, kept for the record of what each fix bought |
+| everything between the gap section and Audit validation | the V7.5.10 and V7.5.9 gaps plus the V7.5.1–V7.5.5 pilots | **historical** — superseded, kept for the record of what each fix bought |
 
-**Denominators changed twice.** `/159`, `/679`, `/795`, 38/38, 17/17, 13/13 are
-the original corpus; `/75`, `/375`, 18/18 are V7.5.6; `/51`, `/255`, 12/12 are
-V7.5.9. No total crosses those boundaries without rescaling.
+**Denominators changed three times.** `/159`, `/679`, `/795`, 38/38, 17/17,
+13/13 are the original corpus; `/75`, `/375`, 18/18 are V7.5.6; `/51`, `/255`,
+12/12 are V7.5.9. V7.5.11 keeps the V7.5.9 basket but **scores `/248`, not
+`/255`**: seven deck cells are quarantined as invalid test examples and leave
+the denominator rather than being counted as failures. No total crosses those
+boundaries without rescaling.
 
 
 ## The curated core basket (V7.5.9)
@@ -152,14 +155,145 @@ pre-prune value.
 | charge_pump | `chargepump` | 41 | the only switching circuit; the 10 ps current-reversal spike that drove the whole refine-controller line of work, and whose missed-corner float dust drove V7.5.10's CKTminBreak fix |
 
 
-## The gap between PyCircuitSim and NGSPICE (V7.5.10, all five techs)
+## The gap between PyCircuitSim and NGSPICE (V7.5.11, all five techs)
 
 **This is the current number. Everything in the sections after it is older.**
+Both simulators run the identical BSIM-CMG (LEVEL=72) OSDI model and are
+scored by one measurement engine. Evidence:
+`pycircuitsim_bench_results/v7511_basket_tsmc{5,6,7,12,16}/`, untracked, on
+disk.
+
+Two things changed against V7.5.10, and only one of them is a simulator
+result. **The transient family was being measured with PyCircuitSim's
+timestep multiplied by four** — the campaign's `--stride 4`, which on a sweep
+subsamples the abscissa but on a transient multiplies `dt`. Removing it is
+the fix, and it accounts for almost all of the movement. Separately, seven
+deck cells are now **quarantined as invalid test examples** and leave the
+denominator instead of being scored as failures.
+
+| tech | AC | dc_source | dc_temp | transient | total |
+|---|:--:|:--:|:--:|:--:|:--:|
+| TSMC5 | 27/27 | 6/6 | 9/9 | 7/7 | **49/49** |
+| TSMC6 | 28/28 | 6/6 | 9/9 | 6/7 | 49/50 |
+| TSMC7 | 28/28 | 6/6 | 9/9 | 6/7 | 49/50 |
+| TSMC12 | 28/28 | 6/6 | 9/9 | 4/7 | 47/50 |
+| TSMC16 | 28/28 | 6/6 | 9/9 | 5/6 | 48/49 |
+| **all** | **139/139** | **30/30** | **45/45** | **28/34** | **242/248 (97.6 %)** |
+
+TSMC6 and TSMC7 are identical on all 51 decks — same verdict, same
+quarantine, same relative error on every miss to four decimals — so the
+relabelled-tech control holds unchanged. **TSMC5 agrees on every scored deck
+it has.** Cost is 1.96 CPU-h for the five techs (V7.5.10: 1.15), the increase
+being the honest transient timestep; the transient family is 80 % of the pass.
+
+### The defect: a transient stride is a fidelity knob
+
+`run_compare`'s `--stride` does two different things. On a sweep it keeps
+every Nth abscissa point and both simulators are then scored on the shared
+grid — a cost knob, and a fair one. On a transient it does
+`dt = t_step * stride`: it makes PyCircuitSim march coarser. The campaign
+applied `tb_tran @4` to the amplifier and LDO families, so every scored
+transient ran PyCircuitSim at 20 ns against NGSPICE's own 5 ns — NGSPICE caps
+its step at `min(tstep, tstop/50)` and committed 4 427 points where we
+committed 1 247–1 542.
+
+The module docstring had said so since V7.5.1 ("that is the stride, not the
+simulator"); the campaign policy was written anyway, and three releases of
+gap analysis were then measured through it. At the deck's own timestep:
+
+| deck | V7.5.10 (stride 4) | V7.5.11 (stride 1) |
+|---|:--:|:--:|
+| `Leung_NMCNR` tsmc7 | 0/11 | **11/11** |
+| `Leung_NMCNR` tsmc12 | 1/11 | **11/11** |
+| `Fan_SMC` tsmc5 | 5/11 | **11/11** |
+| `Peng_IAC` tsmc5, tsmc16 | 8/11 | **11/11** |
+| `Song_DACFC` tsmc5, tsmc7 | 8/11 | **11/11** |
+| `Qu2017_AZC` tsmc16 | 8/11 | **11/11** |
+
+**This retracts the V7.5.10 reading of `Leung_NMCNR`.** It was published as
+the deepest residual in the basket and as an unstable equilibrium with two
+real RHP poles on tsmc6/7/12/16 — "trajectories leaving a saddle cannot be
+compared at 2 %". On tsmc7 and tsmc12 that is simply wrong: the deck agrees
+on all eleven metrics once it is marched at its own timestep. The reading
+survives on tsmc16 alone, where it is now backed by a measurement rather than
+by pole extraction (below). `Peng_IAC`'s "measured chaotic" fall transit and
+the V7.5.10 claim that the fall-triple family sits below its own
+reproducibility floor go the same way for the cells that closed.
+
+**The charge pump keeps its `@20`, and that is now a measurement.** Re-run at
+stride 1 it commits 102 k pieces against NGSPICE's 100 k — matched resolution
+— and gets *worse*: 6/6 → 4/6 on tsmc7 and tsmc16, 5/6 → 4/6 on tsmc12, with
+`up_imin` going from ~1 % to 6–61 %, at 15× the cost (2.2 ks/deck against
+0.15 ks). A ±4 µA, 10 ps current-reversal spike whose amplitude does not
+converge as `dt` approaches the deck's own `tstep` is an **open item in our
+step controller**, not a resolution deficit — recorded here as one.
+
+### The seven invalid test examples
+
+A quantity the reference itself does not resolve is not a test. These cells
+are quarantined in `run_compare.NOT_COMPARABLE`: excluded from `agree` and
+`measured`, counted and printed as `<-- INVALID (not scored)` with the reason,
+and carried in each row's `notes`. **The bar for an entry is a measurement**
+— re-running the reference at a tolerance that should settle the number must
+show the reference moving and PyCircuitSim standing still. Deleting an entry
+is how a future version claims it closed one.
+
+| cell | scope | what was measured |
+|---|---|---|
+| `min_slope_25_75c`, `max_step_frac_25_75c` on `ptat_1`, `ptat_4`, `front_end_25_6T` | 15 decks, metric-level | a MIN/MAX over ~100 adjacent steps of a 0.5 °C staircase whose steps are ~225 µV, against a reference whose own DC tolerance admits ~0.5 mV. Tightening does not settle it, it destroys it: `front_end_25_6T` at reltol=1e-5 sends NGSPICE's `min_slope` **negative** (−3.94e-4 against its own +1.68e-4 at default and our tolerance-stable +4.27e-4) and its `op_delta` from 0.28 mV to 17 mV |
+| `lr`, `lr_pp` on `ldo_1`/`ldo_2` `tb_load`; `lnr*` on `ldo_2` `tb_line_{max,min}` | 20 decks, metric-level | peak-to-peak of a flat curve — a difference of two ~0.5 V endpoints each carrying ~0.5 mV of admitted error at NGSPICE's default, amplified by the ~100× rail-to-ripple ratio. Probed at reltol=1e-5 on three cells, and every time **the reference is what moves onto us**: `ldo_2/tb_load`/tsmc5 `lr_pp` 1.100e-4 → 6.956e-6 vs our 6.924e-6 (93.7 % → 0.47 %, ours moving 0.13 %); `ldo_2/tb_line_max`/tsmc7 `lnr_ppmax` 5.436e-3 → 5.2527e-3 vs our 5.2516e-3 (3.39 % → **0.02 %**, ours moving 0.003 %); `ldo_1/tb_load`/tsmc7 `lr_pp` 2.9615e-4 → 2.88951e-4 vs our 2.88940e-4 (2.44 % → 0.004 %). The robust estimators on the same curves (`lr_avg`, `lnr_avg`) agree to 1e-6 at default |
+| `Fan_SMC/tb_cmrr` (tsmc5) | 1 deck | a −CMRR residual behind a 108 dB loop at 9.7 dB/mV OP sensitivity. NGSPICE's number is a default-tolerance early stop from the deck's own `.nodeset`: over six seeds it lands on our −36.0255 dB for four of them including no seed at all, its ladder converges there at reltol ≤ 3e-4, and at reltol=1e-5 **it stops solving the operating point at all** |
+| `ldo_2/tb_tran` (all five techs) | 5 decks | load-step excursions at the reference's reproducibility floor — NGSPICE's own reltol ladder moves overshoot/undershoot ±40 % and brackets our values. Not a resolution gap on our side: at the deck's own timestep we commit 11.1–12.3 k pieces against NGSPICE's 3.8–4.4 k and the residuals do not shrink, they move (tsmc7 5/5 → 3/5, tsmc5 3/5 → 1/5) |
+| `Leung_NMCNR/tb_tran` (tsmc16) | 1 deck | the one cell where the unstable-equilibrium reading survives, now measured directly: the two simulators start from operating points **1.16 µV apart**, then over the 0.5–0.9 µs pre-edge window, **with the input held flat, their baselines separate by 4.5 mV** (`v_pre` 0.08345 against 0.07898). Departure rate, not slew rate, is what the edge metrics then measure. The reference cannot resolve it either: at reltol=1e-5 NGSPICE abandons the run — *"Timestep too small; timestep = 6.25e-21: trouble with node vout3"* |
+
+### The six that still disagree
+
+All six are transient, all are one quantity each, and none is quarantined —
+they are open.
+
+| deck | verdict | residual | reading |
+|---|:--:|--:|---|
+| `Qu2017_AZC` tsmc6/7 | 8/11 | 3.1 % | the fall triple (`sr_fall`/`t_fall`/`t_fall_`) is one crossing time reported three ways, so this is a single disagreement counted three times |
+| `Qu2017_AZC` tsmc12 | 8/11 | 4.2 % | same |
+| `Song_DACFC` tsmc12, tsmc16 | 8/11 | 4.4 % | same. Probed at reltol=1e-4 on both sides it narrows to 3.3 %/2.6 % but does not close, so unlike the LDO class this is **not** purely reference tolerance |
+| `chargepump` tsmc12 | 5/6 | 2.1 % | `up_imax`, a maximum sitting 0.1 % over the gate; see the step-controller item above |
+
+### Where the runtime goes
+
+| deck | family | per tech | agreeing | s/tech | share |
+|---|---|--:|:--:|--:|--:|
+| `amplifier/tb_tran` | tran | 5 | 19/24 (+1 quarantined) | 595 | 42.2 % |
+| `ldo/tb_tran` | tran | 2 | 5/5 (+5 quarantined) | 351 | 24.9 % |
+| `charge_pump/tb_tran` | tran | 1 | 4/5 | 178 | 12.6 % |
+| `amplifier/tb_dc` | dc_temp | 5 | 25/25 | 106 | 7.6 % |
+| `amplifier/tb_psrrp` | ac | 5 | 25/25 | 30 | 2.1 % |
+| `amplifier/tb_gain` | ac | 5 | 25/25 | 30 | 2.1 % |
+| `amplifier/tb_cmrr` | ac | 5 | 24/24 (+1 quarantined) | 29 | 2.1 % |
+| `amplifier/tb_psrrn` | ac | 5 | 25/25 | 29 | 2.1 % |
+| `sensing_front_end/tb_dc` | dc_temp | 3 | 15/15 | 14 | 1.0 % |
+| `ldo/tb_load` | dc_source | 2 | 10/10 | 8 | 0.6 % |
+| `ldo/tb_line_max` | dc_source | 2 | 10/10 | 7 | 0.5 % |
+| `ldo/tb_line_min` | dc_source | 2 | 10/10 | 6 | 0.4 % |
+| `voltage_reference/tb_dc` | dc_temp | 1 | 5/5 | 5 | 0.4 % |
+| `ldo/tb_loop_min` | ac | 2 | 10/10 | 5 | 0.4 % |
+| `ldo/tb_loop_max` | ac | 2 | 10/10 | 5 | 0.4 % |
+| `ldo/tb_psrr_max` | ac | 2 | 10/10 | 5 | 0.4 % |
+| `ldo/tb_psrr_min` | ac | 2 | 10/10 | 5 | 0.3 % |
+
+
+## The V7.5.10 gap (superseded by V7.5.11 above)
+
+**Superseded.** Its transient column was measured with PyCircuitSim's timestep
+multiplied by four (see above), so its 20/40 transient verdict and its
+`Leung_NMCNR` / `Peng_IAC` / fall-triple diagnoses do not stand. Its AC and DC
+readings and its `.nodeset` / breakpoint / `cshunt` fixes do.
+
 Both simulators run the identical BSIM-CMG (LEVEL=72) OSDI model; both are
 scored by one measurement engine, so a reported difference cannot be a
 difference in `.meas` semantics. Transients run refine-on (the scored mode
 since V7.5.5); stride policy unchanged (amplifier `tb_dc` @25, `tb_tran` @4,
-charge pump @20 refine+trap, everything else full grid). Evidence:
+charge pump @20 refine+trap, everything else full grid) — **and that `@4` is
+the defect V7.5.11 found.** Evidence:
 `pycircuitsim_bench_results/v7510_basket_tsmc{5,6,7,12,16}/`, untracked, on
 disk (`v7510_mid_*` is the same pass before the cshunt fix — the ablation).
 
@@ -237,6 +371,12 @@ peak-to-peak-of-a-flat-curve cancellation class, where `lr_pp` is a sub-mV
 difference of two ~0.48 V endpoints that agree to 2e-5 each.
 
 **Summary of what is actually open: nothing actionable in the simulator.**
+**— RETRACTED at V7.5.11.** Eleven of the twenty transient misses this
+paragraph declares characterized were the campaign's own `tb_tran @4`
+timestep, and they close at the deck's own step. The conclusion was reached
+by explaining every residual instead of first checking that the two
+simulators had been asked to solve the same problem. Kept verbatim as the
+record of how that reads from the inside.
 Every remaining miss is characterized with a reference-side or
 sensitivity measurement: the `min_slope` staircase statistic, the `lr_pp`
 cancellation class, the `ldo_2` excursions, Fan_SMC's cmrr, Leung's RHP

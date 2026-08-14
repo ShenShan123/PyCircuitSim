@@ -167,6 +167,95 @@ DEFAULT_MAX_ITERATIONS: int = 500
 METRIC_ATOL: Dict[str, float] = {"vos25": 1e-5,
                                  "overshoot": 1e-6, "undershoot": 1e-6}
 
+#: Metric cells that are INVALID TEST EXAMPLES at this version (V7.5.11):
+#: quantities the two simulators cannot be asked to agree on at the 2 % gate,
+#: because the quantity is not resolved by the reference itself.  They are
+#: **quarantined, not deleted and not silently passed** -- excluded from
+#: ``agree``/``measured``, counted in ``not_comparable``, printed as
+#: ``<-- INVALID`` with the reason, and carried in the row's ``notes``.
+#:
+#: The bar for an entry is a MEASUREMENT, not a judgement: re-running the
+#: reference at a tolerance that should settle the number must show the
+#: reference moving and PyCircuitSim standing still.  Every entry below cites
+#: the probe that put it here.  Removing an entry is how a future version
+#: claims it closed one; that is the only intended edit.
+#:
+#: Key ``(design, deck stem, tech)`` with ``"*"`` matching any tech; value
+#: ``(metric names or ("*",), reason)``.
+_STAIRCASE: Tuple[str, ...] = ("min_slope_25_75c", "max_step_frac_25_75c")
+_WHY_STAIRCASE = (
+    "order statistic of a 0.5 C staircase: a MIN/MAX over ~100 adjacent "
+    "steps of ~225 uV, against a reference whose own DC tolerance "
+    "(reltol=1e-3 -> ~0.5 mV here) is twice a step. Probed on the "
+    "reference: tightening it does not settle the number, it destroys it "
+    "-- front_end_25_6T at reltol=1e-5 sends NGSPICE's min_slope NEGATIVE "
+    "(-3.94e-4 against its own +1.68e-4 at default and our tolerance-stable "
+    "+4.27e-4) and its op_delta from 0.28 mV to 17 mV. Read lsb_25_75c and "
+    "mono_violations, which agree to 5e-4 and exactly")
+_WHY_CANCELLATION = (
+    "a peak-to-peak of a flat curve: a difference of two ~0.5 V endpoints "
+    "carrying up to ~0.5 mV each of admitted error at NGSPICE's default "
+    "reltol=1e-3, which amplifies the endpoints' relative disagreement by "
+    "the ~100x ratio of rail to ripple. Probed on the reference at "
+    "reltol=1e-5, three cells, and every time it is the REFERENCE that "
+    "moves onto us: ldo_2/tb_load/tsmc5 lr_pp 1.100e-4 -> 6.956e-6 against "
+    "our 6.924e-6 (93.7 % -> 0.47 %, our value moving 0.13 %); "
+    "ldo_2/tb_line_max/tsmc7 lnr_ppmax 5.436e-3 -> 5.2527e-3 against our "
+    "5.2516e-3 (3.39 % -> 0.02 %, ours moving 0.003 %); "
+    "ldo_1/tb_load/tsmc7 lr_pp 2.9615e-4 -> 2.88951e-4 against our "
+    "2.88940e-4 (2.44 % -> 0.004 %, ours moving 3e-6). The same curves' "
+    "robust estimators (lr_avg, lnr_avg) agree to 1e-6 at default")
+
+NOT_COMPARABLE: Dict[Tuple[str, str, str], Tuple[Tuple[str, ...], str]] = {
+    ("ptat_1", "tb_dc", "*"): (_STAIRCASE, _WHY_STAIRCASE),
+    ("ptat_4", "tb_dc", "*"): (_STAIRCASE, _WHY_STAIRCASE),
+    ("front_end_25_6T_schematic", "tb_dc", "*"): (_STAIRCASE, _WHY_STAIRCASE),
+    ("ldo_1", "tb_load", "*"): (("lr", "lr_pp"), _WHY_CANCELLATION),
+    ("ldo_2", "tb_load", "*"): (("lr", "lr_pp"), _WHY_CANCELLATION),
+    ("ldo_2", "tb_line_max", "*"): (("lnrmax", "lnr_ppmax"), _WHY_CANCELLATION),
+    ("ldo_2", "tb_line_min", "*"): (("lnrmin", "lnr_ppmin"), _WHY_CANCELLATION),
+    ("Fan_SMC_Pin_3", "tb_cmrr", "tsmc5"): (("cmrrdc",), (
+        "a -CMRR residual behind a 108 dB loop at 9.7 dB/mV operating-point "
+        "sensitivity, on the reference side. NGSPICE's number is a "
+        "default-tolerance early stop from the deck's own .nodeset: probed "
+        "over six seeds it lands on our -36.0255 dB for four of them "
+        "INCLUDING no seed at all, its own ladder converges there at "
+        "reltol <= 3e-4, and at reltol=1e-5 it stops solving the operating "
+        "point at all ('could not be simulated successfully'). Ours is "
+        "seed-independent to 0.002 dB")),
+    ("ldo_2", "tb_tran", "*"): (("*",), (
+        "load-step excursions of the corpus's most delicate local loop, "
+        "measured at the reference's reproducibility floor. NGSPICE's own "
+        "reltol ladder moves overshoot/undershoot by +-40 % and brackets "
+        "our values, and its default run is demonstrably unsettled (the "
+        "pre-step average sits 1.4 mV above its own DC). Not a resolution "
+        "gap on our side: at the deck's own timestep PyCircuitSim commits "
+        "11.1-12.3k pieces against NGSPICE's 3.8-4.4k and the residuals do "
+        "not shrink -- they move (tsmc7 3/5, tsmc5 1/5)")),
+    ("Leung_NMCNR_Pin_3", "tb_tran", "tsmc16"): (("*",), (
+        "the deck's pulse-baseline bias is a dynamically unstable "
+        "equilibrium, so its trajectory is not a comparable quantity. "
+        "Measured here, not inherited: the two simulators start from "
+        "operating points 1.16 uV apart, and then -- over the 0.5-0.9 us "
+        "pre-edge window, with the input held flat -- their baselines "
+        "separate by 4.5 mV (v_pre 0.08345 against 0.07898, 5.4 %). "
+        "Departure rate, not slew rate, is what the edge metrics then "
+        "measure. The reference cannot resolve it either: at reltol=1e-5 "
+        "NGSPICE abandons the run outright ('Timestep too small; timestep "
+        "= 6.25e-21: trouble with node vout3'). NOTE the V7.5.10 report put "
+        "tsmc6/7/12/16 in this class; tsmc7 and tsmc12 were the transient "
+        "stride and close at 11/11 without it, so tsmc16 is the only cell "
+        "the reading survives on")),
+}
+
+
+def not_comparable(design: str, deck: str,
+                   tech: str) -> Optional[Tuple[Tuple[str, ...], str]]:
+    """The :data:`NOT_COMPARABLE` entry for one deck cell, if it has one."""
+    stem = Path(deck).stem
+    return (NOT_COMPARABLE.get((design, stem, tech.lower()))
+            or NOT_COMPARABLE.get((design, stem, "*")))
+
 #: NGSPICE-45.2's own DC convergence tolerances.  PyCircuitSim defaults to
 #: RELTOL=1e-4 / VNTOL=1e-7 -- TEN TIMES TIGHTER than the simulator it is being
 #: compared against -- and on these decks the tighter test is what fails, not the
@@ -208,12 +297,21 @@ class SimOptions:
     cap the NN path already uses.  ``0.0`` disables the trust region (and
     reproduces the divergence, which is why it is expressible).
 
-    ``stride`` subsamples a sweep axis (and multiplies the transient timestep)
-    so an 1651-point pure-Python temperature sweep can be measured at a
-    tractable cost.  It keeps the FULL range -- only the grid gets coarser -- so
-    every ``.meas`` window still covers what it was written to cover; the value
-    is recorded in the result JSON so a strided row can never be mistaken for a
-    full-resolution one.
+    ``stride`` subsamples a sweep axis so an 1651-point pure-Python temperature
+    sweep can be measured at a tractable cost.  It keeps the FULL range -- only
+    the grid gets coarser -- so every ``.meas`` window still covers what it was
+    written to cover; the value is recorded in the result JSON so a strided row
+    can never be mistaken for a full-resolution one.
+
+    **On a transient it is NOT a cost knob and must stay 1 for any scored run**
+    (V7.5.11).  A sweep stride subsamples the abscissa and both simulators are
+    scored on the shared grid; a transient stride multiplies the timestep
+    (``dt = t_step * stride``), so it silently marches PyCircuitSim coarser
+    than the deck -- and than NGSPICE, which caps its own delta at
+    ``min(tstep, tstop/50)``.  Measured: the campaign's ``tb_tran @4`` ran
+    20 ns against NGSPICE's 5 ns and produced 15 false disagreements across the
+    basket, all of which close at stride 1.  :data:`campaign.STRIDES` no longer
+    carries a transient entry.
     """
 
     dv_limit: Optional[float] = None
@@ -1265,6 +1363,7 @@ def compare_translated(td: TranslatedDeck, work: Path,
         py_metrics, ng_cmp, rtol=rtol, atol_by_key=METRIC_ATOL)
     out["compare"]["ng_vs_ngmeas"] = measure_mod.compare_metrics(
         ng_metrics, ng_own, rtol=rtol) if ng_own else {}
+    _quarantine(out)
     out["verdict"] = _verdict(out)
     return out
 
@@ -1460,6 +1559,7 @@ def compare_with_recovery(td: TranslatedDeck, work: Path,
         out["pycircuitsim"]["metrics"], out["ngspice"]["metrics"], rtol=rtol,
         atol_by_key=METRIC_ATOL)
     out["compare"]["ng_vs_ngmeas"] = {}
+    _quarantine(out)
     out["verdict"] = _verdict(out)
     return out
 
@@ -1530,6 +1630,30 @@ def _op_delta_for(td: TranslatedDeck, py_sweeps: Sequence[SweepResult],
     return report
 
 
+def _quarantine(out: Dict[str, Any]) -> None:
+    """Mark this row's :data:`NOT_COMPARABLE` metrics, in place.
+
+    Applied to ``py_vs_ng`` only.  The engine control keeps measuring every
+    key: whether our reader reproduces NGSPICE's own ``.meas`` on NGSPICE's own
+    data is answerable for a quantity the two simulators cannot be compared on,
+    and it is exactly the column that would catch a quarantine hiding a
+    measurement bug.
+    """
+    entry = not_comparable(out["design"], out["deck"], out["tech"])
+    if entry is None:
+        return
+    keys, reason = entry
+    table = out["compare"]["py_vs_ng"]
+    marked = sorted(table) if keys == ("*",) else [k for k in keys
+                                                  if k in table]
+    for key in marked:
+        table[key]["comparable"] = False
+    if marked:
+        out["notes"].append(
+            f"INVALID TEST EXAMPLE at this version — "
+            f"{', '.join(marked)} quarantined (not scored): {reason}")
+
+
 def _verdict(out: Dict[str, Any]) -> Dict[str, Any]:
     """A compact pass/fail summary of one deck row.
 
@@ -1544,6 +1668,8 @@ def _verdict(out: Dict[str, Any]) -> Dict[str, Any]:
     def tally(table: Dict[str, Dict[str, Any]]) -> Tuple[int, int, int, int]:
         both = agree = only_b = only_a = 0
         for entry in table.values():
+            if entry.get("comparable") is False:
+                continue
             has_a = entry["a"] is not None
             has_b = entry["b"] is not None
             if has_a and has_b:
@@ -1557,6 +1683,8 @@ def _verdict(out: Dict[str, Any]) -> Dict[str, Any]:
 
     agree, measured, missing_py, extra_py = tally(out["compare"]["py_vs_ng"])
     eng_agree, eng_measured, _, _ = tally(out["compare"]["ng_vs_ngmeas"])
+    quarantined = sorted(k for k, e in out["compare"]["py_vs_ng"].items()
+                         if e.get("comparable") is False)
     op = out.get("op_delta") or {}
     return {
         "ran": out["pycircuitsim"]["error"] is None,
@@ -1566,6 +1694,11 @@ def _verdict(out: Dict[str, Any]) -> Dict[str, Any]:
         "ng_ran": out["ngspice"]["error"] is None,
         "measured": measured, "agree": agree,
         "missing_py": missing_py, "extra_py": extra_py,
+        # V7.5.11 -- metrics quarantined by NOT_COMPARABLE. Reported, never
+        # folded into `agree`: a quarantined cell is a question this version
+        # cannot ask, not a question it answered.
+        "not_comparable": len(quarantined),
+        "not_comparable_keys": quarantined,
         "engine_measured": eng_measured, "engine_agree": eng_agree,
         "engine_ok": eng_measured == 0 or eng_agree == eng_measured,
         "op_worst_abs": op.get("worst_abs"),
@@ -1699,12 +1832,23 @@ def _print_row(row: Dict[str, Any]) -> None:
     for key in sorted(table):
         entry = table[key]
         eng = engine.get(key, {})
+        if entry.get("comparable") is False:
+            mark = "  <-- INVALID (not scored)"
+        elif entry["ok"]:
+            mark = ""
+        else:
+            mark = "  <-- differs"
         print(f"  {key:26s} {_fmt(entry['a']):>15s} {_fmt(entry['b']):>15s} "
               f"{_fmt(entry['rel'], '.3e'):>10s}  "
               f"{_fmt(eng.get('b')):>15s} {_fmt(eng.get('rel'), '.1e'):>9s}"
-              + ("" if entry["ok"] else "  <-- differs"))
+              + mark)
+    for note in row["notes"]:
+        if note.startswith("INVALID TEST EXAMPLE"):
+            print(f"  {note}")
+    quarantined = (f", not_comparable {verdict['not_comparable']}"
+                   if verdict.get("not_comparable") else "")
     print(f"  VERDICT agree {verdict['agree']}/{verdict['measured']}, "
-          f"missing_py {verdict['missing_py']}, "
+          f"missing_py {verdict['missing_py']}{quarantined}, "
           f"engine {verdict['engine_agree']}/{verdict['engine_measured']}, "
           f"py {verdict['py_seconds']:.1f}s ng {verdict['ng_seconds']:.1f}s")
 

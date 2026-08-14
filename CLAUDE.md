@@ -136,6 +136,28 @@ was reverted — is `docs/CHANGELOG.md` §V7.5.0–V7.5.7. What survives as a ru
   them, and dropping them was worth 14 % on an amplifier fall slew. The
   bench applies them post-flattening in `build_circuit`. Anything a deck
   option does to the *circuit* must be reproduced, not recorded-and-ignored.
+- **A knob that means two things will be used as the harmless one** (V7.5.11).
+  `run_compare --stride` subsamples a sweep abscissa — a cost knob, scored on
+  the shared grid — but on a **transient** it multiplies the solver timestep
+  (`dt = t_step * stride`) and touches only our side. The campaign's
+  `tb_tran @4` therefore marched PyCircuitSim at 20 ns against NGSPICE's 5 ns
+  for three releases, and 11 of the 20 transient "disagreements" V7.5.10
+  published — including the `Leung_NMCNR` RHP-saddle finding — were that 4x.
+  `campaign.STRIDES` carries no transient entry for the amplifier/LDO
+  families; the charge pump's `@20` stays because it is *measured* (stride 1
+  matches NGSPICE's point count and scores worse, at 15x the cost). **Before
+  explaining a residual, check that both simulators were asked to solve the
+  same problem** — the explanation is the expensive way to find a
+  configuration bug, and it is convincing all the way down.
+- **A quantity the reference cannot resolve is not a test** (V7.5.11).
+  `run_compare.NOT_COMPARABLE` quarantines those cells: excluded from
+  `agree`/`measured`, counted in `not_comparable`, printed with the reason,
+  never silently passed and never deleted. The bar for an entry is a
+  **measurement, not a judgement** — re-run the reference at a tolerance that
+  should settle the number and the *reference* must be what moves (NGSPICE's
+  `lr_pp` collapses onto ours at reltol=1e-5; its `min_slope` goes negative;
+  on two decks it stops converging altogether). Removing an entry is how a
+  version claims it closed one.
 - **The AnalogGym corpus IS the tree** — `campaign.corpus()` enumerates
   whatever `examples/complex_circuits/designs_tsmc*/` holds; there is no
   selection flag. Curating the basket means deleting design directories and
@@ -143,7 +165,8 @@ was reverted — is `docs/CHANGELOG.md` §V7.5.0–V7.5.7. What survives as a ru
   Three traps that outlive their sprint:
   - **Totals are not comparable across a curation.** `/159`, `/679`, `/795`,
     38/38, 17/17, 13/13 are the original corpus; `/75`, `/375`, 18/18 are
-    V7.5.6; `/51`, `/255`, 12/12 are V7.5.9. Rescale or don't compare.
+    V7.5.6; `/51`, `/255`, 12/12 are V7.5.9; `/248` is V7.5.11 (the V7.5.9
+    basket less the quarantined cells). Rescale or don't compare.
   - `cross_tech_report.py` **overwrites RESULTS_TSMC.md wholesale**,
     destroying its hand-written sections — splice its tables in, never run it
     blind.
