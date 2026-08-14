@@ -523,7 +523,40 @@ def build_circuit(td: TranslatedDeck, work: Path):
     path = translate.write_netlist(td, work / "netlists")
     parser = Parser(modelcard_path=str(td.modelcard_path))
     parser.parse_file(str(path))
+    _apply_node_shunts(parser.circuit, td)
     return parser.circuit, path
+
+
+def _apply_node_shunts(circuit, td: TranslatedDeck) -> None:
+    """NGSPICE ``.options cshunt``/``rshunt``: an element on EVERY node.
+
+    These are circuit elements, not solver knobs — NGSPICE stamps a
+    capacitor (cshunt) and/or resistor (rshunt) from every voltage node to
+    ground at parse time, so a deck that sets them describes a DIFFERENT
+    circuit than its device cards alone. Dropping them silently was worth
+    14 % on Song_DACFC's falling slew: the deck's ``cshunt=1e-14`` is
+    comparable to the device capacitance on the amplifier's internal nodes,
+    and NGSPICE re-run WITHOUT it lands on PyCircuitSim's number (sr_fall
+    0.320 -> 0.276 vs py 0.282). Applied after subckt flattening so
+    internal nodes get their shunts exactly as in NGSPICE. The one
+    remaining deviation: NGSPICE also shunts OSDI-internal device nodes,
+    which PyCMG condenses — those sit behind mOhm-kOhm terminal
+    resistances, so 10 fF there is invisible at deck timescales.
+    """
+    from pycircuitsim.models.passive import (                   # noqa: PLC0415
+        Capacitor, Resistor)
+
+    cshunt = td.options.cshunt
+    rshunt = td.options.rshunt
+    if not cshunt and not rshunt:
+        return
+    for node in list(circuit.get_nodes()):
+        if cshunt:
+            circuit.add_component(
+                Capacitor(f"C_cshunt_{node}", [node, "0"], float(cshunt)))
+        if rshunt:
+            circuit.add_component(
+                Resistor(f"R_rshunt_{node}", [node, "0"], float(rshunt)))
 
 
 def _fail(meta: Dict[str, Any], message: str) -> "SimFailure":
