@@ -14,15 +14,15 @@ This file carries **two axes**, and they are easy to confuse:
 
 Per-tree design detail: `designs_<tech>/RESULTS.md`.
 
-**Which numbers are current** (last measured 2026-08-13, V7.5.9):
+**Which numbers are current** (last measured 2026-08-13, V7.5.10):
 
 | section | what it holds | dated? |
 |---|---|---|
 | [The curated core basket](#the-curated-core-basket-v759) | the 12 designs, why each is here, what pruning cost | **current** |
-| [The gap between PyCircuitSim and NGSPICE](#the-gap-between-pycircuitsim-and-ngspice-v759-all-five-techs) | 203/255 decks, every disagreement, where the runtime goes | **current** |
+| [The gap between PyCircuitSim and NGSPICE](#the-gap-between-pycircuitsim-and-ngspice-v7510-all-five-techs) | 215/255 decks, every disagreement, where the runtime goes | **current** |
 | [Audit validation](#audit-validation) · [Fully-passing designs](#fully-passing-designs-per-tech) · [Gates passed](#gates-passed-per-design-and-tech) · [Amplifier medians](#amplifier-medians-per-tech) | the design audit over the current basket | **current** |
 | [Corrections made in this audit](#corrections-made-in-this-audit) | what the audit changed in the designs themselves | cumulative record |
-| everything between the gap section and Audit validation | V7.5.1–V7.5.5 pilots and campaigns | **historical** — superseded, kept for the record of what each fix bought |
+| everything between the gap section and Audit validation | the V7.5.9 gap plus the V7.5.1–V7.5.5 pilots | **historical** — superseded, kept for the record of what each fix bought |
 
 **Denominators changed twice.** `/159`, `/679`, `/795`, 38/38, 17/17, 13/13 are
 the original corpus; `/75`, `/375`, 18/18 are V7.5.6; `/51`, `/255`, 12/12 are
@@ -140,19 +140,19 @@ pre-prune value.
 |---|---|--:|---|
 | amplifier | `Fan_SMC_Pin_3` | 24 | sole source of NFIN=7 and L=67; carries the corpus's only AC miss (`tb_cmrr`, reference-side) |
 | amplifier | `Qu2017_AZC_Pin_3` | 25 | the NGSPICE Newton-basin case; the only deck that exercises the `tb_tran_altns` alternate-seed fallback |
-| amplifier | `Leung_NMCNR_Pin_3` | 24 | **the deepest transient residual in the basket** — 0–1/11 at 29–30 % slew on four techs, 11/11 on tsmc5 |
-| amplifier | `Peng_IAC_Pin_3` | 34 | 27 nodes; the AC-pathological design that forced the `pm_true` wrap-aware rework |
-| amplifier | `Song_DACFC_Pin_3` | 37 | largest amplifier; the open multi-OP basin case, and the only design whose basin split reaches the **AC** benches (tsmc12 `tb_gain` 0/1) |
+| amplifier | `Leung_NMCNR_Pin_3` | 24 | **the deepest transient residual in the basket** — its slew-bench bias is a dynamically UNSTABLE equilibrium (two real RHP poles) on four techs; 11/11 on tsmc5, whose RHP pair is 25× too slow to matter (V7.5.10 characterization) |
+| amplifier | `Peng_IAC_Pin_3` | 34 | 27 nodes; the AC-pathological design that forced the `pm_true` wrap-aware rework; V7.5.10 measured its fall transit chaotic — a 0.8 µV start change moves `sr_fall` 3.5 % |
+| amplifier | `Song_DACFC_Pin_3` | 37 | largest amplifier; the former multi-OP basin case whose split reached the **AC** benches — CLOSED in V7.5.10 by NGSPICE-exact `.nodeset` semantics |
 | ldo | `ldo_1` | 9 | the `tb_load` anchor; sole carrier of the two shortest L bins (6, 8 nm) |
 | ldo | `ldo_2` | 20 | the hardest LDO — carries every LDO miss class (`lr`/`lr_pp`, `lnrmax`, load-step excursions) |
 | sensing_front_end | `ptat_1` | 6 | the V7.5.1 subthreshold-floor regression anchor (5/13 → 13/13) |
 | sensing_front_end | `ptat_4` | 8 | widest sensor geometry (8 cells, 3 Vt flavors); `min_slope` miss carrier |
 | sensing_front_end | `front_end_25_6T_schematic` | 6 | the V7.5.4 deep-subthreshold case (m=360/1728 nulvt cores); misses on 4 of 5 techs |
 | voltage_reference | `dual_output_subthreshold_vref` | 7 | the only design carrying **all six** Vt flavors; sole `voltage_reference` metric class |
-| charge_pump | `chargepump` | 41 | the only switching circuit; the 10 ps current-reversal spike that drove the whole refine-controller line of work |
+| charge_pump | `chargepump` | 41 | the only switching circuit; the 10 ps current-reversal spike that drove the whole refine-controller line of work, and whose missed-corner float dust drove V7.5.10's CKTminBreak fix |
 
 
-## The gap between PyCircuitSim and NGSPICE (V7.5.9, all five techs)
+## The gap between PyCircuitSim and NGSPICE (V7.5.10, all five techs)
 
 **This is the current number. Everything in the sections after it is older.**
 Both simulators run the identical BSIM-CMG (LEVEL=72) OSDI model; both are
@@ -160,8 +160,130 @@ scored by one measurement engine, so a reported difference cannot be a
 difference in `.meas` semantics. Transients run refine-on (the scored mode
 since V7.5.5); stride policy unchanged (amplifier `tb_dc` @25, `tb_tran` @4,
 charge pump @20 refine+trap, everything else full grid). Evidence:
-`pycircuitsim_bench_results/v759_basket_tsmc{5,6,7,12,16}/`, untracked, on
-disk.
+`pycircuitsim_bench_results/v7510_basket_tsmc{5,6,7,12,16}/`, untracked, on
+disk (`v7510_mid_*` is the same pass before the cshunt fix — the ablation).
+
+V7.5.10 closed the three items V7.5.9 left open (CHANGELOG §V7.5.10): the
+`Song_DACFC` basin split (NGSPICE-exact `.nodeset` clamp-then-release
+semantics), the charge pump's off-tsmc5 spike (float dust in breakpoint
+matching, fixed with NGSPICE's CKTminBreak), and the missing
+`.options cshunt`/`rshunt` node shunts (circuit elements 85 decks set and the
+translator silently dropped).
+
+| tech | AC | dc_source | dc_temp | transient | total |
+|---|:--:|:--:|:--:|:--:|:--:|
+| TSMC5 | 27/28 | 5/6 | 7/9 | 4/8 | **43/51** |
+| TSMC6 | 28/28 | 3/6 | 6/9 | 5/8 | 42/51 |
+| TSMC7 | 28/28 | 3/6 | 6/9 | 5/8 | 42/51 |
+| TSMC12 | 28/28 | 5/6 | 7/9 | 3/8 | 43/51 |
+| TSMC16 | 28/28 | 6/6 | 8/9 | 3/8 | **45/51** |
+| **all** | **139/140** | **22/30** | **34/45** | **20/40** | **215/255 (84.3 %)** |
+
+A deck counts only when every metric both simulators produced agrees inside
+the 2 % gate and none is missing. TSMC6 and TSMC7 are verdict-identical on
+all 51 decks, as they must be. Against V7.5.9's 203/255: 13 decks flipped to
+fully-agreeing, one flipped out (`Peng_IAC/tb_tran` on tsmc5 — see the
+trajectory-sensitivity measurement below), and seven more improved without
+reaching full agreement.
+
+Three numbers that qualify the table:
+
+* **Operating-point agreement, which the metric columns can hide** (V7.5.4's
+  lesson): over 253 decks the worst node error is **median 3.5 µV, p90
+  0.21 mV**. V7.5.9's single 0.495 V outlier (`Song_DACFC`'s basin) is gone —
+  the worst is now the charge pump's pre-transient float of a node with no DC
+  path, which has never been scored.
+* **Engine control: 255/255 decks clean.** Our reader of NGSPICE's own sweep
+  reproduces the `.meas` values NGSPICE printed from that same run — so the
+  disagreements below are simulator differences, not measurement differences.
+* **Cost: 1.15 CPU-h for the five techs, 13.7× NGSPICE's 0.08 CPU-h** — down
+  from 1.77 CPU-h at V7.5.9, almost all of it the `.nodeset` clamp making the
+  hard DC starts cheap. The transient family is now 77 % of the pass.
+
+### Where the 40 disagreements are
+
+**AC: 139/140.** The single miss is `Fan_SMC/tb_cmrr` (tsmc5, 2.3 %), the
+**reference side** — a −CMRR residual behind a 108 dB loop at 9.7 dB/mV OP
+sensitivity, where NGSPICE's number is a default-tolerance early stop from the
+deck's own `.nodeset`; probed over six seeds it lands on our value for four of
+them including no seed at all, and its own tolerance ladder converges there at
+reltol ≤ 3e-4. `Song_DACFC`'s three tsmc12 AC misses were the `.nodeset`
+semantics and are fixed (op_delta 0.457 V → 4e-7 V).
+
+**Transient: 20/40**, and the misses now split into three characterized
+classes, each with its own measurement:
+
+| design | verdicts | worst residual | reading |
+|---|---|--:|---|
+| `Leung_NMCNR` | 11/11 tsmc5, 0–3/11 elsewhere | 25.2 % | **an unstable equilibrium, not a slew error**: the deck's pulse-baseline bias has two real RHP poles on tsmc6/7/12/16 (tsmc12: τ = 4.4 ns and 228 ns growth), so NGSPICE departs the operating point from t=0 with no stimulus (its `v_pre` sits 1.3 mV above its own DC at default tolerance, 6.6 mV at reltol=1e-5) while PyCircuitSim sits on the fixed point; its `sr_rise` moves **+17 % between NGSPICE's own default and reltol=1e-4 runs**. tsmc5's RHP pair (τ = 5.5 µs, f = 604 kHz) is 25× slower than the bench window — which is exactly why tsmc5 agrees 11/11. Trajectories leaving a saddle cannot be compared at 2 % |
+| `Song_DACFC` | 8/11 all five techs | 4.4 % | only the fall triple (`sr_fall`/`t_fall`/`t_fall_`) misses, at 2.1–4.4 %; **our value is NGSPICE's own converged one** — with the cshunt fix PyCircuitSim reads 0.3342 on tsmc12 against NGSPICE's 0.3348 at reltol ≤ 1e-4 (0.3369 at tmax=200 ps); the scored gap is to its default-tolerance 0.3201 |
+| `Peng_IAC` | 11/11 tsmc6/7/12, 8/11 tsmc5/16 | 6.1 % | fall-triple crossings; the fall transit is **measured chaotic**: two starts differing by 0.8 µV worst-node (nodeset-as-guess vs clamp, identical march) move `sr_fall` by 3.5 % across the gate |
+| `Qu2017_AZC` | 11/11 tsmc5, 8/11 elsewhere | 4.6 % | shallow fall/rise-triple crossings, same class |
+| `Fan_SMC` | 11/11 except tsmc5 5/11 | 5.4 % | same class; note tsmc6/7/16 went 8/11 → 11/11 on the cshunt fix alone |
+| `chargepump` | **6/6 everywhere but tsmc12's 5/6** | `up_imax` 2.1 % | the 10 ps reversal spike is CLOSED (`up_imin` 45.6 % → 1.4 % on tsmc16, 34.5 % → 1.1 % on tsmc12); the one residual is a maximum sitting 0.1 % over the gate, and it pre-dates the fix (2.15 % before) |
+| `ldo_1` / `ldo_2` | 5/5 and 2–3/5 | `overshoot` 72 % | `ldo_1` is fully agreeing on all five techs since the 1 fF cshunt landed; `ldo_2`'s load-step excursions remain the V7.5.5-characterized reference-tolerance class (NGSPICE's own reltol ladder moves them ±40 % and brackets our values) |
+
+**dc_temp 34/45**, unchanged, and all 11 misses are still the same two
+metrics: `min_slope_25_75c` and `max_step_frac_25_75c`. V7.5.4 characterized
+this pair as a **reference-noise statistic, not a solver gap** — a minimum
+over 100 adjacent steps of a 0.5 °C staircase whose steps are ~225 µV, so one
+bad reference sample sets the whole number; at reltol=1e-5 NGSPICE's own
+`min_slope` goes *negative*. Read the median slope instead (it agrees to
+0.5 %), and do not chase it in the solver.
+
+**dc_source 22/30**, unchanged: `lr`/`lr_pp` on `ldo_2` (41–98 %) and `ldo_1`
+(2.4 %, tsmc6/7), and `lnrmax`/`lnr_ppmax` on `ldo_2` (3.4 %) — all the
+peak-to-peak-of-a-flat-curve cancellation class, where `lr_pp` is a sub-mV
+difference of two ~0.48 V endpoints that agree to 2e-5 each.
+
+**Summary of what is actually open: nothing actionable in the simulator.**
+Every remaining miss is characterized with a reference-side or
+sensitivity measurement: the `min_slope` staircase statistic, the `lr_pp`
+cancellation class, the `ldo_2` excursions, Fan_SMC's cmrr, Leung's RHP
+saddle, and the shallow fall-triple scatter whose two anchor measurements
+(Song: we match NGSPICE-converged, not NGSPICE-default; Peng: 0.8 µV of
+start dust moves the metric 3.5 %) say the 2 % gate is below the decks' own
+reproducibility floor for that metric family.
+
+### Where the runtime goes
+
+Cost and agreement per deck kind, from the same pass. The AC and DC families
+are now nearly free — **three transient deck kinds are 8 of 51 decks per tech
+and 77 % of the time**.
+
+| deck | family | per tech | agreeing | s/tech | share |
+|---|---|--:|:--:|--:|--:|
+| `amplifier/tb_tran` | tran | 5 | 9/25 | 252 | 30.3 % |
+| `ldo/tb_tran` | tran | 2 | 7/10 | 239 | 28.7 % |
+| `charge_pump/tb_tran` | tran | 1 | 4/5 | 147 | 17.7 % |
+| `amplifier/tb_dc` | dc_temp | 5 | 25/25 | 77 | 9.2 % |
+| `amplifier/tb_cmrr` | ac | 5 | 24/25 | 17 | 2.0 % |
+| `amplifier/tb_psrrn` | ac | 5 | 25/25 | 17 | 2.0 % |
+| `amplifier/tb_gain` | ac | 5 | 25/25 | 16 | 2.0 % |
+| `amplifier/tb_psrrp` | ac | 5 | 25/25 | 16 | 2.0 % |
+| `sensing_front_end/tb_dc` | dc_temp | 3 | 4/15 | 12 | 1.5 % |
+| `ldo/tb_load` | dc_source | 2 | 4/10 | 6 | 0.8 % |
+| `ldo/tb_line_min` | dc_source | 2 | 10/10 | 6 | 0.7 % |
+| `ldo/tb_line_max` | dc_source | 2 | 8/10 | 5 | 0.7 % |
+| `ldo/tb_loop_max` | ac | 2 | 10/10 | 5 | 0.6 % |
+| `voltage_reference/tb_dc` | dc_temp | 1 | 5/5 | 4 | 0.5 % |
+| `ldo/tb_psrr_max` | ac | 2 | 10/10 | 4 | 0.5 % |
+| `ldo/tb_loop_min` | ac | 2 | 10/10 | 4 | 0.5 % |
+| `ldo/tb_psrr_min` | ac | 2 | 10/10 | 4 | 0.5 % |
+| **total** | | **51** | **215/255** | **832** | |
+
+Single most expensive design: `ldo_2`, almost all of it `tb_tran`.
+`amplifier/tb_dc` remains the one expensive saturated deck kind (25/25, 9 %
+of the time), kept as the regression gate for the V7.5.1 fix (it read 0/15
+before it). The remaining levers are unchanged from V7.5.9: **stride policy**
+and the **transient refine cost**, not deck count.
+
+
+## The V7.5.9 gap (superseded by V7.5.10 above)
+
+The same basket, same stride policy, at V7.5.9 HEAD — the baseline the
+V7.5.10 fixes are measured against. Per-deck movement: CHANGELOG §V7.5.10.
+Evidence: `pycircuitsim_bench_results/v759_basket_tsmc{5,6,7,12,16}/`.
 
 | tech | AC | dc_source | dc_temp | transient | total |
 |---|:--:|:--:|:--:|:--:|:--:|
@@ -172,106 +294,12 @@ disk.
 | TSMC16 | 28/28 | 6/6 | 8/9 | 1/8 | **43/51** |
 | **all** | **136/140** | **22/30** | **34/45** | **11/40** | **203/255 (79.6 %)** |
 
-A deck counts only when every metric both simulators produced agrees inside
-the 2 % gate and none is missing. TSMC6 and TSMC7 are verdict-identical and
-miss-magnitude-identical on all 51 decks, as they must be.
-
-Three numbers that qualify the table:
-
-* **Operating-point agreement, which the metric columns can hide** (V7.5.4's
-  lesson): over 253 decks the worst node error is **median 4.9 µV, p90
-  0.26 mV**. The single 0.495 V outlier is `Song_DACFC` on tsmc6/7/12/16 — a
-  genuine multi-OP basin difference, flagged below, not a convergence failure.
-* **Engine control: 255/255 decks clean.** Our reader of NGSPICE's own sweep
-  reproduces the `.meas` values NGSPICE printed from that same run — so the
-  disagreements below are simulator differences, not measurement differences.
-* **Cost: 1.77 CPU-h for the five techs, 13× NGSPICE's 0.13 CPU-h.** Two
-  thirds of that is the transient family (66.6 %), and `ldo_2/tb_tran` alone
-  is a quarter of the whole pass.
-
-### Where the 52 disagreements are
-
-**AC is essentially exact: 136/140.** The four misses are two known cases.
-`Fan_SMC/tb_cmrr` (tsmc5, 2.3 %) is the **reference side** — a −CMRR residual
-behind a 108 dB loop at 9.7 dB/mV OP sensitivity, where NGSPICE's number is a
-default-tolerance early stop from the deck's own `.nodeset`; probed over six
-seeds it lands on our value for four of them including no seed at all, and its
-own tolerance ladder converges there at reltol ≤ 3e-4. The other three are
-`Song_DACFC` on tsmc12 (`tb_gain` 0/1 with 7 metrics unmeasured, `tb_psrrn`,
-`tb_psrrp`) — the same multi-OP basin that shows up in that design's `op_delta`,
-now reaching the AC benches. **This is the one genuinely open item in the
-table and the first thing to look at next.**
-
-**Transient is the weak family: 11/40**, and every miss is a slew or
-edge-timing metric (`sr_fall`/`sr_rise`/`t_fall`/`t_rise` and their
-`_edge` variants). Depth, per design, worst over techs:
-
-| design | verdicts | worst residual | reading |
-|---|---|--:|---|
-| `Leung_NMCNR` | 11/11 tsmc5, 0–1/11 elsewhere | 30.0 % | slew-limited class-A; the deepest and most tech-dependent residual in the corpus |
-| `Song_DACFC` | 8/11 tsmc5, 3/11 elsewhere | 15.4 % + `v_pre` 83 % | the `v_pre` figure is the multi-OP basin, not a slew error |
-| `Qu2017_AZC` | 8/11, 5/11 tsmc16 | 12.7 % | |
-| `Fan_SMC` | 8/11, 5/11 tsmc5 | 6.6 % | |
-| `Peng_IAC` | 8/11, 5/11 tsmc16 | 6.6 % | |
-| `chargepump` | 5/6 tsmc6/7, 3/6 tsmc12, 4/6 tsmc16, **6/6 tsmc5** | `up_imin` 45.6 % | the 10 ps reversal spike; the tsmc5 tuning does not transfer to the other nodes |
-| `ldo_1` / `ldo_2` | 3/5 and 2–3/5 | `overshoot` 41 % | load-step excursions; V7.5.5 probed NGSPICE's own reltol ladder moving these ±40 % and bracketing our values |
-
-**dc_temp 34/45**, and all 11 misses are the same two metrics:
-`min_slope_25_75c` and `max_step_frac_25_75c`. V7.5.4 characterized this pair
-as a **reference-noise statistic, not a solver gap** — a minimum over 100
-adjacent steps of a 0.5 °C staircase whose steps are ~225 µV, so one bad
-reference sample sets the whole number; at reltol=1e-5 NGSPICE's own
-`min_slope` goes *negative*. Read the median slope instead (it agrees to
-0.5 %), and do not chase it in the solver.
-
-**dc_source 22/30**: `lr`/`lr_pp` on `ldo_2` (39–98 %) and `ldo_1` (2.0 %), and
-`lnrmax`/`lnr_ppmax` on `ldo_2` (3.4 %) — all the peak-to-peak-of-a-flat-curve
-cancellation class, where `lr_pp` is a sub-mV difference of two ~0.48 V
-endpoints that agree to 2e-5 each.
-
-**Summary of what is actually open:** `Song_DACFC`'s operating-point basin
-(now visible in AC), the transient slew family, and the charge pump's spike
-away from tsmc5. Everything else in the table is a characterized
-reference-side or cancellation artifact with its own diagnosis above.
-
-### Where the runtime goes
-
-Cost and agreement per deck kind, from the same pass. Read it before
-proposing to make the evaluation faster by removing decks: **the four AC
-amplifier benches are 20 of the 51 decks per tech and 14 % of the time**,
-while three transient deck kinds are 8 decks and **67 %**.
-
-| deck | family | per tech | agreeing | s/tech | share |
-|---|---|--:|:--:|--:|--:|
-| `amplifier/tb_tran` | tran | 5 | 4/25 | 406 | 31.8 % |
-| `ldo/tb_tran` | tran | 2 | 6/10 | 289 | 22.6 % |
-| `charge_pump/tb_tran` | tran | 1 | 1/5 | 156 | 12.2 % |
-| `amplifier/tb_dc` | dc_temp | 5 | 25/25 | 145 | 11.3 % |
-| `amplifier/tb_gain` | ac | 5 | 24/25 | 51 | 4.0 % |
-| `amplifier/tb_cmrr` | ac | 5 | 24/25 | 46 | 3.6 % |
-| `amplifier/tb_psrrp` | ac | 5 | 24/25 | 41 | 3.2 % |
-| `amplifier/tb_psrrn` | ac | 5 | 24/25 | 40 | 3.1 % |
-| `sensing_front_end/tb_dc` | dc_temp | 3 | 4/15 | 15 | 1.2 % |
-| `ldo/tb_line_max` | dc_source | 2 | 8/10 | 15 | 1.2 % |
-| `ldo/tb_load` | dc_source | 2 | 4/10 | 15 | 1.2 % |
-| `ldo/tb_line_min` | dc_source | 2 | 10/10 | 13 | 1.0 % |
-| `ldo/tb_loop_max` | ac | 2 | 10/10 | 11 | 0.9 % |
-| `ldo/tb_loop_min` | ac | 2 | 10/10 | 11 | 0.8 % |
-| `ldo/tb_psrr_min` | ac | 2 | 10/10 | 10 | 0.8 % |
-| `ldo/tb_psrr_max` | ac | 2 | 10/10 | 10 | 0.8 % |
-| `voltage_reference/tb_dc` | dc_temp | 1 | 5/5 | 5 | 0.4 % |
-| **total** | | **51** | **203/255** | **1277** | |
-
-Single most expensive design: `ldo_2` at 24.7 % of the pass, almost all of it
-`tb_tran`. `amplifier/tb_dc` is the one expensive deck kind that is fully
-saturated (25/25) — it is 11 % of the time for a family that has agreed
-everywhere since V7.5.1, and it is kept because it is the regression gate for
-that fix (it read 0/15 before it).
-
-The remaining levers, in order of size, are **stride policy** and the
-**transient refine cost**, not deck count. V7.5.9 tried the deck-count lever
-and measured it: dropping the saturated AC benches removes 23 decks for 5 % of
-the runtime (CHANGELOG §V7.5.9 dead ends).
+Its three open items — `Song_DACFC`'s basin reaching AC (op_delta 0.30–0.50 V
+on four techs, tsmc12 `tb_gain` 0/1 with dcgain −37.7 dB against +111.8 dB),
+the transient slew family at 29–30 % worst (`Leung_NMCNR`), and the charge
+pump's `up_imin` at 45.6 % off-tsmc5 — are each fixed or characterized in the
+V7.5.10 section above. Cost was 1.77 CPU-h (13× NGSPICE), two thirds of it
+transient.
 
 
 ## PyCircuitSim versus NGSPICE (V7.5.1–V7.5.3 pilot — historical)

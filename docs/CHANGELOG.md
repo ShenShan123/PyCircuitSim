@@ -8,6 +8,142 @@ pruned; the full original text lives in git history.)
 
 ---
 
+## V7.5.10 — the V7.5.9 open list closed: nodeset semantics, breakpoint float dust, the dropped node shunts (branch `feat/analoggym-migration`, 2026-08-13)
+
+**Goal: fix the three failure classes the V7.5.9 gap table left open** —
+`Song_DACFC`'s operating-point basin (reaching the AC benches on tsmc12), the
+transient slew family (worst 29–30 % on `Leung_NMCNR`), and the charge pump's
+reversal spike off-tsmc5 (45.6 %). Two turned out to be one-line-diagnosis
+simulator/harness defects; the third is real physics that no simulator pair
+can score at 2 %, now proven with poles. Headline: **203/255 → 215/255
+(84.3 %)** at 1.15 CPU-h (was 1.77). Same denominators as V7.5.9 — directly
+comparable. Evidence: `v7510_basket_*` (final), `v7510_mid_*` (before the
+cshunt fix — the ablation of item 3).
+
+### 1. `.nodeset` is clamp-then-release, not an initial guess
+
+The bench passed the deck's `.nodeset` values to `DCSolver` as the Newton
+initial guess. NGSPICE does something categorically different (spice3
+MODEINITFIX): it holds each nodeset node with a **1 S Thevenin clamp**
+(diag += 1 S, rhs += value·1 S), converges the clamped system, releases, and
+re-converges. On `Song_DACFC` (37 MOS, the corpus's known multi-OP design)
+the difference is the whole game: seeded-as-guess Newton converges 0.457 V
+from NGSPICE's operating point into a dead-amplifier root (dcgain −37.7 dB
+vs +111.8 dB, tsmc12), while clamp-then-release reproduces NGSPICE to 4e-7 V
+— and a no-seed cold start ALSO finds the amplifying root, so the deck's own
+hint was actively harmful under the wrong semantics.
+
+`DCSolver` gains an opt-in `nodesets` parameter (default None — every
+existing caller bit-identical; the clamp is temporary Norton components, so
+limiting/damping/the gmin ladder all apply to the clamped solve unchanged).
+The bench passes it on the first solve of each analysis only; continuation
+points keep pure previous-point seeding, exactly as NGSPICE applies nodesets
+to the first CKTop and never again. Measured: tsmc12 `tb_gain`
+0/1(+7 unmeasured) → 8/8, `tb_psrrp`/`tb_psrrn` → 1/1, `tb_tran` 3/11 → 8/11
+on tsmc6/7/12/16 with op_delta 0.30–0.50 V → sub-µV; the campaign got 35 %
+cheaper (the clamp makes the hard amplifier DC starts converge in ~1 s); the
+op_delta p90 tightened 0.26 → 0.21 mV.
+
+### 2. Breakpoints must be tolerance-matched (NGSPICE's CKTminBreak)
+
+The refine march compared the accumulated output-grid time against the
+analytic PULSE corner time (`td + k·per + corner`) with exact `<=`. The two
+compute the same nominal instant ~1 ulp apart (~7e-24 s at 40 ns), so on the
+charge pump the march **missed the falling-edge corner**, skipped the BE
+restart and the V7.5.5 corner guard, and crossed the whole 10 ps source edge
+in one accepted 8.6 ps piece (r_v = 1.22 sits inside NGSPICE's 0.9h accept
+band) — fabricating a spurious `up_imin` 46 % deep. A second dust defect
+compounded it: the same corner computed from two different sources' float
+paths (td=0 vs td=10n) landed as a near-duplicate breakpoint pair ~1 ulp
+apart, collapsing the corner-restart gap and the guard window to attoseconds
+— the guard never engaged exactly where the spike lives. The march trace
+(`PYCIRCUITSIM_REFINE_TRACE`) shows both directly.
+
+Fix is NGSPICE's own concept: `CKTminBreak = 5e-5·dt` — corners closer than
+it coalesce in `_collect_breakpoints`, and the march's cursor-advance and
+on-breakpoint tests match with the same tolerance. Refine-only; flags-off
+transient untouched. Measured (`charge_pump/tb_tran`, stride 20, refine+trap):
+tsmc16 4/6 → **6/6** (`up_imin` 45.6 % → 1.4 %), tsmc12 3/6 → 5/6 (34.5 % →
+1.1 %), tsmc7 5/6 → **6/6**, tsmc5 6/6 unchanged. The one residual
+(`up_imax` tsmc12, 2.10 %) pre-dates the fix (2.15 %) — a maximum 0.1 % over
+the gate. **The V7.5.3 claim "the tsmc5 tuning does not transfer" is
+retracted: the controller was fine; the corners were being missed by float
+dust, deterministically per corner value.**
+
+### 3. `.options cshunt`/`rshunt` are circuit elements, and 85 decks set them
+
+NGSPICE stamps a capacitor (`cshunt`) / resistor (`rshunt`) from **every**
+node to ground at parse time. The translator recorded both and applied
+neither — so on the 50 amplifier tran decks (`cshunt=1e-14`), 35 more at
+1e-15, and 3 with `rshunt=1e10`, PyCircuitSim was simulating a different
+circuit. 10 fF is comparable to the device capacitance on the amplifiers'
+internal nodes and is first-order for their fall transits: NGSPICE re-run
+with cshunt stripped moves `Song_DACFC` tsmc12 `sr_fall` 0.320 → 0.276,
+landing on PyCircuitSim's shuntless 0.282. `build_circuit` now adds the
+shunts to every flattened node (OSDI-internal nodes stay condensed — behind
+mΩ–kΩ terminal resistances, invisible at deck timescales). Measured on top
+of items 1–2 (`v7510_mid_*` → `v7510_basket_*`): `Fan_SMC/tb_tran` 8/11 →
+**11/11** on tsmc6/7/16, `Peng_IAC/tb_tran` 8/11 → **11/11** on
+tsmc6/7/12, `Qu2017_AZC` and `Leung` +3 on tsmc16, `ldo_1/tb_tran` → **5/5
+on all five techs**, and `Song_DACFC`'s fall now reads 0.3342 — within 0.4 %
+of NGSPICE's own tolerance-converged 0.3348, i.e. the residual 4.2 % gap is
+to the reference's *default* run, not to its answer.
+
+### The two characterizations (measured, not asserted)
+
+* **`Leung_NMCNR`'s slew bench bias is a dynamically unstable equilibrium.**
+  Linearizing `G + sC` about the deck's pulse-baseline OP (the AC stamps,
+  generalized eigenvalues): **two real RHP poles on tsmc6/7/12/16** (tsmc12
+  with shunts: τ = 4.4 ns and 228 ns growth) against a slow complex pair on
+  tsmc5 (τ = 5.5 µs at 604 kHz — 25× the bench window, which is exactly why
+  tsmc5 agrees 11/11). NGSPICE's trajectory departs the OP from t = 0 with no
+  stimulus (net043 swings 0.38 V inside the first µs; `v_pre` sits 1.3 mV
+  above its own DC at default tolerance and 6.6 mV at reltol=1e-5) while
+  PyCircuitSim sits on the fixed point it converged to; a 1 mV kick decays
+  1000× in 50 ns and then grows on the measured τ ≈ 230 ns mode. NGSPICE
+  disagrees with itself by +17 % on `sr_rise` between default and
+  reltol=1e-4. Trajectories leaving a saddle cannot be compared at 2 %;
+  the deck stays in the basket as the carrier of exactly this physics.
+* **The shallow fall-triple scatter is below the decks' reproducibility
+  floor.** `Peng_IAC` tsmc5: two transient starts differing by **0.8 µV**
+  worst-node (nodeset-as-guess vs clamp, identical march code — the bisect
+  that proved the breakpoint fix innocent) move `sr_fall` by 3.5 % across
+  the 2 % gate. This is the one deck the sprint moved down (11/11 → 8/11);
+  it is start-dust luck on a chaotic fall transit, and it is not chased.
+
+### Dead ends and notes, so they are not retried
+
+* NGSPICE's control-mode `option cshunt=0` does **not** override a deck's
+  `.options cshunt` — shunts stamp at circuit parse; probing requires editing
+  the deck (measured: identical results to 7 digits with the option "set").
+* Leung is NOT rescued by finer strides, method changes, or refine flavors —
+  flags-off and refine-on read identical residuals (measured V7.5.5, same at
+  V7.5.10); the saddle, not the march, is the mechanism.
+* `Song_DACFC`'s fall was NOT the input-edge resolution: both simulators take
+  ~1 point inside the 1 ns input edge; the discrepancy was the missing
+  10 fF shunts on the ringing internal nodes (`net049` swings 0.6 V through
+  a metastable transit during the output plateau, in both simulators).
+
+### The scoreboard
+
+| tech | AC | dc_source | dc_temp | transient | total |
+|---|:--:|:--:|:--:|:--:|:--:|
+| TSMC5 | 27/28 | 5/6 | 7/9 | 4/8 | **43/51** |
+| TSMC6 | 28/28 | 3/6 | 6/9 | 5/8 | 42/51 |
+| TSMC7 | 28/28 | 3/6 | 6/9 | 5/8 | 42/51 |
+| TSMC12 | 28/28 | 5/6 | 7/9 | 3/8 | 43/51 |
+| TSMC16 | 28/28 | 6/6 | 8/9 | 3/8 | **45/51** |
+| **all** | **139/140** | **22/30** | **34/45** | **20/40** | **215/255 (84.3 %)** |
+
+TSMC6 ≡ TSMC7 verdict-identical on all 51 decks, as the relabelled-tech
+control demands. AC's single miss and every dc miss are the previously
+characterized reference-side/cancellation classes, unchanged. What remains in
+the transient column is Leung's saddle (10 metric-slots), `ldo_2`'s
+characterized excursions, one 2.1 % charge-pump maximum, and the shallow
+fall-triple scatter — all carrying their own measurement. The quick-sanity
+gates (`verify_bsimcmg_op`, `verify_subckt`) pass; no gate reads the changed
+paths (nodesets default off, refine is bench-only, shunts are bench-only).
+
 ## V7.5.9 — the evaluation set cut to its discriminating core, on measurements (branch `feat/analoggym-migration`, 2026-08-13)
 
 **Goal: make the accuracy evaluation cheap enough to run every time, without

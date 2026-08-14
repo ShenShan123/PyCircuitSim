@@ -121,6 +121,21 @@ was reverted — is `docs/CHANGELOG.md` §V7.5.0–V7.5.7. What survives as a ru
   step-control semantics. `PYCIRCUITSIM_REFINE_TRACE` dumps a march trace.
   **ITL4 iteration-count control is measured dead on this corpus** (damped NR
   never exceeds 6 iterations) — do not re-derive it.
+- **`.nodeset` is clamp-then-release, never an initial guess** (V7.5.10):
+  `DCSolver(nodesets=...)` implements spice3 MODEINITFIX (1 S Thevenin clamp,
+  converge, release, re-converge). Seeding Newton with the raw values lands
+  Song_DACFC 0.457 V from NGSPICE's OP in a dead-amplifier basin; the clamp
+  reproduces it to 4e-7 V. Default None — non-bench callers bit-identical.
+- **Never exact-compare an accumulated time to an analytic time** (V7.5.10):
+  grid times are sums, breakpoint corners are `td + k·per + corner`; the same
+  instant differs by ~1 ulp, and an exact `<=` silently skips the corner
+  restart AND the corner guard. Breakpoints coalesce and match with
+  NGSPICE's CKTminBreak (5e-5·dt).
+- **`.options cshunt`/`rshunt` are circuit elements, not solver knobs**
+  (V7.5.10): NGSPICE shunts EVERY node at parse time; 85 basket decks set
+  them, and dropping them was worth 14 % on an amplifier fall slew. The
+  bench applies them post-flattening in `build_circuit`. Anything a deck
+  option does to the *circuit* must be reproduced, not recorded-and-ignored.
 - **The AnalogGym corpus IS the tree** — `campaign.corpus()` enumerates
   whatever `examples/complex_circuits/designs_tsmc*/` holds; there is no
   selection flag. Curating the basket means deleting design directories and
