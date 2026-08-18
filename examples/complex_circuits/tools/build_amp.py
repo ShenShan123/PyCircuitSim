@@ -26,7 +26,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from pycmg_lib import (MODELS_FILE, ModelLibrary, OSDI_PATH, TECH, VDD,
                        snap_l, snap_nfin)
@@ -237,7 +237,7 @@ TB_TRAN = _HEADER + """\
 * The transient op must settle at the pulse BASELINE, not the common mode:
 * seeding vout3 at VCM makes the pre-edge interval a slew event of its own,
 * which slew-marginal designs do not survive.
-.nodeset V(vout3)={val0}
+.nodeset V(vout3)={nodeset}
 
 VVISR visr 0 pulse({val0} {val1} {t_delay} {t_edge} {t_edge} {t_pw} {t_per})
 xop6 vss vdd vout3 visr vout3 {subckt}
@@ -263,6 +263,14 @@ CLoad6 vout3 0 'PARAM_CLOAD'
 .meas tran sr_fall param='{half_step}/t_fall'
 .end
 """
+
+
+# Alternate nodesets are emergency reference fallbacks, not a second transient
+# test family. Every entry must have dual-engine evidence that the primary seed
+# fails while the alternate seed passes the full transient metric gate.
+ALT_NODESET_DECKS: Set[Tuple[str, str]] = {
+    ("TSMC5", "qu2017_azc_pin_3"),
+}
 
 
 def emit_testbenches(topo: Topology, design: AmpDesign) -> Dict[str, str]:
@@ -317,7 +325,17 @@ def emit_testbenches(topo: Topology, design: AmpDesign) -> Dict[str, str]:
                          + 0.8 * (t_end - t_fall_start)),
         t_low_end=_eng(t_end),
     )
-    return {
+
+    def render_transient(nodeset: float) -> str:
+        """Render the shared pulse bench with an explicit startup seed."""
+        return TB_TRAN.format(
+            **common,
+            **tran_common,
+            val0=_eng(design.vcm - step / 2),
+            nodeset=_eng(nodeset),
+        )
+
+    benches = {
         "tb_gain.cir": TB_GAIN.format(**common, orig="ACDC",
                                       what="open-loop gain bench"),
         "tb_cmrr.cir": TB_CMRR.format(
@@ -333,19 +351,14 @@ def emit_testbenches(topo: Topology, design: AmpDesign) -> Dict[str, str]:
         "tb_dc.cir": TB_DC.format(**common, orig="ACDC",
                                   what="DC / temperature bench"),
         # Primary transient seeds the output at the pulse baseline (the true
-        # pre-edge settle point); the _altns variant keeps the historic
-        # common-mode seed for designs whose transient op only solves from
-        # there.  Runners try the primary first and fall back.
-        "tb_tran.cir": TB_TRAN.format(
-            **common, **tran_common,
-            val0=_eng(design.vcm - step / 2),
-        ),
-        "tb_tran_altns.cir": TB_TRAN.format(
-            **common, **tran_common,
-            val0=_eng(design.vcm - step / 2),
-        ).replace(f".nodeset V(vout3)={_eng(design.vcm - step / 2)}",
-                  f".nodeset V(vout3)={_eng(design.vcm)}"),
+        # pre-edge settle point).
+        "tb_tran.cir": render_transient(design.vcm - step / 2),
     }
+    if deck_key in ALT_NODESET_DECKS:
+        # This validated fallback keeps the historic common-mode seed for the
+        # one design whose NGSPICE transient op rejects the primary seed.
+        benches["tb_tran_altns.cir"] = render_transient(design.vcm)
+    return benches
 
 
 # Per-design transient max-step caps, keyed like the deck rshunt exceptions.
@@ -408,6 +421,10 @@ def write_design(out_dir: Path, topo: Topology, design: AmpDesign) -> Path:
     lib.write(out_dir / MODELS_FILE)
     (out_dir / "netlist.spice").write_text(netlist)
     (out_dir / "design.json").write_text(design.to_json())
-    for name, text in emit_testbenches(topo, design).items():
+    benches = emit_testbenches(topo, design)
+    if "tb_tran_altns.cir" not in benches:
+        # Regeneration must also remove helpers emitted by older tool versions.
+        (out_dir / "tb_tran_altns.cir").unlink(missing_ok=True)
+    for name, text in benches.items():
         (out_dir / name).write_text(text)
     return out_dir

@@ -14,19 +14,19 @@ This file carries **two axes**, and they are easy to confuse:
 
 Per-tree design detail: `designs_<tech>/RESULTS.md`.
 
-**Which numbers are current** (last measured 2026-08-14, V7.5.11):
+**Which numbers are current** (last measured 2026-08-18, V7.5.12):
 
 | section | what it holds | dated? |
 |---|---|---|
 | [The curated core basket](#the-curated-core-basket-v759) | the 12 designs, why each is here, what pruning cost | **current** |
-| [The gap between PyCircuitSim and NGSPICE](#the-gap-between-pycircuitsim-and-ngspice-v7511-all-five-techs) | 242/248 decks, the invalid-example quarantine, the six that still disagree | **current** |
+| [The gap between PyCircuitSim and NGSPICE](#the-gap-between-pycircuitsim-and-ngspice-v7512-all-five-techs) | 242/248 decks, corrected transient OP diagnostics, the invalid-example quarantine, the six that still disagree | **current** |
 | [Audit validation](#audit-validation) · [Fully-passing designs](#fully-passing-designs-per-tech) · [Gates passed](#gates-passed-per-design-and-tech) · [Amplifier medians](#amplifier-medians-per-tech) | the design audit over the current basket | **current** |
 | [Corrections made in this audit](#corrections-made-in-this-audit) | what the audit changed in the designs themselves | cumulative record |
 | everything between the gap section and Audit validation | the V7.5.10 and V7.5.9 gaps plus the V7.5.1–V7.5.5 pilots | **historical** — superseded, kept for the record of what each fix bought |
 
 **Denominators changed three times.** `/159`, `/679`, `/795`, 38/38, 17/17,
 13/13 are the original corpus; `/75`, `/375`, 18/18 are V7.5.6; `/51`, `/255`,
-12/12 are V7.5.9. V7.5.11 keeps the V7.5.9 basket but **scores `/248`, not
+12/12 are V7.5.9. V7.5.12 keeps the V7.5.9 basket but **scores `/248`, not
 `/255`**: seven deck cells are quarantined as invalid test examples and leave
 the denominator rather than being counted as failures. No total crosses those
 boundaries without rescaling.
@@ -143,8 +143,8 @@ pre-prune value.
 |---|---|--:|---|
 | amplifier | `Fan_SMC_Pin_3` | 24 | sole source of NFIN=7 and L=67; carries the corpus's only AC miss (`tb_cmrr`, reference-side) |
 | amplifier | `Qu2017_AZC_Pin_3` | 25 | the NGSPICE Newton-basin case; the only deck that exercises the `tb_tran_altns` alternate-seed fallback |
-| amplifier | `Leung_NMCNR_Pin_3` | 24 | **the deepest transient residual in the basket** — its slew-bench bias is a dynamically UNSTABLE equilibrium (two real RHP poles) on four techs; 11/11 on tsmc5, whose RHP pair is 25× too slow to matter (V7.5.10 characterization) |
-| amplifier | `Peng_IAC_Pin_3` | 34 | 27 nodes; the AC-pathological design that forced the `pm_true` wrap-aware rework; V7.5.10 measured its fall transit chaotic — a 0.8 µV start change moves `sr_fall` 3.5 % |
+| amplifier | `Leung_NMCNR_Pin_3` | 24 | the unstable-equilibrium canary: tsmc16 is quarantined because the two engines depart before the commanded edge, while the other four techs agree 11/11 at the deck timestep |
+| amplifier | `Peng_IAC_Pin_3` | 34 | 27 nodes; the AC-pathological design that forced the `pm_true` wrap-aware rework and a large transient state-space check; all current scored cells close |
 | amplifier | `Song_DACFC_Pin_3` | 37 | largest amplifier; the former multi-OP basin case whose split reached the **AC** benches — CLOSED in V7.5.10 by NGSPICE-exact `.nodeset` semantics |
 | ldo | `ldo_1` | 9 | the `tb_load` anchor; sole carrier of the two shortest L bins (6, 8 nm) |
 | ldo | `ldo_2` | 20 | the hardest LDO — carries every LDO miss class (`lr`/`lr_pp`, `lnrmax`, load-step excursions) |
@@ -155,21 +155,24 @@ pre-prune value.
 | charge_pump | `chargepump` | 41 | the only switching circuit; the 10 ps current-reversal spike that drove the whole refine-controller line of work, and whose missed-corner float dust drove V7.5.10's CKTminBreak fix |
 
 
-## The gap between PyCircuitSim and NGSPICE (V7.5.11, all five techs)
+## The gap between PyCircuitSim and NGSPICE (V7.5.12, all five techs)
 
-**This is the current number. Everything in the sections after it is older.**
+**This is the current number. Everything after this section and before Audit
+validation is older.**
 Both simulators run the identical BSIM-CMG (LEVEL=72) OSDI model and are
 scored by one measurement engine. Evidence:
-`pycircuitsim_bench_results/v7511_basket_tsmc{5,6,7,12,16}/`, untracked, on
-disk.
+`pycircuitsim_bench_results/v7512_basket_tsmc{5,6,7,12,16}/`, untracked, on
+disk: one complete post-fix 255-row pass, not a splice of campaigns.
 
-Two things changed against V7.5.10, and only one of them is a simulator
-result. **The transient family was being measured with PyCircuitSim's
-timestep multiplied by four** — the campaign's `--stride 4`, which on a sweep
-subsamples the abscissa but on a transient multiplies `dt`. Removing it is
-the fix, and it accounts for almost all of the movement. Separately, seven
-deck cells are now **quarantined as invalid test examples** and leave the
-denominator instead of being scored as failures.
+V7.5.12 changes no electrical result: all 255 PyCircuitSim and NGSPICE metric
+payloads, NGSPICE own-measure payloads, comparison objects, quarantine
+classifications and core verdict fields match the fresh V7.5.11-code control
+run exactly. The core fields are `ran`, `ng_ran`, metric and engine counts,
+missing/extra/not-comparable state and agreement status; per-run timers and the
+corrected transient `op_delta` / `op_worst_abs` diagnostics intentionally
+differ. V7.5.12 removes 24 unqualified alternate-seed helpers that the scored
+basket never used. The V7.5.11 stride fix and invalid-example quarantine
+remain the source of the headline below.
 
 | tech | AC | dc_source | dc_temp | transient | total |
 |---|:--:|:--:|:--:|:--:|:--:|
@@ -183,10 +186,65 @@ denominator instead of being scored as failures.
 TSMC6 and TSMC7 are identical on all 51 decks — same verdict, same
 quarantine, same relative error on every miss to four decimals — so the
 relabelled-tech control holds unchanged. **TSMC5 agrees on every scored deck
-it has.** Cost is 1.96 CPU-h for the five techs (V7.5.10: 1.15), the increase
-being the honest transient timestep; the transient family is 80 % of the pass.
+it has.** Every one of the 255 PyCircuitSim and NGSPICE analyses completed,
+measurement-engine control covers all 255 rows, and no PyCircuitSim metric is
+NaN/Inf. The 248 monolithic rows pass **1,265/1,265** individual controls. The
+seven recovered amplifier `tb_dc` rows pass another **301/301** across their
+21 saved hot/cold/narrow segments: `Song_DACFC` on all five technologies and
+`Leung_NMCNR` on TSMC6/7. Their recombined top-level rows intentionally have
+empty own-measure payloads, so 248 is the direct-row count, not the coverage
+total.
 
-### The defect: a transient stride is a fidelity knob
+### V7.5.12 findings and fixes
+
+**Transient operating point: the old diagnostic compared different states.**
+PyCircuitSim correctly pins `.ic` nodes while constructing a transient's
+startup, and NGSPICE's first transient sample carries the same constrained
+state. `run_compare` instead launched a separate unconstrained `op` and called
+that the transient comparison. On the five charge pumps this fabricated worst
+node deltas of **94.6–160.9 mV**; the TSMC5 `vcp_net` example was 0.325 V in
+both transient startups against 0.485917 V in the unrelated `op`. V7.5.12
+compares against the NGSPICE time-zero sample. The same five rows now report
+**0.21–3.04 µV** worst, and all 40 transient rows identify their source as
+`transient-time-zero`; the worst transient startup delta anywhere is 56.6 µV.
+AC keeps its dedicated `op`, because AC has no time-domain startup sample.
+
+**Alternate nodesets: one fallback, not 25 apparent tests.** The emitter used
+to write `tb_tran_altns.cir` for every amplifier even though the campaign
+excludes that helper and only TSMC5 `Qu2017_AZC` ever takes the fallback.
+Running all 25 helpers directly found PyCircuitSim completing 25/25, NGSPICE
+failing 6/25 with timestep collapse, and six more cells outside the strict
+metric gate; only 13/25 independently closed. V7.5.12 emits and ships only the
+validated TSMC5/Qu2017 helper. The on-disk corpus is therefore the 255 scored
+decks plus that one fallback, which is exercised by the primary row and agrees
+11/11.
+
+**Reference health stayed clean after pruning.** A second NGSPICE design audit
+over the final corpus passed all **60/60 designs and 430/430 specification
+checks**, with zero analysis errors. The static model binding check covers
+1,205 MOS devices, 604 sizing vectors and 456 model aliases with zero problems.
+The full matched-engine re-run remains 242/248 because the six open numerical
+residuals below are unchanged; none is an invalid, non-finite, out-of-rail or
+otherwise pathological circuit metric.
+
+**Evidence integrity was checked after the final directory rename.** The 289
+NGSPICE rawfile references in the local V7.5.12 JSON records initially pointed
+at the temporary `v7512_resim_tran_*` directory names. They were rewritten to
+the final `v7512_basket_*` locations and **289/289 now resolve**. These campaign
+bundles remain deliberately untracked, as noted above; the committed report is
+the durable summary.
+
+One audit limitation is now explicit: the untracked upstream AnalogGym source
+tree `examples/complex_circuits/designs/` is absent on this worktree, so
+source-topology revalidation and deck regeneration cannot run. The regeneration
+command previously printed 0 regenerated / 5 failed and exited success; it now
+fails early and nonzero with the missing prerequisite. If a source directory is
+present but incomplete, a full required-input preflight now also aborts before
+any generated deck is touched (`netlist.spice` for every selected topology and
+`param.spice` for the charge pump). The historical 60/60 source-topology result
+remains evidence, but is no longer labelled as a fresh V7.5.12 check.
+
+### V7.5.11 fix retained: a transient stride is a fidelity knob
 
 `run_compare`'s `--stride` does two different things. On a sweep it keeps
 every Nth abscissa point and both simulators are then scored on the shared
@@ -260,28 +318,34 @@ they are open.
 
 ### Where the runtime goes
 
+The fresh V7.5.12 pass records **2.57 summed engine wall-hours** (PyCircuitSim
+2.45 h, NGSPICE 0.13 h). These are per-process wall timers from a concurrent,
+busy-host campaign, not a controlled CPU benchmark. There were no timeouts;
+the slowest row was `ldo_2/tb_tran` at 474 s. The distribution is still useful
+for locating cost:
+
 | deck | family | per tech | agreeing | s/tech | share |
 |---|---|--:|:--:|--:|--:|
-| `amplifier/tb_tran` | tran | 5 | 19/24 (+1 quarantined) | 595 | 42.2 % |
-| `ldo/tb_tran` | tran | 2 | 5/5 (+5 quarantined) | 351 | 24.9 % |
-| `charge_pump/tb_tran` | tran | 1 | 4/5 | 178 | 12.6 % |
-| `amplifier/tb_dc` | dc_temp | 5 | 25/25 | 106 | 7.6 % |
-| `amplifier/tb_psrrp` | ac | 5 | 25/25 | 30 | 2.1 % |
-| `amplifier/tb_gain` | ac | 5 | 25/25 | 30 | 2.1 % |
-| `amplifier/tb_cmrr` | ac | 5 | 24/24 (+1 quarantined) | 29 | 2.1 % |
-| `amplifier/tb_psrrn` | ac | 5 | 25/25 | 29 | 2.1 % |
-| `sensing_front_end/tb_dc` | dc_temp | 3 | 15/15 | 14 | 1.0 % |
-| `ldo/tb_load` | dc_source | 2 | 10/10 | 8 | 0.6 % |
-| `ldo/tb_line_max` | dc_source | 2 | 10/10 | 7 | 0.5 % |
-| `ldo/tb_line_min` | dc_source | 2 | 10/10 | 6 | 0.4 % |
-| `voltage_reference/tb_dc` | dc_temp | 1 | 5/5 | 5 | 0.4 % |
-| `ldo/tb_loop_min` | ac | 2 | 10/10 | 5 | 0.4 % |
-| `ldo/tb_loop_max` | ac | 2 | 10/10 | 5 | 0.4 % |
-| `ldo/tb_psrr_max` | ac | 2 | 10/10 | 5 | 0.4 % |
-| `ldo/tb_psrr_min` | ac | 2 | 10/10 | 5 | 0.3 % |
+| `amplifier/tb_tran` | tran | 5 | 19/24 (+1 quarantined) | 777 | 42.0 % |
+| `ldo/tb_tran` | tran | 2 | 5/5 (+5 quarantined) | 463 | 25.0 % |
+| `charge_pump/tb_tran` | tran | 1 | 4/5 | 271 | 14.6 % |
+| `amplifier/tb_dc` | dc_temp | 5 | 25/25 | 125 | 6.7 % |
+| `amplifier/tb_cmrr` | ac | 5 | 24/24 (+1 quarantined) | 31 | 1.7 % |
+| `amplifier/tb_psrrp` | ac | 5 | 25/25 | 31 | 1.7 % |
+| `amplifier/tb_psrrn` | ac | 5 | 25/25 | 30 | 1.6 % |
+| `amplifier/tb_gain` | ac | 5 | 25/25 | 30 | 1.6 % |
+| `sensing_front_end/tb_dc` | dc_temp | 3 | 15/15 | 18 | 1.0 % |
+| `ldo/tb_line_min` | dc_source | 2 | 10/10 | 13 | 0.7 % |
+| `ldo/tb_line_max` | dc_source | 2 | 10/10 | 12 | 0.7 % |
+| `ldo/tb_load` | dc_source | 2 | 10/10 | 11 | 0.6 % |
+| `ldo/tb_loop_min` | ac | 2 | 10/10 | 8 | 0.5 % |
+| `ldo/tb_loop_max` | ac | 2 | 10/10 | 8 | 0.4 % |
+| `ldo/tb_psrr_min` | ac | 2 | 10/10 | 8 | 0.4 % |
+| `ldo/tb_psrr_max` | ac | 2 | 10/10 | 7 | 0.4 % |
+| `voltage_reference/tb_dc` | dc_temp | 1 | 5/5 | 7 | 0.4 % |
 
 
-## The V7.5.10 gap (superseded by V7.5.11 above)
+## The V7.5.10 gap (superseded by V7.5.12 above)
 
 **Superseded.** Its transient column was measured with PyCircuitSim's timestep
 multiplied by four (see above), so its 20/40 transient verdict and its
@@ -327,9 +391,13 @@ Three numbers that qualify the table:
   0.21 mV**. V7.5.9's single 0.495 V outlier (`Song_DACFC`'s basin) is gone —
   the worst is now the charge pump's pre-transient float of a node with no DC
   path, which has never been scored.
-* **Engine control: 255/255 decks clean.** Our reader of NGSPICE's own sweep
-  reproduces the `.meas` values NGSPICE printed from that same run — so the
-  disagreements below are simulator differences, not measurement differences.
+* **Engine control covers 255/255 rows.** The 248 monolithic rows pass
+  1,265/1,265 individual comparisons; seven recovered amplifier `tb_dc` rows
+  pass 301/301 more across their 21 saved hot/cold/narrow segments. Their
+  recombined top-level rows intentionally have no own-measure payload. In both
+  paths our reader of NGSPICE's sweep reproduces the `.meas` values NGSPICE
+  printed from that run — so the controlled disagreements below are simulator
+  differences, not measurement differences.
 * **Cost: 1.15 CPU-h for the five techs, 13.7× NGSPICE's 0.08 CPU-h** — down
   from 1.77 CPU-h at V7.5.9, almost all of it the `.nodeset` clamp making the
   hard DC starts cheap. The transient family is now 77 % of the pass.
@@ -820,15 +888,18 @@ untracked, on disk.
 
 ## Audit validation
 
-Re-run over the V7.5.9 basket (`verify_tsmc_sizing.py`, 0 problems):
+Re-run in V7.5.12 over the final pruned basket (`run_all.py` plus
+`verify_tsmc_sizing.py`):
 
 | check | result |
 |---|---:|
 | generated designs simulated | 60/60 |
-| source/qualified-core topology checks | 60/60 |
+| circuit specification gates | 430/430 |
+| analysis errors | 0 |
 | generated MOS instances checked | 1,205 |
 | sizing vectors inside modelcard envelopes | 604/604 |
 | referenced local PyCMG model aliases valid | 456/456 |
+| source/qualified-core topology checks | historical 60/60; not rerunnable without the untracked source corpus |
 
 Both earlier corpora audited clean at the same rate: V7.5.6's basket 90/90
 designs, 1,695 MOS, 779/779 vectors, 612/612 aliases; the original full corpus
@@ -838,6 +909,9 @@ Topology checks cover MOS/passive connectivity, channel type, amplifier mirror
 ratios, the retained charge-pump hierarchy, the permitted `ldo_1` compensation
 network, and the subthreshold reference core. Geometry checks cover L, NFIN,
 multiplicity, local model definition, and every model used by a generated MOS.
+The topology result was measured while the upstream AnalogGym source tree was
+present; V7.5.12 does not pretend it re-ran that check after finding the source
+tree absent.
 
 ## Corrections made in this audit
 
@@ -851,6 +925,13 @@ correction would silently reproduce the defect it fixed.
 
 * NGSPICE analysis failures are now fatal even when NGSPICE exits with status
   zero; partial AC/DC/transient runs can no longer be reported as successes.
+* Transient operating-point diagnostics compare PyCircuitSim's startup with
+  NGSPICE's actual time-zero state, including `.ic`, instead of an unrelated
+  unconstrained `op`. AC continues to use a dedicated `op`.
+* Alternate transient nodesets are emitted only for the validated
+  TSMC5/Qu2017 fallback. Regeneration now fails loudly when its untracked source
+  topology prerequisite is absent or incomplete instead of reporting a failed
+  or partially applied run as success.
 * `ldo_1` received a per-node series-RC compensation network and re-sized bias,
   driver, and pass devices. It now passes all 9 LDO gates on all five nodes.
 * The LDO bias-source polarity now follows the actual NMOS/PMOS diode topology;
@@ -1000,7 +1081,8 @@ every miss magnitude to six decimal places.
 ## Remaining partial designs
 
 All 12 basket designs pass every audit gate on all five nodes with no
-simulator analysis errors — 60/60 design instances, re-measured at V7.5.9.
+simulator analysis errors — 60/60 design instances and 430/430 gates,
+re-measured at V7.5.12 after the alternate-deck pruning.
 The table below lists any design that regresses in a future re-run.
 
 | tech | category/design | failed gates | analysis errors |
@@ -1011,5 +1093,6 @@ The table below lists any design that regresses in a future re-run.
 pass all its audit gates here and still appear in the disagreement list above:
 the audit asks whether the *design* meets its specification under NGSPICE, and
 the comparison asks whether *PyCircuitSim* reproduces NGSPICE on the same
-deck. `Leung_NMCNR` is 10/10 in the table above and 0–1/11 against NGSPICE on
-four techs — both readings are correct and they answer different questions.
+deck. For example, `Qu2017_AZC` is 10/10 in the design audit on every tech but
+its one fall crossing remains 3.1–4.2 % apart on tsmc6/7/12; those readings
+answer different questions and are both retained.

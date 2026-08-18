@@ -34,8 +34,9 @@ DC operating point.  Two consequences are baked into this module:
 * ``DCSolver._last_solve_converged`` is NOT accepted as evidence.  The
   operating-point delta against NGSPICE is a first-class output field
   (``op_delta``), computed node by node: for a dc sweep over EVERY solved
-  point, for ac/tran against a dedicated NGSPICE ``op`` run.  A metric that
-  matches for the wrong reason is worse than a reported failure.
+  point, for ac against a dedicated NGSPICE ``op`` run, and for transient
+  against NGSPICE's actual time-zero state.  A metric that matches for the
+  wrong reason is worse than a reported failure.
 * the DC solve is seeded from the deck's own ``.nodeset`` and run with the
   ``dv_limit`` trust region (see :data:`DEFAULT_MAX_ITERATIONS` and
   ``DCSolver(dv_limit=...)``), because without a per-iteration voltage cap the
@@ -167,7 +168,7 @@ DEFAULT_MAX_ITERATIONS: int = 500
 METRIC_ATOL: Dict[str, float] = {"vos25": 1e-5,
                                  "overshoot": 1e-6, "undershoot": 1e-6}
 
-#: Metric cells that are INVALID TEST EXAMPLES at this version (V7.5.11):
+#: Metric cells that are INVALID TEST EXAMPLES at this version (V7.5.12):
 #: quantities the two simulators cannot be asked to agree on at the 2 % gate,
 #: because the quantity is not resolved by the reference itself.  They are
 #: **quarantined, not deleted and not silently passed** -- excluded from
@@ -1608,11 +1609,11 @@ def _op_delta_for(td: TranslatedDeck, py_sweeps: Sequence[SweepResult],
     """Operating-point delta, from the sweep itself when the sweep carries one.
 
     A dc sweep's dump IS a per-point operating point, so it gives the strongest
-    available check.  An ac/tran deck's dump does not, so NGSPICE is asked for
-    an ``op`` and the delta is taken against the operating point PyCircuitSim
-    actually linearised (ac) or started from (tran) -- including
-    ``partial_op``, the operating point of a run that then died, which is the
-    case where this comparison is the entire diagnosis.
+    available check.  AC has no time-domain startup sample, so NGSPICE is asked
+    for an ``op``.  A transient dump's first point IS the state NGSPICE
+    actually started from, including any ``.ic`` constraints; comparing that
+    point avoids the false pathology produced by a separate unconstrained
+    ``op``.  ``partial_op`` carries PyCircuitSim's startup when its run died.
     """
     py_op: Optional[Dict[str, float]] = None
     if py_sweeps and ng_sweeps and py_sweeps[0].kind == "dc":
@@ -1624,6 +1625,34 @@ def _op_delta_for(td: TranslatedDeck, py_sweeps: Sequence[SweepResult],
     py_op = py_op or partial_op
     if not py_op:
         return None
+
+    kind = td.plans[0].kind
+    if kind == "tran":
+        if not ng_sweeps:
+            # A separate NGSPICE ``op`` ignores transient ``.ic`` constraints,
+            # so it cannot stand in for a missing constrained startup point.
+            if td.ic:
+                return None
+            report = op_delta(
+                py_op,
+                ngspice_operating_point(td, work, opts.ng_timeout),
+            )
+            report["source"] = (
+                "ngspice-op-run (failed transient's operating point)"
+            )
+            return report
+        ng_op = {
+            node: float(np.real(values[0]))
+            for node, values in ng_sweeps[0].v.items()
+            if values.size and _INTERNAL_MARK not in node
+            and np.isfinite(np.real(values[0]))
+        }
+        if not ng_op:
+            return None
+        report = op_delta(py_op, ng_op)
+        report["source"] = "transient-time-zero"
+        return report
+
     report = op_delta(py_op, ngspice_operating_point(td, work, opts.ng_timeout))
     report["source"] = ("ngspice-op-run" if py_sweeps
                         else "ngspice-op-run (failed run's operating point)")
@@ -1737,18 +1766,11 @@ def _with_altns_fallback(row: Dict[str, Any], td: TranslatedDeck, work: Path,
                          opts: SimOptions, rtol: float) -> Dict[str, Any]:
     """Score the alternate-nodeset twin when NGSPICE produced nothing.
 
-    Four of the 85 amplifier ``tb_tran.cir`` decks (V7.5.3 sweep: tsmc5
-    Qu2017_AZC, tsmc6+tsmc7 Yan_AZ, tsmc16 Leung_DFCFC2) fail NGSPICE's
-    transient-op homotopies from the PRIMARY ``.nodeset`` seed — a Newton
-    basin artifact, not a deck defect: the shipped seed sits 0.6 mV from the
-    true operating point and still fails, while PyCircuitSim solves both
-    seeds (metrics agree to 1.7e-7). The corpus ships ``tb_tran_altns.cir``
-    for exactly this and the reference runner falls back to it
-    (``finalize.py``), so its committed evidence came from the altns seed;
-    :func:`translate.altns_deck` existed but was never wired in. The
-    returned row keeps the primary deck's name (aggregation keys on it);
-    ``notes`` and ``altns`` record which seed actually produced it, and the
-    failed primary row is carried, never discarded.
+    Alternate decks are corpus-curated fallbacks for reference transient-op
+    homotopy failures, and the reference runner uses the same fallback
+    (``finalize.py``). The returned row keeps the primary deck's name because
+    aggregation keys on it; ``notes`` and ``altns`` record which seed produced
+    the evidence, and the failed primary row is carried, never discarded.
     """
     if row["ngspice"]["error"] is None:
         return row

@@ -8,6 +8,101 @@ pruned; the full original text lives in git history.)
 
 ---
 
+## V7.5.12 — the transient OP diagnostic now compares the transient; one validated alternate seed, not 25 apparent tests (branch `feat/analoggym-migration`, 2026-08-18)
+
+**Goal: re-simulate the curated AnalogGym circuits under both engines, reject
+pathological circuit metrics, and make every diagnostic describe the analysis
+that actually ran.** The post-fix five-tech campaign completed all **255/255**
+PyCircuitSim and NGSPICE rows with no analysis error and no NaN/Inf
+PyCircuitSim metric. **Measurement-engine control covers all 255 rows**: the
+248 monolithic rows pass 1,265/1,265 individual comparisons, and seven
+recovered amplifier `tb_dc` rows pass another 301/301 across their 21 saved
+hot/cold/narrow segments. The electrical headline is deliberately unchanged
+at **242/248 (97.6 %)**. All PyCircuitSim/NGSPICE metric payloads, NGSPICE
+own-measure payloads, comparison objects, quarantines and core verdict fields
+reproduce the fresh pre-fix control exactly; corrected OP diagnostics and
+per-run timers are intentionally different. Evidence:
+`v7512_basket_tsmc{5,6,7,12,16}/`.
+
+### 1. Fixed: a constrained transient startup was compared with an unconstrained `op`
+
+`_pinned_operating_point` already implemented NGSPICE's `.ic` semantics: hold
+the named nodes while constructing the transient startup. `_op_delta_for`
+discarded that equivalence by launching a separate NGSPICE `op`, which ignores
+the transient constraint, then compared the two different states. The clearest
+case was TSMC5 charge-pump `vcp_net`: both transient startups are 0.325 V, while
+the unrelated `op` is 0.485917 V, fabricating a 160.917 mV delta.
+
+V7.5.12 takes NGSPICE's first transient sample, the state it actually started
+from. Across the five charge pumps the reported worst delta moves from
+94.6–160.9 mV to **0.21–3.04 µV**; across all 40 transient rows the worst is
+56.6 µV and every source is `transient-time-zero`. AC retains the dedicated
+`op`, and an `.ic` transient with no NGSPICE waveform now reports no OP delta
+rather than manufacturing an unfair comparison.
+
+### 2. Fixed: the generator emitted 24 unqualified alternate-seed helpers
+
+`build_amp.emit_testbenches` wrote `tb_tran_altns.cir` for every amplifier,
+although the campaign excludes helpers and only TSMC5 `Qu2017_AZC` takes the
+fallback. The requested all-files scan made the hidden corpus visible:
+
+* PyCircuitSim completed 25/25 helpers;
+* NGSPICE failed 6/25 with timestep collapse;
+* six of the 19 dual-engine runs missed the 2 % transient gate;
+* only 13/25 were independently clean.
+
+The emitter now carries an explicit `(tech, subckt)` allowlist containing the
+single validated fallback. `write_design` removes stale helpers during a real
+regeneration, and the 24 unneeded tracked decks were removed from the current
+trees. The final on-disk corpus is 255 scored decks plus the one TSMC5/Qu2017
+fallback; the primary row exercises it and agrees 11/11.
+
+### 3. Fresh health and performance evidence
+
+The final pruned corpus was re-run through the NGSPICE design audit: **60/60
+designs, 430/430 specification gates, zero analysis errors**. Static validation
+covered 1,205 MOS devices, 604 sizing vectors and 456 local model aliases with
+zero problems. The full matched-engine campaign remains AC 139/139, dc_source
+30/30, dc_temp 45/45 and transient 28/34, with seven invalid deck cells outside
+the denominator and the same six small open transient residuals (2.1–4.4 %).
+No result is non-finite, out-of-rail, missing or otherwise a pathological
+circuit metric.
+
+The run recorded 2.57 summed per-process wall-hours (PyCircuitSim 2.45 h,
+NGSPICE 0.13 h) under a concurrent busy-host launch. There were no timeouts;
+the slowest row was `ldo_2/tb_tran` at 474 s. These timers locate cost but are
+not presented as a controlled CPU benchmark.
+
+### 4. Audit correction and regeneration dead end
+
+The report had labelled the historical 60/60 source-topology check as current,
+but its required untracked source tree `examples/complex_circuits/designs/` is
+not present on this worktree. An attempted amplifier regeneration therefore
+failed 25/25 paths — and exposed that `regen_decks.py` printed the failures but
+returned status 0. The source data cannot be reconstructed faithfully from the
+already lowered generated netlists, so that proposal was not pursued.
+Regeneration now fails early and nonzero with the missing prerequisite. A
+second preflight inventories all selected upstream `netlist.spice` inputs plus
+the charge pump's `param.spice` before the first output mutation, so a present
+but incomplete corpus cannot leave a partially regenerated tree.
+
+The review also tightened two evidence claims. Seven recovered amplifier
+`tb_dc` rows do not carry own-measure data in their recombined top-level JSON,
+but their 21 saved segments pass 301/301 controls; the report now distinguishes
+that segmented coverage from the 248 direct rows and their 1,265/1,265 checks.
+The 289 rawfile paths inside the untracked V7.5.12 JSON bundles still named
+their temporary result directories; all were rewritten to the final basket
+paths and **289/289 resolve**. `RESULTS_TSMC.md` now distinguishes those facts,
+the historical topology evidence and every fresh reproducible V7.5.12 result,
+and retracts its stale V7.5.10-era Leung summary.
+
+Regression gate: `tests/simple_circuits/verify_analoggym_migration.py` — 9/9
+(transient time-zero comparison, failed constrained/unconstrained transient
+behavior, AC `op` preservation, validated helper inventory and stale-helper
+reconciliation, loud missing/incomplete-source regeneration failures).
+
+---
+
 ## V7.5.11 — the transient stride was the disagreement; the rest is quarantined as invalid test examples (branch `feat/analoggym-migration`, 2026-08-14)
 
 **Goal: fix the AnalogGym failure cases, and mark as invalid whatever cannot
@@ -315,7 +410,9 @@ the pass.
 
 ### Where PyCircuitSim and NGSPICE actually differ (V7.5.9, 5 techs, 255 decks)
 
-**203/255 decks fully agree (79.6 %)**, engine control 255/255 clean,
+**203/255 decks fully agree (79.6 %)**; engine control covers 255/255 rows —
+1,265/1,265 direct comparisons on 248 monolithic rows plus 301/301 comparisons
+across the 21 saved segments of seven recovered rows —
 operating-point agreement median 4.9 µV / p90 0.26 mV. Full breakdown with
 per-deck residuals: `RESULTS_TSMC.md` §"The gap between PyCircuitSim and
 NGSPICE".
