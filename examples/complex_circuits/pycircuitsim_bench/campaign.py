@@ -229,6 +229,51 @@ def run_deck(tech: str, cat: str, design: str, deck: str, out: Path,
             "log": str(log)}
 
 
+def _aggregate_voltage_error(
+    tech: str, out: Path, families: List[str], model_level: int,
+    checkpoint_size: str,
+) -> Optional[Dict[str, float]]:
+    """Combine per-row voltage sufficient statistics exactly."""
+    n = decks = 0
+    relative_error_sum = ss_res = truth_sum = truth_sum_squared = 0.0
+    truth_min = float("inf")
+    truth_max = float("-inf")
+    max_error = 0.0
+    for cat, design, deck in corpus(tech, families):
+        path = out / f"{tech}_{cat}_{design}_{Path(deck).stem}.json"
+        if not path.is_file() or not _row_matches_model(
+            path, tech, model_level, checkpoint_size
+        ):
+            continue
+        row = json.loads(path.read_text())
+        stats = (row.get("op_delta") or {}).get("error_stats")
+        if not isinstance(stats, dict) or not stats.get("n"):
+            continue
+        count = int(stats["n"])
+        n += count
+        decks += 1
+        relative_error_sum += float(stats["relative_error_sum"])
+        ss_res += float(stats["sum_squared_error"])
+        truth_sum += float(stats["truth_sum"])
+        truth_sum_squared += float(stats["truth_sum_squared"])
+        truth_min = min(truth_min, float(stats["truth_min"]))
+        truth_max = max(truth_max, float(stats["truth_max"]))
+        max_error = max(max_error, float(stats["max_error"]))
+    if n == 0:
+        return None
+    ss_total = truth_sum_squared - truth_sum * truth_sum / n
+    scale = truth_max - truth_min
+    if scale <= 0.0:
+        scale = max(abs(truth_min), abs(truth_max), 1e-12)
+    return {
+        "decks": float(decks), "n": float(n),
+        "mre": relative_error_sum / n,
+        "r2": 1.0 - ss_res / ss_total if ss_total > 0.0 else float("nan"),
+        "nrmse": (ss_res / n) ** 0.5 / scale,
+        "max_error": max_error,
+    }
+
+
 def summarize(tech: str, out: Path, families: List[str], model_level: int = 72,
               checkpoint_size: str = "large") -> str:
     """Markdown summary over the JSON rows present in ``out``."""
@@ -303,6 +348,25 @@ def summarize(tech: str, out: Path, families: List[str], model_level: int = 72,
         + (f" ({m} missing)" if m else "")
         + (f" ({p} provenance mismatch)" if p else "")
         for fam, (n, s, q, m, p) in fam_tot.items()]
+    voltage = _aggregate_voltage_error(
+        tech, out, families, model_level, checkpoint_size
+    )
+    lines += ["", "## Voltage-state error", ""]
+    if voltage is None:
+        lines.append("No comparable operating-point/DC-sweep voltage samples.")
+    else:
+        lines += [
+            "Computed over comparable operating-point and DC-sweep node "
+            "voltages; MRE uses a symmetric denominator and NRMSE uses the "
+            "technology campaign's NGSPICE voltage range.",
+            "",
+            "| rows | samples | MRE | R² | NRMSE | max abs(ΔV) |",
+            "|--:|--:|--:|--:|--:|--:|",
+            f"| {int(voltage['decks'])} | {int(voltage['n'])} "
+            f"| {100.0 * voltage['mre']:.6g}% | {voltage['r2']:.8g} "
+            f"| {100.0 * voltage['nrmse']:.6g}% "
+            f"| {voltage['max_error']:.8g} V |",
+        ]
     return "\n".join(lines) + "\n"
 
 

@@ -182,6 +182,22 @@ def verify_ac_still_uses_dedicated_operating_point() -> None:
     assert report["worst_abs"] == 0.0
 
 
+def verify_voltage_error_stats_are_aggregatable() -> None:
+    """Rows must retain sufficient statistics for a per-tech NN error report."""
+    report = run_compare.op_delta(
+        {"a": 1.0, "b": 3.0}, {"a": 1.0, "b": 2.0}
+    )
+    stats = report["error_stats"]
+    assert stats["n"] == 2
+    assert stats["sum_squared_error"] == 1.0
+    assert stats["truth_sum"] == 3.0
+    assert stats["truth_sum_squared"] == 5.0
+    assert np.isclose(stats["mre"], 1.0 / 6.0)
+    assert np.isclose(stats["r2"], -1.0)
+    assert np.isclose(stats["nrmse"], np.sqrt(0.5))
+    assert stats["max_error"] == 1.0
+
+
 def verify_directnet_model_stub_is_explicit() -> None:
     """An NN deck must retain its technology and model-card VT flavor."""
     assert translate._model_stub(
@@ -446,6 +462,7 @@ def main() -> None:
         verify_both_failed_ic_transient_does_not_compare_unconstrained_op,
         verify_failed_unconstrained_transient_uses_operating_point,
         verify_ac_still_uses_dedicated_operating_point,
+        verify_voltage_error_stats_are_aggregatable,
         verify_directnet_model_stub_is_explicit,
         verify_nn_temperature_sweep_rebinds_geometry,
         verify_campaign_propagates_deck_failures,

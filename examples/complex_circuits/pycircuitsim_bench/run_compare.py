@@ -1202,6 +1202,59 @@ def _line_tag(deck: str) -> str:
 
 # ── Operating-point comparison ───────────────────────────────────────────
 
+def _voltage_error_stats(
+    pairs: Sequence[Tuple[float, float]],
+) -> Dict[str, Any]:
+    """Error metrics plus sufficient statistics for cross-row aggregation.
+
+    MRE uses a symmetric denominator so ground-adjacent nodes cannot turn a
+    microvolt difference into an unbounded percentage. NRMSE is normalized by
+    the reference voltage range (or its absolute scale for a constant vector).
+    The sums make the per-technology R²/NRMSE exact when campaign rows are
+    combined, rather than averaging already-normalized row scores.
+    """
+    if not pairs:
+        return {
+            "n": 0, "mre": None, "r2": None, "nrmse": None,
+            "max_error": None, "sum_squared_error": 0.0,
+            "relative_error_sum": 0.0, "truth_sum": 0.0,
+            "truth_sum_squared": 0.0, "truth_min": None, "truth_max": None,
+        }
+    predicted = np.asarray([a for a, _ in pairs], dtype=np.float64)
+    truth = np.asarray([b for _, b in pairs], dtype=np.float64)
+    errors = predicted - truth
+    squared = errors * errors
+    ss_res = float(np.sum(squared))
+    truth_sum = float(np.sum(truth))
+    truth_sum_squared = float(np.sum(truth * truth))
+    truth_min = float(np.min(truth))
+    truth_max = float(np.max(truth))
+    scale = truth_max - truth_min
+    if scale <= 0.0:
+        scale = max(abs(truth_min), abs(truth_max), 1e-12)
+    denom = np.maximum(
+        np.maximum(np.abs(predicted), np.abs(truth)), 1e-12
+    )
+    relative_error_sum = float(np.sum(np.abs(errors) / denom))
+    n = len(pairs)
+    ss_total = truth_sum_squared - truth_sum * truth_sum / n
+    r2 = (1.0 - ss_res / ss_total) if ss_total > 0.0 else (
+        1.0 if ss_res == 0.0 else None
+    )
+    return {
+        "n": n,
+        "mre": relative_error_sum / n,
+        "r2": r2,
+        "nrmse": math.sqrt(ss_res / n) / scale,
+        "max_error": float(np.max(np.abs(errors))),
+        "sum_squared_error": ss_res,
+        "relative_error_sum": relative_error_sum,
+        "truth_sum": truth_sum,
+        "truth_sum_squared": truth_sum_squared,
+        "truth_min": truth_min,
+        "truth_max": truth_max,
+    }
+
 def op_delta(py: Dict[str, float], ng: Dict[str, float],
              top_n: int = 5) -> Dict[str, Any]:
     """Node-by-node operating-point comparison, worst first.
@@ -1215,6 +1268,9 @@ def op_delta(py: Dict[str, float], ng: Dict[str, float],
     deltas.sort(key=lambda item: -abs(item[1]))
     rms = (math.sqrt(sum(d * d for _, d in deltas) / len(deltas))
            if deltas else None)
+    stats = _voltage_error_stats(
+        [(float(py[node]), float(ng[node])) for node in common]
+    )
     return {
         "n_compared": len(deltas),
         "only_pycircuitsim": sorted(set(py) - set(ng)),
@@ -1222,6 +1278,7 @@ def op_delta(py: Dict[str, float], ng: Dict[str, float],
         "worst_node": deltas[0][0] if deltas else None,
         "worst_abs": abs(deltas[0][1]) if deltas else None,
         "rms": rms,
+        "error_stats": stats,
         "top": [{"node": n, "delta": d} for n, d in deltas[:top_n]],
     }
 
@@ -1251,6 +1308,7 @@ def sweep_delta(py: SweepResult, ng: SweepResult,
     worst: List[Tuple[str, float, float]] = []
     total = 0
     acc = 0.0
+    pairs: List[Tuple[float, float]] = []
     for node in common_nodes:
         py_arr = np.real(np.asarray(py.v[node])).astype(np.float64)
         ng_arr = np.real(np.asarray(ng.v[node])).astype(np.float64)
@@ -1262,6 +1320,7 @@ def sweep_delta(py: SweepResult, ng: SweepResult,
             if not (math.isfinite(a) and math.isfinite(b)):
                 continue
             delta = abs(a - b)
+            pairs.append((float(a), float(b)))
             node_points += 1
             acc += delta * delta
             if delta > node_worst:
@@ -1281,6 +1340,7 @@ def sweep_delta(py: SweepResult, ng: SweepResult,
         "worst_node": worst[0][0] if worst else None,
         "worst_abs": worst[0][1] if worst else None,
         "rms": math.sqrt(acc / total) if total else None,
+        "error_stats": _voltage_error_stats(pairs),
         "top": [{"node": n, "delta": d, "at": at} for n, d, at in worst[:top_n]],
     }
 
