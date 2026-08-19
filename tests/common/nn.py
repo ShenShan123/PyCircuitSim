@@ -2,7 +2,7 @@
 
 Importing this module guarantees that:
 
-1. The ``bsimar`` package is on ``sys.path`` (so ``import bsimar`` works).
+1. The ``neural_network`` package is on ``sys.path``.
 2. The vendored PyCMG package is on ``sys.path`` (so ``import pycmg`` works).
 3. The reusable metrics (``nrmse`` / ``mre``) are computed identically in
    every verify script.
@@ -24,7 +24,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 _EXTERNAL_DIR = PROJECT_ROOT / "external_compact_models"
-_PYCMG_DIR = _EXTERNAL_DIR / "PyCMG"
+_PYCMG_DIR = _EXTERNAL_DIR / "bsim_cmg"
 _PYCMG_TESTS = _PYCMG_DIR / "tests"
 
 for _p in (PROJECT_ROOT, _EXTERNAL_DIR, _PYCMG_DIR, _PYCMG_TESTS):
@@ -90,7 +90,7 @@ def tech_code_in_vocab(
     ``LOCAL_VARIANT_CODES`` therefore passes unconditionally; the universal
     ceiling only still needs to gate ASAP7 (no local vocab, no per-tech ckpt).
     """
-    from bsimar.config import tech_variant_to_code, LOCAL_VARIANT_CODES
+    from neural_network.config import tech_variant_to_code, LOCAL_VARIANT_CODES
     if tech_key.lower() in LOCAL_VARIANT_CODES:
         return True
     return tech_variant_to_code(tech_key, vt_key) < num_codes

@@ -35,8 +35,9 @@ before changing behavior. Start with these ownership boundaries:
 - `pycircuitsim/models/`: device currents, conductances, and charges.
 - `pycircuitsim/simulation.py`: analysis orchestration.
 - `pycircuitsim/parser.py`: netlist expansion and checkpoint resolution.
-- `external_compact_models/PyCMG/`: BSIM-CMG evaluation and dataset creation.
-- `external_compact_models/bsimar/`: shared NN data, models, loss, and training.
+- `PDKs/`: source technology modelcards; only ASAP7 is tracked.
+- `external_compact_models/bsim_cmg/`: BSIM-CMG evaluation and dataset creation.
+- `external_compact_models/neural_network/`: shared NN data, models, loss, and training.
 - `tests/common/`: authoritative deck rendering and comparison infrastructure.
 
 Keep the solver free of device equations and device models free of matrix
@@ -137,7 +138,7 @@ Apply the source-relative voltage frame to NMOS and PMOS alike. Training uses
 Per-technology models use a local embedding vocabulary. Derive
 `unknown_code_id` as `num_tech_codes - 1`; never reuse the universal UNKNOWN
 identifier. At inference, map `(scope, tech, variant)` through
-`bsimar.config.local_variant_code()`.
+`neural_network.config.local_variant_code()`.
 
 For LEVEL=73–75:
 
@@ -239,4 +240,4 @@ predeclared metric, not as routine cleanup.
 - Train independent jobs across available GPUs; keep scored inference on the
   pinned CPU contract.
 - Preserve unrelated working-tree changes and generated evidence.
-- Keep raw TSMC `cln*.l` modelcards and `modelcards.tar.gz` out of Git.
+- Keep raw TSMC `PDKs/TSMC*/*.l` cards and `PDKs/modelcards.tar.gz*` out of Git.

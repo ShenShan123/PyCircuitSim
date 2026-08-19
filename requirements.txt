@@ -17,19 +17,19 @@
 # that is API-compatible with our code and is a safe lower bound.
 numpy>=1.26
 # scipy.sparse (lil_matrix, csr, spsolve) — the sparse MNA solver.
-# scipy.ndimage / scipy.signal.windows — LDS kernel smoothing in bsimar.losses.
+# scipy.ndimage / scipy.signal.windows — LDS smoothing in neural_network.losses.
 scipy>=1.11
 matplotlib>=3.7
 
 # ── scikit-learn ────────────────────────────────────────────────────────────
 # sklearn.preprocessing.KBinsDiscretizer — LDS weight binning in
-#   bsimar.losses.bni_mae.compute_lds_weights_per_target
-# sklearn.metrics.r2_score — scatter plots in bsimar.eval.visualization
+#   neural_network.losses.bni_mae.compute_lds_weights_per_target
+# sklearn.metrics.r2_score — scatter plots in neural_network.eval.visualization
 scikit-learn>=1.3
 
 # ── pybind11 ────────────────────────────────────────────────────────────────
 # Required by the PyCMG submodule (used by pycircuitsim.models.mosfet_cmg
-# and the NN data generator at external_compact_models/PyCMG/scripts/).
+# and the NN data generator at external_compact_models/bsim_cmg/scripts/).
 pybind11>=2.11
 
 # ── Testing ─────────────────────────────────────────────────────────────────

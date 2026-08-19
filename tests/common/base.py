@@ -29,15 +29,15 @@ import matplotlib.pyplot as plt
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
-sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG"))
-sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tests"))
+sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg"))
+sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "tests"))
 
 OSDI_PATH = (
-    PROJECT_ROOT / "external_compact_models" / "PyCMG"
+    PROJECT_ROOT / "external_compact_models" / "bsim_cmg"
     / "build" / "osdi" / "bsimcmg.osdi"
 )
 MODELCARDS_DIR = (
-    PROJECT_ROOT / "external_compact_models" / "PyCMG" / "modelcards"
+    PROJECT_ROOT / "PDKs"
 )
 NGSPICE_BIN = os.environ.get(
     "NGSPICE_BIN", "/usr/local/ngspice-45.2/bin/ngspice")
@@ -96,7 +96,7 @@ class TechProfile:
     def _resolve_tsmc_modelcard(self, pdk_device: str, l_m: float) -> Path:
         """Generate a TSMC naive modelcard on-the-fly via pycmg.tech.resolve_modelcard.
 
-        The committed ``modelcards/TSMC*/naive/*.l`` files were removed; they
+        The old committed ``PDKs/TSMC*/naive/*.l`` files were removed; they
         are now regenerated from the raw PDK and cached under PyCMG's
         ``build/modelcards/``. Uses ``NFIN=self.default_nfin`` so the correct
         NFIN-group variant is selected.

@@ -47,9 +47,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 
-from bsimar.config import CHECKPOINT_DIR, tech_variant_to_code, UNKNOWN_CODE_ID
-from bsimar.data.normalize import BSIMARNormStats
-from bsimar.models.direct_net import DirectNet
+from neural_network.config import CHECKPOINT_DIR, tech_variant_to_code, UNKNOWN_CODE_ID
+from neural_network.data.normalize import BSIMARNormStats
+from neural_network.models.direct_net import DirectNet
 
 
 # ── op-point grid ──────────────────────────────────────────────────────────

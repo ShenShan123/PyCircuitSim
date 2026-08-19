@@ -55,19 +55,19 @@ import numpy as np
 print = functools.partial(print, flush=True)  # type: ignore[assignment]
 
 ROOT = Path(__file__).resolve().parents[1]
-for p in (ROOT / "external_compact_models" / "PyCMG" / "tests",
-          ROOT / "external_compact_models" / "PyCMG",
+for p in (ROOT / "external_compact_models" / "bsim_cmg" / "tests",
+          ROOT / "external_compact_models" / "bsim_cmg",
           ROOT / "external_compact_models",
           ROOT):
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
 import tests.common.complex as cx  # noqa: E402
-import tests.verify_complex_ring_osc as ro_mod  # noqa: E402
+import tests.simple_circuits.verify_complex_ring_osc as ro_mod  # noqa: E402
 from tests.common.complex import (  # noqa: E402
     BENCH, BenchTech, full_metrics, run_directnet_transient,
 )
-from tests.verify_complex_ring_osc import (  # noqa: E402
+from tests.simple_circuits.verify_complex_ring_osc import (  # noqa: E402
     _period_from_wave, run_ngspice_ro,
 )
 

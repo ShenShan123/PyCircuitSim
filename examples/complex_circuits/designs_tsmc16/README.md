@@ -2,7 +2,7 @@
 
 AnalogGym's circuits re-targeted from sky130 (planar, 1.8 V) to **TSMC16
 FinFET at 0.8 V**, using the BSIM-CMG compact model that
-`PyCircuitSim/external_compact_models/PyCMG` wraps.
+`PyCircuitSim/external_compact_models/bsim_cmg` wraps.
 
 Each design is a directory with a netlist, the model cards it names, the design
 vector that produced it, and runnable testbenches:
@@ -31,7 +31,7 @@ NGSPICE=/path/to/ngspice python3 ../run_all.py
 ```
 
 Requirements: **ngspice 45.2+** (needs OSDI) and the OSDI binary at
-`PyCircuitSim/external_compact_models/PyCMG/build/osdi/bsimcmg.osdi`.
+`PyCircuitSim/external_compact_models/bsim_cmg/build/osdi/bsimcmg.osdi`.
 `PYCMG_DIR` overrides the PyCMG location.
 
 A deck cannot be handed to ngspice directly — the OSDI binary must be loaded

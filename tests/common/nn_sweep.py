@@ -16,7 +16,7 @@ P/N-ratio NFIN split needed a behaviour-preserving refactor of
 Reproducibility note: run against a *stable* checkpoint set. The inverter VTC
 has gain ~-15..-30 at the trip point, so any perturbation of the NN weights —
 e.g. the checkpoint files being overwritten by a concurrent retrain — is
-amplified ~20x into the VTC NRMSE. Point ``bsimar/checkpoints/`` at a fixed
+amplified ~20x into the VTC NRMSE. Point ``neural_network/checkpoints/`` at a fixed
 copy, not a symlink into a directory under active training. The harness also
 pins ``torch`` to one thread; driver scripts should be invoked with
 ``OMP_NUM_THREADS=1 MKL_NUM_THREADS=1``.

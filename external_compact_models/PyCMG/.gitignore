@@ -1,8 +1,0 @@
-.worktrees/
-build*/
-__pycache__/
-# Ignore commercial TSMC PDK modelcards (IP-protected).
-# Naive modelcards are no longer committed — they are regenerated on-the-fly
-# via ``pycmg.tech.resolve_modelcard`` and cached under ``build/modelcards/``.
-modelcards/TSMC*/*.l
-modelcards/TSMC*/naive/

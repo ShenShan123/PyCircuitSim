@@ -155,12 +155,12 @@ def usable_vts(tech: str) -> Set[str]:
 
     The intersection of (i) the BSIM-CMG ground-truth VT pairs that survive
     ``base.py`` PDIBL2/garbage pruning and (ii) the per-tech DirectNet local
-    embedding vocabulary (``bsimar.config.LOCAL_VARIANT_CODES``). A VT outside
+    embedding vocabulary (``neural_network.config.LOCAL_VARIANT_CODES``). A VT outside
     the DN vocab maps to LOCAL_UNKNOWN **silently** (no warning in per-tech
     scope), so enumerating from this intersection — and validating in
     ``bench_variant`` — is the only safe way to drive the VT sweep.
     """
-    from bsimar.config import LOCAL_VARIANT_CODES  # lazy: heavy import
+    from neural_network.config import LOCAL_VARIANT_CODES  # lazy: heavy import
     scope = tech.lower()
     dn_vocab = LOCAL_VARIANT_CODES.get(scope, {})
     prof = ALL_TECHS[tech]

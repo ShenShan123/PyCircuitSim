@@ -58,8 +58,8 @@ ROOT = Path(__file__).resolve().parents[1]
 # elsewhere on sys.path — otherwise PyCMG's own ``tests`` package shadows the
 # repo's ``tests.common`` (remove-then-insert; the plain ``if not in`` guard
 # leaves a pre-existing ROOT entry stuck behind PyCMG/tests).
-for p in (ROOT / "external_compact_models" / "PyCMG" / "tests",
-          ROOT / "external_compact_models" / "PyCMG",
+for p in (ROOT / "external_compact_models" / "bsim_cmg" / "tests",
+          ROOT / "external_compact_models" / "bsim_cmg",
           ROOT / "external_compact_models",
           ROOT):
     sp = str(p)

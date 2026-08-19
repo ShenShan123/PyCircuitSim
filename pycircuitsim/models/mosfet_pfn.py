@@ -1,6 +1,6 @@
 """TabPFN-style compact model (LEVEL=75).
 
-Wraps the TabPFN-v3-style in-context regressor (``bsimar.models.tabpfn``)
+Wraps the TabPFN-v3-style in-context regressor (``neural_network.models.tabpfn``)
 into the same ``_MOSFETNNBase`` used by DirectNet (LEVEL=73) and BSIM-AR
 (LEVEL=74). The model is one-shot and emits the canonical
 ``OUTPUT_COLUMN_ORDER``, so the base's "standard" layout applies; its
@@ -40,7 +40,7 @@ class _MOSFETPFNBase(_MOSFETNNBase):
         temperature: float = 300.15,
         tech_code: Optional[int] = None,
     ):
-        from bsimar.models.tabpfn import TabPFNCompact
+        from neural_network.models.tabpfn import TabPFNCompact
 
         model_path_obj = Path(model_path)
         base_stem = model_path_obj.stem

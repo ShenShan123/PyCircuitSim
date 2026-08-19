@@ -1,0 +1,5 @@
+# Per-run simulator scratch generated beneath individual design directories.
+**/.run-*/
+**/work/
+**/models/cache/
+**/*.log

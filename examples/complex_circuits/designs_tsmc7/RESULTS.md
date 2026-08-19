@@ -1,7 +1,7 @@
 # Results -- AnalogGym on TSMC7 (BSIM-CMG via PyCMG)
 
 Every number below comes from running the decks in this tree under ngspice-45.2 with the
-`bsimcmg.osdi` binary from `PyCircuitSim/external_compact_models/PyCMG`. Nothing is copied from
+`bsimcmg.osdi` binary from `PyCircuitSim/external_compact_models/bsim_cmg`. Nothing is copied from
 the AnalogGym paper or from the sky130 port.
 
 

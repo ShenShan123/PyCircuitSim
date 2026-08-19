@@ -39,7 +39,7 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
         temperature: float = 300.15,
         tech_code: Optional[int] = None,
     ):
-        from bsimar.models.transformer import TransformerEncoderModel
+        from neural_network.models.transformer import TransformerEncoderModel
 
         model_path_obj = Path(model_path)
         base_stem = model_path_obj.stem

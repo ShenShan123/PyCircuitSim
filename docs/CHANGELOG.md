@@ -20,6 +20,26 @@ The pre-compaction long-form narrative remains available in Git history.
 
 ## V7.5 — AnalogGym migration
 
+### V7.5.13 — type-based compact-model layout and cleanup (2026-08-19)
+
+- Moved technology inputs to root `PDKs/`: tracked ASAP7 cards and local,
+  ignored TSMC cards now have one owner independent of the model evaluator.
+- Renamed the two external stacks by role: `bsim_cmg/` owns the physics/OSDI
+  evaluator and generated-card cache; `neural_network/` owns DirectNet,
+  BSIM-AR, PFN, datasets, checkpoints, training, and evaluation. Python imports
+  moved from `bsimar.*` to `neural_network.*`; the public `pycmg` API and
+  simulator BSIM-AR family names remain unchanged.
+- Retired the closed V7.2 GPU probes and V7.4 campaign babysitters, removed
+  generated runner decks with machine-specific paths, and dropped two
+  unreferenced campaign diagnostics. Current generation, training, re-gate,
+  accuracy-document, AnalogGym, diagnostic, and performance-gate tooling stays;
+  the retained V7.1 re-gate now retries a recorded no-checkpoint cell after its
+  checkpoints appear.
+- Fast verification passed shell syntax, Python compilation, the package
+  import/path smoke, two focused PyCMG PDK-resolution tests, BSIM-CMG NMOS and
+  PMOS operating points versus NGSPICE (2/2), the AnalogGym migration
+  regressions (9/9), and the subcircuit gate (11/11).
+
 ### V7.5.12 — transient diagnostics and corpus integrity (2026-08-18)
 
 - Replaced the unrelated unconstrained `op` used by transient diagnostics with

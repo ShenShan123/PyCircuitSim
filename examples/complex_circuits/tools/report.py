@@ -356,7 +356,7 @@ def main() -> None:
              "Every number below comes from running the decks in this tree "
              "under ngspice-45.2 with the\n"
              "`bsimcmg.osdi` binary from "
-             "`PyCircuitSim/external_compact_models/PyCMG`. Nothing is copied "
+             "`PyCircuitSim/external_compact_models/bsim_cmg`. Nothing is copied "
              "from\nthe AnalogGym paper or from the sky130 port.\n",
              "\n## Coverage\n\n" + coverage(rows)]
     titles = {"amplifier": "Amplifier", "ldo": "Low Dropout Regulator",

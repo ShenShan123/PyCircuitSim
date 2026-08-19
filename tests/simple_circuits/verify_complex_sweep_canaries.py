@@ -32,7 +32,7 @@ print = functools.partial(print, flush=True)  # type: ignore[assignment]
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tests"))
+sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "tests"))
 
 from tests.common.complex import (  # noqa: E402
     BENCH, BENCH_TECHS,

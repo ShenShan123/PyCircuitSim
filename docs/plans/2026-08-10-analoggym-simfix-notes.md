@@ -113,10 +113,10 @@ plus a decision about the campaign stride policy; nothing here requires it.
 ## Env facts, artifacts, and traps
 
 - conda env `pycircuitsim` at `/home/shenshan/.conda/envs/pycircuitsim`;
-  NGSPICE `/usr/local/ngspice-45.2/bin/ngspice`; worktree at
-  `/data2/home/shenshan/PyCircuitSim/.claude/worktrees/analoggym-migration`.
+  NGSPICE `/usr/local/ngspice-45.2/bin/ngspice`; the campaign originally ran
+  in a temporary `analoggym-migration` worktree.
 - Gates CPU-pinned: `CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1
-  MKL_NUM_THREADS=1`. `bsimar/checkpoints` is a symlink to the main repo copy
+  MKL_NUM_THREADS=1`. `neural_network/checkpoints` is a symlink to the main repo copy
   (gitignored) so the NN gates can run here.
 - **Campaign evidence is untracked and only on disk:** per-deck JSONs under
   `examples/complex_circuits/pycircuitsim_bench_results/v753_campaign_tsmc{5,6,7,12,16}/`

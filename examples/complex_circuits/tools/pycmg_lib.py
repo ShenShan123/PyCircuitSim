@@ -42,7 +42,7 @@ PYCMG_DIR = Path(
     os.environ.get(
         "PYCMG_DIR",
         str(Path(__file__).resolve().parents[3]
-            / "external_compact_models" / "PyCMG"),
+            / "external_compact_models" / "bsim_cmg"),
     )
 )
 if str(PYCMG_DIR) not in sys.path:

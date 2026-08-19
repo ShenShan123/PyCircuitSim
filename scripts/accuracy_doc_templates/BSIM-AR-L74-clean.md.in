@@ -3,7 +3,7 @@
 **What it is.** An autoregressive Transformer that emits the thirteen outputs
 one token at a time, each conditioned on the ones already produced. It shares
 DirectNet's data, normalization, loss, training and evaluation pipeline
-entirely — the `bsimar` package — so the only variable against
+entirely — the `neural_network` package — so the only variable against
 [`DirectNet-L73-clean.md`](DirectNet-L73-clean.md) is the architecture.
 
 **What it costs.** The autoregressive loop re-enters the network once per

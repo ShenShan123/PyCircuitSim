@@ -3,7 +3,7 @@
 #
 # Uses the canonical "regen-v2" data recipe (grid sampler + inverter-trip overlay
 # + subthreshold/OFF densification) but writes the UNVERSIONED filename
-# `{tech}_{dev}.npz`, which is exactly what `bsimar.cli.train` resolves by default
+# `{tech}_{dev}.npz`, exactly what `neural_network.cli.train` resolves by default
 # (datasets/<tech-scope>_<device-type>.npz). Covers ALL Vth variants (--variants
 # all, the default) and the full L/NFIN/T geometry grid per tech.
 #
@@ -19,8 +19,8 @@
 # see docs/plans/2026-08-10-v742-bsimar-capacity.md.
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-GEN="$ROOT/external_compact_models/PyCMG/scripts/generate_nn_data.py"
-OUTDIR="$ROOT/external_compact_models/bsimar/data/datasets"
+GEN="$ROOT/external_compact_models/bsim_cmg/scripts/generate_nn_data.py"
+OUTDIR="$ROOT/external_compact_models/neural_network/data/datasets"
 LOGDIR="$ROOT/results/benchmark_sml/gen_logs"
 WORKERS="${1:-20}"
 mkdir -p "$OUTDIR" "$LOGDIR"

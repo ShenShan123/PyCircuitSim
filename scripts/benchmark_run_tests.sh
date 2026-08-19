@@ -20,7 +20,7 @@ set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SELF="$ROOT/scripts/$(basename "${BASH_SOURCE[0]}")"
 NG="$ROOT/tools/ngspice-45.2/bin/ngspice"
-CKPT="$ROOT/external_compact_models/bsimar/checkpoints"
+CKPT="$ROOT/external_compact_models/neural_network/checkpoints"
 PAR="${PAR:-12}"
 
 # V6.8 — MODEL env selects the NN under test (see gate_matrix_iso.sh):
@@ -84,8 +84,16 @@ if [ "${1:-}" = "_one" ]; then
     export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="${tlc}_dn_${size}_nmos"
     export PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="${tlc}_dn_${size}_pmos"
   fi
+  test_file="$ROOT/tests/simple_circuits/${suite}.py"
+  if [ "$suite" = "verify_nn_multi_tech_dc" ]; then
+    test_file="$ROOT/tests/single_devices/${suite}.py"
+  fi
+  [ -f "$test_file" ] || {
+    echo "[test] UNKNOWN suite path: $suite" > "$log"
+    exit 3
+  }
   echo "[test] RUN $size/$tlc/$suite"
-  conda run -n pycircuitsim python -u "$ROOT/tests/${suite}.py" --tech "$tuc" > "$log" 2>&1
+  conda run -n pycircuitsim python -u "$test_file" --tech "$tuc" > "$log" 2>&1
   rc=$?
   echo "===BENCH_DONE rc=$rc===" >> "$log"
   echo "[test] END $size/$tlc/$suite rc=$rc"

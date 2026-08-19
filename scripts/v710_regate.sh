@@ -27,12 +27,14 @@
 #   PAR=24 JOBS=jobs.txt bash scripts/v710_regate.sh          # dispatch a pool
 #   bash scripts/v710_regate.sh _one dn small TSMC16 verify_nn_ac 1
 #
-# Resumable: a job whose log already carries ===V710_DONE is skipped.
+# Resumable: a job whose verdict log already carries ===V710_DONE is skipped.
+# A recorded NO-CKPT remains a no-verdict and is retried when both checkpoints
+# later appear.
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SELF="$ROOT/scripts/$(basename "${BASH_SOURCE[0]}")"
 NG="$ROOT/tools/ngspice-45.2/bin/ngspice"
-CKPT="$ROOT/external_compact_models/bsimar/checkpoints"
+CKPT="$ROOT/external_compact_models/neural_network/checkpoints"
 OUT="${V710_OUT:-$ROOT/results/v710_regate}"
 SCRATCH="${V710_SCRATCH:-/tmp/v710_regate_scratch}"
 PY="${NN_PY:-/data1/shenshan/.conda/envs/pycircuitsim/bin/python}"
@@ -43,6 +45,16 @@ if [ "${1:-}" = "_one" ]; then
   tlc="$(echo "$tuc" | tr 'A-Z' 'a-z')"
   log="$OUT/$tag/$variant/$tlc/${suite}.omp${omp}.log"
   mkdir -p "$(dirname "$log")"
+  # A NO-CKPT marker contains the generic resume sentinel. Keep it as a
+  # no-verdict while either checkpoint is absent, but clear the stale marker
+  # and resume the cell after both checkpoints have been trained.
+  if grep -q "===V710_DONE rc=no-ckpt===" "$log" 2>/dev/null; then
+    if [ -f "$CKPT/${tlc}_${tag}_${variant}_nmos_best.pt" ] && [ -f "$CKPT/${tlc}_${tag}_${variant}_pmos_best.pt" ]; then
+      echo "[v710] RETRY $tag/$variant/$tlc/$suite/omp$omp (checkpoints appeared since the NO-CKPT record)"; rm -f "$log"
+    else
+      echo "[v710] SKIP $tag/$variant/$tlc/$suite/omp$omp (recorded NO-CKPT — still no verdict)"; exit 3
+    fi
+  fi
   if grep -q "===V710_DONE" "$log" 2>/dev/null; then echo "[v710] SKIP $tag/$variant/$tlc/$suite/omp$omp"; exit 0; fi
 
   sn="${tlc}_${tag}_${variant}_nmos"; sp="${tlc}_${tag}_${variant}_pmos"
@@ -72,9 +84,17 @@ if [ "${1:-}" = "_one" ]; then
   export PYCIRCUITSIM_COMPLEX_RESULTS="$iso/cplx" PYCIRCUITSIM_NN_RESULTS="$iso/nn"
   mkdir -p "$PYCIRCUITSIM_COMPLEX_RESULTS" "$PYCIRCUITSIM_NN_RESULTS"
 
+  test_file="$ROOT/tests/simple_circuits/${suite}.py"
+  if [ "$suite" = "verify_nn_multi_tech_dc" ]; then
+    test_file="$ROOT/tests/single_devices/${suite}.py"
+  fi
+  [ -f "$test_file" ] || {
+    echo "[v710] UNKNOWN suite path: $suite" > "$log"
+    exit 3
+  }
   echo "[v710] RUN $tag/$variant/$tlc/$suite/omp$omp"
   OMP_NUM_THREADS=$omp MKL_NUM_THREADS=$omp PYCIRCUITSIM_TORCH_THREADS=$omp \
-    "$PY" -u "$ROOT/tests/${suite}.py" --tech "$tuc" > "$log" 2>&1
+    "$PY" -u "$test_file" --tech "$tuc" > "$log" 2>&1
   rc=$?
   echo "===V710_DONE rc=$rc===" >> "$log"
   echo "[v710] END $tag/$variant/$tlc/$suite/omp$omp rc=$rc"

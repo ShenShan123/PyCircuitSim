@@ -45,9 +45,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 
-import bsimar.models.transformer as transformer_mod  # noqa: E402
-from bsimar.config import CHECKPOINT_DIR  # noqa: E402
-from bsimar.models.transformer import TransformerEncoderModel  # noqa: E402
+import neural_network.models.transformer as transformer_mod  # noqa: E402
+from neural_network.config import CHECKPOINT_DIR  # noqa: E402
+from neural_network.models.transformer import TransformerEncoderModel  # noqa: E402
 
 # Cover both device polarities, all three shipped sizes, and more than one
 # tech — d_model / nhead / num_layers all vary across these.
@@ -125,7 +125,7 @@ def level0() -> List[Result]:
     probe = subprocess.run(
         [sys.executable, "-c",
          "import sys; sys.path.insert(0, %r);"
-         "import bsimar.models.transformer as t; print(t._AR_CACHE)"
+         "import neural_network.models.transformer as t; print(t._AR_CACHE)"
          % str(PROJECT_ROOT / "external_compact_models")],
         capture_output=True, text=True, env={"PATH": "/usr/bin:/bin"})
     default_off = probe.stdout.strip() == "False"

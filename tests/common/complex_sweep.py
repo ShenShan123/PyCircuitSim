@@ -57,7 +57,7 @@ from tests.common.complex import (  # noqa: E402
     ngspice_sram_lobe, directnet_sram_lobe, directnet_sram_6t,
 )
 
-CKPT_DIR = PROJECT_ROOT / "external_compact_models" / "bsimar" / "checkpoints"
+CKPT_DIR = PROJECT_ROOT / "external_compact_models" / "neural_network" / "checkpoints"
 
 # --- hard-gate thresholds (plan Step 7) -------------------------------------
 OPAMP_GAIN_TOL = 0.10        # |dn-ng|/ng gain gate

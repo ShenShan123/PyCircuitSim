@@ -1,9 +1,0 @@
-* tsmc16 runner (tb_dc)
-.control
-set noaskquit
-set num_threads=1
-osdi /data2/home/shenshan/PyCircuitSim/.claude/worktrees/analoggym-migration/external_compact_models/PyCMG/build/osdi/bsimcmg.osdi
-source /data2/home/shenshan/PyCircuitSim/.claude/worktrees/analoggym-migration/examples/complex_circuits/designs_tsmc7/voltage_reference/dual_output_subthreshold_vref/tb_dc.cir
-dc temp -40 125 0.5
-.endc
-.end

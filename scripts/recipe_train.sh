@@ -34,8 +34,8 @@
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SELF="$ROOT/scripts/$(basename "${BASH_SOURCE[0]}")"
-CKPT="$ROOT/external_compact_models/bsimar/checkpoints"
-DS="$ROOT/external_compact_models/bsimar/data/datasets"
+CKPT="$ROOT/external_compact_models/neural_network/checkpoints"
+DS="$ROOT/external_compact_models/neural_network/data/datasets"
 LOGDIR="$ROOT/results/recipe_bench/train_logs"
 mkdir -p "$LOGDIR"
 read -r -a GPU_IDS <<< "${GPUS:-0 1 2}"
@@ -186,7 +186,7 @@ if [ "${1:-}" = "_one" ]; then
   # near-full-core OpenMP pool; at NSTREAMS=6-9 concurrent jobs the box hit
   # loadavg ~400/192 with GPUs starved at 56-78% util. TRAIN_OMP=4 default.
   CUDA_VISIBLE_DEVICES="$gpu" OMP_NUM_THREADS="${TRAIN_OMP:-4}" MKL_NUM_THREADS="${TRAIN_OMP:-4}" \
-    conda run --no-capture-output -n pycircuitsim python -u -m bsimar.cli.train \
+    conda run --no-capture-output -n pycircuitsim python -u -m neural_network.cli.train \
     --model "$MODEL" --size "$size" --device-type "$dev" --tech-scope "$tech" \
     --apply-filter off --swa-mode ema --seed 42 --cuda --overwrite \
     $expname $extra \

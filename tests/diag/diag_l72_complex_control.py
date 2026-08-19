@@ -31,7 +31,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
-sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tests"))
+sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "tests"))
 
 from tests.common.complex import BENCH, RESULTS_BASE, BenchTech  # noqa: E402
 from pycircuitsim.parser import Parser  # noqa: E402

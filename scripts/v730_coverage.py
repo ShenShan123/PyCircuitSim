@@ -28,7 +28,7 @@ import pathlib
 from typing import Dict, List, Optional, Tuple
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CKPT = ROOT / "external_compact_models" / "bsimar" / "checkpoints"
+CKPT = ROOT / "external_compact_models" / "neural_network" / "checkpoints"
 
 TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 FAM = {"dn": "DirectNet", "tf": "BSIM-AR", "pfn": "PFN"}

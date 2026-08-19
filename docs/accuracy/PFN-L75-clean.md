@@ -3,7 +3,7 @@
 **What it is.** A faithful scaled-down port of TabPFN-v3's in-context
 transformer, used as a compact model: the tech code enters as an eighth column
 token and predictions are conditioned on a table of context rows rather than on
-weights alone. It shares the `bsimar` data, normalization, loss, training and
+weights alone. It shares the `neural_network` data, normalization, loss, training and
 evaluation pipeline with the other two families.
 
 **Two deliberate deviations from TabPFN**, both forced by the solver:

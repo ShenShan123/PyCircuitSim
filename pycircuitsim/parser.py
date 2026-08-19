@@ -60,10 +60,10 @@ import re
 import sys
 from pathlib import Path
 
-# Make the `bsimar` package importable for LEVEL=73 / LEVEL=74 resolution below.
-_BSIMAR_PARENT = Path(__file__).resolve().parent.parent / "external_compact_models"
-if str(_BSIMAR_PARENT) not in sys.path:
-    sys.path.insert(0, str(_BSIMAR_PARENT))
+# Make the neural compact-model package importable for LEVEL=73-75 resolution.
+_NN_PARENT = Path(__file__).resolve().parent.parent / "external_compact_models"
+if str(_NN_PARENT) not in sys.path:
+    sys.path.insert(0, str(_NN_PARENT))
 
 from pycircuitsim.circuit import Circuit
 from pycircuitsim.models import (
@@ -108,7 +108,7 @@ def _phys_best_trustworthy(phys_path: Path, norm_path: Path) -> bool:
         key = (str(norm_path), int(st.st_mtime_ns), int(st.st_size))
         hit = _PHYS_METRIC_CACHE.get(key)
         if hit is None:
-            from bsimar.data.normalize import BSIMARNormStats
+            from neural_network.data.normalize import BSIMARNormStats
             _ns = BSIMARNormStats.load(str(norm_path))
             hit = (getattr(_ns, "phys_best_metric", "legacy_mean")
                    == "median")
@@ -156,7 +156,7 @@ def _resolve_nn_checkpoint(
     distinct key; logging and the UNKNOWN-code check still run per device
     so counts and strict-mode raises stay exact.
     """
-    from bsimar.config import UNKNOWN_CODE_ID, LOCAL_UNKNOWN_CODE_ID
+    from neural_network.config import UNKNOWN_CODE_ID, LOCAL_UNKNOWN_CODE_ID
 
     memo_key = (level, device_key, tech_key, vt_key, explicit_path)
     hit = _RESOLUTION_MEMO.get(memo_key)
@@ -222,7 +222,7 @@ def _resolve_nn_checkpoint_uncached(
     files default to ``_best.pt`` to avoid the AR-rollout id-column
     blowup.
     """
-    from bsimar.config import (
+    from neural_network.config import (
         CHECKPOINT_DIR, tech_variant_to_code, UNKNOWN_CODE_ID,
         LOCAL_UNKNOWN_CODE_ID, LOCAL_VARIANT_CODES, local_variant_code,
     )

@@ -39,7 +39,7 @@ class _DirectNetMixin(_MOSFETNNBase):
         temperature: float = 300.15,
         tech_code: Optional[int] = None,
     ):
-        from bsimar.models.direct_net import DirectNet
+        from neural_network.models.direct_net import DirectNet
 
         def _build_from_state(state: Dict[str, torch.Tensor]) -> torch.nn.Module:
             net_keys = [

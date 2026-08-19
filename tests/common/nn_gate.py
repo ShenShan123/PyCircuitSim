@@ -67,7 +67,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from tests.common.nn import nrmse, mre, tech_code_in_vocab  # noqa: E402
 from helpers import bake_inst_params  # noqa: E402
-from bsimar.config import CHECKPOINT_DIR, OSDI_PATH  # noqa: E402
+from neural_network.config import CHECKPOINT_DIR, OSDI_PATH  # noqa: E402
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -75,7 +75,7 @@ from bsimar.config import CHECKPOINT_DIR, OSDI_PATH  # noqa: E402
 NGSPICE_BIN = os.environ.get(
     "NGSPICE_BIN", "/usr/local/ngspice-45.2/bin/ngspice")
 MODELCARDS_DIR = (
-    PROJECT_ROOT / "external_compact_models" / "PyCMG" / "modelcards"
+    PROJECT_ROOT / "PDKs"
 )
 RESULTS_BASE = PROJECT_ROOT / "tests" / "verify_nn_dc_tran_results"
 

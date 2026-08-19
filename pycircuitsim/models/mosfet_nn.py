@@ -30,15 +30,15 @@ from typing import Callable, Dict, List, Optional, Tuple
 import numpy as np
 import torch
 
-# Make `bsimar` importable regardless of cwd.
+# Make the neural compact-model package importable regardless of cwd.
 PROJECT_ROOT = Path(__file__).parent.parent.parent
-_BSIMAR_PARENT = PROJECT_ROOT / "external_compact_models"
-if str(_BSIMAR_PARENT) not in sys.path:
-    sys.path.insert(0, str(_BSIMAR_PARENT))
+_NN_PARENT = PROJECT_ROOT / "external_compact_models"
+if str(_NN_PARENT) not in sys.path:
+    sys.path.insert(0, str(_NN_PARENT))
 
 from pycircuitsim.models.base import Component
-from bsimar.config import UNKNOWN_CODE_ID
-from bsimar.data.normalize import (
+from neural_network.config import UNKNOWN_CODE_ID
+from neural_network.data.normalize import (
     NormStats, normalizer_from_stats,
     OUTPUT_COLUMN_ORDER, BSIMAR_COLUMN_ORDER,
 )

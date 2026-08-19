@@ -1,0 +1,225 @@
+"""Dataset wrapper and loader for BSIMAR / DirectNet training.
+
+One loader for both architectures. The caller picks ``norm_mode``:
+``"zscore"`` for DirectNet, ``"asinh"`` for the Transformer.
+"""
+
+from typing import Dict, List, Optional, Set, Tuple
+
+import numpy as np
+import torch
+from torch.utils.data import Dataset
+
+from neural_network.data.normalize import _NormalizerBase, normalizer_for
+
+
+class MOSFETDataset(Dataset):
+    """(inputs, outputs, tech_codes) tuples in normalised space.
+
+    ``sample_class`` (V6.4.7 S9b): optional per-row generator origin tag
+    (int8 codes from PyCMG ``nn_generate.SAMPLE_CLASS_CODES``), kept
+    aligned with the split rows. ``sample_class_names`` maps code → name
+    (index = code). Both are metadata only — ``__getitem__`` is unchanged.
+    """
+
+    def __init__(
+        self,
+        inputs_norm: np.ndarray,
+        outputs_norm: np.ndarray,
+        tech_codes: np.ndarray,
+        sample_class: Optional[np.ndarray] = None,
+        sample_class_names: Optional[List[str]] = None,
+    ) -> None:
+        self.inputs = torch.tensor(inputs_norm, dtype=torch.float32)
+        self.outputs = torch.tensor(outputs_norm, dtype=torch.float32)
+        self.tech_codes = torch.tensor(tech_codes, dtype=torch.long)
+        self.sample_class = (
+            torch.tensor(sample_class, dtype=torch.int8)
+            if sample_class is not None else None)
+        self.sample_class_names = sample_class_names
+
+    def __len__(self) -> int:
+        return len(self.inputs)
+
+    def __getitem__(self, idx: int):
+        return self.inputs[idx], self.outputs[idx], self.tech_codes[idx]
+
+
+# Drop rows below the modelcard noise floor for Id. Charges and caps are
+# absorbed by the asinh per-target scale, so the only useful filter is on
+# Id (v5 plan §4-B4).
+DEFAULT_FILTER_THRESHOLDS: Dict[str, float] = {"id": 1e-15}
+
+# Legacy sample_class code for rows of unknown origin — mirrors
+# PyCMG nn_generate._assemble, which tags pre-B1 bins as "lhs" (code 6).
+_LEGACY_LHS_CLASS_CODE: int = 6
+
+
+def filter_small_targets(
+    outputs: np.ndarray,
+    column_names: List[str],
+    thresholds: Optional[Dict[str, float]] = None,
+) -> np.ndarray:
+    thresholds = thresholds or DEFAULT_FILTER_THRESHOLDS
+    mask = np.ones(len(outputs), dtype=bool)
+    for i, name in enumerate(column_names):
+        if name in thresholds:
+            mask &= np.abs(outputs[:, i]) > thresholds[name]
+    return mask
+
+
+def load_and_split_bsimar(
+    data_path: str,
+    column_names: List[str],
+    device_type: str,
+    norm_mode: str = "asinh",
+    train_ratio: float = 0.8,
+    val_ratio: float = 0.1,
+    seed: int = 42,
+    apply_filter: bool = True,
+    filter_thresholds: Optional[Dict[str, float]] = None,
+    exclude_techs: Optional[Set[str]] = None,
+    max_rows: Optional[int] = None,
+    output_subset: Optional[List[str]] = None,
+    tech_scope: str = "universal",
+) -> Tuple[MOSFETDataset, MOSFETDataset, MOSFETDataset, _NormalizerBase]:
+    """Load .npz, label, optionally filter / exclude techs / cap, split, normalise.
+
+    ``output_subset``: optional list of column names from
+    ``OUTPUT_COLUMN_ORDER``. If given, only those columns are kept on
+    every split, and the normalizer's stats are sized to the subset.
+
+    ``tech_scope``: one of ``"universal"`` (no remap; default) or a
+    per-tech scope name (``"tsmc5"`` / ``"tsmc7"``). When non-universal,
+    each row's tech_code is remapped from the universal vocab to a
+    0-indexed local vocab whose size matches the trained per-tech
+    embedding. Rows outside the scope (which should already be removed
+    by ``exclude_techs``) collapse to the local UNKNOWN slot at the tail.
+    """
+    from neural_network.eval.loo_labels import get_or_build_tech_variant_labels
+
+    data = np.load(data_path, allow_pickle=True)
+    inputs = data["inputs"]
+    geometry = data["geometry"]
+    outputs = data["outputs"]
+    tech_codes = get_or_build_tech_variant_labels(
+        data_path, device_type, verbose=True)
+
+    # V6.4.7 S9b: per-row generator origin tag, kept aligned through every
+    # row operation below. Missing → legacy "lhs" code (nn_generate
+    # convention for pre-B1 bins).
+    if "sample_class" in data.files:
+        sample_class = np.asarray(data["sample_class"], dtype=np.int8)
+    else:
+        print(f"  [warn] {data_path} has no sample_class — tagging all "
+              f"rows as legacy 'lhs' (code {_LEGACY_LHS_CLASS_CODE})")
+        sample_class = np.full(
+            len(outputs), _LEGACY_LHS_CLASS_CODE, dtype=np.int8)
+    sample_class_names: Optional[List[str]] = None
+    if "meta_sample_class_names" in data.files:
+        sample_class_names = [
+            n.decode() if isinstance(n, bytes) else str(n)
+            for n in data["meta_sample_class_names"]
+        ]
+
+    n0 = len(outputs)
+    if apply_filter:
+        keep = filter_small_targets(outputs, column_names, filter_thresholds)
+        inputs, geometry, outputs = inputs[keep], geometry[keep], outputs[keep]
+        tech_codes = tech_codes[keep]
+        sample_class = sample_class[keep]
+        n_drop = n0 - len(outputs)
+        print(f"  Filter Id>1e-15: {n0} -> {len(outputs)} "
+              f"(dropped {n_drop} rows, {100.0 * n_drop / max(n0, 1):.2f}%)")
+    else:
+        print(f"  Filter OFF: keeping all {n0} rows "
+              "(small-Id rows retained)")
+
+    if exclude_techs:
+        from neural_network.config import TECH_VARIANT_CODES
+        excl = {
+            code for (tech, _), code in TECH_VARIANT_CODES.items()
+            if tech in exclude_techs
+        }
+        keep = np.array(
+            [int(c) not in excl for c in tech_codes], dtype=bool)
+        inputs, geometry, outputs = inputs[keep], geometry[keep], outputs[keep]
+        tech_codes = tech_codes[keep]
+        sample_class = sample_class[keep]
+        print(f"  Excluded {exclude_techs}: kept {keep.sum()} samples")
+
+    if max_rows is not None and len(outputs) > max_rows:
+        rng_cap = np.random.default_rng(seed)
+        idx = rng_cap.choice(len(outputs), size=max_rows, replace=False)
+        inputs, geometry, outputs = inputs[idx], geometry[idx], outputs[idx]
+        tech_codes = tech_codes[idx]
+        sample_class = sample_class[idx]
+        print(f"  Capped to {max_rows} rows")
+
+    if tech_scope != "universal":
+        from neural_network.config import (
+            CODE_TO_TECH_VARIANT,
+            LOCAL_VARIANT_CODES,
+            LOCAL_UNKNOWN_CODE_ID,
+            VALID_TECH_SCOPES,
+        )
+        if tech_scope not in LOCAL_VARIANT_CODES:
+            raise ValueError(
+                f"tech_scope {tech_scope!r} not in {VALID_TECH_SCOPES}")
+        local_table = LOCAL_VARIANT_CODES[tech_scope]
+        unk = LOCAL_UNKNOWN_CODE_ID[tech_scope]
+        remapped = np.empty_like(tech_codes)
+        n_outside = 0
+        for i, c in enumerate(tech_codes):
+            tv = CODE_TO_TECH_VARIANT.get(int(c))
+            if tv is None or tv[0] != tech_scope:
+                remapped[i] = unk
+                n_outside += 1
+            else:
+                remapped[i] = local_table.get(tv, unk)
+        tech_codes = remapped
+        if n_outside:
+            print(f"  tech_scope={tech_scope}: {n_outside} rows fell to "
+                  f"UNKNOWN (expected 0 if exclude_techs is set correctly)")
+        print(f"  tech_scope={tech_scope}: remapped to local vocab "
+              f"(size={len(local_table) + 1})")
+
+    if output_subset is not None:
+        from neural_network.data.normalize import OUTPUT_COLUMN_ORDER
+        for c in output_subset:
+            if c not in OUTPUT_COLUMN_ORDER:
+                raise ValueError(
+                    f"output_subset column {c!r} not in OUTPUT_COLUMN_ORDER")
+        col_idx = [OUTPUT_COLUMN_ORDER.index(c) for c in output_subset]
+        outputs = outputs[:, col_idx]
+        print(f"  Output subset: kept {len(output_subset)} cols "
+              f"{output_subset}")
+
+    rng = np.random.default_rng(seed)
+    perm = rng.permutation(len(outputs))
+    n_train = int(len(perm) * train_ratio)
+    n_val = int(len(perm) * val_ratio)
+    train_idx = perm[:n_train]
+    val_idx = perm[n_train:n_train + n_val]
+    test_idx = perm[n_train + n_val:]
+
+    normalizer = normalizer_for(norm_mode)
+    normalizer.fit(
+        inputs[train_idx], geometry[train_idx], outputs[train_idx],
+        output_columns=output_subset,
+    )
+
+    def _make(idxs: np.ndarray) -> MOSFETDataset:
+        x = normalizer.normalize_inputs(inputs[idxs], geometry[idxs])
+        y = normalizer.normalize_outputs(outputs[idxs])
+        return MOSFETDataset(
+            x, y, tech_codes[idxs],
+            sample_class=sample_class[idxs],
+            sample_class_names=sample_class_names)
+
+    train_ds = _make(train_idx)
+    val_ds = _make(val_idx)
+    test_ds = _make(test_idx)
+
+    print(f"  Split: train={len(train_ds)} val={len(val_ds)} test={len(test_ds)}")
+    return train_ds, val_ds, test_ds, normalizer

@@ -215,7 +215,7 @@ different training run. Read every TSMC6-vs-TSMC7 difference as training-run
 luck plus Newton-basin luck — that is exactly what makes it the instrument for
 §8.4's noise floor.
 
-`bsimar.config.assert_tech_is_distinct()` still flags the collision;
+`neural_network.config.assert_tech_is_distinct()` still flags the collision;
 `tsmc6`↔`tsmc7` is the sole entry in `ACKNOWLEDGED_DUPLICATE_TECHS`, so the
 guard prints loudly and continues instead of raising. Nothing else is on that
 list and nothing else should be, to silence a genuine onboarding mistake.
@@ -289,9 +289,7 @@ python scripts/v710_regate_collect.py --root results/v740_regate
 python scripts/v730_docs_build.py --only dn,tf --recipes clean
 python scripts/v730_docs_build.py --check
 
-# GPU fidelity axis (opt-in; not part of the CPU scoreboard)
-T3_AXIS=gpu GPU=1 NN_PY=python \
-  bash scripts/v720_t3_flag_bundle.sh NATURAL
+# GPU fidelity spot-check (opt-in; not part of the CPU scoreboard)
 python tests/perf/verify_latch_basin_gpu.py \
   --config commit+gpu+stamp+order --gpu 1 --ordering NATURAL
 ```

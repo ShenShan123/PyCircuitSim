@@ -44,7 +44,7 @@ LEVEL=72–75 MOSFETs, and flattened `X` subcircuit instances.
 - OpenVAF at `/usr/local/bin/openvaf`
 - PyTorch for LEVEL=73–75
 - A built BSIM-CMG OSDI binary at
-  `external_compact_models/PyCMG/build/osdi/bsimcmg.osdi`
+  `external_compact_models/bsim_cmg/build/osdi/bsimcmg.osdi`
 
 The configured NGSPICE binary is `/usr/local/ngspice-45.2/bin/ngspice`. No
 NGSPICE executable is bundled in this checkout; set `NGSPICE_BIN` to another
@@ -54,11 +54,11 @@ TSMC runs also require the private raw modelcards below. They are intentionally
 untracked; only the ASAP7 cards are bundled:
 
 ```text
-external_compact_models/PyCMG/modelcards/TSMC5/cln5_1d2_sp_v1d2_2p2.l
-external_compact_models/PyCMG/modelcards/TSMC6/cln6_1d8_sp_v1d0_2p2.l
-external_compact_models/PyCMG/modelcards/TSMC7/cln7_1d8_sp_v1d2_2p2.l
-external_compact_models/PyCMG/modelcards/TSMC12/cln12ffcll_1d8_sp_v1d0_2p4.l
-external_compact_models/PyCMG/modelcards/TSMC16/crn16ffcll_1d8_sp_v1d0_2p1.l
+PDKs/TSMC5/cln5_1d2_sp_v1d2_2p2.l
+PDKs/TSMC6/cln6_1d8_sp_v1d0_2p2.l
+PDKs/TSMC7/cln7_1d8_sp_v1d2_2p2.l
+PDKs/TSMC12/cln12ffcll_1d8_sp_v1d0_2p4.l
+PDKs/TSMC16/crn16ffcll_1d8_sp_v1d0_2p1.l
 ```
 
 ### Clone and install
@@ -83,7 +83,7 @@ pip install torch \
 Build the OSDI model if it is absent:
 
 ```bash
-cd external_compact_models/PyCMG
+cd external_compact_models/bsim_cmg
 mkdir -p build
 cd build
 cmake ..
@@ -94,7 +94,7 @@ cd ../../..
 Verify the reference path before generating data or running gates:
 
 ```bash
-test -f external_compact_models/PyCMG/build/osdi/bsimcmg.osdi
+test -f external_compact_models/bsim_cmg/build/osdi/bsimcmg.osdi
 conda run -n pycircuitsim python tests/single_devices/verify_bsimcmg_op.py
 ```
 
@@ -112,7 +112,7 @@ Generate both polarities for one technology:
 
 ```bash
 conda run -n pycircuitsim python \
-  external_compact_models/PyCMG/scripts/generate_nn_data.py \
+  external_compact_models/bsim_cmg/scripts/generate_nn_data.py \
   --device both \
   --tech tsmc5 \
   --enable-inv-trip \
@@ -125,11 +125,11 @@ dataset. Inspect all generator choices with:
 
 ```bash
 conda run -n pycircuitsim python \
-  external_compact_models/PyCMG/scripts/generate_nn_data.py --help
+  external_compact_models/bsim_cmg/scripts/generate_nn_data.py --help
 ```
 
 Datasets are written under
-`external_compact_models/bsimar/data/datasets/`. Each NPZ contains
+`external_compact_models/neural_network/data/datasets/`. Each NPZ contains
 source-relative terminal inputs, geometry/technology features, 13 BSIM-CMG
 targets, and a sample-class label. Unstable bins are rejected by the
 generator; NFIN=1 is not part of the training domain.
@@ -158,7 +158,7 @@ Train a clean DirectNet checkpoint for one polarity:
 
 ```bash
 PYTHONPATH=external_compact_models \
-conda run -n pycircuitsim python -m bsimar.cli.train \
+conda run -n pycircuitsim python -m neural_network.cli.train \
   --model direct \
   --size large \
   --device-type nmos \
@@ -170,7 +170,7 @@ conda run -n pycircuitsim python -m bsimar.cli.train \
 ```
 
 Repeat with `--device-type pmos`. Checkpoints are written to
-`external_compact_models/bsimar/checkpoints/` using stems such as
+`external_compact_models/neural_network/checkpoints/` using stems such as
 `tsmc5_dn_large_nmos`. The CLI writes the model and normalization sidecar;
 Transformer and PFN also require a configuration sidecar.
 
@@ -403,8 +403,9 @@ for promoting performance paths are in [`AGENTS.md`](AGENTS.md).
 
 ```text
 pycircuitsim/                         parser, solver, simulation, models
-external_compact_models/PyCMG/       BSIM-CMG evaluator and data generator
-external_compact_models/bsimar/      shared NN data/model/training package
+PDKs/                                technology modelcards (TSMC files private)
+external_compact_models/bsim_cmg/    BSIM-CMG evaluator and data generator
+external_compact_models/neural_network/  shared NN data/model/training package
 examples/single_devices/             device decks and NGSPICE templates
 examples/simple_circuits/             compact-model circuit decks
 examples/complex_circuits/            AnalogGym corpus and campaign harness
@@ -414,5 +415,7 @@ tests/common/                         shared render/compare infrastructure
 docs/accuracy/                        generated evidence and methodology
 ```
 
-Raw TSMC PDK modelcards are intentionally untracked and regenerated locally.
-Do not publish `cln*.l` files or `modelcards.tar.gz`.
+Raw TSMC PDK modelcards live under `PDKs/TSMC*/` and are intentionally
+untracked. Generated single-device cards stay under
+`external_compact_models/bsim_cmg/build/modelcards/`. Do not publish `cln*.l`
+files or `modelcards.tar.gz`.

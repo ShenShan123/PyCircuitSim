@@ -28,13 +28,13 @@ from typing import Dict
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG"))
-sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG" / "tests"))
+sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg"))
+sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "tests"))
 
-OSDI_PATH = (PROJECT_ROOT / "external_compact_models" / "PyCMG" / "build"
+OSDI_PATH = (PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "build"
              / "osdi" / "bsimcmg.osdi")
-MODELCARD_PATH = (PROJECT_ROOT / "external_compact_models" / "PyCMG"
-                  / "modelcards" / "ASAP7" / "7nm_TT_160803.pm")
+MODELCARD_PATH = (PROJECT_ROOT / "PDKs" / "ASAP7"
+                  / "7nm_TT_160803.pm")
 NGSPICE_BIN = os.environ.get("NGSPICE_BIN",
                              "/usr/local/ngspice-45.2/bin/ngspice")
 RESULTS_DIR = PROJECT_ROOT / "tests" / "verify_bsimcmg_op_results"

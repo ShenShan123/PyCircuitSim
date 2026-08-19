@@ -16,8 +16,8 @@
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SELF="$ROOT/scripts/$(basename "${BASH_SOURCE[0]}")"
-CKPT="$ROOT/external_compact_models/bsimar/checkpoints"
-DS="$ROOT/external_compact_models/bsimar/data/datasets"
+CKPT="$ROOT/external_compact_models/neural_network/checkpoints"
+DS="$ROOT/external_compact_models/neural_network/data/datasets"
 LOGDIR="$ROOT/results/benchmark_sml/train_logs"
 mkdir -p "$LOGDIR"
 # GPUS env (space-separated physical GPU ids) lets a run dodge a busy/shared GPU
@@ -26,7 +26,7 @@ read -r -a GPU_IDS <<< "${GPUS:-0 1 2}"
 NGPU=${#GPU_IDS[@]}
 NSTREAMS="${NSTREAMS:-9}"
 
-# The `bsimar` package lives under external_compact_models/ (not on sys.path);
+# The `neural_network` package lives under external_compact_models/;
 # it bootstraps pycmg internally.
 #
 # audit B5a — this script also absorbed the deleted scripts/train_per_tech_8cells.sh
@@ -53,7 +53,7 @@ if [ "${1:-}" = "_one" ]; then
   # EXTRA_TRAIN_ARGS lets a campaign inject a recipe addendum (e.g. the V6.5.1
   # µA-band loss lever: '--subthresh --subthresh-s2 1e-7 --subthresh-upper 3e-5')
   # without editing this script; empty by default = the clean control-v2 recipe.
-  CUDA_VISIBLE_DEVICES="$gpu" conda run --no-capture-output -n pycircuitsim python -u -m bsimar.cli.train \
+  CUDA_VISIBLE_DEVICES="$gpu" conda run --no-capture-output -n pycircuitsim python -u -m neural_network.cli.train \
     --model direct --size "$size" --device-type "$dev" --tech-scope "$tech" \
     --apply-filter off --swa-mode ema --seed 42 --cuda --overwrite ${EXTRA_TRAIN_ARGS:-} \
     > "$log" 2>&1

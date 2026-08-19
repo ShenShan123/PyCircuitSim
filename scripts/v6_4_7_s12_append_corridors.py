@@ -34,23 +34,23 @@ import numpy as np
 print = functools.partial(print, flush=True)  # type: ignore[assignment]
 
 ROOT = Path(__file__).resolve().parents[1]
-for p in (ROOT / "external_compact_models" / "PyCMG",
+for p in (ROOT / "external_compact_models" / "bsim_cmg",
           ROOT / "external_compact_models", ROOT):
     sp = str(p)
     if sp in sys.path:
         sys.path.remove(sp)
     sys.path.insert(0, sp)
 
-from bsimar.eval.loo_labels import (  # noqa: E402
+from neural_network.eval.loo_labels import (  # noqa: E402
     get_or_build_tech_variant_labels,
     write_sidecar_meta,
 )
-from bsimar.config import tech_variant_to_code  # noqa: E402
+from neural_network.config import tech_variant_to_code  # noqa: E402
 from pycmg.nn_generate import SAMPLE_CLASS_NAMES, SAMPLE_CLASS_CODES  # noqa: E402
 
-DATA_DIR = ROOT / "external_compact_models" / "bsimar" / "data" / "datasets"
+DATA_DIR = ROOT / "external_compact_models" / "neural_network" / "data" / "datasets"
 FRAG_DIR = ROOT / "results" / "v6_4_7" / "s12_corridors"
-BACKUP_DIR = ROOT / "external_compact_models" / "bsimar" / "data" / "datasets_precor_backup"
+BACKUP_DIR = ROOT / "external_compact_models" / "neural_network" / "data" / "datasets_precor_backup"
 BENCH_VARIANT = {"tsmc5": "lvt", "tsmc6": "ulvt", "tsmc7": "ulvt",
                  "tsmc12": "svt", "tsmc16": "svt"}
 CORRIDOR_CODE = SAMPLE_CLASS_CODES["traj_corridor"]  # 12

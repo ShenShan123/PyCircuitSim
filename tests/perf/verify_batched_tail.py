@@ -63,7 +63,7 @@ from pycircuitsim.models.mosfet_bsimar import (  # noqa: E402
     NMOS_BSIMAR, PMOS_BSIMAR)
 from pycircuitsim.models.mosfet_pfn import NMOS_PFN, PMOS_PFN  # noqa: E402
 
-CKPT = PROJECT_ROOT / "external_compact_models" / "bsimar" / "checkpoints"
+CKPT = PROJECT_ROOT / "external_compact_models" / "neural_network" / "checkpoints"
 
 KEYS8 = ["id", "gm", "gds", "gmb", "qg", "qd", "qs", "qb"]
 KEYS13 = KEYS8 + ["cgg", "cgd", "cgs", "cdg", "cdd"]

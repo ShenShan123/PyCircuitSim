@@ -34,12 +34,12 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 # PROJECT_ROOT must stay ahead of PyCMG: both ship a top-level ``tests``
 # package, and PyCMG's has no ``common`` submodule.
-sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "PyCMG"))
+sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg"))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from tests.common.complex import BENCH, BENCH_TECHS  # noqa: E402
-from bsimar.config import DATA_DIR, TECH_CONFIGS  # noqa: E402
+from neural_network.config import DATA_DIR, TECH_CONFIGS  # noqa: E402
 from pycmg.parser import _scan_all_variants  # noqa: E402
 from pycmg.tech import _resolve_path  # noqa: E402
 
