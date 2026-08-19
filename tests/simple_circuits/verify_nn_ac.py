@@ -222,26 +222,30 @@ def eval_cs_amp(tech: str, device: str) -> Dict[str, object]:
     v_dn, op_ok, dc_op = run_directnet_ac(nn_deck, work_dir, f"{tag}_ac",
                                           freqs, "out")
     nn_vout = dc_op.get("out", float("nan"))
-    # OP validity is judged by the OP VOLTAGE being mid-rail (the device is
-    # actually amplifying), NOT by the strict NR convergence flag — a high-gain
-    # CS-amp trip legitimately trips that flag while the pseudo-transient
-    # fallback returns a sound OP. A failure with op_valid=False is an OP-misbias
-    # (Vth/value-surface offset, already measured by the DC suite), NOT a
-    # charge-derivative (cap) error.
+    # Voltage placement and Newton convergence answer different questions: a
+    # mid-rail pseudo-transient state can look plausible but is not a DC fixed
+    # point. AC must linearize around a converged operating point.
     op_valid = (np.isfinite(nn_vout)
                 and 0.15 * bt.vdd < nn_vout < 0.85 * bt.vdd)
 
     m = ac_metrics_extended(freqs, v_dn, v_ng)
-    passed = (
-        op_valid
-        and m["gain0_db_err"] <= GAIN0_DB_ERR_TOL
-        and np.isfinite(m["f3db_ratio"])
-        and F3DB_RATIO_LO <= m["f3db_ratio"] <= F3DB_RATIO_HI
-        and m["mag_nrmse"] <= MAG_NRMSE_TOL
-    )
+    passed = ac_gate_passes(op_ok, bool(op_valid), m)
     return dict(tech=tech, device=device, ng_vbias=ng_vbias, nn_vbias=nn_vbias,
                 ng_vout=ng_vout, nn_vout=nn_vout, op_ok=op_ok,
                 op_valid=bool(op_valid), dc_op=dc_op, m=m, passed=bool(passed))
+
+
+def ac_gate_passes(op_converged: bool, op_valid: bool,
+                   metrics: Dict[str, float]) -> bool:
+    """Require a converged DC fixed point before scoring AC agreement."""
+    return bool(
+        op_converged
+        and op_valid
+        and metrics["gain0_db_err"] <= GAIN0_DB_ERR_TOL
+        and np.isfinite(metrics["f3db_ratio"])
+        and F3DB_RATIO_LO <= metrics["f3db_ratio"] <= F3DB_RATIO_HI
+        and metrics["mag_nrmse"] <= MAG_NRMSE_TOL
+    )
 
 
 def _print_result(r: Dict[str, object]) -> None:
@@ -324,6 +328,8 @@ def main() -> int:
         m = r["m"]
         if r["passed"]:
             status = "PASS"
+        elif not r.get("op_ok", False):
+            status = "FAIL-NONCONVERGED"
         elif not r.get("op_valid", True):
             status = "FAIL-MISBIAS"   # OP off-rail: Vth offset, not a cap error
         else:

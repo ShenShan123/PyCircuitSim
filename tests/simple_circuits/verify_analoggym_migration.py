@@ -29,6 +29,7 @@ if str(TOOLS_ROOT) not in sys.path:
 os.environ.setdefault("AG_TREE", str(BENCH_ROOT / "designs_tsmc5"))
 
 from tests.common import nn_gate  # noqa: E402
+from tests.simple_circuits import verify_nn_ac  # noqa: E402
 from examples.complex_circuits.pycircuitsim_bench import (  # noqa: E402
     AnalysisPlan,
     DeckOptions,
@@ -382,6 +383,17 @@ def verify_large_directnet_checkpoints_enable_shared_gates() -> None:
     )
 
 
+def verify_ac_gate_rejects_nonconverged_operating_point() -> None:
+    """Numerical AC agreement cannot validate a non-fixed linearization."""
+    metrics = {
+        "gain0_db_err": 0.0,
+        "f3db_ratio": 1.0,
+        "mag_nrmse": 0.0,
+    }
+    assert verify_nn_ac.ac_gate_passes(True, True, metrics)
+    assert not verify_nn_ac.ac_gate_passes(False, True, metrics)
+
+
 def verify_only_validated_alternate_seed_is_emitted() -> None:
     """Only the fallback that the current corpus actually exercises is shipped."""
     assert build_amp.ALT_NODESET_DECKS == {("TSMC5", "qu2017_azc_pin_3")}
@@ -517,6 +529,7 @@ def main() -> None:
         verify_campaign_resume_is_checkpoint_exact,
         verify_partial_campaign_summary_counts_missing_rows,
         verify_large_directnet_checkpoints_enable_shared_gates,
+        verify_ac_gate_rejects_nonconverged_operating_point,
         verify_only_validated_alternate_seed_is_emitted,
         verify_write_design_reconciles_alternate_seed_inventory,
         verify_regeneration_fails_loudly_without_source_corpus,
