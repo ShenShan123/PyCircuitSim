@@ -3,10 +3,12 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 from tempfile import TemporaryDirectory
 from typing import Dict, Optional
 from unittest.mock import patch
@@ -32,7 +34,11 @@ from examples.complex_circuits.pycircuitsim_bench import (  # noqa: E402
     SweepResult,
     TranslatedDeck,
 )
-from examples.complex_circuits.pycircuitsim_bench import run_compare  # noqa: E402
+from examples.complex_circuits.pycircuitsim_bench import (  # noqa: E402
+    campaign,
+    run_compare,
+    translate,
+)
 
 import build_amp  # noqa: E402
 
@@ -176,6 +182,143 @@ def verify_ac_still_uses_dedicated_operating_point() -> None:
     assert report["worst_abs"] == 0.0
 
 
+def verify_directnet_model_stub_is_explicit() -> None:
+    """An NN deck must retain its technology and model-card VT flavor."""
+    assert translate._model_stub(
+        "nsvt_l32_f7", "NMOS", tech="tsmc5", model_level=73
+    ) == ".model nsvt_l32_f7 NMOS (LEVEL=73 TECH=tsmc5 VT=svt)"
+    assert translate._model_stub(
+        "phvt_l90_f4", "PMOS", tech="tsmc16", model_level=73
+    ) == ".model phvt_l90_f4 PMOS (LEVEL=73 TECH=tsmc16 VT=hvt)"
+
+
+def verify_nn_temperature_sweep_rebinds_geometry() -> None:
+    """A temperature sweep must update the NN input and invalidate its cache."""
+    import torch
+
+    from pycircuitsim.models.mosfet_directnet import NMOS_NN
+
+    device = object.__new__(NMOS_NN)
+    device.NFIN = 4.0
+    device.L = 32e-9
+    device.temperature = 300.15
+    device._norm_key = ("norm", 0, 0)
+    device._device = torch.device("cpu")
+    device._norm_stats = SimpleNamespace(
+        input_mean=np.zeros(7), input_std=np.ones(7)
+    )
+    device._eval_cache = {"id": 1.0}
+    device._cache_voltages = (0.1, 0.2, 0.0, 0.0)
+    device._cache_has_caps = True
+    device._q_prev = {"qg": 1.0}
+    device._q_prev2 = {"qg": 1.0}
+    device._v_prev_tran = {"d": 0.1}
+
+    device.set_temperature(398.15)
+
+    assert device.temperature == 398.15
+    assert np.isclose(float(device._geo_norm_t[2]), 398.15)
+    assert device._eval_cache is None
+    assert device._q_prev is None
+    assert device._q_prev2 is None
+    assert device._v_prev_tran is None
+
+    circuit = SimpleNamespace(components=[device])
+    assert run_compare._mosfets(circuit) == [device]
+
+
+def verify_campaign_propagates_deck_failures() -> None:
+    """A failed campaign child must make the campaign itself fail loudly."""
+    with TemporaryDirectory() as temp_dir, patch.object(
+        campaign,
+        "corpus",
+        return_value=[("amplifier", "broken", "tb_gain.cir")],
+    ), patch.object(
+        campaign,
+        "run_deck",
+        return_value={
+            "category": "amplifier",
+            "design": "broken",
+            "deck": "tb_gain.cir",
+            "rc": 2,
+            "log": "broken.log",
+        },
+    ):
+        rc = campaign.main(
+            [
+                "--tech",
+                "tsmc5",
+                "--families",
+                "ac",
+                "--jobs",
+                "1",
+                "--out",
+                temp_dir,
+            ]
+        )
+        summary = (Path(temp_dir) / "summary.md").read_text()
+    assert rc != 0, "a failed child process was reported as campaign success"
+    assert "(1 quarantined)" not in summary, (
+        "a missing failed row was mislabeled as an invalid test example"
+    )
+
+
+def verify_modelcard_materializer_reads_generated_geometry() -> None:
+    """Private model libraries must be reproducible without rewriting decks."""
+    from examples.complex_circuits.tools.materialize_modelcards import (
+        model_specs,
+    )
+
+    text = """
+Nm1 d g s b nsvt_l32_f7 m=2
+Nm2 d g s b phvt_l90_f4 m=1
+Nm3 d g s b nsvt_l32_f7 m=8
+"""
+    assert model_specs(text) == {
+        "nsvt_l32_f7": ("n", "svt", 32 * 1e-9, 7),
+        "phvt_l90_f4": ("p", "hvt", 90 * 1e-9, 4),
+    }
+
+
+def verify_campaign_resume_is_checkpoint_exact() -> None:
+    """A same-stem retrain must not reuse rows from the previous weights."""
+    with TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        checkpoints = {}
+        for device in ("nmos", "pmos"):
+            stem = f"tsmc5_dn_large_{device}"
+            checkpoint = root / f"{stem}_best.pt"
+            norm = root / f"{stem}_norm.npz"
+            checkpoint.write_bytes(f"weights-{device}".encode())
+            norm.write_bytes(f"norm-{device}".encode())
+            checkpoint.with_suffix(".pt.complete").touch()
+            checkpoints[device] = {
+                "selection": "explicit",
+                "stem": stem,
+                "checkpoint_sha256": run_compare._sha256(checkpoint),
+                "norm_sha256": run_compare._sha256(norm),
+                "complete": True,
+            }
+        row_path = root / "row.json"
+        row_path.write_text(json.dumps({
+            "py_model": {
+                "family": "directnet",
+                "level": 73,
+                "tech": "tsmc5",
+                "checkpoints": checkpoints,
+            }
+        }))
+
+        with patch.object(campaign, "_CHECKPOINT_DIR", root):
+            assert campaign._row_matches_model(row_path, "tsmc5", 73, "large")
+            (root / "tsmc5_dn_large_nmos_best.pt").write_bytes(
+                b"retrained weights"
+            )
+            assert not campaign._row_matches_model(
+                row_path, "tsmc5", 73, "large"
+            )
+
+
 def verify_only_validated_alternate_seed_is_emitted() -> None:
     """Only the fallback that the current corpus actually exercises is shipped."""
     assert build_amp.ALT_NODESET_DECKS == {("TSMC5", "qu2017_azc_pin_3")}
@@ -303,6 +446,11 @@ def main() -> None:
         verify_both_failed_ic_transient_does_not_compare_unconstrained_op,
         verify_failed_unconstrained_transient_uses_operating_point,
         verify_ac_still_uses_dedicated_operating_point,
+        verify_directnet_model_stub_is_explicit,
+        verify_nn_temperature_sweep_rebinds_geometry,
+        verify_campaign_propagates_deck_failures,
+        verify_modelcard_materializer_reads_generated_geometry,
+        verify_campaign_resume_is_checkpoint_exact,
         verify_only_validated_alternate_seed_is_emitted,
         verify_write_design_reconciles_alternate_seed_inventory,
         verify_regeneration_fails_loudly_without_source_corpus,

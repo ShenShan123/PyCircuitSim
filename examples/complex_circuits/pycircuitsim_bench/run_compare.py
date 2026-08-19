@@ -21,8 +21,9 @@ difference in what ``AVG from=-40 to=125`` was taken to mean.  ``ng`` vs
 NGSPICE on NGSPICE's own data; if that column disagrees, nothing else in the
 row can be trusted.
 
-Only LEVEL=72 (BSIM-CMG via PyCMG/OSDI) is involved.  No NN model family
-(LEVEL=73/74/75) is imported, instantiated or invoked.
+NGSPICE always runs LEVEL=72 BSIM-CMG via OSDI.  PyCircuitSim may run that
+same implementation or DirectNet LEVEL=73; the selected family and exact
+checkpoint hashes are recorded in every result row.
 
 DC QUALITY IS THE WHOLE GAME
 ----------------------------
@@ -104,6 +105,7 @@ What this module found, so the next reader does not re-derive it:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import math
 import os
@@ -323,6 +325,76 @@ class SimOptions:
     stride: int = 1
     max_seconds: Optional[float] = None
     ng_timeout: float = 1800.0
+
+
+_PY_MODEL_FAMILIES: Dict[int, str] = {72: "bsim_cmg", 73: "directnet"}
+
+
+def _sha256(path: Path) -> str:
+    """Return a stable content digest for one model artifact."""
+    digest = hashlib.sha256()
+    with path.open("rb") as fh:
+        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _checkpoint_pin(device: str) -> Optional[str]:
+    """Return the effective explicit DirectNet pin for one polarity."""
+    names = (
+        f"PYCIRCUITSIM_NN_CHECKPOINT_DN_{device.upper()}",
+        f"PYCIRCUITSIM_NN_CHECKPOINT_{device.upper()}",
+        "PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE",
+    )
+    return next((os.environ[name].strip() for name in names
+                 if os.environ.get(name)), None)
+
+
+def _model_provenance(td: TranslatedDeck) -> Dict[str, Any]:
+    """Describe the PyCircuitSim compact model used for one result row."""
+    family = _PY_MODEL_FAMILIES.get(td.model_level)
+    if family is None:
+        raise SimFailure(f"Unsupported PyCircuitSim model level {td.model_level}")
+    out: Dict[str, Any] = {
+        "family": family, "level": td.model_level, "tech": td.tech,
+    }
+    if td.model_level != 73:
+        return out
+
+    from neural_network.config import CHECKPOINT_DIR           # noqa: PLC0415
+
+    checkpoints: Dict[str, Any] = {}
+    for device in ("nmos", "pmos"):
+        pin = _checkpoint_pin(device)
+        if pin is None:
+            checkpoints[device] = {"selection": "automatic"}
+            continue
+        if pin.endswith(f"_{device}"):
+            stem = pin
+        elif pin.endswith("_nmos") or pin.endswith("_pmos"):
+            raise SimFailure(
+                f"DirectNet pin {pin!r} names the opposite polarity for "
+                f"{device}")
+        else:
+            stem = f"{pin}_{device}"
+        checkpoint = CHECKPOINT_DIR / f"{stem}_best.pt"
+        norm = CHECKPOINT_DIR / f"{stem}_norm.npz"
+        if not checkpoint.is_file() or not norm.is_file():
+            raise SimFailure(
+                f"DirectNet provenance cannot resolve {stem}: expected "
+                f"{checkpoint} and {norm}")
+        checkpoints[device] = {
+            "selection": "explicit",
+            "stem": stem,
+            "checkpoint": str(checkpoint.resolve()),
+            "checkpoint_sha256": _sha256(checkpoint),
+            "norm": str(norm.resolve()),
+            "norm_sha256": _sha256(norm),
+            "complete": checkpoint.with_suffix(
+                checkpoint.suffix + ".complete").is_file(),
+        }
+    out["checkpoints"] = checkpoints
+    return out
 
 
 # ── NGSPICE grid reproduction ────────────────────────────────────────────
@@ -672,9 +744,9 @@ def _fail(meta: Dict[str, Any], message: str) -> "SimFailure":
 
 
 def _mosfets(circuit) -> list:
-    """Every LEVEL=72 device in the circuit (the only devices we ever touch)."""
-    from pycircuitsim.models.mosfet_cmg import MOSFET_CMG       # noqa: PLC0415
-    return [c for c in circuit.components if isinstance(c, MOSFET_CMG)]
+    """Every MOSFET device in the circuit, independent of compact-model level."""
+    from pycircuitsim.solver import _mosfet_types              # noqa: PLC0415
+    return [c for c in circuit.components if isinstance(c, _mosfet_types())]
 
 
 def _supply_rail(circuit) -> float:
@@ -1245,6 +1317,7 @@ def compare_translated(td: TranslatedDeck, work: Path,
         "schema": SCHEMA_VERSION,
         "tech": td.tech, "category": td.category, "design": td.design,
         "deck": td.deck, "devices": td.devices,
+        "py_model": _model_provenance(td),
         "control": [plan.control for plan in td.plans],
         "plans": [asdict(plan) for plan in td.plans],
         "translate_warnings": list(td.warnings),
@@ -1740,7 +1813,8 @@ def compare_deck(design_dir: Path, deck: str, *, tech: str, category: str,
                  work: Path, opts: SimOptions = SimOptions(),
                  control: Optional[str] = None,
                  rtol: float = 0.02,
-                 recovery: bool = True) -> Dict[str, Any]:
+                 recovery: bool = True,
+                 model_level: int = 72) -> Dict[str, Any]:
     """Translate one deck and score it under both simulators.
 
     Args:
@@ -1754,7 +1828,8 @@ def compare_deck(design_dir: Path, deck: str, *, tech: str, category: str,
             degraded into a plausible wrong answer
     """
     td = translate.translate_deck(design_dir, deck, tech=tech,
-                                  category=category, control=control)
+                                  category=category, control=control,
+                                  model_level=model_level)
     if recovery:
         row = compare_with_recovery(td, work, opts, rtol=rtol)
     else:
@@ -1887,8 +1962,8 @@ def _fmt(value: Any, spec: str = ".6g") -> str:
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """CLI: one deck, one design, or a whole category."""
     parser = argparse.ArgumentParser(
-        description="Score AnalogGym decks: PyCircuitSim vs NGSPICE "
-                    "(BSIM-CMG LEVEL=72 both sides).")
+        description="Score AnalogGym decks: a selected PyCircuitSim compact "
+                    "model vs NGSPICE BSIM-CMG LEVEL=72.")
     parser.add_argument("--root", type=Path, default=BENCH_ROOT,
                         help="tree holding designs_tsmc* (default: %(default)s)")
     parser.add_argument("--tech", default="tsmc5",
@@ -1930,6 +2005,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         help="NGSPICE timeout in seconds (default: %(default)s)")
     parser.add_argument("--rtol", type=float, default=0.02,
                         help="metric agreement tolerance (default: %(default)s)")
+    parser.add_argument(
+        "--model-level", type=int, choices=sorted(_PY_MODEL_FAMILIES),
+        default=72,
+        help="PyCircuitSim compact-model level: 72=BSIM-CMG, 73=DirectNet "
+             "(default: %(default)s)",
+    )
     parser.add_argument("--no-recovery", action="store_true",
                         help="do not fall back to the outward-from-25 C "
                              "segments when a monolithic temperature sweep "
@@ -1960,7 +2041,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 row = compare_deck(design_dir, deck, tech=args.tech.lower(),
                                    category=args.category, work=work,
                                    opts=opts, rtol=args.rtol,
-                                   recovery=not args.no_recovery)
+                                   recovery=not args.no_recovery,
+                                   model_level=args.model_level)
             except Exception as exc:                # noqa: BLE001 -- reported
                 failures += 1
                 print(f"\n=== {args.tech}/{args.category}/{design_dir.name}/"

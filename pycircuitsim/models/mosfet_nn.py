@@ -1345,6 +1345,43 @@ class _MOSFETNNBase(Component):
             self._i_prev_gate = cap_currents.get("i_gate", 0.0)
             self._i_prev_drain = cap_currents.get("i_drain", 0.0)
 
+    def set_temperature(self, temperature_kelvin: float) -> None:
+        """Rebind the temperature feature used by NN inference.
+
+        Temperature is part of the constant geometry tensor, not the voltage
+        tuple used as the evaluation-cache key.  A temperature sweep therefore
+        has to rebuild that tensor and clear both the current cache and the
+        transient charge history.
+        """
+        if temperature_kelvin <= 200.0:
+            raise ValueError(
+                f"Temperature must be in Kelvin (> 200 K), got "
+                f"{temperature_kelvin}. Use temp_K = temp_C + 273.15.")
+
+        self.temperature = float(temperature_kelvin)
+        nfin_log = float(np.log2(max(self.NFIN, 1.0)))
+        geo_raw = np.array(
+            [nfin_log, self.L, self.temperature], dtype=np.float64)
+        geo_std = self._norm_stats.input_std[4:7].copy()
+        geo_std[geo_std < 1e-12] = 1.0
+        self._geo_norm = (
+            (geo_raw - self._norm_stats.input_mean[4:7]) / geo_std)
+
+        dev_key = str(self._device)
+        geo_key = (
+            self._norm_key, dev_key, self.NFIN, self.L, self.temperature)
+        geo_t = _SHARED_GEO_TENSORS.get(geo_key)
+        if geo_t is None:
+            geo_t = torch.tensor(
+                self._geo_norm, dtype=torch.float32, device=self._device)
+            _SHARED_GEO_TENSORS[geo_key] = geo_t
+        self._geo_norm_t = geo_t
+
+        self.clear_cache()
+        self._q_prev = None
+        self._q_prev2 = None
+        self._v_prev_tran = None
+
     def clear_cache(self) -> None:
         self._eval_cache = None
         self._cache_voltages = None

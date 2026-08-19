@@ -312,38 +312,63 @@ family reports are indexed by [`docs/accuracy/README.md`](docs/accuracy/README.m
 ## 5. Verify `complex_circuits` with AnalogGym
 
 The AnalogGym migration expands validation to a large, translated circuit
-corpus under `examples/complex_circuits/`. In the current branch this harness
-uses LEVEL=72 only. It verifies netlist translation, solver behavior, and
-measurement agreement with NGSPICE; it does not yet validate LEVEL=73–75
-checkpoints.
+corpus under `examples/complex_circuits/`. NGSPICE always runs the identical
+BSIM-CMG OSDI model as ground truth. PyCircuitSim defaults to LEVEL=72 and can
+instead run a completed, explicitly pinned DirectNet LEVEL=73 checkpoint pair.
+Each result records the checkpoint and normalization hashes; resume refuses to
+mix rows from different weights.
+
+The per-design BSIM-CMG libraries are ignored private artifacts derived from
+the local TSMC cards. Materialize them after a fresh checkout without rewriting
+the tracked AnalogGym decks:
+
+```bash
+for tech in tsmc5 tsmc6 tsmc7 tsmc12 tsmc16; do
+  conda run -n pycircuitsim python -m \
+    examples.complex_circuits.tools.materialize_modelcards \
+    --tree "examples/complex_circuits/designs_${tech}"
+done
+```
 
 Run one deck while developing a translation or solver fix:
 
 ```bash
+PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS=tsmc5_dn_large_nmos \
+PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS=tsmc5_dn_large_pmos \
+CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+PYCIRCUITSIM_TORCH_THREADS=1 \
 conda run -n pycircuitsim python -m \
   examples.complex_circuits.pycircuitsim_bench.run_compare \
   --tech tsmc5 \
   --category amplifier \
   --design Fan_SMC_Pin_3 \
   --deck tb_gain.cir \
+  --model-level 73 \
   --out results/analoggym-one
 ```
 
-Run and refine a complete technology campaign:
+Run and refine a complete DirectNet technology campaign. The driver requires
+both `*_best.pt.complete` markers, pins inference to CPU with one OpenMP, MKL,
+and Torch thread, and keeps NGSPICE on LEVEL=72:
 
 ```bash
 conda run -n pycircuitsim python -m \
   examples.complex_circuits.pycircuitsim_bench.campaign \
   --tech tsmc5 \
+  --model-level 73 \
+  --checkpoint-size large \
   --families ac,dc_source,dc_temp,tran \
   --jobs 12 \
   --refine \
-  --out results/analoggym-tsmc5
+  --out results/analoggym-directnet-large-tsmc5
 ```
 
-Repeat for `tsmc7`, `tsmc12`, and `tsmc16`. LEVEL=72 TSMC6 is an exact TSMC7
-repeat and normally is reported as such instead of being rerun as a distinct
-ground-truth technology. Read the current results and quarantined-deck list in
+Repeat for `tsmc6`, `tsmc7`, `tsmc12`, and `tsmc16`. TSMC6 and TSMC7 share
+LEVEL=72 ground truth but use independently trained DirectNet checkpoints, so
+the NN campaign keeps both as its controlled training-repeat axis. For a pure
+LEVEL=72 campaign, omit `--model-level` and `--checkpoint-size`; TSMC6 is then
+normally reported as the exact TSMC7 repeat instead of rerun. Read the current
+results and quarantined-deck list in
 [`examples/complex_circuits/RESULTS_TSMC.md`](examples/complex_circuits/RESULTS_TSMC.md).
 
 ## Run a netlist directly

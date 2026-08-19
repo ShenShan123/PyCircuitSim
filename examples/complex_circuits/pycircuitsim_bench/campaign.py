@@ -50,7 +50,74 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .run_compare import BENCH_ROOT, _decks_of, _designs
+from .run_compare import BENCH_ROOT, _decks_of, _designs, _sha256
+
+
+_CHECKPOINT_DIR = (
+    BENCH_ROOT.parents[1]
+    / "external_compact_models"
+    / "neural_network"
+    / "checkpoints"
+)
+
+
+def _directnet_stems(tech: str, size: str) -> Dict[str, str]:
+    """Checkpoint stems for one explicitly pinned DirectNet campaign."""
+    return {
+        device: f"{tech.lower()}_dn_{size}_{device}"
+        for device in ("nmos", "pmos")
+    }
+
+
+def _require_directnet_checkpoints(tech: str, size: str) -> None:
+    """Reject missing or interrupted checkpoints before campaign fan-out."""
+    missing: List[Path] = []
+    for stem in _directnet_stems(tech, size).values():
+        checkpoint = _CHECKPOINT_DIR / f"{stem}_best.pt"
+        norm = _CHECKPOINT_DIR / f"{stem}_norm.npz"
+        complete = checkpoint.with_suffix(checkpoint.suffix + ".complete")
+        missing.extend(path for path in (checkpoint, norm, complete)
+                       if not path.is_file())
+    if missing:
+        rendered = "\n".join(f"  - {path}" for path in missing)
+        raise SystemExit(
+            "DirectNet campaign requires completed, explicitly pinned "
+            f"checkpoints:\n{rendered}")
+
+
+def _row_matches_model(path: Path, tech: str, model_level: int,
+                       checkpoint_size: str) -> bool:
+    """Whether a resumable row belongs to this exact model selection."""
+    try:
+        row = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return False
+    model = row.get("py_model")
+    if model_level == 72:
+        return model is None or model == {
+            "family": "bsim_cmg", "level": 72, "tech": tech,
+        }
+    if not isinstance(model, dict) or model.get("level") != model_level:
+        return False
+    checkpoints = model.get("checkpoints")
+    if not isinstance(checkpoints, dict):
+        return False
+    expected = _directnet_stems(tech, checkpoint_size)
+    for device, stem in expected.items():
+        info = checkpoints.get(device)
+        checkpoint = _CHECKPOINT_DIR / f"{stem}_best.pt"
+        norm = _CHECKPOINT_DIR / f"{stem}_norm.npz"
+        if not (
+            isinstance(info, dict)
+            and info.get("stem") == stem
+            and bool(info.get("complete"))
+            and checkpoint.is_file()
+            and norm.is_file()
+            and info.get("checkpoint_sha256") == _sha256(checkpoint)
+            and info.get("norm_sha256") == _sha256(norm)
+        ):
+            return False
+    return True
 
 #: (category, deck) -> measurement family. Anything not listed is a bug in
 #: the corpus enumeration, not a deck to guess about.
@@ -125,7 +192,8 @@ def corpus(tech: str, families: List[str]) -> List[Tuple[str, str, str]]:
 
 
 def run_deck(tech: str, cat: str, design: str, deck: str, out: Path,
-             work: Path, refine: bool, timeout: float) -> Dict[str, Any]:
+             work: Path, refine: bool, timeout: float, model_level: int,
+             checkpoint_size: str) -> Dict[str, Any]:
     """One run_compare subprocess; returns a status record."""
     stem = Path(deck).stem
     stride = STRIDES.get((cat, deck), 1)
@@ -133,10 +201,16 @@ def run_deck(tech: str, cat: str, design: str, deck: str, out: Path,
            "examples.complex_circuits.pycircuitsim_bench.run_compare",
            "--tech", tech, "--category", cat, "--design", design,
            "--deck", deck, "--stride", str(stride), "--out", str(out),
-           "--work", str(work / f"{design}_{stem}")]
+           "--work", str(work / f"{design}_{stem}"),
+           "--model-level", str(model_level)]
     env = dict(os.environ,
                CUDA_VISIBLE_DEVICES="", OMP_NUM_THREADS="1",
-               MKL_NUM_THREADS="1")
+               MKL_NUM_THREADS="1", PYCIRCUITSIM_TORCH_THREADS="1")
+    if model_level == 73:
+        pins = _directnet_stems(tech, checkpoint_size)
+        env["PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS"] = pins["nmos"]
+        env["PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS"] = pins["pmos"]
+        env["PYCIRCUITSIM_NN_STRICT_TECH_CODE"] = "1"
     if refine and FAMILIES[(cat, deck)] == "tran":
         env["PYCIRCUITSIM_BENCH_TRAN_REFINE"] = "1"
         if cat == "charge_pump":
@@ -155,9 +229,14 @@ def run_deck(tech: str, cat: str, design: str, deck: str, out: Path,
             "log": str(log)}
 
 
-def summarize(tech: str, out: Path, families: List[str]) -> str:
+def summarize(tech: str, out: Path, families: List[str], model_level: int = 72,
+              checkpoint_size: str = "large") -> str:
     """Markdown summary over the JSON rows present in ``out``."""
-    lines = [f"# AnalogGym campaign — {tech}", ""]
+    model_name = "BSIM-CMG" if model_level == 72 else "DirectNet"
+    lines = [
+        f"# AnalogGym campaign — {tech} — {model_name} LEVEL={model_level}",
+        "",
+    ]
     fam_tot: Dict[str, List[int]] = {}
     for fam in families:
         rows = []
@@ -167,23 +246,35 @@ def summarize(tech: str, out: Path, families: List[str]) -> str:
             if not path.exists():
                 rows.append((cat, design, stem, None))
                 continue
+            if not _row_matches_model(
+                path, tech, model_level, checkpoint_size
+            ):
+                rows.append((cat, design, stem, "PROVENANCE_MISMATCH"))
+                continue
             rows.append((cat, design, stem,
                          json.loads(path.read_text())["verdict"]))
         lines += [f"## {fam} ({len(rows)} decks)", "",
                   "| deck | agree | quarantined | engine | op worst (V) "
                   "| py / ng s |",
                   "|---|:--:|:--:|:--:|--:|--:|"]
-        full = scored = 0
+        full = scored = quarantined = missing = mismatched = 0
         for cat, design, stem, v in rows:
             name = f"{cat}/{design}/{stem}"
             if v is None:
+                missing += 1
                 lines.append(f"| {name} | MISSING | | | | |")
+                continue
+            if v == "PROVENANCE_MISMATCH":
+                mismatched += 1
+                lines.append(
+                    f"| {name} | PROVENANCE_MISMATCH | | | | |")
                 continue
             # A deck whose every metric is quarantined asks no question of
             # this version, so it is neither a pass nor a fail: it leaves the
             # denominator and is counted in `quarantined` instead.
             whole = v["measured"] == 0 and v.get("not_comparable", 0) > 0
             scored += not whole
+            quarantined += whole
             ok = v["ran"] and v["measured"] > 0 and \
                 v["agree"] == v["measured"] and v["missing_py"] == 0
             full += ok
@@ -198,15 +289,20 @@ def summarize(tech: str, out: Path, families: List[str]) -> str:
                 f"| {'ok' if v['engine_ok'] else 'FAIL'} "
                 f"| {'' if op is None else format(op, '.2e')} "
                 f"| {v['py_seconds']:.1f} / {v['ng_seconds']:.1f} |")
-        fam_tot[fam] = [full, scored, len(rows)]
-        quarantined = len(rows) - scored
+        fam_tot[fam] = [full, scored, quarantined, missing, mismatched]
         lines += ["", f"**{fam}: {full}/{scored} decks fully agree**"
                   + (f" ({quarantined} quarantined as invalid test examples "
                      f"— see run_compare.NOT_COMPARABLE)" if quarantined
-                     else ""), ""]
+                     else "")
+                  + (f" ({missing} missing)" if missing else "")
+                  + (f" ({mismatched} provenance mismatch)"
+                     if mismatched else ""), ""]
     lines += ["## Totals", ""] + [
-        f"- {fam}: {n}/{s}" + (f" ({d - s} quarantined)" if d != s else "")
-        for fam, (n, s, d) in fam_tot.items()]
+        f"- {fam}: {n}/{s}"
+        + (f" ({q} quarantined)" if q else "")
+        + (f" ({m} missing)" if m else "")
+        + (f" ({p} provenance mismatch)" if p else "")
+        for fam, (n, s, q, m, p) in fam_tot.items()]
     return "\n".join(lines) + "\n"
 
 
@@ -227,6 +323,14 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="re-run decks whose JSON already exists")
     ap.add_argument("--summarize-only", action="store_true")
     ap.add_argument("--deck-timeout", type=float, default=3600.0)
+    ap.add_argument("--model-level", type=int, choices=(72, 73), default=72,
+                    help="PyCircuitSim compact-model level: 72=BSIM-CMG, "
+                         "73=DirectNet (default: %(default)s)")
+    ap.add_argument("--checkpoint-size",
+                    choices=("small", "medium", "large", "xl"),
+                    default="large",
+                    help="DirectNet per-tech checkpoint tier "
+                         "(default: %(default)s)")
     args = ap.parse_args(argv)
 
     tech = args.tech.lower()
@@ -235,29 +339,51 @@ def main(argv: Optional[List[str]] = None) -> int:
     work = args.work or (out / "work")
     out.mkdir(parents=True, exist_ok=True)
 
+    if args.model_level == 73:
+        _require_directnet_checkpoints(tech, args.checkpoint_size)
+
+    failed: List[Dict[str, Any]] = []
     if not args.summarize_only:
         todo = []
         for cat, design, deck in corpus(tech, families):
             path = out / f"{tech}_{cat}_{design}_{Path(deck).stem}.json"
+            if path.exists() and not args.force and not _row_matches_model(
+                path, tech, args.model_level, args.checkpoint_size
+            ):
+                raise SystemExit(
+                    f"Existing row has different or incomplete model "
+                    f"provenance: {path}. Use --force or a fresh --out.")
             if args.force or not path.exists():
                 todo.append((cat, design, deck))
         print(f"[campaign] {tech}: {len(todo)} decks to run "
               f"({args.jobs} workers)", flush=True)
         with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
             futs = {pool.submit(run_deck, tech, cat, design, deck, out, work,
-                                args.refine, args.deck_timeout):
+                                args.refine, args.deck_timeout,
+                                args.model_level, args.checkpoint_size):
                     (cat, design, deck) for cat, design, deck in todo}
             done = 0
             for fut in concurrent.futures.as_completed(futs):
                 cat, design, deck = futs[fut]
                 rec = fut.result()
+                if rec["rc"] != 0:
+                    failed.append(rec)
                 done += 1
                 print(f"[campaign] {done}/{len(todo)} rc={rec['rc']} "
                       f"{cat}/{design}/{deck}", flush=True)
 
-    text = summarize(tech, out, families)
+    text = summarize(
+        tech, out, families, args.model_level, args.checkpoint_size
+    )
     (out / "summary.md").write_text(text)
     print(text)
+    if failed:
+        print(
+            f"[campaign] FAILED: {len(failed)} deck subprocesses returned "
+            "nonzero; inspect the recorded logs",
+            file=sys.stderr,
+        )
+        return 1
     return 0
 
 
