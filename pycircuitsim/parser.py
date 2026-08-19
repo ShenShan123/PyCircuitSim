@@ -215,7 +215,7 @@ def _resolve_nn_checkpoint_uncached(
 ) -> Tuple[str, int, str, str]:
     """Resolve (path, tech_code, chk_name, scope) for LEVEL=73/74/75.
 
-    Cascade: explicit ``MODEL_PATH`` > v4 universal > per-tech > bare.
+    Cascade: explicit ``MODEL_PATH`` > per-tech > universal > bare.
     For LEVEL=74 (BSIMAR) the universal cascade prefers ``_best.phys.pt``
     over ``_best.pt`` only when the matching ``_norm.npz`` was saved with
     the median-aggregated phys-score (post-2026-05-03 fix); pre-fix
@@ -307,7 +307,7 @@ def _resolve_nn_checkpoint_uncached(
         # Cascade: per-tech dedicated > refactor universal presets >
         # v4-re universal > legacy v4 universal > per-tech-bare > bare.
         #
-        # Per-tech dedicated slots (`tsmc{5,7,12,16}_dn_{size}_{dev}_best.pt`)
+        # Per-tech dedicated slots (`tsmc{5,6,7,12,16}_dn_{size}_{dev}_best.pt`)
         # preempt the universal cascade when the netlist's tech matches.
         # The trained model uses a SHRUNK local-vocab embedding; the
         # tech_code remap below keys off the file's `tsmc{X}_dn_` prefix.

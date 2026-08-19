@@ -1130,9 +1130,9 @@ def _cascade_handles_stem(path: Optional[Path]) -> bool:
     can route to the right checkpoint based on the netlist's TECH=.
 
     For these stems we deliberately omit MODEL_PATH in the netlist so a
-    single test invocation can pick TSMC5 medium for TSMC5 netlists, TSMC7
-    medium for TSMC7 netlists, etc. — instead of pinning ONE tech's net for
-    every tech (bug report B1). All four per-tech ``tsmc{5,7,12,16}_dn_*``
+    single test invocation can pick TSMC5 large for TSMC5 netlists, TSMC7
+    large for TSMC7 netlists, etc. — instead of pinning ONE tech's net for
+    every tech (bug report B1). All five per-tech ``tsmc{5,6,7,12,16}_dn_*``
     stems route through the parser's preempt cascade; ``refac_dn_*`` is the
     universal-refactor preset the cascade also recognises. An explicit env
     pin (``PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}``) still wins because the
