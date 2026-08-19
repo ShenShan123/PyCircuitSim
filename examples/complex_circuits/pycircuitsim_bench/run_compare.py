@@ -105,6 +105,7 @@ What this module found, so the next reader does not re-derive it:
 from __future__ import annotations
 
 import argparse
+import functools
 import hashlib
 import json
 import math
@@ -330,13 +331,24 @@ class SimOptions:
 _PY_MODEL_FAMILIES: Dict[int, str] = {72: "bsim_cmg", 73: "directnet"}
 
 
-def _sha256(path: Path) -> str:
-    """Return a stable content digest for one model artifact."""
+@functools.lru_cache(maxsize=32)
+def _sha256_at_version(path: Path, mtime_ns: int, ctime_ns: int,
+                       size: int) -> str:
+    """Hash one immutable-on-disk version of an artifact."""
+    del mtime_ns, ctime_ns, size
     digest = hashlib.sha256()
     with path.open("rb") as fh:
         for chunk in iter(lambda: fh.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _sha256(path: Path) -> str:
+    """Return a stable content digest for one model artifact."""
+    resolved = path.resolve()
+    stat = resolved.stat()
+    return _sha256_at_version(
+        resolved, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
 
 
 def _checkpoint_pin(device: str) -> Optional[str]:

@@ -325,7 +325,7 @@ def verify_campaign_resume_is_checkpoint_exact() -> None:
             }
         }))
 
-        with patch.object(campaign, "_CHECKPOINT_DIR", root):
+        with patch.object(campaign, "CHECKPOINT_DIR", root):
             assert campaign._row_matches_model(row_path, "tsmc5", 73, "large")
             (root / "tsmc5_dn_large_nmos_best.pt").write_bytes(
                 b"retrained weights"
@@ -333,6 +333,34 @@ def verify_campaign_resume_is_checkpoint_exact() -> None:
             assert not campaign._row_matches_model(
                 row_path, "tsmc5", 73, "large"
             )
+
+
+def verify_partial_campaign_summary_counts_missing_rows() -> None:
+    """A valid row followed by a missing row must retain an integer count."""
+    entries = [
+        ("amplifier", "complete", "tb_gain.cir"),
+        ("amplifier", "missing", "tb_gain.cir"),
+    ]
+    verdict = {
+        "ran": True,
+        "measured": 1,
+        "agree": 1,
+        "missing_py": 0,
+        "not_comparable": 0,
+        "engine_ok": True,
+        "op_worst_abs": 0.0,
+        "py_seconds": 0.1,
+        "ng_seconds": 0.1,
+    }
+    with TemporaryDirectory() as temp_dir, patch.object(
+        campaign, "corpus", return_value=entries
+    ):
+        out = Path(temp_dir)
+        (out / "tsmc5_amplifier_complete_tb_gain.json").write_text(
+            json.dumps({"verdict": verdict})
+        )
+        summary = campaign.summarize("tsmc5", out, ["ac"])
+    assert "**ac: 1/1 decks fully agree** (1 missing)" in summary
 
 
 def verify_only_validated_alternate_seed_is_emitted() -> None:
@@ -468,6 +496,7 @@ def main() -> None:
         verify_campaign_propagates_deck_failures,
         verify_modelcard_materializer_reads_generated_geometry,
         verify_campaign_resume_is_checkpoint_exact,
+        verify_partial_campaign_summary_counts_missing_rows,
         verify_only_validated_alternate_seed_is_emitted,
         verify_write_design_reconciles_alternate_seed_inventory,
         verify_regeneration_fails_loudly_without_source_corpus,

@@ -350,13 +350,7 @@ class _MOSFETNNBase(Component):
             [self._tech_code], dtype=torch.long)
 
         # ── Pre-compute normalised geometry (constant per device) ────
-        nfin_log = float(np.log2(max(self.NFIN, 1.0)))
-        geo_raw = np.array(
-            [nfin_log, self.L, self.temperature], dtype=np.float64)
-        geo_std = self._norm_stats.input_std[4:7].copy()
-        geo_std[geo_std < 1e-12] = 1.0
-        self._geo_norm = (
-            (geo_raw - self._norm_stats.input_mean[4:7]) / geo_std)
+        self._refresh_geometry()
 
         # Derive the model-output → column-name lookup. Three cases:
         #
@@ -440,14 +434,7 @@ class _MOSFETNNBase(Component):
             _SHARED_CODE_TENSORS[code_key] = code_t
         self._tech_code_tensor = code_t
 
-        geo_key = (
-            self._norm_key, dev_key, self.NFIN, self.L, self.temperature)
-        geo_t = _SHARED_GEO_TENSORS.get(geo_key)
-        if geo_t is None:
-            geo_t = torch.tensor(
-                self._geo_norm, dtype=torch.float32, device=self._device)
-            _SHARED_GEO_TENSORS[geo_key] = geo_t
-        self._geo_norm_t = geo_t
+        self._bind_geometry_tensor()
 
         s = self._norm_stats
         norm_key = (self._norm_key, dev_key)
@@ -1359,6 +1346,16 @@ class _MOSFETNNBase(Component):
                 f"{temperature_kelvin}. Use temp_K = temp_C + 273.15.")
 
         self.temperature = float(temperature_kelvin)
+        self._refresh_geometry()
+        self._bind_geometry_tensor()
+
+        self.clear_cache()
+        self._q_prev = None
+        self._q_prev2 = None
+        self._v_prev_tran = None
+
+    def _refresh_geometry(self) -> None:
+        """Recompute normalized geometry after a geometry feature changes."""
         nfin_log = float(np.log2(max(self.NFIN, 1.0)))
         geo_raw = np.array(
             [nfin_log, self.L, self.temperature], dtype=np.float64)
@@ -1367,6 +1364,8 @@ class _MOSFETNNBase(Component):
         self._geo_norm = (
             (geo_raw - self._norm_stats.input_mean[4:7]) / geo_std)
 
+    def _bind_geometry_tensor(self) -> None:
+        """Share the normalized geometry tensor for this device geometry."""
         dev_key = str(self._device)
         geo_key = (
             self._norm_key, dev_key, self.NFIN, self.L, self.temperature)
@@ -1376,11 +1375,6 @@ class _MOSFETNNBase(Component):
                 self._geo_norm, dtype=torch.float32, device=self._device)
             _SHARED_GEO_TENSORS[geo_key] = geo_t
         self._geo_norm_t = geo_t
-
-        self.clear_cache()
-        self._q_prev = None
-        self._q_prev2 = None
-        self._v_prev_tran = None
 
     def clear_cache(self) -> None:
         self._eval_cache = None

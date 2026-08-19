@@ -52,13 +52,10 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from .run_compare import BENCH_ROOT, _decks_of, _designs, _sha256
 
-
-_CHECKPOINT_DIR = (
-    BENCH_ROOT.parents[1]
-    / "external_compact_models"
-    / "neural_network"
-    / "checkpoints"
-)
+_NN_PARENT = BENCH_ROOT.parents[1] / "external_compact_models"
+if str(_NN_PARENT) not in sys.path:
+    sys.path.insert(0, str(_NN_PARENT))
+from neural_network.config import CHECKPOINT_DIR
 
 
 def _directnet_stems(tech: str, size: str) -> Dict[str, str]:
@@ -73,8 +70,8 @@ def _require_directnet_checkpoints(tech: str, size: str) -> None:
     """Reject missing or interrupted checkpoints before campaign fan-out."""
     missing: List[Path] = []
     for stem in _directnet_stems(tech, size).values():
-        checkpoint = _CHECKPOINT_DIR / f"{stem}_best.pt"
-        norm = _CHECKPOINT_DIR / f"{stem}_norm.npz"
+        checkpoint = CHECKPOINT_DIR / f"{stem}_best.pt"
+        norm = CHECKPOINT_DIR / f"{stem}_norm.npz"
         complete = checkpoint.with_suffix(checkpoint.suffix + ".complete")
         missing.extend(path for path in (checkpoint, norm, complete)
                        if not path.is_file())
@@ -85,12 +82,10 @@ def _require_directnet_checkpoints(tech: str, size: str) -> None:
             f"checkpoints:\n{rendered}")
 
 
-def _row_matches_model(path: Path, tech: str, model_level: int,
+def _model_matches_row(row: object, tech: str, model_level: int,
                        checkpoint_size: str) -> bool:
-    """Whether a resumable row belongs to this exact model selection."""
-    try:
-        row = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+    """Whether one decoded row belongs to this exact model selection."""
+    if not isinstance(row, dict):
         return False
     model = row.get("py_model")
     if model_level == 72:
@@ -105,8 +100,8 @@ def _row_matches_model(path: Path, tech: str, model_level: int,
     expected = _directnet_stems(tech, checkpoint_size)
     for device, stem in expected.items():
         info = checkpoints.get(device)
-        checkpoint = _CHECKPOINT_DIR / f"{stem}_best.pt"
-        norm = _CHECKPOINT_DIR / f"{stem}_norm.npz"
+        checkpoint = CHECKPOINT_DIR / f"{stem}_best.pt"
+        norm = CHECKPOINT_DIR / f"{stem}_norm.npz"
         if not (
             isinstance(info, dict)
             and info.get("stem") == stem
@@ -118,6 +113,24 @@ def _row_matches_model(path: Path, tech: str, model_level: int,
         ):
             return False
     return True
+
+
+def _read_row(path: Path) -> Optional[Dict[str, Any]]:
+    """Decode one campaign row, returning ``None`` for an invalid file."""
+    try:
+        row = json.loads(path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    return row if isinstance(row, dict) else None
+
+
+def _row_matches_model(path: Path, tech: str, model_level: int,
+                       checkpoint_size: str) -> bool:
+    """Whether a resumable row belongs to this exact model selection."""
+    row = _read_row(path)
+    return row is not None and _model_matches_row(
+        row, tech, model_level, checkpoint_size)
+
 
 #: (category, deck) -> measurement family. Anything not listed is a bug in
 #: the corpus enumeration, not a deck to guess about.
@@ -230,8 +243,7 @@ def run_deck(tech: str, cat: str, design: str, deck: str, out: Path,
 
 
 def _aggregate_voltage_error(
-    tech: str, out: Path, families: List[str], model_level: int,
-    checkpoint_size: str,
+    rows: Dict[Path, Dict[str, Any]],
 ) -> Optional[Dict[str, float]]:
     """Combine per-row voltage sufficient statistics exactly."""
     n = decks = 0
@@ -239,13 +251,7 @@ def _aggregate_voltage_error(
     truth_min = float("inf")
     truth_max = float("-inf")
     max_error = 0.0
-    for cat, design, deck in corpus(tech, families):
-        path = out / f"{tech}_{cat}_{design}_{Path(deck).stem}.json"
-        if not path.is_file() or not _row_matches_model(
-            path, tech, model_level, checkpoint_size
-        ):
-            continue
-        row = json.loads(path.read_text())
+    for row in rows.values():
         stats = (row.get("op_delta") or {}).get("error_stats")
         if not isinstance(stats, dict) or not stats.get("n"):
             continue
@@ -283,6 +289,7 @@ def summarize(tech: str, out: Path, families: List[str], model_level: int = 72,
         "",
     ]
     fam_tot: Dict[str, List[int]] = {}
+    matching_rows: Dict[Path, Dict[str, Any]] = {}
     for fam in families:
         rows = []
         for cat, design, deck in corpus(tech, [fam]):
@@ -291,13 +298,14 @@ def summarize(tech: str, out: Path, families: List[str], model_level: int = 72,
             if not path.exists():
                 rows.append((cat, design, stem, None))
                 continue
-            if not _row_matches_model(
-                path, tech, model_level, checkpoint_size
+            row = _read_row(path)
+            if row is None or not _model_matches_row(
+                row, tech, model_level, checkpoint_size
             ):
                 rows.append((cat, design, stem, "PROVENANCE_MISMATCH"))
                 continue
-            rows.append((cat, design, stem,
-                         json.loads(path.read_text())["verdict"]))
+            matching_rows[path] = row
+            rows.append((cat, design, stem, row["verdict"]))
         lines += [f"## {fam} ({len(rows)} decks)", "",
                   "| deck | agree | quarantined | engine | op worst (V) "
                   "| py / ng s |",
@@ -324,12 +332,12 @@ def summarize(tech: str, out: Path, families: List[str], model_level: int = 72,
                 v["agree"] == v["measured"] and v["missing_py"] == 0
             full += ok
             op = v.get("op_worst_abs")
-            missing = ("" if v["missing_py"] == 0
-                       else f" (+{v['missing_py']} unmeasured)")
+            missing_suffix = ("" if v["missing_py"] == 0
+                              else f" (+{v['missing_py']} unmeasured)")
             nc = v.get("not_comparable", 0)
             score = "--" if whole else f"{v['agree']}/{v['measured']}"
             lines.append(
-                f"| {name} | {score}{missing} "
+                f"| {name} | {score}{missing_suffix} "
                 f"| {nc if nc else ''} "
                 f"| {'ok' if v['engine_ok'] else 'FAIL'} "
                 f"| {'' if op is None else format(op, '.2e')} "
@@ -348,9 +356,7 @@ def summarize(tech: str, out: Path, families: List[str], model_level: int = 72,
         + (f" ({m} missing)" if m else "")
         + (f" ({p} provenance mismatch)" if p else "")
         for fam, (n, s, q, m, p) in fam_tot.items()]
-    voltage = _aggregate_voltage_error(
-        tech, out, families, model_level, checkpoint_size
-    )
+    voltage = _aggregate_voltage_error(matching_rows)
     lines += ["", "## Voltage-state error", ""]
     if voltage is None:
         lines.append("No comparable operating-point/DC-sweep voltage samples.")
