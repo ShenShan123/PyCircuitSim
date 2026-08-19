@@ -20,6 +20,38 @@ The pre-compaction long-form narrative remains available in Git history.
 
 ## V7.5 — AnalogGym migration
 
+### V7.5.14 — DirectNet retrain and AnalogGym qualification (2026-08-19)
+
+- Retrained ten per-technology DirectNet `large` checkpoints (NMOS and PMOS
+  for TSMC5/6/7/12/16) with the clean seed-42, filter-off, EMA recipe. All ten
+  completed 800 epochs; best validation losses were 0.000215–0.000254.
+- The focused CPU gates passed lifted-source DC 15/15, single-device 20/20,
+  inverter 10/10, parametric inverter transient 80/80, ring period 5/5, SRAM
+  5/5, and switched-cap 5/5. Parametric device DC was 68/69; Miller opamp was
+  0/5. Device AC is 0/10 under the corrected converged-operating-point gate.
+- Ran one code- and checkpoint-pinned 255-row LEVEL=73 AnalogGym campaign
+  against NGSPICE LEVEL=72. No scored deck fully agreed: 0/248 after seven
+  invalid deck cells were quarantined. Aggregate comparable voltage error was
+  37.69% MRE, -44.54 R², 78.83% NRMSE, and 12.611 V maximum error.
+- Added explicit DirectNet technology/VT translation, checkpoint completion
+  and hash provenance, code-state campaign manifests, exact resume checks,
+  per-technology voltage-error aggregation, and local modelcard
+  materialization. Campaign children now propagate failures to the driver.
+- Fixed NN temperature sweeps to rebuild geometry inputs and invalidate model
+  history; production-large checkpoint discovery; AC linearization about
+  nonconverged DC states; and failure summaries/timing that previously hid the
+  simulator side or reported a long failed attempt as zero seconds.
+- Retracted the initial 10/10 device-AC diagnostic: its response shapes were
+  close, but all ten DC states were nonconverged. The strict result is 0/10.
+  The missing upstream AnalogGym source tree also prevented regeneration, so
+  this release scores the tracked V7.5.9 generated corpus and does not claim a
+  refreshed source-topology audit.
+
+Open after this release: DirectNet does not preserve AnalogGym operating
+points, all five charge-pump transients fail at the first output step, and the
+Miller opamp remains railed. These are model/solver research items, not gates
+that were weakened to obtain a release pass.
+
 ### V7.5.13 — type-based compact-model layout and cleanup (2026-08-19)
 
 - Moved technology inputs to root `PDKs/`: tracked ASAP7 cards and local,

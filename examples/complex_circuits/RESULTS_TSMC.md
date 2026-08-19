@@ -1,6 +1,6 @@
 # AnalogGym across TSMC FinFET nodes
 
-This file carries **two axes**, and they are easy to confuse:
+This file carries **three axes**, and they are easy to confuse:
 
 1. **The design audit.** A strict NGSPICE/PyCMG check of every generated
    design — topologies against their source, dimensions inside each
@@ -11,13 +11,17 @@ This file carries **two axes**, and they are easy to confuse:
 2. **PyCircuitSim versus NGSPICE**, on the identical BSIM-CMG (LEVEL=72) OSDI
    model, added when the corpus moved into PyCircuitSim at V7.5.0. This is
    what the basket is curated *for*.
+3. **NN compact models versus NGSPICE**, with the PyCircuitSim side selecting
+   LEVEL=73–75 while NGSPICE remains on LEVEL=72. This is an independent model
+   accuracy axis; it does not change the LEVEL=72 simulator result.
 
 Per-tree design detail: `designs_<tech>/RESULTS.md`.
 
-**Which numbers are current** (last measured 2026-08-18, V7.5.12):
+**Which numbers are current** (last measured 2026-08-19, V7.5.14):
 
 | section | what it holds | dated? |
 |---|---|---|
+| [DirectNet LEVEL=73](#directnet-level73-on-the-curated-basket-v7514) | the fresh `large` retrain against LEVEL=72 across all 255 deck cells | **current NN axis** |
 | [The curated core basket](#the-curated-core-basket-v759) | the 12 designs, why each is here, what pruning cost | **current** |
 | [The gap between PyCircuitSim and NGSPICE](#the-gap-between-pycircuitsim-and-ngspice-v7512-all-five-techs) | 242/248 decks, corrected transient OP diagnostics, the invalid-example quarantine, the six that still disagree | **current** |
 | [Audit validation](#audit-validation) · [Fully-passing designs](#fully-passing-designs-per-tech) · [Gates passed](#gates-passed-per-design-and-tech) · [Amplifier medians](#amplifier-medians-per-tech) | the design audit over the current basket | **current** |
@@ -30,6 +34,70 @@ Per-tree design detail: `designs_<tech>/RESULTS.md`.
 `/255`**: seven deck cells are quarantined as invalid test examples and leave
 the denominator rather than being counted as failures. No total crosses those
 boundaries without rescaling.
+
+
+## DirectNet LEVEL=73 on the curated basket (V7.5.14)
+
+This is the first complete NN-axis AnalogGym campaign. PyCircuitSim used the
+fresh per-technology DirectNet `large` checkpoints at LEVEL=73; NGSPICE used
+the identical BSIM-CMG OSDI model at LEVEL=72. Both sides used the same
+generated topology, sources, options, analysis limits, and measurement engine.
+Scored inference was CPU-only with one OpenMP, MKL, and Torch thread.
+
+**Verdict: DirectNet is not qualified for this complex-circuit basket.** No
+scored deck fully agrees with the reference: **0/248**. Seven invalid deck
+cells remain quarantined, so the physical corpus is still 255 rows. The model
+does produce some correct individual measurements, but it does not preserve
+the circuit operating points: the per-technology voltage error table is owned
+by [`docs/accuracy/DirectNet-L73-AnalogGym.md`](../../docs/accuracy/DirectNet-L73-AnalogGym.md).
+
+| tech | AC | dc_source | dc_temp | transient | total | Py failures | NG failures |
+|---|:--:|:--:|:--:|:--:|:--:|--:|--:|
+| TSMC5 | 0/27 | 0/6 | 0/9 | 0/7 | **0/49** | 3 | 0 |
+| TSMC6 | 0/28 | 0/6 | 0/9 | 0/7 | **0/50** | 4 | 0 |
+| TSMC7 | 0/28 | 0/6 | 0/9 | 0/7 | **0/50** | 4 | 0 |
+| TSMC12 | 0/28 | 0/6 | 0/9 | 0/7 | **0/50** | 11 | 0 |
+| TSMC16 | 0/28 | 0/6 | 0/9 | 0/6 | **0/49** | 9 | 3 |
+| **all** | **0/139** | **0/30** | **0/45** | **0/34** | **0/248** | **31** | **3** |
+
+Deck agreement is deliberately strict: one missing or inaccurate scored
+quantity fails the deck. The metric-cell view shows that the result is not
+merely one marginal quantity per circuit.
+
+| tech | comparable metric cells agreeing | missing Py values | quarantined cells |
+|---|---:|---:|---:|
+| TSMC5 | 15/203 | 99 | 20 |
+| TSMC6 | 23/213 | 90 | 19 |
+| TSMC7 | 23/213 | 90 | 19 |
+| TSMC12 | 25/182 | 121 | 19 |
+| TSMC16 | 24/205 | 65 | 30 |
+| **all** | **110/1,016** | **465** | **107** |
+
+The 31 PyCircuitSim engine failures are concentrated and reproducible:
+
+* 25 AC rows correctly refuse to linearize about nonconverged DirectNet DC
+  states. TSMC5 fails the two `ldo_2` maximum-bias benches; TSMC6/7 additionally
+  fail `Peng_IAC/tb_gain`; TSMC12 fails all four Fan AC benches, three Peng AC
+  benches, and the two LDO benches; TSMC16 fails three Leung, three Peng, and
+  the two LDO benches.
+* All five charge-pump transients fail at the first 40 ps output step. TSMC12
+  exhausts the 4,096-subpiece guard; the other four stagnate in the
+  timestep-cut ladder. TSMC12 also fails the Fan transient.
+* NGSPICE itself fails three TSMC16 temperature-recovery rows (Fan, Leung, and
+  Qu2017). They remain explicit reference failures, not DirectNet passes.
+
+The campaign also caught and retracted a false AC result: the earlier device
+AC diagnostic reported 10/10 close frequency responses even though none of
+the ten DirectNet operating points was a converged fixed point. AC now fails
+loudly before linearization, both in the simulator and in this campaign.
+
+Provenance: simulation commit
+`efe9455c65a735fa8c72a5c509af95ad8dde0fa2`; one immutable pass in
+`results/analoggym-directnet-large-efe9455-tsmc{5,6,7,12,16}/`, with the code
+commit and full checkpoint/normalization hashes in every row. The upstream
+AnalogGym source design tree is absent on this machine, so preflight prevented
+regeneration. The scored corpus is the existing tracked V7.5.9 generated tree,
+not a refreshed topology audit.
 
 
 ## The curated core basket (V7.5.9)

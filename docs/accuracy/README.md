@@ -9,6 +9,7 @@ model — never a simplified or self-defined reference.
 |---|---|
 | **[`methodology.md`](methodology.md)** | What a gate is, the thresholds, the strict-OMP rule, and **which code state produced which number**. Read before comparing any two numbers. |
 | [`DirectNet-L73-clean.md`](DirectNet-L73-clean.md) | The production family under one training run — per tech, per scale, per testcase. |
+| [`DirectNet-L73-AnalogGym.md`](DirectNet-L73-AnalogGym.md) | The 2026-08-19 `large` retrain, strict gates, and LEVEL=73 accuracy on the 255-row AnalogGym basket. |
 | [`DirectNet-L73-recipes.md`](DirectNet-L73-recipes.md) | Its curriculum arms, the universal-scope study, and the dead ends. |
 | [`BSIM-AR-L74-clean.md`](BSIM-AR-L74-clean.md) | The autoregressive Transformer — the reproducible family. |
 | [`BSIM-AR-L74-recipes.md`](BSIM-AR-L74-recipes.md) | Its corridor arms, and why the `inv_trip` anchor is inert here. |
@@ -37,6 +38,9 @@ V7.4.0 rebuilt the DirectNet and BSIM-AR clean matrices from scratch on the
 new hardware. Recipe columns and both PFN columns are the latest available
 evidence but remain V7.3.0 measurements; those recipe deltas belong to their
 V7.3.0 controls and are not direct deltas against the V7.4.0 clean rows.
+The 2026-08-19 DirectNet retrain is reported separately because it was scored
+at the one-thread production contract but not repeated at OMP ∈ {2, 4}; it
+therefore does not replace the strict scoreboard above.
 
 ## The finding that governs how to read everything else
 
