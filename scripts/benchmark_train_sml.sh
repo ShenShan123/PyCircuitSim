@@ -42,13 +42,16 @@ if [ "${1:-}" = "_one" ]; then
   tech="$2"; size="$3"; dev="$4"; gpu="$5"; force="${6:-}"
   name="${tech}_dn_${size}_${dev}"
   ckpt="$CKPT/${name}_best.pt"
+  norm="$CKPT/${name}_norm.npz"
+  complete="$ckpt.complete"
   log="$LOGDIR/${name}.log"
-  if [ -f "$ckpt" ] && [ "$force" != "--force" ]; then
-    # `_best.pt` alone is NOT proof of a completed run (a killed run leaves a
-    # best-so-far file) — the .complete marker is; warn when it is absent
-    [ -f "$ckpt.complete" ] || echo "[train] WARN $name exists WITHOUT completion marker (killed run? --force to retrain)"
+  if [ -f "$ckpt" ] && [ -f "$norm" ] && [ -f "$complete" ] && [ "$force" != "--force" ]; then
     echo "[train] SKIP existing $name"; exit 0
   fi
+  # Completion belongs to one exact successful overwrite.  Leaving the prior
+  # marker in place while --overwrite writes best-so-far weights lets a killed
+  # retrain masquerade as complete to downstream scored campaigns.
+  rm -f "$complete"
   echo "[train] START $name on GPU$gpu"
   # EXTRA_TRAIN_ARGS lets a campaign inject a recipe addendum (e.g. the V6.5.1
   # µA-band loss lever: '--subthresh --subthresh-s2 1e-7 --subthresh-upper 3e-5')
@@ -58,10 +61,11 @@ if [ "${1:-}" = "_one" ]; then
     --apply-filter off --swa-mode ema --seed 42 --cuda --overwrite ${EXTRA_TRAIN_ARGS:-} \
     > "$log" 2>&1
   rc=$?
-  if [ $rc -eq 0 ] && [ -f "$ckpt" ]; then
-    touch "$ckpt.complete"
+  if [ $rc -eq 0 ] && [ -f "$ckpt" ] && [ -f "$norm" ]; then
+    touch "$complete"
     echo "[train] DONE $name"
   else
+    rm -f "$complete"
     # audit B3 — a failed train produces NO artifact, so there is nothing for a
     # downstream gate to judge; exit 3 (never 255: xargs aborts the run on 255)
     # so the dispatcher fails loudly instead of printing FAIL and returning 0.

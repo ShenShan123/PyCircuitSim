@@ -50,7 +50,12 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-from .run_compare import BENCH_ROOT, _decks_of, _designs, _sha256
+from .provenance import (
+    artifact_record_is_current,
+    executable_record_is_current,
+    file_sha256,
+)
+from .run_compare import BENCH_ROOT, _decks_of, _designs
 
 _NN_PARENT = BENCH_ROOT.parents[1] / "external_compact_models"
 if str(_NN_PARENT) not in sys.path:
@@ -58,6 +63,12 @@ if str(_NN_PARENT) not in sys.path:
 from neural_network.config import CHECKPOINT_DIR
 
 _PROVENANCE_FILE = "campaign_provenance.json"
+_TRANSIENT_DIAGNOSTIC_ENV = (
+    "PYCIRCUITSIM_BENCH_TRAN_METHOD",
+    "PYCIRCUITSIM_BENCH_TRAN_SUBSTEPS",
+    "PYCIRCUITSIM_BENCH_TRAN_REFINE",
+    "PYCIRCUITSIM_BENCH_TRAN_TMAX",
+)
 
 
 def _directnet_stems(tech: str, size: str) -> Dict[str, str]:
@@ -86,11 +97,23 @@ def _require_directnet_checkpoints(tech: str, size: str) -> None:
 
 def _model_matches_row(row: object, tech: str, model_level: int,
                        checkpoint_size: str,
-                       code_commit: Optional[str] = None) -> bool:
+                       code_commit: Optional[str] = None,
+                       campaign_policy: Optional[Dict[str, Any]] = None) -> bool:
     """Whether one decoded row belongs to this exact model selection."""
     if not isinstance(row, dict):
         return False
     if code_commit is not None and row.get("code_commit") != code_commit:
+        return False
+    if campaign_policy is not None and row.get("campaign_policy") != campaign_policy:
+        return False
+    reference = row.get("ground_truth")
+    if not isinstance(reference, dict) or not (
+        reference.get("family") == "bsim_cmg"
+        and reference.get("level") == 72
+        and artifact_record_is_current(reference.get("modelcard"))
+        and artifact_record_is_current(reference.get("osdi"))
+        and executable_record_is_current(reference.get("ngspice"))
+    ):
         return False
     model = row.get("py_model")
     if model_level == 72:
@@ -113,8 +136,8 @@ def _model_matches_row(row: object, tech: str, model_level: int,
             and bool(info.get("complete"))
             and checkpoint.is_file()
             and norm.is_file()
-            and info.get("checkpoint_sha256") == _sha256(checkpoint)
-            and info.get("norm_sha256") == _sha256(norm)
+            and info.get("checkpoint_sha256") == file_sha256(checkpoint)
+            and info.get("norm_sha256") == file_sha256(norm)
         ):
             return False
     return True
@@ -131,11 +154,26 @@ def _read_row(path: Path) -> Optional[Dict[str, Any]]:
 
 def _row_matches_model(path: Path, tech: str, model_level: int,
                        checkpoint_size: str,
-                       code_commit: Optional[str] = None) -> bool:
+                       code_commit: Optional[str] = None,
+                       campaign_policy: Optional[Dict[str, Any]] = None) -> bool:
     """Whether a resumable row belongs to this exact model selection."""
     row = _read_row(path)
     return row is not None and _model_matches_row(
-        row, tech, model_level, checkpoint_size, code_commit)
+        row, tech, model_level, checkpoint_size, code_commit, campaign_policy)
+
+
+def _campaign_policy(cat: str, deck: str, refine: bool) -> Dict[str, Any]:
+    """Exact campaign-owned fidelity settings for one result row."""
+    is_transient = FAMILIES[(cat, deck)] == "tran"
+    return {
+        "refine_requested": refine,
+        "transient_refine": refine and is_transient,
+        "transient_method_override": (
+            "trap" if refine and is_transient and cat == "charge_pump"
+            else None
+        ),
+        "stride": STRIDES.get((cat, deck), 1),
+    }
 
 
 def _current_commit() -> str:
@@ -163,6 +201,7 @@ def _campaign_provenance(
     families: List[str],
     model_level: int,
     checkpoint_size: str,
+    refine: bool,
     *,
     summarize_only: bool,
 ) -> Dict[str, Any]:
@@ -172,6 +211,20 @@ def _campaign_provenance(
         row = _read_row(path)
         if row is None:
             raise SystemExit(f"Missing campaign provenance: {path}")
+        selected = {
+            "tech": tech,
+            "families": families,
+            "model_level": model_level,
+            "checkpoint_size": checkpoint_size,
+            "refine": refine,
+        }
+        mismatches = [key for key, value in selected.items()
+                      if row.get(key) != value]
+        if mismatches:
+            raise SystemExit(
+                "Summarize selection does not match campaign provenance: "
+                + ", ".join(mismatches)
+            )
         return row
 
     expected: Dict[str, Any] = {
@@ -180,6 +233,7 @@ def _campaign_provenance(
         "families": families,
         "model_level": model_level,
         "checkpoint_size": checkpoint_size,
+        "refine": refine,
     }
     existing = _read_row(path) if path.exists() else None
     if existing is not None and existing != expected:
@@ -280,15 +334,21 @@ def run_deck(tech: str, cat: str, design: str, deck: str, out: Path,
                CUDA_VISIBLE_DEVICES="", OMP_NUM_THREADS="1",
                MKL_NUM_THREADS="1", PYCIRCUITSIM_TORCH_THREADS="1",
                PYCIRCUITSIM_BENCH_CODE_COMMIT=code_commit)
+    for name in _TRANSIENT_DIAGNOSTIC_ENV:
+        env.pop(name, None)
+    policy = _campaign_policy(cat, deck, refine)
+    env["PYCIRCUITSIM_BENCH_CAMPAIGN_POLICY"] = json.dumps(
+        policy, sort_keys=True, separators=(",", ":"))
     if model_level == 73:
         pins = _directnet_stems(tech, checkpoint_size)
         env["PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS"] = pins["nmos"]
         env["PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS"] = pins["pmos"]
         env["PYCIRCUITSIM_NN_STRICT_TECH_CODE"] = "1"
-    if refine and FAMILIES[(cat, deck)] == "tran":
+    if policy["transient_refine"]:
         env["PYCIRCUITSIM_BENCH_TRAN_REFINE"] = "1"
-        if cat == "charge_pump":
-            env["PYCIRCUITSIM_BENCH_TRAN_METHOD"] = "trap"
+        method = policy["transient_method_override"]
+        if method is not None:
+            env["PYCIRCUITSIM_BENCH_TRAN_METHOD"] = str(method)
     log = work / f"{design}_{stem}.log"
     log.parent.mkdir(parents=True, exist_ok=True)
     with open(log, "w") as fh:
@@ -343,7 +403,8 @@ def _aggregate_voltage_error(
 
 def summarize(tech: str, out: Path, families: List[str], model_level: int = 72,
               checkpoint_size: str = "large",
-              code_commit: Optional[str] = None) -> str:
+              code_commit: Optional[str] = None,
+              refine: bool = False) -> str:
     """Markdown summary over the JSON rows present in ``out``."""
     model_name = "BSIM-CMG" if model_level == 72 else "DirectNet"
     lines = [
@@ -362,7 +423,8 @@ def summarize(tech: str, out: Path, families: List[str], model_level: int = 72,
                 continue
             row = _read_row(path)
             if row is None or not _model_matches_row(
-                row, tech, model_level, checkpoint_size, code_commit
+                row, tech, model_level, checkpoint_size, code_commit,
+                _campaign_policy(cat, deck, refine),
             ):
                 rows.append((cat, design, stem, "PROVENANCE_MISMATCH"))
                 continue
@@ -446,6 +508,45 @@ def summarize(tech: str, out: Path, families: List[str], model_level: int = 72,
     return "\n".join(lines) + "\n"
 
 
+def _row_completed(row: object) -> bool:
+    """Whether both simulators produced the persisted campaign row."""
+    if not isinstance(row, dict):
+        return False
+    verdict = row.get("verdict")
+    return (
+        isinstance(verdict, dict)
+        and verdict.get("ran") is True
+        and verdict.get("ng_ran") is True
+    )
+
+
+def _campaign_issues(
+    tech: str,
+    out: Path,
+    families: List[str],
+    model_level: int,
+    checkpoint_size: str,
+    code_commit: str,
+    refine: bool,
+) -> List[str]:
+    """Return every missing, stale, invalid, or failed expected row."""
+    issues: List[str] = []
+    for cat, design, deck in corpus(tech, families):
+        path = out / f"{tech}_{cat}_{design}_{Path(deck).stem}.json"
+        row = _read_row(path) if path.exists() else None
+        name = f"{cat}/{design}/{deck}"
+        if row is None:
+            issues.append(f"{name}: missing or invalid JSON")
+        elif not _model_matches_row(
+            row, tech, model_level, checkpoint_size, code_commit,
+            _campaign_policy(cat, deck, refine),
+        ):
+            issues.append(f"{name}: provenance mismatch")
+        elif not _row_completed(row):
+            issues.append(f"{name}: simulator failure")
+    return issues
+
+
 def main(argv: Optional[List[str]] = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     ap.add_argument("--tech", default="tsmc5")
@@ -485,6 +586,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         families,
         args.model_level,
         args.checkpoint_size,
+        args.refine,
         summarize_only=args.summarize_only,
     )
     code_commit = str(provenance["code_commit"])
@@ -497,14 +599,18 @@ def main(argv: Optional[List[str]] = None) -> int:
         todo = []
         for cat, design, deck in corpus(tech, families):
             path = out / f"{tech}_{cat}_{design}_{Path(deck).stem}.json"
-            if path.exists() and not args.force and not _row_matches_model(
+            policy = _campaign_policy(cat, deck, args.refine)
+            matching = path.exists() and _row_matches_model(
                 path, tech, args.model_level, args.checkpoint_size,
-                code_commit,
-            ):
+                code_commit, policy,
+            )
+            if path.exists() and not args.force and not matching:
                 raise SystemExit(
                     f"Existing row has different or incomplete model "
                     f"provenance: {path}. Use --force or a fresh --out.")
-            if args.force or not path.exists():
+            row = _read_row(path) if matching else None
+            if args.force or not matching or not _row_completed(row):
+                path.unlink(missing_ok=True)
                 todo.append((cat, design, deck))
         print(f"[campaign] {tech}: {len(todo)} decks to run "
               f"({args.jobs} workers)", flush=True)
@@ -526,16 +632,25 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     text = summarize(
         tech, out, families, args.model_level, args.checkpoint_size,
-        code_commit,
+        code_commit, args.refine,
     )
     (out / "summary.md").write_text(text)
     print(text)
-    if failed:
+    issues = _campaign_issues(
+        tech, out, families, args.model_level, args.checkpoint_size,
+        code_commit, args.refine,
+    )
+    if failed or issues:
         print(
             f"[campaign] FAILED: {len(failed)} deck subprocesses returned "
-            "nonzero; inspect the recorded logs",
+            f"nonzero; {len(issues)} expected rows remain incomplete",
             file=sys.stderr,
         )
+        for issue in issues[:10]:
+            print(f"[campaign]   {issue}", file=sys.stderr)
+        if len(issues) > 10:
+            print(f"[campaign]   ... and {len(issues) - 10} more",
+                  file=sys.stderr)
         return 1
     return 0
 

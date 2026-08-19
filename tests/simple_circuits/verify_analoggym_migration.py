@@ -7,10 +7,11 @@ import json
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from tempfile import TemporaryDirectory
-from typing import Dict, Optional
+from typing import Any, Dict, Optional
 from unittest.mock import patch
 
 import numpy as np
@@ -200,6 +201,27 @@ def verify_voltage_error_stats_are_aggregatable() -> None:
     assert stats["max_error"] == 1.0
 
 
+def verify_multi_segment_voltage_stats_are_complete() -> None:
+    """Every comparable segment must contribute to campaign voltage error."""
+    td = _translated_deck("dc")
+    py = [
+        _sweep("dc", "pycircuitsim", np.array([1.0, 2.0])),
+        _sweep("dc", "pycircuitsim", np.array([3.0, 4.0])),
+    ]
+    ng = [
+        _sweep("dc", "ngspice", np.array([1.0, 1.0])),
+        _sweep("dc", "ngspice", np.array([1.0, 1.0])),
+    ]
+    report = run_compare._op_delta_for(
+        td, py, ng, BENCH_ROOT, run_compare.SimOptions()
+    )
+    assert report is not None
+    assert report["segments"] == 2
+    assert report["error_stats"]["n"] == 4
+    assert report["error_stats"]["sum_squared_error"] == 14.0
+    assert report["worst_abs"] == 3.0
+
+
 def verify_directnet_model_stub_is_explicit() -> None:
     """An NN deck must retain its technology and model-card VT flavor."""
     assert translate._model_stub(
@@ -302,6 +324,54 @@ Nm3 d g s b nsvt_l32_f7 m=8
     }
 
 
+def verify_modelcard_materializer_writes_and_rejects_alias_drift() -> None:
+    """Tree discovery, alias round-trip, and writes are one tested contract."""
+    from examples.complex_circuits.tools.materialize_modelcards import (
+        materialize_tree,
+    )
+
+    with TemporaryDirectory() as temp_dir:
+        tree = Path(temp_dir)
+        design = tree / "amplifier" / "example"
+        design.mkdir(parents=True)
+        (design / "netlist.spice").write_text(
+            "Nm1 d g s b nsvt_l32_f7 m=1\n")
+
+        class FakeLibrary:
+            def model_name(self, kind: str, vt: str, length_m: float,
+                           nfin: int) -> str:
+                return f"{kind}{vt}_l{round(length_m * 1e9)}_f{nfin}"
+
+            def write(self, path: Path) -> None:
+                path.write_text("materialized\n")
+
+        module = ModuleType("pycmg_lib")
+        module.MODELS_FILE = "private_models.spice"  # type: ignore[attr-defined]
+        module.ModelLibrary = FakeLibrary  # type: ignore[attr-defined]
+        with patch.dict(sys.modules, {"pycmg_lib": module}), patch.dict(
+            os.environ, {}, clear=False
+        ):
+            assert materialize_tree(tree) == 1
+        output = design / "private_models.spice"
+        assert output.read_text() == "materialized\n"
+
+        class DriftedLibrary(FakeLibrary):
+            def model_name(self, kind: str, vt: str, length_m: float,
+                           nfin: int) -> str:
+                return "wrong_alias"
+
+        output.unlink()
+        module.ModelLibrary = DriftedLibrary  # type: ignore[attr-defined]
+        with patch.dict(sys.modules, {"pycmg_lib": module}):
+            try:
+                materialize_tree(tree)
+            except RuntimeError as exc:
+                assert "round-trip changed" in str(exc)
+            else:
+                raise AssertionError("alias drift was accepted")
+        assert not output.exists()
+
+
 def verify_campaign_resume_is_checkpoint_exact() -> None:
     """A same-stem retrain must not reuse rows from the previous weights."""
     with TemporaryDirectory() as temp_dir:
@@ -317,13 +387,14 @@ def verify_campaign_resume_is_checkpoint_exact() -> None:
             checkpoints[device] = {
                 "selection": "explicit",
                 "stem": stem,
-                "checkpoint_sha256": run_compare._sha256(checkpoint),
-                "norm_sha256": run_compare._sha256(norm),
+                "checkpoint_sha256": run_compare.file_sha256(checkpoint),
+                "norm_sha256": run_compare.file_sha256(norm),
                 "complete": True,
             }
         row_path = root / "row.json"
         row_path.write_text(json.dumps({
             "code_commit": "old-code",
+            "ground_truth": {"family": "bsim_cmg", "level": 72},
             "py_model": {
                 "family": "directnet",
                 "level": 73,
@@ -332,7 +403,11 @@ def verify_campaign_resume_is_checkpoint_exact() -> None:
             }
         }))
 
-        with patch.object(campaign, "CHECKPOINT_DIR", root):
+        with patch.object(campaign, "CHECKPOINT_DIR", root), patch.object(
+            campaign, "artifact_record_is_current", return_value=True
+        ), patch.object(
+            campaign, "executable_record_is_current", return_value=True
+        ):
             assert campaign._row_matches_model(row_path, "tsmc5", 73, "large")
             assert campaign._row_matches_model(
                 row_path, "tsmc5", 73, "large", "old-code"
@@ -346,6 +421,81 @@ def verify_campaign_resume_is_checkpoint_exact() -> None:
             assert not campaign._row_matches_model(
                 row_path, "tsmc5", 73, "large"
             )
+
+
+def verify_directnet_provenance_resolves_every_pin_branch() -> None:
+    """Scored rows must identify exact polarity-specific model artifacts."""
+    from neural_network import config as nn_config
+
+    td = replace(_translated_deck("ac"), model_level=73)
+    with TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        for device in ("nmos", "pmos"):
+            stem = f"tsmc5_dn_large_{device}"
+            (root / f"{stem}_best.pt").write_bytes(device.encode())
+            (root / f"{stem}_norm.npz").write_bytes(f"norm-{device}".encode())
+            (root / f"{stem}_best.pt.complete").touch()
+        pins = {
+            "PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS": "tsmc5_dn_large_nmos",
+            "PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS": "tsmc5_dn_large_pmos",
+        }
+        with patch.object(nn_config, "CHECKPOINT_DIR", root), patch.dict(
+            os.environ, pins, clear=True
+        ):
+            record = run_compare._model_provenance(td)
+        assert record["checkpoints"]["nmos"]["selection"] == "explicit"
+        assert record["checkpoints"]["pmos"]["complete"] is True
+        assert record["checkpoints"]["nmos"]["checkpoint_sha256"] == (
+            run_compare.file_sha256(
+                root / "tsmc5_dn_large_nmos_best.pt")
+        )
+
+        with patch.object(nn_config, "CHECKPOINT_DIR", root), patch.dict(
+            os.environ, {}, clear=True
+        ):
+            automatic = run_compare._model_provenance(td)
+        assert automatic["checkpoints"]["nmos"] == {"selection": "automatic"}
+
+        with patch.object(nn_config, "CHECKPOINT_DIR", root), patch.dict(
+            os.environ,
+            {"PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS":
+             "tsmc5_dn_large_pmos"},
+            clear=True,
+        ):
+            try:
+                run_compare._model_provenance(td)
+            except run_compare.SimFailure as exc:
+                assert "opposite polarity" in str(exc)
+            else:
+                raise AssertionError("opposite-polarity pin was accepted")
+
+        with patch.object(nn_config, "CHECKPOINT_DIR", root), patch.dict(
+            os.environ,
+            {"PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS": "missing_nmos"},
+            clear=True,
+        ):
+            try:
+                run_compare._model_provenance(td)
+            except run_compare.SimFailure as exc:
+                assert "cannot resolve" in str(exc)
+            else:
+                raise AssertionError("missing checkpoint pin was accepted")
+
+
+def verify_reference_provenance_detects_artifact_changes() -> None:
+    """Resume eligibility must include ignored ground-truth artifacts."""
+    from examples.complex_circuits.pycircuitsim_bench.provenance import (
+        artifact_record,
+        artifact_record_is_current,
+    )
+
+    with TemporaryDirectory() as temp_dir:
+        path = Path(temp_dir) / "modelcard.spice"
+        path.write_text("version one\n")
+        record = artifact_record(path)
+        assert artifact_record_is_current(record)
+        path.write_text("version two changed\n")
+        assert not artifact_record_is_current(record)
 
 
 def verify_partial_campaign_summary_counts_missing_rows() -> None:
@@ -372,7 +522,8 @@ def verify_partial_campaign_summary_counts_missing_rows() -> None:
         (out / "tsmc5_amplifier_complete_tb_gain.json").write_text(
             json.dumps({"verdict": verdict})
         )
-        summary = campaign.summarize("tsmc5", out, ["ac"])
+        with patch.object(campaign, "_model_matches_row", return_value=True):
+            summary = campaign.summarize("tsmc5", out, ["ac"])
     assert "**ac: 1/1 decks fully agree** (1 missing)" in summary
 
 
@@ -399,8 +550,127 @@ def verify_campaign_summary_surfaces_simulator_failures() -> None:
         (out / "tsmc5_amplifier_failed_tb_gain.json").write_text(
             json.dumps({"verdict": verdict})
         )
-        summary = campaign.summarize("tsmc5", out, ["ac"])
+        with patch.object(campaign, "_model_matches_row", return_value=True):
+            summary = campaign.summarize("tsmc5", out, ["ac"])
     assert "| PY FAIL |" in summary
+
+
+def verify_campaign_pins_transient_policy_and_clears_diagnostics() -> None:
+    """Parent diagnostic variables must not mutate a scored child policy."""
+    captured: Dict[str, str] = {}
+
+    def fake_run(*args: Any, **kwargs: Any) -> SimpleNamespace:
+        del args
+        captured.update(kwargs["env"])
+        return SimpleNamespace(returncode=0)
+
+    polluted = {
+        "PYCIRCUITSIM_BENCH_TRAN_METHOD": "gear2",
+        "PYCIRCUITSIM_BENCH_TRAN_SUBSTEPS": "99",
+        "PYCIRCUITSIM_BENCH_TRAN_REFINE": "1",
+        "PYCIRCUITSIM_BENCH_TRAN_TMAX": "1",
+    }
+    with TemporaryDirectory() as temp_dir, patch.dict(
+        os.environ, polluted, clear=False
+    ), patch.object(campaign.subprocess, "run", side_effect=fake_run):
+        root = Path(temp_dir)
+        campaign.run_deck(
+            "tsmc5", "amplifier", "example", "tb_tran.cir",
+            root / "out", root / "work", False, 10.0, 72, "large",
+            "commit",
+        )
+    for name in campaign._TRANSIENT_DIAGNOSTIC_ENV:
+        assert name not in captured
+    policy = json.loads(captured["PYCIRCUITSIM_BENCH_CAMPAIGN_POLICY"])
+    assert policy == {
+        "refine_requested": False,
+        "stride": 1,
+        "transient_method_override": None,
+        "transient_refine": False,
+    }
+
+
+def verify_campaign_manifest_rejects_changed_refine_policy() -> None:
+    """A resume cannot mix refined and unrefined transient semantics."""
+    with TemporaryDirectory() as temp_dir, patch.object(
+        campaign, "_current_commit", return_value="commit"
+    ):
+        out = Path(temp_dir)
+        campaign._campaign_provenance(
+            out, "tsmc5", ["tran"], 73, "large", True,
+            summarize_only=False,
+        )
+        try:
+            campaign._campaign_provenance(
+                out, "tsmc5", ["tran"], 73, "large", False,
+                summarize_only=True,
+            )
+        except SystemExit as exc:
+            assert "refine" in str(exc)
+        else:
+            raise AssertionError("changed transient policy was accepted")
+
+
+def verify_campaign_requeues_failed_rows_and_invalidates_force() -> None:
+    """Persisted failures and stale forced rows cannot produce success."""
+    entry = ("amplifier", "broken", "tb_gain.cir")
+    verdict = {"ran": False, "ng_ran": True}
+    with TemporaryDirectory() as temp_dir:
+        out = Path(temp_dir)
+        row_path = out / "tsmc5_amplifier_broken_tb_gain.json"
+        row_path.write_text(json.dumps({"verdict": verdict}))
+        observed_absent: list[bool] = []
+
+        def failed_run(*args: Any, **kwargs: Any) -> Dict[str, Any]:
+            del args, kwargs
+            observed_absent.append(not row_path.exists())
+            return {
+                "category": "amplifier", "design": "broken",
+                "deck": "tb_gain.cir", "rc": 2, "log": "broken.log",
+            }
+
+        with patch.object(campaign, "corpus", return_value=[entry]), \
+                patch.object(campaign, "_current_commit", return_value="commit"), \
+                patch.object(campaign, "_row_matches_model", return_value=True), \
+                patch.object(campaign, "run_deck", side_effect=failed_run), \
+                patch.object(campaign, "_model_matches_row", return_value=True):
+            rc = campaign.main([
+                "--tech", "tsmc5", "--families", "ac", "--jobs", "1",
+                "--out", temp_dir,
+            ])
+        assert rc != 0
+        assert observed_absent == [True]
+
+        row_path.write_text(json.dumps({"verdict": {"ran": True,
+                                                     "ng_ran": True}}))
+        observed_absent.clear()
+        with patch.object(campaign, "corpus", return_value=[entry]), \
+                patch.object(campaign, "_current_commit", return_value="commit"), \
+                patch.object(campaign, "run_deck", side_effect=failed_run), \
+                patch.object(campaign, "_model_matches_row", return_value=True):
+            rc = campaign.main([
+                "--tech", "tsmc5", "--families", "ac", "--jobs", "1",
+                "--out", temp_dir, "--force",
+            ])
+        assert rc != 0
+        assert observed_absent == [True]
+
+
+def verify_summarize_only_fails_on_incomplete_evidence() -> None:
+    """A human-readable MISSING row must also produce a nonzero command."""
+    entry = ("amplifier", "missing", "tb_gain.cir")
+    with TemporaryDirectory() as temp_dir:
+        out = Path(temp_dir)
+        (out / "campaign_provenance.json").write_text(json.dumps({
+            "code_commit": "commit", "tech": "tsmc5", "families": ["ac"],
+            "model_level": 72, "checkpoint_size": "large", "refine": False,
+        }))
+        with patch.object(campaign, "corpus", return_value=[entry]):
+            rc = campaign.main([
+                "--tech", "tsmc5", "--families", "ac",
+                "--out", temp_dir, "--summarize-only",
+            ])
+        assert rc != 0
 
 
 def verify_failed_simulation_retains_elapsed_time() -> None:
@@ -418,6 +688,10 @@ def verify_failed_simulation_retains_elapsed_time() -> None:
         run_compare.time,
         "perf_counter",
         side_effect=(10.0, 13.0),
+    ), patch.object(
+        run_compare,
+        "_reference_provenance",
+        return_value={"family": "bsim_cmg", "level": 72},
     ):
         row = run_compare.compare_translated(td, Path(temp_dir))
     assert row["pycircuitsim"]["seconds"] == 3.0
@@ -606,13 +880,21 @@ def main() -> None:
         verify_failed_unconstrained_transient_uses_operating_point,
         verify_ac_still_uses_dedicated_operating_point,
         verify_voltage_error_stats_are_aggregatable,
+        verify_multi_segment_voltage_stats_are_complete,
         verify_directnet_model_stub_is_explicit,
         verify_nn_temperature_sweep_rebinds_geometry,
         verify_campaign_propagates_deck_failures,
         verify_modelcard_materializer_reads_generated_geometry,
+        verify_modelcard_materializer_writes_and_rejects_alias_drift,
         verify_campaign_resume_is_checkpoint_exact,
+        verify_directnet_provenance_resolves_every_pin_branch,
+        verify_reference_provenance_detects_artifact_changes,
         verify_partial_campaign_summary_counts_missing_rows,
         verify_campaign_summary_surfaces_simulator_failures,
+        verify_campaign_pins_transient_policy_and_clears_diagnostics,
+        verify_campaign_manifest_rejects_changed_refine_policy,
+        verify_campaign_requeues_failed_rows_and_invalidates_force,
+        verify_summarize_only_fails_on_incomplete_evidence,
         verify_failed_simulation_retains_elapsed_time,
         verify_large_directnet_checkpoints_enable_shared_gates,
         verify_ac_gate_rejects_nonconverged_operating_point,

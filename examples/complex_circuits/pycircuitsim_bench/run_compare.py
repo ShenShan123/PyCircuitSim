@@ -105,11 +105,10 @@ What this module found, so the next reader does not re-derive it:
 from __future__ import annotations
 
 import argparse
-import functools
-import hashlib
 import json
 import math
 import os
+import shutil
 import sys
 import time
 from dataclasses import asdict, dataclass, replace
@@ -129,6 +128,7 @@ from . import (
 )
 from . import measure as measure_mod
 from . import translate
+from .provenance import artifact_record, executable_record, file_sha256
 
 # ── Repository wiring ────────────────────────────────────────────────────
 
@@ -331,26 +331,6 @@ class SimOptions:
 _PY_MODEL_FAMILIES: Dict[int, str] = {72: "bsim_cmg", 73: "directnet"}
 
 
-@functools.lru_cache(maxsize=32)
-def _sha256_at_version(path: Path, mtime_ns: int, ctime_ns: int,
-                       size: int) -> str:
-    """Hash one immutable-on-disk version of an artifact."""
-    del mtime_ns, ctime_ns, size
-    digest = hashlib.sha256()
-    with path.open("rb") as fh:
-        for chunk in iter(lambda: fh.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
-
-
-def _sha256(path: Path) -> str:
-    """Return a stable content digest for one model artifact."""
-    resolved = path.resolve()
-    stat = resolved.stat()
-    return _sha256_at_version(
-        resolved, stat.st_mtime_ns, stat.st_ctime_ns, stat.st_size)
-
-
 def _checkpoint_pin(device: str) -> Optional[str]:
     """Return the effective explicit DirectNet pin for one polarity."""
     names = (
@@ -399,14 +379,48 @@ def _model_provenance(td: TranslatedDeck) -> Dict[str, Any]:
             "selection": "explicit",
             "stem": stem,
             "checkpoint": str(checkpoint.resolve()),
-            "checkpoint_sha256": _sha256(checkpoint),
+            "checkpoint_sha256": file_sha256(checkpoint),
             "norm": str(norm.resolve()),
-            "norm_sha256": _sha256(norm),
+            "norm_sha256": file_sha256(norm),
             "complete": checkpoint.with_suffix(
                 checkpoint.suffix + ".complete").is_file(),
         }
     out["checkpoints"] = checkpoints
     return out
+
+
+def _reference_provenance(td: TranslatedDeck) -> Dict[str, Any]:
+    """Fingerprint every local artifact that defines NGSPICE ground truth."""
+    from meas import NGSPICE                                  # noqa: PLC0415
+    from pycmg_lib import OSDI_PATH                           # noqa: PLC0415
+
+    executable = Path(NGSPICE)
+    if not executable.is_file():
+        resolved = shutil.which(NGSPICE)
+        if resolved is None:
+            raise SimFailure(f"NGSPICE executable not found: {NGSPICE}")
+        executable = Path(resolved)
+    return {
+        "family": "bsim_cmg",
+        "level": 72,
+        "modelcard": artifact_record(td.modelcard_path),
+        "osdi": artifact_record(OSDI_PATH),
+        "ngspice": executable_record(executable),
+    }
+
+
+def _campaign_policy_from_environment() -> Optional[Dict[str, Any]]:
+    """Decode the exact campaign-owned fidelity policy for this row."""
+    raw = os.environ.get("PYCIRCUITSIM_BENCH_CAMPAIGN_POLICY")
+    if raw is None:
+        return None
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SimFailure(f"Invalid campaign policy JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise SimFailure("Campaign policy must decode to a JSON object")
+    return value
 
 
 # ── NGSPICE grid reproduction ────────────────────────────────────────────
@@ -1362,6 +1376,94 @@ def sweep_delta(py: SweepResult, ng: SweepResult,
     }
 
 
+def _merge_error_stats(reports: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """Merge sufficient statistics without averaging normalized metrics."""
+    stats = [report.get("error_stats") for report in reports]
+    usable = [value for value in stats
+              if isinstance(value, dict) and value.get("n")]
+    if not usable:
+        return _voltage_error_stats([])
+    n = sum(int(value["n"]) for value in usable)
+    ss_res = sum(float(value["sum_squared_error"]) for value in usable)
+    relative_error_sum = sum(
+        float(value["relative_error_sum"]) for value in usable)
+    truth_sum = sum(float(value["truth_sum"]) for value in usable)
+    truth_sum_squared = sum(
+        float(value["truth_sum_squared"]) for value in usable)
+    truth_min = min(float(value["truth_min"]) for value in usable)
+    truth_max = max(float(value["truth_max"]) for value in usable)
+    max_error = max(float(value["max_error"]) for value in usable)
+    scale = truth_max - truth_min
+    if scale <= 0.0:
+        scale = max(abs(truth_min), abs(truth_max), 1e-12)
+    ss_total = truth_sum_squared - truth_sum * truth_sum / n
+    return {
+        "n": n,
+        "mre": relative_error_sum / n,
+        "r2": (1.0 - ss_res / ss_total) if ss_total > 0.0 else (
+            1.0 if ss_res == 0.0 else None
+        ),
+        "nrmse": math.sqrt(ss_res / n) / scale,
+        "max_error": max_error,
+        "sum_squared_error": ss_res,
+        "relative_error_sum": relative_error_sum,
+        "truth_sum": truth_sum,
+        "truth_sum_squared": truth_sum_squared,
+        "truth_min": truth_min,
+        "truth_max": truth_max,
+    }
+
+
+def _merge_voltage_deltas(
+    reports: Sequence[Optional[Dict[str, Any]]],
+    *,
+    top_n: int = 5,
+) -> Optional[Dict[str, Any]]:
+    """Combine comparable voltage reports from every scored sweep segment."""
+    usable = [report for report in reports
+              if isinstance(report, dict) and "error" not in report]
+    if not usable:
+        return None
+    stats = _merge_error_stats(usable)
+    top_by_node: Dict[str, Dict[str, Any]] = {}
+    for segment, report in enumerate(usable):
+        for item in report.get("top", []):
+            node = item.get("node")
+            delta = item.get("delta")
+            if not isinstance(node, str) or not isinstance(delta, (int, float)):
+                continue
+            current = top_by_node.get(node)
+            if current is None or abs(float(delta)) > abs(float(current["delta"])):
+                current = dict(item)
+                current["segment"] = segment
+                top_by_node[node] = current
+    top = sorted(
+        top_by_node.values(), key=lambda item: -abs(float(item["delta"])))
+    n = int(stats["n"])
+    ss_res = float(stats["sum_squared_error"])
+    return {
+        "n_compared": n,
+        "matched_points": sum(int(report.get("matched_points", 0))
+                              for report in usable),
+        "n_flag_ok": sum(int(report.get("n_flag_ok", 0))
+                         for report in usable),
+        "only_pycircuitsim": sorted({
+            node for report in usable
+            for node in report.get("only_pycircuitsim", [])
+        }),
+        "only_ngspice": sorted({
+            node for report in usable
+            for node in report.get("only_ngspice", [])
+        }),
+        "worst_node": top[0]["node"] if top else None,
+        "worst_abs": abs(float(top[0]["delta"])) if top else None,
+        "rms": math.sqrt(ss_res / n) if n else None,
+        "error_stats": stats,
+        "top": top[:top_n],
+        "segments": len(usable),
+    }
+
+
 def grid_report(py: SweepResult, ng: SweepResult) -> Dict[str, Any]:
     """Do the two simulators agree on the abscissa they solved?"""
     out: Dict[str, Any] = {"py_points": int(len(py.x)),
@@ -1396,6 +1498,8 @@ def compare_translated(td: TranslatedDeck, work: Path,
         "tech": td.tech, "category": td.category, "design": td.design,
         "deck": td.deck, "devices": td.devices,
         "py_model": _model_provenance(td),
+        "ground_truth": _reference_provenance(td),
+        "campaign_policy": _campaign_policy_from_environment(),
         "control": [plan.control for plan in td.plans],
         "plans": [asdict(plan) for plan in td.plans],
         "translate_warnings": list(td.warnings),
@@ -1465,7 +1569,8 @@ def compare_translated(td: TranslatedDeck, work: Path,
             out["pycircuitsim"]["partial"] = {
                 k: partial.get(k) for k in
                 ("dc_seconds", "dc_converged", "dc_error", "failures",
-                 "integration_method", "dt", "devices", "nodes")}
+                 "integration_method", "dt", "refine_output",
+                 "refine_max_dt", "devices", "nodes")}
     out["pycircuitsim"]["metrics"] = py_metrics
     out["pycircuitsim"]["seconds"] = py_seconds
 
@@ -1711,7 +1816,11 @@ def compare_with_recovery(td: TranslatedDeck, work: Path,
                        "op_delta": row["op_delta"],
                        "verdict": row["verdict"]},
     }
-    out["op_delta"] = seg_rows["cold"]["op_delta"]
+    out["op_delta"] = _merge_voltage_deltas([
+        seg_rows[label]["op_delta"] for label in seg_rows
+    ])
+    if out["op_delta"] is not None:
+        out["op_delta"]["source"] = "recovery-segments"
     out["compare"]["py_vs_ng"] = measure_mod.compare_metrics(
         out["pycircuitsim"]["metrics"], out["ngspice"]["metrics"], rtol=rtol,
         atol_by_key=METRIC_ATOL)
@@ -1740,6 +1849,8 @@ def _sweep_summary(plan: AnalysisPlan, sweep: SweepResult) -> Dict[str, Any]:
         "truncated_at": meta.get("truncated_at"),
         "integration_method": meta.get("integration_method"),
         "dt": meta.get("dt"),
+        "refine_output": meta.get("refine_output"),
+        "refine_max_dt": meta.get("refine_max_dt"),
         "branch_current_gaps": meta.get("branch_current_gaps"),
         "failures": meta.get("failures", []),
     }
@@ -1773,7 +1884,12 @@ def _op_delta_for(td: TranslatedDeck, py_sweeps: Sequence[SweepResult],
     """
     py_op: Optional[Dict[str, float]] = None
     if py_sweeps and ng_sweeps and py_sweeps[0].kind == "dc":
-        report = sweep_delta(py_sweeps[0], ng_sweeps[0])
+        report = _merge_voltage_deltas([
+            sweep_delta(py_sweep, ng_sweep)
+            for py_sweep, ng_sweep in zip(py_sweeps, ng_sweeps)
+        ])
+        if report is None:
+            return None
         report["source"] = "per-point-sweep"
         return report
     if py_sweeps:
