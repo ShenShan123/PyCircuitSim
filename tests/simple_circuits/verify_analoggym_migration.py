@@ -376,6 +376,53 @@ def verify_partial_campaign_summary_counts_missing_rows() -> None:
     assert "**ac: 1/1 decks fully agree** (1 missing)" in summary
 
 
+def verify_campaign_summary_surfaces_simulator_failures() -> None:
+    """Measurement-control success must not hide a failed simulator."""
+    verdict = {
+        "ran": False,
+        "ng_ran": True,
+        "measured": 0,
+        "agree": 0,
+        "missing_py": 8,
+        "not_comparable": 0,
+        "engine_ok": True,
+        "op_worst_abs": None,
+        "py_seconds": 3.0,
+        "ng_seconds": 0.1,
+    }
+    with TemporaryDirectory() as temp_dir, patch.object(
+        campaign,
+        "corpus",
+        return_value=[("amplifier", "failed", "tb_gain.cir")],
+    ):
+        out = Path(temp_dir)
+        (out / "tsmc5_amplifier_failed_tb_gain.json").write_text(
+            json.dumps({"verdict": verdict})
+        )
+        summary = campaign.summarize("tsmc5", out, ["ac"])
+    assert "| PY FAIL |" in summary
+
+
+def verify_failed_simulation_retains_elapsed_time() -> None:
+    """A failed long-running solve must not be reported as zero seconds."""
+    td = _translated_deck("ac")
+    with TemporaryDirectory() as temp_dir, patch.object(
+        run_compare,
+        "ngspice_sweep",
+        side_effect=run_compare.SimFailure("reference unavailable"),
+    ), patch.object(
+        run_compare,
+        "simulate",
+        side_effect=run_compare.SimFailure("solver exhausted"),
+    ), patch.object(
+        run_compare.time,
+        "perf_counter",
+        side_effect=(10.0, 13.0),
+    ):
+        row = run_compare.compare_translated(td, Path(temp_dir))
+    assert row["pycircuitsim"]["seconds"] == 3.0
+
+
 def verify_large_directnet_checkpoints_enable_shared_gates() -> None:
     """Production-large files must satisfy the shared gate's sentinel."""
     with TemporaryDirectory() as temp_dir:
@@ -565,6 +612,8 @@ def main() -> None:
         verify_modelcard_materializer_reads_generated_geometry,
         verify_campaign_resume_is_checkpoint_exact,
         verify_partial_campaign_summary_counts_missing_rows,
+        verify_campaign_summary_surfaces_simulator_failures,
+        verify_failed_simulation_retains_elapsed_time,
         verify_large_directnet_checkpoints_enable_shared_gates,
         verify_ac_gate_rejects_nonconverged_operating_point,
         verify_analoggym_rejects_nonconverged_ac_operating_point,

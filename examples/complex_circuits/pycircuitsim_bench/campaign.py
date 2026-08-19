@@ -369,7 +369,7 @@ def summarize(tech: str, out: Path, families: List[str], model_level: int = 72,
             matching_rows[path] = row
             rows.append((cat, design, stem, row["verdict"]))
         lines += [f"## {fam} ({len(rows)} decks)", "",
-                  "| deck | agree | quarantined | engine | op worst (V) "
+                  "| deck | agree | quarantined | engines | op worst (V) "
                   "| py / ng s |",
                   "|---|:--:|:--:|:--:|--:|--:|"]
         full = scored = quarantined = missing = mismatched = 0
@@ -398,10 +398,18 @@ def summarize(tech: str, out: Path, families: List[str], model_level: int = 72,
                               else f" (+{v['missing_py']} unmeasured)")
             nc = v.get("not_comparable", 0)
             score = "--" if whole else f"{v['agree']}/{v['measured']}"
+            failures = []
+            if not v["ran"]:
+                failures.append("PY FAIL")
+            if not v.get("ng_ran", True):
+                failures.append("NG FAIL")
+            if not v["engine_ok"]:
+                failures.append("MEAS FAIL")
+            engine_status = ", ".join(failures) if failures else "ok"
             lines.append(
                 f"| {name} | {score}{missing_suffix} "
                 f"| {nc if nc else ''} "
-                f"| {'ok' if v['engine_ok'] else 'FAIL'} "
+                f"| {engine_status} "
                 f"| {'' if op is None else format(op, '.2e')} "
                 f"| {v['py_seconds']:.1f} / {v['ng_seconds']:.1f} |")
         fam_tot[fam] = [full, scored, quarantined, missing, mismatched]

@@ -1446,7 +1446,12 @@ def compare_translated(td: TranslatedDeck, work: Path,
     py_partial_op: Optional[Dict[str, float]] = None
     try:
         for plan in td.plans:
-            sweep = simulate(td, plan, work, opts)
+            plan_started = time.perf_counter()
+            try:
+                sweep = simulate(td, plan, work, opts)
+            except Exception:                       # noqa: BLE001 -- re-raised
+                py_seconds += time.perf_counter() - plan_started
+                raise
             py_sweeps.append(sweep)
             py_seconds += float(sweep.meta.get("seconds", 0.0))
             py_metrics = measure_result(td, plan, sweep, seed=py_metrics)
