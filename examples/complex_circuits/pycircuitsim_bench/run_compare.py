@@ -978,6 +978,11 @@ def _simulate_ac(td: TranslatedDeck, plan: AnalysisPlan, circuit,
     meta["dc_converged"] = converged
     if voltages is None:
         raise _fail(meta, f"DC operating point failed: {error}")
+    if not converged:
+        raise _fail(
+            meta,
+            "DC operating point did not converge; refusing AC linearization",
+        )
     meta["dc_error"] = error
     meta["operating_point"] = {n.lower(): float(v) for n, v in voltages.items()
                                if n not in ("0", "GND")}
@@ -1387,6 +1392,7 @@ def compare_translated(td: TranslatedDeck, work: Path,
     work.mkdir(parents=True, exist_ok=True)
     out: Dict[str, Any] = {
         "schema": SCHEMA_VERSION,
+        "code_commit": os.environ.get("PYCIRCUITSIM_BENCH_CODE_COMMIT"),
         "tech": td.tech, "category": td.category, "design": td.design,
         "deck": td.deck, "devices": td.devices,
         "py_model": _model_provenance(td),

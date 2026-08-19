@@ -789,6 +789,11 @@ def run_ac_sweep(
 
         dc_solver, dc_solution = _solve_dc_with_retry(circuit, has_nn, _ac_op_solve)
 
+    if not getattr(dc_solver, "_last_solve_converged", True):
+        raise RuntimeError(
+            "AC analysis requires a converged DC operating point"
+        )
+
     logger.info("DC operating point computed")
     for node, voltage in dc_solution.items():
         if node not in ["0", "GND"]:

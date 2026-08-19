@@ -4058,6 +4058,10 @@ class ACSolver:
             dc_solver = DCSolver(self.circuit)
             with dc_solver:
                 self.dc_solution = dc_solver.solve()
+            if not dc_solver._last_solve_converged:
+                raise RuntimeError(
+                    "AC analysis requires a converged DC operating point"
+                )
 
         # Get circuit topology
         nodes = self.circuit.get_nodes()

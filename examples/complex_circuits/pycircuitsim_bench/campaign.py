@@ -57,6 +57,8 @@ if str(_NN_PARENT) not in sys.path:
     sys.path.insert(0, str(_NN_PARENT))
 from neural_network.config import CHECKPOINT_DIR
 
+_PROVENANCE_FILE = "campaign_provenance.json"
+
 
 def _directnet_stems(tech: str, size: str) -> Dict[str, str]:
     """Checkpoint stems for one explicitly pinned DirectNet campaign."""
@@ -83,9 +85,12 @@ def _require_directnet_checkpoints(tech: str, size: str) -> None:
 
 
 def _model_matches_row(row: object, tech: str, model_level: int,
-                       checkpoint_size: str) -> bool:
+                       checkpoint_size: str,
+                       code_commit: Optional[str] = None) -> bool:
     """Whether one decoded row belongs to this exact model selection."""
     if not isinstance(row, dict):
+        return False
+    if code_commit is not None and row.get("code_commit") != code_commit:
         return False
     model = row.get("py_model")
     if model_level == 72:
@@ -125,11 +130,66 @@ def _read_row(path: Path) -> Optional[Dict[str, Any]]:
 
 
 def _row_matches_model(path: Path, tech: str, model_level: int,
-                       checkpoint_size: str) -> bool:
+                       checkpoint_size: str,
+                       code_commit: Optional[str] = None) -> bool:
     """Whether a resumable row belongs to this exact model selection."""
     row = _read_row(path)
     return row is not None and _model_matches_row(
-        row, tech, model_level, checkpoint_size)
+        row, tech, model_level, checkpoint_size, code_commit)
+
+
+def _current_commit() -> str:
+    """Return the clean tracked code state used by a scored campaign."""
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=BENCH_ROOT.parents[1], check=True, capture_output=True, text=True,
+    )
+    if status.stdout.strip():
+        raise SystemExit(
+            "Scored campaigns require a clean tracked worktree so every row "
+            "has exact code provenance. Commit the changes or use a separate "
+            "diagnostic output directory."
+        )
+    result = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=BENCH_ROOT.parents[1], check=True,
+        capture_output=True, text=True,
+    )
+    return result.stdout.strip()
+
+
+def _campaign_provenance(
+    out: Path,
+    tech: str,
+    families: List[str],
+    model_level: int,
+    checkpoint_size: str,
+    *,
+    summarize_only: bool,
+) -> Dict[str, Any]:
+    """Create or validate the immutable provenance for one output tree."""
+    path = out / _PROVENANCE_FILE
+    if summarize_only:
+        row = _read_row(path)
+        if row is None:
+            raise SystemExit(f"Missing campaign provenance: {path}")
+        return row
+
+    expected: Dict[str, Any] = {
+        "code_commit": _current_commit(),
+        "tech": tech,
+        "families": families,
+        "model_level": model_level,
+        "checkpoint_size": checkpoint_size,
+    }
+    existing = _read_row(path) if path.exists() else None
+    if existing is not None and existing != expected:
+        raise SystemExit(
+            f"Campaign provenance changed for {out}; use a fresh --out "
+            "directory instead of mixing campaign passes."
+        )
+    if existing is None:
+        path.write_text(json.dumps(expected, indent=2) + "\n")
+    return expected
 
 
 #: (category, deck) -> measurement family. Anything not listed is a bug in
@@ -206,7 +266,7 @@ def corpus(tech: str, families: List[str]) -> List[Tuple[str, str, str]]:
 
 def run_deck(tech: str, cat: str, design: str, deck: str, out: Path,
              work: Path, refine: bool, timeout: float, model_level: int,
-             checkpoint_size: str) -> Dict[str, Any]:
+             checkpoint_size: str, code_commit: str) -> Dict[str, Any]:
     """One run_compare subprocess; returns a status record."""
     stem = Path(deck).stem
     stride = STRIDES.get((cat, deck), 1)
@@ -218,7 +278,8 @@ def run_deck(tech: str, cat: str, design: str, deck: str, out: Path,
            "--model-level", str(model_level)]
     env = dict(os.environ,
                CUDA_VISIBLE_DEVICES="", OMP_NUM_THREADS="1",
-               MKL_NUM_THREADS="1", PYCIRCUITSIM_TORCH_THREADS="1")
+               MKL_NUM_THREADS="1", PYCIRCUITSIM_TORCH_THREADS="1",
+               PYCIRCUITSIM_BENCH_CODE_COMMIT=code_commit)
     if model_level == 73:
         pins = _directnet_stems(tech, checkpoint_size)
         env["PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS"] = pins["nmos"]
@@ -281,7 +342,8 @@ def _aggregate_voltage_error(
 
 
 def summarize(tech: str, out: Path, families: List[str], model_level: int = 72,
-              checkpoint_size: str = "large") -> str:
+              checkpoint_size: str = "large",
+              code_commit: Optional[str] = None) -> str:
     """Markdown summary over the JSON rows present in ``out``."""
     model_name = "BSIM-CMG" if model_level == 72 else "DirectNet"
     lines = [
@@ -300,7 +362,7 @@ def summarize(tech: str, out: Path, families: List[str], model_level: int = 72,
                 continue
             row = _read_row(path)
             if row is None or not _model_matches_row(
-                row, tech, model_level, checkpoint_size
+                row, tech, model_level, checkpoint_size, code_commit
             ):
                 rows.append((cat, design, stem, "PROVENANCE_MISMATCH"))
                 continue
@@ -409,6 +471,16 @@ def main(argv: Optional[List[str]] = None) -> int:
     work = args.work or (out / "work")
     out.mkdir(parents=True, exist_ok=True)
 
+    provenance = _campaign_provenance(
+        out,
+        tech,
+        families,
+        args.model_level,
+        args.checkpoint_size,
+        summarize_only=args.summarize_only,
+    )
+    code_commit = str(provenance["code_commit"])
+
     if args.model_level == 73:
         _require_directnet_checkpoints(tech, args.checkpoint_size)
 
@@ -418,7 +490,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         for cat, design, deck in corpus(tech, families):
             path = out / f"{tech}_{cat}_{design}_{Path(deck).stem}.json"
             if path.exists() and not args.force and not _row_matches_model(
-                path, tech, args.model_level, args.checkpoint_size
+                path, tech, args.model_level, args.checkpoint_size,
+                code_commit,
             ):
                 raise SystemExit(
                     f"Existing row has different or incomplete model "
@@ -430,7 +503,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         with concurrent.futures.ThreadPoolExecutor(args.jobs) as pool:
             futs = {pool.submit(run_deck, tech, cat, design, deck, out, work,
                                 args.refine, args.deck_timeout,
-                                args.model_level, args.checkpoint_size):
+                                args.model_level, args.checkpoint_size,
+                                code_commit):
                     (cat, design, deck) for cat, design, deck in todo}
             done = 0
             for fut in concurrent.futures.as_completed(futs):
@@ -443,7 +517,8 @@ def main(argv: Optional[List[str]] = None) -> int:
                       f"{cat}/{design}/{deck}", flush=True)
 
     text = summarize(
-        tech, out, families, args.model_level, args.checkpoint_size
+        tech, out, families, args.model_level, args.checkpoint_size,
+        code_commit,
     )
     (out / "summary.md").write_text(text)
     print(text)

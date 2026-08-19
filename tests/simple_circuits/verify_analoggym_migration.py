@@ -253,6 +253,10 @@ def verify_campaign_propagates_deck_failures() -> None:
         return_value=[("amplifier", "broken", "tb_gain.cir")],
     ), patch.object(
         campaign,
+        "_current_commit",
+        return_value="0123456789abcdef",
+    ), patch.object(
+        campaign,
         "run_deck",
         return_value={
             "category": "amplifier",
@@ -319,6 +323,7 @@ def verify_campaign_resume_is_checkpoint_exact() -> None:
             }
         row_path = root / "row.json"
         row_path.write_text(json.dumps({
+            "code_commit": "old-code",
             "py_model": {
                 "family": "directnet",
                 "level": 73,
@@ -329,6 +334,12 @@ def verify_campaign_resume_is_checkpoint_exact() -> None:
 
         with patch.object(campaign, "CHECKPOINT_DIR", root):
             assert campaign._row_matches_model(row_path, "tsmc5", 73, "large")
+            assert campaign._row_matches_model(
+                row_path, "tsmc5", 73, "large", "old-code"
+            )
+            assert not campaign._row_matches_model(
+                row_path, "tsmc5", 73, "large", "new-code"
+            )
             (root / "tsmc5_dn_large_nmos_best.pt").write_bytes(
                 b"retrained weights"
             )
@@ -392,6 +403,32 @@ def verify_ac_gate_rejects_nonconverged_operating_point() -> None:
     }
     assert verify_nn_ac.ac_gate_passes(True, True, metrics)
     assert not verify_nn_ac.ac_gate_passes(False, True, metrics)
+
+
+def verify_analoggym_rejects_nonconverged_ac_operating_point() -> None:
+    """The campaign must not score an AC solve about a non-fixed state."""
+    td = _translated_deck("ac")
+    plan = td.plans[0]
+    meta: Dict[str, object] = {}
+    with patch.object(
+        run_compare,
+        "_dc_solve",
+        return_value=({"out": 0.25}, False, "NR exhausted"),
+    ):
+        try:
+            run_compare._simulate_ac(
+                td,
+                plan,
+                SimpleNamespace(),
+                {"out": "out"},
+                run_compare.SimOptions(),
+                0.65,
+                meta,
+            )
+        except run_compare.SimFailure as exc:
+            assert "refusing AC linearization" in str(exc)
+        else:
+            raise AssertionError("nonconverged AC operating point was scored")
 
 
 def verify_only_validated_alternate_seed_is_emitted() -> None:
@@ -530,6 +567,7 @@ def main() -> None:
         verify_partial_campaign_summary_counts_missing_rows,
         verify_large_directnet_checkpoints_enable_shared_gates,
         verify_ac_gate_rejects_nonconverged_operating_point,
+        verify_analoggym_rejects_nonconverged_ac_operating_point,
         verify_only_validated_alternate_seed_is_emitted,
         verify_write_design_reconciles_alternate_seed_inventory,
         verify_regeneration_fails_loudly_without_source_corpus,
