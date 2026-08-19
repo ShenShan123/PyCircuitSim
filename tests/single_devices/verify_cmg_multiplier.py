@@ -21,7 +21,7 @@ noted as an internal consistency check that has no ngspice observable):
   6. AC: common-source amplifier at m=4, complex V(out) vs NGSPICE at three
      frequencies (proves the capacitances scale too).
 
-Run CPU-pinned (CLAUDE.md gate methodology):
+Run CPU-pinned (AGENTS.md gate methodology):
 
     CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \\
         NGSPICE_BIN=/usr/local/ngspice-45.2/bin/ngspice \\

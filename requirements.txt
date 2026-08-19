@@ -9,7 +9,7 @@
 #   pip install torch                          # CPU
 #   pip install torch --index-url https://download.pytorch.org/whl/cu121  # CUDA 12.1
 #
-# Tsinghua mirror (recommended for users in China — see CLAUDE.md):
+# Tsinghua mirror (recommended for users in China — see AGENTS.md):
 #   pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 
 # ── Numerical / plotting core ───────────────────────────────────────────────

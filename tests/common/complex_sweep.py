@@ -5,7 +5,7 @@ inverter sweep harness (``tests/common/nn_sweep.py``) but for the opamp /
 ring-oscillator / switched-cap / 6T-SRAM benchmarks. Sweeps technology, VT
 (symmetric + asymmetric N/P), geometry (L / NFIN / P-N fin ratio), VDD, and
 per-circuit input stimuli, baseline-gated, against the NGSPICE BSIM-CMG
-(LEVEL=72) ground truth — never a simplified model (CLAUDE.md Validation rule).
+(LEVEL=72) ground truth — never a simplified model (AGENTS.md Validation rule).
 
 The four single-point ``verify_complex_*.py`` ship gates are UNTOUCHED; this is
 additive infra. Hard gates: every swept config is a real PASS/FAIL at the

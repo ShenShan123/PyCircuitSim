@@ -4,7 +4,7 @@
 * `tests/verify_complex_ring_osc.py` renders this deck per technology and
 * scores the oscillation period of `directnet_ring_osc_tran.sp` against it.
 * Ground truth is ALWAYS NGSPICE on the identical BSIM-CMG OSDI model
-* (CLAUDE.md Validation rule).
+* (AGENTS.md Validation rule).
 *
 * <TOKEN> placeholders are substituted by tests.common.base
 * :: render_reference_deck. <BAKED_LIB> is the merged modelcard with

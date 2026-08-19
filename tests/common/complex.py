@@ -11,7 +11,7 @@ a single inverter:
   3d  verify_complex_switchcap.py  — switched-cap unit cell (.tran, PULSE)
 
 Ground truth is ALWAYS NGSPICE BSIM-CMG (LEVEL=72) via the bsimcmg OSDI binary
-(CLAUDE.md Validation rule — never simplified/self-defined equations).
+(AGENTS.md Validation rule — never simplified/self-defined equations).
 
 This module owns the shared plumbing:
   * baked-modelcard generation (NGSPICE side, L/NFIN/TFIN injected),

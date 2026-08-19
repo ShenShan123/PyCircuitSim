@@ -10,7 +10,7 @@ ground truth. Extracts open-loop DC gain (peak |dVout/dVin|), trip point
 
 Gates: open-loop DC gain within +/-10%; trip-point shift reported.
 
-Ground truth is ALWAYS NGSPICE BSIM-CMG (CLAUDE.md Validation rule).
+Ground truth is ALWAYS NGSPICE BSIM-CMG (AGENTS.md Validation rule).
 Report MRE / R2 / NRMSE / MaxErr.
 
 Usage:

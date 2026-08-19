@@ -15,7 +15,7 @@ fragility (REPORT.md finding #3 — gain collapses to ~0 at small/medium) shows 
 here as an honest low/zero AC gain, NOT as a bias artifact. The DC OP node
 voltages are printed so a low gain is attributable to OP drift vs derivative error.
 
-Ground truth is ALWAYS NGSPICE BSIM-CMG (CLAUDE.md Validation rule).
+Ground truth is ALWAYS NGSPICE BSIM-CMG (AGENTS.md Validation rule).
 
 Run CPU-pinned, repo ngspice:
 

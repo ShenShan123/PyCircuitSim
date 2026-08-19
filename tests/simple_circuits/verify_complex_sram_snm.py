@@ -25,7 +25,7 @@ Gate: across NFIN corners, both DirectNet butterfly curves are positive
 NOT enter the verdict (force_ic is a self-consistency probe, not an NGSPICE
 comparison; the SNM scalar is too geometry-sensitive to gate on directly).
 
-Ground truth is ALWAYS NGSPICE BSIM-CMG (CLAUDE.md Validation rule).
+Ground truth is ALWAYS NGSPICE BSIM-CMG (AGENTS.md Validation rule).
 Report MRE / R2 / NRMSE / MaxErr.
 
 Usage:

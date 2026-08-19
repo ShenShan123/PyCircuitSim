@@ -3,7 +3,7 @@
 V6.5 — extends the DC/transient complex-circuit harness (``complex.py``) into the
 frequency domain so DirectNet (LEVEL=73) AC accuracy can be gated against NGSPICE
 BSIM-CMG (LEVEL=72) ground truth — never a self-defined transfer function
-(CLAUDE.md Validation rule).
+(AGENTS.md Validation rule).
 
 AC linearizes about a DC operating point, so it is only physically meaningful for
 circuits with a stable amplifying OP. This module supports the two such circuits:

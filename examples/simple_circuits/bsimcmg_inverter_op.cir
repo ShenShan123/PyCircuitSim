@@ -2,7 +2,7 @@
 *
 * The reference half of the inverter-OP gate. Scored against
 * `bsimcmg_inverter_op.sp`. Ground truth is ALWAYS NGSPICE on the identical
-* BSIM-CMG OSDI model (CLAUDE.md Validation rule).
+* BSIM-CMG OSDI model (AGENTS.md Validation rule).
 *
 * <TOKEN> placeholders are substituted by tests.common.base
 * :: render_reference_deck. <COMBINED_LIB> is a single modelcard with BOTH

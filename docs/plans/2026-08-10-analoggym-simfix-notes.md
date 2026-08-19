@@ -3,7 +3,7 @@
 **Task:** make the AnalogGym test circuits agree with NGSPICE by fixing the
 *simulator* (solver / parser / BSIM-CMG L72 path) — never by weakening a gate or
 editing a deck. NN models (L73/74/75) are parked. Docs to update on each
-version: `docs/CHANGELOG.md`, `CLAUDE.md`, `README.md`,
+version: `docs/CHANGELOG.md`, `AGENTS.md`, `README.md`,
 `examples/complex_circuits/RESULTS_TSMC.md`.
 
 > **This file is the working scratchpad: current state + what is still open.**

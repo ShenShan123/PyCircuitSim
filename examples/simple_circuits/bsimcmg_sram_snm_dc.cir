@@ -4,7 +4,7 @@
 * `tests/verify_complex_sram_snm.py` renders this deck per technology and per
 * fin count, and scores the DirectNet butterfly lobe in
 * `directnet_sram_snm_dc.sp` against it point-by-point. Ground truth is ALWAYS
-* NGSPICE on the identical BSIM-CMG OSDI model (CLAUDE.md Validation rule).
+* NGSPICE on the identical BSIM-CMG OSDI model (AGENTS.md Validation rule).
 *
 * <TOKEN> placeholders are substituted by tests.common.base
 * :: render_reference_deck. <BAKED_LIB> is the merged modelcard with

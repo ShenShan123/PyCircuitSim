@@ -18,7 +18,7 @@
 #   suite    any tests/verify_*.py taking --tech
 #   omp      OMP_NUM_THREADS = MKL_NUM_THREADS = PYCIRCUITSIM_TORCH_THREADS
 #
-# Verdict = the suite's EXIT CODE (CLAUDE.md gate methodology), recorded in the
+# Verdict = the suite's EXIT CODE (AGENTS.md gate methodology), recorded in the
 # log's trailing marker. CPU-pinned, repo ngspice, per-job isolated results dir
 # (both PYCIRCUITSIM_NN_RESULTS and PYCIRCUITSIM_COMPLEX_RESULTS) so jobs fan
 # out safely — the harness scratch dirs are keyed by (circuit, tech) only.

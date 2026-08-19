@@ -25,7 +25,7 @@ Each side linearizes about its OWN mid-rail DC OP, so the result is the
 realistic end-to-end AC accuracy a user would see (it folds in any NN Vth
 offset, exactly as a real AC sim would).
 
-Run CPU-pinned, repo ngspice (CLAUDE.md gate methodology):
+Run CPU-pinned, repo ngspice (AGENTS.md gate methodology):
 
     CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \\
         NGSPICE_BIN="$PWD/tools/ngspice-45.2/bin/ngspice" \\

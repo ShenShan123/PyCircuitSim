@@ -23,7 +23,7 @@ Two levels, both gated against ground truth (never a self-defined equation):
              the 3-conductance stamp is blind to junction conductances.
              Gates v(out) AND the bulk node itself against NGSPICE.
 
-Run CPU-pinned, with the repo ngspice (CLAUDE.md gate methodology):
+Run CPU-pinned, with the repo ngspice (AGENTS.md gate methodology):
 
     CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \\
         NGSPICE_BIN="$PWD/tools/ngspice-45.2/bin/ngspice" \\

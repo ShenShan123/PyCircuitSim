@@ -150,7 +150,7 @@ def ckpt_exists(tag: str, variant: str, tech: str,
     A bare `_best.pt` may be a run that was killed mid-training — the trainer
     writes it at every val improvement — so gating one silently produces a
     number for a checkpoint nobody finished. The marker is the discipline
-    (CLAUDE.md); it is opt-in here because checkpoints predating the marker are
+    (AGENTS.md); it is opt-in here because checkpoints predating the marker are
     genuinely complete and would otherwise be excluded.
     """
     t = tech.lower()

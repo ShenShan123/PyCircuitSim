@@ -4,7 +4,7 @@
 * renders this deck per technology and scores the DirectNet result in
 * `directnet_opamp_miller_dc.sp` against it. Ground truth is ALWAYS NGSPICE on
 * the identical BSIM-CMG OSDI model — never a simplified or self-defined
-* equation (CLAUDE.md Validation rule).
+* equation (AGENTS.md Validation rule).
 *
 * <TOKEN> placeholders are substituted by tests.common.base
 * :: render_reference_deck. <BAKED_LIB> is the merged NMOS+PMOS modelcard with

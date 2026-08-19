@@ -19,7 +19,7 @@ PULSE clock. The harness measures:
 The DirectNet (LEVEL=73) transmission gate runs in PyCircuitSim transient;
 NGSPICE BSIM-CMG (LEVEL=72) is the ground truth.
 
-Ground truth is ALWAYS NGSPICE BSIM-CMG (CLAUDE.md Validation rule).
+Ground truth is ALWAYS NGSPICE BSIM-CMG (AGENTS.md Validation rule).
 Report MRE / R2 / NRMSE / MaxErr.
 
 Usage:

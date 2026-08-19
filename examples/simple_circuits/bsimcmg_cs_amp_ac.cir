@@ -3,7 +3,7 @@
 * The reference half of the AC gate's Level 2
 * (`tests/simple_circuits/verify_ac.py`), scored against
 * `bsimcmg_cs_amp_ac.sp`. Ground truth is ALWAYS NGSPICE on the identical
-* BSIM-CMG OSDI model (CLAUDE.md Validation rule).
+* BSIM-CMG OSDI model (AGENTS.md Validation rule).
 *
 * <TOKEN> placeholders are substituted by tests.common.base
 * :: render_reference_deck. <BAKED_LIB> is the merged NMOS+PMOS modelcard with
