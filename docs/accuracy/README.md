@@ -17,10 +17,11 @@ model — never a simplified or self-defined reference.
 | [`PFN-L75-recipes.md`](PFN-L75-recipes.md) | Its first curriculum arm, new in V7.3.0. |
 | [`archive-pre-gds-fix.md`](archive-pre-gds-fix.md) | The register of retracted claims. |
 
-**Two files per family: one clean, one recipes.** The clean report is the
-control — one training run, no addendum — and answers *per tech, per scale, per
-testcase* in one place. The recipes report carries the training addenda
-measured against that control. Anything cross-cutting — the `gds` fix, the
+**Two baseline files per family: one clean, one recipes.** The clean report is
+the control — one training run, no addendum — and answers *per tech, per scale,
+per testcase* in one place. The recipes report carries the training addenda
+measured against that control. Cross-benchmark qualification reports are
+indexed separately above. Anything cross-cutting — the `gds` fix, the
 corridor law, the TSMC6 repeat, the noise floor — lives in `methodology.md` so
 it is stated once.
 

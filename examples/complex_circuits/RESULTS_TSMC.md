@@ -92,9 +92,10 @@ the ten DirectNet operating points was a converged fixed point. AC now fails
 loudly before linearization, both in the simulator and in this campaign.
 
 Provenance: simulation commit
-`efe9455c65a735fa8c72a5c509af95ad8dde0fa2`; one immutable pass in
-`results/analoggym-directnet-large-efe9455-tsmc{5,6,7,12,16}/`, with the code
-commit and full checkpoint/normalization hashes in every row. The upstream
+`d52a1d36f24d926a672c85ba7cc0cd80a79dfca3`; one immutable pass in
+`results/analoggym-directnet-large-d52a1d3-tsmc{5,6,7,12,16}/`, with code,
+checkpoint, normalization, modelcard, OSDI, NGSPICE, stride, and refinement
+provenance in every row. The upstream
 AnalogGym source design tree is absent on this machine, so preflight prevented
 regeneration. The scored corpus is the existing tracked V7.5.9 generated tree,
 not a refreshed topology audit.

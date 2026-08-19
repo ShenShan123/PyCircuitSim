@@ -32,17 +32,23 @@ The pre-compaction long-form narrative remains available in Git history.
 - Ran one code- and checkpoint-pinned 255-row LEVEL=73 AnalogGym campaign
   against NGSPICE LEVEL=72. No scored deck fully agreed: 0/248 after seven
   invalid deck cells were quarantined. Aggregate comparable voltage error was
-  37.69% MRE, -44.54 R², 78.83% NRMSE, and 12.611 V maximum error.
+  35.41% MRE, -42.66 R², 73.22% NRMSE, and 12.696 V maximum error over
+  80,299 samples.
 - Added explicit DirectNet technology/VT translation, checkpoint completion
-  and hash provenance, code-state campaign manifests, exact resume checks,
-  per-technology voltage-error aggregation, and local modelcard
-  materialization. Campaign children now propagate failures to the driver.
+  and hash provenance, ground-truth modelcard/OSDI/NGSPICE hashes, code-state
+  campaign manifests, exact transient-policy resume checks, per-technology
+  voltage-error aggregation, and local modelcard materialization. Campaign
+  children and persisted failed/missing rows now propagate failure to the
+  driver; forced reruns invalidate stale rows and training completion markers.
 - Fixed NN temperature sweeps to rebuild geometry inputs and invalidate model
   history; production-large checkpoint discovery; AC linearization about
   nonconverged DC states; and failure summaries/timing that previously hid the
   simulator side or reported a long failed attempt as zero seconds.
 - Retracted the initial 10/10 device-AC diagnostic: its response shapes were
   close, but all ten DC states were nonconverged. The strict result is 0/10.
+  Also retracted the first 54,045-sample AnalogGym voltage aggregate: it used
+  only the first/cold segment of multi-plan and recovery sweeps. The corrected
+  one-pass aggregate covers all 80,299 saved comparable samples.
   The missing upstream AnalogGym source tree also prevented regeneration, so
   this release scores the tracked V7.5.9 generated corpus and does not claim a
   refreshed source-topology audit.

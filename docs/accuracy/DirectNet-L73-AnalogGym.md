@@ -11,8 +11,8 @@ single devices and digital primitives, but are **not qualified for the
 AnalogGym complex-circuit basket**. No scored AnalogGym deck fully agrees with
 the reference: **0/248**, with seven invalid deck cells quarantined from the
 255-row corpus. Across the voltage states that were comparable, aggregate
-MRE is **37.69%**, R² is **-44.54**, NRMSE is **78.83%**, and maximum voltage
-error is **12.611 V**.
+MRE is **35.41%**, R² is **-42.66**, NRMSE is **73.22%**, and maximum voltage
+error is **12.696 V**.
 
 This is a model result, not an L72 simulator regression. A same-topology L72
 Fan amplifier smoke test remained 8/8 with a 0.77 µV maximum operating-point
@@ -49,7 +49,12 @@ and datasets did not change before evaluation.
 ## Checkpoint provenance
 
 Every scored JSON row records the full checkpoint and normalization hashes,
-the explicit resolver stem, completion marker, and evaluation commit.
+the explicit resolver stem, completion marker, and evaluation commit. It also
+records the per-design modelcard, OSDI, and NGSPICE executable hashes plus the
+effective stride/refinement policy. The shared OSDI SHA-256 is
+`f089f17d5d5b1178c48932ff699960dab3ab509c33b34c798421eccbbf14a78b`;
+the NGSPICE 45.2 executable SHA-256 is
+`3b931f4ecb53a9e2e650087be470b3decc49654ce2237a204c6cb6b4ab45d764`.
 
 | checkpoint stem | checkpoint SHA-256 | normalization SHA-256 |
 |---|---|---|
@@ -86,19 +91,23 @@ production AC path now require a converged fixed point.
 ## AnalogGym voltage-state accuracy
 
 The complete campaign used commit
-`efe9455c65a735fa8c72a5c509af95ad8dde0fa2`, 51 rows per technology, and the
+`d52a1d36f24d926a672c85ba7cc0cd80a79dfca3`, 51 rows per technology, and the
 V7.5.9 curated basket. MRE uses the symmetric denominator. NRMSE uses each
 technology campaign's NGSPICE voltage range; the aggregate row uses the
 five-technology range.
 
 | technology | rows with state data | samples | MRE | R² | NRMSE | max abs error |
 |---|---:|---:|---:|---:|---:|---:|
-| TSMC5 | 49 | 11,089 | 33.85% | -53.844 | 92.07% | 12.266 V |
-| TSMC6 | 48 | 11,169 | 36.65% | -44.542 | 83.67% | 12.507 V |
-| TSMC7 | 48 | 11,169 | 36.65% | -44.542 | 83.67% | 12.507 V |
-| TSMC12 | 40 | 10,589 | 40.76% | -41.157 | 81.09% | 12.595 V |
-| TSMC16 | 41 | 10,029 | 41.02% | -44.333 | 83.66% | 12.611 V |
-| **all** | **226** | **54,045** | **37.69%** | **-44.542** | **78.83%** | **12.611 V** |
+| TSMC5 | 49 | 16,729 | 32.57% | -50.056 | 84.10% | 12.326 V |
+| TSMC6 | 48 | 16,917 | 34.12% | -42.987 | 76.98% | 12.577 V |
+| TSMC7 | 48 | 16,917 | 34.12% | -42.987 | 76.98% | 12.577 V |
+| TSMC12 | 40 | 15,599 | 37.47% | -38.987 | 76.02% | 12.681 V |
+| TSMC16 | 43 | 14,137 | 39.57% | -43.443 | 80.13% | 12.696 V |
+| **all** | **228** | **80,299** | **35.41%** | **-42.655** | **73.22%** | **12.696 V** |
+
+The earlier 54,045-sample aggregate is retracted: multi-plan line sweeps and
+temperature-recovery rows contributed only their first/cold segment. The
+corrected pass aggregates every saved comparable segment from one campaign.
 
 Across metric cells, 110/1,016 comparable values agree at the existing gate,
 465 NGSPICE values are missing on the PyCircuitSim side, and 107 cells are
@@ -115,6 +124,6 @@ the local ignored TSMC PDK cards. It is valid evidence for the compact-model
 comparison on those decks, but it is not a refreshed source-topology audit.
 
 Raw evidence remains on disk in
-`results/analoggym-directnet-large-efe9455-tsmc{5,6,7,12,16}/`; training and
+`results/analoggym-directnet-large-d52a1d3-tsmc{5,6,7,12,16}/`; training and
 gate logs remain in `results/benchmark_sml/train_logs/` and
 `results/directnet-retrain-large/gates/`.
