@@ -501,7 +501,7 @@ def get_available_checkpoints() -> Dict[str, Optional[Path]]:
 
         # DirectNet v4 (tech-code embedding) or env override.
         # When neither env nor `v4_dn_universal_*` is available, fall back
-        # to any present per-tech (`tsmc{5,7}_dn_medium_*`) or refactor
+        # to any present per-tech production checkpoint or refactor
         # universal (`refac_dn_medium_*`) checkpoint — the path is only a
         # *existence sentinel*: the netlist builders for the inverter
         # tests omit MODEL_PATH for per-tech/refac stems so the parser's
@@ -511,13 +511,13 @@ def get_available_checkpoints() -> Dict[str, Optional[Path]]:
                 dn_ovr, dn_var, ("_best.pt",))
         else:
             fallbacks = [
+                CHECKPOINT_DIR / f"{tech}_dn_{size}_{dev}_best.pt"
+                for size in ("large", "medium", "small", "xl")
+                for tech in ("tsmc5", "tsmc6", "tsmc7", "tsmc12", "tsmc16")
+            ] + [
                 CHECKPOINT_DIR / f"v4_dn_universal_{dev}_best.pt",
                 CHECKPOINT_DIR / f"refac_dn_medium_{dev}_best.pt",
                 CHECKPOINT_DIR / f"refac_dn_small_{dev}_best.pt",
-                CHECKPOINT_DIR / f"tsmc5_dn_medium_{dev}_best.pt",
-                CHECKPOINT_DIR / f"tsmc7_dn_medium_{dev}_best.pt",
-                CHECKPOINT_DIR / f"tsmc5_dn_small_{dev}_best.pt",
-                CHECKPOINT_DIR / f"tsmc7_dn_small_{dev}_best.pt",
             ]
             checkpoints[f"directnet_v4{suffix}"] = next(
                 (p for p in fallbacks if p.exists()), None)

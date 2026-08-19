@@ -20,7 +20,7 @@ REPO_ROOT: Path = Path(__file__).resolve().parents[2]
 BENCH_ROOT: Path = REPO_ROOT / "examples" / "complex_circuits"
 TOOLS_ROOT: Path = BENCH_ROOT / "tools"
 
-if str(REPO_ROOT) not in sys.path:
+if sys.path[0] != str(REPO_ROOT):
     sys.path.insert(0, str(REPO_ROOT))
 if str(TOOLS_ROOT) not in sys.path:
     sys.path.insert(0, str(TOOLS_ROOT))
@@ -28,6 +28,7 @@ if str(TOOLS_ROOT) not in sys.path:
 # The shared AnalogGym tools require an explicit technology tree at import.
 os.environ.setdefault("AG_TREE", str(BENCH_ROOT / "designs_tsmc5"))
 
+from tests.common import nn_gate  # noqa: E402
 from examples.complex_circuits.pycircuitsim_bench import (  # noqa: E402
     AnalysisPlan,
     DeckOptions,
@@ -363,6 +364,24 @@ def verify_partial_campaign_summary_counts_missing_rows() -> None:
     assert "**ac: 1/1 decks fully agree** (1 missing)" in summary
 
 
+def verify_large_directnet_checkpoints_enable_shared_gates() -> None:
+    """Production-large files must satisfy the shared gate's sentinel."""
+    with TemporaryDirectory() as temp_dir:
+        root = Path(temp_dir)
+        for device in ("nmos", "pmos"):
+            (root / f"tsmc12_dn_large_{device}_best.pt").touch()
+        with patch.object(nn_gate, "CHECKPOINT_DIR", root), patch.object(
+            nn_gate, "_env_pin", return_value=(None, None)
+        ):
+            checkpoints = nn_gate.get_available_checkpoints()
+    assert checkpoints["directnet_v4_nmos"].name == (
+        "tsmc12_dn_large_nmos_best.pt"
+    )
+    assert checkpoints["directnet_v4_pmos"].name == (
+        "tsmc12_dn_large_pmos_best.pt"
+    )
+
+
 def verify_only_validated_alternate_seed_is_emitted() -> None:
     """Only the fallback that the current corpus actually exercises is shipped."""
     assert build_amp.ALT_NODESET_DECKS == {("TSMC5", "qu2017_azc_pin_3")}
@@ -497,6 +516,7 @@ def main() -> None:
         verify_modelcard_materializer_reads_generated_geometry,
         verify_campaign_resume_is_checkpoint_exact,
         verify_partial_campaign_summary_counts_missing_rows,
+        verify_large_directnet_checkpoints_enable_shared_gates,
         verify_only_validated_alternate_seed_is_emitted,
         verify_write_design_reconciles_alternate_seed_inventory,
         verify_regeneration_fails_loudly_without_source_corpus,
