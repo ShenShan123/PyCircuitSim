@@ -11,6 +11,8 @@ Pools (write one file each so they can be dispatched with different PAR):
 * ``tf_dev``    — BSIM-AR device suites only, 5 priority variants (~40x per eval).
 * ``tf_strict`` — BSIM-AR strict-OMP sweep for the `large` corridor recipes,
                   the one gap BSIM-AR-L74-clean.md flags explicitly.
+* ``clean`` — DirectNet and BSIM-AR clean S/M/L/XL tiers across all five
+              reported technologies, including the TSMC6 repeat.
 
 Usage: python scripts/v710_regate_jobs.py <outdir>
 """
@@ -20,6 +22,7 @@ import sys
 from pathlib import Path
 
 TECHS = ["TSMC5", "TSMC7", "TSMC12", "TSMC16"]
+CLEAN_TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 
 DEVICE_SUITES = [
     "verify_nn_ac",                 # device CS-amp small-signal
@@ -38,12 +41,17 @@ DN_VARIANTS = [
 PFN_VARIANTS = ["small", "medium", "large"]
 TF_DEV_VARIANTS = ["small", "medium", "large", "xl", "corroft_medium"]
 TF_STRICT_VARIANTS = ["corroft_large", "crit15m_large", "crit30_large", "corro15_medium"]
+CLEAN_VARIANTS = ["small", "medium", "large", "xl"]
 
 
-def full(tag: str, variants: list[str]) -> list[str]:
+def full(
+    tag: str,
+    variants: list[str],
+    techs: list[str] = TECHS,
+) -> list[str]:
     jobs = []
     for v in variants:
-        for t in TECHS:
+        for t in techs:
             for s in DEVICE_SUITES:
                 jobs.append(f"{tag} {v} {t} {s} 1")
             for s in DETERMINISTIC:
@@ -64,15 +72,24 @@ def strict_only(tag: str, variants: list[str]) -> list[str]:
             for v in variants for t in TECHS for s in MULTISTABLE for omp in (1, 2, 4)]
 
 
-def main() -> int:
-    out = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
-    out.mkdir(parents=True, exist_ok=True)
-    pools = {
+def build_pools() -> dict[str, list[str]]:
+    """Return every campaign pool from one testable source of truth."""
+    return {
         "dn": full("dn", DN_VARIANTS),
         "pfn": full("pfn", PFN_VARIANTS),
         "tf_dev": device_only("tf", TF_DEV_VARIANTS),
         "tf_strict": strict_only("tf", TF_STRICT_VARIANTS),
+        "clean": [
+            *full("dn", CLEAN_VARIANTS, CLEAN_TECHS),
+            *full("tf", CLEAN_VARIANTS, CLEAN_TECHS),
+        ],
     }
+
+
+def main() -> int:
+    out = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
+    out.mkdir(parents=True, exist_ok=True)
+    pools = build_pools()
     for name, jobs in pools.items():
         p = out / f"jobs_{name}.txt"
         p.write_text("\n".join(jobs) + "\n")

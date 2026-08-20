@@ -21,7 +21,7 @@ import re
 from pathlib import Path
 from typing import Dict, List, Optional
 
-TECHS = ["TSMC5", "TSMC7", "TSMC12", "TSMC16"]
+TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 CIRCS = ["ring_osc", "opamp", "sram_snm", "switchcap"]
 FAMILY = {"dn": "DirectNet (L73)", "tf": "BSIM-AR (L74)", "pfn": "PFN (L75)"}
 
@@ -57,10 +57,25 @@ def rc_of(txt: str) -> Optional[str]:
     # Two dispatchers can race onto the same job if one was launched while the
     # other already had it in flight; the tell is two completion markers in one
     # log. Such a log is a mixture of two runs and must be re-run, not parsed.
-    ms = _RC.findall(txt)
-    if len(ms) > 1:
+    markers = [line for line in txt.splitlines()
+               if line.startswith("===V710_DONE")]
+    if len(markers) > 1:
         return "RACED"
-    return ms[0] if ms else None
+    if not markers:
+        return None
+    match = _RC.fullmatch(markers[0])
+    return match.group(1) if match else None
+
+
+def is_verdict(entry: object) -> bool:
+    """Whether an entry reached a scientific PASS/FAIL verdict."""
+    if not isinstance(entry, dict):
+        return False
+    try:
+        rc = int(entry.get("rc"))
+    except (TypeError, ValueError):
+        return False
+    return 0 <= rc < 126 and rc != 124
 
 
 def collect(root: Path) -> Dict:
@@ -123,10 +138,10 @@ def _verdict(cell: Dict, omp: str = "omp1") -> str:
     e = cell.get(omp)
     if not e:
         return "—"
+    if not is_verdict(e):
+        return "INVALID"
     if e["rc"] == "0":
         return "PASS"
-    if e["rc"] in ("no-ckpt",):
-        return "n/a"
     return "FAIL"
 
 
@@ -134,6 +149,8 @@ def _strict(cell: Dict) -> str:
     vs = [_verdict(cell, f"omp{n}") for n in (1, 2, 4)]
     if any(v == "—" for v in vs):
         return "partial"
+    if any(v == "INVALID" for v in vs):
+        return "INVALID"
     if all(v == "PASS" for v in vs):
         return "PASS"
     if all(v == "FAIL" for v in vs):
@@ -164,6 +181,9 @@ def render(data: Dict) -> str:
                     if not c:
                         rows.append(f"| {t} | — | — |")
                         continue
+                    if not is_verdict(c):
+                        rows.append(f"| {t} | INVALID | INVALID |")
+                        continue
                     for dev in ("nmos", "pmos"):
                         d = c.get(dev)
                         if d:
@@ -187,6 +207,9 @@ def render(data: Dict) -> str:
                     if not c:
                         rows.append(f"| {t} | — | | | | |")
                         continue
+                    if not is_verdict(c):
+                        rows.append(f"| {t} | INVALID | | | | |")
+                        continue
                     ntot += 1
                     npass += c["rc"] == "0"
                     rows.append(
@@ -207,7 +230,13 @@ def render(data: Dict) -> str:
                 rows, npass, ntot = [], 0, 0
                 for t in TECHS:
                     c = cells.get(t, {}).get("omp1")
-                    if not c or "n" not in c:
+                    if not c:
+                        rows.append(f"| {t} | — | | | |")
+                        continue
+                    if not is_verdict(c):
+                        rows.append(f"| {t} | INVALID | | | |")
+                        continue
+                    if "n" not in c:
                         rows.append(f"| {t} | — | | | |")
                         continue
                     npass += c["n_pass"]; ntot += c["n"]
@@ -228,7 +257,9 @@ def render(data: Dict) -> str:
                             cs.append("—"); continue
                         v = _verdict(cell)
                         m = cell.get("omp1", {}).get("metric")
-                        ntot += 1; npass += v == "PASS"
+                        if v in ("PASS", "FAIL"):
+                            ntot += 1
+                            npass += v == "PASS"
                         cs.append(f"{v}" + (f" {m:.2f}%" if m is not None else ""))
                     rows.append(f"| {t} | " + " | ".join(cs) + " |")
                 L += [f"**Complex matrix (single-run OMP=1): {npass}/{ntot}**", "",
@@ -243,9 +274,10 @@ def render(data: Dict) -> str:
                         if not cell:
                             cs.append("—"); continue
                         s = _strict(cell) if c in ("opamp", "ring_osc") else _verdict(cell)
-                        stot += 1
-                        spass += s == "PASS"
-                        flips += s == "FLIP"
+                        if s in ("PASS", "FAIL", "FLIP"):
+                            stot += 1
+                            spass += s == "PASS"
+                            flips += s == "FLIP"
                         cs.append(s)
                     srows.append(f"| {t} | " + " | ".join(cs) + " |")
                 L += [f"**Strict OMP∈{{1,2,4}} (opamp+ring swept; sram/switchcap "

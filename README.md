@@ -305,6 +305,30 @@ conda run -n pycircuitsim python \
   tests/simple_circuits/verify_complex_switchcap.py
 ```
 
+### Run the complete clean checkpoint matrix
+
+Generate and run the DirectNet/BSIM-AR S/M/L/XL matrix, then require complete
+coverage before checking the generated accuracy reports:
+
+```bash
+python scripts/v710_regate_jobs.py /tmp/pycircuitsim-simple-jobs
+
+BSIMAR_CHECKPOINT_DIR=external_compact_models/neural_network/v740_archive/checkpoints \
+V710_OUT="$PWD/results/simple_recheck_24c181a" \
+JOBS=/tmp/pycircuitsim-simple-jobs/jobs_clean.txt PAR=96 \
+NN_PY="$(command -v python)" \
+bash scripts/v710_regate.sh
+
+python scripts/v710_regate_collect.py --root results/simple_recheck_24c181a
+BSIMAR_CHECKPOINT_DIR=external_compact_models/neural_network/v740_archive/checkpoints \
+python scripts/v730_coverage.py --tag dn --set clean \
+  --passes simple-recheck --require-complete --fail-on-gaps
+BSIMAR_CHECKPOINT_DIR=external_compact_models/neural_network/v740_archive/checkpoints \
+python scripts/v730_coverage.py --tag tf --set clean \
+  --passes simple-recheck --require-complete --fail-on-gaps
+python scripts/v730_docs_build.py --check
+```
+
 These gates own NN circuit accuracy. Their definitions and thresholds are in
 [`docs/accuracy/methodology.md`](docs/accuracy/methodology.md); generated
 family reports are indexed by [`docs/accuracy/README.md`](docs/accuracy/README.md).

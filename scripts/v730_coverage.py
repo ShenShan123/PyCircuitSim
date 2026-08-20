@@ -24,11 +24,20 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
 from typing import Dict, List, Optional, Tuple
 
+if __package__:
+    from .v710_regate_collect import is_verdict, rc_of
+else:
+    from v710_regate_collect import is_verdict, rc_of
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CKPT = ROOT / "external_compact_models" / "neural_network" / "checkpoints"
+CKPT = pathlib.Path(os.environ.get(
+    "BSIMAR_CHECKPOINT_DIR",
+    ROOT / "external_compact_models" / "neural_network" / "checkpoints",
+))
 
 TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 FAM = {"dn": "DirectNet", "tf": "BSIM-AR", "pfn": "PFN"}
@@ -76,7 +85,10 @@ PASSES = [("a3", ROOT / "results" / "a3_regate"),
           ("v710", ROOT / "results" / "v710_regate"),
           ("v730", ROOT / "results" / "v730_regate"),
           ("v740", ROOT / "results" / "v740_regate"),
-          ("v742", ROOT / "results" / "v742_regate")]
+          ("v742", ROOT / "results" / "v742_regate"),
+          ("simple-recheck", ROOT / "results" / "simple_recheck_24c181a")]
+
+CellKey = Tuple[str, str, str, str, str]
 
 
 def load_json_pass(root: pathlib.Path) -> Dict:
@@ -89,35 +101,31 @@ def load_json_pass(root: pathlib.Path) -> Dict:
         return {}
 
 
-def scan_logs(root: pathlib.Path) -> Dict[Tuple[str, str, str, str, str], str]:
-    """Verdicts straight from the log tree, so a pass mid-flight still counts.
+def scan_logs(root: pathlib.Path) -> Dict[CellKey, Optional[str]]:
+    """Observed raw logs and their optional scientific verdicts.
 
     data.json is only rewritten when the collector runs; during a campaign the
-    logs are ahead of it. Reading both means a resumed pool never re-runs a job
-    that has already landed.
+    logs are ahead of it. Returning invalid and unfinished observations as
+    ``None`` lets callers suppress a stale JSON verdict for the same cell.
     """
-    out: Dict[Tuple[str, str, str, str, str], str] = {}
+    out: Dict[CellKey, Optional[str]] = {}
     for log in root.glob("*/*/*/*.omp*.log"):
         suite, _, omp = log.name[:-4].partition(".omp")
+        key = (log.parent.parent.parent.name, log.parent.parent.name,
+               log.parent.name.upper(), suite, omp)
         try:
             txt = log.read_text(errors="replace")
         except OSError:
+            out[key] = None
             continue
-        marks = [ln for ln in txt.splitlines() if ln.startswith("===V710_DONE")]
-        if len(marks) != 1:
-            continue  # unfinished, or two dispatchers raced onto one job
-        rc = marks[0].split("rc=")[1].rstrip("=")
-        if rc in ("no-ckpt",):
-            continue
-        key = (log.parent.parent.parent.name, log.parent.parent.name,
-               log.parent.name.upper(), suite, omp)
-        out[key] = rc
+        rc = rc_of(txt)
+        out[key] = rc if is_verdict({"rc": rc}) else None
     return out
 
 
 def build_index(
     only: Optional[List[str]] = None,
-) -> Dict[Tuple[str, str, str, str, str], str]:
+) -> Dict[CellKey, str]:
     """(tag, variant, TECH, suite, omp) -> which pass measured it.
 
     ``only`` restricts which passes count as coverage. A rebuild campaign
@@ -125,12 +133,11 @@ def build_index(
     every pass would report full coverage and emit zero jobs. Default
     (``None``) merges everything, newest last, as before.
     """
-    idx: Dict[Tuple[str, str, str, str, str], str] = {}
+    idx: Dict[CellKey, str] = {}
     for name, root in PASSES:
         if only is not None and name not in only:
             continue
-        for key in scan_logs(root):
-            idx[key] = name
+        pass_idx: Dict[CellKey, str] = {}
         data = load_json_pass(root)
         for tag, variants in data.items():
             for variant, suites in variants.items():
@@ -139,7 +146,14 @@ def build_index(
                         for omp in omps:
                             if not omp.startswith("omp"):
                                 continue
-                            idx[(tag, variant, tech, suite, omp[3:])] = name
+                            if not is_verdict(omps[omp]):
+                                continue
+                            pass_idx[(tag, variant, tech, suite, omp[3:])] = name
+        for key, rc in scan_logs(root).items():
+            pass_idx.pop(key, None)
+            if rc is not None:
+                pass_idx[key] = name
+        idx.update(pass_idx)
     return idx
 
 
@@ -193,6 +207,10 @@ def main() -> int:
                     help="Only count a checkpoint that carries its "
                          "*_best.pt.complete marker — use when a training "
                          "wave for these stems is still running")
+    ap.add_argument("--fail-on-gaps", action="store_true",
+                    help="Exit nonzero when a requested measurement is "
+                         "missing or a requested checkpoint group is "
+                         "unavailable")
     args = ap.parse_args()
 
     techs = ([t.strip().upper() for t in args.techs.split(",")]
@@ -245,6 +263,8 @@ def main() -> int:
     if args.emit_jobs:
         args.emit_jobs.write_text("".join(j + "\n" for j in jobs))
         print(f"wrote {len(jobs)} jobs -> {args.emit_jobs}")
+    if args.fail_on_gaps and (tot_miss or tot_nockpt):
+        return 1
     return 0
 
 

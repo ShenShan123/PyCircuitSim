@@ -20,6 +20,28 @@ The pre-compaction long-form narrative remains available in Git history.
 
 ## V7.5 — AnalogGym migration
 
+### V7.5.15 — clean simple-circuit recheck (2026-08-20)
+
+- Re-ran all 480 CPU-pinned DirectNet and BSIM-AR clean S/M/L/XL suite runs
+  from the retained V7.4 checkpoint matrix before continuing AnalogGym work.
+  Current strict complex scores are DirectNet 8/11/12/12 and BSIM-AR
+  13/12/12/12 out of 20 from S→XL. Parametric DC and transient reproduce;
+  device AC is 0/10 and opamp AC 0/5 at every family/tier because AC now
+  requires a converged physical operating point.
+- Retracted old capacity trends based on nonconverged Miller fixed points.
+  Also retracted the V7.4 BSIM-AR TSMC12-XL collapse: all 12 underlying logs
+  were race-corrupted, and three of its four complex cells pass when isolated.
+- Fixed the campaign path to honor checkpoint archives, generate one complete
+  five-technology clean pool, retain TSMC6 in collection, and reject raced,
+  timed-out, killed and missing-checkpoint entries from coverage/report
+  denominators. Per-log locks now prevent concurrent dispatchers from mixing
+  output, contention cannot report false completion, and invalid completion
+  markers remain retryable. Raw logs override stale same-pass JSON, coverage
+  can fail on gaps, and report completeness requires the parsed metrics used
+  by every table. Repinned generated clean reports to one complete current-code
+  pass and documented exact old-versus-new provenance in
+  [`accuracy/simple-circuits-recheck-2026-08-19.md`](accuracy/simple-circuits-recheck-2026-08-19.md).
+
 ### V7.5.14 — DirectNet retrain and AnalogGym qualification (2026-08-19)
 
 - Retrained ten per-technology DirectNet `large` checkpoints (NMOS and PMOS

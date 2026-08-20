@@ -133,14 +133,16 @@ Metrics reported per Rule 13: **MRE %, R², NRMSE, Max error**, per tech.
   This changes how threads wait, never how work is partitioned, so it is
   numerically neutral.
 
-### V7.4 GPU-axis result
+### Historical V7.4 GPU-axis result
 
 The complete perturbing bundle — batched transient commit, CUDA NN evaluation,
 batched COO stamping and NATURAL MNA ordering — clears both binding gates on an
 RTX PRO 6000 Blackwell. T3 runs 48 cells (four electrically distinct techs ×
 four circuits × OMP {1,2,4}): SRAM + switchcap are **24/24**, Rule 2 is
-**15/15**, there are zero flips/runtime failures, and the full report-only
-basket is **12/16 strict**, exactly the V7.4 CPU clean-`large` basket. T4 is
+**15/15**, there are zero flips/runtime failures, and the then-current
+report-only basket was **12/16 strict**, matching the V7.4 CPU clean-`large`
+basket. Its opamp cells predate the current final-step convergence contract
+and are not a current CPU-score comparison. T4 is
 **8/8**, zero basin flips/errors, worst max|ΔV| 0.1206 mV and worst q-NRMSE
 0.0101% of VDD. Raw evidence is under `results/v720_gpu_regate/`.
 
@@ -156,6 +158,7 @@ basket is **12/16 strict**, exactly the V7.4 CPU clean-`large` basket. T4 is
 | **V7.3.0** | `73434d4` | five-tech report baseline: BSIM-AR, PFN `xl`, surviving recipes and PFN's first curriculum arm |
 | **V7.4.0** | `c2cab3d` | new-hardware, from-scratch clean rebuild of all DirectNet and BSIM-AR tiers; 480 measured suite runs, CPU-pinned |
 | **V7.4.0 GPU axis** | `5256d32` | opt-in CUDA T3 48/48 runs + T4 8/8 basin campaign; separate from the CPU scoreboard |
+| **2026-08-19 simple recheck** | `24c181a` | complete CPU-pinned re-gate of the preserved V7.4 DirectNet/BSIM-AR S/M/L/XL checkpoints under honest final-step DC convergence and converged-OP AC gates |
 
 ### The `gds` sign bug (fixed in `8ed35bd`, V6.13.0)
 
@@ -253,11 +256,17 @@ TSMC6 holds tail codes 22-24, so its presence renumbers nothing.
    claim on a SRAM or switchcap cell is.** Family-level counts over many cells,
    and levers whose effect clears the floor (the corridor moves rings by
    ~8 pp), are unaffected.
-   Reproducibility is also **family-dependent**. In the V7.4.0 clean rebuild,
-   BSIM-AR reproduced 15/16 TSMC6-vs-TSMC7 verdicts (the split was the small
-   ring) and DirectNet 14/16 (both splits were opamps). PFN's latest repeat is
-   still V7.3.0, at 10/12.
-5. **The opamp open-loop AC gate has a bias-resolution defect.**
+   Reproducibility is also **family-dependent**. In the current clean recheck,
+   BSIM-AR reproduces 15/16 TSMC6-vs-TSMC7 verdicts (the split is the small
+   ring) and DirectNet 16/16 after the old nonconverged opamp passes are
+   removed. PFN's latest repeat is still V7.3.0, at 10/12.
+5. **AC requires a converged DC fixed point.** Since commits `c96dd09` and
+   `104d7af`, convergence at an intermediate homotopy step or a plausible
+   pseudo-transient state cannot make an AC pass. The 2026-08-19 recheck
+   consequently reports device AC 0/10 at every DirectNet and BSIM-AR tier.
+   Printed response-shape metrics for a nonconverged operating point are
+   diagnostic only.
+6. **The opamp open-loop AC gate also has a bias-resolution defect.**
    `verify_complex_opamp_ac` linearizes about `argmax |dVout/dVin|` found on a
    **2 mV** grid, but a two-stage Miller opamp with 33–48 dB of gain has a
    transition only **3–14 mV** wide. On three of four techs the **NGSPICE
@@ -270,22 +279,28 @@ TSMC6 holds tail codes 22-24, so its presence renumbers nothing.
    changing an accuracy gate changes the accuracy record, which is a separate
    decision.
 
-**A gate result is a reproducible property of a checkpoint; it is not a
-reproducible property of a recipe.** Re-gating the same weights is
-deterministic — 223/223 complex cells agreed between two passes on different
-days. Retraining the same recipe on the same rows is not.
+**A gate result is a property of a checkpoint, code state and gate contract;
+it is not a reproducible property of a recipe.** Re-gating the same weights is
+deterministic only within a fixed solver/gate state. The current recheck
+deliberately changes that state by requiring convergence at the final physical
+homotopy step and before AC linearization. Retraining the same recipe on the
+same rows remains nondeterministic.
 
 ## 9. Reproducing
 
 ```bash
-# confirm the V7.4.0 clean checkpoint matrix is complete
-python scripts/v730_coverage.py --tag dn --set clean --require-complete
-python scripts/v730_coverage.py --tag tf --set clean --require-complete
+# confirm the current simple-circuit recheck is complete
+BSIMAR_CHECKPOINT_DIR=external_compact_models/neural_network/v740_archive/checkpoints \
+python scripts/v730_coverage.py --tag dn --set clean \
+  --passes simple-recheck --require-complete
+BSIMAR_CHECKPOINT_DIR=external_compact_models/neural_network/v740_archive/checkpoints \
+python scripts/v730_coverage.py --tag tf --set clean \
+  --passes simple-recheck --require-complete
 
-# collect the completed new-hardware CPU gates
-python scripts/v710_regate_collect.py --root results/v740_regate
+# collect the complete recheck
+python scripts/v710_regate_collect.py --root results/simple_recheck_24c181a
 
-# rebuild/check only the V7.4.0 reports backed by local raw evidence
+# rebuild/check the reports backed by local raw evidence
 python scripts/v730_docs_build.py --only dn,tf --recipes clean
 python scripts/v730_docs_build.py --check
 
@@ -294,7 +309,8 @@ python tests/perf/verify_latch_basin_gpu.py \
   --config commit+gpu+stamp+order --gpu 1 --ordering NATURAL
 ```
 
-Local raw evidence: `results/v740_regate/` (V7.4.0 CPU clean) and
+Local raw evidence: `results/simple_recheck_24c181a/` (2026-08-19 CPU clean),
+`results/v740_regate/` (historical V7.4.0 CPU clean), and
 `results/v720_gpu_regate/` (V7.4.0 GPU axis). The V7.3.0 raw recipe/PFN trees
 were not copied to the new machine; their rendered family reports are the
 durable historical record. The builder renders only from a complete pinned

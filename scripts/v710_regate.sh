@@ -34,7 +34,7 @@ set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SELF="$ROOT/scripts/$(basename "${BASH_SOURCE[0]}")"
 NG="$ROOT/tools/ngspice-45.2/bin/ngspice"
-CKPT="$ROOT/external_compact_models/neural_network/checkpoints"
+CKPT="${BSIMAR_CHECKPOINT_DIR:-$ROOT/external_compact_models/neural_network/checkpoints}"
 OUT="${V710_OUT:-$ROOT/results/v710_regate}"
 SCRATCH="${V710_SCRATCH:-/tmp/v710_regate_scratch}"
 PY="${NN_PY:-/data1/shenshan/.conda/envs/pycircuitsim/bin/python}"
@@ -45,6 +45,25 @@ if [ "${1:-}" = "_one" ]; then
   tlc="$(echo "$tuc" | tr 'A-Z' 'a-z')"
   log="$OUT/$tag/$variant/$tlc/${suite}.omp${omp}.log"
   mkdir -p "$(dirname "$log")"
+  # Two campaign dispatchers must never append to the same verdict log. The
+  # lock file may persist, but flock's ownership ends with this process, so a
+  # killed worker is retryable without stale-lock cleanup.
+  exec 9>"$log.lock"
+  flock -n 9
+  lock_rc=$?
+  case "$lock_rc" in
+    0) ;;
+    1)
+      echo "[v710] ACTIVE $tag/$variant/$tlc/$suite/omp$omp (owned by another dispatcher)"
+      # The owner has not written a verdict yet, so this dispatcher must not
+      # advertise the cell (or an all-contended pool) as complete.
+      exit 3
+      ;;
+    *)
+      echo "[v710] ERROR: flock failed for $tag/$variant/$tlc/$suite/omp$omp (rc=$lock_rc)" >&2
+      exit 3
+      ;;
+  esac
   # A NO-CKPT marker contains the generic resume sentinel. Keep it as a
   # no-verdict while either checkpoint is absent, but clear the stale marker
   # and resume the cell after both checkpoints have been trained.
@@ -55,7 +74,25 @@ if [ "${1:-}" = "_one" ]; then
       echo "[v710] SKIP $tag/$variant/$tlc/$suite/omp$omp (recorded NO-CKPT — still no verdict)"; exit 3
     fi
   fi
-  if grep -q "===V710_DONE" "$log" 2>/dev/null; then echo "[v710] SKIP $tag/$variant/$tlc/$suite/omp$omp"; exit 0; fi
+  if grep -q "^===V710_DONE" "$log" 2>/dev/null; then
+    nmarks="$(grep -c '^===V710_DONE' "$log")"
+    recorded_rc="$(sed -n 's/^===V710_DONE rc=\([^=]*\)===$/\1/p' "$log" | tail -1)"
+    valid=false
+    case "$recorded_rc" in
+      ''|*[!0-9]*) ;;
+      *)
+        if [ "$recorded_rc" -ne 124 ] && [ "$recorded_rc" -lt 126 ]; then
+          valid=true
+        fi
+        ;;
+    esac
+    if [ "$nmarks" -eq 1 ] && [ "$valid" = true ]; then
+      echo "[v710] SKIP $tag/$variant/$tlc/$suite/omp$omp"
+      exit 0
+    fi
+    echo "[v710] RETRY $tag/$variant/$tlc/$suite/omp$omp (invalid prior completion marker)"
+    rm -f "$log"
+  fi
 
   sn="${tlc}_${tag}_${variant}_nmos"; sp="${tlc}_${tag}_${variant}_pmos"
   if [ ! -f "$CKPT/${sn}_best.pt" ] || [ ! -f "$CKPT/${sp}_best.pt" ]; then
@@ -100,7 +137,7 @@ if [ "${1:-}" = "_one" ]; then
   echo "[v710] END $tag/$variant/$tlc/$suite/omp$omp rc=$rc"
   # rc 124 (timeout) / >=126 (killed, cannot-exec) = no verdict reached; a
   # plain nonzero rc IS the FAIL verdict (audit B3 convention).
-  if [ "$rc" -eq 124 ] || [ "$rc" -ge 126 ]; then rm -f "$log.novrd"; exit 3; fi
+  if [ "$rc" -eq 124 ] || [ "$rc" -ge 126 ]; then rm -f "$log"; exit 3; fi
   [ "$(grep -cv '^===V710_DONE' "$log")" -gt 0 ] || exit 3
   exit 0
 fi

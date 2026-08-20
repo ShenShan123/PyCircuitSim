@@ -18,11 +18,13 @@ regardless of which family scores higher.
 live under their own stems and are covered in
 [`BSIM-AR-L74-recipes.md`](BSIM-AR-L74-recipes.md).
 
-**Every number below is from the V7.4.0 rebuild.** Datasets, checkpoints and
-gate verdicts were all regenerated from scratch on new hardware, on exactly the
-same datasets and the same clean recipe DirectNet used, so the two clean
-reports remain a like-for-like architecture comparison. Nothing is inherited
-from an earlier pass.
+**Measurement provenance.** The datasets and S/M/L/XL checkpoints are the
+preserved V7.4.0 clean rebuild, on exactly the same data and recipe as
+DirectNet. Every table below was remeasured in one complete CPU-pinned pass on
+2026-08-19 at commit `24c181a`, after the solver began requiring convergence
+at the final physical homotopy step and before AC linearization. The shared
+checkpoint archive and exact old-versus-new comparison are recorded in
+[`simple-circuits-recheck-2026-08-19.md`](simple-circuits-recheck-2026-08-19.md).
 
 Gate definitions, the strict-OMP rule and the code ladder:
 [`methodology.md`](methodology.md).
@@ -67,62 +69,66 @@ Strict: a cell passes only if it passes at OMP ∈ {1, 2, 4}.
 
 <!--BYTECH-->
 
-The V7.4.0 rebuild **retracts the clean separation that V7.3.0 showed**. Rings
-remain the dominant weakness, but they are no longer the whole failure set:
-`small` loses TSMC5 switchcap on hold droop, `large` rails the duplicate
-TSMC6/TSMC7 opamps, and `xl` loses all four TSMC12 cells. The TSMC12 collapse
-is especially diagnostic because the other four technologies retain three or
-four cells at the same tier; it is a checkpoint-specific failure, not a law of
-the architecture.
+Rings and Miller opamp fixed points are the two weaknesses under the current
+solver contract. `small` keeps four of five rings but loses TSMC5 switchcap on
+hold droop; every larger tier keeps two rings and all five switchcaps. Every
+tier is 0/5 on opamp because the selected NN fixed points do not converge at
+the final physical homotopy step.
+
+The old V7.4 report's **TSMC12 `xl` collapse is retracted**. All twelve raw
+runs in that group carried two completion markers and were correctly collected
+as `RACED`, but the report builder counted them as scientific failures. The
+fresh isolated pass restores the expected TSMC12 SRAM, ring and switchcap
+passes; only its opamp remains a real failure.
 
 The controlled repeat is still doing its job. TSMC6 and TSMC7 reproduce
 **15/16** verdicts across the four tiers; the sole disagreement is the noisy
-`small` ring cell (4.33 % PASS vs 5.86 % FAIL). Their large-tier opamps rail
-together, and every SRAM and switchcap verdict agrees.
+`small` ring cell (4.33 % PASS vs 5.86 % FAIL). Every opamp now fails the
+honest convergence contract, and every SRAM and switchcap verdict agrees.
 
 ## 4. By scale
 
 <!--BYSCALE-->
 
-> **RETRACTED in V7.4.0: "BSIM-AR is flat across capacity."** On the fresh
-> checkpoints the strict curve is **18 → 17 → 15 → 13/20**. Capacity now
-> hurts monotonically, the opposite of DirectNet's 11 → 12 → 14 → 15/20
-> climb under the identical data and recipe. The architectural comparison is
-> therefore sharper than a score: additional capacity helps the feed-forward
-> MLP and hurts the autoregressive model on this training run.
+The current strict curve is **13 → 12 → 12 → 12/20**. The old
+18 → 17 → 15 → 13 curve combined nonconverged opamp fixed points with
+race-corrupted TSMC12-`xl` cells and is retracted. Capacity does not recover
+the low-VDD rings or any Miller opamp; beyond `medium`, the circuit score is
+flat.
 
 `small` is the clean selection: it has the best circuit score, 67/69
-parametric-DC configs, 80/80 transient configs and 9/10 device-AC cells at
-0.67 M parameters. `medium` repairs the last device-AC cell and reaches 68/69
-DC, but loses one complex cell. `xl` costs 7.6× medium's parameters and is the
-worst circuit tier, with the TSMC12 four-cell collapse.
+parametric-DC configs and 80/80 transient configs at 0.67 M parameters.
+`medium` reaches the best device-DC result, 68/69, but loses one ring.
+`large` and `xl` add parameters without improving the 12/20 complex score.
 
 ## 5. Device-level suites
 
 <!--DEVICE-->
 
-The device results do not rescue the larger tiers. Parametric DC is
-67/69 · 68/69 · 65/69 · 67/69 from small→xl, while transient is 80/80 at
-every tier. `medium` is the best device fit and `large` the worst; the circuit
-curve keeps falling through `xl`. Device AC is the stable axis: 9/10 at
-`small`, then 10/10 at every larger tier.
+Parametric DC is 67/69 · 68/69 · 65/69 · 67/69 from small→xl, while
+transient is 80/80 at every tier. `medium` is the best device fit and `large`
+the worst. Device AC is 0/10 at every tier because none of its DC operating
+points satisfies the current convergence prerequisite. The previously
+reported 9/10 · 10/10 · 10/10 · 10/10 response-shape counts were measured
+at nonconverged states and are retracted.
 
-## 6. Reproducibility — the reason to prefer this family for fidelity work
+## 6. Controlled-repeat reproducibility
 
 The TSMC6 controlled repeat retrains one recipe on **bit-identical rows** and
 compares strict verdicts, which measures the whole pipeline's run-to-run
 variance with the data held exactly fixed (`methodology.md` §7).
 
-**BSIM-AR remains the most stable family, but no longer a perfect one.** Across
-the V7.4.0 repeat, fifteen of sixteen compared verdicts reproduce. The single
-split is `small` ring (4.33 % vs 5.86 %), exactly the threshold-sensitive class
-the methodology's noise floor predicts. DirectNet reproduces fourteen of
-sixteen in the same rebuild, with both disagreements in the bimodal opamp
-column; PFN's latest controlled comparison remains ten of twelve from V7.3.0.
+Under the current contract, BSIM-AR reproduces fifteen of sixteen compared
+verdicts. The single split is `small` ring (4.33 % vs 5.86 %), exactly the
+threshold-sensitive class the methodology's noise floor predicts. DirectNet
+is 16/16 after its old nonconverged opamp passes are removed; PFN's latest
+controlled comparison remains ten of twelve from V7.3.0.
 
-That is a practical argument for BSIM-AR as the fidelity option **on top of**
-its gate score: a number measured on a BSIM-AR checkpoint is more likely to
-survive a retrain than the same number measured on the other two families.
+The old claim that this verdict count makes BSIM-AR the more reproducible
+family is therefore retracted. The current convergence contract collapses
+every Miller opamp to the same failure, so 15/16 versus 16/16 measures one
+threshold-sensitive ring split, not comparative fidelity on viable opamp
+fixed points.
 
 ## 7. The AR prefix cache
 
@@ -135,19 +141,18 @@ evaluation.
 in real arithmetic but not in float32, because `F.linear` is not row-stable on
 CPU — so *no* incremental formulation can be bit-identical, and the deviation
 (≤1.6 µV on solved nodes) has to be shown harmless rather than argued away.
-`tests/verify_ar_cache.py` guards the lever with 10 checks, since no accuracy
+`tests/perf/verify_ar_cache.py` guards the lever with 10 checks, since no accuracy
 gate can reach the path while it is off.
 
 ## 8. What is open
 
 | open | reading |
 |---|---|
-| **Capacity decline** | 18 → 17 → 15 → 13/20. The old flat-capacity claim is retracted. |
-| **Low-VDD rings** | Still the dominant failure class. The historical corridor curriculum closes them; recipes were not retrained in V7.4.0. |
-| **TSMC12 `xl` collapse** | All four complex cells fail while the other techs retain 3–4/4. Checkpoint-specific and unexplained. |
+| **Capacity plateau** | 13 → 12 → 12 → 12/20. Larger tiers do not recover a ring or opamp fixed point. |
+| **Low-VDD rings** | The repeatable failure class after the universal opamp-convergence failures. The historical corridor curriculum closes them; recipes were not retrained in V7.4.0. |
 | **Inference cost** | ~40× DirectNet per evaluation. Structural, not a tuning matter: it is the token count times the weight stream. |
 | **TSMC7-NMOS device DC** | Grows with capacity. Unexplained. |
-| **Opamp open-loop AC** | BSIM-AR passes this gate more often than either other family, but part of the denominator is unreachable by construction — see the caveat in `DirectNet-L73-clean.md` §6. |
+| **Miller opamp DC/AC** | DC is 0/5 and AC is 0/5 at every tier. Fix the physical operating-point convergence/basin before interpreting small-signal metrics; the AC gate also has the bias-grid caveat in `DirectNet-L73-clean.md` §6. |
 
 ## 9. Reproducing
 
@@ -159,11 +164,14 @@ MODEL=transformer RECIPES=clean TECHS='tsmc5 tsmc6 tsmc7 tsmc12 tsmc16' \
   bash scripts/recipe_train.sh
 
 # BSIM-AR gates through the same drivers; the tag selects LEVEL=74
+BSIMAR_CHECKPOINT_DIR=external_compact_models/neural_network/v740_archive/checkpoints \
 NN_PY=$(command -v python) bash scripts/v710_regate.sh \
   _one tf medium TSMC7 verify_complex_opamp 4
-python scripts/v730_coverage.py --set clean --tag tf --require-complete
+BSIMAR_CHECKPOINT_DIR=external_compact_models/neural_network/v740_archive/checkpoints \
+python scripts/v730_coverage.py --set clean --tag tf \
+  --passes simple-recheck --require-complete
 ```
 
 Checkpoints (gitignored): `tsmc{5,6,7,12,16}_tf_{small,medium,large,xl}_{nmos,pmos}`,
 each with `_norm.npz` and a **required** `_config.npz` sidecar.
-Raw runs: `results/v740_regate/`.
+Raw runs: `results/simple_recheck_24c181a/`.

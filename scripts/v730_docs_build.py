@@ -39,6 +39,11 @@ import pathlib
 import re
 from typing import Dict, Generator, List, Optional, Tuple
 
+if __package__:
+    from .v710_regate_collect import is_verdict
+else:
+    from v710_regate_collect import is_verdict
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 TPL = ROOT / "scripts" / "accuracy_doc_templates"
 DOCS = ROOT / "docs" / "accuracy"
@@ -69,6 +74,25 @@ REPORT_SUITES: Dict[str, Tuple[str, ...]] = {
     "verify_nn_ac": ("omp1",),
     "verify_complex_opamp_ac": ("omp1",),
 }
+
+_REPORT_PAYLOAD_KEYS: Dict[str, Tuple[str, ...]] = {
+    "verify_complex_ring_osc": ("metric",),
+    "verify_complex_opamp": ("metric",),
+    "verify_complex_sram_snm": ("metric",),
+    "verify_complex_switchcap": ("metric",),
+    "verify_nn_multi_tech_dc": (
+        "n", "n_pass", "mean_nrmse", "max_nrmse", "mean_mre",
+    ),
+    "verify_nn_multi_tech_tran": (
+        "n", "n_pass", "mean_nrmse", "max_nrmse", "mean_mre",
+    ),
+    "verify_complex_opamp_ac": (
+        "dc_gain_err_db", "gbw_ratio", "pm_err_deg", "mag_nrmse_pct", "status",
+    ),
+}
+_DEVICE_AC_PAYLOAD_KEYS = (
+    "gain0_err_db", "f3db_ratio", "mag_nrmse_pct", "status",
+)
 
 # Clean control per family. V7.4.0 retrained DirectNet and BSIM-AR from scratch
 # on the clean recipe into the production slots at every tier, so clean@large is
@@ -135,21 +159,20 @@ def load_json(name: str) -> Dict:
 A3 = load_a3()
 PASSES = [("V7.1.0", load_json("v710_regate")), ("V7.3.0", load_json("v730_regate")),
           ("V7.4.0", load_json("v740_regate")),
-          ("V7.4.2", load_json("v742_regate"))]
+          ("V7.4.2", load_json("v742_regate")),
+          ("2026-08-19 recheck", load_json("simple_recheck_24c181a"))]
 PASS_DATA = dict(PASSES)
 ACTIVE_PASS: Optional[str] = None
 
 # Every report is rendered from one coherent campaign. A later partial pass is
 # never allowed to backfill itself from older cells and overwrite a complete
 # published report.
-# V7.4.2 repins both clean reports: the V7.4.0 checkpoints were trained on a
-# grid that sampled L only at PDK bin corners, so their complex-circuit
-# numbers measure an unsampled interpolation rather than the model's fit
-# (docs/plans/2026-08-10-v742-bsimar-capacity.md). The V7.4.0 pass stays
-# loaded so the reports can quote what it said and mark it retracted.
+# The current clean reports use the complete 2026-08-19 recheck of the
+# preserved V7.4 checkpoint matrix. It applies the current honest DC/AC
+# convergence contract without mixing cells from an older solver state.
 REPORT_PASS: Dict[Tuple[str, bool], str] = {
-    ("dn", False): "V7.4.2",
-    ("tf", False): "V7.4.2",
+    ("dn", False): "2026-08-19 recheck",
+    ("tf", False): "2026-08-19 recheck",
     ("pfn", False): "V7.3.0",
     ("dn", True): "V7.3.0",
     ("tf", True): "V7.3.0",
@@ -159,9 +182,11 @@ REPORT_PASS: Dict[Tuple[str, bool], str] = {
 # The new hardware does not carry the raw V7.3 recipe/PFN trees. These digests
 # make the retained rendered reports immutable and keep --check meaningful.
 PRESERVED_REPORT_SHA256: Dict[Tuple[str, bool], str] = {
+    ("dn", False): "74fc8fdb68f62db910f3ca9da85493cd64ce0ec916d46a0541038e033f840052",
     ("dn", True): "cf5e72584234e4c4e15b3759bfc09d1cbbdef4742e5fe664cd501c000a241805",
+    ("tf", False): "6c1b70927cd20d83e894441551cf722789d244d19f666805c3e9947e86c080ed",
     ("tf", True): "c79255aabecd3e9b1b320e403e747d790482046a829b1c40c44299d6bd758a2e",
-    ("pfn", False): "e861078d23f489735f12363ab88909aac65c312662e6702fd7787fc55d5cf072",
+    ("pfn", False): "13e56216775055fa3701fba4d9b893d8143a11626250fd67a129ac39a2c21102",
     ("pfn", True): "e48c24415a76876dcd1c62bb249fdddee772a7bc30fb1c60260b333cfdb554e7",
 }
 
@@ -479,13 +504,12 @@ FAMILY_META = {
     "pfn": ("75", "research", "15.6 ms @ `small`"),
 }
 
-# The new hardware carries the rendered V7.3 recipe/PFN reports but not their
-# pruned raw result trees. These values are the durable published fallback for
-# the README only; every fallback is labelled V7.3 so it cannot masquerade as
-# a locally regenerated V7.4 result.
+# Raw campaign trees are local evidence and may be absent on another clone.
+# These values are the durable published fallback for the README only; the
+# rendered labels still identify the code state that produced each result.
 HISTORICAL_CLEAN: Dict[str, Tuple[str, int, int]] = {
-    "dn": ("large", 16, 20),
-    "tf": ("small", 17, 20),
+    "dn": ("large", 12, 20),
+    "tf": ("small", 13, 20),
     "pfn": ("small", 14, 20),
 }
 HISTORICAL_RECIPE: Dict[str, Tuple[str, int, int]] = {
@@ -517,6 +541,23 @@ def _best(tag: str, recipes: bool) -> Tuple[str, int, int]:
     return best
 
 
+def _report_result_complete(suite: str, result: object) -> bool:
+    """Whether one verdict includes the metrics its report table consumes."""
+    if not isinstance(result, dict) or not is_verdict(result):
+        return False
+    if suite == "verify_nn_ac":
+        for device in ("nmos", "pmos"):
+            payload = result.get(device)
+            if not isinstance(payload, dict) or any(
+                payload.get(key) is None for key in _DEVICE_AC_PAYLOAD_KEYS
+            ):
+                return False
+        return True
+    required = _REPORT_PAYLOAD_KEYS.get(suite)
+    return required is not None and all(result.get(key) is not None
+                                        for key in required)
+
+
 def _matrix_complete_in_pass(tag: str, recipes: bool, version: str) -> bool:
     """Whether one pass fully measured every table cell in this report."""
     data = PASS_DATA.get(version, {})
@@ -528,7 +569,11 @@ def _matrix_complete_in_pass(tag: str, recipes: bool, version: str) -> bool:
             for suite, required in REPORT_SUITES.items():
                 entry = (data.get(tag, {}).get(variant, {})
                          .get(suite, {}).get(tech))
-                if not entry or any(omp not in entry for omp in required):
+                if not entry or any(
+                    omp not in entry
+                    or not _report_result_complete(suite, entry[omp])
+                    for omp in required
+                ):
                     return False
     return True
 
@@ -538,7 +583,7 @@ def scoreboard(_tag=None, _recipes=None) -> str:
            "|---|---|---|---|---|---|"]
     for tag in ("dn", "tf", "pfn"):
         lvl, role, cost = FAMILY_META[tag]
-        clean_version = "V7.4.0" if tag in ("dn", "tf") else "V7.3.0"
+        clean_version = REPORT_PASS[(tag, False)]
         clean_complete = _matrix_complete_in_pass(tag, False, clean_version)
         recipe_complete = _matrix_complete_in_pass(tag, True, "V7.3.0")
         if clean_complete:
@@ -554,10 +599,10 @@ def scoreboard(_tag=None, _recipes=None) -> str:
         if tag == "dn" and clean_complete:
             with evidence_pass(clean_version):
                 served_pass, served_total = _score(tag, "large", False)
-            c = (f"V7.4 `large` **{served_pass}/{served_total}** served; "
+            c = (f"2026-08-19 `large` **{served_pass}/{served_total}** served; "
                  f"`{cl}` **{cp}/{cn}** best")
         else:
-            version = ("V7.4" if clean_complete and clean_version == "V7.4.0"
+            version = ("2026-08-19" if clean_version == "2026-08-19 recheck"
                        else "V7.3")
             c = f"{version} `{cl}` **{cp}/{cn}**"
         r = f"V7.3 {rl} **{rp}/{rn}**"
