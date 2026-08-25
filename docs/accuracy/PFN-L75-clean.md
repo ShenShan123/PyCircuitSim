@@ -23,11 +23,13 @@ checkpoint without it cannot be loaded.
 is here because it is a genuinely different inductive bias on the same problem,
 and because it is ~4× cheaper than BSIM-AR at ~15.6 ms/eval.
 
-Gate definitions and the code ladder: [`methodology.md`](methodology.md).
+Gate definitions, strict-OMP scoring, comparability, and evidence rules are in
+[`methodology.md`](methodology.md).
 
-> **Evidence boundary.** PFN was not rebuilt in V7.4.0; no PFN checkpoints are
-> present in the new-hardware artifact set. All measurements in this file are
-> the latest available PFN evidence, retained from V7.3.0.
+> **Evidence boundary.** PFN was not rebuilt in V7.4.0, and its V7.5.16
+> retraining was stopped before any checkpoint completed. All measurements in
+> this file remain the retained V7.3.0 evidence; incomplete V7.5.16 artifacts
+> are excluded.
 
 | tier | shape | params |
 |---|---|---|
@@ -212,16 +214,15 @@ current measurement; treat any group with a flip as unbankable, per
 | **`large` trainability** | Divergence-collapse events, not a capacity ceiling. Worth separating before drawing a capacity conclusion about this tier. |
 | **`xl` convergence** | Most runs banked before a third of the schedule. |
 
-## 8. Reproducing
-
-```bash
-# every driver takes MODEL=tabpfn; the gate driver's tag is pfn
-bash scripts/v710_regate.sh _one pfn small TSMC12 verify_complex_switchcap 1
-python scripts/v730_coverage.py --set clean --tag pfn
-```
+## 8. Reproduction
 
 Checkpoints (gitignored): `tsmc{5,6,7,12,16}_pfn_{small,medium,large,xl}_{nmos,pmos}`,
 each with `_norm.npz` and a **required** `_config.npz`. Env pins
 `PYCIRCUITSIM_NN_CHECKPOINT_PFN_{NMOS,PMOS}`; hook
 `PYCIRCUITSIM_NN_FORCE_LEVEL=75` retargets a LEVEL=73 deck at PFN, so the whole
 gate infrastructure runs this family with zero deck changes.
+
+The supported PFN model selector and historical split-precision training
+examples are in the
+[README](../../README.md#2-train-the-nn-compact-model). No V7.5.16 PFN
+reproduction is claimed.

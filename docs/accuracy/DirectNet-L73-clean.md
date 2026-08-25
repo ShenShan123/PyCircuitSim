@@ -11,19 +11,18 @@ charges — nothing is fitted twice.
 in [`DirectNet-L73-recipes.md`](DirectNet-L73-recipes.md) is measured against.
 
 **Measurement provenance.** The datasets and S/M/L/XL checkpoints are the
-preserved V7.4.0 clean rebuild. Every table below was remeasured in one
-complete CPU-pinned pass on 2026-08-19 at commit `24c181a`, after the solver
-began requiring convergence at the final physical homotopy step and before AC
-linearization. The shared DirectNet/BSIM-AR archive contains 280 checkpoint
-artifacts with manifest SHA-256
+preserved V7.4.0 clean rebuild. Every generated table below was remeasured in
+the complete V7.5.16 CPU-pinned pass at gate commit `49f0426`, after the MNA
+residual and opamp-AC bias contracts were corrected. The shared
+DirectNet/BSIM-AR archive contains 280 checkpoint artifacts with manifest
+SHA-256
 `8e4245f1ab563cd116a789cb02388e0f7b736186141694d3242ede2a7ed07868`.
-The old V7.4.0 gate verdicts are historical; the exact comparison and
-retractions are in
+Raw evidence is under `results/v7516_clean/`. The V7.5.15 recheck remains the
+exact audit trail for the earlier convergence and campaign retractions:
 [`simple-circuits-recheck-2026-08-19.md`](simple-circuits-recheck-2026-08-19.md).
 
-Gate definitions, the strict-OMP rule, the `gds`-fix code ladder and the
-measured noise floor: [`methodology.md`](methodology.md). Read it before
-comparing any two numbers here.
+Gate definitions, strict-OMP scoring, comparability, and evidence rules are in
+[`methodology.md`](methodology.md).
 
 | tier | width × depth | params | CPU cost, 1 thread |
 |---|---|---|---|
@@ -37,24 +36,8 @@ comparing any two numbers here.
 > earlier report scored /16, /8 and /4 over the four electrically distinct
 > techs. **No total here is comparable to a pre-V7.3.0 total without
 > rescaling.**
->
-> **V7.4.0 strengthens `methodology.md` §7 from exemplary to exhaustive.** §7
-> named five differing PDK keys and showed they were absent from the BSIM-CMG
-> Verilog-A; this campaign enumerates *all* of them. Of 1748 shared modelcard
-> parameters exactly **11 differ in value**, plus 74 keys unique to TSMC6 and
-> 12 to TSMC7 — 97 in total — and **all 97 have zero occurrences anywhere in
-> the Verilog-A sources**, against 333 of the 1737 identical keys that do
-> appear. The 97 form one coherent family: TSMC's TMI layout-dependent-effect
-> layer (LOD, ODX OD-to-OD spacing, isolated-CPODE). Not one core device-physics
-> parameter differs — `vth0`, `u0`, `vsat`, `dvt0/1`, `eta0`, `phig`, `eot`,
-> `toxp`, `hfin`, `cgso/cgdo` are bit-identical. That matches silicon: TSMC N6
-> is a design-rule-compatible EUV derivative of N7, the same transistor with
-> re-calibrated layout-stress models — and the stress layer is exactly what
-> OpenVAF never compiles and this layout-free flow never stamps. Measured
-> consequence, reproduced here on freshly generated data: every array of
-> `tsmc6_{nmos,pmos}.npz` is bit-identical to `tsmc7_*` bar the tech-name
-> string. TSMC6 is a **controlled repeat** whose only degree of freedom is
-> training nondeterminism.
+
+TSMC6 remains the controlled repeat defined in `methodology.md` §7.
 
 ---
 
@@ -86,7 +69,7 @@ that localizes a weakness.
 | small | FAIL 6.87% | FAIL 6.19% | FAIL 5.49% | **PASS** 2.21% | **PASS** 1.59% |
 | medium | FAIL 6.28% | FAIL 10.65% | FAIL 10.81% | **PASS** 2.15% | **PASS** 2.28% |
 | large | FAIL 12.34% | FAIL 7.38% | FAIL 7.40% | **PASS** 2.14% | **PASS** 2.23% |
-| xl | FAIL 14.36% | FAIL 11.83% | FAIL 10.49% | **PASS** 2.98% | **PASS** 2.77% |
+| xl | FAIL 14.36% | FAIL 11.82% | FAIL 10.49% | **PASS** 2.98% | **PASS** 2.77% |
 
 #### Two-stage Miller opamp (DC)
 
@@ -94,10 +77,10 @@ that localizes a weakness.
 
 | group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
 |---|---|---|---|---|---|
-| small | FAIL 100.00% | FAIL 100.00% | FAIL 100.00% | FAIL 100.00% | FAIL 100.00% |
+| small | FAIL 100.00% | FAIL 100.00% | FAIL 100.00% | FAIL 100.00% | FAIL 99.76% |
 | medium | FAIL 100.00% | FAIL 100.00% | FAIL 100.00% | FAIL 100.00% | FAIL 100.00% |
 | large | FAIL 100.00% | FAIL 100.00% | FAIL 100.00% | FAIL 100.00% | FAIL 100.00% |
-| xl | FAIL 100.00% | FAIL 100.00% | FAIL 100.00% | FAIL 100.00% | FAIL 100.00% |
+| xl | FAIL 100.00% | FAIL 100.00% | FAIL 100.00% | FAIL 99.45% | FAIL 100.00% |
 
 #### 6T SRAM read SNM
 
@@ -105,10 +88,10 @@ that localizes a weakness.
 
 | group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
 |---|---|---|---|---|---|
-| small | **PASS** 6.00% | **PASS** 2.28% | **PASS** 1.96% | **PASS** 1.50% | **PASS** 2.21% |
-| medium | **PASS** 7.96% | **PASS** 2.39% | **PASS** 2.22% | **PASS** 1.63% | **PASS** 2.57% |
-| large | **PASS** 6.35% | **PASS** 1.80% | **PASS** 2.11% | **PASS** 1.23% | **PASS** 1.49% |
-| xl | **PASS** 5.80% | **PASS** 1.86% | **PASS** 1.85% | **PASS** 1.69% | **PASS** 3.71% |
+| small | **PASS** 6.00% | **PASS** 2.28% | **PASS** 1.96% | **PASS** 1.51% | **PASS** 2.22% |
+| medium | **PASS** 7.96% | **PASS** 2.39% | **PASS** 2.22% | **PASS** 1.63% | **PASS** 2.61% |
+| large | **PASS** 6.35% | **PASS** 1.82% | **PASS** 2.11% | **PASS** 1.74% | **PASS** 1.49% |
+| xl | **PASS** 5.80% | **PASS** 1.86% | **PASS** 1.85% | **PASS** 1.69% | **PASS** 4.30% |
 
 #### Switched-capacitor cell
 
@@ -167,23 +150,23 @@ operating point.
 Parametric DC is **`gds`-invariant**, so its numbers are comparable across the
 whole campaign history; transient and AC are not (`methodology.md` §6).
 
-**Parametric DC — `verify_nn_multi_tech_dc`** *(mean Id-Vgs NRMSE %, config fails in brackets)*
+**Parametric DC — `verify_nn_multi_tech_dc`** *(mean NRMSE % / mean MRE % / min R² / max error µA; config fails in brackets)*
 
 | group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass |
 |---|---|---|---|---|---|---|
-| small | 2.17 | 2.61 | 1.48 | 1.01 | 0.80 | 69/69 |
-| medium | 1.72 | 2.33 | 1.57 | 0.62 | 0.67 | 69/69 |
-| large | 2.57 | 1.96 | 1.37 | 1.33 | 0.71 | 69/69 |
-| xl | 3.02 | 2.91 | 2.06 | 1.34 (17/18) | 2.58 (12/14) | 66/69 |
+| small | 2.17 / 7.48 / 0.965 / 42.2 | 2.61 / 9.69 / 0.911 / 26.4 | 1.48 / 5.39 / 0.986 / 26.4 | 1.01 / 3.14 / 0.935 / 97.9 | 0.80 / 2.74 / 0.994 / 23.7 | 69/69 |
+| medium | 1.72 / 5.65 / 0.942 / 18.8 | 2.33 / 7.80 / 0.917 / 24.1 | 1.57 / 4.70 / 0.956 / 19.4 | 0.62 / 2.09 / 0.984 / 58.7 | 0.67 / 2.10 / 0.972 / 59 | 69/69 |
+| large | 2.57 / 8.54 / 0.937 / 28.5 | 1.96 / 6.02 / 0.940 / 53 | 1.37 / 3.36 / 0.986 / 53 | 1.33 / 3.81 / 0.902 / 124 | 0.71 / 1.72 / 0.945 / 97.3 | 69/69 |
+| xl | 3.02 / 10.01 / 0.927 / 28.2 | 2.91 / 8.63 / 0.899 / 51.3 | 2.06 / 5.01 / 0.969 / 48.2 | 1.34 / 3.58 / 0.874 / 147 (17/18) | 2.58 / 5.70 / 0.579 / 236 (12/14) | 66/69 |
 
-**Parametric transient — `verify_nn_multi_tech_tran`** *(mean NRMSE %)*
+**Parametric transient — `verify_nn_multi_tech_tran`** *(mean NRMSE % / mean MRE % / min R² / max error mV; config fails in brackets)*
 
 | group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass |
 |---|---|---|---|---|---|---|
-| small | 3.58 | 1.57 | 1.58 | 1.76 | 1.75 | 80/80 |
-| medium | 1.92 | 1.45 | 1.47 | 1.52 | 1.51 | 80/80 |
-| large | 1.67 | 1.46 | 1.46 | 1.50 | 1.47 | 80/80 |
-| xl | 1.67 | 1.47 | 1.45 | 1.52 | 1.47 | 80/80 |
+| small | 3.58 / 14.50 / 0.937 / 544 | 1.57 / 8.28 / 0.991 / 249 | 1.59 / 8.41 / 0.991 / 247 | 1.76 / 8.29 / 0.990 / 362 | 1.75 / 7.71 / 0.988 / 390 | 80/80 |
+| medium | 1.92 / 8.35 / 0.990 / 238 | 1.46 / 8.51 / 0.991 / 250 | 1.47 / 8.48 / 0.991 / 250 | 1.52 / 9.26 / 0.992 / 220 | 1.51 / 8.58 / 0.992 / 211 | 80/80 |
+| large | 1.67 / 8.97 / 0.990 / 185 | 1.46 / 8.38 / 0.991 / 249 | 1.46 / 8.36 / 0.991 / 249 | 1.50 / 9.03 / 0.992 / 221 | 1.47 / 8.42 / 0.992 / 213 | 80/80 |
+| xl | 1.67 / 8.89 / 0.990 / 185 | 1.47 / 8.25 / 0.991 / 250 | 1.45 / 8.20 / 0.991 / 250 | 1.52 / 9.07 / 0.992 / 222 | 1.47 / 8.42 / 0.992 / 213 | 80/80 |
 
 **Device CS-amp AC** — NMOS / PMOS *(gate: gain0 ≤1.5 dB, f3db ratio ∈[0.7, 1.43], magNRMSE ≤10 %)*
 
@@ -194,14 +177,14 @@ whole campaign history; transient and AC are not (`methodology.md` §6).
 | large | ✗ f3db nan, mag 10.50 % / ✗ | ✗ / ✗ | ✗ / ✗ | ✗ / ✗ | ✗ / ✗ | **0/10** |
 | xl | ✗ f3db nan, mag 14.64 % / ✗ | ✗ / ✗ | ✗ / ✗ | ✗ / ✗ | ✗ / ✗ | **0/10** |
 
-**Opamp open-loop AC** — DC-gain error *(gate: ≤3 dB, GBW ratio ∈[0.6, 1.67], PM err ≤15°, non-railed OP)*
+**Opamp open-loop AC** — DC-gain error *(gate: ≤3 dB, GBW ratio ∈[0.6, 1.67], PM err ≤15°, valid refined reference and converged NN OP)*
 
 | group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass /5 |
 |---|---|---|---|---|---|---|
-| small | FAIL 17.30 dB | FAIL 32.54 dB | FAIL 28.51 dB | FAIL 24.03 dB | FAIL 39.03 dB | **0/5** |
-| medium | FAIL 13.33 dB | FAIL 32.03 dB | FAIL 31.60 dB | FAIL 29.51 dB | FAIL 34.20 dB | **0/5** |
-| large | FAIL 11.57 dB | FAIL 31.75 dB | FAIL 31.66 dB | FAIL 28.98 dB | FAIL 35.40 dB | **0/5** |
-| xl | FAIL 17.96 dB | FAIL 30.13 dB | FAIL 30.24 dB | FAIL 27.91 dB | FAIL 34.62 dB | **0/5** |
+| small | FAIL 48.70 dB | FAIL 51.74 dB | FAIL 50.94 dB | FAIL 31.59 dB | FAIL 61.99 dB | **0/5** |
+| medium | FAIL 53.41 dB | FAIL 49.94 dB | FAIL 49.49 dB | FAIL 34.29 dB | FAIL 34.06 dB | **0/5** |
+| large | FAIL 49.63 dB | FAIL 50.24 dB | FAIL 50.29 dB | FAIL 34.77 dB | FAIL 33.26 dB | **0/5** |
+| xl | FAIL 53.93 dB | FAIL 49.70 dB | FAIL 49.71 dB | FAIL 32.01 dB | FAIL 32.28 dB | **0/5** |
 
 Reading the DC column, `medium` is the best device fit on TSMC5, TSMC12 and
 TSMC16; `large` takes TSMC6 and TSMC7. Two results bind:
@@ -221,23 +204,17 @@ capacity information at all.
 
 ## 6. What the AC gates actually diagnose
 
-Both AC gates are now dominated by their prerequisite: **a converged DC fixed
+Both AC gates are dominated by their prerequisite: **a converged DC fixed
 point**. Device CS-amp AC is 0/10 at every tier, explicitly
-`FAIL-NONCONVERGED`; opamp open-loop AC is 0/5 at every tier after its DC
-bias sweep selects a railed branch. Printed gain/pole/phase metrics remain
-diagnostics only. This pass therefore cannot distinguish a charge-derivative
-defect from a DC-basin defect, and the old AC pass counts are retracted.
+`FAIL-NONCONVERGED`; opamp open-loop AC is 0/5 at every tier with
+`OP-NOT-CONVERGED`. Printed gain/pole/phase metrics remain diagnostics only.
 
-> **The opamp open-loop AC row is a lower bound, not a result.**
-> `verify_complex_opamp_ac` picks its bias by `argmax |dVout/dVin|` on a 2 mV
-> grid, but a two-stage Miller opamp with 33–48 dB of gain has a transition
-> only 3–14 mV wide. On three of the four original techs the **NGSPICE
-> reference's own** operating point at the chosen bias falls outside the
-> gate's 15–85 %·VDD validity window, and that window is then applied to the NN
-> alone — so a model that faithfully reproduces the reference is scored
-> `OP-MISBIAS`. This is a gate-construction defect and is deliberately **not**
-> fixed here: changing an accuracy gate changes the accuracy record, which is a
-> separate decision.
+V7.5.16 closes the former opamp-bias defect. Each simulator now performs a
+physical 0.1 mV refinement around its coarse maximum-gain point, and every
+NGSPICE reference bias in this pass is inside the 15–85% VDD validity window.
+The zero is therefore no longer a coarse-grid lower bound: it is a result about
+the NN fixed point. It still cannot diagnose charge derivatives independently
+until the operating-point gate converges.
 
 ## 7. What is open
 
@@ -275,33 +252,18 @@ q-NRMSE **0.0101% of VDD**. This clears the GPU fidelity gates; CUDA remains an
 explicit opt-in because the CPU/flags-off path is still the scored contract,
 not because a V7.4 mismatch remains.
 
-## 9. Reproducing
+## 9. Reproduction
 
-```bash
-# 1. datasets (10 = 5 techs x 2 polarities); BOTH flags are required
-bash scripts/benchmark_gen_data.sh 12
+The published measurements belong to the exact V7.4.0 checkpoint population,
+not to the clean recipe in the abstract. A different checkpoint digest is a
+different experiment. Retraining the same seed is a new stochastic control,
+not a reproduction of these tables.
 
-# 2. train the clean control, all tiers, on GPU
-MODEL=direct RECIPES=clean TECHS='tsmc5 tsmc6 tsmc7 tsmc12 tsmc16' \
-  SIZES='small medium large xl' GPUS='1 1 1 0' NSTREAMS=12 TRAIN_OMP=4 \
-  bash scripts/recipe_train.sh
-
-# 3. gate one (tier, tech) cell, isolated and CPU-pinned
-BSIMAR_CHECKPOINT_DIR=external_compact_models/neural_network/v740_archive/checkpoints \
-NN_PY=$(command -v python) bash scripts/v710_regate.sh \
-  _one dn xl TSMC12 verify_complex_ring_osc 1
-
-# 4. the coverage map: what is measured, by which pass, and what is missing
-BSIMAR_CHECKPOINT_DIR=external_compact_models/neural_network/v740_archive/checkpoints \
-python scripts/v730_coverage.py --set clean --tag dn \
-  --passes simple-recheck --require-complete
-
-# 5. rebuild this file from the evidence
-python scripts/v710_regate_collect.py --root results/simple_recheck_24c181a
-python scripts/v730_docs_build.py
-```
-
-Checkpoints (gitignored): `external_compact_models/neural_network/v740_archive/checkpoints/`.
-Raw runs: `results/simple_recheck_24c181a/`.
+Preserved checkpoints (gitignored):
+`external_compact_models/neural_network/v740_archive/checkpoints/`. Raw runs:
+`results/v7516_clean/`.
 GPU evidence: `results/v720_gpu_regate/t3_gpu_bundle/` and
 `results/v720_gpu_regate/t4_gpu_bundle/`.
+
+The complete launch, coverage, report-build, and new-control commands are in
+the [README](../../README.md#run-the-complete-clean-checkpoint-matrix).

@@ -6,6 +6,8 @@ to generate BSIM-CMG data, train a compact model, and increase validation scope
 from devices to circuits while keeping NGSPICE on the identical OSDI model as
 ground truth.
 
+Current release: **V7.5.16**.
+
 ## Documentation map
 
 Each project document has one job:
@@ -101,6 +103,38 @@ conda run -n pycircuitsim python tests/single_devices/verify_bsimcmg_op.py
 A fresh checkout does not include those private cards, generated datasets, or
 NN checkpoints. Supply the cards, then build the artifacts in stages 1 and 2.
 
+### Command interface conventions
+
+Python entry points use `argparse`. Put their options after the script/module
+name and inspect the exact interface with `--help`:
+
+```bash
+conda run -n pycircuitsim python main.py --help
+conda run -n pycircuitsim python -m neural_network.cli.train --help
+conda run -n pycircuitsim python scripts/v710_regate_jobs.py --help
+conda run -n pycircuitsim python scripts/v730_coverage.py --help
+conda run -n pycircuitsim python scripts/v730_docs_build.py --help
+```
+
+The training and re-gate shell wrappers use environment variables for their
+campaign matrix and concurrency. They accept only the positional arguments
+shown by their own help; Python CLI flags belong in `EXTRA_ARGS` when the
+training wrapper explicitly forwards them:
+
+```bash
+bash scripts/recipe_train.sh --help
+bash scripts/v710_regate.sh --help
+```
+
+`v710_regate.sh` requires `NN_PY` to name an executable Python environment
+with NumPy and PyTorch. It fails before dispatch if that interpreter is absent
+or incomplete; it never falls back to a different Python. A shell-independent
+way to resolve the project environment is:
+
+```bash
+NN_PY="$(conda run -n pycircuitsim which python)"
+```
+
 ## 1. Generate datasets
 
 The generator evaluates PyCMG/BSIM-CMG over bias, geometry, temperature, and
@@ -184,16 +218,38 @@ SIZES="large" \
 bash scripts/benchmark_train_sml.sh
 ```
 
-For Transformer or PFN clean runs, use the family-aware wrapper:
+For a clean matrix, use the family-aware wrapper and keep its outputs isolated
+from preserved controls:
 
 ```bash
-MODEL=transformer RECIPES=clean SIZES="small" \
+BSIMAR_CHECKPOINT_DIR="$PWD/results/v7516_clean/checkpoints" \
+RECIPE_TRAIN_LOG_DIR="$PWD/results/v7516_clean/training/tf" \
+MODEL=transformer RECIPES=clean SIZES="small medium large xl" \
 TECHS="tsmc5 tsmc6 tsmc7 tsmc12 tsmc16" \
-GPUS="0 1 2" NSTREAMS=9 \
+GPUS="0 1 2" NSTREAMS=6 \
 bash scripts/recipe_train.sh
 ```
 
-Set `MODEL=tabpfn` for PFN. The wrappers create a
+Set `MODEL=direct`, `transformer`, or `tabpfn` for the three families. PFN is a
+separate research campaign and is not part of the V7.5.16 clean re-gate. Its
+historical clean recipe uses normal precision for `small`/`medium` and AMP for
+the compute-bound `large`/`xl` tiers:
+
+```bash
+BSIMAR_CHECKPOINT_DIR="$PWD/results/pfn_clean_control/checkpoints" \
+RECIPE_TRAIN_LOG_DIR="$PWD/results/pfn_clean_control/training" \
+MODEL=tabpfn RECIPES=clean SIZES="small medium" \
+TECHS="tsmc5 tsmc6 tsmc7 tsmc12 tsmc16" \
+GPUS="0 1 2" NSTREAMS=6 bash scripts/recipe_train.sh
+
+BSIMAR_CHECKPOINT_DIR="$PWD/results/pfn_clean_control/checkpoints" \
+RECIPE_TRAIN_LOG_DIR="$PWD/results/pfn_clean_control/training" \
+MODEL=tabpfn RECIPES=clean SIZES="large xl" EXTRA_ARGS="--amp" \
+TECHS="tsmc5 tsmc6 tsmc7 tsmc12 tsmc16" \
+GPUS="0 1 2" NSTREAMS=6 bash scripts/recipe_train.sh
+```
+
+The wrapper creates a
 `*_best.pt.complete` marker only after a successful job. Treat that marker as
 the campaign completion record: a bare `*_best.pt` can be best-so-far output
 from an interrupted run.
@@ -307,26 +363,36 @@ conda run -n pycircuitsim python \
 
 ### Run the complete clean checkpoint matrix
 
-Generate and run the DirectNet/BSIM-AR S/M/L/XL matrix, then require complete
-coverage before checking the generated accuracy reports:
+Generate the full family pool, then select the DirectNet/BSIM-AR S/M/L/XL
+matrix used by V7.5.16. It is exactly **480 jobs**: two families × four tiers ×
+five technologies, with the required OMP repeats. Require complete coverage
+for both current families before rebuilding the generated reports:
 
 ```bash
-python scripts/v710_regate_jobs.py /tmp/pycircuitsim-simple-jobs
+conda run -n pycircuitsim python \
+  scripts/v710_regate_jobs.py /tmp/pycircuitsim-v7516-jobs
+awk '$1 == "dn" || $1 == "tf"' \
+  /tmp/pycircuitsim-v7516-jobs/jobs_clean.txt \
+  > /tmp/pycircuitsim-v7516-jobs/jobs_clean_dn_tf.txt
 
-BSIMAR_CHECKPOINT_DIR=external_compact_models/neural_network/v740_archive/checkpoints \
-V710_OUT="$PWD/results/simple_recheck_24c181a" \
-JOBS=/tmp/pycircuitsim-simple-jobs/jobs_clean.txt PAR=96 \
-NN_PY="$(command -v python)" \
+BSIMAR_CHECKPOINT_DIR="$PWD/results/v7516_clean/checkpoints" \
+V710_OUT="$PWD/results/v7516_clean" \
+V710_SCRATCH=/tmp/pycircuitsim-v7516-clean \
+NGSPICE_BIN="${NGSPICE_BIN:-$PWD/tools/ngspice-45.2/bin/ngspice}" \
+JOBS=/tmp/pycircuitsim-v7516-jobs/jobs_clean_dn_tf.txt PAR=32 \
+NN_PY="$(conda run -n pycircuitsim which python)" \
 bash scripts/v710_regate.sh
 
-python scripts/v710_regate_collect.py --root results/simple_recheck_24c181a
-BSIMAR_CHECKPOINT_DIR=external_compact_models/neural_network/v740_archive/checkpoints \
-python scripts/v730_coverage.py --tag dn --set clean \
-  --passes simple-recheck --require-complete --fail-on-gaps
-BSIMAR_CHECKPOINT_DIR=external_compact_models/neural_network/v740_archive/checkpoints \
-python scripts/v730_coverage.py --tag tf --set clean \
-  --passes simple-recheck --require-complete --fail-on-gaps
-python scripts/v730_docs_build.py --check
+conda run -n pycircuitsim python scripts/v710_regate_collect.py \
+  --root results/v7516_clean
+for family in dn tf; do
+  BSIMAR_CHECKPOINT_DIR="$PWD/results/v7516_clean/checkpoints" \
+  conda run -n pycircuitsim python scripts/v730_coverage.py \
+    --tag "$family" --set clean --passes v7516-clean \
+    --require-complete --fail-on-gaps
+done
+conda run -n pycircuitsim python scripts/v730_docs_build.py
+conda run -n pycircuitsim python scripts/v730_docs_build.py --check
 ```
 
 These gates own NN circuit accuracy. Their definitions and thresholds are in

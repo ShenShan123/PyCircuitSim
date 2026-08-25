@@ -1,5 +1,11 @@
 # DirectNet / BSIM-AR simple-circuit recheck — 2026-08-19
 
+> **Historical V7.5.15 record.** V7.5.16 supersedes the DirectNet and BSIM-AR
+> clean reports with a complete pass after fixing the MNA residual and
+> opamp-AC bias contracts. PFN remains V7.3 evidence because its retrain was
+> stopped before completion. The measurements below remain the audit trail for
+> the seven campaign defects found in this recheck.
+
 ## Scope and provenance
 
 This is the prerequisite recheck before any new AnalogGym/complex-corpus

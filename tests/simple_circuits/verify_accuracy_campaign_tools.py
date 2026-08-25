@@ -666,6 +666,59 @@ def _check_report_payload_completeness() -> None:
     finally:
         docs.PASS_DATA = old_data
 
+
+def _check_historical_pfn_does_not_block_current_readme() -> None:
+    """A stopped PFN rebuild cannot block complete DirectNet/BSIM-AR docs."""
+    data = {
+        tag: {
+            variant: {
+                suite: {
+                    tech: {
+                        omp: _report_payload(suite)
+                        for omp in required
+                    }
+                    for tech in docs.TECHS
+                }
+                for suite, required in docs.REPORT_SUITES.items()
+            }
+            for variant in docs.TIERS
+        }
+        for tag in docs.CURRENT_CLEAN_TAGS
+    }
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        templates = root / "templates"
+        rendered = root / "rendered"
+        templates.mkdir()
+        rendered.mkdir()
+        (templates / "README.md.in").write_text("<!--SCOREBOARD-->\n")
+
+        old_root, old_tpl, old_docs = docs.ROOT, docs.TPL, docs.DOCS
+        old_data, old_pass = docs.PASS_DATA, docs.REPORT_PASS
+        docs.ROOT = root
+        docs.TPL = templates
+        docs.DOCS = rendered
+        docs.PASS_DATA = {"V7.5.16": data, "V7.3.0": {}}
+        docs.REPORT_PASS = {
+            **old_pass,
+            ("dn", False): "V7.5.16",
+            ("tf", False): "V7.5.16",
+            ("pfn", False): "V7.3.0",
+        }
+        try:
+            with redirect_stdout(io.StringIO()):
+                assert docs.build_readme(check=False)
+            result = (rendered / "README.md").read_text()
+            assert "V7.5.16 `small` **0/20**" in result
+            assert "V7.3 `small` **14/20**" in result
+        finally:
+            docs.ROOT = old_root
+            docs.TPL = old_tpl
+            docs.DOCS = old_docs
+            docs.PASS_DATA = old_data
+            docs.REPORT_PASS = old_pass
+
+
 def _check_incomplete_reports_preserve_verified_output() -> None:
     """Missing raw evidence preserves only a checksum-verified report."""
     with tempfile.TemporaryDirectory() as raw:
@@ -757,11 +810,18 @@ def main() -> int:
     _check_regate_interpreter_failures_are_infrastructure()
     _check_fail_on_gaps()
     _check_report_payload_completeness()
+    _check_historical_pfn_does_not_block_current_readme()
     _check_incomplete_reports_preserve_verified_output()
-    clean_jobs = len(jobs.build_pools()["clean"])
+    clean_pool = jobs.build_pools()["clean"]
+    clean_jobs = len(clean_pool)
+    current_jobs = sum(
+        line.split(maxsplit=1)[0] in docs.CURRENT_CLEAN_TAGS
+        for line in clean_pool
+    )
+    assert current_jobs == 480
     print(
         f"Accuracy campaign tools: {clean_jobs} unique clean jobs; "
-        "invalid outcomes excluded"
+        f"{current_jobs} current DirectNet/BSIM-AR jobs; invalid outcomes excluded"
     )
     return 0
 

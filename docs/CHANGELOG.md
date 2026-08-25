@@ -20,6 +20,33 @@ The pre-compaction long-form narrative remains available in Git history.
 
 ## V7.5 — AnalogGym migration
 
+### V7.5.16 — corrected clean evidence and BSIM-AR evaluation (2026-08-25)
+
+- Corrected the MNA residual probe to recover ideal-source branch currents
+  and scale only current-valued rows, then cached its topology-stable fit.
+  Corrected opamp AC to refine each simulator's physical bias independently,
+  validate the reference, and require a converged NN operating point. Family
+  banners and accuracy CLIs now fail closed on invalid selections.
+- Re-gated the preserved V7.4 DirectNet and BSIM-AR checkpoints in one isolated,
+  CPU-pinned 480-job pass at gate commit `49f0426`. Strict complex scores are
+  DirectNet **8/11/12/12** and BSIM-AR **13/12/12/12** out of 20 from S→XL.
+  Device AC and opamp AC remain 0/10 and 0/5 at every tier because their NN
+  operating points do not converge under the physical contract.
+- Stopped the PFN rebuild before any checkpoint completed. Its partial files
+  are excluded from V7.5.16 evidence, and the clean PFN report remains the
+  checksum-pinned V7.3.0 record.
+- Hardened clean training, re-gating, coverage, and report generation around
+  isolated checkpoint roots, required sidecars/completion markers, exact
+  family scope, argument validation, and interpreter preflight. Tracebacks are
+  infrastructure failures; explicit parametric `ERROR` rows stay in their
+  denominators while metric aggregates ignore nonnumeric rows.
+- The opt-in BSIM-AR prefix cache passed 10/10 parity checks and measured
+  118.5 ms → 74.2 ms (**1.60×**). It remains default-off pending a complete
+  floating-point-perturbing accuracy re-gate.
+- Dead end: a 480-job attempt launched with a nonexistent Python interpreter
+  produced only tracebacks. That evidence was quarantined and excluded; the
+  driver now rejects the interpreter before dispatch.
+
 ### V7.5.15 — clean simple-circuit recheck (2026-08-20)
 
 - Re-ran all 480 CPU-pinned DirectNet and BSIM-AR clean S/M/L/XL suite runs

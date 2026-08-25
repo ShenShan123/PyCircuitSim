@@ -20,13 +20,15 @@ live under their own stems and are covered in
 
 **Measurement provenance.** The datasets and S/M/L/XL checkpoints are the
 preserved V7.4.0 clean rebuild, on exactly the same data and recipe as
-DirectNet. Every table below was remeasured in one complete CPU-pinned pass on
-2026-08-19 at commit `24c181a`, after the solver began requiring convergence
-at the final physical homotopy step and before AC linearization. The shared
-checkpoint archive and exact old-versus-new comparison are recorded in
+DirectNet. Every generated table below was remeasured in the complete V7.5.16
+CPU-pinned pass at gate commit `49f0426`, after the MNA residual and opamp-AC
+bias contracts were corrected. The shared 280-artifact checkpoint archive has
+manifest SHA-256
+`8e4245f1ab563cd116a789cb02388e0f7b736186141694d3242ede2a7ed07868`.
+The V7.5.15 audit trail remains in
 [`simple-circuits-recheck-2026-08-19.md`](simple-circuits-recheck-2026-08-19.md).
 
-Gate definitions, the strict-OMP rule and the code ladder:
+Gate definitions, strict-OMP scoring, comparability, and evidence rules:
 [`methodology.md`](methodology.md).
 
 | tier | shape | params | CPU cost, 1 thread |
@@ -43,15 +45,8 @@ Tier names compare a family with itself, never across families: BSIM-AR
 > totals are **/20**, device AC **/10**, opamp AC **/5**, where every earlier
 > report said /16, /8 and /4. No total here is comparable to a pre-V7.3.0 total
 > without rescaling.
->
-> V7.4.0 makes `methodology.md` §7's TSMC6 finding exhaustive rather than
-> exemplary: of 1748 shared modelcard parameters exactly 11 differ in value,
-> plus 74 TSMC6-only and 12 TSMC7-only keys, and **all 97 have zero occurrences
-> anywhere in the BSIM-CMG Verilog-A** (against 333 of the 1737 identical keys
-> that do appear). All 97 belong to TSMC's TMI layout-dependent-effect layer
-> (LOD, ODX, isolated-CPODE); no core device-physics parameter differs. TSMC6
-> stays a **controlled repeat** whose sole degree of freedom is training
-> nondeterminism — see `DirectNet-L73-clean.md` for the full breakdown.
+
+TSMC6 remains the controlled repeat defined in `methodology.md` §7.
 
 ---
 
@@ -96,8 +91,8 @@ Strict: a cell passes only if it passes at OMP ∈ {1, 2, 4}.
 
 | group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
 |---|---|---|---|---|---|
-| small | **PASS** 6.27% | **PASS** 1.65% | **PASS** 1.69% | **PASS** 1.45% | **PASS** 1.44% |
-| medium | **PASS** 6.67% | **PASS** 1.71% | **PASS** 1.75% | **PASS** 1.38% | **PASS** 2.69% |
+| small | **PASS** 6.26% | **PASS** 1.67% | **PASS** 1.69% | **PASS** 1.46% | **PASS** 1.60% |
+| medium | **PASS** 6.68% | **PASS** 1.74% | **PASS** 1.77% | **PASS** 1.38% | **PASS** 2.69% |
 | large | **PASS** 5.83% | **PASS** 1.61% | **PASS** 1.61% | **PASS** 2.07% | **PASS** 1.49% |
 | xl | **PASS** 6.33% | **PASS** 1.74% | **PASS** 1.66% | **PASS** 2.44% | **PASS** 2.03% |
 
@@ -163,23 +158,23 @@ parametric-DC configs and 80/80 transient configs at 0.67 M parameters.
 
 ## 5. Device-level suites
 
-**Parametric DC — `verify_nn_multi_tech_dc`** *(mean Id-Vgs NRMSE %, config fails in brackets)*
+**Parametric DC — `verify_nn_multi_tech_dc`** *(mean NRMSE % / mean MRE % / min R² / max error µA; config fails in brackets)*
 
 | group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass |
 |---|---|---|---|---|---|---|
-| small | 1.98 | 2.33 (13/14) | 1.46 | 0.94 | 1.58 (13/14) | 67/69 |
-| medium | 1.78 | 2.09 | 1.22 | 1.46 | 1.80 (13/14) | 68/69 |
-| large | 2.12 | 2.51 (13/14) | 1.27 | 1.99 (16/18) | 1.97 (13/14) | 65/69 |
-| xl | 1.91 | 3.22 (13/14) | 2.41 | 0.98 | 1.45 (13/14) | 67/69 |
+| small | 1.98 / 7.87 / 0.961 / 37 | 2.33 / 8.60 / 0.885 / 29.8 (13/14) | 1.46 / 4.93 / 0.989 / 28 | 0.94 / 3.64 / 0.974 / 49.3 | 1.58 / 6.07 / 0.860 / 106 (13/14) | 67/69 |
+| medium | 1.78 / 5.81 / 0.955 / 23.4 | 2.09 / 7.28 / 0.914 / 24.4 | 1.22 / 3.31 / 0.988 / 23.3 | 1.46 / 4.03 / 0.891 / 116 | 1.80 / 6.22 / 0.774 / 151 (13/14) | 68/69 |
+| large | 2.12 / 6.58 / 0.959 / 30.1 | 2.51 / 7.77 / 0.855 / 32.5 (13/14) | 1.27 / 3.40 / 0.984 / 20.7 | 1.99 / 5.85 / 0.804 / 171 (16/18) | 1.97 / 5.53 / 0.809 / 151 (13/14) | 65/69 |
+| xl | 1.91 / 6.00 / 0.954 / 33.2 | 3.22 / 9.57 / 0.808 / 38 (13/14) | 2.41 / 6.61 / 0.950 / 64.8 | 0.98 / 2.98 / 0.906 / 114 | 1.45 / 4.31 / 0.790 / 158 (13/14) | 67/69 |
 
-**Parametric transient — `verify_nn_multi_tech_tran`** *(mean NRMSE %)*
+**Parametric transient — `verify_nn_multi_tech_tran`** *(mean NRMSE % / mean MRE % / min R² / max error mV; config fails in brackets)*
 
 | group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass |
 |---|---|---|---|---|---|---|
-| small | 1.96 | 1.46 | 1.50 | 1.51 | 1.62 | 80/80 |
-| medium | 1.68 | 1.51 | 1.55 | 1.48 | 1.47 | 80/80 |
-| large | 1.72 | 1.47 | 1.47 | 1.49 | 1.49 | 80/80 |
-| xl | 1.66 | 1.47 | 1.46 | 1.50 | 1.50 | 80/80 |
+| small | 1.98 / 8.24 / 0.991 / 242 | 1.48 / 8.02 / 0.990 / 253 | 1.51 / 8.31 / 0.991 / 250 | 1.51 / 8.44 / 0.992 / 220 | 1.63 / 8.22 / 0.992 / 209 | 80/80 |
+| medium | 1.68 / 8.57 / 0.990 / 184 | 1.51 / 8.06 / 0.991 / 251 | 1.56 / 8.19 / 0.991 / 250 | 1.48 / 8.75 / 0.992 / 220 | 1.46 / 8.28 / 0.992 / 210 | 80/80 |
+| large | 1.74 / 8.76 / 0.990 / 185 | 1.48 / 8.35 / 0.991 / 250 | 1.48 / 8.35 / 0.991 / 250 | 1.50 / 9.03 / 0.992 / 221 | 1.49 / 8.67 / 0.992 / 210 | 80/80 |
+| xl | 1.66 / 8.85 / 0.990 / 184 | 1.47 / 8.31 / 0.991 / 250 | 1.46 / 8.30 / 0.991 / 250 | 1.50 / 8.93 / 0.992 / 220 | 1.50 / 8.66 / 0.992 / 210 | 80/80 |
 
 **Device CS-amp AC** — NMOS / PMOS *(gate: gain0 ≤1.5 dB, f3db ratio ∈[0.7, 1.43], magNRMSE ≤10 %)*
 
@@ -190,14 +185,14 @@ parametric-DC configs and 80/80 transient configs at 0.67 M parameters.
 | large | ✗ / ✗ | ✗ / ✗ | ✗ / ✗ | ✗ / ✗ | ✗ / ✗ | **0/10** |
 | xl | ✗ / ✗ | ✗ / ✗ | ✗ / ✗ | ✗ / ✗ | ✗ / ✗ | **0/10** |
 
-**Opamp open-loop AC** — DC-gain error *(gate: ≤3 dB, GBW ratio ∈[0.6, 1.67], PM err ≤15°, non-railed OP)*
+**Opamp open-loop AC** — DC-gain error *(gate: ≤3 dB, GBW ratio ∈[0.6, 1.67], PM err ≤15°, valid refined reference and converged NN OP)*
 
 | group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass /5 |
 |---|---|---|---|---|---|---|
-| small | FAIL 15.52 dB | FAIL 30.40 dB | FAIL 30.18 dB | FAIL 21.58 dB | FAIL 30.94 dB | **0/5** |
-| medium | FAIL 12.42 dB | FAIL 29.81 dB | FAIL 29.24 dB | FAIL 30.26 dB | FAIL 32.14 dB | **0/5** |
-| large | FAIL 17.05 dB | FAIL 30.98 dB | FAIL 30.98 dB | FAIL 27.81 dB | FAIL 33.11 dB | **0/5** |
-| xl | FAIL 13.96 dB | FAIL 30.72 dB | FAIL 30.72 dB | FAIL 28.00 dB | FAIL 33.55 dB | **0/5** |
+| small | FAIL 54.03 dB | FAIL 49.84 dB | FAIL 49.59 dB | FAIL 31.75 dB | FAIL 36.13 dB | **0/5** |
+| medium | FAIL 55.07 dB | FAIL 51.07 dB | FAIL 51.73 dB | FAIL 35.19 dB | FAIL 39.38 dB | **0/5** |
+| large | FAIL 52.82 dB | FAIL 50.69 dB | FAIL 50.69 dB | FAIL 34.64 dB | FAIL 33.02 dB | **0/5** |
+| xl | FAIL 54.81 dB | FAIL 49.92 dB | FAIL 50.13 dB | FAIL 34.31 dB | FAIL 32.48 dB | **0/5** |
 
 Parametric DC is 67/69 · 68/69 · 65/69 · 67/69 from small→xl, while
 transient is 80/80 at every tier. `medium` is the best device fit and `large`
@@ -228,8 +223,8 @@ fixed points.
 
 `PYCIRCUITSIM_NN_AR_CACHE=1` keeps per-layer K/V across the autoregressive loop
 so each token is encoded once, instead of re-encoding the whole growing prefix
-at every step. It is worth 1.2–1.6× in the solver and 4.3× on `no_grad` batch
-evaluation.
+at every step. The V7.5.16 rerun passed all 10 checks and measured
+118.5 ms → 74.2 ms (**1.60×**) for the cached evaluation.
 
 **It is default-off and stays off until a full re-gate clears it.** It is exact
 in real arithmetic but not in float32, because `F.linear` is not row-stable on
@@ -246,26 +241,12 @@ gate can reach the path while it is off.
 | **Low-VDD rings** | The repeatable failure class after the universal opamp-convergence failures. The historical corridor curriculum closes them; recipes were not retrained in V7.4.0. |
 | **Inference cost** | ~40× DirectNet per evaluation. Structural, not a tuning matter: it is the token count times the weight stream. |
 | **TSMC7-NMOS device DC** | Grows with capacity. Unexplained. |
-| **Miller opamp DC/AC** | DC is 0/5 and AC is 0/5 at every tier. Fix the physical operating-point convergence/basin before interpreting small-signal metrics; the AC gate also has the bias-grid caveat in `DirectNet-L73-clean.md` §6. |
+| **Miller opamp DC/AC** | DC is 0/5 and AC is 0/5 at every tier. Fix the physical operating-point convergence/basin before interpreting small-signal metrics. |
 
-## 9. Reproducing
-
-```bash
-# train the clean control, all tiers, on GPU (same driver as DirectNet;
-# MODEL=transformer selects LEVEL=74 and the `_tf_` stems)
-MODEL=transformer RECIPES=clean TECHS='tsmc5 tsmc6 tsmc7 tsmc12 tsmc16' \
-  SIZES='small medium large xl' GPUS='1 1 0' NSTREAMS=8 TRAIN_OMP=4 \
-  bash scripts/recipe_train.sh
-
-# BSIM-AR gates through the same drivers; the tag selects LEVEL=74
-BSIMAR_CHECKPOINT_DIR=external_compact_models/neural_network/v740_archive/checkpoints \
-NN_PY=$(command -v python) bash scripts/v710_regate.sh \
-  _one tf medium TSMC7 verify_complex_opamp 4
-BSIMAR_CHECKPOINT_DIR=external_compact_models/neural_network/v740_archive/checkpoints \
-python scripts/v730_coverage.py --set clean --tag tf \
-  --passes simple-recheck --require-complete
-```
+## 9. Reproduction
 
 Checkpoints (gitignored): `tsmc{5,6,7,12,16}_tf_{small,medium,large,xl}_{nmos,pmos}`,
 each with `_norm.npz` and a **required** `_config.npz` sidecar.
-Raw runs: `results/simple_recheck_24c181a/`.
+Raw runs: `results/v7516_clean/`. The complete training, gate, coverage, and
+report-build commands are in the
+[README](../../README.md#run-the-complete-clean-checkpoint-matrix).

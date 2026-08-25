@@ -20,13 +20,15 @@ live under their own stems and are covered in
 
 **Measurement provenance.** The datasets and S/M/L/XL checkpoints are the
 preserved V7.4.0 clean rebuild, on exactly the same data and recipe as
-DirectNet. Every table below was remeasured in one complete CPU-pinned pass on
-2026-08-19 at commit `24c181a`, after the solver began requiring convergence
-at the final physical homotopy step and before AC linearization. The shared
-checkpoint archive and exact old-versus-new comparison are recorded in
+DirectNet. Every generated table below was remeasured in the complete V7.5.16
+CPU-pinned pass at gate commit `49f0426`, after the MNA residual and opamp-AC
+bias contracts were corrected. The shared 280-artifact checkpoint archive has
+manifest SHA-256
+`8e4245f1ab563cd116a789cb02388e0f7b736186141694d3242ede2a7ed07868`.
+The V7.5.15 audit trail remains in
 [`simple-circuits-recheck-2026-08-19.md`](simple-circuits-recheck-2026-08-19.md).
 
-Gate definitions, the strict-OMP rule and the code ladder:
+Gate definitions, strict-OMP scoring, comparability, and evidence rules:
 [`methodology.md`](methodology.md).
 
 | tier | shape | params | CPU cost, 1 thread |
@@ -43,15 +45,8 @@ Tier names compare a family with itself, never across families: BSIM-AR
 > totals are **/20**, device AC **/10**, opamp AC **/5**, where every earlier
 > report said /16, /8 and /4. No total here is comparable to a pre-V7.3.0 total
 > without rescaling.
->
-> V7.4.0 makes `methodology.md` §7's TSMC6 finding exhaustive rather than
-> exemplary: of 1748 shared modelcard parameters exactly 11 differ in value,
-> plus 74 TSMC6-only and 12 TSMC7-only keys, and **all 97 have zero occurrences
-> anywhere in the BSIM-CMG Verilog-A** (against 333 of the 1737 identical keys
-> that do appear). All 97 belong to TSMC's TMI layout-dependent-effect layer
-> (LOD, ODX, isolated-CPODE); no core device-physics parameter differs. TSMC6
-> stays a **controlled repeat** whose sole degree of freedom is training
-> nondeterminism — see `DirectNet-L73-clean.md` for the full breakdown.
+
+TSMC6 remains the controlled repeat defined in `methodology.md` §7.
 
 ---
 
@@ -134,8 +129,8 @@ fixed points.
 
 `PYCIRCUITSIM_NN_AR_CACHE=1` keeps per-layer K/V across the autoregressive loop
 so each token is encoded once, instead of re-encoding the whole growing prefix
-at every step. It is worth 1.2–1.6× in the solver and 4.3× on `no_grad` batch
-evaluation.
+at every step. The V7.5.16 rerun passed all 10 checks and measured
+118.5 ms → 74.2 ms (**1.60×**) for the cached evaluation.
 
 **It is default-off and stays off until a full re-gate clears it.** It is exact
 in real arithmetic but not in float32, because `F.linear` is not row-stable on
@@ -152,26 +147,12 @@ gate can reach the path while it is off.
 | **Low-VDD rings** | The repeatable failure class after the universal opamp-convergence failures. The historical corridor curriculum closes them; recipes were not retrained in V7.4.0. |
 | **Inference cost** | ~40× DirectNet per evaluation. Structural, not a tuning matter: it is the token count times the weight stream. |
 | **TSMC7-NMOS device DC** | Grows with capacity. Unexplained. |
-| **Miller opamp DC/AC** | DC is 0/5 and AC is 0/5 at every tier. Fix the physical operating-point convergence/basin before interpreting small-signal metrics; the AC gate also has the bias-grid caveat in `DirectNet-L73-clean.md` §6. |
+| **Miller opamp DC/AC** | DC is 0/5 and AC is 0/5 at every tier. Fix the physical operating-point convergence/basin before interpreting small-signal metrics. |
 
-## 9. Reproducing
-
-```bash
-# train the clean control, all tiers, on GPU (same driver as DirectNet;
-# MODEL=transformer selects LEVEL=74 and the `_tf_` stems)
-MODEL=transformer RECIPES=clean TECHS='tsmc5 tsmc6 tsmc7 tsmc12 tsmc16' \
-  SIZES='small medium large xl' GPUS='1 1 0' NSTREAMS=8 TRAIN_OMP=4 \
-  bash scripts/recipe_train.sh
-
-# BSIM-AR gates through the same drivers; the tag selects LEVEL=74
-BSIMAR_CHECKPOINT_DIR=external_compact_models/neural_network/v740_archive/checkpoints \
-NN_PY=$(command -v python) bash scripts/v710_regate.sh \
-  _one tf medium TSMC7 verify_complex_opamp 4
-BSIMAR_CHECKPOINT_DIR=external_compact_models/neural_network/v740_archive/checkpoints \
-python scripts/v730_coverage.py --set clean --tag tf \
-  --passes simple-recheck --require-complete
-```
+## 9. Reproduction
 
 Checkpoints (gitignored): `tsmc{5,6,7,12,16}_tf_{small,medium,large,xl}_{nmos,pmos}`,
 each with `_norm.npz` and a **required** `_config.npz` sidecar.
-Raw runs: `results/simple_recheck_24c181a/`.
+Raw runs: `results/v7516_clean/`. The complete training, gate, coverage, and
+report-build commands are in the
+[README](../../README.md#run-the-complete-clean-checkpoint-matrix).

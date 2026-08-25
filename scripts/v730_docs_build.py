@@ -23,7 +23,7 @@ Available sources (each rendered report is pinned to one complete pass):
     results/v710_regate/data.json  V7.1.0, device + AC + strict OMP
     results/v730_regate/data.json  V7.3.0, recipes + PFN campaign
     results/v740_regate/data.json  V7.4.0, clean DN + BSIM-AR rebuild
-    results/v7516_clean/data.json   V7.5.16, clean all-family re-gate
+    results/v7516_clean/data.json   V7.5.16, clean DirectNet/BSIM-AR re-gate
 
 Run after any re-gate:
 
@@ -171,30 +171,32 @@ ACTIVE_PASS: Optional[str] = None
 # Every report is rendered from one coherent campaign. A later partial pass is
 # never allowed to backfill itself from older cells and overwrite a complete
 # published report.
-# The current clean reports use one complete V7.5.16 campaign across all three
-# families. The builder fails closed until that pass contains every required
-# suite result; it never backfills a partial new campaign from older cells.
+# DirectNet and BSIM-AR use one complete V7.5.16 campaign. PFN remains pinned
+# to its retained V7.3.0 report; a stopped partial retrain must not replace it.
+# The builder never backfills a partial current campaign from older cells.
 REPORT_PASS: Dict[Tuple[str, bool], str] = {
     ("dn", False): "V7.5.16",
     ("tf", False): "V7.5.16",
-    ("pfn", False): "V7.5.16",
+    ("pfn", False): "V7.3.0",
     ("dn", True): "V7.3.0",
     ("tf", True): "V7.3.0",
     ("pfn", True): "V7.3.0",
 }
 
+CURRENT_CLEAN_TAGS = ("dn", "tf")
+
 # The new hardware does not carry the raw V7.3 recipe/PFN trees. These digests
 # make the retained rendered reports immutable and keep --check meaningful.
 PRESERVED_REPORT_SHA256: Dict[Tuple[str, bool], str] = {
-    ("dn", False): "74fc8fdb68f62db910f3ca9da85493cd64ce0ec916d46a0541038e033f840052",
+    ("dn", False): "b4037e7f303a5f680bea3380efec6c022aa9a23132e5009ed5c9d43c7b34d1d3",
     ("dn", True): "cf5e72584234e4c4e15b3759bfc09d1cbbdef4742e5fe664cd501c000a241805",
-    ("tf", False): "6c1b70927cd20d83e894441551cf722789d244d19f666805c3e9947e86c080ed",
+    ("tf", False): "de54d9da78b0eddc66ffef97f487a04c0d64ea6cc9e26d2cc18ae65694590618",
     ("tf", True): "c79255aabecd3e9b1b320e403e747d790482046a829b1c40c44299d6bd758a2e",
-    ("pfn", False): "13e56216775055fa3701fba4d9b893d8143a11626250fd67a129ac39a2c21102",
+    ("pfn", False): "b9be502ed26b3d380cfaceb2ba938e907ac4dddb4de1a77884b35e4b9832c104",
     ("pfn", True): "e48c24415a76876dcd1c62bb249fdddee772a7bc30fb1c60260b333cfdb554e7",
 }
 PRESERVED_README_SHA256 = (
-    "661882c1d035a35a190ce8be60dbbb6f454ee28844428c540419e8976f3e4fc1"
+    "c7b2743dbfaab7adddfb8abd19ea76b3a4a75264aa7b49f152d69e7f358b8f69"
 )
 
 
@@ -716,7 +718,7 @@ def build_readme(check: bool) -> bool:
     dest = DOCS / "README.md"
     incomplete = [
         f"{tag}@{REPORT_PASS[(tag, False)]}"
-        for tag in ("dn", "tf", "pfn")
+        for tag in CURRENT_CLEAN_TAGS
         if not _matrix_complete_in_pass(
             tag, False, REPORT_PASS[(tag, False)]
         )

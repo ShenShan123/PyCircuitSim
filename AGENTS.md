@@ -89,6 +89,12 @@ outer bounds.
 
 ### DC and operating point
 
+- A residual evaluated from node voltages must first solve the augmented MNA
+  branch-current tail for ideal voltage sources. Never fill those unknowns
+  with zero, and scale a KCL tolerance only from current-valued node RHS rows;
+  voltage-source constraint rows are measured in volts. Cache the
+  topology-stable source-incidence fit rather than recomputing its dense
+  least-squares factorization in every nonlinear iteration.
 - Apply the standard voltage convergence test:
   `|ΔV| < VNTOL + RELTOL * max(|V_old|, |V_new|)` with `RELTOL=1e-4` and
   `VNTOL=1e-7` unless a gate explicitly studies tolerances.
@@ -180,10 +186,32 @@ must come from one complete campaign pass and must preserve its checkpoint and
 commit provenance. Do not mix partial logs or compare totals across a gate-
 denominator change without rescaling.
 
+Train a new clean matrix into an isolated `BSIMAR_CHECKPOINT_DIR`; never
+overwrite the preserved control while generating a comparison. A checkpoint
+is campaign-ready only when its model, required normalization/config sidecars,
+and completion marker all exist.
+
 Keep diagnostics separate from gates. A diagnostic may explain a failure but
 does not count as evidence. Make each gate answer one question, and test NMOS
 and PMOS through single-device OP/DC, inverter VTC/transient, and derivative-
 sensitive circuit behavior before promoting a model.
+
+Accuracy CLIs must reject unknown technologies, devices, and analyses before
+running so a typo cannot shrink a denominator. When a LEVEL=73 deck is
+retargeted with `PYCIRCUITSIM_NN_FORCE_LEVEL`, every human-readable banner must
+name the selected family rather than the deck's original family.
+
+The clean re-gate driver must reject a missing or dependency-incomplete
+`NN_PY`; never silently fall back to another interpreter. An unhandled Python
+traceback is infrastructure failure, not a scientific exit-1 verdict. Keep
+explicit `ERROR` configurations in parametric denominators while aggregating
+numeric metrics only over rows that produced them.
+
+For a high-gain opamp AC gate, locate the linearization bias with a physical
+fine sweep around the coarse maximum-gain point. Do not interpolate a coarse
+grid into a reference. Gate only after the reference bias is off-rail and the
+NN DC operating point has converged; an unconverged response remains a
+diagnostic.
 
 Report model error with MRE, R², NRMSE, and maximum voltage error per
 technology. Store the detailed results in `docs/accuracy/`, not in this file.
