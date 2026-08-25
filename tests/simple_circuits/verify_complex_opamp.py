@@ -37,6 +37,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "
 from tests.common.base import SIMPLE_DECKS, render_reference_deck  # noqa: E402
 from tests.common.complex import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech, active_model_label,
+    active_model_name,
     get_baked_modelcard, run_ngspice_wrdata,
     render_directnet_text, run_directnet_dc_sweep, full_metrics, fmt_metrics,
 )
@@ -232,7 +233,8 @@ def main() -> int:
     print("\n" + "=" * 78)
     print("SUMMARY — Benchmark 3b Miller opamp")
     print("=" * 78)
-    hdr = (f"{'Tech':8s} | {'NG gain':>9s} | {'DN gain':>9s} | "
+    model_gain = f"{active_model_name()} gain"
+    hdr = (f"{'Tech':8s} | {'NG gain':>9s} | {model_gain:>9s} | "
            f"{'GainErr%':>9s} | {'TripShift':>10s} | {'NRMSE%':>7s} | "
            f"{'Status':>8s}")
     print(hdr)

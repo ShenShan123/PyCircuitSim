@@ -55,6 +55,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "
 from tests.common.base import SIMPLE_DECKS, render_reference_deck  # noqa: E402
 from tests.common.complex import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech, active_model_label,
+    active_model_name,
     get_baked_modelcard, run_ngspice_wrdata, parse_netlist, full_metrics,
     render_directnet_text,
 )
@@ -325,8 +326,11 @@ def run_one(bt: BenchTech, nfins: List[int]) -> Dict:
         nrmse_ok = metrics["nrmse_pct"] <= SRAM_NRMSE_TOL * 100
         snm_err = (abs(dn_snm - ng_snm) / ng_snm * 100.0
                    if ng_snm > 1e-6 else float("nan"))
-        print(f"      NG SNM={ng_snm*1e3:.1f}mV  DN SNM={dn_snm*1e3:.1f}mV  "
-              f"SNMerr={snm_err:.1f}%  DN min(qb)={dn_min*1e3:.1f}mV  "
+        model_name = active_model_name()
+        print(f"      NG SNM={ng_snm*1e3:.1f}mV  "
+              f"{model_name} SNM={dn_snm*1e3:.1f}mV  "
+              f"SNMerr={snm_err:.1f}%  "
+              f"{model_name} min(qb)={dn_min*1e3:.1f}mV  "
               f"NRMSE={metrics['nrmse_pct']:.2f}% "
               f"({'ok' if nrmse_ok else 'HIGH'})")
         corner_rows.append({
@@ -395,8 +399,9 @@ def main() -> int:
     print("\n" + "=" * 78)
     print("SUMMARY — Benchmark 3c SRAM read SNM")
     print("=" * 78)
+    model_snm = f"{active_model_name()} SNM mV"
     hdr = (f"{'Tech':8s} | {'NFIN':>5s} | {'NG SNM mV':>10s} | "
-           f"{'DN SNM mV':>10s} | {'SNMerr%':>8s} | {'min(qb)mV':>10s} | "
+           f"{model_snm:>10s} | {'SNMerr%':>8s} | {'min(qb)mV':>10s} | "
            f"{'NRMSE%':>7s} | {'Gate':>5s}")
     print(hdr)
     print("-" * len(hdr))

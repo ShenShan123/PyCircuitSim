@@ -160,18 +160,30 @@ def build_index(
 
 def ckpt_exists(tag: str, variant: str, tech: str,
                 require_complete: bool = False) -> bool:
-    """Both devices present. `require_complete` also demands the done marker.
+    """Both models present. `require_complete` also demands ready artifacts.
 
     A bare `_best.pt` may be a run that was killed mid-training — the trainer
     writes it at every val improvement — so gating one silently produces a
-    number for a checkpoint nobody finished. The marker is the discipline
-    (AGENTS.md); it is opt-in here because checkpoints predating the marker are
-    genuinely complete and would otherwise be excluded.
+    number for a checkpoint nobody finished. A campaign-ready checkpoint also
+    needs its normalization data and, for BSIM-AR/PFN, its architecture
+    sidecar. This stricter contract is opt-in because historical checkpoints
+    predate the completion marker.
     """
     t = tech.lower()
-    suffixes = ("_best.pt.complete",) if require_complete else ("_best.pt",)
-    return all((CKPT / f"{t}_{tag}_{variant}_{d}{sfx}").exists()
-               for d in ("nmos", "pmos") for sfx in suffixes)
+    for device in ("nmos", "pmos"):
+        stem = CKPT / f"{t}_{tag}_{variant}_{device}"
+        if not (stem.with_name(stem.name + "_best.pt")).exists():
+            return False
+        if require_complete:
+            if not (stem.with_name(stem.name + "_norm.npz")).exists():
+                return False
+            if not (stem.with_name(stem.name + "_best.pt.complete")).exists():
+                return False
+            if tag in ("tf", "pfn") and not (
+                stem.with_name(stem.name + "_config.npz")
+            ).exists():
+                return False
+    return True
 
 
 def variant_for(tag: str, group: str, tech: str, is_clean: bool) -> str:
@@ -205,9 +217,8 @@ def main() -> int:
                          "campaign passes its OWN name so cells measured by "
                          "an earlier pass are re-gated rather than inherited.")
     ap.add_argument("--require-complete", action="store_true",
-                    help="Only count a checkpoint that carries its "
-                         "*_best.pt.complete marker — use when a training "
-                         "wave for these stems is still running")
+                    help="Only count checkpoints with model, normalization, "
+                         "completion marker, and required architecture sidecar")
     ap.add_argument("--fail-on-gaps", action="store_true",
                     help="Exit nonzero when a requested measurement is "
                          "missing or a requested checkpoint group is "

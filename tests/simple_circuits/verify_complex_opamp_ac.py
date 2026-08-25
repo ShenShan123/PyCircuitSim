@@ -41,7 +41,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from tests.common.complex import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech, OpAmpParams,
-    active_model_label, opamp_bias,
+    active_model_label, active_model_name, opamp_bias,
     get_baked_modelcard, run_ngspice_wrdata, run_directnet_dc_sweep,
     ngspice_opamp, directnet_opamp,
 )
@@ -203,7 +203,6 @@ def eval_opamp_ac(tech: str) -> Dict[str, object]:
     passed = opamp_ac_gate_passes(op_ok, bool(reference_op_valid), m)
     return dict(tech=tech, ng_trip=ng_trip, nn_trip=nn_trip,
                 ng_vout=ng_vout, nn_vout=nn_vout, op_ok=op_ok,
-                op_valid=bool(reference_op_valid),
                 reference_op_valid=bool(reference_op_valid),
                 nn_op_valid=bool(nn_op_valid), dc_op=dc_op, m=m,
                 passed=bool(passed))
@@ -226,6 +225,7 @@ def _to_ac_deck(dc_deck: str, vcm_tok: str, trip: float, ac_card: str) -> str:
 def _print_result(r: Dict[str, object]) -> None:
     m = r["m"]
     tech = r["tech"]
+    model_name = active_model_name()
     verdict = "PASS" if r["passed"] else "FAIL"
     if not r.get("reference_op_valid", True):
         op_note = "  [REF-OP-MISBIAS: ground-truth output railed]"
@@ -238,13 +238,14 @@ def _print_result(r: Dict[str, object]) -> None:
     op = r["dc_op"]
     op_str = "  ".join(
         f"{k}={op[k]:.3f}" for k in ("vout", "vo1i", "vtail") if k in op)
-    print(f"    NN DC OP: {op_str}")
+    print(f"    {model_name} DC OP: {op_str}")
     print(
-        f"    dc_gain DN={m['gain0_db']:.2f}dB NG={m['gain0_db_ref']:.2f}dB "
+        f"    dc_gain {model_name}={m['gain0_db']:.2f}dB "
+        f"NG={m['gain0_db_ref']:.2f}dB "
         f"(err={m['gain0_db_err']:.2f}dB)  "
-        f"GBW DN={fmt_hz(m['gbw_test'])} NG={fmt_hz(m['gbw_ref'])} "
+        f"GBW {model_name}={fmt_hz(m['gbw_test'])} NG={fmt_hz(m['gbw_ref'])} "
         f"(ratio={fmt_ratio(m['gbw_ratio'])})  "
-        f"PM DN={fmt_ratio(m['pm_test'])} NG={fmt_ratio(m['pm_ref'])} "
+        f"PM {model_name}={fmt_ratio(m['pm_test'])} NG={fmt_ratio(m['pm_ref'])} "
         f"(err={fmt_ratio(m['pm_err'])}deg)  "
         f"magNRMSE={m['mag_nrmse']*100:.2f}%")
     # parseable gate line (benchmark_collect.parse_ac_complex_log reads this)

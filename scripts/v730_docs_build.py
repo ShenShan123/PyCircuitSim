@@ -193,6 +193,9 @@ PRESERVED_REPORT_SHA256: Dict[Tuple[str, bool], str] = {
     ("pfn", False): "13e56216775055fa3701fba4d9b893d8143a11626250fd67a129ac39a2c21102",
     ("pfn", True): "e48c24415a76876dcd1c62bb249fdddee772a7bc30fb1c60260b333cfdb554e7",
 }
+PRESERVED_README_SHA256 = (
+    "661882c1d035a35a190ce8be60dbbb6f454ee28844428c540419e8976f3e4fc1"
+)
 
 
 @contextmanager
@@ -457,7 +460,8 @@ def device_tables(tag: str, recipes: bool) -> str:
             out.append(f"| {label} | " + " | ".join(cells) + f" | **{p}/{n}** |")
 
     out += ["", "**Opamp open-loop AC** — DC-gain error "
-            "*(gate: ≤3 dB, GBW ratio ∈[0.6, 1.67], PM err ≤15°, non-railed OP)*", "",
+            "*(gate: ≤3 dB, GBW ratio ∈[0.6, 1.67], PM err ≤15°, "
+            "valid refined reference and converged NN OP)*", "",
             "| group | " + " | ".join(TECHS) + " | pass /5 |",
             "|---|" + "---|" * (len(TECHS) + 1)]
     for label, key in _groups(tag, recipes):
@@ -516,10 +520,10 @@ FAMILY_META = {
 # Raw campaign trees are local evidence and may be absent on another clone.
 # These values are the durable published fallback for the README only; the
 # rendered labels still identify the code state that produced each result.
-HISTORICAL_CLEAN: Dict[str, Tuple[str, int, int]] = {
-    "dn": ("large", 12, 20),
-    "tf": ("small", 13, 20),
-    "pfn": ("small", 14, 20),
+HISTORICAL_CLEAN: Dict[str, Tuple[str, str, int, int]] = {
+    "dn": ("2026-08-19", "large", 12, 20),
+    "tf": ("2026-08-19", "small", 13, 20),
+    "pfn": ("V7.3", "small", 14, 20),
 }
 HISTORICAL_RECIPE: Dict[str, Tuple[str, int, int]] = {
     "dn": ("`crit15m`@xl", 19, 20),
@@ -598,8 +602,9 @@ def scoreboard(_tag=None, _recipes=None) -> str:
         if clean_complete:
             with evidence_pass(clean_version):
                 cl, cp, cn = _best(tag, False)
+            clean_source_version = clean_version.removesuffix(" recheck")
         else:
-            cl, cp, cn = HISTORICAL_CLEAN[tag]
+            clean_source_version, cl, cp, cn = HISTORICAL_CLEAN[tag]
         if recipe_complete:
             with evidence_pass("V7.3.0"):
                 rl, rp, rn = _best(tag, True)
@@ -608,12 +613,11 @@ def scoreboard(_tag=None, _recipes=None) -> str:
         if tag == "dn" and clean_complete:
             with evidence_pass(clean_version):
                 served_pass, served_total = _score(tag, "large", False)
-            c = (f"{clean_version} `large` "
+            c = (f"{clean_source_version} `large` "
                  f"**{served_pass}/{served_total}** served; "
                  f"`{cl}` **{cp}/{cn}** best")
         else:
-            version = clean_version.removesuffix(" recheck")
-            c = f"{version} `{cl}` **{cp}/{cn}**"
+            c = f"{clean_source_version} `{cl}` **{cp}/{cn}**"
         r = f"V7.3 {rl} **{rp}/{rn}**"
         out.append(f"| {lvl} | **{FAM[tag]}** | {role} | {c} | {r} | {cost} |")
     out.append("")
@@ -709,8 +713,23 @@ def build_readme(check: bool) -> bool:
     tpl = TPL / "README.md.in"
     if not tpl.exists():
         return True
-    text = tpl.read_text().replace("<!--SCOREBOARD-->", scoreboard())
     dest = DOCS / "README.md"
+    incomplete = [
+        f"{tag}@{REPORT_PASS[(tag, False)]}"
+        for tag in ("dn", "tf", "pfn")
+        if not _matrix_complete_in_pass(
+            tag, False, REPORT_PASS[(tag, False)]
+        )
+    ]
+    if incomplete:
+        actual = (hashlib.sha256(dest.read_bytes()).hexdigest()
+                  if dest.exists() else None)
+        preserved = actual == PRESERVED_README_SHA256
+        state = "checksum verified" if preserved else "MISSING OR DRIFTED"
+        print(f"  {dest.name}: clean matrix incomplete "
+              f"({', '.join(incomplete)}), {state}")
+        return preserved
+    text = tpl.read_text().replace("<!--SCOREBOARD-->", scoreboard())
     if check:
         same = dest.exists() and dest.read_text() == text
         print(f"  {dest.name}: {'up to date' if same else 'STALE'}")

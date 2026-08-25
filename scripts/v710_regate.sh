@@ -62,6 +62,18 @@ PY="${NN_PY:-/data1/shenshan/.conda/envs/pycircuitsim/bin/python}"
   exit 2
 }
 
+checkpoint_ready () {
+  local stem
+  for stem in "$@"; do
+    [ -f "$CKPT/${stem}_best.pt" ] || return 1
+    [ -f "$CKPT/${stem}_norm.npz" ] || return 1
+    [ -f "$CKPT/${stem}_best.pt.complete" ] || return 1
+    case "$tag" in
+      tf|pfn) [ -f "$CKPT/${stem}_config.npz" ] || return 1 ;;
+    esac
+  done
+}
+
 if [ "${1:-}" = "_one" ]; then
   tag="$2"; variant="$3"; tuc="$4"; suite="$5"; omp="${6:-1}"
   tlc="$(echo "$tuc" | tr 'A-Z' 'a-z')"
@@ -90,7 +102,7 @@ if [ "${1:-}" = "_one" ]; then
   # no-verdict while either checkpoint is absent, but clear the stale marker
   # and resume the cell after both checkpoints have been trained.
   if grep -q "===V710_DONE rc=no-ckpt===" "$log" 2>/dev/null; then
-    if [ -f "$CKPT/${tlc}_${tag}_${variant}_nmos_best.pt" ] && [ -f "$CKPT/${tlc}_${tag}_${variant}_pmos_best.pt" ]; then
+    if checkpoint_ready "${tlc}_${tag}_${variant}_nmos" "${tlc}_${tag}_${variant}_pmos"; then
       echo "[v710] RETRY $tag/$variant/$tlc/$suite/omp$omp (checkpoints appeared since the NO-CKPT record)"; rm -f "$log"
     else
       echo "[v710] SKIP $tag/$variant/$tlc/$suite/omp$omp (recorded NO-CKPT — still no verdict)"; exit 3
@@ -117,7 +129,7 @@ if [ "${1:-}" = "_one" ]; then
   fi
 
   sn="${tlc}_${tag}_${variant}_nmos"; sp="${tlc}_${tag}_${variant}_pmos"
-  if [ ! -f "$CKPT/${sn}_best.pt" ] || [ ! -f "$CKPT/${sp}_best.pt" ]; then
+  if ! checkpoint_ready "$sn" "$sp"; then
     echo "[v710] NO-CKPT $tag/$variant/$tlc -> skip $suite"
     echo "===V710_DONE rc=no-ckpt===" > "$log"; exit 3
   fi
@@ -135,7 +147,8 @@ if [ "${1:-}" = "_one" ]; then
          export PYCIRCUITSIM_NN_FORCE_LEVEL=74 ;;
     pfn) export PYCIRCUITSIM_NN_CHECKPOINT_PFN_NMOS="$sn" PYCIRCUITSIM_NN_CHECKPOINT_PFN_PMOS="$sp"
          export PYCIRCUITSIM_NN_FORCE_LEVEL=75 ;;
-    dn)  export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="$sn"  PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="$sp" ;;
+    dn)  export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="$sn"  PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="$sp"
+         export PYCIRCUITSIM_NN_FORCE_LEVEL=73 ;;
     *)   echo "[v710] UNKNOWN tag=$tag"; exit 1 ;;
   esac
 

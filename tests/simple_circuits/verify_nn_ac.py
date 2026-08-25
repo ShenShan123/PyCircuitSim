@@ -44,7 +44,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from tests.common.complex import (  # noqa: E402
-    BENCH, BENCH_TECHS, active_model_label, get_baked_modelcard,
+    BENCH, BENCH_TECHS, active_model_label, active_model_name,
+    get_baked_modelcard,
     run_ngspice_wrdata,
 )
 from tests.common.complex_ac import (  # noqa: E402
@@ -114,7 +115,7 @@ def _directnet_deck(bt, device: str, vbias: float, ac_card: str) -> str:
         model = (f".model pmos_nn PMOS "
                  f"(LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})\n")
     return (
-        f"* {device.upper()} CS amp AC — DirectNet LEVEL=73 ({bt.name})\n"
+        f"* {device.upper()} CS amp AC — {active_model_label()} ({bt.name})\n"
         f"VDD vdd 0 {bt.vdd:g}\n"
         f"Vin in 0 DC={vbias:g} AC=1 0\n"
         f"Xamp in out vdd csamp\n"
@@ -252,6 +253,7 @@ def ac_gate_passes(op_converged: bool, op_valid: bool,
 def _print_result(r: Dict[str, object]) -> None:
     m = r["m"]
     tech, dev = r["tech"], r["device"]
+    model_name = active_model_name()
     verdict = "PASS" if r["passed"] else "FAIL"
     if not r["op_ok"]:
         op_note = "  [OP-NOT-CONVERGED]"
@@ -262,9 +264,9 @@ def _print_result(r: Dict[str, object]) -> None:
     print(
         f"  {tech} {dev} CS-amp @ NG Vin={r['ng_vbias']:.3f}(Vout={r['ng_vout']:.2f}) "
         f"NN Vin={r['nn_vbias']:.3f}(Vout={r['nn_vout']:.2f}): "
-        f"gain0 DN={m['gain0_db']:.2f}dB NG={m['gain0_db_ref']:.2f}dB "
+        f"gain0 {model_name}={m['gain0_db']:.2f}dB NG={m['gain0_db_ref']:.2f}dB "
         f"(err={m['gain0_db_err']:.3f}dB)  "
-        f"f3db DN={fmt_hz(m['f3db_test'])} NG={fmt_hz(m['f3db_ref'])} "
+        f"f3db {model_name}={fmt_hz(m['f3db_test'])} NG={fmt_hz(m['f3db_ref'])} "
         f"(ratio={m['f3db_ratio']:.3f})  "
         f"magNRMSE={m['mag_nrmse']*100:.2f}%  "
         f"phaseErr(inband)={m['phase_maxerr_inband_deg']:.2f}deg  "

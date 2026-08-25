@@ -58,20 +58,27 @@ from tests.common.nn import nrmse as _nrmse_pct, mre as _mre_pct
 # ASAP7 is out of scope; LEVEL=74 BSIMAR out of scope.
 # ---------------------------------------------------------------------------
 BENCH_TECHS: List[str] = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
+_MODEL_NAMES = {73: "DirectNet", 74: "BSIM-AR", 75: "PFN"}
+
+
+def _active_model_level() -> int | str:
+    """Return the parsed campaign force level, preserving invalid input."""
+    raw_level = os.environ.get("PYCIRCUITSIM_NN_FORCE_LEVEL", "73")
+    try:
+        return int(raw_level)
+    except ValueError:
+        return raw_level
+
+
+def active_model_name() -> str:
+    """Return the short NN-family name selected by the force-level hook."""
+    return _MODEL_NAMES.get(_active_model_level(), "NN")
 
 
 def active_model_label() -> str:
     """Return the NN family selected by the campaign force-level hook."""
-    raw_level = os.environ.get("PYCIRCUITSIM_NN_FORCE_LEVEL", "73")
-    try:
-        level = int(raw_level)
-    except ValueError:
-        return f"NN (LEVEL={raw_level})"
-    return {
-        73: "DirectNet (LEVEL=73)",
-        74: "BSIM-AR (LEVEL=74)",
-        75: "PFN (LEVEL=75)",
-    }.get(level, f"NN (LEVEL={level})")
+    level = _active_model_level()
+    return f"{_MODEL_NAMES.get(level, 'NN')} (LEVEL={level})"
 
 # RESULTS_BASE is env-overridable so parallel sweeps (e.g. the V6.5.4 checkpoint
 # bake-off) can give each worker an isolated output dir — otherwise concurrent

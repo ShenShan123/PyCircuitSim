@@ -71,6 +71,15 @@ esac
 export MODEL
 export PYTHONPATH="$ROOT/external_compact_models${PYTHONPATH:+:$PYTHONPATH}"
 
+required_sidecars_exist () {
+  local stem="$1"
+  [ -f "$CKPT/${stem}_norm.npz" ] || return 1
+  case "$TAG" in
+    dn) return 0 ;;
+    tf|pfn) [ -f "$CKPT/${stem}_config.npz" ] ;;
+  esac
+}
+
 # ── recipe → extra train args. 'clean' is the control (no addendum); it is
 #    normally NOT retrained here (the production tsmc{X}_dn_{size} ckpts serve
 #    as the clean control), but it is defined for completeness / re-baselining.
@@ -151,17 +160,9 @@ if [ "${1:-}" = "_one" ]; then
     name="${tech}_${TAG}_${recipe}_${size}_${dev}"
   fi
   ckpt="$CKPT/${name}_best.pt"
-  norm="$CKPT/${name}_norm.npz"
-  config="$CKPT/${name}_config.npz"
   log="$LOGDIR/${name}.log"
-  sidecars_ok=false
-  if [ -f "$norm" ]; then
-    case "$TAG" in
-      dn) sidecars_ok=true ;;
-      tf|pfn) [ -f "$config" ] && sidecars_ok=true ;;
-    esac
-  fi
-  if [ -f "$ckpt" ] && [ -f "$ckpt.complete" ] && [ "$sidecars_ok" = true ] && [ "$force" != "--force" ]; then
+  if [ -f "$ckpt" ] && [ -f "$ckpt.complete" ] \
+      && required_sidecars_exist "$name" && [ "$force" != "--force" ]; then
     echo "[train] SKIP existing $name"; exit 0
   fi
   if [ -f "$ckpt" ] && [ "$force" != "--force" ]; then
@@ -222,15 +223,11 @@ if [ "${1:-}" = "_one" ]; then
     $expname $extra \
     > "$log" 2>&1
   rc=$?
-  sidecars_ok=false
-  if [ -f "$norm" ]; then
-    case "$TAG" in
-      dn) sidecars_ok=true ;;
-      tf|pfn) [ -f "$config" ] && sidecars_ok=true ;;
-    esac
-  fi
-  if [ $rc -eq 0 ] && [ -f "$ckpt" ] && [ "$sidecars_ok" = true ]; then
-    touch "$ckpt.complete"
+  if [ $rc -eq 0 ] && [ -f "$ckpt" ] && required_sidecars_exist "$name"; then
+    if ! touch "$ckpt.complete"; then
+      echo "[train] LIFECYCLE ERROR $name: could not create completion marker" >&2
+      exit 3
+    fi
     echo "[train] DONE $name"
   else
     rm -f "$ckpt.complete"
@@ -244,6 +241,11 @@ if [ "${1:-}" = "_one" ]; then
 fi
 
 # ---- dispatcher ----
+if [ "$#" -gt 1 ]; then
+  echo "[train] UNKNOWN arguments: $*" >&2
+  echo "Usage: [ENV=VALUE ...] bash scripts/recipe_train.sh [--force]" >&2
+  exit 2
+fi
 FORCE="${1:-}"
 if [ -n "$FORCE" ] && [ "$FORCE" != "--force" ]; then
   echo "[train] UNKNOWN argument: $FORCE (expected --force or --help)" >&2
@@ -275,14 +277,10 @@ done; done
 lines=(); i=0
 for size in "${sizes[@]}"; do for recipe in "${recipes[@]}"; do for tech in "${techs[@]}"; do for dev in "${devs[@]}"; do
   if [ "$recipe" = clean ]; then _nm="${tech}_${TAG}_${size}_${dev}"; else _nm="${tech}_${TAG}_${recipe}_${size}_${dev}"; fi
-  _ready=false
-  if [ -f "$CKPT/${_nm}_best.pt" ] && [ -f "$CKPT/${_nm}_norm.npz" ] && [ -f "$CKPT/${_nm}_best.pt.complete" ]; then
-    case "$TAG" in
-      dn) _ready=true ;;
-      tf|pfn) [ -f "$CKPT/${_nm}_config.npz" ] && _ready=true ;;
-    esac
-  fi
-  if [ "$_ready" = true ] && [ "$FORCE" != "--force" ]; then continue; fi
+  if [ -f "$CKPT/${_nm}_best.pt" ] \
+      && [ -f "$CKPT/${_nm}_best.pt.complete" ] \
+      && required_sidecars_exist "$_nm" \
+      && [ "$FORCE" != "--force" ]; then continue; fi
   lines+=("$recipe $tech $size $dev ${GPU_IDS[$((i % NGPU))]} ${FORCE:-noforce}")
   i=$((i+1))
 done; done; done; done

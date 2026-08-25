@@ -34,6 +34,7 @@ _OPAMP_AC = re.compile(
 _DEV_ROW = re.compile(
     r"^\s+(TSMC\d+_\w+)\s+NRMSE=\s*(\S+)%\s+MRE=\s*(\S+)%\s+R2=\s*(\S+)\s+"
     r"MaxErr=(\S+)\s+(PASS|FAIL|ERROR)", re.M)
+_DEV_ERROR_ROW = re.compile(r"^\s+(TSMC\d+_\w+)\s+ERROR:", re.M)
 # SRAM's gate metric is the worst lobe NRMSE over the NFIN corners — column 7
 # of its summary table, not the first "NRMSE=" the log happens to print.
 _SRAM_ROW = re.compile(
@@ -110,17 +111,24 @@ def collect(root: Path) -> Dict:
             rows = [(m.group(1), float(m.group(2)), float(m.group(3)),
                      float(m.group(4)), float(m.group(5)), m.group(6))
                     for m in _DEV_ROW.finditer(txt)]
-            if rows:
-                entry["n"] = len(rows)
+            error_labels = {m.group(1) for m in _DEV_ERROR_ROW.finditer(txt)}
+            labels = {row[0] for row in rows} | error_labels
+            if labels:
+                entry["n"] = len(labels)
                 entry["n_pass"] = sum(1 for r in rows if r[5] == "PASS")
+                entry["rows"] = {label: {"status": "ERROR"}
+                                 for label in error_labels}
+                entry["rows"].update(
+                    {row[0]: {"nrmse": row[1], "mre": row[2], "r2": row[3],
+                              "max_error": row[4], "status": row[5]}
+                     for row in rows}
+                )
+            if rows:
                 entry["mean_nrmse"] = round(sum(r[1] for r in rows) / len(rows), 3)
                 entry["max_nrmse"] = round(max(r[1] for r in rows), 3)
                 entry["mean_mre"] = round(sum(r[2] for r in rows) / len(rows), 3)
                 entry["min_r2"] = round(min(r[3] for r in rows), 5)
                 entry["max_error"] = max(r[4] for r in rows)
-                entry["rows"] = {r[0]: {"nrmse": r[1], "mre": r[2], "r2": r[3],
-                                        "max_error": r[4], "status": r[5]}
-                                 for r in rows}
         else:  # complex circuits
             circ = suite.replace("verify_complex_", "")
             if circ == "sram_snm":

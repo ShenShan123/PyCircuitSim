@@ -121,7 +121,11 @@ def parse_complex_log(suite: str, text: str) -> dict:
         # Authoritative gate (verify_complex_sram_snm.main): "both butterfly lobes
         # positive across NFIN corners" == the `all-positive: yes/NO` summary flag.
         # force_ic is an informational probe, NOT part of the gate.
-        snm = re.search(rf"NG SNM=({NUM})mV\s+DN SNM=({NUM})mV", text)
+        snm = re.search(
+            rf"NG SNM=({NUM})mV\s+"
+            rf"(?:DirectNet|BSIM-AR|PFN|NN|DN) SNM=({NUM})mV",
+            text,
+        )
         fic = re.search(r"force_ic:\s*state1=(\w+)\s*state0=(\w+)", text)
         ap = re.search(r"all-positive:\s*(yes|NO)", text)
         hl = []

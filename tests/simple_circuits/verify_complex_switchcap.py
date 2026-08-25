@@ -46,6 +46,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "
 from tests.common.base import SIMPLE_DECKS, render_reference_deck  # noqa: E402
 from tests.common.complex import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech, active_model_label,
+    active_model_name,
     get_baked_modelcard, run_ngspice_wrdata,
     render_directnet_text, run_directnet_transient, full_metrics, fmt_metrics,
 )
@@ -179,7 +180,7 @@ def run_one(bt: BenchTech) -> Dict:
     passed = charge_ok and droop_ok and not partial
     print(f"    waveform: {fmt_metrics(metrics)}")
     print(f"    charge err={charge_err:.2f}% of VDD  "
-          f"droop |dn-ng|={droop_abs*1e3:.3f}mV "
+          f"droop |{active_model_name()}-NG|={droop_abs*1e3:.3f}mV "
           f"({droop_err:.0f}% of allowance {droop_allow*1e3:.3f}mV)"
           f"  ->  {'PASS' if passed else 'FAIL'}")
     return {"tech": bt.name, "ng_charge": ng_charge, "dn_charge": dn_charge,
@@ -205,7 +206,8 @@ def main() -> int:
     print(f"Benchmark 3d — switched-cap unit cell: {active_model_label()} "
           "vs NGSPICE BSIM-CMG")
     print(f"  Gates: charge transfer +/-{CHARGE_TOL*100:.0f}% of VDD,"
-          f" hold droop |dn-ng| <= max({DROOP_TOL*100:.0f}% of NG droop,"
+          f" hold droop |{active_model_name()}-NG| <= "
+          f"max({DROOP_TOL*100:.0f}% of NG droop,"
           f" {DROOP_FLOOR_FRAC*100:.1f}% of VDD)")
     print("=" * 78)
 
@@ -220,7 +222,8 @@ def main() -> int:
     print("\n" + "=" * 78)
     print("SUMMARY — Benchmark 3d switched-cap unit cell")
     print("=" * 78)
-    hdr = (f"{'Tech':8s} | {'NG chg V':>9s} | {'DN chg V':>9s} | "
+    model_charge = f"{active_model_name()} chg V"
+    hdr = (f"{'Tech':8s} | {'NG chg V':>9s} | {model_charge:>9s} | "
            f"{'ChgErr%':>8s} | {'Droop%alw':>10s} | {'NRMSE%':>7s} | "
            f"{'Status':>8s}")
     print(hdr)

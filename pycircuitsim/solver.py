@@ -28,6 +28,7 @@ The solver handles:
 """
 import functools
 import os
+from dataclasses import dataclass
 from typing import Dict, List, Tuple, Optional
 from pathlib import Path
 import numpy as np
@@ -114,6 +115,14 @@ def _solve_mna(mna_matrix, rhs: np.ndarray) -> np.ndarray:
 _RESID_ABS_FLOOR: float = 1e-6
 
 
+@dataclass(frozen=True)
+class _VoltageSourceTailFit:
+    """Topology-stable source incidence and its least-squares projector."""
+
+    incidence: np.ndarray
+    projector: np.ndarray
+
+
 def _mna_residual_inf(mna_matrix, rhs: np.ndarray, x: np.ndarray) -> float:
     """Return ‖rhs − A·x‖∞ — the MNA residual at iterate ``x``.
 
@@ -143,11 +152,62 @@ def _mna_residual_inf(mna_matrix, rhs: np.ndarray, x: np.ndarray) -> float:
     return float(np.max(np.abs(resid)))
 
 
+def _branch_current_projector(incidence: np.ndarray) -> np.ndarray:
+    """Return the least-squares branch-current projector for an incidence matrix."""
+    if incidence.shape[1] == 0:
+        return np.empty((0, incidence.shape[0]), dtype=np.float64)
+    rcond = np.finfo(np.float64).eps * max(incidence.shape)
+    return np.linalg.pinv(incidence, rcond=rcond)
+
+
+def _voltage_source_tail_projector(
+    circuit: Circuit,
+    node_map: Dict[str, int],
+    num_nodes: int,
+    num_branches: int,
+) -> np.ndarray:
+    """Cache the topology-stable least-squares projector for voltage sources.
+
+    The B/C incidence block is set solely by voltage-source terminal nodes, so
+    it survives every nonlinear re-stamp.  ``pinv`` uses the same default rank
+    cutoff as ``lstsq(..., rcond=None)`` while avoiding a fresh SVD per Newton
+    iteration, including rank-deficient ideal-source loops.
+    """
+    if num_branches == 0:
+        return np.empty((0, num_nodes), dtype=np.float64)
+    key = (_topo_key(circuit), num_nodes, num_branches)
+    cached = getattr(circuit, "_pcs_voltage_source_tail_projector", None)
+    if cached is not None and cached[0] == key:
+        return cached[1].projector
+
+    incidence = np.zeros((num_nodes, num_branches), dtype=np.float64)
+    branch = 0
+    for component in circuit.components:
+        if not isinstance(component, VoltageSource):
+            continue
+        pos_node, neg_node = component.nodes
+        if pos_node != "0" and pos_node in node_map:
+            incidence[node_map[pos_node], branch] += 1.0
+        if neg_node != "0" and neg_node in node_map:
+            incidence[node_map[neg_node], branch] -= 1.0
+        branch += 1
+    if branch != num_branches:
+        raise ValueError(
+            f"expected {num_branches} voltage-source branches, found {branch}"
+        )
+    projector = _branch_current_projector(incidence)
+    circuit._pcs_voltage_source_tail_projector = (
+        key, _VoltageSourceTailFit(incidence=incidence, projector=projector),
+    )
+    return projector
+
+
 def _mna_residual_at_node_voltages(
     mna_matrix: np.ndarray | spmatrix,
     rhs: np.ndarray,
     node_voltages: np.ndarray,
     num_nodes: int,
+    tail_projector: Optional[np.ndarray] = None,
 ) -> Tuple[float, float]:
     """Evaluate a candidate node state with its voltage-source currents fitted.
 
@@ -164,6 +224,8 @@ def _mna_residual_at_node_voltages(
         rhs: Fully stamped MNA right-hand side.
         node_voltages: Candidate values for the leading node-voltage block.
         num_nodes: Size of the node-voltage block.
+        tail_projector: Cached least-squares projector for ideal-source branch
+            currents, when the circuit topology is unchanged.
 
     Returns:
         ``(residual_inf, current_rhs_scale)`` for convergence gating.
@@ -179,18 +241,17 @@ def _mna_residual_at_node_voltages(
 
     num_branches = matrix_size - num_nodes
     if num_branches > 0:
-        if issparse(mna_matrix):
-            conductance = mna_matrix[:num_nodes, :num_nodes].tocsr()
-            incidence = mna_matrix[:num_nodes, num_nodes:].toarray()
-            node_balance = rhs[:num_nodes] - conductance.dot(node_values)
-        else:
-            conductance = mna_matrix[:num_nodes, :num_nodes]
-            incidence = mna_matrix[:num_nodes, num_nodes:]
-            node_balance = rhs[:num_nodes] - conductance.dot(node_values)
-        branch_currents, *_ = np.linalg.lstsq(
-            np.asarray(incidence), np.asarray(node_balance), rcond=None,
-        )
-        iterate[num_nodes:] = branch_currents
+        if tail_projector is None:
+            incidence = np.asarray(mna_matrix[:num_nodes, num_nodes:].toarray()
+                                   if issparse(mna_matrix)
+                                   else mna_matrix[:num_nodes, num_nodes:])
+            tail_projector = _branch_current_projector(incidence)
+        if tail_projector.shape != (num_branches, num_nodes):
+            raise ValueError(
+                "tail projector shape does not match the MNA branch block"
+            )
+        node_balance = rhs[:num_nodes] - mna_matrix.dot(iterate)[:num_nodes]
+        iterate[num_nodes:] = tail_projector.dot(node_balance)
 
     current_rhs = rhs[:num_nodes]
     current_scale = (
@@ -1250,6 +1311,9 @@ class DCSolver:
 
         num_voltage_sources = self.circuit.count_voltage_sources()
         matrix_size = num_nodes + num_voltage_sources
+        tail_projector = _voltage_source_tail_projector(
+            self.circuit, node_map, num_nodes, num_voltage_sources,
+        )
 
         # Store original voltage source values for source stepping
         original_voltages = []
@@ -1420,7 +1484,7 @@ class DCSolver:
                     # the supply current look like nonlinear residual.
                     iter_residual, iter_rhs_scale = (
                         _mna_residual_at_node_voltages(
-                            mna_solve, rhs, v_arr, n_nodes,
+                            mna_solve, rhs, v_arr, n_nodes, tail_projector,
                         )
                     )
 
@@ -1918,6 +1982,9 @@ class DCSolver:
         )
         return _mna_residual_at_node_voltages(
             mna, rhs, node_values, num_nodes,
+            _voltage_source_tail_projector(
+                self.circuit, node_map, num_nodes, matrix_size - num_nodes,
+            ),
         )
 
     def _stamp_voltage_sources(
@@ -2588,6 +2655,9 @@ class TransientSolver:
         n_nodes = len(nodes)
         v_arr = np.fromiter(
             (voltages[nd] for nd in nodes), np.float64, n_nodes)
+        tail_projector = _voltage_source_tail_projector(
+            self.circuit, node_map, n_nodes, num_voltage_sources,
+        )
         vs_constrained_nodes = set()
         for component in self.circuit.components:
             if isinstance(component, VoltageSource):
@@ -2665,7 +2735,7 @@ class TransientSolver:
             # Complete the node state with ideal-source branch currents before
             # measuring the nonlinear KCL residual (DC uses the same helper).
             iter_residual, iter_rhs_scale = _mna_residual_at_node_voltages(
-                mna_solve, rhs, v_arr, n_nodes,
+                mna_solve, rhs, v_arr, n_nodes, tail_projector,
             )
 
             # Solve for voltage updates
