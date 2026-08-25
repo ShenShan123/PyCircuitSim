@@ -242,6 +242,15 @@ def _check_training_archive_is_selectable_and_completion_gated() -> None:
     source = (ROOT / "scripts" / "recipe_train.sh").read_text()
     assert 'CKPT="${BSIMAR_CHECKPOINT_DIR:-' in source
     assert '[ -f "$ckpt" ] && [ -f "$ckpt.complete" ]' in source
+    for script in ("recipe_train.sh", "v710_regate.sh"):
+        result = subprocess.run(
+            ["bash", str(ROOT / "scripts" / script), "--help"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "Usage:" in result.stdout
 
 
 def _coverage_data() -> dict[str, dict]:

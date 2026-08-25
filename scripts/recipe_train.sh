@@ -34,6 +34,26 @@
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SELF="$ROOT/scripts/$(basename "${BASH_SOURCE[0]}")"
+
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+  cat <<'EOF'
+Usage: [ENV=VALUE ...] bash scripts/recipe_train.sh [--force]
+
+Environment:
+  MODEL        direct | transformer | tabpfn (default: direct)
+  RECIPES      space-separated recipes (use clean for clean checkpoints)
+  TECHS        space-separated lowercase technology names
+  SIZES        space-separated small | medium | large | xl
+  DEVS         space-separated nmos | pmos
+  GPUS         space-separated physical GPU IDs
+  NSTREAMS     maximum concurrent training jobs
+  TRAIN_OMP    CPU threads per training job
+  EXTRA_ARGS   extra neural_network.cli.train arguments
+  BSIMAR_CHECKPOINT_DIR  checkpoint output/selection directory
+  RECIPE_TRAIN_LOG_DIR   training-log directory
+EOF
+  exit 0
+fi
 CKPT="${BSIMAR_CHECKPOINT_DIR:-$ROOT/external_compact_models/neural_network/checkpoints}"
 DS="$ROOT/external_compact_models/neural_network/data/datasets"
 LOGDIR="${RECIPE_TRAIN_LOG_DIR:-$ROOT/results/recipe_bench/train_logs}"
@@ -225,6 +245,10 @@ fi
 
 # ---- dispatcher ----
 FORCE="${1:-}"
+if [ -n "$FORCE" ] && [ "$FORCE" != "--force" ]; then
+  echo "[train] UNKNOWN argument: $FORCE (expected --force or --help)" >&2
+  exit 2
+fi
 read -r -a recipes <<< "${RECIPES:-csob sob ekv}"
 read -r -a techs   <<< "${TECHS:-tsmc5 tsmc7 tsmc12 tsmc16}"
 read -r -a sizes   <<< "${SIZES:-large xl}"
