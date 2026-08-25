@@ -377,6 +377,18 @@ def _check_report_payload_completeness() -> None:
     finally:
         docs.PASS_DATA = old_data
 
+    old_data, old_report_pass = docs.PASS_DATA, docs.REPORT_PASS
+    docs.PASS_DATA = {"V7.5.16": data}
+    docs.REPORT_PASS = {
+        **old_report_pass,
+        ("dn", False): "V7.5.16",
+    }
+    try:
+        assert "V7.5.16 `large`" in docs.scoreboard()
+    finally:
+        docs.PASS_DATA = old_data
+        docs.REPORT_PASS = old_report_pass
+
 
 def main() -> int:
     _check_residual_completes_voltage_source_currents()

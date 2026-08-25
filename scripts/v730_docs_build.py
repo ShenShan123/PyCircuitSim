@@ -608,11 +608,11 @@ def scoreboard(_tag=None, _recipes=None) -> str:
         if tag == "dn" and clean_complete:
             with evidence_pass(clean_version):
                 served_pass, served_total = _score(tag, "large", False)
-            c = (f"2026-08-19 `large` **{served_pass}/{served_total}** served; "
+            c = (f"{clean_version} `large` "
+                 f"**{served_pass}/{served_total}** served; "
                  f"`{cl}` **{cp}/{cn}** best")
         else:
-            version = ("2026-08-19" if clean_version == "2026-08-19 recheck"
-                       else "V7.3")
+            version = clean_version.removesuffix(" recheck")
             c = f"{version} `{cl}` **{cp}/{cn}**"
         r = f"V7.3 {rl} **{rp}/{rn}**"
         out.append(f"| {lvl} | **{FAM[tag]}** | {role} | {c} | {r} | {cost} |")
