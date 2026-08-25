@@ -55,11 +55,23 @@ NG="${NGSPICE_BIN:-$ROOT/tools/ngspice-45.2/bin/ngspice}"
 CKPT="${BSIMAR_CHECKPOINT_DIR:-$ROOT/external_compact_models/neural_network/checkpoints}"
 OUT="${V710_OUT:-$ROOT/results/v710_regate}"
 SCRATCH="${V710_SCRATCH:-/tmp/v710_regate_scratch}"
-PY="${NN_PY:-/data1/shenshan/.conda/envs/pycircuitsim/bin/python}"
-[ -x "$PY" ] || PY="python"
+PY="${NN_PY:-$(command -v python 2>/dev/null)}"
+[ -n "$PY" ] && [ -f "$PY" ] && [ -x "$PY" ] || {
+  echo "[v710] NN_PY executable not found: ${NN_PY:-$PY}" >&2
+  exit 2
+}
 [ -x "$NG" ] || {
   echo "[v710] NGSPICE executable not found: $NG" >&2
   exit 2
+}
+
+preflight_python () {
+  if [ "${V710_PY_PREFLIGHTED:-}" = "$PY" ]; then return 0; fi
+  if ! "$PY" -c 'import numpy, torch' >/dev/null 2>&1; then
+    echo "[v710] NN_PY cannot import required numpy/torch packages: $PY" >&2
+    exit 2
+  fi
+  export V710_PY_PREFLIGHTED="$PY"
 }
 
 checkpoint_ready () {
@@ -151,6 +163,7 @@ if [ "${1:-}" = "_one" ]; then
          export PYCIRCUITSIM_NN_FORCE_LEVEL=73 ;;
     *)   echo "[v710] UNKNOWN tag=$tag"; exit 1 ;;
   esac
+  preflight_python
 
   iso="$SCRATCH/${tag}_${variant}_${tlc}_${suite}_omp${omp}"
   export PYCIRCUITSIM_COMPLEX_RESULTS="$iso/cplx" PYCIRCUITSIM_NN_RESULTS="$iso/nn"
@@ -168,6 +181,11 @@ if [ "${1:-}" = "_one" ]; then
   OMP_NUM_THREADS=$omp MKL_NUM_THREADS=$omp PYCIRCUITSIM_TORCH_THREADS=$omp \
     "$PY" -u "$test_file" --tech "$tuc" > "$log" 2>&1
   rc=$?
+  if [ "$rc" -ne 0 ] && grep -q '^Traceback (most recent call last):' "$log"; then
+    echo "===V710_DONE rc=infra===" >> "$log"
+    echo "[v710] INFRA $tag/$variant/$tlc/$suite/omp$omp: unhandled Python traceback" >&2
+    exit 3
+  fi
   echo "===V710_DONE rc=$rc===" >> "$log"
   echo "[v710] END $tag/$variant/$tlc/$suite/omp$omp rc=$rc"
   # rc 124 (timeout) / >=126 (killed, cannot-exec) = no verdict reached; a
@@ -180,6 +198,7 @@ fi
 # ---- dispatcher ----
 JOBS="${JOBS:?set JOBS=<file of 'tag variant TECH suite omp' lines>}"
 PAR="${PAR:-16}"
+preflight_python
 n="$(grep -cve '^\s*$' -e '^#' "$JOBS")"
 echo "[v710] pool start: $n jobs, PAR=$PAR, out=$OUT  ($(date '+%F %T'))"
 grep -ve '^\s*$' -e '^#' "$JOBS" | xargs -P "$PAR" -L1 "$SELF" _one

@@ -489,6 +489,57 @@ def _check_regate_readiness_and_family_ownership() -> None:
         assert "Usage:" in result.stdout
 
 
+def _check_regate_interpreter_failures_are_infrastructure() -> None:
+    """A broken Python environment must not become a scientific FAIL row."""
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        jobs_file = root / "jobs.txt"
+        jobs_file.write_text("")
+        env = os.environ.copy()
+        env.update({
+            "JOBS": str(jobs_file),
+            "NGSPICE_BIN": "/bin/true",
+            "NN_PY": str(root / "missing-python"),
+        })
+        env.pop("V710_PY_PREFLIGHTED", None)
+        missing = subprocess.run(
+            ["bash", str(ROOT / "scripts" / "v710_regate.sh")],
+            env=env, capture_output=True, text=True, check=False, timeout=10,
+        )
+        assert missing.returncode == 2
+        assert "NN_PY executable not found" in missing.stderr
+
+        checkpoint_dir = root / "checkpoints"
+        checkpoint_dir.mkdir()
+        _ready_checkpoint(checkpoint_dir, "dn")
+        runner = root / "traceback-python"
+        _write_executable(
+            runner,
+            """#!/usr/bin/env bash
+if [ "${1:-}" = "-c" ]; then exit 0; fi
+printf '%s\n' 'Traceback (most recent call last):' >&2
+printf '%s\n' 'ModuleNotFoundError: No module named numpy' >&2
+exit 1
+""",
+        )
+        env.update({
+            "NN_PY": str(runner),
+            "BSIMAR_CHECKPOINT_DIR": str(checkpoint_dir),
+            "V710_OUT": str(root / "out"),
+            "V710_SCRATCH": str(root / "scratch"),
+        })
+        gate = subprocess.run(
+            ["bash", str(ROOT / "scripts" / "v710_regate.sh"), "_one",
+             "dn", "small", "TSMC5", "verify_nn_ac", "1"],
+            env=env, capture_output=True, text=True, check=False, timeout=10,
+        )
+        assert gate.returncode == 3
+        log = (root / "out" / "dn" / "small" / "tsmc5"
+               / "verify_nn_ac.omp1.log")
+        assert "===V710_DONE rc=infra===" in log.read_text()
+        assert "===V710_DONE rc=1===" not in log.read_text()
+
+
 def _coverage_data() -> dict[str, dict]:
     """Return one complete TSMC5 DirectNet clean coverage snapshot."""
     return {
@@ -703,6 +754,7 @@ def main() -> int:
     _check_training_lifecycle_subprocesses()
     _check_training_cli_contract()
     _check_regate_readiness_and_family_ownership()
+    _check_regate_interpreter_failures_are_infrastructure()
     _check_fail_on_gaps()
     _check_report_payload_completeness()
     _check_incomplete_reports_preserve_verified_output()
