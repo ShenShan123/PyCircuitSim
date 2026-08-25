@@ -18,7 +18,7 @@ Usage: python scripts/v710_regate_jobs.py <outdir>
 """
 from __future__ import annotations
 
-import sys
+import argparse
 from pathlib import Path
 
 TECHS = ["TSMC5", "TSMC7", "TSMC12", "TSMC16"]
@@ -87,8 +87,13 @@ def build_pools() -> dict[str, list[str]]:
     }
 
 
-def main() -> int:
-    out = Path(sys.argv[1] if len(sys.argv) > 1 else ".")
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "outdir", type=Path, help="directory for generated job lists",
+    )
+    args = parser.parse_args(argv)
+    out: Path = args.outdir
     out.mkdir(parents=True, exist_ok=True)
     pools = build_pools()
     for name, jobs in pools.items():

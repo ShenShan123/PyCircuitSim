@@ -221,6 +221,22 @@ def _check_clean_pool() -> None:
     assert len(clean) == len(parsed)
 
 
+def _check_job_generator_help_is_read_only() -> None:
+    """A standard ``--help`` request must not become an output directory."""
+    with tempfile.TemporaryDirectory() as raw:
+        result = subprocess.run(
+            [sys.executable, str(ROOT / "scripts" / "v710_regate_jobs.py"),
+             "--help"],
+            cwd=raw,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert "usage:" in result.stdout
+        assert not (Path(raw) / "--help").exists()
+
+
 def _check_training_archive_is_selectable_and_completion_gated() -> None:
     """Training must preserve prior checkpoints and never accept partial runs."""
     source = (ROOT / "scripts" / "recipe_train.sh").read_text()
@@ -378,6 +394,7 @@ def main() -> int:
     _check_invalid_rendering()
     _check_device_metrics_survive_collection()
     _check_clean_pool()
+    _check_job_generator_help_is_read_only()
     _check_training_archive_is_selectable_and_completion_gated()
     _check_fail_on_gaps()
     _check_report_payload_completeness()
