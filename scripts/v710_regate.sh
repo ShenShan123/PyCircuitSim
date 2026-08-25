@@ -44,18 +44,23 @@ Environment:
   V710_OUT   raw log/result directory
   V710_SCRATCH  isolated temporary working directory
   NN_PY      Python interpreter used for gates
+  NGSPICE_BIN  OSDI-capable NGSPICE executable
   BSIMAR_CHECKPOINT_DIR  checkpoint selection directory
 
 The `_one` subcommand is internal to the dispatcher.
 EOF
   exit 0
 fi
-NG="$ROOT/tools/ngspice-45.2/bin/ngspice"
+NG="${NGSPICE_BIN:-$ROOT/tools/ngspice-45.2/bin/ngspice}"
 CKPT="${BSIMAR_CHECKPOINT_DIR:-$ROOT/external_compact_models/neural_network/checkpoints}"
 OUT="${V710_OUT:-$ROOT/results/v710_regate}"
 SCRATCH="${V710_SCRATCH:-/tmp/v710_regate_scratch}"
 PY="${NN_PY:-/data1/shenshan/.conda/envs/pycircuitsim/bin/python}"
 [ -x "$PY" ] || PY="python"
+[ -x "$NG" ] || {
+  echo "[v710] NGSPICE executable not found: $NG" >&2
+  exit 2
+}
 
 if [ "${1:-}" = "_one" ]; then
   tag="$2"; variant="$3"; tuc="$4"; suite="$5"; omp="${6:-1}"
