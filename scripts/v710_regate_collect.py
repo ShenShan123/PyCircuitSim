@@ -108,16 +108,19 @@ def collect(root: Path) -> Dict:
                              status=m.group(6))
         elif suite.startswith("verify_nn_multi_tech"):
             rows = [(m.group(1), float(m.group(2)), float(m.group(3)),
-                     float(m.group(4)), m.group(6)) for m in _DEV_ROW.finditer(txt)]
+                     float(m.group(4)), float(m.group(5)), m.group(6))
+                    for m in _DEV_ROW.finditer(txt)]
             if rows:
                 entry["n"] = len(rows)
-                entry["n_pass"] = sum(1 for r in rows if r[4] == "PASS")
+                entry["n_pass"] = sum(1 for r in rows if r[5] == "PASS")
                 entry["mean_nrmse"] = round(sum(r[1] for r in rows) / len(rows), 3)
                 entry["max_nrmse"] = round(max(r[1] for r in rows), 3)
                 entry["mean_mre"] = round(sum(r[2] for r in rows) / len(rows), 3)
                 entry["min_r2"] = round(min(r[3] for r in rows), 5)
+                entry["max_error"] = max(r[4] for r in rows)
                 entry["rows"] = {r[0]: {"nrmse": r[1], "mre": r[2], "r2": r[3],
-                                        "status": r[4]} for r in rows}
+                                        "max_error": r[4], "status": r[5]}
+                                 for r in rows}
         else:  # complex circuits
             circ = suite.replace("verify_complex_", "")
             if circ == "sram_snm":
@@ -231,20 +234,24 @@ def render(data: Dict) -> str:
                 for t in TECHS:
                     c = cells.get(t, {}).get("omp1")
                     if not c:
-                        rows.append(f"| {t} | — | | | |")
+                        rows.append(f"| {t} | — | | | | | |")
                         continue
                     if not is_verdict(c):
-                        rows.append(f"| {t} | INVALID | | | |")
+                        rows.append(f"| {t} | INVALID | | | | | |")
                         continue
                     if "n" not in c:
-                        rows.append(f"| {t} | — | | | |")
+                        rows.append(f"| {t} | — | | | | | |")
                         continue
                     npass += c["n_pass"]; ntot += c["n"]
+                    max_error = c["max_error"] * (1e6 if suite.endswith("_dc") else 1.0)
                     rows.append(f"| {t} | {c['n_pass']}/{c['n']} | {c['mean_nrmse']} "
-                                f"| {c['max_nrmse']} | {c['mean_mre']} |")
+                                f"| {c['max_nrmse']} | {c['mean_mre']} "
+                                f"| {c['min_r2']} | {max_error:.6g} |")
+                error_unit = "µA" if suite.endswith("_dc") else "mV"
                 L += [f"**{label}: {npass}/{ntot} configs**", "",
-                      "| tech | pass | mean NRMSE % | max NRMSE % | mean MRE % |",
-                      "|---|---|---|---|---|", *rows, ""]
+                      "| tech | pass | mean NRMSE % | max NRMSE % | mean MRE % "
+                      f"| min R² | max error {error_unit} |",
+                      "|---|---|---|---|---|---|---|", *rows, ""]
 
             have_circ = [c for c in CIRCS if f"verify_complex_{c}" in g]
             if have_circ:

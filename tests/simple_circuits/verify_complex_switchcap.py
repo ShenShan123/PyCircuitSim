@@ -45,7 +45,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "
 
 from tests.common.base import SIMPLE_DECKS, render_reference_deck  # noqa: E402
 from tests.common.complex import (  # noqa: E402
-    BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech,
+    BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech, active_model_label,
     get_baked_modelcard, run_ngspice_wrdata,
     render_directnet_text, run_directnet_transient, full_metrics, fmt_metrics,
 )
@@ -134,11 +134,12 @@ def run_one(bt: BenchTech) -> Dict:
     print(f"    NGSPICE: charge level={ng_charge:.4f}V (Vin={vin}V)  "
           f"hold droop={ng_droop*1e3:.3f}mV")
 
-    print("  DirectNet (LEVEL=73) transient ...")
+    model_label = active_model_label()
+    print(f"  {model_label} transient ...")
     try:
         dn, partial, err = run_directnet_sc(bt, work_dir)
     except Exception as exc:  # noqa: BLE001
-        print(f"    DirectNet FAILED: {exc!r}")
+        print(f"    {model_label} FAILED: {exc!r}")
         return {"tech": bt.name, "ng_charge": ng_charge,
                 "ng_droop": ng_droop, "error": repr(exc)}
 
@@ -146,7 +147,7 @@ def run_one(bt: BenchTech) -> Dict:
     dn_charge = _at(dn["time"], dn["vsamp"], SAMPLE_END)
     dn_droop = (_at(dn["time"], dn["vsamp"], HOLD_START)
                 - _at(dn["time"], dn["vsamp"], HOLD_END))
-    print(f"    DirectNet: charge level={dn_charge:.4f}V  "
+    print(f"    {model_label}: charge level={dn_charge:.4f}V  "
           f"hold droop={dn_droop*1e3:.3f}mV{note}")
 
     # waveform metrics on the common window
@@ -201,7 +202,8 @@ def main() -> int:
         return 1
 
     print("=" * 78)
-    print("Benchmark 3d — switched-cap unit cell: DirectNet vs NGSPICE BSIM-CMG")
+    print(f"Benchmark 3d — switched-cap unit cell: {active_model_label()} "
+          "vs NGSPICE BSIM-CMG")
     print(f"  Gates: charge transfer +/-{CHARGE_TOL*100:.0f}% of VDD,"
           f" hold droop |dn-ng| <= max({DROOP_TOL*100:.0f}% of NG droop,"
           f" {DROOP_FLOOR_FRAC*100:.1f}% of VDD)")

@@ -12,6 +12,9 @@ import sys
 import tempfile
 from pathlib import Path
 from typing import Callable
+from unittest.mock import patch
+
+import numpy as np
 
 ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
@@ -21,6 +24,63 @@ from scripts import v710_regate_collect as collect
 from scripts import v710_regate_jobs as jobs
 from scripts import v730_coverage as coverage
 from scripts import v730_docs_build as docs
+from pycircuitsim.solver import (
+    _mna_residual_at_node_voltages,
+    _mna_residual_inf,
+)
+from tests.simple_circuits import verify_complex_opamp_ac as opamp_ac
+from tests.simple_circuits import verify_nn_ac
+
+
+def _check_residual_completes_voltage_source_currents() -> None:
+    """KCL residuals must solve the MNA branch-current tail, not assume zero."""
+    mna = np.array([[2.0, 1.0], [1.0, 0.0]])
+    rhs = np.array([0.0, 1.0])
+    zero_tail = np.array([1.0, 0.0])
+    assert _mna_residual_inf(mna, rhs, zero_tail) == 2.0
+
+    residual, current_scale = _mna_residual_at_node_voltages(
+        mna, rhs, np.array([1.0]), num_nodes=1,
+    )
+    assert residual < 1e-12
+    assert current_scale == 0.0
+
+
+def _check_nn_ac_banner_tracks_forced_family() -> None:
+    """Gate output must identify the NN family actually selected by the parser."""
+    with patch.dict(os.environ, {}, clear=True):
+        assert verify_nn_ac.active_model_label() == "DirectNet (LEVEL=73)"
+    with patch.dict(os.environ, {"PYCIRCUITSIM_NN_FORCE_LEVEL": "74"}, clear=True):
+        assert verify_nn_ac.active_model_label() == "BSIM-AR (LEVEL=74)"
+    with patch.dict(os.environ, {"PYCIRCUITSIM_NN_FORCE_LEVEL": "75"}, clear=True):
+        assert verify_nn_ac.active_model_label() == "PFN (LEVEL=75)"
+
+
+def _check_opamp_ac_refines_bias_and_requires_fixed_point() -> None:
+    """A narrow transition needs a fine sweep and a converged AC fixed point."""
+    center = 0.501
+
+    def transition(lo: float, hi: float, step: float) -> tuple[np.ndarray, np.ndarray]:
+        vin = np.arange(lo, hi + 0.5 * step, step)
+        vout = 1.0 / (1.0 + np.exp((vin - center) / 0.00015))
+        return vin, vout
+
+    coarse_vin, coarse_vout = transition(0.45, 0.55, 0.002)
+    _coarse_bias, coarse_output = opamp_ac._peak_gain_bias(
+        coarse_vin, coarse_vout,
+    )
+    assert not 0.15 < coarse_output < 0.85
+
+    fine_bias, fine_output = opamp_ac._refined_peak_gain_bias(
+        coarse_vin, coarse_vout, transition,
+    )
+    assert abs(fine_bias - center) <= 0.0001
+    assert 0.15 < fine_output < 0.85
+
+    metrics = {"gain0_db_err": 0.0, "gbw_ratio": 1.0, "pm_err": 0.0}
+    assert opamp_ac.opamp_ac_gate_passes(True, True, metrics)
+    assert not opamp_ac.opamp_ac_gate_passes(False, True, metrics)
+    assert not opamp_ac.opamp_ac_gate_passes(True, False, metrics)
 
 
 def _check_verdict_predicate(predicate: Callable[[object], bool]) -> None:
@@ -122,13 +182,32 @@ def _check_invalid_rendering() -> None:
     assert "| TSMC5 | — | | | |" not in report
 
 
+def _check_device_metrics_survive_collection() -> None:
+    """Per-tech reports must retain Rule 13's R² and maximum-error evidence."""
+    with tempfile.TemporaryDirectory() as raw:
+        log = (Path(raw) / "dn" / "small" / "tsmc5"
+               / "verify_nn_multi_tech_dc.omp1.log")
+        log.parent.mkdir(parents=True)
+        log.write_text(
+            "  TSMC5_nmos_base  NRMSE= 2.00%  MRE= 3.00%  "
+            "R2= 0.95000  MaxErr=4.000e-06  PASS\n"
+            "===V710_DONE rc=0===\n"
+        )
+        entry = collect.collect(Path(raw))["dn"]["small"][
+            "verify_nn_multi_tech_dc"
+        ]["TSMC5"]["omp1"]
+        assert entry["min_r2"] == 0.95
+        assert entry["max_error"] == 4e-6
+        assert entry["rows"]["TSMC5_nmos_base"]["max_error"] == 4e-6
+
+
 def _check_clean_pool() -> None:
     """The clean campaign must cover the exact requested Cartesian product."""
     clean = jobs.build_pools()["clean"]
     parsed = {tuple(line.split()) for line in clean}
     expected = {
         (tag, variant, tech, suite, str(omp))
-        for tag in ("dn", "tf")
+        for tag in ("dn", "tf", "pfn")
         for variant in ("small", "medium", "large", "xl")
         for tech in ("TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16")
         for suite, omps in {
@@ -140,6 +219,13 @@ def _check_clean_pool() -> None:
     }
     assert parsed == expected
     assert len(clean) == len(parsed)
+
+
+def _check_training_archive_is_selectable_and_completion_gated() -> None:
+    """Training must preserve prior checkpoints and never accept partial runs."""
+    source = (ROOT / "scripts" / "recipe_train.sh").read_text()
+    assert 'CKPT="${BSIMAR_CHECKPOINT_DIR:-' in source
+    assert '[ -f "$ckpt" ] && [ -f "$ckpt.complete" ]' in source
 
 
 def _coverage_data() -> dict[str, dict]:
@@ -213,6 +299,7 @@ def _report_payload(suite: str, rc: str = "1") -> dict[str, object]:
     elif suite.startswith("verify_nn_multi_tech"):
         result.update(
             n=1, n_pass=0, mean_nrmse=12.0, max_nrmse=15.0, mean_mre=20.0,
+            min_r2=0.5, max_error=0.001,
         )
     elif suite == "verify_complex_opamp_ac":
         result.update(
@@ -232,7 +319,7 @@ def _check_report_payload_completeness() -> None:
         assert not docs._report_result_complete(suite, {**payload, "rc": "124"})
         assert not docs._report_result_complete(suite, {"rc": "1"})
         if suite.startswith("verify_nn_multi_tech"):
-            for missing in ("max_nrmse", "mean_mre"):
+            for missing in ("max_nrmse", "mean_mre", "min_r2", "max_error"):
                 incomplete = dict(payload)
                 del incomplete[missing]
                 assert not docs._report_result_complete(suite, incomplete)
@@ -267,6 +354,9 @@ def _check_report_payload_completeness() -> None:
 
 
 def main() -> int:
+    _check_residual_completes_voltage_source_currents()
+    _check_nn_ac_banner_tracks_forced_family()
+    _check_opamp_ac_refines_bias_and_requires_fixed_point()
     _check_verdict_predicate(collect.is_verdict)
     assert coverage.is_verdict is collect.is_verdict
     assert docs.is_verdict is collect.is_verdict
@@ -286,10 +376,16 @@ def main() -> int:
     _check_log_scan()
     _check_lock_contention()
     _check_invalid_rendering()
+    _check_device_metrics_survive_collection()
     _check_clean_pool()
+    _check_training_archive_is_selectable_and_completion_gated()
     _check_fail_on_gaps()
     _check_report_payload_completeness()
-    print("Accuracy campaign tools: 480 unique jobs; invalid outcomes excluded")
+    clean_jobs = len(jobs.build_pools()["clean"])
+    print(
+        f"Accuracy campaign tools: {clean_jobs} unique clean jobs; "
+        "invalid outcomes excluded"
+    )
     return 0
 
 

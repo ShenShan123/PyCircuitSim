@@ -35,7 +35,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "
 
 from tests.common.base import SIMPLE_DECKS, render_reference_deck  # noqa: E402
 from tests.common.complex import (  # noqa: E402
-    BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech,
+    BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech, active_model_label,
     get_baked_modelcard, run_ngspice_wrdata,
     render_directnet_text, run_directnet_transient, full_metrics, fmt_metrics,
 )
@@ -133,16 +133,17 @@ def run_one(bt: BenchTech) -> Dict:
     ng_per = _period_from_wave(ng["time"], ng["v(n5)"], mid, SETTLE)
     print(f"    NGSPICE period = {ng_per*1e12:.2f} ps")
 
-    print("  DirectNet (LEVEL=73) transient ...")
+    model_label = active_model_label()
+    print(f"  {model_label} transient ...")
     try:
         dn, partial, err = run_directnet_ro(bt, work_dir)
     except Exception as exc:  # noqa: BLE001
-        print(f"    DirectNet FAILED: {exc!r}")
+        print(f"    {model_label} FAILED: {exc!r}")
         return {"tech": bt.name, "ng_period": ng_per, "error": repr(exc)}
 
     dn_per = _period_from_wave(dn["time"], dn["v(n5)"], mid, SETTLE)
     note = " (partial waveform — NR truncated)" if partial else ""
-    print(f"    DirectNet period = {dn_per*1e12:.2f} ps{note}")
+    print(f"    {model_label} period = {dn_per*1e12:.2f} ps{note}")
 
     # waveform-shape metrics on the common post-settle window
     t_lo, t_hi = SETTLE, min(ng["time"][-1], dn["time"][-1])
@@ -184,7 +185,8 @@ def main() -> int:
         return 1
 
     print("=" * 78)
-    print("Benchmark 3a — 5-stage ring oscillator: DirectNet vs NGSPICE BSIM-CMG")
+    print(f"Benchmark 3a — 5-stage ring oscillator: {active_model_label()} "
+          "vs NGSPICE BSIM-CMG")
     print(f"  Gate: oscillation period within +/-{PERIOD_TOL*100:.0f}%")
     print("=" * 78)
 

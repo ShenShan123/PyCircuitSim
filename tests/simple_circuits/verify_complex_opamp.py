@@ -36,7 +36,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "
 
 from tests.common.base import SIMPLE_DECKS, render_reference_deck  # noqa: E402
 from tests.common.complex import (  # noqa: E402
-    BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech,
+    BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech, active_model_label,
     get_baked_modelcard, run_ngspice_wrdata,
     render_directnet_text, run_directnet_dc_sweep, full_metrics, fmt_metrics,
 )
@@ -171,16 +171,17 @@ def run_one(bt: BenchTech) -> Dict:
         return {"tech": bt.name, "ng_gain": ng_gain, "ng_trip": ng_trip,
                 "error": region_err}
 
-    print("  DirectNet (LEVEL=73) DC transfer ...")
+    model_label = active_model_label()
+    print(f"  {model_label} DC transfer ...")
     try:
         dn = run_directnet_opamp(bt, work_dir)
     except Exception as exc:  # noqa: BLE001
-        print(f"    DirectNet FAILED: {exc!r}")
+        print(f"    {model_label} FAILED: {exc!r}")
         return {"tech": bt.name, "ng_gain": ng_gain, "ng_trip": ng_trip,
                 "error": repr(exc)}
 
     dn_gain, dn_trip, dn_slew = _gain_trip(dn["sweep"], dn["vout"], bt.vdd)
-    print(f"    DirectNet gain={dn_gain:.1f}  trip={dn_trip:.4f}V  "
+    print(f"    {model_label} gain={dn_gain:.1f}  trip={dn_trip:.4f}V  "
           f"slew(step)={dn_slew*1e3:.2f}mV")
 
     # Vout-curve metrics on the common sweep window
@@ -215,7 +216,8 @@ def main() -> int:
         return 1
 
     print("=" * 78)
-    print("Benchmark 3b — two-stage Miller opamp: DirectNet vs NGSPICE BSIM-CMG")
+    print(f"Benchmark 3b — two-stage Miller opamp: {active_model_label()} "
+          "vs NGSPICE BSIM-CMG")
     print(f"  Gate: open-loop DC gain within +/-{GAIN_TOL*100:.0f}%")
     print("=" * 78)
 

@@ -31,7 +31,7 @@ import os
 from typing import Dict, List, Tuple, Optional
 from pathlib import Path
 import numpy as np
-from scipy.sparse import lil_matrix, issparse
+from scipy.sparse import lil_matrix, issparse, spmatrix
 from scipy.sparse.linalg import spsolve, splu
 from pycircuitsim.circuit import Circuit
 from pycircuitsim.models.passive import VoltageSource, Capacitor
@@ -141,6 +141,62 @@ def _mna_residual_inf(mna_matrix, rhs: np.ndarray, x: np.ndarray) -> float:
     if not np.all(np.isfinite(resid)):
         return float("inf")
     return float(np.max(np.abs(resid)))
+
+
+def _mna_residual_at_node_voltages(
+    mna_matrix: np.ndarray | spmatrix,
+    rhs: np.ndarray,
+    node_voltages: np.ndarray,
+    num_nodes: int,
+) -> Tuple[float, float]:
+    """Evaluate a candidate node state with its voltage-source currents fitted.
+
+    Node voltages alone are not a complete MNA iterate: the augmented tail
+    contains one current unknown per ideal voltage source. Leaving that tail at
+    zero adds the supply current to the apparent KCL residual and lets the
+    voltage-valued source rows inflate a current tolerance. Recover the branch
+    currents that best balance the node rows, then evaluate the full MNA
+    residual (including the voltage constraints). The returned scale is formed
+    only from node/KCL RHS entries, whose units are amperes.
+
+    Args:
+        mna_matrix: Fully stamped MNA matrix.
+        rhs: Fully stamped MNA right-hand side.
+        node_voltages: Candidate values for the leading node-voltage block.
+        num_nodes: Size of the node-voltage block.
+
+    Returns:
+        ``(residual_inf, current_rhs_scale)`` for convergence gating.
+    """
+    node_values = np.asarray(node_voltages, dtype=np.float64)
+    if node_values.shape != (num_nodes,):
+        raise ValueError(
+            f"expected {num_nodes} node voltages, got {node_values.shape}"
+        )
+    matrix_size = int(mna_matrix.shape[0])
+    iterate = np.zeros(matrix_size, dtype=np.float64)
+    iterate[:num_nodes] = node_values
+
+    num_branches = matrix_size - num_nodes
+    if num_branches > 0:
+        if issparse(mna_matrix):
+            conductance = mna_matrix[:num_nodes, :num_nodes].tocsr()
+            incidence = mna_matrix[:num_nodes, num_nodes:].toarray()
+            node_balance = rhs[:num_nodes] - conductance.dot(node_values)
+        else:
+            conductance = mna_matrix[:num_nodes, :num_nodes]
+            incidence = mna_matrix[:num_nodes, num_nodes:]
+            node_balance = rhs[:num_nodes] - conductance.dot(node_values)
+        branch_currents, *_ = np.linalg.lstsq(
+            np.asarray(incidence), np.asarray(node_balance), rcond=None,
+        )
+        iterate[num_nodes:] = branch_currents
+
+    current_rhs = rhs[:num_nodes]
+    current_scale = (
+        float(np.max(np.abs(current_rhs))) if current_rhs.size else 0.0
+    )
+    return _mna_residual_inf(mna_matrix, rhs, iterate), current_scale
 
 
 def _lm_augment(mna_matrix, lam: float):
@@ -1359,16 +1415,14 @@ class DCSolver:
                     if nn_extra is not None:
                         mna_solve = mna_solve + nn_extra
 
-                    # Current iterate as a full MNA vector (node voltages in
-                    # the leading slots; branch-current slots left at 0 —
-                    # they only scale the residual, not the descent test).
-                    current_iterate = np.zeros(matrix_size)
-                    current_iterate[:n_nodes] = v_arr
-
-                    # MNA residual ‖b − A·v‖∞ at the current iterate
-                    # (Phase 6b): the nonlinear KCL mismatch before the
-                    # Newton step. LM uses this to detect overshoot.
-                    iter_residual = _mna_residual_inf(mna_solve, rhs, current_iterate)
+                    # Complete the node state with the ideal-source branch
+                    # currents before measuring KCL. A zero branch tail makes
+                    # the supply current look like nonlinear residual.
+                    iter_residual, iter_rhs_scale = (
+                        _mna_residual_at_node_voltages(
+                            mna_solve, rhs, v_arr, n_nodes,
+                        )
+                    )
 
                     # Solve the MNA system
                     try:
@@ -1557,9 +1611,8 @@ class DCSolver:
                     # cleanly separates the two and never misfires on a
                     # SPICE-converged inverter point.
                     if all_converged and _has_nn_device(self.circuit):
-                        rhs_scale = float(np.max(np.abs(rhs))) if rhs.size else 0.0
                         resid_threshold = max(_RESID_ABS_FLOOR,
-                                              100.0 * self.reltol * rhs_scale)
+                                              100.0 * self.reltol * iter_rhs_scale)
                         if iter_residual > resid_threshold:
                             all_converged = False
 
@@ -1823,7 +1876,7 @@ class DCSolver:
         num_nodes: int,
         matrix_size: int,
         gmin_level: float,
-    ) -> tuple:
+    ) -> Tuple[float, float]:
         """Re-stamp the DC MNA system at ``voltages`` and return its residual.
 
         Phase 6b. Used to validate the oscillation-detection averaged
@@ -1842,7 +1895,7 @@ class DCSolver:
 
         Returns:
             ``(residual_inf, rhs_scale)`` — the residual ‖b−A·v‖∞ and the
-            RHS infinity-norm used to scale the acceptance threshold.
+            current-valued node-RHS norm used to scale its threshold.
         """
         mna = _create_mna_matrix(matrix_size)
         rhs = np.zeros(matrix_size)
@@ -1860,11 +1913,12 @@ class DCSolver:
         self._stamp_voltage_sources(mna, rhs, node_map, num_nodes, voltages=voltages)
         if gmin_level > self.gmin:
             self._apply_gmin_stepping(mna, node_map, gmin_level)
-        iterate = np.zeros(matrix_size)
-        for idx, node in enumerate(nodes):
-            iterate[idx] = voltages[node]
-        rhs_scale = float(np.max(np.abs(rhs))) if rhs.size else 0.0
-        return _mna_residual_inf(mna, rhs, iterate), rhs_scale
+        node_values = np.fromiter(
+            (voltages[node] for node in nodes), np.float64, num_nodes,
+        )
+        return _mna_residual_at_node_voltages(
+            mna, rhs, node_values, num_nodes,
+        )
 
     def _stamp_voltage_sources(
         self,
@@ -2608,12 +2662,11 @@ class TransientSolver:
             if nn_extra is not None:
                 mna_solve = mna_solve + nn_extra
 
-            # Current iterate as a full MNA vector (Phase 6a/6b).
-            current_iterate = np.zeros(matrix_size)
-            current_iterate[:n_nodes] = v_arr
-
-            # MNA residual ‖b−A·v‖∞ at the current iterate (Phase 6b).
-            iter_residual = _mna_residual_inf(mna_solve, rhs, current_iterate)
+            # Complete the node state with ideal-source branch currents before
+            # measuring the nonlinear KCL residual (DC uses the same helper).
+            iter_residual, iter_rhs_scale = _mna_residual_at_node_voltages(
+                mna_solve, rhs, v_arr, n_nodes,
+            )
 
             # Solve for voltage updates
             try:
@@ -2735,8 +2788,10 @@ class TransientSolver:
             # generous (see the DC analog) so it never misfires on a
             # SPICE-converged timestep.
             if all_converged and _has_nn_device(self.circuit):
-                rhs_scale = float(np.max(np.abs(rhs))) if rhs.size else 0.0
-                resid_threshold = max(_RESID_ABS_FLOOR, 100.0 * self.reltol * rhs_scale)
+                resid_threshold = max(
+                    _RESID_ABS_FLOOR,
+                    100.0 * self.reltol * iter_rhs_scale,
+                )
                 if iter_residual > resid_threshold:
                     all_converged = False
 
@@ -3065,7 +3120,7 @@ class TransientSolver:
         matrix_size: int,
         gmin: float,
         time: float,
-    ) -> tuple:
+    ) -> Tuple[float, float]:
         """Re-stamp the transient MNA system at ``voltages``; return its residual.
 
         Phase 6b. Validates the oscillation-detection averaged solution
@@ -3103,11 +3158,12 @@ class TransientSolver:
                                              voltages, limit=False)
         if gmin > self.gmin_final:
             self._apply_gmin_stepping(mna, node_map, gmin)
-        iterate = np.zeros(matrix_size)
-        for idx, node in enumerate(nodes):
-            iterate[idx] = voltages[node]
-        rhs_scale = float(np.max(np.abs(rhs))) if rhs.size else 0.0
-        return _mna_residual_inf(mna, rhs, iterate), rhs_scale
+        node_values = np.fromiter(
+            (voltages[node] for node in nodes), np.float64, num_nodes,
+        )
+        return _mna_residual_at_node_voltages(
+            mna, rhs, node_values, num_nodes,
+        )
 
     def solve(self) -> Dict[str, np.ndarray]:
         """

@@ -23,6 +23,7 @@ Available sources (each rendered report is pinned to one complete pass):
     results/v710_regate/data.json  V7.1.0, device + AC + strict OMP
     results/v730_regate/data.json  V7.3.0, recipes + PFN campaign
     results/v740_regate/data.json  V7.4.0, clean DN + BSIM-AR rebuild
+    results/v7516_clean/data.json   V7.5.16, clean all-family re-gate
 
 Run after any re-gate:
 
@@ -81,10 +82,12 @@ _REPORT_PAYLOAD_KEYS: Dict[str, Tuple[str, ...]] = {
     "verify_complex_sram_snm": ("metric",),
     "verify_complex_switchcap": ("metric",),
     "verify_nn_multi_tech_dc": (
-        "n", "n_pass", "mean_nrmse", "max_nrmse", "mean_mre",
+        "n", "n_pass", "mean_nrmse", "max_nrmse", "mean_mre", "min_r2",
+        "max_error",
     ),
     "verify_nn_multi_tech_tran": (
-        "n", "n_pass", "mean_nrmse", "max_nrmse", "mean_mre",
+        "n", "n_pass", "mean_nrmse", "max_nrmse", "mean_mre", "min_r2",
+        "max_error",
     ),
     "verify_complex_opamp_ac": (
         "dc_gain_err_db", "gbw_ratio", "pm_err_deg", "mag_nrmse_pct", "status",
@@ -160,20 +163,21 @@ A3 = load_a3()
 PASSES = [("V7.1.0", load_json("v710_regate")), ("V7.3.0", load_json("v730_regate")),
           ("V7.4.0", load_json("v740_regate")),
           ("V7.4.2", load_json("v742_regate")),
-          ("2026-08-19 recheck", load_json("simple_recheck_24c181a"))]
+          ("2026-08-19 recheck", load_json("simple_recheck_24c181a")),
+          ("V7.5.16", load_json("v7516_clean"))]
 PASS_DATA = dict(PASSES)
 ACTIVE_PASS: Optional[str] = None
 
 # Every report is rendered from one coherent campaign. A later partial pass is
 # never allowed to backfill itself from older cells and overwrite a complete
 # published report.
-# The current clean reports use the complete 2026-08-19 recheck of the
-# preserved V7.4 checkpoint matrix. It applies the current honest DC/AC
-# convergence contract without mixing cells from an older solver state.
+# The current clean reports use one complete V7.5.16 campaign across all three
+# families. The builder fails closed until that pass contains every required
+# suite result; it never backfills a partial new campaign from older cells.
 REPORT_PASS: Dict[Tuple[str, bool], str] = {
-    ("dn", False): "2026-08-19 recheck",
-    ("tf", False): "2026-08-19 recheck",
-    ("pfn", False): "V7.3.0",
+    ("dn", False): "V7.5.16",
+    ("tf", False): "V7.5.16",
+    ("pfn", False): "V7.5.16",
     ("dn", True): "V7.3.0",
     ("tf", True): "V7.3.0",
     ("pfn", True): "V7.3.0",
@@ -405,12 +409,13 @@ def _ac_mark(r: Optional[Dict]) -> str:
 
 def device_tables(tag: str, recipes: bool) -> str:
     out: List[str] = []
-    for suite, title, unit in (
+    for suite, title, error_unit in (
             ("verify_nn_multi_tech_dc", "Parametric DC — `verify_nn_multi_tech_dc`",
-             "mean Id-Vgs NRMSE %, config fails in brackets"),
+             "µA"),
             ("verify_nn_multi_tech_tran", "Parametric transient — `verify_nn_multi_tech_tran`",
-             "mean NRMSE %")):
-        out += [f"**{title}** *({unit})*", "",
+             "mV")):
+        out += [f"**{title}** *(mean NRMSE % / mean MRE % / min R² / "
+                f"max error {error_unit}; config fails in brackets)*", "",
                 "| group | " + " | ".join(TECHS) + " | pass |",
                 "|---|" + "---|" * (len(TECHS) + 1)]
         for label, key in _groups(tag, recipes):
@@ -423,7 +428,11 @@ def device_tables(tag: str, recipes: bool) -> str:
                 p += e["n_pass"]
                 n += e["n"]
                 extra = "" if e["n_pass"] == e["n"] else f" ({e['n_pass']}/{e['n']})"
-                cells.append(f"{e['mean_nrmse']:.2f}{extra}")
+                max_error = e["max_error"] * (1e6 if suite.endswith("_dc") else 1.0)
+                cells.append(
+                    f"{e['mean_nrmse']:.2f} / {e['mean_mre']:.2f} / "
+                    f"{e['min_r2']:.3f} / {max_error:.3g}{extra}"
+                )
             if n:
                 out.append(f"| {label} | " + " | ".join(cells) + f" | {p}/{n} |")
         out.append("")

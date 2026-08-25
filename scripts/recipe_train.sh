@@ -34,10 +34,10 @@
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SELF="$ROOT/scripts/$(basename "${BASH_SOURCE[0]}")"
-CKPT="$ROOT/external_compact_models/neural_network/checkpoints"
+CKPT="${BSIMAR_CHECKPOINT_DIR:-$ROOT/external_compact_models/neural_network/checkpoints}"
 DS="$ROOT/external_compact_models/neural_network/data/datasets"
-LOGDIR="$ROOT/results/recipe_bench/train_logs"
-mkdir -p "$LOGDIR"
+LOGDIR="${RECIPE_TRAIN_LOG_DIR:-$ROOT/results/recipe_bench/train_logs}"
+mkdir -p "$CKPT" "$LOGDIR"
 read -r -a GPU_IDS <<< "${GPUS:-0 1 2}"
 NGPU=${#GPU_IDS[@]}
 NSTREAMS="${NSTREAMS:-9}"
@@ -131,12 +131,21 @@ if [ "${1:-}" = "_one" ]; then
     name="${tech}_${TAG}_${recipe}_${size}_${dev}"
   fi
   ckpt="$CKPT/${name}_best.pt"
+  norm="$CKPT/${name}_norm.npz"
+  config="$CKPT/${name}_config.npz"
   log="$LOGDIR/${name}.log"
-  if [ -f "$ckpt" ] && [ "$force" != "--force" ]; then
-    # `_best.pt` alone is NOT proof of a completed run (a killed run leaves a
-    # best-so-far file) — the .complete marker is; warn when it is absent
-    [ -f "$ckpt.complete" ] || echo "[train] WARN $name exists WITHOUT completion marker (killed run? --force to retrain)"
+  sidecars_ok=false
+  if [ -f "$norm" ]; then
+    case "$TAG" in
+      dn) sidecars_ok=true ;;
+      tf|pfn) [ -f "$config" ] && sidecars_ok=true ;;
+    esac
+  fi
+  if [ -f "$ckpt" ] && [ -f "$ckpt.complete" ] && [ "$sidecars_ok" = true ] && [ "$force" != "--force" ]; then
     echo "[train] SKIP existing $name"; exit 0
+  fi
+  if [ -f "$ckpt" ] && [ "$force" != "--force" ]; then
+    echo "[train] RETRAIN incomplete $name (checkpoint, sidecar, or completion marker missing)"
   fi
   extra="$(recipe_args "$recipe")"
   if [ "$extra" = "__UNKNOWN__" ]; then echo "[train] UNKNOWN recipe $recipe"; exit 1; fi
@@ -185,6 +194,7 @@ if [ "${1:-}" = "_one" ]; then
   # V6.8: pin CPU threads per job. Un-pinned, each torch process spawns a
   # near-full-core OpenMP pool; at NSTREAMS=6-9 concurrent jobs the box hit
   # loadavg ~400/192 with GPUs starved at 56-78% util. TRAIN_OMP=4 default.
+  rm -f "$ckpt.complete"
   CUDA_VISIBLE_DEVICES="$gpu" OMP_NUM_THREADS="${TRAIN_OMP:-4}" MKL_NUM_THREADS="${TRAIN_OMP:-4}" \
     conda run --no-capture-output -n pycircuitsim python -u -m neural_network.cli.train \
     --model "$MODEL" --size "$size" --device-type "$dev" --tech-scope "$tech" \
@@ -192,10 +202,18 @@ if [ "${1:-}" = "_one" ]; then
     $expname $extra \
     > "$log" 2>&1
   rc=$?
-  if [ $rc -eq 0 ] && [ -f "$ckpt" ]; then
+  sidecars_ok=false
+  if [ -f "$norm" ]; then
+    case "$TAG" in
+      dn) sidecars_ok=true ;;
+      tf|pfn) [ -f "$config" ] && sidecars_ok=true ;;
+    esac
+  fi
+  if [ $rc -eq 0 ] && [ -f "$ckpt" ] && [ "$sidecars_ok" = true ]; then
     touch "$ckpt.complete"
     echo "[train] DONE $name"
   else
+    rm -f "$ckpt.complete"
     # audit B3 — a failed train produces NO artifact, so there is nothing for a
     # downstream gate to judge; exit 3 (never 255: xargs aborts the run on 255)
     # so the dispatcher fails loudly instead of printing FAIL and returning 0.
@@ -233,7 +251,14 @@ done; done
 lines=(); i=0
 for size in "${sizes[@]}"; do for recipe in "${recipes[@]}"; do for tech in "${techs[@]}"; do for dev in "${devs[@]}"; do
   if [ "$recipe" = clean ]; then _nm="${tech}_${TAG}_${size}_${dev}"; else _nm="${tech}_${TAG}_${recipe}_${size}_${dev}"; fi
-  if [ -f "$CKPT/${_nm}_best.pt.complete" ] && [ "$FORCE" != "--force" ]; then continue; fi
+  _ready=false
+  if [ -f "$CKPT/${_nm}_best.pt" ] && [ -f "$CKPT/${_nm}_norm.npz" ] && [ -f "$CKPT/${_nm}_best.pt.complete" ]; then
+    case "$TAG" in
+      dn) _ready=true ;;
+      tf|pfn) [ -f "$CKPT/${_nm}_config.npz" ] && _ready=true ;;
+    esac
+  fi
+  if [ "$_ready" = true ] && [ "$FORCE" != "--force" ]; then continue; fi
   lines+=("$recipe $tech $size $dev ${GPU_IDS[$((i % NGPU))]} ${FORCE:-noforce}")
   i=$((i+1))
 done; done; done; done

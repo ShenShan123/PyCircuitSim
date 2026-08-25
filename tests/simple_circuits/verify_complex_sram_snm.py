@@ -54,7 +54,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "
 
 from tests.common.base import SIMPLE_DECKS, render_reference_deck  # noqa: E402
 from tests.common.complex import (  # noqa: E402
-    BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech,
+    BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech, active_model_label,
     get_baked_modelcard, run_ngspice_wrdata, parse_netlist, full_metrics,
     render_directnet_text,
 )
@@ -304,11 +304,12 @@ def run_one(bt: BenchTech, nfins: List[int]) -> Dict:
             continue
         ng_snm = snm_from_lobes(ng["q"], ng["qb"])
 
-        print("    DirectNet (LEVEL=73) butterfly lobe ...")
+        model_label = active_model_label()
+        print(f"    {model_label} butterfly lobe ...")
         try:
             dn = directnet_lobe(bt, nfin, work_dir)
         except Exception as exc:  # noqa: BLE001
-            print(f"      DirectNet FAILED: {exc!r}")
+            print(f"      {model_label} FAILED: {exc!r}")
             corner_rows.append({"nfin": nfin, "ng_snm": ng_snm,
                                 "error": repr(exc)})
             continue
@@ -375,7 +376,8 @@ def main() -> int:
     nfins = [int(x) for x in args.nfin.split(",")]
 
     print("=" * 78)
-    print("Benchmark 3c — 6T SRAM read SNM: DirectNet vs NGSPICE BSIM-CMG")
+    print(f"Benchmark 3c — 6T SRAM read SNM: {active_model_label()} "
+          "vs NGSPICE BSIM-CMG")
     print(f"  NFIN corners: {nfins}")
     print("  Gate: butterfly lobes positive AND NGSPICE-NRMSE-tracking "
           f"(<= {SRAM_NRMSE_TOL*100:.0f}%) across NFIN corners")

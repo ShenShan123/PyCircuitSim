@@ -44,7 +44,8 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from tests.common.complex import (  # noqa: E402
-    BENCH, BENCH_TECHS, get_baked_modelcard, run_ngspice_wrdata,
+    BENCH, BENCH_TECHS, active_model_label, get_baked_modelcard,
+    run_ngspice_wrdata,
 )
 from tests.common.complex_ac import (  # noqa: E402
     ac_freq_grid, run_ngspice_ac_baked, run_directnet_ac, ac_metrics_extended,
@@ -291,16 +292,25 @@ def main() -> int:
     techs = [t.strip().upper() for t in args.tech.split(",") if t.strip()]
     devices = [d.strip().lower() for d in args.device.split(",") if d.strip()]
 
+    unknown_techs = [tech for tech in techs if tech not in BENCH]
+    unknown_devices = [device for device in devices
+                       if device not in {"nmos", "pmos"}]
+    if not techs or unknown_techs:
+        print(f"ERROR: unknown tech(s) {unknown_techs or techs}. "
+              f"Available: {list(BENCH)}")
+        return 1
+    if not devices or unknown_devices:
+        print(f"ERROR: unknown device(s) {unknown_devices or devices}. "
+              "Available: ['nmos', 'pmos']")
+        return 1
+
     RESULTS_BASE.mkdir(parents=True, exist_ok=True)
     print("\n" + "*" * 78)
-    print("  Device-level NN AC gate: DirectNet (LEVEL=73) vs NGSPICE BSIM-CMG")
+    print(f"  Device-level NN AC gate: {active_model_label()} vs NGSPICE BSIM-CMG")
     print("*" * 78)
 
     rows: List[Dict[str, object]] = []
     for tech in techs:
-        if tech not in BENCH:
-            print(f"  [skip] unknown tech {tech}")
-            continue
         print(f"\n  === {tech} ===")
         for device in devices:
             try:
