@@ -36,7 +36,7 @@ mixed.
 
 ```bash
 conda run -n pycircuitsim python scripts/v710_regate_collect.py \
-  --root results/v7517_clean
+  --root results/v7517_clean --require-manifest
 
 for family in dn tf; do
   BSIMAR_CHECKPOINT_DIR="$PWD/results/v7516_clean/checkpoints" \

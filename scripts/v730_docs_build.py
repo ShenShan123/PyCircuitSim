@@ -552,6 +552,11 @@ def _report_result_complete(suite: str, result: object) -> bool:
     """Whether one verdict includes the metrics its report table consumes."""
     if not isinstance(result, dict) or not is_verdict(result):
         return False
+    if suite in ("verify_complex_opamp", "verify_complex_opamp_ac"):
+        error = result.get("error")
+        if result.get("status") == "ERROR":
+            return (int(result["rc"]) != 0 and isinstance(error, str)
+                    and bool(error.strip()))
     if suite == "verify_nn_ac":
         for device in ("nmos", "pmos"):
             payload = result.get(device)

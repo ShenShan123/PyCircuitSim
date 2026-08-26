@@ -33,6 +33,9 @@ _AC_ROW = re.compile(
 _OPAMP_AC = re.compile(
     r"^\s*(TSMC\d+)\s*\| dc_gain_err=\s*(\S+)dB \| gbw_ratio=\s*(\S+) \| "
     r"pm_err=\s*(\S+)deg \| magNRMSE=\s*(\S+)% \| (\w+)", re.M)
+_SUMMARY_ERROR_ROW = re.compile(
+    r"^\s*(TSMC\d+)\s*\|\s*ERROR\s+[—-]\s+(.+?)\s*$", re.M,
+)
 _DEV_ROW = re.compile(
     r"^\s+(TSMC\d+_\S+)\s+NRMSE=\s*(\S+)%\s+MRE=\s*(\S+)%\s+R2=\s*(\S+)\s+"
     r"MaxErr=(\S+)\s+(PASS|FAIL|ERROR)", re.M)
@@ -88,6 +91,14 @@ def rc_of(txt: str) -> Optional[str]:
         return None
     match = _RC.fullmatch(markers[0])
     return match.group(1) if match else None
+
+
+def _summary_error(txt: str, tech: str) -> Optional[str]:
+    """Return a caught per-tech error from a suite's summary table."""
+    for match in _SUMMARY_ERROR_ROW.finditer(txt):
+        if match.group(1).upper() == tech.upper():
+            return match.group(2)
+    return None
 
 
 def is_verdict(entry: object) -> bool:
@@ -171,6 +182,10 @@ def collect(root: Path, require_manifest: bool = False) -> Dict:
                     vals = pat.findall(txt)
                     if vals:
                         entry["metric"] = float(vals[-1])
+        if suite in ("verify_complex_opamp", "verify_complex_opamp_ac"):
+            error = _summary_error(txt, tech_dir)
+            if error is not None:
+                entry.update(status="ERROR", error=error)
         cell[f"omp{omp}"] = entry
     return out
 

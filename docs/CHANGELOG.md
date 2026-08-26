@@ -20,7 +20,7 @@ The pre-compaction long-form narrative remains available in Git history.
 
 ## V7.5 — AnalogGym migration
 
-### V7.5.17 — PFN retirement and audited simple-circuit coverage (2026-08-25)
+### V7.5.17 — PFN retirement and audited simple-circuit coverage (2026-08-26)
 
 - Retired PFN/TabPFN and LEVEL=75 from the parser, solver, model/training
   packages, campaign tooling, tests, and active documentation. DirectNet
@@ -41,7 +41,22 @@ The pre-compaction long-form narrative remains available in Git history.
 - Bound every clean re-gate log to one immutable manifest of the source commit,
   job list, NGSPICE/OSDI/PDKs, checkpoints, and sidecars. Collection and report
   generation fail on mixed or missing provenance.
-- Clean re-gate outcome: pending the complete V7.5.17 campaign below.
+- Completed one manifest-bound, CPU-pinned 480-job clean re-gate at gate commit
+  `db1b295`, with 480 completion markers and no infrastructure errors or
+  tracebacks. Strict complex scores are DirectNet **5/7/9/10** and BSIM-AR
+  **9/9/12/11** out of 20 from S→XL. The expanded parametric matrix scores
+  DirectNet DC **105/105/105/102 of 129** and transient **88/87/91/94 of 100**;
+  BSIM-AR DC **103/104/101/103 of 129** and transient **89/91/86/92 of 100**.
+  Device AC and opamp AC remain **0/10** and **0/5** at every tier because the
+  required NN operating points do not converge.
+- Investigated the 6–14 hour BSIM-AR XL AC long tail. The jobs were CPU-bound,
+  not hung: the AC gate scans 66–82 fresh DC biases per technology, and hard
+  points exhaust GMIN retry before a 200-step pseudo-transient fallback. Stock
+  autoregressive XL evaluation measured 204.4 ms for the DC path and 380.9 ms
+  for capacitances versus 29.0/54.4 ms at `small`; one failed point issued 513
+  Transformer forwards. The 180-frequency linear AC solve reuses one
+  linearization and is not the bottleneck. The non-bit-identical prefix cache
+  remained off for the scored campaign.
 
 ### V7.5.16 — corrected clean evidence and BSIM-AR evaluation (2026-08-25)
 

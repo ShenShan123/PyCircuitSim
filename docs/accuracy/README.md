@@ -20,15 +20,14 @@ contract before comparing results.
 
 | LEVEL | family | role | current / best clean | historical best recipe | CPU cost |
 |---|---|---|---|---|---|
-| 73 | **DirectNet** | **production** | V7.5.16 `large` **12/20** served; `large` **12/20** best | V7.3 `crit15m`@xl **19/20** | 1.5 ms @ `large` |
-| 74 | **BSIM-AR** | higher fidelity | V7.5.16 `small` **13/20** | V7.3 `corroft`@medium **20/20** | 61.5 ms @ `medium` |
+| 73 | **DirectNet** | **production** | V7.5.17 `large` **9/20** served; `xl` **10/20** best | V7.3 `crit15m`@xl **19/20** | 1.5 ms @ `large` |
+| 74 | **BSIM-AR** | higher fidelity | V7.5.17 `large` **12/20** | V7.3 `corroft`@medium **20/20** | 61.5 ms @ `medium` |
 
 Strict = passes at OMP ∈ {1, 2, 4}. Totals are **/20** — 4 circuits × 5 techs, TSMC6 included (`methodology.md` §2). Earlier reports scored /16 over four techs, so a /20 total here and a /16 total there can be the same measurement.
 
-The DirectNet and BSIM-AR clean rows come from one V7.5.16 CPU-pinned campaign
-at gate commit `49f0426`, using the preserved V7.4 checkpoint population.
-Recipe columns are historical and are not direct deltas against the current
-clean contract.
+The DirectNet and BSIM-AR clean rows come from one V7.5.17 CPU-pinned campaign
+using the preserved V7.4 checkpoint population. Recipe columns are historical
+and are not direct deltas against the current clean contract.
 
 TSMC6 remains in the denominator as a controlled repeat of TSMC7. Their
 LEVEL=72 data are identical, so disagreement measures training and Newton-basin
@@ -42,12 +41,12 @@ mixed.
 
 ```bash
 conda run -n pycircuitsim python scripts/v710_regate_collect.py \
-  --root results/v7516_clean
+  --root results/v7517_clean --require-manifest
 
 for family in dn tf; do
   BSIMAR_CHECKPOINT_DIR="$PWD/results/v7516_clean/checkpoints" \
   conda run -n pycircuitsim python scripts/v730_coverage.py \
-    --tag "$family" --set clean --passes v7516-clean \
+    --tag "$family" --set clean --passes v7517-clean \
     --require-complete --fail-on-gaps
 done
 
@@ -55,4 +54,4 @@ conda run -n pycircuitsim python scripts/v730_docs_build.py
 conda run -n pycircuitsim python scripts/v730_docs_build.py --check
 ```
 
-Current raw evidence is local and gitignored under `results/v7516_clean/`.
+Current raw evidence is local and gitignored under `results/v7517_clean/`.

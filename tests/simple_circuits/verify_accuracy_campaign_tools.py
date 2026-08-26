@@ -354,6 +354,38 @@ def _check_error_rows_count_in_device_denominators() -> None:
         assert entry["rows"]["TSMC5_pmos_base"]["status"] == "ERROR"
 
 
+def _check_explicit_opamp_errors_are_complete_failures() -> None:
+    """Caught convergence errors stay in report denominators without metrics."""
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        logs = {
+            "verify_complex_opamp": (
+                "TSMC5    | ERROR — RuntimeError('DC operating point did not converge')\n"
+            ),
+            "verify_complex_opamp_ac": (
+                "  TSMC5    | ERROR — DC operating point did not converge\n"
+            ),
+        }
+        for suite, summary in logs.items():
+            log = root / "dn" / "small" / "tsmc5" / f"{suite}.omp1.log"
+            log.parent.mkdir(parents=True, exist_ok=True)
+            log.write_text(summary + "===V710_DONE rc=1===\n")
+
+        data = collect.collect(root)
+        for suite in logs:
+            entry = data["dn"]["small"][suite]["TSMC5"]["omp1"]
+            assert entry["status"] == "ERROR"
+            assert "DC operating point did not converge" in entry["error"]
+            assert docs._report_result_complete(suite, entry)
+            assert "metric" not in entry
+            assert not docs._report_result_complete(
+                suite, {"rc": "1", "status": "ERROR"},
+            )
+            assert not docs._report_result_complete(
+                suite, {"rc": "0", "status": "ERROR", "error": "bad"},
+            )
+
+
 def _check_clean_pool() -> None:
     """The clean campaign must cover the exact requested Cartesian product."""
     clean = jobs.build_pools()["clean"]
@@ -813,6 +845,7 @@ def main() -> int:
     _check_invalid_rendering()
     _check_device_metrics_survive_collection()
     _check_error_rows_count_in_device_denominators()
+    _check_explicit_opamp_errors_are_complete_failures()
     _check_clean_pool()
     _check_job_generator_help_is_read_only()
     _check_training_lifecycle_subprocesses()
