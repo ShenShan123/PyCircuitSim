@@ -4,13 +4,21 @@ One loader for both architectures. The caller picks ``norm_mode``:
 ``"zscore"`` for DirectNet, ``"asinh"`` for the Transformer.
 """
 
-from typing import Dict, List, Optional, Set, Tuple
+import hashlib
+import json
+import re
+from pathlib import Path
+from typing import Dict, List, Optional, Set, Tuple, Union
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
 from neural_network.data.normalize import _NormalizerBase, normalizer_for
+from neural_network.data.sampling import (
+    grouped_split_indices,
+    stratified_sample_indices,
+)
 
 
 class MOSFETDataset(Dataset):
@@ -55,6 +63,95 @@ DEFAULT_FILTER_THRESHOLDS: Dict[str, float] = {"id": 1e-15}
 _LEGACY_LHS_CLASS_CODE: int = 6
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def validate_canonical_dataset(data_path: Union[str, Path]) -> None:
+    """Reject incomplete, diagnostic, stale, or untraceable training data."""
+    path = Path(data_path)
+    marker_path = path.with_suffix(path.suffix + ".complete")
+    if not marker_path.is_file():
+        raise ValueError(f"dataset completion marker is missing: {marker_path}")
+    try:
+        marker = json.loads(marker_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"invalid dataset completion marker: {marker_path}") from exc
+    if not isinstance(marker, dict):
+        raise ValueError(f"invalid dataset completion marker: {marker_path}")
+    if marker.get("dataset") != path.name:
+        raise ValueError("dataset completion marker names a different file")
+    if marker.get("dataset_sha256") != _sha256(path):
+        raise ValueError("dataset checksum does not match completion marker")
+
+    required = {
+        "meta_allow_rejected_points", "meta_dataset_variant",
+        "meta_dropped_bins", "meta_generator_release", "meta_kept_rows",
+        "meta_manifest_json", "meta_modelcard_sha256_json",
+        "meta_osdi_sha256", "meta_rejected_rows", "meta_requested_rows",
+        "meta_source_commit", "meta_source_dirty",
+    }
+    with np.load(path, allow_pickle=False) as data:
+        missing = sorted(required.difference(data.files))
+        if missing:
+            raise ValueError(
+                "dataset provenance metadata is incomplete: " + ", ".join(missing)
+            )
+
+        def _scalar(name: str) -> object:
+            value = np.asarray(data[name])
+            if value.size != 1:
+                raise ValueError(f"dataset metadata {name} must be scalar")
+            return value.reshape(()).item()
+
+        rows = len(data["outputs"])
+        requested = int(_scalar("meta_requested_rows"))
+        kept = int(_scalar("meta_kept_rows"))
+        rejected = int(_scalar("meta_rejected_rows"))
+        dropped = int(_scalar("meta_dropped_bins"))
+        if bool(_scalar("meta_allow_rejected_points")) or rejected or dropped:
+            raise ValueError(
+                "diagnostic dataset cannot be used for canonical training"
+            )
+        if requested != kept or kept != rows:
+            raise ValueError("dataset row counts do not prove complete generation")
+        if bool(_scalar("meta_source_dirty")):
+            raise ValueError("dataset was generated from a dirty source tree")
+        source_commit = str(_scalar("meta_source_commit"))
+        release = str(_scalar("meta_generator_release"))
+        osdi_sha = str(_scalar("meta_osdi_sha256"))
+        try:
+            modelcard_hashes = json.loads(
+                str(_scalar("meta_modelcard_sha256_json"))
+            )
+            manifest = json.loads(str(_scalar("meta_manifest_json")))
+        except json.JSONDecodeError as exc:
+            raise ValueError("dataset hash or bin manifest JSON is invalid") from exc
+        sha_pattern = re.compile(r"[0-9a-f]{64}")
+        if not sha_pattern.fullmatch(osdi_sha):
+            raise ValueError("dataset OSDI SHA-256 is invalid")
+        if not isinstance(modelcard_hashes, dict) or not modelcard_hashes or any(
+            not isinstance(value, str) or not sha_pattern.fullmatch(value)
+            for value in modelcard_hashes.values()
+        ):
+            raise ValueError("dataset modelcard SHA-256 map is invalid")
+        if not isinstance(manifest, list) or not manifest:
+            raise ValueError("dataset bin manifest is empty or invalid")
+        if marker.get("rows") != rows:
+            raise ValueError("dataset row count does not match completion marker")
+        if marker.get("source_commit") != source_commit:
+            raise ValueError("dataset source commit does not match completion marker")
+        if marker.get("generator_release") != release:
+            raise ValueError("dataset release does not match completion marker")
+        if (not re.fullmatch(r"[0-9a-f]{40}", source_commit)
+                or not re.fullmatch(r"V\d+\.\d+\.\d+", release)):
+            raise ValueError("dataset provenance contains unknown values")
+
+
 def filter_small_targets(
     outputs: np.ndarray,
     column_names: List[str],
@@ -82,6 +179,7 @@ def load_and_split_bsimar(
     max_rows: Optional[int] = None,
     output_subset: Optional[List[str]] = None,
     tech_scope: str = "universal",
+    split_mode: str = "combo",
 ) -> Tuple[MOSFETDataset, MOSFETDataset, MOSFETDataset, _NormalizerBase]:
     """Load .npz, label, optionally filter / exclude techs / cap, split, normalise.
 
@@ -149,8 +247,10 @@ def load_and_split_bsimar(
         print(f"  Excluded {exclude_techs}: kept {keep.sum()} samples")
 
     if max_rows is not None and len(outputs) > max_rows:
-        rng_cap = np.random.default_rng(seed)
-        idx = rng_cap.choice(len(outputs), size=max_rows, replace=False)
+        cap_strata = np.column_stack(
+            [tech_codes, geometry[:, :3], sample_class]
+        )
+        idx = stratified_sample_indices(cap_strata, max_rows, seed)
         inputs, geometry, outputs = inputs[idx], geometry[idx], outputs[idx]
         tech_codes = tech_codes[idx]
         sample_class = sample_class[idx]
@@ -195,13 +295,21 @@ def load_and_split_bsimar(
         print(f"  Output subset: kept {len(output_subset)} cols "
               f"{output_subset}")
 
-    rng = np.random.default_rng(seed)
-    perm = rng.permutation(len(outputs))
-    n_train = int(len(perm) * train_ratio)
-    n_val = int(len(perm) * val_ratio)
-    train_idx = perm[:n_train]
-    val_idx = perm[n_train:n_train + n_val]
-    test_idx = perm[n_train + n_val:]
+    if split_mode == "combo":
+        combo_strata = np.column_stack([tech_codes, geometry[:, :3]])
+        train_idx, val_idx, test_idx = grouped_split_indices(
+            combo_strata, train_ratio, val_ratio, seed,
+        )
+    elif split_mode == "random":
+        rng = np.random.default_rng(seed)
+        perm = rng.permutation(len(outputs))
+        n_train = int(len(perm) * train_ratio)
+        n_val = int(len(perm) * val_ratio)
+        train_idx = perm[:n_train]
+        val_idx = perm[n_train:n_train + n_val]
+        test_idx = perm[n_train + n_val:]
+    else:
+        raise ValueError("split_mode must be 'combo' or 'random'")
 
     normalizer = normalizer_for(norm_mode)
     normalizer.fit(
@@ -221,5 +329,6 @@ def load_and_split_bsimar(
     val_ds = _make(val_idx)
     test_ds = _make(test_idx)
 
-    print(f"  Split: train={len(train_ds)} val={len(val_ds)} test={len(test_ds)}")
+    print(f"  Split ({split_mode}): train={len(train_ds)} "
+          f"val={len(val_ds)} test={len(test_ds)}")
     return train_ds, val_ds, test_ds, normalizer

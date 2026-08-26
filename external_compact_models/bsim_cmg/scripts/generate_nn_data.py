@@ -19,11 +19,16 @@ Output goes to --data-dir (default: ../../neural_network/data/datasets/).
 """
 
 import argparse
+import hashlib
+import json
 import os
+import shlex
+import subprocess
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
 
@@ -33,6 +38,7 @@ from pycmg.nn_generate import (
     DEFAULT_HOT_PER_AXIS,
     DEFAULT_JITTER_SIGMA_FRAC,
     DEFAULT_LHS_SAMPLES_PER_BIN,
+    DEFAULT_MAX_L_RATIO,
     DEFAULT_SAMPLER,
     DEFAULT_TEMPERATURES_K,
     DEFAULT_VBS_LEVELS,
@@ -41,6 +47,8 @@ from pycmg.nn_generate import (
     generate_universal_dataset,
 )
 from pycmg.sweep import save_npz
+
+from neural_network.data.sampling import stratified_sample_indices
 
 
 def _default_data_dir() -> Path:
@@ -56,35 +64,88 @@ def _parse_temperatures(arg: str) -> tuple:
 
 def _save_finetune_split(
     full: dict,
+    parent_path: Path,
     out_path: Path,
     n_samples: int,
     seed: int,
 ) -> None:
-    """Write a stratified random subset of `full` for paper-style fine-tune.
-
-    "Stratified" here means a uniform random shuffle (the LHS sampler
-    already produced uniform coverage; further stratification by
-    (variant, T) bin is overkill for an N=1k–8k subset). Reuses the
-    same metadata as the parent dataset.
-    """
+    """Write a subset stratified by geometry, process variant, and class."""
     n_total = full["inputs"].shape[0]
     n = min(n_samples, n_total)
-    rng = np.random.default_rng(seed)
-    idx = rng.permutation(n_total)[:n]
+    sample_class_full = full.get("sample_class")
+    if sample_class_full is None:
+        sample_class_full = np.full(n_total, -1, dtype=np.int8)
+    strata = np.column_stack([full["geometry"], sample_class_full])
+    idx = stratified_sample_indices(strata, n, seed)
 
     sample_class = full.get("sample_class")
     if sample_class is not None:
         sample_class = sample_class[idx]
 
+    metadata = dict(full["metadata"])
+    metadata.update({
+        "dataset_variant": (
+            f"{metadata.get('dataset_variant', 'generated')}_finetune_stratified"
+        ),
+        "requested_rows": np.int64(len(idx)),
+        "kept_rows": np.int64(len(idx)),
+        "rejected_rows": np.int64(0),
+        "dropped_bins": np.int64(0),
+        "allow_rejected_points": np.bool_(False),
+        "parent_dataset": parent_path.name,
+        "parent_dataset_sha256": _sha256(parent_path),
+    })
     save_npz(
         full["inputs"][idx],
         full["geometry"][idx],
         full["outputs"][idx],
         out_path,
-        metadata=full["metadata"],
+        metadata=metadata,
         sample_class=sample_class,
     )
+    _write_completion_marker(out_path, len(idx), metadata)
     print(f"  Fine-tune split: {n:,} samples -> {out_path}")
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _write_completion_marker(
+    dataset_path: Path,
+    row_count: int,
+    metadata: dict,
+) -> None:
+    marker = dataset_path.with_suffix(dataset_path.suffix + ".complete")
+    marker.write_text(json.dumps({
+        "dataset": dataset_path.name,
+        "dataset_sha256": _sha256(dataset_path),
+        "rows": row_count,
+        "source_commit": str(metadata.get("source_commit", "unknown")),
+        "source_dirty": bool(metadata.get("source_dirty", True)),
+        "generator_release": str(metadata.get("generator_release", "unknown")),
+    }, sort_keys=True, indent=2) + "\n")
+
+
+def _add_run_provenance(data: dict) -> None:
+    project_root = Path(__file__).resolve().parents[3]
+    commit = subprocess.run(
+        ["git", "rev-parse", "HEAD"], cwd=project_root,
+        capture_output=True, text=True, check=False,
+    )
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=no"],
+        cwd=project_root, capture_output=True, text=True, check=False,
+    )
+    data["metadata"].update({
+        "source_commit": commit.stdout.strip() if commit.returncode == 0 else "unknown",
+        "source_dirty": status.returncode != 0 or bool(status.stdout.strip()),
+        "generator_command": shlex.join([sys.executable, *sys.argv]),
+    })
 
 
 def main() -> None:
@@ -191,12 +252,15 @@ def main() -> None:
     # is what produced the "capacity hurts BSIM-AR" artifact (docs/plans/
     # 2026-08-10-v742-bsimar-capacity.md). Default off = legacy grid.
     parser.add_argument(
-        "--max-l-ratio", type=float, default=None,
+        "--max-l-ratio", type=float, default=DEFAULT_MAX_L_RATIO,
         help="Sample inside each PDK length bin so no adjacent pair of L "
-             "knots differs by more than this ratio (e.g. 1.35). Unset "
-             "(default) samples each bin's lower corner only, reproducing "
-             "the pre-V7.4.2 grid byte for byte. Costs roughly "
+             "knots differs by more than this ratio (default: 1.35). Costs roughly "
              "log(bin span)/log(ratio) times the rows.",
+    )
+    parser.add_argument(
+        "--allow-rejected-points", action="store_true",
+        help="Write a diagnostic artifact despite rejected points/bins. "
+             "Canonical datasets fail instead.",
     )
 
     parser.add_argument("--data-dir", type=Path, default=None,
@@ -249,6 +313,7 @@ def main() -> None:
         enable_inv_trip=args.enable_inv_trip,
         enable_subvt_off=args.enable_subvt_off,
         max_l_ratio=args.max_l_ratio,
+        allow_rejected_points=args.allow_rejected_points,
     )
 
     if args.universal:
@@ -258,17 +323,19 @@ def main() -> None:
                 exclude_techs=exclude_techs,
                 **common_kw,
             )
+            _add_run_provenance(data)
             out = data_dir / f"{_versioned('universal')}_{device_type}.npz"
             save_npz(data["inputs"], data["geometry"], data["outputs"],
                      out, metadata=data["metadata"],
                      sample_class=data.get("sample_class"))
+            _write_completion_marker(out, data["inputs"].shape[0], data["metadata"])
             print(f"  Wrote {out} ({data['inputs'].shape[0]:,} rows)")
             if args.finetune_size > 0:
                 ft_out = data_dir / (
                     f"finetune_{_versioned('universal')}_{device_type}.npz"
                 )
                 _save_finetune_split(
-                    data, ft_out, args.finetune_size, seed=args.seed,
+                    data, out, ft_out, args.finetune_size, seed=args.seed,
                 )
         return
 
@@ -291,19 +358,21 @@ def main() -> None:
                 variant_names=variant_names,
                 **common_kw,
             )
+            _add_run_provenance(data)
             out = data_dir / (
                 f"{_versioned(tech.name.lower())}_{device_type}.npz"
             )
             save_npz(data["inputs"], data["geometry"], data["outputs"],
                      out, metadata=data["metadata"],
                      sample_class=data.get("sample_class"))
+            _write_completion_marker(out, data["inputs"].shape[0], data["metadata"])
             print(f"  Wrote {out} ({data['inputs'].shape[0]:,} rows)")
             if args.finetune_size > 0:
                 ft_out = data_dir / (
                     f"finetune_{_versioned(tech.name.lower())}_{device_type}.npz"
                 )
                 _save_finetune_split(
-                    data, ft_out, args.finetune_size, seed=args.seed,
+                    data, out, ft_out, args.finetune_size, seed=args.seed,
                 )
 
 

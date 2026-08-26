@@ -10,10 +10,8 @@ contract before comparing results.
 |---|---|
 | [`DirectNet-L73-clean.md`](DirectNet-L73-clean.md) | production DirectNet, all clean tiers |
 | [`BSIM-AR-L74-clean.md`](BSIM-AR-L74-clean.md) | autoregressive Transformer, all clean tiers |
-| [`PFN-L75-clean.md`](PFN-L75-clean.md) | in-context PFN research family, all clean tiers |
 | [`DirectNet-L73-recipes.md`](DirectNet-L73-recipes.md) | historical DirectNet recipe study |
 | [`BSIM-AR-L74-recipes.md`](BSIM-AR-L74-recipes.md) | historical BSIM-AR recipe study |
-| [`PFN-L75-recipes.md`](PFN-L75-recipes.md) | historical PFN recipe study |
 | [`simple-circuits-recheck-2026-08-19.md`](simple-circuits-recheck-2026-08-19.md) | superseded V7.5.15 campaign audit trail |
 | [`archive-pre-gds-fix.md`](archive-pre-gds-fix.md) | retracted pre-V6.13 claims |
 | [`../../examples/complex_circuits/RESULTS_TSMC.md`](../../examples/complex_circuits/RESULTS_TSMC.md) | separate AnalogGym campaign |
@@ -24,15 +22,13 @@ contract before comparing results.
 |---|---|---|---|---|---|
 | 73 | **DirectNet** | **production** | V7.5.16 `large` **12/20** served; `large` **12/20** best | V7.3 `crit15m`@xl **19/20** | 1.5 ms @ `large` |
 | 74 | **BSIM-AR** | higher fidelity | V7.5.16 `small` **13/20** | V7.3 `corroft`@medium **20/20** | 61.5 ms @ `medium` |
-| 75 | **PFN** | research | V7.3 `small` **14/20** | V7.3 `corroft`@small **14/20** | 15.6 ms @ `small` |
 
 Strict = passes at OMP ∈ {1, 2, 4}. Totals are **/20** — 4 circuits × 5 techs, TSMC6 included (`methodology.md` §2). Earlier reports scored /16 over four techs, so a /20 total here and a /16 total there can be the same measurement.
 
 The DirectNet and BSIM-AR clean rows come from one V7.5.16 CPU-pinned campaign
-at gate commit `49f0426`, using the preserved V7.4 checkpoint population. PFN
-remains V7.3 historical evidence because its V7.5.16 retrain was stopped before
-completion. Recipe columns are also historical and are not direct deltas
-against the current clean contract.
+at gate commit `49f0426`, using the preserved V7.4 checkpoint population.
+Recipe columns are historical and are not direct deltas against the current
+clean contract.
 
 TSMC6 remains in the denominator as a controlled repeat of TSMC7. Their
 LEVEL=72 data are identical, so disagreement measures training and Newton-basin
@@ -42,7 +38,7 @@ variability rather than an independent technology result.
 
 Current tables are published only when all 480 DirectNet/BSIM-AR clean jobs and
 all family-required checkpoint artifacts are present. Partial passes are never
-mixed. Historical PFN output is preserved only when its pinned SHA-256 matches.
+mixed.
 
 ```bash
 conda run -n pycircuitsim python scripts/v710_regate_collect.py \

@@ -32,8 +32,7 @@ MODEL="${MODEL:-direct}"
 case "$MODEL" in
   direct)      TAG="dn"; OUT_DEFAULT="$ROOT/results/benchmark_sml" ;;
   transformer) TAG="tf"; OUT_DEFAULT="$ROOT/results/bsimar_bench" ;;
-  tabpfn)      TAG="pfn"; OUT_DEFAULT="$ROOT/results/pfn_bench" ;;
-  *) echo "[test] UNKNOWN MODEL=$MODEL (direct|transformer|tabpfn)"; exit 1 ;;
+  *) echo "[test] UNKNOWN MODEL=$MODEL (direct|transformer)"; exit 1 ;;
 esac
 export MODEL
 OUT="${BENCH_OUT:-$OUT_DEFAULT}"
@@ -76,10 +75,6 @@ if [ "${1:-}" = "_one" ]; then
     export PYCIRCUITSIM_NN_CHECKPOINT_TF_NMOS="${tlc}_tf_${size}_nmos"
     export PYCIRCUITSIM_NN_CHECKPOINT_TF_PMOS="${tlc}_tf_${size}_pmos"
     export PYCIRCUITSIM_NN_FORCE_LEVEL=74
-  elif [ "$TAG" = "pfn" ]; then
-    export PYCIRCUITSIM_NN_CHECKPOINT_PFN_NMOS="${tlc}_pfn_${size}_nmos"
-    export PYCIRCUITSIM_NN_CHECKPOINT_PFN_PMOS="${tlc}_pfn_${size}_pmos"
-    export PYCIRCUITSIM_NN_FORCE_LEVEL=75
   else
     export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="${tlc}_dn_${size}_nmos"
     export PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="${tlc}_dn_${size}_pmos"

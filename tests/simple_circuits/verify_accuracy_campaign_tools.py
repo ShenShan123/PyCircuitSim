@@ -98,7 +98,7 @@ def _ready_checkpoint(
         stem.with_name(stem.name + "_norm.npz").touch()
         if complete:
             stem.with_name(stem.name + "_best.pt.complete").touch()
-        if tag in ("tf", "pfn") and config:
+        if tag == "tf" and config:
             stem.with_name(stem.name + "_config.npz").touch()
 
 
@@ -155,8 +155,12 @@ def _check_nn_ac_banner_tracks_forced_family() -> None:
         assert verify_nn_ac.active_model_label() == "BSIM-AR (LEVEL=74)"
         assert verify_nn_ac.active_model_name() == "BSIM-AR"
     with patch.dict(os.environ, {"PYCIRCUITSIM_NN_FORCE_LEVEL": "75"}, clear=True):
-        assert verify_nn_ac.active_model_label() == "PFN (LEVEL=75)"
-        assert verify_nn_ac.active_model_name() == "PFN"
+        try:
+            verify_nn_ac.active_model_label()
+        except ValueError as exc:
+            assert "unsupported NN model level 75" in str(exc)
+        else:
+            raise AssertionError("retired LEVEL=75 was accepted")
 
     parsed = benchmark_collect.parse_complex_log(
         "verify_complex_sram_snm",
@@ -175,13 +179,12 @@ def _check_nn_ac_banner_tracks_forced_family() -> None:
             "mag_nrmse": 0.0,
         },
     }
-    for level, family in (("74", "BSIM-AR"), ("75", "PFN")):
-        printed = io.StringIO()
-        with patch.dict(os.environ, {"PYCIRCUITSIM_NN_FORCE_LEVEL": level},
-                        clear=True), redirect_stdout(printed):
-            opamp_ac._print_result(result)
-        assert f"{family} DC OP" in printed.getvalue()
-        assert "NN DC OP" not in printed.getvalue()
+    printed = io.StringIO()
+    with patch.dict(os.environ, {"PYCIRCUITSIM_NN_FORCE_LEVEL": "74"},
+                    clear=True), redirect_stdout(printed):
+        opamp_ac._print_result(result)
+    assert "BSIM-AR DC OP" in printed.getvalue()
+    assert "NN DC OP" not in printed.getvalue()
 
 
 def _check_opamp_ac_refines_bias_and_requires_fixed_point() -> None:
@@ -281,6 +284,8 @@ def _check_lock_contention() -> None:
                 "JOBS": str(job_file),
                 "PAR": "1",
                 "V710_OUT": str(out),
+                "V710_CAMPAIGN_DIGEST": "0" * 64,
+                "V710_TEST_BYPASS_MANIFEST": "1",
             })
             result = subprocess.run(
                 ["bash", str(ROOT / "scripts" / "v710_regate.sh")],
@@ -355,7 +360,7 @@ def _check_clean_pool() -> None:
     parsed = {tuple(line.split()) for line in clean}
     expected = {
         (tag, variant, tech, suite, str(omp))
-        for tag in ("dn", "tf", "pfn")
+        for tag in ("dn", "tf")
         for variant in ("small", "medium", "large", "xl")
         for tech in ("TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16")
         for suite, omps in {
@@ -449,6 +454,8 @@ def _check_regate_readiness_and_family_ownership() -> None:
             "V710_SCRATCH": str(root / "scratch"),
             "FAKE_FORCE_LOG": str(observed),
             "PYCIRCUITSIM_NN_FORCE_LEVEL": "75",
+            "V710_CAMPAIGN_DIGEST": "0" * 64,
+            "V710_TEST_BYPASS_MANIFEST": "1",
         })
         command = ["bash", str(ROOT / "scripts" / "v710_regate.sh"), "_one",
                    "dn", "small", "TSMC5", "verify_nn_ac", "1"]
@@ -527,6 +534,8 @@ exit 1
             "BSIMAR_CHECKPOINT_DIR": str(checkpoint_dir),
             "V710_OUT": str(root / "out"),
             "V710_SCRATCH": str(root / "scratch"),
+            "V710_CAMPAIGN_DIGEST": "0" * 64,
+            "V710_TEST_BYPASS_MANIFEST": "1",
         })
         gate = subprocess.run(
             ["bash", str(ROOT / "scripts" / "v710_regate.sh"), "_one",
@@ -667,8 +676,8 @@ def _check_report_payload_completeness() -> None:
         docs.PASS_DATA = old_data
 
 
-def _check_historical_pfn_does_not_block_current_readme() -> None:
-    """A stopped PFN rebuild cannot block complete DirectNet/BSIM-AR docs."""
+def _check_readme_uses_only_current_families() -> None:
+    """The generated scoreboard contains only supported model families."""
     data = {
         tag: {
             variant: {
@@ -695,28 +704,30 @@ def _check_historical_pfn_does_not_block_current_readme() -> None:
 
         old_root, old_tpl, old_docs = docs.ROOT, docs.TPL, docs.DOCS
         old_data, old_pass = docs.PASS_DATA, docs.REPORT_PASS
+        old_provenance = docs._v7517_provenance_complete
         docs.ROOT = root
         docs.TPL = templates
         docs.DOCS = rendered
-        docs.PASS_DATA = {"V7.5.16": data, "V7.3.0": {}}
+        docs.PASS_DATA = {"V7.5.17": data}
         docs.REPORT_PASS = {
             **old_pass,
-            ("dn", False): "V7.5.16",
-            ("tf", False): "V7.5.16",
-            ("pfn", False): "V7.3.0",
+            ("dn", False): "V7.5.17",
+            ("tf", False): "V7.5.17",
         }
+        docs._v7517_provenance_complete = lambda: True
         try:
             with redirect_stdout(io.StringIO()):
                 assert docs.build_readme(check=False)
             result = (rendered / "README.md").read_text()
-            assert "V7.5.16 `small` **0/20**" in result
-            assert "V7.3 `small` **14/20**" in result
+            assert "V7.5.17 `small` **0/20**" in result
+            assert "| 75 |" not in result
         finally:
             docs.ROOT = old_root
             docs.TPL = old_tpl
             docs.DOCS = old_docs
             docs.PASS_DATA = old_data
             docs.REPORT_PASS = old_pass
+            docs._v7517_provenance_complete = old_provenance
 
 
 def _check_incomplete_reports_preserve_verified_output() -> None:
@@ -810,7 +821,7 @@ def main() -> int:
     _check_regate_interpreter_failures_are_infrastructure()
     _check_fail_on_gaps()
     _check_report_payload_completeness()
-    _check_historical_pfn_does_not_block_current_readme()
+    _check_readme_uses_only_current_families()
     _check_incomplete_reports_preserve_verified_output()
     clean_pool = jobs.build_pools()["clean"]
     clean_jobs = len(clean_pool)

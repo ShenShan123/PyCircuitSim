@@ -127,7 +127,7 @@ class NNDCSweepConfig:
     tech: TestTechConfig
     tech_key: str
     device: str              # "nmos" | "pmos"
-    sweep_type: str          # "baseline" | "l" | "nfin" | "vt"
+    sweep_type: str          # baseline/l/nfin/vt/temperature/body/reverse/joint
     config_name: str
     swept: Dict[str, object] = field(default_factory=dict)
 
@@ -169,7 +169,7 @@ def make_dc_baseline(tech_key: str, device: str) -> NNDCSweepConfig:
 
 
 def build_dc_parametric(tech_key: str, device: str) -> List[NNDCSweepConfig]:
-    """L / NFIN / VT sweep configs for a single device.
+    """Geometry, variant, temperature, body, and reverse-bias configs.
 
     Off-bin L points (e.g. 24nm vs the per-tech NN training bins
     {16,20,36,72,120}nm) exercise NN extrapolation; elevated NRMSE there is
@@ -212,6 +212,52 @@ def build_dc_parametric(tech_key: str, device: str) -> List[NNDCSweepConfig]:
             tech, tech_key, device, "vt", f"vt_{vp.vt_name}",
             {"vt": vp.vt_name}))
 
+    # Temperature endpoints are explicit scored cells, not merely dimensions
+    # present in the training file.
+    for temperature_c in (-25.0, 125.0):
+        tech = replace(
+            base, name=f"{tech_key}_t{temperature_c:+.0f}",
+            temperature_c=temperature_c,
+        )
+        cfgs.append(NNDCSweepConfig(
+            tech, tech_key, device, "temperature",
+            f"temp_{temperature_c:+.0f}c", {"temperature_c": temperature_c},
+        ))
+
+    # Exercise both signs of body bias in the source-relative device frame.
+    body_sign = 1.0 if device == "nmos" else -1.0
+    for tag, vbs in (
+        ("reverse", -body_sign * 0.25 * base.vdd),
+        ("forward", body_sign * 0.10 * base.vdd),
+    ):
+        tech = replace(base, name=f"{tech_key}_body_{tag}", dc_vbs=vbs)
+        cfgs.append(NNDCSweepConfig(
+            tech, tech_key, device, "body", f"body_{tag}", {"vbs": vbs},
+        ))
+
+    # Reverse Vds catches a sign error that magnitude-only comparisons hide.
+    tech = replace(base, name=f"{tech_key}_reverse_vds", dc_vds_scale=-0.25)
+    cfgs.append(NNDCSweepConfig(
+        tech, tech_key, device, "reverse", "reverse_vds",
+        {"vds": -0.25 * base.vdd},
+    ))
+
+    # A joint corner prevents every dimension from being tested only in
+    # isolation. Use an actual PDK length and a generated NFIN knot.
+    joint_l = profile.l_values[-1]
+    joint_nfin = 6
+    joint_kw = ({"l_nmos": joint_l} if device == "nmos"
+                else {"l_pmos": joint_l})
+    tech = replace(
+        base, name=f"{tech_key}_joint", nfin=joint_nfin,
+        temperature_c=125.0, **joint_kw,
+    )
+    cfgs.append(NNDCSweepConfig(
+        tech, tech_key, device, "joint", "joint_l_nfin_temp",
+        {"l_nm": round(joint_l * 1e9), "nfin": joint_nfin,
+         "temperature_c": 125.0},
+    ))
+
     return cfgs
 
 
@@ -236,25 +282,26 @@ def make_inv_baseline(tech_key: str, analysis: str) -> NNInvSweepConfig:
 def build_inv_parametric(tech_key: str, analysis: str) -> List[NNInvSweepConfig]:
     """P/N-ratio + VDD sweeps (VTC & tran); Cload + slew + PW (tran only).
 
-    The P/N-ratio sweep is bounded by the TSMC naive-modelcard NFIN-group rule
-    (``nfin_p > nfin+1`` skipped) exactly as the BSIM-CMG harness
-    (``verify_multi_tech.py``) — with default NFIN=2 this admits a single
-    point, ``nfin_p=3``. The limiter is the modelcard, not the NN model.
+    P/N-ratio cells use exact joint NFIN knots from each technology dataset,
+    so all advertised 0.5/1.5/2.0 ratios are actually scored.
     """
     base = ALL_TEST_TECHS[tech_key]
     cfgs: List[NNInvSweepConfig] = []
     default_circuit = None if analysis == "vtc" else InvCircuitParams()
 
-    # P/N ratio — PMOS fin count varies, NMOS stays at default.
-    nfin0 = base.effective_inv_nfin
-    for ratio in (0.5, 1.5, 2.0):
-        nfin_p = max(2, round(nfin0 * ratio))
-        if nfin_p == nfin0 or nfin_p > nfin0 + 1:
-            continue
-        tech = replace(base, name=f"{tech_key}_pn{nfin_p}", inv_nfin_p=nfin_p)
+    pairs = ((6, 3), (2, 3), (3, 6)) if tech_key in ("TSMC6", "TSMC7") \
+        else ((4, 2), (2, 3), (2, 4))
+    for nfin_n, nfin_p in pairs:
+        ratio = nfin_p / nfin_n
+        tech = replace(
+            base, name=f"{tech_key}_pn{ratio:.1f}",
+            inv_nfin=nfin_n, inv_nfin_p=nfin_p,
+        )
         cfgs.append(NNInvSweepConfig(
             tech, tech_key, analysis, default_circuit, "pn_ratio",
-            f"pn_nfinp{nfin_p}", {"nfin_p": nfin_p}))
+            f"pn_{ratio:.1f}".replace(".", "p"),
+            {"nfin_n": nfin_n, "nfin_p": nfin_p, "pn_ratio": ratio},
+        ))
 
     # VDD sweep — +/- 0.1 V.
     for dv in (-0.1, 0.1):
@@ -394,25 +441,28 @@ def run_nn_multi_tech(
     build_param_fn: Callable,
     run_single_fn: Callable,
 ) -> List[Dict[str, object]]:
-    """Run baseline per tech, then the parametric sweep only for techs that
-    pass baseline (mirrors ``base.run_multi_tech_main``)."""
+    """Run the complete declared matrix without denominator shrinkage."""
     checkpoints = get_available_checkpoints()
     results: List[Dict[str, object]] = []
     for tk in tech_keys:
         print(f"\n{'=' * 70}\n  {tk} — {dimension}\n{'=' * 70}")
-        base_cfg = make_baseline_fn(tk, dimension)
-        wd = results_dir / tk / f"{dimension}_{base_cfg.config_name}"
-        res = run_single_fn(base_cfg, wd, checkpoints)
-        results.append(res)
-        _print_result_line(res)
-        if not res["passed"]:
-            print(f"  baseline FAILED — skipping {tk} {dimension} sweep")
-            continue
-        for cfg in build_param_fn(tk, dimension):
+        configs = [make_baseline_fn(tk, dimension),
+                   *build_param_fn(tk, dimension)]
+        expected_labels = [cfg.label for cfg in configs]
+        if len(expected_labels) != len(set(expected_labels)):
+            raise RuntimeError(f"duplicate declared configs for {tk}/{dimension}")
+        observed_labels: List[str] = []
+        for cfg in configs:
             wd = results_dir / tk / f"{dimension}_{cfg.config_name}"
             res = run_single_fn(cfg, wd, checkpoints)
             results.append(res)
+            observed_labels.append(cfg.label)
             _print_result_line(res)
+        if observed_labels != expected_labels:
+            raise RuntimeError(
+                f"incomplete result matrix for {tk}/{dimension}: "
+                f"expected {expected_labels}, got {observed_labels}"
+            )
     return results
 
 

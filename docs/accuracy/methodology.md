@@ -13,7 +13,7 @@ analysis limits; only the MOSFET model changes.
 
 Simplified equations, hand-written approximations, and PyCircuitSim output are
 not independent references. LEVEL=72 is the yardstick, not a graded family.
-The graded NN families are DirectNet (LEVEL=73), BSIM-AR (74), and PFN (75),
+The graded NN families are DirectNet (LEVEL=73) and BSIM-AR (74),
 across TSMC5/6/7/12/16 and the `small`, `medium`, `large`, and `xl` tiers.
 
 ## 2. Gates
@@ -89,9 +89,8 @@ A report is publishable only when all of the following hold:
 - Reference and candidate decks are rendered and compared before a numerical
   mismatch is attributed to the model.
 
-The V7.5.16 clean matrix contains DirectNet and BSIM-AR × 4 tiers × 5
-technologies × 12 gate invocations = **480 jobs**. PFN remains pinned to its
-V7.3.0 report because the V7.5.16 retrain was stopped before completion.
+The V7.5.17 clean matrix contains DirectNet and BSIM-AR × 4 tiers × 5
+technologies × 12 gate invocations = **480 jobs**.
 Report generation fails closed unless the applicable matrix and checkpoint
 artifacts are complete.
 
@@ -112,9 +111,10 @@ electrical response are identical. It remains in the five-tech denominator as
 a controlled repeat, not an independent ground truth. Differences between its
 NN verdicts and TSMC7's measure training and Newton-basin variability.
 
-## 8. Measurement caveats and V7.5.16 corrections
+## 8. Measurement caveats and V7.5.17 corrections
 
-V7.5.16 makes three measurement corrections:
+V7.5.17 retains the V7.5.16 solver corrections and adds coverage-audit
+contracts:
 
 - Residual probes recover ideal-voltage-source branch currents and scale the
   tolerance from current-valued node rows, so they measure the complete MNA
@@ -123,12 +123,25 @@ V7.5.16 makes three measurement corrections:
   validates the NGSPICE reference, and requires a converged NN operating point.
 - Family labels and CLI validation fail closed; an invalid interpreter,
   technology, device, or analysis cannot silently shrink a denominator.
+- DC/VTC gates reject every unconverged operating point or sweep point and
+  retain signed terminal current.
+- Every declared parametric cell remains in the denominator, including after
+  baseline failure; the matrix directly covers temperature, body bias,
+  reverse VDS, joint geometry/temperature corners, and three legal N/P ratios.
+- Dataset generation fails on missing rows/bins, records a hashed manifest and
+  checksum-bound completion marker, and training rejects diagnostic, stale,
+  dirty-source, or incomplete artifacts. The default training split holds out
+  complete technology/VT/L/NFIN/temperature groups.
+- Every V7.5.17 worker log carries the digest of one immutable campaign
+  manifest covering the source commit, jobs, NGSPICE/OSDI/PDKs, and every
+  checkpoint sidecar. Collection and report generation reject mixed or
+  missing provenance.
 
 ### 8.4 Run-to-run limits
 
-The validation split is a dense random row split, not a held-out geometry
-split, so dataset metrics are optimistic relative to circuit gates. Use broad
-family-level results for claims. The TSMC6 repeat measured about ±4 percentage
+The default validation/test split holds out complete geometry/variant/
+temperature groups. It still does not reproduce full circuit trajectories, so
+use broad family-level results for claims. The TSMC6 repeat measured about ±4 percentage
 points of ring scatter and bimodal opamp basins; a single ring/opamp cell can
 therefore change verdict between otherwise equivalent training runs.
 
@@ -138,7 +151,7 @@ Use the `pycircuitsim` conda environment and repository NGSPICE binary. The
 authoritative launch, coverage, and report-build commands are in the
 [README](../../README.md#run-the-complete-clean-checkpoint-matrix).
 
-Raw V7.5.16 evidence is stored under `results/v7516_clean/`. Historical raw
+Raw V7.5.17 evidence is stored under `results/v7517_clean/`. Historical raw
 trees are not mixed into the current pass. If complete local evidence is
 absent, the builder may preserve an already committed report only when its
 pinned SHA-256 matches; it must never synthesize a partial replacement.

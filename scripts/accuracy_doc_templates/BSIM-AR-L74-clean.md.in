@@ -20,9 +20,9 @@ live under their own stems and are covered in
 
 **Measurement provenance.** The datasets and S/M/L/XL checkpoints are the
 preserved V7.4.0 clean rebuild, on exactly the same data and recipe as
-DirectNet. Every generated table below was remeasured in the complete V7.5.16
-CPU-pinned pass at gate commit `49f0426`, after the MNA residual and opamp-AC
-bias contracts were corrected. The shared 280-artifact checkpoint archive has
+DirectNet. Every generated table below was remeasured in the complete V7.5.17
+CPU-pinned pass after the coverage-audit contracts were enforced. The shared
+280-artifact checkpoint archive has
 manifest SHA-256
 `8e4245f1ab563cd116a789cb02388e0f7b736186141694d3242ede2a7ed07868`.
 The V7.5.15 audit trail remains in
@@ -116,8 +116,7 @@ variance with the data held exactly fixed (`methodology.md` §7).
 Under the current contract, BSIM-AR reproduces fifteen of sixteen compared
 verdicts. The single split is `small` ring (4.33 % vs 5.86 %), exactly the
 threshold-sensitive class the methodology's noise floor predicts. DirectNet
-is 16/16 after its old nonconverged opamp passes are removed; PFN's latest
-controlled comparison remains ten of twelve from V7.3.0.
+is 16/16 after its old nonconverged opamp passes are removed.
 
 The old claim that this verdict count makes BSIM-AR the more reproducible
 family is therefore retracted. The current convergence contract collapses
@@ -129,7 +128,7 @@ fixed points.
 
 `PYCIRCUITSIM_NN_AR_CACHE=1` keeps per-layer K/V across the autoregressive loop
 so each token is encoded once, instead of re-encoding the whole growing prefix
-at every step. The V7.5.16 rerun passed all 10 checks and measured
+at every step. The V7.5.17 rerun passed all 10 checks and measured
 118.5 ms → 74.2 ms (**1.60×**) for the cached evaluation.
 
 **It is default-off and stays off until a full re-gate clears it.** It is exact
@@ -153,6 +152,6 @@ gate can reach the path while it is off.
 
 Checkpoints (gitignored): `tsmc{5,6,7,12,16}_tf_{small,medium,large,xl}_{nmos,pmos}`,
 each with `_norm.npz` and a **required** `_config.npz` sidecar.
-Raw runs: `results/v7516_clean/`. The complete training, gate, coverage, and
+Raw runs: `results/v7517_clean/`. The complete training, gate, coverage, and
 report-build commands are in the
 [README](../../README.md#run-the-complete-clean-checkpoint-matrix).

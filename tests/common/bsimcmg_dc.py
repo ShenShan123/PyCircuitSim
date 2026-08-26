@@ -416,6 +416,7 @@ def run_pycircuitsim_dc(config: DCTestConfig, work_dir: Path) -> Dict[str, np.nd
 
         results = run_dc_sweep(
             circuit, parser.analysis_params, vis, out_dir, config.label,
+            require_convergence=True,
         )
     finally:
         logging.disable(logging.NOTSET)

@@ -40,7 +40,7 @@ CKPT = pathlib.Path(os.environ.get(
 ))
 
 TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
-FAM = {"dn": "DirectNet", "tf": "BSIM-AR", "pfn": "PFN"}
+FAM = {"dn": "DirectNet", "tf": "BSIM-AR"}
 
 # Suites, and the OMP settings each must be measured at. ring_osc and opamp sit
 # on multistable fixed points, so their verdict is only bankable if it holds at
@@ -65,7 +65,6 @@ SUITES: Dict[str, Tuple[str, ...]] = {
 CLEAN: Dict[str, Dict[str, str]] = {
     "dn": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
     "tf": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
-    "pfn": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
 }
 CLEAN_TECH_OVERRIDE: Dict[Tuple[str, str, str], str] = {}
 
@@ -76,7 +75,6 @@ RECIPES: Dict[str, List[str]] = {
     "tf": ["corroft_medium", "corro15_medium",
            "corroft_large", "crit15m_large", "crit30_large",
            "corroft_xl", "corro15_xl", "crit15m_xl", "crit30_xl"],
-    "pfn": ["corroft_small"],
 }
 
 # Newest pass wins: a cell re-measured in V7.3.0 supersedes its V7.1.0 value,
@@ -87,7 +85,8 @@ PASSES = [("a3", ROOT / "results" / "a3_regate"),
           ("v740", ROOT / "results" / "v740_regate"),
           ("v742", ROOT / "results" / "v742_regate"),
           ("simple-recheck", ROOT / "results" / "simple_recheck_24c181a"),
-          ("v7516-clean", ROOT / "results" / "v7516_clean")]
+          ("v7516-clean", ROOT / "results" / "v7516_clean"),
+          ("v7517-clean", ROOT / "results" / "v7517_clean")]
 
 CellKey = Tuple[str, str, str, str, str]
 
@@ -165,7 +164,7 @@ def ckpt_exists(tag: str, variant: str, tech: str,
     A bare `_best.pt` may be a run that was killed mid-training — the trainer
     writes it at every val improvement — so gating one silently produces a
     number for a checkpoint nobody finished. A campaign-ready checkpoint also
-    needs its normalization data and, for BSIM-AR/PFN, its architecture
+    needs its normalization data and, for BSIM-AR, its architecture
     sidecar. This stricter contract is opt-in because historical checkpoints
     predate the completion marker.
     """
@@ -179,7 +178,7 @@ def ckpt_exists(tag: str, variant: str, tech: str,
                 return False
             if not (stem.with_name(stem.name + "_best.pt.complete")).exists():
                 return False
-            if tag in ("tf", "pfn") and not (
+            if tag == "tf" and not (
                 stem.with_name(stem.name + "_config.npz")
             ).exists():
                 return False
@@ -227,7 +226,7 @@ def main() -> int:
 
     techs = ([t.strip().upper() for t in args.techs.split(",")]
              if args.techs else TECHS)
-    tags = [args.tag] if args.tag else ["dn", "tf", "pfn"]
+    tags = [args.tag] if args.tag else ["dn", "tf"]
     only = ([p.strip() for p in args.passes.split(",")]
             if args.passes else None)
     if only is not None:

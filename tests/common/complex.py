@@ -58,16 +58,23 @@ from tests.common.nn import nrmse as _nrmse_pct, mre as _mre_pct
 # ASAP7 is out of scope; LEVEL=74 BSIMAR out of scope.
 # ---------------------------------------------------------------------------
 BENCH_TECHS: List[str] = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
-_MODEL_NAMES = {73: "DirectNet", 74: "BSIM-AR", 75: "PFN"}
+_MODEL_NAMES = {73: "DirectNet", 74: "BSIM-AR"}
 
 
 def _active_model_level() -> int | str:
-    """Return the parsed campaign force level, preserving invalid input."""
+    """Return the supported campaign force level or fail loudly."""
     raw_level = os.environ.get("PYCIRCUITSIM_NN_FORCE_LEVEL", "73")
     try:
-        return int(raw_level)
-    except ValueError:
-        return raw_level
+        level = int(raw_level)
+    except ValueError as exc:
+        raise ValueError(
+            f"PYCIRCUITSIM_NN_FORCE_LEVEL={raw_level!r} is not an integer"
+        ) from exc
+    if level not in _MODEL_NAMES:
+        raise ValueError(
+            f"unsupported NN model level {level}; supported levels are 73 and 74"
+        )
+    return level
 
 
 def active_model_name() -> str:
@@ -541,8 +548,10 @@ def run_directnet_dc_sweep(netlist_path: Path, work_dir: Path, tag: str):
         circuit = parser.circuit
         out_dir = work_dir / f"{tag}_dcsweep"
         out_dir.mkdir(parents=True, exist_ok=True)
-        results = run_dc_sweep(circuit, parser.analysis_params,
-                               Visualizer(), out_dir, tag)
+        results = run_dc_sweep(
+            circuit, parser.analysis_params, Visualizer(), out_dir, tag,
+            require_convergence=True,
+        )
     finally:
         logging.disable(logging.NOTSET)
     return results

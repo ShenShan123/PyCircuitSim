@@ -148,6 +148,9 @@ class TestTechConfig:
     l_pmos: float = 0.0    # PMOS channel length [m] (0 = same as l_nmos)
     pmos_model: str = ""   # NGSPICE PMOS model name
     nn_pmos_vt: str = ""   # VT= for PMOS (empty = same as NMOS)
+    temperature_c: float = 27.0
+    dc_vds_scale: float = 0.5
+    dc_vbs: float = 0.0
 
     # Inverter-specific geometry. 0 = fall back to single-device l_nmos / effective_l_pmos / nfin.
     # Use these to align the inverter test point with the per-tech NN training bins
@@ -537,17 +540,18 @@ def run_ngspice_nmos_dc(
 ) -> Dict[str, np.ndarray]:
     """Run NGSPICE NMOS Id-Vgs DC sweep. Returns {sweep, id}."""
     baked = create_baked_modelcard(tech, work_dir)
-    vds_bias = round(tech.vdd * 0.5, 4)
+    vds_bias = round(tech.vdd * tech.dc_vds_scale, 4)
 
     # Netlist
     netlist_path = work_dir / f"ngspice_nmos_dc_{tech.name}.cir"
     netlist_content = (
         f"* NMOS Id-Vgs DC (NGSPICE ground truth, {tech.name})\n"
         f'.include "{baked}"\n'
-        f".temp 27\n"
+        f".temp {tech.temperature_c:g}\n"
         f"Vds d 0 {vds_bias}\n"
         f"Vgs g 0 0.0\n"
-        f"N1 d g 0 0 {tech.nmos_model}\n"
+        f"Vbs b 0 {tech.dc_vbs:g}\n"
+        f"N1 d g 0 b {tech.nmos_model}\n"
         f".dc Vgs 0 {tech.vdd} 0.005\n"
         f".end\n"
     )
@@ -603,7 +607,9 @@ def run_ngspice_nmos_dc(
     if not np.all(np.isfinite(data)):
         raise RuntimeError(f"NGSPICE output contains NaN/Inf for {tech.name}")
 
-    return {"sweep": data[:, 0], "id": np.abs(data[:, 1])}
+    # NGSPICE reports current entering Vds; PyCircuitSim reports current
+    # leaving the drain. Convert conventions without discarding sign.
+    return {"sweep": data[:, 0], "id": -data[:, 1]}
 
 
 # ---------------------------------------------------------------------------
@@ -617,7 +623,7 @@ def run_pycircuitsim_cmg_nmos_dc(
     from pycircuitsim.simulation import run_dc_sweep
     from pycircuitsim.visualizer import Visualizer
 
-    vds_bias = round(tech.vdd * 0.5, 4)
+    vds_bias = round(tech.vdd * tech.dc_vds_scale, 4)
     l_nm = tech.l_nmos * 1e9
 
     netlist_path = work_dir / f"pycircuitsim_cmg_nmos_dc_{tech.name}.sp"
@@ -652,6 +658,7 @@ def run_pycircuitsim_cmg_nmos_dc(
         results = run_dc_sweep(
             circuit, parser.analysis_params, vis, out_dir,
             f"cmg_nmos_{tech.name}",
+            require_convergence=True,
         )
     finally:
         logging.disable(logging.NOTSET)
@@ -684,7 +691,7 @@ def run_pycircuitsim_nn_nmos_dc(
     from pycircuitsim.simulation import run_dc_sweep
     from pycircuitsim.visualizer import Visualizer
 
-    vds_bias = round(tech.vdd * 0.5, 4)
+    vds_bias = round(tech.vdd * tech.dc_vds_scale, 4)
     l_nm = tech.l_nmos * 1e9
 
     netlist_path = work_dir / f"nn_{model_name}_nmos_dc_{tech.name}.sp"
@@ -703,8 +710,10 @@ def run_pycircuitsim_nn_nmos_dc(
         f"* NN NMOS Id-Vgs ({model_name}, {tech.name})\n"
         f"Vds 1 0 {vds_bias}\n"
         f"Vgs 2 0 0.0\n"
-        f"Mn1 1 2 0 0 nmos_nn L={l_nm:.0f}n NFIN={tech.nfin}\n"
+        f"Vbs 3 0 {tech.dc_vbs:g}\n"
+        f"Mn1 1 2 0 3 nmos_nn L={l_nm:.0f}n NFIN={tech.nfin}\n"
         f".model nmos_nn NMOS ({model_params})\n"
+        f".temp {tech.temperature_c:g}\n"
         f".dc Vgs 0 {tech.vdd} 0.005\n"
         f".end\n"
     )
@@ -723,12 +732,13 @@ def run_pycircuitsim_nn_nmos_dc(
         results = run_dc_sweep(
             circuit, parser.analysis_params, vis, out_dir,
             f"{model_name}_nmos_{tech.name}",
+            require_convergence=True,
         )
     finally:
         logging.disable(logging.NOTSET)
 
     sweep = np.array(results["2"])
-    signal = np.abs(np.array(results["i(Mn1)"]))
+    signal = np.array(results["i(Mn1)"])
     return {"sweep": sweep, "id": signal}
 
 
@@ -912,16 +922,17 @@ def run_ngspice_pmos_dc(
     Vgs swept from 0 to -VDD, Vds biased at -VDD/2.
     """
     baked = create_baked_pmos_modelcard(tech, work_dir)
-    vds_bias = round(-tech.vdd * 0.5, 4)
+    vds_bias = round(-tech.vdd * tech.dc_vds_scale, 4)
 
     netlist_path = work_dir / f"ngspice_pmos_dc_{tech.name}.cir"
     netlist_content = (
         f"* PMOS Id-Vgs DC (NGSPICE ground truth, {tech.name})\n"
         f'.include "{baked}"\n'
-        f".temp 27\n"
+        f".temp {tech.temperature_c:g}\n"
         f"Vds d 0 {vds_bias}\n"
         f"Vgs g 0 0.0\n"
-        f"N1 d g 0 0 {tech.pmos_model}\n"
+        f"Vbs b 0 {tech.dc_vbs:g}\n"
+        f"N1 d g 0 b {tech.pmos_model}\n"
         f".dc Vgs 0 {-tech.vdd} -0.005\n"
         f".end\n"
     )
@@ -973,11 +984,11 @@ def run_ngspice_pmos_dc(
     if not np.all(np.isfinite(data)):
         raise RuntimeError(f"NGSPICE PMOS output contains NaN/Inf for {tech.name}")
 
-    # Use |Vgs| for sweep (PMOS sweeps negative) and |Id| for current
+    # Use |Vgs| for an ascending interpolation axis; retain signed current.
     sweep = np.abs(data[:, 0])
     # Sort by ascending |Vgs| for consistent interpolation
     sort_idx = np.argsort(sweep)
-    return {"sweep": sweep[sort_idx], "id": np.abs(data[sort_idx, 1])}
+    return {"sweep": sweep[sort_idx], "id": data[sort_idx, 1]}
 
 
 # ---------------------------------------------------------------------------
@@ -998,7 +1009,7 @@ def run_pycircuitsim_nn_pmos_dc(
     from pycircuitsim.simulation import run_dc_sweep
     from pycircuitsim.visualizer import Visualizer
 
-    vds_bias = round(-tech.vdd * 0.5, 4)
+    vds_bias = round(-tech.vdd * tech.dc_vds_scale, 4)
     l_nm = tech.effective_l_pmos * 1e9
 
     netlist_path = work_dir / f"nn_{model_name}_pmos_dc_{tech.name}.sp"
@@ -1016,8 +1027,10 @@ def run_pycircuitsim_nn_pmos_dc(
         f"* NN PMOS Id-Vgs ({model_name}, {tech.name})\n"
         f"Vds 1 0 {vds_bias}\n"
         f"Vgs 2 0 0.0\n"
-        f"Mp1 1 2 0 0 pmos_nn L={l_nm:.0f}n NFIN={tech.nfin}\n"
+        f"Vbs 3 0 {tech.dc_vbs:g}\n"
+        f"Mp1 1 2 0 3 pmos_nn L={l_nm:.0f}n NFIN={tech.nfin}\n"
         f".model pmos_nn PMOS ({model_params})\n"
+        f".temp {tech.temperature_c:g}\n"
         f".dc Vgs 0 {-tech.vdd} -0.005\n"
         f".end\n"
     )
@@ -1036,13 +1049,14 @@ def run_pycircuitsim_nn_pmos_dc(
         results = run_dc_sweep(
             circuit, parser.analysis_params, vis, out_dir,
             f"{model_name}_pmos_{tech.name}",
+            require_convergence=True,
         )
     finally:
         logging.disable(logging.NOTSET)
 
-    # Use |Vgs| for sweep (PMOS sweeps negative) and |Id| for current
+    # Use |Vgs| for an ascending interpolation axis; retain signed current.
     sweep = np.abs(np.array(results["2"]))
-    signal = np.abs(np.array(results["i(Mp1)"]))
+    signal = np.array(results["i(Mp1)"])
     # Sort by ascending |Vgs|
     sort_idx = np.argsort(sweep)
     return {"sweep": sweep[sort_idx], "id": signal[sort_idx]}
@@ -1203,6 +1217,7 @@ def run_pycircuitsim_nn_inverter_vtc(
         f".ends\n"
         f".model nmos_nn NMOS ({nmos_params})\n"
         f".model pmos_nn PMOS ({pmos_params})\n"
+        f".temp {tech.temperature_c:g}\n"
         f".dc Vin 0 {tech.vdd} 0.005\n"
         f".end\n"
     )
@@ -1221,6 +1236,7 @@ def run_pycircuitsim_nn_inverter_vtc(
         results = run_dc_sweep(
             circuit, parser.analysis_params, vis, out_dir,
             f"{model_name}_inverter_{tech.name}",
+            require_convergence=True,
         )
     finally:
         logging.disable(logging.NOTSET)
@@ -2851,6 +2867,7 @@ def _eval_nn_single_op(
         results = run_dc_sweep(
             circuit, parser.analysis_params, vis, out_dir,
             f"sign_{model_name}",
+            require_convergence=True,
         )
     finally:
         logging.disable(logging.NOTSET)
@@ -3082,6 +3099,7 @@ def run_pycircuitsim_nn_nmos_idvds(
         results = run_dc_sweep(
             circuit, parser.analysis_params, vis, out_dir,
             f"{model_name}_idvds_{tech.name}",
+            require_convergence=True,
         )
     finally:
         logging.disable(logging.NOTSET)

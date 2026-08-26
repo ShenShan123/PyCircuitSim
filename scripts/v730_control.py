@@ -2,7 +2,7 @@
 """Control: do the V7.3.0 re-measurements agree with the earlier passes?
 
 Every complex cell measured in BOTH V7.3.0 and an earlier pass is compared
-verdict-to-verdict. The V7.3.0 campaign re-gates BSIM-AR and PFN on HEAD, which
+verdict-to-verdict. The V7.3.0 campaign re-gates BSIM-AR on HEAD, which
 carries the V7.0.x performance work, audit fix wave 1 and the passive
 thread-wait policy on top of the code the earlier numbers were measured at. All
 were declared behaviour-preserving; this checks it against the only thing that
@@ -57,7 +57,7 @@ def main() -> int:
     agree = same_basis_disagree = flips_revealed = 0
     rows: list[str] = []
 
-    for tag in ("dn", "tf", "pfn"):
+    for tag in ("dn", "tf"):
         for variant in sorted(set(v730.get(tag, {}))):
             for circ in CIRCS:
                 for tech in TECHS:

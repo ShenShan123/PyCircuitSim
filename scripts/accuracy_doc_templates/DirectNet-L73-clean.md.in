@@ -12,12 +12,12 @@ in [`DirectNet-L73-recipes.md`](DirectNet-L73-recipes.md) is measured against.
 
 **Measurement provenance.** The datasets and S/M/L/XL checkpoints are the
 preserved V7.4.0 clean rebuild. Every generated table below was remeasured in
-the complete V7.5.16 CPU-pinned pass at gate commit `49f0426`, after the MNA
-residual and opamp-AC bias contracts were corrected. The shared
+the complete V7.5.17 CPU-pinned pass after the coverage-audit contracts were
+enforced. The shared
 DirectNet/BSIM-AR archive contains 280 checkpoint artifacts with manifest
 SHA-256
 `8e4245f1ab563cd116a789cb02388e0f7b736186141694d3242ede2a7ed07868`.
-Raw evidence is under `results/v7516_clean/`. The V7.5.15 recheck remains the
+Raw evidence is under `results/v7517_clean/`. The V7.5.15 recheck remains the
 exact audit trail for the earlier convergence and campaign retractions:
 [`simple-circuits-recheck-2026-08-19.md`](simple-circuits-recheck-2026-08-19.md).
 
@@ -115,7 +115,7 @@ point**. Device CS-amp AC is 0/10 at every tier, explicitly
 `FAIL-NONCONVERGED`; opamp open-loop AC is 0/5 at every tier with
 `OP-NOT-CONVERGED`. Printed gain/pole/phase metrics remain diagnostics only.
 
-V7.5.16 closes the former opamp-bias defect. Each simulator now performs a
+V7.5.17 retains the corrected opamp-bias contract. Each simulator performs a
 physical 0.1 mV refinement around its coarse maximum-gain point, and every
 NGSPICE reference bias in this pass is inside the 15–85% VDD validity window.
 The zero is therefore no longer a coarse-grid lower bound: it is a result about

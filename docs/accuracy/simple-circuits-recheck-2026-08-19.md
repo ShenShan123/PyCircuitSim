@@ -2,8 +2,7 @@
 
 > **Historical V7.5.15 record.** V7.5.16 supersedes the DirectNet and BSIM-AR
 > clean reports with a complete pass after fixing the MNA residual and
-> opamp-AC bias contracts. PFN remains V7.3 evidence because its retrain was
-> stopped before completion. The measurements below remain the audit trail for
+> opamp-AC bias contracts. The measurements below remain the audit trail for
 > the seven campaign defects found in this recheck.
 
 ## Scope and provenance

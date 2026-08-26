@@ -131,8 +131,10 @@ def run_nn_nmos_dc_lifted(
         parser.parse_file(str(netlist))
         out_dir = work_dir / f"nn_dc_{tag}"
         out_dir.mkdir(parents=True, exist_ok=True)
-        results = run_dc_sweep(parser.circuit, parser.analysis_params,
-                               Visualizer(), out_dir, f"nn_nmos_{tag}")
+        results = run_dc_sweep(
+            parser.circuit, parser.analysis_params, Visualizer(), out_dir,
+            f"nn_nmos_{tag}", require_convergence=True,
+        )
     finally:
         logging.disable(logging.NOTSET)
     return {"sweep": np.array(results["g"]),

@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""V7.3.0 — build the six accuracy reports from measurement, not transcription.
+"""Build the four active accuracy reports from measurement, not transcription.
 
 Emits two files per model family into docs/accuracy/:
 
-    {DirectNet-L73, BSIM-AR-L74, PFN-L75}-{clean, recipes}.md
+    {DirectNet-L73, BSIM-AR-L74}-{clean, recipes}.md
 
 The prose lives in scripts/accuracy_doc_templates/*.md.in and the tables are
 substituted into `<!--MARKER-->` slots, so no table in the reports can drift
@@ -21,9 +21,10 @@ Available sources (each rendered report is pinned to one complete pass):
 
     results/a3_regate/REPORT.md    V6.13.0, complex matrix, single-run
     results/v710_regate/data.json  V7.1.0, device + AC + strict OMP
-    results/v730_regate/data.json  V7.3.0, recipes + PFN campaign
+    results/v730_regate/data.json  V7.3.0 recipe campaign
     results/v740_regate/data.json  V7.4.0, clean DN + BSIM-AR rebuild
     results/v7516_clean/data.json   V7.5.16, clean DirectNet/BSIM-AR re-gate
+    results/v7517_clean/data.json   V7.5.17, audited clean re-gate
 
 Run after any re-gate:
 
@@ -62,8 +63,8 @@ CIRC_LABEL = {
     "switchcap": ("Switched-capacitor cell", "charge error % of VDD, gate ≤5 %"),
 }
 TIERS = ["small", "medium", "large", "xl"]
-FAM = {"dn": "DirectNet", "tf": "BSIM-AR", "pfn": "PFN"}
-FILE_STEM = {"dn": "DirectNet-L73", "tf": "BSIM-AR-L74", "pfn": "PFN-L75"}
+FAM = {"dn": "DirectNet", "tf": "BSIM-AR"}
+FILE_STEM = {"dn": "DirectNet-L73", "tf": "BSIM-AR-L74"}
 STRICT_OMP = ("omp1", "omp2", "omp4")
 REPORT_SUITES: Dict[str, Tuple[str, ...]] = {
     "verify_complex_ring_osc": STRICT_OMP,
@@ -104,7 +105,6 @@ _DEVICE_AC_PAYLOAD_KEYS = (
 CLEAN = {
     "dn": {t: t for t in TIERS},
     "tf": {t: t for t in TIERS},
-    "pfn": {t: t for t in TIERS},
 }
 CLEAN_OVERRIDE: Dict[Tuple[str, str, str], str] = {}
 
@@ -115,7 +115,6 @@ RECIPES: Dict[str, List[Tuple[str, str]]] = {
            ("corroft", "large"), ("crit15m", "large"), ("crit30", "large"),
            ("corroft", "xl"), ("corro15", "xl"),
            ("crit15m", "xl"), ("crit30", "xl")],
-    "pfn": [("corroft", "small")],
 }
 
 
@@ -164,36 +163,32 @@ PASSES = [("V7.1.0", load_json("v710_regate")), ("V7.3.0", load_json("v730_regat
           ("V7.4.0", load_json("v740_regate")),
           ("V7.4.2", load_json("v742_regate")),
           ("2026-08-19 recheck", load_json("simple_recheck_24c181a")),
-          ("V7.5.16", load_json("v7516_clean"))]
+          ("V7.5.16", load_json("v7516_clean")),
+          ("V7.5.17", load_json("v7517_clean"))]
 PASS_DATA = dict(PASSES)
 ACTIVE_PASS: Optional[str] = None
 
 # Every report is rendered from one coherent campaign. A later partial pass is
 # never allowed to backfill itself from older cells and overwrite a complete
 # published report.
-# DirectNet and BSIM-AR use one complete V7.5.16 campaign. PFN remains pinned
-# to its retained V7.3.0 report; a stopped partial retrain must not replace it.
+# DirectNet and BSIM-AR use one complete V7.5.17 campaign.
 # The builder never backfills a partial current campaign from older cells.
 REPORT_PASS: Dict[Tuple[str, bool], str] = {
-    ("dn", False): "V7.5.16",
-    ("tf", False): "V7.5.16",
-    ("pfn", False): "V7.3.0",
+    ("dn", False): "V7.5.17",
+    ("tf", False): "V7.5.17",
     ("dn", True): "V7.3.0",
     ("tf", True): "V7.3.0",
-    ("pfn", True): "V7.3.0",
 }
 
 CURRENT_CLEAN_TAGS = ("dn", "tf")
 
-# The new hardware does not carry the raw V7.3 recipe/PFN trees. These digests
+# The new hardware does not carry the raw V7.3 recipe trees. These digests
 # make the retained rendered reports immutable and keep --check meaningful.
 PRESERVED_REPORT_SHA256: Dict[Tuple[str, bool], str] = {
     ("dn", False): "b4037e7f303a5f680bea3380efec6c022aa9a23132e5009ed5c9d43c7b34d1d3",
     ("dn", True): "cf5e72584234e4c4e15b3759bfc09d1cbbdef4742e5fe664cd501c000a241805",
     ("tf", False): "de54d9da78b0eddc66ffef97f487a04c0d64ea6cc9e26d2cc18ae65694590618",
     ("tf", True): "c79255aabecd3e9b1b320e403e747d790482046a829b1c40c44299d6bd758a2e",
-    ("pfn", False): "b9be502ed26b3d380cfaceb2ba938e907ac4dddb4de1a77884b35e4b9832c104",
-    ("pfn", True): "e48c24415a76876dcd1c62bb249fdddee772a7bc30fb1c60260b333cfdb554e7",
 }
 PRESERVED_README_SHA256 = (
     "c7b2743dbfaab7adddfb8abd19ea76b3a4a75264aa7b49f152d69e7f358b8f69"
@@ -516,7 +511,6 @@ def recipe_delta(tag: str) -> str:
 FAMILY_META = {
     "dn": ("73", "**production**", "1.5 ms @ `large`"),
     "tf": ("74", "higher fidelity", "61.5 ms @ `medium`"),
-    "pfn": ("75", "research", "15.6 ms @ `small`"),
 }
 
 # Raw campaign trees are local evidence and may be absent on another clone.
@@ -525,12 +519,10 @@ FAMILY_META = {
 HISTORICAL_CLEAN: Dict[str, Tuple[str, str, int, int]] = {
     "dn": ("2026-08-19", "large", 12, 20),
     "tf": ("2026-08-19", "small", 13, 20),
-    "pfn": ("V7.3", "small", 14, 20),
 }
 HISTORICAL_RECIPE: Dict[str, Tuple[str, int, int]] = {
     "dn": ("`crit15m`@xl", 19, 20),
     "tf": ("`corroft`@medium", 20, 20),
-    "pfn": ("`corroft`@small", 14, 20),
 }
 
 
@@ -573,8 +565,36 @@ def _report_result_complete(suite: str, result: object) -> bool:
                                         for key in required)
 
 
+def _v7517_provenance_complete() -> bool:
+    root = ROOT / "results" / "v7517_clean"
+    manifest_path = root / "campaign_manifest.json"
+    provenance_path = root / "collection_provenance.json"
+    data_path = root / "data.json"
+    try:
+        manifest = json.loads(manifest_path.read_text())
+        provenance = json.loads(provenance_path.read_text())
+    except (OSError, ValueError):
+        return False
+    manifest_digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    data_digest = hashlib.sha256(data_path.read_bytes()).hexdigest()
+    checkpoint_hashes = manifest.get("checkpoint_sha256")
+    return (
+        manifest.get("job_count") == 480
+        and manifest.get("source_dirty") is False
+        and isinstance(checkpoint_hashes, dict)
+        and bool(checkpoint_hashes)
+        and all(checkpoint_hashes.values())
+        and bool(manifest.get("pdk_sha256"))
+        and provenance.get("campaign_manifest_sha256") == manifest_digest
+        and provenance.get("data_sha256") == data_digest
+        and provenance.get("source_commit") == manifest.get("source_commit")
+    )
+
+
 def _matrix_complete_in_pass(tag: str, recipes: bool, version: str) -> bool:
     """Whether one pass fully measured every table cell in this report."""
+    if version == "V7.5.17" and not _v7517_provenance_complete():
+        return False
     data = PASS_DATA.get(version, {})
     if not data:
         return False
@@ -596,7 +616,7 @@ def _matrix_complete_in_pass(tag: str, recipes: bool, version: str) -> bool:
 def scoreboard(_tag=None, _recipes=None) -> str:
     out = ["| LEVEL | family | role | current / best clean | historical best recipe | CPU cost |",
            "|---|---|---|---|---|---|"]
-    for tag in ("dn", "tf", "pfn"):
+    for tag in ("dn", "tf"):
         lvl, role, cost = FAMILY_META[tag]
         clean_version = REPORT_PASS[(tag, False)]
         clean_complete = _matrix_complete_in_pass(tag, False, clean_version)
@@ -647,7 +667,7 @@ def denominator_note(tag: Optional[str], recipes: Optional[bool]) -> str:
     guarantees it is wrong half the time; deriving it cannot be.
     """
     if tag is None:
-        scopes = [(t, r) for t in ("dn", "tf", "pfn") for r in (False, True)]
+        scopes = [(t, r) for t in ("dn", "tf") for r in (False, True)]
     else:
         scopes = [(tag, bool(recipes))]
     sizes = {len(_techs_measured(t, r)) * 4 for t, r in scopes}
@@ -742,7 +762,7 @@ def build_readme(check: bool) -> bool:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Build the six accuracy reports")
+    ap = argparse.ArgumentParser(description="Build the four accuracy reports")
     ap.add_argument("--check", action="store_true",
                     help="Verify the committed files match the evidence; "
                          "do not write. Exit 1 if any is stale.")
@@ -750,7 +770,7 @@ def main() -> int:
     # prevents partial regeneration; --only remains a convenient way to limit
     # output to the family currently being worked on.
     ap.add_argument("--only", default=None,
-                    help="Comma list of families to build (dn,tf,pfn). "
+                    help="Comma list of families to build (dn,tf). "
                          "Default: all. The README scoreboard spans families, "
                          "so it is skipped unless all are built.")
     ap.add_argument("--recipes", choices=["both", "clean", "recipes"],
@@ -758,7 +778,7 @@ def main() -> int:
     args = ap.parse_args()
 
     tags = ([t.strip() for t in args.only.split(",")] if args.only
-            else ["dn", "tf", "pfn"])
+            else ["dn", "tf"])
     unknown = [t for t in tags if t not in FAM]
     if unknown:
         ap.error(f"unknown family {unknown}; choose from {sorted(FAM)}")

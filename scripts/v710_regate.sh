@@ -5,14 +5,14 @@
 # V6.13.0 re-ran the complex 16-cell matrix for all 28 on-disk checkpoint
 # groups, but the *device* suites (nn_ac, opamp_ac, multi_tech_dc/tran) only
 # for the resolver-DEFAULT stem of each family (DirectNet production `large`,
-# BSIM-AR `large`, PFN `large`). Every per-size / per-recipe device+AC number
+# BSIM-AR `large`). Every per-size / per-recipe device+AC number
 # in docs/accuracy/ is therefore still a pre-fix measurement, and AC is the
 # axis the fix moved most (device AC 8/10 -> 10/10, 4/12 -> 8/8). It also
 # strict-swept OMP for only 10 of the 28 groups.
 #
 # This driver closes both gaps. One job = (tag, variant, tech, suite, omp):
 #
-#   tag      dn | tf | pfn          (LEVEL 73 / 74 / 75)
+#   tag      dn | tf                (LEVEL 73 / 74)
 #   variant  small | medium | large | xl | <recipe>_<size>
 #              -> checkpoint stem {tech}_{tag}_{variant}_{nmos,pmos}
 #   suite    any tests/verify_*.py taking --tech
@@ -46,6 +46,7 @@ Environment:
   NN_PY      Python interpreter used for gates
   NGSPICE_BIN  OSDI-capable NGSPICE executable
   BSIMAR_CHECKPOINT_DIR  checkpoint selection directory
+  V710_MANIFEST  immutable campaign provenance manifest path
 
 The `_one` subcommand is internal to the dispatcher.
 EOF
@@ -55,6 +56,8 @@ NG="${NGSPICE_BIN:-$ROOT/tools/ngspice-45.2/bin/ngspice}"
 CKPT="${BSIMAR_CHECKPOINT_DIR:-$ROOT/external_compact_models/neural_network/checkpoints}"
 OUT="${V710_OUT:-$ROOT/results/v710_regate}"
 SCRATCH="${V710_SCRATCH:-/tmp/v710_regate_scratch}"
+OSDI="${PYCIRCUITSIM_OSDI_PATH:-$ROOT/external_compact_models/bsim_cmg/build/osdi/bsimcmg.osdi}"
+MANIFEST="${V710_MANIFEST:-$OUT/campaign_manifest.json}"
 PY="${NN_PY:-$(command -v python 2>/dev/null)}"
 [ -n "$PY" ] && [ -f "$PY" ] && [ -x "$PY" ] || {
   echo "[v710] NN_PY executable not found: ${NN_PY:-$PY}" >&2
@@ -81,9 +84,18 @@ checkpoint_ready () {
     [ -f "$CKPT/${stem}_norm.npz" ] || return 1
     [ -f "$CKPT/${stem}_best.pt.complete" ] || return 1
     case "$tag" in
-      tf|pfn) [ -f "$CKPT/${stem}_config.npz" ] || return 1 ;;
+      tf) [ -f "$CKPT/${stem}_config.npz" ] || return 1 ;;
     esac
   done
+}
+
+verify_checkpoint_provenance () {
+  if [ "${V710_TEST_BYPASS_MANIFEST:-}" = "1" ]; then
+    return 0
+  fi
+  "$PY" "$ROOT/scripts/v710_regate_manifest.py" \
+    --output "$MANIFEST" --checkpoints "$CKPT" \
+    --verify-group "$1" "$2" "$3"
 }
 
 if [ "${1:-}" = "_one" ]; then
@@ -110,6 +122,22 @@ if [ "${1:-}" = "_one" ]; then
       exit 3
       ;;
   esac
+  provenance="${V710_CAMPAIGN_DIGEST:-}"
+  if [ -z "$provenance" ]; then
+    echo "[v710] missing V710_CAMPAIGN_DIGEST" >&2
+    exit 3
+  fi
+  if [ -f "$log" ]; then
+    recorded_provenance="$(sed -n 's/^===V710_PROVENANCE sha256=\([^=]*\)===$/\1/p' "$log" | tail -1)"
+    if [ -s "$log" ] && [ -z "$recorded_provenance" ]; then
+      echo "[v710] provenance missing from $log; use a new output root" >&2
+      exit 3
+    fi
+    if [ -n "$recorded_provenance" ] && [ "$recorded_provenance" != "$provenance" ]; then
+      echo "[v710] provenance mismatch for $log; use a new output root" >&2
+      exit 3
+    fi
+  fi
   # A NO-CKPT marker contains the generic resume sentinel. Keep it as a
   # no-verdict while either checkpoint is absent, but clear the stale marker
   # and resume the cell after both checkpoints have been trained.
@@ -143,7 +171,12 @@ if [ "${1:-}" = "_one" ]; then
   sn="${tlc}_${tag}_${variant}_nmos"; sp="${tlc}_${tag}_${variant}_pmos"
   if ! checkpoint_ready "$sn" "$sp"; then
     echo "[v710] NO-CKPT $tag/$variant/$tlc -> skip $suite"
-    echo "===V710_DONE rc=no-ckpt===" > "$log"; exit 3
+    echo "===V710_PROVENANCE sha256=$provenance===" > "$log"
+    echo "===V710_DONE rc=no-ckpt===" >> "$log"; exit 3
+  fi
+  if ! verify_checkpoint_provenance "$tag" "$variant" "$tlc"; then
+    echo "[v710] checkpoint provenance drift before $tag/$variant/$tlc" >&2
+    exit 3
   fi
 
   export CUDA_VISIBLE_DEVICES="" NGSPICE_BIN="$NG"
@@ -157,8 +190,6 @@ if [ "${1:-}" = "_one" ]; then
   case "$tag" in
     tf)  export PYCIRCUITSIM_NN_CHECKPOINT_TF_NMOS="$sn"  PYCIRCUITSIM_NN_CHECKPOINT_TF_PMOS="$sp"
          export PYCIRCUITSIM_NN_FORCE_LEVEL=74 ;;
-    pfn) export PYCIRCUITSIM_NN_CHECKPOINT_PFN_NMOS="$sn" PYCIRCUITSIM_NN_CHECKPOINT_PFN_PMOS="$sp"
-         export PYCIRCUITSIM_NN_FORCE_LEVEL=75 ;;
     dn)  export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="$sn"  PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="$sp"
          export PYCIRCUITSIM_NN_FORCE_LEVEL=73 ;;
     *)   echo "[v710] UNKNOWN tag=$tag"; exit 1 ;;
@@ -178,9 +209,15 @@ if [ "${1:-}" = "_one" ]; then
     exit 3
   }
   echo "[v710] RUN $tag/$variant/$tlc/$suite/omp$omp"
+  echo "===V710_PROVENANCE sha256=$provenance===" > "$log"
   OMP_NUM_THREADS=$omp MKL_NUM_THREADS=$omp PYCIRCUITSIM_TORCH_THREADS=$omp \
-    "$PY" -u "$test_file" --tech "$tuc" > "$log" 2>&1
+    "$PY" -u "$test_file" --tech "$tuc" >> "$log" 2>&1
   rc=$?
+  if ! verify_checkpoint_provenance "$tag" "$variant" "$tlc"; then
+    echo "===V710_DONE rc=infra===" >> "$log"
+    echo "[v710] checkpoint provenance drift during $tag/$variant/$tlc" >&2
+    exit 3
+  fi
   if [ "$rc" -ne 0 ] && grep -q '^Traceback (most recent call last):' "$log"; then
     echo "===V710_DONE rc=infra===" >> "$log"
     echo "[v710] INFRA $tag/$variant/$tlc/$suite/omp$omp: unhandled Python traceback" >&2
@@ -200,6 +237,14 @@ JOBS="${JOBS:?set JOBS=<file of 'tag variant TECH suite omp' lines>}"
 PAR="${PAR:-16}"
 preflight_python
 n="$(grep -cve '^\s*$' -e '^#' "$JOBS")"
+if [ "${V710_TEST_BYPASS_MANIFEST:-}" = "1" ]; then
+  [ -n "${V710_CAMPAIGN_DIGEST:-}" ] || exit 2
+else
+  V710_CAMPAIGN_DIGEST="$("$PY" "$ROOT/scripts/v710_regate_manifest.py" \
+    --output "$MANIFEST" --jobs "$JOBS" --checkpoints "$CKPT" \
+    --ngspice "$NG" --osdi "$OSDI" --pdk-root "$ROOT/PDKs")" || exit $?
+fi
+export V710_CAMPAIGN_DIGEST
 echo "[v710] pool start: $n jobs, PAR=$PAR, out=$OUT  ($(date '+%F %T'))"
 grep -ve '^\s*$' -e '^#' "$JOBS" | xargs -P "$PAR" -L1 "$SELF" _one
 xrc=$?

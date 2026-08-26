@@ -16,6 +16,7 @@ Usage: python scripts/v710_regate_collect.py [--root results/v710_regate]
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -23,18 +24,19 @@ from typing import Dict, List, Optional
 
 TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 CIRCS = ["ring_osc", "opamp", "sram_snm", "switchcap"]
-FAMILY = {"dn": "DirectNet (L73)", "tf": "BSIM-AR (L74)", "pfn": "PFN (L75)"}
+FAMILY = {"dn": "DirectNet (L73)", "tf": "BSIM-AR (L74)"}
 
 _RC = re.compile(r"===V710_DONE rc=(\S+)===")
+_PROVENANCE = re.compile(r"===V710_PROVENANCE sha256=([0-9a-f]{64})===")
 _AC_ROW = re.compile(
     r"^\s*AC \| (\w+)_(nmos|pmos) \| (\S+) \| (\S+) \| (\S+) \| (\S+) \| (\S+)", re.M)
 _OPAMP_AC = re.compile(
     r"^\s*(TSMC\d+)\s*\| dc_gain_err=\s*(\S+)dB \| gbw_ratio=\s*(\S+) \| "
     r"pm_err=\s*(\S+)deg \| magNRMSE=\s*(\S+)% \| (\w+)", re.M)
 _DEV_ROW = re.compile(
-    r"^\s+(TSMC\d+_\w+)\s+NRMSE=\s*(\S+)%\s+MRE=\s*(\S+)%\s+R2=\s*(\S+)\s+"
+    r"^\s+(TSMC\d+_\S+)\s+NRMSE=\s*(\S+)%\s+MRE=\s*(\S+)%\s+R2=\s*(\S+)\s+"
     r"MaxErr=(\S+)\s+(PASS|FAIL|ERROR)", re.M)
-_DEV_ERROR_ROW = re.compile(r"^\s+(TSMC\d+_\w+)\s+ERROR:", re.M)
+_DEV_ERROR_ROW = re.compile(r"^\s+(TSMC\d+_\S+)\s+ERROR:", re.M)
 # SRAM's gate metric is the worst lobe NRMSE over the NFIN corners — column 7
 # of its summary table, not the first "NRMSE=" the log happens to print.
 _SRAM_ROW = re.compile(
@@ -52,6 +54,26 @@ def read(p: Path) -> Optional[str]:
         return p.read_text(errors="replace")
     except OSError:
         return None
+
+
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def campaign_manifest_digest(
+    root: Path,
+    require_manifest: bool = False,
+) -> Optional[str]:
+    manifest = root / "campaign_manifest.json"
+    if not manifest.is_file():
+        if require_manifest:
+            raise ValueError(f"campaign manifest is missing: {manifest}")
+        return None
+    return _sha256(manifest)
 
 
 def rc_of(txt: str) -> Optional[str]:
@@ -79,7 +101,8 @@ def is_verdict(entry: object) -> bool:
     return 0 <= rc < 126 and rc != 124
 
 
-def collect(root: Path) -> Dict:
+def collect(root: Path, require_manifest: bool = False) -> Dict:
+    expected_provenance = campaign_manifest_digest(root, require_manifest)
     out: Dict[str, Dict] = {}
     for log in sorted(root.glob("*/*/*/*.omp*.log")):
         tech_dir = log.parent.name
@@ -89,6 +112,13 @@ def collect(root: Path) -> Dict:
         txt = read(log)
         if txt is None:
             continue
+        if expected_provenance is not None:
+            observed = _PROVENANCE.findall(txt)
+            if observed != [expected_provenance]:
+                raise ValueError(
+                    f"campaign provenance mismatch in {log}: "
+                    f"expected one {expected_provenance}, got {observed}"
+                )
         rc = rc_of(txt)
         if rc is None:
             continue  # still running
@@ -176,7 +206,7 @@ def render(data: Dict) -> str:
                     "guard fix, post V7.0.x perf work, opt-in perf flags OFF), CPU-pinned,",
                     "repo ngspice, per-job isolated results dir. Verdict = suite exit code.",
                     ""]
-    for tag in ("dn", "tf", "pfn"):
+    for tag in ("dn", "tf"):
         if tag not in data:
             continue
         L += [f"## {FAMILY[tag]}", ""]
@@ -306,11 +336,25 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", default="results/v710_regate", type=Path)
     ap.add_argument("--out", default=None, type=Path)
+    ap.add_argument("--require-manifest", action="store_true")
     a = ap.parse_args()
-    data = collect(a.root)
+    try:
+        data = collect(a.root, require_manifest=a.require_manifest)
+    except ValueError as exc:
+        print(f"[v710-collect] ERROR: {exc}")
+        return 2
     out = a.out or (a.root / "REPORT.md")
     out.write_text(render(data))
-    (a.root / "data.json").write_text(json.dumps(data, indent=1, sort_keys=True))
+    data_path = a.root / "data.json"
+    data_path.write_text(json.dumps(data, indent=1, sort_keys=True))
+    manifest_digest = campaign_manifest_digest(a.root)
+    if manifest_digest is not None:
+        manifest = json.loads((a.root / "campaign_manifest.json").read_text())
+        (a.root / "collection_provenance.json").write_text(json.dumps({
+            "campaign_manifest_sha256": manifest_digest,
+            "data_sha256": _sha256(data_path),
+            "source_commit": manifest["source_commit"],
+        }, indent=2, sort_keys=True) + "\n")
     n = sum(len(s) for t in data.values() for v in t.values() for s in v.values())
     print(f"[v710-collect] {n} suite-cells -> {out}")
     return 0

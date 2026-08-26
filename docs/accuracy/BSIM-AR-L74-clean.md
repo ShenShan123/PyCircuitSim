@@ -210,8 +210,7 @@ variance with the data held exactly fixed (`methodology.md` §7).
 Under the current contract, BSIM-AR reproduces fifteen of sixteen compared
 verdicts. The single split is `small` ring (4.33 % vs 5.86 %), exactly the
 threshold-sensitive class the methodology's noise floor predicts. DirectNet
-is 16/16 after its old nonconverged opamp passes are removed; PFN's latest
-controlled comparison remains ten of twelve from V7.3.0.
+is 16/16 after its old nonconverged opamp passes are removed.
 
 The old claim that this verdict count makes BSIM-AR the more reproducible
 family is therefore retracted. The current convergence contract collapses

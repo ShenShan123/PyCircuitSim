@@ -314,11 +314,6 @@ def _mosfet_types() -> tuple:
         types.extend([NMOS_BSIMAR, PMOS_BSIMAR])
     except ImportError:
         pass
-    try:
-        from pycircuitsim.models.mosfet_pfn import NMOS_PFN, PMOS_PFN
-        types.extend([NMOS_PFN, PMOS_PFN])
-    except ImportError:
-        pass
     return tuple(types)
 
 
@@ -348,11 +343,6 @@ def _pmos_types() -> tuple:
         types.append(PMOS_BSIMAR)
     except ImportError:
         pass
-    try:
-        from pycircuitsim.models.mosfet_pfn import PMOS_PFN
-        types.append(PMOS_PFN)
-    except ImportError:
-        pass
     return tuple(types)
 
 
@@ -379,14 +369,6 @@ def _nn_mosfet_types() -> tuple:
     try:
         from pycircuitsim.models.mosfet_bsimar import NMOS_BSIMAR, PMOS_BSIMAR
         types.extend([NMOS_BSIMAR, PMOS_BSIMAR])
-    except ImportError:
-        pass
-    # V6.9: LEVEL=75 TabPFN — one-shot forward, row-independent by
-    # construction (queries only cross-attend to the frozen context), so
-    # the batched pre-warm applies unchanged.
-    try:
-        from pycircuitsim.models.mosfet_pfn import NMOS_PFN, PMOS_PFN
-        types.extend([NMOS_PFN, PMOS_PFN])
     except ImportError:
         pass
     return tuple(types)
@@ -946,7 +928,7 @@ class DCSolver:
                 floor asks for ΔV ≈ 2e6 V) reaches the compact model as
                 `g=-505225 V` and OSDI's internal-node solve raises. Capping
                 the step is SPICE's own answer to this. NN circuits (LEVEL
-                73/74/75) already cap at one supply rail unconditionally; a
+                73/74) already cap at one supply rail unconditionally; a
                 value here overrides that cap for them too.
                 PERTURBING, hence default-off: the cap changes the Newton PATH
                 (not the fixed point), so it is not bit-identical on a circuit

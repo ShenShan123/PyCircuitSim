@@ -146,8 +146,10 @@ def directnet_lobe(bt: BenchTech, nfin: int, work_dir: Path) -> Dict[str, np.nda
         parser = parse_netlist(netlist)
         out_dir = work_dir / f"sram_{bt.name}_nfin{nfin}_out"
         out_dir.mkdir(parents=True, exist_ok=True)
-        results = run_dc_sweep(parser.circuit, parser.analysis_params,
-                               Visualizer(), out_dir, f"sram_{bt.name}_{nfin}")
+        results = run_dc_sweep(
+            parser.circuit, parser.analysis_params, Visualizer(), out_dir,
+            f"sram_{bt.name}_{nfin}", require_convergence=True,
+        )
     finally:
         logging.disable(logging.NOTSET)
     return {"q": np.asarray(results["q"]), "qb": np.asarray(results["qb"])}

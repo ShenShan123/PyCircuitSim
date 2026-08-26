@@ -7,11 +7,10 @@ Pools (write one file each so they can be dispatched with different PAR):
 
 * ``dn``   — DirectNet, all 10 on-disk variants, full re-gate
              (4 device suites + 4 complex circuits + OMP{1,2,4} on opamp/ring).
-* ``pfn``  — PFN, all 3 variants, same shape (~10x DirectNet per eval).
 * ``tf_dev``    — BSIM-AR device suites only, 5 priority variants (~40x per eval).
 * ``tf_strict`` — BSIM-AR strict-OMP sweep for the `large` corridor recipes,
                   the one gap BSIM-AR-L74-clean.md flags explicitly.
-* ``clean`` — DirectNet, BSIM-AR and PFN clean S/M/L/XL tiers across all five
+* ``clean`` — DirectNet and BSIM-AR clean S/M/L/XL tiers across all five
               reported technologies, including the TSMC6 repeat.
 
 Usage: python scripts/v710_regate_jobs.py <outdir>
@@ -38,7 +37,6 @@ DN_VARIANTS = [
     "v660clean_large", "crit30f_large", "csob_large",
     "corroft_xl", "crit10_xl", "crit15m_xl",
 ]
-PFN_VARIANTS = ["small", "medium", "large"]
 TF_DEV_VARIANTS = ["small", "medium", "large", "xl", "corroft_medium"]
 TF_STRICT_VARIANTS = ["corroft_large", "crit15m_large", "crit30_large", "corro15_medium"]
 CLEAN_VARIANTS = ["small", "medium", "large", "xl"]
@@ -76,13 +74,11 @@ def build_pools() -> dict[str, list[str]]:
     """Return every campaign pool from one testable source of truth."""
     return {
         "dn": full("dn", DN_VARIANTS),
-        "pfn": full("pfn", PFN_VARIANTS),
         "tf_dev": device_only("tf", TF_DEV_VARIANTS),
         "tf_strict": strict_only("tf", TF_STRICT_VARIANTS),
         "clean": [
             *full("dn", CLEAN_VARIANTS, CLEAN_TECHS),
             *full("tf", CLEAN_VARIANTS, CLEAN_TECHS),
-            *full("pfn", CLEAN_VARIANTS, CLEAN_TECHS),
         ],
     }
 

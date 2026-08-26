@@ -20,6 +20,29 @@ The pre-compaction long-form narrative remains available in Git history.
 
 ## V7.5 — AnalogGym migration
 
+### V7.5.17 — PFN retirement and audited simple-circuit coverage (2026-08-25)
+
+- Retired PFN/TabPFN and LEVEL=75 from the parser, solver, model/training
+  packages, campaign tooling, tests, and active documentation. DirectNet
+  LEVEL=73 and BSIM-AR LEVEL=74 remain the two NN families; historical PFN
+  release notes remain below as history.
+- Closed the simple-circuit coverage audit: DC/VTC gates reject unconverged
+  solves, preserve signed current, and retain the complete expected matrix.
+  Added scored temperature, body-bias, reverse-VDS, joint-corner, and exact
+  0.5/1.5/2.0 N/P-ratio cells. The variant/temperature-aware joint geometry
+  guard passes all **339/339** current requested device geometries.
+- Made canonical dataset generation fail on any dropped bin or rejected row,
+  pin intra-bin L spacing to 1.35, generate the transmission-gate corridor,
+  and record requested/actual manifests, command/commit/source hashes, and
+  checksum-bound completion markers. Training rejects diagnostic, stale,
+  dirty-source, or incomplete data. Capped/fine-tune samples are stratified
+  and the default model split holds out complete
+  technology/VT/L/NFIN/temperature groups.
+- Bound every clean re-gate log to one immutable manifest of the source commit,
+  job list, NGSPICE/OSDI/PDKs, checkpoints, and sidecars. Collection and report
+  generation fail on mixed or missing provenance.
+- Clean re-gate outcome: pending the complete V7.5.17 campaign below.
+
 ### V7.5.16 — corrected clean evidence and BSIM-AR evaluation (2026-08-25)
 
 - Corrected the MNA residual probe to recover ideal-source branch currents

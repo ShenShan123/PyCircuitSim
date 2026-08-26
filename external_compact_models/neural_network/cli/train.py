@@ -21,15 +21,17 @@ import torch
 
 from neural_network.config import (
     CHECKPOINT_DIR, DATA_DIR,
-    DirectNetConfig, TransformerConfig, TabPFNConfig,
+    DirectNetConfig, TransformerConfig,
     LOCAL_VARIANT_CODES, VALID_TECH_SCOPES, tech_scope_vocab_size,
 )
 from neural_network.training.trainer import (
-    train_directnet, train_transformer, train_tabpfn,
+    train_directnet, train_transformer,
 )
 from neural_network.utils.seed import set_seed
 
 import numpy as np
+
+from neural_network.data.dataset import validate_canonical_dataset
 
 
 # All TSMC + ASAP7 tech names for the per-tech `--tech-scope` auto-exclude.
@@ -101,40 +103,6 @@ SIZE_PRESETS = {
         d_model=384, nhead=8, num_layers=8, dim_feedforward=1536,
         dropout=0.2, batch_size=1024, max_epochs=300,
         patience=80, lr=6e-4),
-    # V6.9 — TabPFN-style in-context compact model (LEVEL=75). Param
-    # counts mirror the transformer tiers (0.69M / 2.03M / 4.65M) so the
-    # capacity curves are comparable. ctx_len = frozen-context rows.
-    ("tabpfn", "small"): dict(
-        embed_dim=64, n_inducing=32, dist_blocks=2, dist_heads=4,
-        agg_blocks=2, agg_heads=4, n_cls_tokens=2, icl_num_blocks=3,
-        icl_heads=4, ctx_len=1024, batch_size=1024, max_epochs=80,
-        patience=25, lr=6e-4),
-    ("tabpfn", "medium"): dict(
-        embed_dim=96, n_inducing=32, dist_blocks=3, dist_heads=6,
-        agg_blocks=3, agg_heads=6, n_cls_tokens=2, icl_num_blocks=4,
-        icl_heads=6, ctx_len=2048, batch_size=1024, max_epochs=150,
-        patience=40, lr=5e-4),
-    # large: 150-epoch cosine. Unlike small/medium (dataloader-bound,
-    # ~118 s/epoch), large is COMPUTE-bound (~12 min/epoch with 2 jobs/GPU
-    # on shared 4090s) — a 300-epoch schedule is ~2.5 GPU-days/checkpoint.
-    # The V6.10 campaign trained this tier with --amp (bf16, the V6.8
-    # opt-in wall-clock lever).
-    ("tabpfn", "large"): dict(
-        embed_dim=128, n_inducing=48, dist_blocks=3, dist_heads=8,
-        agg_blocks=3, agg_heads=8, n_cls_tokens=2, icl_num_blocks=6,
-        icl_heads=8, ctx_len=2048, batch_size=1024, max_epochs=150,
-        patience=50, lr=4e-4),
-    # V7.1.0 — PFN XL tier, completing the 4-scale matrix for all three NN
-    # families. 14.86M params mirrors the transformer xl (14.81M), and the
-    # ICL width W = embed_dim * n_cls_tokens = 384 equals transformer-xl's
-    # d_model, so the capacity axis stays comparable across families.
-    # lr 3e-4, not large's 4e-4: the V6.10 large wave logged 8 divergence
-    # collapses (5/8 at 4e-4) and this stack is 50 % deeper on the ICL side.
-    ("tabpfn", "xl"): dict(
-        embed_dim=192, n_inducing=64, dist_blocks=4, dist_heads=12,
-        agg_blocks=4, agg_heads=12, n_cls_tokens=2, icl_num_blocks=9,
-        icl_heads=12, ctx_len=2048, batch_size=1024, max_epochs=150,
-        patience=50, lr=3e-4),
 }
 
 
@@ -166,7 +134,7 @@ def _resolve_data_path(args: argparse.Namespace) -> Path:
 def _make_save_prefix(args: argparse.Namespace) -> str:
     if args.exp_name:
         return f"{args.exp_name}_{args.device_type}"
-    tag = {"direct": "dn", "transformer": "tf", "tabpfn": "pfn"}[args.model]
+    tag = {"direct": "dn", "transformer": "tf"}[args.model]
     suffix = ""
     if args.loss_preset != "default":
         suffix = f"_{args.loss_preset}"
@@ -181,6 +149,11 @@ def _run(args: argparse.Namespace) -> None:
     data_path = _resolve_data_path(args)
     if not data_path.exists():
         print(f"Dataset not found: {data_path}")
+        sys.exit(1)
+    try:
+        validate_canonical_dataset(data_path)
+    except ValueError as exc:
+        print(f"ERROR: non-canonical training dataset: {exc}")
         sys.exit(1)
 
     save_prefix = _make_save_prefix(args)
@@ -252,6 +225,7 @@ def _run(args: argparse.Namespace) -> None:
         swa_mode=args.swa_mode, ema_decay=args.ema_decay,
         apply_filter=(args.apply_filter == "on"),
         class_weights=_parse_class_weights(args.class_weights),
+        split_mode=args.split_mode,
     )
 
     # Phase 7 (V6.4.2) soft physics constraints — DirectNet only, opt-in.
@@ -293,13 +267,6 @@ def _run(args: argparse.Namespace) -> None:
         print("[error] --amp is incompatible with the double-backward aux "
               "losses (sobolev / subthresh / charge-sobolev).")
         sys.exit(2)
-    # V6.9 phase 1: TabPFN trains on the plain LDS-MAE recipe only.
-    if args.model == "tabpfn" and (
-            args.sobolev or args.subthresh or args.charge_sobolev):
-        print("[error] the sobolev / subthresh / charge-sobolev aux losses "
-              "are not supported for --model tabpfn (phase 1).")
-        sys.exit(2)
-
     if args.model == "direct":
         cfg = DirectNetConfig(**preset)
         train_directnet(
@@ -320,18 +287,6 @@ def _run(args: argparse.Namespace) -> None:
             charge_sobolev=args.charge_sobolev,
             lam_charge_sobolev=args.lam_charge_sobolev,
             charge_sobolev_floor=args.charge_sobolev_floor,
-            init_from=args.init_from,
-            amp=args.amp,
-            **common,
-        )
-    elif args.model == "tabpfn":
-        if (loss_preset["output_subset"] is not None
-                or loss_preset["column_weights"] is not None):
-            print("[warn] loss presets are DirectNet-only; "
-                  "TabPFN ignores them")
-        cfg = TabPFNConfig(**preset)
-        train_tabpfn(
-            str(data_path), config=cfg,
             init_from=args.init_from,
             amp=args.amp,
             **common,
@@ -367,7 +322,7 @@ def _run(args: argparse.Namespace) -> None:
 def main() -> None:
     p = argparse.ArgumentParser(
         description="Unified BSIMAR / DirectNet training CLI")
-    p.add_argument("--model", choices=["direct", "transformer", "tabpfn"],
+    p.add_argument("--model", choices=["direct", "transformer"],
                    default="direct")
     p.add_argument("--size", choices=["small", "medium", "large", "xl"],
                    default="medium",
@@ -384,6 +339,11 @@ def main() -> None:
     p.add_argument("--max-rows", type=int, default=None,
                    help="Cap dataset rows (after filter / exclude) for "
                         "fast smoke runs")
+    p.add_argument(
+        "--split-mode", choices=["combo", "random"], default="combo",
+        help="Hold out complete (technology, VT, L, NFIN, temperature) "
+             "combinations by default; 'random' is interpolation-only.",
+    )
 
     p.add_argument("--cuda", action="store_true")
     p.add_argument("--amp", action="store_true",

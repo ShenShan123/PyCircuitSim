@@ -7,16 +7,12 @@
 # (datasets/<tech-scope>_<device-type>.npz). Covers ALL Vth variants (--variants
 # all, the default) and the full L/NFIN/T geometry grid per tech.
 #
-# Runs all 8 (tech x device) jobs concurrently — the box has 192 cores.
+# Runs all 10 (tech x device) jobs concurrently.
 #
 # Usage: bash scripts/benchmark_gen_data.sh [workers_per_job]   (default 20)
 #
-# V7.4.2 — GEN_EXTRA appends flags to every job. The rebuild uses
-#   GEN_EXTRA="--max-l-ratio 1.35" bash scripts/benchmark_gen_data.sh 15
-# which samples inside each PDK length bin instead of at its lower corner
-# only. Without it TSMC5/6/7's benchmark NMOS (L=16 nm) sits in an unsampled
-# bin interior, and capacity makes the unconstrained interpolant drift —
-# see docs/plans/2026-08-10-v742-bsimar-capacity.md.
+# V7.5.17 pins the required 1.35 intra-bin L spacing in the canonical command.
+# GEN_EXTRA remains available for explicit diagnostic-only additions.
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GEN="$ROOT/external_compact_models/bsim_cmg/scripts/generate_nn_data.py"
@@ -44,6 +40,7 @@ for tech in "${techs[@]}"; do
     conda run -n pycircuitsim python -u "$GEN" \
         --device "$dev" --tech "$tech" \
         --enable-inv-trip --enable-subvt-off \
+        --max-l-ratio 1.35 \
         --n-workers "$WORKERS" ${GEN_EXTRA:-} \
         >"$log" 2>&1 &
     pids+=($!); jobs+=("${tech}_${dev}")

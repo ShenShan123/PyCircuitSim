@@ -23,8 +23,8 @@ criteria for the shipped code, not guidance:
       than VNTOL) while passing every smoke test.
 
 Levels, no NGSPICE (the reference is the shipped scalar tail):
-  Level 1: batched == scalar, bit for bit, per element — all three NN
-    families (DirectNet / BSIM-AR / PFN), both polarities, caps on/off,
+  Level 1: batched == scalar, bit for bit, per element — both NN
+    families (DirectNet / BSIM-AR), both polarities, caps on/off,
     over an adversarial voltage box (off-state, |Vds|→0, reverse-taper
     window, rail overshoot in both extrapolation branches, fast path).
   Level 2: the §8.1 constraints are present in the shipped code (source
@@ -61,15 +61,14 @@ from pycircuitsim.models.mosfet_nn import (  # noqa: E402
 from pycircuitsim.models.mosfet_directnet import NMOS_NN, PMOS_NN  # noqa: E402
 from pycircuitsim.models.mosfet_bsimar import (  # noqa: E402
     NMOS_BSIMAR, PMOS_BSIMAR)
-from pycircuitsim.models.mosfet_pfn import NMOS_PFN, PMOS_PFN  # noqa: E402
 
 CKPT = PROJECT_ROOT / "external_compact_models" / "neural_network" / "checkpoints"
 
 KEYS8 = ["id", "gm", "gds", "gmb", "qg", "qd", "qs", "qb"]
 KEYS13 = KEYS8 + ["cgg", "cgd", "cgs", "cdg", "cdd"]
 
-# (label, class, checkpoint stem, batch) — small AR/PFN checkpoints keep
-# the AR loop affordable; DirectNet runs at production size on two techs.
+# (label, class, checkpoint stem, batch) — small AR checkpoints keep the loop
+# affordable; DirectNet runs at production size on two technologies.
 CONFIGS = [
     ("DN-tsmc5-nmos", NMOS_NN, "tsmc5_dn_large_nmos", 512),
     ("DN-tsmc5-pmos", PMOS_NN, "tsmc5_dn_large_pmos", 512),
@@ -77,8 +76,6 @@ CONFIGS = [
     ("DN-tsmc16-pmos", PMOS_NN, "tsmc16_dn_large_pmos", 512),
     ("AR-tsmc5-nmos", NMOS_BSIMAR, "tsmc5_tf_small_nmos", 96),
     ("AR-tsmc5-pmos", PMOS_BSIMAR, "tsmc5_tf_small_pmos", 96),
-    ("PFN-tsmc5-nmos", NMOS_PFN, "tsmc5_pfn_small_nmos", 96),
-    ("PFN-tsmc5-pmos", PMOS_PFN, "tsmc5_pfn_small_pmos", 96),
 ]
 
 Result = Tuple[str, bool, str]

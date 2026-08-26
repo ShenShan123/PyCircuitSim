@@ -335,7 +335,8 @@ def run_dc_sweep(
     analysis_params: Dict,
     visualizer: Visualizer,
     output_path: Path,
-    circuit_name: str
+    circuit_name: str,
+    require_convergence: bool = False,
 ) -> Dict[str, List[float]]:
     """
     Run DC sweep analysis and generate plots.
@@ -350,6 +351,8 @@ def run_dc_sweep(
         visualizer: Visualizer instance for plotting
         output_path: Directory to save plots
         circuit_name: Name of the circuit (for file naming)
+        require_convergence: Raise instead of returning an unconverged OP or
+            sweep point. Scientific accuracy gates must enable this.
 
     Returns:
         Dictionary mapping node names to their value lists
@@ -394,6 +397,10 @@ def run_dc_sweep(
         return s, sol
 
     op_solver, op_solution = _solve_dc_with_retry(circuit, has_nn, _op_solve)
+    if (require_convergence
+            and not getattr(op_solver, "_last_solve_converged", True)):
+        source_component.value = original_value
+        raise RuntimeError("DC operating point did not converge")
     logger.info(f"DC operating point computed: {len(op_solution)} nodes")
 
     # STAGE 2: Use OP solution as initial guess for sweep
@@ -483,6 +490,14 @@ def run_dc_sweep(
             point_solver, solution = _solve_dc_with_retry(
                 circuit, has_nn, _point_solve, skip_header=True,
             )
+            if (require_convergence
+                    and not getattr(
+                        point_solver, "_last_solve_converged", True)):
+                source_component.value = original_value
+                raise RuntimeError(
+                    f"DC sweep point {point_num} at {current_value:g} "
+                    "did not converge"
+                )
 
             # Store this solution for next point's initial guess
             prev_solution = solution.copy()

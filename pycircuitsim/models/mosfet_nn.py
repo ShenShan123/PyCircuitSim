@@ -1018,7 +1018,7 @@ class _MOSFETNNBase(Component):
 
         Requires the opt-in flag AND a model that implements it AND an
         instance whose ``id`` column is not re-composed by an EKV core or
-        monotone residual. False for BSIM-AR and PFN, whose forwards are
+        monotone residual. False for BSIM-AR, whose forward is
         not plain MLPs.
         """
         return (

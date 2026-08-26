@@ -40,7 +40,7 @@ if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
 Usage: [ENV=VALUE ...] bash scripts/recipe_train.sh [--force]
 
 Environment:
-  MODEL        direct | transformer | tabpfn (default: direct)
+  MODEL        direct | transformer (default: direct)
   RECIPES      space-separated recipes (use clean for clean checkpoints)
   TECHS        space-separated lowercase technology names
   SIZES        space-separated small | medium | large | xl
@@ -65,8 +65,7 @@ MODEL="${MODEL:-direct}"
 case "$MODEL" in
   direct)      TAG="dn" ;;
   transformer) TAG="tf" ;;
-  tabpfn)      TAG="pfn" ;;
-  *) echo "[train] UNKNOWN MODEL=$MODEL (direct|transformer|tabpfn)"; exit 1 ;;
+  *) echo "[train] UNKNOWN MODEL=$MODEL (direct|transformer)"; exit 1 ;;
 esac
 export MODEL
 export PYTHONPATH="$ROOT/external_compact_models${PYTHONPATH:+:$PYTHONPATH}"
@@ -76,7 +75,7 @@ required_sidecars_exist () {
   [ -f "$CKPT/${stem}_norm.npz" ] || return 1
   case "$TAG" in
     dn) return 0 ;;
-    tf|pfn) [ -f "$CKPT/${stem}_config.npz" ] ;;
+    tf) [ -f "$CKPT/${stem}_config.npz" ] ;;
   esac
 }
 

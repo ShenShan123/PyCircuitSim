@@ -6,7 +6,7 @@ to generate BSIM-CMG data, train a compact model, and increase validation scope
 from devices to circuits while keeping NGSPICE on the identical OSDI model as
 ground truth.
 
-Current release: **V7.5.16**.
+Current release: **V7.5.17**.
 
 ## Documentation map
 
@@ -31,11 +31,10 @@ Each project document has one job:
 | 72 | BSIM-CMG through PyCMG/OSDI | Reference compact model |
 | 73 | DirectNet | Production NN fast path |
 | 74 | BSIM-AR Transformer | Higher-fidelity, slower NN |
-| 75 | PFN / TabPFN port | Research NN |
 
 Supported analyses are `.op`, `.dc`, `.ac`, and `.tran`. Devices include
 resistors, capacitors, independent voltage/current sources, PULSE sources,
-LEVEL=72–75 MOSFETs, and flattened `X` subcircuit instances.
+LEVEL=72–74 MOSFETs, and flattened `X` subcircuit instances.
 
 ## 0. Set up the environment
 
@@ -44,7 +43,7 @@ LEVEL=72–75 MOSFETs, and flattened `X` subcircuit instances.
 - Python 3.10 in a conda environment named `pycircuitsim`
 - NGSPICE 45.2 or newer with OSDI support
 - OpenVAF at `/usr/local/bin/openvaf`
-- PyTorch for LEVEL=73–75
+- PyTorch for LEVEL=73–74
 - A built BSIM-CMG OSDI binary at
   `external_compact_models/bsim_cmg/build/osdi/bsimcmg.osdi`
 
@@ -165,8 +164,11 @@ conda run -n pycircuitsim python \
 Datasets are written under
 `external_compact_models/neural_network/data/datasets/`. Each NPZ contains
 source-relative terminal inputs, geometry/technology features, 13 BSIM-CMG
-targets, and a sample-class label. Unstable bins are rejected by the
-generator; NFIN=1 is not part of the training domain.
+targets, and a sample-class label. Canonical generation aborts on any rejected
+point or dropped bin and writes a checksum-bound `.npz.complete` marker.
+`--allow-rejected-points` is diagnostic only; the training CLI rejects those
+artifacts, missing/stale markers, dirty-source provenance, and incomplete row
+counts. NFIN=1 is not part of the training domain.
 
 For the five-technology production sweep, use the parallel driver:
 
@@ -184,7 +186,6 @@ The unified trainer supports:
 
 - `--model direct` for LEVEL=73 DirectNet;
 - `--model transformer` for LEVEL=74 BSIM-AR;
-- `--model tabpfn` for LEVEL=75 PFN;
 - `--size small|medium|large|xl`;
 - `--tech-scope tsmc5|tsmc6|tsmc7|tsmc12|tsmc16|universal`.
 
@@ -206,7 +207,7 @@ conda run -n pycircuitsim python -m neural_network.cli.train \
 Repeat with `--device-type pmos`. Checkpoints are written to
 `external_compact_models/neural_network/checkpoints/` using stems such as
 `tsmc5_dn_large_nmos`. The CLI writes the model and normalization sidecar;
-Transformer and PFN also require a configuration sidecar.
+Transformer also requires a configuration sidecar.
 
 For parallel DirectNet production training, let the campaign wrapper assign
 jobs across GPUs:
@@ -230,24 +231,7 @@ GPUS="0 1 2" NSTREAMS=6 \
 bash scripts/recipe_train.sh
 ```
 
-Set `MODEL=direct`, `transformer`, or `tabpfn` for the three families. PFN is a
-separate research campaign and is not part of the V7.5.16 clean re-gate. Its
-historical clean recipe uses normal precision for `small`/`medium` and AMP for
-the compute-bound `large`/`xl` tiers:
-
-```bash
-BSIMAR_CHECKPOINT_DIR="$PWD/results/pfn_clean_control/checkpoints" \
-RECIPE_TRAIN_LOG_DIR="$PWD/results/pfn_clean_control/training" \
-MODEL=tabpfn RECIPES=clean SIZES="small medium" \
-TECHS="tsmc5 tsmc6 tsmc7 tsmc12 tsmc16" \
-GPUS="0 1 2" NSTREAMS=6 bash scripts/recipe_train.sh
-
-BSIMAR_CHECKPOINT_DIR="$PWD/results/pfn_clean_control/checkpoints" \
-RECIPE_TRAIN_LOG_DIR="$PWD/results/pfn_clean_control/training" \
-MODEL=tabpfn RECIPES=clean SIZES="large xl" EXTRA_ARGS="--amp" \
-TECHS="tsmc5 tsmc6 tsmc7 tsmc12 tsmc16" \
-GPUS="0 1 2" NSTREAMS=6 bash scripts/recipe_train.sh
-```
+Set `MODEL=direct` or `transformer` for the two supported families.
 
 The wrapper creates a
 `*_best.pt.complete` marker only after a successful job. Treat that marker as
@@ -266,11 +250,11 @@ export PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS=tsmc5_dn_large_pmos
 
 Pins are checkpoint stems inside the package checkpoint directory, without
 `_best.pt`; they are not arbitrary file paths. Use `TF` instead of `DN` for
-LEVEL=74 and `PFN` for LEVEL=75. A missing pinned stem is an error.
+LEVEL=74. A missing pinned stem is an error.
 
 The device and inverter gates below have dedicated DirectNet and BSIM-AR
 passes, so family-specific pins are sufficient. Other gates render LEVEL=73
-decks. Retarget one of those gates to a trained Transformer or PFN checkpoint
+decks. Retarget one of those gates to a trained Transformer checkpoint
 like this:
 
 ```bash
@@ -283,8 +267,8 @@ conda run -n pycircuitsim python \
   tests/single_devices/verify_nn_multi_tech_dc.py --tech TSMC5
 ```
 
-For PFN, set the force level to `75` and use `PFN` pins. Unset
-`PYCIRCUITSIM_NN_FORCE_LEVEL` before returning to the default DirectNet gates.
+Unset `PYCIRCUITSIM_NN_FORCE_LEVEL` before returning to the default DirectNet
+gates.
 
 ## 3. Verify `single_devices` against ground truth
 
@@ -364,31 +348,31 @@ conda run -n pycircuitsim python \
 ### Run the complete clean checkpoint matrix
 
 Generate the full family pool, then select the DirectNet/BSIM-AR S/M/L/XL
-matrix used by V7.5.16. It is exactly **480 jobs**: two families × four tiers ×
+matrix used by V7.5.17. It is exactly **480 jobs**: two families × four tiers ×
 five technologies, with the required OMP repeats. Require complete coverage
 for both current families before rebuilding the generated reports:
 
 ```bash
 conda run -n pycircuitsim python \
-  scripts/v710_regate_jobs.py /tmp/pycircuitsim-v7516-jobs
+  scripts/v710_regate_jobs.py /tmp/pycircuitsim-v7517-jobs
 awk '$1 == "dn" || $1 == "tf"' \
-  /tmp/pycircuitsim-v7516-jobs/jobs_clean.txt \
-  > /tmp/pycircuitsim-v7516-jobs/jobs_clean_dn_tf.txt
+  /tmp/pycircuitsim-v7517-jobs/jobs_clean.txt \
+  > /tmp/pycircuitsim-v7517-jobs/jobs_clean_dn_tf.txt
 
 BSIMAR_CHECKPOINT_DIR="$PWD/results/v7516_clean/checkpoints" \
-V710_OUT="$PWD/results/v7516_clean" \
-V710_SCRATCH=/tmp/pycircuitsim-v7516-clean \
+V710_OUT="$PWD/results/v7517_clean" \
+V710_SCRATCH=/tmp/pycircuitsim-v7517-clean \
 NGSPICE_BIN="${NGSPICE_BIN:-$PWD/tools/ngspice-45.2/bin/ngspice}" \
-JOBS=/tmp/pycircuitsim-v7516-jobs/jobs_clean_dn_tf.txt PAR=32 \
+JOBS=/tmp/pycircuitsim-v7517-jobs/jobs_clean_dn_tf.txt PAR=32 \
 NN_PY="$(conda run -n pycircuitsim which python)" \
 bash scripts/v710_regate.sh
 
 conda run -n pycircuitsim python scripts/v710_regate_collect.py \
-  --root results/v7516_clean
+  --root results/v7517_clean --require-manifest
 for family in dn tf; do
   BSIMAR_CHECKPOINT_DIR="$PWD/results/v7516_clean/checkpoints" \
   conda run -n pycircuitsim python scripts/v730_coverage.py \
-    --tag "$family" --set clean --passes v7516-clean \
+    --tag "$family" --set clean --passes v7517-clean \
     --require-complete --fail-on-gaps
 done
 conda run -n pycircuitsim python scripts/v730_docs_build.py
@@ -482,7 +466,7 @@ M1 out in 0 0 nmos_nn L=16n NFIN=10
 .end
 ```
 
-LEVEL=74 and LEVEL=75 use the same netlist shape. NN technologies require
+LEVEL=74 uses the same netlist shape. NN technologies require
 `TECH` and `VT`; ASAP7 has no NN checkpoints. Parser-supported suffixes include
 `f`, `p`, `n`, `u`, `m`, `k`, `meg`, and `g`.
 
