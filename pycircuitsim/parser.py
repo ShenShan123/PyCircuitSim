@@ -1152,7 +1152,7 @@ class Parser:
 
             nn_kwargs = dict(
                 name=name, nodes=nodes, model_path=nn_model_path,
-                L=L, NFIN=NFIN, tech_code=nn_tech_code,
+                L=L, NFIN=NFIN, tech_code=nn_tech_code, multiplier=MULT,
             )
 
             if model_type.upper() == 'NMOS':

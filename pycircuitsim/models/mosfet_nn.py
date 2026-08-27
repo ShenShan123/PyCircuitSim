@@ -260,6 +260,7 @@ class _MOSFETNNBase(Component):
         NFIN: float,
         temperature: float = 300.15,
         tech_code: Optional[int] = None,
+        multiplier: float = 1.0,
         *,
         model_factory: Optional[
             Callable[[Dict[str, torch.Tensor]], torch.nn.Module]
@@ -274,9 +275,13 @@ class _MOSFETNNBase(Component):
             raise ValueError(f"L must be positive, got {L}")
         if NFIN <= 0:
             raise ValueError(f"NFIN must be positive, got {NFIN}")
+        if multiplier <= 0:
+            raise ValueError(
+                f"Instance multiplier m must be positive, got {multiplier}")
 
         self.L = float(L)
         self.NFIN = float(NFIN)
+        self.m = float(multiplier)
         self.temperature = float(temperature)
         self._output_layout = output_layout
 
@@ -1260,7 +1265,9 @@ class _MOSFETNNBase(Component):
         self, voltages: Dict[str, float],
     ) -> Tuple[float, float, float]:
         r = self._eval(voltages)
-        return r["gds"], r["gm"], r["gmb"]
+        return (
+            self.m * r["gds"], self.m * r["gm"], self.m * r["gmb"],
+        )
 
     @staticmethod
     def require_caps(components) -> None:
@@ -1290,13 +1297,15 @@ class _MOSFETNNBase(Component):
             self._caps_required = True
             self.clear_cache()
         r = self._eval(voltages)
-        return {k: r[k] for k in ("cgg", "cgd", "cgs", "cdg", "cdd")}
+        return {
+            k: self.m * r[k] for k in ("cgg", "cgd", "cgs", "cdg", "cdd")
+        }
 
     def get_charges(
         self, voltages: Dict[str, float],
     ) -> Dict[str, float]:
         r = self._eval(voltages)
-        return {k: r[k] for k in ("qg", "qd", "qs", "qb")}
+        return {k: self.m * r[k] for k in ("qg", "qd", "qs", "qb")}
 
     # ── Transient charge state ───────────────────────────────────────
 

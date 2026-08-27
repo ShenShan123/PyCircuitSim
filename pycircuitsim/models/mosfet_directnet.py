@@ -38,7 +38,8 @@ class _DirectNetMixin(_MOSFETNNBase):
         NFIN: float,
         temperature: float = 300.15,
         tech_code: Optional[int] = None,
-    ):
+        multiplier: float = 1.0,
+    ) -> None:
         from neural_network.models.direct_net import DirectNet
 
         def _build_from_state(state: Dict[str, torch.Tensor]) -> torch.nn.Module:
@@ -85,6 +86,7 @@ class _DirectNetMixin(_MOSFETNNBase):
         super().__init__(
             name=name, nodes=nodes, model_path=model_path,
             L=L, NFIN=NFIN, temperature=temperature, tech_code=tech_code,
+            multiplier=multiplier,
             model_factory=_build_from_state,
             output_layout="standard",
         )
@@ -94,7 +96,7 @@ class NMOS_NN(_DirectNetMixin):
     """N-channel DirectNet MOSFET (LEVEL=73)."""
 
     def calculate_current(self, voltages: Dict[str, float]) -> float:
-        return -self._eval(voltages)["id"]
+        return -self.m * self._eval(voltages)["id"]
 
 
 class PMOS_NN(_DirectNetMixin):
@@ -105,4 +107,4 @@ class PMOS_NN(_DirectNetMixin):
         self._is_pmos = True
 
     def calculate_current(self, voltages: Dict[str, float]) -> float:
-        return self._eval(voltages)["id"]
+        return self.m * self._eval(voltages)["id"]
