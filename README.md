@@ -6,7 +6,7 @@ to generate BSIM-CMG data, train a compact model, and increase validation scope
 from devices to circuits while keeping NGSPICE on the identical OSDI model as
 ground truth.
 
-Current release: **V7.6.0**.
+Current release: **V7.6.1**.
 
 ## Documentation map
 
@@ -32,12 +32,13 @@ Each project document has one job:
 | 73 | DirectNet | Production NN fast path |
 | 74 | BSIM-AR Transformer | Higher-fidelity, slower NN |
 | 75 | DirectNet-Full | Experimental full-terminal NN path |
+| 76 | BSIM-AR-Full Transformer | Experimental full-terminal autoregressive path |
 
 Supported analyses are `.op`, `.dc`, `.ac`, and `.tran`. Devices include
 resistors, capacitors, independent voltage/current sources, PULSE sources,
-LEVEL=72–75 MOSFETs, and flattened `X` subcircuit instances. LEVEL=75 is a
-separate experimental family selected only by `FAMILY=directnet-full`; it is
-not the retired PFN family and has no production-qualified checkpoints.
+LEVEL=72–76 MOSFETs, and flattened `X` subcircuit instances. LEVEL=75 and 76
+are separate experimental families selected by `FAMILY=directnet-full` and
+`FAMILY=bsimar-full`; LEVEL=75 is not the retired PFN family.
 
 ## 0. Set up the environment
 
@@ -46,7 +47,7 @@ not the retired PFN family and has no production-qualified checkpoints.
 - Python 3.10 in a conda environment named `pycircuitsim`
 - NGSPICE 45.2 or newer with OSDI support
 - OpenVAF at `/usr/local/bin/openvaf`
-- PyTorch for LEVEL=73–75
+- PyTorch for LEVEL=73–76
 - A built BSIM-CMG OSDI binary at
   `external_compact_models/bsim_cmg/build/osdi/bsimcmg.osdi`
 
@@ -195,6 +196,8 @@ The unified trainer supports:
 - `--model transformer` for LEVEL=74 BSIM-AR;
 - `--model direct --output-contract full-terminal` for the separate,
   experimental LEVEL=75 DirectNet-Full family;
+- `--model transformer --output-contract full-terminal` for the separate,
+  experimental LEVEL=76 BSIM-AR-Full family;
 - `--size small|medium|large|xl`;
 - `--tech-scope tsmc5|tsmc6|tsmc7|tsmc12|tsmc16|universal`.
 
@@ -220,11 +223,11 @@ Transformer also requires a configuration sidecar.
 
 Full-terminal training additionally requires a dataset generated with
 `--output-contract full-terminal` and `--apply-filter off`. Its default
-dataset and checkpoint names carry the distinct `dnf` family tag; an optional
-`--exp-name` must preserve that separation. It learns `i_d`, `i_g`, `i_b`,
-`qd`, `qg`, and `qb`; source current and charge are reconstructed analytically.
-V7.6.0 provides and verifies this pipeline but does not ship a qualified
-checkpoint pair, so LEVEL=73 remains the production NN path.
+dataset names carry the architecture-neutral `dnf` tag. DirectNet-Full
+checkpoints use `dnf`; BSIM-AR-Full checkpoints use `tff`. Both learn `i_d`,
+`i_g`, `i_b`, `qd`, `qg`, and `qb`; the Transformer emits those surfaces in
+the declared charge-first autoregressive order. Source current and charge are
+reconstructed analytically. LEVEL=73 remains the production NN path.
 
 For parallel DirectNet production training, let the campaign wrapper assign
 jobs across GPUs:
@@ -248,7 +251,8 @@ GPUS="0 1 2" NSTREAMS=6 \
 bash scripts/recipe_train.sh
 ```
 
-Set `MODEL=direct` or `transformer` for the two supported families.
+Set `MODEL=direct` or `transformer`. Set `OUTPUT_CONTRACT=full-terminal` to
+train LEVEL=75/76 into the isolated `dnf`/`tff` stems.
 
 The wrapper creates a
 `*_best.pt.complete` marker only after a successful job. Treat that marker as
@@ -267,9 +271,10 @@ export PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS=tsmc5_dn_large_pmos
 
 Pins are checkpoint stems inside the package checkpoint directory, without
 `_best.pt`; they are not arbitrary file paths. Use `TF` instead of `DN` for
-LEVEL=74, or `DNF` for the explicit DirectNet-Full LEVEL=75 family. A missing
-pinned stem is an error. LEVEL=75 also requires checksum-valid model,
-normalization, and completion artifacts.
+LEVEL=74, `DNF` for DirectNet-Full LEVEL=75, or `TFF` for BSIM-AR-Full
+LEVEL=76. A missing pinned stem is an error. Full-terminal bundles require
+checksum-valid model, normalization, and completion artifacts; LEVEL=76 also
+requires its checksum-bound configuration sidecar.
 
 The device and inverter gates below have dedicated DirectNet and BSIM-AR
 passes, so family-specific pins are sufficient. Other gates render LEVEL=73
@@ -402,16 +407,44 @@ These gates own NN circuit accuracy. Their definitions and thresholds are in
 [`docs/accuracy/methodology.md`](docs/accuracy/methodology.md); generated
 family reports are indexed by [`docs/accuracy/README.md`](docs/accuracy/README.md).
 
+For the independent full-terminal scan, generate the `dnf` datasets, train
+both architectures into a new checkpoint root, and run the separate 480-job
+pool:
+
+```bash
+OUTPUT_CONTRACT=full-terminal \
+BENCHMARK_GEN_LOG_DIR="$PWD/results/v761_full_generation" \
+bash scripts/benchmark_gen_data.sh 20
+
+for model in direct transformer; do
+  BSIMAR_CHECKPOINT_DIR="$PWD/results/v761_full_checkpoints" \
+  RECIPE_TRAIN_LOG_DIR="$PWD/results/v761_full_training/$model" \
+  MODEL="$model" OUTPUT_CONTRACT=full-terminal RECIPES=clean \
+  SIZES="small medium large xl" \
+  TECHS="tsmc5 tsmc6 tsmc7 tsmc12 tsmc16" \
+  GPUS="0 2 3 4" NSTREAMS=8 bash scripts/recipe_train.sh
+done
+
+conda run -n pycircuitsim python \
+  scripts/v710_regate_jobs.py /tmp/pycircuitsim-v761-jobs
+BSIMAR_CHECKPOINT_DIR="$PWD/results/v761_full_checkpoints" \
+V710_OUT="$PWD/results/v761_full_clean" \
+V710_SCRATCH=/tmp/pycircuitsim-v761-full \
+NGSPICE_BIN=/usr/local/ngspice-45.2/bin/ngspice \
+JOBS=/tmp/pycircuitsim-v761-jobs/jobs_full_clean.txt PAR=32 \
+NN_PY="$(conda run -n pycircuitsim which python)" \
+bash scripts/v710_regate.sh
+```
+
 ## 5. Verify `complex_circuits` with AnalogGym
 
 The AnalogGym migration expands validation to a large, translated circuit
 corpus under `examples/complex_circuits/`. NGSPICE always runs the identical
 BSIM-CMG OSDI model as ground truth. PyCircuitSim defaults to LEVEL=72 and can
 instead run a completed, explicitly pinned DirectNet LEVEL=73 checkpoint pair.
-The campaign also accepts experimental LEVEL=75 pairs under distinct `dnf`
-stems; those runs are diagnostics until every promotion gate passes.
-Each result records the checkpoint and normalization hashes; resume refuses to
-mix rows from different weights.
+The campaign also accepts experimental LEVEL=75 and 76 pairs under distinct
+`dnf` and `tff` stems. Each result records all required artifact hashes;
+resume refuses to mix rows from different weights.
 
 The per-design BSIM-CMG libraries are ignored private artifacts derived from
 the local TSMC cards. Materialize them after a fresh checkout without rewriting
@@ -483,13 +516,14 @@ A MOS model declaration selects its implementation:
 .model nmos_ref NMOS (LEVEL=72 TECH=tsmc5 VT=lvt)
 .model nmos_nn  NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)
 .model nmos_full NMOS (LEVEL=75 FAMILY=directnet-full TECH=tsmc5 VT=lvt)
+.model nmos_ar_full NMOS (LEVEL=76 FAMILY=bsimar-full TECH=tsmc5 VT=lvt)
 M1 out in 0 0 nmos_nn L=16n NFIN=10
 .dc Vin 0 0.8 0.01
 .end
 ```
 
-LEVEL=74 uses the LEVEL=73 netlist shape; LEVEL=75 additionally requires the
-explicit family token shown above. NN technologies require
+LEVEL=74 uses the LEVEL=73 netlist shape; LEVEL=75 and 76 additionally require
+their explicit family tokens shown above. NN technologies require
 `TECH` and `VT`; ASAP7 has no NN checkpoints. Parser-supported suffixes include
 `f`, `p`, `n`, `u`, `m`, `k`, `meg`, and `g`.
 

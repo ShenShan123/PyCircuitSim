@@ -10,6 +10,8 @@ contract before comparing results.
 |---|---|
 | [`DirectNet-L73-clean.md`](DirectNet-L73-clean.md) | production DirectNet, all clean tiers |
 | [`BSIM-AR-L74-clean.md`](BSIM-AR-L74-clean.md) | autoregressive Transformer, all clean tiers |
+| [`DirectNet-L75-clean.md`](DirectNet-L75-clean.md) | full-terminal DirectNet, all clean tiers |
+| [`BSIM-AR-L76-clean.md`](BSIM-AR-L76-clean.md) | full-terminal autoregressive Transformer, all clean tiers |
 | [`DirectNet-L73-recipes.md`](DirectNet-L73-recipes.md) | historical DirectNet recipe study |
 | [`BSIM-AR-L74-recipes.md`](BSIM-AR-L74-recipes.md) | historical BSIM-AR recipe study |
 | [`simple-circuits-recheck-2026-08-19.md`](simple-circuits-recheck-2026-08-19.md) | superseded V7.5.15 campaign audit trail |
@@ -20,9 +22,9 @@ contract before comparing results.
 
 <!--SCOREBOARD-->
 
-The DirectNet and BSIM-AR clean rows come from one V7.5.17 CPU-pinned campaign
-using the preserved V7.4 checkpoint population. Recipe columns are historical
-and are not direct deltas against the current clean contract.
+The reduced rows come from the V7.5.17 CPU-pinned campaign. The full-terminal
+rows come from the independent V7.6.1 CPU-pinned campaign. Recipe columns are
+historical and are not direct deltas against either clean contract.
 
 TSMC6 remains in the denominator as a controlled repeat of TSMC7. Their
 LEVEL=72 data are identical, so disagreement measures training and Newton-basin
@@ -30,18 +32,17 @@ variability rather than an independent technology result.
 
 ## Evidence and reproduction
 
-Current tables are published only when all 480 DirectNet/BSIM-AR clean jobs and
-all family-required checkpoint artifacts are present. Partial passes are never
-mixed.
+Each clean pass is published only when all 480 jobs and all family-required
+checkpoint artifacts are present. Partial passes are never mixed.
 
 ```bash
 conda run -n pycircuitsim python scripts/v710_regate_collect.py \
-  --root results/v7517_clean --require-manifest
+  --root results/v761_full_clean --require-manifest
 
-for family in dn tf; do
-  BSIMAR_CHECKPOINT_DIR="$PWD/results/v7516_clean/checkpoints" \
+for family in dnf tff; do
+  BSIMAR_CHECKPOINT_DIR="$PWD/results/v761_full_checkpoints" \
   conda run -n pycircuitsim python scripts/v730_coverage.py \
-    --tag "$family" --set clean --passes v7517-clean \
+    --tag "$family" --set clean --passes v761-full-clean \
     --require-complete --fail-on-gaps
 done
 
@@ -49,4 +50,5 @@ conda run -n pycircuitsim python scripts/v730_docs_build.py
 conda run -n pycircuitsim python scripts/v730_docs_build.py --check
 ```
 
-Current raw evidence is local and gitignored under `results/v7517_clean/`.
+Current raw evidence is local and gitignored under `results/v7517_clean/` and
+`results/v761_full_clean/`.

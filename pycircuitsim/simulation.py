@@ -28,8 +28,9 @@ def _circuit_has_nn(circuit: Circuit) -> bool:
     """
     # Local import to avoid a top-level circular import via models.
     from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase
+    from pycircuitsim.models.mosfet_directnet_full import _FullTerminalNNBase
     for comp in circuit.components:
-        if isinstance(comp, _MOSFETNNBase):
+        if isinstance(comp, (_MOSFETNNBase, _FullTerminalNNBase)):
             return True
     return False
 

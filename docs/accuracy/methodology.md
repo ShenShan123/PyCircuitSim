@@ -13,8 +13,10 @@ analysis limits; only the MOSFET model changes.
 
 Simplified equations, hand-written approximations, and PyCircuitSim output are
 not independent references. LEVEL=72 is the yardstick, not a graded family.
-The graded NN families are DirectNet (LEVEL=73) and BSIM-AR (74),
-across TSMC5/6/7/12/16 and the `small`, `medium`, `large`, and `xl` tiers.
+The graded reduced NN families are DirectNet (LEVEL=73) and BSIM-AR (74).
+The separately scored experimental full-terminal families are DirectNet-Full
+(75) and BSIM-AR-Full (76). All use TSMC5/6/7/12/16 and the `small`, `medium`,
+`large`, and `xl` tiers.
 
 ## 2. Gates
 
@@ -91,6 +93,8 @@ A report is publishable only when all of the following hold:
 
 The V7.5.17 clean matrix contains DirectNet and BSIM-AR × 4 tiers × 5
 technologies × 12 gate invocations = **480 jobs**.
+The V7.6.1 full-terminal matrix applies the same 480-job denominator to
+DirectNet-Full and BSIM-AR-Full in a separate, non-backfilled campaign.
 Report generation fails closed unless the applicable matrix and checkpoint
 artifacts are complete.
 

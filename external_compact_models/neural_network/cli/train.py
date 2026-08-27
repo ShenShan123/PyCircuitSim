@@ -140,10 +140,10 @@ def _resolve_data_path(args: argparse.Namespace) -> Path:
 def _make_save_prefix(args: argparse.Namespace) -> str:
     if args.exp_name:
         return f"{args.exp_name}_{args.device_type}"
-    tag = (
-        "dnf" if args.output_contract == FULL_TERMINAL_OUTPUT_CONTRACT
-        else {"direct": "dn", "transformer": "tf"}[args.model]
-    )
+    if args.output_contract == FULL_TERMINAL_OUTPUT_CONTRACT:
+        tag = {"direct": "dnf", "transformer": "tff"}[args.model]
+    else:
+        tag = {"direct": "dn", "transformer": "tf"}[args.model]
     suffix = ""
     if args.loss_preset != "default":
         suffix = f"_{args.loss_preset}"
@@ -211,8 +211,7 @@ def _run(args: argparse.Namespace) -> None:
     full_terminal = args.output_contract == FULL_TERMINAL_OUTPUT_CONTRACT
     if full_terminal:
         incompatible = (
-            args.model != "direct"
-            or args.loss_preset != "default"
+            args.loss_preset != "default"
             or args.sobolev
             or args.subthresh
             or args.charge_sobolev
@@ -222,8 +221,8 @@ def _run(args: argparse.Namespace) -> None:
         if incompatible:
             print(
                 "[error] --output-contract full-terminal is a separate "
-                "plain DirectNet family and is incompatible with Transformer, "
-                "legacy loss presets, or reduced-head auxiliary paths."
+                "six-surface family and is incompatible with legacy loss "
+                "presets or reduced-head auxiliary paths."
             )
             sys.exit(2)
         if args.apply_filter != "off":
@@ -338,6 +337,10 @@ def _run(args: argparse.Namespace) -> None:
         cfg = TransformerConfig(**preset)
         train_transformer(
             str(data_path), config=cfg,
+            output_columns=(
+                list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER)
+                if full_terminal else None
+            ),
             sobolev=args.sobolev, lam_sobolev=args.lam_sobolev,
             sobolev_floor=args.sobolev_floor,
             sobolev_strong_boost=args.sobolev_strong_boost,
@@ -374,7 +377,7 @@ def main() -> None:
         choices=[REDUCED_OUTPUT_CONTRACT, FULL_TERMINAL_OUTPUT_CONTRACT],
         default=REDUCED_OUTPUT_CONTRACT,
         help="Train the legacy 13-head reduced model or the V7.6.0 "
-             "six-surface full-terminal DirectNet family.",
+             "six-surface full-terminal DirectNet/BSIM-AR families.",
     )
 
     # Per-flag overrides (None means: use the size-preset default)
@@ -416,7 +419,8 @@ def main() -> None:
                         "--num-tech-codes (per-tech vocab + UNKNOWN), "
                         "default --data path, and the save_prefix "
                         "(tsmc{5,7}_dn_<size>_<dev>, or *_dnf_* for the "
-                        "full-terminal contract) recognized by the parser "
+                        "full DirectNet and *_tff_* for full BSIM-AR) "
+                        "recognized by the parser "
                         "preempt cascade.")
     p.add_argument("--exp-name", type=str, default=None,
                    help="Override the auto-generated save_prefix")

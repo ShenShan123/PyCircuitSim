@@ -342,15 +342,16 @@ class SimOptions:
 
 _PY_MODEL_FAMILIES: Dict[int, str] = {
     72: "bsim_cmg", 73: "directnet", 75: "directnet_full",
+    76: "bsimar_full",
 }
 
 
 def _checkpoint_pin(device: str, model_level: int) -> Optional[str]:
     """Return the effective explicit neural-model pin for one polarity."""
-    level_tag = {73: "DN", 75: "DNF"}.get(model_level)
+    level_tag = {73: "DN", 75: "DNF", 76: "TFF"}.get(model_level)
     if level_tag is None:
         raise ValueError(
-            f"LEVEL={model_level} does not use a DirectNet checkpoint"
+            f"LEVEL={model_level} does not use a supported NN checkpoint"
         )
     names = (
         f"PYCIRCUITSIM_NN_CHECKPOINT_{level_tag}_{device.upper()}",
@@ -392,7 +393,7 @@ def _model_provenance(
         out["evaluator_boundary"] = opts.evaluator_boundary
     if opts.correction_trace:
         out["correction_trace"] = True
-    if td.model_level not in (73, 75):
+    if td.model_level not in (73, 75, 76):
         return out
 
     from neural_network.config import CHECKPOINT_DIR           # noqa: PLC0415
@@ -430,6 +431,13 @@ def _model_provenance(
         if completion.is_file():
             checkpoints[device]["completion"] = str(completion.resolve())
             checkpoints[device]["completion_sha256"] = file_sha256(completion)
+        if td.model_level == 76:
+            config = CHECKPOINT_DIR / f"{stem}_config.npz"
+            if not config.is_file():
+                raise SimFailure(
+                    f"BSIM-AR-Full provenance cannot resolve {config}")
+            checkpoints[device]["config"] = str(config.resolve())
+            checkpoints[device]["config_sha256"] = file_sha256(config)
     out["checkpoints"] = checkpoints
     return out
 

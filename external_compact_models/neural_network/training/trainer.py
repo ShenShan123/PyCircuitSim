@@ -36,9 +36,13 @@ from neural_network.config import (
     NUM_TSMC_CODES_WITH_UNKNOWN,
 )
 from neural_network.data.dataset import MOSFETDataset, load_and_split_bsimar
+from neural_network.data.contracts import (
+    BSIMAR_FULL_TERMINAL_COLUMN_ORDER,
+    FULL_TERMINAL_OUTPUT_CONTRACT,
+)
 from neural_network.data.normalize import (
-    FULL_TERMINAL_OUTPUT_COLUMN_ORDER, OUTPUT_COLUMN_ORDER,
-    reorder_outputs, unreorder_outputs,
+    BSIMAR_COLUMN_ORDER, FULL_TERMINAL_OUTPUT_COLUMN_ORDER,
+    OUTPUT_COLUMN_ORDER,
     _NormalizerBase,
 )
 from neural_network.losses.bni_mae import MAELoss, compute_lds_weights_per_target
@@ -390,11 +394,35 @@ def _train_loop(
             "(sobolev / subthresh / charge-sobolev)")
     if amp:
         print("  AMP: bf16 autocast ON (train + teacher-forced val)")
+    normalized_columns = list(
+        normalizer.stats.output_columns or OUTPUT_COLUMN_ORDER)
+    ordered_transformer_columns: Optional[list[str]] = None
     if is_transformer:
+        if tuple(normalized_columns) == tuple(
+            FULL_TERMINAL_OUTPUT_COLUMN_ORDER
+        ):
+            ordered_transformer_columns = list(
+                BSIMAR_FULL_TERMINAL_COLUMN_ORDER)
+        elif normalized_columns == list(OUTPUT_COLUMN_ORDER):
+            ordered_transformer_columns = list(BSIMAR_COLUMN_ORDER)
+        else:
+            raise ValueError(
+                "Transformer normalizer columns do not name a supported "
+                f"output contract: {normalized_columns}")
+        if (len(ordered_transformer_columns) != len(normalized_columns)
+                or set(ordered_transformer_columns) != set(normalized_columns)):
+            raise ValueError(
+                "Transformer target columns must be a permutation of the "
+                f"normalizer columns: target={ordered_transformer_columns}, "
+                f"normalizer={normalized_columns}")
+        permutation = [
+            normalized_columns.index(name)
+            for name in ordered_transformer_columns
+        ]
         for ds in (train_ds, val_ds, test_ds):
             ds.outputs = torch.tensor(
-                reorder_outputs(ds.outputs.numpy()), dtype=torch.float32)
-        print("  Outputs reordered to BSIMAR_COLUMN_ORDER")
+                ds.outputs.numpy()[:, permutation], dtype=torch.float32)
+        print(f"  Transformer target order: {ordered_transformer_columns}")
 
     print("  Computing LDS weights …")
     lds = compute_lds_weights_per_target(
@@ -486,9 +514,9 @@ def _train_loop(
                      else OUTPUT_COLUMN_ORDER)
         if not is_transformer:
             return base_cols, st.output_std, st.output_mean, st.asinh_scale
-        from neural_network.data.normalize import BSIMAR_COLUMN_ORDER
-        perm = [base_cols.index(c) for c in BSIMAR_COLUMN_ORDER]
-        return (list(BSIMAR_COLUMN_ORDER), st.output_std[perm],
+        assert ordered_transformer_columns is not None
+        perm = [base_cols.index(c) for c in ordered_transformer_columns]
+        return (ordered_transformer_columns, st.output_std[perm],
                 st.output_mean[perm], st.asinh_scale[perm])
 
     def _nt(arr: np.ndarray) -> torch.Tensor:
@@ -672,8 +700,13 @@ def _train_loop(
     pred_norm, true_norm, test_tc = _collect_predictions(
         model, test_loader, device, is_transformer)
     if is_transformer:
-        pred_norm = unreorder_outputs(pred_norm)
-        true_norm = unreorder_outputs(true_norm)
+        assert ordered_transformer_columns is not None
+        inverse = [
+            ordered_transformer_columns.index(name)
+            for name in normalized_columns
+        ]
+        pred_norm = pred_norm[:, inverse]
+        true_norm = true_norm[:, inverse]
 
     from neural_network.eval.metrics import compute_physical_metrics, print_metrics
     metrics = compute_physical_metrics(pred_norm, true_norm, normalizer)
@@ -933,6 +966,7 @@ def train_transformer(
     num_tech_codes: int = NUM_TSMC_CODES_WITH_UNKNOWN,
     p_unknown: float = 0.1,
     max_rows: Optional[int] = None,
+    output_columns: Optional[list[str]] = None,
     tech_scope: str = "universal",
     swa_mode: str = "none",
     ema_decay: float = 0.999,
@@ -979,8 +1013,33 @@ def train_transformer(
     if exclude_techs:
         print(f"  Excluding techs: {exclude_techs}")
 
+    training_columns = (
+        list(output_columns) if output_columns is not None
+        else list(OUTPUT_COLUMN_ORDER)
+    )
+    full_terminal = tuple(training_columns) == tuple(
+        FULL_TERMINAL_OUTPUT_COLUMN_ORDER)
+    if full_terminal:
+        if (sobolev or subthresh or charge_sobolev):
+            raise ValueError(
+                "The full-terminal BSIM-AR family cannot use legacy "
+                "reduced-head auxiliary losses")
+        if apply_filter:
+            raise ValueError(
+                "The full-terminal BSIM-AR family requires "
+                "apply_filter=False")
+    elif training_columns != list(OUTPUT_COLUMN_ORDER):
+        raise ValueError(
+            "Transformer output_columns must select either the reduced or "
+            "full-terminal contract")
+
+    target_columns = list(
+        BSIMAR_FULL_TERMINAL_COLUMN_ORDER
+        if full_terminal else BSIMAR_COLUMN_ORDER)
+    ar_target_dim = len(target_columns) if full_terminal else 8
+
     train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
-        data_path, OUTPUT_COLUMN_ORDER, device_type=device_type,
+        data_path, training_columns, device_type=device_type,
         apply_filter=apply_filter, exclude_techs=exclude_techs,
         norm_mode=_NORM_MODE, max_rows=max_rows,
         tech_scope=tech_scope,
@@ -1001,6 +1060,7 @@ def train_transformer(
         tech_embed_dropout=p_unknown,
         # Rule 16: UNKNOWN at the tail of the (possibly local) vocab.
         unknown_code_id=num_tech_codes - 1,
+        ar_target_dim=ar_target_dim,
     ).to(device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  Params: {n_params:,}")
@@ -1029,7 +1089,13 @@ def train_transformer(
         "dropout": config.dropout,
         "num_tech_codes": num_tech_codes,
     }
-    return _train_loop(
+    if full_terminal:
+        arch_config.update({
+            "ar_target_dim": ar_target_dim,
+            "output_contract": FULL_TERMINAL_OUTPUT_CONTRACT,
+            "target_columns": target_columns,
+        })
+    trained = _train_loop(
         model=model, is_transformer=True,
         train_ds=train_ds, val_ds=val_ds, test_ds=test_ds,
         normalizer=normalizer,
@@ -1055,3 +1121,20 @@ def train_transformer(
         charge_sobolev_floor=charge_sobolev_floor,
         amp=amp,
     )
+    if full_terminal:
+        checkpoint_path = CHECKPOINT_DIR / f"{save_prefix}_best.pt"
+        norm_path = CHECKPOINT_DIR / f"{save_prefix}_norm.npz"
+        config_path = CHECKPOINT_DIR / f"{save_prefix}_config.npz"
+        marker_path = checkpoint_path.with_suffix(".pt.complete")
+        marker_path.write_text(json.dumps({
+            "family": "bsimar-full",
+            "checkpoint": checkpoint_path.name,
+            "checkpoint_sha256": _sha256_file(checkpoint_path),
+            "normalization": norm_path.name,
+            "normalization_sha256": _sha256_file(norm_path),
+            "configuration": config_path.name,
+            "configuration_sha256": _sha256_file(config_path),
+            "output_columns": list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER),
+            "target_columns": target_columns,
+        }, sort_keys=True, indent=2) + "\n")
+    return trained

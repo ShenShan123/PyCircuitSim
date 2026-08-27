@@ -20,6 +20,24 @@ The pre-compaction long-form narrative remains available in Git history.
 
 ## V7.6 — full-terminal DirectNet recovery
 
+### V7.6.1 — full-terminal BSIM-AR and clean campaign contract (2026-08-27)
+
+- Added the explicit experimental `LEVEL=76 FAMILY=bsimar-full` family. It
+  predicts the same six independent terminal surfaces as LEVEL=75, in the
+  autoregressive order `qg,qb,qd,i_d,i_g,i_b`, then reuses the shared
+  KCL/translation-invariant full current and charge boundary.
+- Generalized the Transformer AR split without changing the legacy LEVEL=74
+  default, parameter names, or state-dict shapes. Full-terminal normalization
+  remains in canonical `i_d,i_g,i_b,qd,qg,qb` order; its configuration records
+  the output contract, target order, and six-target AR dimension.
+- Isolated BSIM-AR-Full checkpoints under `tff` stems. Runtime loading requires
+  checksum agreement for the model, normalization, configuration, and JSON
+  completion marker; missing explicit pins fail rather than falling back.
+- Extended parser, solver discovery, CPU gate dispatch, immutable campaign
+  manifests, coverage/report generation, and AnalogGym translation/provenance
+  to LEVEL=76. The new family remains outside batched/fused evaluation until
+  independent parity gates justify enabling those paths.
+
 ### V7.6.0 — attributed boundary errors and experimental LEVEL=75 (2026-08-27)
 
 - Fixed NN MOSFET instance multipliers across current, conductance, charge, and

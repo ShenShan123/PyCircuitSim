@@ -63,8 +63,14 @@ CIRC_LABEL = {
     "switchcap": ("Switched-capacitor cell", "charge error % of VDD, gate ≤5 %"),
 }
 TIERS = ["small", "medium", "large", "xl"]
-FAM = {"dn": "DirectNet", "tf": "BSIM-AR"}
-FILE_STEM = {"dn": "DirectNet-L73", "tf": "BSIM-AR-L74"}
+FAM = {
+    "dn": "DirectNet", "tf": "BSIM-AR",
+    "dnf": "DirectNet-Full", "tff": "BSIM-AR-Full",
+}
+FILE_STEM = {
+    "dn": "DirectNet-L73", "tf": "BSIM-AR-L74",
+    "dnf": "DirectNet-L75", "tff": "BSIM-AR-L76",
+}
 STRICT_OMP = ("omp1", "omp2", "omp4")
 REPORT_SUITES: Dict[str, Tuple[str, ...]] = {
     "verify_complex_ring_osc": STRICT_OMP,
@@ -105,6 +111,8 @@ _DEVICE_AC_PAYLOAD_KEYS = (
 CLEAN = {
     "dn": {t: t for t in TIERS},
     "tf": {t: t for t in TIERS},
+    "dnf": {t: t for t in TIERS},
+    "tff": {t: t for t in TIERS},
 }
 CLEAN_OVERRIDE: Dict[Tuple[str, str, str], str] = {}
 
@@ -164,9 +172,14 @@ PASSES = [("V7.1.0", load_json("v710_regate")), ("V7.3.0", load_json("v730_regat
           ("V7.4.2", load_json("v742_regate")),
           ("2026-08-19 recheck", load_json("simple_recheck_24c181a")),
           ("V7.5.16", load_json("v7516_clean")),
-          ("V7.5.17", load_json("v7517_clean"))]
+          ("V7.5.17", load_json("v7517_clean")),
+          ("V7.6.1", load_json("v761_full_clean"))]
 PASS_DATA = dict(PASSES)
 ACTIVE_PASS: Optional[str] = None
+CAMPAIGN_EVIDENCE: Dict[str, Tuple[str, int, int]] = {
+    "V7.5.17": ("v7517_clean", 480, 280),
+    "V7.6.1": ("v761_full_clean", 480, 280),
+}
 
 # Every report is rendered from one coherent campaign. A later partial pass is
 # never allowed to backfill itself from older cells and overwrite a complete
@@ -176,11 +189,13 @@ ACTIVE_PASS: Optional[str] = None
 REPORT_PASS: Dict[Tuple[str, bool], str] = {
     ("dn", False): "V7.5.17",
     ("tf", False): "V7.5.17",
+    ("dnf", False): "V7.6.1",
+    ("tff", False): "V7.6.1",
     ("dn", True): "V7.3.0",
     ("tf", True): "V7.3.0",
 }
 
-CURRENT_CLEAN_TAGS = ("dn", "tf")
+CURRENT_CLEAN_TAGS = ("dn", "tf", "dnf", "tff")
 
 # The new hardware does not carry the raw V7.3 recipe trees. These digests
 # make the retained rendered reports immutable and keep --check meaningful.
@@ -511,6 +526,8 @@ def recipe_delta(tag: str) -> str:
 FAMILY_META = {
     "dn": ("73", "**production**", "1.5 ms @ `large`"),
     "tf": ("74", "higher fidelity", "61.5 ms @ `medium`"),
+    "dnf": ("75", "experimental full-terminal", "see report"),
+    "tff": ("76", "experimental full-terminal", "see report"),
 }
 
 # Raw campaign trees are local evidence and may be absent on another clone.
@@ -519,6 +536,8 @@ FAMILY_META = {
 HISTORICAL_CLEAN: Dict[str, Tuple[str, str, int, int]] = {
     "dn": ("2026-08-19", "large", 12, 20),
     "tf": ("2026-08-19", "small", 13, 20),
+    "dnf": ("V7.6.0", "—", 0, 0),
+    "tff": ("V7.6.1", "—", 0, 0),
 }
 HISTORICAL_RECIPE: Dict[str, Tuple[str, int, int]] = {
     "dn": ("`crit15m`@xl", 19, 20),
@@ -570,8 +589,10 @@ def _report_result_complete(suite: str, result: object) -> bool:
                                         for key in required)
 
 
-def _v7517_provenance_complete() -> bool:
-    root = ROOT / "results" / "v7517_clean"
+def _campaign_provenance_complete(version: str) -> bool:
+    """Whether one campaign has a complete immutable evidence set."""
+    directory, expected_jobs, expected_artifacts = CAMPAIGN_EVIDENCE[version]
+    root = ROOT / "results" / directory
     manifest_path = root / "campaign_manifest.json"
     provenance_path = root / "collection_provenance.json"
     data_path = root / "data.json"
@@ -584,10 +605,10 @@ def _v7517_provenance_complete() -> bool:
     data_digest = hashlib.sha256(data_path.read_bytes()).hexdigest()
     checkpoint_hashes = manifest.get("checkpoint_sha256")
     return (
-        manifest.get("job_count") == 480
+        manifest.get("job_count") == expected_jobs
         and manifest.get("source_dirty") is False
         and isinstance(checkpoint_hashes, dict)
-        and bool(checkpoint_hashes)
+        and len(checkpoint_hashes) == expected_artifacts
         and all(checkpoint_hashes.values())
         and bool(manifest.get("pdk_sha256"))
         and provenance.get("campaign_manifest_sha256") == manifest_digest
@@ -596,9 +617,19 @@ def _v7517_provenance_complete() -> bool:
     )
 
 
+def _v7517_provenance_complete() -> bool:
+    return _campaign_provenance_complete("V7.5.17")
+
+
+def _v761_provenance_complete() -> bool:
+    return _campaign_provenance_complete("V7.6.1")
+
+
 def _matrix_complete_in_pass(tag: str, recipes: bool, version: str) -> bool:
     """Whether one pass fully measured every table cell in this report."""
     if version == "V7.5.17" and not _v7517_provenance_complete():
+        return False
+    if version == "V7.6.1" and not _v761_provenance_complete():
         return False
     data = PASS_DATA.get(version, {})
     if not data:
@@ -621,11 +652,14 @@ def _matrix_complete_in_pass(tag: str, recipes: bool, version: str) -> bool:
 def scoreboard(_tag=None, _recipes=None) -> str:
     out = ["| LEVEL | family | role | current / best clean | historical best recipe | CPU cost |",
            "|---|---|---|---|---|---|"]
-    for tag in ("dn", "tf"):
+    for tag in ("dn", "tf", "dnf", "tff"):
         lvl, role, cost = FAMILY_META[tag]
         clean_version = REPORT_PASS[(tag, False)]
         clean_complete = _matrix_complete_in_pass(tag, False, clean_version)
-        recipe_complete = _matrix_complete_in_pass(tag, True, "V7.3.0")
+        recipe_complete = (
+            tag in RECIPES
+            and _matrix_complete_in_pass(tag, True, "V7.3.0")
+        )
         if clean_complete:
             with evidence_pass(clean_version):
                 cl, cp, cn = _best(tag, False)
@@ -635,8 +669,10 @@ def scoreboard(_tag=None, _recipes=None) -> str:
         if recipe_complete:
             with evidence_pass("V7.3.0"):
                 rl, rp, rn = _best(tag, True)
-        else:
+        elif tag in HISTORICAL_RECIPE:
             rl, rp, rn = HISTORICAL_RECIPE[tag]
+        else:
+            rl, rp, rn = "none", 0, 0
         if tag == "dn" and clean_complete:
             with evidence_pass(clean_version):
                 served_pass, served_total = _score(tag, "large", False)
@@ -645,7 +681,8 @@ def scoreboard(_tag=None, _recipes=None) -> str:
                  f"`{cl}` **{cp}/{cn}** best")
         else:
             c = f"{clean_source_version} `{cl}` **{cp}/{cn}**"
-        r = f"V7.3 {rl} **{rp}/{rn}**"
+        r = (f"V7.3 {rl} **{rp}/{rn}**"
+             if rn else "none")
         out.append(f"| {lvl} | **{FAM[tag]}** | {role} | {c} | {r} | {cost} |")
     out.append("")
     out.append("Strict = passes at OMP ∈ {1, 2, 4}. " + denominator_note(None, None))
@@ -672,7 +709,10 @@ def denominator_note(tag: Optional[str], recipes: Optional[bool]) -> str:
     guarantees it is wrong half the time; deriving it cannot be.
     """
     if tag is None:
-        scopes = [(t, r) for t in ("dn", "tf") for r in (False, True)]
+        scopes = [
+            *((t, r) for t in ("dn", "tf") for r in (False, True)),
+            ("dnf", False), ("tff", False),
+        ]
     else:
         scopes = [(tag, bool(recipes))]
     sizes = {len(_techs_measured(t, r)) * 4 for t, r in scopes}
@@ -701,7 +741,28 @@ BUILDERS = {
     "BYSCALE": by_scale_rollup,
     "DEVICE": device_tables,
     "RECIPEDELTA": lambda tag, recipes: recipe_delta(tag),
+    "PROVENANCE": lambda tag, recipes: campaign_provenance(tag),
 }
+
+
+def campaign_provenance(tag: str) -> str:
+    """Render immutable provenance for a generated clean report."""
+    version = REPORT_PASS[(tag, False)]
+    evidence = CAMPAIGN_EVIDENCE.get(version)
+    if evidence is None:
+        return f"Evidence pass: {version}."
+    directory, _expected_jobs, _expected_artifacts = evidence
+    root = ROOT / "results" / directory
+    manifest_path = root / "campaign_manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    return (
+        f"Evidence pass: **{version}**. Campaign manifest SHA-256 "
+        f"`{digest}` pins gate commit `{manifest['source_commit']}`, "
+        f"{manifest['job_count']} jobs, and "
+        f"{len(manifest['checkpoint_sha256'])} checkpoint artifacts. "
+        f"Raw evidence: `results/{directory}/`."
+    )
 
 
 def build(tag: str, recipes: bool, check: bool) -> bool:
@@ -775,7 +836,7 @@ def main() -> int:
     # prevents partial regeneration; --only remains a convenient way to limit
     # output to the family currently being worked on.
     ap.add_argument("--only", default=None,
-                    help="Comma list of families to build (dn,tf). "
+                    help="Comma list of families to build (dn,tf,dnf,tff). "
                          "Default: all. The README scoreboard spans families, "
                          "so it is skipped unless all are built.")
     ap.add_argument("--recipes", choices=["both", "clean", "recipes"],
@@ -783,7 +844,7 @@ def main() -> int:
     args = ap.parse_args()
 
     tags = ([t.strip() for t in args.only.split(",")] if args.only
-            else ["dn", "tf"])
+            else ["dn", "tf", "dnf", "tff"])
     unknown = [t for t in tags if t not in FAM]
     if unknown:
         ap.error(f"unknown family {unknown}; choose from {sorted(FAM)}")

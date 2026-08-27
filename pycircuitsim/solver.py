@@ -319,6 +319,11 @@ def _mosfet_types() -> tuple:
         types.extend([NMOS_DNF, PMOS_DNF])
     except ImportError:
         pass
+    try:
+        from pycircuitsim.models.mosfet_bsimar_full import NMOS_TFF, PMOS_TFF
+        types.extend([NMOS_TFF, PMOS_TFF])
+    except ImportError:
+        pass
     return tuple(types)
 
 
@@ -351,6 +356,11 @@ def _pmos_types() -> tuple:
     try:
         from pycircuitsim.models.mosfet_directnet_full import PMOS_DNF
         types.append(PMOS_DNF)
+    except ImportError:
+        pass
+    try:
+        from pycircuitsim.models.mosfet_bsimar_full import PMOS_TFF
+        types.append(PMOS_TFF)
     except ImportError:
         pass
     return tuple(types)
@@ -450,9 +460,9 @@ def _has_nn_device(circuit: Circuit) -> bool:
     from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase
     try:
         from pycircuitsim.models.mosfet_directnet_full import (
-            NMOS_DNF, PMOS_DNF,
+            _FullTerminalNNBase,
         )
-        nn_types = (_MOSFETNNBase, NMOS_DNF, PMOS_DNF)
+        nn_types = (_MOSFETNNBase, _FullTerminalNNBase)
     except ImportError:
         nn_types = (_MOSFETNNBase,)
     val = any(isinstance(c, nn_types) for c in circuit.components)

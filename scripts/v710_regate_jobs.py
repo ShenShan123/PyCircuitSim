@@ -10,8 +10,8 @@ Pools (write one file each so they can be dispatched with different PAR):
 * ``tf_dev``    — BSIM-AR device suites only, 5 priority variants (~40x per eval).
 * ``tf_strict`` — BSIM-AR strict-OMP sweep for the `large` corridor recipes,
                   the one gap BSIM-AR-L74-clean.md flags explicitly.
-* ``clean`` — DirectNet and BSIM-AR clean S/M/L/XL tiers across all five
-              reported technologies, including the TSMC6 repeat.
+* ``clean`` — reduced DirectNet and BSIM-AR clean S/M/L/XL tiers.
+* ``full_clean`` — full-terminal DirectNet and BSIM-AR clean S/M/L/XL tiers.
 
 Usage: python scripts/v710_regate_jobs.py <outdir>
 """
@@ -79,6 +79,10 @@ def build_pools() -> dict[str, list[str]]:
         "clean": [
             *full("dn", CLEAN_VARIANTS, CLEAN_TECHS),
             *full("tf", CLEAN_VARIANTS, CLEAN_TECHS),
+        ],
+        "full_clean": [
+            *full("dnf", CLEAN_VARIANTS, CLEAN_TECHS),
+            *full("tff", CLEAN_VARIANTS, CLEAN_TECHS),
         ],
     }
 

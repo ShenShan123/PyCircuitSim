@@ -24,7 +24,12 @@ from typing import Dict, List, Optional
 
 TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 CIRCS = ["ring_osc", "opamp", "sram_snm", "switchcap"]
-FAMILY = {"dn": "DirectNet (L73)", "tf": "BSIM-AR (L74)"}
+FAMILY = {
+    "dn": "DirectNet (L73)",
+    "tf": "BSIM-AR (L74)",
+    "dnf": "DirectNet-Full (L75)",
+    "tff": "BSIM-AR-Full (L76)",
+}
 
 _RC = re.compile(r"===V710_DONE rc=(\S+)===")
 _PROVENANCE = re.compile(r"===V710_PROVENANCE sha256=([0-9a-f]{64})===")
@@ -221,7 +226,7 @@ def render(data: Dict) -> str:
                     "guard fix, post V7.0.x perf work, opt-in perf flags OFF), CPU-pinned,",
                     "repo ngspice, per-job isolated results dir. Verdict = suite exit code.",
                     ""]
-    for tag in ("dn", "tf"):
+    for tag in ("dn", "tf", "dnf", "tff"):
         if tag not in data:
             continue
         L += [f"## {FAMILY[tag]}", ""]

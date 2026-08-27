@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -19,6 +21,15 @@ def test_level75_model_stub_is_explicit() -> None:
     ) == (
         ".model nsvt_l32_f7 NMOS "
         "(LEVEL=75 FAMILY=directnet-full TECH=tsmc5 VT=svt)"
+    )
+
+
+def test_level76_model_stub_is_explicit() -> None:
+    assert translate._model_stub(
+        "nsvt_l32_f7", "NMOS", tech="tsmc5", model_level=76,
+    ) == (
+        ".model nsvt_l32_f7 NMOS "
+        "(LEVEL=76 FAMILY=bsimar-full TECH=tsmc5 VT=svt)"
     )
 
 
@@ -90,6 +101,18 @@ def test_level75_campaign_banner_names_selected_family(
     assert complex_common.active_model_label() == "DirectNet-Full (LEVEL=75)"
 
 
+def test_level76_campaign_uses_tff_stems_and_banner(
+    monkeypatch: Any,
+) -> None:
+    assert campaign._checkpoint_stems("tsmc5", "large", 76) == {
+        "nmos": "tsmc5_tff_large_nmos",
+        "pmos": "tsmc5_tff_large_pmos",
+    }
+    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "76")
+    assert complex_common.active_model_name() == "BSIM-AR-Full"
+    assert complex_common.active_model_label() == "BSIM-AR-Full (LEVEL=76)"
+
+
 def test_scored_campaign_rejects_diagnostic_directnet_rows(
     tmp_path: Path,
     monkeypatch: Any,
@@ -122,9 +145,25 @@ def test_scored_campaign_rejects_diagnostic_directnet_rows(
         },
         "py_model": base_model,
     }
+    monkeypatch.setattr(
+        campaign,
+        "file_sha256",
+        lambda path: hashlib.sha256(path.read_bytes()).hexdigest(),
+    )
     assert campaign._model_matches_row(row, "tsmc5", 73, "large")
 
     row["py_model"] = {**base_model, "evaluator_boundary": "raw-directnet"}
     assert not campaign._model_matches_row(row, "tsmc5", 73, "large")
     row["py_model"] = {**base_model, "correction_trace": True}
+    assert not campaign._model_matches_row(row, "tsmc5", 73, "large")
+
+    row["py_model"] = base_model
+    checkpoint = tmp_path / "tsmc5_dn_large_nmos_best.pt"
+    original_stat = checkpoint.stat()
+    checkpoint.write_bytes(b"swap")
+    os.utime(
+        checkpoint,
+        ns=(original_stat.st_atime_ns, original_stat.st_mtime_ns),
+    )
+    assert checkpoint.stat().st_size == original_stat.st_size
     assert not campaign._model_matches_row(row, "tsmc5", 73, "large")

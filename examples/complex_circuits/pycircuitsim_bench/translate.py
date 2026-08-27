@@ -484,17 +484,20 @@ def _model_stub(name: str, kind: str, *, tech: str,
     """
     if model_level == 72:
         return f".model {name} {kind} (LEVEL=72)"
-    if model_level not in (73, 75):
+    if model_level not in (73, 75, 76):
         raise TranslateError(
             f"Unsupported PyCircuitSim model level {model_level}; "
             "AnalogGym supports LEVEL=72, DirectNet LEVEL=73, or "
-            "DirectNet-Full LEVEL=75")
+            "DirectNet-Full LEVEL=75, or BSIM-AR-Full LEVEL=76")
     match = re.fullmatch(r"[np]([^_]+)_l\d+_f\d+", name, re.IGNORECASE)
     if match is None:
         raise TranslateError(
             f"Cannot recover VT flavor from AnalogGym model alias {name!r}")
     vt = match.group(1).lower()
-    family = " FAMILY=directnet-full" if model_level == 75 else ""
+    family = {
+        73: "", 75: " FAMILY=directnet-full",
+        76: " FAMILY=bsimar-full",
+    }[model_level]
     return (
         f".model {name} {kind} "
         f"(LEVEL={model_level}{family} TECH={tech.lower()} VT={vt})"

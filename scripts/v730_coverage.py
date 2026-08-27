@@ -40,7 +40,10 @@ CKPT = pathlib.Path(os.environ.get(
 ))
 
 TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
-FAM = {"dn": "DirectNet", "tf": "BSIM-AR"}
+FAM = {
+    "dn": "DirectNet", "tf": "BSIM-AR",
+    "dnf": "DirectNet-Full", "tff": "BSIM-AR-Full",
+}
 
 # Suites, and the OMP settings each must be measured at. ring_osc and opamp sit
 # on multistable fixed points, so their verdict is only bankable if it holds at
@@ -65,6 +68,8 @@ SUITES: Dict[str, Tuple[str, ...]] = {
 CLEAN: Dict[str, Dict[str, str]] = {
     "dn": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
     "tf": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
+    "dnf": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
+    "tff": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
 }
 CLEAN_TECH_OVERRIDE: Dict[Tuple[str, str, str], str] = {}
 
@@ -75,6 +80,8 @@ RECIPES: Dict[str, List[str]] = {
     "tf": ["corroft_medium", "corro15_medium",
            "corroft_large", "crit15m_large", "crit30_large",
            "corroft_xl", "corro15_xl", "crit15m_xl", "crit30_xl"],
+    "dnf": [],
+    "tff": [],
 }
 
 # Newest pass wins: a cell re-measured in V7.3.0 supersedes its V7.1.0 value,
@@ -86,7 +93,8 @@ PASSES = [("a3", ROOT / "results" / "a3_regate"),
           ("v742", ROOT / "results" / "v742_regate"),
           ("simple-recheck", ROOT / "results" / "simple_recheck_24c181a"),
           ("v7516-clean", ROOT / "results" / "v7516_clean"),
-          ("v7517-clean", ROOT / "results" / "v7517_clean")]
+          ("v7517-clean", ROOT / "results" / "v7517_clean"),
+          ("v761-full-clean", ROOT / "results" / "v761_full_clean")]
 
 CellKey = Tuple[str, str, str, str, str]
 
@@ -178,7 +186,7 @@ def ckpt_exists(tag: str, variant: str, tech: str,
                 return False
             if not (stem.with_name(stem.name + "_best.pt.complete")).exists():
                 return False
-            if tag == "tf" and not (
+            if tag in ("tf", "tff") and not (
                 stem.with_name(stem.name + "_config.npz")
             ).exists():
                 return False
@@ -226,7 +234,7 @@ def main() -> int:
 
     techs = ([t.strip().upper() for t in args.techs.split(",")]
              if args.techs else TECHS)
-    tags = [args.tag] if args.tag else ["dn", "tf"]
+    tags = [args.tag] if args.tag else ["dn", "tf", "dnf", "tff"]
     only = ([p.strip() for p in args.passes.split(",")]
             if args.passes else None)
     if only is not None:

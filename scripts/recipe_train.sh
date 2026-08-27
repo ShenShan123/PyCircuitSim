@@ -41,6 +41,7 @@ Usage: [ENV=VALUE ...] bash scripts/recipe_train.sh [--force]
 
 Environment:
   MODEL        direct | transformer (default: direct)
+  OUTPUT_CONTRACT  reduced | full-terminal (default: reduced)
   RECIPES      space-separated recipes (use clean for clean checkpoints)
   TECHS        space-separated lowercase technology names
   SIZES        space-separated small | medium | large | xl
@@ -62,20 +63,23 @@ read -r -a GPU_IDS <<< "${GPUS:-0 1 2}"
 NGPU=${#GPU_IDS[@]}
 NSTREAMS="${NSTREAMS:-9}"
 MODEL="${MODEL:-direct}"
-case "$MODEL" in
-  direct)      TAG="dn" ;;
-  transformer) TAG="tf" ;;
+OUTPUT_CONTRACT="${OUTPUT_CONTRACT:-reduced}"
+case "$MODEL:$OUTPUT_CONTRACT" in
+  direct:reduced)            TAG="dn" ;;
+  transformer:reduced)       TAG="tf" ;;
+  direct:full-terminal)      TAG="dnf" ;;
+  transformer:full-terminal) TAG="tff" ;;
   *) echo "[train] UNKNOWN MODEL=$MODEL (direct|transformer)"; exit 1 ;;
 esac
-export MODEL
+export MODEL OUTPUT_CONTRACT
 export PYTHONPATH="$ROOT/external_compact_models${PYTHONPATH:+:$PYTHONPATH}"
 
 required_sidecars_exist () {
   local stem="$1"
   [ -f "$CKPT/${stem}_norm.npz" ] || return 1
   case "$TAG" in
-    dn) return 0 ;;
-    tf) [ -f "$CKPT/${stem}_config.npz" ] ;;
+    dn|dnf) return 0 ;;
+    tf|tff) [ -f "$CKPT/${stem}_config.npz" ] ;;
   esac
 }
 
@@ -218,6 +222,7 @@ if [ "${1:-}" = "_one" ]; then
   CUDA_VISIBLE_DEVICES="$gpu" OMP_NUM_THREADS="${TRAIN_OMP:-4}" MKL_NUM_THREADS="${TRAIN_OMP:-4}" \
     conda run --no-capture-output -n pycircuitsim python -u -m neural_network.cli.train \
     --model "$MODEL" --size "$size" --device-type "$dev" --tech-scope "$tech" \
+    --output-contract "$OUTPUT_CONTRACT" \
     --apply-filter off --swa-mode ema --seed 42 --cuda --overwrite \
     $expname $extra \
     > "$log" 2>&1
@@ -257,7 +262,12 @@ read -r -a devs    <<< "${DEVS:-nmos pmos}"
 
 missing=0
 for tech in "${techs[@]}"; do for dev in "${devs[@]}"; do
-  [ -f "$DS/${tech}_${dev}.npz" ] || { echo "[train] MISSING dataset $DS/${tech}_${dev}.npz"; missing=1; }
+  if [ "$OUTPUT_CONTRACT" = "full-terminal" ]; then
+    dataset="$DS/${tech}_dnf_${dev}.npz"
+  else
+    dataset="$DS/${tech}_${dev}.npz"
+  fi
+  [ -f "$dataset" ] || { echo "[train] MISSING dataset $dataset"; missing=1; }
 done; done
 [ "$missing" -eq 0 ] || { echo "[train] ABORT: datasets incomplete"; exit 1; }
 

@@ -60,7 +60,7 @@ import re
 import sys
 from pathlib import Path
 
-# Make the neural compact-model package importable for LEVEL=73-75 resolution.
+# Make the neural compact-model package importable for LEVEL=73-76 resolution.
 _NN_PARENT = Path(__file__).resolve().parent.parent / "external_compact_models"
 if str(_NN_PARENT) not in sys.path:
     sys.path.insert(0, str(_NN_PARENT))
@@ -148,7 +148,7 @@ def _resolve_nn_checkpoint(
     explicit_path: Optional[str],
     netlist_name: str,
 ) -> Tuple[str, int]:
-    """Resolve checkpoint path and tech code for LEVEL=73/74/75.
+    """Resolve checkpoint path and tech code for LEVEL=73/74/75/76.
 
     V7.2.0 Phase 1c: memoizing wrapper. The cascade result cannot differ
     between two devices with the same (level, polarity, tech, VT,
@@ -213,7 +213,7 @@ def _resolve_nn_checkpoint_uncached(
     vt_key: str,
     explicit_path: Optional[str],
 ) -> Tuple[str, int, str, str]:
-    """Resolve (path, tech_code, chk_name, scope) for LEVEL=73/74/75.
+    """Resolve (path, tech_code, chk_name, scope) for LEVEL=73/74/75/76.
 
     Cascade: explicit ``MODEL_PATH`` > per-tech > universal > bare.
     For LEVEL=74 (BSIMAR) the universal cascade prefers ``_best.phys.pt``
@@ -236,7 +236,7 @@ def _resolve_nn_checkpoint_uncached(
     # The override prefix is treated as the trainer save_prefix; when it
     # ends in "_nmos"/"_pmos" the polarity is honoured.
     import os
-    level_tag = {73: "DN", 74: "TF", 75: "DNF"}[level]
+    level_tag = {73: "DN", 74: "TF", 75: "DNF", 76: "TFF"}[level]
     level_polarity_env = (
         f"PYCIRCUITSIM_NN_CHECKPOINT_{level_tag}_{device_key.upper()}")
     per_polarity_env = (
@@ -270,7 +270,7 @@ def _resolve_nn_checkpoint_uncached(
         else:
             base = f"{ovr}_{device_key}"
 
-        if level in (73, 75):
+        if level in (73, 75, 76):
             ovr_path = CHECKPOINT_DIR / f"{base}_best.pt"
             if ovr_path.exists():
                 explicit_path = str(ovr_path)
@@ -392,7 +392,7 @@ def _resolve_nn_checkpoint_uncached(
                 path = str(per_tech_path)
             else:
                 path = str(bare_path)
-    else:  # level == 75, explicit directnet-full opt-in only
+    elif level == 75:  # explicit directnet-full opt-in only
         per_tech_preempt: list = []
         if tech_key in LOCAL_VARIANT_CODES:
             per_tech_preempt = [
@@ -411,6 +411,25 @@ def _resolve_nn_checkpoint_uncached(
         ]
         path = next((str(p) for p in candidates if p.exists()),
                     str(candidates[-1]))
+    else:  # level == 76, explicit bsimar-full opt-in only
+        per_tech_preempt: list = []
+        if tech_key in LOCAL_VARIANT_CODES:
+            per_tech_preempt = [
+                CHECKPOINT_DIR / f"{tech_key}_tff_large_{device_key}_best.pt",
+                CHECKPOINT_DIR / f"{tech_key}_tff_medium_{device_key}_best.pt",
+                CHECKPOINT_DIR / f"{tech_key}_tff_small_{device_key}_best.pt",
+                CHECKPOINT_DIR / f"{tech_key}_tff_xl_{device_key}_best.pt",
+            ]
+        candidates = per_tech_preempt + [
+            CHECKPOINT_DIR / f"refac_tff_large_{device_key}_best.pt",
+            CHECKPOINT_DIR / f"refac_tff_medium_{device_key}_best.pt",
+            CHECKPOINT_DIR / f"refac_tff_small_{device_key}_best.pt",
+            CHECKPOINT_DIR / f"refac_tff_xl_{device_key}_best.pt",
+            CHECKPOINT_DIR / f"tff_{tech_key}_{device_key}_best.pt",
+            CHECKPOINT_DIR / f"tff_{device_key}_best.pt",
+        ]
+        path = next((str(p) for p in candidates if p.exists()),
+                    str(candidates[-1]))
 
     # Determine vocab scope from the resolved checkpoint name.
     # `tsmc{X}_dn_*` (DirectNet) / `tsmc{X}_tf_*` (BSIMAR Transformer)
@@ -420,7 +439,8 @@ def _resolve_nn_checkpoint_uncached(
     for s in LOCAL_VARIANT_CODES:
         if (chk_name.startswith(f"{s}_dn_")
                 or chk_name.startswith(f"{s}_tf_")
-                or chk_name.startswith(f"{s}_dnf_")):
+                or chk_name.startswith(f"{s}_dnf_")
+                or chk_name.startswith(f"{s}_tff_")):
             scope = s
             break
     tech_code = local_variant_code(scope, tech_key, vt_key)
@@ -1106,23 +1126,26 @@ class Parser:
             else:
                 raise ValueError(f"Unknown MOSFET model type: {model_type}")
 
-        elif level in (73, 74, 75):
+        elif level in (73, 74, 75, 76):
             # NN compact models: LEVEL=73 (DirectNet), LEVEL=74 (BSIM-AR),
-            # or explicit LEVEL=75 FAMILY=directnet-full. Only legacy NN
-            # decks may be retargeted by the campaign hook.
+            # explicit LEVEL=75 FAMILY=directnet-full, or explicit LEVEL=76
+            # FAMILY=bsimar-full. Only legacy NN decks may be retargeted by
+            # the campaign hook.
             #
-            # Harness hook: PYCIRCUITSIM_NN_FORCE_LEVEL={73,74,75}
+            # Harness hook: PYCIRCUITSIM_NN_FORCE_LEVEL={73,74,75,76}
             # retargets every NN model card at parse time, so the ENTIRE
             # gate/sweep/AC harness (whose netlists carry LEVEL=73 tokens)
             # can run the BSIM-AR Transformer without rendering parallel decks.
             # NGSPICE reference decks (LEVEL=72) are untouched.
-            if level == 75:
+            if level in (75, 76):
                 family = str(model_params.get('FAMILY') or "").lower()
-                if family != "directnet-full":
+                required_family = {
+                    75: "directnet-full", 76: "bsimar-full",
+                }[level]
+                if family != required_family:
                     raise ValueError(
-                        "Unsupported MOSFET LEVEL=75 without explicit "
-                        "FAMILY=directnet-full; the retired PFN family "
-                        "remains unavailable")
+                        f"Unsupported MOSFET LEVEL={level} without explicit "
+                        f"FAMILY={required_family}")
             else:
                 import os as _os
                 _force = _os.environ.get("PYCIRCUITSIM_NN_FORCE_LEVEL")
@@ -1133,11 +1156,12 @@ class Parser:
                         raise ValueError(
                             f"PYCIRCUITSIM_NN_FORCE_LEVEL={_force!r} is not "
                             "an integer") from exc
-                    if force_level not in (73, 74, 75):
+                    if force_level not in (73, 74, 75, 76):
                         raise ValueError(
                             f"unsupported NN model level {force_level}; "
                             "supported levels are 73 (DirectNet), 74 "
-                            "(BSIM-AR), and 75 (DirectNet-Full)")
+                            "(BSIM-AR), 75 (DirectNet-Full), and 76 "
+                            "(BSIM-AR-Full)")
                 else:
                     force_level = level
                 if force_level != level:
@@ -1149,15 +1173,16 @@ class Parser:
                     level = force_level
             label = {
                 73: "DirectNet", 74: "BSIM-AR", 75: "DirectNet-Full",
+                76: "BSIM-AR-Full",
             }[level]
-            if level == 75:
+            if level in (75, 76):
                 missing = [
                     key for key in ("TECH", "VT")
                     if not model_params.get(key)
                 ]
                 if missing:
                     raise ValueError(
-                        "DirectNet-Full (forced LEVEL=75) requires explicit "
+                        f"{label} (forced LEVEL={level}) requires explicit "
                         + " and ".join(missing)
                     )
             if NFIN is None:
@@ -1173,9 +1198,13 @@ class Parser:
                     from pycircuitsim.models.mosfet_bsimar import (
                         NMOS_BSIMAR as _NMOS, PMOS_BSIMAR as _PMOS,
                     )
-                else:
+                elif level == 75:
                     from pycircuitsim.models.mosfet_directnet_full import (
                         NMOS_DNF as _NMOS, PMOS_DNF as _PMOS,
+                    )
+                else:
+                    from pycircuitsim.models.mosfet_bsimar_full import (
+                        NMOS_TFF as _NMOS, PMOS_TFF as _PMOS,
                     )
             except ImportError:
                 raise ImportError(
@@ -1213,7 +1242,8 @@ class Parser:
                 f"Unsupported MOSFET LEVEL={level}. "
                 f"Supported levels: LEVEL=72 (BSIM-CMG), "
                 f"LEVEL=73 (DirectNet), LEVEL=74 (BSIM-AR), and explicit "
-                f"LEVEL=75 FAMILY=directnet-full"
+                f"LEVEL=75 FAMILY=directnet-full or "
+                f"LEVEL=76 FAMILY=bsimar-full"
             )
 
         self.circuit.add_component(mosfet)

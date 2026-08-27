@@ -281,6 +281,7 @@ def _check_lock_contention() -> None:
             env.update({
                 "JOBS": str(job_file),
                 "PAR": "1",
+                "NN_PY": sys.executable,
                 "V710_OUT": str(out),
                 "V710_CAMPAIGN_DIGEST": "0" * 64,
                 "V710_TEST_BYPASS_MANIFEST": "1",
@@ -402,6 +403,23 @@ def _check_clean_pool() -> None:
     }
     assert parsed == expected
     assert len(clean) == len(parsed)
+
+    full_clean = jobs.build_pools()["full_clean"]
+    full_parsed = {tuple(line.split()) for line in full_clean}
+    full_expected = {
+        (tag, variant, tech, suite, str(omp))
+        for tag in ("dnf", "tff")
+        for variant in ("small", "medium", "large", "xl")
+        for tech in ("TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16")
+        for suite, omps in {
+            **{suite: (1,) for suite in jobs.DEVICE_SUITES},
+            **{suite: (1,) for suite in jobs.DETERMINISTIC},
+            **{suite: (1, 2, 4) for suite in jobs.MULTISTABLE},
+        }.items()
+        for omp in omps
+    }
+    assert full_parsed == full_expected
+    assert len(full_clean) == len(full_parsed) == 480
 
 
 def _check_job_generator_help_is_read_only() -> None:
@@ -533,6 +551,18 @@ def _check_regate_interpreter_failures_are_infrastructure() -> None:
         jobs_file = root / "jobs.txt"
         jobs_file.write_text("")
         env = os.environ.copy()
+        env.pop("NN_PY", None)
+        env.update({
+            "JOBS": str(jobs_file),
+            "NGSPICE_BIN": "/bin/true",
+        })
+        unset = subprocess.run(
+            ["bash", str(ROOT / "scripts" / "v710_regate.sh")],
+            env=env, capture_output=True, text=True, check=False, timeout=10,
+        )
+        assert unset.returncode == 2
+        assert "NN_PY executable not found: <unset>" in unset.stderr
+
         env.update({
             "JOBS": str(jobs_file),
             "NGSPICE_BIN": "/bin/true",
@@ -706,8 +736,8 @@ def _check_report_payload_completeness() -> None:
         docs.PASS_DATA = old_data
 
 
-def _check_readme_uses_only_current_families() -> None:
-    """The generated scoreboard contains only supported model families."""
+def _check_readme_uses_all_current_families() -> None:
+    """The generated scoreboard contains every supported clean family."""
     data = {
         tag: {
             variant: {
@@ -741,8 +771,8 @@ def _check_readme_uses_only_current_families() -> None:
         docs.PASS_DATA = {"V7.5.17": data}
         docs.REPORT_PASS = {
             **old_pass,
-            ("dn", False): "V7.5.17",
-            ("tf", False): "V7.5.17",
+            **{(tag, False): "V7.5.17"
+               for tag in docs.CURRENT_CLEAN_TAGS},
         }
         docs._v7517_provenance_complete = lambda: True
         try:
@@ -750,7 +780,8 @@ def _check_readme_uses_only_current_families() -> None:
                 assert docs.build_readme(check=False)
             result = (rendered / "README.md").read_text()
             assert "V7.5.17 `small` **0/20**" in result
-            assert "| 75 |" not in result
+            assert "| 75 |" in result
+            assert "| 76 |" in result
         finally:
             docs.ROOT = old_root
             docs.TPL = old_tpl
@@ -852,7 +883,7 @@ def main() -> int:
     _check_regate_interpreter_failures_are_infrastructure()
     _check_fail_on_gaps()
     _check_report_payload_completeness()
-    _check_readme_uses_only_current_families()
+    _check_readme_uses_all_current_families()
     _check_incomplete_reports_preserve_verified_output()
     clean_pool = jobs.build_pools()["clean"]
     clean_jobs = len(clean_pool)

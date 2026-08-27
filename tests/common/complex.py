@@ -60,6 +60,7 @@ from tests.common.nn import nrmse as _nrmse_pct, mre as _mre_pct
 BENCH_TECHS: List[str] = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 _MODEL_NAMES = {
     73: "DirectNet", 74: "BSIM-AR", 75: "DirectNet-Full",
+    76: "BSIM-AR-Full",
 }
 
 
@@ -75,7 +76,7 @@ def _active_model_level() -> int | str:
     if level not in _MODEL_NAMES:
         raise ValueError(
             f"unsupported NN model level {level}; supported levels are "
-            "73, 74, and 75"
+            "73, 74, 75, and 76"
         )
     return level
 

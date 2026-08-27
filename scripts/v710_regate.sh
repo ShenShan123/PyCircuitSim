@@ -12,7 +12,7 @@
 #
 # This driver closes both gaps. One job = (tag, variant, tech, suite, omp):
 #
-#   tag      dn | tf                (LEVEL 73 / 74)
+#   tag      dn | tf | dnf | tff   (LEVEL 73 / 74 / 75 / 76)
 #   variant  small | medium | large | xl | <recipe>_<size>
 #              -> checkpoint stem {tech}_{tag}_{variant}_{nmos,pmos}
 #   suite    any tests/verify_*.py taking --tech
@@ -58,9 +58,9 @@ OUT="${V710_OUT:-$ROOT/results/v710_regate}"
 SCRATCH="${V710_SCRATCH:-/tmp/v710_regate_scratch}"
 OSDI="${PYCIRCUITSIM_OSDI_PATH:-$ROOT/external_compact_models/bsim_cmg/build/osdi/bsimcmg.osdi}"
 MANIFEST="${V710_MANIFEST:-$OUT/campaign_manifest.json}"
-PY="${NN_PY:-$(command -v python 2>/dev/null)}"
+PY="${NN_PY:-}"
 [ -n "$PY" ] && [ -f "$PY" ] && [ -x "$PY" ] || {
-  echo "[v710] NN_PY executable not found: ${NN_PY:-$PY}" >&2
+  echo "[v710] NN_PY executable not found: ${NN_PY:-<unset>}" >&2
   exit 2
 }
 [ -x "$NG" ] || {
@@ -84,7 +84,7 @@ checkpoint_ready () {
     [ -f "$CKPT/${stem}_norm.npz" ] || return 1
     [ -f "$CKPT/${stem}_best.pt.complete" ] || return 1
     case "$tag" in
-      tf) [ -f "$CKPT/${stem}_config.npz" ] || return 1 ;;
+      tf|tff) [ -f "$CKPT/${stem}_config.npz" ] || return 1 ;;
     esac
   done
 }
@@ -192,6 +192,10 @@ if [ "${1:-}" = "_one" ]; then
          export PYCIRCUITSIM_NN_FORCE_LEVEL=74 ;;
     dn)  export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="$sn"  PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="$sp"
          export PYCIRCUITSIM_NN_FORCE_LEVEL=73 ;;
+    dnf) export PYCIRCUITSIM_NN_CHECKPOINT_DNF_NMOS="$sn" PYCIRCUITSIM_NN_CHECKPOINT_DNF_PMOS="$sp"
+         export PYCIRCUITSIM_NN_FORCE_LEVEL=75 ;;
+    tff) export PYCIRCUITSIM_NN_CHECKPOINT_TFF_NMOS="$sn" PYCIRCUITSIM_NN_CHECKPOINT_TFF_PMOS="$sp"
+         export PYCIRCUITSIM_NN_FORCE_LEVEL=76 ;;
     *)   echo "[v710] UNKNOWN tag=$tag"; exit 1 ;;
   esac
   preflight_python

@@ -51,7 +51,7 @@ def _artifact_hashes(
         for device in ("nmos", "pmos"):
             stem = f"{tech}_{tag}_{variant}_{device}"
             suffixes = ["_best.pt", "_norm.npz", "_best.pt.complete"]
-            if tag == "tf":
+            if tag in ("tf", "tff"):
                 suffixes.append("_config.npz")
             for suffix in suffixes:
                 path = checkpoints / f"{stem}{suffix}"

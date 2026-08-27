@@ -63,6 +63,12 @@ The package covers two complementary architectures:
   loss / structural Vds gate, and the AR-finetune tail were all
   removed in the trim.
 
+Both architectures also support the isolated six-surface full-terminal
+contract. DirectNet-Full checkpoints use `dnf`; all-autoregressive
+BSIM-AR-Full checkpoints use `tff` and a configuration sidecar declaring the
+target order `qg,qb,qd,i_d,i_g,i_b`. The canonical dataset and normalization
+order remains `i_d,i_g,i_b,qd,qg,qb`.
+
 ```text
 external_compact_models/neural_network/
 ├── config.py                  technology and architecture configuration
@@ -156,6 +162,11 @@ Training accepts only canonical datasets whose `.npz.complete` marker matches
 the NPZ checksum, row count, clean source commit, OSDI/modelcard provenance,
 and zero-rejection manifest. Regenerate legacy or diagnostic NPZ files before
 training; there is no silent fallback.
+
+Add `--output-contract full-terminal --apply-filter off` to train the
+six-surface family. The CLI chooses `dnf` for DirectNet and `tff` for the
+Transformer so neither can overwrite the reduced or other full-terminal
+architecture.
 
 #### BSIMAR v3 Medium results on `universal_nmos` (legacy reference)
 

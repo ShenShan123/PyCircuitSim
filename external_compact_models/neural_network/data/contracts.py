@@ -8,6 +8,9 @@ FULL_TERMINAL_OUTPUT_CONTRACT = "full-terminal"
 FULL_TERMINAL_OUTPUT_COLUMN_ORDER: Tuple[str, ...] = (
     "i_d", "i_g", "i_b", "qd", "qg", "qb",
 )
+BSIMAR_FULL_TERMINAL_COLUMN_ORDER: Tuple[str, ...] = (
+    "qg", "qb", "qd", "i_d", "i_g", "i_b",
+)
 
 
 def dataset_filename(
@@ -34,5 +37,6 @@ __all__ = [
     "REDUCED_OUTPUT_CONTRACT",
     "FULL_TERMINAL_OUTPUT_CONTRACT",
     "FULL_TERMINAL_OUTPUT_COLUMN_ORDER",
+    "BSIMAR_FULL_TERMINAL_COLUMN_ORDER",
     "dataset_filename",
 ]

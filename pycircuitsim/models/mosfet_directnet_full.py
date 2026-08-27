@@ -34,9 +34,10 @@ from neural_network.data.normalize import (  # noqa: E402
 
 
 _OUTPUT_COLUMNS = tuple(FULL_TERMINAL_OUTPUT_COLUMN_ORDER)
+_ArtifactBundle = Tuple[torch.nn.Module, NormStats, int, Tuple[str, ...]]
 _ARTIFACT_CACHE: Dict[
     Tuple[Tuple[str, int, int], Tuple[str, int, int], Tuple[str, int, int]],
-    Tuple[torch.nn.Module, NormStats, int],
+    _ArtifactBundle,
 ] = {}
 
 
@@ -55,7 +56,7 @@ def _artifact_key(path: Path) -> Tuple[str, int, int]:
 
 def _load_artifacts(
     checkpoint: Path,
-) -> Tuple[torch.nn.Module, NormStats, int]:
+) -> _ArtifactBundle:
     """Verify and load one immutable full-terminal artifact bundle."""
     if not checkpoint.exists():
         raise FileNotFoundError(
@@ -153,13 +154,16 @@ def _load_artifacts(
     )
     model.load_state_dict(state)
     model.eval()
-    loaded = (model, norm_stats, num_tech_codes)
+    loaded = (model, norm_stats, num_tech_codes, _OUTPUT_COLUMNS)
     _ARTIFACT_CACHE[cache_key] = loaded
     return loaded
 
 
-class _DirectNetFullBase(Component):
-    """Shared LEVEL=75 runtime for the separate full-terminal family."""
+class _FullTerminalNNBase(Component):
+    """Architecture-neutral runtime for a six-surface terminal model."""
+
+    _artifact_loader = staticmethod(_load_artifacts)
+    _family_label = "DirectNet-Full"
 
     def __init__(
         self,
@@ -184,8 +188,15 @@ class _DirectNetFullBase(Component):
         self.m = float(multiplier)
         self.temperature = float(temperature)
 
-        self._nn_model, self._norm_stats, num_tech_codes = _load_artifacts(
-            Path(model_path))
+        (self._nn_model, self._norm_stats, num_tech_codes,
+         model_output_columns) = self._artifact_loader(Path(model_path))
+        self._model_output_columns = tuple(model_output_columns)
+        if (len(self._model_output_columns) != len(_OUTPUT_COLUMNS)
+                or set(self._model_output_columns) != set(_OUTPUT_COLUMNS)):
+            raise ValueError(
+                f"{self._family_label} model output columns must be a "
+                f"permutation of {list(_OUTPUT_COLUMNS)}, got "
+                f"{list(self._model_output_columns)}")
 
         self._tech_code = (
             num_tech_codes - 1 if tech_code is None else int(tech_code))
@@ -304,20 +315,20 @@ class _DirectNetFullBase(Component):
         x = torch.tensor(
             normalized, dtype=torch.float32, requires_grad=True).unsqueeze(0)
         output = self._forward_model(x)
-        if output.shape != (1, len(_OUTPUT_COLUMNS)):
+        if output.shape != (1, len(self._model_output_columns)):
             raise RuntimeError(
-                f"Full-terminal DirectNet returned shape {tuple(output.shape)}")
+                f"{self._family_label} returned shape {tuple(output.shape)}")
 
         values: Dict[str, float] = {
             name: self._denorm_value(name, float(output[0, index].detach()))
-            for index, name in enumerate(_OUTPUT_COLUMNS)
+            for index, name in enumerate(self._model_output_columns)
         }
         derivatives: Dict[str, np.ndarray] = {}
-        differentiated = list(_OUTPUT_COLUMNS[:3])
+        differentiated = ["i_d", "i_g", "i_b"]
         if self._caps_required:
-            differentiated.extend(_OUTPUT_COLUMNS[3:])
+            differentiated.extend(["qd", "qg", "qb"])
         for gradient_index, name in enumerate(differentiated):
-            index = _OUTPUT_COLUMNS.index(name)
+            index = self._model_output_columns.index(name)
             physical = values[name]
             gradient = torch.autograd.grad(
                 output[0, index], x,
@@ -346,7 +357,7 @@ class _DirectNetFullBase(Component):
         if charge_jacobian is not None:
             finite_values.append(charge_jacobian)
         if not all(np.all(np.isfinite(value)) for value in finite_values):
-            raise RuntimeError("Full-terminal DirectNet produced NaN/Inf")
+            raise RuntimeError(f"{self._family_label} produced NaN/Inf")
         self._cache_voltages = key
         self._eval_cache = (
             currents, current_jacobian, charges, charge_jacobian)
@@ -449,12 +460,16 @@ class _DirectNetFullBase(Component):
         self._eval_cache = None
 
 
-class NMOS_DNF(_DirectNetFullBase):
+class NMOS_DNF(_FullTerminalNNBase):
     """N-channel full-terminal DirectNet (LEVEL=75)."""
 
 
-class PMOS_DNF(_DirectNetFullBase):
+class PMOS_DNF(_FullTerminalNNBase):
     """P-channel full-terminal DirectNet (LEVEL=75)."""
+
+
+# Compatibility for private imports in downstream diagnostic scripts.
+_DirectNetFullBase = _FullTerminalNNBase
 
 
 __all__ = ["NMOS_DNF", "PMOS_DNF"]

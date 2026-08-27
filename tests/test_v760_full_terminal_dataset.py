@@ -16,7 +16,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 
 from neural_network.data import dataset as dataset_module
 from neural_network.cli import train as train_cli
-from neural_network.config import DirectNetConfig
+from neural_network.config import DirectNetConfig, TransformerConfig
 from neural_network.data.contracts import (
     FULL_TERMINAL_OUTPUT_CONTRACT,
     REDUCED_OUTPUT_CONTRACT,
@@ -210,20 +210,41 @@ def test_training_cli_routes_full_terminal_contract(
     assert observed["apply_filter"] is False
 
 
-def test_training_cli_rejects_full_terminal_transformer(
+def test_training_cli_routes_full_terminal_transformer(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     data_path = tmp_path / "full.npz"
     data_path.touch()
+    observed: dict[str, object] = {}
     monkeypatch.setattr(train_cli, "validate_canonical_dataset", lambda _p: None)
+    monkeypatch.setattr(
+        train_cli,
+        "train_transformer",
+        lambda *_args, **kwargs: observed.update(kwargs),
+    )
     monkeypatch.setattr(sys, "argv", [
-        "train", "--model", "transformer", "--data", str(data_path),
-        "--output-contract", "full-terminal",
+        "train", "--model", "transformer", "--size", "small",
+        "--device-type", "nmos", "--data", str(data_path),
+        "--output-contract", "full-terminal", "--apply-filter", "off",
+        "--exp-name", "v761_full_smoke",
     ])
-    with pytest.raises(SystemExit) as exc_info:
-        train_cli.main()
-    assert exc_info.value.code == 2
+
+    train_cli.main()
+
+    assert observed["output_columns"] == FULL_COLUMNS
+    assert observed["apply_filter"] is False
+
+
+def test_full_terminal_transformer_uses_distinct_checkpoint_stem() -> None:
+    args = train_cli.argparse.Namespace(
+        data=None, tech_scope="tsmc5", device_type="nmos",
+        output_contract=FULL_TERMINAL_OUTPUT_CONTRACT,
+        exp_name=None, model="transformer", size="large",
+        loss_preset="default",
+    )
+    assert train_cli._resolve_data_path(args).name == "tsmc5_dnf_nmos.npz"
+    assert train_cli._make_save_prefix(args) == "tsmc5_tff_large_nmos"
 
 
 def test_full_terminal_training_writes_runtime_complete_artifacts(
@@ -282,3 +303,71 @@ def test_full_terminal_training_rejects_legacy_head_options() -> None:
             output_subset=["i_d"],
             apply_filter=False,
         )
+
+
+def test_full_terminal_transformer_writes_verified_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rng = np.random.default_rng(761)
+    data_path = tmp_path / "training_tff.npz"
+    n_rows = 40
+    np.savez(
+        data_path,
+        inputs=rng.uniform(-0.5, 0.5, size=(n_rows, 4)),
+        geometry=np.column_stack([
+            np.full(n_rows, 2.0), np.full(n_rows, 16e-9),
+            np.full(n_rows, 300.15), np.zeros((n_rows, 12)),
+        ]),
+        outputs=np.column_stack([
+            rng.normal(scale=1e-4, size=(n_rows, 3)),
+            rng.normal(scale=1e-15, size=(n_rows, 3)),
+        ]),
+        meta_output_columns=np.asarray(FULL_COLUMNS),
+        sample_class=np.zeros(n_rows, dtype=np.int8),
+    )
+    monkeypatch.setattr(
+        "neural_network.eval.loo_labels.get_or_build_tech_variant_labels",
+        lambda *_args, **_kwargs: np.zeros(n_rows, dtype=int),
+    )
+    monkeypatch.setattr(trainer, "CHECKPOINT_DIR", tmp_path)
+    monkeypatch.setattr(trainer, "_NUM_WORKERS", 1)
+    torch.manual_seed(761)
+
+    trainer.train_transformer(
+        str(data_path),
+        config=TransformerConfig(
+            batch_size=16, d_model=8, nhead=2, num_layers=1,
+            dim_feedforward=16, dropout=0.0, max_epochs=1, patience=1,
+        ),
+        save_prefix="tff_smoke", device_str="cpu", overwrite=True,
+        num_tech_codes=2, p_unknown=0.0, apply_filter=False,
+        split_mode="random", output_columns=FULL_COLUMNS,
+    )
+
+    marker = json.loads(
+        (tmp_path / "tff_smoke_best.pt.complete").read_text())
+    assert marker["family"] == "bsimar-full"
+    assert marker["output_columns"] == FULL_COLUMNS
+    assert marker["target_columns"] == [
+        "qg", "qb", "qd", "i_d", "i_g", "i_b",
+    ]
+    assert len(marker["configuration_sha256"]) == 64
+    with np.load(tmp_path / "tff_smoke_config.npz") as config:
+        assert config["output_contract"].item() == "full-terminal"
+        assert config["ar_target_dim"].item() == 6
+
+    from pycircuitsim.models.mosfet_bsimar_full import NMOS_TFF
+
+    device = NMOS_TFF(
+        "Mtrained", ["d", "g", "s", "b"],
+        str(tmp_path / "tff_smoke_best.pt"),
+        L=16e-9, NFIN=2.0, tech_code=0,
+    )
+    currents, current_jacobian = device.get_terminal_stamp({
+        "d": 0.2, "g": 0.3, "s": 0.05, "b": 0.1,
+    })
+    assert np.all(np.isfinite(currents))
+    assert np.all(np.isfinite(current_jacobian))
+    assert np.sum(currents) == pytest.approx(0.0, abs=1e-12)
+    np.testing.assert_allclose(current_jacobian.sum(axis=0), 0.0, atol=1e-12)

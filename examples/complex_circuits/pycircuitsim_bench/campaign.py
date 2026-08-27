@@ -75,10 +75,10 @@ def _checkpoint_stems(
     tech: str, size: str, model_level: int,
 ) -> Dict[str, str]:
     """Checkpoint stems for one explicitly pinned neural-model campaign."""
-    family_tag = {73: "dn", 75: "dnf"}.get(model_level)
+    family_tag = {73: "dn", 75: "dnf", 76: "tff"}.get(model_level)
     if family_tag is None:
         raise ValueError(
-            f"LEVEL={model_level} does not use a DirectNet checkpoint"
+            f"LEVEL={model_level} does not use a supported NN checkpoint"
         )
     return {
         device: f"{tech.lower()}_{family_tag}_{size}_{device}"
@@ -102,6 +102,10 @@ def _require_model_checkpoints(
         complete = checkpoint.with_suffix(checkpoint.suffix + ".complete")
         missing.extend(path for path in (checkpoint, norm, complete)
                        if not path.is_file())
+        if model_level == 76:
+            config = CHECKPOINT_DIR / f"{stem}_config.npz"
+            if not config.is_file():
+                missing.append(config)
     if missing:
         rendered = "\n".join(f"  - {path}" for path in missing)
         raise SystemExit(
@@ -141,7 +145,9 @@ def _model_matches_row(row: object, tech: str, model_level: int,
         }
     if not isinstance(model, dict) or model.get("level") != model_level:
         return False
-    expected_family = {73: "directnet", 75: "directnet_full"}.get(model_level)
+    expected_family = {
+        73: "directnet", 75: "directnet_full", 76: "bsimar_full",
+    }.get(model_level)
     if expected_family is None or model.get("family") != expected_family:
         return False
     if (model.get("evaluator_boundary", "native") != "native"
@@ -171,6 +177,14 @@ def _model_matches_row(row: object, tech: str, model_level: int,
             info.get("completion_sha256") != file_sha256(completion)
         ):
             return False
+        if model_level == 76:
+            config = CHECKPOINT_DIR / f"{stem}_config.npz"
+            if not (
+                config.is_file()
+                and info.get("config_sha256") == file_sha256(config)
+                and info.get("completion_sha256") == file_sha256(completion)
+            ):
+                return False
     return True
 
 
@@ -370,9 +384,9 @@ def run_deck(tech: str, cat: str, design: str, deck: str, out: Path,
     policy = _campaign_policy(cat, deck, refine)
     env["PYCIRCUITSIM_BENCH_CAMPAIGN_POLICY"] = json.dumps(
         policy, sort_keys=True, separators=(",", ":"))
-    if model_level in (73, 75):
+    if model_level in (73, 75, 76):
         pins = _checkpoint_stems(tech, checkpoint_size, model_level)
-        level_tag = {73: "DN", 75: "DNF"}[model_level]
+        level_tag = {73: "DN", 75: "DNF", 76: "TFF"}[model_level]
         env[f"PYCIRCUITSIM_NN_CHECKPOINT_{level_tag}_NMOS"] = pins["nmos"]
         env[f"PYCIRCUITSIM_NN_CHECKPOINT_{level_tag}_PMOS"] = pins["pmos"]
         env["PYCIRCUITSIM_NN_STRICT_TECH_CODE"] = "1"
@@ -598,9 +612,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="re-run decks whose JSON already exists")
     ap.add_argument("--summarize-only", action="store_true")
     ap.add_argument("--deck-timeout", type=float, default=3600.0)
-    ap.add_argument("--model-level", type=int, choices=(72, 73, 75), default=72,
+    ap.add_argument("--model-level", type=int, choices=(72, 73, 75, 76), default=72,
                     help="PyCircuitSim compact-model level: 72=BSIM-CMG, "
-                         "73=DirectNet, 75=DirectNet-Full "
+                         "73=DirectNet, 75=DirectNet-Full, "
+                         "76=BSIM-AR-Full "
                          "(default: %(default)s)")
     ap.add_argument("--checkpoint-size",
                     choices=("small", "medium", "large", "xl"),
@@ -626,7 +641,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     code_commit = str(provenance["code_commit"])
 
-    if args.model_level in (73, 75):
+    if args.model_level in (73, 75, 76):
         _require_model_checkpoints(
             tech, args.checkpoint_size, args.model_level,
         )
