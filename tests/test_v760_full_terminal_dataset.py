@@ -145,6 +145,18 @@ def test_full_terminal_rejects_nonfinite_dependent_terminal() -> None:
     assert reason == "non_finite_output"
 
 
+def test_internal_node_failure_has_auditable_safety_reason() -> None:
+    instance = _Instance()
+    instance.eval_dc = lambda _nodes: (_ for _ in ()).throw(
+        RuntimeError("Internal node NR failed to converge at d=0.2000")
+    )
+    result, reason = nn_generate._eval_single_point_with_reason(
+        instance, 0.2, 0.3, output_contract="full-terminal", _silent=True,
+    )
+    assert result is None
+    assert reason == "internal_node_solve_failed"
+
+
 def test_loader_uses_dataset_declared_output_columns(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

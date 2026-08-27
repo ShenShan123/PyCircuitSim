@@ -124,6 +124,21 @@ def test_dataset_assembly_fails_loud_on_dropped_bin() -> None:
         _assemble([None], {}, verbose=False)
 
 
+def test_canonical_dataset_allows_only_declared_safety_rejections() -> None:
+    data = _assemble(
+        [_bin_result(1)], {}, verbose=False, allow_safety_rejections=True,
+    )
+    assert data["metadata"]["rejected_rows"] == 1
+    assert data["metadata"]["allow_safety_rejections"]
+
+    result = _bin_result(1)
+    result["failure_reasons"] = np.asarray(["eval_exception:RuntimeError"])
+    with pytest.raises(RuntimeError, match="unapproved rejection reasons"):
+        _assemble(
+            [result], {}, verbose=False, allow_safety_rejections=True,
+        )
+
+
 def test_diagnostic_dataset_records_rejection_manifest() -> None:
     data = _assemble(
         [_bin_result(1), None], {}, verbose=False,
@@ -141,6 +156,7 @@ def _write_canonical_dataset(tmp_path: Path, **overrides: object) -> Path:
     path = tmp_path / "training.npz"
     metadata: Dict[str, object] = {
         "allow_rejected_points": False,
+        "allow_safety_rejections": False,
         "dataset_variant": "v7517_generated_core_plus_tg",
         "dropped_bins": 0,
         "generator_release": "V7.5.17",
@@ -184,6 +200,26 @@ def test_canonical_dataset_validator_rejects_diagnostic_data(
     )
     with pytest.raises(ValueError, match="diagnostic dataset"):
         validate_canonical_dataset(diagnostic)
+
+
+def test_canonical_dataset_validator_accepts_audited_safety_rejections(
+    tmp_path: Path,
+) -> None:
+    manifest = json.dumps([{
+        "status": "partial",
+        "requested": 5,
+        "kept": 4,
+        "rejected": 1,
+        "failure_reason_counts": {"terminal_current_over_1A": 1},
+    }])
+    path = _write_canonical_dataset(
+        tmp_path,
+        allow_safety_rejections=True,
+        rejected_rows=1,
+        requested_rows=5,
+        manifest_json=manifest,
+    )
+    validate_canonical_dataset(path)
 
 
 def test_canonical_dataset_validator_rejects_bad_checksum(

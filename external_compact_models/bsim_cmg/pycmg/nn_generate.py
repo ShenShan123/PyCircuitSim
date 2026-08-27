@@ -37,6 +37,7 @@ from typing import Dict, List, Optional, Sequence, Tuple
 import numpy as np
 
 from neural_network.data.contracts import (
+    CANONICAL_SAFETY_REJECTION_REASONS,
     FULL_TERMINAL_OUTPUT_COLUMN_ORDER,
     FULL_TERMINAL_OUTPUT_CONTRACT,
     REDUCED_OUTPUT_CONTRACT,
@@ -362,6 +363,9 @@ def _eval_single_point_with_reason(
         if not _silent:
             print(f"  WARNING: eval_dc failed at "
                   f"Vd={vd:.3f} Vg={vg:.3f} Vb={vb:.3f}: {exc}")
+        if (isinstance(exc, RuntimeError)
+                and str(exc).startswith("Internal node NR failed to converge")):
+            return None, "internal_node_solve_failed"
         return None, f"eval_exception:{type(exc).__name__}"
 
 
@@ -1153,7 +1157,12 @@ def _assemble(
     verbose: bool,
     bin_specs: Optional[List[BinSpec]] = None,
     allow_rejected_points: bool = False,
+    allow_safety_rejections: bool = False,
 ) -> Dict[str, np.ndarray]:
+    if allow_rejected_points and allow_safety_rejections:
+        raise ValueError(
+            "diagnostic and canonical safety-rejection modes are exclusive"
+        )
     inputs_list, geo_list, out_list, cls_list = [], [], [], []
     n_kept_total = 0
     n_failed_total = 0
@@ -1212,16 +1221,39 @@ def _assemble(
                         SAMPLE_CLASS_CODES["lhs"], dtype=np.int8)
             )
 
+    rejected_reasons = {
+        reason
+        for row in manifest
+        for reason in row.get("failure_reason_counts", {})
+    }
+    unexpected_reasons = sorted(
+        rejected_reasons.difference(CANONICAL_SAFETY_REJECTION_REASONS)
+    )
     if n_bins_dropped or n_failed_total:
         summary = (f"dataset generation rejected {n_failed_total} points and "
                    f"dropped {n_bins_dropped} bins")
-        if not allow_rejected_points:
+        canonical_safety_only = (
+            allow_safety_rejections
+            and not n_bins_dropped
+            and not unexpected_reasons
+        )
+        if not allow_rejected_points and not canonical_safety_only:
+            detail = (
+                f"; unapproved rejection reasons: {unexpected_reasons}"
+                if unexpected_reasons else ""
+            )
             raise RuntimeError(
-                summary + "; rerun with allow_rejected_points=True only for "
-                "a diagnostic artifact"
+                summary + detail
+                + "; rerun with allow_rejected_points=True only for "
+                  "a diagnostic artifact"
             )
         if verbose:
-            print(f"  WARNING: {summary}; diagnostic artifact requested")
+            mode = (
+                "diagnostic artifact requested"
+                if allow_rejected_points else
+                "approved safety exclusions recorded"
+            )
+            print(f"  WARNING: {summary}; {mode}")
 
     if not inputs_list:
         raise RuntimeError(
@@ -1252,6 +1284,7 @@ def _assemble(
         "kept_bins": np.int64(n_bins_kept),
         "dropped_bins": np.int64(n_bins_dropped),
         "allow_rejected_points": np.bool_(allow_rejected_points),
+        "allow_safety_rejections": np.bool_(allow_safety_rejections),
     })
 
     if verbose:
@@ -1346,6 +1379,7 @@ def generate_dataset(
     enable_subvt_off: bool = DEFAULT_SUBVT_OFF,
     max_l_ratio: Optional[float] = DEFAULT_MAX_L_RATIO,
     allow_rejected_points: bool = False,
+    allow_safety_rejections: bool = False,
     output_contract: str = "reduced",
 ) -> Dict[str, np.ndarray]:
     """Generate training data for one tech/polarity across all bins.
@@ -1432,6 +1466,7 @@ def generate_dataset(
     return _assemble(
         results, metadata, verbose=verbose, bin_specs=bins,
         allow_rejected_points=allow_rejected_points,
+        allow_safety_rejections=allow_safety_rejections,
     )
 
 
@@ -1456,6 +1491,7 @@ def generate_universal_dataset(
     exclude_techs: Optional[Sequence[str]] = None,
     max_l_ratio: Optional[float] = DEFAULT_MAX_L_RATIO,
     allow_rejected_points: bool = False,
+    allow_safety_rejections: bool = False,
     output_contract: str = "reduced",
 ) -> Dict[str, np.ndarray]:
     """Concatenate per-tech datasets across all 5 technologies and variants.
@@ -1534,4 +1570,5 @@ def generate_universal_dataset(
     return _assemble(
         results, metadata, verbose=verbose, bin_specs=all_bins,
         allow_rejected_points=allow_rejected_points,
+        allow_safety_rejections=allow_safety_rejections,
     )

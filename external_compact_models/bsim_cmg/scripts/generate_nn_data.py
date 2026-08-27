@@ -269,6 +269,12 @@ def main() -> None:
              "Canonical datasets fail instead.",
     )
     parser.add_argument(
+        "--allow-safety-rejections", action="store_true",
+        help="Keep a canonical dataset after excluding only the declared "
+             "NaN/Inf, >1 A terminal-current, or internal-node-solve safety "
+             "failures. Dropped bins and other failures remain fatal.",
+    )
+    parser.add_argument(
         "--output-contract",
         choices=[REDUCED_OUTPUT_CONTRACT, FULL_TERMINAL_OUTPUT_CONTRACT],
         default=REDUCED_OUTPUT_CONTRACT,
@@ -324,6 +330,7 @@ def main() -> None:
         enable_subvt_off=args.enable_subvt_off,
         max_l_ratio=args.max_l_ratio,
         allow_rejected_points=args.allow_rejected_points,
+        allow_safety_rejections=args.allow_safety_rejections,
         output_contract=args.output_contract,
     )
 

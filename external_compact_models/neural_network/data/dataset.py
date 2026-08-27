@@ -14,6 +14,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from neural_network.data.contracts import CANONICAL_SAFETY_REJECTION_REASONS
 from neural_network.data.normalize import _NormalizerBase, normalizer_for
 from neural_network.data.sampling import (
     grouped_split_indices,
@@ -113,11 +114,16 @@ def validate_canonical_dataset(data_path: Union[str, Path]) -> None:
         kept = int(_scalar("meta_kept_rows"))
         rejected = int(_scalar("meta_rejected_rows"))
         dropped = int(_scalar("meta_dropped_bins"))
-        if bool(_scalar("meta_allow_rejected_points")) or rejected or dropped:
+        allow_diagnostic = bool(_scalar("meta_allow_rejected_points"))
+        allow_safety = (
+            bool(_scalar("meta_allow_safety_rejections"))
+            if "meta_allow_safety_rejections" in data.files else False
+        )
+        if allow_diagnostic or dropped or (rejected and not allow_safety):
             raise ValueError(
                 "diagnostic dataset cannot be used for canonical training"
             )
-        if requested != kept or kept != rows:
+        if requested != kept + rejected or kept != rows:
             raise ValueError("dataset row counts do not prove complete generation")
         if bool(_scalar("meta_source_dirty")):
             raise ValueError("dataset was generated from a dirty source tree")
@@ -141,6 +147,35 @@ def validate_canonical_dataset(data_path: Union[str, Path]) -> None:
             raise ValueError("dataset modelcard SHA-256 map is invalid")
         if not isinstance(manifest, list) or not manifest:
             raise ValueError("dataset bin manifest is empty or invalid")
+        if rejected:
+            manifest_rejected = 0
+            manifest_reasons: Set[str] = set()
+            for entry in manifest:
+                if not isinstance(entry, dict):
+                    raise ValueError("dataset bin manifest is invalid")
+                entry_rejected = int(entry.get("rejected", 0))
+                manifest_rejected += entry_rejected
+                reason_counts = entry.get("failure_reason_counts", {})
+                if not isinstance(reason_counts, dict):
+                    raise ValueError("dataset rejection manifest is invalid")
+                try:
+                    counted_rejections = sum(
+                        int(count) for count in reason_counts.values()
+                    )
+                except (TypeError, ValueError) as exc:
+                    raise ValueError(
+                        "dataset rejection manifest is invalid"
+                    ) from exc
+                if counted_rejections != entry_rejected:
+                    raise ValueError("dataset rejection manifest is invalid")
+                manifest_reasons.update(str(reason) for reason in reason_counts)
+            unexpected = sorted(
+                manifest_reasons.difference(CANONICAL_SAFETY_REJECTION_REASONS)
+            )
+            if manifest_rejected != rejected or unexpected:
+                raise ValueError(
+                    "dataset safety-rejection provenance is invalid"
+                )
         if marker.get("rows") != rows:
             raise ValueError("dataset row count does not match completion marker")
         if marker.get("source_commit") != source_commit:

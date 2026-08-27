@@ -11,6 +11,11 @@ FULL_TERMINAL_OUTPUT_COLUMN_ORDER: Tuple[str, ...] = (
 BSIMAR_FULL_TERMINAL_COLUMN_ORDER: Tuple[str, ...] = (
     "qg", "qb", "qd", "i_d", "i_g", "i_b",
 )
+CANONICAL_SAFETY_REJECTION_REASONS: Tuple[str, ...] = (
+    "internal_node_solve_failed",
+    "non_finite_output",
+    "terminal_current_over_1A",
+)
 
 
 def dataset_filename(
@@ -38,5 +43,6 @@ __all__ = [
     "FULL_TERMINAL_OUTPUT_CONTRACT",
     "FULL_TERMINAL_OUTPUT_COLUMN_ORDER",
     "BSIMAR_FULL_TERMINAL_COLUMN_ORDER",
+    "CANONICAL_SAFETY_REJECTION_REASONS",
     "dataset_filename",
 ]

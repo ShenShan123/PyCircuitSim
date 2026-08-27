@@ -37,6 +37,12 @@ The pre-compaction long-form narrative remains available in Git history.
   manifests, coverage/report generation, and AnalogGym translation/provenance
   to LEVEL=76. The new family remains outside batched/fused evaluation until
   independent parity gates justify enabling those paths.
+- Full-terminal generation now distinguishes audited safety exclusions from
+  diagnostic incompleteness: NaN/Inf surfaces, terminal currents above 1 A,
+  and failed internal-node solves may be excluded with their coordinates and
+  reason counts preserved, while dropped bins and unknown exceptions remain
+  fatal. Generator subprocesses are pinned to one BLAS thread so the ten-job
+  canonical pass cannot exhaust the process/thread limit.
 
 ### V7.6.0 — attributed boundary errors and experimental LEVEL=75 (2026-08-27)
 

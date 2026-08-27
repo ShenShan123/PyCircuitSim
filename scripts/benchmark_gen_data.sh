@@ -21,8 +21,11 @@ LOGDIR="${BENCHMARK_GEN_LOG_DIR:-$ROOT/results/benchmark_sml/gen_logs}"
 WORKERS="${1:-20}"
 OUTPUT_CONTRACT="${OUTPUT_CONTRACT:-reduced}"
 case "$OUTPUT_CONTRACT" in
-  reduced) DATA_TAG="" ;;
-  full-terminal) DATA_TAG="_dnf" ;;
+  reduced) DATA_TAG=""; CONTRACT_EXTRA=() ;;
+  full-terminal)
+    DATA_TAG="_dnf"
+    CONTRACT_EXTRA=(--allow-safety-rejections)
+    ;;
   *) echo "[gen] UNKNOWN OUTPUT_CONTRACT=$OUTPUT_CONTRACT" >&2; exit 2 ;;
 esac
 mkdir -p "$OUTDIR" "$LOGDIR"
@@ -43,10 +46,12 @@ for tech in "${techs[@]}"; do
     rm -f "$OUTDIR/${tech}${DATA_TAG}_${dev}_tech_variant_labels.npy" \
           "$OUTDIR/${tech}${DATA_TAG}_${dev}_tech_variant_labels.meta.npz"
     echo "[gen] $tech $dev ($WORKERS workers) -> $log"
-    conda run -n pycircuitsim python -u "$GEN" \
+    OPENBLAS_NUM_THREADS=1 OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+      NUMEXPR_NUM_THREADS=1 conda run -n pycircuitsim python -u "$GEN" \
         --device "$dev" --tech "$tech" \
         --enable-inv-trip --enable-subvt-off \
         --output-contract "$OUTPUT_CONTRACT" \
+        "${CONTRACT_EXTRA[@]}" \
         --max-l-ratio 1.35 \
         --n-workers "$WORKERS" ${GEN_EXTRA:-} \
         >"$log" 2>&1 &
