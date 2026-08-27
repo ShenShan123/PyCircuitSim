@@ -29,7 +29,7 @@ The solver handles:
 import functools
 import os
 from dataclasses import dataclass
-from typing import Dict, List, Tuple, Optional
+from typing import Any, Callable, Dict, List, Tuple, Optional
 from pathlib import Path
 import numpy as np
 from scipy.sparse import lil_matrix, issparse, spmatrix
@@ -443,6 +443,28 @@ def _has_nn_device(circuit: Circuit) -> bool:
     return val
 
 
+def _selected_full_stamp(
+    device: object, attribute: str,
+) -> Optional[Callable[..., Any]]:
+    """Return a full-terminal stamp unless its explicit boundary disables it."""
+    boundary = getattr(device, "evaluator_boundary", "native")
+    if boundary == "reduced-osdi":
+        return None
+    if boundary != "native":
+        raise ValueError(f"Unsupported evaluator boundary {boundary!r}")
+    return getattr(device, attribute, None)
+
+
+def _full_current_stamp(device: object) -> Optional[Callable[..., Any]]:
+    """Select the device's full terminal-current stamp, when active."""
+    return _selected_full_stamp(device, "get_terminal_stamp")
+
+
+def _full_charge_stamp(device: object) -> Optional[Callable[..., Any]]:
+    """Select the device's full terminal-charge stamp, when active."""
+    return _selected_full_stamp(device, "get_charge_stamp")
+
+
 def _has_full_stamp_device(circuit: Circuit) -> bool:
     """Any device with the V7.5.0 full 4-terminal stamp (BSIM-CMG L72)?
 
@@ -453,7 +475,7 @@ def _has_full_stamp_device(circuit: Circuit) -> bool:
     cached = getattr(circuit, "_pcs_has_l72_cache", None)
     if cached is not None and cached[0] == key:
         return cached[1]
-    val = any(hasattr(c, "get_terminal_stamp") for c in circuit.components)
+    val = any(_full_current_stamp(c) is not None for c in circuit.components)
     circuit._pcs_has_l72_cache = (key, val)
     return val
 
@@ -556,7 +578,7 @@ def _stamp_mosfet_dc(
     # cycles around a residual its Jacobian cannot see. Devices exposing
     # get_terminal_stamp() stamp all four KCL rows from the condensed
     # OSDI Jacobian instead, exactly as NGSPICE loads the model.
-    full_stamp = getattr(mosfet, "get_terminal_stamp", None)
+    full_stamp = _full_current_stamp(mosfet)
     if full_stamp is not None:
         i_out, g4 = full_stamp(voltages)
         idx = [node_map.get(n) if n not in ("0", "GND") else None
@@ -1874,8 +1896,7 @@ class DCSolver:
         if (not self._last_solve_converged
                 and not self.use_gmin_stepping
                 and not getattr(self, "_in_gmin_fallback", False)
-                and any(hasattr(c, "get_terminal_stamp")
-                        for c in self.circuit.components)):
+                and _has_full_stamp_device(self.circuit)):
             # The ladder replaces source stepping (two homotopies at once
             # just splits the NR budget 20 ways) and needs a real
             # iteration budget of its own. If the ladder ALSO fails, the
@@ -3022,7 +3043,7 @@ class TransientSolver:
         # Newton iteration AMPLIFY the error ~15x. Devices exposing
         # get_charge_stamp stamp the condensed reactive OSDI Jacobian
         # directly — true dQ/dV, bulk row and column included.
-        full_q = getattr(mosfet, "get_charge_stamp", None)
+        full_q = _full_charge_stamp(mosfet)
         if full_q is not None:
             if getattr(mosfet, "_q_prev", None) is None:
                 return
@@ -3680,7 +3701,7 @@ class TransientSolver:
                                     terminal_currents["i_drain"] = coeff * charges_new["qd"] - h_d
                                     # V7.5.1: the full 4-terminal charge
                                     # companion needs source/bulk history too.
-                                    if hasattr(component, "get_charge_stamp"):
+                                    if _full_charge_stamp(component) is not None:
                                         for key, name in (("qs", "i_source"),
                                                           ("qb", "i_bulk")):
                                             if method == 'bdf2' and hasattr(component, '_q_prev2') and component._q_prev2 is not None:
@@ -4339,9 +4360,16 @@ class ACSolver:
             # defect, same hazard). Devices exposing get_terminal_stamp
             # carry Y = G4 + jw*C4 from the condensed OSDI Jacobians,
             # evaluated once at the DC OP — exactly NGSPICE's AC load.
-            if hasattr(component, "get_terminal_stamp"):
-                _, g4 = component.get_terminal_stamp(self.dc_solution)
-                _, c4 = component.get_charge_stamp(self.dc_solution)
+            full_current = _full_current_stamp(component)
+            if full_current is not None:
+                full_charge = _full_charge_stamp(component)
+                if full_charge is None:
+                    raise RuntimeError(
+                        f"{component.name} exposes a full current stamp without "
+                        "a full charge stamp"
+                    )
+                _, g4 = full_current(self.dc_solution)
+                _, c4 = full_charge(self.dc_solution)
                 # NO external gmin here: the DC stamp's gmin across
                 # d-s/d-b/s-b is a Newton convergence aid; NGSPICE's AC
                 # load carries only the model's own Jacobian (the OSDI

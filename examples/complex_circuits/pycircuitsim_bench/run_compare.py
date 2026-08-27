@@ -326,6 +326,15 @@ class SimOptions:
     stride: int = 1
     max_seconds: Optional[float] = None
     ng_timeout: float = 1800.0
+    evaluator_boundary: str = "native"
+
+    def __post_init__(self) -> None:
+        """Reject misspelled diagnostic boundaries before a campaign starts."""
+        if self.evaluator_boundary not in ("native", "reduced-osdi"):
+            raise ValueError(
+                f"Unsupported evaluator boundary {self.evaluator_boundary!r}; "
+                "expected 'native' or 'reduced-osdi'"
+            )
 
 
 _PY_MODEL_FAMILIES: Dict[int, str] = {72: "bsim_cmg", 73: "directnet"}
@@ -342,14 +351,27 @@ def _checkpoint_pin(device: str) -> Optional[str]:
                  if os.environ.get(name)), None)
 
 
-def _model_provenance(td: TranslatedDeck) -> Dict[str, Any]:
+def _validate_evaluator_boundary(model_level: int, opts: SimOptions) -> None:
+    """Validate the diagnostic boundary against the selected compact model."""
+    if opts.evaluator_boundary == "reduced-osdi" and model_level != 72:
+        raise ValueError(
+            "The reduced-osdi evaluator boundary requires model LEVEL=72"
+        )
+
+
+def _model_provenance(
+    td: TranslatedDeck, opts: SimOptions = SimOptions(),
+) -> Dict[str, Any]:
     """Describe the PyCircuitSim compact model used for one result row."""
+    _validate_evaluator_boundary(td.model_level, opts)
     family = _PY_MODEL_FAMILIES.get(td.model_level)
     if family is None:
         raise SimFailure(f"Unsupported PyCircuitSim model level {td.model_level}")
     out: Dict[str, Any] = {
         "family": family, "level": td.model_level, "tech": td.tech,
     }
+    if opts.evaluator_boundary != "native":
+        out["evaluator_boundary"] = opts.evaluator_boundary
     if td.model_level != 73:
         return out
 
@@ -775,6 +797,15 @@ def _mosfets(circuit) -> list:
     return [c for c in circuit.components if isinstance(c, _mosfet_types())]
 
 
+def _configure_evaluator_boundary(
+    circuit: Any, model_level: int, opts: SimOptions,
+) -> None:
+    """Configure parsed compact-model instances before any solver is built."""
+    _validate_evaluator_boundary(model_level, opts)
+    for device in _mosfets(circuit):
+        device.evaluator_boundary = opts.evaluator_boundary
+
+
 def _supply_rail(circuit) -> float:
     """Largest voltage-source magnitude, i.e. one supply rail (>= 1e-3 V)."""
     from pycircuitsim.models.passive import VoltageSource       # noqa: PLC0415
@@ -945,6 +976,7 @@ def simulate(td: TranslatedDeck, plan: AnalysisPlan, work: Path,
     wall-clock budget truncated the run.
     """
     circuit, netlist = build_circuit(td, work)
+    _configure_evaluator_boundary(circuit, td.model_level, opts)
     rail = _supply_rail(circuit)
     dv_limit = rail if opts.dv_limit is None else opts.dv_limit
     nodes = _node_table(circuit)
@@ -953,6 +985,7 @@ def simulate(td: TranslatedDeck, plan: AnalysisPlan, work: Path,
         "netlist": str(netlist), "stride": opts.stride,
         "dv_limit": dv_limit, "max_iterations": opts.max_iterations,
         "use_source_stepping": opts.use_source_stepping,
+        "evaluator_boundary": opts.evaluator_boundary,
         "devices": len(_mosfets(circuit)),
         "nodes": len(nodes), "failures": [], "failed": 0, "flag_failed": 0,
         "truncated_at": None,
@@ -1491,13 +1524,14 @@ def compare_translated(td: TranslatedDeck, work: Path,
     Returns:
         A JSON-serialisable dict; see the module docstring for the columns.
     """
+    _validate_evaluator_boundary(td.model_level, opts)
     work.mkdir(parents=True, exist_ok=True)
     out: Dict[str, Any] = {
         "schema": SCHEMA_VERSION,
         "code_commit": os.environ.get("PYCIRCUITSIM_BENCH_CODE_COMMIT"),
         "tech": td.tech, "category": td.category, "design": td.design,
         "deck": td.deck, "devices": td.devices,
-        "py_model": _model_provenance(td),
+        "py_model": _model_provenance(td, opts),
         "ground_truth": _reference_provenance(td),
         "campaign_policy": _campaign_policy_from_environment(),
         "control": [plan.control for plan in td.plans],
@@ -1846,6 +1880,7 @@ def _sweep_summary(plan: AnalysisPlan, sweep: SweepResult) -> Dict[str, Any]:
         "seconds": meta.get("seconds"), "dc_seconds": meta.get("dc_seconds"),
         "dc_converged": meta.get("dc_converged"),
         "stride": meta.get("stride"), "dv_limit": meta.get("dv_limit"),
+        "evaluator_boundary": meta.get("evaluator_boundary"),
         "truncated_at": meta.get("truncated_at"),
         "integration_method": meta.get("integration_method"),
         "dt": meta.get("dt"),
@@ -2210,11 +2245,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         help="PyCircuitSim compact-model level: 72=BSIM-CMG, 73=DirectNet "
              "(default: %(default)s)",
     )
+    parser.add_argument(
+        "--evaluator-boundary", choices=("native", "reduced-osdi"),
+        default="native",
+        help="device stamp boundary: native/full or exact OSDI through the "
+             "classic reduced drain/source path (LEVEL=72 only; default: "
+             "%(default)s)",
+    )
     parser.add_argument("--no-recovery", action="store_true",
                         help="do not fall back to the outward-from-25 C "
                              "segments when a monolithic temperature sweep "
                              "loses its Newton branch (amplifier tb_dc only)")
     args = parser.parse_args(argv)
+    try:
+        _validate_evaluator_boundary(
+            args.model_level,
+            SimOptions(evaluator_boundary=args.evaluator_boundary),
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     _pin_design_tree(args.root, args.tech)
 
     out_dir = args.out or (args.root / "pycircuitsim_bench_results")
@@ -2224,7 +2273,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         use_source_stepping=args.source_stepping,
         reltol=args.solver_reltol, vntol=args.solver_vntol,
         stride=args.stride, max_seconds=args.max_seconds,
-        ng_timeout=args.ng_timeout)
+        ng_timeout=args.ng_timeout,
+        evaluator_boundary=args.evaluator_boundary)
 
     designs = ([args.root / f"designs_{args.tech.lower()}" / args.category
                 / args.design] if args.design
