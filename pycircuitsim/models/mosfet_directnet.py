@@ -29,6 +29,8 @@ def _get_nn_device():  # back-compat re-export
 class _DirectNetMixin(_MOSFETNNBase):
     """LEVEL=73 base: loads a DirectNet checkpoint via _MOSFETNNBase."""
 
+    _supports_raw_directnet: bool = True
+
     def __init__(
         self,
         name: str,

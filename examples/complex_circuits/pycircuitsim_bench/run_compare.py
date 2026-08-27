@@ -327,13 +327,16 @@ class SimOptions:
     max_seconds: Optional[float] = None
     ng_timeout: float = 1800.0
     evaluator_boundary: str = "native"
+    correction_trace: bool = False
 
     def __post_init__(self) -> None:
         """Reject misspelled diagnostic boundaries before a campaign starts."""
-        if self.evaluator_boundary not in ("native", "reduced-osdi"):
+        if self.evaluator_boundary not in (
+            "native", "reduced-osdi", "raw-directnet",
+        ):
             raise ValueError(
                 f"Unsupported evaluator boundary {self.evaluator_boundary!r}; "
-                "expected 'native' or 'reduced-osdi'"
+                "expected 'native', 'reduced-osdi', or 'raw-directnet'"
             )
 
 
@@ -357,6 +360,14 @@ def _validate_evaluator_boundary(model_level: int, opts: SimOptions) -> None:
         raise ValueError(
             "The reduced-osdi evaluator boundary requires model LEVEL=72"
         )
+    if opts.evaluator_boundary == "raw-directnet" and model_level != 73:
+        raise ValueError(
+            "The raw-directnet evaluator boundary requires model LEVEL=73"
+        )
+    if opts.correction_trace and model_level != 73:
+        raise ValueError(
+            "DirectNet correction tracing requires model LEVEL=73"
+        )
 
 
 def _model_provenance(
@@ -372,6 +383,8 @@ def _model_provenance(
     }
     if opts.evaluator_boundary != "native":
         out["evaluator_boundary"] = opts.evaluator_boundary
+    if opts.correction_trace:
+        out["correction_trace"] = True
     if td.model_level != 73:
         return out
 
@@ -803,7 +816,21 @@ def _configure_evaluator_boundary(
     """Configure parsed compact-model instances before any solver is built."""
     _validate_evaluator_boundary(model_level, opts)
     for device in _mosfets(circuit):
-        device.evaluator_boundary = opts.evaluator_boundary
+        configure = getattr(device, "configure_evaluator", None)
+        if callable(configure):
+            configure(opts.evaluator_boundary, opts.correction_trace)
+        else:
+            device.evaluator_boundary = opts.evaluator_boundary
+
+
+def _correction_traces(circuit: Any) -> List[Dict[str, Any]]:
+    """Return JSON-safe traces from devices configured to collect them."""
+    traces: List[Dict[str, Any]] = []
+    for device in _mosfets(circuit):
+        get_trace = getattr(device, "evaluator_trace", None)
+        if callable(get_trace):
+            traces.append(get_trace())
+    return traces
 
 
 def _supply_rail(circuit) -> float:
@@ -986,6 +1013,7 @@ def simulate(td: TranslatedDeck, plan: AnalysisPlan, work: Path,
         "dv_limit": dv_limit, "max_iterations": opts.max_iterations,
         "use_source_stepping": opts.use_source_stepping,
         "evaluator_boundary": opts.evaluator_boundary,
+        "correction_trace_enabled": opts.correction_trace,
         "devices": len(_mosfets(circuit)),
         "nodes": len(nodes), "failures": [], "failed": 0, "flag_failed": 0,
         "truncated_at": None,
@@ -996,18 +1024,25 @@ def simulate(td: TranslatedDeck, plan: AnalysisPlan, work: Path,
         _apply_temperature(circuit, td.temp_c)
         meta["temp_c"] = td.temp_c
 
-    if plan.kind == "ac":
-        result = _simulate_ac(td, plan, circuit, nodes, opts, dv_limit, meta)
-    elif plan.kind in ("dc_source", "dc_temp"):
-        result = _simulate_dc(td, plan, circuit, nodes, sources, opts,
-                              dv_limit, meta)
-    elif plan.kind == "tran":
-        result = _simulate_tran(td, plan, circuit, nodes, sources, opts,
-                                dv_limit, meta)
-    else:
-        raise SimFailure(f"Unsupported plan kind {plan.kind!r}")
+    try:
+        if plan.kind == "ac":
+            result = _simulate_ac(td, plan, circuit, nodes, opts, dv_limit, meta)
+        elif plan.kind in ("dc_source", "dc_temp"):
+            result = _simulate_dc(td, plan, circuit, nodes, sources, opts,
+                                  dv_limit, meta)
+        elif plan.kind == "tran":
+            result = _simulate_tran(td, plan, circuit, nodes, sources, opts,
+                                    dv_limit, meta)
+        else:
+            raise SimFailure(f"Unsupported plan kind {plan.kind!r}")
+    except Exception:  # noqa: BLE001 -- attach trace, then preserve the error
+        if opts.correction_trace:
+            meta["correction_trace"] = _correction_traces(circuit)
+        raise
 
     result.meta["seconds"] = time.perf_counter() - started
+    if opts.correction_trace:
+        result.meta["correction_trace"] = _correction_traces(circuit)
     return result
 
 
@@ -1604,7 +1639,7 @@ def compare_translated(td: TranslatedDeck, work: Path,
                 k: partial.get(k) for k in
                 ("dc_seconds", "dc_converged", "dc_error", "failures",
                  "integration_method", "dt", "refine_output",
-                 "refine_max_dt", "devices", "nodes")}
+                 "refine_max_dt", "devices", "nodes", "correction_trace")}
     out["pycircuitsim"]["metrics"] = py_metrics
     out["pycircuitsim"]["seconds"] = py_seconds
 
@@ -1881,6 +1916,7 @@ def _sweep_summary(plan: AnalysisPlan, sweep: SweepResult) -> Dict[str, Any]:
         "dc_converged": meta.get("dc_converged"),
         "stride": meta.get("stride"), "dv_limit": meta.get("dv_limit"),
         "evaluator_boundary": meta.get("evaluator_boundary"),
+        "correction_trace": meta.get("correction_trace"),
         "truncated_at": meta.get("truncated_at"),
         "integration_method": meta.get("integration_method"),
         "dt": meta.get("dt"),
@@ -2246,11 +2282,17 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
              "(default: %(default)s)",
     )
     parser.add_argument(
-        "--evaluator-boundary", choices=("native", "reduced-osdi"),
+        "--evaluator-boundary",
+        choices=("native", "reduced-osdi", "raw-directnet"),
         default="native",
-        help="device stamp boundary: native/full or exact OSDI through the "
-             "classic reduced drain/source path (LEVEL=72 only; default: "
-             "%(default)s)",
+        help="device evaluator boundary: native, exact OSDI through the "
+             "classic reduced drain/source path (LEVEL=72), or uncorrected "
+             "DirectNet (LEVEL=73; default: %(default)s)",
+    )
+    parser.add_argument(
+        "--trace-corrections", action="store_true",
+        help="record DirectNet support distance and first correction "
+             "activations in result metadata (LEVEL=73 only)",
     )
     parser.add_argument("--no-recovery", action="store_true",
                         help="do not fall back to the outward-from-25 C "
@@ -2260,7 +2302,10 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         _validate_evaluator_boundary(
             args.model_level,
-            SimOptions(evaluator_boundary=args.evaluator_boundary),
+            SimOptions(
+                evaluator_boundary=args.evaluator_boundary,
+                correction_trace=args.trace_corrections,
+            ),
         )
     except ValueError as exc:
         parser.error(str(exc))
@@ -2274,7 +2319,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         reltol=args.solver_reltol, vntol=args.solver_vntol,
         stride=args.stride, max_seconds=args.max_seconds,
         ng_timeout=args.ng_timeout,
-        evaluator_boundary=args.evaluator_boundary)
+        evaluator_boundary=args.evaluator_boundary,
+        correction_trace=args.trace_corrections)
 
     designs = ([args.root / f"designs_{args.tech.lower()}" / args.category
                 / args.design] if args.design

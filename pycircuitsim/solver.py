@@ -448,7 +448,7 @@ def _selected_full_stamp(
 ) -> Optional[Callable[..., Any]]:
     """Return a full-terminal stamp unless its explicit boundary disables it."""
     boundary = getattr(device, "evaluator_boundary", "native")
-    if boundary == "reduced-osdi":
+    if boundary in ("reduced-osdi", "raw-directnet"):
         return None
     if boundary != "native":
         raise ValueError(f"Unsupported evaluator boundary {boundary!r}")
