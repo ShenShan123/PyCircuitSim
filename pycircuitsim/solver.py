@@ -314,6 +314,11 @@ def _mosfet_types() -> tuple:
         types.extend([NMOS_BSIMAR, PMOS_BSIMAR])
     except ImportError:
         pass
+    try:
+        from pycircuitsim.models.mosfet_directnet_full import NMOS_DNF, PMOS_DNF
+        types.extend([NMOS_DNF, PMOS_DNF])
+    except ImportError:
+        pass
     return tuple(types)
 
 
@@ -341,6 +346,11 @@ def _pmos_types() -> tuple:
     try:
         from pycircuitsim.models.mosfet_bsimar import PMOS_BSIMAR
         types.append(PMOS_BSIMAR)
+    except ImportError:
+        pass
+    try:
+        from pycircuitsim.models.mosfet_directnet_full import PMOS_DNF
+        types.append(PMOS_DNF)
     except ImportError:
         pass
     return tuple(types)
@@ -438,7 +448,14 @@ def _has_nn_device(circuit: Circuit) -> bool:
     if cached is not None and cached[0] == key:
         return cached[1]
     from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase
-    val = any(isinstance(c, _MOSFETNNBase) for c in circuit.components)
+    try:
+        from pycircuitsim.models.mosfet_directnet_full import (
+            NMOS_DNF, PMOS_DNF,
+        )
+        nn_types = (_MOSFETNNBase, NMOS_DNF, PMOS_DNF)
+    except ImportError:
+        nn_types = (_MOSFETNNBase,)
+    val = any(isinstance(c, nn_types) for c in circuit.components)
     circuit._pcs_has_nn_cache = (key, val)
     return val
 
@@ -481,7 +498,7 @@ def _has_full_stamp_device(circuit: Circuit) -> bool:
 
 
 def _require_nn_caps(circuit: Circuit) -> None:
-    """Tell every NN device in ``circuit`` that this analysis reads caps.
+    """Tell every NN device that this analysis reads charge Jacobians.
 
     Only ``TransientSolver`` and ``ACSolver`` consume MOSFET
     capacitances. Marking them here lets a ``.dc`` / ``.op`` run skip the
@@ -490,6 +507,11 @@ def _require_nn_caps(circuit: Circuit) -> None:
     circuits with no NN device, and ``get_capacitances`` self-heals if
     some other caller needs caps anyway.
     """
+    for component in circuit.components:
+        require = getattr(component, "require_capacitance_jacobians", None)
+        if callable(require):
+            require()
+
     from pycircuitsim.models.mosfet_nn import _MOSFETNNBase
     _MOSFETNNBase.require_caps(circuit.components)
 

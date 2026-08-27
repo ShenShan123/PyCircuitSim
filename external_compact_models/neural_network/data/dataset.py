@@ -200,6 +200,20 @@ def load_and_split_bsimar(
     inputs = data["inputs"]
     geometry = data["geometry"]
     outputs = data["outputs"]
+    declared_columns = (
+        [str(value) for value in data["meta_output_columns"]]
+        if "meta_output_columns" in data.files else list(column_names)
+    )
+    if declared_columns != list(column_names):
+        raise ValueError(
+            "dataset declared output columns do not match the requested "
+            f"training contract: declared={declared_columns}, "
+            f"requested={list(column_names)}"
+        )
+    if outputs.ndim != 2 or outputs.shape[1] != len(declared_columns):
+        raise ValueError(
+            "dataset output width does not match its declared output columns"
+        )
     tech_codes = get_or_build_tech_variant_labels(
         data_path, device_type, verbose=True)
 
@@ -285,12 +299,11 @@ def load_and_split_bsimar(
               f"(size={len(local_table) + 1})")
 
     if output_subset is not None:
-        from neural_network.data.normalize import OUTPUT_COLUMN_ORDER
         for c in output_subset:
-            if c not in OUTPUT_COLUMN_ORDER:
+            if c not in declared_columns:
                 raise ValueError(
-                    f"output_subset column {c!r} not in OUTPUT_COLUMN_ORDER")
-        col_idx = [OUTPUT_COLUMN_ORDER.index(c) for c in output_subset]
+                    f"output_subset column {c!r} not in dataset columns")
+        col_idx = [declared_columns.index(c) for c in output_subset]
         outputs = outputs[:, col_idx]
         print(f"  Output subset: kept {len(output_subset)} cols "
               f"{output_subset}")
@@ -312,9 +325,13 @@ def load_and_split_bsimar(
         raise ValueError("split_mode must be 'combo' or 'random'")
 
     normalizer = normalizer_for(norm_mode)
+    selected_columns = (
+        list(output_subset) if output_subset is not None
+        else declared_columns
+    )
     normalizer.fit(
         inputs[train_idx], geometry[train_idx], outputs[train_idx],
-        output_columns=output_subset,
+        output_columns=selected_columns,
     )
 
     def _make(idxs: np.ndarray) -> MOSFETDataset:

@@ -155,12 +155,10 @@ def _check_nn_ac_banner_tracks_forced_family() -> None:
         assert verify_nn_ac.active_model_label() == "BSIM-AR (LEVEL=74)"
         assert verify_nn_ac.active_model_name() == "BSIM-AR"
     with patch.dict(os.environ, {"PYCIRCUITSIM_NN_FORCE_LEVEL": "75"}, clear=True):
-        try:
-            verify_nn_ac.active_model_label()
-        except ValueError as exc:
-            assert "unsupported NN model level 75" in str(exc)
-        else:
-            raise AssertionError("retired LEVEL=75 was accepted")
+        assert verify_nn_ac.active_model_label() == (
+            "DirectNet-Full (LEVEL=75)"
+        )
+        assert verify_nn_ac.active_model_name() == "DirectNet-Full"
 
     parsed = benchmark_collect.parse_complex_log(
         "verify_complex_sram_snm",

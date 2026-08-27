@@ -32,6 +32,12 @@ from neural_network.utils.seed import set_seed
 import numpy as np
 
 from neural_network.data.dataset import validate_canonical_dataset
+from neural_network.data.contracts import (
+    FULL_TERMINAL_OUTPUT_CONTRACT,
+    REDUCED_OUTPUT_CONTRACT,
+    dataset_filename,
+)
+from neural_network.data.normalize import FULL_TERMINAL_OUTPUT_COLUMN_ORDER
 
 
 # All TSMC + ASAP7 tech names for the per-tech `--tech-scope` auto-exclude.
@@ -126,15 +132,18 @@ def _parse_class_weights(spec: Optional[str]) -> Optional[Dict[str, float]]:
 def _resolve_data_path(args: argparse.Namespace) -> Path:
     if args.data:
         return Path(args.data)
-    if args.tech_scope != "universal":
-        return DATA_DIR / f"{args.tech_scope}_{args.device_type}.npz"
-    return DATA_DIR / f"universal_{args.device_type}.npz"
+    return DATA_DIR / dataset_filename(
+        args.tech_scope, args.device_type, args.output_contract,
+    )
 
 
 def _make_save_prefix(args: argparse.Namespace) -> str:
     if args.exp_name:
         return f"{args.exp_name}_{args.device_type}"
-    tag = {"direct": "dn", "transformer": "tf"}[args.model]
+    tag = (
+        "dnf" if args.output_contract == FULL_TERMINAL_OUTPUT_CONTRACT
+        else {"direct": "dn", "transformer": "tf"}[args.model]
+    )
     suffix = ""
     if args.loss_preset != "default":
         suffix = f"_{args.loss_preset}"
@@ -198,6 +207,32 @@ def _run(args: argparse.Namespace) -> None:
             if args.exclude_techs else None)
         if args.num_tech_codes is None:
             args.num_tech_codes = tech_scope_vocab_size("universal")
+
+    full_terminal = args.output_contract == FULL_TERMINAL_OUTPUT_CONTRACT
+    if full_terminal:
+        incompatible = (
+            args.model != "direct"
+            or args.loss_preset != "default"
+            or args.sobolev
+            or args.subthresh
+            or args.charge_sobolev
+            or args.monotonic
+            or args.ekv_core
+        )
+        if incompatible:
+            print(
+                "[error] --output-contract full-terminal is a separate "
+                "plain DirectNet family and is incompatible with Transformer, "
+                "legacy loss presets, or reduced-head auxiliary paths."
+            )
+            sys.exit(2)
+        if args.apply_filter != "off":
+            print(
+                "[error] --output-contract full-terminal requires "
+                "--apply-filter off; its current columns are i_d/i_g/i_b, "
+                "not the legacy id filter contract."
+            )
+            sys.exit(2)
 
     if (args.model, args.size) not in SIZE_PRESETS:
         print(f"[error] no preset for --model {args.model} "
@@ -271,6 +306,10 @@ def _run(args: argparse.Namespace) -> None:
         cfg = DirectNetConfig(**preset)
         train_directnet(
             str(data_path), config=cfg,
+            output_columns=(
+                list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER)
+                if full_terminal else None
+            ),
             column_weights=loss_preset["column_weights"],
             output_subset=loss_preset["output_subset"],
             sobolev=args.sobolev, lam_sobolev=args.lam_sobolev,
@@ -330,6 +369,13 @@ def main() -> None:
     p.add_argument("--device-type", choices=["nmos", "pmos"], default="nmos")
     p.add_argument("--data", type=str, default=None,
                    help="Path to .npz dataset (auto-resolved if omitted)")
+    p.add_argument(
+        "--output-contract",
+        choices=[REDUCED_OUTPUT_CONTRACT, FULL_TERMINAL_OUTPUT_CONTRACT],
+        default=REDUCED_OUTPUT_CONTRACT,
+        help="Train the legacy 13-head reduced model or the V7.6.0 "
+             "six-surface full-terminal DirectNet family.",
+    )
 
     # Per-flag overrides (None means: use the size-preset default)
     p.add_argument("--epochs", type=int, default=None)
@@ -369,8 +415,9 @@ def main() -> None:
                         "auto-set --exclude-techs (all other techs), "
                         "--num-tech-codes (per-tech vocab + UNKNOWN), "
                         "default --data path, and the save_prefix "
-                        "(tsmc{5,7}_dn_<size>_<dev>) recognized by the "
-                        "parser preempt cascade.")
+                        "(tsmc{5,7}_dn_<size>_<dev>, or *_dnf_* for the "
+                        "full-terminal contract) recognized by the parser "
+                        "preempt cascade.")
     p.add_argument("--exp-name", type=str, default=None,
                    help="Override the auto-generated save_prefix")
     p.add_argument("--overwrite", action="store_true")

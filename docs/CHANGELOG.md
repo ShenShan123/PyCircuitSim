@@ -18,6 +18,43 @@ The pre-compaction long-form narrative remains available in Git history.
   same.
 - Current detailed scoreboards are generated evidence, not maintained here.
 
+## V7.6 — full-terminal DirectNet recovery
+
+### V7.6.0 — attributed boundary errors and experimental LEVEL=75 (2026-08-27)
+
+- Fixed NN MOSFET instance multipliers across current, conductance, charge, and
+  capacitance paths. On the TSMC5 LDO diagnostic this reduced maximum node
+  error from 12.3250 V to 0.306632 V, but the deck remained 0/3; multiplier
+  handling was a real defect, not the complete AnalogGym cause.
+- Added matched full-OSDI, exact-reduced-OSDI, raw-DirectNet, production-trace,
+  and same-state evaluator boundaries. Exact reduced OSDI passed the LDO but
+  failed the high-temperature Fan sweep at 12/15 with an 817.3 V maximum state
+  error, establishing the full-terminal interface as a prerequisite. Removing
+  production corrections lost convergence and did not recover the failing
+  gate, so that change was rejected.
+- Introduced the explicit experimental `LEVEL=75 FAMILY=directnet-full`
+  family. It learns three solver-positive terminal currents and three charges,
+  closes source values analytically, reconstructs full 4×4 current and charge
+  Jacobians, and uses the existing full-terminal solver stamp. DC skips charge
+  derivatives; AC/transient request them lazily.
+- Added separate six-surface dataset/training contracts, checksum-bound model,
+  normalization and completion artifacts, `dnf` checkpoint resolution,
+  LEVEL=75 gate retargeting, and AnalogGym provenance/campaign support. The
+  runtime fails outside recorded input bounds instead of applying LEVEL=73
+  heuristic continuation.
+- A real TSMC5 full-terminal generation probe exposed 132 PMOS rows where the
+  `vds_zero` class exceeded its declared nominal envelope. Making that class
+  honor the full-terminal envelope moved the matched run to 5,008,380 rows,
+  780/780 bins, and zero rejects; the reduced generator remains unchanged.
+- Full-terminal generation and training now use isolated `dnf` dataset and
+  checkpoint stems by default, so the six-surface family cannot overwrite or
+  masquerade as a LEVEL=73 artifact. Scored campaign resume also rejects raw
+  evaluator and correction-trace diagnostic rows.
+- No LEVEL=75 checkpoint or circuit result is promoted. The generation probes
+  were dirty-source diagnostics, and multi-seed truth-surface, circuit,
+  AnalogGym, and performance gates remain outstanding. Detailed evidence is
+  in [`accuracy/DirectNet-L75-V760-recovery.md`](accuracy/DirectNet-L75-V760-recovery.md).
+
 ## V7.5 — AnalogGym migration
 
 ### V7.5.17 — PFN retirement and audited simple-circuit coverage (2026-08-26)

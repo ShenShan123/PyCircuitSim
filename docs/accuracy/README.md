@@ -10,6 +10,7 @@ contract before comparing results.
 |---|---|
 | [`DirectNet-L73-clean.md`](DirectNet-L73-clean.md) | production DirectNet, all clean tiers |
 | [`BSIM-AR-L74-clean.md`](BSIM-AR-L74-clean.md) | autoregressive Transformer, all clean tiers |
+| [`DirectNet-L75-V760-recovery.md`](DirectNet-L75-V760-recovery.md) | V7.6.0 attribution and experimental full-terminal status |
 | [`DirectNet-L73-recipes.md`](DirectNet-L73-recipes.md) | historical DirectNet recipe study |
 | [`BSIM-AR-L74-recipes.md`](BSIM-AR-L74-recipes.md) | historical BSIM-AR recipe study |
 | [`simple-circuits-recheck-2026-08-19.md`](simple-circuits-recheck-2026-08-19.md) | superseded V7.5.15 campaign audit trail |
@@ -22,6 +23,7 @@ contract before comparing results.
 |---|---|---|---|---|---|
 | 73 | **DirectNet** | **production** | V7.5.17 `large` **9/20** served; `xl` **10/20** best | V7.3 `crit15m`@xl **19/20** | 1.5 ms @ `large` |
 | 74 | **BSIM-AR** | higher fidelity | V7.5.17 `large` **12/20** | V7.3 `corroft`@medium **20/20** | 61.5 ms @ `medium` |
+| 75 | **DirectNet-Full** | experimental | no qualified checkpoint/campaign | none | not gated |
 
 Strict = passes at OMP ∈ {1, 2, 4}. Totals are **/20** — 4 circuits × 5 techs, TSMC6 included (`methodology.md` §2). Earlier reports scored /16 over four techs, so a /20 total here and a /16 total there can be the same measurement.
 

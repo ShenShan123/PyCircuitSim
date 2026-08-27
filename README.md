@@ -6,7 +6,7 @@ to generate BSIM-CMG data, train a compact model, and increase validation scope
 from devices to circuits while keeping NGSPICE on the identical OSDI model as
 ground truth.
 
-Current release: **V7.5.17**.
+Current release: **V7.6.0**.
 
 ## Documentation map
 
@@ -31,10 +31,13 @@ Each project document has one job:
 | 72 | BSIM-CMG through PyCMG/OSDI | Reference compact model |
 | 73 | DirectNet | Production NN fast path |
 | 74 | BSIM-AR Transformer | Higher-fidelity, slower NN |
+| 75 | DirectNet-Full | Experimental full-terminal NN path |
 
 Supported analyses are `.op`, `.dc`, `.ac`, and `.tran`. Devices include
 resistors, capacitors, independent voltage/current sources, PULSE sources,
-LEVEL=72–74 MOSFETs, and flattened `X` subcircuit instances.
+LEVEL=72–75 MOSFETs, and flattened `X` subcircuit instances. LEVEL=75 is a
+separate experimental family selected only by `FAMILY=directnet-full`; it is
+not the retired PFN family and has no production-qualified checkpoints.
 
 ## 0. Set up the environment
 
@@ -43,7 +46,7 @@ LEVEL=72–74 MOSFETs, and flattened `X` subcircuit instances.
 - Python 3.10 in a conda environment named `pycircuitsim`
 - NGSPICE 45.2 or newer with OSDI support
 - OpenVAF at `/usr/local/bin/openvaf`
-- PyTorch for LEVEL=73–74
+- PyTorch for LEVEL=73–75
 - A built BSIM-CMG OSDI binary at
   `external_compact_models/bsim_cmg/build/osdi/bsimcmg.osdi`
 
@@ -163,8 +166,12 @@ conda run -n pycircuitsim python \
 
 Datasets are written under
 `external_compact_models/neural_network/data/datasets/`. Each NPZ contains
-source-relative terminal inputs, geometry/technology features, 13 BSIM-CMG
-targets, and a sample-class label. Canonical generation aborts on any rejected
+source-relative terminal inputs, geometry/technology features, a sample-class
+label, and either 13 reduced targets or six full-terminal independent surfaces.
+Default full-terminal names include `dnf` (for example,
+`tsmc5_dnf_nmos.npz`) and cannot replace the reduced dataset at
+`tsmc5_nmos.npz`.
+Canonical generation aborts on any rejected
 point or dropped bin and writes a checksum-bound `.npz.complete` marker.
 `--allow-rejected-points` is diagnostic only; the training CLI rejects those
 artifacts, missing/stale markers, dirty-source provenance, and incomplete row
@@ -186,6 +193,8 @@ The unified trainer supports:
 
 - `--model direct` for LEVEL=73 DirectNet;
 - `--model transformer` for LEVEL=74 BSIM-AR;
+- `--model direct --output-contract full-terminal` for the separate,
+  experimental LEVEL=75 DirectNet-Full family;
 - `--size small|medium|large|xl`;
 - `--tech-scope tsmc5|tsmc6|tsmc7|tsmc12|tsmc16|universal`.
 
@@ -208,6 +217,14 @@ Repeat with `--device-type pmos`. Checkpoints are written to
 `external_compact_models/neural_network/checkpoints/` using stems such as
 `tsmc5_dn_large_nmos`. The CLI writes the model and normalization sidecar;
 Transformer also requires a configuration sidecar.
+
+Full-terminal training additionally requires a dataset generated with
+`--output-contract full-terminal` and `--apply-filter off`. Its default
+dataset and checkpoint names carry the distinct `dnf` family tag; an optional
+`--exp-name` must preserve that separation. It learns `i_d`, `i_g`, `i_b`,
+`qd`, `qg`, and `qb`; source current and charge are reconstructed analytically.
+V7.6.0 provides and verifies this pipeline but does not ship a qualified
+checkpoint pair, so LEVEL=73 remains the production NN path.
 
 For parallel DirectNet production training, let the campaign wrapper assign
 jobs across GPUs:
@@ -250,7 +267,9 @@ export PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS=tsmc5_dn_large_pmos
 
 Pins are checkpoint stems inside the package checkpoint directory, without
 `_best.pt`; they are not arbitrary file paths. Use `TF` instead of `DN` for
-LEVEL=74. A missing pinned stem is an error.
+LEVEL=74, or `DNF` for the explicit DirectNet-Full LEVEL=75 family. A missing
+pinned stem is an error. LEVEL=75 also requires checksum-valid model,
+normalization, and completion artifacts.
 
 The device and inverter gates below have dedicated DirectNet and BSIM-AR
 passes, so family-specific pins are sufficient. Other gates render LEVEL=73
@@ -389,6 +408,8 @@ The AnalogGym migration expands validation to a large, translated circuit
 corpus under `examples/complex_circuits/`. NGSPICE always runs the identical
 BSIM-CMG OSDI model as ground truth. PyCircuitSim defaults to LEVEL=72 and can
 instead run a completed, explicitly pinned DirectNet LEVEL=73 checkpoint pair.
+The campaign also accepts experimental LEVEL=75 pairs under distinct `dnf`
+stems; those runs are diagnostics until every promotion gate passes.
 Each result records the checkpoint and normalization hashes; resume refuses to
 mix rows from different weights.
 
@@ -461,12 +482,14 @@ A MOS model declaration selects its implementation:
 ```spice
 .model nmos_ref NMOS (LEVEL=72 TECH=tsmc5 VT=lvt)
 .model nmos_nn  NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)
+.model nmos_full NMOS (LEVEL=75 FAMILY=directnet-full TECH=tsmc5 VT=lvt)
 M1 out in 0 0 nmos_nn L=16n NFIN=10
 .dc Vin 0 0.8 0.01
 .end
 ```
 
-LEVEL=74 uses the same netlist shape. NN technologies require
+LEVEL=74 uses the LEVEL=73 netlist shape; LEVEL=75 additionally requires the
+explicit family token shown above. NN technologies require
 `TECH` and `VT`; ASAP7 has no NN checkpoints. Parser-supported suffixes include
 `f`, `p`, `n`, `u`, `m`, `k`, `meg`, and `g`.
 

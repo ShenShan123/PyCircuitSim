@@ -71,18 +71,32 @@ _TRANSIENT_DIAGNOSTIC_ENV = (
 )
 
 
-def _directnet_stems(tech: str, size: str) -> Dict[str, str]:
-    """Checkpoint stems for one explicitly pinned DirectNet campaign."""
+def _checkpoint_stems(
+    tech: str, size: str, model_level: int,
+) -> Dict[str, str]:
+    """Checkpoint stems for one explicitly pinned neural-model campaign."""
+    family_tag = {73: "dn", 75: "dnf"}.get(model_level)
+    if family_tag is None:
+        raise ValueError(
+            f"LEVEL={model_level} does not use a DirectNet checkpoint"
+        )
     return {
-        device: f"{tech.lower()}_dn_{size}_{device}"
+        device: f"{tech.lower()}_{family_tag}_{size}_{device}"
         for device in ("nmos", "pmos")
     }
 
 
-def _require_directnet_checkpoints(tech: str, size: str) -> None:
+def _directnet_stems(tech: str, size: str) -> Dict[str, str]:
+    """Backward-compatible LEVEL=73 checkpoint stem helper."""
+    return _checkpoint_stems(tech, size, 73)
+
+
+def _require_model_checkpoints(
+    tech: str, size: str, model_level: int,
+) -> None:
     """Reject missing or interrupted checkpoints before campaign fan-out."""
     missing: List[Path] = []
-    for stem in _directnet_stems(tech, size).values():
+    for stem in _checkpoint_stems(tech, size, model_level).values():
         checkpoint = CHECKPOINT_DIR / f"{stem}_best.pt"
         norm = CHECKPOINT_DIR / f"{stem}_norm.npz"
         complete = checkpoint.with_suffix(checkpoint.suffix + ".complete")
@@ -91,8 +105,13 @@ def _require_directnet_checkpoints(tech: str, size: str) -> None:
     if missing:
         rendered = "\n".join(f"  - {path}" for path in missing)
         raise SystemExit(
-            "DirectNet campaign requires completed, explicitly pinned "
+            "Neural-model campaign requires completed, explicitly pinned "
             f"checkpoints:\n{rendered}")
+
+
+def _require_directnet_checkpoints(tech: str, size: str) -> None:
+    """Backward-compatible LEVEL=73 checkpoint preflight."""
+    _require_model_checkpoints(tech, size, 73)
 
 
 def _model_matches_row(row: object, tech: str, model_level: int,
@@ -122,22 +141,34 @@ def _model_matches_row(row: object, tech: str, model_level: int,
         }
     if not isinstance(model, dict) or model.get("level") != model_level:
         return False
+    expected_family = {73: "directnet", 75: "directnet_full"}.get(model_level)
+    if expected_family is None or model.get("family") != expected_family:
+        return False
+    if (model.get("evaluator_boundary", "native") != "native"
+            or bool(model.get("correction_trace", False))):
+        return False
     checkpoints = model.get("checkpoints")
     if not isinstance(checkpoints, dict):
         return False
-    expected = _directnet_stems(tech, checkpoint_size)
+    expected = _checkpoint_stems(tech, checkpoint_size, model_level)
     for device, stem in expected.items():
         info = checkpoints.get(device)
         checkpoint = CHECKPOINT_DIR / f"{stem}_best.pt"
         norm = CHECKPOINT_DIR / f"{stem}_norm.npz"
+        completion = checkpoint.with_suffix(checkpoint.suffix + ".complete")
         if not (
             isinstance(info, dict)
             and info.get("stem") == stem
             and bool(info.get("complete"))
             and checkpoint.is_file()
             and norm.is_file()
+            and completion.is_file()
             and info.get("checkpoint_sha256") == file_sha256(checkpoint)
             and info.get("norm_sha256") == file_sha256(norm)
+        ):
+            return False
+        if model_level == 75 and (
+            info.get("completion_sha256") != file_sha256(completion)
         ):
             return False
     return True
@@ -339,10 +370,11 @@ def run_deck(tech: str, cat: str, design: str, deck: str, out: Path,
     policy = _campaign_policy(cat, deck, refine)
     env["PYCIRCUITSIM_BENCH_CAMPAIGN_POLICY"] = json.dumps(
         policy, sort_keys=True, separators=(",", ":"))
-    if model_level == 73:
-        pins = _directnet_stems(tech, checkpoint_size)
-        env["PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS"] = pins["nmos"]
-        env["PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS"] = pins["pmos"]
+    if model_level in (73, 75):
+        pins = _checkpoint_stems(tech, checkpoint_size, model_level)
+        level_tag = {73: "DN", 75: "DNF"}[model_level]
+        env[f"PYCIRCUITSIM_NN_CHECKPOINT_{level_tag}_NMOS"] = pins["nmos"]
+        env[f"PYCIRCUITSIM_NN_CHECKPOINT_{level_tag}_PMOS"] = pins["pmos"]
         env["PYCIRCUITSIM_NN_STRICT_TECH_CODE"] = "1"
     if policy["transient_refine"]:
         env["PYCIRCUITSIM_BENCH_TRAN_REFINE"] = "1"
@@ -406,7 +438,9 @@ def summarize(tech: str, out: Path, families: List[str], model_level: int = 72,
               code_commit: Optional[str] = None,
               refine: bool = False) -> str:
     """Markdown summary over the JSON rows present in ``out``."""
-    model_name = "BSIM-CMG" if model_level == 72 else "DirectNet"
+    model_name = {
+        72: "BSIM-CMG", 73: "DirectNet", 75: "DirectNet-Full",
+    }[model_level]
     lines = [
         f"# AnalogGym campaign — {tech} — {model_name} LEVEL={model_level}",
         "",
@@ -564,9 +598,10 @@ def main(argv: Optional[List[str]] = None) -> int:
                     help="re-run decks whose JSON already exists")
     ap.add_argument("--summarize-only", action="store_true")
     ap.add_argument("--deck-timeout", type=float, default=3600.0)
-    ap.add_argument("--model-level", type=int, choices=(72, 73), default=72,
+    ap.add_argument("--model-level", type=int, choices=(72, 73, 75), default=72,
                     help="PyCircuitSim compact-model level: 72=BSIM-CMG, "
-                         "73=DirectNet (default: %(default)s)")
+                         "73=DirectNet, 75=DirectNet-Full "
+                         "(default: %(default)s)")
     ap.add_argument("--checkpoint-size",
                     choices=("small", "medium", "large", "xl"),
                     default="large",
@@ -591,8 +626,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     )
     code_commit = str(provenance["code_commit"])
 
-    if args.model_level == 73:
-        _require_directnet_checkpoints(tech, args.checkpoint_size)
+    if args.model_level in (73, 75):
+        _require_model_checkpoints(
+            tech, args.checkpoint_size, args.model_level,
+        )
 
     failed: List[Dict[str, Any]] = []
     if not args.summarize_only:

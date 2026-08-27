@@ -9,6 +9,7 @@ This package contains all circuit component models including:
   - NMOS_CMG, PMOS_CMG (LEVEL=72) — BSIM-CMG via PyCMG/OSDI
   - NMOS_NN, PMOS_NN (LEVEL=73) — DirectNet MLP
   - NMOS_BSIMAR, PMOS_BSIMAR (LEVEL=74) — BSIMAR v3 Transformer
+  - NMOS_DNF, PMOS_DNF (LEVEL=75) — full-terminal DirectNet MLP
 """
 
 from pycircuitsim.models.base import Component

@@ -49,6 +49,11 @@ from pycmg.nn_generate import (
 from pycmg.sweep import save_npz
 
 from neural_network.data.sampling import stratified_sample_indices
+from neural_network.data.contracts import (
+    FULL_TERMINAL_OUTPUT_CONTRACT,
+    REDUCED_OUTPUT_CONTRACT,
+    dataset_filename,
+)
 
 
 def _default_data_dir() -> Path:
@@ -210,9 +215,10 @@ def main() -> None:
     # v5 plan §4-B5: dataset versioning + tech exclusion.
     parser.add_argument(
         "--version", default="",
-        help="Version tag prefixed onto output filenames "
-             "(e.g. 'v5' -> universal_v5_{nmos,pmos}.npz). "
-             "Empty string preserves the legacy unversioned name.",
+        help="Version tag inserted after the scope in output filenames "
+             "(e.g. 'v5' -> universal_v5_nmos.npz, or "
+             "universal_v5_dnf_nmos.npz for full-terminal data). Empty "
+             "preserves the unversioned name.",
     )
     parser.add_argument(
         "--exclude-techs", default="",
@@ -262,6 +268,13 @@ def main() -> None:
         help="Write a diagnostic artifact despite rejected points/bins. "
              "Canonical datasets fail instead.",
     )
+    parser.add_argument(
+        "--output-contract",
+        choices=[REDUCED_OUTPUT_CONTRACT, FULL_TERMINAL_OUTPUT_CONTRACT],
+        default=REDUCED_OUTPUT_CONTRACT,
+        help="Training targets: legacy reduced 13-head outputs or the "
+             "V7.6.0 six-surface full-terminal contract.",
+    )
 
     parser.add_argument("--data-dir", type=Path, default=None,
                         help="Output directory for .npz files")
@@ -295,9 +308,6 @@ def main() -> None:
     # v5 plan §4-B5: optional version tag. Empty -> legacy name.
     version_tag = args.version.strip().strip("_")
 
-    def _versioned(stem: str) -> str:
-        return f"{stem}_{version_tag}" if version_tag else stem
-
     common_kw = dict(
         temperatures=args.temperatures,
         n_lhs_samples=args.n_lhs_samples,
@@ -314,6 +324,7 @@ def main() -> None:
         enable_subvt_off=args.enable_subvt_off,
         max_l_ratio=args.max_l_ratio,
         allow_rejected_points=args.allow_rejected_points,
+        output_contract=args.output_contract,
     )
 
     if args.universal:
@@ -324,16 +335,16 @@ def main() -> None:
                 **common_kw,
             )
             _add_run_provenance(data)
-            out = data_dir / f"{_versioned('universal')}_{device_type}.npz"
+            out = data_dir / dataset_filename(
+                "universal", device_type, args.output_contract, version_tag,
+            )
             save_npz(data["inputs"], data["geometry"], data["outputs"],
                      out, metadata=data["metadata"],
                      sample_class=data.get("sample_class"))
             _write_completion_marker(out, data["inputs"].shape[0], data["metadata"])
             print(f"  Wrote {out} ({data['inputs'].shape[0]:,} rows)")
             if args.finetune_size > 0:
-                ft_out = data_dir / (
-                    f"finetune_{_versioned('universal')}_{device_type}.npz"
-                )
+                ft_out = data_dir / f"finetune_{out.name}"
                 _save_finetune_split(
                     data, out, ft_out, args.finetune_size, seed=args.seed,
                 )
@@ -359,8 +370,9 @@ def main() -> None:
                 **common_kw,
             )
             _add_run_provenance(data)
-            out = data_dir / (
-                f"{_versioned(tech.name.lower())}_{device_type}.npz"
+            out = data_dir / dataset_filename(
+                tech.name.lower(), device_type, args.output_contract,
+                version_tag,
             )
             save_npz(data["inputs"], data["geometry"], data["outputs"],
                      out, metadata=data["metadata"],
@@ -368,9 +380,7 @@ def main() -> None:
             _write_completion_marker(out, data["inputs"].shape[0], data["metadata"])
             print(f"  Wrote {out} ({data['inputs'].shape[0]:,} rows)")
             if args.finetune_size > 0:
-                ft_out = data_dir / (
-                    f"finetune_{_versioned(tech.name.lower())}_{device_type}.npz"
-                )
+                ft_out = data_dir / f"finetune_{out.name}"
                 _save_finetune_split(
                     data, out, ft_out, args.finetune_size, seed=args.seed,
                 )

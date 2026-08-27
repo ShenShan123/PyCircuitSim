@@ -17,6 +17,8 @@ from __future__ import annotations
 
 import os
 import time
+import hashlib
+import json
 from pathlib import Path
 from typing import Dict, Optional, Sequence, Set, Tuple
 
@@ -35,7 +37,8 @@ from neural_network.config import (
 )
 from neural_network.data.dataset import MOSFETDataset, load_and_split_bsimar
 from neural_network.data.normalize import (
-    OUTPUT_COLUMN_ORDER, reorder_outputs, unreorder_outputs,
+    FULL_TERMINAL_OUTPUT_COLUMN_ORDER, OUTPUT_COLUMN_ORDER,
+    reorder_outputs, unreorder_outputs,
     _NormalizerBase,
 )
 from neural_network.losses.bni_mae import MAELoss, compute_lds_weights_per_target
@@ -45,6 +48,14 @@ from neural_network.losses.bni_mae import MAELoss, compute_lds_weights_per_targe
 # dominates inverter trip-point NRMSE.
 _NORM_MODE = "asinh"
 _NUM_WORKERS = 8
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
 
 
 # ── Batch iteration (V7.0.2) ───────────────────────────────────────────────
@@ -689,6 +700,7 @@ def train_directnet(
     overwrite: bool = False,
     column_weights: Optional[np.ndarray] = None,
     output_subset: Optional[list[str]] = None,
+    output_columns: Optional[list[str]] = None,
     tech_scope: str = "universal",
     monotonic: bool = False,
     ekv_core: bool = False,
@@ -743,6 +755,10 @@ def train_directnet(
     the loss (combined with LDS). Use to down-weight or zero out targets
     the simulator does not consume — e.g. ``qs`` (always replaced by KCL).
 
+    ``output_columns`` declares the complete dataset/model contract. It
+    defaults to the checkpoint-compatible 13-column DirectNet layout; the
+    separate full-terminal family supplies its six independent surfaces.
+
     ``output_subset`` (list of column names): if given, train only on
     this subset of the 13 outputs (E2 4-output head). The model's
     ``output_dim`` becomes ``len(output_subset)`` and the saved norm
@@ -761,8 +777,25 @@ def train_directnet(
     if exclude_techs:
         print(f"  Excluding techs: {exclude_techs}")
 
+    training_columns = (
+        list(output_columns) if output_columns is not None
+        else list(OUTPUT_COLUMN_ORDER)
+    )
+    if tuple(training_columns) == FULL_TERMINAL_OUTPUT_COLUMN_ORDER:
+        if (output_subset is not None or monotonic or ekv_core or sobolev
+                or subthresh or charge_sobolev):
+            raise ValueError(
+                "The full-terminal family is a separate six-surface "
+                "DirectNet contract and cannot use reduced-head subsets, "
+                "backbones, or legacy auxiliary losses."
+            )
+        if apply_filter:
+            raise ValueError(
+                "The full-terminal family requires apply_filter=False; "
+                "the legacy filter is defined only for the id column."
+            )
     train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
-        data_path, OUTPUT_COLUMN_ORDER, device_type=device_type,
+        data_path, training_columns, device_type=device_type,
         train_ratio=config.train_ratio, val_ratio=config.val_ratio,
         apply_filter=apply_filter, exclude_techs=exclude_techs,
         norm_mode=_NORM_MODE, max_rows=max_rows,
@@ -844,7 +877,7 @@ def train_directnet(
                 f"missing={list(missing)} unexpected={list(unexpected)}")
         print(f"  Warm-started from {init_path.name}")
 
-    return _train_loop(
+    trained = _train_loop(
         model=model, is_transformer=False,
         train_ds=train_ds, val_ds=val_ds, test_ds=test_ds,
         normalizer=normalizer,
@@ -870,6 +903,19 @@ def train_directnet(
         charge_sobolev_floor=charge_sobolev_floor,
         amp=amp,
     )
+    if tuple(training_columns) == FULL_TERMINAL_OUTPUT_COLUMN_ORDER:
+        checkpoint_path = CHECKPOINT_DIR / f"{save_prefix}_best.pt"
+        norm_path = CHECKPOINT_DIR / f"{save_prefix}_norm.npz"
+        marker_path = checkpoint_path.with_suffix(".pt.complete")
+        marker_path.write_text(json.dumps({
+            "family": "directnet-full",
+            "checkpoint": checkpoint_path.name,
+            "checkpoint_sha256": _sha256_file(checkpoint_path),
+            "normalization": norm_path.name,
+            "normalization_sha256": _sha256_file(norm_path),
+            "output_columns": list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER),
+        }, sort_keys=True, indent=2) + "\n")
+    return trained
 
 
 def train_transformer(

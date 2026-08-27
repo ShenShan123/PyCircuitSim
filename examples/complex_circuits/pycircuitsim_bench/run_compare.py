@@ -340,13 +340,20 @@ class SimOptions:
             )
 
 
-_PY_MODEL_FAMILIES: Dict[int, str] = {72: "bsim_cmg", 73: "directnet"}
+_PY_MODEL_FAMILIES: Dict[int, str] = {
+    72: "bsim_cmg", 73: "directnet", 75: "directnet_full",
+}
 
 
-def _checkpoint_pin(device: str) -> Optional[str]:
-    """Return the effective explicit DirectNet pin for one polarity."""
+def _checkpoint_pin(device: str, model_level: int) -> Optional[str]:
+    """Return the effective explicit neural-model pin for one polarity."""
+    level_tag = {73: "DN", 75: "DNF"}.get(model_level)
+    if level_tag is None:
+        raise ValueError(
+            f"LEVEL={model_level} does not use a DirectNet checkpoint"
+        )
     names = (
-        f"PYCIRCUITSIM_NN_CHECKPOINT_DN_{device.upper()}",
+        f"PYCIRCUITSIM_NN_CHECKPOINT_{level_tag}_{device.upper()}",
         f"PYCIRCUITSIM_NN_CHECKPOINT_{device.upper()}",
         "PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE",
     )
@@ -385,14 +392,14 @@ def _model_provenance(
         out["evaluator_boundary"] = opts.evaluator_boundary
     if opts.correction_trace:
         out["correction_trace"] = True
-    if td.model_level != 73:
+    if td.model_level not in (73, 75):
         return out
 
     from neural_network.config import CHECKPOINT_DIR           # noqa: PLC0415
 
     checkpoints: Dict[str, Any] = {}
     for device in ("nmos", "pmos"):
-        pin = _checkpoint_pin(device)
+        pin = _checkpoint_pin(device, td.model_level)
         if pin is None:
             checkpoints[device] = {"selection": "automatic"}
             continue
@@ -400,7 +407,7 @@ def _model_provenance(
             stem = pin
         elif pin.endswith("_nmos") or pin.endswith("_pmos"):
             raise SimFailure(
-                f"DirectNet pin {pin!r} names the opposite polarity for "
+                f"Neural-model pin {pin!r} names the opposite polarity for "
                 f"{device}")
         else:
             stem = f"{pin}_{device}"
@@ -408,8 +415,9 @@ def _model_provenance(
         norm = CHECKPOINT_DIR / f"{stem}_norm.npz"
         if not checkpoint.is_file() or not norm.is_file():
             raise SimFailure(
-                f"DirectNet provenance cannot resolve {stem}: expected "
+                f"Neural-model provenance cannot resolve {stem}: expected "
                 f"{checkpoint} and {norm}")
+        completion = checkpoint.with_suffix(checkpoint.suffix + ".complete")
         checkpoints[device] = {
             "selection": "explicit",
             "stem": stem,
@@ -417,9 +425,11 @@ def _model_provenance(
             "checkpoint_sha256": file_sha256(checkpoint),
             "norm": str(norm.resolve()),
             "norm_sha256": file_sha256(norm),
-            "complete": checkpoint.with_suffix(
-                checkpoint.suffix + ".complete").is_file(),
+            "complete": completion.is_file(),
         }
+        if completion.is_file():
+            checkpoints[device]["completion"] = str(completion.resolve())
+            checkpoints[device]["completion_sha256"] = file_sha256(completion)
     out["checkpoints"] = checkpoints
     return out
 
@@ -2278,8 +2288,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser.add_argument(
         "--model-level", type=int, choices=sorted(_PY_MODEL_FAMILIES),
         default=72,
-        help="PyCircuitSim compact-model level: 72=BSIM-CMG, 73=DirectNet "
-             "(default: %(default)s)",
+        help="PyCircuitSim compact-model level: 72=BSIM-CMG, 73=DirectNet, "
+             "75=DirectNet-Full (default: %(default)s)",
     )
     parser.add_argument(
         "--evaluator-boundary",

@@ -36,7 +36,19 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from neural_network.data.contracts import (
+    FULL_TERMINAL_OUTPUT_COLUMN_ORDER,
+    FULL_TERMINAL_OUTPUT_CONTRACT,
+    REDUCED_OUTPUT_CONTRACT,
+)
+
 from .sweep import NN_OUTPUT_COLUMNS, find_threshold
+
+
+OUTPUT_CONTRACTS: Dict[str, Sequence[str]] = {
+    REDUCED_OUTPUT_CONTRACT: NN_OUTPUT_COLUMNS,
+    FULL_TERMINAL_OUTPUT_CONTRACT: FULL_TERMINAL_OUTPUT_COLUMN_ORDER,
+}
 from .model import Model, Instance
 from .nn_config import (
     OSDI_PATH,
@@ -127,7 +139,7 @@ def _source_hash_metadata(bins: Sequence[BinSpec]) -> Dict[str, object]:
             cards[key] = _sha256(path)
     osdi = Path(OSDI_PATH).resolve()
     return {
-        "generator_release": "V7.5.17",
+        "generator_release": "V7.6.0",
         "osdi_path": str(osdi),
         "osdi_sha256": _sha256(osdi),
         "modelcard_sha256_json": json.dumps(cards, sort_keys=True),
@@ -215,6 +227,7 @@ class BinSpec:
     n_vbs_lhs: int = DEFAULT_N_VBS_LHS
     # V6.4.7 S9b addition:
     enable_subvt_off: bool = DEFAULT_SUBVT_OFF
+    output_contract: str = "reduced"
 
 
 # ── Model + instance with smoke test (D6) ────────────────────────────────────
@@ -307,14 +320,42 @@ def _eval_single_point_with_reason(
     vb: float = 0.0,
     *,
     _silent: bool = False,
+    output_contract: str = "reduced",
 ) -> Tuple[Optional[Dict[str, float]], str]:
     """Evaluate one point and retain the rejection reason for manifests."""
+    if output_contract not in OUTPUT_CONTRACTS:
+        raise ValueError(
+            f"unknown output contract {output_contract!r}; expected one of "
+            f"{sorted(OUTPUT_CONTRACTS)}"
+        )
     try:
         result = inst.eval_dc({"d": vd, "g": vg, "s": vs, "e": vb})
-        out = {k: result[k] for k in NN_OUTPUT_COLUMNS}
+        if output_contract == FULL_TERMINAL_OUTPUT_CONTRACT:
+            terminal_values = [
+                result[key]
+                for key in ("id", "ig", "is", "ie", "qd", "qg", "qs", "qb")
+            ]
+            if any(not math.isfinite(value) for value in terminal_values):
+                return None, "non_finite_output"
+            if any(abs(result[key]) > 1.0
+                   for key in ("id", "ig", "is", "ie")):
+                return None, "terminal_current_over_1A"
+            # OSDI currents point into the external terminals. Store the
+            # three independent surfaces in the solver's positive-leaving
+            # convention; source is reconstructed by KCL at inference.
+            out = {
+                "i_d": -result["id"],
+                "i_g": -result["ig"],
+                "i_b": -result["ie"],
+                "qd": result["qd"],
+                "qg": result["qg"],
+                "qb": result["qb"],
+            }
+        else:
+            out = {k: result[k] for k in NN_OUTPUT_COLUMNS}
         if any(math.isnan(v) or math.isinf(v) for v in out.values()):
             return None, "non_finite_output"
-        if abs(out["id"]) > 1.0:
+        if output_contract == "reduced" and abs(out["id"]) > 1.0:
             return None, "terminal_current_over_1A"
         return out, ""
     except Exception as exc:
@@ -487,14 +528,19 @@ def _anchor_points(
 def _vds_zero_line_points(
     vdd: float,
     is_pmos: bool,
+    voltage_box_factor: float = 2.0,
 ) -> List[Tuple[float, float, float]]:
     """Dense samples along Vds=0 to enforce the Id(Vds=0)=0 boundary.
 
-    Returns (vg, vd=0, vbs) tuples spanning the full Vg range at Vds=0.
-    60 points per bin (20 Vg x 3 Vbs).
+    Returns (vg, vd=0, vbs) tuples spanning the declared Vg range at Vds=0.
+    The legacy reduced contract keeps its 2x-VDD default; the full-terminal
+    family passes its explicit certified-envelope factor. 60 points per bin
+    (20 Vg x 3 Vbs).
     """
+    if voltage_box_factor <= 0.0:
+        raise ValueError("voltage_box_factor must be positive")
     s = -1.0 if is_pmos else 1.0
-    vg_steps = np.linspace(0, s * 2.0 * vdd, 20)
+    vg_steps = np.linspace(0, s * voltage_box_factor * vdd, 20)
     vbs_steps = [0.0, s * 0.25 * vdd, s * 0.5 * vdd]
     return [(float(vg), 0.0, float(vbs)) for vg in vg_steps for vbs in vbs_steps]
 
@@ -865,6 +911,7 @@ def generate_one_bin(spec: BinSpec) -> Optional[Dict[str, np.ndarray]]:
         nonlocal failed
         result, reason = _eval_single_point_with_reason(
             inst, vd=float(vd), vg=float(vg), vs=0.0, vb=float(vbs),
+            output_contract=spec.output_contract,
         )
         if result is None:
             failed += 1
@@ -874,7 +921,8 @@ def generate_one_bin(spec: BinSpec) -> Optional[Dict[str, np.ndarray]]:
             return False
         inputs.append(np.array([vd, vg, 0.0, vbs]))
         geometry.append(geo.copy())
-        outputs.append(np.array([result[k] for k in NN_OUTPUT_COLUMNS]))
+        output_columns = OUTPUT_CONTRACTS[spec.output_contract]
+        outputs.append(np.array([result[k] for k in output_columns]))
         classes.append(klass)
         return True
 
@@ -888,8 +936,18 @@ def generate_one_bin(spec: BinSpec) -> Optional[Dict[str, np.ndarray]]:
     # V6.3 adds the reverse_vds corridor (Vd<0 NMOS frame; mirror for PMOS)
     # so the NN learns reverse conduction instead of relying on the
     # mosfet_nn.py f_id=0 reverse clamp.
+    vds_zero_factor = (
+        spec.voltage_box_factor
+        if spec.output_contract == FULL_TERMINAL_OUTPUT_CONTRACT else 2.0
+    )
+    for vg, vd, vbs in _vds_zero_line_points(
+        spec.vdd, is_pmos, voltage_box_factor=vds_zero_factor,
+    ):
+        _eval_and_keep(
+            vg, vd, vbs, SAMPLE_CLASS_CODES["vds_zero"],
+        )
+
     for _gen_fn, _klass in (
-        (_vds_zero_line_points, SAMPLE_CLASS_CODES["vds_zero"]),
         (_subthreshold_transition_points, SAMPLE_CLASS_CODES["subthresh"]),
         (_small_vds_points, SAMPLE_CLASS_CODES["small_vds"]),
         (_reverse_vds_points, SAMPLE_CLASS_CODES["reverse_vds"]),
@@ -1028,6 +1086,7 @@ def enumerate_bins(
     n_vbs_lhs: int = DEFAULT_N_VBS_LHS,
     enable_subvt_off: bool = DEFAULT_SUBVT_OFF,
     max_l_ratio: Optional[float] = DEFAULT_MAX_L_RATIO,
+    output_contract: str = "reduced",
 ) -> List[BinSpec]:
     """Enumerate every (variant, L, NFIN, T) bin spec for a tech/polarity.
 
@@ -1035,6 +1094,11 @@ def enumerate_bins(
     bin; see ``NNTechConfig.get_geometry_combos``. Unset reproduces the
     lower-corner-only grid.
     """
+    if output_contract not in OUTPUT_CONTRACTS:
+        raise ValueError(
+            f"unknown output contract {output_contract!r}; expected one of "
+            f"{sorted(OUTPUT_CONTRACTS)}"
+        )
     variants = variant_names or tech.variant_names
     if not variants:
         raise ValueError(
@@ -1075,6 +1139,7 @@ def enumerate_bins(
                     overshoot_per_axis=overshoot_per_axis,
                     n_vbs_lhs=n_vbs_lhs,
                     enable_subvt_off=enable_subvt_off,
+                    output_contract=output_contract,
                 ))
                 counter += 1
     return bins
@@ -1168,12 +1233,18 @@ def _assemble(
     geometry = np.concatenate(geo_list, axis=0)
     outputs = np.concatenate(out_list, axis=0)
     sample_class = np.concatenate(cls_list, axis=0).astype(np.int8)
+    output_contract = str(metadata.get("output_contract", "reduced"))
+    dataset_variant = (
+        "v760_full_terminal_core_plus_tg"
+        if output_contract == FULL_TERMINAL_OUTPUT_CONTRACT
+        else "v7517_generated_core_plus_tg"
+    )
     metadata.update({
-        "dataset_variant": "v7517_generated_core_plus_tg",
+        "dataset_variant": dataset_variant,
         "generated_sample_class_names": np.array([
             SAMPLE_CLASS_NAMES[int(code)] for code in np.unique(sample_class)
         ]),
-        "externally_appended_sample_class_names": np.array(["traj_corridor"]),
+        "externally_appended_sample_class_names": np.array([], dtype=str),
         "manifest_json": json.dumps(manifest, sort_keys=True),
         "requested_rows": np.int64(n_kept_total + n_failed_total),
         "kept_rows": np.int64(n_kept_total),
@@ -1275,6 +1346,7 @@ def generate_dataset(
     enable_subvt_off: bool = DEFAULT_SUBVT_OFF,
     max_l_ratio: Optional[float] = DEFAULT_MAX_L_RATIO,
     allow_rejected_points: bool = False,
+    output_contract: str = "reduced",
 ) -> Dict[str, np.ndarray]:
     """Generate training data for one tech/polarity across all bins.
 
@@ -1313,6 +1385,7 @@ def generate_dataset(
         n_vbs_lhs=n_vbs_lhs,
         enable_subvt_off=enable_subvt_off,
         max_l_ratio=max_l_ratio,
+        output_contract=output_contract,
     )
 
     if verbose:
@@ -1339,7 +1412,8 @@ def generate_dataset(
         "vdd": tech.vdd,
         "temperatures_k": np.array(temperatures, dtype=np.float64),
         "voltage_box_factor": voltage_box_factor,
-        "output_columns": np.array(NN_OUTPUT_COLUMNS),
+        "output_columns": np.array(OUTPUT_CONTRACTS[output_contract]),
+        "output_contract": output_contract,
         "variants": np.array(variant_names or tech.variant_names),
         "sampler": sampler,
         "grid_per_axis": grid_per_axis,
@@ -1382,6 +1456,7 @@ def generate_universal_dataset(
     exclude_techs: Optional[Sequence[str]] = None,
     max_l_ratio: Optional[float] = DEFAULT_MAX_L_RATIO,
     allow_rejected_points: bool = False,
+    output_contract: str = "reduced",
 ) -> Dict[str, np.ndarray]:
     """Concatenate per-tech datasets across all 5 technologies and variants.
 
@@ -1416,6 +1491,7 @@ def generate_universal_dataset(
             n_vbs_lhs=n_vbs_lhs,
             enable_subvt_off=enable_subvt_off,
             max_l_ratio=max_l_ratio,
+            output_contract=output_contract,
         ))
 
     if verbose:
@@ -1437,7 +1513,8 @@ def generate_universal_dataset(
         "vdd": 0.0,
         "temperatures_k": np.array(temperatures, dtype=np.float64),
         "voltage_box_factor": voltage_box_factor,
-        "output_columns": np.array(NN_OUTPUT_COLUMNS),
+        "output_columns": np.array(OUTPUT_CONTRACTS[output_contract]),
+        "output_contract": output_contract,
         "variants": np.array(included_techs),
         "sampler": sampler,
         "grid_per_axis": grid_per_axis,

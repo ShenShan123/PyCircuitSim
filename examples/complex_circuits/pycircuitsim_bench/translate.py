@@ -477,25 +477,27 @@ def _model_stub(name: str, kind: str, *, tech: str,
     """Render one PyCircuitSim model declaration.
 
     LEVEL=72 resolves the original baked BSIM-CMG card through
-    ``modelcard_path``.  DirectNet instead needs the technology and VT flavor
-    explicitly.  The generated AnalogGym aliases own that flavor in their
+    ``modelcard_path``.  Neural families instead need the technology and VT
+    flavor explicitly.  The generated AnalogGym aliases own that flavor in their
     ``<n|p><vt>_l...`` prefix, so extracting it preserves the source deck's
     per-device model choice instead of flattening every device to one VT.
     """
     if model_level == 72:
         return f".model {name} {kind} (LEVEL=72)"
-    if model_level != 73:
+    if model_level not in (73, 75):
         raise TranslateError(
             f"Unsupported PyCircuitSim model level {model_level}; "
-            "AnalogGym supports LEVEL=72 or DirectNet LEVEL=73")
+            "AnalogGym supports LEVEL=72, DirectNet LEVEL=73, or "
+            "DirectNet-Full LEVEL=75")
     match = re.fullmatch(r"[np]([^_]+)_l\d+_f\d+", name, re.IGNORECASE)
     if match is None:
         raise TranslateError(
             f"Cannot recover VT flavor from AnalogGym model alias {name!r}")
     vt = match.group(1).lower()
+    family = " FAMILY=directnet-full" if model_level == 75 else ""
     return (
         f".model {name} {kind} "
-        f"(LEVEL=73 TECH={tech.lower()} VT={vt})"
+        f"(LEVEL={model_level}{family} TECH={tech.lower()} VT={vt})"
     )
 
 

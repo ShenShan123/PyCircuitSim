@@ -58,7 +58,9 @@ from tests.common.nn import nrmse as _nrmse_pct, mre as _mre_pct
 # ASAP7 is out of scope; LEVEL=74 BSIMAR out of scope.
 # ---------------------------------------------------------------------------
 BENCH_TECHS: List[str] = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
-_MODEL_NAMES = {73: "DirectNet", 74: "BSIM-AR"}
+_MODEL_NAMES = {
+    73: "DirectNet", 74: "BSIM-AR", 75: "DirectNet-Full",
+}
 
 
 def _active_model_level() -> int | str:
@@ -72,7 +74,8 @@ def _active_model_level() -> int | str:
         ) from exc
     if level not in _MODEL_NAMES:
         raise ValueError(
-            f"unsupported NN model level {level}; supported levels are 73 and 74"
+            f"unsupported NN model level {level}; supported levels are "
+            "73, 74, and 75"
         )
     return level
 
