@@ -25,10 +25,10 @@ printed metric interpreted by eye.
 
 | complex gate | pass condition |
 |---|---|
-| `verify_complex_ring_osc.py` | period error ≤ 5% |
-| `verify_complex_opamp.py` | open-loop DC gain error ≤ 10%; trip shift is diagnostic |
-| `verify_complex_sram_snm.py` | every lobe is positive and lobe NRMSE ≤ 10% at every NFIN corner |
-| `verify_complex_switchcap.py` | transfer error ≤ 5% of VDD and droop ≤ max(10% of reference droop, 0.1% of VDD) |
+| `verify_circuit_ring_osc.py` | period error ≤ 5% |
+| `verify_circuit_opamp.py` | open-loop DC gain error ≤ 10%; trip shift is diagnostic |
+| `verify_circuit_sram_snm.py` | every lobe is positive and lobe NRMSE ≤ 10% at every NFIN corner |
+| `verify_circuit_switchcap.py` | transfer error ≤ 5% of VDD and droop ≤ max(10% of reference droop, 0.1% of VDD) |
 
 The complex score is 4 circuits × 5 technologies = **20 cells per tier**.
 Reports before V7.3 used four electrically distinct technologies and `/16`;
@@ -40,7 +40,7 @@ rescale before comparing totals.
 | `verify_nn_multi_tech_dc.py` | Id–Vgs NRMSE < 10% for every L/NFIN/VT configuration |
 | `verify_nn_multi_tech_tran.py` | inverter transient over the same sweep |
 | `verify_nn_ac.py` | gain error ≤ 1.5 dB, f3dB ratio 0.7–1.43, magnitude NRMSE ≤ 10%; phase is diagnostic |
-| `verify_complex_opamp_ac.py` | gain error ≤ 3 dB, GBW ratio 0.6–1.67, PM error ≤ 15°, valid refined reference bias, converged NN operating point |
+| `verify_circuit_opamp_ac.py` | gain error ≤ 3 dB, GBW ratio 0.6–1.67, PM error ≤ 15°, valid refined reference bias, converged NN operating point |
 | `verify_nn_lifted_source_dc.py` | source-relative-frame canary, NRMSE ≤ 10% |
 
 ## 3. Determinism and execution

@@ -34,7 +34,7 @@ from pycircuitsim.solver import (
 )
 from pycircuitsim.circuit import Circuit
 from pycircuitsim.models.passive import VoltageSource
-from tests.simple_circuits import verify_complex_opamp_ac as opamp_ac
+from tests.simple_circuits import verify_circuit_opamp_ac as opamp_ac
 from tests.simple_circuits import verify_nn_ac
 
 
@@ -353,28 +353,42 @@ def _check_error_rows_count_in_device_denominators() -> None:
         assert entry["rows"]["TSMC5_pmos_base"]["status"] == "ERROR"
 
 
-def _check_explicit_opamp_errors_are_complete_failures() -> None:
+def _check_explicit_circuit_errors_are_complete_failures() -> None:
     """Caught convergence errors stay in report denominators without metrics."""
     with tempfile.TemporaryDirectory() as raw:
         root = Path(raw)
         logs = {
+            "verify_complex_ring_osc": (
+                "TSMC5    | ERROR — ValueError('outside certified support')\n",
+                "outside certified support",
+            ),
             "verify_complex_opamp": (
-                "TSMC5    | ERROR — RuntimeError('DC operating point did not converge')\n"
+                "TSMC5    | ERROR — RuntimeError('DC operating point did not converge')\n",
+                "DC operating point did not converge",
+            ),
+            "verify_complex_sram_snm": (
+                "TSMC5    |     5 | ERROR — ValueError('outside certified support')\n",
+                "outside certified support",
+            ),
+            "verify_complex_switchcap": (
+                "TSMC5    | ERROR — ValueError('outside certified support')\n",
+                "outside certified support",
             ),
             "verify_complex_opamp_ac": (
-                "  TSMC5    | ERROR — DC operating point did not converge\n"
+                "  TSMC5    | ERROR — DC operating point did not converge\n",
+                "DC operating point did not converge",
             ),
         }
-        for suite, summary in logs.items():
+        for suite, (summary, _error_fragment) in logs.items():
             log = root / "dn" / "small" / "tsmc5" / f"{suite}.omp1.log"
             log.parent.mkdir(parents=True, exist_ok=True)
             log.write_text(summary + "===V710_DONE rc=1===\n")
 
         data = collect.collect(root)
-        for suite in logs:
+        for suite, (_summary, error_fragment) in logs.items():
             entry = data["dn"]["small"][suite]["TSMC5"]["omp1"]
             assert entry["status"] == "ERROR"
-            assert "DC operating point did not converge" in entry["error"]
+            assert error_fragment in entry["error"]
             assert docs._report_result_complete(suite, entry)
             assert "metric" not in entry
             assert not docs._report_result_complete(
@@ -383,6 +397,30 @@ def _check_explicit_opamp_errors_are_complete_failures() -> None:
             assert not docs._report_result_complete(
                 suite, {"rc": "0", "status": "ERROR", "error": "bad"},
             )
+
+        ring = data["dn"]["small"]["verify_complex_ring_osc"]["TSMC5"]
+        assert collect._verdict(ring) == "ERROR"
+        assert docs.verdict_mark("ERROR", None) == "ERROR"
+
+        docs.PASS_DATA["error_render"] = {
+            "dnf": {
+                "small": {
+                    "verify_complex_opamp_ac": {
+                        "TSMC5": {
+                            "omp1": {
+                                "rc": "1", "status": "ERROR",
+                                "error": "outside support",
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        try:
+            with docs.evidence_pass("error_render"):
+                assert "| small | ERROR |" in docs.device_tables("dnf", False)
+        finally:
+            docs.PASS_DATA.pop("error_render")
 
 
 def _check_clean_pool() -> None:
@@ -874,7 +912,7 @@ def main() -> int:
     _check_invalid_rendering()
     _check_device_metrics_survive_collection()
     _check_error_rows_count_in_device_denominators()
-    _check_explicit_opamp_errors_are_complete_failures()
+    _check_explicit_circuit_errors_are_complete_failures()
     _check_clean_pool()
     _check_job_generator_help_is_read_only()
     _check_training_lifecycle_subprocesses()

@@ -18,23 +18,57 @@ owned by [`methodology.md`](methodology.md).
 
 <!--HEADLINE-->
 
+Only three of the 80 strict complex cells pass: the medium TSMC6/TSMC7
+opamps and the XL TSMC16 opamp. The tier curve is **0 → 2 → 0 → 1/20**;
+larger models therefore show no monotonic qualification gain.
+
 ## By testcase
 
 <!--TESTCASE-->
+
+Every ring-oscillator and switched-capacitor cell is an explicit `ERROR`.
+Every SRAM cell also errors before all required lobes complete, even where a
+completed lobe has a small diagnostic NRMSE. Most failures are certified-input
+support violations during circuit iteration—for example, a PMOS source-relative
+drain voltage of 0.65 V against a recorded upper bound of 0.52 V. These are
+scientific/runtime qualification failures, not missing jobs, and remain in the
+denominator without invented numeric metrics.
 
 ## By technology
 
 <!--BYTECH-->
 
+TSMC6 and TSMC7 are the controlled repeat and produce identical scores. They
+count as two campaign columns but only one independent ground truth.
+
 ## By scale
 
 <!--BYSCALE-->
+
+Neither the complex curve nor the device-level curves improve monotonically
+with parameter count. Capacity alone does not resolve the observed interface
+and support-envelope failures.
 
 ## Device and AC suites
 
 <!--DEVICE-->
 
-## Interpretation
+Parametric DC passes **59 → 59 → 58 → 58/129** configurations. All 64 PMOS
+configurations fail at every tier, while NMOS passes 59/65 at small and medium
+and 58/65 at large and XL. This headline is dominated by an interface-contract
+mismatch: LEVEL=75's scalar `calculate_current()` exposes signed solver-positive
+drain-terminal current, while the legacy PMOS device gate expects a positive
+PMOS magnitude. The table is retained as executed, but it is not a pure measure
+of PMOS surface-fit error.
+
+Parametric transient passes **30 → 30 → 30 → 29/100**. The numeric aggregates
+come from configurations that returned metrics—principally the six VTC rows
+per technology—while unsupported transient rows remain `ERROR`. Device CS-amp
+AC improves from **8/10** at small to **10/10** at every larger tier, showing
+useful local current/charge derivatives at the tested converged operating
+points. Opamp open-loop AC follows the complex result at **0 → 2 → 0 → 1/5**.
+
+## Qualification verdict
 
 The tables preserve every scientific failure and every declared parametric
 configuration. Numeric aggregates omit only rows that produced no numeric
@@ -42,9 +76,18 @@ metric; those rows remain in the denominator as `ERROR`. Tier comparisons are
 within this family, and the TSMC6 column is the controlled TSMC7 repeat rather
 than an independent ground truth.
 
+DirectNet-Full is **not promotion-ready**. It demonstrates accurate in-domain
+VTCs and strong device-level AC above the small tier, but fails the dynamic and
+multi-device qualification needed to replace LEVEL=73. Promotion requires at
+least a circuit-safe support/iteration policy and a corrected scalar PMOS
+current contract, followed by a complete clean re-gate.
+
 ## Reproduction
 
 Checkpoints are `tsmc{5,6,7,12,16}_dnf_{small,medium,large,xl}_{nmos,pmos}`.
 Each requires `_best.pt`, `_norm.npz`, and the checksum-bound
-`_best.pt.complete` marker. See the repository README for the complete
+`_best.pt.complete` marker. This report is the isolated 240-job DirectNet-Full
+family pass in `results/v761_directnet_full_clean/`; the combined DirectNet /
+BSIM-AR scoreboard is intentionally not regenerated while the independent
+BSIM-AR campaign is still running. See the repository README for the complete
 generation, training, gate, coverage, and report commands.

@@ -43,18 +43,18 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from tests.common.complex import (  # noqa: E402
+from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BENCH_TECHS, active_model_label, active_model_name,
     get_baked_modelcard,
     run_ngspice_wrdata,
 )
-from tests.common.complex_ac import (  # noqa: E402
+from tests.common.circuit_ac import (  # noqa: E402
     ac_freq_grid, run_ngspice_ac_baked, run_directnet_ac, ac_metrics_extended,
     fmt_hz,
 )
 
 # Env-overridable so parallel checkpoint bake-offs can isolate output dirs
-# (same idiom as PYCIRCUITSIM_COMPLEX_RESULTS in tests/common/complex.py).
+# (same idiom as PYCIRCUITSIM_COMPLEX_RESULTS in tests/common/circuit_benchmarks.py).
 import os as _os  # noqa: E402
 RESULTS_BASE = Path(_os.environ.get(
     "PYCIRCUITSIM_NN_RESULTS",

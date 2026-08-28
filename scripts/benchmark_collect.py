@@ -514,7 +514,7 @@ def report(data) -> str:
 
     # ── capacity comparison: complex gate matrix (tech x circuit, S/M/L) ──
     L += ["## Capacity comparison (the headline view)", "",
-          "### Complex-circuit gate verdict by capacity", ""]
+          "### Circuit benchmark gate verdict by capacity", ""]
     rows = []
     for tech in TECHS:
         for suite in CPX_SUITES:

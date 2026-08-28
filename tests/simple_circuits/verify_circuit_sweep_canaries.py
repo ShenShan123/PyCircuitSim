@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""Equivalence canaries for the complex-circuit sweep builders (plan C2/C4).
+"""Equivalence canaries for the circuit benchmark sweep builders (plan C2/C4).
 
-The parametric builders in ``tests/common/complex.py`` must, at their default
+The parametric builders in ``tests/common/circuit_benchmarks.py`` must, at their default
 (baseline) stimulus, reproduce the single-point ship-gate decks line-for-line —
 otherwise a sweep "baseline" silently diverges from the authoritative
-``verify_complex_*.py`` gate. These canaries assert that, normalized for
+``verify_circuit_*.py`` gate. These canaries assert that, normalized for
 whitespace/comments, the sweep builder line-set equals the REAL ship-gate deck
 for BOTH the DirectNet and the NGSPICE-ground-truth side of every circuit:
 
@@ -34,7 +34,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "tests"))
 
-from tests.common.complex import (  # noqa: E402
+from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BENCH_TECHS,
     OpAmpParams, RingOscParams, SwitchCapParams, SramParams,
     directnet_opamp, directnet_ringosc, directnet_switchcap, directnet_sram_lobe,
@@ -43,13 +43,13 @@ from tests.common.complex import (  # noqa: E402
 )
 # REAL single-point ship-gate deck producers (B8): diff the sweep builders
 # against these, not against hand-copied replicas.
-from tests.simple_circuits.verify_complex_opamp import (  # noqa: E402
+from tests.simple_circuits.verify_circuit_opamp import (  # noqa: E402
     directnet_opamp_deck, ngspice_opamp_body)
-from tests.simple_circuits.verify_complex_ring_osc import (  # noqa: E402
+from tests.simple_circuits.verify_circuit_ring_osc import (  # noqa: E402
     directnet_ring_deck, ngspice_ring_body)
-from tests.simple_circuits.verify_complex_switchcap import (  # noqa: E402
+from tests.simple_circuits.verify_circuit_switchcap import (  # noqa: E402
     directnet_sc_deck, ngspice_sc_body)
-from tests.simple_circuits.verify_complex_sram_snm import (  # noqa: E402
+from tests.simple_circuits.verify_circuit_sram_snm import (  # noqa: E402
     directnet_sram_lobe_deck, ngspice_sram_lobe_body)
 
 # The sweep ring/switchcap probe window the orchestrator uses at baseline.
@@ -79,7 +79,7 @@ def _diff(tag: str, side: str, sweep_text: str, ship_text: str) -> int:
 def main() -> int:
     fails = 0
     print("=" * 70)
-    print("Complex-circuit sweep builder equivalence canaries")
+    print("Circuit sweep builder equivalence canaries")
     print("  (sweep baseline builders  ==  REAL single-point ship-gate decks)")
     print("=" * 70)
 

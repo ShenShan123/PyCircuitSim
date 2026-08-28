@@ -1,6 +1,6 @@
 """Guard: every benchmark geometry must be resolved by the training grid.
 
-V7.4.2. The complex-circuit gates pin NMOS L=16 nm / PMOS L=20 nm, but the
+V7.4.2. The circuit benchmark gates pin NMOS L=16 nm / PMOS L=20 nm, but the
 NN datasets sampled L only at each PDK length bin's *lower corner* — and
 short-channel bins are wide (TSMC5's shortest spans L in [6, 20] nm). For
 TSMC5/6/7 the benchmark NMOS therefore sat deep inside an unsampled bin
@@ -40,7 +40,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg"))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from tests.common.complex import BENCH, BENCH_TECHS  # noqa: E402
+from tests.common.circuit_benchmarks import BENCH, BENCH_TECHS  # noqa: E402
 from neural_network.config import (  # noqa: E402
     DATA_DIR,
     TECH_CONFIGS,

@@ -14,8 +14,8 @@ Ground truth is ALWAYS NGSPICE BSIM-CMG (AGENTS.md Validation rule).
 Report MRE / R2 / NRMSE / MaxErr.
 
 Usage:
-    conda run -n pycircuitsim python tests/simple_circuits/verify_complex_opamp.py
-    conda run -n pycircuitsim python tests/simple_circuits/verify_complex_opamp.py --tech TSMC12
+    conda run -n pycircuitsim python tests/simple_circuits/verify_circuit_opamp.py
+    conda run -n pycircuitsim python tests/simple_circuits/verify_circuit_opamp.py --tech TSMC12
 """
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ if str(PROJECT_ROOT) not in sys.path:
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "tests"))
 
 from tests.common.base import SIMPLE_DECKS, render_reference_deck  # noqa: E402
-from tests.common.complex import (  # noqa: E402
+from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech, active_model_label,
     active_model_name,
     get_baked_modelcard, run_ngspice_wrdata,
@@ -45,7 +45,7 @@ from tests.common.complex import (  # noqa: E402
 GAIN_TOL = 0.10            # +/-10% open-loop DC gain gate
 # audit B5c: an NGSPICE reference gain below this V/V means the cell is biased
 # out of its amplifying region — it is not an opamp, so no DirectNet run can
-# certify it. Mirrors the parametric twin (tests/common/complex_sweep.py
+# certify it. Mirrors the parametric twin (tests/common/circuit_sweep.py
 # OPAMP_MIN_GAIN). The shipped cells sit at 160-190 V/V, ~30x above the floor.
 OPAMP_MIN_GAIN = 5.0
 TEMPLATE = SIMPLE_DECKS / "directnet_opamp_miller_dc.sp"
@@ -102,8 +102,8 @@ def ngspice_opamp_body(bt: BenchTech, baked: Path) -> Dict[str, str]:
     bsimcmg_opamp_miller_dc.cir``, rendered per tech. This function owns the
     bias and the sweep window, nothing else.
 
-    Pure (returns text) so verify_complex_sweep_canaries can diff it against the
-    parametric ``tests.common.complex.ngspice_opamp`` builder (bug report B8).
+    Pure (returns text) so verify_circuit_sweep_canaries can diff it against the
+    parametric ``tests.common.circuit_benchmarks.ngspice_opamp`` builder (bug report B8).
     """
     vcm, vbn, vbp = _bias(bt)
     body = render_reference_deck(NG_TEMPLATE, {
@@ -167,7 +167,7 @@ def run_one(bt: BenchTech) -> Dict:
     if region_err:
         # audit B5c: bail before spending the DirectNet run — an out-of-region
         # reference cannot certify anything. Ordering mirrors the parametric
-        # twin's `_err` in tests/common/complex_sweep.py.
+        # twin's `_err` in tests/common/circuit_sweep.py.
         print(f"    {region_err} — not a usable opamp reference")
         return {"tech": bt.name, "ng_gain": ng_gain, "ng_trip": ng_trip,
                 "error": region_err}

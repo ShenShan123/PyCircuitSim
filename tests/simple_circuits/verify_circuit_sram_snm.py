@@ -29,9 +29,9 @@ Ground truth is ALWAYS NGSPICE BSIM-CMG (AGENTS.md Validation rule).
 Report MRE / R2 / NRMSE / MaxErr.
 
 Usage:
-    conda run -n pycircuitsim python tests/simple_circuits/verify_complex_sram_snm.py
-    conda run -n pycircuitsim python tests/simple_circuits/verify_complex_sram_snm.py --tech TSMC5
-    conda run -n pycircuitsim python tests/simple_circuits/verify_complex_sram_snm.py --nfin 2,5,10
+    conda run -n pycircuitsim python tests/simple_circuits/verify_circuit_sram_snm.py
+    conda run -n pycircuitsim python tests/simple_circuits/verify_circuit_sram_snm.py --tech TSMC5
+    conda run -n pycircuitsim python tests/simple_circuits/verify_circuit_sram_snm.py --nfin 2,5,10
 """
 from __future__ import annotations
 
@@ -53,7 +53,7 @@ if str(PROJECT_ROOT) not in sys.path:
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "tests"))
 
 from tests.common.base import SIMPLE_DECKS, render_reference_deck  # noqa: E402
-from tests.common.complex import (  # noqa: E402
+from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech, active_model_label,
     active_model_name,
     get_baked_modelcard, run_ngspice_wrdata, parse_netlist, full_metrics,
@@ -87,8 +87,8 @@ def ngspice_sram_lobe_body(bt: BenchTech, nfin: int, baked: Path) -> Dict[str, s
     baked modelcard, which is why it appears in the signature but not in the
     substitutions.
 
-    Pure (returns text) so verify_complex_sweep_canaries can diff it against the
-    parametric ``tests.common.complex.ngspice_sram_lobe`` builder (B7/B8)."""
+    Pure (returns text) so verify_circuit_sweep_canaries can diff it against the
+    parametric ``tests.common.circuit_benchmarks.ngspice_sram_lobe`` builder (B7/B8)."""
     body = render_reference_deck(NG_TEMPLATE, {
         "BAKED_LIB": str(baked),
         "VDD": f"{bt.vdd}",

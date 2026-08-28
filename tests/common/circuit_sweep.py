@@ -1,4 +1,4 @@
-"""Parametric sweep harness for the four DirectNet complex circuits.
+"""Parametric sweep harness for the four DirectNet circuit benchmarks.
 
 Built in V6.4.8+ (``docs/CHANGELOG.md``). Mirrors the
 inverter sweep harness (``tests/common/nn_sweep.py``) but for the opamp /
@@ -7,7 +7,7 @@ ring-oscillator / switched-cap / 6T-SRAM benchmarks. Sweeps technology, VT
 per-circuit input stimuli, baseline-gated, against the NGSPICE BSIM-CMG
 (LEVEL=72) ground truth — never a simplified model (AGENTS.md Validation rule).
 
-The four single-point ``verify_complex_*.py`` ship gates are UNTOUCHED; this is
+The four single-point ``verify_circuit_*.py`` ship gates are UNTOUCHED; this is
 additive infra. Hard gates: every swept config is a real PASS/FAIL at the
 circuit's domain tolerance. Bake / OSDI-Fatal / absent-checkpoint /
 out-of-region → ERROR (never a silent FAIL). 3-state exit code:
@@ -43,7 +43,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 from tests.common.base import ALL_TECHS, TECH_COLORS  # noqa: E402
-from tests.common.complex import (  # noqa: E402
+from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BENCH_TECHS, PROJECT_ROOT, RESULTS_BASE,
     BenchTech, OpAmpParams, RingOscParams, SwitchCapParams, SramParams,
     bench_variant, usable_vts,
@@ -99,7 +99,7 @@ def all_dimensions(circuit: str) -> List[str]:
 # Config
 # ===========================================================================
 @dataclass
-class ComplexSweepConfig:
+class CircuitSweepConfig:
     bt: BenchTech
     tech_key: str
     circuit: str             # opamp | ringosc | switchcap | sram
@@ -113,8 +113,8 @@ class ComplexSweepConfig:
         return f"{self.tech_key}_{self.circuit}_{self.config_name}"
 
 
-def make_baseline(circuit: str, tech_key: str) -> ComplexSweepConfig:
-    return ComplexSweepConfig(
+def make_baseline(circuit: str, tech_key: str) -> CircuitSweepConfig:
+    return CircuitSweepConfig(
         bt=BENCH[tech_key], tech_key=tech_key, circuit=circuit,
         stim=DEFAULT_STIM[circuit], sweep_type="baseline",
         config_name="baseline", swept={})
@@ -249,22 +249,22 @@ def _stim_variants(circuit: str,
 
 
 def build_parametric(circuit: str, tech_key: str,
-                     dimension: str) -> List[ComplexSweepConfig]:
+                     dimension: str) -> List[CircuitSweepConfig]:
     """All parametric configs for one circuit/tech/dimension ('all' → every
     dimension)."""
     dims = all_dimensions(circuit) if dimension in ("all", "") else [dimension]
     base_stim = DEFAULT_STIM[circuit]
-    cfgs: List[ComplexSweepConfig] = []
+    cfgs: List[CircuitSweepConfig] = []
     for d in dims:
         if d in SHARED_DIMS or (circuit == "sram" and d in
                                 ("vt_sym", "vt_asym", "l", "nfin", "vdd")):
             for bt, cname, swept in _shared_variants(tech_key, d):
-                cfgs.append(ComplexSweepConfig(
+                cfgs.append(CircuitSweepConfig(
                     bt, tech_key, circuit, base_stim, d, cname, swept))
         else:
             bt0 = BENCH[tech_key]
             for stim, cname, swept in _stim_variants(circuit, d):
-                cfgs.append(ComplexSweepConfig(
+                cfgs.append(CircuitSweepConfig(
                     bt0, tech_key, circuit, stim, d, cname, swept))
     return cfgs
 
@@ -276,12 +276,12 @@ _NAN_METRICS = {"mre_pct": float("nan"), "r2": float("nan"),
                 "nrmse_pct": float("nan"), "max_err": float("nan")}
 
 
-def _err(cfg: ComplexSweepConfig, msg: str) -> Dict[str, Any]:
+def _err(cfg: CircuitSweepConfig, msg: str) -> Dict[str, Any]:
     return {"config": cfg, "status": "error", "error": msg,
             **_NAN_METRICS, "domain": {}}
 
 
-def _result(cfg: ComplexSweepConfig, passed: bool, metrics: Dict[str, float],
+def _result(cfg: CircuitSweepConfig, passed: bool, metrics: Dict[str, float],
             domain: Dict[str, Any]) -> Dict[str, Any]:
     return {"config": cfg, "status": "pass" if passed else "fail",
             "error": "", **metrics, "domain": domain}
@@ -290,7 +290,7 @@ def _result(cfg: ComplexSweepConfig, passed: bool, metrics: Dict[str, float],
 # ===========================================================================
 # Single-test orchestrators
 # ===========================================================================
-def run_single_opamp(cfg: ComplexSweepConfig, work_dir: Path) -> Dict[str, Any]:
+def run_single_opamp(cfg: CircuitSweepConfig, work_dir: Path) -> Dict[str, Any]:
     work_dir.mkdir(parents=True, exist_ok=True)
     bt, p = cfg.bt, cfg.stim
     try:
@@ -332,7 +332,7 @@ def run_single_opamp(cfg: ComplexSweepConfig, work_dir: Path) -> Dict[str, Any]:
         "dn_gain": dn_gain, "gain_err_pct": gain_err, "trip_shift_mV": trip_shift})
 
 
-def run_single_ringosc(cfg: ComplexSweepConfig,
+def run_single_ringosc(cfg: CircuitSweepConfig,
                        work_dir: Path) -> Dict[str, Any]:
     work_dir.mkdir(parents=True, exist_ok=True)
     bt, p = cfg.bt, cfg.stim
@@ -395,7 +395,7 @@ def run_single_ringosc(cfg: ComplexSweepConfig,
         "period_err_pct": per_err, "partial": partial})
 
 
-def run_single_switchcap(cfg: ComplexSweepConfig,
+def run_single_switchcap(cfg: CircuitSweepConfig,
                          work_dir: Path) -> Dict[str, Any]:
     work_dir.mkdir(parents=True, exist_ok=True)
     bt, p = cfg.bt, cfg.stim
@@ -451,7 +451,7 @@ def _sram_force_ic(bt: BenchTech, nfin: int, work_dir: Path) -> bool:
     """Full 6T cell, wl=OFF/hold, both storage states must rail (force_ic)."""
     import logging
     from pycircuitsim.solver import DCSolver
-    from tests.common.complex import parse_netlist
+    from tests.common.circuit_benchmarks import parse_netlist
     ok_all = True
     for tag, (q0, qb0) in (("state1", (bt.vdd, 0.0)),
                            ("state0", (0.0, bt.vdd))):
@@ -482,7 +482,7 @@ def _sram_force_ic(bt: BenchTech, nfin: int, work_dir: Path) -> bool:
     return ok_all
 
 
-def run_single_sram(cfg: ComplexSweepConfig,
+def run_single_sram(cfg: CircuitSweepConfig,
                     work_dir: Path) -> Dict[str, Any]:
     work_dir.mkdir(parents=True, exist_ok=True)
     bt, p = cfg.bt, cfg.stim
@@ -517,7 +517,8 @@ def run_single_sram(cfg: ComplexSweepConfig,
     snm_err = (abs(dn_snm - ng_snm) / ng_snm * 100.0
                if ng_snm > 1e-6 else float("nan"))
     # B7: the SRAM sweep baseline must use the SAME pass definition as the
-    # authoritative single-point ship gate (verify_complex_sram_snm) —
+    # authoritative single-point ship gate (historical suite key
+    # verify_complex_sram_snm) —
     # positivity AND NGSPICE-NRMSE tracking. force_ic is a self-consistency
     # convergence probe (not an NGSPICE comparison): it is reported but NOT
     # gated, exactly as in the ship gate. Previously the sweep AND'd force_ic,
@@ -612,7 +613,7 @@ def verify_checkpoint_pin(tech_keys: List[str], results_dir: Path,
 # ===========================================================================
 # Baseline-gated multi-tech driver
 # ===========================================================================
-def run_complex_multi_tech(circuit: str, tech_keys: List[str], dimension: str,
+def run_circuit_multi_tech(circuit: str, tech_keys: List[str], dimension: str,
                            results_dir: Path,
                            pin_strict: bool = False) -> List[Dict[str, Any]]:
     runner = _RUNNERS[circuit]
@@ -751,13 +752,13 @@ def exit_code(results: List[Dict[str, Any]], tech_keys: List[str]) -> int:
 
 
 # ===========================================================================
-# Thin-driver entry point (shared by verify_complex_sweep.py's four circuits)
+# Thin-driver entry point (shared by verify_circuit_sweep.py's four circuits)
 # ===========================================================================
 def driver_main(circuit: str) -> int:
     import argparse
 
     ap = argparse.ArgumentParser(
-        description=f"DirectNet complex-circuit parametric sweep — {circuit}")
+        description=f"DirectNet circuit benchmark parametric sweep — {circuit}")
     ap.add_argument("--tech", default="TSMC7,TSMC16",
                     help="comma-separated techs (default TSMC7,TSMC16 — the "
                          "nodes with checkpoints present here)")
@@ -770,12 +771,12 @@ def driver_main(circuit: str) -> int:
 
     results_dir = RESULTS_BASE / circuit / "sweep"
     print("=" * 96)
-    print(f"DirectNet complex-circuit parametric sweep — {circuit}")
+    print(f"DirectNet circuit benchmark parametric sweep — {circuit}")
     print(f"  Techs: {', '.join(techs)}   Dimension: {args.dimension}")
     print(f"  Ground truth: NGSPICE BSIM-CMG (LEVEL=72)")
     print("=" * 96)
 
-    results = run_complex_multi_tech(circuit, techs, args.dimension,
+    results = run_circuit_multi_tech(circuit, techs, args.dimension,
                                      results_dir, pin_strict=args.pin_strict)
     print_summary(results, circuit)
     techtag = "-".join(techs)

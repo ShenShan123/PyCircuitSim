@@ -15,7 +15,7 @@ DECISION:
     dynamics 2x slow — indicts the solver/harness (huge finding).
 
 LIKE-FOR-LIKE GUARANTEES
-  * Circuit: identical to verify_complex_ring_osc.py — 5 stages, per stage
+  * Circuit: identical to verify_circuit_ring_osc.py — 5 stages, per stage
     PMOS L=20n NFIN=2 + NMOS L=16n NFIN=2 + 0.5 fF to ground, alternating
     .ic, VDD=0.75, TSMC7 ULVT (BENCH["TSMC7"]).
   * Modelcards: BOTH sides consume the same two resolved naive cards
@@ -24,7 +24,7 @@ LIKE-FOR-LIKE GUARANTEES
     rejects instance params); PyCircuitSim gets the unbaked merge +
     L/NFIN/TFIN on the M lines (tests/common/bsimcmg_tran.py pattern).
     Source-card sha256s are printed as proof.
-  * Runner: tests.common.complex.run_directnet_transient VERBATIM (S5b
+  * Runner: tests.common.circuit_benchmarks.run_directnet_transient VERBATIM (S5b
     constrained-.ic uic-equivalent start, same solver settings as every S6
     run). Only the module-global `parse_netlist` is swapped for one that
     passes modelcard_path/model_name_map to Parser — harness plumbing; the
@@ -62,12 +62,12 @@ for p in (ROOT / "external_compact_models" / "bsim_cmg" / "tests",
     if str(p) not in sys.path:
         sys.path.insert(0, str(p))
 
-import tests.common.complex as cx  # noqa: E402
-import tests.simple_circuits.verify_complex_ring_osc as ro_mod  # noqa: E402
-from tests.common.complex import (  # noqa: E402
+import tests.common.circuit_benchmarks as cx  # noqa: E402
+import tests.simple_circuits.verify_circuit_ring_osc as ro_mod  # noqa: E402
+from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BenchTech, full_metrics, run_directnet_transient,
 )
-from tests.simple_circuits.verify_complex_ring_osc import (  # noqa: E402
+from tests.simple_circuits.verify_circuit_ring_osc import (  # noqa: E402
     _period_from_wave, run_ngspice_ro,
 )
 
@@ -82,7 +82,7 @@ def _sha256(p: Path) -> str:
 
 def render_l72_netlist(bt: BenchTech, tstep: float, tstop: float,
                        out_path: Path) -> Path:
-    """The verify_complex_ring_osc RO, with LEVEL=72 .model lines.
+    """The verify_circuit_ring_osc RO, with LEVEL=72 .model lines.
 
     Topology/geometry identical to both the NGSPICE deck (run_ngspice_ro) and
     the LEVEL=73 template: stage i drives nd[i] from nd[i-1] (n5 wraps to
@@ -97,7 +97,7 @@ def render_l72_netlist(bt: BenchTech, tstep: float, tstop: float,
         "* 5-stage CMOS ring oscillator -- BSIM-CMG LEVEL=72 control "
         "(V6.4.7 S6)",
         f"* {bt.name} VT={bt.vt} VDD={bt.vdd} -- same circuit as "
-        "verify_complex_ring_osc.py",
+        "verify_circuit_ring_osc.py",
         "",
         f"Vdd vdd 0 {bt.vdd}",
         f".ic V(n1)=0.0 V(n2)={bt.vdd} V(n3)=0.0 V(n4)={bt.vdd} V(n5)=0.0",

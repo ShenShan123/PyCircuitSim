@@ -1,4 +1,4 @@
-"""Native-LEVEL=72 controls for the ring-osc + opamp complex gates.
+"""Native-LEVEL=72 controls for the ring-oscillator and opamp gates.
 
 The project's most productive discipline (force_ic, switchcap) is: *run the
 EXACT benchmark circuit through PyCircuitSim's OWN solver with the ground-truth
@@ -15,7 +15,7 @@ circuits — only the simulator differs.
 
 Usage:
     NGSPICE_BIN=$PWD/tools/ngspice-45.2/bin/ngspice \
-      conda run -n pycircuitsim python tests/diag/diag_l72_complex_control.py \
+      conda run -n pycircuitsim python tests/diag/diag_l72_circuit_control.py \
       --circuit ring,opamp --tech TSMC5,TSMC7,TSMC12,TSMC16
 """
 from __future__ import annotations
@@ -33,12 +33,12 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "tests"))
 
-from tests.common.complex import BENCH, RESULTS_BASE, BenchTech  # noqa: E402
+from tests.common.circuit_benchmarks import BENCH, RESULTS_BASE, BenchTech  # noqa: E402
 from pycircuitsim.parser import Parser  # noqa: E402
 from pycircuitsim.solver import DCSolver, TransientSolver  # noqa: E402
 from pycircuitsim.models.passive import VoltageSource  # noqa: E402
 
-# ring-osc gate constants (mirror verify_complex_ring_osc.py)
+# ring-osc gate constants (mirror verify_circuit_ring_osc.py)
 RO_TSTEP, RO_TSTOP, RO_SETTLE = 2e-12, 1.2e-9, 0.3e-9
 
 
@@ -123,7 +123,7 @@ def _period(t, v, mid, settle):
 
 def ring(bt: BenchTech) -> Dict:
     """L72-in-PyCircuitSim 5-stage ring osc vs NGSPICE."""
-    from tests.simple_circuits.verify_complex_ring_osc import run_ngspice_ro
+    from tests.simple_circuits.verify_circuit_ring_osc import run_ngspice_ro
     work = RESULTS_BASE / "l72_control" / "ring" / bt.name
     work.mkdir(parents=True, exist_ok=True)
     merged, n, p = _merged_card(bt, work)
@@ -176,7 +176,7 @@ def ring(bt: BenchTech) -> Dict:
 
 def opamp(bt: BenchTech) -> Dict:
     """L72-in-PyCircuitSim two-stage Miller opamp DC gain vs NGSPICE."""
-    from tests.simple_circuits.verify_complex_opamp import run_ngspice_opamp, _bias, _gain_trip
+    from tests.simple_circuits.verify_circuit_opamp import run_ngspice_opamp, _bias, _gain_trip
     from pycircuitsim.simulation import run_dc_sweep
     from pycircuitsim.visualizer import Visualizer
     work = RESULTS_BASE / "l72_control" / "opamp" / bt.name
@@ -253,7 +253,7 @@ def main() -> int:
     techs = [t.strip() for t in args.tech.split(",")]
 
     print("=" * 78)
-    print("Native-L72 control: EXACT complex circuits through PyCircuitSim's")
+    print("Native-L72 control: exact circuit benchmarks through PyCircuitSim's")
     print("own solver with ground-truth OSDI (no NN) vs NGSPICE.")
     print("  Gate that rejects ground-truth physics == mis-specified / solver-owned.")
     print("=" * 78)

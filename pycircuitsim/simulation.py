@@ -614,7 +614,7 @@ def run_transient(
     # so PyCircuitSim and NGSPICE would integrate from different initial states.
     # Default-off: only engaged when the netlist requests `uic`, so non-uic
     # decks are byte-identical. Mirrors the test harness's uic pinning
-    # (tests/common/complex.py run_directnet_transient).
+    # (tests/common/circuit_benchmarks.py run_directnet_transient).
     from pycircuitsim.models.passive import VoltageSource
     _uic_temps = []
     if analysis_params.get("uic") and circuit.initial_conditions:

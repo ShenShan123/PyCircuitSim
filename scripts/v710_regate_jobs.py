@@ -6,7 +6,7 @@ One line per job: ``tag variant TECH suite omp``.
 Pools (write one file each so they can be dispatched with different PAR):
 
 * ``dn``   — DirectNet, all 10 on-disk variants, full re-gate
-             (4 device suites + 4 complex circuits + OMP{1,2,4} on opamp/ring).
+             (4 device suites + 4 circuit benchmarks + OMP{1,2,4} on opamp/ring).
 * ``tf_dev``    — BSIM-AR device suites only, 5 priority variants (~40x per eval).
 * ``tf_strict`` — BSIM-AR strict-OMP sweep for the `large` corridor recipes,
                   the one gap BSIM-AR-L74-clean.md flags explicitly.

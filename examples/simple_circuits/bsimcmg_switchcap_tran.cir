@@ -1,7 +1,7 @@
 * Switched-capacitor unit cell — NGSPICE BSIM-CMG (LEVEL=72) ground truth
 *
 * The reference half of the switched-cap gate.
-* `tests/verify_complex_switchcap.py` renders this deck per technology and
+* `tests/simple_circuits/verify_circuit_switchcap.py` renders this deck per technology and
 * scores the charge-transfer level and hold droop of
 * `directnet_switchcap_tran.sp` against it. Ground truth is ALWAYS NGSPICE on
 * the identical BSIM-CMG OSDI model (AGENTS.md Validation rule).

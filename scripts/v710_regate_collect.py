@@ -39,7 +39,8 @@ _OPAMP_AC = re.compile(
     r"^\s*(TSMC\d+)\s*\| dc_gain_err=\s*(\S+)dB \| gbw_ratio=\s*(\S+) \| "
     r"pm_err=\s*(\S+)deg \| magNRMSE=\s*(\S+)% \| (\w+)", re.M)
 _SUMMARY_ERROR_ROW = re.compile(
-    r"^\s*(TSMC\d+)\s*\|\s*ERROR\s+[—-]\s+(.+?)\s*$", re.M,
+    r"^\s*(TSMC\d+)\s*\|(?:[^|\n]*\|)*\s*ERROR\s+[—-]\s+(.+?)\s*$",
+    re.M,
 )
 _DEV_ROW = re.compile(
     r"^\s+(TSMC\d+_\S+)\s+NRMSE=\s*(\S+)%\s+MRE=\s*(\S+)%\s+R2=\s*(\S+)\s+"
@@ -175,7 +176,7 @@ def collect(root: Path, require_manifest: bool = False) -> Dict:
                 entry["mean_mre"] = round(sum(r[2] for r in rows) / len(rows), 3)
                 entry["min_r2"] = round(min(r[3] for r in rows), 5)
                 entry["max_error"] = max(r[4] for r in rows)
-        else:  # complex circuits
+        else:  # circuit benchmarks
             circ = suite.replace("verify_complex_", "")
             if circ == "sram_snm":
                 vals = [float(m.group(1)) for m in _SRAM_ROW.finditer(txt)]
@@ -187,7 +188,7 @@ def collect(root: Path, require_manifest: bool = False) -> Dict:
                     vals = pat.findall(txt)
                     if vals:
                         entry["metric"] = float(vals[-1])
-        if suite in ("verify_complex_opamp", "verify_complex_opamp_ac"):
+        if suite.startswith("verify_complex_"):
             error = _summary_error(txt, tech_dir)
             if error is not None:
                 entry.update(status="ERROR", error=error)
@@ -201,6 +202,8 @@ def _verdict(cell: Dict, omp: str = "omp1") -> str:
         return "—"
     if not is_verdict(e):
         return "INVALID"
+    if e.get("status") == "ERROR":
+        return "ERROR"
     if e["rc"] == "0":
         return "PASS"
     return "FAIL"
@@ -212,6 +215,8 @@ def _strict(cell: Dict) -> str:
         return "partial"
     if any(v == "INVALID" for v in vs):
         return "INVALID"
+    if any(v == "ERROR" for v in vs):
+        return "ERROR"
     if all(v == "PASS" for v in vs):
         return "PASS"
     if all(v == "FAIL" for v in vs):

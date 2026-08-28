@@ -1,6 +1,6 @@
 * Two-stage Miller opamp — NGSPICE BSIM-CMG (LEVEL=72) ground truth
 *
-* The reference half of the opamp gate. `tests/verify_complex_opamp.py`
+* The reference half of the opamp gate. `tests/simple_circuits/verify_circuit_opamp.py`
 * renders this deck per technology and scores the DirectNet result in
 * `directnet_opamp_miller_dc.sp` against it. Ground truth is ALWAYS NGSPICE on
 * the identical BSIM-CMG OSDI model — never a simplified or self-defined

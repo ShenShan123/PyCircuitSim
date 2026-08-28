@@ -43,6 +43,15 @@ The pre-compaction long-form narrative remains available in Git history.
   reason counts preserved, while dropped bins and unknown exceptions remain
   fatal. Generator subprocesses are pinned to one BLAS thread so the ten-job
   canonical pass cannot exhaust the process/thread limit.
+- Completed the isolated 240-job DirectNet-Full clean qualification with all
+  jobs and checkpoint artifacts present and no infrastructure errors. Strict
+  complex scores were 0, 2, 0, and 1/20 from small through XL; certified-input
+  support errors and a scalar PMOS current-contract mismatch keep LEVEL=75
+  experimental. Detailed evidence is in
+  [`accuracy/DirectNet-L75-clean.md`](accuracy/DirectNet-L75-clean.md).
+- Renamed the simple-circuit gate modules and shared helpers from the ambiguous
+  `complex` vocabulary to `circuit`. Historical `verify_complex_*` campaign
+  keys remain stable so existing raw evidence and generated reports still load.
 
 ### V7.6.0 — attributed boundary errors and experimental LEVEL=75 (2026-08-27)
 

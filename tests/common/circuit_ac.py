@@ -1,6 +1,6 @@
-"""Shared infrastructure for the AC (small-signal) complex-circuit benchmark.
+"""Shared infrastructure for the AC (small-signal) circuit benchmark.
 
-V6.5 — extends the DC/transient complex-circuit harness (``complex.py``) into the
+V6.5 — extends the DC/transient circuit harness (``circuit_benchmarks.py``) into the
 frequency domain so DirectNet (LEVEL=73) AC accuracy can be gated against NGSPICE
 BSIM-CMG (LEVEL=72) ground truth — never a self-defined transfer function
 (AGENTS.md Validation rule).
@@ -9,7 +9,7 @@ AC linearizes about a DC operating point, so it is only physically meaningful fo
 circuits with a stable amplifying OP. This module supports the two such circuits:
 
   * the device-level common-source amplifier   (verify_nn_ac.py)
-  * the two-stage Miller opamp, open loop       (verify_complex_opamp_ac.py)
+  * the two-stage Miller opamp, open loop       (verify_circuit_opamp_ac.py)
 
 The free-running ring oscillator (astable, no stable OP) and the 6T SRAM
 (bistable) are deliberately EXCLUDED — neither has a defensible NGSPICE ``.ac``
@@ -34,7 +34,7 @@ from typing import Dict, List, Optional, Tuple
 import numpy as np
 
 # Single-thread torch BEFORE any inference (v664 P0) — same rationale and
-# PYCIRCUITSIM_TORCH_THREADS override as tests/common/complex.py: the AC gate
+# PYCIRCUITSIM_TORCH_THREADS override as tests/common/circuit_benchmarks.py: the AC gate
 # linearizes about the same basin-fragile OP the DC gates solve.
 try:
     import torch
@@ -90,7 +90,8 @@ def run_ngspice_ac_baked(
 
     ``body_lines`` is the circuit body (``.include "{baked}"``, ``.temp 27``,
     sources, device lines with NO instance params, caps) following the
-    ``complex.py`` baking convention. Delegates to ``verify_ac.run_ngspice_ac``
+    ``circuit_benchmarks.py`` baking convention. Delegates to
+    ``verify_ac.run_ngspice_ac``
     which writes a one-vector ``wrdata`` (columns [freq, real, imag] — no
     rad/deg ambiguity).
     """

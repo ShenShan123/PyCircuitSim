@@ -1,7 +1,7 @@
 * 5-stage CMOS ring oscillator — NGSPICE BSIM-CMG (LEVEL=72) ground truth
 *
 * The reference half of the ring-oscillator gate.
-* `tests/verify_complex_ring_osc.py` renders this deck per technology and
+* `tests/simple_circuits/verify_circuit_ring_osc.py` renders this deck per technology and
 * scores the oscillation period of `directnet_ring_osc_tran.sp` against it.
 * Ground truth is ALWAYS NGSPICE on the identical BSIM-CMG OSDI model
 * (AGENTS.md Validation rule).
@@ -11,8 +11,8 @@
 * L / NFIN / TFIN / DEVTYPE baked in. OSDI devices take the N prefix.
 *
 * Five stages, 0.5 fF per node. The .tran statement is supplied by the runner.
-* The parametric mirror in tests/common/complex.py sweeps the stage count, so
-* it builds its ring programmatically; verify_complex_sweep_canaries.py holds
+* The parametric mirror in tests/common/circuit_benchmarks.py sweeps the stage count, so
+* it builds its ring programmatically; verify_circuit_sweep_canaries.py holds
 * it line-for-line identical to THIS deck at the 5-stage baseline.
 
 .include "<BAKED_LIB>"

@@ -67,8 +67,8 @@ for p in (ROOT / "external_compact_models" / "bsim_cmg" / "tests",
         sys.path.remove(sp)
     sys.path.insert(0, sp)
 
-import tests.common.complex as cx  # noqa: E402
-from tests.common.complex import (  # noqa: E402
+import tests.common.circuit_benchmarks as cx  # noqa: E402
+from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BenchTech, run_directnet_transient, get_baked_modelcard,
 )
 from tests.common.base import OSDI_PATH, run_ngspice_subprocess  # noqa: E402

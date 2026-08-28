@@ -1,7 +1,7 @@
 * 6T SRAM read-SNM half-cell — DirectNet LEVEL=73
 *
 * The scored half of the SRAM static-noise-margin gate.
-* `tests/verify_complex_sram_snm.py` renders this deck per technology and per
+* `tests/simple_circuits/verify_circuit_sram_snm.py` renders this deck per technology and per
 * fin count and scores it point-by-point against the NGSPICE BSIM-CMG lobe in
 * `bsimcmg_sram_snm_dc.cir`.
 *

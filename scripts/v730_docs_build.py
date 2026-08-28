@@ -264,6 +264,8 @@ def strict(tag: str, variant: str, circ: str, tech: str
             metric = got[0].get("metric")
             if len(got) < len(omps):
                 return ("PARTIAL", metric)
+            if any(g.get("status") == "ERROR" for g in got):
+                return ("ERROR", metric)
             if rcs == {"0"}:
                 return ("PASS", metric)
             if "0" in rcs:
@@ -430,7 +432,7 @@ def device_tables(tag: str, recipes: bool) -> str:
             ("verify_nn_multi_tech_tran", "Parametric transient — `verify_nn_multi_tech_tran`",
              "mV")):
         out += [f"**{title}** *(mean NRMSE % / mean MRE % / min R² / "
-                f"max error {error_unit}; config fails in brackets)*", "",
+                f"max error {error_unit}; passing/total configs in parentheses)*", "",
                 "| group | " + " | ".join(TECHS) + " | pass |",
                 "|---|" + "---|" * (len(TECHS) + 1)]
         for label, key in _groups(tag, recipes):
@@ -487,7 +489,13 @@ def device_tables(tag: str, recipes: bool) -> str:
             n += 1
             ok = e["rc"] == "0"
             p += ok
-            cells.append(f"{'**PASS**' if ok else 'FAIL'} {e.get('dc_gain_err_db', '—')} dB")
+            if e.get("status") == "ERROR":
+                cells.append("ERROR")
+            else:
+                cells.append(
+                    f"{'**PASS**' if ok else 'FAIL'} "
+                    f"{e.get('dc_gain_err_db', '—')} dB"
+                )
         if n:
             out.append(f"| {label} | " + " | ".join(cells) + f" | **{p}/{n}** |")
     return "\n".join(out)
@@ -571,7 +579,7 @@ def _report_result_complete(suite: str, result: object) -> bool:
     """Whether one verdict includes the metrics its report table consumes."""
     if not isinstance(result, dict) or not is_verdict(result):
         return False
-    if suite in ("verify_complex_opamp", "verify_complex_opamp_ac"):
+    if suite.startswith("verify_complex_"):
         error = result.get("error")
         if result.get("status") == "ERROR":
             return (int(result["rc"]) != 0 and isinstance(error, str)

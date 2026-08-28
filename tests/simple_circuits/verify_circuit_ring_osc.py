@@ -13,8 +13,8 @@ Ground truth is ALWAYS NGSPICE BSIM-CMG -- never a simplified model
 (AGENTS.md Validation rule). Report MRE / R2 / NRMSE / MaxErr.
 
 Usage:
-    conda run -n pycircuitsim python tests/simple_circuits/verify_complex_ring_osc.py
-    conda run -n pycircuitsim python tests/simple_circuits/verify_complex_ring_osc.py --tech TSMC5,TSMC7
+    conda run -n pycircuitsim python tests/simple_circuits/verify_circuit_ring_osc.py
+    conda run -n pycircuitsim python tests/simple_circuits/verify_circuit_ring_osc.py --tech TSMC5,TSMC7
 """
 from __future__ import annotations
 
@@ -34,7 +34,7 @@ if str(PROJECT_ROOT) not in sys.path:
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "tests"))
 
 from tests.common.base import SIMPLE_DECKS, render_reference_deck  # noqa: E402
-from tests.common.complex import (  # noqa: E402
+from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech, active_model_label,
     active_model_name,
     get_baked_modelcard, run_ngspice_wrdata,
@@ -79,8 +79,8 @@ def ngspice_ring_body(bt: BenchTech, baked: Path) -> Dict[str, str]:
     bsimcmg_ring_osc_tran.cir``, rendered per tech. This function owns the
     supply, the seed and the transient window, nothing else.
 
-    Pure (returns text) so verify_complex_sweep_canaries can diff it against the
-    parametric ``tests.common.complex.ngspice_ringosc`` builder (bug report B8).
+    Pure (returns text) so verify_circuit_sweep_canaries can diff it against the
+    parametric ``tests.common.circuit_benchmarks.ngspice_ringosc`` builder (bug report B8).
     The parametric twin sweeps the stage count, so it still builds its ring in
     code; the canary is what holds the two identical at 5 stages.
     """

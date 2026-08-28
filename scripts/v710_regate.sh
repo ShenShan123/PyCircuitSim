@@ -204,7 +204,10 @@ if [ "${1:-}" = "_one" ]; then
   export PYCIRCUITSIM_COMPLEX_RESULTS="$iso/cplx" PYCIRCUITSIM_NN_RESULTS="$iso/nn"
   mkdir -p "$PYCIRCUITSIM_COMPLEX_RESULTS" "$PYCIRCUITSIM_NN_RESULTS"
 
-  test_file="$ROOT/tests/simple_circuits/${suite}.py"
+  # Campaign suite IDs are persisted in historical evidence. Keep those keys
+  # stable while resolving renamed simple-circuit modules on disk.
+  script_suite="${suite/verify_complex_/verify_circuit_}"
+  test_file="$ROOT/tests/simple_circuits/${script_suite}.py"
   if [ "$suite" = "verify_nn_multi_tech_dc" ]; then
     test_file="$ROOT/tests/single_devices/${suite}.py"
   fi

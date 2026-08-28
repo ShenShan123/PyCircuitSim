@@ -44,7 +44,7 @@ from tests.common.nn_sweep import (  # noqa: E402
 )
 
 # Env-overridable so parallel checkpoint bake-offs can isolate output dirs
-# (same idiom as PYCIRCUITSIM_COMPLEX_RESULTS in tests/common/complex.py).
+# (same idiom as PYCIRCUITSIM_COMPLEX_RESULTS in tests/common/circuit_benchmarks.py).
 import os as _os  # noqa: E402
 RESULTS_DIR = Path(_os.environ.get(
     "PYCIRCUITSIM_NN_RESULTS",

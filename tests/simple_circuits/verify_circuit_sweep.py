@@ -1,22 +1,22 @@
 #!/usr/bin/env python3
-"""Parametric sweep driver for all four complex circuits (DirectNet vs NGSPICE).
+"""Parametric sweep driver for all four circuit benchmarks (DirectNet vs NGSPICE).
 
 Sweeps tech / VT (sym + asym N/P) / geometry (L / NFIN / P-N ratio) / VDD /
 per-circuit stimulus, baseline-gated, with a 3-state exit code (0=all-pass,
 1=any-fail, 2=could-not-characterize). The single-point ship gates
-(``verify_complex_{opamp,ring_osc,switchcap,sram_snm}.py``) are untouched;
-``verify_complex_sweep_canaries.py`` holds this driver's builders line-for-line
+(``verify_circuit_{opamp,ring_osc,switchcap,sram_snm}.py``) are untouched;
+``verify_circuit_sweep_canaries.py`` holds this driver's builders line-for-line
 against the ship decks at the baseline stimulus.
 
-Until V7.5.9 this was four files — ``verify_complex_{opamp,ringosc,switchcap,
+Until V7.5.9 this was four files — ``verify_circuit_{opamp,ringosc,switchcap,
 sram}_sweep.py`` — each 33 lines that differed only in the circuit name handed
 to ``driver_main``. The circuit is an argument, so it is one now.
 
 Always CPU-pin:  CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1
 
 Usage:
-    python tests/simple_circuits/verify_complex_sweep.py opamp
-    python tests/simple_circuits/verify_complex_sweep.py sram --tech TSMC16 \\
+    python tests/simple_circuits/verify_circuit_sweep.py opamp
+    python tests/simple_circuits/verify_circuit_sweep.py sram --tech TSMC16 \\
         --dimension vt_asym
 """
 from __future__ import annotations
@@ -32,7 +32,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "tests"))
 
-from tests.common.complex_sweep import CIRCUITS, driver_main  # noqa: E402
+from tests.common.circuit_sweep import CIRCUITS, driver_main  # noqa: E402
 
 
 def main(argv: list[str] | None = None) -> int:

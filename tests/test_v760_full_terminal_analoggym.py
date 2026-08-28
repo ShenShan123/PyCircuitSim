@@ -12,7 +12,7 @@ from typing import Any
 from examples.complex_circuits.pycircuitsim_bench import campaign
 from examples.complex_circuits.pycircuitsim_bench import run_compare
 from examples.complex_circuits.pycircuitsim_bench import translate
-from tests.common import complex as complex_common
+from tests.common import circuit_benchmarks as circuit_common
 
 
 def test_level75_model_stub_is_explicit() -> None:
@@ -97,8 +97,8 @@ def test_level75_campaign_banner_names_selected_family(
     monkeypatch: Any,
 ) -> None:
     monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
-    assert complex_common.active_model_name() == "DirectNet-Full"
-    assert complex_common.active_model_label() == "DirectNet-Full (LEVEL=75)"
+    assert circuit_common.active_model_name() == "DirectNet-Full"
+    assert circuit_common.active_model_label() == "DirectNet-Full (LEVEL=75)"
 
 
 def test_level76_campaign_uses_tff_stems_and_banner(
@@ -109,8 +109,8 @@ def test_level76_campaign_uses_tff_stems_and_banner(
         "pmos": "tsmc5_tff_large_pmos",
     }
     monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "76")
-    assert complex_common.active_model_name() == "BSIM-AR-Full"
-    assert complex_common.active_model_label() == "BSIM-AR-Full (LEVEL=76)"
+    assert circuit_common.active_model_name() == "BSIM-AR-Full"
+    assert circuit_common.active_model_label() == "BSIM-AR-Full (LEVEL=76)"
 
 
 def test_scored_campaign_rejects_diagnostic_directnet_rows(

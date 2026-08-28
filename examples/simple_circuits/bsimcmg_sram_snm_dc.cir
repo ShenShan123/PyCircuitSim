@@ -1,7 +1,7 @@
 * 6T SRAM read-SNM half-cell — NGSPICE BSIM-CMG (LEVEL=72) ground truth
 *
 * The reference half of the SRAM static-noise-margin gate.
-* `tests/verify_complex_sram_snm.py` renders this deck per technology and per
+* `tests/simple_circuits/verify_circuit_sram_snm.py` renders this deck per technology and per
 * fin count, and scores the DirectNet butterfly lobe in
 * `directnet_sram_snm_dc.sp` against it point-by-point. Ground truth is ALWAYS
 * NGSPICE on the identical BSIM-CMG OSDI model (AGENTS.md Validation rule).

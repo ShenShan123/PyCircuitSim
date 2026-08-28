@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Complex-circuit AC gate — two-stage Miller opamp open-loop frequency response.
+"""Circuit AC gate — two-stage Miller opamp open-loop frequency response.
 
 DirectNet (LEVEL=73) vs NGSPICE BSIM-CMG (LEVEL=72) ground truth on the IDENTICAL
-opamp topology used by the DC opamp gate (tests/simple_circuits/verify_complex_opamp.py). Measures
+opamp topology used by the DC opamp gate (tests/simple_circuits/verify_circuit_opamp.py). Measures
 the small-signal open-loop response: DC gain, gain-bandwidth / unity-gain
 frequency, phase margin, −3 dB bandwidth.
 
@@ -21,7 +21,7 @@ Run CPU-pinned, repo ngspice:
 
     CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \\
         NGSPICE_BIN="$PWD/tools/ngspice-45.2/bin/ngspice" \\
-        python tests/simple_circuits/verify_complex_opamp_ac.py --tech TSMC12
+        python tests/simple_circuits/verify_circuit_opamp_ac.py --tech TSMC12
 """
 from __future__ import annotations
 
@@ -39,13 +39,13 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from tests.common.complex import (  # noqa: E402
+from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech, OpAmpParams,
     active_model_label, active_model_name, opamp_bias,
     get_baked_modelcard, run_ngspice_wrdata, run_directnet_dc_sweep,
     ngspice_opamp, directnet_opamp,
 )
-from tests.common.complex_ac import (  # noqa: E402
+from tests.common.circuit_ac import (  # noqa: E402
     ac_freq_grid, run_ngspice_ac_baked, run_directnet_ac, ac_metrics_extended,
     fmt_hz, fmt_ratio,
 )
@@ -60,7 +60,7 @@ BIAS_REFINE_STEP = 0.0001          # 0.1 mV resolves the 3-14 mV transition
 def _peak_gain_bias(vinp: np.ndarray, vout: np.ndarray) -> Tuple[float, float]:
     """Vinp at the peak-|dVout/dVin| point (the max-gain bias), and Vout there.
 
-    Matches the DC opamp gate's gain definition (verify_complex_opamp._gain_trip)
+    Matches the DC opamp gate's gain definition (verify_circuit_opamp._gain_trip)
     so the AC linearizes about each opamp's own steepest, highest-gain bias —
     not merely where Vout≈VDD/2, which diverges for an offset/distorted curve.
     """

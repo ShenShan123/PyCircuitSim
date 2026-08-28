@@ -360,13 +360,13 @@ Finish the default LEVEL=73 score matrix with the four multi-device cells:
 
 ```bash
 conda run -n pycircuitsim python \
-  tests/simple_circuits/verify_complex_ring_osc.py
+  tests/simple_circuits/verify_circuit_ring_osc.py
 conda run -n pycircuitsim python \
-  tests/simple_circuits/verify_complex_opamp.py
+  tests/simple_circuits/verify_circuit_opamp.py
 conda run -n pycircuitsim python \
-  tests/simple_circuits/verify_complex_sram_snm.py
+  tests/simple_circuits/verify_circuit_sram_snm.py
 conda run -n pycircuitsim python \
-  tests/simple_circuits/verify_complex_switchcap.py
+  tests/simple_circuits/verify_circuit_switchcap.py
 ```
 
 ### Run the complete clean checkpoint matrix

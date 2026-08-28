@@ -1,14 +1,14 @@
-"""Shared infrastructure for the DirectNet complex-circuit benchmark harness.
+"""Shared infrastructure for the DirectNet circuit benchmark harness.
 
 Phase 3 of the DirectNet V6.4 sprint.
 
 Four benchmark circuits exercise DirectNet (LEVEL=73) on larger topologies than
 a single inverter:
 
-  3a  verify_complex_ring_osc.py   — 5-stage CMOS ring oscillator (.tran)
-  3b  verify_complex_opamp.py      — two-stage Miller opamp (.op + .dc)
-  3c  verify_complex_sram_snm.py   — 6T SRAM read SNM butterfly (.dc, force_ic)
-  3d  verify_complex_switchcap.py  — switched-cap unit cell (.tran, PULSE)
+  3a  verify_circuit_ring_osc.py   — 5-stage CMOS ring oscillator (.tran)
+  3b  verify_circuit_opamp.py      — two-stage Miller opamp (.op + .dc)
+  3c  verify_circuit_sram_snm.py   — 6T SRAM read SNM butterfly (.dc, force_ic)
+  3d  verify_circuit_switchcap.py  — switched-cap unit cell (.tran, PULSE)
 
 Ground truth is ALWAYS NGSPICE BSIM-CMG (LEVEL=72) via the bsimcmg OSDI binary
 (AGENTS.md Validation rule — never simplified/self-defined equations).
@@ -183,7 +183,7 @@ BENCH: Dict[str, BenchTech] = {n: _resolve_bench_tech(n) for n in BENCH_TECHS}
 # Parametric-sweep helpers: usable VT vocabulary + a validated variant builder
 # ---------------------------------------------------------------------------
 def usable_vts(tech: str) -> Set[str]:
-    """VT names usable for ``tech`` in the complex-circuit sweep.
+    """VT names usable for ``tech`` in the circuit benchmark sweep.
 
     The intersection of (i) the BSIM-CMG ground-truth VT pairs that survive
     ``base.py`` PDIBL2/garbage pruning and (ii) the per-tech DirectNet local
@@ -331,7 +331,7 @@ def run_ngspice_wrdata(
     # Circuit body lives in its own deck (device lines + .include + .ic are
     # invalid inside a .control block); the runner sources it.
     cir.write_text(
-        f"* complex-circuit benchmark — NGSPICE BSIM-CMG ground truth ({tag})\n"
+        f"* circuit benchmark — NGSPICE BSIM-CMG ground truth ({tag})\n"
         f"{netlist_text}\n"
         f".end\n"
     )
@@ -414,7 +414,7 @@ def render_directnet_text(template_text: str, bt: BenchTech) -> str:
 
     Pure (string-in, string-out) so the single-point verify scripts can build
     their ship-gate deck text WITHOUT touching the filesystem, and the
-    equivalence canary (verify_complex_sweep_canaries) can diff that exact text
+    equivalence canary (verify_circuit_sweep_canaries) can diff that exact text
     against the sweep builders. ``render_directnet_netlist`` is the file-writing
     wrapper around this.
     """
@@ -595,7 +595,7 @@ def _tp(t: float) -> str:
 @dataclass(frozen=True)
 class OpAmpParams:
     """Two-stage Miller opamp stimulus. Bias rails are fractions of VDD; the
-    defaults reproduce ``verify_complex_opamp._bias`` exactly (0.55/0.45/0.55)
+    defaults reproduce ``verify_circuit_opamp._bias`` exactly (0.55/0.45/0.55)
     and the .dc window (vcm±0.15 @ 0.002)."""
     vcm_frac: float = 0.55
     vbn_frac: float = 0.45
@@ -814,7 +814,7 @@ def directnet_ringosc(bt: BenchTech, p: RingOscParams, tstop: float) -> str:
               f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})",
               # `uic` matches the ship-gate template (directnet_ring_osc_tran.sp:37);
               # the sweep transient runner pins .ic nodes regardless, but keeping the
-              # token makes the deck byte-faithful so verify_complex_sweep_canaries
+              # token makes the deck byte-faithful so verify_circuit_sweep_canaries
               # stays green (bug report B2).
               f".tran {_tp(p.tstep)} {_tn(tstop)} uic", ".end"]
     return "\n".join(lines) + "\n"
