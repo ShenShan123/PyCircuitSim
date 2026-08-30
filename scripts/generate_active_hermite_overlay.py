@@ -604,28 +604,67 @@ def _publish_overlay(
 ) -> dict[str, Any]:
     """Atomically publish one guarded overlay artifact and completion marker."""
     marker_path = output.with_suffix(output.suffix + ".complete")
-    if (output.exists() or marker_path.exists()) and not overwrite:
-        raise FileExistsError(
-            f"refusing to overwrite {output} or {marker_path}")
     output.parent.mkdir(parents=True, exist_ok=True)
+    lock_path = marker_path.with_name(marker_path.name + ".lock")
+    try:
+        lock_fd = os.open(lock_path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError as exc:
+        raise RuntimeError(f"overlay publication is already active: {lock_path}") \
+            from exc
     temporary = output.with_name(output.name + f".tmp-{os.getpid()}.npz")
     marker_temporary = marker_path.with_name(
         marker_path.name + f".tmp-{os.getpid()}")
+    output_backup = output.with_name(output.name + f".bak-{os.getpid()}")
+    marker_backup = marker_path.with_name(
+        marker_path.name + f".bak-{os.getpid()}")
     try:
+        if (output.exists() or marker_path.exists()) and not overwrite:
+            raise FileExistsError(
+                f"refusing to overwrite {output} or {marker_path}")
+        if output_backup.exists() or marker_backup.exists():
+            raise FileExistsError("stale overlay publication backup exists")
         np.savez(temporary, **arrays)
-        os.replace(temporary, output)
         marker = {
             "artifact": output.name,
-            "artifact_sha256": sha256_file(output),
+            "artifact_sha256": sha256_file(temporary),
             **marker_fields,
         }
         marker_temporary.write_text(
             json.dumps(marker, sort_keys=True, indent=2) + "\n")
-        os.replace(marker_temporary, marker_path)
+        moved_output = False
+        moved_marker = False
+        try:
+            if output.exists():
+                os.replace(output, output_backup)
+                moved_output = True
+            if marker_path.exists():
+                os.replace(marker_path, marker_backup)
+                moved_marker = True
+        except BaseException:
+            if moved_output:
+                os.replace(output_backup, output)
+            if moved_marker:
+                os.replace(marker_backup, marker_path)
+            raise
+        try:
+            os.replace(temporary, output)
+            os.replace(marker_temporary, marker_path)
+        except BaseException:
+            output.unlink(missing_ok=True)
+            marker_path.unlink(missing_ok=True)
+            if moved_output:
+                os.replace(output_backup, output)
+            if moved_marker:
+                os.replace(marker_backup, marker_path)
+            raise
+        output_backup.unlink(missing_ok=True)
+        marker_backup.unlink(missing_ok=True)
         return marker
     finally:
         temporary.unlink(missing_ok=True)
         marker_temporary.unlink(missing_ok=True)
+        os.close(lock_fd)
+        lock_path.unlink(missing_ok=True)
 
 
 def generate(args: argparse.Namespace) -> dict[str, Any]:

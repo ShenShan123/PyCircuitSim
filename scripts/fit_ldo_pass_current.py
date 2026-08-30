@@ -93,6 +93,18 @@ def validate_line_sweep(plan: Any) -> int:
     return points
 
 
+def validate_sweep_grid(plan: Any, sweep: Any) -> np.ndarray:
+    """Return an NGSPICE grid only when it matches the fixed requested plan."""
+    if sweep.kind != "dc":
+        raise ValueError("NGSPICE line-regulation result is not a DC sweep")
+    expected = np.asarray(run_compare.plan_points(plan), dtype=np.float64)
+    actual = np.asarray(sweep.x, dtype=np.float64)
+    if not np.array_equal(actual, expected):
+        raise ValueError(
+            f"NGSPICE {plan.label} abscissa differs from the fixed plan")
+    return actual
+
+
 def aligned_sweep_state(circuit: Any, sweep: Any, index: int) -> dict[str, float]:
     """Map one complete NGSPICE raw point onto native circuit node names."""
     table: dict[str, str] = {}
@@ -396,8 +408,10 @@ def _harvest_centers(
         td75 = translate.translate_deck(
             design_dir, deck, tech="tsmc5", category="ldo", model_level=75,
         )
-        if len(td72.plans) != len(EXPECTED_SWEEPS):
-            raise ValueError(f"{deck} must contain exactly two fixed sweeps")
+        labels = {str(plan.label) for plan in td72.plans}
+        if len(td72.plans) != len(EXPECTED_SWEEPS) \
+                or labels != set(EXPECTED_SWEEPS):
+            raise ValueError(f"{deck} must contain exactly the up/down sweeps")
         expected_points = sum(validate_line_sweep(plan) for plan in td72.plans)
         if expected_points != EXPECTED_CENTERS // len(TRAIN_DECKS):
             raise ValueError(f"{deck} sweep denominator changed")
@@ -435,7 +449,8 @@ def _harvest_centers(
             )
             reference_seconds += seconds
             rawfile = Path(str(sweep.meta["rawfile"]))
-            for point_index, sweep_value in enumerate(np.asarray(sweep.x)):
+            raw_grid = validate_sweep_grid(plan, sweep)
+            for point_index, sweep_value in enumerate(raw_grid):
                 state = aligned_sweep_state(circuit72, sweep, point_index)
                 drain, gate, source, bulk = osdi_device.nodes
                 source_value = state[source]

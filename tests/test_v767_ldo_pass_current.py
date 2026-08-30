@@ -17,6 +17,7 @@ from scripts.fit_ldo_pass_current import (
     minimum_local_scale,
     solve_output_row_delta,
     validate_line_sweep,
+    validate_sweep_grid,
 )
 
 
@@ -45,6 +46,20 @@ def test_line_sweep_denominator_is_not_caller_adjustable() -> None:
     plan.stop = 0.71
     with pytest.raises(ValueError, match="plan 'up' changed"):
         validate_line_sweep(plan)
+
+
+def test_ngspice_grid_must_match_the_fixed_plan() -> None:
+    plan = SimpleNamespace(
+        label="up", source="V1", start=0.65, stop=0.715, step=0.005,
+        kind="dc_source",
+    )
+    expected = np.arange(0.65, 0.72, 0.005)
+    sweep = SimpleNamespace(kind="dc", x=expected.copy())
+
+    np.testing.assert_array_equal(validate_sweep_grid(plan, sweep), expected)
+    sweep.x[-1] = 0.714
+    with pytest.raises(ValueError, match="abscissa"):
+        validate_sweep_grid(plan, sweep)
 
 
 def test_aligned_sweep_state_requires_the_complete_physical_state() -> None:

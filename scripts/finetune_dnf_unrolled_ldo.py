@@ -949,6 +949,43 @@ def _schedule_record() -> dict[str, float | int]:
     }
 
 
+def _publish_staged_directory(
+    staging: Path,
+    target: Path,
+    *,
+    overwrite: bool,
+) -> None:
+    """Atomically publish one directory under an exclusive reservation."""
+    target.parent.mkdir(parents=True, exist_ok=True)
+    lock = target.with_name(target.name + ".lock")
+    backup = target.with_name(target.name + f".bak-{os.getpid()}")
+    try:
+        lock_fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+    except FileExistsError as exc:
+        raise RuntimeError(f"candidate publication is already active: {lock}") \
+            from exc
+    try:
+        if target.exists() and not overwrite:
+            raise FileExistsError(target)
+        if backup.exists():
+            raise FileExistsError(backup)
+        moved_target = False
+        if target.exists():
+            os.replace(target, backup)
+            moved_target = True
+        try:
+            os.replace(staging, target)
+        except BaseException:
+            if moved_target and not target.exists():
+                os.replace(backup, target)
+            raise
+        if moved_target:
+            shutil.rmtree(backup)
+    finally:
+        os.close(lock_fd)
+        lock.unlink(missing_ok=True)
+
+
 def _save_candidate_pair(
     models: Mapping[str, torch.nn.Module],
     runs: Mapping[str, _DeviceRun],
@@ -964,7 +1001,6 @@ def _save_candidate_pair(
 ) -> dict[str, str]:
     epoch_dir = args.output_dir / f"epoch_{epoch:02d}"
     staging_dir = args.output_dir / f".epoch_{epoch:02d}.tmp-{os.getpid()}"
-    backup_dir = args.output_dir / f".epoch_{epoch:02d}.bak-{os.getpid()}"
     names = {
         "nmos": _stem(
             args.nmos_checkpoint, "nmos", args.nmos_stem, args.arm),
@@ -977,7 +1013,7 @@ def _save_candidate_pair(
     }
     if epoch_dir.exists() and not args.overwrite:
         raise FileExistsError(epoch_dir)
-    if staging_dir.exists() or backup_dir.exists():
+    if staging_dir.exists():
         raise FileExistsError(staging_dir)
     args.output_dir.mkdir(parents=True, exist_ok=True)
     staging_dir.mkdir()
@@ -1038,16 +1074,8 @@ def _save_candidate_pair(
             _completion_path(checkpoint).write_text(
                 json.dumps(marker, sort_keys=True, indent=2) + "\n")
 
-        if epoch_dir.exists():
-            os.replace(epoch_dir, backup_dir)
-        try:
-            os.replace(staging_dir, epoch_dir)
-        except BaseException:
-            if backup_dir.exists() and not epoch_dir.exists():
-                os.replace(backup_dir, epoch_dir)
-            raise
-        if backup_dir.exists():
-            shutil.rmtree(backup_dir)
+        _publish_staged_directory(
+            staging_dir, epoch_dir, overwrite=bool(args.overwrite))
     except BaseException:
         if staging_dir.exists():
             shutil.rmtree(staging_dir)

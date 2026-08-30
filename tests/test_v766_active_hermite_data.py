@@ -42,6 +42,33 @@ def test_overlay_publication_replaces_artifact_and_marker_together(
     assert marker["artifact_sha256"] == hermite.sha256_file(output)
 
 
+def test_overlay_publication_restores_both_files_after_marker_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    output = tmp_path / "overlay.npz"
+    marker_path = output.with_suffix(".npz.complete")
+    output.write_bytes(b"preserved-artifact")
+    marker_path.write_text("preserved-marker")
+    replace = hermite.os.replace
+
+    def fail_marker_install(source: str | Path, target: str | Path) -> None:
+        source_path = Path(source)
+        if Path(target) == marker_path and ".tmp-" in source_path.name:
+            raise OSError("injected marker publication failure")
+        replace(source, target)
+
+    monkeypatch.setattr(hermite.os, "replace", fail_marker_install)
+
+    with pytest.raises(OSError, match="injected marker"):
+        hermite._publish_overlay(
+            output, {"value": np.asarray([4])}, {"rows": 1}, overwrite=True,
+        )
+
+    assert output.read_bytes() == b"preserved-artifact"
+    assert marker_path.read_text() == "preserved-marker"
+
+
 def test_bin_seed_is_coordinate_stable_and_domain_separated() -> None:
     coordinates = ("tsmc5", "nmos", "svt", 12.001, 135.01e-9, 300.15)
 

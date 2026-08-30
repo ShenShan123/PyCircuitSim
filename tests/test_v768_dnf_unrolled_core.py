@@ -373,6 +373,52 @@ def test_candidate_stems_end_in_the_parser_polarity_suffix() -> None:
         )
 
 
+def test_candidate_pair_publication_rejects_collision_and_overwrites_atomically(
+    tmp_path: Path,
+) -> None:
+    target = tmp_path / "epoch_03"
+    staging = tmp_path / ".epoch_03.tmp"
+    target.mkdir()
+    staging.mkdir()
+    (target / "pair").write_text("preserved")
+    (staging / "pair").write_text("candidate")
+
+    with pytest.raises(FileExistsError):
+        unrolled._publish_staged_directory(
+            staging, target, overwrite=False)
+    assert (target / "pair").read_text() == "preserved"
+    assert staging.is_dir()
+
+    unrolled._publish_staged_directory(staging, target, overwrite=True)
+    assert (target / "pair").read_text() == "candidate"
+    assert not staging.exists()
+
+
+def test_candidate_pair_publication_restores_incumbent_on_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = tmp_path / "epoch_03"
+    staging = tmp_path / ".epoch_03.tmp"
+    target.mkdir()
+    staging.mkdir()
+    (target / "pair").write_text("preserved")
+    (staging / "pair").write_text("candidate")
+    replace_path = unrolled.os.replace
+
+    def fail_candidate_install(source: str | Path, destination: str | Path) -> None:
+        if Path(source) == staging and Path(destination) == target:
+            raise OSError("injected pair publication failure")
+        replace_path(source, destination)
+
+    monkeypatch.setattr(unrolled.os, "replace", fail_candidate_install)
+
+    with pytest.raises(OSError, match="injected pair"):
+        unrolled._publish_staged_directory(staging, target, overwrite=True)
+    assert (target / "pair").read_text() == "preserved"
+    assert (staging / "pair").read_text() == "candidate"
+
+
 def test_topology_provenance_rejects_corrupt_hashes_and_counts(
     tmp_path: Path,
 ) -> None:
