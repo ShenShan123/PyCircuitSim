@@ -50,6 +50,13 @@ def _metadata(data: np.lib.npyio.NpzFile) -> Dict[str, object]:
     }
 
 
+def _scalar(metadata: Dict[str, object], name: str) -> object:
+    value = np.asarray(metadata[name])
+    if value.size != 1:
+        raise ValueError(f"metadata {name} must be scalar")
+    return value.reshape(()).item()
+
+
 def augment(base_path: Path, terminal_path: Path, output_path: Path) -> dict:
     """Write base rows plus terminal-length groups absent from ``base``."""
     validate_canonical_dataset(base_path)
@@ -61,6 +68,8 @@ def augment(base_path: Path, terminal_path: Path, output_path: Path) -> dict:
     with np.load(base_path, allow_pickle=False) as base, np.load(
         terminal_path, allow_pickle=False
     ) as terminal:
+        base_metadata = _metadata(base)
+        terminal_metadata = _metadata(terminal)
         base_max_l = float(np.max(base["geometry"][:, 1]))
         new_mask = terminal["geometry"][:, 1] > base_max_l
         new_rows = int(np.sum(new_mask))
@@ -74,11 +83,25 @@ def augment(base_path: Path, terminal_path: Path, output_path: Path) -> dict:
             [base["outputs"], terminal["outputs"][new_mask]])
         sample_class = np.concatenate(
             [base["sample_class"], terminal["sample_class"][new_mask]])
-        if len(outputs) != len(terminal["outputs"]):
-            raise ValueError(
-                "matched append row count differs from the regenerated artifact")
 
-        metadata = _metadata(terminal)
+        base_manifest = json.loads(str(_scalar(base_metadata, "manifest_json")))
+        terminal_manifest = json.loads(
+            str(_scalar(terminal_metadata, "manifest_json")))
+        new_manifest = [
+            row for row in terminal_manifest
+            if float(row.get("L", float("-inf"))) > base_max_l
+        ]
+        if sum(int(row.get("kept", 0)) for row in new_manifest) != new_rows:
+            raise ValueError("terminal manifest does not match appended rows")
+        manifest = [*base_manifest, *new_manifest]
+        kept_bins = sum(row.get("status") != "dropped" for row in manifest)
+        dropped_bins = len(manifest) - kept_bins
+        rejected_rows = sum(int(row.get("rejected", 0)) for row in manifest)
+        requested_rows = sum(int(row.get("requested", 0)) for row in manifest)
+        if requested_rows != len(outputs) + rejected_rows:
+            raise ValueError("merged manifest row accounting is inconsistent")
+
+        metadata = terminal_metadata
         metadata.update({
             "dataset_variant": "v764_full_terminal_matched_append",
             "generator_release": "V7.6.4",
@@ -92,6 +115,18 @@ def augment(base_path: Path, terminal_path: Path, output_path: Path) -> dict:
             "matched_base_rows": np.int64(len(base["outputs"])),
             "appended_terminal_rows": np.int64(new_rows),
             "matched_base_max_l": np.float64(base_max_l),
+            "manifest_json": json.dumps(manifest, sort_keys=True),
+            "requested_rows": np.int64(requested_rows),
+            "kept_rows": np.int64(len(outputs)),
+            "rejected_rows": np.int64(rejected_rows),
+            "kept_bins": np.int64(kept_bins),
+            "dropped_bins": np.int64(dropped_bins),
+            "allow_rejected_points": np.bool_(False),
+            "allow_safety_rejections": np.bool_(
+                bool(_scalar(base_metadata, "allow_safety_rejections"))
+                or bool(_scalar(terminal_metadata,
+                                "allow_safety_rejections"))
+            ),
         })
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
