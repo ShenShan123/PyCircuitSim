@@ -116,20 +116,16 @@ def test_asinh_denormalization_is_exact_and_differentiable() -> None:
     assert torch.all(torch.isfinite(normalized.grad))
 
 
-def test_terminal_closure_has_no_pmos_flip_and_applies_multiplier() -> None:
+def test_terminal_closure_applies_multiplier_and_preserves_kcl() -> None:
     independent = torch.tensor([[[1.0, 2.0, 3.0]]])
 
-    nmos = unrolled.close_terminal_currents(
-        independent, torch.tensor([2.0]),
-    )
-    pmos = unrolled.close_terminal_currents(
+    currents = unrolled.close_terminal_currents(
         independent, torch.tensor([2.0]),
     )
 
     expected = torch.tensor([[[2.0, 4.0, -12.0, 6.0]]])
-    torch.testing.assert_close(nmos, expected)
-    torch.testing.assert_close(pmos, expected)
-    torch.testing.assert_close(pmos.sum(dim=-1), torch.zeros((1, 1)))
+    torch.testing.assert_close(currents, expected)
+    torch.testing.assert_close(currents.sum(dim=-1), torch.zeros((1, 1)))
 
 
 def test_residual_stamps_all_terminals_passives_sources_and_gmin() -> None:
@@ -273,13 +269,9 @@ def test_only_predeclared_control_and_treatment_arms_exist() -> None:
         unrolled.circuit_weight("weight-search")
 
 
-def test_epoch_schedule_finishes_both_replays_before_circuit_update() -> None:
-    assert unrolled.training_phases("treatment") == (
-        "replay_nmos", "replay_pmos", "circuit",
-    )
-    assert unrolled.training_phases("control") == (
-        "replay_nmos", "replay_pmos",
-    )
+def test_epoch_schedule_runs_both_replay_polarities() -> None:
+    assert unrolled.replay_polarities("treatment") == ("nmos", "pmos")
+    assert unrolled.replay_polarities("control") == ("nmos", "pmos")
 
 
 def test_control_never_emits_a_candidate_checkpoint() -> None:
@@ -296,14 +288,19 @@ def test_control_never_emits_a_candidate_checkpoint() -> None:
 
 def test_candidate_stems_end_in_the_parser_polarity_suffix() -> None:
     assert unrolled._stem(
-        Path("tsmc5_dnf_medium_nmos_best.pt"), None, "treatment",
+        Path("tsmc5_dnf_medium_nmos_best.pt"), "nmos", None, "treatment",
     ) == "tsmc5_dnf_medium_unrolled_treatment_nmos"
     assert unrolled._stem(
-        Path("tsmc5_dnf_medium_pmos_best.pt"), None, "treatment",
+        Path("tsmc5_dnf_medium_pmos_best.pt"), "pmos", None, "treatment",
     ) == "tsmc5_dnf_medium_unrolled_treatment_pmos"
     with pytest.raises(ValueError, match="must end in _nmos"):
         unrolled._stem(
-            Path("tsmc5_dnf_medium_nmos_best.pt"), "wrong_pmos", "treatment",
+            Path("tsmc5_dnf_medium_nmos_best.pt"), "nmos", "wrong_pmos",
+            "treatment",
+        )
+    with pytest.raises(ValueError, match="nmos checkpoint"):
+        unrolled._stem(
+            Path("tsmc5_dnf_medium_pmos_best.pt"), "nmos", None, "treatment",
         )
 
 

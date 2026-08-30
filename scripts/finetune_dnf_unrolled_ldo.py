@@ -634,11 +634,10 @@ def circuit_weight(arm: str) -> float:
     raise ValueError(f"unknown arm {arm!r}; expected control or treatment")
 
 
-def training_phases(arm: str) -> tuple[str, ...]:
-    """Return the fixed replay-before-circuit order for one epoch."""
-    weight = circuit_weight(arm)
-    replay = ("replay_nmos", "replay_pmos")
-    return replay + (("circuit",) if weight else ())
+def replay_polarities(arm: str) -> tuple[str, str]:
+    """Return the fixed replay order for one control or treatment epoch."""
+    circuit_weight(arm)
+    return ("nmos", "pmos")
 
 
 def should_save_candidate(arm: str, gate: Mapping[str, object]) -> bool:
@@ -668,12 +667,6 @@ def normalized_circuit_loss(
     return loss, {"curve_mse": curve_mse, "residual_mse": residual_mse}
 
 
-def _within_ratio(candidate: float, baseline: float, ratio: float) -> bool:
-    limit = ratio * baseline
-    tolerance = abs(limit) * 1e-12 + np.finfo(np.float64).tiny
-    return candidate <= limit + tolerance
-
-
 def evaluate_candidate_gate(
     baselines: Mapping[str, dict[str, object]],
     candidates: Mapping[str, dict[str, object]],
@@ -696,9 +689,11 @@ def evaluate_candidate_gate(
             f"{polarity}.{failure}" for failure in device_gate["failures"])
         baseline_j = float(baselines[polarity]["current_jacobian_mae"])
         candidate_j = float(candidates[polarity]["current_jacobian_mae"])
-        if not _within_ratio(candidate_j, baseline_j, JACOBIAN_MAX_RATIO):
+        if not hermite._within_ratio(
+            candidate_j, baseline_j, JACOBIAN_MAX_RATIO,
+        ):
             failures.append(f"{polarity}.current_jacobian_mae")
-    if not _within_ratio(
+    if not hermite._within_ratio(
         candidate_vout_mae, baseline_vout_mae, VOUT_MAE_RATIO,
     ):
         failures.append("local_vout_mae")
@@ -733,21 +728,6 @@ class _DeviceRun:
     overlay_marker: dict[str, Any]
 
 
-def _read_json(path: Path) -> dict[str, Any]:
-    try:
-        value = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(f"invalid JSON artifact: {path}") from exc
-    if not isinstance(value, dict):
-        raise ValueError(f"invalid JSON object: {path}")
-    return value
-
-
-def _normalization_path(checkpoint: Path) -> Path:
-    return checkpoint.with_name(
-        checkpoint.name.replace("_best.pt", "_norm.npz"))
-
-
 def _completion_path(checkpoint: Path) -> Path:
     return Path(f"{checkpoint}.complete")
 
@@ -759,7 +739,7 @@ def _verify_topology_provenance(
     marker_path = Path(f"{artifact_path}.complete")
     if not marker_path.is_file():
         raise FileNotFoundError(marker_path)
-    marker = _read_json(marker_path)
+    marker = hermite._read_json(marker_path)
     if int(marker.get("schema_version", -1)) != SCHEMA_VERSION:
         raise ValueError("topology marker schema_version mismatch")
     if marker.get("schema_name") != SCHEMA_NAME:
@@ -783,7 +763,7 @@ def _verify_topology_provenance(
         info = recorded.get(polarity)
         if not isinstance(info, dict):
             raise ValueError(f"topology marker lacks {polarity} parent")
-        norm = _normalization_path(checkpoint)
+        norm = hermite._normalization_path(checkpoint)
         completion = _completion_path(checkpoint)
         expected = {
             "checkpoint_sha256": hermite.sha256_file(checkpoint),
@@ -903,21 +883,39 @@ def _candidate_metrics_cpu(
     return result
 
 
-def _stem(checkpoint: Path, requested: str | None, arm: str) -> str:
-    for polarity in ("nmos", "pmos"):
-        suffix = f"_{polarity}_best.pt"
-        if not checkpoint.name.endswith(suffix):
-            continue
-        if requested:
-            if not requested.endswith(f"_{polarity}"):
-                raise ValueError(
-                    f"{polarity} stem must end in _{polarity}: {requested!r}")
-            return requested
-        parent = checkpoint.name.removesuffix(suffix)
-        return f"{parent}_unrolled_{arm}_{polarity}"
-    raise ValueError(
-        f"checkpoint name must end in _nmos_best.pt or _pmos_best.pt: "
-        f"{checkpoint.name}")
+def _stem(
+    checkpoint: Path,
+    polarity: str,
+    requested: str | None,
+    arm: str,
+) -> str:
+    if polarity not in {"nmos", "pmos"}:
+        raise ValueError(f"unknown checkpoint polarity {polarity!r}")
+    suffix = f"_{polarity}_best.pt"
+    if not checkpoint.name.endswith(suffix):
+        raise ValueError(
+            f"{polarity} checkpoint must end in {suffix}: {checkpoint.name}")
+    if requested:
+        if not requested.endswith(f"_{polarity}"):
+            raise ValueError(
+                f"{polarity} stem must end in _{polarity}: {requested!r}")
+        return requested
+    parent = checkpoint.name.removesuffix(suffix)
+    return f"{parent}_unrolled_{arm}_{polarity}"
+
+
+def _schedule_record() -> dict[str, float | int]:
+    return {
+        "epochs": EPOCHS,
+        "learning_rate": LEARNING_RATE,
+        "replay_batch_size": REPLAY_BATCH_SIZE,
+        "gradient_clip": GRADIENT_CLIP,
+        "lm_steps": LM_STEPS,
+        "lm_lambda": LM_LAMBDA,
+        "lm_step": LM_STEP,
+        "trust_clip_v": TRUST_CLIP_V,
+        "residual_loss_weight": RESIDUAL_LOSS_WEIGHT,
+    }
 
 
 def _save_candidate_pair(
@@ -935,8 +933,10 @@ def _save_candidate_pair(
 ) -> dict[str, str]:
     epoch_dir = args.output_dir / f"epoch_{epoch:02d}"
     names = {
-        "nmos": _stem(args.nmos_checkpoint, args.nmos_stem, args.arm),
-        "pmos": _stem(args.pmos_checkpoint, args.pmos_stem, args.arm),
+        "nmos": _stem(
+            args.nmos_checkpoint, "nmos", args.nmos_stem, args.arm),
+        "pmos": _stem(
+            args.pmos_checkpoint, "pmos", args.pmos_stem, args.arm),
     }
     paths = {
         polarity: epoch_dir / f"{names[polarity]}_best.pt"
@@ -961,7 +961,7 @@ def _save_candidate_pair(
         }
         torch.save(state, checkpoint)
         norm = epoch_dir / f"{names[polarity]}_norm.npz"
-        parent_norm = _normalization_path(runs[polarity].checkpoint)
+        parent_norm = hermite._normalization_path(runs[polarity].checkpoint)
         shutil.copy2(parent_norm, norm)
         if hermite.sha256_file(norm) != hermite.sha256_file(parent_norm):
             raise RuntimeError("saved normalizer differs from parent")
@@ -969,7 +969,7 @@ def _save_candidate_pair(
     trainer_sha256 = hermite.sha256_file(Path(__file__))
     for polarity, checkpoint in paths.items():
         norm = epoch_dir / f"{names[polarity]}_norm.npz"
-        parent_norm = _normalization_path(runs[polarity].checkpoint)
+        parent_norm = hermite._normalization_path(runs[polarity].checkpoint)
         other = "pmos" if polarity == "nmos" else "nmos"
         marker = {
             "family": "directnet-full",
@@ -999,17 +999,7 @@ def _save_candidate_pair(
             "topology_artifact_sha256": topology_marker["artifact_sha256"],
             "arm": args.arm,
             "epoch": epoch,
-            "schedule": {
-                "epochs": EPOCHS,
-                "learning_rate": LEARNING_RATE,
-                "replay_batch_size": REPLAY_BATCH_SIZE,
-                "gradient_clip": GRADIENT_CLIP,
-                "lm_steps": LM_STEPS,
-                "lm_lambda": LM_LAMBDA,
-                "lm_step": LM_STEP,
-                "trust_clip_v": TRUST_CLIP_V,
-                "residual_loss_weight": RESIDUAL_LOSS_WEIGHT,
-            },
+            "schedule": _schedule_record(),
             "device_metrics": device_metrics,
             "circuit_metrics": circuit_metrics,
             "feasibility": gate,
@@ -1047,7 +1037,7 @@ def finetune(args: argparse.Namespace) -> dict[str, object]:
     }
     for checkpoint in checkpoints.values():
         for path in (
-            checkpoint, _normalization_path(checkpoint),
+            checkpoint, hermite._normalization_path(checkpoint),
             _completion_path(checkpoint),
         ):
             if not path.is_file():
@@ -1119,10 +1109,7 @@ def finetune(args: argparse.Namespace) -> dict[str, object]:
 
     for epoch in range(1, EPOCHS + 1):
         replay_losses: dict[str, float] = {}
-        for phase in training_phases(args.arm):
-            if not phase.startswith("replay_"):
-                continue
-            polarity = phase.removeprefix("replay_")
+        for polarity in replay_polarities(args.arm):
             model = models[polarity]
             data = replay_train[polarity]
             model.train(mode=bool(weight))
@@ -1159,8 +1146,6 @@ def finetune(args: argparse.Namespace) -> dict[str, object]:
 
         circuit_training: dict[str, float] | None = None
         if weight:
-            for model in models.values():
-                model.train()
             result, raw_metrics = _circuit_metrics(
                 artifact_train, models, stats, create_graph=True)
             loss, components = normalized_circuit_loss(
@@ -1228,24 +1213,14 @@ def finetune(args: argparse.Namespace) -> dict[str, object]:
                 "checkpoint": str(run.checkpoint),
                 "checkpoint_sha256": hermite.sha256_file(run.checkpoint),
                 "normalization_sha256": hermite.sha256_file(
-                    _normalization_path(run.checkpoint)),
+                    hermite._normalization_path(run.checkpoint)),
                 "overlay_sha256": run.overlay_marker["artifact_sha256"],
                 "replay_dataset_sha256": run.overlay_marker["dataset_sha256"],
                 "replay_rows": REPLAY_ROWS,
             }
             for name, run in runs.items()
         },
-        "schedule": {
-            "epochs": EPOCHS,
-            "learning_rate": LEARNING_RATE,
-            "replay_batch_size": REPLAY_BATCH_SIZE,
-            "gradient_clip": GRADIENT_CLIP,
-            "lm_steps": LM_STEPS,
-            "lm_lambda": LM_LAMBDA,
-            "lm_step": LM_STEP,
-            "trust_clip_v": TRUST_CLIP_V,
-            "residual_loss_weight": RESIDUAL_LOSS_WEIGHT,
-        },
+        "schedule": _schedule_record(),
         "baseline_device_metrics": baselines,
         "baseline_circuit_metrics": baseline_circuit,
         "history": history,
