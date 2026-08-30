@@ -711,8 +711,8 @@ def generate(args: argparse.Namespace) -> dict[str, Any]:
         meta_fd_max_tolerance_ratio=np.asarray(
             float(np.max(fd_errors)) if len(fd_errors) else np.nan),
         **{
-            name: value for name, value in arrays.items()
-            if name.startswith("meta_")
+            f"meta_parent_dataset_{name.removeprefix('meta_')}": value
+            for name, value in arrays.items() if name.startswith("meta_")
         },
     )
     marker = {
