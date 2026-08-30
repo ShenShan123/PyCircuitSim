@@ -243,6 +243,21 @@ def expected_plan_counts(
     }
 
 
+def head_balanced_scores(
+    per_head_error: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Average dimensionless within-head errors for active selection."""
+    errors = np.asarray(per_head_error, dtype=np.float64)
+    if errors.ndim != 2 or errors.shape[1] != 3:
+        raise ValueError("current-J errors must have three current heads")
+    if not np.all(np.isfinite(errors)) or np.any(errors < 0.0):
+        raise ValueError("current-J errors must be finite and non-negative")
+    scale = errors.mean(axis=0)
+    safe_scale = scale.copy()
+    safe_scale[safe_scale <= 0.0] = 1.0
+    return np.mean(errors / safe_scale[None, :], axis=1), scale
+
+
 def terminal_values(result: dict[str, float]) -> np.ndarray:
     """Convert OSDI values to the six independent LEVEL=75 surfaces."""
     required = ("id", "ig", "is", "ie", "qd", "qg", "qs", "qb")
@@ -629,10 +644,11 @@ def generate(args: argparse.Namespace) -> dict[str, Any]:
         parts = list(executor.map(_run_bin, jobs))
     if sum(len(part["outputs"]) for part in parts) != plan["queried_rows"]:
         raise RuntimeError("Hermite OSDI evaluation returned an incomplete set")
-    scores, per_head_scores = _score_parent(
+    raw_scores, per_head_scores = _score_parent(
         checkpoint, arrays, parts, device_name=args.score_device,
         batch_size=args.score_batch_size,
     )
+    scores, score_head_scale = head_balanced_scores(per_head_scores)
     source_rows = _concatenate(parts, "source_rows")
     sample_class = arrays["sample_class"]
     roles = np.empty(len(source_rows), dtype=np.int8)
@@ -681,7 +697,9 @@ def generate(args: argparse.Namespace) -> dict[str, Any]:
     output.parent.mkdir(parents=True, exist_ok=True)
     np.savez(
         output, **arrays_out, role=roles, active_rank=ranks,
-        parent_current_j_error=scores,
+        active_score=scores,
+        active_score_head_scale=score_head_scale,
+        parent_current_j_error=raw_scores,
         parent_current_j_error_by_head=per_head_scores,
         replay_source_rows=replay,
         meta_output_columns=np.asarray(OUTPUT_COLUMNS),
@@ -704,6 +722,8 @@ def generate(args: argparse.Namespace) -> dict[str, Any]:
         meta_candidates_per_bin=np.asarray(args.candidates_per_bin),
         meta_validation_per_bin=np.asarray(args.validation_per_bin),
         meta_active_per_bin=np.asarray(args.active_per_bin),
+        meta_active_score=np.asarray(
+            "mean(error_head / frozen_candidate_mean_head)"),
         meta_bins=np.asarray(len(jobs)),
         meta_candidate_queries=np.asarray(plan["queried_rows"]),
         meta_fd_verification_bins=np.asarray(len(fd_errors)),
@@ -728,6 +748,8 @@ def generate(args: argparse.Namespace) -> dict[str, Any]:
         "parent_checkpoint_marker_sha256": sha256_file(checkpoint_marker),
         "parent_normalization": norm.name,
         "parent_normalization_sha256": sha256_file(norm),
+        "active_score": "mean(error_head / frozen_candidate_mean_head)",
+        "active_score_head_scale": score_head_scale.tolist(),
         "fd_verification_bins": len(fd_errors),
         "fd_extra_queries": len(fd_errors) * 6,
         "fd_max_tolerance_ratio": (

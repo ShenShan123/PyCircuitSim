@@ -106,6 +106,21 @@ def test_expected_plan_counts_are_fixed() -> None:
     }
 
 
+def test_active_score_is_invariant_to_per_head_error_scale() -> None:
+    per_head = np.asarray([
+        [1.0, 10.0, 0.25],
+        [3.0, 20.0, 1.00],
+        [5.0, 40.0, 0.50],
+    ])
+    rescaled = per_head * np.asarray([1e-3, 1e6, 7.0])
+
+    score, scale = hermite.head_balanced_scores(per_head)
+    rescaled_score, _rescaled_scale = hermite.head_balanced_scores(rescaled)
+
+    np.testing.assert_allclose(score, rescaled_score)
+    np.testing.assert_array_equal(scale, per_head.mean(axis=0))
+
+
 class _FakeInstance:
     def condense_last_jacobian(self) -> np.ndarray:
         return np.arange(16, dtype=np.float64).reshape(4, 4)
