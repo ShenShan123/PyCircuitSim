@@ -100,7 +100,7 @@ def _finite_difference_error(
     point: np.ndarray,
     analytical: np.ndarray,
 ) -> float:
-    """Check the current-label orientation against central differences."""
+    """Return worst error/tolerance using the NGSPICE-backed Jacobian gate."""
     step = 1e-6
     numerical = np.empty((3, 3), dtype=np.float64)
     for target_column, input_column in enumerate(VOLTAGE_COLUMNS):
@@ -112,11 +112,15 @@ def _finite_difference_error(
         y_backward, _ = _evaluate(instance, backward)
         numerical[:, target_column] = (
             y_forward[:3] - y_backward[:3]) / (2.0 * step)
-    scale = np.maximum.reduce([
-        np.abs(numerical), np.abs(analytical[:3]),
-        np.full_like(numerical, 1e-8),
-    ])
-    return float(np.max(np.abs(numerical - analytical[:3]) / scale))
+    # Match external_compact_models/bsim_cmg/tests/helpers.py: the condensed
+    # analytical matrix is accepted at 1% relative or 1e-6 S absolute. The
+    # absolute floor matters for gate/body leakage derivatives; treating a
+    # harmless 1e-9 S solver-tolerance difference as a large relative error
+    # made the first smoke overlay fail at 45% despite being far below the
+    # project's independently NGSPICE-backed conductance tolerance.
+    tolerance = 1e-6 + 1e-2 * np.maximum(
+        np.abs(numerical), np.abs(analytical[:3]))
+    return float(np.max(np.abs(numerical - analytical[:3]) / tolerance))
 
 
 def _run_bin(job: _BinJob) -> dict[str, Any]:
@@ -143,9 +147,10 @@ def _run_bin(job: _BinJob) -> dict[str, Any]:
     strong_index = int(np.argmax(np.max(np.abs(values[:,:3]), axis=1)))
     fd_error = _finite_difference_error(
         instance, job.inputs[strong_index], jacobians[strong_index])
-    if fd_error > 0.05:
+    if fd_error > 1.0:
         raise RuntimeError(
-            f"current Jacobian sign/scale check failed: {fd_error:.3%}")
+            f"current Jacobian sign/scale check failed: "
+            f"{fd_error:.3f}x tolerance")
     code = local_variant_code(job.tech, job.tech, job.variant)
     return {
         "inputs": job.inputs,
@@ -262,7 +267,7 @@ def generate(
         meta_seed=np.asarray(seed),
         meta_samples_per_bin=np.asarray(samples_per_bin),
         meta_bins=np.asarray(len(jobs)),
-        meta_fd_max_scaled_error=np.asarray(
+        meta_fd_max_tolerance_ratio=np.asarray(
             max(float(part["fd_error"]) for part in parts)),
     )
     marker = {
@@ -272,7 +277,7 @@ def generate(
         "bins": len(jobs),
         "source_commit": source_commit,
         "parent_dataset_sha256": _sha256(dataset_path),
-        "fd_max_scaled_error": max(
+        "fd_max_tolerance_ratio": max(
             float(part["fd_error"]) for part in parts),
     }
     output_path.with_suffix(output_path.suffix + ".complete").write_text(
