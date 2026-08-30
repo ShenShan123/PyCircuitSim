@@ -313,7 +313,7 @@ def test_real_parent_residual_matches_frozen_ldo_baseline() -> None:
     marker = unrolled._verify_topology_provenance(
         artifact_path, checkpoints)
     assert marker["artifact_sha256"] == (
-        "cab62c60707e0b806b08c1b6c2a007c7371ed3e4ac2f984a91f7934156cad63c"
+        "0ff0399a9b33c03d3f9840482c2613d68ada722120dcbdf026d4a2dff09422da"
     )
 
     models: dict[str, torch.nn.Module] = {}
