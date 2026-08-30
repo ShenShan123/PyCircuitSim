@@ -1,0 +1,108 @@
+"""Focused contracts for the V7.6.7 LDO pass-current correction."""
+
+from __future__ import annotations
+
+from types import SimpleNamespace
+
+import numpy as np
+import pytest
+import torch
+
+from scripts.fit_ldo_pass_current import (
+    aligned_sweep_state,
+    apply_output_row_delta,
+    candidate_gate,
+    solve_output_row_delta,
+)
+
+
+class _Circuit:
+    def get_nodes(self) -> list[str]:
+        return ["VDD", "out", "x1.n1"]
+
+
+def test_aligned_sweep_state_requires_the_complete_physical_state() -> None:
+    sweep = SimpleNamespace(v={
+        "vdd": np.asarray([0.65]),
+        "out": np.asarray([0.48]),
+        "x1.n1": np.asarray([0.22]),
+        "x1.mm1#di": np.asarray([0.21]),
+    })
+    state = aligned_sweep_state(_Circuit(), sweep, 0)
+    assert state == {"VDD": 0.65, "out": 0.48, "x1.n1": 0.22,
+                     "0": 0.0, "GND": 0.0}
+
+    sweep.v.pop("out")
+    with pytest.raises(ValueError, match="missing=.*out"):
+        aligned_sweep_state(_Circuit(), sweep, 0)
+
+
+def test_disabled_local_residual_is_an_exact_parent_control() -> None:
+    local = np.asarray([[1.0, 2.0], [1.0, -1.0]], dtype=np.float64)
+    replay = np.asarray([[1.0, 0.0], [1.0, 1.0]], dtype=np.float64)
+    delta, diagnostics = solve_output_row_delta(
+        local, np.asarray([0.4, -0.2]), replay,
+        local_weight=0.0, anchor_weight=1.0, ridge_ratio=1e-6,
+    )
+    assert np.array_equal(delta, np.zeros(2, dtype=np.float64))
+    assert diagnostics["control_exact"] is True
+
+
+def test_ridge_solution_reduces_local_error_with_replay_anchor() -> None:
+    local = np.asarray([[1.0, 0.0], [1.0, 1.0]], dtype=np.float64)
+    residual = np.asarray([1.0, 1.0], dtype=np.float64)
+    replay = np.asarray([[1.0, -1.0], [1.0, 2.0]], dtype=np.float64)
+    delta, diagnostics = solve_output_row_delta(
+        local, residual, replay,
+        local_weight=1.0, anchor_weight=1.0, ridge_ratio=1e-6,
+    )
+    assert np.mean(np.abs(residual - local @ delta)) < np.mean(
+        np.abs(residual))
+    assert diagnostics["ridge"] > 0.0
+
+
+def test_only_the_selected_output_row_changes() -> None:
+    state = {
+        "net.12.weight": torch.arange(18, dtype=torch.float32).reshape(3, 6),
+        "net.12.bias": torch.arange(3, dtype=torch.float32),
+        "net.10.weight": torch.ones((6, 6), dtype=torch.float32),
+    }
+    original = {name: value.clone() for name, value in state.items()}
+    apply_output_row_delta(
+        state, "net.12.weight", "net.12.bias", row=0,
+        delta=np.arange(7, dtype=np.float64),
+    )
+    assert torch.equal(state["net.12.weight"][1:],
+                       original["net.12.weight"][1:])
+    assert torch.equal(state["net.12.bias"][1:],
+                       original["net.12.bias"][1:])
+    assert torch.equal(state["net.10.weight"], original["net.10.weight"])
+    assert not torch.equal(state["net.12.weight"][0],
+                           original["net.12.weight"][0])
+
+
+def test_candidate_gate_keeps_local_and_global_requirements_independent() -> None:
+    baseline = {
+        "replay": {"normalized_mae": [1.0] * 6,
+                   "physical_max_abs": [1.0] * 6},
+        "hermite": {"normalized_mae": [1.0] * 6,
+                    "physical_max_abs": [1.0] * 6},
+        "current_jacobian_mae": 2.0,
+    }
+    candidate = {
+        "replay": {"normalized_mae": [1.01] * 6,
+                   "physical_max_abs": [1.04] * 6},
+        "hermite": {"normalized_mae": [1.01] * 6,
+                    "physical_max_abs": [1.04] * 6},
+        "current_jacobian_mae": 2.08,
+    }
+    passed = candidate_gate(
+        baseline, candidate, local_parent_mae=1.0, local_candidate_mae=0.49,
+    )
+    assert passed["eligible"] is True
+
+    failed = candidate_gate(
+        baseline, candidate, local_parent_mae=1.0, local_candidate_mae=0.51,
+    )
+    assert failed["eligible"] is False
+    assert "local_i_d_mae" in failed["failures"]
