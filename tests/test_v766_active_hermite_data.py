@@ -2,9 +2,44 @@
 
 from __future__ import annotations
 
+import json
+from pathlib import Path
+
 import numpy as np
+import pytest
 
 from scripts import generate_active_hermite_overlay as hermite
+
+
+def test_overlay_publication_requires_explicit_overwrite(tmp_path: Path) -> None:
+    output = tmp_path / "overlay.npz"
+    marker_path = output.with_suffix(".npz.complete")
+    output.write_bytes(b"preserved")
+    marker_path.write_text("preserved-marker")
+
+    with pytest.raises(FileExistsError, match="refusing to overwrite"):
+        hermite._publish_overlay(
+            output, {"value": np.asarray([2])}, {"rows": 1},
+            overwrite=False,
+        )
+
+    assert output.read_bytes() == b"preserved"
+    assert marker_path.read_text() == "preserved-marker"
+
+
+def test_overlay_publication_replaces_artifact_and_marker_together(
+    tmp_path: Path,
+) -> None:
+    output = tmp_path / "overlay.npz"
+
+    marker = hermite._publish_overlay(
+        output, {"value": np.asarray([3])}, {"rows": 1}, overwrite=False,
+    )
+
+    with np.load(output, allow_pickle=False) as artifact:
+        np.testing.assert_array_equal(artifact["value"], np.asarray([3]))
+    assert json.loads(output.with_suffix(".npz.complete").read_text()) == marker
+    assert marker["artifact_sha256"] == hermite.sha256_file(output)
 
 
 def test_bin_seed_is_coordinate_stable_and_domain_separated() -> None:

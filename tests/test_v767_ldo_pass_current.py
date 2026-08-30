@@ -16,6 +16,7 @@ from scripts.fit_ldo_pass_current import (
     checkpoint_override_prefix,
     minimum_local_scale,
     solve_output_row_delta,
+    validate_line_sweep,
 )
 
 
@@ -32,6 +33,18 @@ def test_checkpoint_override_uses_the_parser_save_prefix_contract(
         "tsmc5_dnf_medium_pmos")
     with pytest.raises(ValueError, match="_nmos_best"):
         checkpoint_override_prefix(path, "nmos")
+
+
+def test_line_sweep_denominator_is_not_caller_adjustable() -> None:
+    plan = SimpleNamespace(
+        label="up", source="V1", start=0.65, stop=0.715, step=0.005,
+        kind="dc_source",
+    )
+
+    assert validate_line_sweep(plan) == 14
+    plan.stop = 0.71
+    with pytest.raises(ValueError, match="plan 'up' changed"):
+        validate_line_sweep(plan)
 
 
 def test_aligned_sweep_state_requires_the_complete_physical_state() -> None:

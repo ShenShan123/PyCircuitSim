@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 import os
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -84,6 +86,73 @@ def _one_device_artifact(*, is_pmos: bool = False) -> unrolled.CircuitArtifact:
         "gmin_scales_with_multiplier": np.asarray(False),
         "terminal_order": np.asarray(["d", "g", "s", "b"]),
     }, device=torch.device("cpu"), dtype=torch.float64)
+
+
+def _fixed_contract_artifact() -> unrolled.CircuitArtifact:
+    """Expand the small residual fixture to the fixed 28-state/9-device gate."""
+    base = _one_device_artifact()
+    states = unrolled.EXPECTED_STATES
+    devices = unrolled.EXPECTED_DEVICES
+    return replace(
+        base,
+        state_group=torch.arange(states),
+        group_segment_offsets=torch.arange(states + 1),
+        group_sweep=torch.as_tensor(
+            [0.65 + 0.005 * index for index in range(14)]
+            + [0.65 - 0.005 * index for index in range(14)],
+            dtype=torch.float64,
+        ),
+        free_voltage_l72=base.free_voltage_l72.repeat(states, 1),
+        fixed_voltage_l72=base.fixed_voltage_l72.repeat(states, 1),
+        arm_scale=base.arm_scale.repeat(states, 1),
+        mos_is_pmos=base.mos_is_pmos.repeat(devices),
+        mos_term_free=base.mos_term_free.repeat(devices, 1),
+        mos_term_fixed=base.mos_term_fixed.repeat(devices, 1),
+        mos_nfin=base.mos_nfin.repeat(devices),
+        mos_length=base.mos_length.repeat(devices),
+        mos_temperature=base.mos_temperature.repeat(devices),
+        mos_multiplier=base.mos_multiplier.repeat(devices),
+        mos_code=base.mos_code.repeat(devices),
+        mos_support_min=base.mos_support_min.repeat(devices, 1),
+        mos_support_max=base.mos_support_max.repeat(devices, 1),
+        mos_support_min_fractional_margin=(
+            base.mos_support_min_fractional_margin.repeat(devices)
+        ),
+    )
+
+
+def _write_provenance_fixture(
+    tmp_path: Path,
+) -> tuple[Path, dict[str, Path], dict[str, object]]:
+    artifact_path = tmp_path / "topology.npz"
+    artifact_path.write_bytes(b"fixed topology")
+    checkpoints: dict[str, Path] = {}
+    parents: dict[str, dict[str, str]] = {}
+    for polarity in ("nmos", "pmos"):
+        checkpoint = tmp_path / f"parent_{polarity}_best.pt"
+        normalization = hermite._normalization_path(checkpoint)
+        completion = Path(f"{checkpoint}.complete")
+        checkpoint.write_bytes(f"{polarity} checkpoint".encode())
+        normalization.write_bytes(f"{polarity} normalization".encode())
+        completion.write_bytes(f"{polarity} completion".encode())
+        checkpoints[polarity] = checkpoint
+        parents[polarity] = {
+            "checkpoint_sha256": hermite.sha256_file(checkpoint),
+            "normalization_sha256": hermite.sha256_file(normalization),
+            "completion_sha256": hermite.sha256_file(completion),
+        }
+    marker: dict[str, object] = {
+        "schema_version": unrolled.SCHEMA_VERSION,
+        "schema_name": unrolled.SCHEMA_NAME,
+        "artifact": artifact_path.name,
+        "artifact_sha256": hermite.sha256_file(artifact_path),
+        "states": unrolled.EXPECTED_STATES,
+        "groups": unrolled.EXPECTED_GROUPS,
+        "devices": unrolled.EXPECTED_DEVICES,
+        "parent_checkpoints": parents,
+    }
+    Path(f"{artifact_path}.complete").write_text(json.dumps(marker))
+    return artifact_path, checkpoints, marker
 
 
 def _metrics(jacobian: float = 1.0) -> dict[str, object]:
@@ -304,6 +373,43 @@ def test_candidate_stems_end_in_the_parser_polarity_suffix() -> None:
         )
 
 
+def test_topology_provenance_rejects_corrupt_hashes_and_counts(
+    tmp_path: Path,
+) -> None:
+    artifact_path, checkpoints, marker = _write_provenance_fixture(tmp_path)
+    artifact = _fixed_contract_artifact()
+    marker_path = Path(f"{artifact_path}.complete")
+    unrolled._verify_topology_provenance(
+        artifact_path, checkpoints, artifact)
+
+    corruptions = (
+        ("artifact_sha256", None),
+        ("states", None),
+        ("checkpoint_sha256", "nmos"),
+        ("normalization_sha256", "pmos"),
+        ("completion_sha256", "pmos"),
+    )
+    for field, polarity in corruptions:
+        corrupted = copy.deepcopy(marker)
+        if polarity is None:
+            corrupted[field] = "wrong"
+        else:
+            corrupted["parent_checkpoints"][polarity][field] = "wrong"
+        marker_path.write_text(json.dumps(corrupted))
+        with pytest.raises(ValueError):
+            unrolled._verify_topology_provenance(
+                artifact_path, checkpoints, artifact)
+    marker_path.write_text(json.dumps(marker))
+
+
+def test_topology_provenance_cross_checks_npz_denominator(tmp_path: Path) -> None:
+    artifact_path, checkpoints, _marker = _write_provenance_fixture(tmp_path)
+
+    with pytest.raises(ValueError, match="artifact states must be 28"):
+        unrolled._verify_topology_provenance(
+            artifact_path, checkpoints, _one_device_artifact())
+
+
 @pytest.mark.skipif(
     os.environ.get("PYCIRCUITSIM_RUN_PRIVATE_INTEGRATION") != "1",
     reason="requires the preserved V7.6.4 parent bundle and harvested LDO artifact",
@@ -320,8 +426,10 @@ def test_real_parent_residual_matches_frozen_ldo_baseline() -> None:
         polarity: checkpoint_dir / f"tsmc5_dnf_medium_{polarity}_best.pt"
         for polarity in ("nmos", "pmos")
     }
+    artifact = unrolled.CircuitArtifact.load(
+        artifact_path, device=torch.device("cpu"), dtype=torch.float32)
     marker = unrolled._verify_topology_provenance(
-        artifact_path, checkpoints)
+        artifact_path, checkpoints, artifact)
     assert marker["artifact_sha256"] == (
         "0ff0399a9b33c03d3f9840482c2613d68ada722120dcbdf026d4a2dff09422da"
     )
@@ -333,8 +441,6 @@ def test_real_parent_residual_matches_frozen_ldo_baseline() -> None:
         assert tuple(outputs) == tuple(hermite.OUTPUT_COLUMNS)
         models[polarity] = copy.deepcopy(model).cpu().eval()
         stats[polarity] = normalization
-    artifact = unrolled.CircuitArtifact.load(
-        artifact_path, device=torch.device("cpu"), dtype=torch.float32)
     residual = unrolled.FullTerminalResidual(
         artifact, models=models, stats=stats)
     parent_kcl = residual(artifact.free_voltage_l72).detach()

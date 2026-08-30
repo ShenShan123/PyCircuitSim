@@ -36,7 +36,7 @@ from examples.complex_circuits.pycircuitsim_bench import (  # noqa: E402
 from examples.complex_circuits.pycircuitsim_bench.evaluator_probe import (  # noqa: E402
     align_devices,
 )
-from neural_network.config import OSDI_PATH, TECH_CONFIGS  # noqa: E402
+from neural_network.config import TECH_CONFIGS  # noqa: E402
 from neural_network.data.normalize import normalizer_from_stats  # noqa: E402
 from pycircuitsim.models.mosfet_directnet_full import (  # noqa: E402
     _load_artifacts,
@@ -48,6 +48,7 @@ from scripts.finetune_active_hermite import (  # noqa: E402
     _normalize_inputs,
     _normalize_outputs,
     _normalization_path,
+    _scored_runtime_contract,
     evaluate_feasibility,
 )
 from scripts.generate_active_hermite_overlay import (  # noqa: E402
@@ -61,6 +62,11 @@ TRAIN_DECKS: tuple[str, ...] = ("tb_line_max.cir", "tb_line_min.cir")
 TARGET_INSTANCE = "m.x1.mm8"
 FINAL_WEIGHT = "net.12.weight"
 FINAL_BIAS = "net.12.bias"
+EXPECTED_CENTERS = 56
+EXPECTED_SWEEPS = {
+    "up": ("v1", 0.65, 0.715, 0.005, 14),
+    "dn": ("v1", 0.65, 0.585, -0.005, 14),
+}
 
 
 def checkpoint_override_prefix(path: Path, device: str) -> str:
@@ -70,6 +76,21 @@ def checkpoint_override_prefix(path: Path, device: str) -> str:
     if not value.endswith(suffix):
         raise ValueError(f"checkpoint must end in {suffix!r}: {path}")
     return value.removesuffix("_best.pt")
+
+
+def validate_line_sweep(plan: Any) -> int:
+    """Validate and return one fixed line-regulation plan denominator."""
+    expected = EXPECTED_SWEEPS.get(str(plan.label))
+    if expected is None:
+        raise ValueError(f"unexpected line-regulation plan {plan.label!r}")
+    source, start, stop, step, points = expected
+    actual = (str(plan.source).lower(), plan.start, plan.stop, plan.step)
+    wanted = (source, start, stop, step)
+    if plan.kind != "dc_source" or actual != wanted:
+        raise ValueError(
+            f"line-regulation plan {plan.label!r} changed: {actual!r}, "
+            f"expected {wanted!r}")
+    return points
 
 
 def aligned_sweep_state(circuit: Any, sweep: Any, index: int) -> dict[str, float]:
@@ -345,6 +366,7 @@ def _harvest_centers(
     args: argparse.Namespace,
     stats: Any,
     source_commit: str,
+    scored_runtime: Mapping[str, object],
 ) -> tuple[Path, dict[str, Any], dict[str, np.ndarray]]:
     """Harvest exact per-unit OSDI labels from the two training line decks."""
     run_compare._pin_design_tree(args.bench_root, "tsmc5")
@@ -366,6 +388,7 @@ def _harvest_centers(
     provenance: list[dict[str, Any]] = []
     state_id = 0
     reference_seconds = 0.0
+    reference_inputs: dict[str, Any] | None = None
     for deck in TRAIN_DECKS:
         td72 = translate.translate_deck(
             design_dir, deck, tech="tsmc5", category="ldo", model_level=72,
@@ -373,6 +396,20 @@ def _harvest_centers(
         td75 = translate.translate_deck(
             design_dir, deck, tech="tsmc5", category="ldo", model_level=75,
         )
+        if len(td72.plans) != len(EXPECTED_SWEEPS):
+            raise ValueError(f"{deck} must contain exactly two fixed sweeps")
+        expected_points = sum(validate_line_sweep(plan) for plan in td72.plans)
+        if expected_points != EXPECTED_CENTERS // len(TRAIN_DECKS):
+            raise ValueError(f"{deck} sweep denominator changed")
+        current_reference = run_compare._reference_provenance(td72)
+        current_inputs = {
+            "osdi": current_reference["osdi"],
+            "ngspice": current_reference["ngspice"],
+        }
+        if reference_inputs is None:
+            reference_inputs = current_inputs
+        elif current_inputs != reference_inputs:
+            raise ValueError("LEVEL=72 executable provenance changed between decks")
         deck_work = args.work_dir / Path(deck).stem
         circuit72, netlist72 = run_compare.build_circuit(td72, deck_work / "l72")
         circuit75, netlist75 = run_compare.build_circuit(td75, deck_work / "l75")
@@ -449,9 +486,11 @@ def _harvest_centers(
                 },
                 "points": int(len(sweep.x)),
             })
-    if state_id != args.expected_centers:
+    if state_id != EXPECTED_CENTERS:
         raise ValueError(
-            f"expected {args.expected_centers} centers, harvested {state_id}")
+            f"expected {EXPECTED_CENTERS} centers, harvested {state_id}")
+    if reference_inputs is None:
+        raise RuntimeError("no LEVEL=72 reference provenance was captured")
     arrays = {
         "inputs": np.asarray(rows["inputs"], dtype=np.float64),
         "outputs": np.asarray(rows["outputs"], dtype=np.float64),
@@ -510,23 +549,9 @@ def _harvest_centers(
         "parent_pmos_sha256": sha256_file(args.parent_pmos),
         "replay_data_sha256": sha256_file(args.replay_data),
         "hermite_overlay_sha256": sha256_file(args.hermite_overlay),
-        "osdi": {
-            "path": str(Path(OSDI_PATH).resolve()),
-            "sha256": sha256_file(Path(OSDI_PATH)),
-        },
-        "ngspice": {
-            "path": str(Path(os.environ["NGSPICE_BIN"]).resolve()),
-            "sha256": sha256_file(Path(os.environ["NGSPICE_BIN"])),
-        },
-        "runtime": {
-            "python": sys.version,
-            "numpy": np.__version__,
-            "torch": torch.__version__,
-            "device": args.device,
-            "torch_threads": args.torch_threads,
-            "omp_threads": os.environ.get("OMP_NUM_THREADS"),
-            "mkl_threads": os.environ.get("MKL_NUM_THREADS"),
-        },
+        "osdi": reference_inputs["osdi"],
+        "ngspice": reference_inputs["ngspice"],
+        "runtime": dict(scored_runtime),
         "plans": provenance,
     }
     marker_path.write_text(json.dumps(marker, sort_keys=True, indent=2) + "\n")
@@ -565,6 +590,7 @@ def run_experiment(args: argparse.Namespace) -> dict[str, object]:
     source_commit, source_dirty = _source_identity()
     if source_dirty:
         raise RuntimeError("LDO pass-current experiment source has tracked changes")
+    scored_runtime = _scored_runtime_contract(args.device, args.torch_threads)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     torch.set_num_threads(args.torch_threads)
@@ -575,7 +601,7 @@ def run_experiment(args: argparse.Namespace) -> dict[str, object]:
         raise ValueError("parent is not the six-surface DirectNet contract")
     parent_model = parent_model.to(device).eval()
     center_path, center_marker, centers = _harvest_centers(
-        args, stats, source_commit,
+        args, stats, source_commit, scored_runtime,
     )
     active, validation, replay, overlay_marker = _load_data(
         args.hermite_overlay, args.replay_data, args.parent_pmos, "pmos",
@@ -701,6 +727,7 @@ def run_experiment(args: argparse.Namespace) -> dict[str, object]:
         "row_scale": row_scale,
         "row_delta": delta_path.name,
         "row_delta_sha256": sha256_file(delta_path),
+        "scored_runtime": scored_runtime,
         "control": control_diagnostics,
         "solve": solve_diagnostics,
         "baseline": baseline,
@@ -771,7 +798,6 @@ def _parser() -> argparse.ArgumentParser:
         "--bench-root", type=Path, default=run_compare.BENCH_ROOT,
     )
     parser.add_argument("--target-instance", default=TARGET_INSTANCE)
-    parser.add_argument("--expected-centers", type=int, default=56)
     parser.add_argument("--local-weight", type=float, default=1.0)
     parser.add_argument("--anchor-weight", type=float, default=1.0)
     parser.add_argument("--ridge-ratio", type=float, default=1e-6)

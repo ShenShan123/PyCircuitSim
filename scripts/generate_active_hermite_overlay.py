@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -594,6 +595,39 @@ def _read_json(path: Path) -> dict[str, Any]:
     return value
 
 
+def _publish_overlay(
+    output: Path,
+    arrays: dict[str, np.ndarray],
+    marker_fields: dict[str, Any],
+    *,
+    overwrite: bool,
+) -> dict[str, Any]:
+    """Atomically publish one guarded overlay artifact and completion marker."""
+    marker_path = output.with_suffix(output.suffix + ".complete")
+    if (output.exists() or marker_path.exists()) and not overwrite:
+        raise FileExistsError(
+            f"refusing to overwrite {output} or {marker_path}")
+    output.parent.mkdir(parents=True, exist_ok=True)
+    temporary = output.with_name(output.name + f".tmp-{os.getpid()}.npz")
+    marker_temporary = marker_path.with_name(
+        marker_path.name + f".tmp-{os.getpid()}")
+    try:
+        np.savez(temporary, **arrays)
+        os.replace(temporary, output)
+        marker = {
+            "artifact": output.name,
+            "artifact_sha256": sha256_file(output),
+            **marker_fields,
+        }
+        marker_temporary.write_text(
+            json.dumps(marker, sort_keys=True, indent=2) + "\n")
+        os.replace(marker_temporary, marker_path)
+        return marker
+    finally:
+        temporary.unlink(missing_ok=True)
+        marker_temporary.unlink(missing_ok=True)
+
+
 def generate(args: argparse.Namespace) -> dict[str, Any]:
     dataset = args.dataset.resolve()
     checkpoint = args.checkpoint.resolve()
@@ -601,6 +635,12 @@ def generate(args: argparse.Namespace) -> dict[str, Any]:
     dataset_marker = dataset.with_suffix(dataset.suffix + ".complete")
     checkpoint_marker = Path(f"{checkpoint}.complete")
     norm = _normalization_path(checkpoint)
+    marker_path = output.with_suffix(output.suffix + ".complete")
+    overwrite = bool(getattr(args, "overwrite", False))
+    if (output.exists() or marker_path.exists()) \
+            and not args.plan_only and not overwrite:
+        raise FileExistsError(
+            f"refusing to overwrite {output} or {marker_path}")
     for path in (dataset, dataset_marker, checkpoint, checkpoint_marker, norm):
         if not path.is_file():
             raise FileNotFoundError(path)
@@ -694,50 +734,49 @@ def generate(args: argparse.Namespace) -> dict[str, Any]:
         }
         for job in jobs
     ]
-    output.parent.mkdir(parents=True, exist_ok=True)
-    np.savez(
-        output, **arrays_out, role=roles, active_rank=ranks,
-        active_score=scores,
-        active_score_head_scale=score_head_scale,
-        parent_current_j_error=raw_scores,
-        parent_current_j_error_by_head=per_head_scores,
-        replay_source_rows=replay,
-        meta_output_columns=np.asarray(OUTPUT_COLUMNS),
-        meta_jacobian_voltage_columns=np.asarray(("Vd", "Vg", "Vb")),
-        meta_role_names=np.asarray(("unused", "active", "validation")),
-        meta_bin_keys_json=np.asarray(json.dumps(bin_keys, sort_keys=True)),
-        meta_parent_dataset=np.asarray(dataset.name),
-        meta_parent_dataset_sha256=np.asarray(dataset_hash),
-        meta_parent_dataset_marker_sha256=np.asarray(
+    artifact_arrays = {
+        **arrays_out,
+        "role": roles,
+        "active_rank": ranks,
+        "active_score": scores,
+        "active_score_head_scale": score_head_scale,
+        "parent_current_j_error": raw_scores,
+        "parent_current_j_error_by_head": per_head_scores,
+        "replay_source_rows": replay,
+        "meta_output_columns": np.asarray(OUTPUT_COLUMNS),
+        "meta_jacobian_voltage_columns": np.asarray(("Vd", "Vg", "Vb")),
+        "meta_role_names": np.asarray(("unused", "active", "validation")),
+        "meta_bin_keys_json": np.asarray(json.dumps(bin_keys, sort_keys=True)),
+        "meta_parent_dataset": np.asarray(dataset.name),
+        "meta_parent_dataset_sha256": np.asarray(dataset_hash),
+        "meta_parent_dataset_marker_sha256": np.asarray(
             sha256_file(dataset_marker)),
-        meta_parent_checkpoint=np.asarray(checkpoint.name),
-        meta_parent_checkpoint_sha256=np.asarray(sha256_file(checkpoint)),
-        meta_parent_checkpoint_marker_sha256=np.asarray(
+        "meta_parent_checkpoint": np.asarray(checkpoint.name),
+        "meta_parent_checkpoint_sha256": np.asarray(sha256_file(checkpoint)),
+        "meta_parent_checkpoint_marker_sha256": np.asarray(
             sha256_file(checkpoint_marker)),
-        meta_parent_normalization=np.asarray(norm.name),
-        meta_parent_normalization_sha256=np.asarray(sha256_file(norm)),
-        meta_source_commit=np.asarray(source_commit),
-        meta_source_dirty=np.asarray(False),
-        meta_seed=np.asarray(args.seed),
-        meta_candidates_per_bin=np.asarray(args.candidates_per_bin),
-        meta_validation_per_bin=np.asarray(args.validation_per_bin),
-        meta_active_per_bin=np.asarray(args.active_per_bin),
-        meta_active_score=np.asarray(
+        "meta_parent_normalization": np.asarray(norm.name),
+        "meta_parent_normalization_sha256": np.asarray(sha256_file(norm)),
+        "meta_source_commit": np.asarray(source_commit),
+        "meta_source_dirty": np.asarray(False),
+        "meta_seed": np.asarray(args.seed),
+        "meta_candidates_per_bin": np.asarray(args.candidates_per_bin),
+        "meta_validation_per_bin": np.asarray(args.validation_per_bin),
+        "meta_active_per_bin": np.asarray(args.active_per_bin),
+        "meta_active_score": np.asarray(
             "mean(error_head / frozen_candidate_mean_head)"),
-        meta_bins=np.asarray(len(jobs)),
-        meta_candidate_queries=np.asarray(plan["queried_rows"]),
-        meta_fd_verification_bins=np.asarray(len(fd_errors)),
-        meta_fd_extra_queries=np.asarray(len(fd_errors) * 6),
-        meta_fd_max_tolerance_ratio=np.asarray(
+        "meta_bins": np.asarray(len(jobs)),
+        "meta_candidate_queries": np.asarray(plan["queried_rows"]),
+        "meta_fd_verification_bins": np.asarray(len(fd_errors)),
+        "meta_fd_extra_queries": np.asarray(len(fd_errors) * 6),
+        "meta_fd_max_tolerance_ratio": np.asarray(
             float(np.max(fd_errors)) if len(fd_errors) else np.nan),
         **{
             f"meta_parent_dataset_{name.removeprefix('meta_')}": value
             for name, value in arrays.items() if name.startswith("meta_")
         },
-    )
-    marker = {
-        "artifact": output.name,
-        "artifact_sha256": sha256_file(output),
+    }
+    marker_fields = {
         **plan,
         "source_commit": source_commit,
         "dataset": dataset.name,
@@ -756,9 +795,8 @@ def generate(args: argparse.Namespace) -> dict[str, Any]:
             float(np.max(fd_errors)) if len(fd_errors) else None
         ),
     }
-    marker_path = output.with_suffix(output.suffix + ".complete")
-    marker_path.write_text(json.dumps(marker, sort_keys=True, indent=2) + "\n")
-    return marker
+    return _publish_overlay(
+        output, artifact_arrays, marker_fields, overwrite=overwrite)
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -778,6 +816,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--score-device", default="cpu")
     parser.add_argument("--score-batch-size", type=int, default=2048)
     parser.add_argument("--plan-only", action="store_true")
+    parser.add_argument("--overwrite", action="store_true")
     return parser
 
 

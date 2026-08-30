@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import copy
 import json
+import os
 import shutil
 import sys
 from dataclasses import dataclass
@@ -735,6 +736,7 @@ def _completion_path(checkpoint: Path) -> Path:
 def _verify_topology_provenance(
     artifact_path: Path,
     checkpoints: Mapping[str, Path],
+    artifact: CircuitArtifact,
 ) -> dict[str, Any]:
     marker_path = Path(f"{artifact_path}.complete")
     if not marker_path.is_file():
@@ -756,6 +758,35 @@ def _verify_topology_provenance(
     for name, expected in expected_counts.items():
         if int(marker.get(name, -1)) != expected:
             raise ValueError(f"topology marker {name} must be {expected}")
+    actual_counts = {
+        "states": artifact.states,
+        "groups": int(artifact.group_sweep.numel()),
+        "devices": int(artifact.mos_is_pmos.numel()),
+    }
+    for name, expected in expected_counts.items():
+        if actual_counts[name] != expected:
+            raise ValueError(f"topology artifact {name} must be {expected}")
+    expected_sweep = torch.as_tensor(
+        [0.65 + 0.005 * index for index in range(14)]
+        + [0.65 - 0.005 * index for index in range(14)],
+        dtype=artifact.group_sweep.dtype,
+        device=artifact.group_sweep.device,
+    )
+    if not torch.allclose(
+        artifact.group_sweep, expected_sweep, rtol=0.0, atol=1e-7,
+    ):
+        raise ValueError("topology artifact sweep coordinates changed")
+    expected_groups = torch.arange(
+        EXPECTED_GROUPS, device=artifact.state_group.device)
+    if (not torch.equal(artifact.state_group, expected_groups)
+            or not torch.equal(
+                artifact.group_segment_offsets,
+                torch.arange(
+                    EXPECTED_GROUPS + 1,
+                    device=artifact.group_segment_offsets.device,
+                ),
+            )):
+        raise ValueError("topology artifact must contain one state per group")
     recorded = marker.get("parent_checkpoints")
     if not isinstance(recorded, dict):
         raise ValueError("topology marker lacks parent_checkpoints")
@@ -932,6 +963,8 @@ def _save_candidate_pair(
     gate: Mapping[str, object],
 ) -> dict[str, str]:
     epoch_dir = args.output_dir / f"epoch_{epoch:02d}"
+    staging_dir = args.output_dir / f".epoch_{epoch:02d}.tmp-{os.getpid()}"
+    backup_dir = args.output_dir / f".epoch_{epoch:02d}.bak-{os.getpid()}"
     names = {
         "nmos": _stem(
             args.nmos_checkpoint, "nmos", args.nmos_stem, args.arm),
@@ -939,74 +972,90 @@ def _save_candidate_pair(
             args.pmos_checkpoint, "pmos", args.pmos_stem, args.arm),
     }
     paths = {
-        polarity: epoch_dir / f"{names[polarity]}_best.pt"
+        polarity: staging_dir / f"{names[polarity]}_best.pt"
         for polarity in ("nmos", "pmos")
     }
-    all_paths: list[Path] = []
-    for polarity, checkpoint in paths.items():
-        norm = epoch_dir / f"{names[polarity]}_norm.npz"
-        all_paths.extend((checkpoint, norm, _completion_path(checkpoint)))
-    if not args.overwrite:
-        existing = [path for path in all_paths if path.exists()]
-        if existing:
-            raise FileExistsError(existing[0])
-    epoch_dir.mkdir(parents=True, exist_ok=True)
+    if epoch_dir.exists() and not args.overwrite:
+        raise FileExistsError(epoch_dir)
+    if staging_dir.exists() or backup_dir.exists():
+        raise FileExistsError(staging_dir)
+    args.output_dir.mkdir(parents=True, exist_ok=True)
+    staging_dir.mkdir()
 
-    # Publish both checkpoint/normalizer halves before either completion marker
-    # can advertise the pair as usable.
-    for polarity, checkpoint in paths.items():
-        state = {
-            name: value.detach().cpu()
-            for name, value in models[polarity].state_dict().items()
-        }
-        torch.save(state, checkpoint)
-        norm = epoch_dir / f"{names[polarity]}_norm.npz"
-        parent_norm = hermite._normalization_path(runs[polarity].checkpoint)
-        shutil.copy2(parent_norm, norm)
-        if hermite.sha256_file(norm) != hermite.sha256_file(parent_norm):
-            raise RuntimeError("saved normalizer differs from parent")
+    try:
+        for polarity, checkpoint in paths.items():
+            state = {
+                name: value.detach().cpu()
+                for name, value in models[polarity].state_dict().items()
+            }
+            torch.save(state, checkpoint)
+            norm = staging_dir / f"{names[polarity]}_norm.npz"
+            parent_norm = hermite._normalization_path(runs[polarity].checkpoint)
+            shutil.copy2(parent_norm, norm)
+            if hermite.sha256_file(norm) != hermite.sha256_file(parent_norm):
+                raise RuntimeError("saved normalizer differs from parent")
 
-    trainer_sha256 = hermite.sha256_file(Path(__file__))
-    for polarity, checkpoint in paths.items():
-        norm = epoch_dir / f"{names[polarity]}_norm.npz"
-        parent_norm = hermite._normalization_path(runs[polarity].checkpoint)
-        other = "pmos" if polarity == "nmos" else "nmos"
-        marker = {
-            "family": "directnet-full",
-            "checkpoint": checkpoint.name,
-            "checkpoint_sha256": hermite.sha256_file(checkpoint),
-            "normalization": norm.name,
-            "normalization_sha256": hermite.sha256_file(norm),
-            "output_columns": list(hermite.OUTPUT_COLUMNS),
-            "source_commit": source_commit,
-            "trainer_sha256": trainer_sha256,
-            "seed": args.seed,
-            "runtime": dict(runtime),
-            "parent_checkpoint_sha256": hermite.sha256_file(
-                runs[polarity].checkpoint),
-            "parent_normalization_sha256": hermite.sha256_file(parent_norm),
-            "parent_completion_sha256": hermite.sha256_file(
-                _completion_path(runs[polarity].checkpoint)),
-            "hermite_overlay": runs[polarity].overlay_marker["artifact"],
-            "hermite_overlay_sha256": runs[polarity].overlay_marker[
-                "artifact_sha256"],
-            "replay_dataset_sha256": runs[polarity].overlay_marker[
-                "dataset_sha256"],
-            "replay_rows": REPLAY_ROWS,
-            "companion_polarity": other,
-            "companion_checkpoint": paths[other].name,
-            "topology_artifact": args.artifact.name,
-            "topology_artifact_sha256": topology_marker["artifact_sha256"],
-            "arm": args.arm,
-            "epoch": epoch,
-            "schedule": _schedule_record(),
-            "device_metrics": device_metrics,
-            "circuit_metrics": circuit_metrics,
-            "feasibility": gate,
-        }
-        _completion_path(checkpoint).write_text(
-            json.dumps(marker, sort_keys=True, indent=2) + "\n")
-    return {polarity: str(path) for polarity, path in paths.items()}
+        trainer_sha256 = hermite.sha256_file(Path(__file__))
+        for polarity, checkpoint in paths.items():
+            norm = staging_dir / f"{names[polarity]}_norm.npz"
+            parent_norm = hermite._normalization_path(runs[polarity].checkpoint)
+            other = "pmos" if polarity == "nmos" else "nmos"
+            marker = {
+                "family": "directnet-full",
+                "checkpoint": checkpoint.name,
+                "checkpoint_sha256": hermite.sha256_file(checkpoint),
+                "normalization": norm.name,
+                "normalization_sha256": hermite.sha256_file(norm),
+                "output_columns": list(hermite.OUTPUT_COLUMNS),
+                "source_commit": source_commit,
+                "trainer_sha256": trainer_sha256,
+                "seed": args.seed,
+                "runtime": dict(runtime),
+                "parent_checkpoint_sha256": hermite.sha256_file(
+                    runs[polarity].checkpoint),
+                "parent_normalization_sha256": hermite.sha256_file(
+                    parent_norm),
+                "parent_completion_sha256": hermite.sha256_file(
+                    _completion_path(runs[polarity].checkpoint)),
+                "hermite_overlay": runs[polarity].overlay_marker["artifact"],
+                "hermite_overlay_sha256": runs[polarity].overlay_marker[
+                    "artifact_sha256"],
+                "replay_dataset_sha256": runs[polarity].overlay_marker[
+                    "dataset_sha256"],
+                "replay_rows": REPLAY_ROWS,
+                "companion_polarity": other,
+                "companion_checkpoint": paths[other].name,
+                "topology_artifact": args.artifact.name,
+                "topology_artifact_sha256": topology_marker[
+                    "artifact_sha256"],
+                "arm": args.arm,
+                "epoch": epoch,
+                "schedule": _schedule_record(),
+                "device_metrics": device_metrics,
+                "circuit_metrics": circuit_metrics,
+                "feasibility": gate,
+            }
+            _completion_path(checkpoint).write_text(
+                json.dumps(marker, sort_keys=True, indent=2) + "\n")
+
+        if epoch_dir.exists():
+            os.replace(epoch_dir, backup_dir)
+        try:
+            os.replace(staging_dir, epoch_dir)
+        except BaseException:
+            if backup_dir.exists() and not epoch_dir.exists():
+                os.replace(backup_dir, epoch_dir)
+            raise
+        if backup_dir.exists():
+            shutil.rmtree(backup_dir)
+    except BaseException:
+        if staging_dir.exists():
+            shutil.rmtree(staging_dir)
+        raise
+    return {
+        polarity: str(epoch_dir / path.name)
+        for polarity, path in paths.items()
+    }
 
 
 def _write_summary(path: Path, summary: Mapping[str, object]) -> None:
@@ -1042,8 +1091,12 @@ def finetune(args: argparse.Namespace) -> dict[str, object]:
         ):
             if not path.is_file():
                 raise FileNotFoundError(path)
-    topology_marker = _verify_topology_provenance(args.artifact, checkpoints)
+    artifact_cpu = CircuitArtifact.load(
+        args.artifact, device=torch.device("cpu"), dtype=torch.float32)
+    topology_marker = _verify_topology_provenance(
+        args.artifact, checkpoints, artifact_cpu)
 
+    scored_runtime = hermite._scored_runtime_contract("cpu", 1)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     torch.set_num_threads(1)
@@ -1059,6 +1112,7 @@ def finetune(args: argparse.Namespace) -> dict[str, object]:
         "training_device": str(train_device),
         "gate_device": "cpu",
         "torch_threads": torch.get_num_threads(),
+        "scored_runtime": scored_runtime,
     }
     if train_device.type == "cuda":
         runtime["cuda_device"] = torch.cuda.get_device_name(train_device)
@@ -1073,8 +1127,6 @@ def finetune(args: argparse.Namespace) -> dict[str, object]:
     }
     parent_models = {name: run.model for name, run in runs.items()}
     stats = {name: run.stats for name, run in runs.items()}
-    artifact_cpu = CircuitArtifact.load(
-        args.artifact, device=torch.device("cpu"), dtype=torch.float32)
     _baseline_result, baseline_circuit = _circuit_metrics(
         artifact_cpu, parent_models, stats, create_graph=False)
     baselines = {

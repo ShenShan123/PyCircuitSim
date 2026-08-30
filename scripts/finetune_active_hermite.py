@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import sys
@@ -43,6 +45,30 @@ from scripts.generate_active_hermite_overlay import (  # noqa: E402
 
 
 TensorOrNone = torch.Tensor | None
+
+
+def _scored_runtime_contract(
+    device: str | torch.device,
+    torch_threads: int,
+) -> dict[str, object]:
+    """Require and describe the fixed scored-inference runtime."""
+    resolved = torch.device(device)
+    if resolved.type != "cpu":
+        raise RuntimeError("scored feasibility gates require CPU")
+    if torch_threads != 1:
+        raise RuntimeError("scored feasibility gates require one Torch thread")
+    for variable in ("OMP_NUM_THREADS", "MKL_NUM_THREADS"):
+        if os.environ.get(variable) != "1":
+            raise RuntimeError(f"{variable}=1 is required for scored gates")
+    return {
+        "python": sys.version.split()[0],
+        "numpy": np.__version__,
+        "torch": str(torch.__version__),
+        "device": "cpu",
+        "torch_threads": 1,
+        "omp_threads": "1",
+        "mkl_threads": "1",
+    }
 
 
 def _seed(base_seed: int, domain: str, value: int) -> int:
@@ -478,6 +504,27 @@ def _model_metrics(
     }
 
 
+def _score_model_on_cpu(
+    model: torch.nn.Module,
+    validation: dict[str, torch.Tensor],
+    replay: dict[str, torch.Tensor],
+    stats: Any,
+    value_batch_size: int,
+    jacobian_batch_size: int,
+) -> dict[str, object]:
+    """Score a detached model copy on the fixed one-thread CPU contract."""
+    previous_threads = torch.get_num_threads()
+    torch.set_num_threads(1)
+    try:
+        scoring_model = copy.deepcopy(model).cpu().eval()
+        return _model_metrics(
+            scoring_model, validation, replay, stats,
+            value_batch_size, jacobian_batch_size,
+        )
+    finally:
+        torch.set_num_threads(previous_threads)
+
+
 def _batches(order: np.ndarray, size: int) -> Iterable[np.ndarray]:
     for start in range(0, len(order), size):
         yield order[start:start + size]
@@ -492,6 +539,7 @@ def _save_feasible_checkpoint(
     source_commit: str,
     overlay_marker: dict[str, Any],
     replay_marker: dict[str, Any],
+    scored_runtime: dict[str, object],
 ) -> Path:
     epoch_dir = args.output_dir / f"epoch_{epoch:02d}"
     epoch_dir.mkdir(parents=True, exist_ok=True)
@@ -536,6 +584,7 @@ def _save_feasible_checkpoint(
         "lambda_jacobian": args.lambda_jacobian,
         "lr": args.lr,
         "seed": args.seed,
+        "scored_runtime": scored_runtime,
         "metrics": metrics,
         "feasibility": gate,
     }
@@ -560,6 +609,7 @@ def finetune(args: argparse.Namespace) -> dict[str, object]:
     if replay_marker.get("dataset_sha256") != sha256_file(args.replay_data):
         raise ValueError("replay dataset marker checksum mismatch")
 
+    scored_runtime = _scored_runtime_contract("cpu", 1)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)
     torch.set_num_threads(args.torch_threads)
@@ -574,8 +624,14 @@ def finetune(args: argparse.Namespace) -> dict[str, object]:
         args.overlay, args.replay_data, args.checkpoint, args.device_type,
         stats, device,
     )
-    baseline = _model_metrics(
-        model, validation, replay, stats, args.value_batch_size,
+    validation_scored = {
+        name: value.detach().cpu() for name, value in validation.items()
+    }
+    replay_scored = {
+        name: value.detach().cpu() for name, value in replay.items()
+    }
+    baseline = _score_model_on_cpu(
+        model, validation_scored, replay_scored, stats, args.value_batch_size,
         args.jacobian_batch_size,
     )
     print(f"baseline={json.dumps(baseline, sort_keys=True)}", flush=True)
@@ -656,8 +712,9 @@ def finetune(args: argparse.Namespace) -> dict[str, object]:
             active_value_sum += float(value_loss.detach()) * count
             active_j_sum += float(jacobian_loss.detach()) * count
             active_seen += count
-        metrics = _model_metrics(
-            model, validation, replay, stats, args.value_batch_size,
+        metrics = _score_model_on_cpu(
+            model, validation_scored, replay_scored, stats,
+            args.value_batch_size,
             args.jacobian_batch_size,
         )
         gate = evaluate_feasibility(
@@ -683,7 +740,7 @@ def finetune(args: argparse.Namespace) -> dict[str, object]:
             feasible_epochs.append(epoch)
             _save_feasible_checkpoint(
                 model, args, epoch, metrics, gate, source_commit,
-                overlay_marker, replay_marker,
+                overlay_marker, replay_marker, scored_runtime,
             )
 
     summary = {
@@ -704,6 +761,7 @@ def finetune(args: argparse.Namespace) -> dict[str, object]:
         "lambda_jacobian": args.lambda_jacobian,
         "lr": args.lr,
         "seed": args.seed,
+        "scored_runtime": scored_runtime,
         "baseline": baseline,
         "history": history,
         "feasible_epochs": feasible_epochs,

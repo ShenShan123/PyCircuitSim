@@ -117,3 +117,29 @@ def test_epoch_order_sweeps_every_replay_row_once() -> None:
 
 def test_pairing_uses_only_synchronized_feasible_epochs() -> None:
     assert hermite.common_feasible_epochs([1, 2, 4], [2, 3, 4]) == [2, 4]
+
+
+def test_scored_runtime_requires_cpu_and_one_thread(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("OMP_NUM_THREADS", "1")
+    monkeypatch.setenv("MKL_NUM_THREADS", "1")
+
+    runtime = hermite._scored_runtime_contract("cpu", 1)
+
+    assert runtime["device"] == "cpu"
+    assert runtime["torch_threads"] == 1
+    with pytest.raises(RuntimeError, match="CPU"):
+        hermite._scored_runtime_contract("cuda", 1)
+    with pytest.raises(RuntimeError, match="one Torch thread"):
+        hermite._scored_runtime_contract("cpu", 2)
+
+
+def test_scored_runtime_requires_openmp_and_mkl_pins(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
+    monkeypatch.setenv("MKL_NUM_THREADS", "1")
+
+    with pytest.raises(RuntimeError, match="OMP_NUM_THREADS=1"):
+        hermite._scored_runtime_contract("cpu", 1)
