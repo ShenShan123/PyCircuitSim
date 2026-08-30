@@ -14,6 +14,7 @@ from scripts.fit_ldo_pass_current import (
     apply_output_row_delta,
     candidate_gate,
     checkpoint_override_prefix,
+    minimum_local_scale,
     solve_output_row_delta,
 )
 
@@ -71,6 +72,18 @@ def test_ridge_solution_reduces_local_error_with_replay_anchor() -> None:
     assert np.mean(np.abs(residual - local @ delta)) < np.mean(
         np.abs(residual))
     assert diagnostics["ridge"] > 0.0
+
+
+def test_minimum_local_scale_uses_only_the_declared_training_error() -> None:
+    parent = np.asarray([0.0, 0.0], dtype=np.float64)
+    target = np.asarray([1.0, 1.0], dtype=np.float64)
+    full_effect = np.asarray([1.0, 1.0], dtype=np.float64)
+
+    scale = minimum_local_scale(
+        parent, target, full_effect, target_ratio=0.5,
+    )
+
+    assert scale == pytest.approx(0.5, abs=1e-12)
 
 
 def test_only_the_selected_output_row_changes() -> None:

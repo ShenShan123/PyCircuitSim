@@ -36,7 +36,7 @@ from examples.complex_circuits.pycircuitsim_bench import (  # noqa: E402
 from examples.complex_circuits.pycircuitsim_bench.evaluator_probe import (  # noqa: E402
     align_devices,
 )
-from neural_network.config import TECH_CONFIGS  # noqa: E402
+from neural_network.config import OSDI_PATH, TECH_CONFIGS  # noqa: E402
 from neural_network.data.normalize import normalizer_from_stats  # noqa: E402
 from pycircuitsim.models.mosfet_directnet_full import (  # noqa: E402
     _load_artifacts,
@@ -153,6 +153,48 @@ def solve_output_row_delta(
     diagnostics["condition_number"] = float(np.linalg.cond(lhs))
     diagnostics["delta_l2"] = float(np.linalg.norm(delta))
     return delta, diagnostics
+
+
+def minimum_local_scale(
+    parent_prediction: np.ndarray,
+    target: np.ndarray,
+    full_effect: np.ndarray,
+    *,
+    target_ratio: float,
+) -> float:
+    """Return the smallest row scale meeting a local-training MAE target."""
+    parent = np.asarray(parent_prediction, dtype=np.float64)
+    truth = np.asarray(target, dtype=np.float64)
+    effect = np.asarray(full_effect, dtype=np.float64)
+    if parent.shape != truth.shape or parent.shape != effect.shape:
+        raise ValueError("local scale arrays must align")
+    if not 0.0 < target_ratio < 1.0:
+        raise ValueError("local target ratio must be strictly between zero and one")
+    baseline = float(np.mean(np.abs(truth - parent)))
+    if baseline == 0.0:
+        return 0.0
+
+    def ratio(scale: float) -> float:
+        return float(np.mean(np.abs(
+            truth - (parent + scale * effect))) / baseline)
+
+    grid = np.linspace(0.0, 1.0, 4097, dtype=np.float64)
+    upper_index = next(
+        (index for index in range(1, len(grid))
+         if ratio(float(grid[index])) <= target_ratio),
+        None,
+    )
+    if upper_index is None:
+        raise ValueError("full row delta does not reach the local MAE target")
+    lower = float(grid[upper_index - 1])
+    upper = float(grid[upper_index])
+    for _ in range(64):
+        middle = 0.5 * (lower + upper)
+        if ratio(middle) <= target_ratio:
+            upper = middle
+        else:
+            lower = middle
+    return upper
 
 
 def apply_output_row_delta(
@@ -401,6 +443,10 @@ def _harvest_centers(
                     "path": str(rawfile.resolve()),
                     "sha256": sha256_file(rawfile),
                 },
+                "modelcard": {
+                    "path": str(td72.modelcard_path.resolve()),
+                    "sha256": sha256_file(td72.modelcard_path),
+                },
                 "points": int(len(sweep.x)),
             })
     if state_id != args.expected_centers:
@@ -464,6 +510,23 @@ def _harvest_centers(
         "parent_pmos_sha256": sha256_file(args.parent_pmos),
         "replay_data_sha256": sha256_file(args.replay_data),
         "hermite_overlay_sha256": sha256_file(args.hermite_overlay),
+        "osdi": {
+            "path": str(Path(OSDI_PATH).resolve()),
+            "sha256": sha256_file(Path(OSDI_PATH)),
+        },
+        "ngspice": {
+            "path": str(Path(os.environ["NGSPICE_BIN"]).resolve()),
+            "sha256": sha256_file(Path(os.environ["NGSPICE_BIN"])),
+        },
+        "runtime": {
+            "python": sys.version,
+            "numpy": np.__version__,
+            "torch": torch.__version__,
+            "device": args.device,
+            "torch_threads": args.torch_threads,
+            "omp_threads": os.environ.get("OMP_NUM_THREADS"),
+            "mkl_threads": os.environ.get("MKL_NUM_THREADS"),
+        },
         "plans": provenance,
     }
     marker_path.write_text(json.dumps(marker, sort_keys=True, indent=2) + "\n")
@@ -554,6 +617,15 @@ def run_experiment(args: argparse.Namespace) -> dict[str, object]:
         local_weight=args.local_weight, anchor_weight=args.anchor_weight,
         ridge_ratio=args.ridge_ratio,
     )
+    full_effect = local_features @ delta
+    row_scale = (
+        1.0 if args.step_policy == "full"
+        else minimum_local_scale(
+            local_parent_prediction, local_target.astype(np.float64),
+            full_effect, target_ratio=args.local_ratio,
+        )
+    )
+    applied_delta = row_scale * delta
     parent_state = {
         name: value.detach().cpu().clone()
         for name, value in parent_model.state_dict().items()
@@ -562,7 +634,8 @@ def run_experiment(args: argparse.Namespace) -> dict[str, object]:
         name: value.clone() for name, value in parent_state.items()
     }
     apply_output_row_delta(
-        candidate_state, FINAL_WEIGHT, FINAL_BIAS, row=0, delta=delta,
+        candidate_state, FINAL_WEIGHT, FINAL_BIAS, row=0,
+        delta=applied_delta,
     )
     if not _only_id_row_changed(parent_state, candidate_state):
         raise RuntimeError("candidate changed a tensor outside PMOS i_d row")
@@ -589,8 +662,22 @@ def run_experiment(args: argparse.Namespace) -> dict[str, object]:
         baseline, candidate_metrics,
         local_parent_mae=local_parent_mae,
         local_candidate_mae=local_candidate_mae,
+        local_ratio=args.local_ratio,
     )
     gate["only_pmos_i_d_row_changed"] = True
+    delta_path = args.output_dir / "row_delta.npz"
+    if delta_path.exists() and not args.overwrite:
+        raise FileExistsError(delta_path)
+    np.savez(
+        delta_path,
+        full_delta=delta,
+        applied_delta=applied_delta,
+        row_scale=np.asarray(row_scale),
+        step_policy=np.asarray(args.step_policy),
+        local_parent_prediction=local_parent_prediction,
+        local_target=local_target,
+        local_full_effect=full_effect,
+    )
     summary: dict[str, object] = {
         "source_commit": source_commit,
         "parent_nmos": str(args.parent_nmos),
@@ -610,6 +697,10 @@ def run_experiment(args: argparse.Namespace) -> dict[str, object]:
         "local_rows": len(local_x),
         "local_parent_i_d_mae": local_parent_mae,
         "local_candidate_i_d_mae": local_candidate_mae,
+        "step_policy": args.step_policy,
+        "row_scale": row_scale,
+        "row_delta": delta_path.name,
+        "row_delta_sha256": sha256_file(delta_path),
         "control": control_diagnostics,
         "solve": solve_diagnostics,
         "baseline": baseline,
@@ -644,11 +735,16 @@ def run_experiment(args: argparse.Namespace) -> dict[str, object]:
             "center_artifact_sha256": center_marker["artifact_sha256"],
             "replay_data_sha256": sha256_file(args.replay_data),
             "hermite_overlay_sha256": sha256_file(args.hermite_overlay),
+            "row_delta": delta_path.name,
+            "row_delta_sha256": sha256_file(delta_path),
             "fit": {
                 "target": "PMOS i_d final row",
                 "local_weight": args.local_weight,
                 "anchor_weight": args.anchor_weight,
                 "ridge_ratio": args.ridge_ratio,
+                "step_policy": args.step_policy,
+                "row_scale": row_scale,
+                "local_ratio": args.local_ratio,
             },
             "gate": gate,
         }
@@ -679,6 +775,10 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--local-weight", type=float, default=1.0)
     parser.add_argument("--anchor-weight", type=float, default=1.0)
     parser.add_argument("--ridge-ratio", type=float, default=1e-6)
+    parser.add_argument(
+        "--step-policy", choices=("full", "minimum-local"), default="full",
+    )
+    parser.add_argument("--local-ratio", type=float, default=0.5)
     parser.add_argument("--seed", type=int, default=767)
     parser.add_argument("--device", default="cpu")
     parser.add_argument("--torch-threads", type=int, default=1)
