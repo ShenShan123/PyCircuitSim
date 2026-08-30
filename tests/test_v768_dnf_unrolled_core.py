@@ -294,6 +294,19 @@ def test_control_never_emits_a_candidate_checkpoint() -> None:
     ) is False
 
 
+def test_candidate_stems_end_in_the_parser_polarity_suffix() -> None:
+    assert unrolled._stem(
+        Path("tsmc5_dnf_medium_nmos_best.pt"), None, "treatment",
+    ) == "tsmc5_dnf_medium_unrolled_treatment_nmos"
+    assert unrolled._stem(
+        Path("tsmc5_dnf_medium_pmos_best.pt"), None, "treatment",
+    ) == "tsmc5_dnf_medium_unrolled_treatment_pmos"
+    with pytest.raises(ValueError, match="must end in _nmos"):
+        unrolled._stem(
+            Path("tsmc5_dnf_medium_nmos_best.pt"), "wrong_pmos", "treatment",
+        )
+
+
 @pytest.mark.skipif(
     os.environ.get("PYCIRCUITSIM_RUN_PRIVATE_INTEGRATION") != "1",
     reason="requires the preserved V7.6.4 parent bundle and harvested LDO artifact",

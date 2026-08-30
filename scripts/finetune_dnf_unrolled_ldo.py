@@ -904,12 +904,20 @@ def _candidate_metrics_cpu(
 
 
 def _stem(checkpoint: Path, requested: str | None, arm: str) -> str:
-    if requested:
-        return requested
-    suffix = "_best.pt"
-    parent = checkpoint.name[:-len(suffix)] if checkpoint.name.endswith(suffix) \
-        else checkpoint.stem
-    return f"{parent}_unrolled_{arm}"
+    for polarity in ("nmos", "pmos"):
+        suffix = f"_{polarity}_best.pt"
+        if not checkpoint.name.endswith(suffix):
+            continue
+        if requested:
+            if not requested.endswith(f"_{polarity}"):
+                raise ValueError(
+                    f"{polarity} stem must end in _{polarity}: {requested!r}")
+            return requested
+        parent = checkpoint.name.removesuffix(suffix)
+        return f"{parent}_unrolled_{arm}_{polarity}"
+    raise ValueError(
+        f"checkpoint name must end in _nmos_best.pt or _pmos_best.pt: "
+        f"{checkpoint.name}")
 
 
 def _save_candidate_pair(
