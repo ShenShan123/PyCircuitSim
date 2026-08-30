@@ -63,6 +63,15 @@ FINAL_WEIGHT = "net.12.weight"
 FINAL_BIAS = "net.12.bias"
 
 
+def checkpoint_override_prefix(path: Path, device: str) -> str:
+    """Return the parser's save-prefix form for one explicit checkpoint."""
+    suffix = f"_{device}_best.pt"
+    value = str(path.resolve())
+    if not value.endswith(suffix):
+        raise ValueError(f"checkpoint must end in {suffix!r}: {path}")
+    return value.removesuffix("_best.pt")
+
+
 def aligned_sweep_state(circuit: Any, sweep: Any, index: int) -> dict[str, float]:
     """Map one complete NGSPICE raw point onto native circuit node names."""
     table: dict[str, str] = {}
@@ -297,8 +306,10 @@ def _harvest_centers(
 ) -> tuple[Path, dict[str, Any], dict[str, np.ndarray]]:
     """Harvest exact per-unit OSDI labels from the two training line decks."""
     run_compare._pin_design_tree(args.bench_root, "tsmc5")
-    os.environ["PYCIRCUITSIM_NN_CHECKPOINT_DNF_NMOS"] = str(args.parent_nmos)
-    os.environ["PYCIRCUITSIM_NN_CHECKPOINT_DNF_PMOS"] = str(args.parent_pmos)
+    os.environ["PYCIRCUITSIM_NN_CHECKPOINT_DNF_NMOS"] = (
+        checkpoint_override_prefix(args.parent_nmos, "nmos"))
+    os.environ["PYCIRCUITSIM_NN_CHECKPOINT_DNF_PMOS"] = (
+        checkpoint_override_prefix(args.parent_pmos, "pmos"))
     os.environ["PYCIRCUITSIM_NN_STRICT_TECH_CODE"] = "1"
     design_dir = (
         args.bench_root / "designs_tsmc5" / "ldo" / "ldo_1"

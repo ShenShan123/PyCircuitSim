@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from types import SimpleNamespace
 
 import numpy as np
@@ -12,6 +13,7 @@ from scripts.fit_ldo_pass_current import (
     aligned_sweep_state,
     apply_output_row_delta,
     candidate_gate,
+    checkpoint_override_prefix,
     solve_output_row_delta,
 )
 
@@ -19,6 +21,16 @@ from scripts.fit_ldo_pass_current import (
 class _Circuit:
     def get_nodes(self) -> list[str]:
         return ["VDD", "out", "x1.n1"]
+
+
+def test_checkpoint_override_uses_the_parser_save_prefix_contract(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "tsmc5_dnf_medium_pmos_best.pt"
+    assert checkpoint_override_prefix(path, "pmos").endswith(
+        "tsmc5_dnf_medium_pmos")
+    with pytest.raises(ValueError, match="_nmos_best"):
+        checkpoint_override_prefix(path, "nmos")
 
 
 def test_aligned_sweep_state_requires_the_complete_physical_state() -> None:
