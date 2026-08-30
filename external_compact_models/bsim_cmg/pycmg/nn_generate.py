@@ -140,7 +140,7 @@ def _source_hash_metadata(bins: Sequence[BinSpec]) -> Dict[str, object]:
             cards[key] = _sha256(path)
     osdi = Path(OSDI_PATH).resolve()
     return {
-        "generator_release": "V7.6.0",
+        "generator_release": "V7.6.3",
         "osdi_path": str(osdi),
         "osdi_sha256": _sha256(osdi),
         "modelcard_sha256_json": json.dumps(cards, sort_keys=True),
@@ -669,6 +669,8 @@ def _reverse_vds_points(
 def _tg_corridor_points(
     vdd: float,
     is_pmos: bool,
+    *,
+    tech_name: str = "",
 ) -> List[Tuple[float, float, float]]:
     """V6.7 transmission-gate / pass-device corridor.
 
@@ -691,16 +693,27 @@ def _tg_corridor_points(
     switchcap over-charge to exactly this corner (raw NN id ≈ 0 where OSDI
     conducts ~µA; PMOS caps 30-60% under-predicted). This overlay samples the
     circuit-realistic loci that produce it, parameterized by the actual DOF:
-    (gate_rail, body_rail, vin, source) → (Vgs, Vds, Vbs). 2 gate × 2 body × 4
-    vin × 16 source = 256 raw loci/bin; only the points OUTSIDE the
+    (gate_rail, body_rail, vin, source) → (Vgs, Vds, Vbs). 2 gate × 2 body × 6
+    vin × 18 source = 432 raw loci/bin; only the points OUTSIDE the
     already-sampled box (|Vds| > 0.30·VDD or |Vbs| > 0.25·VDD) are kept so the
     overlay is the gap-fill, not a re-sample. NMOS-positive convention; mirror
-    through the origin for PMOS (``s = -1``).
+    through the origin for PMOS (``s = -1``). TSMC5/16 NMOS use the wider
+    50% source guard required by their op-amp trajectories; all other devices
+    retain the latch-stable 20% guard.
     """
     s = -1.0 if is_pmos else 1.0
     rails = [0.0, s * vdd]                          # gate / body sit at a rail
-    vin_levels = [s * f * vdd for f in (0.2, 0.4, 0.6, 0.8)]
-    src_levels = np.linspace(0.0, s * vdd, 16)      # source sweeps rail-to-rail
+    vin_levels = [s * f * vdd for f in (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)]
+    source_guard = (
+        0.50
+        if not is_pmos and tech_name.lower() in {"tsmc5", "tsmc16"}
+        else 0.20
+    )
+    src_levels = np.concatenate((
+        [-s * source_guard * vdd],
+        np.linspace(0.0, s * vdd, 16),
+        [s * (1.0 + source_guard) * vdd],
+    ))
     pts: List[Tuple[float, float, float]] = []
     seen: set = set()
     for g_rail in rails:
@@ -955,10 +968,15 @@ def generate_one_bin(spec: BinSpec) -> Optional[Dict[str, np.ndarray]]:
         (_subthreshold_transition_points, SAMPLE_CLASS_CODES["subthresh"]),
         (_small_vds_points, SAMPLE_CLASS_CODES["small_vds"]),
         (_reverse_vds_points, SAMPLE_CLASS_CODES["reverse_vds"]),
-        (_tg_corridor_points, SAMPLE_CLASS_CODES["tg_corridor"]),
     ):
         for vg, vd, vbs in _gen_fn(spec.vdd, is_pmos):
             _eval_and_keep(vg, vd, vbs, _klass)
+    for vg, vd, vbs in _tg_corridor_points(
+        spec.vdd,
+        is_pmos,
+        tech_name=spec.tech_name,
+    ):
+        _eval_and_keep(vg, vd, vbs, SAMPLE_CLASS_CODES["tg_corridor"])
 
     # v5 plan §4-B1: inverter trip-point overlay. Vth_n / Vth_p is
     # determined per-bin via the peak-gm coarse sweep (find_threshold)

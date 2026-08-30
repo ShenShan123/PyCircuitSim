@@ -74,6 +74,33 @@ def test_full_terminal_cli_defaults_match_level75_artifacts() -> None:
     assert train_cli._make_save_prefix(universal) == "refac_dnf_large_nmos"
 
 
+@pytest.mark.parametrize(
+    ("tech_name", "is_pmos", "expected_guard"),
+    [
+        ("tsmc5", False, 1.50),
+        ("tsmc16", False, 1.50),
+        ("tsmc7", False, 1.20),
+        ("tsmc5", True, 1.20),
+    ],
+)
+def test_transmission_gate_corridor_certifies_rail_overshoot_guard(
+    tech_name: str,
+    is_pmos: bool,
+    expected_guard: float,
+) -> None:
+    """Pass-device data must cover rails plus the transient source guard."""
+    vdd = 0.75
+    points = nn_generate._tg_corridor_points(
+        vdd,
+        is_pmos,
+        tech_name=tech_name,
+    )
+    magnitudes = [abs(value) for point in points for value in point]
+
+    assert max(magnitudes) == pytest.approx(expected_guard * vdd)
+    assert any(abs(vds) == pytest.approx(vdd) for _vgs, vds, _vbs in points)
+
+
 def test_full_terminal_assembly_declares_v760_provenance() -> None:
     result = {
         "inputs": np.zeros((1, 4)),
