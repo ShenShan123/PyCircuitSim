@@ -62,6 +62,19 @@ def test_ngspice_grid_must_match_the_fixed_plan() -> None:
         validate_sweep_grid(plan, sweep)
 
 
+def test_ngspice_grid_rejects_non_dc_sweeps() -> None:
+    plan = SimpleNamespace(
+        label="up", source="V1", start=0.65, stop=0.715, step=0.005,
+        kind="dc_source",
+    )
+    sweep = SimpleNamespace(
+        kind="tran", x=np.arange(0.65, 0.72, 0.005),
+    )
+
+    with pytest.raises(ValueError, match="not a DC sweep"):
+        validate_sweep_grid(plan, sweep)
+
+
 def test_aligned_sweep_state_requires_the_complete_physical_state() -> None:
     sweep = SimpleNamespace(v={
         "vdd": np.asarray([0.65]),
