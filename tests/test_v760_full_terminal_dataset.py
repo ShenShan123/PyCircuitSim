@@ -279,6 +279,7 @@ def test_training_cli_routes_full_terminal_transformer(
         "train", "--model", "transformer", "--size", "small",
         "--device-type", "nmos", "--data", str(data_path),
         "--output-contract", "full-terminal", "--apply-filter", "off",
+        "--full-terminal-ar-targets", "3",
         "--exp-name", "v761_full_smoke",
     ])
 
@@ -286,6 +287,41 @@ def test_training_cli_routes_full_terminal_transformer(
 
     assert observed["output_columns"] == FULL_COLUMNS
     assert observed["apply_filter"] is False
+    assert observed["full_terminal_ar_target_dim"] == 3
+
+
+def test_transformer_validation_can_use_autoregressive_runtime_path() -> None:
+    """Checkpoint selection must be able to match deployed AR inference."""
+    class _ValidationProbe(torch.nn.Module):
+        def forward(
+            self,
+            x: torch.Tensor,
+            y: torch.Tensor | None = None,
+            *,
+            tech_codes: torch.Tensor | None = None,
+        ) -> torch.Tensor:
+            del tech_codes
+            return torch.zeros_like(x) if y is None else torch.ones_like(x)
+
+    values = torch.zeros((4, 2), dtype=torch.float32)
+    codes = torch.zeros(4, dtype=torch.long)
+    loader = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(values, values, codes),
+        batch_size=2,
+    )
+    criterion = torch.nn.L1Loss()
+
+    runtime_loss = trainer._epoch_eval(
+        _ValidationProbe(), loader, criterion, torch.device("cpu"),
+        is_transformer=True, autoregressive=True,
+    )
+    teacher_forced_loss = trainer._epoch_eval(
+        _ValidationProbe(), loader, criterion, torch.device("cpu"),
+        is_transformer=True, autoregressive=False,
+    )
+
+    assert runtime_loss == 0.0
+    assert teacher_forced_loss == 1.0
 
 
 def test_full_terminal_transformer_uses_distinct_checkpoint_stem() -> None:
@@ -404,6 +440,7 @@ def test_full_terminal_transformer_writes_verified_bundle(
         save_prefix="tff_smoke", device_str="cpu", overwrite=True,
         num_tech_codes=2, p_unknown=0.0, apply_filter=False,
         split_mode="random", output_columns=FULL_COLUMNS,
+        full_terminal_ar_target_dim=3,
     )
 
     marker = json.loads(
@@ -413,10 +450,12 @@ def test_full_terminal_transformer_writes_verified_bundle(
     assert marker["target_columns"] == [
         "qg", "qb", "qd", "i_d", "i_g", "i_b",
     ]
+    assert marker["ar_target_dim"] == 3
     assert len(marker["configuration_sha256"]) == 64
     with np.load(tmp_path / "tff_smoke_config.npz") as config:
         assert config["output_contract"].item() == "full-terminal"
-        assert config["ar_target_dim"].item() == 6
+        assert config["ar_target_dim"].item() == 3
+        assert config["validation_mode"].item() == "autoregressive"
 
     from pycircuitsim.models.mosfet_bsimar_full import NMOS_TFF
 

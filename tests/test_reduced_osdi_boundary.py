@@ -12,6 +12,7 @@ import pytest
 
 from examples.complex_circuits.pycircuitsim_bench import DeckOptions, run_compare
 from pycircuitsim import solver
+from pycircuitsim.models.mosfet_bsimar_full import NMOS_TFF
 from pycircuitsim.models.mosfet_directnet_full import NMOS_DNF
 
 
@@ -92,15 +93,21 @@ def test_reduced_osdi_boundary_uses_classic_drain_source_stamp() -> None:
 
 
 @pytest.mark.parametrize(
-    ("override", "expected"),
-    ((None, 0.1), (0.25, 0.25)),
+    ("device_type", "override", "expected"),
+    (
+        (NMOS_DNF, None, 0.1),
+        (NMOS_DNF, 0.25, 0.25),
+        (NMOS_TFF, None, 0.1),
+        (NMOS_TFF, 0.25, 0.25),
+    ),
 )
-def test_level75_gets_support_safe_newton_step(
+def test_full_terminal_nn_gets_support_safe_newton_step(
+    device_type: type,
     override: float | None,
     expected: float,
 ) -> None:
-    """LEVEL=75 stays in support unless the caller explicitly overrides it."""
-    device = object.__new__(NMOS_DNF)
+    """LEVEL=75/76 stay in support unless the caller overrides the cap."""
+    device = object.__new__(device_type)
     circuit = SimpleNamespace(components=[device], _topo_version=0)
 
     assert solver._has_directnet_full_device(circuit)

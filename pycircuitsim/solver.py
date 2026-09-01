@@ -498,15 +498,16 @@ def _full_charge_stamp(device: object) -> Optional[Callable[..., Any]]:
 
 
 def _has_directnet_full_device(circuit: Circuit) -> bool:
-    """Return whether the circuit contains a LEVEL=75 full-terminal NN."""
+    """Return whether the circuit contains a LEVEL=75/76 full-terminal NN."""
     key = _topo_key(circuit)
     cached = getattr(circuit, "_pcs_has_full_nn_cache", None)
     if cached is not None and cached[0] == key:
         return cached[1]
     try:
         from pycircuitsim.models.mosfet_directnet_full import NMOS_DNF, PMOS_DNF
+        from pycircuitsim.models.mosfet_bsimar_full import NMOS_TFF, PMOS_TFF
         val = any(
-            isinstance(component, (NMOS_DNF, PMOS_DNF))
+            isinstance(component, (NMOS_DNF, PMOS_DNF, NMOS_TFF, PMOS_TFF))
             for component in circuit.components
         )
     except ImportError:

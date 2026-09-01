@@ -232,6 +232,14 @@ def _run(args: argparse.Namespace) -> None:
                 "not the legacy id filter contract."
             )
             sys.exit(2)
+    if args.full_terminal_ar_targets is not None and (
+        not full_terminal or args.model != "transformer"
+    ):
+        print(
+            "[error] --full-terminal-ar-targets requires "
+            "--model transformer --output-contract full-terminal."
+        )
+        sys.exit(2)
 
     if (args.model, args.size) not in SIZE_PRESETS:
         print(f"[error] no preset for --model {args.model} "
@@ -357,6 +365,7 @@ def _run(args: argparse.Namespace) -> None:
             charge_sobolev_floor=args.charge_sobolev_floor,
             init_from=args.init_from,
             amp=args.amp,
+            full_terminal_ar_target_dim=args.full_terminal_ar_targets,
             **common,
         )
 
@@ -378,6 +387,15 @@ def main() -> None:
         default=REDUCED_OUTPUT_CONTRACT,
         help="Train the legacy 13-head reduced model or the V7.6.0 "
              "six-surface full-terminal DirectNet/BSIM-AR families.",
+    )
+    p.add_argument(
+        "--full-terminal-ar-targets",
+        type=int,
+        choices=[3, 6],
+        default=None,
+        help="Level-76 architecture arm: 6 keeps every surface "
+             "autoregressive; 3 keeps qg/qb/qd autoregressive and emits "
+             "i_d/i_g/i_b through the parallel tail. Unset preserves 6.",
     )
 
     # Per-flag overrides (None means: use the size-preset default)

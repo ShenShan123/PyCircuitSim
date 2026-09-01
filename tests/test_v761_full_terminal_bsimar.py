@@ -83,6 +83,7 @@ def _write_checkpoint(root: Path, stem: str = "full") -> Path:
         "configuration_sha256": _sha256(config_path),
         "output_columns": FULL_COLUMNS,
         "target_columns": TFF_COLUMNS,
+        "ar_target_dim": len(TFF_COLUMNS),
     }))
     return checkpoint
 
@@ -150,6 +151,27 @@ def test_bsimar_full_reconstructs_closed_terminal_stamps(
     assert _is_mosfet(device)
     assert _full_current_stamp(device) is not None
     assert _full_charge_stamp(device) is not None
+
+
+def test_bsimar_full_pmos_scalar_current_preserves_solver_stamp(
+    checkpoint: Path,
+) -> None:
+    """Comparison consumers use the PMOS scalar sign, not the solver sign."""
+    from pycircuitsim.models.mosfet_bsimar_full import PMOS_TFF
+
+    device = PMOS_TFF(
+        "MP", ["d", "g", "s", "b"], str(checkpoint),
+        L=16e-9, NFIN=2.0, tech_code=0, multiplier=2.0,
+    )
+    device._forward_model = MethodType(_linear_surfaces, device)
+    currents_before, jacobian_before = device.get_terminal_stamp(VOLTAGES)
+
+    assert device.calculate_current(VOLTAGES) == pytest.approx(
+        -currents_before[0])
+
+    currents_after, jacobian_after = device.get_terminal_stamp(VOLTAGES)
+    np.testing.assert_array_equal(currents_after, currents_before)
+    np.testing.assert_array_equal(jacobian_after, jacobian_before)
 
 
 def test_level76_requires_explicit_family_and_force_retargets(

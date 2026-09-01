@@ -126,8 +126,9 @@ class TransformerEncoderModel(nn.Module):
         self.input_dim = self.N_GROUPED_INPUT_TOKENS
 
         # P4 — legacy checkpoints use 8 AR targets followed by 5 parallel
-        # capacitances. Full-terminal BSIM-AR uses six AR targets and no
-        # parallel tail without adding any new state-dict keys.
+        # capacitances. Full-terminal BSIM-AR records either a six-target AR
+        # chain or a three-charge AR chain plus three parallel currents in its
+        # architecture sidecar, without adding new state-dict keys.
         self.ar_target_dim = int(ar_target_dim)
         self.parallel_target_dim = target_dim - self.ar_target_dim
 

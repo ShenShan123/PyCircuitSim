@@ -129,8 +129,13 @@ def _load_artifacts(checkpoint: Path) -> _ArtifactBundle:
 
     if kwargs["target_dim"] != len(_TARGET_COLUMNS):
         raise ValueError("Full-terminal BSIM-AR target_dim must be 6")
-    if kwargs["ar_target_dim"] != len(_TARGET_COLUMNS):
-        raise ValueError("Full-terminal BSIM-AR must autoregress all 6 targets")
+    if kwargs["ar_target_dim"] not in (3, len(_TARGET_COLUMNS)):
+        raise ValueError(
+            "Full-terminal BSIM-AR must autoregress 3 or all 6 targets")
+    if marker_data.get("ar_target_dim") != kwargs["ar_target_dim"]:
+        raise ValueError(
+            "Full-terminal BSIM-AR completion marker ar_target_dim does "
+            "not match its configuration")
     model = TransformerEncoderModel(
         **kwargs,
         dropout=dropout,
@@ -158,6 +163,10 @@ class PMOS_TFF(_FullTerminalNNBase):
 
     _artifact_loader = staticmethod(_load_artifacts)
     _family_label = "BSIM-AR-Full"
+
+    def calculate_current(self, voltages: Dict[str, float]) -> float:
+        """Return the project PMOS scalar sign for comparison consumers."""
+        return -super().calculate_current(voltages)
 
 
 __all__ = ["NMOS_TFF", "PMOS_TFF"]

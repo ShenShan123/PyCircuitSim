@@ -323,17 +323,24 @@ def _epoch_eval(
     model: nn.Module, loader: DataLoader, criterion: MAELoss,
     device: torch.device, is_transformer: bool,
     amp: bool = False,
+    autoregressive: bool = False,
 ) -> float:
+    """Evaluate one epoch, optionally matching Transformer deployment."""
     model.eval()
     total = torch.zeros((), device=device)
     n = 0
     for x, y, tc in loader:
         x, y, tc = x.to(device), y.to(device), tc.to(device)
-        # Teacher-forced eval for the Transformer (val loss aligned with train).
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16,
                             enabled=amp):
-            pred = (model(x, y, tech_codes=tc) if is_transformer
-                    else model(x, tech_codes=tc))
+            if is_transformer:
+                pred = model(
+                    x,
+                    None if autoregressive else y,
+                    tech_codes=tc,
+                )
+            else:
+                pred = model(x, tech_codes=tc)
         total += criterion(pred.float(), y).detach()
         n += 1
     return float(total) / max(n, 1)
@@ -420,13 +427,17 @@ def _train_loop(
     charge_sobolev_floor: float = 1e-19,
     amp: bool = False,
     clip_grad: bool = False,
+    autoregressive_validation: bool = False,
 ) -> Tuple[nn.Module, _NormalizerBase]:
     if amp and (sobolev or subthresh or charge_sobolev):
         raise ValueError(
             "--amp is incompatible with the double-backward aux losses "
             "(sobolev / subthresh / charge-sobolev)")
     if amp:
-        print("  AMP: bf16 autocast ON (train + teacher-forced val)")
+        print("  AMP: bf16 autocast ON (train + validation)")
+    if autoregressive_validation and not is_transformer:
+        raise ValueError(
+            "autoregressive_validation requires a Transformer model")
     normalized_columns = list(
         normalizer.stats.output_columns or OUTPUT_COLUMN_ORDER)
     ordered_transformer_columns: Optional[list[str]] = None
@@ -456,6 +467,10 @@ def _train_loop(
             ds.outputs = torch.tensor(
                 ds.outputs.numpy()[:, permutation], dtype=torch.float32)
         print(f"  Transformer target order: {ordered_transformer_columns}")
+        validation_mode = (
+            "autoregressive" if autoregressive_validation else "teacher-forced"
+        )
+        print(f"  Transformer validation mode: {validation_mode}")
 
     print("  Computing LDS weights …")
     lds = compute_lds_weights_per_target(
@@ -690,7 +705,7 @@ def _train_loop(
         eval_model = avg_model if avg_active else model
         val_loss = _epoch_eval(
             eval_model, val_loader, criterion, device, is_transformer,
-            amp=amp)
+            amp=amp, autoregressive=autoregressive_validation)
         scheduler.step()
         lr_now = scheduler.get_last_lr()[0]
 
@@ -1028,6 +1043,7 @@ def train_transformer(
     init_from: Optional[str] = None,
     amp: bool = False,
     split_mode: str = "combo",
+    full_terminal_ar_target_dim: Optional[int] = None,
     **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
     """BSIMAR Transformer training pipeline.
@@ -1067,15 +1083,28 @@ def train_transformer(
                 "The full-terminal BSIM-AR family requires "
                 "apply_filter=False")
         dataset_provenance = _full_terminal_dataset_provenance(data_path)
+        ar_target_dim = (
+            len(BSIMAR_FULL_TERMINAL_COLUMN_ORDER)
+            if full_terminal_ar_target_dim is None
+            else int(full_terminal_ar_target_dim)
+        )
+        if ar_target_dim not in (3, 6):
+            raise ValueError(
+                "Full-terminal BSIM-AR supports 3 or 6 autoregressive "
+                f"targets, got {ar_target_dim}")
     elif training_columns != list(OUTPUT_COLUMN_ORDER):
         raise ValueError(
             "Transformer output_columns must select either the reduced or "
             "full-terminal contract")
+    elif full_terminal_ar_target_dim is not None:
+        raise ValueError(
+            "full_terminal_ar_target_dim requires the full-terminal contract")
 
     target_columns = list(
         BSIMAR_FULL_TERMINAL_COLUMN_ORDER
         if full_terminal else BSIMAR_COLUMN_ORDER)
-    ar_target_dim = len(target_columns) if full_terminal else 8
+    if not full_terminal:
+        ar_target_dim = 8
 
     train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
         data_path, training_columns, device_type=device_type,
@@ -1134,6 +1163,7 @@ def train_transformer(
             "ar_target_dim": ar_target_dim,
             "output_contract": FULL_TERMINAL_OUTPUT_CONTRACT,
             "target_columns": target_columns,
+            "validation_mode": "autoregressive",
         })
     trained = _train_loop(
         model=model, is_transformer=True,
@@ -1160,6 +1190,7 @@ def train_transformer(
         lam_charge_sobolev=lam_charge_sobolev,
         charge_sobolev_floor=charge_sobolev_floor,
         amp=amp,
+        autoregressive_validation=full_terminal,
     )
     if full_terminal:
         checkpoint_path = CHECKPOINT_DIR / f"{save_prefix}_best.pt"
@@ -1176,6 +1207,7 @@ def train_transformer(
             "configuration_sha256": _sha256_file(config_path),
             "output_columns": list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER),
             "target_columns": target_columns,
+            "ar_target_dim": ar_target_dim,
             **dataset_provenance,
         }, sort_keys=True, indent=2) + "\n")
     return trained
