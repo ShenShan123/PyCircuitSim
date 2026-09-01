@@ -45,7 +45,8 @@ Supported analyses are `.op`, `.dc`, `.ac`, and `.tran`. Devices include
 resistors, capacitors, independent voltage/current sources, PULSE sources,
 LEVEL=72–76 MOSFETs, and flattened `X` subcircuit instances. LEVEL=75 and 76
 are separate experimental families selected by `FAMILY=directnet-full` and
-`FAMILY=bsimar-full`; LEVEL=75 is not the retired PFN family.
+`FAMILY=bsimar-full`; LEVEL=75 is not the retired PFN family. Set the global
+device temperature in degrees Celsius with a single `.temp <value>` card.
 
 ## 0. Set up the environment
 

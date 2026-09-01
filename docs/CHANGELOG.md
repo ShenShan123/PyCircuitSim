@@ -18,6 +18,19 @@ per-commit chronology and superseded prose remain in Git history.
 
 ## V7.6 — full-terminal families and closure
 
+### Post-V7.6.4 — LEVEL=76 simple-circuit recovery (2026-09-01)
+
+- Made the parser apply the global Celsius `.temp` card to LEVEL=72–76
+  devices independent of card order. Existing devices rebind through their
+  cache-clearing `set_temperature` contract; later devices receive the
+  selected Kelvin value at construction. Decimal conversion is canonicalized
+  so `-25 C` remains inside a checkpoint whose lower support edge is exactly
+  `248.15 K`.
+- On the fixed TSMC5 LEVEL=76 large DC denominator, the unchanged 20-epoch
+  checkpoint improved from 22/26 to 25/26 with no `ERROR` rows. PMOS `+125 C`
+  and both joint length/NFIN/temperature corners changed from fail to pass;
+  NMOS `+125 C` remains a model failure at 21.86% NRMSE.
+
 ### Post-V7.6.3 — V7.6.4 closure loop and cleanup (2026-08-29 to 2026-08-31)
 
 - Regenerated terminal-upper-edge full-terminal data and eliminated the

@@ -203,6 +203,32 @@ def test_level76_requires_explicit_family_and_force_retargets(
     assert isinstance(forced.circuit.components[-1], NMOS_TFF)
 
 
+def test_level76_parser_binds_netlist_temperature(
+    checkpoint: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`.temp` must reach Level76 whether it precedes or follows the device."""
+    monkeypatch.setattr(
+        "pycircuitsim.parser._resolve_nn_checkpoint",
+        lambda **_kwargs: (str(checkpoint), 0),
+    )
+    parser = Parser()
+    parser.parse_line(".temp 125")
+    parser.parse_line(
+        ".model full NMOS (LEVEL=76 FAMILY=bsimar-full TECH=tsmc5 VT=svt)"
+    )
+    parser.parse_line("M1 d g s b full L=16n NFIN=2")
+    device = parser.circuit.components[-1]
+    assert device.temperature == 398.15
+
+    device._cache_voltages = (0.1, 0.2, 0.0, 0.0)
+    device._eval_cache = (np.ones(4), np.ones((4, 4)))
+    parser.parse_line(".temp -25")
+    assert device.temperature == 248.15
+    assert device._cache_voltages is None
+    assert device._eval_cache is None
+
+
 @pytest.mark.parametrize("artifact", ["best.pt", "norm.npz", "config.npz"])
 def test_bsimar_full_rejects_artifact_checksum_mutation(
     tmp_path: Path,

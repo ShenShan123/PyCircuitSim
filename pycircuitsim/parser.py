@@ -18,6 +18,7 @@ Supported analysis:
 - AC analysis: .ac <sweep_type> <num_points> <fstart> <fstop>
 
 Supported directives:
+- Circuit temperature: .temp <degrees_C>
 - Initial conditions: .ic V(<node>)=<value> ...  (hierarchical nodes like
   V(X1.n1)=... are accepted; .ic cards inside .subckt bodies are rewritten
   to the instance-prefixed nodes at expansion time)
@@ -55,6 +56,7 @@ Value suffixes supported:
 - p/P: pico (1e-12)
 """
 from typing import Any, Dict, Optional, Set, Tuple
+import math
 import os
 import re
 import sys
@@ -73,7 +75,12 @@ from pycircuitsim.models import (
     CurrentSource,
     Inductor,
 )
-from pycircuitsim.config import BSIMCMG_OSDI_PATH, GENERIC_MODELCARD_DIR, ASAP7_MODELCARD_DIR
+from pycircuitsim.config import (
+    ASAP7_MODELCARD_DIR,
+    BSIMCMG_OSDI_PATH,
+    DEFAULT_TEMPERATURE,
+    GENERIC_MODELCARD_DIR,
+)
 
 
 # ── V7.2.0 Phase 1a: per-file caches + collapsed per-device logging ──────
@@ -523,6 +530,7 @@ class Parser:
         self.circuit = Circuit()
         self.analysis_type: Optional[str] = None
         self.analysis_params: Dict[str, float] = {}
+        self._temperature_kelvin = DEFAULT_TEMPERATURE
         self.models: Dict[str, Dict[str, Any]] = {}  # Model definitions
         # Subcircuit definitions: UPPER name -> {name, ports, params, body}
         self.subckts: Dict[str, Dict[str, Any]] = {}
@@ -689,6 +697,8 @@ class Parser:
             self._parse_tran(line)
         elif line.lower().startswith('.ac'):
             self._parse_ac(line)
+        elif line.lower().startswith('.temp'):
+            self._parse_temperature(line)
         elif line.lower().startswith('.ic'):
             self._parse_ic(line)
         elif line.lower().startswith('.model'):
@@ -1105,6 +1115,7 @@ class Parser:
                     TFIN=TFIN,
                     HFIN=HFIN,
                     FPITCH=FPITCH,
+                    temperature=self._temperature_kelvin,
                     model_card_name=model_card_name,
                     multiplier=MULT,
                 )
@@ -1120,6 +1131,7 @@ class Parser:
                     TFIN=TFIN,
                     HFIN=HFIN,
                     FPITCH=FPITCH,
+                    temperature=self._temperature_kelvin,
                     model_card_name=model_card_name,
                     multiplier=MULT,
                 )
@@ -1227,7 +1239,8 @@ class Parser:
 
             nn_kwargs = dict(
                 name=name, nodes=nodes, model_path=nn_model_path,
-                L=L, NFIN=NFIN, tech_code=nn_tech_code, multiplier=MULT,
+                L=L, NFIN=NFIN, temperature=self._temperature_kelvin,
+                tech_code=nn_tech_code, multiplier=MULT,
             )
 
             if model_type.upper() == 'NMOS':
@@ -1247,6 +1260,39 @@ class Parser:
             )
 
         self.circuit.add_component(mosfet)
+
+    def _parse_temperature(self, line: str) -> None:
+        """Parse one global ``.temp`` value in degrees Celsius.
+
+        Netlist temperature is independent of card order. Existing compact
+        models are rebound in place, while later MOSFET constructors consume
+        ``_temperature_kelvin`` directly. Rebinding also lets each model clear
+        voltage-keyed inference and charge-history caches through its own
+        ``set_temperature`` contract.
+        """
+        parts = line.split()
+        if len(parts) != 2:
+            raise ValueError(
+                f"Invalid .temp syntax (expected one Celsius value): {line}"
+            )
+        try:
+            temperature_celsius = float(parts[1])
+        except ValueError as exc:
+            raise ValueError(f"Invalid .temp value: {parts[1]!r}") from exc
+
+        # Canonicalize the decimal Celsius-to-Kelvin conversion. Without the
+        # rounding, ``-25 + 273.15`` lands at 248.14999999999998 and is
+        # spuriously rejected by a checkpoint certified down to 248.15 K.
+        temperature_kelvin = round(temperature_celsius + 273.15, 12)
+        if not math.isfinite(temperature_kelvin) or temperature_kelvin <= 200.0:
+            raise ValueError(
+                f"Temperature must exceed 200 K, got {temperature_celsius} C"
+            )
+        self._temperature_kelvin = temperature_kelvin
+        for component in self.circuit.components:
+            setter = getattr(component, "set_temperature", None)
+            if callable(setter):
+                setter(temperature_kelvin)
 
     def _parse_dc(self, line: str) -> None:
         """
