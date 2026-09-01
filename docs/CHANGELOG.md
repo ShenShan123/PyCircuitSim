@@ -30,6 +30,11 @@ per-commit chronology and superseded prose remain in Git history.
   checkpoint improved from 22/26 to 25/26 with no `ERROR` rows. PMOS `+125 C`
   and both joint length/NFIN/temperature corners changed from fail to pass;
   NMOS `+125 C` remains a model failure at 21.86% NRMSE.
+- Extended the value-only subthreshold loss to the full-terminal `i_d` column
+  and LEVEL=76 training. It remains compatible with BF16 autocast because it
+  does not build a derivative or double-backward graph; full-terminal
+  Sobolev losses remain rejected because the six-surface data has no
+  derivative labels.
 
 ### Post-V7.6.3 — V7.6.4 closure loop and cleanup (2026-08-29 to 2026-08-31)
 

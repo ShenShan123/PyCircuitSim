@@ -23,6 +23,7 @@ from neural_network.data.contracts import (
     REDUCED_OUTPUT_CONTRACT,
     dataset_filename,
 )
+from neural_network.losses.bni_mae import SubthresholdIdLoss
 from neural_network.training import trainer
 from pycmg import nn_generate
 
@@ -280,6 +281,7 @@ def test_training_cli_routes_full_terminal_transformer(
         "--device-type", "nmos", "--data", str(data_path),
         "--output-contract", "full-terminal", "--apply-filter", "off",
         "--full-terminal-ar-targets", "3",
+        "--subthresh", "--amp",
         "--exp-name", "v761_full_smoke",
     ])
 
@@ -288,6 +290,35 @@ def test_training_cli_routes_full_terminal_transformer(
     assert observed["output_columns"] == FULL_COLUMNS
     assert observed["apply_filter"] is False
     assert observed["full_terminal_ar_target_dim"] == 3
+    assert observed["subthresh"] is True
+    assert observed["amp"] is True
+
+
+def test_subthreshold_loss_accepts_full_terminal_drain_column() -> None:
+    columns = ["qg", "qb", "qd", "i_d", "i_g", "i_b"]
+    criterion = SubthresholdIdLoss(column_order=columns)
+    x_norm = torch.zeros((2, 7), dtype=torch.float32)
+    x_norm[:, 4] = 1.0
+    prediction = torch.zeros((2, 6), dtype=torch.float32, requires_grad=True)
+    truth = torch.zeros((2, 6), dtype=torch.float32)
+    truth[:, 3] = torch.asinh(torch.tensor(1e-8))
+    stats = torch.ones(6, dtype=torch.float32)
+
+    loss = criterion(
+        x_norm=x_norm,
+        y_pred_norm=prediction,
+        y_true_norm=truth,
+        in_mean=torch.zeros(7),
+        in_std=torch.ones(7),
+        out_std=stats,
+        out_mean=torch.zeros(6),
+        asinh_scale=stats,
+    )
+    loss.backward()
+
+    assert loss > 0.0
+    assert prediction.grad is not None
+    assert torch.all(torch.isfinite(prediction.grad))
 
 
 def test_transformer_validation_can_use_autoregressive_runtime_path() -> None:
@@ -440,7 +471,7 @@ def test_full_terminal_transformer_writes_verified_bundle(
         save_prefix="tff_smoke", device_str="cpu", overwrite=True,
         num_tech_codes=2, p_unknown=0.0, apply_filter=False,
         split_mode="random", output_columns=FULL_COLUMNS,
-        full_terminal_ar_target_dim=3,
+        full_terminal_ar_target_dim=3, subthresh=True,
     )
 
     marker = json.loads(

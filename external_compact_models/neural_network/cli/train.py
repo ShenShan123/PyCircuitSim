@@ -213,7 +213,6 @@ def _run(args: argparse.Namespace) -> None:
         incompatible = (
             args.loss_preset != "default"
             or args.sobolev
-            or args.subthresh
             or args.charge_sobolev
             or args.monotonic
             or args.ekv_core
@@ -223,6 +222,12 @@ def _run(args: argparse.Namespace) -> None:
                 "[error] --output-contract full-terminal is a separate "
                 "six-surface family and is incompatible with legacy loss "
                 "presets or reduced-head auxiliary paths."
+            )
+            sys.exit(2)
+        if args.subthresh and args.model != "transformer":
+            print(
+                "[error] full-terminal --subthresh is currently supported "
+                "only by the Level76 Transformer family."
             )
             sys.exit(2)
         if args.apply_filter != "off":
@@ -305,9 +310,9 @@ def _run(args: argparse.Namespace) -> None:
         print("[error] --charge-sobolev needs the qg/qd + cgg/cgd/cdg/cdd "
               "columns; it is incompatible with the e2 output-subset preset.")
         sys.exit(2)
-    if args.amp and (args.sobolev or args.subthresh or args.charge_sobolev):
+    if args.amp and (args.sobolev or args.charge_sobolev):
         print("[error] --amp is incompatible with the double-backward aux "
-              "losses (sobolev / subthresh / charge-sobolev).")
+              "losses (sobolev / charge-sobolev).")
         sys.exit(2)
     if args.model == "direct":
         cfg = DirectNetConfig(**preset)
@@ -501,12 +506,12 @@ def main() -> None:
                         "(fine-tune; architecture must match --size / "
                         "--tech-scope).")
 
-    # V6.4.7 S11 (P3) — subthreshold id value+ceiling term, DirectNet only.
+    # V6.4.7 S11 (P3) — subthreshold drain-current value+ceiling term.
     p.add_argument("--subthresh", action="store_true",
                    help="Add the subthreshold id value+ceiling term "
                         "(asinh-s2 sub-uA value MAE + sign-agnostic OFF "
-                        "ceiling hinge). Targets SRAM force_ic. DirectNet "
-                        "only; requires asinh output norm.")
+                        "ceiling hinge). Targets weak-inversion circuit "
+                        "states; requires asinh output norm.")
     p.add_argument("--lam-subthresh", type=float, default=0.05,
                    help="Subthreshold term weight λ (default 0.05). The "
                         "asinh-s2 term is O(1)/row vs the ~5e-3 base MAE, so "

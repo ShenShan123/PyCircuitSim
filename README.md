@@ -240,6 +240,11 @@ checkpoints use `dnf`; BSIM-AR-Full checkpoints use `tff`. Both learn `i_d`,
 `i_g`, `i_b`, `qd`, `qg`, and `qb`; the Transformer emits those surfaces in
 the declared charge-first autoregressive order. Source current and charge are
 reconstructed analytically. LEVEL=73 remains the production NN path.
+For LEVEL=76, `--full-terminal-ar-targets 3` keeps the three charge surfaces
+autoregressive and emits the three current surfaces through the parallel tail.
+The opt-in `--subthresh` drain-current loss supports this contract and may be
+combined with `--amp`; derivative auxiliary losses remain unavailable because
+the six-surface dataset does not carry derivative labels.
 
 For parallel DirectNet production training, let the campaign wrapper assign
 jobs across GPUs:

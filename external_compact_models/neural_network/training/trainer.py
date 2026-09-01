@@ -429,10 +429,10 @@ def _train_loop(
     clip_grad: bool = False,
     autoregressive_validation: bool = False,
 ) -> Tuple[nn.Module, _NormalizerBase]:
-    if amp and (sobolev or subthresh or charge_sobolev):
+    if amp and (sobolev or charge_sobolev):
         raise ValueError(
             "--amp is incompatible with the double-backward aux losses "
-            "(sobolev / subthresh / charge-sobolev)")
+            "(sobolev / charge-sobolev)")
     if amp:
         print("  AMP: bf16 autocast ON (train + validation)")
     if autoregressive_validation and not is_transformer:
@@ -1074,10 +1074,10 @@ def train_transformer(
         FULL_TERMINAL_OUTPUT_COLUMN_ORDER)
     dataset_provenance: Optional[Dict[str, object]] = None
     if full_terminal:
-        if (sobolev or subthresh or charge_sobolev):
+        if (sobolev or charge_sobolev):
             raise ValueError(
                 "The full-terminal BSIM-AR family cannot use legacy "
-                "reduced-head auxiliary losses")
+                "reduced-head derivative losses")
         if apply_filter:
             raise ValueError(
                 "The full-terminal BSIM-AR family requires "
