@@ -41,6 +41,11 @@ per-commit chronology and superseded prose remain in Git history.
   random splitting, and leaves default combo splits unchanged. This caught a
   targeted L=16 nm, 398.15 K hot-NMOS overlay whose 12,789 rows otherwise
   landed entirely in validation.
+- Added opt-in LEVEL=76 autoregressive fine-tuning so the current tail and
+  later charge heads train against predicted charge prefixes, matching the
+  deployed rollout instead of ground-truth teacher-forcing prefixes. Existing
+  training remains unchanged by default, and both bundle sidecars record the
+  selected mode.
 
 ### Post-V7.6.3 — V7.6.4 closure loop and cleanup (2026-08-29 to 2026-08-31)
 

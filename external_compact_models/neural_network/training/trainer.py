@@ -3,8 +3,9 @@
 Both architectures share the same data, normaliser, LDS-MAE loss, cosine
 schedule, and early-stop pattern. The only differences:
 
-* the Transformer's ``forward`` takes a teacher-forced ``y`` argument
-  during training and runs autoregressively at eval time;
+* the Transformer's ``forward`` uses teacher forcing by default, with an
+  opt-in deployed-rollout path for full-terminal fine-tuning, and runs
+  autoregressively at eval time;
 * the Transformer trains in ``BSIMAR_COLUMN_ORDER`` and saves an
   architecture sidecar so the simulator can rebuild the model.
 
@@ -230,6 +231,7 @@ def _epoch_train(
     charge_sobolev_norm: Optional[Dict[str, torch.Tensor]] = None,
     amp: bool = False,
     clip_grad: bool = False,
+    autoregressive_training: bool = False,
 ) -> Tuple[float, float]:
     """One training epoch. Returns (mean_total_loss, mean_aux_term).
 
@@ -275,8 +277,14 @@ def _epoch_train(
         # with the double-backward aux terms — the CLI guards that combo.
         with _fwd_ctx(), torch.autocast(
                 device_type="cuda", dtype=torch.bfloat16, enabled=amp):
-            pred = (model(x, y, tech_codes=tc) if is_transformer
-                    else model(x, tech_codes=tc))
+            pred = (
+                model(
+                    x,
+                    None if autoregressive_training else y,
+                    tech_codes=tc,
+                )
+                if is_transformer else model(x, tech_codes=tc)
+            )
             loss = criterion(pred.float(), y, weights=w)
         if sobolev_loss is not None:
             sob = sobolev_loss(
@@ -428,6 +436,7 @@ def _train_loop(
     amp: bool = False,
     clip_grad: bool = False,
     autoregressive_validation: bool = False,
+    autoregressive_training: bool = False,
 ) -> Tuple[nn.Module, _NormalizerBase]:
     if amp and (sobolev or charge_sobolev):
         raise ValueError(
@@ -438,6 +447,9 @@ def _train_loop(
     if autoregressive_validation and not is_transformer:
         raise ValueError(
             "autoregressive_validation requires a Transformer model")
+    if autoregressive_training and not is_transformer:
+        raise ValueError(
+            "autoregressive_training requires a Transformer model")
     normalized_columns = list(
         normalizer.stats.output_columns or OUTPUT_COLUMN_ORDER)
     ordered_transformer_columns: Optional[list[str]] = None
@@ -470,6 +482,10 @@ def _train_loop(
         validation_mode = (
             "autoregressive" if autoregressive_validation else "teacher-forced"
         )
+        training_mode = (
+            "autoregressive" if autoregressive_training else "teacher-forced"
+        )
+        print(f"  Transformer training mode: {training_mode}")
         print(f"  Transformer validation mode: {validation_mode}")
 
     print("  Computing LDS weights …")
@@ -693,7 +709,8 @@ def _train_loop(
             subthresh_loss=subthresh_loss, aux_norm=aux_norm,
             charge_sobolev_loss=charge_sobolev_loss,
             charge_sobolev_norm=charge_sobolev_norm,
-            amp=amp, clip_grad=clip_grad)
+            amp=amp, clip_grad=clip_grad,
+            autoregressive_training=autoregressive_training)
         if swa_mode == "swa" and epoch >= swa_start:
             avg_model.update_parameters(model)
             if epoch == swa_start:
@@ -1047,6 +1064,7 @@ def train_transformer(
     split_mode: str = "combo",
     training_overlay_classes: Optional[Set[str]] = None,
     full_terminal_ar_target_dim: Optional[int] = None,
+    autoregressive_training: bool = False,
     **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
     """BSIMAR Transformer training pipeline.
@@ -1102,6 +1120,9 @@ def train_transformer(
     elif full_terminal_ar_target_dim is not None:
         raise ValueError(
             "full_terminal_ar_target_dim requires the full-terminal contract")
+    if autoregressive_training and not full_terminal:
+        raise ValueError(
+            "autoregressive_training requires the full-terminal contract")
 
     target_columns = list(
         BSIMAR_FULL_TERMINAL_COLUMN_ORDER
@@ -1167,6 +1188,10 @@ def train_transformer(
             "ar_target_dim": ar_target_dim,
             "output_contract": FULL_TERMINAL_OUTPUT_CONTRACT,
             "target_columns": target_columns,
+            "training_mode": (
+                "autoregressive" if autoregressive_training
+                else "teacher-forced"
+            ),
             "validation_mode": "autoregressive",
         })
     trained = _train_loop(
@@ -1195,6 +1220,7 @@ def train_transformer(
         charge_sobolev_floor=charge_sobolev_floor,
         amp=amp,
         autoregressive_validation=full_terminal,
+        autoregressive_training=autoregressive_training,
     )
     if full_terminal:
         checkpoint_path = CHECKPOINT_DIR / f"{save_prefix}_best.pt"
@@ -1212,6 +1238,10 @@ def train_transformer(
             "output_columns": list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER),
             "target_columns": target_columns,
             "ar_target_dim": ar_target_dim,
+            "training_mode": (
+                "autoregressive" if autoregressive_training
+                else "teacher-forced"
+            ),
             **dataset_provenance,
         }, sort_keys=True, indent=2) + "\n")
     return trained

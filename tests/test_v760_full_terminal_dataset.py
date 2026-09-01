@@ -281,6 +281,7 @@ def test_training_cli_routes_full_terminal_transformer(
         "--device-type", "nmos", "--data", str(data_path),
         "--output-contract", "full-terminal", "--apply-filter", "off",
         "--full-terminal-ar-targets", "3",
+        "--autoregressive-training",
         "--training-overlay-classes", "traj_corridor,hot",
         "--subthresh", "--amp",
         "--exp-name", "v761_full_smoke",
@@ -291,6 +292,7 @@ def test_training_cli_routes_full_terminal_transformer(
     assert observed["output_columns"] == FULL_COLUMNS
     assert observed["apply_filter"] is False
     assert observed["full_terminal_ar_target_dim"] == 3
+    assert observed["autoregressive_training"] is True
     assert observed["subthresh"] is True
     assert observed["amp"] is True
     assert observed["training_overlay_classes"] == {
@@ -357,6 +359,61 @@ def test_transformer_validation_can_use_autoregressive_runtime_path() -> None:
 
     assert runtime_loss == 0.0
     assert teacher_forced_loss == 1.0
+
+
+def test_transformer_training_can_use_autoregressive_runtime_path() -> None:
+    """Fine-tuning can condition every head on deployed predictions."""
+    class _TrainingProbe(torch.nn.Module):
+        def __init__(self) -> None:
+            super().__init__()
+            self.bias = torch.nn.Parameter(torch.tensor(0.25))
+            self.seen_autoregressive: list[bool] = []
+
+        def forward(
+            self,
+            x: torch.Tensor,
+            y: torch.Tensor | None = None,
+            *,
+            tech_codes: torch.Tensor | None = None,
+        ) -> torch.Tensor:
+            del tech_codes
+            self.seen_autoregressive.append(y is None)
+            return self.bias * torch.ones_like(x)
+
+    values = torch.zeros((4, 2), dtype=torch.float32)
+    codes = torch.zeros(4, dtype=torch.long)
+    weights = torch.ones_like(values)
+    loader = torch.utils.data.DataLoader(
+        torch.utils.data.TensorDataset(values, values, codes, weights),
+        batch_size=2,
+    )
+
+    runtime_model = _TrainingProbe()
+    trainer._epoch_train(
+        runtime_model, loader, trainer.MAELoss(),
+        torch.optim.SGD(runtime_model.parameters(), lr=0.01),
+        torch.device("cpu"), is_transformer=True,
+        autoregressive_training=True,
+    )
+    teacher_model = _TrainingProbe()
+    trainer._epoch_train(
+        teacher_model, loader, trainer.MAELoss(),
+        torch.optim.SGD(teacher_model.parameters(), lr=0.01),
+        torch.device("cpu"), is_transformer=True,
+        autoregressive_training=False,
+    )
+
+    assert runtime_model.seen_autoregressive == [True, True]
+    assert teacher_model.seen_autoregressive == [False, False]
+
+
+def test_autoregressive_training_requires_full_terminal_contract() -> None:
+    with pytest.raises(ValueError, match="full-terminal"):
+        trainer.train_transformer(
+            "unused.npz",
+            save_prefix="unused",
+            autoregressive_training=True,
+        )
 
 
 def test_full_terminal_transformer_uses_distinct_checkpoint_stem() -> None:
@@ -476,6 +533,7 @@ def test_full_terminal_transformer_writes_verified_bundle(
         num_tech_codes=2, p_unknown=0.0, apply_filter=False,
         split_mode="random", output_columns=FULL_COLUMNS,
         full_terminal_ar_target_dim=3, subthresh=True,
+        autoregressive_training=True,
     )
 
     marker = json.loads(
@@ -486,11 +544,13 @@ def test_full_terminal_transformer_writes_verified_bundle(
         "qg", "qb", "qd", "i_d", "i_g", "i_b",
     ]
     assert marker["ar_target_dim"] == 3
+    assert marker["training_mode"] == "autoregressive"
     assert len(marker["configuration_sha256"]) == 64
     with np.load(tmp_path / "tff_smoke_config.npz") as config:
         assert config["output_contract"].item() == "full-terminal"
         assert config["ar_target_dim"].item() == 3
         assert config["validation_mode"].item() == "autoregressive"
+        assert config["training_mode"].item() == "autoregressive"
 
     from pycircuitsim.models.mosfet_bsimar_full import NMOS_TFF
 

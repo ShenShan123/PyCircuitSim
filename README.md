@@ -242,6 +242,10 @@ the declared charge-first autoregressive order. Source current and charge are
 reconstructed analytically. LEVEL=73 remains the production NN path.
 For LEVEL=76, `--full-terminal-ar-targets 3` keeps the three charge surfaces
 autoregressive and emits the three current surfaces through the parallel tail.
+`--autoregressive-training` makes an opt-in fine-tune use those predicted
+charge prefixes during training, matching deployed rollout; the default
+remains checkpoint-compatible teacher forcing. The configuration and
+completion sidecars record which training mode produced the checkpoint.
 The opt-in `--subthresh` drain-current loss supports this contract and may be
 combined with `--amp`; derivative auxiliary losses remain unavailable because
 the six-surface dataset does not carry derivative labels.
@@ -257,6 +261,7 @@ default split when the flag is absent:
 python -m neural_network.cli.train \
   --model transformer --size large --device-type nmos --tech-scope tsmc5 \
   --output-contract full-terminal --full-terminal-ar-targets 3 \
+  --autoregressive-training \
   --apply-filter off --split-mode combo \
   --training-overlay-classes traj_corridor \
   --class-weights traj_corridor=3.0 \

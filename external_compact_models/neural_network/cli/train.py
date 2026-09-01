@@ -253,6 +253,14 @@ def _run(args: argparse.Namespace) -> None:
             "--model transformer --output-contract full-terminal."
         )
         sys.exit(2)
+    if args.autoregressive_training and (
+        not full_terminal or args.model != "transformer"
+    ):
+        print(
+            "[error] --autoregressive-training requires "
+            "--model transformer --output-contract full-terminal."
+        )
+        sys.exit(2)
 
     if (args.model, args.size) not in SIZE_PRESETS:
         print(f"[error] no preset for --model {args.model} "
@@ -381,6 +389,7 @@ def _run(args: argparse.Namespace) -> None:
             init_from=args.init_from,
             amp=args.amp,
             full_terminal_ar_target_dim=args.full_terminal_ar_targets,
+            autoregressive_training=args.autoregressive_training,
             **common,
         )
 
@@ -411,6 +420,13 @@ def main() -> None:
         help="Level-76 architecture arm: 6 keeps every surface "
              "autoregressive; 3 keeps qg/qb/qd autoregressive and emits "
              "i_d/i_g/i_b through the parallel tail. Unset preserves 6.",
+    )
+    p.add_argument(
+        "--autoregressive-training",
+        action="store_true",
+        help="Fine-tune LEVEL=76 using the same predicted-prefix rollout "
+             "used at inference. Full-terminal Transformer only; unset "
+             "preserves teacher forcing.",
     )
 
     # Per-flag overrides (None means: use the size-preset default)
