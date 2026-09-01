@@ -200,6 +200,65 @@ def filter_small_targets(
     return mask
 
 
+def _promote_training_overlay_strata(
+    combo_strata: np.ndarray,
+    sample_class: np.ndarray,
+    sample_class_names: Optional[List[str]],
+    training_overlay_classes: Set[str],
+    train_idx: np.ndarray,
+    val_idx: np.ndarray,
+    test_idx: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Move complete combo strata containing declared overlays to training.
+
+    Circuit-derived overlays are deliberate training evidence, not independent
+    validation samples.  Moving only the tagged rows would leak their exact
+    technology/geometry stratum across partitions, so every peer row in an
+    affected stratum moves with them.
+    """
+    if sample_class_names is None:
+        raise ValueError(
+            "training overlay classes require meta_sample_class_names"
+        )
+    unknown = sorted(
+        training_overlay_classes.difference(sample_class_names)
+    )
+    if unknown:
+        raise ValueError(
+            f"training overlay classes {unknown} not in dataset "
+            f"sample classes {sample_class_names}"
+        )
+    overlay_codes = np.asarray([
+        sample_class_names.index(name)
+        for name in sorted(training_overlay_classes)
+    ], dtype=sample_class.dtype)
+    overlay_rows = np.isin(sample_class, overlay_codes)
+    if not np.any(overlay_rows):
+        raise ValueError(
+            "training overlay classes select no rows after filtering"
+        )
+
+    strata = np.ascontiguousarray(combo_strata)
+    key_dtype = np.dtype((np.void, strata.dtype.itemsize * strata.shape[1]))
+    row_keys = strata.view(key_dtype).reshape(-1)
+    overlay_keys = np.unique(row_keys[overlay_rows])
+    promote = np.isin(row_keys, overlay_keys)
+    val_move = promote[val_idx]
+    test_move = promote[test_idx]
+    promoted = np.concatenate([val_idx[val_move], test_idx[test_move]])
+    if len(promoted):
+        train_idx = np.concatenate([train_idx, promoted])
+    val_idx = val_idx[~val_move]
+    test_idx = test_idx[~test_move]
+    print(
+        f"  Training overlays {sorted(training_overlay_classes)}: "
+        f"{int(overlay_rows.sum())} tagged rows across "
+        f"{len(overlay_keys)} combo strata; promoted {len(promoted)} "
+        f"total rows from validation/test"
+    )
+    return train_idx, val_idx, test_idx
+
+
 def load_and_split_bsimar(
     data_path: str,
     column_names: List[str],
@@ -215,6 +274,7 @@ def load_and_split_bsimar(
     output_subset: Optional[List[str]] = None,
     tech_scope: str = "universal",
     split_mode: str = "combo",
+    training_overlay_classes: Optional[Set[str]] = None,
 ) -> Tuple[MOSFETDataset, MOSFETDataset, MOSFETDataset, _NormalizerBase]:
     """Load .npz, label, optionally filter / exclude techs / cap, split, normalise.
 
@@ -228,6 +288,11 @@ def load_and_split_bsimar(
     0-indexed local vocab whose size matches the trained per-tech
     embedding. Rows outside the scope (which should already be removed
     by ``exclude_techs``) collapse to the local UNKNOWN slot at the tail.
+
+    ``training_overlay_classes`` is an opt-in set of circuit-derived sample
+    classes.  Under the combo split, every complete stratum containing one of
+    those rows is promoted to training so the overlay cannot silently land in
+    validation/test or leak a geometry across partitions.
     """
     from neural_network.eval.loo_labels import get_or_build_tech_variant_labels
 
@@ -268,6 +333,24 @@ def load_and_split_bsimar(
             n.decode() if isinstance(n, bytes) else str(n)
             for n in data["meta_sample_class_names"]
         ]
+    overlay_classes = set(training_overlay_classes or ())
+    if overlay_classes and split_mode != "combo":
+        raise ValueError(
+            "training overlay classes require split_mode='combo'"
+        )
+    if overlay_classes:
+        if sample_class_names is None:
+            raise ValueError(
+                "training overlay classes require meta_sample_class_names"
+            )
+        unknown_overlay_classes = sorted(
+            overlay_classes.difference(sample_class_names)
+        )
+        if unknown_overlay_classes:
+            raise ValueError(
+                f"training overlay classes {unknown_overlay_classes} not in "
+                f"dataset sample classes {sample_class_names}"
+            )
 
     n0 = len(outputs)
     if apply_filter:
@@ -348,6 +431,11 @@ def load_and_split_bsimar(
         train_idx, val_idx, test_idx = grouped_split_indices(
             combo_strata, train_ratio, val_ratio, seed,
         )
+        if overlay_classes:
+            train_idx, val_idx, test_idx = _promote_training_overlay_strata(
+                combo_strata, sample_class, sample_class_names,
+                overlay_classes, train_idx, val_idx, test_idx,
+            )
     elif split_mode == "random":
         rng = np.random.default_rng(seed)
         perm = rng.permutation(len(outputs))

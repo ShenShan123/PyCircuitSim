@@ -129,6 +129,14 @@ def _parse_class_weights(spec: Optional[str]) -> Optional[Dict[str, float]]:
     return out or None
 
 
+def _parse_class_names(spec: Optional[str]) -> Optional[set[str]]:
+    """Parse a comma-separated sample-class list; empty means disabled."""
+    if not spec:
+        return None
+    names = {name.strip() for name in spec.split(",") if name.strip()}
+    return names or None
+
+
 def _resolve_data_path(args: argparse.Namespace) -> Path:
     if args.data:
         return Path(args.data)
@@ -273,6 +281,8 @@ def _run(args: argparse.Namespace) -> None:
         apply_filter=(args.apply_filter == "on"),
         class_weights=_parse_class_weights(args.class_weights),
         split_mode=args.split_mode,
+        training_overlay_classes=_parse_class_names(
+            args.training_overlay_classes),
     )
 
     # Phase 7 (V6.4.2) soft physics constraints — DirectNet only, opt-in.
@@ -471,6 +481,12 @@ def main() -> None:
                         "'subthresh=4.0,reverse_vds=2.0'. Folded into the "
                         "LDS tensor and renormalized to unit mean per "
                         "target. Requires a sample_class-tagged dataset.")
+    p.add_argument(
+        "--training-overlay-classes", type=str, default=None,
+        help="Comma-separated circuit-derived sample classes that must be "
+             "training evidence. With --split-mode combo, complete affected "
+             "technology/geometry strata move to training and are reported.",
+    )
     p.add_argument("--loss-preset",
                    choices=sorted(LOSS_PRESETS.keys()),
                    default="default",

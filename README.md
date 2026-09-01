@@ -246,6 +246,23 @@ The opt-in `--subthresh` drain-current loss supports this contract and may be
 combined with `--amp`; derivative auxiliary losses remain unavailable because
 the six-surface dataset does not carry derivative labels.
 
+Circuit-derived rows appended for curriculum training must be declared
+explicitly. With the default combo split, `--training-overlay-classes` moves
+every complete technology/VT/L/NFIN/temperature stratum containing one of the
+named classes into training and reports the moved row count. This prevents an
+overlay from silently landing only in validation/test while preserving the
+default split when the flag is absent:
+
+```bash
+python -m neural_network.cli.train \
+  --model transformer --size large --device-type nmos --tech-scope tsmc5 \
+  --output-contract full-terminal --full-terminal-ar-targets 3 \
+  --apply-filter off --split-mode combo \
+  --training-overlay-classes traj_corridor \
+  --class-weights traj_corridor=3.0 \
+  --data "$BSIMAR_DATA_DIR/tsmc5_dnf_corridor_nmos.npz"
+```
+
 For parallel DirectNet production training, let the campaign wrapper assign
 jobs across GPUs:
 

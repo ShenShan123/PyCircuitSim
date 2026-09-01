@@ -811,6 +811,7 @@ def train_directnet(
     init_from: Optional[str] = None,
     amp: bool = False,
     split_mode: str = "combo",
+    training_overlay_classes: Optional[Set[str]] = None,
     **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
     """DirectNet MLP training pipeline.
@@ -885,6 +886,7 @@ def train_directnet(
         output_subset=output_subset,
         tech_scope=tech_scope,
         split_mode=split_mode,
+        training_overlay_classes=training_overlay_classes,
     )
     _assert_codes_in_vocab(
         (train_ds, val_ds, test_ds), num_tech_codes, tech_scope)
@@ -1043,6 +1045,7 @@ def train_transformer(
     init_from: Optional[str] = None,
     amp: bool = False,
     split_mode: str = "combo",
+    training_overlay_classes: Optional[Set[str]] = None,
     full_terminal_ar_target_dim: Optional[int] = None,
     **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
@@ -1112,6 +1115,7 @@ def train_transformer(
         norm_mode=_NORM_MODE, max_rows=max_rows,
         tech_scope=tech_scope,
         split_mode=split_mode,
+        training_overlay_classes=training_overlay_classes,
     )
     _assert_codes_in_vocab(
         (train_ds, val_ds, test_ds), num_tech_codes, tech_scope)

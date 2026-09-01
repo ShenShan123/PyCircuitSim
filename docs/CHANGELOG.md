@@ -35,6 +35,12 @@ per-commit chronology and superseded prose remain in Git history.
   does not build a derivative or double-backward graph; full-terminal
   Sobolev losses remain rejected because the six-surface data has no
   derivative labels.
+- Added an opt-in training-overlay split contract for circuit-derived sample
+  classes. It promotes whole technology/VT/L/NFIN/temperature strata into the
+  training partition, reports the movement, rejects unknown classes and
+  random splitting, and leaves default combo splits unchanged. This caught a
+  targeted L=16 nm, 398.15 K hot-NMOS overlay whose 12,789 rows otherwise
+  landed entirely in validation.
 
 ### Post-V7.6.3 — V7.6.4 closure loop and cleanup (2026-08-29 to 2026-08-31)
 

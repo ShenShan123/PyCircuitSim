@@ -98,6 +98,79 @@ def test_loader_passes_full_combo_strata_to_grouped_split(
     )
 
 
+def test_training_overlay_moves_its_whole_combo_stratum_to_train(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Circuit-derived rows and same-geometry peers cannot remain held out."""
+    path = tmp_path / "overlay.npz"
+    geometry = np.zeros((6, 15), dtype=np.float64)
+    geometry[:, :3] = np.asarray([
+        [2, 16e-9, 300.15], [2, 16e-9, 300.15],
+        [3, 20e-9, 300.15], [3, 20e-9, 300.15],
+        [2, 16e-9, 398.15], [2, 16e-9, 398.15],
+    ])
+    np.savez(
+        path,
+        inputs=np.arange(24, dtype=float).reshape(6, 4),
+        geometry=geometry,
+        outputs=np.arange(6, dtype=float)[:, None] + 1.0,
+        sample_class=np.asarray([0, 0, 0, 0, 1, 0], dtype=np.int8),
+        meta_sample_class_names=np.asarray(["grid", "traj_corridor"]),
+    )
+    monkeypatch.setattr(
+        "neural_network.eval.loo_labels.get_or_build_tech_variant_labels",
+        lambda *_args, **_kwargs: np.zeros(6, dtype=int),
+    )
+    monkeypatch.setattr(
+        dataset_module,
+        "grouped_split_indices",
+        lambda *_args, **_kwargs: (
+            np.asarray([0, 1]), np.asarray([2, 3]), np.asarray([4, 5]),
+        ),
+    )
+
+    train, validation, test, _normalizer = (
+        dataset_module.load_and_split_bsimar(
+            str(path), ["id"], "nmos", apply_filter=False,
+            training_overlay_classes={"traj_corridor"},
+        )
+    )
+
+    assert (len(train), len(validation), len(test)) == (4, 2, 0)
+    assert train.sample_class is not None
+    assert train.sample_class.tolist().count(1) == 1
+
+
+def test_training_overlay_rejects_unknown_class_and_random_split(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = tmp_path / "overlay.npz"
+    np.savez(
+        path,
+        inputs=np.zeros((3, 4)), geometry=np.zeros((3, 15)),
+        outputs=np.ones((3, 1)), sample_class=np.asarray([0, 1, 0]),
+        meta_sample_class_names=np.asarray(["grid", "traj_corridor"]),
+    )
+    monkeypatch.setattr(
+        "neural_network.eval.loo_labels.get_or_build_tech_variant_labels",
+        lambda *_args, **_kwargs: np.zeros(3, dtype=int),
+    )
+
+    with pytest.raises(ValueError, match="not in dataset"):
+        dataset_module.load_and_split_bsimar(
+            str(path), ["id"], "nmos", apply_filter=False,
+            training_overlay_classes={"missing"},
+        )
+    with pytest.raises(ValueError, match="require split_mode='combo'"):
+        dataset_module.load_and_split_bsimar(
+            str(path), ["id"], "nmos", apply_filter=False,
+            split_mode="random",
+            training_overlay_classes={"traj_corridor"},
+        )
+
+
 def _bin_result(n_failed: int) -> Dict[str, np.ndarray]:
     return {
         "inputs": np.zeros((1, 4)),

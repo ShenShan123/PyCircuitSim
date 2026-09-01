@@ -281,6 +281,7 @@ def test_training_cli_routes_full_terminal_transformer(
         "--device-type", "nmos", "--data", str(data_path),
         "--output-contract", "full-terminal", "--apply-filter", "off",
         "--full-terminal-ar-targets", "3",
+        "--training-overlay-classes", "traj_corridor,hot",
         "--subthresh", "--amp",
         "--exp-name", "v761_full_smoke",
     ])
@@ -292,6 +293,9 @@ def test_training_cli_routes_full_terminal_transformer(
     assert observed["full_terminal_ar_target_dim"] == 3
     assert observed["subthresh"] is True
     assert observed["amp"] is True
+    assert observed["training_overlay_classes"] == {
+        "traj_corridor", "hot",
+    }
 
 
 def test_subthreshold_loss_accepts_full_terminal_drain_column() -> None:
