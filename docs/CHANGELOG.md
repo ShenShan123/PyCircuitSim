@@ -46,6 +46,21 @@ per-commit chronology and superseded prose remain in Git history.
   deployed rollout instead of ground-truth teacher-forcing prefixes. Existing
   training remains unchanged by default, and both bundle sidecars record the
   selected mode.
+- Retrained and CPU-gated a fresh TSMC5 S/M/L/XL matrix. All tiers pass 26/26
+  DC configurations; inverter VTC/transient scores are 20/20, 20/20, 20/20,
+  and 19/20. Strict non-opamp complex passes are 3, 2, 3, and 2 of three
+  scorable cells, with the Miller opamp remaining an explicit error at every
+  tier. Medium's teacher checkpoint is retained because it passes 2/2 device
+  AC versus rollout's 1/2 without losing another circuit pass.
+- Selected Small, targeted Large, and XL rollout bundles plus the Medium
+  teacher bundle into one checksum-valid S/M/L/XL artifact root. Large has the
+  best aggregate DC/transient error among the two three-circuit tiers; the
+  full tables and provenance are in
+  [the LEVEL=76 simple-circuit report](accuracy/BSIM-AR-L76-simple-circuits.md).
+- Rejected polarity hybrids, support-aware stamping, and a physical line
+  search. The Medium hybrid worsened switched-capacitor droop to 1.598 mV
+  against a 0.650 mV allowance, while the runtime experiments delayed or
+  moved the same opamp failure without producing a new pass.
 
 ### Post-V7.6.3 — V7.6.4 closure loop and cleanup (2026-08-29 to 2026-08-31)
 
