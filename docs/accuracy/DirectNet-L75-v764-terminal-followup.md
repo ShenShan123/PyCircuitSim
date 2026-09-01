@@ -203,8 +203,10 @@ does not address the measured model error.
   selected-marker aggregate `ee126587e3d879a530d4fd8e1e52eea8402b5667357a80cc5b6748b43e5b74b8`.
 - Clean limiter evaluation source: `fc85a8c6ec31d98ad4665acb6091de1f2f6427bf`;
   completed-row JSON aggregate `3ca28974e24b476920452f2e63feabac97091e27da05e0eb6045f4c65b4408c0`.
-- Raw artifacts live under `results/v764_terminal_l*`; the experiment ledger
-  is `results/v764_terminal_l/ledger.md`.
+- The rejected local payloads under `results/v764_terminal_l*` were purged
+  after the closure loop. The hashes and measurements in this report and the
+  [condensed closure ledger](../plans/2026-08-29-v764-complex-circuit-closure-loop.md)
+  are the retained record; raw payload recovery requires Git/history backups.
 - Generator tests: 28 passed; full-terminal dataset tests: 19 passed. The
   temporary limiter path passed 18 focused tests. After its reversion, the
   focused primary suite passed 16/16. PyTorch deprecation messages were

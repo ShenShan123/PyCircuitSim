@@ -173,12 +173,16 @@ PASSES = [("V7.1.0", load_json("v710_regate")), ("V7.3.0", load_json("v730_regat
           ("2026-08-19 recheck", load_json("simple_recheck_24c181a")),
           ("V7.5.16", load_json("v7516_clean")),
           ("V7.5.17", load_json("v7517_clean")),
-          ("V7.6.1", load_json("v761_full_clean"))]
+          ("V7.6.1", load_json("v761_directnet_full_clean")),
+          ("V7.6.1 combined", load_json("v761_full_clean")),
+          ("V7.6.2", load_json("v762_directnet_full_clean"))]
 PASS_DATA = dict(PASSES)
 ACTIVE_PASS: Optional[str] = None
 CAMPAIGN_EVIDENCE: Dict[str, Tuple[str, int, int]] = {
     "V7.5.17": ("v7517_clean", 480, 280),
-    "V7.6.1": ("v761_full_clean", 480, 280),
+    "V7.6.1": ("v761_directnet_full_clean", 240, 120),
+    "V7.6.1 combined": ("v761_full_clean", 480, 280),
+    "V7.6.2": ("v762_directnet_full_clean", 240, 120),
 }
 
 # Every report is rendered from one coherent campaign. A later partial pass is
@@ -189,8 +193,8 @@ CAMPAIGN_EVIDENCE: Dict[str, Tuple[str, int, int]] = {
 REPORT_PASS: Dict[Tuple[str, bool], str] = {
     ("dn", False): "V7.5.17",
     ("tf", False): "V7.5.17",
-    ("dnf", False): "V7.6.1",
-    ("tff", False): "V7.6.1",
+    ("dnf", False): "V7.6.2",
+    ("tff", False): "V7.6.1 combined",
     ("dn", True): "V7.3.0",
     ("tf", True): "V7.3.0",
 }
@@ -626,18 +630,17 @@ def _campaign_provenance_complete(version: str) -> bool:
 
 
 def _v7517_provenance_complete() -> bool:
+    """Backward-compatible provenance hook used by campaign-tool checks."""
     return _campaign_provenance_complete("V7.5.17")
-
-
-def _v761_provenance_complete() -> bool:
-    return _campaign_provenance_complete("V7.6.1")
 
 
 def _matrix_complete_in_pass(tag: str, recipes: bool, version: str) -> bool:
     """Whether one pass fully measured every table cell in this report."""
-    if version == "V7.5.17" and not _v7517_provenance_complete():
-        return False
-    if version == "V7.6.1" and not _v761_provenance_complete():
+    if version == "V7.5.17":
+        if not _v7517_provenance_complete():
+            return False
+    elif (version in CAMPAIGN_EVIDENCE
+          and not _campaign_provenance_complete(version)):
         return False
     data = PASS_DATA.get(version, {})
     if not data:

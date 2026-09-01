@@ -1159,8 +1159,9 @@ def _simulate_dc(td: TranslatedDeck, plan: AnalysisPlan, circuit,
     meta["points"] = len(points)
     # `solved` is "produced a finite solution", `flag_ok` is "and the solver
     # said so". They differ, routinely and in both directions; see above.
-    meta["solved"] = len(points) - meta["failed"] - (
-        len(points) - (meta["truncated_at"] or len(points)))
+    attempted = (len(points) if meta["truncated_at"] is None
+                 else int(meta["truncated_at"]))
+    meta["solved"] = attempted - meta["failed"]
     meta["flag_ok"] = int(ok.sum())
     x_name = "temp-sweep" if is_temp else (plan.source or "sweep")
     return SweepResult(kind="dc", x_name=x_name, x=points, v=v, i=i, ok=ok,
@@ -1925,8 +1926,23 @@ def _full_control(td: TranslatedDeck) -> str:
 def _sweep_summary(plan: AnalysisPlan, sweep: SweepResult) -> Dict[str, Any]:
     """The per-sweep honesty record that lands in the JSON."""
     meta = sweep.meta
+    axis = np.asarray(sweep.x)
+    expected = len(axis)
+    result_arrays = [
+        np.asarray(values)
+        for table in (sweep.v, sweep.i)
+        for values in table.values()
+    ]
+    finite = bool(
+        expected > 0
+        and sweep.v
+        and np.all(np.isfinite(axis))
+        and all(values.size == expected and np.all(np.isfinite(values))
+                for values in result_arrays)
+    )
     return {
         "kind": plan.kind, "label": plan.label,
+        "finite": finite,
         "points": meta.get("points"), "solved": meta.get("solved"),
         "failed": meta.get("failed"), "flag_ok": meta.get("flag_ok"),
         "flag_failed": meta.get("flag_failed"),
@@ -2247,6 +2263,49 @@ def _fmt(value: Any, spec: str = ".6g") -> str:
         return str(value)
 
 
+def deck_fully_agrees(verdict: Dict[str, Any]) -> bool:
+    """Return whether one scored deck satisfies the campaign pass contract."""
+    return bool(
+        verdict.get("ran") is True
+        and verdict.get("ng_ran") is True
+        and verdict.get("engine_ok") is True
+        and verdict["measured"] > 0
+        and verdict["agree"] == verdict["measured"]
+        and verdict["missing_py"] == 0
+    )
+
+
+def deck_sweeps_complete(row: Dict[str, Any]) -> bool:
+    """Require every PyCircuitSim sweep point to have a converged result."""
+    sweeps = row.get("pycircuitsim", {}).get("sweeps", [])
+    if not sweeps:
+        return False
+    for sweep in sweeps:
+        kind = sweep.get("kind")
+        points = sweep.get("points")
+        solved = sweep.get("solved")
+        refined_tran = (
+            kind == "tran"
+            and sweep.get("refine_output") is True
+            and isinstance(solved, int)
+            and isinstance(points, int)
+            and solved >= points
+        )
+        if (kind not in ("dc_source", "dc_temp", "ac", "tran")
+                or sweep.get("finite") is not True
+                or not isinstance(points, int) or points <= 0
+                or (solved != points and not refined_tran)
+                or sweep.get("failed") != 0
+                or sweep.get("truncated_at") is not None):
+            return False
+        flag_ok = sweep.get("flag_ok")
+        if kind in ("dc_source", "dc_temp") and flag_ok != points:
+            return False
+        if kind in ("ac", "tran") and sweep.get("dc_converged") is not True:
+            return False
+    return True
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """CLI: one deck, one design, or a whole category."""
     parser = argparse.ArgumentParser(
@@ -2316,6 +2375,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         help="do not fall back to the outward-from-25 C "
                              "segments when a monolithic temperature sweep "
                              "loses its Newton branch (amplifier tb_dc only)")
+    parser.add_argument(
+        "--require-full-agreement",
+        action="store_true",
+        help="exit nonzero unless every selected deck satisfies the full "
+             "campaign agreement predicate",
+    )
     args = parser.parse_args(argv)
     try:
         _validate_evaluator_boundary(
@@ -2364,7 +2429,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 continue
             _print_row(row)
             write_result(row, out_dir)
-            if not row["verdict"]["ran"] or not row["verdict"]["ng_ran"]:
+            if (args.require_full_agreement
+                    and not (deck_fully_agrees(row["verdict"])
+                             and deck_sweeps_complete(row))):
+                failures += 1
+            elif (not row["verdict"]["ran"]
+                  or not row["verdict"]["ng_ran"]):
                 failures += 1
     return 1 if failures else 0
 

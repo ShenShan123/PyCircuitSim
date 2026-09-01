@@ -55,7 +55,7 @@ from .provenance import (
     executable_record_is_current,
     file_sha256,
 )
-from .run_compare import BENCH_ROOT, _decks_of, _designs
+from .run_compare import BENCH_ROOT, _decks_of, _designs, deck_fully_agrees
 
 _NN_PARENT = BENCH_ROOT.parents[1] / "external_compact_models"
 if str(_NN_PARENT) not in sys.path:
@@ -496,12 +496,16 @@ def summarize(tech: str, out: Path, families: List[str], model_level: int = 72,
                 continue
             # A deck whose every metric is quarantined asks no question of
             # this version, so it is neither a pass nor a fail: it leaves the
-            # denominator and is counted in `quarantined` instead.
-            whole = v["measured"] == 0 and v.get("not_comparable", 0) > 0
+            # denominator and is counted in `quarantined` instead. Required
+            # metrics missing from PyCircuitSim still make the deck scorable.
+            whole = (
+                v["measured"] == 0
+                and v.get("missing_py", 0) == 0
+                and v.get("not_comparable", 0) > 0
+            )
             scored += not whole
             quarantined += whole
-            ok = v["ran"] and v["measured"] > 0 and \
-                v["agree"] == v["measured"] and v["missing_py"] == 0
+            ok = deck_fully_agrees(v)
             full += ok
             op = v.get("op_worst_abs")
             missing_suffix = ("" if v["missing_py"] == 0

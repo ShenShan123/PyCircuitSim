@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import json
+import hashlib
 from pathlib import Path
 
 import numpy as np
@@ -27,6 +28,18 @@ from pycmg import nn_generate
 
 
 FULL_COLUMNS = ["i_d", "i_g", "i_b", "qd", "qg", "qb"]
+
+
+def _write_dataset_marker(data_path: Path) -> Path:
+    """Bind a smoke dataset to the same marker contract as scored data."""
+    marker_path = data_path.with_suffix(data_path.suffix + ".complete")
+    marker_path.write_text(json.dumps({
+        "dataset": data_path.name,
+        "dataset_sha256": hashlib.sha256(data_path.read_bytes()).hexdigest(),
+        "source_commit": "a" * 40,
+        "source_dirty": False,
+    }))
+    return marker_path
 
 
 class _Instance:
@@ -72,6 +85,33 @@ def test_full_terminal_cli_defaults_match_level75_artifacts() -> None:
         "universal_dnf_nmos.npz"
     )
     assert train_cli._make_save_prefix(universal) == "refac_dnf_large_nmos"
+
+
+@pytest.mark.parametrize(
+    ("tech_name", "is_pmos", "expected_guard"),
+    [
+        ("tsmc5", False, 1.50),
+        ("tsmc16", False, 1.50),
+        ("tsmc7", False, 1.20),
+        ("tsmc5", True, 1.20),
+    ],
+)
+def test_transmission_gate_corridor_certifies_rail_overshoot_guard(
+    tech_name: str,
+    is_pmos: bool,
+    expected_guard: float,
+) -> None:
+    """Pass-device data must cover rails plus the transient source guard."""
+    vdd = 0.75
+    points = nn_generate._tg_corridor_points(
+        vdd,
+        is_pmos,
+        tech_name=tech_name,
+    )
+    magnitudes = [abs(value) for point in points for value in point]
+
+    assert max(magnitudes) == pytest.approx(expected_guard * vdd)
+    assert any(abs(vds) == pytest.approx(vdd) for _vgs, vds, _vbs in points)
 
 
 def test_full_terminal_assembly_declares_v760_provenance() -> None:
@@ -280,6 +320,7 @@ def test_full_terminal_training_writes_runtime_complete_artifacts(
         meta_output_columns=np.asarray(FULL_COLUMNS),
         sample_class=np.zeros(n_rows, dtype=np.int8),
     )
+    dataset_marker = _write_dataset_marker(data_path)
     monkeypatch.setattr(
         "neural_network.eval.loo_labels.get_or_build_tech_variant_labels",
         lambda *_args, **_kwargs: np.zeros(n_rows, dtype=int),
@@ -305,6 +346,13 @@ def test_full_terminal_training_writes_runtime_complete_artifacts(
     assert marker["output_columns"] == FULL_COLUMNS
     assert len(marker["checkpoint_sha256"]) == 64
     assert len(marker["normalization_sha256"]) == 64
+    assert marker["dataset"] == data_path.name
+    assert marker["dataset_sha256"] == hashlib.sha256(
+        data_path.read_bytes()).hexdigest()
+    assert marker["dataset_completion_marker"] == dataset_marker.name
+    assert marker["dataset_completion_marker_sha256"] == hashlib.sha256(
+        dataset_marker.read_bytes()).hexdigest()
+    assert marker["dataset_source_commit"] == "a" * 40
 
 
 def test_full_terminal_training_rejects_legacy_head_options() -> None:
@@ -338,6 +386,7 @@ def test_full_terminal_transformer_writes_verified_bundle(
         meta_output_columns=np.asarray(FULL_COLUMNS),
         sample_class=np.zeros(n_rows, dtype=np.int8),
     )
+    _write_dataset_marker(data_path)
     monkeypatch.setattr(
         "neural_network.eval.loo_labels.get_or_build_tech_variant_labels",
         lambda *_args, **_kwargs: np.zeros(n_rows, dtype=int),

@@ -9,10 +9,40 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
+import numpy as np
+
 from examples.complex_circuits.pycircuitsim_bench import campaign
 from examples.complex_circuits.pycircuitsim_bench import run_compare
 from examples.complex_circuits.pycircuitsim_bench import translate
+from scripts import v762_directnet_full_analoggym_report as dnf_report
 from tests.common import circuit_benchmarks as circuit_common
+
+
+def _run_compare_main_for_row(
+    row: dict[str, Any],
+    tmp_path: Path,
+    monkeypatch: Any,
+    *,
+    strict: bool,
+) -> int:
+    monkeypatch.setattr(run_compare, "_pin_design_tree", lambda *_args: None)
+    monkeypatch.setattr(
+        run_compare,
+        "compare_deck",
+        lambda *_args, **_kwargs: row,
+    )
+    monkeypatch.setattr(run_compare, "_print_row", lambda _row: None)
+    monkeypatch.setattr(run_compare, "write_result", lambda *_args: None)
+    argv = [
+        "--root", str(tmp_path),
+        "--tech", "tsmc5",
+        "--category", "ldo",
+        "--design", "ldo_1",
+        "--deck", "tb_line_max.cir",
+    ]
+    if strict:
+        argv.append("--require-full-agreement")
+    return run_compare.main(argv)
 
 
 def test_level75_model_stub_is_explicit() -> None:
@@ -99,6 +129,229 @@ def test_level75_campaign_banner_names_selected_family(
     monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
     assert circuit_common.active_model_name() == "DirectNet-Full"
     assert circuit_common.active_model_label() == "DirectNet-Full (LEVEL=75)"
+
+
+def test_campaign_summary_keeps_missing_metrics_in_denominator(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """A partial quarantine must not hide required missing measurements."""
+    verdict = {
+        "ran": True,
+        "ng_ran": True,
+        "measured": 0,
+        "agree": 0,
+        "missing_py": 3,
+        "not_comparable": 2,
+        "engine_ok": True,
+        "op_worst_abs": None,
+        "py_seconds": 0.1,
+        "ng_seconds": 0.1,
+    }
+    row = tmp_path / "tsmc5_ldo_partial_tb_load.json"
+    row.write_text(json.dumps({"verdict": verdict}))
+    monkeypatch.setattr(
+        campaign,
+        "corpus",
+        lambda _tech, _families: [("ldo", "partial", "tb_load.cir")],
+    )
+    monkeypatch.setattr(campaign, "_model_matches_row", lambda *_args: True)
+
+    summary = campaign.summarize("tsmc5", tmp_path, ["dc_source"])
+
+    assert "**dc_source: 0/1 decks fully agree**" in summary
+    assert "(1 quarantined as invalid test examples" not in summary
+
+
+def test_run_compare_strict_gate_rejects_metric_failure(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """A completed subprocess is not a deck pass when a metric disagrees."""
+    verdict = {
+        "ran": True,
+        "ng_ran": True,
+        "engine_ok": True,
+        "measured": 1,
+        "agree": 0,
+        "missing_py": 0,
+    }
+    row = {
+        "verdict": verdict,
+        "pycircuitsim": {"sweeps": [{
+            "kind": "dc_source", "finite": True,
+            "points": 28, "solved": 28, "failed": 0,
+            "flag_ok": 28, "truncated_at": None,
+        }]},
+    }
+
+    assert _run_compare_main_for_row(
+        row, tmp_path, monkeypatch, strict=True,
+    ) == 1
+
+
+def test_run_compare_strict_gate_rejects_partial_sweep(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """Matching subset metrics cannot pass a physically incomplete deck."""
+    row = {
+        "verdict": {
+            "ran": True, "ng_ran": True, "engine_ok": True,
+            "measured": 1, "agree": 1, "missing_py": 0,
+        },
+        "pycircuitsim": {"sweeps": [{
+            "kind": "dc_source", "finite": True,
+            "points": 28, "solved": 27, "failed": 0,
+            "flag_ok": 27, "truncated_at": None,
+        }]},
+    }
+
+    assert _run_compare_main_for_row(
+        row, tmp_path, monkeypatch, strict=True,
+    ) == 1
+
+
+def test_run_compare_strict_gate_accepts_complete_agreement(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    row = {
+        "verdict": {
+            "ran": True, "ng_ran": True, "engine_ok": True,
+            "measured": 1, "agree": 1, "missing_py": 0,
+        },
+        "pycircuitsim": {"sweeps": [{
+            "kind": "dc_source", "finite": True,
+            "points": 28, "solved": 28, "failed": 0,
+            "flag_ok": 28, "truncated_at": None,
+        }]},
+    }
+
+    assert _run_compare_main_for_row(
+        row, tmp_path, monkeypatch, strict=True,
+    ) == 0
+
+
+def test_run_compare_strict_gate_rejects_nonfinite_unmeasured_node(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """Agreement on selected metrics cannot hide NaN elsewhere in a sweep."""
+    row = {
+        "verdict": {
+            "ran": True, "ng_ran": True, "engine_ok": True,
+            "measured": 1, "agree": 1, "missing_py": 0,
+        },
+        "pycircuitsim": {"sweeps": [{
+            "kind": "ac", "finite": False,
+            "points": 28, "solved": 28, "failed": 0,
+            "flag_ok": None, "dc_converged": True, "truncated_at": None,
+        }]},
+    }
+
+    assert _run_compare_main_for_row(
+        row, tmp_path, monkeypatch, strict=True,
+    ) == 1
+
+
+def test_sweep_summary_checks_every_result_array_for_finiteness() -> None:
+    plan = SimpleNamespace(kind="ac", label="ac")
+    sweep = SimpleNamespace(
+        x=np.asarray([1.0, 2.0]),
+        v={
+            "measured": np.asarray([1.0 + 0.0j, 2.0 + 0.0j]),
+            "unmeasured": np.asarray([0.0 + 0.0j, np.nan + 0.0j]),
+        },
+        i={},
+        meta={"points": 2, "solved": 2, "failed": 0},
+    )
+
+    assert run_compare._sweep_summary(plan, sweep)["finite"] is False
+
+
+def test_run_compare_non_strict_keeps_campaign_aggregation_contract(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    row = {
+        "verdict": {
+            "ran": True, "ng_ran": True, "engine_ok": True,
+            "measured": 1, "agree": 0, "missing_py": 0,
+        },
+    }
+
+    assert _run_compare_main_for_row(
+        row, tmp_path, monkeypatch, strict=False,
+    ) == 0
+
+
+def test_deck_agreement_requires_explicit_reference_success() -> None:
+    verdict = {
+        "ran": True, "engine_ok": True,
+        "measured": 1, "agree": 1, "missing_py": 0,
+    }
+
+    assert not run_compare.deck_fully_agrees(verdict)
+
+
+def test_campaign_summary_rejects_failed_reference(
+    tmp_path: Path,
+    monkeypatch: Any,
+) -> None:
+    """Matching metrics cannot pass when the ground-truth run failed."""
+    verdict = {
+        "ran": True,
+        "ng_ran": False,
+        "measured": 1,
+        "agree": 1,
+        "missing_py": 0,
+        "not_comparable": 0,
+        "engine_ok": True,
+        "op_worst_abs": 0.0,
+        "py_seconds": 0.1,
+        "ng_seconds": 0.1,
+    }
+    row = tmp_path / "tsmc16_amplifier_failed_tb_dc.json"
+    row.write_text(json.dumps({"verdict": verdict}))
+    monkeypatch.setattr(
+        campaign,
+        "corpus",
+        lambda _tech, _families: [("amplifier", "failed", "tb_dc.cir")],
+    )
+    monkeypatch.setattr(campaign, "_model_matches_row", lambda *_args: True)
+
+    summary = campaign.summarize("tsmc16", tmp_path, ["dc_temp"])
+
+    assert "**dc_temp: 0/1 decks fully agree**" in summary
+    assert "| NG FAIL |" in summary
+
+
+def test_analoggym_aggregate_does_not_quarantine_missing_py_values() -> None:
+    """Partial measurements stay in the scored denominator as failures."""
+    partial = dnf_report._row_counts({
+        "ran": True,
+        "ng_ran": True,
+        "engine_ok": True,
+        "measured": 0,
+        "agree": 0,
+        "missing_py": 3,
+        "not_comparable": 2,
+    })
+    whole_quarantine = dnf_report._row_counts({
+        "ran": True,
+        "ng_ran": True,
+        "engine_ok": True,
+        "measured": 0,
+        "agree": 0,
+        "missing_py": 0,
+        "not_comparable": 2,
+    })
+
+    assert partial["scored"] == 1
+    assert partial["quarantined"] == 0
+    assert whole_quarantine["scored"] == 0
+    assert whole_quarantine["quarantined"] == 1
 
 
 def test_level76_campaign_uses_tff_stems_and_banner(

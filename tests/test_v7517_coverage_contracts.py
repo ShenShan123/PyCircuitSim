@@ -28,6 +28,7 @@ from pycircuitsim.parser import Parser  # noqa: E402
 from scripts.v710_regate_collect import collect  # noqa: E402
 from scripts.v710_regate_manifest import (  # noqa: E402
     _artifact_hashes,
+    _dataset_provenance,
     _verify_group,
 )
 from tests.common import nn_sweep  # noqa: E402
@@ -300,6 +301,42 @@ def test_campaign_manifest_detects_checkpoint_mutation(tmp_path: Path) -> None:
     (checkpoints / "tsmc5_dn_small_nmos_best.pt").write_bytes(b"mutated")
     with pytest.raises(ValueError, match="checkpoint artifacts drifted"):
         _verify_group(manifest, checkpoints, group)
+
+
+def test_full_terminal_campaign_requires_dataset_provenance(
+    tmp_path: Path,
+) -> None:
+    checkpoints = tmp_path / "checkpoints"
+    checkpoints.mkdir()
+    group = ("dnf", "small", "tsmc5")
+    for device in ("nmos", "pmos"):
+        stem = f"tsmc5_dnf_small_{device}"
+        (checkpoints / f"{stem}_best.pt").touch()
+        (checkpoints / f"{stem}_norm.npz").touch()
+        (checkpoints / f"{stem}_best.pt.complete").write_text(json.dumps({
+            "family": "directnet-full",
+        }))
+
+    with pytest.raises(ValueError, match="dataset provenance"):
+        _dataset_provenance(checkpoints, {group})
+
+    for device in ("nmos", "pmos"):
+        marker = checkpoints / f"tsmc5_dnf_small_{device}_best.pt.complete"
+        payload = json.loads(marker.read_text())
+        payload.update({
+            "dataset": f"tsmc5_dnf_{device}.npz",
+            "dataset_sha256": "a" * 64,
+            "dataset_completion_marker": f"tsmc5_dnf_{device}.npz.complete",
+            "dataset_completion_marker_sha256": "b" * 64,
+            "dataset_source_commit": "c" * 40,
+        })
+        marker.write_text(json.dumps(payload))
+
+    provenance = _dataset_provenance(checkpoints, {group})
+    assert len(provenance) == 2
+    assert {entry["dataset_source_commit"] for entry in provenance.values()} == {
+        "c" * 40,
+    }
 
 
 def test_all_three_pn_ratios_are_declared_for_every_tech() -> None:

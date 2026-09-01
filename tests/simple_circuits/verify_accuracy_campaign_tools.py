@@ -519,6 +519,63 @@ def _check_training_cli_contract() -> None:
     assert "Usage:" in result.stderr
 
 
+def _check_isolated_dataset_root_is_forwarded() -> None:
+    """Regeneration and training must never fall back to preserved data."""
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        fake_bin = root / "bin"
+        fake_bin.mkdir()
+        invocations = root / "conda.args"
+        _write_executable(
+            fake_bin / "conda",
+            "#!/usr/bin/env bash\nprintf '%s\\n' \"$*\" >> \"$FAKE_CONDA_ARGS\"\n",
+        )
+        data_dir = root / "isolated-data"
+        env = os.environ.copy()
+        env.update({
+            "PATH": f"{fake_bin}:{env['PATH']}",
+            "BSIMAR_DATA_DIR": str(data_dir),
+            "BENCHMARK_GEN_LOG_DIR": str(root / "gen-logs"),
+            "FAKE_CONDA_ARGS": str(invocations),
+            "OUTPUT_CONTRACT": "full-terminal",
+        })
+        generated = subprocess.run(
+            ["bash", str(ROOT / "scripts" / "benchmark_gen_data.sh"), "1"],
+            env=env, capture_output=True, text=True, check=False, timeout=10,
+        )
+        assert generated.returncode == 0, generated.stdout + generated.stderr
+        calls = invocations.read_text().splitlines()
+        assert len(calls) == 10
+        assert all(f"--data-dir {data_dir}" in call for call in calls)
+
+        checkpoint_dir = root / "checkpoints"
+        checkpoint_dir.mkdir()
+        data_path = data_dir / "tsmc5_dnf_nmos.npz"
+        data_path.touch()
+        _write_executable(
+            fake_bin / "conda",
+            """#!/usr/bin/env bash
+printf '%s\\n' "$*" >> "$FAKE_CONDA_ARGS"
+stem="$BSIMAR_CHECKPOINT_DIR/tsmc5_dnf_small_nmos"
+: > "${stem}_best.pt"
+: > "${stem}_norm.npz"
+""",
+        )
+        env.update({
+            "BSIMAR_CHECKPOINT_DIR": str(checkpoint_dir),
+            "RECIPE_TRAIN_LOG_DIR": str(root / "train-logs"),
+            "MODEL": "direct",
+        })
+        trained = subprocess.run(
+            ["bash", str(ROOT / "scripts" / "recipe_train.sh"), "_one",
+             "clean", "tsmc5", "small", "nmos", "0", "noforce"],
+            env=env, capture_output=True, text=True, check=False, timeout=10,
+        )
+        assert trained.returncode == 0, trained.stdout + trained.stderr
+        train_call = invocations.read_text().splitlines()[-1]
+        assert f"--data {data_path}" in train_call
+
+
 def _check_regate_readiness_and_family_ownership() -> None:
     """Re-gate rejects partial artifacts and owns its selected NN family."""
     with tempfile.TemporaryDirectory() as raw:
@@ -917,6 +974,7 @@ def main() -> int:
     _check_job_generator_help_is_read_only()
     _check_training_lifecycle_subprocesses()
     _check_training_cli_contract()
+    _check_isolated_dataset_root_is_forwarded()
     _check_regate_readiness_and_family_ownership()
     _check_regate_interpreter_failures_are_infrastructure()
     _check_fail_on_gaps()

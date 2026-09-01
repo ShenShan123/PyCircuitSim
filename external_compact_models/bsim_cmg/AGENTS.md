@@ -341,6 +341,13 @@ openvaf -I bsim-cmg-va/code -o bsimcmg.osdi bsim-cmg-va/code/bsimcmg_main.va
 - Process parameters are extracted on-the-fly from the resolved modelcard via `extract_process_params(model.modelcard_params)`. They are NOT hardcoded in config.
 - Each (L, NFIN) bin gets its own `Model()` instance to avoid shared-buffer corruption (see "Instance / Model Isolation" constraint).
 - NFIN < 2 is always filtered out (convergence failures documented above).
+- Keep the pass-device transient source guard at 50% beyond the rails only for
+  TSMC5/16 NMOS and at 20% for every other device. Fine-tune these datasets
+  from the manifest-pinned control checkpoint: an older PMOS warm start
+  inverted the scalar boundary and cut the device gate from 114/129 to 58/129.
+- LEVEL=75 DC and transient solves use a 0.1 V per-iteration node-voltage cap.
+  A rail-sized step can leave certified support even when the physical fixed
+  point is inside it; the tighter cap preserves both SRAM latch states.
 
 ### Newton-Raphson Limiting (`_pnjlim`)
 - Always guard `math.log(vnew / vt)` against `vnew <= 0`. Fall back to `vcrit` when the argument would be non-positive.

@@ -17,10 +17,12 @@ This file carries **three axes**, and they are easy to confuse:
 
 Per-tree design detail: `designs_<tech>/RESULTS.md`.
 
-**Which numbers are current** (last measured 2026-08-19, V7.5.14):
+**Which numbers are current** (last measured 2026-08-29):
 
 | section | what it holds | dated? |
 |---|---|---|
+| [Terminal-length diagnostic](#directnet-full-level75-terminal-length-diagnostic-2026-08-29) | fixed TSMC5 DC subset after terminal-edge regeneration and trial globalization | **diagnostic; not a qualification replacement** |
+| [DirectNet-Full LEVEL=75](#directnet-full-level75-production-qualification-2026-08-28-clean-rerun) | regenerated production-sized `large` candidate against LEVEL=72 across all 255 deck cells | **current full-terminal NN axis** |
 | [DirectNet LEVEL=73](#directnet-level73-on-the-curated-basket-v7514) | the fresh `large` retrain against LEVEL=72 across all 255 deck cells | **current NN axis** |
 | [The curated core basket](#the-curated-core-basket-v759) | the 12 designs, why each is here, what pruning cost | **current** |
 | [The gap between PyCircuitSim and NGSPICE](#the-gap-between-pycircuitsim-and-ngspice-v7512-all-five-techs) | 242/248 decks, corrected transient OP diagnostics, the invalid-example quarantine, the six that still disagree | **current** |
@@ -35,6 +37,66 @@ Per-tree design detail: `designs_<tech>/RESULTS.md`.
 the denominator rather than being counted as failures. No total crosses those
 boundaries without rescaling.
 
+
+## DirectNet-Full LEVEL=75 terminal-length diagnostic (2026-08-29)
+
+This bounded follow-up is not a new `/248` campaign. It uses the medium
+terminal-edge checkpoints plus an experimental support-aware evaluator limiter
+on the fixed TSMC5 subset containing all six DC-source and all nine
+DC-temperature decks. NGSPICE LEVEL=72 remained ground truth; inference was
+CPU-only with one OpenMP, MKL, and Torch thread. Every deck had a 300-second
+cap.
+
+| result | V7.6.3 medium control | terminal-edge diagnostic |
+|---|---:|---:|
+| fully agreeing decks | 0/15 | **0/15** |
+| rows returning numeric comparisons before cap | 15/15, mostly partial | 7/15 |
+| comparable metric cells agreeing | 2/14 | 11/44 |
+| timed out | 0 | 8 |
+
+The extra metric coverage is not a pass. Five candidate rows carrying
+comparable voltage samples aggregate to 13.74% symmetric MRE, 138.17% NRMSE,
+R² -22.22, and 22.02 V maximum error. The limiter was reverted because it
+turned explicit support failures into long solves without closing a deck.
+
+The preceding five-technology Song AC canary likewise passed 0/5 decks. TSMC5
+completed all 221 AC points with 1/8 metrics agreeing and a 29.60 mV worst
+operating-point error; the other four technologies ended in late support or
+non-convergence errors after 182–240 seconds.
+
+The rejected local rows were purged after the closure loop; their clean
+evaluation commit is `fc85a8c`. Full data/model/globalization/Jacobian
+analysis, artifact hashes, and the explicit skipped checks are owned by
+[`docs/accuracy/DirectNet-L75-v764-terminal-followup.md`](../../docs/accuracy/DirectNet-L75-v764-terminal-followup.md).
+
+
+## DirectNet-Full LEVEL=75 production qualification (2026-08-28 clean rerun)
+
+The regenerated full-terminal `large` checkpoint pair for each technology was evaluated on all 255 tracked deck cells, with NGSPICE LEVEL=72 as ground truth. Scored inference was CPU-only with one OpenMP, MKL, and Torch thread. Seven whole-deck invalid examples remain quarantined, leaving the established `/248` denominator.
+
+**Verdict: do not promote LEVEL=75. DirectNet-Full passes 0/248 decks.** Production promotion also remains blocked on a refreshed source-tree campaign and the separately deferred seed/performance protocols.
+
+| tech | AC | dc_source | dc_temp | transient | total | Py failures | NG failures |
+|---|:--:|:--:|:--:|:--:|:--:|--:|--:|
+| TSMC5 | 0/27 | 0/6 | 0/9 | 0/7 | **0/49** | 36 | 0 |
+| TSMC6 | 0/28 | 0/6 | 0/9 | 0/7 | **0/50** | 36 | 0 |
+| TSMC7 | 0/28 | 0/6 | 0/9 | 0/7 | **0/50** | 36 | 0 |
+| TSMC12 | 0/28 | 0/6 | 0/9 | 0/7 | **0/50** | 32 | 0 |
+| TSMC16 | 0/28 | 0/6 | 0/9 | 0/6 | **0/49** | 34 | 3 |
+| **all** | **0/139** | **0/30** | **0/45** | **0/34** | **0/248** | **174** | **3** |
+
+| tech | comparable metric cells agreeing | missing Py values | quarantined metric cells |
+|---|---:|---:|---:|
+| TSMC5 | 8/63 | 239 | 20 |
+| TSMC6 | 3/58 | 245 | 19 |
+| TSMC7 | 3/58 | 245 | 19 |
+| TSMC12 | 16/79 | 224 | 19 |
+| TSMC16 | 11/68 | 202 | 30 |
+| **all** | **41/326** | **1155** | **107** |
+
+Per-technology voltage-state metrics are owned by [`docs/accuracy/DirectNet-L75-clean.md`](../../docs/accuracy/DirectNet-L75-clean.md). Partial numeric data never convert an incomplete deck into a pass.
+
+Provenance: aggregate `0228f7db941b569efdf6e8c5a7ee0149629a93adc3dcddbc5da9af04ebcfc397` at simulation commit `5eabb6bf09107c674ad08d180631a5b6b2a5d909`. Every row pins its checkpoint, normalization, completion marker, modelcard, OSDI, NGSPICE executable, stride, and refinement policy. The upstream AnalogGym source tree remains absent, so this evaluates the tracked generated decks and is not a refreshed source-topology audit.
 
 ## DirectNet LEVEL=73 on the curated basket (V7.5.14)
 

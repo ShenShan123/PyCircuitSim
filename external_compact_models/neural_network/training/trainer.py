@@ -62,6 +62,39 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _full_terminal_dataset_provenance(data_path: str) -> Dict[str, object]:
+    """Return the immutable dataset identity embedded in a model bundle."""
+    path = Path(data_path)
+    marker_path = path.with_suffix(path.suffix + ".complete")
+    if not marker_path.is_file():
+        raise ValueError(
+            f"full-terminal dataset completion marker is missing: {marker_path}"
+        )
+    try:
+        marker = json.loads(marker_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"invalid full-terminal dataset marker: {marker_path}"
+        ) from exc
+    if not isinstance(marker, dict) or marker.get("dataset") != path.name:
+        raise ValueError("full-terminal dataset marker names a different file")
+    dataset_sha256 = _sha256_file(path)
+    if marker.get("dataset_sha256") != dataset_sha256:
+        raise ValueError("full-terminal dataset checksum does not match marker")
+    source_commit = marker.get("source_commit")
+    if not isinstance(source_commit, str) or len(source_commit) != 40:
+        raise ValueError("full-terminal dataset source commit is invalid")
+    if marker.get("source_dirty") is not False:
+        raise ValueError("full-terminal dataset came from a dirty source tree")
+    return {
+        "dataset": path.name,
+        "dataset_sha256": dataset_sha256,
+        "dataset_completion_marker": marker_path.name,
+        "dataset_completion_marker_sha256": _sha256_file(marker_path),
+        "dataset_source_commit": source_commit,
+    }
+
+
 # ── Batch iteration (V7.0.2) ───────────────────────────────────────────────
 
 class _DeviceBatches:
@@ -814,6 +847,7 @@ def train_directnet(
         list(output_columns) if output_columns is not None
         else list(OUTPUT_COLUMN_ORDER)
     )
+    dataset_provenance: Optional[Dict[str, object]] = None
     if tuple(training_columns) == FULL_TERMINAL_OUTPUT_COLUMN_ORDER:
         if (output_subset is not None or monotonic or ekv_core or sobolev
                 or subthresh or charge_sobolev):
@@ -827,6 +861,7 @@ def train_directnet(
                 "The full-terminal family requires apply_filter=False; "
                 "the legacy filter is defined only for the id column."
             )
+        dataset_provenance = _full_terminal_dataset_provenance(data_path)
     train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
         data_path, training_columns, device_type=device_type,
         train_ratio=config.train_ratio, val_ratio=config.val_ratio,
@@ -937,6 +972,7 @@ def train_directnet(
         amp=amp,
     )
     if tuple(training_columns) == FULL_TERMINAL_OUTPUT_COLUMN_ORDER:
+        assert dataset_provenance is not None
         checkpoint_path = CHECKPOINT_DIR / f"{save_prefix}_best.pt"
         norm_path = CHECKPOINT_DIR / f"{save_prefix}_norm.npz"
         marker_path = checkpoint_path.with_suffix(".pt.complete")
@@ -947,6 +983,7 @@ def train_directnet(
             "normalization": norm_path.name,
             "normalization_sha256": _sha256_file(norm_path),
             "output_columns": list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER),
+            **dataset_provenance,
         }, sort_keys=True, indent=2) + "\n")
     return trained
 
@@ -1019,6 +1056,7 @@ def train_transformer(
     )
     full_terminal = tuple(training_columns) == tuple(
         FULL_TERMINAL_OUTPUT_COLUMN_ORDER)
+    dataset_provenance: Optional[Dict[str, object]] = None
     if full_terminal:
         if (sobolev or subthresh or charge_sobolev):
             raise ValueError(
@@ -1028,6 +1066,7 @@ def train_transformer(
             raise ValueError(
                 "The full-terminal BSIM-AR family requires "
                 "apply_filter=False")
+        dataset_provenance = _full_terminal_dataset_provenance(data_path)
     elif training_columns != list(OUTPUT_COLUMN_ORDER):
         raise ValueError(
             "Transformer output_columns must select either the reduced or "
@@ -1090,6 +1129,7 @@ def train_transformer(
         "num_tech_codes": num_tech_codes,
     }
     if full_terminal:
+        assert dataset_provenance is not None
         arch_config.update({
             "ar_target_dim": ar_target_dim,
             "output_contract": FULL_TERMINAL_OUTPUT_CONTRACT,
@@ -1136,5 +1176,6 @@ def train_transformer(
             "configuration_sha256": _sha256_file(config_path),
             "output_columns": list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER),
             "target_columns": target_columns,
+            **dataset_provenance,
         }, sort_keys=True, indent=2) + "\n")
     return trained

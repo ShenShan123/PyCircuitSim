@@ -94,7 +94,9 @@ PASSES = [("a3", ROOT / "results" / "a3_regate"),
           ("simple-recheck", ROOT / "results" / "simple_recheck_24c181a"),
           ("v7516-clean", ROOT / "results" / "v7516_clean"),
           ("v7517-clean", ROOT / "results" / "v7517_clean"),
-          ("v761-full-clean", ROOT / "results" / "v761_full_clean")]
+          ("v761-full-clean", ROOT / "results" / "v761_full_clean"),
+          ("v762-directnet-full", ROOT / "results" /
+           "v762_directnet_full_clean")]
 
 CellKey = Tuple[str, str, str, str, str]
 

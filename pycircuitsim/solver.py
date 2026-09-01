@@ -114,6 +114,11 @@ def _solve_mna(mna_matrix, rhs: np.ndarray) -> np.ndarray:
 # gap: well above any converged inverter point, well below a stalled one.
 _RESID_ABS_FLOOR: float = 1e-6
 
+# V7.6.3 — keep full-terminal NN Newton iterates inside the checkpoint's
+# certified voltage support. This changes only the iteration path, not the
+# converged circuit equations.
+_DIRECTNET_FULL_DV_LIMIT: float = 0.1
+
 
 @dataclass(frozen=True)
 class _VoltageSourceTailFit:
@@ -490,6 +495,24 @@ def _full_current_stamp(device: object) -> Optional[Callable[..., Any]]:
 def _full_charge_stamp(device: object) -> Optional[Callable[..., Any]]:
     """Select the device's full terminal-charge stamp, when active."""
     return _selected_full_stamp(device, "get_charge_stamp")
+
+
+def _has_directnet_full_device(circuit: Circuit) -> bool:
+    """Return whether the circuit contains a LEVEL=75 full-terminal NN."""
+    key = _topo_key(circuit)
+    cached = getattr(circuit, "_pcs_has_full_nn_cache", None)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    try:
+        from pycircuitsim.models.mosfet_directnet_full import NMOS_DNF, PMOS_DNF
+        val = any(
+            isinstance(component, (NMOS_DNF, PMOS_DNF))
+            for component in circuit.components
+        )
+    except ImportError:
+        val = False
+    circuit._pcs_has_full_nn_cache = (key, val)
+    return val
 
 
 def _has_full_stamp_device(circuit: Circuit) -> bool:
@@ -975,18 +998,17 @@ class DCSolver:
             use_gmin_stepping: Enable DC GMIN stepping for bistable convergence (default: False)
             force_ic: Enforce .ic as voltage constraints, not just initial guess (default: False)
             dv_limit: Per-iteration, per-node |ΔV| trust-region cap in volts
-                (default None = OFF, historical behaviour). There is otherwise
-                NO voltage limiting on the LEVEL=72 path: `mosfet_cmg.py` hands
+                (default None = 0.1 V for full-terminal NN models and OFF for
+                non-NN models). There is otherwise NO voltage limiting on the
+                LEVEL=72 path: `mosfet_cmg.py` hands
                 raw node voltages to OSDI, so one bad Newton step (measured:
                 a 2 µA current source into a node still at the 1e-12 S gds
                 floor asks for ΔV ≈ 2e6 V) reaches the compact model as
                 `g=-505225 V` and OSDI's internal-node solve raises. Capping
                 the step is SPICE's own answer to this. NN circuits (LEVEL
-                73/74) already cap at one supply rail unconditionally; a
-                value here overrides that cap for them too.
-                PERTURBING, hence default-off: the cap changes the Newton PATH
-                (not the fixed point), so it is not bit-identical on a circuit
-                where it engages.
+                73/74) already cap at one supply rail unconditionally; LEVEL=75
+                caps at 0.1 V. A value here overrides either automatic cap.
+                The cap changes the Newton PATH, not the fixed point.
 
                 MEASURED DEAD END, kept here so it is not retried: also
                 ramping the CURRENT sources with the source-stepping homotopy
@@ -1021,7 +1043,11 @@ class DCSolver:
         self.gmin = gmin
         self.use_gmin_stepping = use_gmin_stepping
         self.force_ic = force_ic
-        self.dv_limit = dv_limit
+        self.dv_limit = (
+            _DIRECTNET_FULL_DV_LIMIT
+            if dv_limit is None and _has_directnet_full_device(circuit)
+            else dv_limit
+        )
         self.nodesets = nodesets
         # True while the clamped (MODEINITFIX) pre-solve is running, so the
         # released re-solve and the gmin-fallback recursion do not re-enter it.
@@ -2220,9 +2246,8 @@ class TransientSolver:
                 disabled — for decks carrying `.options method=gear maxord=2`,
                 where trapezoid ringing corrupts slew/overshoot metrics.
             dv_limit: Per-iteration, per-node |ΔV| trust-region cap in volts,
-                applied at EVERY timestep (default None = OFF, historical
-                behaviour). The transient twin of ``DCSolver(dv_limit=...)``;
-                see there for why it exists and why it is default-off.
+                applied at EVERY timestep. ``None`` selects the automatic
+                family cap described by ``DCSolver``.
             refine_output: V7.5.2 — LTE-driven local refinement ON THE
                 OUTPUT AXIS (default False = OFF, byte-identical; env
                 ``PYCIRCUITSIM_TRAN_REFINE=1`` also enables). The fixed
@@ -2310,8 +2335,12 @@ class TransientSolver:
         # actually in force is self._integration_method below.
         self.integration_method = integration_method
 
-        # Per-iteration |ΔV| trust-region cap (None = off); see __init__ docs.
-        self.dv_limit = dv_limit
+        # Per-iteration explicit/automatic |ΔV| cap; see __init__ docs.
+        self.dv_limit = (
+            _DIRECTNET_FULL_DV_LIMIT
+            if dv_limit is None and _has_directnet_full_device(circuit)
+            else dv_limit
+        )
 
         # Integration method: 'be', 'trap', or 'bdf2'
         self._integration_method = 'be'

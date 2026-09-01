@@ -118,6 +118,39 @@ def test_full_terminal_surfaces_reconstruct_exact_closure(
     assert _full_charge_stamp(device) is not None
 
 
+def test_full_terminal_scalar_current_adapts_only_pmos_boundary(
+    checkpoint: Path,
+) -> None:
+    """Scalar comparison signs must not alter full-terminal solver stamps."""
+    from pycircuitsim.models.mosfet_directnet_full import NMOS_DNF, PMOS_DNF
+
+    nmos = NMOS_DNF(
+        "MN", ["d", "g", "s", "b"], str(checkpoint),
+        L=16e-9, NFIN=2.0, tech_code=0, multiplier=2.0,
+    )
+    pmos = PMOS_DNF(
+        "MP", ["d", "g", "s", "b"], str(checkpoint),
+        L=16e-9, NFIN=2.0, tech_code=0, multiplier=2.0,
+    )
+    nmos._forward_model = MethodType(_linear_surfaces, nmos)
+    pmos._forward_model = MethodType(_linear_surfaces, pmos)
+
+    nmos_stamp_before = nmos.get_terminal_stamp(VOLTAGES)
+    pmos_stamp_before = pmos.get_terminal_stamp(VOLTAGES)
+
+    assert nmos.calculate_current(VOLTAGES) == pytest.approx(
+        nmos_stamp_before[0][0])
+    assert pmos.calculate_current(VOLTAGES) == pytest.approx(
+        -pmos_stamp_before[0][0])
+
+    nmos_stamp_after = nmos.get_terminal_stamp(VOLTAGES)
+    pmos_stamp_after = pmos.get_terminal_stamp(VOLTAGES)
+    np.testing.assert_array_equal(nmos_stamp_after[0], nmos_stamp_before[0])
+    np.testing.assert_array_equal(nmos_stamp_after[1], nmos_stamp_before[1])
+    np.testing.assert_array_equal(pmos_stamp_after[0], pmos_stamp_before[0])
+    np.testing.assert_array_equal(pmos_stamp_after[1], pmos_stamp_before[1])
+
+
 def test_full_terminal_family_rejects_outside_certified_support(
     checkpoint: Path,
 ) -> None:

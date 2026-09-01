@@ -6,7 +6,14 @@ to generate BSIM-CMG data, train a compact model, and increase validation scope
 from devices to circuits while keeping NGSPICE on the identical OSDI model as
 ground truth.
 
-Current release: **V7.6.1**.
+Current release: **V7.6.3**.
+
+LEVEL=73 DirectNet `large` is the served NN path. LEVEL=74 is the optional
+autoregressive family. LEVEL=75 and 76 remain experimental: the clean
+DirectNet-Full qualification is **0/248** on tracked AnalogGym, and the
+subsequent bounded closure loop produced no promotable checkpoint or runtime
+adapter. Its compact verdict is in
+[`docs/plans/2026-08-29-v764-complex-circuit-closure-loop.md`](docs/plans/2026-08-29-v764-complex-circuit-closure-loop.md).
 
 ## Documentation map
 
@@ -183,6 +190,10 @@ For the five-technology production sweep, use the parallel driver:
 ```bash
 bash scripts/benchmark_gen_data.sh
 ```
+
+Set `BSIMAR_DATA_DIR` to an isolated campaign directory when regenerating
+data for a comparison. The training wrapper accepts the same variable and
+fails if a required dataset or completion marker is absent.
 
 This creates NMOS and PMOS data for TSMC5/6/7/12/16. TSMC6 deliberately uses
 the TSMC7 BSIM-CMG source data as a controlled repeat; its NN training run is
@@ -407,18 +418,21 @@ These gates own NN circuit accuracy. Their definitions and thresholds are in
 [`docs/accuracy/methodology.md`](docs/accuracy/methodology.md); generated
 family reports are indexed by [`docs/accuracy/README.md`](docs/accuracy/README.md).
 
-For the independent full-terminal scan, generate the `dnf` datasets, train
-both architectures into a new checkpoint root, and run the separate 480-job
-pool:
+For an independent full-terminal scan, generate the `dnf` datasets, train both
+architectures into isolated roots, and run the separate 480-job pool. Replace
+the generic campaign names below with one immutable experiment identifier;
+never write a candidate over the served checkpoint directory:
 
 ```bash
+BSIMAR_DATA_DIR="$PWD/results/full-terminal-data" \
 OUTPUT_CONTRACT=full-terminal \
-BENCHMARK_GEN_LOG_DIR="$PWD/results/v761_full_generation" \
+BENCHMARK_GEN_LOG_DIR="$PWD/results/full-terminal-generation" \
 bash scripts/benchmark_gen_data.sh 20
 
 for model in direct transformer; do
-  BSIMAR_CHECKPOINT_DIR="$PWD/results/v761_full_checkpoints" \
-  RECIPE_TRAIN_LOG_DIR="$PWD/results/v761_full_training/$model" \
+  BSIMAR_DATA_DIR="$PWD/results/full-terminal-data" \
+  BSIMAR_CHECKPOINT_DIR="$PWD/results/full-terminal-checkpoints" \
+  RECIPE_TRAIN_LOG_DIR="$PWD/results/full-terminal-training/$model" \
   MODEL="$model" OUTPUT_CONTRACT=full-terminal RECIPES=clean \
   SIZES="small medium large xl" \
   TECHS="tsmc5 tsmc6 tsmc7 tsmc12 tsmc16" \
@@ -426,12 +440,12 @@ for model in direct transformer; do
 done
 
 conda run -n pycircuitsim python \
-  scripts/v710_regate_jobs.py /tmp/pycircuitsim-v761-jobs
-BSIMAR_CHECKPOINT_DIR="$PWD/results/v761_full_checkpoints" \
-V710_OUT="$PWD/results/v761_full_clean" \
-V710_SCRATCH=/tmp/pycircuitsim-v761-full \
+  scripts/v710_regate_jobs.py /tmp/pycircuitsim-full-terminal-jobs
+BSIMAR_CHECKPOINT_DIR="$PWD/results/full-terminal-checkpoints" \
+V710_OUT="$PWD/results/full-terminal-clean" \
+V710_SCRATCH=/tmp/pycircuitsim-full-terminal \
 NGSPICE_BIN=/usr/local/ngspice-45.2/bin/ngspice \
-JOBS=/tmp/pycircuitsim-v761-jobs/jobs_full_clean.txt PAR=32 \
+JOBS=/tmp/pycircuitsim-full-terminal-jobs/jobs_full_clean.txt PAR=32 \
 NN_PY="$(conda run -n pycircuitsim which python)" \
 bash scripts/v710_regate.sh
 ```
@@ -472,8 +486,15 @@ conda run -n pycircuitsim python -m \
   --design Fan_SMC_Pin_3 \
   --deck tb_gain.cir \
   --model-level 73 \
+  --require-full-agreement \
   --out results/analoggym-one
 ```
+
+`--require-full-agreement` is the red/green single-deck contract: both engines
+must run, every scored metric must agree, every required value must exist, and
+every PyCircuitSim sweep must be finite, complete, converged, and untruncated.
+Omit it only for diagnostic collection where a numerical disagreement is an
+expected result rather than a process failure.
 
 Run and refine a complete DirectNet technology campaign. The driver requires
 both `*_best.pt.complete` markers, pins inference to CPU with one OpenMP, MKL,
@@ -498,6 +519,24 @@ LEVEL=72 campaign, omit `--model-level` and `--checkpoint-size`; TSMC6 is then
 normally reported as the exact TSMC7 repeat instead of rerun. Read the current
 results and quarantined-deck list in
 [`examples/complex_circuits/RESULTS_TSMC.md`](examples/complex_circuits/RESULTS_TSMC.md).
+
+The V7.6.2 DirectNet-Full aggregate and its generated report sections are
+reproducible from exactly five completed campaign roots:
+
+```bash
+BSIMAR_CHECKPOINT_DIR="$PWD/results/v762_directnet_full_checkpoints" \
+conda run -n pycircuitsim python \
+  scripts/v762_directnet_full_analoggym_report.py \
+  --root results/v762_directnet_full_analoggym_tsmc5 \
+  --root results/v762_directnet_full_analoggym_tsmc6 \
+  --root results/v762_directnet_full_analoggym_tsmc7 \
+  --root results/v762_directnet_full_analoggym_tsmc12 \
+  --root results/v762_directnet_full_analoggym_tsmc16 \
+  --out results/v762_directnet_full_analoggym_aggregate.json \
+  --accuracy-report docs/accuracy/DirectNet-L75-clean.md \
+  --results-report examples/complex_circuits/RESULTS_TSMC.md \
+  --check
+```
 
 ## Run a netlist directly
 
@@ -575,3 +614,23 @@ Raw TSMC PDK modelcards live under `PDKs/TSMC*/` and are intentionally
 untracked. Generated single-device cards stay under
 `external_compact_models/bsim_cmg/build/modelcards/`. Do not publish `cln*.l`
 files or `modelcards.tar.gz`.
+
+## Artifact retention
+
+Generated datasets, checkpoints, logs, and simulations are local artifacts;
+Git ignores their payloads. Keep each campaign in an isolated `results/<id>`
+root and preserve only artifacts behind a current published score or an active
+served checkpoint. Once a candidate is rejected and its measurements, hashes,
+and decision are recorded in tracked documentation, remove its intermediate
+data, checkpoints, work directories, and private experiment drivers.
+
+The runtime checkpoint directory
+`external_compact_models/neural_network/checkpoints/` should contain only
+complete bundles intentionally available to automatic resolution. Do not keep
+rejected candidates or best-so-far files there. Historical controls belong in
+an explicitly named campaign root while they remain binding.
+
+Before deleting artifacts, resolve exact targets and preserve the current
+qualification roots. Never treat private `PDKs/TSMC*/` cards, the built OSDI
+binary, materialized AnalogGym modelcards, or tracked reference JSON/CSV as
+disposable results.

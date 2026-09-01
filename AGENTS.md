@@ -13,7 +13,8 @@ Keep each fact in one authoritative place:
 - Put durable implementation rules and debugging lessons in this file.
 - Put release outcomes, measurements, retractions, and dead ends in
   `docs/CHANGELOG.md`.
-- Put gate definitions and score evidence in `docs/accuracy/`.
+- Put gate definitions and scoreboard summaries in `docs/accuracy/`.
+- Put all simulation artifacts in `results/`.
 - Put detailed AnalogGym results in
   `examples/complex_circuits/RESULTS_TSMC.md`.
 
@@ -39,6 +40,7 @@ before changing behavior. Start with these ownership boundaries:
 - `external_compact_models/bsim_cmg/`: BSIM-CMG evaluation and dataset creation.
 - `external_compact_models/neural_network/`: shared NN data, models, loss, and training.
 - `tests/common/`: authoritative deck rendering and comparison infrastructure.
+- `scripts/`: campaign-level evaluation scripts.
 
 Keep the solver free of device equations and device models free of matrix
 assembly. Update `_is_mosfet()` in `solver.py` whenever a new MOSFET class is

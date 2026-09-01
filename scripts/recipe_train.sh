@@ -50,13 +50,14 @@ Environment:
   NSTREAMS     maximum concurrent training jobs
   TRAIN_OMP    CPU threads per training job
   EXTRA_ARGS   extra neural_network.cli.train arguments
+  BSIMAR_DATA_DIR  dataset input directory
   BSIMAR_CHECKPOINT_DIR  checkpoint output/selection directory
   RECIPE_TRAIN_LOG_DIR   training-log directory
 EOF
   exit 0
 fi
 CKPT="${BSIMAR_CHECKPOINT_DIR:-$ROOT/external_compact_models/neural_network/checkpoints}"
-DS="$ROOT/external_compact_models/neural_network/data/datasets"
+DS="${BSIMAR_DATA_DIR:-$ROOT/external_compact_models/neural_network/data/datasets}"
 LOGDIR="${RECIPE_TRAIN_LOG_DIR:-$ROOT/results/recipe_bench/train_logs}"
 mkdir -p "$CKPT" "$LOGDIR"
 read -r -a GPU_IDS <<< "${GPUS:-0 1 2}"
@@ -173,6 +174,11 @@ if [ "${1:-}" = "_one" ]; then
   fi
   extra="$(recipe_args "$recipe")"
   if [ "$extra" = "__UNKNOWN__" ]; then echo "[train] UNKNOWN recipe $recipe"; exit 1; fi
+  if [ "$OUTPUT_CONTRACT" = "full-terminal" ]; then
+    job_data="$DS/${tech}_dnf_${dev}.npz"
+  else
+    job_data="$DS/${tech}_${dev}.npz"
+  fi
   # Curriculum (warm-start) recipes — the "*ft" family fine-tunes from its OWN
   # clean same-size checkpoint. Locality (init-from) is THE basin-preserving
   # lever (plan §2/§4). Injected here (not in recipe_args) because it is
@@ -200,15 +206,13 @@ if [ "${1:-}" = "_one" ]; then
   # dataset {tech}_cor_{dev}.npz (from v6_4_7_s12_append_corridors.py). Uniform:
   # every (tech,dev) trains on its OWN corridor set — mechanical, not hand-picked.
   case "$recipe" in
-    crit*|csobcrit) cordata="$DS/${tech}_corro_${dev}.npz"   # combo always uses ring-only corridor data
-          if [ ! -f "$cordata" ]; then echo "[train] MISSING corridor dataset $cordata"; exit 1; fi
-          extra="$extra --data ${cordata}" ;;
+    crit*|csobcrit) job_data="$DS/${tech}_corro_${dev}.npz" ;; # combo always uses ring-only corridor data
     cor*) corvar="${recipe/ft/}"   # cor->cor, corft->cor, corr->corr, corrft->corr
           corvar="${corvar%%[0-9]*}"  # strip weight suffix: corro15->corro
-          cordata="$DS/${tech}_${corvar}_${dev}.npz"
-          if [ ! -f "$cordata" ]; then echo "[train] MISSING corridor dataset $cordata"; exit 1; fi
-          extra="$extra --data ${cordata}" ;;
+          job_data="$DS/${tech}_${corvar}_${dev}.npz" ;;
   esac
+  if [ ! -f "$job_data" ]; then echo "[train] MISSING dataset $job_data"; exit 1; fi
+  extra="$extra --data ${job_data}"
   extra="$extra ${EXTRA_ARGS:-}"
   expname=""
   if [ "$recipe" != "clean" ]; then

@@ -16,7 +16,7 @@
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 GEN="$ROOT/external_compact_models/bsim_cmg/scripts/generate_nn_data.py"
-OUTDIR="$ROOT/external_compact_models/neural_network/data/datasets"
+OUTDIR="${BSIMAR_DATA_DIR:-$ROOT/external_compact_models/neural_network/data/datasets}"
 LOGDIR="${BENCHMARK_GEN_LOG_DIR:-$ROOT/results/benchmark_sml/gen_logs}"
 WORKERS="${1:-20}"
 OUTPUT_CONTRACT="${OUTPUT_CONTRACT:-reduced}"
@@ -52,6 +52,7 @@ for tech in "${techs[@]}"; do
         --enable-inv-trip --enable-subvt-off \
         --output-contract "$OUTPUT_CONTRACT" \
         "${CONTRACT_EXTRA[@]}" \
+        --data-dir "$OUTDIR" \
         --max-l-ratio 1.35 \
         --n-workers "$WORKERS" ${GEN_EXTRA:-} \
         >"$log" 2>&1 &

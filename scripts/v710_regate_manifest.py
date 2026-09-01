@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -59,6 +60,63 @@ def _artifact_hashes(
     return hashes
 
 
+def _dataset_provenance(
+    checkpoints: Path,
+    groups: Set[Tuple[str, str, str]],
+) -> Dict[str, Dict[str, str]]:
+    """Validate dataset identity embedded in DirectNet-Full bundles."""
+    provenance: Dict[str, Dict[str, str]] = {}
+    sha256_pattern = re.compile(r"[0-9a-f]{64}")
+    commit_pattern = re.compile(r"[0-9a-f]{40}")
+    for tag, variant, tech in sorted(groups):
+        if tag != "dnf":
+            continue
+        for device in ("nmos", "pmos"):
+            name = f"{tech}_{tag}_{variant}_{device}_best.pt.complete"
+            marker_path = checkpoints / name
+            try:
+                marker = json.loads(marker_path.read_text())
+            except (OSError, json.JSONDecodeError) as exc:
+                raise ValueError(
+                    f"DirectNet-Full dataset provenance is invalid: {name}"
+                ) from exc
+            expected_dataset = f"{tech}_dnf_{device}.npz"
+            required = {
+                "dataset": expected_dataset,
+                "dataset_completion_marker": expected_dataset + ".complete",
+            }
+            if not isinstance(marker, dict) or any(
+                marker.get(key) != value for key, value in required.items()
+            ):
+                raise ValueError(
+                    f"DirectNet-Full dataset provenance is incomplete: {name}"
+                )
+            for field in (
+                "dataset_sha256", "dataset_completion_marker_sha256",
+            ):
+                value = marker.get(field)
+                if not isinstance(value, str) or not sha256_pattern.fullmatch(value):
+                    raise ValueError(
+                        f"DirectNet-Full dataset provenance is incomplete: {name}"
+                    )
+            source_commit = marker.get("dataset_source_commit")
+            if (not isinstance(source_commit, str)
+                    or not commit_pattern.fullmatch(source_commit)):
+                raise ValueError(
+                    f"DirectNet-Full dataset provenance is incomplete: {name}"
+                )
+            provenance[name] = {
+                field: str(marker[field])
+                for field in (
+                    "dataset", "dataset_sha256",
+                    "dataset_completion_marker",
+                    "dataset_completion_marker_sha256",
+                    "dataset_source_commit",
+                )
+            }
+    return provenance
+
+
 def _pdk_hashes(pdk_root: Path, techs: Set[str]) -> Dict[str, str]:
     hashes: Dict[str, str] = {}
     for tech in sorted(techs):
@@ -81,6 +139,14 @@ def _verify_group(
     if observed != expected or any(value is None for value in observed.values()):
         raise ValueError(
             f"checkpoint artifacts drifted for {'/'.join(group)}"
+        )
+    observed_data = _dataset_provenance(checkpoints, {group})
+    expected_data = manifest.get("dataset_provenance", {})
+    if observed_data and observed_data != {
+        name: expected_data.get(name) for name in observed_data
+    }:
+        raise ValueError(
+            f"checkpoint dataset provenance drifted for {'/'.join(group)}"
         )
 
 
@@ -137,9 +203,21 @@ def main(argv: Optional[List[str]] = None) -> int:
             + ", ".join(unsafe_untracked)
         )
     lines, groups = _jobs(args.jobs)
+    try:
+        dataset_provenance = _dataset_provenance(args.checkpoints, groups)
+    except ValueError as exc:
+        raise SystemExit(f"campaign provenance error: {exc}") from exc
+    source_commit = _git(root, "rev-parse", "HEAD")
+    dataset_commits = {
+        entry["dataset_source_commit"] for entry in dataset_provenance.values()
+    }
+    if dataset_commits and dataset_commits != {source_commit}:
+        raise SystemExit(
+            "campaign dataset source commit does not match campaign source commit"
+        )
     manifest = {
-        "schema": 1,
-        "source_commit": _git(root, "rev-parse", "HEAD"),
+        "schema": 2,
+        "source_commit": source_commit,
         "source_dirty": False,
         "python": str(Path(sys.executable).resolve()),
         "jobs_sha256": _sha256(args.jobs),
@@ -150,6 +228,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "osdi_sha256": _sha256(args.osdi),
         "checkpoint_dir": str(args.checkpoints.resolve()),
         "checkpoint_sha256": _artifact_hashes(args.checkpoints, groups),
+        "dataset_provenance": dataset_provenance,
         "pdk_sha256": _pdk_hashes(
             args.pdk_root, {tech for _tag, _variant, tech in groups},
         ),

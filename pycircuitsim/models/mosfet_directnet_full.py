@@ -467,6 +467,10 @@ class NMOS_DNF(_FullTerminalNNBase):
 class PMOS_DNF(_FullTerminalNNBase):
     """P-channel full-terminal DirectNet (LEVEL=75)."""
 
+    def calculate_current(self, voltages: Dict[str, float]) -> float:
+        """Return the project PMOS scalar sign for comparison consumers."""
+        return -super().calculate_current(voltages)
+
 
 # Compatibility for private imports in downstream diagnostic scripts.
 _DirectNetFullBase = _FullTerminalNNBase
