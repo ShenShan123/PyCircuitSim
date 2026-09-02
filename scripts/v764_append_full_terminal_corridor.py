@@ -47,7 +47,6 @@ from neural_network.eval.loo_labels import (  # noqa: E402
 from pycmg.nn_config import TECH_CONFIGS  # noqa: E402
 from pycmg.nn_generate import (  # noqa: E402
     SAMPLE_CLASS_CODES,
-    SAMPLE_CLASS_NAMES,
     _create_model_and_instance,
     _eval_single_point_with_reason,
 )

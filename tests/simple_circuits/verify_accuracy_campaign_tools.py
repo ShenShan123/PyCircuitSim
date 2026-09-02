@@ -22,7 +22,6 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from scripts import benchmark_collect
 from scripts import v710_regate_collect as collect
 from scripts import v710_regate_jobs as jobs
 from scripts import v730_coverage as coverage
@@ -161,13 +160,6 @@ def _check_nn_ac_banner_tracks_forced_family() -> None:
             "DirectNet-Full (LEVEL=75)"
         )
         assert verify_nn_ac.active_model_name() == "DirectNet-Full"
-
-    parsed = benchmark_collect.parse_complex_log(
-        "verify_complex_sram_snm",
-        "NG SNM=120.0mV  BSIM-AR SNM=118.0mV\nall-positive: yes\n",
-    )
-    assert parsed["headline"] == "NG_SNM=120.0mV DN_SNM=118.0mV"
-    assert parsed["gate"] == "PASS"
 
     result: dict[str, object] = {
         "tech": "TSMC5", "passed": True, "op_ok": True,
@@ -360,23 +352,23 @@ def _check_explicit_circuit_errors_are_complete_failures() -> None:
     with tempfile.TemporaryDirectory() as raw:
         root = Path(raw)
         logs = {
-            "verify_complex_ring_osc": (
+            "verify_circuit_ring_osc": (
                 "TSMC5    | ERROR — ValueError('outside certified support')\n",
                 "outside certified support",
             ),
-            "verify_complex_opamp": (
+            "verify_circuit_opamp": (
                 "TSMC5    | ERROR — RuntimeError('DC operating point did not converge')\n",
                 "DC operating point did not converge",
             ),
-            "verify_complex_sram_snm": (
+            "verify_circuit_sram_snm": (
                 "TSMC5    |     5 | ERROR — ValueError('outside certified support')\n",
                 "outside certified support",
             ),
-            "verify_complex_switchcap": (
+            "verify_circuit_switchcap": (
                 "TSMC5    | ERROR — ValueError('outside certified support')\n",
                 "outside certified support",
             ),
-            "verify_complex_opamp_ac": (
+            "verify_circuit_opamp_ac": (
                 "  TSMC5    | ERROR — DC operating point did not converge\n",
                 "DC operating point did not converge",
             ),
@@ -400,14 +392,14 @@ def _check_explicit_circuit_errors_are_complete_failures() -> None:
                 suite, {"rc": "0", "status": "ERROR", "error": "bad"},
             )
 
-        ring = data["dn"]["small"]["verify_complex_ring_osc"]["TSMC5"]
+        ring = data["dn"]["small"]["verify_circuit_ring_osc"]["TSMC5"]
         assert collect._verdict(ring) == "ERROR"
         assert docs.verdict_mark("ERROR", None) == "ERROR"
 
         docs.PASS_DATA["error_render"] = {
             "dnf": {
                 "small": {
-                    "verify_complex_opamp_ac": {
+                    "verify_circuit_opamp_ac": {
                         "TSMC5": {
                             "omp1": {
                                 "rc": "1", "status": "ERROR",
@@ -629,7 +621,7 @@ def _check_regate_readiness_and_family_ownership() -> None:
             "#!/usr/bin/env bash\n"
             "printf '%s\\n' \"$PYCIRCUITSIM_NN_FORCE_LEVEL\" > \"$FAKE_FORCE_LOG\"\n"
             "printf '%s\\n' \"$*\" >> \"$FAKE_ARGS_LOG\"\n"
-            "printf '%s\\n' \"$PYCIRCUITSIM_SIMPLE_RESULTS|$PYCIRCUITSIM_COMPLEX_RESULTS\" "
+            "printf '%s\\n' \"$PYCIRCUITSIM_SIMPLE_RESULTS\" "
             ">> \"$FAKE_RESULTS_LOG\"\n"
             "echo stub-suite-ran\n",
         )
@@ -685,10 +677,12 @@ def _check_regate_readiness_and_family_ownership() -> None:
             "verify_circuit_topologies.py --tech TSMC5 --case current_mirror"
             in call for call in calls
         )
-        result_roots = (root / "runner-results.txt").read_text().splitlines()
-        assert all(left == right for left, right in (
-            line.split("|", 1) for line in result_roots
-        ))
+        result_roots = [
+            line for line in (root / "runner-results.txt").read_text().splitlines()
+            if line
+        ]
+        assert result_roots
+        assert all(Path(line).name == "simple" for line in result_roots)
 
         _ready_checkpoint(checkpoint_dir, "tf", config=False)
         with patch.object(coverage, "CKPT", checkpoint_dir):
@@ -802,7 +796,7 @@ def _check_fail_on_gaps() -> None:
                     stem.with_name(stem.name + suffix).touch()
 
         data = _coverage_data()
-        del data["dn"]["small"]["verify_complex_ring_osc"]["TSMC5"]["omp4"]
+        del data["dn"]["small"]["verify_circuit_ring_osc"]["TSMC5"]["omp4"]
         (root / "data.json").write_text(json.dumps(data))
         args = [
             "v730_coverage.py", "--tag", "dn", "--set", "clean",
@@ -846,7 +840,7 @@ def _report_payload(suite: str, rc: str = "1") -> dict[str, object]:
             n=1, n_pass=0, mean_nrmse=12.0, max_nrmse=15.0, mean_mre=20.0,
             min_r2=0.5, max_error=0.001,
         )
-    elif suite == "verify_complex_opamp_ac":
+    elif suite == "verify_circuit_opamp_ac":
         result.update(
             dc_gain_err_db="4.0", gbw_ratio="0.5", pm_err_deg="20.0",
             mag_nrmse_pct="12.0", status="FAIL",
@@ -888,7 +882,7 @@ def _check_report_payload_completeness() -> None:
     docs.PASS_DATA = {"test": data}
     try:
         assert docs._matrix_complete_in_pass("dn", False, "test")
-        cell = data["dn"]["small"]["verify_complex_ring_osc"]["TSMC5"]["omp1"]
+        cell = data["dn"]["small"]["verify_circuit_ring_osc"]["TSMC5"]["omp1"]
         del cell["metric"]
         assert not docs._matrix_complete_in_pass("dn", False, "test")
         cell["metric"] = 12.0
@@ -953,6 +947,17 @@ def _check_readme_uses_all_current_families() -> None:
             docs._v7517_provenance_complete = old_provenance
 
 
+def _check_v766_full_clean_registration() -> None:
+    """Both full-terminal reports must resolve to one combined clean pass."""
+    pass_roots = dict(coverage.PASSES)
+    assert pass_roots["v766-full-clean"].name == "v766_full_clean"
+    assert docs.REPORT_PASS[("dnf", False)] == "V7.6.6"
+    assert docs.REPORT_PASS[("tff", False)] == "V7.6.6"
+    assert docs.CAMPAIGN_EVIDENCE["V7.6.6"] == (
+        "v766_full_clean", 480, 280,
+    )
+
+
 def _check_incomplete_reports_preserve_verified_output() -> None:
     """Missing raw evidence preserves only a checksum-verified report."""
     with tempfile.TemporaryDirectory() as raw:
@@ -999,7 +1004,7 @@ def _check_incomplete_reports_preserve_verified_output() -> None:
             with redirect_stdout(io.StringIO()):
                 assert not docs.build_readme(check=False)
             scoreboard = docs.scoreboard()
-            assert "2026-08-19 `large`" in scoreboard
+            assert "V7.5.17 `large` **9/20** served" in scoreboard
             assert "V7.5.16 `large`" not in scoreboard
         finally:
             docs.TPL = old_tpl
@@ -1048,6 +1053,7 @@ def main() -> int:
     _check_fail_on_gaps()
     _check_report_payload_completeness()
     _check_readme_uses_all_current_families()
+    _check_v766_full_clean_registration()
     _check_incomplete_reports_preserve_verified_output()
     clean_pool = jobs.build_pools()["clean"]
     clean_jobs = len(clean_pool)

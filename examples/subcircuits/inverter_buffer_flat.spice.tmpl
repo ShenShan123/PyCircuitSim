@@ -1,0 +1,13 @@
+* Flat two-inverter buffer
+<MODEL_SETUP>
+.temp <TEMP>
+Vdd vdd 0 <VDD>
+Vin in 0 <INPUT_SPEC>
+<P_PREFIX>p1 mid in vdd vdd <P_DEVICE>
+<N_PREFIX>n1 mid in 0 0 <N_DEVICE>
+<P_PREFIX>p2 out mid vdd vdd <P_DEVICE>
+<N_PREFIX>n2 out mid 0 0 <N_DEVICE>
+<OUTPUT_LOAD>
+<INITIAL_CONDITION>
+<ANALYSIS>
+.end

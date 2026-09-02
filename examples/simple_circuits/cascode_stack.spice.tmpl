@@ -1,0 +1,27 @@
+* Complementary cascode compliance and AC-gain branches
+<MODEL_SETUP>
+Vdd vdd 0 <VDD>
+Vbn bn 0 <BODY_N>
+Vbp bp 0 <BODY_P>
+Vbiasn biasn 0 <BIAS_N>
+Vcasn casn 0 <CAS_N>
+Voutn dn 0 0
+<N_PREFIX>n_lo nx biasn 0 bn <N_DEVICE>
+<N_PREFIX>n_hi dn casn nx bn <N_DEVICE>
+Vbiasp biasp 0 <BIAS_P>
+Vcasp casp 0 <CAS_P>
+Voutp dp 0 <VDD>
+<P_PREFIX>p_lo px biasp vdd bp <P_DEVICE>
+<P_PREFIX>p_hi dp casp px bp <P_DEVICE>
+Vinac inac 0 DC=<BIAS_N> AC=1 0
+Rna vdd nac <CASCODE_LOAD>
+<N_PREFIX>n_alo nax inac 0 bn <N_DEVICE>
+<N_PREFIX>n_ahi nac casn nax bn <N_DEVICE>
+Vipac ipac 0 DC=<BIAS_P> AC=1 0
+Rpa pac 0 <CASCODE_LOAD>
+<P_PREFIX>p_alo pax ipac vdd bp <P_DEVICE>
+<P_PREFIX>p_ahi pac casp pax bp <P_DEVICE>
+<OUTPUT_LOAD>
+.temp <TEMP>
+<ANALYSIS>
+.end

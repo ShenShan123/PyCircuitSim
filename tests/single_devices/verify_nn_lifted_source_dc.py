@@ -47,6 +47,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from tests.common.nn_sweep import NN_TECHS, curve_metrics  # noqa: E402
+from tests.common.base import DEVICE_DECKS, render_template  # noqa: E402
 from tests.common.nn_gate import (  # noqa: E402
     ALL_TEST_TECHS,
     NGSPICE_BIN,
@@ -58,8 +59,7 @@ from tests.common.nn_gate import (  # noqa: E402
 VS0_FRACTIONS: List[float] = [0.0, 0.1, 0.2]   # source lift, fraction of VDD
 VG_STEP = 0.005                                 # same grid as the 55-cfg gate
 DC_NRMSE_PASS = 10.0                            # % — same gate as the 55-cfg DC
-RESULTS_DIR = PROJECT_ROOT / "tests" / "verify_nn_lifted_source_dc_results"
-OUT_DIR = PROJECT_ROOT / "results" / "v6_4_7"
+RESULTS_DIR = PROJECT_ROOT / "results" / "tests" / "nn_lifted_source_dc"
 
 
 def run_ngspice_nmos_dc_lifted(
@@ -69,17 +69,18 @@ def run_ngspice_nmos_dc_lifted(
     baked = create_baked_modelcard(tech, work_dir)
     tag = f"{tech.name}_vs{round(vs0 * 1e3)}mV"
     netlist = work_dir / f"ngspice_nmos_lifted_{tag}.cir"
-    netlist.write_text(
-        f"* NMOS lifted-source Id-Vgs (NGSPICE truth, {tag})\n"
-        f'.include "{baked}"\n'
-        f".temp 27\n"
-        f"Vd d 0 {tech.vdd}\n"
-        f"Vg g 0 0.0\n"
-        f"Vs s 0 {vs0}\n"
-        f"Vb b 0 0.0\n"
-        f"N1 d g s b {tech.nmos_model}\n"
-        f".dc Vg 0 {tech.vdd} {VG_STEP}\n"
-        f".end\n")
+    netlist.write_text(render_template(
+        DEVICE_DECKS / "mosfet.spice.tmpl", {
+            "MODEL_SETUP": f'.include "{baked}"', "TEMP": "27",
+            "DRAIN_BIAS": f"Vd d 0 {tech.vdd:g}",
+            "GATE_BIAS": "Vg g 0 0", "SOURCE_BIAS": f"Vs s 0 {vs0:g}",
+            "BULK_BIAS": "Vb b 0 0", "DEVICE_NAME": "Ndut",
+            "DRAIN_NODE": "d", "GATE_NODE": "g", "SOURCE_NODE": "s",
+            "BULK_NODE": "b", "DEVICE": tech.nmos_model,
+            "EXTRA_DEVICES": "", "LOAD": "",
+            "ANALYSIS": f".dc Vg 0 {tech.vdd:g} {VG_STEP:g}",
+        },
+    ))
     csv_path = work_dir / f"ngspice_nmos_lifted_{tag}.csv"
     log_path = work_dir / f"ngspice_nmos_lifted_{tag}.log"
     runner = work_dir / f"ngspice_nmos_lifted_{tag}_runner.cir"
@@ -115,16 +116,24 @@ def run_nn_nmos_dc_lifted(
 
     tag = f"{tech.name}_vs{round(vs0 * 1e3)}mV"
     netlist = work_dir / f"nn_nmos_lifted_{tag}.sp"
-    netlist.write_text(
-        f"* NN NMOS lifted-source Id-Vgs (LEVEL=73, {tag})\n"
-        f"Vd d 0 {tech.vdd}\n"
-        f"Vg g 0 0.0\n"
-        f"Vs s 0 {vs0}\n"
-        f"Vb b 0 0.0\n"
-        f"Mn1 d g s b nmos_nn L={tech.l_nmos * 1e9:.0f}n NFIN={tech.nfin}\n"
-        f".model nmos_nn NMOS (LEVEL=73 TECH={tech.nn_tech_key} VT={tech.nn_vt})\n"
-        f".dc Vg 0 {tech.vdd} {VG_STEP}\n"
-        f".end\n")
+    netlist.write_text(render_template(
+        DEVICE_DECKS / "mosfet.spice.tmpl", {
+            "MODEL_SETUP": (
+                f".model nmos_nn NMOS "
+                f"(LEVEL=73 TECH={tech.nn_tech_key} VT={tech.nn_vt})"
+            ),
+            "TEMP": "27", "DRAIN_BIAS": f"Vd d 0 {tech.vdd:g}",
+            "GATE_BIAS": "Vg g 0 0", "SOURCE_BIAS": f"Vs s 0 {vs0:g}",
+            "BULK_BIAS": "Vb b 0 0", "DEVICE_NAME": "Mdut",
+            "DRAIN_NODE": "d", "GATE_NODE": "g", "SOURCE_NODE": "s",
+            "BULK_NODE": "b",
+            "DEVICE": (
+                f"nmos_nn L={tech.l_nmos * 1e9:.0f}n NFIN={tech.nfin}"
+            ),
+            "EXTRA_DEVICES": "", "LOAD": "",
+            "ANALYSIS": f".dc Vg 0 {tech.vdd:g} {VG_STEP:g}",
+        },
+    ))
     logging.disable(logging.CRITICAL)
     try:
         parser = Parser()
@@ -138,7 +147,7 @@ def run_nn_nmos_dc_lifted(
     finally:
         logging.disable(logging.NOTSET)
     return {"sweep": np.array(results["g"]),
-            "id": np.abs(np.array(results["i(Mn1)"]))}
+            "id": np.abs(np.array(results["i(Mdut)"]))}
 
 
 def main() -> int:
@@ -193,8 +202,8 @@ def main() -> int:
             curve_rows += [[tk, frac, vs0, f"{vg:.4f}", f"{ig:.6e}", f"{inn:.6e}"]
                            for vg, ig, inn in zip(ref["sweep"], ref["id"], id_nn)]
 
-    OUT_DIR.mkdir(parents=True, exist_ok=True)
-    csv_path = OUT_DIR / f"lifted_source_sweep_{args.label}.csv"
+    RESULTS_DIR.mkdir(parents=True, exist_ok=True)
+    csv_path = RESULTS_DIR / f"lifted_source_sweep_{args.label}.csv"
     with csv_path.open("w", newline="") as fh:
         w = csv.writer(fh)
         w.writerow(["tech", "vs0_frac", "vs0_V", "vg_V",
@@ -202,7 +211,7 @@ def main() -> int:
         w.writerows(curve_rows)
     print(f"\n  [CSV] Raw curves saved: {csv_path}")
 
-    md_path = OUT_DIR / f"lifted_source_sweep_{args.label}.md"
+    md_path = RESULTS_DIR / f"lifted_source_sweep_{args.label}.md"
     lines = [
         f"# Lifted-source NMOS Id-Vgs sweep — {args.label} (V6.4.7 P0)",
         "",

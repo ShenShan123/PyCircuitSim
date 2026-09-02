@@ -24,7 +24,7 @@ import json
 import os
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 import numpy as np
 
@@ -45,13 +45,12 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from tests.common.base import ALL_TECHS, TECH_COLORS  # noqa: E402
 from tests.common.circuit_benchmarks import (  # noqa: E402
-    BENCH, BENCH_TECHS, PROJECT_ROOT, RESULTS_BASE,
+    BENCH, PROJECT_ROOT, RESULTS_BASE,
     BenchTech, OpAmpParams, RingOscParams, SwitchCapParams, SramParams,
     bench_variant, usable_vts,
     get_baked_modelcard, run_ngspice_wrdata,
     run_directnet_transient, run_directnet_dc_sweep,
-    full_metrics, fmt_metrics,
-    opamp_bias, gain_trip, period_from_wave, at, snm_from_lobes, sc_windows,
+    full_metrics, gain_trip, period_from_wave, at, snm_from_lobes, sc_windows,
     ngspice_opamp, directnet_opamp,
     ngspice_ringosc, directnet_ringosc,
     ngspice_switchcap, directnet_switchcap,
@@ -556,7 +555,7 @@ def run_single_sram(cfg: CircuitSweepConfig,
                if ng_snm > 1e-6 else float("nan"))
     # B7: the SRAM sweep baseline must use the SAME pass definition as the
     # authoritative single-point ship gate (historical compatibility suite key
-    # verify_complex_sram_snm) —
+    # verify_circuit_sram_snm) —
     # positivity AND NGSPICE-NRMSE tracking. force_ic is a self-consistency
     # convergence probe (not an NGSPICE comparison): it is reported but NOT
     # gated, exactly as in the ship gate. Previously the sweep AND'd force_ic,

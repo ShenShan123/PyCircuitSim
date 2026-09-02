@@ -27,12 +27,13 @@ from tests.common.bsimcmg_tran import (
     TECH_ORDER,
     TechProfile,
     TestConfig,
-    VtPair,
     make_baseline,
     run_test_suite,
 )
 
-RESULTS_DIR = PROJECT_ROOT / "tests" / "verify_bsimcmg_tran_results" / "comprehensive"
+RESULTS_DIR = (
+    PROJECT_ROOT / "results" / "tests" / "bsimcmg_tran" / "comprehensive"
+)
 
 NFIN_SWEEP_VALUES = [2, 5, 10]
 

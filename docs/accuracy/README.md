@@ -11,7 +11,7 @@ contract before comparing results.
 | [`simple-circuits-v2-topologies.md`](simple-circuits-v2-topologies.md) | held-out simple-topology catalog, corner matrix, harness and promotion contract |
 | [`DirectNet-L73-clean.md`](DirectNet-L73-clean.md) | production DirectNet, all clean tiers |
 | [`BSIM-AR-L74-clean.md`](BSIM-AR-L74-clean.md) | autoregressive Transformer, all clean tiers |
-| [`DirectNet-L75-clean.md`](DirectNet-L75-clean.md) | full-terminal DirectNet production qualification and AnalogGym accuracy |
+| [`DirectNet-L75-clean.md`](DirectNet-L75-clean.md) | full-terminal DirectNet production qualification |
 | [`DirectNet-L75-v763-targeted.md`](DirectNet-L75-v763-targeted.md) | V7.6.3 targeted four-scale recovery; not a clean-matrix replacement |
 | [`DirectNet-L75-v764-terminal-followup.md`](DirectNet-L75-v764-terminal-followup.md) | terminal-length, globalization, matched-data, and Jacobian experiments; no promotion |
 | [`DirectNet-L75-V760-recovery.md`](DirectNet-L75-V760-recovery.md) | V7.6.0 attribution and experimental full-terminal status |
@@ -20,7 +20,6 @@ contract before comparing results.
 | [`BSIM-AR-L74-recipes.md`](BSIM-AR-L74-recipes.md) | historical BSIM-AR recipe study |
 | [`simple-circuits-recheck-2026-08-19.md`](simple-circuits-recheck-2026-08-19.md) | superseded V7.5.15 campaign audit trail |
 | [`archive-pre-gds-fix.md`](archive-pre-gds-fix.md) | retracted pre-V6.13 claims |
-| [`../../examples/complex_circuits/RESULTS_TSMC.md`](../../examples/complex_circuits/RESULTS_TSMC.md) | separate AnalogGym campaign |
 
 ## Clean scoreboard
 
@@ -28,7 +27,7 @@ contract before comparing results.
 |---|---|---|---|---|---|
 | 73 | **DirectNet** | **production** | V7.5.17 `large` **9/20** served; `xl` **10/20** best | V7.3 `crit15m`@xl **19/20** | 1.5 ms @ `large` |
 | 74 | **BSIM-AR** | higher fidelity | V7.5.17 `large` **12/20** | V7.3 `corroft`@medium **20/20** | 61.5 ms @ `medium` |
-| 75 | **DirectNet-Full** | experimental, rejected | V7.6.2 `large` **5/20**; AnalogGym **0/248** | `small` **8/20** | not gated |
+| 75 | **DirectNet-Full** | experimental, rejected | V7.6.2 `large` **5/20** | `small` **8/20** | not gated |
 
 Strict = passes at OMP ∈ {1, 2, 4}. Totals are **/20** — 4 circuits × 5 techs, TSMC6 included (`methodology.md` §2). Earlier reports scored /16 over four techs, so a /20 total here and a /16 total there can be the same measurement.
 
@@ -77,6 +76,5 @@ conda run -n pycircuitsim python scripts/v730_docs_build.py \
   --check --only dnf --recipes clean
 ```
 
-Current raw evidence is local and gitignored under `results/v7517_clean/`,
-`results/v762_directnet_full_clean/`, and
-`results/v762_directnet_full_analoggym_tsmc{5,6,7,12,16}/`.
+Current raw evidence is local and gitignored under `results/v7517_clean/` and
+`results/v762_directnet_full_clean/`.

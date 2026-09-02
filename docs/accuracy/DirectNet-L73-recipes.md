@@ -222,7 +222,7 @@ portable.
 | `crit15m`@xl | FAIL 4.59 dB | FAIL 31.84 dB | FAIL 32.27 dB | FAIL 9.45 dB | FAIL 4.02 dB | **0/5** |
 
 `csob` earns its keep on the device and charge axis and is retained as a
-documented env-pin alternate **for device and AC work only**. Its complex-gate
+documented env-pin alternate **for device and AC work only**. Its circuit-gate
 rationale is withdrawn: post-fix it fails the `tsmc16-opamp` it was documented
 to hold.
 
@@ -274,5 +274,5 @@ are listed to stop the arms being retried, not as current measurements.
 | **Current fast path (V7.4.0)** | `clean@large` = the `tsmc{X}_dn_large_*` slots | newly rebuilt artifact set; 14/20 at 0.92 M params and ~1.5 ms/eval |
 | **Historical V7.3.0 production** | `crit30f@large` | retained result only; recipe checkpoints were not rebuilt or promoted in V7.4.0 |
 | **Best DirectNet** | `crit15m@xl` (env-pin) | 19/20, the family's best — but 2.3× the inference cost and no device-fidelity gain, and its one miss is a coin-flip (§4a) |
-| **Device / charge / AC work** | `csob@large` (env-pin) | best mean device NRMSE; **not** a complex-gate alternate |
+| **Device / charge / AC work** | `csob@large` (env-pin) | best mean device NRMSE; **not** a circuit-gate alternate |
 | **One checkpoint, many techs** | `u716_dn_corroft_large` (env-pin) | ties the per-tech bar at universal scope, zero flips |

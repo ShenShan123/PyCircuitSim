@@ -23,7 +23,7 @@ from typing import Any, Dict, Tuple
 
 import pytest
 
-from pycmg.tech import TECH_REGISTRY, TechConfig, resolve_modelcard
+from pycmg.tech import TECH_REGISTRY, resolve_modelcard
 from tests.helpers import ROOT, OSDI_PATH
 
 # ---------------------------------------------------------------------------

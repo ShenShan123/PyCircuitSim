@@ -73,7 +73,6 @@ from tests.simple_circuits.verify_circuit_ring_osc import (  # noqa: E402
 
 OUT_DIR = ROOT / "results" / "v6_4_7" / "s6_logs"
 S6_INJECTION_PS = 93.01   # S6=P1 id+q N+P injection (s6_p1_id_q_np_600ps.md)
-S6_BASELINE_PS = None     # printed from the baseline md if present
 
 
 def _sha256(p: Path) -> str:

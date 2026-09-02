@@ -1,0 +1,18 @@
+* Full 6T SRAM hold, read, and write modes
+<MODEL_SETUP>
+Vdd vdd 0 <VDD>
+<BODY_NETWORK>
+Vwl wl 0 <WL_SPEC>
+Vbl bl 0 <BL_SPEC>
+Vblb blb 0 <BLB_SPEC>
+<P_PREFIX>p_l q qb vdd <BODY_P_NODE> <P_DEVICE>
+<N_PREFIX>n_l q qb 0 <BODY_N_NODE> <N_DEVICE>
+<P_PREFIX>p_r qb q vdd <BODY_P_NODE> <P_DEVICE>
+<N_PREFIX>n_r qb q 0 <BODY_N_NODE> <N_DEVICE>
+<N_PREFIX>n_al bl wl q <BODY_N_NODE> <N_DEVICE>
+<N_PREFIX>n_ar blb wl qb <BODY_N_NODE> <N_DEVICE>
+<STORAGE_LOADS>
+.ic V(q)=<Q_IC> V(qb)=<QB_IC>
+.temp <TEMP>
+<ANALYSIS>
+.end

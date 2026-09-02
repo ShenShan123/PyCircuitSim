@@ -17,7 +17,6 @@ htmlcov/
 
 # Simulation results (generated at runtime)
 results/
-tests/verify_*_results/
 
 # NGSPICE output files
 *.lis
@@ -72,23 +71,6 @@ v6_3_1_checkpoints/
 external_compact_models/neural_network/data/datasets_v2_backup/
 # Historical V7.4 archives are local-only if deliberately restored.
 external_compact_models/neural_network/v740_archive/
-
-# PyCircuitSim-vs-NGSPICE comparison output (regenerable by run_compare.py;
-# `work/` holds translated netlists and ngspice rawfiles and gets large).
-examples/complex_circuits/pycircuitsim_bench_results/
-
-# AnalogGym designs (examples/complex_circuits/): the per-design BSIM-CMG libraries and
-# the naive modelcard cache are derived from the IP-protected TSMC PDK and are
-# regenerable via pycmg.tech.resolve_modelcard — keep them on disk, never in git.
-examples/complex_circuits/designs_tsmc*/models/cache/
-examples/complex_circuits/designs_tsmc*/**/*_models.spice
-# ...but the NGSPICE reference numbers are the comparison baseline and must be
-# tracked, against the global `results/` and `*.csv` rules above.
-!examples/complex_circuits/designs_tsmc*/results/
-!examples/complex_circuits/designs_tsmc*/results/**/
-!examples/complex_circuits/designs_tsmc*/results/**/*.json
-!examples/complex_circuits/designs_tsmc*/results/*.json
-!examples/complex_circuits/designs_tsmc*/results/*.csv
 
 # BSIM-CMG build output and private PDK assets. A fresh checkout contains only
 # the tracked ASAP7 cards; raw TSMC cards and local archives remain untracked.

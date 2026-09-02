@@ -20,7 +20,7 @@ Input feature vector (19 features = 4 voltages + 15 geometry):
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 

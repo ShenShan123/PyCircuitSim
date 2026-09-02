@@ -20,9 +20,9 @@ from typing import Dict, Optional
 import torch
 
 from neural_network.config import (
-    CHECKPOINT_DIR, DATA_DIR,
+    DATA_DIR,
     DirectNetConfig, TransformerConfig,
-    LOCAL_VARIANT_CODES, VALID_TECH_SCOPES, tech_scope_vocab_size,
+    VALID_TECH_SCOPES, tech_scope_vocab_size,
 )
 from neural_network.training.trainer import (
     train_directnet, train_transformer,
@@ -33,11 +33,11 @@ import numpy as np
 
 from neural_network.data.dataset import validate_canonical_dataset
 from neural_network.data.contracts import (
+    FULL_TERMINAL_OUTPUT_COLUMN_ORDER,
     FULL_TERMINAL_OUTPUT_CONTRACT,
     REDUCED_OUTPUT_CONTRACT,
     dataset_filename,
 )
-from neural_network.data.normalize import FULL_TERMINAL_OUTPUT_COLUMN_ORDER
 
 
 # All TSMC + ASAP7 tech names for the per-tech `--tech-scope` auto-exclude.

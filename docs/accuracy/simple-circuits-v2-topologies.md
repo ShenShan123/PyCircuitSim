@@ -1,9 +1,8 @@
 # Simple-circuit topology evaluation
 
 This document defines the held-out `simple-v2` evaluation set for NN compact
-models. These are still simple circuits. They exercise device composition more
-deeply than a single transistor or inverter, but they are intentionally
-separate from the AnalogGym designs under `examples/complex_circuits/`.
+models. They exercise device composition more deeply than a single transistor
+or inverter while remaining inside the compact-model qualification scope.
 
 The existing four-cell score is versioned as `simple-v1` and remains `/20` per
 tier. `simple-v2` is diagnostic until its reference stability and thresholds
@@ -30,19 +29,19 @@ Every case declares its expected signals and domain metrics in
 `tests/common/simple_circuit_catalog.py`. DC, transient and AC are all present;
 current signals keep their sign rather than being converted to magnitudes.
 
-## Paired-deck contract
+## Unified-template contract
 
-Each experiment has one candidate `.sp` and one LEVEL=72 reference `.cir` in
-`examples/simple_circuits/`. Both are flat, tokenized descriptions of the same
-components, connectivity, sources, initial conditions and analysis limits.
-Only compact-model binding and engine-required syntax differ. Rendering is
+Each experiment has one `.spice.tmpl` source in `examples/simple_circuits/`.
+The candidate and LEVEL=72 reference adapters render it with different compact-
+model binding and engine-required syntax while preserving components,
+connectivity, sources, initial conditions, and analysis limits. Rendering is
 strict: missing and unused tokens are errors. Before either simulator runs,
 the harness compares a canonical topology signature, including MOS polarity
-and terminal order, source kind and initial conditions.
+and terminal order, source kind, and initial conditions.
 
 The legacy opamp, ring oscillator, SRAM-SNM and switched-capacitor builders,
 plus the scored inverter VTC/transient builders, now render these authoritative
-example decks as well. Programmatic ring generation remains only for the
+templates as well. Programmatic ring generation remains only for the
 stage-count sweep and is parity-checked at 3, 5, 7 and 9 stages.
 
 ## Corner matrix
@@ -83,9 +82,9 @@ conda run -n pycircuitsim python \
 
 Use `--case all --corner all` for the declared matrix and
 `--reference-repeats 3` when gathering promotion evidence. Results go under
-`PYCIRCUITSIM_SIMPLE_RESULTS/simple-v2/` and every requested analysis emits a
-structured marker. An `ERROR` stays in the denominator while numerical
-aggregates include only characterized rows.
+`results/tests/simple_circuits/simple-v2/` by default and every requested
+analysis emits a structured marker. An `ERROR` stays in the denominator while
+numerical aggregates include only characterized rows.
 
 For checkpoint campaigns, `scripts/v710_regate_jobs.py` writes a separate
 nominal-corner `jobs_simple_v2.txt` screening pool. Full corner characterization

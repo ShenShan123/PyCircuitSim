@@ -12,12 +12,12 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
 from tests.common.base import (
-    NGSPICE_BIN, OSDI_PATH, SIMPLE_DECKS, deck_tokens, render_deck_text,
+    OSDI_PATH, SIMPLE_DECKS, deck_tokens, render_deck_text,
     run_ngspice_subprocess,
 )
 from tests.common.circuit_benchmarks import (
@@ -137,29 +137,30 @@ def _expand(value: str, available: Mapping[str, str]) -> str:
     raise ValueError(f"recursive deck substitution did not terminate: {value}")
 
 
-def _ring_blocks(bt: BenchTech, *, reference: bool,
-                 n_stages: int = 5, cload: float = 0.5e-15) -> Tuple[str, str]:
+def render_ring_stages(
+    *,
+    n_stages: int,
+    p_prefix: str,
+    n_prefix: str,
+    p_device: str,
+    n_device: str,
+    cload: float,
+    vdd: float,
+) -> Tuple[str, str]:
+    """Build the variable odd-stage block used by the canonical ring template."""
     if n_stages < 3 or n_stages % 2 == 0:
         raise ValueError("ring oscillator needs an odd stage count >= 3")
     lines: List[str] = []
     for index in range(1, n_stages + 1):
         inp = f"n{index - 1}" if index > 1 else f"n{n_stages}"
         out = f"n{index}"
-        if reference:
-            lines.extend((
-                f"Np{index} {out} {inp} vdd vdd {bt.pmos_model}",
-                f"Nn{index} {out} {inp} 0 0 {bt.nmos_model}",
-            ))
-        else:
-            lines.extend((
-                f"Mp{index} {out} {inp} vdd vdd pmos_nn "
-                f"L={_spice_length(bt.l_pmos)} NFIN={bt.effective_nfin_p}",
-                f"Mn{index} {out} {inp} 0 0 nmos_nn "
-                f"L={_spice_length(bt.l_nmos)} NFIN={bt.nfin}",
-            ))
+        lines.extend((
+            f"{p_prefix}p{index} {out} {inp} vdd vdd {p_device}",
+            f"{n_prefix}n{index} {out} {inp} 0 0 {n_device}",
+        ))
         lines.append(f"Cl{index} {out} 0 {_spice_cap(cload)}")
     ic = " ".join(
-        f"V(n{index})={'0' if index % 2 else _number(bt.vdd)}"
+        f"V(n{index})={'0' if index % 2 else _number(vdd)}"
         for index in range(1, n_stages + 1)
     )
     return "\n".join(lines), ic
@@ -176,16 +177,41 @@ def _common_substitutions(
 ) -> Dict[str, str]:
     vdd = bt.vdd
     reverse = corner.body_reverse_frac * vdd
-    ring_stages, ring_ic = _ring_blocks(
-        bt, reference=reference, n_stages=ring_n_stages,
-        cload=ring_cload,
-    )
+    level = {"DirectNet": 73, "BSIM-AR": 74,
+             "DirectNet-Full": 75, "BSIM-AR-Full": 76}.get(
+                 active_model_label().split(" (")[0], 73)
     vcm = 0.55 * vdd
+    if reference:
+        model_setup = f'.include "{baked_lib}"'
+        n_prefix = p_prefix = "N"
+        n_device = bt.nmos_model
+        p_device = bt.pmos_model
+    else:
+        model_setup = (
+            f".model nmos_nn NMOS (LEVEL={level} TECH={bt.nn_tech} "
+            f"VT={bt.effective_nmos_vt})\n"
+            f".model pmos_nn PMOS (LEVEL={level} TECH={bt.nn_tech} "
+            f"VT={bt.effective_pmos_vt})"
+        )
+        n_prefix = p_prefix = "M"
+        n_device = (
+            f"nmos_nn L={_spice_length(bt.l_nmos)} NFIN={bt.nfin}"
+        )
+        p_device = (
+            f"pmos_nn L={_spice_length(bt.l_pmos)} "
+            f"NFIN={bt.effective_nfin_p}"
+        )
+    ring_stages, ring_ic = render_ring_stages(
+        n_stages=ring_n_stages,
+        p_prefix=p_prefix,
+        n_prefix=n_prefix,
+        p_device=p_device,
+        n_device=n_device,
+        cload=ring_cload,
+        vdd=vdd,
+    )
     values = {
-        "LEVEL": str({"DirectNet": 73, "BSIM-AR": 74,
-                       "DirectNet-Full": 75,
-                       "BSIM-AR-Full": 76}.get(
-                           active_model_label().split(" (")[0], 73)),
+        "LEVEL": str(level),
         "TECH": bt.nn_tech,
         "NVT": bt.effective_nmos_vt,
         "PVT": bt.effective_pmos_vt,
@@ -198,6 +224,12 @@ def _common_substitutions(
         "HALF_VDD": _number(0.5 * vdd),
         "BODY_N": _number(-reverse),
         "BODY_P": _number(vdd + reverse),
+        "BODY_NETWORK": (
+            f"Vbn bn 0 {_number(-reverse)}\n"
+            f"Vbp bp 0 {_number(vdd + reverse)}"
+        ),
+        "BODY_N_NODE": "bn",
+        "BODY_P_NODE": "bp",
         "GATE_N": _number(0.65 * vdd),
         "GATE_P": _number(0.35 * vdd),
         "FOLLOW_N_IC": _number(0.25 * vdd),
@@ -224,7 +256,28 @@ def _common_substitutions(
         "SLEW": "0.1n",
         "PW": "1.9n",
         "PER": "4n",
+        "INPUT_DELAY": "0.5n",
+        "INPUT_RISE": "20p",
+        "INPUT_FALL": "20p",
+        "INPUT_WIDTH": "1n",
+        "INPUT_PERIOD": "2n",
+        "SRAM_WL_WIDTH": "1.5n",
+        "SRAM_WL_PERIOD": "3n",
+        "CLOCK_DELAY": "1n",
+        "CLOCK_RISE": "20p",
+        "CLOCK_FALL": "20p",
+        "CLOCK_WIDTH": "2n",
+        "CLOCK_PERIOD": "4n",
         "CSAMPLE": "100f",
+        "FOLLOWER_LOAD": "20k",
+        "COMMON_GATE_LOAD": "12k",
+        "DIFFPAIR_LOAD": "18k",
+        "CASCODE_LOAD": "20k",
+        "CHAIN_LOAD": "2f",
+        "STORAGE_LOADS": "Cq q 0 2f\nCqb qb 0 2f",
+        "LOGIC_LOAD": "5f",
+        "HOLD_LOAD": "100f",
+        "OUTPUT_LOAD": "",
         "AC_INP": "1",
         "AC_INN": "0",
         "VA_SPEC": "0",
@@ -237,6 +290,13 @@ def _common_substitutions(
         "BAKED_LIB": str(baked_lib),
         "NMOS": bt.nmos_model,
         "PMOS": bt.pmos_model,
+        "MODEL_SETUP": model_setup,
+        "N_PREFIX": n_prefix,
+        "P_PREFIX": p_prefix,
+        "N_DEVICE": n_device,
+        "P_DEVICE": p_device,
+        "PULSE_OPEN": "PULSE(" if reference else "PULSE",
+        "PULSE_CLOSE": ")" if reference else "",
         "RING_STAGES": ring_stages,
         "RING_IC": ring_ic,
     }
@@ -255,7 +315,7 @@ def _render_one(
     ring_n_stages: int = 5,
     ring_cload: float = 0.5e-15,
 ) -> str:
-    relative = case.reference_deck if reference else case.candidate_deck
+    relative = case.template
     path = SIMPLE_DECKS / relative
     template = path.read_text()
     available = _common_substitutions(
@@ -263,12 +323,13 @@ def _render_one(
         ring_n_stages=ring_n_stages, ring_cload=ring_cload,
     )
     available.update(substitutions or {})
-    for name, raw in analysis.substitutions(reference).items():
+    for name, raw in analysis.substitutions().items():
         available[name] = _expand(raw, available)
-    card = analysis.reference_card if reference else analysis.candidate_card
     # Reference analysis is executed explicitly in the NGSPICE control block;
     # keeping the template slot empty prevents accidental `run` semantics.
-    available["ANALYSIS"] = "" if reference else _expand(card, available)
+    available["ANALYSIS"] = (
+        "" if reference else "." + _expand(analysis.card, available)
+    )
     required = deck_tokens(template)
     missing = [name for name in required if name not in available]
     if missing:
@@ -284,22 +345,24 @@ def _resolved_analysis(
     bt: BenchTech,
     corner: Corner,
 ) -> AnalysisSpec:
-    """Resolve technology placeholders in both engines' analysis cards."""
+    """Resolve technology placeholders in an experiment's analysis card."""
     candidate_values = _common_substitutions(
         bt, corner, reference=False, baked_lib=Path("<unused>"),
     )
     reference_values = _common_substitutions(
         bt, corner, reference=True, baked_lib=Path("<unused>"),
     )
-    for name, raw in analysis.substitutions(False).items():
+    for name, raw in analysis.substitutions().items():
         candidate_values[name] = _expand(raw, candidate_values)
-    for name, raw in analysis.substitutions(True).items():
         reference_values[name] = _expand(raw, reference_values)
-    return replace(
-        analysis,
-        candidate_card=_expand(analysis.candidate_card, candidate_values),
-        reference_card=_expand(analysis.reference_card, reference_values),
-    )
+    candidate_card = _expand(analysis.card, candidate_values)
+    reference_card = _expand(analysis.card, reference_values)
+    if candidate_card != reference_card:
+        raise ValueError(
+            f"analysis card differs by adapter: {candidate_card!r} != "
+            f"{reference_card!r}"
+        )
+    return replace(analysis, card=candidate_card)
 
 
 def render_case_decks(
@@ -492,7 +555,7 @@ def run_reference_trace(
 ) -> Trace:
     """Run the accepted LEVEL=72 trajectory for one rendered experiment."""
     signals = list(dict.fromkeys((*analysis.signals, *support_signals)))
-    card = analysis.reference_card
+    card = analysis.card
     if analysis.kind == "ac":
         return _run_ngspice_ac_trace(deck, signals, card, work_dir, tag)
     data = run_ngspice_wrdata(

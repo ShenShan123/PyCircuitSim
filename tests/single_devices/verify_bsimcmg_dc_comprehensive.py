@@ -36,7 +36,7 @@ from tests.common.bsimcmg_dc import (
     run_dc_test_suite,
 )
 
-RESULTS_DIR = PROJECT_ROOT / "tests" / "verify_bsimcmg_dc_results" / "comprehensive"
+RESULTS_DIR = PROJECT_ROOT / "results" / "tests" / "bsimcmg_dc" / "comprehensive"
 
 
 def build_vt_sweep(tech: TechProfile, devices: List[str]) -> List[DCTestConfig]:

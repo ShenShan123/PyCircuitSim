@@ -67,8 +67,8 @@ from tests.common.bsimcmg_tran import (  # noqa: E402
     save_summary_csv,
 )
 
-DC_RESULTS_DIR = PROJECT_ROOT / "tests" / "verify_multi_tech_dc_results"
-TRAN_RESULTS_DIR = PROJECT_ROOT / "tests" / "verify_multi_tech_tran_results"
+DC_RESULTS_DIR = PROJECT_ROOT / "results" / "tests" / "multi_tech_dc"
+TRAN_RESULTS_DIR = PROJECT_ROOT / "results" / "tests" / "multi_tech_tran"
 
 
 def _pn_ratio_pairs(tech: TechProfile) -> Tuple[Tuple[int, int], ...]:

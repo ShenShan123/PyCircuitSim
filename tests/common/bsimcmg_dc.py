@@ -29,10 +29,11 @@ import matplotlib.pyplot as plt
 # ---------------------------------------------------------------------------
 # Shared test infrastructure (from test_common)
 # ---------------------------------------------------------------------------
-from tests.common.base import (
+from tests.common.base import (  # noqa: F401  (public gate re-exports)
     PROJECT_ROOT, OSDI_PATH, MODELCARDS_DIR, NGSPICE_BIN,
+    DEVICE_DECKS, SIMPLE_DECKS,
     VtPair, TechProfile, ALL_TECHS, TECH_ORDER, TECH_COLORS,
-    bake_inst_params,
+    bake_inst_params, render_template,
     run_ngspice_subprocess,
     plot_summary_bar as _plot_summary_bar,
     run_test_suite as _run_test_suite,
@@ -129,19 +130,6 @@ def make_dc_config(
     return DCTestConfig(**kwargs)
 
 
-def is_config_available(config: DCTestConfig) -> bool:
-    """Check if required modelcard(s) exist for this config."""
-    tech, vt = config.tech, config.vt
-    if tech.single_file:
-        return True
-    if config.test_type == NMOS_IDVGS:
-        return tech.get_nmos_modelcard(vt, config.l_nmos).exists()
-    elif config.test_type == PMOS_IDVGS:
-        return tech.get_pmos_modelcard(vt, config.l_pmos).exists()
-    else:
-        return tech.is_combo_available(vt, config.l_nmos, config.l_pmos)
-
-
 # ---------------------------------------------------------------------------
 # Modelcard helpers
 # ---------------------------------------------------------------------------
@@ -230,45 +218,50 @@ def create_ngspice_dc_netlist(
     vt = config.vt
 
     if config.test_type == NMOS_IDVGS:
-        content = (
-            f"* NMOS Id-Vgs ({config.label})\n"
-            f'.include "{baked}"\n'
-            f".temp 27\n"
-            f"Vds d 0 {config.vds_bias}\n"
-            f"Vgs g 0 0.0\n"
-            f"N1 d g 0 0 {vt.nmos_model}\n"
-            f".dc Vgs {config.sweep_start} {config.sweep_stop} {config.sweep_step}\n"
-            f".end\n"
-        )
-        signals = ["i(Vds)"]
+        content = render_template(DEVICE_DECKS / "mosfet.spice.tmpl", {
+            "MODEL_SETUP": f'.include "{baked}"', "TEMP": "27",
+            "DRAIN_BIAS": f"Vd d 0 {config.vds_bias}",
+            "GATE_BIAS": "Vg g 0 0", "SOURCE_BIAS": "Vs s 0 0",
+            "BULK_BIAS": "Vb b 0 0", "DEVICE_NAME": "Ndut",
+            "DRAIN_NODE": "d", "GATE_NODE": "g", "SOURCE_NODE": "s",
+            "BULK_NODE": "b", "DEVICE": vt.nmos_model,
+            "EXTRA_DEVICES": "", "LOAD": "",
+            "ANALYSIS": (
+                f".dc Vg {config.sweep_start} {config.sweep_stop} "
+                f"{config.sweep_step}"
+            ),
+        })
+        signals = ["i(Vd)"]
 
     elif config.test_type == PMOS_IDVGS:
         vd = round(config.vdd - config.vds_bias, 4)
-        content = (
-            f"* PMOS |Id| vs Vg ({config.label})\n"
-            f'.include "{baked}"\n'
-            f".temp 27\n"
-            f"Vdd vdd 0 {config.vdd}\n"
-            f"Vdrain drain 0 {vd}\n"
-            f"Vg gate 0 0.0\n"
-            f"N1 drain gate vdd vdd {vt.pmos_model}\n"
-            f".dc Vg {config.sweep_start} {config.sweep_stop} {config.sweep_step}\n"
-            f".end\n"
-        )
-        signals = ["i(Vdrain)"]
+        content = render_template(DEVICE_DECKS / "mosfet.spice.tmpl", {
+            "MODEL_SETUP": f'.include "{baked}"', "TEMP": "27",
+            "DRAIN_BIAS": f"Vd d 0 {vd}", "GATE_BIAS": "Vg g 0 0",
+            "SOURCE_BIAS": f"Vs s 0 {config.vdd}",
+            "BULK_BIAS": f"Vb b 0 {config.vdd}", "DEVICE_NAME": "Ndut",
+            "DRAIN_NODE": "d", "GATE_NODE": "g", "SOURCE_NODE": "s",
+            "BULK_NODE": "b", "DEVICE": vt.pmos_model,
+            "EXTRA_DEVICES": "", "LOAD": "",
+            "ANALYSIS": (
+                f".dc Vg {config.sweep_start} {config.sweep_stop} "
+                f"{config.sweep_step}"
+            ),
+        })
+        signals = ["i(Vd)"]
 
     else:  # INVERTER_VTC
-        content = (
-            f"* CMOS Inverter VTC ({config.label})\n"
-            f'.include "{baked}"\n'
-            f".temp 27\n"
-            f"Vdd vdd 0 {config.vdd}\n"
-            f"Vin in 0 0.0\n"
-            f"Np out in vdd vdd {vt.pmos_model}\n"
-            f"Nn out in 0 0 {vt.nmos_model}\n"
-            f".dc Vin {config.sweep_start} {config.sweep_stop} {config.sweep_step}\n"
-            f".end\n"
-        )
+        content = render_template(SIMPLE_DECKS / "inverter.spice.tmpl", {
+            "MODEL_SETUP": f'.include "{baked}"', "TEMP": "27",
+            "VDD": f"{config.vdd}", "INPUT_SPEC": "0",
+            "N_PREFIX": "N", "P_PREFIX": "N",
+            "N_DEVICE": vt.nmos_model, "P_DEVICE": vt.pmos_model,
+            "OUTPUT_LOAD": "", "INITIAL_CONDITION": "",
+            "ANALYSIS": (
+                f".dc Vin {config.sweep_start} {config.sweep_stop} "
+                f"{config.sweep_step}"
+            ),
+        })
         signals = ["v(out)"]
 
     netlist_path.write_text(content)
@@ -333,53 +326,70 @@ def create_pycircuitsim_dc_netlist(config: DCTestConfig, work_dir: Path) -> Path
 
     if config.test_type == NMOS_IDVGS:
         l_nm = config.l_nmos * 1e9
-        content = (
-            f"* NMOS Id-Vgs ({config.label})\n"
-            f"Vds 1 0 {config.vds_bias}\n"
-            f"Vgs 2 0 0.0\n"
-            f"Mn1 1 2 0 0 {vt.nmos_model} L={l_nm:.0f}n"
-            f" NFIN={config.nfin_n} TFIN={tech.tfin*1e9:.1f}n\n"
-            f".model {vt.nmos_model} NMOS (LEVEL=72)\n"
-            f".dc Vgs {config.sweep_start} {config.sweep_stop} {config.sweep_step}\n"
-            f".end\n"
-        )
+        content = render_template(DEVICE_DECKS / "mosfet.spice.tmpl", {
+            "MODEL_SETUP": f".model {vt.nmos_model} NMOS (LEVEL=72)",
+            "TEMP": "27", "DRAIN_BIAS": f"Vd d 0 {config.vds_bias}",
+            "GATE_BIAS": "Vg g 0 0", "SOURCE_BIAS": "Vs s 0 0",
+            "BULK_BIAS": "Vb b 0 0", "DEVICE_NAME": "Mdut",
+            "DRAIN_NODE": "d", "GATE_NODE": "g", "SOURCE_NODE": "s",
+            "BULK_NODE": "b",
+            "DEVICE": (
+                f"{vt.nmos_model} L={l_nm:.0f}n NFIN={config.nfin_n} "
+                f"TFIN={tech.tfin * 1e9:.1f}n"
+            ),
+            "EXTRA_DEVICES": "", "LOAD": "",
+            "ANALYSIS": (
+                f".dc Vg {config.sweep_start} {config.sweep_stop} "
+                f"{config.sweep_step}"
+            ),
+        })
 
     elif config.test_type == PMOS_IDVGS:
         l_nm = config.l_pmos * 1e9
         vd = round(config.vdd - config.vds_bias, 4)
-        content = (
-            f"* PMOS |Id| vs Vg ({config.label})\n"
-            f"Vdd 1 0 {config.vdd}\n"
-            f"Vdrain 3 0 {vd}\n"
-            f"Vg 2 0 0.0\n"
-            f"Mp1 3 2 1 1 {vt.pmos_model} L={l_nm:.0f}n"
-            f" NFIN={config.nfin_p} TFIN={tech.tfin*1e9:.1f}n\n"
-            f".model {vt.pmos_model} PMOS (LEVEL=72)\n"
-            f".dc Vg {config.sweep_start} {config.sweep_stop} {config.sweep_step}\n"
-            f".end\n"
-        )
+        content = render_template(DEVICE_DECKS / "mosfet.spice.tmpl", {
+            "MODEL_SETUP": f".model {vt.pmos_model} PMOS (LEVEL=72)",
+            "TEMP": "27", "DRAIN_BIAS": f"Vd d 0 {vd}",
+            "GATE_BIAS": "Vg g 0 0",
+            "SOURCE_BIAS": f"Vs s 0 {config.vdd}",
+            "BULK_BIAS": f"Vb b 0 {config.vdd}", "DEVICE_NAME": "Mdut",
+            "DRAIN_NODE": "d", "GATE_NODE": "g", "SOURCE_NODE": "s",
+            "BULK_NODE": "b",
+            "DEVICE": (
+                f"{vt.pmos_model} L={l_nm:.0f}n NFIN={config.nfin_p} "
+                f"TFIN={tech.tfin * 1e9:.1f}n"
+            ),
+            "EXTRA_DEVICES": "", "LOAD": "",
+            "ANALYSIS": (
+                f".dc Vg {config.sweep_start} {config.sweep_stop} "
+                f"{config.sweep_step}"
+            ),
+        })
 
     else:  # INVERTER_VTC
-        # Hierarchical deck (V6.12.0): inverter as a .subckt instance; ports
-        # keep probed nodes (2=in, 3=out) at top level, NFIN via parameters.
         l_n_nm = config.l_nmos * 1e9
         l_p_nm = config.l_pmos * 1e9
-        content = (
-            f"* CMOS Inverter VTC ({config.label})\n"
-            f"Vdd 1 0 {config.vdd}\n"
-            f"Vin 2 0 0.0\n"
-            f"Xinv 2 3 1 inv NFP={config.nfin_p} NFN={config.nfin_n}\n"
-            f".subckt inv i o vdd NFP=1 NFN=1\n"
-            f"Mp1 o i vdd vdd {vt.pmos_model} L={l_p_nm:.0f}n"
-            f" NFIN=NFP TFIN={tech.tfin*1e9:.1f}n\n"
-            f"Mn1 o i 0 0 {vt.nmos_model} L={l_n_nm:.0f}n"
-            f" NFIN=NFN TFIN={tech.tfin*1e9:.1f}n\n"
-            f".ends\n"
-            f".model {vt.nmos_model} NMOS (LEVEL=72)\n"
-            f".model {vt.pmos_model} PMOS (LEVEL=72)\n"
-            f".dc Vin {config.sweep_start} {config.sweep_stop} {config.sweep_step}\n"
-            f".end\n"
-        )
+        content = render_template(SIMPLE_DECKS / "inverter.spice.tmpl", {
+            "MODEL_SETUP": (
+                f".model {vt.nmos_model} NMOS (LEVEL=72)\n"
+                f".model {vt.pmos_model} PMOS (LEVEL=72)"
+            ),
+            "TEMP": "27", "VDD": f"{config.vdd}", "INPUT_SPEC": "0",
+            "N_PREFIX": "M", "P_PREFIX": "M",
+            "N_DEVICE": (
+                f"{vt.nmos_model} L={l_n_nm:.0f}n NFIN={config.nfin_n} "
+                f"TFIN={tech.tfin * 1e9:.1f}n"
+            ),
+            "P_DEVICE": (
+                f"{vt.pmos_model} L={l_p_nm:.0f}n NFIN={config.nfin_p} "
+                f"TFIN={tech.tfin * 1e9:.1f}n"
+            ),
+            "OUTPUT_LOAD": "", "INITIAL_CONDITION": "",
+            "ANALYSIS": (
+                f".dc Vin {config.sweep_start} {config.sweep_stop} "
+                f"{config.sweep_step}"
+            ),
+        })
 
     netlist_path.write_text(content)
     return netlist_path
@@ -421,15 +431,15 @@ def run_pycircuitsim_dc(config: DCTestConfig, work_dir: Path) -> Dict[str, np.nd
     finally:
         logging.disable(logging.NOTSET)
 
-    # Extract sweep (node 2 = gate/input) and signal
-    sweep = np.array(results["2"])
+    sweep_node = "in" if config.test_type == INVERTER_VTC else "g"
+    sweep = np.array(results[sweep_node])
 
     if config.test_type == NMOS_IDVGS:
-        signal = np.abs(np.array(results["i(Mn1)"]))
+        signal = np.abs(np.array(results["i(Mdut)"]))
     elif config.test_type == PMOS_IDVGS:
-        signal = np.abs(np.array(results["i(Mp1)"]))
+        signal = np.abs(np.array(results["i(Mdut)"]))
     else:
-        signal = np.array(results["3"])
+        signal = np.array(results["out"])
 
     return {"sweep": sweep, "signal": signal}
 
@@ -567,9 +577,9 @@ def run_single_dc_test(config: DCTestConfig, work_dir: Path,
     ng_sweep = ng_data["sweep"]
 
     if config.test_type == NMOS_IDVGS:
-        ng_signal = np.abs(ng_data["i(Vds)"])
+        ng_signal = np.abs(ng_data["i(Vd)"])
     elif config.test_type == PMOS_IDVGS:
-        ng_signal = np.abs(ng_data["i(Vdrain)"])
+        ng_signal = np.abs(ng_data["i(Vd)"])
     else:
         ng_signal = ng_data["v(out)"]
 

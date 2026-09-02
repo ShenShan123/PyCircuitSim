@@ -68,7 +68,7 @@ def test_tech_config_list_devices():
 
 
 def test_tech_registry_all_techs():
-    from pycmg.tech import TECH_REGISTRY, list_techs
+    from pycmg.tech import list_techs
     assert set(list_techs()) >= {
         "ASAP7", "TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"
     }

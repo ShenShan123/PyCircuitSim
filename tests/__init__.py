@@ -1,7 +1,7 @@
 """Test harness root package.
 
-Gates are grouped by the tier of the circuit they gate — `single_devices`,
-`simple_circuits`, `complex_circuits` — mirroring `examples/`; `perf` and
+Gates are grouped by the tier of the circuit they gate — `single_devices`
+and `simple_circuits` — mirroring `examples/`; `perf` and
 `diag` sit outside that axis on purpose (see their own `__init__`).
 Shared infrastructure lives in `tests.common` (base helpers, BSIM-CMG DC/tran,
 NN helpers). Every circuit a gate simulates lives in `examples/` and is

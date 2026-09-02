@@ -37,21 +37,21 @@ CLEAN_TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 
 DEVICE_SUITES = [
     "verify_nn_ac",                 # device CS-amp small-signal
-    "verify_complex_opamp_ac",      # two-stage Miller open-loop AC
+    "verify_circuit_opamp_ac",      # two-stage Miller open-loop AC
     "verify_nn_multi_tech_dc",      # parametric Id-Vgs
     "verify_nn_multi_tech_tran",    # parametric inverter transient
 ]
 _SIMPLE_V1_CASES = cases(score_version=SIMPLE_V1)
 _SIMPLE_V2_CASES = cases(score_version=SIMPLE_V2)
 MULTISTABLE = [
-    case.legacy_suite_id
+    case.campaign_suite
     for case in _SIMPLE_V1_CASES
-    if len(case.omp_threads) > 1 and case.legacy_suite_id is not None
+    if len(case.omp_threads) > 1
 ]
 DETERMINISTIC = [
-    case.legacy_suite_id
+    case.campaign_suite
     for case in _SIMPLE_V1_CASES
-    if len(case.omp_threads) == 1 and case.legacy_suite_id is not None
+    if len(case.omp_threads) == 1
 ]
 SIMPLE_V2_SUITES = [case.campaign_suite for case in _SIMPLE_V2_CASES]
 

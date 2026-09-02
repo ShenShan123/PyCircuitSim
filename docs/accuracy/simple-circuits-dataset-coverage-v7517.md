@@ -1,7 +1,7 @@
 # V7.5.17 simple-circuit dataset coverage gate
 
 This gate answers one question: does every scored V7.5.17 single-device,
-inverter, and complex-circuit configuration have nearby training data from the
+inverter, and circuit configuration have nearby training data from the
 exact technology/VT label, temperature, and legal PDK `(L, NFIN)` bin?
 
 The gate enumerates the same configurations as the simple-circuit campaign,

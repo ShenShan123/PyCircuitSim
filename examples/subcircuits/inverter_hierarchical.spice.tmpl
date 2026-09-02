@@ -1,0 +1,14 @@
+* CMOS inverter wrapped in a parameterized subcircuit
+<MODEL_SETUP>
+.temp <TEMP>
+Vdd vdd 0 <VDD>
+Vin in 0 <INPUT_SPEC>
+Xinv in out vdd inv NFP=<NFP> NFN=<NFN>
+<OUTPUT_LOAD>
+.subckt inv i o vdd NFP=1 NFN=1
+<P_PREFIX>p1 o i vdd vdd <P_DEVICE> NFIN=NFP
+<N_PREFIX>n1 o i 0 0 <N_DEVICE> NFIN=NFN
+<INITIAL_CONDITION>
+.ends
+<ANALYSIS>
+.end

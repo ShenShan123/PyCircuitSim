@@ -44,7 +44,7 @@ from .core import (
     OsdiSimulation,
     apply_param,
 )
-from .parser import ParsedModel, parse_modelcard, parse_number_with_suffix
+from .parser import parse_modelcard
 
 
 class Model:

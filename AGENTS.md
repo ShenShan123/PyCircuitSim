@@ -15,8 +15,8 @@ Keep each fact in one authoritative place:
   `docs/CHANGELOG.md`.
 - Put gate definitions and scoreboard summaries in `docs/accuracy/`.
 - Put all simulation artifacts in `results/`.
-- Put detailed AnalogGym results in
-  `examples/complex_circuits/RESULTS_TSMC.md`.
+- Put every test-circuit topology in one parameterized template under
+  `examples/`.
 
 Link to the owner instead of copying its content into another document.
 
@@ -143,6 +143,10 @@ Apply the source-relative voltage frame to NMOS and PMOS alike. Training uses
 `Vs=0`; inference must shift every terminal by `-Vs`. Keep
 `verify_nn_lifted_source_dc.py` as the canary for this rule.
 
+Import full-terminal contract names and column order from
+`neural_network.data.contracts`; `data.normalize` owns transforms and reduced
+model ordering, not schema re-exports.
+
 Per-technology models use a local embedding vocabulary. Derive
 `unknown_code_id` as `num_tech_codes - 1`; never reuse the universal UNKNOWN
 identifier. At inference, map `(scope, tech, variant)` through
@@ -172,9 +176,11 @@ causes slowness rather than incorrect results.
 
 ## Verification discipline
 
-Use the `.sp`/`.cir` pair in `examples/` as the single source for each tested
-circuit. Render reference decks through `tests.common.base`; verification
-modules must not embed or privately copy netlists.
+Use one `.spice.tmpl` file in `examples/` as the single source for each tested
+circuit. Render both candidate and reference decks through `tests.common.base`;
+verification modules must not embed or privately copy netlists. Store every
+materialized netlist and simulation artifact under `results/`, never `tests/`
+or `examples/`.
 
 Before interpreting a numerical mismatch:
 
@@ -217,29 +223,6 @@ diagnostic.
 
 Report model error with MRE, R², NRMSE, and maximum voltage error per
 technology. Store the detailed results in `docs/accuracy/`, not in this file.
-
-## AnalogGym migration rules
-
-Before citing AnalogGym as evidence, check the current model scope in
-`README.md` stage 5. Treat any extension beyond that scope as new work requiring
-its own gates.
-
-- Treat the source design tree as the corpus. Run the source-tree preflight
-  before regeneration and fail loudly when it is absent.
-- Set `AG_TREE` before importing modules that lazily locate the corpus.
-- Follow the technology interpretation in `README.md` when selecting campaign
-  dimensions; do not inflate the independent ground-truth count.
-- Curate by measured discrimination and reproducibility, not by deck-level
-  aesthetics. Record quarantines explicitly.
-- Keep `NOT_COMPARABLE` as a measurement outcome when the two engines did not
-  produce commensurate values.
-- Treat transient stride as a semantic sampling choice. Preserve the explicit
-  charge-pump exception instead of globally forcing stride 1.
-- Regenerate reports through the report builder only after preserving the
-  underlying campaign artifacts; the builder overwrites its destination.
-
-Detailed campaign verdicts belong in `RESULTS_TSMC.md`, and release-level
-interpretation belongs in the changelog.
 
 ## Performance discipline
 

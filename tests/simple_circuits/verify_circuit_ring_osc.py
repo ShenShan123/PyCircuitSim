@@ -75,7 +75,7 @@ def ngspice_ring_body(bt: BenchTech, baked: Path) -> Dict[str, str]:
     """Single-point NGSPICE ring-osc ground-truth deck body (no .control/.end).
 
     The topology is NOT here — it is ``examples/simple_circuits/
-    bsimcmg_ring_osc_tran.cir``, rendered per tech. This function owns the
+    ring_oscillator.spice.tmpl``, rendered per tech. This function owns the
     supply, the seed and the transient window, nothing else.
 
     Pure (returns text) so verify_circuit_sweep_canaries can diff it against the

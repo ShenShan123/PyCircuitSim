@@ -60,9 +60,8 @@ FAM = {
 # every thread count (methodology.md §3); the rest are deterministic under the
 # thread pin and are taken from a single run.
 SIMPLE_V1_SUITES: Dict[str, Tuple[str, ...]] = {
-    case.legacy_suite_id: tuple(str(value) for value in case.omp_threads)
+    case.campaign_suite: tuple(str(value) for value in case.omp_threads)
     for case in cases(score_version=SIMPLE_V1)
-    if case.legacy_suite_id is not None
 }
 SIMPLE_V2_SUITES: Dict[str, Tuple[str, ...]] = {
     case.campaign_suite: ("1",)
@@ -70,7 +69,7 @@ SIMPLE_V2_SUITES: Dict[str, Tuple[str, ...]] = {
 }
 NON_SIMPLE_SUITES: Dict[str, Tuple[str, ...]] = {
     "verify_nn_ac": ("1",),
-    "verify_complex_opamp_ac": ("1",),
+    "verify_circuit_opamp_ac": ("1",),
     "verify_nn_multi_tech_dc": ("1",),
     "verify_nn_multi_tech_tran": ("1",),
 }
@@ -126,7 +125,8 @@ PASSES = [("a3", ROOT / "results" / "a3_regate"),
           ("v7517-clean", ROOT / "results" / "v7517_clean"),
           ("v761-full-clean", ROOT / "results" / "v761_full_clean"),
           ("v762-directnet-full", ROOT / "results" /
-           "v762_directnet_full_clean")]
+           "v762_directnet_full_clean"),
+          ("v766-full-clean", ROOT / "results" / "v766_full_clean")]
 
 CellKey = Tuple[str, str, str, str, str]
 

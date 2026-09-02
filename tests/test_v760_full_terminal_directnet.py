@@ -7,7 +7,6 @@ import json
 import sys
 from pathlib import Path
 from types import MethodType
-from typing import Dict
 
 import numpy as np
 import pytest

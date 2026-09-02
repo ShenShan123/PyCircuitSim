@@ -31,7 +31,7 @@ Usage:
     conda run -n pycircuitsim python tests/simple_circuits/verify_nn_inverter.py --vtc-only
 
 This module is the shared body, not an entry point — run one of the two gate
-scripts above. `RESULTS_BASE` keeps its historical `verify_nn_dc_tran_results`
+scripts above. `RESULTS_BASE` keeps its generated evidence below `results/`
 name so the accuracy reports' raw evidence stays where they pinned it.
 """
 from __future__ import annotations
@@ -40,7 +40,6 @@ import argparse
 import logging
 import subprocess
 import sys
-import tempfile
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -67,7 +66,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from tests.common.nn import nrmse, mre, tech_code_in_vocab  # noqa: E402
 from tests.common.base import (  # noqa: E402
-    SIMPLE_DECKS, deck_tokens, render_deck_text,
+    DEVICE_DECKS, SIMPLE_DECKS, deck_tokens, render_deck_text, render_template,
 )
 from helpers import bake_inst_params  # noqa: E402
 from neural_network.config import CHECKPOINT_DIR, OSDI_PATH  # noqa: E402
@@ -80,7 +79,7 @@ NGSPICE_BIN = os.environ.get(
 MODELCARDS_DIR = (
     PROJECT_ROOT / "PDKs"
 )
-RESULTS_BASE = PROJECT_ROOT / "tests" / "verify_nn_dc_tran_results"
+RESULTS_BASE = PROJECT_ROOT / "results" / "tests" / "nn_dc_tran"
 
 # DC thresholds (loose for NN, tight for BSIM-CMG)
 DC_NRMSE_THRESHOLD_NN = 0.10   # 10% for NN models
@@ -98,6 +97,24 @@ TRAN_TSTOP = 3e-9     # 3ns
 TRAN_TR = 50e-12       # 50ps rise
 TRAN_TF = 50e-12       # 50ps fall
 TRAN_PW = 1e-9         # 1ns pulse width
+
+
+def _render_mosfet_deck(
+    *, model_setup: str, temperature_c: float, drain_bias: str,
+    gate_bias: str, source_bias: str, bulk_bias: str, device_name: str,
+    nodes: Tuple[str, str, str, str], device: str, load: str, analysis: str,
+) -> str:
+    """Render one four-terminal characterization deck from the shared source."""
+    drain, gate, source, bulk = nodes
+    return render_template(DEVICE_DECKS / "mosfet.spice.tmpl", {
+        "MODEL_SETUP": model_setup, "TEMP": f"{temperature_c:g}",
+        "DRAIN_BIAS": drain_bias, "GATE_BIAS": gate_bias,
+        "SOURCE_BIAS": source_bias, "BULK_BIAS": bulk_bias,
+        "DEVICE_NAME": device_name, "DRAIN_NODE": drain,
+        "GATE_NODE": gate, "SOURCE_NODE": source, "BULK_NODE": bulk,
+        "DEVICE": device, "EXTRA_DEVICES": "", "LOAD": load,
+        "ANALYSIS": analysis,
+    })
 TRAN_TD = 0.2e-9       # 200ps delay
 TRAN_RLOAD = 5e3       # 5k ohm load resistor
 TRAN_STARTUP_EXCL = 0.1e-9  # 0.1ns startup exclusion
@@ -112,17 +129,17 @@ INV_TRAN_PW = 1e-9         # 1ns pulse width
 INV_TRAN_TD = 0.2e-9       # 200ps delay
 
 
-def _render_inverter_deck(filename: str, values: Dict[str, str]) -> str:
-    """Render an authoritative inverter example with strict tokens."""
-    path = SIMPLE_DECKS / filename
+def _render_inverter_deck(values: Dict[str, str]) -> str:
+    """Render the authoritative inverter template with strict tokens."""
+    path = SIMPLE_DECKS / "inverter.spice.tmpl"
     template = path.read_text()
     required = deck_tokens(template)
     missing = [name for name in required if name not in values]
     if missing:
-        raise KeyError(f"{filename}: missing substitutions {missing}")
+        raise KeyError(f"{path.name}: missing substitutions {missing}")
     return render_deck_text(
         template, {name: values[name] for name in required},
-        source_name=filename,
+        source_name=path.name,
     )
 
 
@@ -561,16 +578,14 @@ def run_ngspice_nmos_dc(
 
     # Netlist
     netlist_path = work_dir / f"ngspice_nmos_dc_{tech.name}.cir"
-    netlist_content = (
-        f"* NMOS Id-Vgs DC (NGSPICE ground truth, {tech.name})\n"
-        f'.include "{baked}"\n'
-        f".temp {tech.temperature_c:g}\n"
-        f"Vds d 0 {vds_bias}\n"
-        f"Vgs g 0 0.0\n"
-        f"Vbs b 0 {tech.dc_vbs:g}\n"
-        f"N1 d g 0 b {tech.nmos_model}\n"
-        f".dc Vgs 0 {tech.vdd} 0.005\n"
-        f".end\n"
+    netlist_content = _render_mosfet_deck(
+        model_setup=f'.include "{baked}"',
+        temperature_c=tech.temperature_c,
+        drain_bias=f"Vds d 0 {vds_bias}", gate_bias="Vgs g 0 0",
+        source_bias="", bulk_bias=f"Vbs b 0 {tech.dc_vbs:g}",
+        device_name="N1", nodes=("d", "g", "0", "b"),
+        device=tech.nmos_model, load="",
+        analysis=f".dc Vgs 0 {tech.vdd:g} 0.005",
     )
     netlist_path.write_text(netlist_content)
 
@@ -644,15 +659,16 @@ def run_pycircuitsim_cmg_nmos_dc(
     l_nm = tech.l_nmos * 1e9
 
     netlist_path = work_dir / f"pycircuitsim_cmg_nmos_dc_{tech.name}.sp"
-    content = (
-        f"* BSIM-CMG NMOS Id-Vgs ({tech.name})\n"
-        f"Vds 1 0 {vds_bias}\n"
-        f"Vgs 2 0 0.0\n"
-        f"Mn1 1 2 0 0 {tech.nmos_model} L={l_nm:.0f}n"
-        f" NFIN={tech.nfin} TFIN={tech.tfin*1e9:.1f}n\n"
-        f".model {tech.nmos_model} NMOS (LEVEL=72)\n"
-        f".dc Vgs 0 {tech.vdd} 0.005\n"
-        f".end\n"
+    content = _render_mosfet_deck(
+        model_setup=f".model {tech.nmos_model} NMOS (LEVEL=72)",
+        temperature_c=27.0, drain_bias=f"Vds 1 0 {vds_bias}",
+        gate_bias="Vgs 2 0 0", source_bias="", bulk_bias="",
+        device_name="Mn1", nodes=("1", "2", "0", "0"),
+        device=(
+            f"{tech.nmos_model} L={l_nm:.0f}n NFIN={tech.nfin} "
+            f"TFIN={tech.tfin * 1e9:.1f}n"
+        ),
+        load="", analysis=f".dc Vgs 0 {tech.vdd:g} 0.005",
     )
     netlist_path.write_text(content)
 
@@ -723,16 +739,14 @@ def run_pycircuitsim_nn_nmos_dc(
     if model_path is not None and not _cascade_handles_stem(model_path):
         model_params += f" MODEL_PATH={model_path}"
 
-    content = (
-        f"* NN NMOS Id-Vgs ({model_name}, {tech.name})\n"
-        f"Vds 1 0 {vds_bias}\n"
-        f"Vgs 2 0 0.0\n"
-        f"Vbs 3 0 {tech.dc_vbs:g}\n"
-        f"Mn1 1 2 0 3 nmos_nn L={l_nm:.0f}n NFIN={tech.nfin}\n"
-        f".model nmos_nn NMOS ({model_params})\n"
-        f".temp {tech.temperature_c:g}\n"
-        f".dc Vgs 0 {tech.vdd} 0.005\n"
-        f".end\n"
+    content = _render_mosfet_deck(
+        model_setup=f".model nmos_nn NMOS ({model_params})",
+        temperature_c=tech.temperature_c,
+        drain_bias=f"Vds 1 0 {vds_bias}", gate_bias="Vgs 2 0 0",
+        source_bias="", bulk_bias=f"Vbs 3 0 {tech.dc_vbs:g}",
+        device_name="Mn1", nodes=("1", "2", "0", "3"),
+        device=f"nmos_nn L={l_nm:.0f}n NFIN={tech.nfin}", load="",
+        analysis=f".dc Vgs 0 {tech.vdd:g} 0.005",
     )
     netlist_path.write_text(content)
 
@@ -774,17 +788,20 @@ def run_ngspice_nmos_tran(
     per = TRAN_TR + TRAN_PW + TRAN_TF + max(TRAN_PW, 1.0e-9)
 
     netlist_path = work_dir / f"ngspice_nmos_tran_{tech.name}.cir"
-    content = (
-        f"* NMOS pulse response (NGSPICE, {tech.name})\n"
-        f'.include "{baked}"\n'
-        f".temp 27\n"
-        f"Vdd vdd 0 {tech.vdd}\n"
-        f"Rload vdd drain {TRAN_RLOAD}\n"
-        f"Vgs gate 0 PULSE(0 {tech.vdd} {TRAN_TD} {TRAN_TR} {TRAN_TF} {TRAN_PW} {per})\n"
-        f"N1 drain gate 0 0 {tech.nmos_model}\n"
-        f".ic V(drain)={tech.vdd}\n"
-        f".tran {TRAN_TSTEP} {TRAN_TSTOP} uic\n"
-        f".end\n"
+    content = _render_mosfet_deck(
+        model_setup=f'.include "{baked}"', temperature_c=27.0,
+        drain_bias=f"Vdd vdd 0 {tech.vdd:g}",
+        gate_bias=(
+            f"Vgs gate 0 PULSE(0 {tech.vdd:g} {TRAN_TD:g} {TRAN_TR:g} "
+            f"{TRAN_TF:g} {TRAN_PW:g} {per:g})"
+        ),
+        source_bias="", bulk_bias="", device_name="N1",
+        nodes=("drain", "gate", "0", "0"), device=tech.nmos_model,
+        load=(
+            f"Rload vdd drain {TRAN_RLOAD:g}\n"
+            f".ic V(drain)={tech.vdd:g}"
+        ),
+        analysis=f".tran {TRAN_TSTEP:g} {TRAN_TSTOP:g} uic",
     )
     netlist_path.write_text(content)
 
@@ -870,17 +887,18 @@ def run_pycircuitsim_nn_nmos_tran(
         model_params += f" MODEL_PATH={model_path}"
 
     netlist_path = work_dir / f"nn_{model_name}_nmos_tran_{tech.name}.sp"
-    content = (
-        f"* NN NMOS pulse response ({model_name}, {tech.name})\n"
-        f"Vdd 1 0 {tech.vdd}\n"
-        f"Rload 1 3 {TRAN_RLOAD}\n"
-        f"Vgs 2 0 PULSE 0 {tech.vdd} {TRAN_TD} {TRAN_TR} {TRAN_TF}"
-        f" {TRAN_PW} {per}\n"
-        f"Mn1 3 2 0 0 nmos_nn L={l_nm:.0f}n NFIN={tech.nfin}\n"
-        f".model nmos_nn NMOS ({model_params})\n"
-        f".ic V(3)={tech.vdd}\n"
-        f".tran {TRAN_TSTEP} {TRAN_TSTOP}\n"
-        f".end\n"
+    content = _render_mosfet_deck(
+        model_setup=f".model nmos_nn NMOS ({model_params})",
+        temperature_c=27.0, drain_bias=f"Vdd 1 0 {tech.vdd:g}",
+        gate_bias=(
+            f"Vgs 2 0 PULSE 0 {tech.vdd:g} {TRAN_TD:g} {TRAN_TR:g} "
+            f"{TRAN_TF:g} {TRAN_PW:g} {per:g}"
+        ),
+        source_bias="", bulk_bias="", device_name="Mn1",
+        nodes=("3", "2", "0", "0"),
+        device=f"nmos_nn L={l_nm:.0f}n NFIN={tech.nfin}",
+        load=f"Rload 1 3 {TRAN_RLOAD:g}\n.ic V(3)={tech.vdd:g}",
+        analysis=f".tran {TRAN_TSTEP:g} {TRAN_TSTOP:g}",
     )
     netlist_path.write_text(content)
 
@@ -942,16 +960,14 @@ def run_ngspice_pmos_dc(
     vds_bias = round(-tech.vdd * tech.dc_vds_scale, 4)
 
     netlist_path = work_dir / f"ngspice_pmos_dc_{tech.name}.cir"
-    netlist_content = (
-        f"* PMOS Id-Vgs DC (NGSPICE ground truth, {tech.name})\n"
-        f'.include "{baked}"\n'
-        f".temp {tech.temperature_c:g}\n"
-        f"Vds d 0 {vds_bias}\n"
-        f"Vgs g 0 0.0\n"
-        f"Vbs b 0 {tech.dc_vbs:g}\n"
-        f"N1 d g 0 b {tech.pmos_model}\n"
-        f".dc Vgs 0 {-tech.vdd} -0.005\n"
-        f".end\n"
+    netlist_content = _render_mosfet_deck(
+        model_setup=f'.include "{baked}"',
+        temperature_c=tech.temperature_c,
+        drain_bias=f"Vds d 0 {vds_bias}", gate_bias="Vgs g 0 0",
+        source_bias="", bulk_bias=f"Vbs b 0 {tech.dc_vbs:g}",
+        device_name="N1", nodes=("d", "g", "0", "b"),
+        device=tech.pmos_model, load="",
+        analysis=f".dc Vgs 0 {-tech.vdd:g} -0.005",
     )
     netlist_path.write_text(netlist_content)
 
@@ -1040,16 +1056,14 @@ def run_pycircuitsim_nn_pmos_dc(
     if model_path is not None and not _cascade_handles_stem(model_path):
         model_params += f" MODEL_PATH={model_path}"
 
-    content = (
-        f"* NN PMOS Id-Vgs ({model_name}, {tech.name})\n"
-        f"Vds 1 0 {vds_bias}\n"
-        f"Vgs 2 0 0.0\n"
-        f"Vbs 3 0 {tech.dc_vbs:g}\n"
-        f"Mp1 1 2 0 3 pmos_nn L={l_nm:.0f}n NFIN={tech.nfin}\n"
-        f".model pmos_nn PMOS ({model_params})\n"
-        f".temp {tech.temperature_c:g}\n"
-        f".dc Vgs 0 {-tech.vdd} -0.005\n"
-        f".end\n"
+    content = _render_mosfet_deck(
+        model_setup=f".model pmos_nn PMOS ({model_params})",
+        temperature_c=tech.temperature_c,
+        drain_bias=f"Vds 1 0 {vds_bias}", gate_bias="Vgs 2 0 0",
+        source_bias="", bulk_bias=f"Vbs 3 0 {tech.dc_vbs:g}",
+        device_name="Mp1", nodes=("1", "2", "0", "3"),
+        device=f"pmos_nn L={l_nm:.0f}n NFIN={tech.nfin}", load="",
+        analysis=f".dc Vgs 0 {-tech.vdd:g} -0.005",
     )
     netlist_path.write_text(content)
 
@@ -1091,13 +1105,17 @@ def run_ngspice_inverter_vtc(
 
     netlist_path = work_dir / f"ngspice_inverter_vtc_{tech.name}.cir"
     netlist_content = _render_inverter_deck(
-        "bsimcmg_inverter_dc.cir", {
-            "BAKED_NMOS": str(baked_nmos),
-            "BAKED_PMOS": str(baked_pmos),
+        {
+            "MODEL_SETUP": (
+                f'.include "{baked_nmos}"\n.include "{baked_pmos}"'
+            ),
             "VDD": f"{tech.vdd:g}",
             "TEMP": f"{tech.temperature_c:g}",
-            "NMOS": tech.nmos_model,
-            "PMOS": tech.pmos_model,
+            "INPUT_SPEC": "0",
+            "N_PREFIX": "N", "P_PREFIX": "N",
+            "N_DEVICE": tech.nmos_model,
+            "P_DEVICE": tech.pmos_model,
+            "OUTPUT_LOAD": "", "INITIAL_CONDITION": "",
             "ANALYSIS": f".dc Vin 0 {tech.vdd:g} 0.005",
         },
     )
@@ -1223,11 +1241,17 @@ def run_pycircuitsim_nn_inverter_vtc(
         pmos_params += f" MODEL_PATH={pmos_model_path}"
 
     content = _render_inverter_deck(
-        "directnet_inverter_dc.sp", {
+        {
+            "MODEL_SETUP": (
+                f".model nmos_nn NMOS ({nmos_params})\n"
+                f".model pmos_nn PMOS ({pmos_params})"
+            ),
             "VDD": f"{tech.vdd:g}",
-            "LN": f"{l_nmos_nm:g}n", "LP": f"{l_pmos_nm:g}n",
-            "NFN": str(nfin), "NFP": str(nfin_p),
-            "NMOS_PARAMS": nmos_params, "PMOS_PARAMS": pmos_params,
+            "INPUT_SPEC": "0",
+            "N_PREFIX": "M", "P_PREFIX": "M",
+            "N_DEVICE": f"nmos_nn L={l_nmos_nm:g}n NFIN={nfin}",
+            "P_DEVICE": f"pmos_nn L={l_pmos_nm:g}n NFIN={nfin_p}",
+            "OUTPUT_LOAD": "", "INITIAL_CONDITION": "",
             "TEMP": f"{tech.temperature_c:g}",
             "ANALYSIS": f".dc Vin 0 {tech.vdd:g} 0.005",
         },
@@ -1377,14 +1401,20 @@ def run_ngspice_inverter_tran(
 
     netlist_path = work_dir / f"ngspice_inverter_tran_{tech.name}.cir"
     content = _render_inverter_deck(
-        "bsimcmg_inverter_tran.cir", {
-            "BAKED_NMOS": str(baked_nmos),
-            "BAKED_PMOS": str(baked_pmos),
+        {
+            "MODEL_SETUP": (
+                f'.include "{baked_nmos}"\n.include "{baked_pmos}"'
+            ),
             "VDD": f"{tech.vdd:g}", "TEMP": f"{tech.temperature_c:g}",
-            "TD": f"{cp.td:g}", "TR": f"{cp.tr:g}",
-            "TF": f"{cp.tf:g}", "PW": f"{cp.pw:g}",
-            "PER": f"{per:g}", "CLOAD": f"{cp.cload:g}",
-            "NMOS": tech.nmos_model, "PMOS": tech.pmos_model,
+            "INPUT_SPEC": (
+                f"PULSE(0 {tech.vdd:g} {cp.td:g} {cp.tr:g} {cp.tf:g} "
+                f"{cp.pw:g} {per:g})"
+            ),
+            "N_PREFIX": "N", "P_PREFIX": "N",
+            "N_DEVICE": tech.nmos_model,
+            "P_DEVICE": tech.pmos_model,
+            "OUTPUT_LOAD": f"Cload out 0 {cp.cload:g}",
+            "INITIAL_CONDITION": f".ic V(out)={tech.vdd:g}",
             "ANALYSIS": f".tran {INV_TRAN_TSTEP:g} {cp.tstop:g} uic",
         },
     )
@@ -1478,14 +1508,21 @@ def run_pycircuitsim_nn_inverter_tran(
 
     netlist_path = work_dir / f"nn_{model_name}_inverter_tran_{tech.name}.sp"
     content = _render_inverter_deck(
-        "nn_inverter_tran.sp", {
+        {
+            "MODEL_SETUP": (
+                f".model nmos_nn NMOS ({nmos_params})\n"
+                f".model pmos_nn PMOS ({pmos_params})"
+            ),
             "VDD": f"{tech.vdd:g}",
-            "TD": f"{cp.td:g}", "TR": f"{cp.tr:g}",
-            "TF": f"{cp.tf:g}", "PW": f"{cp.pw:g}",
-            "PER": f"{per:g}", "CLOAD": f"{cp.cload:g}",
-            "LN": f"{l_nmos_nm:g}n", "LP": f"{l_pmos_nm:g}n",
-            "NFN": str(nfin), "NFP": str(nfin_p),
-            "NMOS_PARAMS": nmos_params, "PMOS_PARAMS": pmos_params,
+            "INPUT_SPEC": (
+                f"PULSE 0 {tech.vdd:g} {cp.td:g} {cp.tr:g} {cp.tf:g} "
+                f"{cp.pw:g} {per:g}"
+            ),
+            "N_PREFIX": "M", "P_PREFIX": "M",
+            "N_DEVICE": f"nmos_nn L={l_nmos_nm:g}n NFIN={nfin}",
+            "P_DEVICE": f"pmos_nn L={l_pmos_nm:g}n NFIN={nfin_p}",
+            "OUTPUT_LOAD": f"Cload out 0 {cp.cload:g}",
+            "INITIAL_CONDITION": f".ic V(out)={tech.vdd:g}",
             "TEMP": f"{tech.temperature_c:g}",
             "ANALYSIS": f".tran {INV_TRAN_TSTEP:g} {cp.tstop:g} uic",
         },
@@ -1682,7 +1719,6 @@ def plot_dc_comparison_multi(
     save_path: Path,
 ) -> None:
     """Plot Id-Vgs overlay for all models vs ground truth, plus log scale."""
-    n_models = len(model_results)
     fig, axes = plt.subplots(
         2, 1, figsize=(12, 10),
         gridspec_kw={"height_ratios": [1, 1]},
@@ -2760,13 +2796,11 @@ def _eval_nn_single_op(
         vt_key = tech.effective_pmos_vt
         dev_name = "Mp1"
         dev_type = "PMOS"
-        inst_line = f"Mp1 1 2 0 0 nn_model L={l_nm:.0f}n NFIN={tech.nfin}"
     else:
         l_nm = tech.l_nmos * 1e9
         vt_key = tech.nn_vt
         dev_name = "Mn1"
         dev_type = "NMOS"
-        inst_line = f"Mn1 1 2 0 0 nn_model L={l_nm:.0f}n NFIN={tech.nfin}"
 
     params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={vt_key}"
     # See B1 note above: let the parser resolve the per-tech checkpoint for
@@ -2776,14 +2810,14 @@ def _eval_nn_single_op(
 
     # Single-point sweep: sweep Vds over [vds, vds] to get one operating point
     netlist_path = work_dir / f"sign_{model_name}_{dev_type}_{vgs:.3f}_{vds:.3f}.sp"
-    content = (
-        f"* Sign diagnostic ({model_name}, {tech.name})\n"
-        f"Vds 1 0 {vds}\n"
-        f"Vgs 2 0 {vgs}\n"
-        f"{inst_line}\n"
-        f".model nn_model {dev_type} ({params})\n"
-        f".dc Vds {vds} {vds} 1\n"
-        f".end\n"
+    content = _render_mosfet_deck(
+        model_setup=f".model nn_model {dev_type} ({params})",
+        temperature_c=tech.temperature_c,
+        drain_bias=f"Vds 1 0 {vds:g}", gate_bias=f"Vgs 2 0 {vgs:g}",
+        source_bias="", bulk_bias="", device_name=dev_name,
+        nodes=("1", "2", "0", "0"),
+        device=f"nn_model L={l_nm:.0f}n NFIN={tech.nfin}", load="",
+        analysis=f".dc Vds {vds:g} {vds:g} 1",
     )
     netlist_path.write_text(content)
 
@@ -2935,15 +2969,12 @@ def run_ngspice_nmos_idvds(
     baked = create_baked_modelcard(tech, work_dir)
 
     netlist_path = work_dir / f"ngspice_nmos_idvds_{tech.name}.cir"
-    content = (
-        f"* NMOS Id-Vds at Vgs=0 (NGSPICE, {tech.name})\n"
-        f'.include "{baked}"\n'
-        f".temp 27\n"
-        f"Vds d 0 0.0\n"
-        f"Vgs g 0 0.0\n"
-        f"N1 d g 0 0 {tech.nmos_model}\n"
-        f".dc Vds -0.1 {tech.vdd} 0.005\n"
-        f".end\n"
+    content = _render_mosfet_deck(
+        model_setup=f'.include "{baked}"', temperature_c=27.0,
+        drain_bias="Vds d 0 0", gate_bias="Vgs g 0 0",
+        source_bias="", bulk_bias="", device_name="N1",
+        nodes=("d", "g", "0", "0"), device=tech.nmos_model, load="",
+        analysis=f".dc Vds -0.1 {tech.vdd:g} 0.005",
     )
     netlist_path.write_text(content)
 
@@ -2964,7 +2995,7 @@ def run_ngspice_nmos_idvds(
     )
     runner_path.write_text(runner_content)
 
-    res = subprocess.run(
+    subprocess.run(
         [NGSPICE_BIN, "-b", "-o", str(log_path), str(runner_path)],
         capture_output=True, text=True,
     )
@@ -3008,14 +3039,13 @@ def run_pycircuitsim_nn_nmos_idvds(
         model_params += f" MODEL_PATH={model_path}"
 
     netlist_path = work_dir / f"nn_{model_name}_nmos_idvds_{tech.name}.sp"
-    content = (
-        f"* NN NMOS Id-Vds at Vgs=0 ({model_name}, {tech.name})\n"
-        f"Vds 1 0 0.0\n"
-        f"Vgs 2 0 0.0\n"
-        f"Mn1 1 2 0 0 nmos_nn L={l_nm:.0f}n NFIN={tech.nfin}\n"
-        f".model nmos_nn NMOS ({model_params})\n"
-        f".dc Vds -0.1 {tech.vdd} 0.005\n"
-        f".end\n"
+    content = _render_mosfet_deck(
+        model_setup=f".model nmos_nn NMOS ({model_params})",
+        temperature_c=tech.temperature_c, drain_bias="Vds 1 0 0",
+        gate_bias="Vgs 2 0 0", source_bias="", bulk_bias="",
+        device_name="Mn1", nodes=("1", "2", "0", "0"),
+        device=f"nmos_nn L={l_nm:.0f}n NFIN={tech.nfin}", load="",
+        analysis=f".dc Vds -0.1 {tech.vdd:g} 0.005",
     )
     netlist_path.write_text(content)
 

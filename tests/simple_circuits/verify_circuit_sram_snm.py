@@ -79,7 +79,7 @@ def ngspice_sram_lobe_body(bt: BenchTech, nfin: int, baked: Path) -> Dict[str, s
     """Single-point NGSPICE SRAM half-cell ground-truth deck body.
 
     The topology is NOT here — it is ``examples/simple_circuits/
-    bsimcmg_sram_snm_dc.cir``, rendered per tech. This function owns the read
+    sram_snm_half_cell.spice.tmpl``, rendered per tech. This function owns the read
     bias and the sweep, nothing else. ``nfin`` reaches the devices through the
     baked modelcard, which is why it appears in the signature but not in the
     substitutions.
@@ -103,7 +103,7 @@ def directnet_sram_lobe_deck(bt: BenchTech, nfin: int) -> str:
     feedback).
 
     The topology is NOT here — it is ``examples/simple_circuits/
-    directnet_sram_snm_dc.sp``, the same arrangement the other three
+    sram_snm_half_cell.spice.tmpl``, the same arrangement the other three
     simple-circuit gates already use. Until V7.5.8 this gate was the one that
     carried its own
     copy, which is exactly why its ``examples/`` deck had been free to drift
@@ -180,7 +180,7 @@ def _directnet_6t_netlist(bt: BenchTech, q_init: float, qb_init: float,
     # covered by the butterfly SNM gate and the paired simple-v2 read mode;
     # callers cannot silently re-enable the retired wl=ON probe. See
     # results/v6_4_7/S17c_forceic_harness_fix.md.
-    # Topology + hold bias come from the paired nn_sram6t_modes.sp catalog
+    # Topology + hold bias come from the canonical SRAM-mode template.
     # deck. Only the two storage-state initial conditions vary per call.
     if wl_on:
         raise ValueError(
@@ -413,10 +413,9 @@ def main() -> int:
                   f"{c['nrmse_pct']:7.2f} | "
                   f"{'PASS' if corner_ok else 'FAIL':>5s}")
         fic = r["force_ic"]
-        # `force_ic:` and `all-positive:` are a machine-readable contract for
-        # scripts/benchmark_collect.py — keep both tokens. force_ic is a
-        # diagnostic; `all-positive` now encodes the full gate (positive +
-        # NGSPICE-NRMSE tracking), which is what GATE reports.
+        # Keep the legacy-readable diagnostic tokens beside the structured
+        # GateResult marker. ``all-positive`` encodes the full gate (positive
+        # plus NGSPICE-NRMSE tracking), while ``force_ic`` is diagnostic only.
         print(f"{r['tech']:8s} |   force_ic: state1="
               f"{'ok' if fic.get('state1') else 'FAIL'} "
               f"state0={'ok' if fic.get('state0') else 'FAIL'} (diag)  "

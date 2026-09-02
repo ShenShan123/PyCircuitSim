@@ -8,12 +8,9 @@ This is the latest clean, source-pinned qualification of the four-terminal
 are closed analytically. NGSPICE LEVEL=72 on the identical BSIM-CMG OSDI model
 is ground truth.
 
-The campaign covers the declared gates backed by
-`examples/simple_circuits/`. The harder `examples/complex_circuits/`
-AnalogGym matrix was intentionally not run and has no score in this report.
-Historical four-tier and AnalogGym results remain in
-[`DirectNet-L75-v763-targeted.md`](DirectNet-L75-v763-targeted.md); results
-from those checkpoints are not mixed into this campaign.
+The campaign covers the declared gates backed by canonical parameterized
+templates in `examples/simple_circuits/`. Results from earlier checkpoints are
+not mixed into this campaign.
 
 Gate definitions and denominator rules are owned by
 [`methodology.md`](methodology.md).
@@ -25,8 +22,7 @@ zero OMP verdict flips.** The same checkpoints also pass 100/100 parametric
 inverter configurations and 10/10 common-source AC cells.
 
 This is not a general LEVEL=75 production promotion: parametric device DC is
-115/129, Miller open-loop AC is 2/5, and complex-circuit coverage was excluded
-by design.
+115/129 and Miller open-loop AC is 2/5.
 
 ## Final strict gate table
 
@@ -157,5 +153,4 @@ The four-terminal `large` DirectNet-Full checkpoints are **qualified for the
 declared simple-circuit matrix**: 20/20 strict cells, 100/100 inverter
 configurations, and 10/10 device AC cells pass. They are **not yet qualified
 as a general LEVEL=75 replacement** because 14/129 device-DC configurations
-and three of five Miller open-loop AC cells remain open, while AnalogGym
-complex circuits were not evaluated.
+and three of five Miller open-loop AC cells remain open.

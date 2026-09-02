@@ -30,8 +30,8 @@ from typing import Dict, List, Optional, Tuple
 # Allow importing pycmg from project root when running as a script
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from pycmg.sweep import generate_dataset, SweepConfig
-from pycmg.tech import TECH_REGISTRY, get_tech_config, list_techs
+from pycmg.sweep import generate_dataset
+from pycmg.tech import get_tech_config, list_techs
 
 
 def parse_process_var(s: str) -> Tuple[str, List[float]]:

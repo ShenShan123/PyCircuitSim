@@ -1,0 +1,17 @@
+* Complementary two-device current mirrors
+<MODEL_SETUP>
+Vdd vdd 0 <VDD>
+Vbn bn 0 <BODY_N>
+Vbp bp 0 <BODY_P>
+Irefn vdd nr <IBIAS>
+<N_PREFIX>n_ref nr nr 0 bn <N_DEVICE>
+Voutn on 0 0
+<N_PREFIX>n_out on nr 0 bn <N_DEVICE>
+Irefp pr 0 <IBIAS>
+<P_PREFIX>p_ref pr pr vdd bp <P_DEVICE>
+Voutp op 0 <VDD>
+<P_PREFIX>p_out op pr vdd bp <P_DEVICE>
+<OUTPUT_LOAD>
+.temp <TEMP>
+<ANALYSIS>
+.end

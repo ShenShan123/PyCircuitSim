@@ -1,0 +1,12 @@
+* Hierarchical initial-condition and UIC fixture
+.temp <TEMP>
+V1 in 0 <VIN>
+X1 in hold sample VIC=<VIC>
+.subckt sample a b VIC=0.5
+R1 a m <R1>
+R2 m b <R2>
+C1 b 0 <CHOLD>
+.ic V(b)=VIC V(m)=<MID_IC>
+.ends
+<ANALYSIS>
+.end

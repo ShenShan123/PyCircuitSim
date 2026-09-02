@@ -2,7 +2,7 @@
 """V7.2.0 §8.4 T4 gate — bistable latch basin agreement for the
 perturbing NN-eval configurations.
 
-The complex suite has no *gated* bistable test (the SRAM ``force_ic``
+The circuit qualification suite has no *gated* bistable test (the SRAM ``force_ic``
 probe is a printed diagnostic), yet the failure mode the V7.2.0 plan
 fears most is exactly a bistable one: a last-float32-bit perturbation
 (batched-GEMM row vs single-row eval, GPU vs CPU kernels) amplified by a
@@ -50,6 +50,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from tests.common.circuit_benchmarks import BENCH  # noqa: E402
+from tests.common.base import SIMPLE_DECKS, render_template  # noqa: E402
 
 DEFAULT_TECHS = ["TSMC5", "TSMC7", "TSMC12", "TSMC16"]
 TRAN = ".tran 0.05n 2n"
@@ -64,25 +65,20 @@ def render_cell(tech: str, state_q1: bool) -> str:
     ln = f"{bt.l_nmos * 1e9:.0f}n"
     lp = f"{bt.l_pmos * 1e9:.0f}n"
     nf, nfp = bt.nfin, bt.effective_nfin_p
-    return "\n".join([
-        f"* 6T retention latch — {tech} state q={'1' if state_q1 else '0'}",
-        f"Vdd vdd 0 {vdd}",
-        "Vwl wl 0 0.0",
-        f"Vbl bl 0 {vdd}",
-        f"Vblb blb 0 {vdd}",
-        f"Mpl q qb vdd vdd pmos_nn L={lp} NFIN={nfp}",
-        f"Mnl q qb 0 0 nmos_nn L={ln} NFIN={nf}",
-        f"Mpr qb q vdd vdd pmos_nn L={lp} NFIN={nfp}",
-        f"Mnr qb q 0 0 nmos_nn L={ln} NFIN={nf}",
-        f"Mal bl wl q 0 nmos_nn L={ln} NFIN={nf}",
-        f"Mar blb wl qb 0 nmos_nn L={ln} NFIN={nf}",
-        f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.vt})",
-        f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.vt})",
-        f".ic V(q)={q0} V(qb)={qb0}",
-        TRAN,
-        ".end",
-        "",
-    ])
+    return render_template(SIMPLE_DECKS / "sram6t_modes.spice.tmpl", {
+        "MODEL_SETUP": (
+            f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.vt})\n"
+            f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.vt})"
+        ),
+        "VDD": f"{vdd}", "BODY_NETWORK": "",
+        "BODY_N_NODE": "0", "BODY_P_NODE": "vdd",
+        "WL_SPEC": "0.0", "BL_SPEC": f"{vdd}", "BLB_SPEC": f"{vdd}",
+        "P_PREFIX": "M", "N_PREFIX": "M",
+        "P_DEVICE": f"pmos_nn L={lp} NFIN={nfp}",
+        "N_DEVICE": f"nmos_nn L={ln} NFIN={nf}",
+        "STORAGE_LOADS": "", "Q_IC": f"{q0}", "QB_IC": f"{qb0}",
+        "TEMP": "27", "ANALYSIS": TRAN,
+    })
 
 
 def run_deck(deck: Path, outdir: Path, extra_env: Dict[str, str]) -> Path:

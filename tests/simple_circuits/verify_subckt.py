@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 
@@ -39,11 +39,15 @@ from tests.common.bsimcmg_tran import (  # noqa: E402
     get_baked_modelcard,
     get_merged_modelcard,
     make_baseline,
+    create_pycircuitsim_netlist,
     run_ngspice_subprocess,
     OSDI_PATH,
 )
+from tests.common.base import (  # noqa: E402
+    SIMPLE_DECKS, SUBCIRCUIT_DECKS, render_template,
+)
 
-RESULTS_DIR = PROJECT_ROOT / "tests" / "verify_subckt_results"
+RESULTS_DIR = PROJECT_ROOT / "results" / "tests" / "subckt"
 
 # Flat-vs-subckt equivalence tolerances. Component order (hence stamp
 # summation order) differs between the two decks, so demand agreement far
@@ -56,7 +60,7 @@ NGSPICE_NRMSE_GATE = 1.0   # [% of VDD] post-startup transient vs NGSPICE
 # ---------------------------------------------------------------------------
 # Generic runners
 # ---------------------------------------------------------------------------
-def parse_deck(text: str, path: Path, **parser_kwargs):
+def parse_deck(text: str, path: Path, **parser_kwargs: Any) -> Any:
     from pycircuitsim.parser import Parser
     path.write_text(text)
     parser = Parser(**parser_kwargs)
@@ -64,7 +68,7 @@ def parse_deck(text: str, path: Path, **parser_kwargs):
     return parser
 
 
-def run_tran(parser) -> Dict[str, np.ndarray]:
+def run_tran(parser: Any) -> Dict[str, np.ndarray]:
     """Transient run mirroring tests/common/bsimcmg_tran.run_pycircuitsim."""
     from pycircuitsim.solver import DCSolver, TransientSolver
 
@@ -91,7 +95,7 @@ def run_tran(parser) -> Dict[str, np.ndarray]:
         logging.disable(logging.NOTSET)
 
 
-def run_op(parser) -> Dict[str, float]:
+def run_op(parser: Any) -> Dict[str, float]:
     from pycircuitsim.solver import DCSolver
 
     logging.disable(logging.CRITICAL)
@@ -103,7 +107,7 @@ def run_op(parser) -> Dict[str, float]:
         logging.disable(logging.NOTSET)
 
 
-def run_ac(parser) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
+def run_ac(parser: Any) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
     from pycircuitsim.solver import ACSolver, DCSolver
 
     p = parser.analysis_params
@@ -192,84 +196,9 @@ def level0() -> List[Tuple[str, bool, str]]:
 # ---------------------------------------------------------------------------
 # Level 1 — linear equivalence (no NGSPICE)
 # ---------------------------------------------------------------------------
-FLAT_RC_TRAN = """* flat RC ladder transient
-V1 in 0 PULSE 0 1.0 1n 0.1n 0.1n 5n 12n
-R1 in n1 1k
-C1 n1 0 1p
-R2 n1 out 2k
-C2 out 0 2p
-.tran 50p 10n
-.end
-"""
-
-SUB_RC_TRAN = """* subckt RC ladder transient (identical system)
-V1 in 0 PULSE 0 1.0 1n 0.1n 0.1n 5n 12n
-X1 in out ladder RA=1k
-.subckt ladder a b RA=999
-R1 a m {RA}
-C1 m 0 1p
-R2 m b {2*RA}
-C2 b 0 2p
-.ends
-.tran 50p 10n
-.end
-"""
-
-FLAT_RC_AC = """* flat RC lowpass AC
-V1 in 0 DC=0 AC=1 0
-R1 in out 1k
-C1 out 0 159.155n
-.ac dec 20 10 1e6
-.end
-"""
-
-SUB_RC_AC = """* subckt RC lowpass AC (identical system)
-V1 in 0 DC=0 AC=1 0
-X1 in out lp
-.subckt lp a b
-R1 a b 1k
-C1 b 0 159.155n
-.ends
-.ac dec 20 10 1e6
-.end
-"""
-
-FLAT_NESTED_OP = """* flat resistor tree, DC OP
-V1 top 0 2.0
-R1 top m1 3k
-R2 m1 mid 6k
-C1 m1 0 2p
-Rload mid 0 1k
-.end
-"""
-
-SUB_NESTED_OP = """* nested subckt resistor tree, DC OP (identical system)
-V1 top 0 2.0
-Xa top mid pair GAIN=3
-Rload mid 0 1k
-.subckt pair x y GAIN=2
-X1 x m half RV={GAIN*1k}
-X2 m y half RV='GAIN*2k'
-C1 m 0 2p
-.subckt half p q RV=1k
-R1 p q {RV}
-.ends half
-.ends pair
-.end
-"""
-
-SUB_IC_UIC = """* .ic inside subckt body + hierarchical .ic + uic
-V1 in 0 0.0
-X1 in hold sample VIC=0.75
-.subckt sample a b VIC=0.5
-R1 a m 1e6
-R2 m b 1e6
-C1 b 0 1p
-.ic V(b)=VIC V(m)=0.2
-.ends
-.tran 1n 20n uic
-.end
-"""
+def _fixture(name: str, substitutions: Dict[str, str]) -> str:
+    """Render one parameterized subcircuit fixture from ``examples/``."""
+    return render_template(SUBCIRCUIT_DECKS / name, substitutions)
 
 
 def level1() -> List[Tuple[str, bool, str]]:
@@ -278,8 +207,19 @@ def level1() -> List[Tuple[str, bool, str]]:
     results = []
 
     # T1: RC ladder transient equivalence
-    flat = run_tran(parse_deck(FLAT_RC_TRAN, work / "flat_tran.sp"))
-    sub = run_tran(parse_deck(SUB_RC_TRAN, work / "sub_tran.sp"))
+    flat = run_tran(parse_deck(_fixture("rc_ladder_flat.spice.tmpl", {
+        "TEMP": "27",
+        "INPUT_SPEC": "PULSE 0 1.0 1n 0.1n 0.1n 5n 12n",
+        "R1": "1k", "C1": "1p", "R2": "2k", "C2": "2p",
+        "ANALYSIS": ".tran 50p 10n",
+    }), work / "flat_tran.sp"))
+    sub = run_tran(parse_deck(_fixture(
+        "rc_ladder_hierarchical.spice.tmpl", {
+            "TEMP": "27",
+            "INPUT_SPEC": "PULSE 0 1.0 1n 0.1n 0.1n 5n 12n",
+            "R1": "1k", "R_DEFAULT": "999", "C1": "1p", "C2": "2p",
+            "ANALYSIS": ".tran 50p 10n",
+        }), work / "sub_tran.sp"))
     delta = max(
         float(np.max(np.abs(flat["out"] - sub["out"]))),
         float(np.max(np.abs(flat["n1"] - sub["X1.m"]))),
@@ -288,8 +228,18 @@ def level1() -> List[Tuple[str, bool, str]]:
                     delta < LINEAR_EQUIV_TOL, f"max|dV|={delta:.3e} V"))
 
     # T2: RC lowpass AC equivalence
-    freqs_f, res_f = run_ac(parse_deck(FLAT_RC_AC, work / "flat_ac.sp"))
-    freqs_s, res_s = run_ac(parse_deck(SUB_RC_AC, work / "sub_ac.sp"))
+    freqs_f, res_f = run_ac(parse_deck(render_template(
+        SIMPLE_DECKS / "rc_lowpass.spice.tmpl", {
+            "TEMP": "27", "INPUT_DC": "0", "INPUT_AC": "1",
+            "INPUT_PHASE": "0", "RESISTANCE": "1k",
+            "CAPACITANCE": "159.155n", "ANALYSIS": ".ac dec 20 10 1e6",
+        }), work / "flat_ac.sp"))
+    freqs_s, res_s = run_ac(parse_deck(_fixture(
+        "rc_lowpass_hierarchical.spice.tmpl", {
+            "TEMP": "27", "INPUT_DC": "0", "INPUT_AC": "1",
+            "INPUT_PHASE": "0", "RESISTANCE": "1k",
+            "CAPACITANCE": "159.155n", "ANALYSIS": ".ac dec 20 10 1e6",
+        }), work / "sub_ac.sp"))
     dmag = float(np.max(np.abs(np.abs(res_f["out"]) - np.abs(res_s["out"]))))
     dph = float(np.max(np.abs(np.angle(res_f["out"]) - np.angle(res_s["out"]))))
     ok = np.array_equal(freqs_f, freqs_s) and dmag < LINEAR_EQUIV_TOL \
@@ -298,8 +248,16 @@ def level1() -> List[Tuple[str, bool, str]]:
                     f"max|dMag|={dmag:.3e}, max|dPh|={dph:.3e} rad"))
 
     # T3: nested hierarchy + expression params at DC OP
-    op_f = run_op(parse_deck(FLAT_NESTED_OP, work / "flat_op.sp"))
-    op_s = run_op(parse_deck(SUB_NESTED_OP, work / "sub_op.sp"))
+    op_f = run_op(parse_deck(_fixture("resistor_tree_flat.spice.tmpl", {
+        "TEMP": "27", "VTOP": "2.0", "R1": "3k", "R2": "6k",
+        "CMID": "2p", "RLOAD": "1k", "ANALYSIS": ".op",
+    }), work / "flat_op.sp"))
+    op_s = run_op(parse_deck(_fixture(
+        "resistor_tree_hierarchical.spice.tmpl", {
+            "TEMP": "27", "VTOP": "2.0", "GAIN": "3",
+            "RBASE": "1k", "RBASE_DOUBLE": "2k", "CMID": "2p",
+            "RLOAD": "1k", "ANALYSIS": ".op",
+        }), work / "sub_op.sp"))
     pairs = [("mid", "mid"), ("m1", "Xa.m"), ("top", "top")]
     delta = max(abs(op_f[a] - op_s[b]) for a, b in pairs)
     results.append(("nested subckt + {expr} params DC OP", delta < LINEAR_EQUIV_TOL,
@@ -307,7 +265,11 @@ def level1() -> List[Tuple[str, bool, str]]:
                     f"(mid={op_s['mid']:.6f} V, Xa.m={op_s['Xa.m']:.6f} V)"))
 
     # T4: .ic in body (param value) + uic pinning of a high-impedance node
-    parser = parse_deck(SUB_IC_UIC, work / "sub_ic_uic.sp")
+    parser = parse_deck(_fixture("ic_hierarchical.spice.tmpl", {
+        "TEMP": "27", "VIN": "0.0", "VIC": "0.75",
+        "R1": "1e6", "R2": "1e6", "CHOLD": "1p", "MID_IC": "0.2",
+        "ANALYSIS": ".tran 1n 20n uic",
+    }), work / "sub_ic_uic.sp")
     ics = parser.circuit.initial_conditions
     ic_ok = (abs(ics.get("hold", 0.0) - 0.75) < 1e-12
              and abs(ics.get("X1.m", 0.0) - 0.2) < 1e-12
@@ -338,30 +300,8 @@ def level1() -> List[Tuple[str, bool, str]]:
 # Level 2 — BSIM-CMG inverter in a .subckt vs flat vs NGSPICE
 # ---------------------------------------------------------------------------
 def create_flat_inverter_netlist(config: TestConfig, work_dir: Path) -> Path:
-    """Historical FLAT inverter deck (pre-V6.12.0 bsimcmg_tran text).
-
-    Kept inline here — the shared infra deck is hierarchical since V6.12.0,
-    so this local copy preserves a genuinely flat reference for the
-    subckt==flat equivalence gate.
-    """
-    tech, vt = config.tech, config.vt
-    l_n_nm = config.l_nmos * 1e9
-    l_p_nm = config.l_pmos * 1e9
-    path = work_dir / f"pycircuitsim_flat_{config.label}.sp"
-    path.write_text(f"""\
-* BSIM-CMG Inverter Transient - FLAT reference ({config.label})
-Vdd 1 0 {config.vdd}
-Vin 2 0 PULSE {config.pulse_v1} {config.pulse_v2} {config.td} {config.tr} {config.tf} {config.pw} {config.per}
-Mp1 3 2 1 1 {vt.pmos_model} L={l_p_nm:.0f}n NFIN={config.nfin_p} TFIN={tech.tfin*1e9:.1f}n
-Mn1 3 2 0 0 {vt.nmos_model} L={l_n_nm:.0f}n NFIN={config.nfin_n} TFIN={tech.tfin*1e9:.1f}n
-Cload 3 0 {config.cload}
-.ic V(3)={config.vdd}
-.model {vt.nmos_model} NMOS (LEVEL=72)
-.model {vt.pmos_model} PMOS (LEVEL=72)
-.tran {config.tstep} {config.tstop}
-.end
-""")
-    return path
+    """Render the canonical flat inverter through the shared L72 adapter."""
+    return create_pycircuitsim_netlist(config, work_dir)
 
 
 def create_subckt_inverter_netlist(config: TestConfig, work_dir: Path) -> Path:
@@ -370,22 +310,30 @@ def create_subckt_inverter_netlist(config: TestConfig, work_dir: Path) -> Path:
     l_n_nm = config.l_nmos * 1e9
     l_p_nm = config.l_pmos * 1e9
     path = work_dir / f"pycircuitsim_subckt_{config.label}.sp"
-    path.write_text(f"""\
-* BSIM-CMG Inverter Transient - subckt hierarchy ({config.label})
-Vdd 1 0 {config.vdd}
-Vin 2 0 PULSE {config.pulse_v1} {config.pulse_v2} {config.td} {config.tr} {config.tf} {config.pw} {config.per}
-Xinv 2 3 1 inv NFP={config.nfin_p} NFN={config.nfin_n}
-Cload 3 0 {config.cload}
-.subckt inv i o vdd NFP=1 NFN=1
-Mp1 o i vdd vdd {vt.pmos_model} L={l_p_nm:.0f}n NFIN=NFP TFIN={tech.tfin*1e9:.1f}n
-Mn1 o i 0 0 {vt.nmos_model} L={l_n_nm:.0f}n NFIN=NFN TFIN={tech.tfin*1e9:.1f}n
-.ic V(o)={config.vdd}
-.ends
-.model {vt.nmos_model} NMOS (LEVEL=72)
-.model {vt.pmos_model} PMOS (LEVEL=72)
-.tran {config.tstep} {config.tstop}
-.end
-""")
+    path.write_text(_fixture("inverter_hierarchical.spice.tmpl", {
+        "MODEL_SETUP": (
+            f".model {vt.nmos_model} NMOS (LEVEL=72)\n"
+            f".model {vt.pmos_model} PMOS (LEVEL=72)"
+        ),
+        "TEMP": "27", "VDD": f"{config.vdd}",
+        "INPUT_SPEC": (
+            f"PULSE {config.pulse_v1} {config.pulse_v2} {config.td} "
+            f"{config.tr} {config.tf} {config.pw} {config.per}"
+        ),
+        "NFP": str(config.nfin_p), "NFN": str(config.nfin_n),
+        "P_PREFIX": "M", "N_PREFIX": "M",
+        "P_DEVICE": (
+            f"{vt.pmos_model} L={l_p_nm:.0f}n "
+            f"TFIN={tech.tfin * 1e9:.1f}n"
+        ),
+        "N_DEVICE": (
+            f"{vt.nmos_model} L={l_n_nm:.0f}n "
+            f"TFIN={tech.tfin * 1e9:.1f}n"
+        ),
+        "OUTPUT_LOAD": f"Cload out 0 {config.cload}",
+        "INITIAL_CONDITION": f".ic V(o)={config.vdd}",
+        "ANALYSIS": f".tran {config.tstep} {config.tstop}",
+    }))
     return path
 
 
@@ -394,21 +342,19 @@ def run_ngspice_buffer(config: TestConfig, work_dir: Path) -> Dict[str, np.ndarr
     baked_lib = get_baked_modelcard(config, work_dir)
     vt = config.vt
     netlist_path = work_dir / f"ngspice_buf_{config.label}.cir"
-    netlist_path.write_text(f"""\
-* BSIM-CMG buffer (2 inverters) - NGSPICE ({config.label})
-.include "{baked_lib}"
-.temp 27
-Vdd vdd 0 {config.vdd}
-Vin in 0 PULSE({config.pulse_v1} {config.pulse_v2} {config.td} {config.tr} {config.tf} {config.pw} {config.per})
-Np1 mid in vdd vdd {vt.pmos_model}
-Nn1 mid in 0 0 {vt.nmos_model}
-Np2 out mid vdd vdd {vt.pmos_model}
-Nn2 out mid 0 0 {vt.nmos_model}
-Cload out 0 {config.cload}
-.ic V(mid)={config.vdd} V(out)=0
-.tran {config.tstep} {config.tstop} uic
-.end
-""")
+    netlist_path.write_text(_fixture("inverter_buffer_flat.spice.tmpl", {
+        "MODEL_SETUP": f'.include "{baked_lib}"',
+        "TEMP": "27", "VDD": f"{config.vdd}",
+        "INPUT_SPEC": (
+            f"PULSE({config.pulse_v1} {config.pulse_v2} {config.td} "
+            f"{config.tr} {config.tf} {config.pw} {config.per})"
+        ),
+        "P_PREFIX": "N", "N_PREFIX": "N",
+        "P_DEVICE": vt.pmos_model, "N_DEVICE": vt.nmos_model,
+        "OUTPUT_LOAD": f"Cload out 0 {config.cload}",
+        "INITIAL_CONDITION": f".ic V(mid)={config.vdd} V(out)=0",
+        "ANALYSIS": f".tran {config.tstep} {config.tstop} uic",
+    }))
     csv_path = work_dir / f"ngspice_buf_{config.label}.csv"
     log_path = work_dir / f"ngspice_buf_{config.label}.log"
     runner_path = work_dir / f"ngspice_buf_{config.label}_runner.cir"
@@ -436,26 +382,29 @@ def create_subckt_buffer_netlist(config: TestConfig, work_dir: Path) -> Path:
     l_n_nm = config.l_nmos * 1e9
     l_p_nm = config.l_pmos * 1e9
     path = work_dir / f"pycircuitsim_buf_{config.label}.sp"
-    path.write_text(f"""\
-* BSIM-CMG buffer - nested subckt hierarchy ({config.label})
-Vdd vdd 0 {config.vdd}
-Vin in 0 PULSE {config.pulse_v1} {config.pulse_v2} {config.td} {config.tr} {config.tf} {config.pw} {config.per}
-Xbuf in out vdd buf NF={config.nfin_n} VDDIC={config.vdd}
-Cload out 0 {config.cload}
-.subckt buf a y vdd NF=1 VDDIC=1.0
-X1 a m vdd inv NFP={config.nfin_p} NFN=NF
-X2 m y vdd inv NFP={config.nfin_p} NFN=NF
-.ic V(m)=VDDIC V(y)=0
-.subckt inv i o vdd NFP=1 NFN=1
-Mp1 o i vdd vdd {vt.pmos_model} L={l_p_nm:.0f}n NFIN=NFP TFIN={tech.tfin*1e9:.1f}n
-Mn1 o i 0 0 {vt.nmos_model} L={l_n_nm:.0f}n NFIN=NFN TFIN={tech.tfin*1e9:.1f}n
-.ends inv
-.ends buf
-.model {vt.nmos_model} NMOS (LEVEL=72)
-.model {vt.pmos_model} PMOS (LEVEL=72)
-.tran {config.tstep} {config.tstop}
-.end
-""")
+    path.write_text(_fixture("inverter_buffer_hierarchical.spice.tmpl", {
+        "MODEL_SETUP": (
+            f".model {vt.nmos_model} NMOS (LEVEL=72)\n"
+            f".model {vt.pmos_model} PMOS (LEVEL=72)"
+        ),
+        "TEMP": "27", "VDD": f"{config.vdd}",
+        "INPUT_SPEC": (
+            f"PULSE {config.pulse_v1} {config.pulse_v2} {config.td} "
+            f"{config.tr} {config.tf} {config.pw} {config.per}"
+        ),
+        "NFN": str(config.nfin_n), "NFP": str(config.nfin_p),
+        "P_PREFIX": "M", "N_PREFIX": "M",
+        "P_DEVICE": (
+            f"{vt.pmos_model} L={l_p_nm:.0f}n "
+            f"TFIN={tech.tfin * 1e9:.1f}n"
+        ),
+        "N_DEVICE": (
+            f"{vt.nmos_model} L={l_n_nm:.0f}n "
+            f"TFIN={tech.tfin * 1e9:.1f}n"
+        ),
+        "OUTPUT_LOAD": f"Cload out 0 {config.cload}",
+        "OUT_IC": "0", "ANALYSIS": f".tran {config.tstep} {config.tstop}",
+    }))
     return path
 
 
@@ -496,14 +445,14 @@ def level2() -> List[Tuple[str, bool, str]]:
     sub = run_tran(_parse_l72(
         create_subckt_inverter_netlist(config, work), config, work))
 
-    # (a) subckt == flat (node 3 in the flat deck is the port 'out' -> "3")
-    d = float(np.max(np.abs(np.interp(flat["time"], sub["time"], sub["3"])
-                            - flat["3"])))
+    # (a) subckt == flat at the shared top-level output port.
+    d = float(np.max(np.abs(np.interp(flat["time"], sub["time"], sub["out"])
+                            - flat["out"])))
     results.append(("L72 inverter .tran subckt==flat", d < NR_EQUIV_TOL,
                     f"max|dV|={d:.3e} V"))
 
     # (b) subckt vs NGSPICE ground truth
-    m = _nrmse_vs_ngspice(ng, sub["time"], sub["3"], "v(out)", config)
+    m = _nrmse_vs_ngspice(ng, sub["time"], sub["out"], "v(out)", config)
     results.append(("L72 inverter subckt vs NGSPICE",
                     m["NRMSE (% of Vdd)"] < NGSPICE_NRMSE_GATE,
                     f"post-startup NRMSE={m['NRMSE (% of Vdd)']:.3f}% of VDD, "

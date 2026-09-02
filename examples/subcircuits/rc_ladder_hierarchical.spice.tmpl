@@ -1,0 +1,12 @@
+* Hierarchical two-section RC ladder
+.temp <TEMP>
+V1 in 0 <INPUT_SPEC>
+X1 in out ladder RA=<R1>
+.subckt ladder a b RA=<R_DEFAULT>
+R1 a m {RA}
+C1 m 0 <C1>
+R2 m b {2*RA}
+C2 b 0 <C2>
+.ends
+<ANALYSIS>
+.end

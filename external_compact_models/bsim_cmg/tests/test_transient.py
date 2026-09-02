@@ -33,7 +33,6 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from pathlib import Path
 
 from pycmg import Model, Instance
 from tests.helpers import (

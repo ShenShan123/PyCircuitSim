@@ -30,7 +30,7 @@ import json
 import math
 import time
 from collections import Counter
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
@@ -55,9 +55,7 @@ from .nn_config import (
     OSDI_PATH,
     NNTechConfig,
     ProcessParams,
-    PROCESS_PARAM_NAMES,
     TECH_CONFIGS,
-    OUTPUT_COLUMNS,
     extract_process_params,
 )
 
@@ -140,7 +138,7 @@ def _source_hash_metadata(bins: Sequence[BinSpec]) -> Dict[str, object]:
             cards[key] = _sha256(path)
     osdi = Path(OSDI_PATH).resolve()
     return {
-        "generator_release": "V7.6.3",
+        "generator_release": "V7.6.6",
         "osdi_path": str(osdi),
         "osdi_sha256": _sha256(osdi),
         "modelcard_sha256_json": json.dumps(cards, sort_keys=True),

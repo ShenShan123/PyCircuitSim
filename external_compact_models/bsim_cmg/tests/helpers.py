@@ -507,11 +507,9 @@ def run_dc_comparison(
         abs_tol_override: Per-output absolute tolerance overrides {key: tol}
     """
     # Avoid circular import: conftest imports from helpers, so import lazily
-    from tests.conftest import ALL_TECHNOLOGIES, get_tech_modelcard
+    from tests.conftest import get_tech_modelcard
 
-    tech = ALL_TECHNOLOGIES[tech_name]
     modelcard, model_name, inst_params = get_tech_modelcard(tech_name, device_type)
-    vdd = tech["vdd"]
 
     if temp_k is None:
         temp_k = temp_c + 273.15

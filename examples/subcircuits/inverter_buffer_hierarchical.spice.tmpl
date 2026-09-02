@@ -1,0 +1,18 @@
+* Nested hierarchical two-inverter buffer
+<MODEL_SETUP>
+.temp <TEMP>
+Vdd vdd 0 <VDD>
+Vin in 0 <INPUT_SPEC>
+Xbuf in out vdd buf NF=<NFN> VDDIC=<VDD>
+<OUTPUT_LOAD>
+.subckt buf a y vdd NF=1 VDDIC=1.0
+X1 a m vdd inv NFP=<NFP> NFN=NF
+X2 m y vdd inv NFP=<NFP> NFN=NF
+.ic V(m)=VDDIC V(y)=<OUT_IC>
+.subckt inv i o vdd NFP=1 NFN=1
+<P_PREFIX>p1 o i vdd vdd <P_DEVICE> NFIN=NFP
+<N_PREFIX>n1 o i 0 0 <N_DEVICE> NFIN=NFN
+.ends inv
+.ends buf
+<ANALYSIS>
+.end

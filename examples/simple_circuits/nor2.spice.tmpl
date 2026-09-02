@@ -1,0 +1,16 @@
+* Two-input static CMOS NOR
+<MODEL_SETUP>
+Vdd vdd 0 <VDD>
+Vbn bn 0 <BODY_N>
+Vbp bp 0 <BODY_P>
+Va a 0 <VA_SPEC>
+Vb b 0 <VB_SPEC>
+<P_PREFIX>p_a pint a vdd bp <P_DEVICE>
+<P_PREFIX>p_b out b pint bp <P_DEVICE>
+<N_PREFIX>n_a out a 0 bn <N_DEVICE>
+<N_PREFIX>n_b out b 0 bn <N_DEVICE>
+Cload out 0 <LOGIC_LOAD>
+.ic V(out)=<VDD> V(pint)=<VDD>
+.temp <TEMP>
+<ANALYSIS>
+.end

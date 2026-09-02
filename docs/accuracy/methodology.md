@@ -34,13 +34,13 @@ The simple-v1 score is 4 circuits × 5 technologies = **20 cells per tier**.
 Reports before V7.3 used four electrically distinct technologies and `/16`;
 rescale before comparing totals.
 
-Historical campaign evidence retains `verify_complex_*` suite IDs. Those are
-compatibility aliases for these four simple circuits, not membership in
-`examples/complex_circuits/`.
+Campaign suite IDs use the canonical `verify_circuit_*` module names. Retired
+aliases are not accepted because an implicit rename can hide a misspelled or
+missing gate.
 
 | device gate | pass condition or purpose |
 |---|---|
-| `verify_nn_dc_tran.py` | resolver-path single-point DC and transient |
+| `verify_nn_dc.py` / `verify_nn_inverter.py` | resolver-path single-device and inverter checks |
 | `verify_nn_multi_tech_dc.py` | Id–Vgs NRMSE < 10% for every L/NFIN/VT configuration |
 | `verify_nn_multi_tech_tran.py` | inverter transient over the same sweep |
 | `verify_nn_ac.py` | gain error ≤ 1.5 dB, f3dB ratio 0.7–1.43, magnitude NRMSE ≤ 10%; phase is diagnostic |
@@ -53,7 +53,8 @@ compatibility aliases for these four simple circuits, not membership in
 source followers, common-gate stages, current mirrors, an open inverter chain,
 transmission-gate DC and hold behavior, ideal- and active-tail differential
 pairs, cascode stacks, NAND2/NOR2, and full 6T SRAM operating modes. It runs
-DC, transient, and AC analyses from paired files in `examples/simple_circuits/`.
+DC, transient, and AC analyses from canonical templates in
+`examples/simple_circuits/`.
 The complete contract is in
 [`simple-circuits-v2-topologies.md`](simple-circuits-v2-topologies.md).
 
@@ -80,10 +81,9 @@ The scored axis is CPU-only (`CUDA_VISIBLE_DEVICES=""`). CUDA and other
 floating-point-perturbing optimizations require separate fidelity gates and
 never replace the CPU score.
 
-Every cell receives an isolated result directory. Parallel jobs must not share
-`PYCIRCUITSIM_SIMPLE_RESULTS` or `PYCIRCUITSIM_NN_RESULTS`.
-`PYCIRCUITSIM_COMPLEX_RESULTS` remains a fallback compatibility alias for old
-campaign launchers.
+Every cell receives an isolated result directory below `results/`. Parallel
+jobs must not share `PYCIRCUITSIM_SIMPLE_RESULTS` or
+`PYCIRCUITSIM_NN_RESULTS`.
 
 ## 4. Reported metrics
 
@@ -123,8 +123,9 @@ A report is publishable only when all of the following hold:
 
 The V7.5.17 clean matrix contains DirectNet and BSIM-AR × 4 tiers × 5
 technologies × 12 gate invocations = **480 jobs**.
-The V7.6.1 full-terminal matrix applies the same 480-job denominator to
-DirectNet-Full and BSIM-AR-Full in a separate, non-backfilled campaign.
+The V7.6.6 full-terminal matrix applies the same 480-job denominator to freshly
+trained DirectNet-Full and BSIM-AR-Full models in one separate, non-backfilled
+campaign.
 Report generation fails closed unless the applicable matrix and checkpoint
 artifacts are complete.
 

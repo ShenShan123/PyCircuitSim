@@ -1068,7 +1068,6 @@ class DCSolver:
         # value is live.
         self._last_dc_residual: Optional[float] = None
         self._last_dc_resid_threshold: Optional[float] = None
-        self._last_residual_ok: Optional[bool] = None
 
     def __enter__(self):
         """
@@ -1904,7 +1903,6 @@ class DCSolver:
             residual_ok = residual_inf <= resid_threshold
             self._last_dc_residual = float(residual_inf)
             self._last_dc_resid_threshold = float(resid_threshold)
-            self._last_residual_ok = bool(residual_ok)
             self._last_solve_converged = bool(finite_voltages and residual_ok)
             return voltages
 
@@ -2351,11 +2349,6 @@ class TransientSolver:
         # by solve(); deliberately NOT added to solve()'s returned dict,
         # because run_transient builds its CSV columns from that dict.
         self.source_currents: Dict[str, np.ndarray] = {}
-
-        # Number of committed steps whose branch currents could not be read
-        # from a solution vector (the oscillation-averaged acceptance path has
-        # none): those entries are NaN, never a plausible-looking zero.
-        self._branch_current_gaps = 0
 
         # Voltage-source tail (solution[num_nodes:]) of the last accepted
         # sub-step solve, or None when the step was accepted without one.
@@ -3363,7 +3356,6 @@ class TransientSolver:
                     if isinstance(c, VoltageSource)]
         self.source_currents = {
             c.name: np.full(num_steps, np.nan) for c in vsources}
-        self._branch_current_gaps = 0
         for c in vsources:
             self.source_currents[c.name][0] = c.calculate_current({})
 
@@ -3560,7 +3552,6 @@ class TransientSolver:
 
             # Set capacitor integration flags
             use_trap = self._integration_method == 'trap'
-            self._use_trap_for_charges = use_trap
             for component in self.circuit.components:
                 if isinstance(component, Capacitor):
                     component._use_trapezoidal = use_trap
@@ -3988,12 +3979,10 @@ class TransientSolver:
             # Store at output point
             for node in nodes:
                 voltages_over_time[node][step] = current_voltages[node]
-            # C6a — commit this step's branch currents (NaN + a counted gap
-            # when the accepted solve produced no solution vector).
+            # C6a — commit this step's branch currents. An accepted solve with
+            # no solution vector remains NaN rather than looking like zero.
             tail = self._last_solution_tail
-            if tail is None:
-                self._branch_current_gaps += 1
-            else:
+            if tail is not None:
                 for vs_idx, comp in enumerate(vsources):
                     if vs_idx < len(tail):
                         self.source_currents[comp.name][step] = float(tail[vs_idx])
@@ -4056,13 +4045,11 @@ class TransientSolver:
                 results[node] = dense_mat[:, j]
             n_dense = len(_dense_t)
             sc = {c.name: np.full(n_dense, np.nan) for c in vsources}
-            self._branch_current_gaps = 0
             for c in vsources:
                 sc[c.name][0] = c.calculate_current({})
             for k in range(1, n_dense):
                 tail_k = _dense_i[k]
                 if tail_k is None:
-                    self._branch_current_gaps += 1
                     continue
                 for vs_idx, comp in enumerate(vsources):
                     if vs_idx < len(tail_k):

@@ -1,0 +1,15 @@
+* Nested hierarchical resistor tree
+.temp <TEMP>
+V1 top 0 <VTOP>
+Xa top mid pair GAIN=<GAIN>
+Rload mid 0 <RLOAD>
+.subckt pair x y GAIN=2
+X1 x m half RV={GAIN*<RBASE>}
+X2 m y half RV='GAIN*<RBASE_DOUBLE>'
+C1 m 0 <CMID>
+.subckt half p q RV=1k
+R1 p q {RV}
+.ends half
+.ends pair
+<ANALYSIS>
+.end

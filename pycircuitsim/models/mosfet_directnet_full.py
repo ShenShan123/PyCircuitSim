@@ -27,10 +27,10 @@ _NN_PARENT = PROJECT_ROOT / "external_compact_models"
 if str(_NN_PARENT) not in sys.path:
     sys.path.insert(0, str(_NN_PARENT))
 
-from neural_network.data.normalize import (  # noqa: E402
+from neural_network.data.contracts import (  # noqa: E402
     FULL_TERMINAL_OUTPUT_COLUMN_ORDER,
-    NormStats,
 )
+from neural_network.data.normalize import NormStats  # noqa: E402
 
 
 _OUTPUT_COLUMNS = tuple(FULL_TERMINAL_OUTPUT_COLUMN_ORDER)

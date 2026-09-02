@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
-"""Build the four active accuracy reports from measurement, not transcription.
+"""Build active accuracy reports from measurement, not transcription.
 
-Emits two files per model family into docs/accuracy/:
+Emits clean reports for all four NN families and historical recipe reports for
+the reduced families into ``docs/accuracy/``:
 
     {DirectNet-L73, BSIM-AR-L74}-{clean, recipes}.md
+    {DirectNet-L75, BSIM-AR-L76}-clean.md
 
 The prose lives in scripts/accuracy_doc_templates/*.md.in and the tables are
 substituted into `<!--MARKER-->` slots, so no table in the reports can drift
@@ -25,6 +27,7 @@ Available sources (each rendered report is pinned to one complete pass):
     results/v740_regate/data.json  V7.4.0, clean DN + BSIM-AR rebuild
     results/v7516_clean/data.json   V7.5.16, clean DirectNet/BSIM-AR re-gate
     results/v7517_clean/data.json   V7.5.17, audited clean re-gate
+    results/v766_full_clean/data.json V7.6.6, full-terminal clean re-gate
 
 Run after any re-gate:
 
@@ -67,9 +70,8 @@ TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 SIMPLE_V1_CASES = cases(score_version=SIMPLE_V1)
 CIRCS = [case.result_key for case in SIMPLE_V1_CASES]
 SUITE_FOR_CIRC = {
-    case.result_key: case.legacy_suite_id
+    case.result_key: case.campaign_suite
     for case in SIMPLE_V1_CASES
-    if case.legacy_suite_id is not None
 }
 CIRC_LABEL = {
     case.result_key: (
@@ -91,21 +93,19 @@ FILE_STEM = {
 STRICT_OMP = ("omp1", "omp2", "omp4")
 REPORT_SUITES: Dict[str, Tuple[str, ...]] = {
     **{
-        case.legacy_suite_id: tuple(f"omp{value}" for value in case.omp_threads)
+        case.campaign_suite: tuple(f"omp{value}" for value in case.omp_threads)
         for case in SIMPLE_V1_CASES
-        if case.legacy_suite_id is not None
     },
     "verify_nn_multi_tech_dc": ("omp1",),
     "verify_nn_multi_tech_tran": ("omp1",),
     "verify_nn_ac": ("omp1",),
-    "verify_complex_opamp_ac": ("omp1",),
+    "verify_circuit_opamp_ac": ("omp1",),
 }
 
 _REPORT_PAYLOAD_KEYS: Dict[str, Tuple[str, ...]] = {
     **{
-        case.legacy_suite_id: ("metric",)
+        case.campaign_suite: ("metric",)
         for case in SIMPLE_V1_CASES
-        if case.legacy_suite_id is not None
     },
     "verify_nn_multi_tech_dc": (
         "n", "n_pass", "mean_nrmse", "max_nrmse", "mean_mre", "min_r2",
@@ -115,7 +115,7 @@ _REPORT_PAYLOAD_KEYS: Dict[str, Tuple[str, ...]] = {
         "n", "n_pass", "mean_nrmse", "max_nrmse", "mean_mre", "min_r2",
         "max_error",
     ),
-    "verify_complex_opamp_ac": (
+    "verify_circuit_opamp_ac": (
         "dc_gain_err_db", "gbw_ratio", "pm_err_deg", "mag_nrmse_pct", "status",
     ),
 }
@@ -194,7 +194,8 @@ PASSES = [("V7.1.0", load_json("v710_regate")), ("V7.3.0", load_json("v730_regat
           ("V7.5.17", load_json("v7517_clean")),
           ("V7.6.1", load_json("v761_directnet_full_clean")),
           ("V7.6.1 combined", load_json("v761_full_clean")),
-          ("V7.6.2", load_json("v762_directnet_full_clean"))]
+          ("V7.6.2", load_json("v762_directnet_full_clean")),
+          ("V7.6.6", load_json("v766_full_clean"))]
 PASS_DATA = dict(PASSES)
 ACTIVE_PASS: Optional[str] = None
 CAMPAIGN_EVIDENCE: Dict[str, Tuple[str, int, int]] = {
@@ -202,6 +203,7 @@ CAMPAIGN_EVIDENCE: Dict[str, Tuple[str, int, int]] = {
     "V7.6.1": ("v761_directnet_full_clean", 240, 120),
     "V7.6.1 combined": ("v761_full_clean", 480, 280),
     "V7.6.2": ("v762_directnet_full_clean", 240, 120),
+    "V7.6.6": ("v766_full_clean", 480, 280),
 }
 
 # Every report is rendered from one coherent campaign. A later partial pass is
@@ -212,21 +214,22 @@ CAMPAIGN_EVIDENCE: Dict[str, Tuple[str, int, int]] = {
 REPORT_PASS: Dict[Tuple[str, bool], str] = {
     ("dn", False): "V7.5.17",
     ("tf", False): "V7.5.17",
-    ("dnf", False): "V7.6.2",
-    ("tff", False): "V7.6.1 combined",
+    ("dnf", False): "V7.6.6",
+    ("tff", False): "V7.6.6",
     ("dn", True): "V7.3.0",
     ("tf", True): "V7.3.0",
 }
 
 CURRENT_CLEAN_TAGS = ("dn", "tf", "dnf", "tff")
+README_REQUIRED_CLEAN_TAGS = ("dnf", "tff")
 
 # The new hardware does not carry the raw V7.3 recipe trees. These digests
 # make the retained rendered reports immutable and keep --check meaningful.
 PRESERVED_REPORT_SHA256: Dict[Tuple[str, bool], str] = {
-    ("dn", False): "b4037e7f303a5f680bea3380efec6c022aa9a23132e5009ed5c9d43c7b34d1d3",
-    ("dn", True): "cf5e72584234e4c4e15b3759bfc09d1cbbdef4742e5fe664cd501c000a241805",
-    ("tf", False): "de54d9da78b0eddc66ffef97f487a04c0d64ea6cc9e26d2cc18ae65694590618",
-    ("tf", True): "c79255aabecd3e9b1b320e403e747d790482046a829b1c40c44299d6bd758a2e",
+    ("dn", False): "501eec0b9f8e813a4e33ce7ffbf56b1f4c27fcfb251f2216d8e864a19c6faa0d",
+    ("dn", True): "34b80c4665e4d2bab4cd3192955c7a1b0afacd651ab85d335fe00099d0c4c290",
+    ("tf", False): "61dd6c094212b5dc24cf7155f9c5bc616df231e0e2cd68172753ff9139257cd5",
+    ("tf", True): "52162e5eee8fdbfac251bd653eaa4eaeb03027dd15193d42ed5d49334180af72",
 }
 PRESERVED_README_SHA256 = (
     "b04b4b40858b34fd4f94071180284e9d50fcd0281a4353b0d588c5c063ec5f5a"
@@ -514,7 +517,7 @@ def device_tables(tag: str, recipes: bool) -> str:
         cells, p, n = [], 0, 0
         for tech in TECHS:
             e = at(tag, _variant(tag, key, tech, recipes),
-                   "verify_complex_opamp_ac", tech)
+                   "verify_circuit_opamp_ac", tech)
             if not e:
                 cells.append("—")
                 continue
@@ -574,10 +577,14 @@ FAMILY_META = {
 # These values are the durable published fallback for the README only; the
 # rendered labels still identify the code state that produced each result.
 HISTORICAL_CLEAN: Dict[str, Tuple[str, str, int, int]] = {
-    "dn": ("2026-08-19", "large", 12, 20),
-    "tf": ("2026-08-19", "small", 13, 20),
+    "dn": ("V7.5.17", "xl", 10, 20),
+    "tf": ("V7.5.17", "large", 12, 20),
     "dnf": ("V7.6.0", "—", 0, 0),
     "tff": ("V7.6.1", "—", 0, 0),
+}
+HISTORICAL_CLEAN_TEXT = {
+    "dn": "V7.5.17 `large` **9/20** served; `xl` **10/20** best",
+    "tf": "V7.5.17 `large` **12/20**",
 }
 HISTORICAL_RECIPE: Dict[str, Tuple[str, int, int]] = {
     "dn": ("`crit15m`@xl", 19, 20),
@@ -611,7 +618,7 @@ def _report_result_complete(suite: str, result: object) -> bool:
     """Whether one verdict includes the metrics its report table consumes."""
     if not isinstance(result, dict) or not is_verdict(result):
         return False
-    if suite.startswith("verify_complex_"):
+    if suite.startswith("verify_circuit_"):
         error = result.get("error")
         if result.get("status") == "ERROR":
             return (int(result["rc"]) != 0 and isinstance(error, str)
@@ -715,7 +722,9 @@ def scoreboard(
             rl, rp, rn = HISTORICAL_RECIPE[tag]
         else:
             rl, rp, rn = "none", 0, 0
-        if tag == "dn" and clean_complete:
+        if not clean_complete and tag in HISTORICAL_CLEAN_TEXT:
+            c = HISTORICAL_CLEAN_TEXT[tag]
+        elif tag == "dn" and clean_complete:
             with evidence_pass(clean_version):
                 served_pass, served_total = _score(tag, "large", False)
             c = (f"{clean_source_version} `large` "
@@ -848,7 +857,7 @@ def build_readme(check: bool) -> bool:
     dest = DOCS / "README.md"
     incomplete = [
         f"{tag}@{REPORT_PASS[(tag, False)]}"
-        for tag in CURRENT_CLEAN_TAGS
+        for tag in README_REQUIRED_CLEAN_TAGS
         if not _matrix_complete_in_pass(
             tag, False, REPORT_PASS[(tag, False)]
         )

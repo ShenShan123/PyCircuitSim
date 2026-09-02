@@ -33,7 +33,7 @@ if _PYCMG_PYPATH not in sys.path:
     sys.path.insert(0, _PYCMG_PYPATH)
 
 # ── Re-export PyCMG's NN config (single source of truth) ─────────────────────
-from pycmg.nn_config import (  # noqa: E402
+from pycmg.nn_config import (  # noqa: E402,F401  (public re-exports)
     OSDI_PATH,
     DEFAULT_TEMPERATURE,
     NNTechConfig,
@@ -64,11 +64,10 @@ TechConfig = NNTechConfig
 def _build_tech_variant_codes() -> Tuple[
     Dict[Tuple[str, str], int],
     Dict[int, Tuple[str, str]],
-    List[Tuple[str, str]],
 ]:
     """Build the canonical (tech, variant) -> code mapping.
 
-    Returns (forward_map, reverse_map, ordered_list).
+    Returns (forward_map, reverse_map).
     """
     # Order: legacy TSMC techs first (sorted by node), then ASAP7, then
     # late-onboarded techs appended at the tail (code-stability invariant).
@@ -94,15 +93,12 @@ def _build_tech_variant_codes() -> Tuple[
         forward[tv] = code
         reverse[code] = tv
         code += 1
-    return forward, reverse, ordered
+    return forward, reverse
 
 
 TECH_VARIANT_CODES: Dict[Tuple[str, str], int]
 CODE_TO_TECH_VARIANT: Dict[int, Tuple[str, str]]
-_TECH_VARIANT_ORDER: List[Tuple[str, str]]
-TECH_VARIANT_CODES, CODE_TO_TECH_VARIANT, _TECH_VARIANT_ORDER = (
-    _build_tech_variant_codes()
-)
+TECH_VARIANT_CODES, CODE_TO_TECH_VARIANT = _build_tech_variant_codes()
 
 UNKNOWN_CODE_ID: int = 17
 NUM_TSMC_CODES: int = 17           # codes 0-16 (legacy TSMC block only)
@@ -328,7 +324,6 @@ class DirectNetConfig:
     batch_size: int = 1024
     train_ratio: float = 0.8
     val_ratio: float = 0.1
-    test_ratio: float = 0.1
     # Architecture
     trunk_hidden: int = 128
     trunk_layers: int = 3

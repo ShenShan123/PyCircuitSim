@@ -64,12 +64,12 @@ def _dataset_provenance(
     checkpoints: Path,
     groups: Set[Tuple[str, str, str]],
 ) -> Dict[str, Dict[str, str]]:
-    """Validate dataset identity embedded in DirectNet-Full bundles."""
+    """Validate dataset identity embedded in full-terminal model bundles."""
     provenance: Dict[str, Dict[str, str]] = {}
     sha256_pattern = re.compile(r"[0-9a-f]{64}")
     commit_pattern = re.compile(r"[0-9a-f]{40}")
     for tag, variant, tech in sorted(groups):
-        if tag != "dnf":
+        if tag not in ("dnf", "tff"):
             continue
         for device in ("nmos", "pmos"):
             name = f"{tech}_{tag}_{variant}_{device}_best.pt.complete"
@@ -78,7 +78,7 @@ def _dataset_provenance(
                 marker = json.loads(marker_path.read_text())
             except (OSError, json.JSONDecodeError) as exc:
                 raise ValueError(
-                    f"DirectNet-Full dataset provenance is invalid: {name}"
+                    f"Full-terminal dataset provenance is invalid: {name}"
                 ) from exc
             expected_dataset = f"{tech}_dnf_{device}.npz"
             required = {
@@ -89,7 +89,7 @@ def _dataset_provenance(
                 marker.get(key) != value for key, value in required.items()
             ):
                 raise ValueError(
-                    f"DirectNet-Full dataset provenance is incomplete: {name}"
+                    f"Full-terminal dataset provenance is incomplete: {name}"
                 )
             for field in (
                 "dataset_sha256", "dataset_completion_marker_sha256",
@@ -97,13 +97,13 @@ def _dataset_provenance(
                 value = marker.get(field)
                 if not isinstance(value, str) or not sha256_pattern.fullmatch(value):
                     raise ValueError(
-                        f"DirectNet-Full dataset provenance is incomplete: {name}"
+                        f"Full-terminal dataset provenance is incomplete: {name}"
                     )
             source_commit = marker.get("dataset_source_commit")
             if (not isinstance(source_commit, str)
                     or not commit_pattern.fullmatch(source_commit)):
                 raise ValueError(
-                    f"DirectNet-Full dataset provenance is incomplete: {name}"
+                    f"Full-terminal dataset provenance is incomplete: {name}"
                 )
             provenance[name] = {
                 field: str(marker[field])
@@ -187,20 +187,10 @@ def main(argv: Optional[List[str]] = None) -> int:
     assert args.pdk_root is not None
 
     root = Path(__file__).resolve().parents[1]
-    if _git(root, "status", "--porcelain", "--untracked-files=no"):
+    if _git(root, "status", "--porcelain"):
         raise SystemExit(
-            "campaign provenance requires a clean tracked worktree; commit first"
-        )
-    untracked = _git(root, "ls-files", "--others", "--exclude-standard")
-    unsafe_suffixes = {".py", ".sh", ".so", ".toml", ".yaml", ".yml"}
-    unsafe_untracked = [
-        path for path in untracked.splitlines()
-        if Path(path).suffix.lower() in unsafe_suffixes
-    ]
-    if unsafe_untracked:
-        raise SystemExit(
-            "campaign provenance found untracked executable/config source: "
-            + ", ".join(unsafe_untracked)
+            "campaign provenance requires a clean worktree; commit or ignore "
+            "every source and configuration file first"
         )
     lines, groups = _jobs(args.jobs)
     try:

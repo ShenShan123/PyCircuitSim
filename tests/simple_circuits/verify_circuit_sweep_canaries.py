@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Pure deck-rendering and topology-parity canaries for simple circuits.
 
-Candidate and LEVEL=72 experiments are rendered from their paired files under
+Candidate and LEVEL=72 experiments are rendered from one shared template under
 ``examples/simple_circuits``. This check compares the actual rendered
 connectivity for every catalog analysis and also exercises the topology-
 changing ring sweep; no simulator or checkpoint is required.
@@ -61,33 +61,57 @@ def main() -> int:
                 failures.append(
                     f"{tech_name}/ring_osc/n_stages={n_stages}: {mismatch}")
 
-        inverter_values = {
-            "VDD": f"{bt.vdd:g}", "LN": f"{bt.l_nmos * 1e9:g}n",
-            "LP": f"{bt.l_pmos * 1e9:g}n", "NFN": str(bt.nfin),
-            "NFP": str(bt.effective_nfin_p), "NMOS_PARAMS": "LEVEL=73",
-            "PMOS_PARAMS": "LEVEL=73", "TEMP": f"{bt.temperature_c:g}",
-            "ANALYSIS": ".dc Vin 0 1 0.1", "BAKED_NMOS": "/tmp/n.lib",
-            "BAKED_PMOS": "/tmp/p.lib", "NMOS": bt.nmos_model,
-            "PMOS": bt.pmos_model, "TD": "0.2n", "TR": "50p",
-            "TF": "50p", "PW": "1n", "PER": "2.1n", "CLOAD": "1f",
+        inverter_path = SIMPLE_DECKS / "inverter.spice.tmpl"
+        inverter_template = inverter_path.read_text()
+        common = {
+            "VDD": f"{bt.vdd:g}", "TEMP": f"{bt.temperature_c:g}",
+            "OUTPUT_LOAD": "", "INITIAL_CONDITION": "",
+            "INPUT_SPEC": "0", "ANALYSIS": ".dc Vin 0 1 0.1",
         }
-        for candidate_name, reference_name in (
-            ("directnet_inverter_dc.sp", "bsimcmg_inverter_dc.cir"),
-            ("nn_inverter_tran.sp", "bsimcmg_inverter_tran.cir"),
-        ):
-            rendered = []
-            for filename in (candidate_name, reference_name):
-                template = (SIMPLE_DECKS / filename).read_text()
-                substitutions = {
-                    token: inverter_values[token] for token in deck_tokens(template)
-                }
-                rendered.append(render_deck_text(
-                    template, substitutions, source_name=filename,
-                ))
+        candidate_values = {
+            **common, "MODEL_SETUP": ".model nmos_nn NMOS (LEVEL=73)\n"
+            ".model pmos_nn PMOS (LEVEL=73)",
+            "N_PREFIX": "M", "P_PREFIX": "M",
+            "N_DEVICE": (
+                f"nmos_nn L={bt.l_nmos * 1e9:g}n NFIN={bt.nfin}"
+            ),
+            "P_DEVICE": (
+                f"pmos_nn L={bt.l_pmos * 1e9:g}n "
+                f"NFIN={bt.effective_nfin_p}"
+            ),
+        }
+        reference_values = {
+            **common, "MODEL_SETUP": '.include "/tmp/pair.lib"',
+            "N_PREFIX": "N", "P_PREFIX": "N",
+            "N_DEVICE": bt.nmos_model, "P_DEVICE": bt.pmos_model,
+        }
+        for analysis_name in ("dc", "tran"):
+            if analysis_name == "tran":
+                candidate_values.update({
+                    "INPUT_SPEC": "PULSE 0 1 0.2n 50p 50p 1n 2.1n",
+                    "OUTPUT_LOAD": "Cload out 0 1f",
+                    "INITIAL_CONDITION": ".ic V(out)=1",
+                    "ANALYSIS": ".tran 2p 3n uic",
+                })
+                reference_values.update({
+                    "INPUT_SPEC": "PULSE(0 1 0.2n 50p 50p 1n 2.1n)",
+                    "OUTPUT_LOAD": "Cload out 0 1f",
+                    "INITIAL_CONDITION": ".ic V(out)=1",
+                    "ANALYSIS": ".tran 2p 3n uic",
+                })
+            rendered = [
+                render_deck_text(
+                    inverter_template,
+                    {token: values[token]
+                     for token in deck_tokens(inverter_template)},
+                    source_name=inverter_path.name,
+                )
+                for values in (candidate_values, reference_values)
+            ]
             mismatch = topology_mismatch(rendered[0], rendered[1])
             if mismatch:
                 failures.append(
-                    f"{tech_name}/inverter/{candidate_name}: {mismatch}")
+                    f"{tech_name}/inverter/{analysis_name}: {mismatch}")
 
     if failures:
         for failure in failures:

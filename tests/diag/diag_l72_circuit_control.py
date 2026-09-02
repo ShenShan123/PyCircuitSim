@@ -34,6 +34,8 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "tests"))
 
 from tests.common.circuit_benchmarks import BENCH, RESULTS_BASE, BenchTech  # noqa: E402
+from tests.common.base import SIMPLE_DECKS, render_template  # noqa: E402
+from tests.common.simple_circuit_harness import render_ring_stages  # noqa: E402
 from pycircuitsim.parser import Parser  # noqa: E402
 from pycircuitsim.solver import DCSolver, TransientSolver  # noqa: E402
 from pycircuitsim.models.passive import VoltageSource  # noqa: E402
@@ -130,25 +132,32 @@ def ring(bt: BenchTech) -> Dict:
     vdd, tfin_nm = bt.vdd, bt.tfin * 1e9
     ln, lp, nf = bt.l_nmos * 1e9, bt.l_pmos * 1e9, bt.nfin
 
-    nd = [f"n{i}" for i in range(1, 6)]
-    lines = [f"* L72 ring-osc control ({bt.name})", f"Vdd vdd 0 {vdd}"]
-    ic = " ".join(f"V({nd[i]})={'0.0' if i % 2 == 0 else vdd}" for i in range(5))
-    # ic: n1=0, n2=vdd, n3=0, n4=vdd, n5=0  (i even -> 0, matches gate)
-    ic = (f"V(n1)=0.0 V(n2)={vdd} V(n3)=0.0 V(n4)={vdd} V(n5)=0.0")
-    lines.append(f".ic {ic}")
-    for i in range(5):
-        inp = nd[i - 1]  # i=0 -> nd[-1]=n5 feedback wrap
-        lines += [
-            f"Mp{i} {nd[i]} {inp} vdd vdd {p} L={lp:.0f}n NFIN={nf} TFIN={tfin_nm:.1f}n",
-            f"Mn{i} {nd[i]} {inp} 0 0 {n} L={ln:.0f}n NFIN={nf} TFIN={tfin_nm:.1f}n",
-            f"Cl{i} {nd[i]} 0 0.5f"]
-    lines += [f".model {n} NMOS (LEVEL=72)", f".model {p} PMOS (LEVEL=72)",
-              f".tran {RO_TSTEP:.0e} {RO_TSTOP:.0e}", ".end"]
+    stages, initial_conditions = render_ring_stages(
+        n_stages=5,
+        p_prefix="M",
+        n_prefix="M",
+        p_device=(
+            f"{p} L={lp:.0f}n NFIN={nf} TFIN={tfin_nm:.1f}n"
+        ),
+        n_device=(
+            f"{n} L={ln:.0f}n NFIN={nf} TFIN={tfin_nm:.1f}n"
+        ),
+        cload=0.5e-15,
+        vdd=vdd,
+    )
+    deck = render_template(SIMPLE_DECKS / "ring_oscillator.spice.tmpl", {
+        "MODEL_SETUP": (
+            f".model {n} NMOS (LEVEL=72)\n"
+            f".model {p} PMOS (LEVEL=72)"
+        ),
+        "TEMP": "27", "VDD": f"{vdd}",
+        "RING_STAGES": stages, "RING_IC": initial_conditions,
+        "ANALYSIS": f".tran {RO_TSTEP:.0e} {RO_TSTOP:.0e}",
+    })
 
     logging.disable(logging.CRITICAL)
     try:
-        parser = _parse_l72("\n".join(lines) + "\n", work / "ring.sp",
-                            merged, n, p)
+        parser = _parse_l72(deck, work / "ring.sp", merged, n, p)
         circuit = parser.circuit
         op = _uic_op(circuit)
         solver = TransientSolver(
@@ -187,26 +196,23 @@ def opamp(bt: BenchTech) -> Dict:
     vcm, vbn, vbp = _bias(bt)
     lo, hi = round(vcm - 0.15, 3), round(vcm + 0.15, 3)
 
-    deck = f"""* L72 opamp control ({bt.name})
-Vdd vdd 0 {vdd}
-Vbn vbn 0 {vbn}
-Vbp vbp 0 {vbp}
-Vinn inn 0 {vcm}
-Vinp inp 0 {vcm}
-Mn1 n1   inp vtail 0   {n} L={ln:.0f}n NFIN={nf} TFIN={tfin_nm:.1f}n
-Mn2 vo1i inn vtail 0   {n} L={ln:.0f}n NFIN={nf} TFIN={tfin_nm:.1f}n
-Mp3 n1   n1  vdd   vdd {p} L={lp:.0f}n NFIN={nf} TFIN={tfin_nm:.1f}n
-Mp4 vo1i n1  vdd   vdd {p} L={lp:.0f}n NFIN={nf} TFIN={tfin_nm:.1f}n
-Mn5 vtail vbn 0    0   {n} L={ln:.0f}n NFIN={nf} TFIN={tfin_nm:.1f}n
-Mp6 vout vo1i vdd vdd {p} L={lp:.0f}n NFIN={nf} TFIN={tfin_nm:.1f}n
-Mn7 vout vbn  0   0   {n} L={ln:.0f}n NFIN={nf} TFIN={tfin_nm:.1f}n
-Cc vo1i vout 20f
-CL vout 0 50f
-.model {n} NMOS (LEVEL=72)
-.model {p} PMOS (LEVEL=72)
-.dc Vinp {lo} {hi} 0.002
-.end
-"""
+    deck = render_template(SIMPLE_DECKS / "opamp_miller.spice.tmpl", {
+        "MODEL_SETUP": (
+            f".model {n} NMOS (LEVEL=72)\n"
+            f".model {p} PMOS (LEVEL=72)"
+        ),
+        "TEMP": "27", "VDD": f"{vdd}",
+        "VBN": f"{vbn}", "VBP": f"{vbp}", "VCM": f"{vcm}",
+        "N_PREFIX": "M", "P_PREFIX": "M",
+        "N_DEVICE": (
+            f"{n} L={ln:.0f}n NFIN={nf} TFIN={tfin_nm:.1f}n"
+        ),
+        "P_DEVICE": (
+            f"{p} L={lp:.0f}n NFIN={nf} TFIN={tfin_nm:.1f}n"
+        ),
+        "CC": "20f", "CL": "50f",
+        "ANALYSIS": f".dc Vinp {lo} {hi} 0.002",
+    })
     # Force the SAME DC-sweep path the NN opamp uses: continuation-first
     # (warm start, source-stepping OFF) + GMIN retry. run_dc_sweep keys this on
     # _circuit_has_nn (True only for LEVEL>=73). For an apples-to-apples

@@ -11,7 +11,7 @@ contract before comparing results.
 | [`simple-circuits-v2-topologies.md`](simple-circuits-v2-topologies.md) | held-out simple-topology catalog, corner matrix, harness and promotion contract |
 | [`DirectNet-L73-clean.md`](DirectNet-L73-clean.md) | production DirectNet, all clean tiers |
 | [`BSIM-AR-L74-clean.md`](BSIM-AR-L74-clean.md) | autoregressive Transformer, all clean tiers |
-| [`DirectNet-L75-clean.md`](DirectNet-L75-clean.md) | full-terminal DirectNet production qualification and AnalogGym accuracy |
+| [`DirectNet-L75-clean.md`](DirectNet-L75-clean.md) | full-terminal DirectNet production qualification |
 | [`DirectNet-L75-v763-targeted.md`](DirectNet-L75-v763-targeted.md) | V7.6.3 targeted four-scale recovery; not a clean-matrix replacement |
 | [`DirectNet-L75-v764-terminal-followup.md`](DirectNet-L75-v764-terminal-followup.md) | terminal-length, globalization, matched-data, and Jacobian experiments; no promotion |
 | [`BSIM-AR-L76-clean.md`](BSIM-AR-L76-clean.md) | full-terminal autoregressive Transformer, all clean tiers |
@@ -19,16 +19,14 @@ contract before comparing results.
 | [`BSIM-AR-L74-recipes.md`](BSIM-AR-L74-recipes.md) | historical BSIM-AR recipe study |
 | [`simple-circuits-recheck-2026-08-19.md`](simple-circuits-recheck-2026-08-19.md) | superseded V7.5.15 campaign audit trail |
 | [`archive-pre-gds-fix.md`](archive-pre-gds-fix.md) | retracted pre-V6.13 claims |
-| [`../../examples/complex_circuits/RESULTS_TSMC.md`](../../examples/complex_circuits/RESULTS_TSMC.md) | separate AnalogGym campaign |
 
 ## Clean scoreboard
 
 <!--SCOREBOARD-->
 
-The reduced rows come from the V7.5.17 CPU-pinned campaign. DirectNet-Full
-comes from the isolated 240-job V7.6.2 pass; BSIM-AR-Full remains on V7.6.1
-evidence. Recipe columns are historical and are not direct deltas against the
-current clean contracts.
+The reduced rows remain pinned to the published V7.5.17 CPU campaign. Both
+full-terminal rows come from the combined V7.6.6 clean pass. Recipe columns
+are historical and are not direct deltas against the current clean contracts.
 
 TSMC6 remains in the denominator as a controlled repeat of TSMC7. Their
 LEVEL=72 data are identical, so disagreement measures training and Newton-basin
@@ -36,26 +34,9 @@ variability rather than an independent technology result.
 
 ## Evidence and reproduction
 
-Each family report is published only from one complete campaign. The current
-DirectNet-Full row requires 240 jobs and 120 checkpoint artifacts; partial
-passes are never backfilled from older evidence.
-
-```bash
-conda run -n pycircuitsim python scripts/v710_regate_collect.py \
-  --root results/v762_directnet_full_clean --require-manifest
-
-BSIMAR_CHECKPOINT_DIR="$PWD/results/v762_directnet_full_checkpoints" \
-conda run -n pycircuitsim python scripts/v730_coverage.py \
-  --tag dnf --set clean --passes v762-directnet-full \
-  --require-complete --fail-on-gaps
-
-conda run -n pycircuitsim python scripts/v730_docs_build.py \
-  --only dnf --recipes clean
-conda run -n pycircuitsim python scripts/v730_docs_build.py \
-  --check --only dnf --recipes clean
-```
-
-Current DirectNet-Full evidence is local and gitignored under
-`results/v762_directnet_full_clean/` and
-`results/v762_directnet_full_analoggym_tsmc{5,6,7,12,16}/`. BSIM-AR-Full
-remains on the preserved V7.6.1 campaign.
+Each family report is published only from one complete campaign. The V7.6.6
+full-terminal evidence requires 480 jobs and 280 checkpoint artifacts; partial
+passes are never backfilled from older evidence. Raw evidence is local and
+gitignored under `results/v766_full_clean/`, with datasets, checkpoints, and
+training logs in the sibling `results/v766_full_*` roots. Reproduction commands
+are owned by the repository [README](../../README.md).

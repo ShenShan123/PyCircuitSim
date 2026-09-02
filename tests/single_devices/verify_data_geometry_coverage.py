@@ -29,7 +29,7 @@ import sys
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import List, Optional, Sequence, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 
@@ -84,13 +84,6 @@ def _bin_containing(
             if v.nfinmin <= nfin <= v.nfinmax:
                 return (v.lmin, v.lmax, v.nfinmin, v.nfinmax)
     return None
-
-
-def _nearest_ratio(target: float, knots: Sequence[float]) -> Optional[float]:
-    """max(target/k, k/target) for the closest knot; None if there are none."""
-    if len(knots) == 0 or target <= 0:
-        return None
-    return min(max(target / k, k / target) for k in knots if k > 0)
 
 
 @lru_cache(maxsize=None)

@@ -5,7 +5,6 @@ This module provides plotting capabilities for DC sweep and transient analysis
 results using matplotlib.
 """
 
-import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
 from pathlib import Path

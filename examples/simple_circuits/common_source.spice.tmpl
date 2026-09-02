@@ -1,0 +1,11 @@
+* Parameterized common-source amplifier
+<MODEL_SETUP>
+.temp <TEMP>
+Vdd vdd 0 <VDD>
+Vin in 0 <INPUT_SPEC>
+<LOAD_NETWORK>
+<BULK_NETWORK>
+<DEVICE_PREFIX>dut out in <SOURCE_NODE> <BULK_NODE> <DEVICE>
+<OUTPUT_LOAD>
+<ANALYSIS>
+.end

@@ -32,7 +32,7 @@ Gate definitions, strict-OMP scoring, comparability, and evidence rules are in
 | `xl` | 512 × 8 | ≈ 2.13 M | 3.4 ms/eval |
 
 > **Denominators changed in V7.3.0.** TSMC6 is now folded into the headline, so
-> complex totals are **/20**, device AC **/10** and opamp AC **/5**. Every
+> circuit totals are **/20**, device AC **/10** and opamp AC **/5**. Every
 > earlier report scored /16, /8 and /4 over the four electrically distinct
 > techs. **No total here is comparable to a pre-V7.3.0 total without
 > rescaling.**
@@ -41,7 +41,7 @@ TSMC6 remains the controlled repeat defined in `methodology.md` §7.
 
 ---
 
-## 1. Headline — complex gates by tier
+## 1. Headline — circuit gates by tier
 
 Strict: a cell passes only if it passes at OMP ∈ {1, 2, 4}.
 
@@ -70,7 +70,7 @@ under-drives, and no amount of capacity has ever moved that.
 **The TSMC6 column remains the controlled repeat.**
 TSMC6 and TSMC7 train on bit-identical rows with an identical recipe, so every
 disagreement between them is training-run luck and nothing else. In V7.5.17
-they agree on **15/16 complex verdicts**; the sole split is the `large` SRAM
+they agree on **15/16 circuit verdicts**; the sole split is the `large` SRAM
 lobe-positivity gate. Both columns reject every opamp fixed point under the
 current convergence contract.
 
@@ -130,7 +130,7 @@ until the operating-point gate converges.
 | **`switchcap` at `small`** | 4/5 fail on **hold droop**, the half of the gate the headline metric does not show. The charge number is inside threshold on all four. |
 | **Device and opamp AC** | 0/10 and 0/5 at every tier. Fix the DC operating-point convergence/basin before interpreting charge dynamics. |
 
-Switchcap is the strongest complex class at 15/20; SRAM is 8/20. The expanded
+Switchcap is the strongest circuit class at 15/20; SRAM is 8/20. The expanded
 device gates retain every DC and transient failure in their `/129` and `/100`
 denominators. The unresolved fixed-point classes are the low-VDD ring and every
 Miller opamp; AC must remain downstream of those.

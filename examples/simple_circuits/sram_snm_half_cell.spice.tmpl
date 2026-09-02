@@ -1,0 +1,12 @@
+* 6T SRAM read-SNM half-cell transfer curve
+<MODEL_SETUP>
+.temp <TEMP>
+Vdd vdd 0 <VDD>
+Vwl wl 0 <WL>
+Vbl bl 0 <VDD>
+Vq q 0 0
+<P_PREFIX>pl qb q vdd vdd <P_DEVICE>
+<N_PREFIX>nl qb q 0 0 <N_DEVICE>
+<N_PREFIX>na bl wl qb 0 <N_DEVICE>
+<ANALYSIS>
+.end

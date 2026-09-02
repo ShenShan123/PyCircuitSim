@@ -176,9 +176,8 @@ def _resolve_nn_checkpoint(
 
     # Fail loud: log every NN checkpoint resolution so the .lis /
     # stdout makes the universal-vs-per-tech choice and tech_code visible.
-    # V7.2.0 Phase 1a: collapsed — first device prints the full line
-    # (format unchanged; benchmark_collect's `-> <chk>` regex matches it),
-    # repeats are counted and summarised by `_flush_resolver_log` instead
+    # V7.2.0 Phase 1a: collapsed — first device prints the full line; repeats
+    # are counted and summarised by `_flush_resolver_log` instead
     # of printing 6,144 identical lines for a 32x32 array.
     _resolver_log(
         (level, tech_key, vt_key, chk_name, scope, tech_code),
@@ -230,8 +229,7 @@ def _resolve_nn_checkpoint_uncached(
     blowup.
     """
     from neural_network.config import (
-        CHECKPOINT_DIR, tech_variant_to_code, UNKNOWN_CODE_ID,
-        LOCAL_UNKNOWN_CODE_ID, LOCAL_VARIANT_CODES, local_variant_code,
+        CHECKPOINT_DIR, LOCAL_VARIANT_CODES, local_variant_code,
     )
 
     # ── Env-var override (V5 Phase C): force a specific exp prefix ──────
@@ -991,11 +989,8 @@ class Parser:
 
         name = parts[0]
         nodes = [self._canon_node(n) for n in parts[1:5]]  # d, g, s, b
-        model = parts[5].upper()  # NMOS or PMOS
-
         # Extract geometric parameters (BSIM-CMG: L, NFIN, TFIN, HFIN, FPITCH; NN: L, NFIN)
         L = None
-        W = None
         NFIN = None
         TFIN = None
         HFIN = None
@@ -1006,7 +1001,7 @@ class Parser:
             if part.startswith('L='):
                 L = self._parse_value(part[2:])
             elif part.startswith('W='):
-                W = self._parse_value(part[2:])
+                self._parse_value(part[2:])
             elif part.startswith('NFIN='):
                 NFIN = float(part[5:])  # Number of fins (integer or float)
             elif part.startswith('TFIN='):

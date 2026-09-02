@@ -39,10 +39,9 @@ TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 SIMPLE_V1_CASES = cases(score_version=SIMPLE_V1)
 SIMPLE_V2_CASES = cases(score_version=SIMPLE_V2)
 CIRCS = [case.result_key for case in SIMPLE_V1_CASES]
-LEGACY_SUITE_BY_RESULT = {
-    case.result_key: case.legacy_suite_id
+SUITE_BY_RESULT = {
+    case.result_key: case.campaign_suite
     for case in SIMPLE_V1_CASES
-    if case.legacy_suite_id is not None
 }
 FAMILY = {
     "dn": "DirectNet (L73)",
@@ -201,7 +200,7 @@ def collect(root: Path, require_manifest: bool = False) -> Dict:
                     "gain0_err_db": m.group(3), "f3db_ratio": m.group(4),
                     "mag_nrmse_pct": m.group(5), "phase_inband_deg": m.group(6),
                     "status": m.group(7)}
-        elif suite == "verify_complex_opamp_ac":
+        elif suite == "verify_circuit_opamp_ac":
             for m in _OPAMP_AC.finditer(txt):
                 entry.update(dc_gain_err_db=m.group(2), gbw_ratio=m.group(3),
                              pm_err_deg=m.group(4), mag_nrmse_pct=m.group(5),
@@ -229,7 +228,7 @@ def collect(root: Path, require_manifest: bool = False) -> Dict:
                 entry["min_r2"] = round(min(r[3] for r in rows), 5)
                 entry["max_error"] = max(r[4] for r in rows)
         else:  # circuit benchmarks
-            circ = suite.replace("verify_complex_", "")
+            circ = suite.replace("verify_circuit_", "")
             if circ == "sram_snm":
                 vals = [float(m.group(1)) for m in _SRAM_ROW.finditer(txt)]
                 if vals:
@@ -240,7 +239,7 @@ def collect(root: Path, require_manifest: bool = False) -> Dict:
                     vals = pat.findall(txt)
                     if vals:
                         entry["metric"] = float(vals[-1])
-        if not structured and suite.startswith("verify_complex_"):
+        if not structured and suite.startswith("verify_circuit_"):
             error = _summary_error(txt, tech_dir)
             if error is not None:
                 entry.update(status="ERROR", error=error)
@@ -277,7 +276,7 @@ def _strict(cell: Dict) -> str:
 
 
 def render(data: Dict) -> str:
-    L: List[str] = ["# V7.1.0 re-gate — device suites, AC and strict OMP",
+    L: List[str] = ["# Clean re-gate — device suites, AC and strict OMP",
                     "",
                     "Every number below is measured at the current HEAD (post gds sign +",
                     "guard fix, post V7.0.x perf work, opt-in perf flags OFF), CPU-pinned,",
@@ -317,8 +316,8 @@ def render(data: Dict) -> str:
                 L += [f"**Device CS-amp AC: {npass}/{ntot}**", "",
                       "| tech | NMOS | PMOS |", "|---|---|---|", *rows, ""]
 
-            if "verify_complex_opamp_ac" in g:
-                cells = g["verify_complex_opamp_ac"]
+            if "verify_circuit_opamp_ac" in g:
+                cells = g["verify_circuit_opamp_ac"]
                 rows, npass, ntot = [], 0, 0
                 for t in TECHS:
                     c = cells.get(t, {}).get("omp1")
@@ -368,13 +367,13 @@ def render(data: Dict) -> str:
                       f"| min R² | max error {error_unit} |",
                       "|---|---|---|---|---|---|---|", *rows, ""]
 
-            have_circ = [c for c in CIRCS if LEGACY_SUITE_BY_RESULT[c] in g]
+            have_circ = [c for c in CIRCS if SUITE_BY_RESULT[c] in g]
             if have_circ:
                 rows, npass, ntot = [], 0, 0
                 for t in TECHS:
                     cs = []
                     for c in CIRCS:
-                        cell = g.get(LEGACY_SUITE_BY_RESULT[c], {}).get(t, {})
+                        cell = g.get(SUITE_BY_RESULT[c], {}).get(t, {})
                         if not cell:
                             cs.append("—"); continue
                         v = _verdict(cell)
@@ -392,7 +391,7 @@ def render(data: Dict) -> str:
                 for t in TECHS:
                     cs = []
                     for c in CIRCS:
-                        cell = g.get(LEGACY_SUITE_BY_RESULT[c], {}).get(t, {})
+                        cell = g.get(SUITE_BY_RESULT[c], {}).get(t, {})
                         if not cell:
                             cs.append("—"); continue
                         s = _strict(cell) if c in ("opamp", "ring_osc") else _verdict(cell)

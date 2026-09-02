@@ -5,7 +5,7 @@ This module implements linear passive components like resistors, capacitors,
 and inductors. These devices follow well-defined linear relationships between
 voltage and current.
 """
-from typing import List, Dict, Any
+from typing import List, Dict
 import numpy as np
 
 from pycircuitsim.models.base import Component
@@ -366,9 +366,6 @@ class PulseVoltageSource(VoltageSource):
         # Handle negative time (use initial value)
         if time < 0:
             return self.v1
-
-        # Calculate position within current period
-        t_in_period = time % self.per
 
         # Check if we're still in initial delay
         if time < self.td:

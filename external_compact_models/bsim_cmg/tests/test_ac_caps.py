@@ -19,7 +19,6 @@ Run: pytest tests/test_ac_caps.py -v
 from __future__ import annotations
 
 import pytest
-from pathlib import Path
 
 from pycmg import Model, Instance
 from tests.helpers import (

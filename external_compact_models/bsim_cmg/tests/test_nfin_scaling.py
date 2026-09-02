@@ -17,7 +17,6 @@ Run: pytest tests/test_nfin_scaling.py -v
 
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Dict
 
 import pytest
@@ -87,5 +86,4 @@ def test_nfin_doubles_current(device: str) -> None:
         f"NFIN scaling failed for qg ({device}): "
         f"ratio={ratio_qg:.4f}, qg(1)={r1['qg']:.4e}, qg(2)={r2['qg']:.4e}"
     )
-
 

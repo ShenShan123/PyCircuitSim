@@ -1,0 +1,15 @@
+* Resistor-loaded NMOS differential pair with ideal tail
+<MODEL_SETUP>
+Vdd vdd 0 <VDD>
+Vinp inp 0 DC=<VCM> AC=<AC_INP> 0
+Vinn inn 0 DC=<VCM> AC=<AC_INN> 0
+Vbn bn 0 <BODY_N>
+Rn vdd outn <DIFFPAIR_LOAD>
+Rp vdd outp <DIFFPAIR_LOAD>
+<N_PREFIX>n_l outn inp tail bn <N_DEVICE>
+<N_PREFIX>n_r outp inn tail bn <N_DEVICE>
+Itail tail 0 <TAIL_CURRENT>
+<OUTPUT_LOAD>
+.temp <TEMP>
+<ANALYSIS>
+.end

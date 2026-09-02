@@ -8,14 +8,13 @@ DC and transient common modules.
 """
 from __future__ import annotations
 
-import argparse
 import os
 import re
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Tuple
 
 import numpy as np
 import matplotlib
@@ -43,12 +42,12 @@ NGSPICE_BIN = os.environ.get(
     "NGSPICE_BIN", "/usr/local/ngspice-45.2/bin/ngspice")
 
 #: Every circuit a gate simulates is a file under here — gates render these,
-#: they never carry a topology of their own. See ``render_reference_deck``.
+#: they never carry a topology of their own. See ``render_template``.
 EXAMPLES_DIR = PROJECT_ROOT / "examples"
 DEVICE_DECKS = EXAMPLES_DIR / "single_devices"
 SIMPLE_DECKS = EXAMPLES_DIR / "simple_circuits"
-
-from helpers import bake_inst_params  # noqa: E402
+SUBCIRCUIT_DECKS = EXAMPLES_DIR / "subcircuits"
+from helpers import bake_inst_params as bake_inst_params  # noqa: E402
 
 
 # ---------------------------------------------------------------------------
@@ -270,7 +269,7 @@ def render_deck_text(
     """Render example-deck text with strict placeholder validation.
 
     This is the engine-neutral implementation behind
-    :func:`render_reference_deck`.  Both the LEVEL=72 reference adapter and
+    :func:`render_template`.  Both the LEVEL=72 reference adapter and
     the NN candidate adapter use it, so neither adapter needs a private
     netlist-rewrite convention.
     """
@@ -307,9 +306,9 @@ def render_deck_text(
     return rendered if body_only else rendered + "\n"
 
 
-def render_reference_deck(template_path: Path, subs: Dict[str, str], *,
-                          body_only: bool = False) -> str:
-    """Render a deck from ``examples/`` into runnable netlist text.
+def render_template(template_path: Path, subs: Dict[str, str], *,
+                    body_only: bool = False) -> str:
+    """Render an ``examples/`` template into runnable netlist text.
 
     The gates own stimulus and tolerances; they do NOT own topology. Every
     circuit a gate simulates is a file under ``examples/``, and this is how it
@@ -317,7 +316,7 @@ def render_reference_deck(template_path: Path, subs: Dict[str, str], *,
     documentation deck and an f-string builder drifts, silently, and the
     ``examples/`` copy is the one nobody re-runs.
 
-    The template is a real deck annotated with ``<TOKEN>`` placeholders for the
+    The template is a SPICE deck annotated with ``<TOKEN>`` placeholders for the
     values that vary per technology (``<VDD>``, ``<NMOS>``, the baked-modelcard
     path, ...). Rendering:
 
@@ -550,24 +549,6 @@ def print_tech_params(tech_names: List[str]) -> None:
               f"{tech.default_l_nmos*1e9:4.0f}n | {tech.default_l_pmos*1e9:4.0f}n | "
               f"{tech.default_nfin:4d} | {tech.default_vt:5s} | "
               f"{vt.nmos_model:15s} | {vt.pmos_model:15s}")
-
-
-# ---------------------------------------------------------------------------
-# Generic --tech argument parser
-# ---------------------------------------------------------------------------
-def parse_tech_args(description: str) -> List[str] | int:
-    """Parse --tech CLI arg. Returns list of tech names or exit code on error."""
-    parser = argparse.ArgumentParser(description=description)
-    parser.add_argument("--tech", type=str, default=",".join(TECH_ORDER),
-                        help="Comma-separated tech names (default: all)")
-    args = parser.parse_args()
-
-    tech_names = [t.strip() for t in args.tech.split(",")]
-    for t in tech_names:
-        if t not in ALL_TECHS:
-            print(f"ERROR: Unknown tech '{t}'. Available: {list(ALL_TECHS.keys())}")
-            return 1
-    return tech_names
 
 
 # ---------------------------------------------------------------------------

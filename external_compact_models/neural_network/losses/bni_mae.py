@@ -365,8 +365,7 @@ class ChargeSobolevLoss(nn.Module):
         total = torch.zeros((), device=y_pred_norm.device,
                             dtype=y_pred_norm.dtype)
         n_chan = 0
-        n_heads = len(self.heads)
-        for h, (head, chans) in enumerate(self.heads.items()):
+        for head, chans in self.heads.items():
             qc = self.head_col[head]
             s_q = asinh_scale[qc]
             out_std_q = out_std[qc]
@@ -375,7 +374,6 @@ class ChargeSobolevLoss(nn.Module):
             q_phys_pred = s_q * torch.sinh(u_q)
             factor = torch.sqrt(s_q * s_q + q_phys_pred * q_phys_pred + 1e-40)
             # One autograd.grad per charge head (column-sum trick).
-            retain = not (h == n_heads - 1)  # last head can free the graph
             g = torch.autograd.grad(
                 y_pred_norm[:, qc].sum(), x_norm,
                 create_graph=True, retain_graph=True)[0]    # (B, in_dim)

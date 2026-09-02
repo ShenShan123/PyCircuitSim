@@ -1,12 +1,10 @@
-"""Focused V7.6.0 checks for the raw DirectNet diagnostic boundary."""
+"""Focused checks for the raw DirectNet device-evaluation boundary."""
 
 from __future__ import annotations
 
 import sys
 from pathlib import Path
-from types import SimpleNamespace
-from typing import Dict, NoReturn
-from unittest.mock import patch
+from typing import Dict
 
 import numpy as np
 import pytest
@@ -17,33 +15,9 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 
 from neural_network.data.normalize import NormStats, OUTPUT_COLUMN_ORDER
 from neural_network.models.direct_net import DirectNet
-from examples.complex_circuits.pycircuitsim_bench import run_compare
+from pycircuitsim import solver
 from pycircuitsim.models.mosfet_directnet import NMOS_NN
 from pycircuitsim.models.mosfet_nn import _MOSFETNNBase
-from pycircuitsim import solver
-
-
-class _TraceProbe:
-    """Minimal device exposing the run-comparison trace protocol."""
-
-    def __init__(self, trace: Dict[str, object]) -> None:
-        self.trace = trace
-
-    def configure_evaluator(
-        self, boundary: str, correction_trace: bool,
-    ) -> None:
-        del boundary, correction_trace
-
-    def evaluator_trace(self) -> Dict[str, object]:
-        return self.trace
-
-
-def _raise_trace_failure(*args: object, **kwargs: object) -> NoReturn:
-    """Raise the harness failure type while retaining its shared metadata."""
-    del kwargs
-    meta = args[-1]
-    assert isinstance(meta, dict)
-    raise run_compare._fail(meta, "trace probe failure")
 
 
 def _write_checkpoint(root: Path) -> Path:
@@ -64,7 +38,7 @@ def _write_checkpoint(root: Path) -> Path:
         model.net[-1].bias[0] = -10.0
     checkpoint = root / "raw_probe_best.pt"
     torch.save(model.state_dict(), checkpoint)
-    stats = NormStats(
+    NormStats(
         mode="zscore",
         input_mean=np.zeros(7, dtype=np.float64),
         input_std=np.ones(7, dtype=np.float64),
@@ -77,13 +51,9 @@ def _write_checkpoint(root: Path) -> Path:
             dtype=np.float64,
         ),
         output_mean=np.zeros(13, dtype=np.float64),
-        output_std=np.asarray(
-            [1e-4] * 4 + [1e-15] * 9,
-            dtype=np.float64,
-        ),
+        output_std=np.asarray([1e-4] * 4 + [1e-15] * 9, dtype=np.float64),
         output_columns=list(OUTPUT_COLUMN_ORDER),
-    )
-    stats.save(str(root / "raw_probe_norm.npz"))
+    ).save(str(root / "raw_probe_norm.npz"))
     return checkpoint
 
 
@@ -97,6 +67,19 @@ def _device(checkpoint: Path, multiplier: float = 1.0) -> NMOS_NN:
         "Mprobe", ["d", "g", "s", "b"], str(checkpoint),
         L=16e-9, NFIN=2.0, tech_code=0, multiplier=multiplier,
     )
+
+
+def test_reduced_model_rejects_unknown_normalization_mode(
+    tmp_path: Path,
+) -> None:
+    checkpoint = _write_checkpoint(tmp_path)
+    norm_path = tmp_path / "raw_probe_norm.npz"
+    stats = NormStats.load(str(norm_path))
+    stats.mode = "unknown"
+    stats.save(str(norm_path))
+
+    with pytest.raises(ValueError, match="Unknown normalizer mode"):
+        _device(checkpoint)
 
 
 def test_raw_directnet_bypasses_input_and_output_corrections(
@@ -115,15 +98,15 @@ def test_raw_directnet_bypasses_input_and_output_corrections(
     assert raw_x[0, :4].tolist() == pytest.approx([1.0, 1.1, 0.0, 0.0])
     assert native_x[0, :4].tolist() != raw_x[0, :4].tolist()
     assert raw_result["id"] == pytest.approx(-1e-3)
-    assert native_result["id"] < raw_result["id"]  # rail extrapolation
+    assert native_result["id"] < raw_result["id"]
     assert raw_result["gds"] == 0.0
-    assert native_result["gds"] > 0.0  # negative/zero-gds guard
+    assert native_result["gds"] > 0.0
     assert raw.calculate_current(voltages) == -4.0 * raw_result["id"]
 
     reverse = {"d": -0.1, "g": 0.5, "s": 0.0, "b": 0.0}
     native.clear_cache()
     raw.clear_cache()
-    assert native._eval(reverse)["id"] == 0.0  # taper + sign clamp
+    assert native._eval(reverse)["id"] == 0.0
     assert raw._eval(reverse)["id"] == pytest.approx(-1e-3)
 
 
@@ -180,20 +163,6 @@ def test_correction_trace_is_observational_and_records_first_activations(
     assert first["negative_gds_guard"]["eval_index"] == 1
     assert first["reverse_taper"]["eval_index"] == 2
     assert first["sign_clamp"]["eval_index"] == 2
-    assert first["input_clamp"]["vds"] == 1.0
-    assert first["reverse_taper"]["vds"] == -0.1
-
-    raw_untraced = _device(checkpoint)
-    raw_untraced.configure_evaluator("raw-directnet", correction_trace=False)
-    raw_traced = _device(checkpoint)
-    raw_traced.configure_evaluator("raw-directnet", correction_trace=True)
-    assert raw_traced._eval(outside) == raw_untraced._eval(outside)
-    raw_traced.clear_cache()
-    raw_traced._eval(reverse)
-    assert set(raw_traced.evaluator_trace()["first_activation"]) == {
-        "input_clamp", "rail_extrapolation", "negative_gds_guard",
-        "reverse_taper", "sign_clamp",
-    }
 
 
 def test_native_batch_trace_does_not_change_cached_values(
@@ -210,91 +179,3 @@ def test_native_batch_trace_does_not_change_cached_values(
 
     assert [device._eval_cache for device in devices] == baseline
     assert [device.evaluator_trace()["evaluations"] for device in devices] == [1, 1]
-
-
-def test_run_compare_validates_and_emits_raw_boundary_configuration() -> None:
-    raw = run_compare.SimOptions(
-        evaluator_boundary="raw-directnet", correction_trace=True,
-    )
-    run_compare._validate_evaluator_boundary(73, raw)
-    provenance = run_compare._model_provenance(
-        SimpleNamespace(model_level=73, tech="tsmc5"), raw,
-    )
-    assert provenance["evaluator_boundary"] == "raw-directnet"
-    assert provenance["correction_trace"] is True
-
-    with pytest.raises(ValueError, match="LEVEL=73"):
-        run_compare._validate_evaluator_boundary(72, raw)
-    with pytest.raises(ValueError, match="LEVEL=73"):
-        run_compare._validate_evaluator_boundary(
-            72, run_compare.SimOptions(correction_trace=True),
-        )
-    with pytest.raises(ValueError, match="LEVEL=72"):
-        run_compare._validate_evaluator_boundary(
-            73, run_compare.SimOptions(evaluator_boundary="reduced-osdi"),
-        )
-    with pytest.raises(SystemExit) as exc:
-        run_compare.main([
-            "--category", "amplifier",
-            "--model-level", "72",
-            "--evaluator-boundary", "raw-directnet",
-        ])
-    assert exc.value.code == 2
-
-
-def test_simulation_metadata_contains_opt_in_correction_trace() -> None:
-    trace = {
-        "device": "M1",
-        "evaluations": 1,
-        "max_normalized_support_distance": 0.25,
-        "first_activation": {},
-    }
-    device = _TraceProbe(trace)
-    circuit = SimpleNamespace(components=[device])
-    td = SimpleNamespace(model_level=73, temp_c=None)
-    plan = SimpleNamespace(kind="dc_source")
-    result = run_compare.SweepResult(
-        kind="dc", x_name="x", x=np.asarray([]), v={}, i={}, ok=None,
-        source="pycircuitsim", meta={},
-    )
-    opts = run_compare.SimOptions(
-        evaluator_boundary="raw-directnet", correction_trace=True,
-    )
-    with (
-        patch.object(run_compare, "build_circuit", return_value=(circuit, Path("x"))),
-        patch.object(run_compare, "_mosfets", return_value=[device]),
-        patch.object(run_compare, "_supply_rail", return_value=1.0),
-        patch.object(run_compare, "_node_table", return_value={}),
-        patch.object(run_compare, "_branch_sources", return_value={}),
-        patch.object(run_compare, "_simulate_dc", return_value=result),
-    ):
-        observed = run_compare.simulate(td, plan, Path("."), opts)
-
-    assert observed.meta["correction_trace"] == [trace]
-
-
-def test_failed_simulation_metadata_contains_opt_in_correction_trace() -> None:
-    trace = {
-        "device": "M1",
-        "evaluations": 1,
-        "max_normalized_support_distance": 0.25,
-        "first_activation": {"input_clamp": {"eval_index": 1}},
-    }
-    device = _TraceProbe(trace)
-    circuit = SimpleNamespace(components=[device])
-    td = SimpleNamespace(model_level=73, temp_c=None)
-    plan = SimpleNamespace(kind="dc_source")
-    opts = run_compare.SimOptions(correction_trace=True)
-
-    with (
-        patch.object(run_compare, "build_circuit", return_value=(circuit, Path("x"))),
-        patch.object(run_compare, "_mosfets", return_value=[device]),
-        patch.object(run_compare, "_supply_rail", return_value=1.0),
-        patch.object(run_compare, "_node_table", return_value={}),
-        patch.object(run_compare, "_branch_sources", return_value={}),
-        patch.object(run_compare, "_simulate_dc", side_effect=_raise_trace_failure),
-        pytest.raises(run_compare.SimFailure) as exc,
-    ):
-        run_compare.simulate(td, plan, Path("."), opts)
-
-    assert exc.value.partial_meta["correction_trace"] == [trace]

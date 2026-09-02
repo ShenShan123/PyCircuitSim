@@ -1,0 +1,10 @@
+* Hierarchical one-pole RC low-pass
+.temp <TEMP>
+V1 in 0 DC=<INPUT_DC> AC=<INPUT_AC> <INPUT_PHASE>
+X1 in out lowpass R=<RESISTANCE> C=<CAPACITANCE>
+.subckt lowpass a b R=1k C=1p
+R1 a b {R}
+C1 b 0 {C}
+.ends
+<ANALYSIS>
+.end

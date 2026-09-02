@@ -15,7 +15,12 @@ Clean means one uniform run per technology, polarity, and tier with
 Gate definitions, strict OMP scoring, denominator rules, and comparability are
 owned by [`methodology.md`](methodology.md).
 
-## Headline — complex gates by tier
+## Status
+
+LEVEL=76 remains experimental. This clean scan updates its evidence without
+changing automatic checkpoint resolution.
+
+## Headline — circuit gates by tier
 
 <!--HEADLINE-->
 
@@ -47,5 +52,7 @@ artifacts and identical gate matrix.
 
 Checkpoints are `tsmc{5,6,7,12,16}_tff_{small,medium,large,xl}_{nmos,pmos}`.
 Each requires `_best.pt`, `_norm.npz`, `_config.npz`, and the checksum-bound
-`_best.pt.complete` marker. See the repository README for the complete
-generation, training, gate, coverage, and report commands.
+`_best.pt.complete` marker. This report is the BSIM-AR-Full half of the
+combined 480-job V7.6.6 pass in `results/v766_full_clean/`. See the repository
+README for the complete generation, training, gate, coverage, and report
+commands.

@@ -21,7 +21,7 @@ This module owns the shared plumbing:
   * NGSPICE batch runner wrappers,
   * metric helpers (NRMSE / MRE / R^2 / MaxErr).
 
-The paired files in ``examples/simple_circuits`` own each tested topology.
+One parameterized file in ``examples/simple_circuits`` owns each topology.
 The four verify scripts own orchestration and import from here so they share
 one strict renderer, modelcard cache, and NGSPICE path.
 """
@@ -47,9 +47,9 @@ except (ImportError, ValueError):  # pragma: no cover
     pass
 
 from tests.common.base import (
-    PROJECT_ROOT, OSDI_PATH, NGSPICE_BIN,
+    PROJECT_ROOT, OSDI_PATH,
     ALL_TECHS, TechProfile, VtPair,
-    bake_inst_params, deck_tokens, render_deck_text, run_ngspice_subprocess,
+    bake_inst_params, run_ngspice_subprocess,
 )
 from tests.common.nn import nrmse as _nrmse_pct, mre as _mre_pct
 
@@ -94,14 +94,11 @@ def active_model_label() -> str:
 # RESULTS_BASE is env-overridable so parallel sweeps (e.g. the V6.5.4 checkpoint
 # bake-off) can give each worker an isolated output dir — otherwise concurrent
 # runs of the same (gate, tech) clobber each other's baked modelcards / NGSPICE
-# decks. Default = the committed in-tree path (unchanged for normal runs).
+# decks. Persistent artifacts belong under the repository results tree.
 import os as _os  # noqa: E402
 RESULTS_BASE = Path(_os.environ.get(
     "PYCIRCUITSIM_SIMPLE_RESULTS",
-    _os.environ.get(
-        "PYCIRCUITSIM_COMPLEX_RESULTS",  # persisted campaign compatibility
-        str(PROJECT_ROOT / "tests" / "verify_simple_results"),
-    ),
+    str(PROJECT_ROOT / "results" / "tests" / "simple_circuits"),
 ))
 
 
@@ -415,52 +412,6 @@ def parse_netlist(netlist_path: Path) -> Any:
     return parser
 
 
-def render_directnet_text(
-    template_text: str,
-    bt: BenchTech,
-    substitutions: Optional[Dict[str, str]] = None,
-) -> str:
-    """Render an NN example template using explicit named placeholders.
-
-    The former implementation globally replaced every standalone ``0.80`` and
-    guessed which ``VT=svt`` belonged to which polarity.  That silently
-    rewrote unrelated rails and could not express asymmetric VT, temperature,
-    or geometry.  Templates must now declare every varying value explicitly;
-    missing case-specific values fail loud.
-    """
-    values = {
-        "LEVEL": str(_active_model_level()), "TECH": bt.nn_tech,
-        "NVT": bt.effective_nmos_vt, "PVT": bt.effective_pmos_vt,
-        "VDD": f"{bt.vdd:g}", "LN": f"{bt.l_nmos * 1e9:g}n",
-        "LP": f"{bt.l_pmos * 1e9:g}n", "NFN": str(bt.nfin),
-        "NFP": str(bt.effective_nfin_p),
-        "TEMP": f"{bt.temperature_c:g}",
-    }
-    values.update(substitutions or {})
-    required = deck_tokens(template_text)
-    missing = [name for name in required if name not in values]
-    if missing:
-        raise KeyError(f"DirectNet template needs substitutions {missing}")
-    return render_deck_text(
-        template_text, {name: values[name] for name in required},
-        source_name="DirectNet template",
-    )
-
-
-def render_directnet_netlist(template_path: Path, bt: BenchTech,
-                             out_path: Path) -> Path:
-    """Write a per-tech DirectNet netlist from an examples/ template.
-
-    The templates declare all circuit-varying values as named tokens.  Strict
-    rendering selects the requested model family, technology, VT, supply,
-    geometry, and temperature without rewriting unrelated numeric literals.
-    """
-    text = render_directnet_text(template_path.read_text(), bt)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-    out_path.write_text(text)
-    return out_path
-
-
 def run_directnet_transient(
     netlist_path: Path,
 ) -> Tuple[Dict[str, np.ndarray], bool, str]:
@@ -667,7 +618,6 @@ class SramParams:
     wl_frac=1.0 (plan M6)."""
     nfins: Tuple[int, ...] = (2, 5, 10)
     wl_frac: float = 1.0
-    storage_states: Tuple[str, ...] = ("state1", "state0")
     dc_step: float = 0.005
 
 
@@ -750,23 +700,19 @@ def _catalog_pair(
     bt: BenchTech,
     baked: Path,
     *,
-    candidate_card: str,
-    reference_card: str,
+    analysis_card: str,
     substitutions: Optional[Dict[str, str]] = None,
     ring_n_stages: int = 5,
     ring_cload: float = 0.5e-15,
 ) -> Tuple[str, str]:
-    """Render one parametric twin from the authoritative example pair."""
+    """Render both adapters from one authoritative example template."""
     from tests.common.simple_circuit_catalog import get_case
     from tests.common.simple_circuit_harness import (
         CORNERS, render_case_decks,
     )
 
     case = get_case(case_id)
-    analysis = replace(
-        case.analyses[0], candidate_card=candidate_card,
-        reference_card=reference_card,
-    )
+    analysis = replace(case.analyses[0], card=analysis_card)
     return render_case_decks(
         case, analysis, bt, CORNERS["nominal"], baked_lib=baked,
         substitutions=substitutions, ring_n_stages=ring_n_stages,
@@ -788,8 +734,7 @@ def ngspice_opamp(bt: BenchTech, p: OpAmpParams, baked: Path) -> Dict[str, str]:
     lo, hi = round(vcm - p.span, 3), round(vcm + p.span, 3)
     card = f"dc Vinp {_f(lo)} {_f(hi)} {_f(p.step)}"
     _, reference = _catalog_pair(
-        "opamp", bt, baked, candidate_card=f".{card}",
-        reference_card=card,
+        "opamp", bt, baked, analysis_card=card,
         substitutions={
             "VCM": _f(vcm), "VBN": _f(vbn), "VBP": _f(vbp),
             "CC": _cap(p.cc), "CL": _cap(p.cl),
@@ -805,8 +750,7 @@ def directnet_opamp(bt: BenchTech, p: OpAmpParams) -> str:
     lo, hi = round(vcm - p.span, 3), round(vcm + p.span, 3)
     card = f"dc Vinp {_f(lo)} {_f(hi)} {_f(p.step)}"
     candidate, _ = _catalog_pair(
-        "opamp", bt, Path("<unused>"), candidate_card=f".{card}",
-        reference_card=card,
+        "opamp", bt, Path("<unused>"), analysis_card=card,
         substitutions={
             "VCM": _f(vcm), "VBN": _f(vbn), "VBP": _f(vbp),
             "CC": _cap(p.cc), "CL": _cap(p.cl),
@@ -821,8 +765,8 @@ def ngspice_ringosc(bt: BenchTech, p: RingOscParams, baked: Path,
                     tstop: float) -> Dict[str, str]:
     card = f"tran {_tp(p.tstep)} {_tn(tstop)} uic"
     _, reference = _catalog_pair(
-        "ring_osc", bt, baked, candidate_card=f".{card}",
-        reference_card=card, ring_n_stages=p.n_stages,
+        "ring_osc", bt, baked, analysis_card=card,
+        ring_n_stages=p.n_stages,
         ring_cload=p.cload,
     )
     return {"body": _catalog_body(reference),
@@ -832,8 +776,8 @@ def ngspice_ringosc(bt: BenchTech, p: RingOscParams, baked: Path,
 def directnet_ringosc(bt: BenchTech, p: RingOscParams, tstop: float) -> str:
     card = f"tran {_tp(p.tstep)} {_tn(tstop)} uic"
     candidate, _ = _catalog_pair(
-        "ring_osc", bt, Path("<unused>"), candidate_card=f".{card}",
-        reference_card=card, ring_n_stages=p.n_stages,
+        "ring_osc", bt, Path("<unused>"), analysis_card=card,
+        ring_n_stages=p.n_stages,
         ring_cload=p.cload,
     )
     return candidate
@@ -850,8 +794,7 @@ def ngspice_switchcap(bt: BenchTech, p: SwitchCapParams,
         "PW": _tn(pw), "PER": _tn(per), "CSAMPLE": _cap(p.csample),
     }
     _, reference = _catalog_pair(
-        "switchcap", bt, baked, candidate_card=f".{card}",
-        reference_card=card, substitutions=values,
+        "switchcap", bt, baked, analysis_card=card, substitutions=values,
     )
     return {"body": _catalog_body(reference), "signals": "v(vsamp)",
             "analysis": card}
@@ -862,8 +805,7 @@ def directnet_switchcap(bt: BenchTech, p: SwitchCapParams) -> str:
     vin = round(bt.vdd * p.vin_frac, 3)
     card = f"tran {_tp(p.tstep)} {_tn(tstop)} uic"
     candidate, _ = _catalog_pair(
-        "switchcap", bt, Path("<unused>"), candidate_card=f".{card}",
-        reference_card=card,
+        "switchcap", bt, Path("<unused>"), analysis_card=card,
         substitutions={
             "VIN": _f(vin), "TD": _tn(p.td),
             "SLEW": _tn(p.clk_slew), "PW": _tn(pw), "PER": _tn(per),
@@ -880,8 +822,8 @@ def ngspice_sram_lobe(bt: BenchTech, p: SramParams, nfin: int,
     render_bt = bench_variant(bt, nfin=nfin, nfin_p=nfin)
     card = f"dc Vq 0 {_f(bt.vdd)} {_f(p.dc_step)}"
     _, reference = _catalog_pair(
-        "sram_snm", render_bt, baked, candidate_card=f".{card}",
-        reference_card=card, substitutions={"WL": _f(wl)},
+        "sram_snm", render_bt, baked, analysis_card=card,
+        substitutions={"WL": _f(wl)},
     )
     return {"body": _catalog_body(reference), "signals": "v(qb)",
             "analysis": card}
@@ -893,7 +835,7 @@ def directnet_sram_lobe(bt: BenchTech, p: SramParams, nfin: int) -> str:
     card = f"dc Vq 0 {_f(bt.vdd)} {_f(p.dc_step)}"
     candidate, _ = _catalog_pair(
         "sram_snm", render_bt, Path("<unused>"),
-        candidate_card=f".{card}", reference_card=card,
+        analysis_card=card,
         substitutions={"WL": _f(wl)},
     )
     return candidate
@@ -904,7 +846,7 @@ def directnet_sram_6t(bt: BenchTech, q0: float, qb0: float, nfin: int) -> str:
     render_bt = bench_variant(bt, nfin=nfin, nfin_p=nfin)
     candidate, _ = _catalog_pair(
         "sram6t_modes", render_bt, Path("<unused>"),
-        candidate_card=".op", reference_card="op",
+        analysis_card="op",
         substitutions={
             "WL_SPEC": "0", "BL_SPEC": _f(bt.vdd),
             "BLB_SPEC": _f(bt.vdd), "Q_IC": _f(q0),

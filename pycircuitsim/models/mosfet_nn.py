@@ -39,7 +39,7 @@ if str(_NN_PARENT) not in sys.path:
 from pycircuitsim.models.base import Component
 from neural_network.config import UNKNOWN_CODE_ID
 from neural_network.data.normalize import (
-    NormStats, normalizer_from_stats,
+    NormStats,
     OUTPUT_COLUMN_ORDER, BSIMAR_COLUMN_ORDER,
 )
 
@@ -220,15 +220,6 @@ def _get_nn_device() -> torch.device:
     return _NN_DEVICE
 
 
-# Column indices into OUTPUT_COLUMN_ORDER (the canonical order the
-# normalizer's stats are stored in).
-_OC = {n: i for i, n in enumerate(OUTPUT_COLUMN_ORDER)}
-_OC_ID = _OC["id"]
-_OC_QG = _OC["qg"]
-_OC_QD = _OC["qd"]
-_OC_QB = _OC["qb"]
-
-
 class _MOSFETNNBase(Component):
     """Shared NN-MOSFET implementation used by LEVEL=73 and LEVEL=74."""
 
@@ -335,7 +326,7 @@ class _MOSFETNNBase(Component):
             self._nn_model.to(_get_nn_device())
             _SHARED_NN_MODULES[self._model_key] = self._nn_model
 
-        # ── Norm stats + normalizer ───────────────────────────────────
+        # ── Normalization stats ───────────────────────────────────────
         # V7.2.0 Phase 1a: shared per-file (was one ``NormStats.load``
         # per device, ~8 s of parse at 6144 devices).
         nst = norm_path.stat()
@@ -347,7 +338,10 @@ class _MOSFETNNBase(Component):
             stats = NormStats.load(str(norm_path))
             _SHARED_NORM_STATS[self._norm_key] = stats
         self._norm_stats: NormStats = stats
-        self._normalizer = normalizer_from_stats(self._norm_stats)
+        if self._norm_stats.mode not in {"zscore", "asinh"}:
+            raise ValueError(
+                f"Unknown normalizer mode: {self._norm_stats.mode!r}"
+            )
 
         # ── Tech code ────────────────────────────────────────────────
         self._tech_code = (
@@ -367,7 +361,7 @@ class _MOSFETNNBase(Component):
         #     the trainer's BSIMAR reorder). This branch must win over (2):
         #     until V6.8 it did not, so a LEVEL=74 checkpoint whose norm file
         #     carried ``output_columns`` had every output misread (qg denormed
-        #     as id, ~5x current error) while ``_stats_col`` stayed correct.
+        #     as id, ~5x current error) while the stats lookup stayed correct.
         # (2) E2 4-output head (DirectNet): norm.npz declares a SUBSET
         #     ``output_columns`` (e.g. ["id", "qg", "qd", "qb"]) matching the
         #     model head. Map names to that subset's indices.
@@ -391,10 +385,9 @@ class _MOSFETNNBase(Component):
         self._vdd_estimate = vd_range / 2.0
 
         # ── Pre-resolved denorm constants (V7.0.1) ───────────────────
-        # ``_stats_col`` used to do a ``list.index`` per scalar, 13x per
-        # eval, to rediscover indices fixed at construction. Resolve them
-        # once here. The arithmetic in ``_denorm`` / ``_denorm_deriv`` is
-        # left in exactly its original order — only the lookups moved.
+        # Resolve fixed stats indices once at construction. The arithmetic in
+        # ``_denorm`` / ``_denorm_deriv`` is left in exactly its original
+        # order — only the lookups moved.
         stats_cols = self._norm_stats.output_columns or OUTPUT_COLUMN_ORDER
         self._stats_idx: Dict[str, int] = {
             n: stats_cols.index(n) for n in stats_cols}
@@ -1110,10 +1103,6 @@ class _MOSFETNNBase(Component):
     def _mcol(self, name: str) -> int:
         """Model-output column index for ``name``."""
         return self._out_col[name]
-
-    def _stats_col(self, name: str) -> int:
-        """Index of column ``name`` in the normalizer's stats arrays."""
-        return self._stats_idx[name]
 
     def _denorm(self, name: str, val_norm: float) -> float:
         """Physical value of a single scalar output column.

@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """DirectNet V6.4.7 — S12 (P5): harvest trajectory-corridor bias points.
 
-Run the 4 complex benchmark circuits with PyCircuitSim's NATIVE LEVEL=72
+Run the four circuit benchmarks with PyCircuitSim's native LEVEL=72
 (BSIM-CMG via PyCMG/OSDI) device path — which S6 proved reproduces NGSPICE at
 ratio 1.000 (46.64/46.65 ps) — collect the per-device (Vd,Vg,Vs,Vb)
 trajectories the transistors actually visit, source-shift them into the NN's
@@ -118,7 +118,7 @@ SC_TRAN = ".tran 20p 4.5n"    # > 1 clock period (4 ns): sample + hold covered
 
 
 # ---------------------------------------------------------------------------
-# L72 netlist renderers (topology/analysis mirror the verify_complex_* decks)
+# L72 netlist renderers (topology/analysis mirror the verify_circuit_* templates)
 # ---------------------------------------------------------------------------
 def _models_block(bt: BenchTech) -> str:
     return (f".model {bt.nmos_model} NMOS (LEVEL=72)\n"
@@ -126,7 +126,7 @@ def _models_block(bt: BenchTech) -> str:
 
 
 def render_ring_osc(bt: BenchTech, path: Path) -> Path:
-    """5-stage RO — verify_complex_ring_osc / S6 control, LEVEL=72."""
+    """5-stage RO — verify_circuit_ring_osc / S6 control, LEVEL=72."""
     nd = ["n1", "n2", "n3", "n4", "n5"]
     ln, lp, tf = bt.l_nmos * 1e9, bt.l_pmos * 1e9, bt.tfin * 1e9
     lines = [f"* RO L72 corridor harvest ({bt.name})",
@@ -146,7 +146,7 @@ def render_ring_osc(bt: BenchTech, path: Path) -> Path:
 
 
 def render_opamp(bt: BenchTech, path: Path) -> Path:
-    """Two-stage Miller opamp DC sweep — verify_complex_opamp, LEVEL=72."""
+    """Two-stage Miller opamp DC sweep — verify_circuit_opamp, LEVEL=72."""
     ln, lp, tf = bt.l_nmos * 1e9, bt.l_pmos * 1e9, bt.tfin * 1e9
     vcm = round(bt.vdd * 0.55, 3)
     vbn = round(bt.vdd * 0.45, 3)
@@ -171,7 +171,7 @@ def render_opamp(bt: BenchTech, path: Path) -> Path:
 
 
 def render_switchcap(bt: BenchTech, path: Path) -> Path:
-    """Switched-cap unit cell transient — verify_complex_switchcap, LEVEL=72."""
+    """Switched-cap unit cell transient — verify_circuit_switchcap, LEVEL=72."""
     ln, lp, tf = bt.l_nmos * 1e9, bt.l_pmos * 1e9, bt.tfin * 1e9
     vin = round(bt.vdd * 0.6, 3)
     n, p = bt.nmos_model, bt.pmos_model
@@ -190,7 +190,7 @@ def render_switchcap(bt: BenchTech, path: Path) -> Path:
 
 
 def render_sram_halfcell(bt: BenchTech, path: Path) -> Path:
-    """SRAM read-SNM butterfly half-cell DC sweep — verify_complex_sram, L72."""
+    """SRAM read-SNM butterfly half-cell DC sweep — verify_circuit_sram, L72."""
     ln, lp, tf = bt.l_nmos * 1e9, bt.l_pmos * 1e9, bt.tfin * 1e9
     n, p = bt.nmos_model, bt.pmos_model
     lines = [
@@ -274,7 +274,7 @@ def run_ngspice_nodes(bt: BenchTech, body_lines: List[str], analysis: str,
     The opamp + SRAM-butterfly DC sweeps diverge under PyCircuitSim's NR for
     the *raw* L72 device (no NN gds-floor / smooth clamp), so their
     ground-truth trajectories are harvested from NGSPICE — the SAME teacher the
-    verify_complex_* gates use (S6: native L72 == NGSPICE at ratio 1.000, so
+    verify_circuit_* gates use (S6: native L72 == NGSPICE at ratio 1.000, so
     this is ground-truth-equivalent to the RO/SC L72 transients). Columns are
     mapped by the wr_vecnames header so the (x,y)-per-vector layout cannot
     confound. Returns ``{"__axis__": sweep, node: values, ...}``.
@@ -468,7 +468,6 @@ def eval_and_save(tech: str, dev: str, acc: Dict, bt: BenchTech,
 
 def validate_shift_equivalence(tech: str) -> None:
     """OSDI is difference-only: eval at a lifted frame == eval at Vs=0 frame."""
-    bt = BENCH[tech.upper()]
     variant = BENCH_VARIANT[tech]
     cfg = TECH_CONFIGS[tech]
     built = _create_model_and_instance(cfg, "nmos", variant, L_NMOS,

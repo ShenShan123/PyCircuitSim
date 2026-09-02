@@ -325,8 +325,6 @@ class DirectNet(nn.Module):
         self.tech_embed_dim = tech_embed_dim
         self._tech_embed_dropout = tech_embed_dropout
         self._unknown_code_id = unknown_code_id
-        self._monotonic = monotonic
-        self._ekv_core = ekv_core
 
         self.tech_embedding = nn.Embedding(num_tech_codes, tech_embed_dim)
 

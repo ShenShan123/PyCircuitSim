@@ -39,11 +39,11 @@ from neural_network.config import (
 from neural_network.data.dataset import MOSFETDataset, load_and_split_bsimar
 from neural_network.data.contracts import (
     BSIMAR_FULL_TERMINAL_COLUMN_ORDER,
+    FULL_TERMINAL_OUTPUT_COLUMN_ORDER,
     FULL_TERMINAL_OUTPUT_CONTRACT,
 )
 from neural_network.data.normalize import (
-    BSIMAR_COLUMN_ORDER, FULL_TERMINAL_OUTPUT_COLUMN_ORDER,
-    OUTPUT_COLUMN_ORDER,
+    BSIMAR_COLUMN_ORDER, OUTPUT_COLUMN_ORDER,
     _NormalizerBase,
 )
 from neural_network.losses.bni_mae import MAELoss, compute_lds_weights_per_target

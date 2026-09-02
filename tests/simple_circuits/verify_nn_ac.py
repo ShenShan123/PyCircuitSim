@@ -44,21 +44,23 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from tests.common.circuit_benchmarks import (  # noqa: E402
-    BENCH, BENCH_TECHS, active_model_label, active_model_name,
+    BENCH, BENCH_TECHS, BenchTech, active_model_label, active_model_name,
     get_baked_modelcard,
     run_ngspice_wrdata,
 )
+from tests.common.base import SIMPLE_DECKS, render_template  # noqa: E402
 from tests.common.circuit_ac import (  # noqa: E402
     ac_freq_grid, run_ngspice_ac_baked, run_directnet_ac, ac_metrics_extended,
     fmt_hz,
 )
 
 # Env-overridable so parallel checkpoint bake-offs can isolate output dirs
-# (same idiom as PYCIRCUITSIM_COMPLEX_RESULTS in tests/common/circuit_benchmarks.py).
+# (same idiom as the shared simple-circuit results root).
 import os as _os  # noqa: E402
 RESULTS_BASE = Path(_os.environ.get(
     "PYCIRCUITSIM_NN_RESULTS",
-    str(PROJECT_ROOT / "tests" / "verify_nn_ac_results")))
+    str(PROJECT_ROOT / "results" / "tests" / "nn_ac")))
+CS_TEMPLATE = SIMPLE_DECKS / "common_source.spice.tmpl"
 
 # CS-amp passive load (matches verify_ac.py L2 scale).
 RD = "50k"
@@ -83,44 +85,70 @@ MAG_NRMSE_TOL = 0.10              # 10% of peak |V| (overall magnitude shape)
 # ---------------------------------------------------------------------------
 # Deck builders (NMOS + PMOS common-source amplifier; no external load cap)
 # ---------------------------------------------------------------------------
-def _ngspice_body(bt, device: str, baked: Path, vbias_token: str) -> List[str]:
+def _common_source_values(
+    bt: BenchTech, device: str, input_spec: str,
+) -> Dict[str, str]:
+    """Return engine-neutral values for one polarity of the shared template."""
+    if device == "nmos":
+        load_network = f"Rd vdd out {RD}"
+        source_node = bulk_node = "0"
+    elif device == "pmos":
+        load_network = f"Rd out 0 {RD}"
+        source_node = bulk_node = "vdd"
+    else:
+        raise ValueError(f"unknown common-source polarity: {device}")
+    return {
+        "TEMP": "27", "VDD": f"{bt.vdd:g}", "INPUT_SPEC": input_spec,
+        "LOAD_NETWORK": load_network, "BULK_NETWORK": "",
+        "SOURCE_NODE": source_node, "BULK_NODE": bulk_node,
+        "OUTPUT_LOAD": "",
+    }
+
+
+def _ngspice_body(
+    bt: BenchTech, device: str, baked: Path, vbias_token: str,
+) -> List[str]:
     """NGSPICE BSIM-CMG body. ``vbias_token`` is the Vin source spec, e.g.
     ``"dc 0.3 ac 1"`` (AC run) or ``"0.0"`` (DC bias sweep placeholder)."""
-    head = [f'.include "{baked}"', ".temp 27", f"VDD vdd 0 {bt.vdd:g}",
-            f"Vin in 0 {vbias_token}"]
     if device == "nmos":
-        body = [f"RD vdd out {RD}", f"Nn1 out in 0 0 {bt.nmos_model}"]
-    else:  # pmos
-        body = [f"Np1 out in vdd vdd {bt.pmos_model}", f"RD out 0 {RD}"]
-    return head + body
+        model = bt.nmos_model
+    elif device == "pmos":
+        model = bt.pmos_model
+    else:
+        raise ValueError(f"unknown common-source polarity: {device}")
+    deck = render_template(CS_TEMPLATE, {
+        **_common_source_values(bt, device, vbias_token),
+        "MODEL_SETUP": f'.include "{baked}"',
+        "DEVICE_PREFIX": "N", "DEVICE": model, "ANALYSIS": "",
+    }, body_only=True)
+    return deck.splitlines()
 
 
-def _directnet_deck(bt, device: str, vbias: float, ac_card: str) -> str:
-    # Hierarchical deck (V6.12.0): the CS-amp core (device + load R) is a
-    # .subckt instance; in/out/vdd stay top-level via the ports.
+def _directnet_deck(
+    bt: BenchTech, device: str, vbias: float, ac_card: str,
+) -> str:
+    """Render the candidate adapter from the common-source template."""
     if device == "nmos":
         ln = bt.l_nmos * 1e9
-        dev = (f".subckt csamp in out vdd\n"
-               f"RD vdd out {RD}\n"
-               f"Mn1 out in 0 0 nmos_nn L={ln:.0f}n NFIN={bt.nfin}\n"
-               f".ends\n")
-        model = (f".model nmos_nn NMOS "
-                 f"(LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})\n")
-    else:  # pmos
+        model_setup = (
+            f".model nmos_nn NMOS "
+            f"(LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})"
+        )
+        model = f"nmos_nn L={ln:.0f}n NFIN={bt.nfin}"
+    elif device == "pmos":
         lp = bt.l_pmos * 1e9
-        dev = (f".subckt csamp in out vdd\n"
-               f"Mp1 out in vdd vdd pmos_nn L={lp:.0f}n NFIN={bt.effective_nfin_p}\n"
-               f"RD out 0 {RD}\n"
-               f".ends\n")
-        model = (f".model pmos_nn PMOS "
-                 f"(LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})\n")
-    return (
-        f"* {device.upper()} CS amp AC — {active_model_label()} ({bt.name})\n"
-        f"VDD vdd 0 {bt.vdd:g}\n"
-        f"Vin in 0 DC={vbias:g} AC=1 0\n"
-        f"Xamp in out vdd csamp\n"
-        + dev + model + f".{ac_card}\n.end\n"
-    )
+        model_setup = (
+            f".model pmos_nn PMOS "
+            f"(LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})"
+        )
+        model = f"pmos_nn L={lp:.0f}n NFIN={bt.effective_nfin_p}"
+    else:
+        raise ValueError(f"unknown common-source polarity: {device}")
+    return render_template(CS_TEMPLATE, {
+        **_common_source_values(bt, device, f"DC={vbias:g} AC=1 0"),
+        "MODEL_SETUP": model_setup, "DEVICE_PREFIX": "M",
+        "DEVICE": model, "ANALYSIS": f".{ac_card}",
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -214,7 +242,7 @@ def eval_cs_amp(tech: str, device: str) -> Dict[str, object]:
 
     # Each side at its OWN mid-rail (Vout≈VDD/2) amplifying bias.
     ng_vbias, ng_vout = find_ng_bias(bt, device, baked, work_dir, tag)
-    nn_vbias, nn_vout_scan = find_nn_bias(bt, device, work_dir, tag)
+    nn_vbias, _ = find_nn_bias(bt, device, work_dir, tag)
 
     ng_body = _ngspice_body(bt, device, baked, f"dc {ng_vbias:g} ac 1")
     v_ng = run_ngspice_ac_baked(ng_body, work_dir, f"{tag}_ac", ac_card,
@@ -324,8 +352,7 @@ def main() -> int:
                 rows.append(dict(tech=tech, device=device, error=str(exc),
                                  passed=False))
 
-    # Parseable summary table (distinct 'AC' leading token → no collision with
-    # the device-table parser; benchmark_collect.parse_ac_device_log reads this).
+    # Human-readable summary table; structured markers carry campaign verdicts.
     print("\n" + "=" * 78)
     print("  AC SUMMARY TABLE")
     print("=" * 78)

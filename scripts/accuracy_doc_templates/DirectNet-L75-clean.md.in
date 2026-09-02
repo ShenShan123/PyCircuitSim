@@ -1,4 +1,4 @@
-# DirectNet-Full (LEVEL=75) — production qualification
+# DirectNet-Full (LEVEL=75) — clean full-terminal scan
 
 This experimental DirectNet learns six independent OSDI terminal surfaces:
 `i_d`, `i_g`, `i_b`, `qd`, `qg`, and `qb`. Source current and charge are
@@ -14,94 +14,35 @@ No reduced-head loss or correction path is enabled.
 Gate definitions, strict OMP scoring, denominator rules, and comparability are
 owned by [`methodology.md`](methodology.md).
 
-## Production decision
+## Status
 
-**Do not promote LEVEL=75.** No tier satisfies the production circuit gates.
-The best strict tier is small at 8/20; the production-sized `large` tier is
-5/20 and passes 0/248 tracked AnalogGym decks. LEVEL=73 `large` therefore
-remains the served DirectNet path.
+LEVEL=75 remains an experimental family. This clean scan updates its evidence;
+it does not change the served LEVEL=73 DirectNet path.
 
 ## Headline — circuit gates by tier
 
 <!--HEADLINE-->
 
-Twenty-five of the 80 strict circuit cells pass: all 20 ring oscillators,
-three small-tier SRAM cells, and the XL TSMC6/TSMC7 opamps. The tier curve is
-**8 → 5 → 5 → 7/20**; larger models therefore show no monotonic
-qualification gain.
-
 ## By testcase
 
 <!--TESTCASE-->
-
-Every ring-oscillator cell passes with zero thread-count flips, while every
-switched-capacitor cell fails. Only the small-tier TSMC5/TSMC6/TSMC7 SRAM cells
-and the XL TSMC6/TSMC7 opamps pass their strict circuit gates. The other rows
-are scientific/runtime qualification failures, not missing jobs, and remain
-in the denominator without invented numeric metrics.
 
 ## By technology
 
 <!--BYTECH-->
 
-TSMC6 and TSMC7 are the controlled repeat and produce identical scores. They
-count as two campaign columns but only one independent ground truth.
+TSMC6 and TSMC7 count as two campaign columns but remain one controlled
+ground-truth repeat.
 
 ## By scale
 
 <!--BYSCALE-->
 
-Neither the complex curve nor the device-level curves improve monotonically
-with parameter count. Capacity alone does not resolve the observed interface
-and support-envelope failures.
-
 ## Device and AC suites
 
 <!--DEVICE-->
 
-Parametric DC passes **115 → 115 → 114 → 114/129** configurations after the
-PMOS scalar-current boundary correction. Parametric transient passes
-**95 → 95 → 91 → 90/100**. Unsupported and failed configurations remain in
-both denominators, while numeric aggregates use only rows that returned
-commensurate metrics. Device CS-amp AC improves from **8/10** at small to
-**10/10** at every larger tier. Opamp open-loop AC is
-**0 → 0 → 0 → 1/5**.
-
-## AnalogGym complex-circuit accuracy
-
-The production-sized `large` checkpoint pair for each technology was evaluated over the tracked 255-row basket in `examples/complex_circuits/`. NGSPICE 45.2 used LEVEL=72 as ground truth; DirectNet-Full used LEVEL=75 on CPU with one OpenMP, MKL, and Torch thread. Seven whole-deck invalid examples remain quarantined, leaving **248 scored decks. DirectNet-Full passes 0/248.**
-
-| tech | AC | dc_source | dc_temp | transient | total | Py failures | NG failures |
-|---|:--:|:--:|:--:|:--:|:--:|--:|--:|
-| TSMC5 | 0/27 | 0/6 | 0/9 | 0/7 | **0/49** | 36 | 0 |
-| TSMC6 | 0/28 | 0/6 | 0/9 | 0/7 | **0/50** | 36 | 0 |
-| TSMC7 | 0/28 | 0/6 | 0/9 | 0/7 | **0/50** | 36 | 0 |
-| TSMC12 | 0/28 | 0/6 | 0/9 | 0/7 | **0/50** | 32 | 0 |
-| TSMC16 | 0/28 | 0/6 | 0/9 | 0/6 | **0/49** | 34 | 3 |
-| **all** | **0/139** | **0/30** | **0/45** | **0/34** | **0/248** | **174** | **3** |
-
-| tech | comparable metric cells agreeing | missing Py values | quarantined metric cells |
-|---|---:|---:|---:|
-| TSMC5 | 8/63 | 239 | 20 |
-| TSMC6 | 3/58 | 245 | 19 |
-| TSMC7 | 3/58 | 245 | 19 |
-| TSMC12 | 16/79 | 224 | 19 |
-| TSMC16 | 11/68 | 202 | 30 |
-| **all** | **41/326** | **1155** | **107** |
-
-Voltage-state metrics use only rows that produced comparable operating-point or DC-sweep samples; incomplete rows remain failures in the deck denominator.
-
-| technology | rows with state data | samples | MRE | R² | NRMSE | max abs error |
-|---|---:|---:|---:|---:|---:|---:|
-| TSMC5 | 9 | 4269 | 40.7% | -0.706134 | 43.9% | 0.9831 V |
-| TSMC6 | 9 | 4451 | 41.37% | -0.353539 | 38.56% | 0.989809 V |
-| TSMC7 | 9 | 4451 | 41.37% | -0.353539 | 38.56% | 0.989809 V |
-| TSMC12 | 14 | 6002 | 37.34% | -0.234386 | 37.64% | 1.1389 V |
-| TSMC16 | 11 | 6127 | 13.64% | 0.928219 | 8.729% | 0.58004 V |
-
-Aggregate SHA-256 `0228f7db941b569efdf6e8c5a7ee0149629a93adc3dcddbc5da9af04ebcfc397` pins simulation commit `5eabb6bf09107c674ad08d180631a5b6b2a5d909`, the five checkpoint pairs, normalization and completion hashes, modelcards, the LEVEL=72 OSDI binary, NGSPICE, and per-deck fidelity policy. Detailed circuit evidence and quarantine ownership are in [`examples/complex_circuits/RESULTS_TSMC.md`](../../examples/complex_circuits/RESULTS_TSMC.md). The upstream AnalogGym source tree is absent, so this is a complete tracked-deck rerun, not a refreshed source-topology audit.
-
-## Qualification verdict
+## Interpretation
 
 The tables preserve every scientific failure and every declared parametric
 configuration. Numeric aggregates omit only rows that produced no numeric
@@ -109,25 +50,15 @@ metric; those rows remain in the denominator as `ERROR`. Tier comparisons are
 within this family, and the TSMC6 column is the controlled TSMC7 repeat rather
 than an independent ground truth.
 
-DirectNet-Full is **not promotion-ready**. The regenerated models repair the
-PMOS scalar boundary, pass every ring-oscillator gate, and retain strong
-device-level AC above the small tier, but still fail the SRAM,
-switched-capacitor, and most opamp qualification needed to replace LEVEL=73.
-Promotion requires closing the remaining circuit convergence, accuracy, and
-certified-support failures, then passing future complete clean and AnalogGym
-gates.
+Promotion requires a complete tier to satisfy the declared circuit, device,
+and AC gates. Read scientific failures and explicit `ERROR` rows directly from
+the tables rather than inferring them from model size.
 
 ## Reproduction
 
 Checkpoints are `tsmc{5,6,7,12,16}_dnf_{small,medium,large,xl}_{nmos,pmos}`.
 Each requires `_best.pt`, `_norm.npz`, and the checksum-bound
-`_best.pt.complete` marker. This report is the isolated 240-job DirectNet-Full
-family pass in `results/v762_directnet_full_clean/`. AnalogGym evidence is in
-`results/v762_directnet_full_analoggym_tsmc{5,6,7,12,16}/`, with the aggregate
-at `results/v762_directnet_full_analoggym_aggregate.json`. The TSMC12
-`front_end_25_6T_schematic/tb_dc` row exceeded the default 3,600-second wall
-limit and completed from fresh scratch under a 7,200-second allowance; its
-model pins, thread count, and fidelity policy were unchanged. The combined
-DirectNet / BSIM-AR scoreboard is intentionally unchanged because V7.6.2
-reran only DirectNet-Full. See the repository README for the complete
-generation, training, gate, coverage, and report commands.
+`_best.pt.complete` marker. This report is the DirectNet-Full half of the
+combined 480-job V7.6.6 pass in `results/v766_full_clean/`. See the repository
+README for the complete generation, training, gate, coverage, and report
+commands.

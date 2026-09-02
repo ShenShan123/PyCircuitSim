@@ -28,9 +28,6 @@ from typing import Optional
 
 import numpy as np
 
-from neural_network.data.contracts import FULL_TERMINAL_OUTPUT_COLUMN_ORDER
-
-
 # ── Output column ordering and floors ──────────────────────────────────────
 
 OUTPUT_COLUMN_ORDER = [

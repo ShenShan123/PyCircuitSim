@@ -3,9 +3,8 @@
 This is the compact release and decision ledger. Commands belong in
 [README.md](../README.md), durable implementation contracts in
 [AGENTS.md](../AGENTS.md), compact-model scoreboards in
-[docs/accuracy/](accuracy/), and AnalogGym tables in
-[RESULTS_TSMC.md](../examples/complex_circuits/RESULTS_TSMC.md). Detailed
-per-commit chronology and superseded prose remain in Git history.
+[docs/accuracy/](accuracy/). Detailed per-commit chronology and superseded prose
+remain in Git history.
 
 ## Reading historical scores
 
@@ -18,12 +17,40 @@ per-commit chronology and superseded prose remain in Git history.
 
 ## V7.6 — full-terminal families and closure
 
-### Post-V7.6.4 — versioned simple-topology diagnostics (2026-09-02)
+### V7.6.6 — clean repository and full-terminal requalification (2026-09-02)
+
+- Retired the AnalogGym `examples/complex_circuits/` corpus and its dedicated
+  tests, scripts, campaign adapters, and current-document links. Historical
+  measurements remain in this ledger and Git history but are no longer an
+  executable compact-model gate.
+- Replaced 48 separately maintained `.sp`/`.cir` example decks with 29 strict
+  `.spice.tmpl` sources, including flat/hierarchical subcircuit fixtures.
+  Candidate NN and LEVEL=72 reference decks now render
+  from one topology while exposing technology, VT, independent P/N geometry,
+  PVT, body bias, slew, load, bias, timing, and analysis tokens.
+- Removed `verify_complex_*` and `PYCIRCUITSIM_COMPLEX_RESULTS` compatibility
+  aliases. Campaign enumeration, collection, coverage, and report generation
+  now use canonical `verify_circuit_*` suite IDs and fail loud on stale names.
+- Moved persistent test decks and simulation artifacts from `tests/` to
+  `results/tests/`, changed every default output root, and added a catalog guard
+  against materialized decks or result files returning to source directories.
+  Root pytest discovery now excludes archived worktrees under `results/`.
+- Added `examples/README.md` and `tests/README.md` as the template and test-tree
+  contracts.
+- Removed unused internal buffers, telemetry, normalization wrappers, imports,
+  locals, historical collectors, retired AnalogGym-only tests, and orphaned
+  scratch reports. Public APIs, ctypes ABI fields, and checkpoint-compatible
+  optional model structures remain intact.
+- Hardened full-terminal provenance: dataset generation treats every
+  nonignored untracked file as dirty, the campaign manifest requires the whole
+  worktree to be clean, and both LEVEL=75 and LEVEL=76 bundles must carry the
+  checksum-bound source-dataset identity.
+
+#### Versioned simple-topology diagnostics
 
 - Versioned the existing ring/opamp/SRAM-SNM/switched-capacitor qualification
-  matrix as `simple-v1` without changing its `/20` denominator. Historical
-  `verify_complex_*` campaign IDs remain aliases only; these are simple
-  circuits and continue to live under `examples/simple_circuits/`.
+  matrix as `simple-v1` without changing its `/20` denominator. These simple
+  circuits continue to live under `examples/simple_circuits/`.
 - Added 12 held-out `simple-v2` topology pairs spanning source-driven stages,
   mirrors/cascodes, open logic chains and stacks, transmission gates,
   differential pairs, and full 6T SRAM modes across DC, transient and AC.

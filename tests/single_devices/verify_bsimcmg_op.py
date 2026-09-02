@@ -28,6 +28,7 @@ from tests.common.bsimcmg_op import (  # noqa: E402
     bake_inst_params, get_mosfet_current_from_solution, pass_fail,
     relative_error, run_ngspice_custom, run_ngspice_op, run_pycircuitsim_op,
 )
+from tests.common.base import DEVICE_DECKS, render_template  # noqa: E402
 
 _relative_error = relative_error
 _pass_fail = pass_fail
@@ -65,21 +66,17 @@ def test_nmos_op() -> bool:
     # -- PyCircuitSim --------------------------------------------------------
     print("  [2/2] Running PyCircuitSim...")
 
-    nmos_netlist = """\
-* NMOS OP verification
-Vds 1 0 0.5
-Vgs 2 0 0.5
-
-Mn1 1 2 0 0 nmos1 L=30n NFIN=10
-
-.model nmos1 NMOS (LEVEL=72)
-
-.op
-
-.end
-"""
+    nmos_netlist = render_template(DEVICE_DECKS / "mosfet.spice.tmpl", {
+        "MODEL_SETUP": ".model nmos1 NMOS (LEVEL=72)", "TEMP": "27",
+        "DRAIN_BIAS": "Vd d 0 0.5", "GATE_BIAS": "Vg g 0 0.5",
+        "SOURCE_BIAS": "Vs s 0 0", "BULK_BIAS": "Vb b 0 0",
+        "DEVICE_NAME": "Mdut", "DRAIN_NODE": "d", "GATE_NODE": "g",
+        "SOURCE_NODE": "s", "BULK_NODE": "b",
+        "DEVICE": "nmos1 L=30n NFIN=10", "EXTRA_DEVICES": "",
+        "LOAD": "", "ANALYSIS": ".op",
+    })
     solution = run_pycircuitsim_op(nmos_netlist)
-    py_id = get_mosfet_current_from_solution(nmos_netlist, solution, "mn1")
+    py_id = get_mosfet_current_from_solution(nmos_netlist, solution, "mdut")
 
     print(f"    PyCircuitSim: I_drain = {py_id:.6e} A")
     print(f"    PyCircuitSim node voltages: {solution}")
@@ -140,17 +137,18 @@ def test_pmos_op() -> bool:
     ng_csv = RESULTS_DIR / "ngspice_pmos_op.csv"
     ng_log = RESULTS_DIR / "ngspice_pmos_op.log"
 
-    ng_netlist.write_text(
-        f'* PMOS OP with load resistor\n'
-        f'.include "{ng_modelcard}"\n'
-        f'.temp 27\n'
-        f'Vdd vdd 0 {VDD}\n'
-        f'Vg g 0 0.2\n'
-        f'N1 drain g vdd vdd pmos_rvt\n'
-        f'Rload drain 0 10k\n'
-        f'.op\n'
-        f'.end\n'
-    )
+    ng_netlist.write_text(render_template(
+        DEVICE_DECKS / "mosfet.spice.tmpl", {
+            "MODEL_SETUP": f'.include "{ng_modelcard}"', "TEMP": "27",
+            "DRAIN_BIAS": "", "GATE_BIAS": "Vg g 0 0.2",
+            "SOURCE_BIAS": f"Vdd s 0 {VDD:g}",
+            "BULK_BIAS": f"Vb b 0 {VDD:g}", "DEVICE_NAME": "Ndut",
+            "DRAIN_NODE": "d", "GATE_NODE": "g", "SOURCE_NODE": "s",
+            "BULK_NODE": "b", "DEVICE": "pmos_rvt",
+            "EXTRA_DEVICES": "", "LOAD": "Rload d 0 10k",
+            "ANALYSIS": ".op",
+        },
+    ))
 
     ng_runner.write_text(
         f'* ngspice runner for PMOS OP\n'
@@ -160,13 +158,13 @@ def test_pmos_op() -> bool:
         f'set filetype=ascii\n'
         f'set wr_vecnames\n'
         f'run\n'
-        f'wrdata {ng_csv} v(drain) v(g) v(vdd)\n'
+        f'wrdata {ng_csv} v(d) v(g) v(s)\n'
         f'.endc\n'
         f'.end\n'
     )
 
     ng_data = run_ngspice_custom(ng_runner, ng_log, ng_csv)
-    ng_v_drain = ng_data["v(drain)"]
+    ng_v_drain = ng_data["v(d)"]
     ng_id_mag = abs(ng_v_drain / 10e3)
 
     print(f"    NGSPICE: V(drain) = {ng_v_drain:.6f} V")
@@ -175,23 +173,19 @@ def test_pmos_op() -> bool:
     # -- PyCircuitSim --------------------------------------------------------
     print("  [3/3] Running PyCircuitSim...")
 
-    pmos_netlist = (
-        f'* PMOS OP with load resistor\n'
-        f'Vdd 1 0 {VDD}\n'
-        f'Vg 2 0 0.2\n'
-        f'\n'
-        f'Mp1 3 2 1 1 pmos1 L=30n NFIN=10\n'
-        f'\n'
-        f'Rload 3 0 10k\n'
-        f'\n'
-        f'.model pmos1 PMOS (LEVEL=72)\n'
-        f'\n'
-        f'.op\n'
-        f'\n'
-        f'.end\n'
-    )
+    pmos_netlist = render_template(DEVICE_DECKS / "mosfet.spice.tmpl", {
+        "MODEL_SETUP": ".model pmos1 PMOS (LEVEL=72)", "TEMP": "27",
+        "DRAIN_BIAS": "", "GATE_BIAS": "Vg g 0 0.2",
+        "SOURCE_BIAS": f"Vdd s 0 {VDD:g}",
+        "BULK_BIAS": f"Vb b 0 {VDD:g}", "DEVICE_NAME": "Mdut",
+        "DRAIN_NODE": "d", "GATE_NODE": "g", "SOURCE_NODE": "s",
+        "BULK_NODE": "b",
+        "DEVICE": "pmos1 L=30n NFIN=10", "EXTRA_DEVICES": "",
+        "LOAD": "Rload d 0 10k",
+        "ANALYSIS": ".op",
+    })
     solution = run_pycircuitsim_op(pmos_netlist)
-    py_v_drain = solution.get("3", 0.0)
+    py_v_drain = solution.get("d", 0.0)
     py_id_mag = abs(py_v_drain / 10e3)
 
     print(f"    PyCircuitSim: V(drain) = {py_v_drain:.6f} V")

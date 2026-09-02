@@ -37,7 +37,7 @@ MODELCARD_PATH = (PROJECT_ROOT / "PDKs" / "ASAP7"
                   / "7nm_TT_160803.pm")
 NGSPICE_BIN = os.environ.get("NGSPICE_BIN",
                              "/usr/local/ngspice-45.2/bin/ngspice")
-RESULTS_DIR = PROJECT_ROOT / "tests" / "verify_bsimcmg_op_results"
+RESULTS_DIR = PROJECT_ROOT / "results" / "tests" / "bsimcmg_op"
 
 from helpers import bake_inst_params, run_ngspice_op  # noqa: E402,F401
 

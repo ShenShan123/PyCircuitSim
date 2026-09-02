@@ -91,7 +91,7 @@ def ngspice_opamp_body(bt: BenchTech, baked: Path) -> Dict[str, str]:
     """Single-point NGSPICE opamp ground-truth deck body (no .control/.end).
 
     The topology is NOT here — it is ``examples/simple_circuits/
-    bsimcmg_opamp_miller_dc.cir``, rendered per tech. This function owns the
+    opamp_miller.spice.tmpl``, rendered per tech. This function owns the
     bias and the sweep window, nothing else.
 
     Pure (returns text) so verify_circuit_sweep_canaries can diff it against the

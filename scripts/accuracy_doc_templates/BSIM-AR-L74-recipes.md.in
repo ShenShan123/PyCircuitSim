@@ -103,7 +103,7 @@ weight → basin map is not portable across architectures.
 | arm | verdict |
 |---|---|
 | **`invtrip`@`large`** | Inert — lands on clean's failure set. Dropped from the kept table. |
-| **`csob`@`xl`** | Inert on the complex matrix — ties clean. Retained only as a device/charge reference. |
+| **`csob`@`xl`** | Inert on the circuit matrix — ties clean. Retained only as a device/charge reference. |
 | **`xl` as a promotion target** | 7.7× `medium`'s parameters and ~11 days of training to tie it. The V6.8.1 reading that "AC collapses at xl" is separately **retracted**: post-fix, `xl` banks the TSMC16 opamp-AC cell, and the `tsmc7-opamp-AC` run that was recorded as never converging after ~6 h now completes. That pathology was the railed operating point, i.e. the `gds` bug. |
 
 ## 8. Recommendation

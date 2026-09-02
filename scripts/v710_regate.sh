@@ -202,18 +202,14 @@ if [ "${1:-}" = "_one" ]; then
 
   iso="$SCRATCH/${tag}_${variant}_${tlc}_${suite}_omp${omp}"
   export PYCIRCUITSIM_SIMPLE_RESULTS="$iso/simple" PYCIRCUITSIM_NN_RESULTS="$iso/nn"
-  # Compatibility for historical workers that still read the old variable.
-  export PYCIRCUITSIM_COMPLEX_RESULTS="$PYCIRCUITSIM_SIMPLE_RESULTS"
   mkdir -p "$PYCIRCUITSIM_SIMPLE_RESULTS" "$PYCIRCUITSIM_NN_RESULTS"
 
-  # Campaign suite IDs are persisted in historical evidence. Keep those keys
-  # stable while resolving renamed simple-circuit modules on disk.
   case_args=()
   if [[ "$suite" == verify_circuit_topologies__* ]]; then
     script_suite="verify_circuit_topologies"
     case_args=(--case "${suite#verify_circuit_topologies__}")
   else
-    script_suite="${suite/verify_complex_/verify_circuit_}"
+    script_suite="$suite"
   fi
   test_file="$ROOT/tests/simple_circuits/${script_suite}.py"
   if [ "$suite" = "verify_nn_multi_tech_dc" ]; then

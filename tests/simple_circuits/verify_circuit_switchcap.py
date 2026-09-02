@@ -76,7 +76,7 @@ def ngspice_sc_body(bt: BenchTech, baked: Path) -> Dict[str, str]:
     """Single-point NGSPICE switched-cap ground-truth deck body.
 
     The topology is NOT here — it is ``examples/simple_circuits/
-    bsimcmg_switchcap_tran.cir``, rendered per tech. This function owns the
+    switched_capacitor.spice.tmpl``, rendered per tech. This function owns the
     sampled level and the transient window, nothing else.
 
     Pure (returns text) so verify_circuit_sweep_canaries can diff it against the

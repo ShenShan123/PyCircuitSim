@@ -588,7 +588,6 @@ def run_transient(
         Dictionary mapping node names to their value lists over time
     """
     from pycircuitsim.solver import DCSolver, TransientSolver
-    import numpy as np
 
     time_step = analysis_params['tstep']
     final_time = analysis_params['tstop']

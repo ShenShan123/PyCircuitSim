@@ -3,7 +3,7 @@
 Used by ``verify_cmg_multiplier.py``, ``verify_inductor.py``,
 ``verify_current_source_ngspice.py``, ``verify_cmg_set_temperature.py``,
 ``verify_tran_branch_current.py`` and ``verify_tran_gear2.py`` — the gates for
-the AnalogGym core additions (instance multiplier ``m=``, Inductor, NGSPICE
+the compact-model core additions (instance multiplier ``m=``, Inductor, NGSPICE
 current-source sign / PULSE, in-place ``set_temperature``, transient branch
 currents, Gear-2 integration).
 
@@ -52,18 +52,6 @@ def bake_asap7(work_dir: Path, model_name: str,
     work_dir.mkdir(parents=True, exist_ok=True)
     dst = work_dir / f"baked_{model_name}{('_' + tag) if tag else ''}.lib"
     bake_inst_params(ASAP7_MODELCARD, dst, model_name, inst_params)
-    return dst
-
-
-def bake_asap7_pair(work_dir: Path, nmos_params: Dict[str, float],
-                    pmos_params: Dict[str, float], tag: str = "") -> Path:
-    """Bake BOTH nmos_rvt and pmos_rvt into one card (two-pass, as the
-    inverter gates do — a single pass leaves the other model at LEVEL=72,
-    which NGSPICE cannot parse)."""
-    work_dir.mkdir(parents=True, exist_ok=True)
-    dst = work_dir / f"baked_pair{('_' + tag) if tag else ''}.lib"
-    bake_inst_params(ASAP7_MODELCARD, dst, "nmos_rvt", nmos_params)
-    bake_inst_params(dst, dst, "pmos_rvt", pmos_params)
     return dst
 
 
@@ -125,15 +113,6 @@ def ngspice_probe(
     if not rows:
         raise RuntimeError(f"NGSPICE wrote no data rows: {csv_path}")
     return np.array(rows, dtype=float)
-
-
-def nrmse(a: np.ndarray, b: np.ndarray) -> float:
-    """Root-mean-square difference normalized by the peak-to-peak of ``b``."""
-    a = np.asarray(a, dtype=float)
-    b = np.asarray(b, dtype=float)
-    span = float(np.max(b) - np.min(b))
-    denom = span if span > 0 else max(float(np.max(np.abs(b))), 1e-30)
-    return float(np.sqrt(np.mean((a - b) ** 2)) / denom)
 
 
 def rel_err(measured: float, reference: float, abs_floor: float) -> float:

@@ -44,7 +44,6 @@ ASAP7_MODELCARD_OVERRIDE = os.environ.get("ASAP7_MODELCARD")
 
 def _get_test_modelcard():
     """Get a test modelcard - prefer ASAP7, otherwise create minimal one."""
-    import re
     import tempfile
 
     # Try ASAP7 first

@@ -23,10 +23,8 @@ from .osdi_types import (
     ACCESS_FLAG_INSTANCE,
     ACCESS_FLAG_SET,
     ANALYSIS_DC,
-    ANALYSIS_IC,
     ANALYSIS_STATIC,
     ANALYSIS_TRAN,
-    CALC_OP,
     CALC_REACT_JACOBIAN,
     CALC_REACT_LIM_RHS,
     CALC_REACT_RESIDUAL,
@@ -326,7 +324,6 @@ class OsdiSimulation:
         self.jacobian_react = self._make_array(1)
         self.state_prev = self._make_array(0)
         self.state_next = self._make_array(0)
-        self.noise_dense = self._make_array(0)
         self.sim_param_names: List[str] = []
         self.sim_param_vals: List[float] = []
 
@@ -511,7 +508,6 @@ class OsdiInstance:
 
         sim.state_prev = sim._make_array(self._desc.num_states)
         sim.state_next = sim._make_array(self._desc.num_states)
-        sim.noise_dense = sim._make_array(self._desc.num_noise_src)
 
     def eval(self, model: OsdiModel, sim: OsdiSimulation, flags: int) -> int:
         return self.eval_with_time(model, sim, flags, 0.0)

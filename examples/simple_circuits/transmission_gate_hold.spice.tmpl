@@ -1,0 +1,15 @@
+* Transmission-gate hold and feedthrough
+<MODEL_SETUP>
+Vdd vdd 0 <VDD>
+Vbn bn 0 <BODY_N>
+Vbp bp 0 <BODY_P>
+Vin vin 0 <HALF_VDD>
+Vphi phi 0 <PULSE_OPEN> <VDD> 0 <CLOCK_DELAY> <CLOCK_RISE> <CLOCK_FALL> <CLOCK_WIDTH> <CLOCK_PERIOD> <PULSE_CLOSE>
+Vphib phib 0 <PULSE_OPEN> 0 <VDD> <CLOCK_DELAY> <CLOCK_RISE> <CLOCK_FALL> <CLOCK_WIDTH> <CLOCK_PERIOD> <PULSE_CLOSE>
+<N_PREFIX>n_tg hold phi vin bn <N_DEVICE>
+<P_PREFIX>p_tg hold phib vin bp <P_DEVICE>
+Chold hold 0 <HOLD_LOAD>
+.ic V(hold)=<HALF_VDD>
+.temp <TEMP>
+<ANALYSIS>
+.end

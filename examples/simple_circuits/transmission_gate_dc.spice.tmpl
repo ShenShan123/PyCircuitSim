@@ -1,0 +1,19 @@
+* Bidirectional CMOS transmission gate
+<MODEL_SETUP>
+Vdd vdd 0 <VDD>
+Vbn bn 0 <BODY_N>
+Vbp bp 0 <BODY_P>
+Vphi phi 0 <VDD>
+Vphib phib 0 0
+Vinf inf 0 0
+<N_PREFIX>n_f outf phi inf bn <N_DEVICE>
+<P_PREFIX>p_f outf phib inf bp <P_DEVICE>
+Rf outf 0 10k
+Vrev outr 0 0
+<N_PREFIX>n_r inr phi outr bn <N_DEVICE>
+<P_PREFIX>p_r inr phib outr bp <P_DEVICE>
+Rr inr 0 10k
+<OUTPUT_LOAD>
+.temp <TEMP>
+<ANALYSIS>
+.end

@@ -1,0 +1,14 @@
+* CMOS switched-capacitor sample-and-hold cell
+<MODEL_SETUP>
+.temp <TEMP>
+Vdd vdd 0 <VDD>
+Vin vin 0 <VIN>
+Vphi phi 0 <PULSE_OPEN> 0 <VDD> <TD> <SLEW> <SLEW> <PW> <PER> <PULSE_CLOSE>
+<P_PREFIX>pc phib phi vdd vdd <P_DEVICE>
+<N_PREFIX>nc phib phi 0 0 <N_DEVICE>
+<N_PREFIX>nt vin phi vsamp 0 <N_DEVICE>
+<P_PREFIX>pt vin phib vsamp vdd <P_DEVICE>
+Csample vsamp 0 <CSAMPLE>
+.ic V(vsamp)=0 V(phib)=<VDD>
+<ANALYSIS>
+.end

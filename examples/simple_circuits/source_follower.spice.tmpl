@@ -1,0 +1,17 @@
+* Complementary source followers with explicit body terminals
+<MODEL_SETUP>
+Vddn vddn 0 <VDD>
+Vddp vddp 0 <VDD>
+Vgn gn 0 <HALF_VDD>
+Vgp gp 0 <HALF_VDD>
+Vbn bn 0 <BODY_N>
+Vbp bp 0 <BODY_P>
+<N_PREFIX>n_sf vddn gn sn bn <N_DEVICE>
+Rn sn 0 <FOLLOWER_LOAD>
+<P_PREFIX>p_sf 0 gp sp bp <P_DEVICE>
+Rp vddp sp <FOLLOWER_LOAD>
+<OUTPUT_LOAD>
+.ic V(sn)=<FOLLOW_N_IC> V(sp)=<FOLLOW_P_IC>
+.temp <TEMP>
+<ANALYSIS>
+.end

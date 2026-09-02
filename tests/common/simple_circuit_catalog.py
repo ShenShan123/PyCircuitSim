@@ -7,7 +7,7 @@ without importing Torch, a simulator, or a PDK.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Iterable, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 
 SIMPLE_V1 = "simple-v1"
@@ -18,22 +18,19 @@ DIAGNOSTIC = "diagnostic"
 
 @dataclass(frozen=True)
 class AnalysisSpec:
-    """One experiment rendered from a candidate/reference deck pair."""
+    """One experiment rendered twice from a canonical circuit template."""
 
     name: str
     kind: str
-    candidate_card: str
-    reference_card: str
+    card: str
     signals: Tuple[str, ...]
     metric_profile: str = "trace"
     phase_align: bool = False
-    candidate_substitutions: Tuple[Tuple[str, str], ...] = ()
-    reference_substitutions: Tuple[Tuple[str, str], ...] = ()
+    template_substitutions: Tuple[Tuple[str, str], ...] = ()
 
-    def substitutions(self, reference: bool) -> Dict[str, str]:
-        values = (self.reference_substitutions if reference
-                  else self.candidate_substitutions)
-        return dict(values)
+    def substitutions(self) -> Dict[str, str]:
+        """Return experiment-specific values for the shared template."""
+        return dict(self.template_substitutions)
 
 
 @dataclass(frozen=True)
@@ -42,8 +39,7 @@ class CircuitCase:
 
     case_id: str
     label: str
-    candidate_deck: str
-    reference_deck: str
+    template: str
     score_version: str
     role: str
     analyses: Tuple[AnalysisSpec, ...]
@@ -54,7 +50,6 @@ class CircuitCase:
     )
     report_key: str = ""
     suite_id: str = ""
-    legacy_suite_id: Optional[str] = None
     training_use: str = "held_out"
     gate_metric: str = ""
     gate_condition: str = ""
@@ -81,9 +76,8 @@ def _dc(
     subs: Tuple[Tuple[str, str], ...] = (),
 ) -> AnalysisSpec:
     return AnalysisSpec(
-        name=name, kind="dc", candidate_card=f".{card}",
-        reference_card=card, signals=signals, metric_profile=profile,
-        candidate_substitutions=subs, reference_substitutions=subs,
+        name=name, kind="dc", card=card, signals=signals,
+        metric_profile=profile, template_substitutions=subs,
     )
 
 
@@ -94,15 +88,12 @@ def _tran(
     profile: str = "transient",
     *,
     phase_align: bool = False,
-    candidate_subs: Tuple[Tuple[str, str], ...] = (),
-    reference_subs: Tuple[Tuple[str, str], ...] = (),
+    subs: Tuple[Tuple[str, str], ...] = (),
 ) -> AnalysisSpec:
     return AnalysisSpec(
-        name=name, kind="tran", candidate_card=f".{card}",
-        reference_card=card, signals=signals, metric_profile=profile,
-        phase_align=phase_align,
-        candidate_substitutions=candidate_subs,
-        reference_substitutions=reference_subs,
+        name=name, kind="tran", card=card, signals=signals,
+        metric_profile=profile, phase_align=phase_align,
+        template_substitutions=subs,
     )
 
 
@@ -115,22 +106,20 @@ def _ac(
 ) -> AnalysisSpec:
     card = "ac dec 12 1e3 1e11"
     return AnalysisSpec(
-        name=name, kind="ac", candidate_card=f".{card}",
-        reference_card=card, signals=signals, metric_profile=profile,
-        candidate_substitutions=subs, reference_substitutions=subs,
+        name=name, kind="ac", card=card, signals=signals,
+        metric_profile=profile, template_substitutions=subs,
     )
 
 
 _V1_CASES: Tuple[CircuitCase, ...] = (
     CircuitCase(
         "ring_osc", "5-stage ring oscillator",
-        "directnet_ring_osc_tran.sp", "bsimcmg_ring_osc_tran.cir",
+        "ring_oscillator.spice.tmpl",
         SIMPLE_V1, QUALIFICATION,
         (_tran("oscillation", "tran 2p 1.2n uic", ("v(n5)",),
                "ring_osc", phase_align=True),),
         omp_threads=(1, 2, 4), report_key="ring_osc",
         suite_id="verify_circuit_ring_osc",
-        legacy_suite_id="verify_complex_ring_osc",
         training_use="qualification_only",
         gate_metric="period error %",
         gate_condition="≤5 %",
@@ -139,13 +128,12 @@ _V1_CASES: Tuple[CircuitCase, ...] = (
     ),
     CircuitCase(
         "opamp", "two-stage Miller opamp",
-        "directnet_opamp_miller_dc.sp", "bsimcmg_opamp_miller_dc.cir",
+        "opamp_miller.spice.tmpl",
         SIMPLE_V1, QUALIFICATION,
         (_dc("transfer", "dc Vinp <OPAMP_LO> <OPAMP_HI> 0.002",
              ("v(vout)",), "opamp"),),
         omp_threads=(1, 2, 4), report_key="opamp",
         suite_id="verify_circuit_opamp",
-        legacy_suite_id="verify_complex_opamp",
         training_use="qualification_only",
         gate_metric="open-loop gain error %",
         gate_condition="≤10 %",
@@ -154,12 +142,11 @@ _V1_CASES: Tuple[CircuitCase, ...] = (
     ),
     CircuitCase(
         "sram_snm", "6T SRAM read-SNM half-cell",
-        "directnet_sram_snm_dc.sp", "bsimcmg_sram_snm_dc.cir",
+        "sram_snm_half_cell.spice.tmpl",
         SIMPLE_V1, QUALIFICATION,
         (_dc("read_snm", "dc Vq 0 <VDD> 0.005", ("v(qb)",),
              "sram_snm"),),
         report_key="sram_snm", suite_id="verify_circuit_sram_snm",
-        legacy_suite_id="verify_complex_sram_snm",
         training_use="qualification_only",
         gate_metric="worst lobe NRMSE %",
         gate_condition="≤10 % and every lobe positive",
@@ -170,12 +157,11 @@ _V1_CASES: Tuple[CircuitCase, ...] = (
     ),
     CircuitCase(
         "switchcap", "switched-capacitor sample/hold",
-        "directnet_switchcap_tran.sp", "bsimcmg_switchcap_tran.cir",
+        "switched_capacitor.spice.tmpl",
         SIMPLE_V1, QUALIFICATION,
         (_tran("sample_hold", "tran 5p 12n uic", ("v(vsamp)",),
                "switchcap"),),
         report_key="switchcap", suite_id="verify_circuit_switchcap",
-        legacy_suite_id="verify_complex_switchcap",
         training_use="qualification_only",
         gate_metric="charge error % of VDD",
         gate_condition=(
@@ -190,7 +176,7 @@ _V1_CASES: Tuple[CircuitCase, ...] = (
 _V2_CASES: Tuple[CircuitCase, ...] = (
     CircuitCase(
         "source_follower", "complementary source followers with body effect",
-        "nn_source_follower.sp", "bsimcmg_source_follower.cir",
+        "source_follower.spice.tmpl",
         SIMPLE_V2, DIAGNOSTIC,
         (
             _dc("nmos", "dc Vgn 0 <VDD> 0.005", ("v(sn)", "i(Vddn)"),
@@ -201,7 +187,7 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
     ),
     CircuitCase(
         "common_gate", "complementary common-gate stages",
-        "nn_common_gate.sp", "bsimcmg_common_gate.cir",
+        "common_gate.spice.tmpl",
         SIMPLE_V2, DIAGNOSTIC,
         (
             _dc("nmos", "dc Vsn 0 <HALF_VDD> 0.005",
@@ -212,7 +198,7 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
     ),
     CircuitCase(
         "current_mirror", "NMOS and PMOS two-device current mirrors",
-        "nn_current_mirror.sp", "bsimcmg_current_mirror.cir",
+        "current_mirror.spice.tmpl",
         SIMPLE_V2, DIAGNOSTIC,
         (
             _dc("nmos", "dc Voutn 0 <VDD> 0.005",
@@ -225,7 +211,7 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
     ),
     CircuitCase(
         "inverter_chain", "open fanout-of-four inverter chain",
-        "nn_inverter_chain.sp", "bsimcmg_inverter_chain.cir",
+        "inverter_chain.spice.tmpl",
         SIMPLE_V2, DIAGNOSTIC,
         (_tran("fo4", "tran 2p 4n uic", ("v(in)", "v(n1)", "v(o0)"),
                "inverter_chain", phase_align=True),),
@@ -236,7 +222,7 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
     ),
     CircuitCase(
         "transmission_gate_dc", "bidirectional transmission gate",
-        "nn_transmission_gate_dc.sp", "bsimcmg_transmission_gate_dc.cir",
+        "transmission_gate_dc.spice.tmpl",
         SIMPLE_V2, DIAGNOSTIC,
         (
             _dc("forward", "dc Vinf 0 <VDD> 0.005",
@@ -249,7 +235,7 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
     ),
     CircuitCase(
         "transmission_gate_hold", "transmission-gate hold and feedthrough",
-        "nn_transmission_gate_hold.sp", "bsimcmg_transmission_gate_hold.cir",
+        "transmission_gate_hold.spice.tmpl",
         SIMPLE_V2, DIAGNOSTIC,
         (_tran("hold", "tran 2p 4n uic", ("v(hold)", "v(phi)"),
                "hold_droop"),),
@@ -258,7 +244,7 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
     ),
     CircuitCase(
         "diffpair_ideal", "resistor-loaded differential pair, ideal tail",
-        "nn_diffpair_ideal.sp", "bsimcmg_diffpair_ideal.cir",
+        "diffpair_ideal.spice.tmpl",
         SIMPLE_V2, DIAGNOSTIC,
         (
             _dc("steering", "dc Vinp <DIFF_LO> <DIFF_HI> 0.001",
@@ -276,7 +262,7 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
     ),
     CircuitCase(
         "diffpair_active", "resistor-loaded differential pair, active tail",
-        "nn_diffpair_active.sp", "bsimcmg_diffpair_active.cir",
+        "diffpair_active.spice.tmpl",
         SIMPLE_V2, DIAGNOSTIC,
         (
             _dc("steering", "dc Vinp <DIFF_LO> <DIFF_HI> 0.001",
@@ -294,7 +280,7 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
     ),
     CircuitCase(
         "cascode_stack", "complementary cascode/current-source stacks",
-        "nn_cascode_stack.sp", "bsimcmg_cascode_stack.cir",
+        "cascode_stack.spice.tmpl",
         SIMPLE_V2, DIAGNOSTIC,
         (
             _dc("nmos_compliance", "dc Voutn 0 <VDD> 0.005",
@@ -308,7 +294,7 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
     ),
     CircuitCase(
         "nand2", "two-input CMOS NAND",
-        "nn_nand2.sp", "bsimcmg_nand2.cir", SIMPLE_V2, DIAGNOSTIC,
+        "nand2.spice.tmpl", SIMPLE_V2, DIAGNOSTIC,
         (
             _dc("input_a", "dc Va 0 <VDD> 0.005",
                 ("v(out)", "v(nint)"), "logic_vtc",
@@ -318,10 +304,10 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
                 subs=(("VA_SPEC", "<VDD>"), ("VB_SPEC", "0"))),
             _tran("transient", "tran 2p 4n uic",
                   ("v(a)", "v(out)", "v(nint)"), "logic_tran",
-                  candidate_subs=(("VA_SPEC", "PULSE 0 <VDD> 0.5n 20p 20p 1n 2n"),
-                                  ("VB_SPEC", "<VDD>")),
-                  reference_subs=(("VA_SPEC", "PULSE(0 <VDD> 0.5n 20p 20p 1n 2n)"),
-                                  ("VB_SPEC", "<VDD>"))),
+                  subs=(("VA_SPEC", "<PULSE_OPEN> 0 <VDD> <INPUT_DELAY> "
+                                    "<INPUT_RISE> <INPUT_FALL> <INPUT_WIDTH> "
+                                    "<INPUT_PERIOD> <PULSE_CLOSE>"),
+                        ("VB_SPEC", "<VDD>"))),
         ),
         required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
                           "trip_shift_v", "delay_error_pct",
@@ -329,7 +315,7 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
     ),
     CircuitCase(
         "nor2", "two-input CMOS NOR",
-        "nn_nor2.sp", "bsimcmg_nor2.cir", SIMPLE_V2, DIAGNOSTIC,
+        "nor2.spice.tmpl", SIMPLE_V2, DIAGNOSTIC,
         (
             _dc("input_a", "dc Va 0 <VDD> 0.005",
                 ("v(out)", "v(pint)"), "logic_vtc",
@@ -339,10 +325,10 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
                 subs=(("VA_SPEC", "0"), ("VB_SPEC", "0"))),
             _tran("transient", "tran 2p 4n uic",
                   ("v(a)", "v(out)", "v(pint)"), "logic_tran",
-                  candidate_subs=(("VA_SPEC", "PULSE 0 <VDD> 0.5n 20p 20p 1n 2n"),
-                                  ("VB_SPEC", "0")),
-                  reference_subs=(("VA_SPEC", "PULSE(0 <VDD> 0.5n 20p 20p 1n 2n)"),
-                                  ("VB_SPEC", "0"))),
+                  subs=(("VA_SPEC", "<PULSE_OPEN> 0 <VDD> <INPUT_DELAY> "
+                                    "<INPUT_RISE> <INPUT_FALL> <INPUT_WIDTH> "
+                                    "<INPUT_PERIOD> <PULSE_CLOSE>"),
+                        ("VB_SPEC", "0"))),
         ),
         required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
                           "trip_shift_v", "delay_error_pct",
@@ -350,24 +336,22 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
     ),
     CircuitCase(
         "sram6t_modes", "full 6T SRAM hold/read/write modes",
-        "nn_sram6t_modes.sp", "bsimcmg_sram6t_modes.cir",
+        "sram6t_modes.spice.tmpl",
         SIMPLE_V2, DIAGNOSTIC,
         (
             _tran("hold", "tran 2p 3n uic", ("v(q)", "v(qb)"), "sram_hold",
-                  candidate_subs=(("WL_SPEC", "0"), ("BL_SPEC", "<VDD>"),
-                                  ("BLB_SPEC", "<VDD>")),
-                  reference_subs=(("WL_SPEC", "0"), ("BL_SPEC", "<VDD>"),
-                                  ("BLB_SPEC", "<VDD>"))),
+                  subs=(("WL_SPEC", "0"), ("BL_SPEC", "<VDD>"),
+                        ("BLB_SPEC", "<VDD>"))),
             _tran("read", "tran 2p 3n uic", ("v(q)", "v(qb)"), "sram_read",
-                  candidate_subs=(("WL_SPEC", "PULSE 0 <VDD> 0.5n 20p 20p 1.5n 3n"),
-                                  ("BL_SPEC", "<VDD>"), ("BLB_SPEC", "<VDD>")),
-                  reference_subs=(("WL_SPEC", "PULSE(0 <VDD> 0.5n 20p 20p 1.5n 3n)"),
-                                  ("BL_SPEC", "<VDD>"), ("BLB_SPEC", "<VDD>"))),
+                  subs=(("WL_SPEC", "<PULSE_OPEN> 0 <VDD> <INPUT_DELAY> "
+                                    "<INPUT_RISE> <INPUT_FALL> <SRAM_WL_WIDTH> "
+                                    "<SRAM_WL_PERIOD> <PULSE_CLOSE>"),
+                        ("BL_SPEC", "<VDD>"), ("BLB_SPEC", "<VDD>"))),
             _tran("write", "tran 2p 3n uic", ("v(q)", "v(qb)"), "sram_write",
-                  candidate_subs=(("WL_SPEC", "PULSE 0 <VDD> 0.5n 20p 20p 1.5n 3n"),
-                                  ("BL_SPEC", "0"), ("BLB_SPEC", "<VDD>")),
-                  reference_subs=(("WL_SPEC", "PULSE(0 <VDD> 0.5n 20p 20p 1.5n 3n)"),
-                                  ("BL_SPEC", "0"), ("BLB_SPEC", "<VDD>"))),
+                  subs=(("WL_SPEC", "<PULSE_OPEN> 0 <VDD> <INPUT_DELAY> "
+                                    "<INPUT_RISE> <INPUT_FALL> <SRAM_WL_WIDTH> "
+                                    "<SRAM_WL_PERIOD> <PULSE_CLOSE>"),
+                        ("BL_SPEC", "0"), ("BLB_SPEC", "<VDD>"))),
         ),
         required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
                           "hold_margin_error_v", "read_disturb_error_v",
@@ -406,20 +390,3 @@ def get_case(case_id: str) -> CircuitCase:
             f"unknown simple-circuit case {case_id!r}; "
             f"available: {sorted(_BY_ID)}"
         ) from exc
-
-
-def suite_cases(score_version: str) -> Tuple[CircuitCase, ...]:
-    """Cases belonging to one versioned campaign contract."""
-    return cases(score_version=score_version)
-
-
-def suite_ids(score_version: str) -> Tuple[str, ...]:
-    """Campaign suite identifiers for one versioned circuit contract."""
-    return tuple(case.campaign_suite for case in suite_cases(score_version))
-
-
-def iter_legacy_aliases() -> Iterable[Tuple[str, str]]:
-    """Yield persisted historical suite ID -> current suite ID mappings."""
-    for case in CASES:
-        if case.legacy_suite_id:
-            yield case.legacy_suite_id, case.campaign_suite

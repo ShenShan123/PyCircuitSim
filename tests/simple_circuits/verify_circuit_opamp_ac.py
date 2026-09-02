@@ -248,7 +248,7 @@ def _print_result(r: Dict[str, object]) -> None:
         f"PM {model_name}={fmt_ratio(m['pm_test'])} NG={fmt_ratio(m['pm_ref'])} "
         f"(err={fmt_ratio(m['pm_err'])}deg)  "
         f"magNRMSE={m['mag_nrmse']*100:.2f}%")
-    # parseable gate line (benchmark_collect.parse_ac_complex_log reads this)
+    # Human-readable companion to the structured GateResult marker.
     print(
         f"  opamp AC {tech}: dc_gain_err={m['gain0_db_err']:.2f}dB  "
         f"gbw_ratio={fmt_ratio(m['gbw_ratio'])}  "
@@ -269,7 +269,7 @@ def main() -> int:
         return 1
 
     print("=" * 78)
-    print("Complex AC — two-stage Miller opamp open-loop: "
+    print("Circuit AC — two-stage Miller opamp open-loop: "
           f"{active_model_label()} vs NGSPICE")
     print("=" * 78)
 

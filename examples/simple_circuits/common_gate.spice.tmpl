@@ -1,0 +1,17 @@
+* Complementary common-gate stages
+<MODEL_SETUP>
+Vdd vdd 0 <VDD>
+Vgn gn 0 <GATE_N>
+Vgp gp 0 <GATE_P>
+Vsn sn 0 0
+Vsp sp 0 <VDD>
+Vbn bn 0 <BODY_N>
+Vbp bp 0 <BODY_P>
+Rn vdd dn <COMMON_GATE_LOAD>
+<N_PREFIX>n_cg dn gn sn bn <N_DEVICE>
+Rp dp 0 <COMMON_GATE_LOAD>
+<P_PREFIX>p_cg dp gp sp bp <P_DEVICE>
+<OUTPUT_LOAD>
+.temp <TEMP>
+<ANALYSIS>
+.end

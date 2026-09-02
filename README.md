@@ -6,14 +6,12 @@ to generate BSIM-CMG data, train a compact model, and increase validation scope
 from devices to circuits while keeping NGSPICE on the identical OSDI model as
 ground truth.
 
-Current release: **V7.6.3**.
+Current release: **V7.6.6**.
 
 LEVEL=73 DirectNet `large` is the served NN path. LEVEL=74 is the optional
-autoregressive family. LEVEL=75 and 76 remain experimental: the clean
-DirectNet-Full qualification is **0/248** on tracked AnalogGym, and the
-subsequent bounded closure loop produced no promotable checkpoint or runtime
-adapter. Its compact verdict is in
-[`docs/plans/2026-08-29-v764-complex-circuit-closure-loop.md`](docs/plans/2026-08-29-v764-complex-circuit-closure-loop.md).
+autoregressive family. LEVEL=75 and 76 remain experimental and are not served
+by automatic production resolution. Current qualification scores and model
+status are indexed in [`docs/accuracy/`](docs/accuracy/).
 
 ## Documentation map
 
@@ -28,8 +26,9 @@ Each project document has one job:
 - [`docs/accuracy/README.md`](docs/accuracy/README.md) indexes current compact-
   model scores; [`docs/accuracy/methodology.md`](docs/accuracy/methodology.md)
   defines gates, thresholds, and evidence provenance.
-- [`examples/complex_circuits/RESULTS_TSMC.md`](examples/complex_circuits/RESULTS_TSMC.md)
-  is the detailed AnalogGym campaign report.
+- [`examples/README.md`](examples/README.md) defines the unified circuit-template
+  contract; [`tests/README.md`](tests/README.md) defines test organization and
+  artifact placement.
 
 ## Model levels
 
@@ -409,10 +408,9 @@ conda run -n pycircuitsim python \
   tests/simple_circuits/verify_circuit_switchcap.py
 ```
 
-The historical campaign keys for these four cases start with
-`verify_complex_`; those names are compatibility aliases only. The circuits
-are simple and their authoritative candidate/reference deck pairs live in
-`examples/simple_circuits/`.
+Each circuit has one authoritative parameterized template in
+`examples/simple_circuits/`. The harness renders both the NN candidate and
+LEVEL=72 reference deck from that same source.
 
 Validate the versioned catalog and every rendered topology/corner without
 running a model, then run selected held-out `simple-v2` diagnostics:
@@ -475,144 +473,113 @@ The same generator also writes a nominal-corner `jobs_simple_v2.txt` screening
 pool. Run it into an isolated `V710_OUT`; use the unified CLI's `--corner all`
 mode for full corner characterization, and audit nominal campaign coverage with
 `scripts/v730_coverage.py --simple-version simple-v2`. Simple-circuit artifacts
-use `PYCIRCUITSIM_SIMPLE_RESULTS`; the old
-`PYCIRCUITSIM_COMPLEX_RESULTS` name is accepted only for persisted campaign
-compatibility.
+use `PYCIRCUITSIM_SIMPLE_RESULTS` and default to `results/tests/simple_circuits/`.
 
 These gates own NN circuit accuracy. Their definitions and thresholds are in
 [`docs/accuracy/methodology.md`](docs/accuracy/methodology.md); generated
 family reports are indexed by [`docs/accuracy/README.md`](docs/accuracy/README.md).
 
-For an independent full-terminal scan, generate the `dnf` datasets, train both
-architectures into isolated roots, and run the separate 480-job pool. Replace
-the generic campaign names below with one immutable experiment identifier;
-never write a candidate over the served checkpoint directory:
+The V7.6.6 full-terminal scan uses one clean committed source state, isolated
+artifacts, and the combined 480-job LEVEL=75/76 pool. Never write a candidate
+over the served checkpoint directory:
 
 ```bash
-BSIMAR_DATA_DIR="$PWD/results/full-terminal-data" \
+BSIMAR_DATA_DIR="$PWD/results/v766_full_data" \
 OUTPUT_CONTRACT=full-terminal \
-BENCHMARK_GEN_LOG_DIR="$PWD/results/full-terminal-generation" \
+BENCHMARK_GEN_LOG_DIR="$PWD/results/v766_full_generation" \
 bash scripts/benchmark_gen_data.sh 20
 
 for model in direct transformer; do
-  BSIMAR_DATA_DIR="$PWD/results/full-terminal-data" \
-  BSIMAR_CHECKPOINT_DIR="$PWD/results/full-terminal-checkpoints" \
-  RECIPE_TRAIN_LOG_DIR="$PWD/results/full-terminal-training/$model" \
+  BSIMAR_DATA_DIR="$PWD/results/v766_full_data" \
+  BSIMAR_CHECKPOINT_DIR="$PWD/results/v766_full_checkpoints" \
+  RECIPE_TRAIN_LOG_DIR="$PWD/results/v766_full_training/$model" \
   MODEL="$model" OUTPUT_CONTRACT=full-terminal RECIPES=clean \
   SIZES="small medium large xl" \
   TECHS="tsmc5 tsmc6 tsmc7 tsmc12 tsmc16" \
-  GPUS="0 2 3 4" NSTREAMS=8 bash scripts/recipe_train.sh
+  DEVS="nmos pmos" EXTRA_ARGS="" \
+  GPUS="0 1 2 3 4" NSTREAMS=8 TRAIN_OMP=4 \
+  bash scripts/recipe_train.sh
 done
 
 conda run -n pycircuitsim python \
-  scripts/v710_regate_jobs.py /tmp/pycircuitsim-full-terminal-jobs
-BSIMAR_CHECKPOINT_DIR="$PWD/results/full-terminal-checkpoints" \
-V710_OUT="$PWD/results/full-terminal-clean" \
-V710_SCRATCH=/tmp/pycircuitsim-full-terminal \
+  scripts/v710_regate_jobs.py results/v766_full_clean/job_lists
+BSIMAR_CHECKPOINT_DIR="$PWD/results/v766_full_checkpoints" \
+V710_OUT="$PWD/results/v766_full_clean" \
+V710_SCRATCH=/tmp/pycircuitsim-v766-full \
 NGSPICE_BIN=/usr/local/ngspice-45.2/bin/ngspice \
-JOBS=/tmp/pycircuitsim-full-terminal-jobs/jobs_full_clean.txt PAR=32 \
+JOBS="$PWD/results/v766_full_clean/job_lists/jobs_full_clean.txt" PAR=32 \
 NN_PY="$(conda run -n pycircuitsim which python)" \
 bash scripts/v710_regate.sh
-```
 
-## 5. Verify `complex_circuits` with AnalogGym
-
-The AnalogGym migration expands validation to a large, translated circuit
-corpus under `examples/complex_circuits/`. NGSPICE always runs the identical
-BSIM-CMG OSDI model as ground truth. PyCircuitSim defaults to LEVEL=72 and can
-instead run a completed, explicitly pinned DirectNet LEVEL=73 checkpoint pair.
-The campaign also accepts experimental LEVEL=75 and 76 pairs under distinct
-`dnf` and `tff` stems. Each result records all required artifact hashes;
-resume refuses to mix rows from different weights.
-
-The per-design BSIM-CMG libraries are ignored private artifacts derived from
-the local TSMC cards. Materialize them after a fresh checkout without rewriting
-the tracked AnalogGym decks:
-
-```bash
-for tech in tsmc5 tsmc6 tsmc7 tsmc12 tsmc16; do
-  conda run -n pycircuitsim python -m \
-    examples.complex_circuits.tools.materialize_modelcards \
-    --tree "examples/complex_circuits/designs_${tech}"
+conda run -n pycircuitsim python scripts/v710_regate_collect.py \
+  --root results/v766_full_clean --require-manifest
+for family in dnf tff; do
+  BSIMAR_CHECKPOINT_DIR="$PWD/results/v766_full_checkpoints" \
+  conda run -n pycircuitsim python scripts/v730_coverage.py \
+    --tag "$family" --set clean --passes v766-full-clean \
+    --require-complete --fail-on-gaps
 done
+conda run -n pycircuitsim python scripts/v730_docs_build.py \
+  --only dnf,tff --recipes clean
+conda run -n pycircuitsim python scripts/v730_docs_build.py \
+  --check --only dnf,tff --recipes clean
 ```
 
-Run one deck while developing a translation or solver fix:
+`RECIPES=clean` and an empty `EXTRA_ARGS` mean from-scratch, teacher-forced
+six-surface training: no warm start, corridor, auxiliary loss, AMP, or rollout
+addendum. Use only GPUs that are actually available on the host; GPU choice
+does not alter the pinned seed or scored CPU contract.
+
+## 5. Sweep the unified circuit templates
+
+Every circuit in `examples/` is a canonical `.spice.tmpl` source. The shared
+harness supplies the simulator adapter plus technology, VT, NMOS/PMOS geometry,
+P/N ratio, PVT, input slew, output load, bias, and analysis values. Candidate
+and LEVEL=72 reference decks are therefore parameterizations of identical
+topology rather than separately maintained files.
+
+List the held-out topology matrix and declared corners:
 
 ```bash
-PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS=tsmc5_dn_large_nmos \
-PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS=tsmc5_dn_large_pmos \
-CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \
-PYCIRCUITSIM_TORCH_THREADS=1 \
-conda run -n pycircuitsim python -m \
-  examples.complex_circuits.pycircuitsim_bench.run_compare \
-  --tech tsmc5 \
-  --category amplifier \
-  --design Fan_SMC_Pin_3 \
-  --deck tb_gain.cir \
-  --model-level 73 \
-  --require-full-agreement \
-  --out results/analoggym-one
-```
-
-`--require-full-agreement` is the red/green single-deck contract: both engines
-must run, every scored metric must agree, every required value must exist, and
-every PyCircuitSim sweep must be finite, complete, converged, and untruncated.
-Omit it only for diagnostic collection where a numerical disagreement is an
-expected result rather than a process failure.
-
-Run and refine a complete DirectNet technology campaign. The driver requires
-both `*_best.pt.complete` markers, pins inference to CPU with one OpenMP, MKL,
-and Torch thread, and keeps NGSPICE on LEVEL=72:
-
-```bash
-conda run -n pycircuitsim python -m \
-  examples.complex_circuits.pycircuitsim_bench.campaign \
-  --tech tsmc5 \
-  --model-level 73 \
-  --checkpoint-size large \
-  --families ac,dc_source,dc_temp,tran \
-  --jobs 12 \
-  --refine \
-  --out results/analoggym-directnet-large-tsmc5
-```
-
-Repeat for `tsmc6`, `tsmc7`, `tsmc12`, and `tsmc16`. TSMC6 and TSMC7 share
-LEVEL=72 ground truth but use independently trained DirectNet checkpoints, so
-the NN campaign keeps both as its controlled training-repeat axis. For a pure
-LEVEL=72 campaign, omit `--model-level` and `--checkpoint-size`; TSMC6 is then
-normally reported as the exact TSMC7 repeat instead of rerun. Read the current
-results and quarantined-deck list in
-[`examples/complex_circuits/RESULTS_TSMC.md`](examples/complex_circuits/RESULTS_TSMC.md).
-
-The V7.6.2 DirectNet-Full aggregate and its generated report sections are
-reproducible from exactly five completed campaign roots:
-
-```bash
-BSIMAR_CHECKPOINT_DIR="$PWD/results/v762_directnet_full_checkpoints" \
 conda run -n pycircuitsim python \
-  scripts/v762_directnet_full_analoggym_report.py \
-  --root results/v762_directnet_full_analoggym_tsmc5 \
-  --root results/v762_directnet_full_analoggym_tsmc6 \
-  --root results/v762_directnet_full_analoggym_tsmc7 \
-  --root results/v762_directnet_full_analoggym_tsmc12 \
-  --root results/v762_directnet_full_analoggym_tsmc16 \
-  --out results/v762_directnet_full_analoggym_aggregate.json \
-  --accuracy-report docs/accuracy/DirectNet-L75-clean.md \
-  --results-report examples/complex_circuits/RESULTS_TSMC.md \
-  --check
+  tests/simple_circuits/verify_circuit_topologies.py --list
 ```
+
+Sweep one qualification circuit across technology/VT, asymmetric VT, channel
+length, fin count, P/N ratio, VDD, temperature, joint PVT, and its
+topology-specific stimulus dimensions:
+
+```bash
+conda run -n pycircuitsim python \
+  tests/simple_circuits/verify_circuit_sweep.py opamp \
+  --tech TSMC5 --dimension all
+```
+
+Run the held-out topology diagnostics across every declared corner, or select
+only the cases and conditions needed for a focused gate:
+
+```bash
+conda run -n pycircuitsim python \
+  tests/simple_circuits/verify_circuit_topologies.py \
+  --case current_mirror,inverter_chain --tech TSMC5 --corner all
+```
+
+The template vocabulary and extension rules are in
+[`examples/README.md`](examples/README.md). Generated decks, reference traces,
+logs, CSV files, and plots are written under `results/tests/`; `tests/` contains
+only harness and verification source.
 
 ## Run a netlist directly
 
 Use the analysis directive in a deck to select the solver:
 
 ```bash
-conda run -n pycircuitsim python main.py \
-  examples/simple_circuits/bsimcmg_inverter_op.sp
 conda run -n pycircuitsim python main.py path/to/deck.sp \
   --output results/my-run
 ```
+
+Files under `examples/` are strict templates and must first be rendered through
+the test harness; they are not materialized input decks.
 
 A MOS model declaration selects its implementation:
 
@@ -640,9 +607,9 @@ results/<circuit>/<analysis>/
 └── <analysis-plot>.png
 ```
 
-Use `.sp` files as PyCircuitSim inputs. The paired `.cir` files in `examples/`
-are NGSPICE reference templates rendered by the verification infrastructure;
-tests do not carry private copies of those netlists.
+Use materialized `.sp` files as direct PyCircuitSim inputs. Verification renders
+both PyCircuitSim and NGSPICE decks from one `.spice.tmpl` file in `examples/`
+and stores the generated files under `results/`.
 
 ## Performance controls
 
@@ -666,12 +633,13 @@ pycircuitsim/                         parser, solver, simulation, models
 PDKs/                                technology modelcards (TSMC files private)
 external_compact_models/bsim_cmg/    BSIM-CMG evaluator and data generator
 external_compact_models/neural_network/  shared NN data/model/training package
-examples/single_devices/             device decks and NGSPICE templates
-examples/simple_circuits/             compact-model circuit decks
-examples/complex_circuits/            AnalogGym corpus and campaign harness
+examples/single_devices/             parameterized device templates
+examples/simple_circuits/             parameterized circuit templates
+examples/subcircuits/                 flat/hierarchical parser templates
 tests/single_devices/                 device-level gates
 tests/simple_circuits/                circuit-level gates
 tests/common/                         shared render/compare infrastructure
+results/tests/                        generated test decks and simulation output
 docs/accuracy/                        generated evidence and methodology
 ```
 
@@ -696,6 +664,5 @@ rejected candidates or best-so-far files there. Historical controls belong in
 an explicitly named campaign root while they remain binding.
 
 Before deleting artifacts, resolve exact targets and preserve the current
-qualification roots. Never treat private `PDKs/TSMC*/` cards, the built OSDI
-binary, materialized AnalogGym modelcards, or tracked reference JSON/CSV as
-disposable results.
+qualification roots. Never treat private `PDKs/TSMC*/` cards or the built OSDI
+binary as disposable results.

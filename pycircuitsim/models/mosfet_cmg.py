@@ -34,7 +34,7 @@ except ImportError as e:
     )
 
 from pycircuitsim.models.base import Component
-from pycircuitsim.config import BSIMCMG_OSDI_PATH, DEFAULT_TEMPERATURE
+from pycircuitsim.config import DEFAULT_TEMPERATURE
 
 
 class MOSFET_CMG(Component):

@@ -11,16 +11,14 @@ The input is biased at each end of the rail (0 V, then VDD): the two points
 where the inverter is fully switched and the expected output is unambiguous.
 Criterion: V(out) within 1% relative error of NGSPICE.
 
-Neither circuit lives in this file. Both come from ``examples/``:
-``bsimcmg_inverter_op.sp`` (PyCircuitSim) and ``bsimcmg_inverter_op.cir``
-(the NGSPICE ground truth).
+The topology lives once in ``examples/simple_circuits/inverter.spice.tmpl``;
+the gate renders PyCircuitSim and NGSPICE model adapters from that template.
 
 Usage:
     conda run -n pycircuitsim python tests/simple_circuits/verify_bsimcmg_inverter_op.py
 """
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 from typing import Dict
@@ -29,15 +27,14 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from tests.common.base import SIMPLE_DECKS, render_reference_deck  # noqa: E402
+from tests.common.base import SIMPLE_DECKS, render_template  # noqa: E402
 from tests.common.bsimcmg_op import (  # noqa: E402
     L, MODELCARD_PATH, NFIN, NMOS_INST_PARAMS, OSDI_PATH, PMOS_INST_PARAMS,
     RESULTS_DIR, VDD, bake_inst_params, pass_fail, run_ngspice_custom,
     run_pycircuitsim_op,
 )
 
-TEMPLATE = SIMPLE_DECKS / "bsimcmg_inverter_op.sp"
-NG_TEMPLATE = SIMPLE_DECKS / "bsimcmg_inverter_op.cir"
+TEMPLATE = SIMPLE_DECKS / "inverter.spice.tmpl"
 
 
 def _combined_modelcard(vin: float) -> Path:
@@ -66,10 +63,15 @@ def ngspice_inverter_op(vin: float) -> float:
     csv_path = RESULTS_DIR / f"ngspice_inverter_op_{tag}.csv"
     log_path = RESULTS_DIR / f"ngspice_inverter_op_{tag}.log"
 
-    net_path.write_text(render_reference_deck(NG_TEMPLATE, {
-        "COMBINED_LIB": str(combined_mc),
+    net_path.write_text(render_template(TEMPLATE, {
+        "MODEL_SETUP": f'.include "{combined_mc}"',
+        "TEMP": "27",
         "VDD": f"{VDD}",
-        "VIN": f"{vin}",
+        "INPUT_SPEC": f"{vin}",
+        "N_PREFIX": "N", "P_PREFIX": "N",
+        "N_DEVICE": "nmos_rvt", "P_DEVICE": "pmos_rvt",
+        "OUTPUT_LOAD": "", "INITIAL_CONDITION": "",
+        "ANALYSIS": ".op",
     }))
 
     runner_path.write_text(
@@ -89,13 +91,20 @@ def ngspice_inverter_op(vin: float) -> float:
 
 
 def pycircuitsim_inverter_deck(vin: float) -> str:
-    """The PyCircuitSim inverter-OP deck at one input bias.
-
-    Whole-line rewrite of the `Vin` source, so it does not care how the deck
-    in ``examples/`` spells the rest of that line.
-    """
-    return re.sub(r"^Vin 2 0 .*$", f"Vin 2 0 {vin}",
-                  TEMPLATE.read_text(), count=1, flags=re.M)
+    """Render the PyCircuitSim LEVEL=72 adapter at one input bias."""
+    length = f"{L * 1e9:g}n"
+    return render_template(TEMPLATE, {
+        "MODEL_SETUP": (
+            ".model nmos1 NMOS (LEVEL=72)\n"
+            ".model pmos1 PMOS (LEVEL=72)"
+        ),
+        "TEMP": "27", "VDD": f"{VDD}", "INPUT_SPEC": f"{vin}",
+        "N_PREFIX": "M", "P_PREFIX": "M",
+        "N_DEVICE": f"nmos1 L={length} NFIN={NFIN}",
+        "P_DEVICE": f"pmos1 L={length} NFIN={NFIN}",
+        "OUTPUT_LOAD": "", "INITIAL_CONDITION": "",
+        "ANALYSIS": ".op",
+    })
 
 
 def test_inverter_op() -> bool:
@@ -119,7 +128,7 @@ def test_inverter_op() -> bool:
 
         print("    [2/2] Running PyCircuitSim...")
         solution = run_pycircuitsim_op(pycircuitsim_inverter_deck(vin))
-        py_vout = solution.get("3", float("nan"))
+        py_vout = solution.get("out", float("nan"))
         print(f"      PyCircuitSim: V(out) = {py_vout:.6f} V")
         print(f"      PyCircuitSim voltages: {solution}")
 

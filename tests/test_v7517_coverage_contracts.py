@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +18,9 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg"))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 
 from pycmg.nn_generate import _assemble  # noqa: E402
+from external_compact_models.bsim_cmg.scripts import (  # noqa: E402
+    generate_nn_data,
+)
 from neural_network.data.sampling import (  # noqa: E402
     grouped_split_indices,
     stratified_sample_indices,
@@ -26,6 +30,7 @@ from neural_network.data import dataset as dataset_module  # noqa: E402
 from neural_network.cli import train as train_cli  # noqa: E402
 from pycircuitsim.parser import Parser  # noqa: E402
 from scripts.v710_regate_collect import collect  # noqa: E402
+from scripts import v710_regate_manifest as manifest_module  # noqa: E402
 from scripts.v710_regate_manifest import (  # noqa: E402
     _artifact_hashes,
     _dataset_provenance,
@@ -376,25 +381,90 @@ def test_campaign_manifest_detects_checkpoint_mutation(tmp_path: Path) -> None:
         _verify_group(manifest, checkpoints, group)
 
 
-def test_full_terminal_campaign_requires_dataset_provenance(
+def test_dataset_generator_marks_untracked_templates_dirty(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fake_run(
+        command: List[str], **_kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        if command[1:] == ["rev-parse", "HEAD"]:
+            return subprocess.CompletedProcess(command, 0, "a" * 40 + "\n", "")
+        if command[1:] == ["status", "--porcelain"]:
+            return subprocess.CompletedProcess(
+                command, 0, "?? examples/new.spice.tmpl\n", "",
+            )
+        return subprocess.CompletedProcess(command, 0, "", "")
+
+    monkeypatch.setattr(generate_nn_data.subprocess, "run", fake_run)
+    data: Dict[str, Dict[str, object]] = {"metadata": {}}
+    generate_nn_data._add_run_provenance(data)
+
+    assert data["metadata"]["source_dirty"] is True
+
+
+def test_campaign_manifest_rejects_untracked_templates(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     checkpoints = tmp_path / "checkpoints"
     checkpoints.mkdir()
-    group = ("dnf", "small", "tsmc5")
     for device in ("nmos", "pmos"):
-        stem = f"tsmc5_dnf_small_{device}"
+        stem = f"tsmc5_dn_small_{device}"
+        for suffix in ("_best.pt", "_norm.npz", "_best.pt.complete"):
+            (checkpoints / f"{stem}{suffix}").write_bytes(b"artifact")
+    jobs = tmp_path / "jobs.txt"
+    jobs.write_text("dn small TSMC5 verify_nn_ac 1\n")
+    ngspice = tmp_path / "ngspice"
+    ngspice.write_bytes(b"ngspice")
+    osdi = tmp_path / "bsimcmg.osdi"
+    osdi.write_bytes(b"osdi")
+    pdk_root = tmp_path / "PDKs"
+    pdk_root.mkdir()
+
+    def fake_git(_root: Path, *args: str) -> str:
+        if args == ("status", "--porcelain"):
+            return "?? examples/new.spice.tmpl"
+        if args == ("status", "--porcelain", "--untracked-files=no"):
+            return ""
+        if args == ("ls-files", "--others", "--exclude-standard"):
+            return "examples/new.spice.tmpl"
+        if args == ("rev-parse", "HEAD"):
+            return "a" * 40
+        raise AssertionError(f"unexpected git invocation: {args}")
+
+    monkeypatch.setattr(manifest_module, "_git", fake_git)
+    with pytest.raises(SystemExit, match="clean worktree"):
+        manifest_module.main([
+            "--output", str(tmp_path / "campaign_manifest.json"),
+            "--jobs", str(jobs),
+            "--checkpoints", str(checkpoints),
+            "--ngspice", str(ngspice),
+            "--osdi", str(osdi),
+            "--pdk-root", str(pdk_root),
+        ])
+
+
+@pytest.mark.parametrize("tag", ["dnf", "tff"])
+def test_full_terminal_campaign_requires_dataset_provenance(
+    tmp_path: Path,
+    tag: str,
+) -> None:
+    checkpoints = tmp_path / "checkpoints"
+    checkpoints.mkdir()
+    group = (tag, "small", "tsmc5")
+    for device in ("nmos", "pmos"):
+        stem = f"tsmc5_{tag}_small_{device}"
         (checkpoints / f"{stem}_best.pt").touch()
         (checkpoints / f"{stem}_norm.npz").touch()
         (checkpoints / f"{stem}_best.pt.complete").write_text(json.dumps({
-            "family": "directnet-full",
+            "family": "full-terminal",
         }))
 
     with pytest.raises(ValueError, match="dataset provenance"):
         _dataset_provenance(checkpoints, {group})
 
     for device in ("nmos", "pmos"):
-        marker = checkpoints / f"tsmc5_dnf_small_{device}_best.pt.complete"
+        marker = checkpoints / f"tsmc5_{tag}_small_{device}_best.pt.complete"
         payload = json.loads(marker.read_text())
         payload.update({
             "dataset": f"tsmc5_dnf_{device}.npz",

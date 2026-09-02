@@ -44,7 +44,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from tests.common.base import (
     OSDI_PATH,
     SIMPLE_DECKS,
-    render_reference_deck,
+    render_template,
     run_ngspice_subprocess,
 )
 from tests.common.bsimcmg_tran import (
@@ -53,16 +53,14 @@ from tests.common.bsimcmg_tran import (
     make_baseline,
 )
 
-RESULTS_DIR = PROJECT_ROOT / "tests" / "verify_ac_results"
+RESULTS_DIR = PROJECT_ROOT / "results" / "tests" / "ac"
 
 # Levels 1 and 2 own stimulus and tolerances, not topology: both circuits are
 # decks in examples/ (V7.5.9 — they had been f-strings here AND decks there,
 # the drift hazard tests/__init__ names). Level 3's floating-bulk pair stays
 # programmatic: it sweeps polarity, so no single deck expresses it.
-RC_TEMPLATE = SIMPLE_DECKS / "rc_lowpass_ac.sp"
-RC_NG_TEMPLATE = SIMPLE_DECKS / "rc_lowpass_ac.cir"
-CS_TEMPLATE = SIMPLE_DECKS / "bsimcmg_cs_amp_ac.sp"
-CS_NG_TEMPLATE = SIMPLE_DECKS / "bsimcmg_cs_amp_ac.cir"
+RC_TEMPLATE = SIMPLE_DECKS / "rc_lowpass.spice.tmpl"
+CS_TEMPLATE = SIMPLE_DECKS / "common_source.spice.tmpl"
 
 # Acceptance thresholds.  L1 is purely linear so it must match tightly; L2
 # carries the OP match (~0.05% from the DC suite) plus the cap condensation.
@@ -261,13 +259,18 @@ def test_rc_lowpass(work_dir: Path) -> bool:
     # R/C are read off the deck rather than declared here: the closed form is
     # only a valid reference if it is the transfer function of the circuit the
     # simulators were actually handed.
-    py_deck = render_reference_deck(RC_TEMPLATE, {})
-    ng_deck = render_reference_deck(RC_NG_TEMPLATE, {})
+    rc_values = {
+        "TEMP": "27", "INPUT_DC": "0", "INPUT_AC": "1", "INPUT_PHASE": "0",
+        "RESISTANCE": "1k", "CAPACITANCE": "159.155n",
+    }
+    py_deck = render_template(
+        RC_TEMPLATE, {**rc_values, "ANALYSIS": ".ac dec 20 10 1e6"})
+    ng_deck = render_template(RC_TEMPLATE, {**rc_values, "ANALYSIS": ""})
     R = _deck_value(py_deck, "R1")
     C = _deck_value(py_deck, "C1")
     fc = 1.0 / (2 * np.pi * R * C)
     freqs = dec_frequencies(20, 10.0, 1e6)
-    print(f"  deck: {RC_TEMPLATE.name} / {RC_NG_TEMPLATE.name}")
+    print(f"  template: {RC_TEMPLATE.name}")
     print(f"  R={R:.0f}ohm  C={C*1e9:.3f}nF  ->  fc = {fc:.2f} Hz")
 
     v_py = run_pycircuitsim_ac(py_deck, work_dir, "rc", freqs, "out")
@@ -310,24 +313,36 @@ def test_cs_amp(work_dir: Path) -> bool:
     ac_card = "ac dec 20 1e3 1e12"
     freqs = dec_frequencies(20, 1e3, 1e12)
 
-    # Topology and geometry come from the deck; the gate supplies only what
-    # the reference half cannot express on an OSDI instance line (the bake)
-    # plus the bias the two halves must share.
-    py_deck = render_reference_deck(CS_TEMPLATE, {})
+    # One template owns topology; the gate supplies the technology, geometry,
+    # bias, passives, and simulator-specific model adapter.
+    common = {
+        "TEMP": "27", "VDD": f"{config.vdd:g}",
+        "INPUT_SPEC": "DC=0.35 AC=1 0", "LOAD_NETWORK": "Rd vdd out 50k",
+        "BULK_NETWORK": "", "SOURCE_NODE": "0", "BULK_NODE": "0",
+        "OUTPUT_LOAD": "Cload out 0 5f",
+    }
+    py_deck = render_template(CS_TEMPLATE, {
+        **common,
+        "MODEL_SETUP": ".model nmos_rvt NMOS (LEVEL=72)",
+        "DEVICE_PREFIX": "M",
+        "DEVICE": (
+            f"nmos_rvt L={config.l_nmos * 1e9:g}n "
+            f"NFIN={config.nfin_n} TFIN={tech.tfin * 1e9:g}n"
+        ),
+        "ANALYSIS": ".ac dec 20 1e3 1e12",
+    })
     vdd = _deck_value(py_deck, "VDD")
     vbias = _deck_param(py_deck, "Vin", "DC")
     rd = _deck_token(py_deck, "RD")
     cload = _deck_token(py_deck, "Cload")
-    ng_deck = render_reference_deck(CS_NG_TEMPLATE, {
-        "BAKED_LIB": str(merged_baked(config, work_dir)),
-        "VDD": f"{vdd}",
-        "VBIAS": f"{vbias}",
-        "RD": rd,
-        "CLOAD": cload,
-        "NMOS": vt.nmos_model,
+    ng_deck = render_template(CS_TEMPLATE, {
+        **common,
+        "MODEL_SETUP": f'.include "{merged_baked(config, work_dir)}"',
+        "DEVICE_PREFIX": "N", "DEVICE": vt.nmos_model,
+        "ANALYSIS": "",
     })
 
-    print(f"  deck: {CS_TEMPLATE.name} / {CS_NG_TEMPLATE.name}")
+    print(f"  template: {CS_TEMPLATE.name}")
     print(f"  Tech=ASAP7 VT={vt.vt_name}  L={config.l_nmos*1e9:.0f}nm "
           f"NFIN={config.nfin_n}  VDD={vdd}V Vbias={vbias}V "
           f"RD={rd} Cload={cload}")
@@ -383,45 +398,35 @@ def _floating_bulk_case(work_dir: Path, polarity: str) -> bool:
         model, l_nm, nfin, vbias = (
             vt.nmos_model, config.l_nmos * 1e9, config.nfin_n, 0.35)
         # Bulk floats behind Rb to ground; junction caps couple it in.
-        core = (
-            f"RD vdd out {rd}\n"
-            f"Rb vb 0 {rb}\n"
-            f"M1 out in 0 vb {model} L={l_nm:.0f}n NFIN={nfin} "
-            f"TFIN={tfin_nm:.1f}n\n")
-        ng_core = (
-            f"RD vdd out {rd}\n"
-            f"Rb vb 0 {rb}\n"
-            f"N1 out in 0 vb {model}\n")
-        model_card = f".model {model} NMOS (LEVEL=72)\n"
+        load_network = f"Rd vdd out {rd}"
+        bulk_network = f"Rb vb 0 {rb}"
+        source_node = "0"
+        model_card = f".model {model} NMOS (LEVEL=72)"
     else:
         model, l_nm, nfin, vbias = (
             vt.pmos_model, config.l_pmos * 1e9, config.nfin_p, 0.35)
-        core = (
-            f"RD out 0 {rd}\n"
-            f"Rb vb vdd {rb}\n"
-            f"M1 out in vdd vb {model} L={l_nm:.0f}n NFIN={nfin} "
-            f"TFIN={tfin_nm:.1f}n\n")
-        ng_core = (
-            f"RD out 0 {rd}\n"
-            f"Rb vb vdd {rb}\n"
-            f"N1 out in vdd vb {model}\n")
-        model_card = f".model {model} PMOS (LEVEL=72)\n"
+        load_network = f"Rd out 0 {rd}"
+        bulk_network = f"Rb vb vdd {rb}"
+        source_node = "vdd"
+        model_card = f".model {model} PMOS (LEVEL=72)"
 
-    py_deck = (
-        f"* BSIM-CMG floating-bulk CS amp AC ({polarity}, PyCircuitSim)\n"
-        f"VDD vdd 0 {vdd}\n"
-        f"Vin in 0 DC={vbias} AC=1 0\n"
-        + core + model_card
-        + f".ac {ac_card.split(' ', 1)[1]}\n.end\n"
-    )
-    ng_deck = (
-        f"* BSIM-CMG floating-bulk CS amp AC ({polarity}, NGSPICE)\n"
-        f'.include "{baked}"\n'
-        ".temp 27\n"
-        f"VDD vdd 0 {vdd}\n"
-        f"Vin in 0 dc {vbias} ac 1\n"
-        + ng_core + ".end\n"
-    )
+    common = {
+        "TEMP": "27", "VDD": f"{vdd:g}",
+        "INPUT_SPEC": f"DC={vbias:g} AC=1 0",
+        "LOAD_NETWORK": load_network, "BULK_NETWORK": bulk_network,
+        "SOURCE_NODE": source_node, "BULK_NODE": "vb", "OUTPUT_LOAD": "",
+    }
+    py_deck = render_template(CS_TEMPLATE, {
+        **common, "MODEL_SETUP": model_card, "DEVICE_PREFIX": "M",
+        "DEVICE": (
+            f"{model} L={l_nm:.0f}n NFIN={nfin} TFIN={tfin_nm:.1f}n"
+        ),
+        "ANALYSIS": f".{ac_card}",
+    })
+    ng_deck = render_template(CS_TEMPLATE, {
+        **common, "MODEL_SETUP": f'.include "{baked}"',
+        "DEVICE_PREFIX": "N", "DEVICE": model, "ANALYSIS": "",
+    })
 
     print(f"  [{polarity.upper()}] model={model} L={l_nm:.0f}nm NFIN={nfin} "
           f"Rb={rb} to {'gnd' if polarity == 'nmos' else 'vdd'}")

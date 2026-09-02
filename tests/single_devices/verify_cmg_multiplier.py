@@ -46,8 +46,9 @@ from tests.common.core_gates import (
     rel_err,
     report,
 )
+from tests.common.base import DEVICE_DECKS, SIMPLE_DECKS, render_template
 
-RESULTS_DIR = PROJECT_ROOT / "tests" / "verify_cmg_multiplier_results"
+RESULTS_DIR = PROJECT_ROOT / "results" / "tests" / "cmg_multiplier"
 
 L = 30e-9
 NFIN = 10.0
@@ -58,6 +59,25 @@ RATIO_TOL = 1e-9        # PyCircuitSim's own m-scaling must be exact
 PARALLEL_TOL_V = 1e-6   # m=N vs N parallel devices, in volts
 AC_MAG_TOL = 0.01       # 1% of |V(out)|
 AC_PHASE_TOL = 1.0      # degrees
+
+
+def _render_device(
+    *, model_setup: str, drain_bias: str, gate_bias: str,
+    source_bias: str, bulk_bias: str, device_name: str,
+    nodes: Tuple[str, str, str, str], device: str, load: str = "",
+    extra_devices: str = "", analysis: str = ".op",
+) -> str:
+    """Render a multiplier experiment from the canonical MOSFET template."""
+    drain, gate, source, bulk = nodes
+    return render_template(DEVICE_DECKS / "mosfet.spice.tmpl", {
+        "MODEL_SETUP": model_setup, "TEMP": "27",
+        "DRAIN_BIAS": drain_bias, "GATE_BIAS": gate_bias,
+        "SOURCE_BIAS": source_bias, "BULK_BIAS": bulk_bias,
+        "DEVICE_NAME": device_name, "DRAIN_NODE": drain,
+        "GATE_NODE": gate, "SOURCE_NODE": source, "BULK_NODE": bulk,
+        "DEVICE": device, "EXTRA_DEVICES": extra_devices,
+        "LOAD": load, "ANALYSIS": analysis,
+    })
 
 
 # ---------------------------------------------------------------------------
@@ -110,27 +130,44 @@ def test_single_device_op(device: str) -> bool:
     for m in MULTS:
         # NGSPICE: N-prefix OSDI device, m on the instance line.
         if is_n:
-            src = "Vd d 0 0.5\nVg g 0 0.5\n" f"N1 d g 0 0 {model} m={m}\n"
+            drain_bias = "Vd d 0 0.5"
+            gate_bias = "Vg g 0 0.5"
+            source_bias = bulk_bias = ""
+            nodes = ("d", "g", "0", "0")
         else:
             # PMOS: source/bulk at 0.7, gate low so the device is ON.
-            src = ("Vs s 0 0.7\nVg g 0 0.2\nVd d 0 0.0\n"
-                   f"N1 d g s s {model} m={m}\n")
-        deck = f'* {device} m={m}\n.include "{baked}"\n.temp 27\n{src}.op\n.end\n'
+            drain_bias = "Vd d 0 0"
+            gate_bias = "Vg g 0 0.2"
+            source_bias = "Vs s 0 0.7"
+            bulk_bias = ""
+            nodes = ("d", "g", "s", "s")
+        deck = _render_device(
+            model_setup=f'.include "{baked}"', drain_bias=drain_bias,
+            gate_bias=gate_bias, source_bias=source_bias,
+            bulk_bias=bulk_bias, device_name="N1", nodes=nodes,
+            device=f"{model} m={m}",
+        )
         data = ngspice_probe(RESULTS_DIR, f"{device}_op_m{m}", deck, "op",
                              ["i(vd)"])
         ng_i[m] = abs(float(data[0, 1]))
 
         # PyCircuitSim: M-prefix, same m.
         if is_n:
-            ps_deck = (f"* {device} m={m}\nVd 1 0 0.5\nVg 2 0 0.5\n"
-                       f"M1 1 2 0 0 nmos1 L=30n NFIN=10 m={m}\n"
-                       f".model nmos1 NMOS (LEVEL=72)\n.op\n.end\n")
-            dev_model = "nmos1"
+            ps_deck = _render_device(
+                model_setup=".model nmos1 NMOS (LEVEL=72)",
+                drain_bias="Vd 1 0 0.5", gate_bias="Vg 2 0 0.5",
+                source_bias="", bulk_bias="", device_name="M1",
+                nodes=("1", "2", "0", "0"),
+                device=f"nmos1 L=30n NFIN=10 m={m}",
+            )
         else:
-            ps_deck = (f"* {device} m={m}\nVs 3 0 0.7\nVg 2 0 0.2\nVd 1 0 0.0\n"
-                       f"M1 1 2 3 3 pmos1 L=30n NFIN=10 m={m}\n"
-                       f".model pmos1 PMOS (LEVEL=72)\n.op\n.end\n")
-            dev_model = "pmos1"
+            ps_deck = _render_device(
+                model_setup=".model pmos1 PMOS (LEVEL=72)",
+                drain_bias="Vd 1 0 0", gate_bias="Vg 2 0 0.2",
+                source_bias="Vs 3 0 0.7", bulk_bias="", device_name="M1",
+                nodes=("1", "2", "3", "3"),
+                device=f"pmos1 L=30n NFIN=10 m={m}",
+            )
         circuit, _ = _parse(ps_deck, f"{device}_op_m{m}", ASAP7_MODELCARD)
         sol = _solve_dc(circuit)
         ps_i[m] = abs(_device(circuit, "M1").calculate_current(sol))
@@ -139,7 +176,6 @@ def test_single_device_op(device: str) -> bool:
         ok &= report(f"{device} m={m:<2d} |Id| vs NGSPICE",
                      err <= REL_TOL_I,
                      f"ng={ng_i[m]:.6e} ps={ps_i[m]:.6e} rel={err*100:.4f}%")
-        assert dev_model  # keep the model token referenced (documentation)
 
     for m in MULTS[1:]:
         r_ps = ps_i[m] / ps_i[1]
@@ -160,9 +196,13 @@ def test_raw_cache_is_unscaled() -> bool:
     ok = True
     ref: Dict[str, float] = {}
     for m in MULTS:
-        deck = (f"* raw m={m}\nVd 1 0 0.5\nVg 2 0 0.5\n"
-                f"M1 1 2 0 0 nmos1 L=30n NFIN=10 m={m}\n"
-                f".model nmos1 NMOS (LEVEL=72)\n.op\n.end\n")
+        deck = _render_device(
+            model_setup=".model nmos1 NMOS (LEVEL=72)",
+            drain_bias="Vd 1 0 0.5", gate_bias="Vg 2 0 0.5",
+            source_bias="", bulk_bias="", device_name="M1",
+            nodes=("1", "2", "0", "0"),
+            device=f"nmos1 L=30n NFIN=10 m={m}",
+        )
         circuit, _ = _parse(deck, f"raw_m{m}", ASAP7_MODELCARD)
         dev = _device(circuit, "M1")
         volt = {"1": 0.5, "2": 0.5, "0": 0.0}
@@ -196,18 +236,25 @@ def test_dc_sweep() -> bool:
     m = 4
     baked = bake_asap7(RESULTS_DIR, "nmos_rvt",
                        {"L": L, "NFIN": NFIN, "DEVTYPE": 1}, tag="dc")
-    deck = (f'* nmos dc m={m}\n.include "{baked}"\n.temp 27\n'
-            f"Vd d 0 0.5\nVgs g 0 0.5\n"
-            f"N1 d g 0 0 nmos_rvt m={m}\n.end\n")
+    deck = _render_device(
+        model_setup=f'.include "{baked}"', drain_bias="Vd d 0 0.5",
+        gate_bias="Vgs g 0 0.5", source_bias="", bulk_bias="",
+        device_name="N1", nodes=("d", "g", "0", "0"),
+        device=f"nmos_rvt m={m}", analysis="",
+    )
     data = ngspice_probe(RESULTS_DIR, "nmos_dc_m4", deck,
                          "dc Vgs 0 0.7 0.05", ["i(vd)"])
     vg_ng, i_ng = data[:, 0], np.abs(data[:, 1])
 
     from pycircuitsim.solver import DCSolver
 
-    ps_deck = (f"* nmos dc m={m}\nVd 1 0 0.5\nVgs 2 0 0.5\n"
-               f"M1 1 2 0 0 nmos1 L=30n NFIN=10 m={m}\n"
-               f".model nmos1 NMOS (LEVEL=72)\n.op\n.end\n")
+    ps_deck = _render_device(
+        model_setup=".model nmos1 NMOS (LEVEL=72)",
+        drain_bias="Vd 1 0 0.5", gate_bias="Vgs 2 0 0.5",
+        source_bias="", bulk_bias="", device_name="M1",
+        nodes=("1", "2", "0", "0"),
+        device=f"nmos1 L=30n NFIN=10 m={m}",
+    )
     circuit, _ = _parse(ps_deck, "nmos_dc_m4", ASAP7_MODELCARD)
     dev = _device(circuit, "M1")
     vgs_src = _device(circuit, "Vgs")
@@ -235,12 +282,21 @@ def test_dc_sweep() -> bool:
 def test_parallel_equivalence() -> bool:
     """A resistor-loaded NMOS: m=4 must solve identically to 4 devices."""
     print("\n  --- m=4 vs 4 parallel devices (resistor-loaded NMOS) ---")
-    head = "Vdd 1 0 0.7\nVg 2 0 0.4\nRload 1 3 20k\n"
-    tail = ".model nmos1 NMOS (LEVEL=72)\n.op\n.end\n"
-    deck_m = f"* m=4\n{head}M1 3 2 0 0 nmos1 L=30n NFIN=10 m=4\n{tail}"
-    deck_p = ("* 4 in parallel\n" + head
-              + "".join(f"M{i} 3 2 0 0 nmos1 L=30n NFIN=10\n" for i in range(1, 5))
-              + tail)
+    common = {
+        "model_setup": ".model nmos1 NMOS (LEVEL=72)",
+        "drain_bias": "Vdd 1 0 0.7", "gate_bias": "Vg 2 0 0.4",
+        "source_bias": "", "bulk_bias": "", "nodes": ("3", "2", "0", "0"),
+        "load": "Rload 1 3 20k",
+    }
+    deck_m = _render_device(
+        **common, device_name="M1", device="nmos1 L=30n NFIN=10 m=4",
+    )
+    deck_p = _render_device(
+        **common, device_name="M1", device="nmos1 L=30n NFIN=10",
+        extra_devices="\n".join(
+            f"M{i} 3 2 0 0 nmos1 L=30n NFIN=10" for i in range(2, 5)
+        ),
+    )
 
     c_m, _ = _parse(deck_m, "par_m4", ASAP7_MODELCARD)
     c_p, _ = _parse(deck_p, "par_x4", ASAP7_MODELCARD)
@@ -268,10 +324,17 @@ def test_ac() -> bool:
     baked = bake_asap7(RESULTS_DIR, "nmos_rvt",
                        {"L": L, "NFIN": NFIN, "DEVTYPE": 1}, tag="ac")
     # Rload chosen so the OP sits mid-rail with m=4 (4x the current).
-    deck = (f'* cs amp m={m}\n.include "{baked}"\n.temp 27\n'
-            f"Vdd vdd 0 0.7\nVin g 0 dc 0.4 ac 1\n"
-            f"N1 out g 0 0 nmos_rvt m={m}\n"
-            f"Rload vdd out 5k\nCload out 0 10f\n.end\n")
+    cs_common = {
+        "TEMP": "27", "VDD": "0.7", "INPUT_SPEC": "DC=0.4 AC=1 0",
+        "LOAD_NETWORK": "Rload vdd out 5k", "BULK_NETWORK": "",
+        "SOURCE_NODE": "0", "BULK_NODE": "0",
+        "OUTPUT_LOAD": "Cload out 0 10f",
+    }
+    deck = render_template(SIMPLE_DECKS / "common_source.spice.tmpl", {
+        **cs_common, "MODEL_SETUP": f'.include "{baked}"',
+        "DEVICE_PREFIX": "N", "DEVICE": f"nmos_rvt m={m}",
+        "ANALYSIS": "",
+    })
     data = ngspice_probe(RESULTS_DIR, "cs_ac_m4", deck,
                          "ac dec 1 1e6 1e9", ["v(out)"])
     freq = data[:, 0]
@@ -279,15 +342,16 @@ def test_ac() -> bool:
 
     from pycircuitsim.solver import ACSolver, DCSolver
 
-    ps_deck = (f"* cs amp m={m}\nVdd 1 0 0.7\nVin 2 0 DC=0.4 AC=1 0\n"
-               f"M1 3 2 0 0 nmos1 L=30n NFIN=10 m={m}\n"
-               f"Rload 1 3 5k\nCload 3 0 10f\n"
-               f".model nmos1 NMOS (LEVEL=72)\n.ac dec 1 1e6 1e9\n.end\n")
+    ps_deck = render_template(SIMPLE_DECKS / "common_source.spice.tmpl", {
+        **cs_common, "MODEL_SETUP": ".model nmos1 NMOS (LEVEL=72)",
+        "DEVICE_PREFIX": "M", "DEVICE": f"nmos1 L=30n NFIN=10 m={m}",
+        "ANALYSIS": ".ac dec 1 1e6 1e9",
+    })
     circuit, _ = _parse(ps_deck, "cs_ac_m4", ASAP7_MODELCARD)
     op = DCSolver(circuit, use_source_stepping=False, use_gmin_stepping=False,
                   max_iterations=200).solve()
     ac = ACSolver(circuit, dc_solution=op).solve(freq)
-    v_ps = ac["3"]
+    v_ps = ac["out"]
 
     mag_err = float(np.max(np.abs(np.abs(v_ps) - np.abs(v_ng))
                            / np.maximum(np.abs(v_ng), 1e-30)))

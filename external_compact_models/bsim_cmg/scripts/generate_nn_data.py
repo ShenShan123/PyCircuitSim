@@ -143,7 +143,7 @@ def _add_run_provenance(data: dict) -> None:
         capture_output=True, text=True, check=False,
     )
     status = subprocess.run(
-        ["git", "status", "--porcelain", "--untracked-files=no"],
+        ["git", "status", "--porcelain"],
         cwd=project_root, capture_output=True, text=True, check=False,
     )
     data["metadata"].update({

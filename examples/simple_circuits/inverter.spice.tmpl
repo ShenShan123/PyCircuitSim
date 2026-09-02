@@ -1,0 +1,11 @@
+* CMOS inverter for OP, DC, and transient analyses
+<MODEL_SETUP>
+.temp <TEMP>
+Vdd vdd 0 <VDD>
+Vin in 0 <INPUT_SPEC>
+<N_PREFIX>n out in 0 0 <N_DEVICE>
+<P_PREFIX>p out in vdd vdd <P_DEVICE>
+<OUTPUT_LOAD>
+<INITIAL_CONDITION>
+<ANALYSIS>
+.end

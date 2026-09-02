@@ -41,7 +41,7 @@ Gate definitions, strict-OMP scoring, comparability, and evidence rules:
 Tier names compare a family with itself, never across families: BSIM-AR
 `small` is already larger than DirectNet `large`.
 
-> **Denominators changed in V7.3.0.** TSMC6 folds into the headline, so complex
+> **Denominators changed in V7.3.0.** TSMC6 folds into the headline, so circuit
 > totals are **/20**, device AC **/10**, opamp AC **/5**, where every earlier
 > report said /16, /8 and /4. No total here is comparable to a pre-V7.3.0 total
 > without rescaling.
@@ -50,7 +50,7 @@ TSMC6 remains the controlled repeat defined in `methodology.md` §7.
 
 ---
 
-## 1. Headline — complex gates by tier
+## 1. Headline — circuit gates by tier
 
 Strict: a cell passes only if it passes at OMP ∈ {1, 2, 4}.
 
