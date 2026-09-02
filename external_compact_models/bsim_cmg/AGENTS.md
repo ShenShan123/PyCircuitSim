@@ -276,6 +276,14 @@ openvaf -I bsim-cmg-va/code -o bsimcmg.osdi bsim-cmg-va/code/bsimcmg_main.va
 ### Capacitance Sign Convention
 - The OSDI reactive Jacobian (dQ/dV) uses **Y-matrix convention** where off-diagonal entries are negative. SPICE capacitance variables (cgd, cgs, cdg) use the **opposite** sign. Off-diagonal entries must be negated when extracting from the condensed matrix; diagonal entries (cgg, cdd) need no sign flip.
 
+### Neural Dataset Output Contracts
+- Keep reduced and full-terminal datasets at distinct default paths. The
+  full-terminal filename carries the `dnf` family tag.
+- The full-terminal `vds_zero` sample class must honor the declared
+  `voltage_box_factor`. The reduced contract retains its legacy 2x envelope.
+  Applying the 2x envelope to full-terminal PMOS data produced over-1 A
+  terminal currents and rejected otherwise legal bins.
+
 ### NGSPICE OSDI Limitations
 - **No instance-line parameters**: NGSPICE OSDI cannot accept instance parameters on the device line (e.g., `N1 d g s e model L=16e-9` fails silently). All geometric parameters must be **baked into the `.model` block**.
 - **Multi-model files**: When a modelcard contains multiple `.model` blocks, `Model()` must pass `model_name` to `parse_modelcard(target=...)` so the correct block is parsed.
@@ -333,6 +341,13 @@ openvaf -I bsim-cmg-va/code -o bsimcmg.osdi bsim-cmg-va/code/bsimcmg_main.va
 - Process parameters are extracted on-the-fly from the resolved modelcard via `extract_process_params(model.modelcard_params)`. They are NOT hardcoded in config.
 - Each (L, NFIN) bin gets its own `Model()` instance to avoid shared-buffer corruption (see "Instance / Model Isolation" constraint).
 - NFIN < 2 is always filtered out (convergence failures documented above).
+- Keep the pass-device transient source guard at 50% beyond the rails only for
+  TSMC5/16 NMOS and at 20% for every other device. Fine-tune these datasets
+  from the manifest-pinned control checkpoint: an older PMOS warm start
+  inverted the scalar boundary and cut the device gate from 114/129 to 58/129.
+- LEVEL=75 DC and transient solves use a 0.1 V per-iteration node-voltage cap.
+  A rail-sized step can leave certified support even when the physical fixed
+  point is inside it; the tighter cap preserves both SRAM latch states.
 
 ### Newton-Raphson Limiting (`_pnjlim`)
 - Always guard `math.log(vnew / vt)` against `vnew <= 0`. Fall back to `vcrit` when the argument would be non-positive.

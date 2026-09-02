@@ -28,8 +28,9 @@ def _circuit_has_nn(circuit: Circuit) -> bool:
     """
     # Local import to avoid a top-level circular import via models.
     from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase
+    from pycircuitsim.models.mosfet_directnet_full import _FullTerminalNNBase
     for comp in circuit.components:
-        if isinstance(comp, _MOSFETNNBase):
+        if isinstance(comp, (_MOSFETNNBase, _FullTerminalNNBase)):
             return True
     return False
 
@@ -335,7 +336,8 @@ def run_dc_sweep(
     analysis_params: Dict,
     visualizer: Visualizer,
     output_path: Path,
-    circuit_name: str
+    circuit_name: str,
+    require_convergence: bool = False,
 ) -> Dict[str, List[float]]:
     """
     Run DC sweep analysis and generate plots.
@@ -350,6 +352,8 @@ def run_dc_sweep(
         visualizer: Visualizer instance for plotting
         output_path: Directory to save plots
         circuit_name: Name of the circuit (for file naming)
+        require_convergence: Raise instead of returning an unconverged OP or
+            sweep point. Scientific accuracy gates must enable this.
 
     Returns:
         Dictionary mapping node names to their value lists
@@ -394,6 +398,10 @@ def run_dc_sweep(
         return s, sol
 
     op_solver, op_solution = _solve_dc_with_retry(circuit, has_nn, _op_solve)
+    if (require_convergence
+            and not getattr(op_solver, "_last_solve_converged", True)):
+        source_component.value = original_value
+        raise RuntimeError("DC operating point did not converge")
     logger.info(f"DC operating point computed: {len(op_solution)} nodes")
 
     # STAGE 2: Use OP solution as initial guess for sweep
@@ -483,6 +491,14 @@ def run_dc_sweep(
             point_solver, solution = _solve_dc_with_retry(
                 circuit, has_nn, _point_solve, skip_header=True,
             )
+            if (require_convergence
+                    and not getattr(
+                        point_solver, "_last_solve_converged", True)):
+                source_component.value = original_value
+                raise RuntimeError(
+                    f"DC sweep point {point_num} at {current_value:g} "
+                    "did not converge"
+                )
 
             # Store this solution for next point's initial guess
             prev_solution = solution.copy()
@@ -598,7 +614,7 @@ def run_transient(
     # so PyCircuitSim and NGSPICE would integrate from different initial states.
     # Default-off: only engaged when the netlist requests `uic`, so non-uic
     # decks are byte-identical. Mirrors the test harness's uic pinning
-    # (tests/common/complex.py run_directnet_transient).
+    # (tests/common/circuit_benchmarks.py run_directnet_transient).
     from pycircuitsim.models.passive import VoltageSource
     _uic_temps = []
     if analysis_params.get("uic") and circuit.initial_conditions:
@@ -788,6 +804,11 @@ def run_ac_sweep(
             return s, sol
 
         dc_solver, dc_solution = _solve_dc_with_retry(circuit, has_nn, _ac_op_solve)
+
+    if not getattr(dc_solver, "_last_solve_converged", True):
+        raise RuntimeError(
+            "AC analysis requires a converged DC operating point"
+        )
 
     logger.info("DC operating point computed")
     for node, voltage in dc_solution.items():

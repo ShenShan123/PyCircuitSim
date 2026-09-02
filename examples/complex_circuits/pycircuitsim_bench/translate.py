@@ -472,6 +472,38 @@ def _polarity(card_name: str, geom: Mapping[str, float]) -> str:
     return by_devtype
 
 
+def _model_stub(name: str, kind: str, *, tech: str,
+                model_level: int) -> str:
+    """Render one PyCircuitSim model declaration.
+
+    LEVEL=72 resolves the original baked BSIM-CMG card through
+    ``modelcard_path``.  Neural families instead need the technology and VT
+    flavor explicitly.  The generated AnalogGym aliases own that flavor in their
+    ``<n|p><vt>_l...`` prefix, so extracting it preserves the source deck's
+    per-device model choice instead of flattening every device to one VT.
+    """
+    if model_level == 72:
+        return f".model {name} {kind} (LEVEL=72)"
+    if model_level not in (73, 75, 76):
+        raise TranslateError(
+            f"Unsupported PyCircuitSim model level {model_level}; "
+            "AnalogGym supports LEVEL=72, DirectNet LEVEL=73, or "
+            "DirectNet-Full LEVEL=75, or BSIM-AR-Full LEVEL=76")
+    match = re.fullmatch(r"[np]([^_]+)_l\d+_f\d+", name, re.IGNORECASE)
+    if match is None:
+        raise TranslateError(
+            f"Cannot recover VT flavor from AnalogGym model alias {name!r}")
+    vt = match.group(1).lower()
+    family = {
+        73: "", 75: " FAMILY=directnet-full",
+        76: " FAMILY=bsimar-full",
+    }[model_level]
+    return (
+        f".model {name} {kind} "
+        f"(LEVEL={model_level}{family} TECH={tech.lower()} VT={vt})"
+    )
+
+
 # ── Node-name handling (translation rules 6 and 11) ──────────────────────
 
 class _Scope:
@@ -898,7 +930,8 @@ def _line_control(tag: str, vdd: float) -> str:
 # ── The translator ───────────────────────────────────────────────────────
 
 def translate_deck(design_dir: Path, deck: str, *, tech: str, category: str,
-                   control: Optional[str] = None) -> TranslatedDeck:
+                   control: Optional[str] = None,
+                   model_level: int = 72) -> TranslatedDeck:
     """Translate one AnalogGym deck into a :class:`TranslatedDeck`.
 
     Args:
@@ -989,8 +1022,10 @@ def translate_deck(design_dir: Path, deck: str, *, tech: str, category: str,
         raise TranslateError(
             f"Unterminated .subckt '{scope_stack[-1].name}' in {deck_path}")
 
-    stubs = [f".model {name} {kind} (LEVEL=72)"
-             for name, kind in used_models.items()]
+    stubs = [
+        _model_stub(name, kind, tech=tech, model_level=model_level)
+        for name, kind in used_models.items()
+    ]
     header = [
         f"* {tech} / {category} / {design_dir.name} / {deck}",
         "* Translated for PyCircuitSim by pycircuitsim_bench.translate.",
@@ -1017,7 +1052,7 @@ def translate_deck(design_dir: Path, deck: str, *, tech: str, category: str,
         nodesets=nodesets, ic=ic, params=params,
         options=DeckOptions(**options), devices=source_devices,
         multipliers=multipliers, stability=STABILITY_DECKS.get(deck),
-        temp_c=temp_c, warnings=warnings)
+        temp_c=temp_c, warnings=warnings, model_level=model_level)
     return td
 
 
@@ -1121,7 +1156,8 @@ def altns_deck(td: TranslatedDeck) -> Optional[TranslatedDeck]:
     if not alt.exists():
         return None
     return translate_deck(td.design_dir, 'tb_tran_altns.cir', tech=td.tech,
-                          category=td.category, control=td.plans[0].control)
+                          category=td.category, control=td.plans[0].control,
+                          model_level=td.model_level)
 
 
 def write_netlist(td: TranslatedDeck, out_dir: Path) -> Path:

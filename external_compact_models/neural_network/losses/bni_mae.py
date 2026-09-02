@@ -434,7 +434,8 @@ class ChargeSobolevLoss(nn.Module):
 class SubthresholdIdLoss(nn.Module):
     """λ · (Huber value term + ceiling_w · ceiling hinge) in asinh(id/s2) space.
 
-    DirectNet-only (asinh output norm). ``s2`` (default 1e-9) sets the
+    Supports the reduced ``id`` and full-terminal ``i_d`` drain-current
+    columns under asinh output normalization. ``s2`` (default 1e-9) sets the
     subthreshold resolution; ``upper`` (1e-6) caps the value band below the
     trip gain; ``id_floor`` (data trust floor, 1e-12 post-regen) masks the
     value MAE; ``off_floor`` (1e-10) selects the hard-OFF rows the ceiling
@@ -467,9 +468,12 @@ class SubthresholdIdLoss(nn.Module):
         from neural_network.data.normalize import OUTPUT_COLUMN_ORDER
         self.column_order = column_order or OUTPUT_COLUMN_ORDER
         col = {c: i for i, c in enumerate(self.column_order)}
-        if "id" not in col:
-            raise ValueError("SubthresholdIdLoss requires an 'id' output column")
-        self.id_col = col["id"]
+        drain_column = "id" if "id" in col else "i_d"
+        if drain_column not in col:
+            raise ValueError(
+                "SubthresholdIdLoss requires an 'id' or 'i_d' output column"
+            )
+        self.id_col = col[drain_column]
 
     @staticmethod
     def _huber(r: torch.Tensor, delta: float) -> torch.Tensor:

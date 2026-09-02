@@ -356,30 +356,3 @@ class TransformerConfig:
     # Early stopping
     patience: int = 30
     delta: float = 1e-5
-
-
-@dataclass
-class TabPFNConfig:
-    """Training hyperparameters for the TabPFN-style compact model (V6.9)."""
-    # Architecture (see neural_network/models/tabpfn.py)
-    embed_dim: int = 96
-    n_inducing: int = 32
-    dist_blocks: int = 3
-    dist_heads: int = 6
-    agg_blocks: int = 3
-    agg_heads: int = 6
-    n_cls_tokens: int = 2
-    icl_num_blocks: int = 4
-    icl_heads: int = 6
-    ctx_len: int = 2048
-    use_rope: bool = True
-    ff_factor: int = 2
-    feature_group_size: int = 3
-    # Optimization
-    batch_size: int = 1024
-    max_epochs: int = 150
-    lr: float = 5e-4
-    weight_decay: float = 1e-4
-    # Early stopping
-    patience: int = 40
-    delta: float = 1e-5

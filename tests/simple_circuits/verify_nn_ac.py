@@ -43,16 +43,18 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from tests.common.complex import (  # noqa: E402
-    BENCH, BENCH_TECHS, get_baked_modelcard, run_ngspice_wrdata,
+from tests.common.circuit_benchmarks import (  # noqa: E402
+    BENCH, BENCH_TECHS, active_model_label, active_model_name,
+    get_baked_modelcard,
+    run_ngspice_wrdata,
 )
-from tests.common.complex_ac import (  # noqa: E402
+from tests.common.circuit_ac import (  # noqa: E402
     ac_freq_grid, run_ngspice_ac_baked, run_directnet_ac, ac_metrics_extended,
     fmt_hz,
 )
 
 # Env-overridable so parallel checkpoint bake-offs can isolate output dirs
-# (same idiom as PYCIRCUITSIM_COMPLEX_RESULTS in tests/common/complex.py).
+# (same idiom as PYCIRCUITSIM_COMPLEX_RESULTS in tests/common/circuit_benchmarks.py).
 import os as _os  # noqa: E402
 RESULTS_BASE = Path(_os.environ.get(
     "PYCIRCUITSIM_NN_RESULTS",
@@ -113,7 +115,7 @@ def _directnet_deck(bt, device: str, vbias: float, ac_card: str) -> str:
         model = (f".model pmos_nn PMOS "
                  f"(LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})\n")
     return (
-        f"* {device.upper()} CS amp AC — DirectNet LEVEL=73 ({bt.name})\n"
+        f"* {device.upper()} CS amp AC — {active_model_label()} ({bt.name})\n"
         f"VDD vdd 0 {bt.vdd:g}\n"
         f"Vin in 0 DC={vbias:g} AC=1 0\n"
         f"Xamp in out vdd csamp\n"
@@ -222,31 +224,36 @@ def eval_cs_amp(tech: str, device: str) -> Dict[str, object]:
     v_dn, op_ok, dc_op = run_directnet_ac(nn_deck, work_dir, f"{tag}_ac",
                                           freqs, "out")
     nn_vout = dc_op.get("out", float("nan"))
-    # OP validity is judged by the OP VOLTAGE being mid-rail (the device is
-    # actually amplifying), NOT by the strict NR convergence flag — a high-gain
-    # CS-amp trip legitimately trips that flag while the pseudo-transient
-    # fallback returns a sound OP. A failure with op_valid=False is an OP-misbias
-    # (Vth/value-surface offset, already measured by the DC suite), NOT a
-    # charge-derivative (cap) error.
+    # Voltage placement and Newton convergence answer different questions: a
+    # mid-rail pseudo-transient state can look plausible but is not a DC fixed
+    # point. AC must linearize around a converged operating point.
     op_valid = (np.isfinite(nn_vout)
                 and 0.15 * bt.vdd < nn_vout < 0.85 * bt.vdd)
 
     m = ac_metrics_extended(freqs, v_dn, v_ng)
-    passed = (
-        op_valid
-        and m["gain0_db_err"] <= GAIN0_DB_ERR_TOL
-        and np.isfinite(m["f3db_ratio"])
-        and F3DB_RATIO_LO <= m["f3db_ratio"] <= F3DB_RATIO_HI
-        and m["mag_nrmse"] <= MAG_NRMSE_TOL
-    )
+    passed = ac_gate_passes(op_ok, bool(op_valid), m)
     return dict(tech=tech, device=device, ng_vbias=ng_vbias, nn_vbias=nn_vbias,
                 ng_vout=ng_vout, nn_vout=nn_vout, op_ok=op_ok,
                 op_valid=bool(op_valid), dc_op=dc_op, m=m, passed=bool(passed))
 
 
+def ac_gate_passes(op_converged: bool, op_valid: bool,
+                   metrics: Dict[str, float]) -> bool:
+    """Require a converged DC fixed point before scoring AC agreement."""
+    return bool(
+        op_converged
+        and op_valid
+        and metrics["gain0_db_err"] <= GAIN0_DB_ERR_TOL
+        and np.isfinite(metrics["f3db_ratio"])
+        and F3DB_RATIO_LO <= metrics["f3db_ratio"] <= F3DB_RATIO_HI
+        and metrics["mag_nrmse"] <= MAG_NRMSE_TOL
+    )
+
+
 def _print_result(r: Dict[str, object]) -> None:
     m = r["m"]
     tech, dev = r["tech"], r["device"]
+    model_name = active_model_name()
     verdict = "PASS" if r["passed"] else "FAIL"
     if not r["op_ok"]:
         op_note = "  [OP-NOT-CONVERGED]"
@@ -257,9 +264,9 @@ def _print_result(r: Dict[str, object]) -> None:
     print(
         f"  {tech} {dev} CS-amp @ NG Vin={r['ng_vbias']:.3f}(Vout={r['ng_vout']:.2f}) "
         f"NN Vin={r['nn_vbias']:.3f}(Vout={r['nn_vout']:.2f}): "
-        f"gain0 DN={m['gain0_db']:.2f}dB NG={m['gain0_db_ref']:.2f}dB "
+        f"gain0 {model_name}={m['gain0_db']:.2f}dB NG={m['gain0_db_ref']:.2f}dB "
         f"(err={m['gain0_db_err']:.3f}dB)  "
-        f"f3db DN={fmt_hz(m['f3db_test'])} NG={fmt_hz(m['f3db_ref'])} "
+        f"f3db {model_name}={fmt_hz(m['f3db_test'])} NG={fmt_hz(m['f3db_ref'])} "
         f"(ratio={m['f3db_ratio']:.3f})  "
         f"magNRMSE={m['mag_nrmse']*100:.2f}%  "
         f"phaseErr(inband)={m['phase_maxerr_inband_deg']:.2f}deg  "
@@ -287,16 +294,25 @@ def main() -> int:
     techs = [t.strip().upper() for t in args.tech.split(",") if t.strip()]
     devices = [d.strip().lower() for d in args.device.split(",") if d.strip()]
 
+    unknown_techs = [tech for tech in techs if tech not in BENCH]
+    unknown_devices = [device for device in devices
+                       if device not in {"nmos", "pmos"}]
+    if not techs or unknown_techs:
+        print(f"ERROR: unknown tech(s) {unknown_techs or techs}. "
+              f"Available: {list(BENCH)}")
+        return 1
+    if not devices or unknown_devices:
+        print(f"ERROR: unknown device(s) {unknown_devices or devices}. "
+              "Available: ['nmos', 'pmos']")
+        return 1
+
     RESULTS_BASE.mkdir(parents=True, exist_ok=True)
     print("\n" + "*" * 78)
-    print("  Device-level NN AC gate: DirectNet (LEVEL=73) vs NGSPICE BSIM-CMG")
+    print(f"  Device-level NN AC gate: {active_model_label()} vs NGSPICE BSIM-CMG")
     print("*" * 78)
 
     rows: List[Dict[str, object]] = []
     for tech in techs:
-        if tech not in BENCH:
-            print(f"  [skip] unknown tech {tech}")
-            continue
         print(f"\n  === {tech} ===")
         for device in devices:
             try:
@@ -324,6 +340,8 @@ def main() -> int:
         m = r["m"]
         if r["passed"]:
             status = "PASS"
+        elif not r.get("op_ok", False):
+            status = "FAIL-NONCONVERGED"
         elif not r.get("op_valid", True):
             status = "FAIL-MISBIAS"   # OP off-rail: Vth offset, not a cap error
         else:

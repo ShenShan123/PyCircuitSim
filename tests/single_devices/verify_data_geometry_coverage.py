@@ -1,6 +1,6 @@
 """Guard: every benchmark geometry must be resolved by the training grid.
 
-V7.4.2. The complex-circuit gates pin NMOS L=16 nm / PMOS L=20 nm, but the
+V7.4.2. The circuit benchmark gates pin NMOS L=16 nm / PMOS L=20 nm, but the
 NN datasets sampled L only at each PDK length bin's *lower corner* — and
 short-channel bins are wide (TSMC5's shortest spans L in [6, 20] nm). For
 TSMC5/6/7 the benchmark NMOS therefore sat deep inside an unsampled bin
@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import argparse
 import sys
+from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
@@ -38,8 +40,27 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg"))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from tests.common.complex import BENCH, BENCH_TECHS  # noqa: E402
-from neural_network.config import DATA_DIR, TECH_CONFIGS  # noqa: E402
+from tests.common.circuit_benchmarks import BENCH, BENCH_TECHS  # noqa: E402
+from tests.common.simple_circuit_catalog import SIMPLE_V2, cases  # noqa: E402
+from tests.common.simple_circuit_harness import (  # noqa: E402
+    CORNERS,
+    apply_corner,
+)
+from neural_network.config import (  # noqa: E402
+    DATA_DIR,
+    TECH_CONFIGS,
+    TECH_VARIANT_CODES,
+)
+from neural_network.eval.loo_labels import (  # noqa: E402
+    get_or_build_tech_variant_labels,
+)
+from tests.common.nn_sweep import (  # noqa: E402
+    NN_TECHS,
+    build_dc_parametric,
+    build_inv_parametric,
+    make_dc_baseline,
+    make_inv_baseline,
+)
 from pycmg.parser import _scan_all_variants  # noqa: E402
 from pycmg.tech import _resolve_path  # noqa: E402
 
@@ -54,14 +75,14 @@ DEFAULT_MAX_NFIN_RATIO = 2.0
 
 def _bin_containing(
     pdk_path: str, pdk_device: str, L: float, nfin: float,
-) -> Optional[Tuple[float, float]]:
-    """(lmin, lmax) of the PDK length bin holding (L, NFIN); None if absent."""
+) -> Optional[Tuple[float, float, float, float]]:
+    """Joint L/NFIN bounds of the PDK bin holding the target geometry."""
     for v in _scan_all_variants(pdk_path, pdk_device):
         if v.lmin <= L <= v.lmax:
             if v.nfinmin is None or v.nfinmax is None:
-                return (v.lmin, v.lmax)
+                return (v.lmin, v.lmax, -np.inf, np.inf)
             if v.nfinmin <= nfin <= v.nfinmax:
-                return (v.lmin, v.lmax)
+                return (v.lmin, v.lmax, v.nfinmin, v.nfinmax)
     return None
 
 
@@ -72,68 +93,172 @@ def _nearest_ratio(target: float, knots: Sequence[float]) -> Optional[float]:
     return min(max(target / k, k / target) for k in knots if k > 0)
 
 
-def _dataset_geometry(tech: str, dev: str) -> Optional[Tuple[np.ndarray,
-                                                             np.ndarray]]:
+@lru_cache(maxsize=None)
+def _dataset_arrays(
+    tech: str,
+    dev: str,
+) -> Optional[Tuple[np.ndarray, np.ndarray]]:
     path = DATA_DIR / f"{tech}_{dev}.npz"
     if not path.exists():
         return None
-    with np.load(str(path), allow_pickle=True) as d:
-        g = d["geometry"]
-        return np.unique(g[:, 1]), np.unique(g[:, 0])
+    with np.load(str(path), allow_pickle=True) as data:
+        geometry = data["geometry"]
+    labels = get_or_build_tech_variant_labels(
+        str(path), dev, verbose=False,
+    )
+    return geometry, labels
+
+
+@lru_cache(maxsize=None)
+def _dataset_geometry(
+    tech: str,
+    dev: str,
+    vt: str,
+    temperature_k: float,
+) -> Optional[np.ndarray]:
+    arrays = _dataset_arrays(tech, dev)
+    if arrays is None:
+        return None
+    geometry, labels = arrays
+    code = TECH_VARIANT_CODES.get((tech, vt))
+    if code is None:
+        return np.empty((0, geometry.shape[1]), dtype=geometry.dtype)
+    mask = ((labels == code)
+            & np.isclose(geometry[:, 2], temperature_k, atol=1e-6))
+    return geometry[mask]
+
+
+@dataclass(frozen=True)
+class EvalGeometry:
+    """One device geometry/variant/temperature requested by a scored gate."""
+
+    label: str
+    tech: str
+    dev: str
+    vt: str
+    length: float
+    nfin: float
+    temperature_k: float
+
+
+def _evaluation_geometries() -> List[EvalGeometry]:
+    points: List[EvalGeometry] = []
+    for tech_key in NN_TECHS:
+        for dev in ("nmos", "pmos"):
+            for cfg in [make_dc_baseline(tech_key, dev),
+                        *build_dc_parametric(tech_key, dev)]:
+                tech = cfg.tech
+                vt = tech.nn_vt if dev == "nmos" else tech.effective_pmos_vt
+                length = tech.l_nmos if dev == "nmos" else tech.effective_l_pmos
+                points.append(EvalGeometry(
+                    cfg.label, tech.nn_tech_key, dev, vt, length,
+                    float(tech.nfin), tech.temperature_c + 273.15,
+                ))
+        for analysis in ("vtc", "tran"):
+            for cfg in [make_inv_baseline(tech_key, analysis),
+                        *build_inv_parametric(tech_key, analysis)]:
+                tech = cfg.tech
+                points.extend((
+                    EvalGeometry(
+                        f"{cfg.label}:nmos", tech.nn_tech_key, "nmos",
+                        tech.nn_vt, tech.effective_inv_l_nmos,
+                        float(tech.effective_inv_nfin),
+                        tech.temperature_c + 273.15,
+                    ),
+                    EvalGeometry(
+                        f"{cfg.label}:pmos", tech.nn_tech_key, "pmos",
+                        tech.effective_pmos_vt, tech.effective_inv_l_pmos,
+                        float(tech.effective_inv_nfin_p),
+                        tech.temperature_c + 273.15,
+                    ),
+                ))
+    return points
+
+
+def _simple_circuit_geometries() -> List[EvalGeometry]:
+    """Unique device coordinates exercised by the simple-v2 corner matrix."""
+    device_kinds = sorted({
+        dev
+        for case in cases(score_version=SIMPLE_V2)
+        for dev in case.device_kinds
+    })
+    points: List[EvalGeometry] = []
+    seen: set[Tuple[str, str, str, float, float, float]] = set()
+    for name in BENCH_TECHS:
+        for corner_name, corner in CORNERS.items():
+            bt = apply_corner(BENCH[name], corner)
+            for dev in device_kinds:
+                vt = (bt.effective_nmos_vt if dev == "nmos"
+                      else bt.effective_pmos_vt)
+                length = bt.l_nmos if dev == "nmos" else bt.l_pmos
+                nfin = bt.nfin if dev == "nmos" else bt.effective_nfin_p
+                temperature_k = bt.temperature_c + 273.15
+                key = (bt.nn_tech, dev, vt, length, float(nfin), temperature_k)
+                if key in seen:
+                    continue
+                seen.add(key)
+                points.append(EvalGeometry(
+                    f"{name}:simple-v2:{corner_name}:{dev}",
+                    bt.nn_tech,
+                    dev,
+                    vt,
+                    length,
+                    float(nfin),
+                    temperature_k,
+                ))
+    return points
 
 
 def check(max_l_ratio: float, max_nfin_ratio: float) -> List[Tuple[str, bool,
                                                                   str]]:
     results: List[Tuple[str, bool, str]] = []
-    for name in BENCH_TECHS:
-        bt = BENCH[name]
-        cfg = TECH_CONFIGS[bt.nn_tech]
+    points = [*_evaluation_geometries(), *_simple_circuit_geometries()]
+
+    for point in points:
+        cfg = TECH_CONFIGS[point.tech]
         # PDK paths in the registry are PyCMG-relative.
         pdk = str(_resolve_path(str(cfg.pycmg_tech.pdk_path)))
-        for dev, L_bench, nfin_bench, vt in (
-            ("nmos", bt.l_nmos, float(bt.nfin), bt.effective_nmos_vt),
-            ("pmos", bt.l_pmos, float(bt.effective_nfin_p),
-             bt.effective_pmos_vt),
-        ):
-            label = f"{bt.nn_tech}:{dev} L={L_bench * 1e9:.0f}nm NFIN={nfin_bench:g}"
-            geo = _dataset_geometry(bt.nn_tech, dev)
-            if geo is None:
-                results.append((label, False,
-                                f"dataset {bt.nn_tech}_{dev}.npz not found"))
-                continue
-            l_knots, nfin_knots = geo
-
-            pdk_device = cfg.pycmg_tech.get_device(f"{dev}_{vt}").pdk_device
-            span = _bin_containing(pdk, pdk_device, L_bench, nfin_bench)
-            if span is None:
-                results.append((label, False,
-                                "no PDK bin contains the benchmark geometry"))
-                continue
-            lo, hi = span
-            # Only knots inside the SAME bin constrain this length — the
-            # half-open interval [lo, hi). A knot sitting exactly on `hi` is
-            # the NEXT bin's lower corner: `_find_length_variant` resolves
-            # that length to the next variant, so the row was generated
-            # under a different modelcard and says nothing about this bin's
-            # interior. Counting it is precisely how the V7.4.0 grid looked
-            # covered while [6, 20] nm held a single sample at 6 nm.
-            same_bin = l_knots[(l_knots >= lo * (1 - 1e-9))
-                               & (l_knots < hi * (1 - 1e-9))]
-            r_l = _nearest_ratio(L_bench, same_bin)
-            r_n = _nearest_ratio(nfin_bench, nfin_knots)
-            if r_l is None:
-                results.append((label, False,
-                                f"bin [{lo*1e9:.0f}, {hi*1e9:.0f}] nm has no "
-                                f"sampled L at all"))
-                continue
-            ok = r_l <= max_l_ratio and (r_n is not None
-                                         and r_n <= max_nfin_ratio)
-            results.append((
-                label, ok,
-                f"bin [{lo*1e9:5.1f},{hi*1e9:6.1f}] nm, {len(same_bin)} knot(s) "
-                f"{np.round(same_bin * 1e9, 2).tolist()} -> L ratio {r_l:.3f} "
-                f"(<= {max_l_ratio}), NFIN ratio "
-                f"{'n/a' if r_n is None else f'{r_n:.3f}'}"))
+        label = (f"{point.label} VT={point.vt} T={point.temperature_k:g}K "
+                 f"L={point.length * 1e9:.0f}nm NFIN={point.nfin:g}")
+        geo = _dataset_geometry(
+            point.tech, point.dev, point.vt, point.temperature_k,
+        )
+        if geo is None:
+            results.append((label, False,
+                            f"dataset {point.tech}_{point.dev}.npz not found"))
+            continue
+        pdk_device = cfg.pycmg_tech.get_device(
+            f"{point.dev}_{point.vt}").pdk_device
+        span = _bin_containing(
+            pdk, pdk_device, point.length, point.nfin,
+        )
+        if span is None:
+            results.append((label, False, "no PDK bin contains the geometry"))
+            continue
+        lo, hi, nlo, nhi = span
+        same_bin = geo[
+            (geo[:, 1] >= lo * (1 - 1e-9))
+            & (geo[:, 1] < hi * (1 - 1e-9))
+            & (geo[:, 0] >= nlo * (1 - 1e-9))
+            & (geo[:, 0] <= nhi * (1 + 1e-9))
+        ]
+        if not len(same_bin):
+            results.append((label, False, "variant/temperature PDK bin has no rows"))
+            continue
+        ratios = np.column_stack((
+            np.maximum(point.length / same_bin[:, 1],
+                       same_bin[:, 1] / point.length),
+            np.maximum(point.nfin / same_bin[:, 0],
+                       same_bin[:, 0] / point.nfin),
+        ))
+        best = int(np.argmin(np.max(ratios, axis=1)))
+        r_l, r_n = ratios[best]
+        ok = r_l <= max_l_ratio and r_n <= max_nfin_ratio
+        results.append((
+            label, ok,
+            f"joint knot L={same_bin[best, 1]*1e9:.2f}nm "
+            f"NFIN={same_bin[best, 0]:g}; ratios L={r_l:.3f}, NFIN={r_n:.3f}",
+        ))
     return results
 
 

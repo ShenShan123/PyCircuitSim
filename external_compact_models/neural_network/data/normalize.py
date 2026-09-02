@@ -28,6 +28,8 @@ from typing import Optional
 
 import numpy as np
 
+from neural_network.data.contracts import FULL_TERMINAL_OUTPUT_COLUMN_ORDER
+
 
 # ── Output column ordering and floors ──────────────────────────────────────
 
@@ -50,6 +52,7 @@ BSIMAR_COLUMN_ORDER = [
 # the scale.
 _OUTPUT_LOG_FLOORS = {
     "id": 1e-18, "gm": 1e-18, "gds": 1e-18, "gmb": 1e-18,
+    "i_d": 1e-18, "i_g": 1e-18, "i_b": 1e-18,
     "qg": 1e-19, "qd": 1e-19, "qs": 1e-19, "qb": 1e-19,
     "cgg": 1e-20, "cgd": 1e-20, "cgs": 1e-20, "cdg": 1e-20, "cdd": 1e-20,
 }

@@ -3,8 +3,9 @@
 Both architectures share the same data, normaliser, LDS-MAE loss, cosine
 schedule, and early-stop pattern. The only differences:
 
-* the Transformer's ``forward`` takes a teacher-forced ``y`` argument
-  during training and runs autoregressively at eval time;
+* the Transformer's ``forward`` uses teacher forcing by default, with an
+  opt-in deployed-rollout path for full-terminal fine-tuning, and runs
+  autoregressively at eval time;
 * the Transformer trains in ``BSIMAR_COLUMN_ORDER`` and saves an
   architecture sidecar so the simulator can rebuild the model.
 
@@ -17,6 +18,8 @@ from __future__ import annotations
 
 import os
 import time
+import hashlib
+import json
 from pathlib import Path
 from typing import Dict, Optional, Sequence, Set, Tuple
 
@@ -28,14 +31,19 @@ from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader, TensorDataset
 
 from neural_network.config import (
-    DirectNetConfig, TransformerConfig, TabPFNConfig,
+    DirectNetConfig, TransformerConfig,
     CHECKPOINT_DIR, RESULTS_DIR,
     CODE_TO_TECH_VARIANT,
     NUM_TSMC_CODES_WITH_UNKNOWN,
 )
 from neural_network.data.dataset import MOSFETDataset, load_and_split_bsimar
+from neural_network.data.contracts import (
+    BSIMAR_FULL_TERMINAL_COLUMN_ORDER,
+    FULL_TERMINAL_OUTPUT_CONTRACT,
+)
 from neural_network.data.normalize import (
-    OUTPUT_COLUMN_ORDER, reorder_outputs, unreorder_outputs,
+    BSIMAR_COLUMN_ORDER, FULL_TERMINAL_OUTPUT_COLUMN_ORDER,
+    OUTPUT_COLUMN_ORDER,
     _NormalizerBase,
 )
 from neural_network.losses.bni_mae import MAELoss, compute_lds_weights_per_target
@@ -45,6 +53,47 @@ from neural_network.losses.bni_mae import MAELoss, compute_lds_weights_per_targe
 # dominates inverter trip-point NRMSE.
 _NORM_MODE = "asinh"
 _NUM_WORKERS = 8
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _full_terminal_dataset_provenance(data_path: str) -> Dict[str, object]:
+    """Return the immutable dataset identity embedded in a model bundle."""
+    path = Path(data_path)
+    marker_path = path.with_suffix(path.suffix + ".complete")
+    if not marker_path.is_file():
+        raise ValueError(
+            f"full-terminal dataset completion marker is missing: {marker_path}"
+        )
+    try:
+        marker = json.loads(marker_path.read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(
+            f"invalid full-terminal dataset marker: {marker_path}"
+        ) from exc
+    if not isinstance(marker, dict) or marker.get("dataset") != path.name:
+        raise ValueError("full-terminal dataset marker names a different file")
+    dataset_sha256 = _sha256_file(path)
+    if marker.get("dataset_sha256") != dataset_sha256:
+        raise ValueError("full-terminal dataset checksum does not match marker")
+    source_commit = marker.get("source_commit")
+    if not isinstance(source_commit, str) or len(source_commit) != 40:
+        raise ValueError("full-terminal dataset source commit is invalid")
+    if marker.get("source_dirty") is not False:
+        raise ValueError("full-terminal dataset came from a dirty source tree")
+    return {
+        "dataset": path.name,
+        "dataset_sha256": dataset_sha256,
+        "dataset_completion_marker": marker_path.name,
+        "dataset_completion_marker_sha256": _sha256_file(marker_path),
+        "dataset_source_commit": source_commit,
+    }
 
 
 # ── Batch iteration (V7.0.2) ───────────────────────────────────────────────
@@ -182,6 +231,7 @@ def _epoch_train(
     charge_sobolev_norm: Optional[Dict[str, torch.Tensor]] = None,
     amp: bool = False,
     clip_grad: bool = False,
+    autoregressive_training: bool = False,
 ) -> Tuple[float, float]:
     """One training epoch. Returns (mean_total_loss, mean_aux_term).
 
@@ -227,8 +277,14 @@ def _epoch_train(
         # with the double-backward aux terms — the CLI guards that combo.
         with _fwd_ctx(), torch.autocast(
                 device_type="cuda", dtype=torch.bfloat16, enabled=amp):
-            pred = (model(x, y, tech_codes=tc) if is_transformer
-                    else model(x, tech_codes=tc))
+            pred = (
+                model(
+                    x,
+                    None if autoregressive_training else y,
+                    tech_codes=tc,
+                )
+                if is_transformer else model(x, tech_codes=tc)
+            )
             loss = criterion(pred.float(), y, weights=w)
         if sobolev_loss is not None:
             sob = sobolev_loss(
@@ -275,17 +331,24 @@ def _epoch_eval(
     model: nn.Module, loader: DataLoader, criterion: MAELoss,
     device: torch.device, is_transformer: bool,
     amp: bool = False,
+    autoregressive: bool = False,
 ) -> float:
+    """Evaluate one epoch, optionally matching Transformer deployment."""
     model.eval()
     total = torch.zeros((), device=device)
     n = 0
     for x, y, tc in loader:
         x, y, tc = x.to(device), y.to(device), tc.to(device)
-        # Teacher-forced eval for the Transformer (val loss aligned with train).
         with torch.autocast(device_type="cuda", dtype=torch.bfloat16,
                             enabled=amp):
-            pred = (model(x, y, tech_codes=tc) if is_transformer
-                    else model(x, tech_codes=tc))
+            if is_transformer:
+                pred = model(
+                    x,
+                    None if autoregressive else y,
+                    tech_codes=tc,
+                )
+            else:
+                pred = model(x, tech_codes=tc)
         total += criterion(pred.float(), y).detach()
         n += 1
     return float(total) / max(n, 1)
@@ -372,18 +435,58 @@ def _train_loop(
     charge_sobolev_floor: float = 1e-19,
     amp: bool = False,
     clip_grad: bool = False,
+    autoregressive_validation: bool = False,
+    autoregressive_training: bool = False,
 ) -> Tuple[nn.Module, _NormalizerBase]:
-    if amp and (sobolev or subthresh or charge_sobolev):
+    if amp and (sobolev or charge_sobolev):
         raise ValueError(
             "--amp is incompatible with the double-backward aux losses "
-            "(sobolev / subthresh / charge-sobolev)")
+            "(sobolev / charge-sobolev)")
     if amp:
-        print("  AMP: bf16 autocast ON (train + teacher-forced val)")
+        print("  AMP: bf16 autocast ON (train + validation)")
+    if autoregressive_validation and not is_transformer:
+        raise ValueError(
+            "autoregressive_validation requires a Transformer model")
+    if autoregressive_training and not is_transformer:
+        raise ValueError(
+            "autoregressive_training requires a Transformer model")
+    normalized_columns = list(
+        normalizer.stats.output_columns or OUTPUT_COLUMN_ORDER)
+    ordered_transformer_columns: Optional[list[str]] = None
     if is_transformer:
+        if tuple(normalized_columns) == tuple(
+            FULL_TERMINAL_OUTPUT_COLUMN_ORDER
+        ):
+            ordered_transformer_columns = list(
+                BSIMAR_FULL_TERMINAL_COLUMN_ORDER)
+        elif normalized_columns == list(OUTPUT_COLUMN_ORDER):
+            ordered_transformer_columns = list(BSIMAR_COLUMN_ORDER)
+        else:
+            raise ValueError(
+                "Transformer normalizer columns do not name a supported "
+                f"output contract: {normalized_columns}")
+        if (len(ordered_transformer_columns) != len(normalized_columns)
+                or set(ordered_transformer_columns) != set(normalized_columns)):
+            raise ValueError(
+                "Transformer target columns must be a permutation of the "
+                f"normalizer columns: target={ordered_transformer_columns}, "
+                f"normalizer={normalized_columns}")
+        permutation = [
+            normalized_columns.index(name)
+            for name in ordered_transformer_columns
+        ]
         for ds in (train_ds, val_ds, test_ds):
             ds.outputs = torch.tensor(
-                reorder_outputs(ds.outputs.numpy()), dtype=torch.float32)
-        print("  Outputs reordered to BSIMAR_COLUMN_ORDER")
+                ds.outputs.numpy()[:, permutation], dtype=torch.float32)
+        print(f"  Transformer target order: {ordered_transformer_columns}")
+        validation_mode = (
+            "autoregressive" if autoregressive_validation else "teacher-forced"
+        )
+        training_mode = (
+            "autoregressive" if autoregressive_training else "teacher-forced"
+        )
+        print(f"  Transformer training mode: {training_mode}")
+        print(f"  Transformer validation mode: {validation_mode}")
 
     print("  Computing LDS weights …")
     lds = compute_lds_weights_per_target(
@@ -475,9 +578,9 @@ def _train_loop(
                      else OUTPUT_COLUMN_ORDER)
         if not is_transformer:
             return base_cols, st.output_std, st.output_mean, st.asinh_scale
-        from neural_network.data.normalize import BSIMAR_COLUMN_ORDER
-        perm = [base_cols.index(c) for c in BSIMAR_COLUMN_ORDER]
-        return (list(BSIMAR_COLUMN_ORDER), st.output_std[perm],
+        assert ordered_transformer_columns is not None
+        perm = [base_cols.index(c) for c in ordered_transformer_columns]
+        return (ordered_transformer_columns, st.output_std[perm],
                 st.output_mean[perm], st.asinh_scale[perm])
 
     def _nt(arr: np.ndarray) -> torch.Tensor:
@@ -606,7 +709,8 @@ def _train_loop(
             subthresh_loss=subthresh_loss, aux_norm=aux_norm,
             charge_sobolev_loss=charge_sobolev_loss,
             charge_sobolev_norm=charge_sobolev_norm,
-            amp=amp, clip_grad=clip_grad)
+            amp=amp, clip_grad=clip_grad,
+            autoregressive_training=autoregressive_training)
         if swa_mode == "swa" and epoch >= swa_start:
             avg_model.update_parameters(model)
             if epoch == swa_start:
@@ -618,7 +722,7 @@ def _train_loop(
         eval_model = avg_model if avg_active else model
         val_loss = _epoch_eval(
             eval_model, val_loader, criterion, device, is_transformer,
-            amp=amp)
+            amp=amp, autoregressive=autoregressive_validation)
         scheduler.step()
         lr_now = scheduler.get_last_lr()[0]
 
@@ -650,7 +754,7 @@ def _train_loop(
           f"({elapsed / max(epoch, 1):.1f}s/epoch). Best val={best_val:.6f}")
 
     # Architecture sidecar for models the simulator can't shape-infer
-    # (Transformer, TabPFN). DirectNet passes arch_config=None — unchanged.
+    # (Transformer). DirectNet passes arch_config=None — unchanged.
     if arch_config is not None:
         np.savez(
             str(CHECKPOINT_DIR / f"{save_prefix}_config.npz"),
@@ -661,8 +765,13 @@ def _train_loop(
     pred_norm, true_norm, test_tc = _collect_predictions(
         model, test_loader, device, is_transformer)
     if is_transformer:
-        pred_norm = unreorder_outputs(pred_norm)
-        true_norm = unreorder_outputs(true_norm)
+        assert ordered_transformer_columns is not None
+        inverse = [
+            ordered_transformer_columns.index(name)
+            for name in normalized_columns
+        ]
+        pred_norm = pred_norm[:, inverse]
+        true_norm = true_norm[:, inverse]
 
     from neural_network.eval.metrics import compute_physical_metrics, print_metrics
     metrics = compute_physical_metrics(pred_norm, true_norm, normalizer)
@@ -689,6 +798,7 @@ def train_directnet(
     overwrite: bool = False,
     column_weights: Optional[np.ndarray] = None,
     output_subset: Optional[list[str]] = None,
+    output_columns: Optional[list[str]] = None,
     tech_scope: str = "universal",
     monotonic: bool = False,
     ekv_core: bool = False,
@@ -717,6 +827,8 @@ def train_directnet(
     charge_sobolev_floor: float = 1e-19,
     init_from: Optional[str] = None,
     amp: bool = False,
+    split_mode: str = "combo",
+    training_overlay_classes: Optional[Set[str]] = None,
     **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
     """DirectNet MLP training pipeline.
@@ -742,6 +854,10 @@ def train_directnet(
     the loss (combined with LDS). Use to down-weight or zero out targets
     the simulator does not consume — e.g. ``qs`` (always replaced by KCL).
 
+    ``output_columns`` declares the complete dataset/model contract. It
+    defaults to the checkpoint-compatible 13-column DirectNet layout; the
+    separate full-terminal family supplies its six independent surfaces.
+
     ``output_subset`` (list of column names): if given, train only on
     this subset of the 13 outputs (E2 4-output head). The model's
     ``output_dim`` becomes ``len(output_subset)`` and the saved norm
@@ -760,13 +876,34 @@ def train_directnet(
     if exclude_techs:
         print(f"  Excluding techs: {exclude_techs}")
 
+    training_columns = (
+        list(output_columns) if output_columns is not None
+        else list(OUTPUT_COLUMN_ORDER)
+    )
+    dataset_provenance: Optional[Dict[str, object]] = None
+    if tuple(training_columns) == FULL_TERMINAL_OUTPUT_COLUMN_ORDER:
+        if (output_subset is not None or monotonic or ekv_core or sobolev
+                or subthresh or charge_sobolev):
+            raise ValueError(
+                "The full-terminal family is a separate six-surface "
+                "DirectNet contract and cannot use reduced-head subsets, "
+                "backbones, or legacy auxiliary losses."
+            )
+        if apply_filter:
+            raise ValueError(
+                "The full-terminal family requires apply_filter=False; "
+                "the legacy filter is defined only for the id column."
+            )
+        dataset_provenance = _full_terminal_dataset_provenance(data_path)
     train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
-        data_path, OUTPUT_COLUMN_ORDER, device_type=device_type,
+        data_path, training_columns, device_type=device_type,
         train_ratio=config.train_ratio, val_ratio=config.val_ratio,
         apply_filter=apply_filter, exclude_techs=exclude_techs,
         norm_mode=_NORM_MODE, max_rows=max_rows,
         output_subset=output_subset,
         tech_scope=tech_scope,
+        split_mode=split_mode,
+        training_overlay_classes=training_overlay_classes,
     )
     _assert_codes_in_vocab(
         (train_ds, val_ds, test_ds), num_tech_codes, tech_scope)
@@ -842,7 +979,7 @@ def train_directnet(
                 f"missing={list(missing)} unexpected={list(unexpected)}")
         print(f"  Warm-started from {init_path.name}")
 
-    return _train_loop(
+    trained = _train_loop(
         model=model, is_transformer=False,
         train_ds=train_ds, val_ds=val_ds, test_ds=test_ds,
         normalizer=normalizer,
@@ -868,6 +1005,21 @@ def train_directnet(
         charge_sobolev_floor=charge_sobolev_floor,
         amp=amp,
     )
+    if tuple(training_columns) == FULL_TERMINAL_OUTPUT_COLUMN_ORDER:
+        assert dataset_provenance is not None
+        checkpoint_path = CHECKPOINT_DIR / f"{save_prefix}_best.pt"
+        norm_path = CHECKPOINT_DIR / f"{save_prefix}_norm.npz"
+        marker_path = checkpoint_path.with_suffix(".pt.complete")
+        marker_path.write_text(json.dumps({
+            "family": "directnet-full",
+            "checkpoint": checkpoint_path.name,
+            "checkpoint_sha256": _sha256_file(checkpoint_path),
+            "normalization": norm_path.name,
+            "normalization_sha256": _sha256_file(norm_path),
+            "output_columns": list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER),
+            **dataset_provenance,
+        }, sort_keys=True, indent=2) + "\n")
+    return trained
 
 
 def train_transformer(
@@ -885,6 +1037,7 @@ def train_transformer(
     num_tech_codes: int = NUM_TSMC_CODES_WITH_UNKNOWN,
     p_unknown: float = 0.1,
     max_rows: Optional[int] = None,
+    output_columns: Optional[list[str]] = None,
     tech_scope: str = "universal",
     swa_mode: str = "none",
     ema_decay: float = 0.999,
@@ -908,6 +1061,10 @@ def train_transformer(
     charge_sobolev_floor: float = 1e-19,
     init_from: Optional[str] = None,
     amp: bool = False,
+    split_mode: str = "combo",
+    training_overlay_classes: Optional[Set[str]] = None,
+    full_terminal_ar_target_dim: Optional[int] = None,
+    autoregressive_training: bool = False,
     **_: object,  # swallow legacy kwargs
 ) -> Tuple[nn.Module, _NormalizerBase]:
     """BSIMAR Transformer training pipeline.
@@ -930,11 +1087,56 @@ def train_transformer(
     if exclude_techs:
         print(f"  Excluding techs: {exclude_techs}")
 
+    training_columns = (
+        list(output_columns) if output_columns is not None
+        else list(OUTPUT_COLUMN_ORDER)
+    )
+    full_terminal = tuple(training_columns) == tuple(
+        FULL_TERMINAL_OUTPUT_COLUMN_ORDER)
+    dataset_provenance: Optional[Dict[str, object]] = None
+    if full_terminal:
+        if (sobolev or charge_sobolev):
+            raise ValueError(
+                "The full-terminal BSIM-AR family cannot use legacy "
+                "reduced-head derivative losses")
+        if apply_filter:
+            raise ValueError(
+                "The full-terminal BSIM-AR family requires "
+                "apply_filter=False")
+        dataset_provenance = _full_terminal_dataset_provenance(data_path)
+        ar_target_dim = (
+            len(BSIMAR_FULL_TERMINAL_COLUMN_ORDER)
+            if full_terminal_ar_target_dim is None
+            else int(full_terminal_ar_target_dim)
+        )
+        if ar_target_dim not in (3, 6):
+            raise ValueError(
+                "Full-terminal BSIM-AR supports 3 or 6 autoregressive "
+                f"targets, got {ar_target_dim}")
+    elif training_columns != list(OUTPUT_COLUMN_ORDER):
+        raise ValueError(
+            "Transformer output_columns must select either the reduced or "
+            "full-terminal contract")
+    elif full_terminal_ar_target_dim is not None:
+        raise ValueError(
+            "full_terminal_ar_target_dim requires the full-terminal contract")
+    if autoregressive_training and not full_terminal:
+        raise ValueError(
+            "autoregressive_training requires the full-terminal contract")
+
+    target_columns = list(
+        BSIMAR_FULL_TERMINAL_COLUMN_ORDER
+        if full_terminal else BSIMAR_COLUMN_ORDER)
+    if not full_terminal:
+        ar_target_dim = 8
+
     train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
-        data_path, OUTPUT_COLUMN_ORDER, device_type=device_type,
+        data_path, training_columns, device_type=device_type,
         apply_filter=apply_filter, exclude_techs=exclude_techs,
         norm_mode=_NORM_MODE, max_rows=max_rows,
         tech_scope=tech_scope,
+        split_mode=split_mode,
+        training_overlay_classes=training_overlay_classes,
     )
     _assert_codes_in_vocab(
         (train_ds, val_ds, test_ds), num_tech_codes, tech_scope)
@@ -951,6 +1153,7 @@ def train_transformer(
         tech_embed_dropout=p_unknown,
         # Rule 16: UNKNOWN at the tail of the (possibly local) vocab.
         unknown_code_id=num_tech_codes - 1,
+        ar_target_dim=ar_target_dim,
     ).to(device)
     n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
     print(f"  Params: {n_params:,}")
@@ -979,7 +1182,19 @@ def train_transformer(
         "dropout": config.dropout,
         "num_tech_codes": num_tech_codes,
     }
-    return _train_loop(
+    if full_terminal:
+        assert dataset_provenance is not None
+        arch_config.update({
+            "ar_target_dim": ar_target_dim,
+            "output_contract": FULL_TERMINAL_OUTPUT_CONTRACT,
+            "target_columns": target_columns,
+            "training_mode": (
+                "autoregressive" if autoregressive_training
+                else "teacher-forced"
+            ),
+            "validation_mode": "autoregressive",
+        })
+    trained = _train_loop(
         model=model, is_transformer=True,
         train_ds=train_ds, val_ds=val_ds, test_ds=test_ds,
         normalizer=normalizer,
@@ -1004,182 +1219,29 @@ def train_transformer(
         lam_charge_sobolev=lam_charge_sobolev,
         charge_sobolev_floor=charge_sobolev_floor,
         amp=amp,
+        autoregressive_validation=full_terminal,
+        autoregressive_training=autoregressive_training,
     )
-
-
-def _stratified_context(
-    train_ds, ctx_len: int, seed: int = 42,
-) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Pick the frozen TabPFN context: stratified over tech-code × id-bin.
-
-    Rows are stratified over the (local) tech-code vocabulary crossed with
-    8 quantile bins of the normalized id column (col 0 of
-    OUTPUT_COLUMN_ORDER), proportional with a 1-row floor per non-empty
-    cell, so subthreshold and strong inversion are both represented for
-    every variant. Deterministic for a fixed seed.
-    """
-    x, y, tc = train_ds.inputs, train_ds.outputs, train_ds.tech_codes
-    n = x.shape[0]
-    if n < ctx_len:
-        raise ValueError(
-            f"Training split ({n} rows) smaller than ctx_len={ctx_len}")
-    g = torch.Generator().manual_seed(seed)
-    ids = y[:, 0].numpy()
-    # np.quantile: torch.quantile caps at ~16M elements.
-    cuts = np.quantile(ids, np.linspace(0.0, 1.0, 9)[1:-1])
-    bins = torch.tensor(
-        np.searchsorted(cuts, ids), dtype=torch.long)          # 0..7
-    cells = tc.long() * 8 + bins
-    chosen: list = []
-    for cell in cells.unique():
-        idx = (cells == cell).nonzero(as_tuple=True)[0]
-        take = min(len(idx), max(1, round(ctx_len * len(idx) / n)))
-        perm = torch.randperm(len(idx), generator=g)[:take]
-        chosen.append(idx[perm])
-    sel = torch.cat(chosen)
-    if len(sel) > ctx_len:
-        sel = sel[torch.randperm(len(sel), generator=g)[:ctx_len]]
-    elif len(sel) < ctx_len:
-        mask = torch.ones(n, dtype=torch.bool)
-        mask[sel] = False
-        rest = mask.nonzero(as_tuple=True)[0]
-        extra = rest[torch.randperm(len(rest), generator=g)
-                     [: ctx_len - len(sel)]]
-        sel = torch.cat([sel, extra])
-    return x[sel].clone(), y[sel].clone(), tc[sel].float().clone()
-
-
-def train_tabpfn(
-    data_path: str,
-    save_prefix: str,
-    device_type: str = "nmos",
-    config: TabPFNConfig = TabPFNConfig(),
-    epochs: Optional[int] = None,
-    batch_size: Optional[int] = None,
-    patience: Optional[int] = None,
-    lr: Optional[float] = None,
-    device_str: str = "cpu",
-    overwrite: bool = False,
-    exclude_techs: Optional[Set[str]] = None,
-    num_tech_codes: int = NUM_TSMC_CODES_WITH_UNKNOWN,
-    p_unknown: float = 0.1,
-    max_rows: Optional[int] = None,
-    tech_scope: str = "universal",
-    swa_mode: str = "none",
-    ema_decay: float = 0.999,
-    apply_filter: bool = True,
-    class_weights: Optional[Dict[str, float]] = None,
-    init_from: Optional[str] = None,
-    amp: bool = False,
-    context_seed: int = 42,
-    **_: object,  # swallow legacy kwargs
-) -> Tuple[nn.Module, _NormalizerBase]:
-    """TabPFN-style compact-model training pipeline (LEVEL=75, V6.9).
-
-    One-shot 13-output forward → rides the DirectNet dispatch path
-    (``is_transformer=False``, canonical OUTPUT_COLUMN_ORDER). The episodic
-    context bank and the frozen deployment context are installed BEFORE the
-    EMA wrap so every saved checkpoint carries the identical frozen context
-    (EMA of a constant float buffer is exact).
-    """
-    from neural_network.models.tabpfn import TabPFNCompact
-
-    epochs = epochs if epochs is not None else config.max_epochs
-    batch_size = batch_size if batch_size is not None else config.batch_size
-    patience = patience if patience is not None else config.patience
-    lr = lr if lr is not None else config.lr
-
-    device = torch.device(device_str)
-    print(f"TabPFN compact on {device}; tech codes={num_tech_codes}, "
-          f"p_unknown={p_unknown}, ctx_len={config.ctx_len}")
-    if exclude_techs:
-        print(f"  Excluding techs: {exclude_techs}")
-
-    train_ds, val_ds, test_ds, normalizer = load_and_split_bsimar(
-        data_path, OUTPUT_COLUMN_ORDER, device_type=device_type,
-        apply_filter=apply_filter, exclude_techs=exclude_techs,
-        norm_mode=_NORM_MODE, max_rows=max_rows,
-        tech_scope=tech_scope,
-    )
-    _assert_codes_in_vocab(
-        (train_ds, val_ds, test_ds), num_tech_codes, tech_scope)
-    in_dim = train_ds.inputs.shape[1]
-    out_dim = train_ds.outputs.shape[1]
-
-    model = TabPFNCompact(
-        input_dim=in_dim, output_dim=out_dim,
-        embed_dim=config.embed_dim,
-        n_inducing=config.n_inducing,
-        dist_blocks=config.dist_blocks, dist_heads=config.dist_heads,
-        agg_blocks=config.agg_blocks, agg_heads=config.agg_heads,
-        n_cls_tokens=config.n_cls_tokens,
-        icl_num_blocks=config.icl_num_blocks, icl_heads=config.icl_heads,
-        ctx_len=config.ctx_len,
-        num_tech_codes=num_tech_codes,
-        tech_embed_dropout=p_unknown,
-        # Rule 16: UNKNOWN at the tail of the (possibly local) vocab.
-        unknown_code_id=num_tech_codes - 1,
-        use_rope=config.use_rope,
-        ff_factor=config.ff_factor,
-        feature_group_size=config.feature_group_size,
-    )
-    n_params = model.count_parameters()
-    print(f"  Params: {n_params:,}")
-
-    if init_from is not None:
-        init_path = Path(init_from)
-        if not init_path.suffix:
-            init_path = CHECKPOINT_DIR / f"{init_from}_best.pt"
-        if not init_path.exists():
-            raise FileNotFoundError(
-                f"init_from checkpoint not found: {init_path}")
-        init_state = torch.load(str(init_path), weights_only=True,
-                                map_location="cpu")
-        missing, unexpected = model.load_state_dict(init_state, strict=False)
-        if missing or unexpected:
-            raise ValueError(
-                f"init_from architecture mismatch for {init_path.name}: "
-                f"missing={list(missing)} unexpected={list(unexpected)}")
-        print(f"  Warm-started from {init_path.name} "
-              "(frozen context inherited, re-frozen below)")
-
-    # Context: episodic bank (CPU tensors, shared across EMA deep-copies)
-    # + the frozen deployment context — set BEFORE _train_loop wraps the
-    # model in AveragedModel so all saved states carry it bit-exactly.
-    model.set_context_bank(
-        train_ds.inputs, train_ds.outputs, train_ds.tech_codes)
-    ctx = _stratified_context(train_ds, config.ctx_len, seed=context_seed)
-    model.set_frozen_context(*ctx)
-    print(f"  Frozen context: {config.ctx_len} rows, stratified "
-          f"tech-code × 8 id-quantile bins (seed={context_seed})")
-    model = model.to(device)
-
-    arch_config = {
-        "input_dim": in_dim, "output_dim": out_dim,
-        "embed_dim": config.embed_dim,
-        "n_inducing": config.n_inducing,
-        "dist_blocks": config.dist_blocks, "dist_heads": config.dist_heads,
-        "agg_blocks": config.agg_blocks, "agg_heads": config.agg_heads,
-        "n_cls_tokens": config.n_cls_tokens,
-        "icl_num_blocks": config.icl_num_blocks,
-        "icl_heads": config.icl_heads,
-        "ctx_len": config.ctx_len,
-        "num_tech_codes": num_tech_codes,
-        "use_rope": int(config.use_rope),
-        "ff_factor": config.ff_factor,
-        "feature_group_size": config.feature_group_size,
-    }
-    return _train_loop(
-        model=model, is_transformer=False,
-        train_ds=train_ds, val_ds=val_ds, test_ds=test_ds,
-        normalizer=normalizer,
-        epochs=epochs, batch_size=batch_size,
-        lr=lr, weight_decay=config.weight_decay,
-        patience=patience, save_prefix=save_prefix,
-        device=device, overwrite=overwrite,
-        arch_config=arch_config,
-        class_weights=class_weights,
-        swa_mode=swa_mode, ema_decay=ema_decay,
-        amp=amp,
-        clip_grad=True,
-    )
+    if full_terminal:
+        checkpoint_path = CHECKPOINT_DIR / f"{save_prefix}_best.pt"
+        norm_path = CHECKPOINT_DIR / f"{save_prefix}_norm.npz"
+        config_path = CHECKPOINT_DIR / f"{save_prefix}_config.npz"
+        marker_path = checkpoint_path.with_suffix(".pt.complete")
+        marker_path.write_text(json.dumps({
+            "family": "bsimar-full",
+            "checkpoint": checkpoint_path.name,
+            "checkpoint_sha256": _sha256_file(checkpoint_path),
+            "normalization": norm_path.name,
+            "normalization_sha256": _sha256_file(norm_path),
+            "configuration": config_path.name,
+            "configuration_sha256": _sha256_file(config_path),
+            "output_columns": list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER),
+            "target_columns": target_columns,
+            "ar_target_dim": ar_target_dim,
+            "training_mode": (
+                "autoregressive" if autoregressive_training
+                else "teacher-forced"
+            ),
+            **dataset_provenance,
+        }, sort_keys=True, indent=2) + "\n")
+    return trained

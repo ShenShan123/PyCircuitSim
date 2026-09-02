@@ -3,7 +3,7 @@
 
 The accuracy campaign has run in three passes that each wrote their own tree:
 
-  results/a3_regate/    V6.13.0, complex matrix only, REPORT.md + OMP_REPORT.md
+  results/a3_regate/    V6.13.0, simple-v1 matrix only, REPORT.md + OMP_REPORT.md
   results/v710_regate/  V7.1.0, device + AC + strict OMP, data.json
   results/v730_regate/  V7.3.0 (this campaign), same layout as v710
 
@@ -24,30 +24,72 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import pathlib
+import sys
 from typing import Dict, List, Optional, Tuple
 
+if __package__:
+    from .v710_regate_collect import is_verdict, rc_of
+else:
+    from v710_regate_collect import is_verdict, rc_of
+
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-CKPT = ROOT / "external_compact_models" / "neural_network" / "checkpoints"
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tests.common.simple_circuit_catalog import (  # noqa: E402
+    SIMPLE_V1,
+    SIMPLE_V2,
+    cases,
+)
+
+CKPT = pathlib.Path(os.environ.get(
+    "BSIMAR_CHECKPOINT_DIR",
+    ROOT / "external_compact_models" / "neural_network" / "checkpoints",
+))
 
 TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
-FAM = {"dn": "DirectNet", "tf": "BSIM-AR", "pfn": "PFN"}
+FAM = {
+    "dn": "DirectNet", "tf": "BSIM-AR",
+    "dnf": "DirectNet-Full", "tff": "BSIM-AR-Full",
+}
 
 # Suites, and the OMP settings each must be measured at. ring_osc and opamp sit
 # on multistable fixed points, so their verdict is only bankable if it holds at
 # every thread count (methodology.md §3); the rest are deterministic under the
 # thread pin and are taken from a single run.
-STRICT_OMP = ("1", "2", "4")
-SUITES: Dict[str, Tuple[str, ...]] = {
-    "verify_complex_ring_osc": STRICT_OMP,
-    "verify_complex_opamp": STRICT_OMP,
-    "verify_complex_sram_snm": ("1",),
-    "verify_complex_switchcap": ("1",),
+SIMPLE_V1_SUITES: Dict[str, Tuple[str, ...]] = {
+    case.legacy_suite_id: tuple(str(value) for value in case.omp_threads)
+    for case in cases(score_version=SIMPLE_V1)
+    if case.legacy_suite_id is not None
+}
+SIMPLE_V2_SUITES: Dict[str, Tuple[str, ...]] = {
+    case.campaign_suite: ("1",)
+    for case in cases(score_version=SIMPLE_V2)
+}
+NON_SIMPLE_SUITES: Dict[str, Tuple[str, ...]] = {
     "verify_nn_ac": ("1",),
     "verify_complex_opamp_ac": ("1",),
     "verify_nn_multi_tech_dc": ("1",),
     "verify_nn_multi_tech_tran": ("1",),
 }
+# Historical callers import SUITES and expect the qualification denominator.
+SUITES: Dict[str, Tuple[str, ...]] = {
+    **SIMPLE_V1_SUITES,
+    **NON_SIMPLE_SUITES,
+}
+
+
+def suites_for(simple_version: str) -> Dict[str, Tuple[str, ...]]:
+    """Select a versioned simple-circuit denominator plus device gates."""
+    selected: Dict[str, Tuple[str, ...]] = {}
+    if simple_version in (SIMPLE_V1, "both"):
+        selected.update(SIMPLE_V1_SUITES)
+    if simple_version in (SIMPLE_V2, "both"):
+        selected.update(SIMPLE_V2_SUITES)
+    selected.update(NON_SIMPLE_SUITES)
+    return selected
 
 # The clean control, per family. V7.4.0 retrained every tier of DirectNet and
 # BSIM-AR from scratch on the clean recipe, straight into the production slots,
@@ -56,7 +98,8 @@ SUITES: Dict[str, Tuple[str, ...]] = {
 CLEAN: Dict[str, Dict[str, str]] = {
     "dn": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
     "tf": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
-    "pfn": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
+    "dnf": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
+    "tff": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
 }
 CLEAN_TECH_OVERRIDE: Dict[Tuple[str, str, str], str] = {}
 
@@ -67,7 +110,8 @@ RECIPES: Dict[str, List[str]] = {
     "tf": ["corroft_medium", "corro15_medium",
            "corroft_large", "crit15m_large", "crit30_large",
            "corroft_xl", "corro15_xl", "crit15m_xl", "crit30_xl"],
-    "pfn": ["corroft_small"],
+    "dnf": [],
+    "tff": [],
 }
 
 # Newest pass wins: a cell re-measured in V7.3.0 supersedes its V7.1.0 value,
@@ -76,7 +120,15 @@ PASSES = [("a3", ROOT / "results" / "a3_regate"),
           ("v710", ROOT / "results" / "v710_regate"),
           ("v730", ROOT / "results" / "v730_regate"),
           ("v740", ROOT / "results" / "v740_regate"),
-          ("v742", ROOT / "results" / "v742_regate")]
+          ("v742", ROOT / "results" / "v742_regate"),
+          ("simple-recheck", ROOT / "results" / "simple_recheck_24c181a"),
+          ("v7516-clean", ROOT / "results" / "v7516_clean"),
+          ("v7517-clean", ROOT / "results" / "v7517_clean"),
+          ("v761-full-clean", ROOT / "results" / "v761_full_clean"),
+          ("v762-directnet-full", ROOT / "results" /
+           "v762_directnet_full_clean")]
+
+CellKey = Tuple[str, str, str, str, str]
 
 
 def load_json_pass(root: pathlib.Path) -> Dict:
@@ -89,35 +141,31 @@ def load_json_pass(root: pathlib.Path) -> Dict:
         return {}
 
 
-def scan_logs(root: pathlib.Path) -> Dict[Tuple[str, str, str, str, str], str]:
-    """Verdicts straight from the log tree, so a pass mid-flight still counts.
+def scan_logs(root: pathlib.Path) -> Dict[CellKey, Optional[str]]:
+    """Observed raw logs and their optional scientific verdicts.
 
     data.json is only rewritten when the collector runs; during a campaign the
-    logs are ahead of it. Reading both means a resumed pool never re-runs a job
-    that has already landed.
+    logs are ahead of it. Returning invalid and unfinished observations as
+    ``None`` lets callers suppress a stale JSON verdict for the same cell.
     """
-    out: Dict[Tuple[str, str, str, str, str], str] = {}
+    out: Dict[CellKey, Optional[str]] = {}
     for log in root.glob("*/*/*/*.omp*.log"):
         suite, _, omp = log.name[:-4].partition(".omp")
+        key = (log.parent.parent.parent.name, log.parent.parent.name,
+               log.parent.name.upper(), suite, omp)
         try:
             txt = log.read_text(errors="replace")
         except OSError:
+            out[key] = None
             continue
-        marks = [ln for ln in txt.splitlines() if ln.startswith("===V710_DONE")]
-        if len(marks) != 1:
-            continue  # unfinished, or two dispatchers raced onto one job
-        rc = marks[0].split("rc=")[1].rstrip("=")
-        if rc in ("no-ckpt",):
-            continue
-        key = (log.parent.parent.parent.name, log.parent.parent.name,
-               log.parent.name.upper(), suite, omp)
-        out[key] = rc
+        rc = rc_of(txt)
+        out[key] = rc if is_verdict({"rc": rc}) else None
     return out
 
 
 def build_index(
     only: Optional[List[str]] = None,
-) -> Dict[Tuple[str, str, str, str, str], str]:
+) -> Dict[CellKey, str]:
     """(tag, variant, TECH, suite, omp) -> which pass measured it.
 
     ``only`` restricts which passes count as coverage. A rebuild campaign
@@ -125,12 +173,11 @@ def build_index(
     every pass would report full coverage and emit zero jobs. Default
     (``None``) merges everything, newest last, as before.
     """
-    idx: Dict[Tuple[str, str, str, str, str], str] = {}
+    idx: Dict[CellKey, str] = {}
     for name, root in PASSES:
         if only is not None and name not in only:
             continue
-        for key in scan_logs(root):
-            idx[key] = name
+        pass_idx: Dict[CellKey, str] = {}
         data = load_json_pass(root)
         for tag, variants in data.items():
             for variant, suites in variants.items():
@@ -139,24 +186,43 @@ def build_index(
                         for omp in omps:
                             if not omp.startswith("omp"):
                                 continue
-                            idx[(tag, variant, tech, suite, omp[3:])] = name
+                            if not is_verdict(omps[omp]):
+                                continue
+                            pass_idx[(tag, variant, tech, suite, omp[3:])] = name
+        for key, rc in scan_logs(root).items():
+            pass_idx.pop(key, None)
+            if rc is not None:
+                pass_idx[key] = name
+        idx.update(pass_idx)
     return idx
 
 
 def ckpt_exists(tag: str, variant: str, tech: str,
                 require_complete: bool = False) -> bool:
-    """Both devices present. `require_complete` also demands the done marker.
+    """Both models present. `require_complete` also demands ready artifacts.
 
     A bare `_best.pt` may be a run that was killed mid-training — the trainer
     writes it at every val improvement — so gating one silently produces a
-    number for a checkpoint nobody finished. The marker is the discipline
-    (AGENTS.md); it is opt-in here because checkpoints predating the marker are
-    genuinely complete and would otherwise be excluded.
+    number for a checkpoint nobody finished. A campaign-ready checkpoint also
+    needs its normalization data and, for BSIM-AR, its architecture
+    sidecar. This stricter contract is opt-in because historical checkpoints
+    predate the completion marker.
     """
     t = tech.lower()
-    suffixes = ("_best.pt.complete",) if require_complete else ("_best.pt",)
-    return all((CKPT / f"{t}_{tag}_{variant}_{d}{sfx}").exists()
-               for d in ("nmos", "pmos") for sfx in suffixes)
+    for device in ("nmos", "pmos"):
+        stem = CKPT / f"{t}_{tag}_{variant}_{device}"
+        if not (stem.with_name(stem.name + "_best.pt")).exists():
+            return False
+        if require_complete:
+            if not (stem.with_name(stem.name + "_norm.npz")).exists():
+                return False
+            if not (stem.with_name(stem.name + "_best.pt.complete")).exists():
+                return False
+            if tag in ("tf", "tff") and not (
+                stem.with_name(stem.name + "_config.npz")
+            ).exists():
+                return False
+    return True
 
 
 def variant_for(tag: str, group: str, tech: str, is_clean: bool) -> str:
@@ -190,14 +256,31 @@ def main() -> int:
                          "campaign passes its OWN name so cells measured by "
                          "an earlier pass are re-gated rather than inherited.")
     ap.add_argument("--require-complete", action="store_true",
-                    help="Only count a checkpoint that carries its "
-                         "*_best.pt.complete marker — use when a training "
-                         "wave for these stems is still running")
+                    help="Only count checkpoints with model, normalization, "
+                         "completion marker, and required architecture sidecar")
+    ap.add_argument("--fail-on-gaps", action="store_true",
+                    help="Exit nonzero when a requested measurement is "
+                         "missing or a requested checkpoint group is "
+                         "unavailable")
+    ap.add_argument(
+        "--simple-version", default=SIMPLE_V1,
+        choices=[SIMPLE_V1, SIMPLE_V2, "both"],
+        help="simple-circuit denominator (default preserves historical score)",
+    )
     args = ap.parse_args()
 
     techs = ([t.strip().upper() for t in args.techs.split(",")]
              if args.techs else TECHS)
-    tags = [args.tag] if args.tag else ["dn", "tf", "pfn"]
+    if not techs:
+        ap.error("--techs must select at least one technology")
+    unknown_techs = [tech for tech in techs if tech not in TECHS]
+    if unknown_techs:
+        ap.error(
+            f"unknown technologies {unknown_techs}; available: {TECHS}"
+        )
+    if len(set(techs)) != len(techs):
+        ap.error(f"--techs contains duplicates: {techs}")
+    tags = [args.tag] if args.tag else ["dn", "tf", "dnf", "tff"]
     only = ([p.strip() for p in args.passes.split(",")]
             if args.passes else None)
     if only is not None:
@@ -207,6 +290,7 @@ def main() -> int:
             raise SystemExit(
                 f"--passes: unknown pass name(s) {bad}; known: {sorted(known)}")
     idx = build_index(only)
+    selected_suites = suites_for(args.simple_version)
 
     jobs: List[str] = []
     print(f"{'group':30s} {'tech':7s} {'measured':>9s} {'missing':>8s}  by")
@@ -222,7 +306,7 @@ def main() -> int:
                     print(f"{label:30s} {tech:7s} {'':>9s} {'':>8s}  NO-CKPT")
                     continue
                 have, miss, by = 0, [], set()
-                for suite, omps in SUITES.items():
+                for suite, omps in selected_suites.items():
                     for omp in omps:
                         src = idx.get((tag, variant, tech, suite, omp))
                         if src:
@@ -237,7 +321,7 @@ def main() -> int:
                 print(f"{label:30s} {tech:7s} {have:>9d} {len(miss):>8d}  "
                       f"{','.join(sorted(by)) or '-'}{flag}")
 
-    n_expect = sum(len(v) for v in SUITES.values())
+    n_expect = sum(len(v) for v in selected_suites.values())
     print("-" * 72)
     print(f"cells measured {tot_have}, missing {tot_miss}, "
           f"no-checkpoint groups {tot_nockpt}  ({n_expect} runs per group-tech)")
@@ -245,6 +329,8 @@ def main() -> int:
     if args.emit_jobs:
         args.emit_jobs.write_text("".join(j + "\n" for j in jobs))
         print(f"wrote {len(jobs)} jobs -> {args.emit_jobs}")
+    if args.fail_on_gaps and (tot_miss or tot_nockpt):
+        return 1
     return 0
 
 

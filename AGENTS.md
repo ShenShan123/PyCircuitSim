@@ -13,7 +13,8 @@ Keep each fact in one authoritative place:
 - Put durable implementation rules and debugging lessons in this file.
 - Put release outcomes, measurements, retractions, and dead ends in
   `docs/CHANGELOG.md`.
-- Put gate definitions and score evidence in `docs/accuracy/`.
+- Put gate definitions and scoreboard summaries in `docs/accuracy/`.
+- Put all simulation artifacts in `results/`.
 - Put detailed AnalogGym results in
   `examples/complex_circuits/RESULTS_TSMC.md`.
 
@@ -39,6 +40,7 @@ before changing behavior. Start with these ownership boundaries:
 - `external_compact_models/bsim_cmg/`: BSIM-CMG evaluation and dataset creation.
 - `external_compact_models/neural_network/`: shared NN data, models, loss, and training.
 - `tests/common/`: authoritative deck rendering and comparison infrastructure.
+- `scripts/`: campaign-level evaluation scripts.
 
 Keep the solver free of device equations and device models free of matrix
 assembly. Update `_is_mosfet()` in `solver.py` whenever a new MOSFET class is
@@ -89,6 +91,12 @@ outer bounds.
 
 ### DC and operating point
 
+- A residual evaluated from node voltages must first solve the augmented MNA
+  branch-current tail for ideal voltage sources. Never fill those unknowns
+  with zero, and scale a KCL tolerance only from current-valued node RHS rows;
+  voltage-source constraint rows are measured in volts. Cache the
+  topology-stable source-incidence fit rather than recomputing its dense
+  least-squares factorization in every nonlinear iteration.
 - Apply the standard voltage convergence test:
   `|ΔV| < VNTOL + RELTOL * max(|V_old|, |V_new|)` with `RELTOL=1e-4` and
   `VNTOL=1e-7` unless a gate explicitly studies tolerances.
@@ -180,10 +188,32 @@ must come from one complete campaign pass and must preserve its checkpoint and
 commit provenance. Do not mix partial logs or compare totals across a gate-
 denominator change without rescaling.
 
+Train a new clean matrix into an isolated `BSIMAR_CHECKPOINT_DIR`; never
+overwrite the preserved control while generating a comparison. A checkpoint
+is campaign-ready only when its model, required normalization/config sidecars,
+and completion marker all exist.
+
 Keep diagnostics separate from gates. A diagnostic may explain a failure but
 does not count as evidence. Make each gate answer one question, and test NMOS
 and PMOS through single-device OP/DC, inverter VTC/transient, and derivative-
 sensitive circuit behavior before promoting a model.
+
+Accuracy CLIs must reject unknown technologies, devices, and analyses before
+running so a typo cannot shrink a denominator. When a LEVEL=73 deck is
+retargeted with `PYCIRCUITSIM_NN_FORCE_LEVEL`, every human-readable banner must
+name the selected family rather than the deck's original family.
+
+The clean re-gate driver must reject a missing or dependency-incomplete
+`NN_PY`; never silently fall back to another interpreter. An unhandled Python
+traceback is infrastructure failure, not a scientific exit-1 verdict. Keep
+explicit `ERROR` configurations in parametric denominators while aggregating
+numeric metrics only over rows that produced them.
+
+For a high-gain opamp AC gate, locate the linearization bias with a physical
+fine sweep around the coarse maximum-gain point. Do not interpolate a coarse
+grid into a reference. Gate only after the reference bias is off-rail and the
+NN DC operating point has converged; an unconverged response remains a
+diagnostic.
 
 Report model error with MRE, R², NRMSE, and maximum voltage error per
 technology. Store the detailed results in `docs/accuracy/`, not in this file.

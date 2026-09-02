@@ -1,7 +1,7 @@
 * 6T SRAM cell, hold state — DirectNet LEVEL=73
 *
 * The full cross-coupled bitcell, used by the `force_ic` retention probe in
-* `tests/verify_complex_sram_snm.py`. That probe is a printed DIAGNOSTIC, not
+* `tests/simple_circuits/verify_circuit_sram_snm.py`. That probe is a printed DIAGNOSTIC, not
 * a scored gate — read stability is gated by the butterfly curves in
 * `directnet_sram_snm_dc.sp` instead.
 *

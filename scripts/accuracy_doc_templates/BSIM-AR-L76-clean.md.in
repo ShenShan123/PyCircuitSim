@@ -1,0 +1,51 @@
+# BSIM-AR-Full (LEVEL=76) — clean full-terminal scan
+
+This experimental Transformer learns the same six independent OSDI terminal
+surfaces as LEVEL=75. It emits `qg`, `qb`, `qd`, `i_d`, `i_g`, and `i_b`
+autoregressively; normalization remains in the canonical full-terminal order.
+Source current and charge and both full Jacobians are reconstructed at the
+shared physical boundary. LEVEL=72 is the ground truth.
+
+Clean means one uniform run per technology, polarity, and tier with
+`--model transformer --output-contract full-terminal --apply-filter off
+--swa-mode ema --seed 42`. No reduced-head auxiliary loss is enabled.
+
+<!--PROVENANCE-->
+
+Gate definitions, strict OMP scoring, denominator rules, and comparability are
+owned by [`methodology.md`](methodology.md).
+
+## Headline — complex gates by tier
+
+<!--HEADLINE-->
+
+## By testcase
+
+<!--TESTCASE-->
+
+## By technology
+
+<!--BYTECH-->
+
+## By scale
+
+<!--BYSCALE-->
+
+## Device and AC suites
+
+<!--DEVICE-->
+
+## Interpretation
+
+The tables preserve every scientific failure and every declared parametric
+configuration. Numeric aggregates omit only rows that produced no numeric
+metric; those rows remain in the denominator as `ERROR`. Compare tiers within
+this family; compare LEVEL=75 and LEVEL=76 only through their separately pinned
+artifacts and identical gate matrix.
+
+## Reproduction
+
+Checkpoints are `tsmc{5,6,7,12,16}_tff_{small,medium,large,xl}_{nmos,pmos}`.
+Each requires `_best.pt`, `_norm.npz`, `_config.npz`, and the checksum-bound
+`_best.pt.complete` marker. See the repository README for the complete
+generation, training, gate, coverage, and report commands.

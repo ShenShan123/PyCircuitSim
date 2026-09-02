@@ -340,6 +340,21 @@ def test_scan_pdk_geometry_combos_tsmc7():
     assert combos[0][1] == pytest.approx(1.0)
 
 
+def test_subdivided_geometry_grid_includes_terminal_length_edge():
+    """Canonical subdivision must certify the top edge of the PDK domain."""
+    from pycmg.parser import _scan_all_variants, scan_pdk_geometry_combos
+
+    pdk = str(ROOT.parents[1] / "PDKs" / "TSMC7" / "cln7_1d8_sp_v1d2_2p2.l")
+    variants = _scan_all_variants(pdk, "pch_lvt_mac")
+    combos = scan_pdk_geometry_combos(
+        pdk, "pch_lvt_mac", max_l_ratio=1.35,
+    )
+
+    assert max(length for length, _nfin in combos) == pytest.approx(
+        max(variant.lmax for variant in variants)
+    )
+
+
 def test_find_length_variant_nfin_aware():
     """NFIN-aware variant selection should pick correct NFIN group."""
     from pycmg.parser import _find_length_variant

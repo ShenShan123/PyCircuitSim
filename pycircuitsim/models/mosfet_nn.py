@@ -25,7 +25,7 @@ import math
 import os
 import sys
 from pathlib import Path
-from typing import Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -235,6 +235,7 @@ class _MOSFETNNBase(Component):
     # Subclasses (DirectNet / BSIMAR) set these.
     _is_pmos: bool = False
     _output_layout: str = "standard"   # "standard" or "bsimar"
+    _supports_raw_directnet: bool = False
 
     # V7.0.1 — does this analysis consume capacitances?
     #
@@ -260,6 +261,7 @@ class _MOSFETNNBase(Component):
         NFIN: float,
         temperature: float = 300.15,
         tech_code: Optional[int] = None,
+        multiplier: float = 1.0,
         *,
         model_factory: Optional[
             Callable[[Dict[str, torch.Tensor]], torch.nn.Module]
@@ -274,9 +276,13 @@ class _MOSFETNNBase(Component):
             raise ValueError(f"L must be positive, got {L}")
         if NFIN <= 0:
             raise ValueError(f"NFIN must be positive, got {NFIN}")
+        if multiplier <= 0:
+            raise ValueError(
+                f"Instance multiplier m must be positive, got {multiplier}")
 
         self.L = float(L)
         self.NFIN = float(NFIN)
+        self.m = float(multiplier)
         self.temperature = float(temperature)
         self._output_layout = output_layout
 
@@ -350,13 +356,7 @@ class _MOSFETNNBase(Component):
             [self._tech_code], dtype=torch.long)
 
         # ── Pre-compute normalised geometry (constant per device) ────
-        nfin_log = float(np.log2(max(self.NFIN, 1.0)))
-        geo_raw = np.array(
-            [nfin_log, self.L, self.temperature], dtype=np.float64)
-        geo_std = self._norm_stats.input_std[4:7].copy()
-        geo_std[geo_std < 1e-12] = 1.0
-        self._geo_norm = (
-            (geo_raw - self._norm_stats.input_mean[4:7]) / geo_std)
+        self._refresh_geometry()
 
         # Derive the model-output → column-name lookup. Three cases:
         #
@@ -413,6 +413,13 @@ class _MOSFETNNBase(Component):
         self._cache_voltages: Optional[Tuple[float, ...]] = None
         # V7.0.1: whether the cached result carries the capacitance block.
         self._cache_has_caps: bool = False
+        self.evaluator_boundary: str = "native"
+        self._correction_trace_enabled: bool = False
+        self._trace_eval_count: int = 0
+        self._trace_max_support_distance: float = 0.0
+        self._trace_max_support_state: Optional[Dict[str, Any]] = None
+        self._trace_first_activation: Dict[str, Dict[str, Any]] = {}
+        self._trace_current_state: Optional[Dict[str, Any]] = None
         self._q_prev: Optional[Dict[str, float]] = None
         self._q_prev2: Optional[Dict[str, float]] = None
         self._v_prev_tran: Optional[Dict[str, float]] = None
@@ -440,14 +447,7 @@ class _MOSFETNNBase(Component):
             _SHARED_CODE_TENSORS[code_key] = code_t
         self._tech_code_tensor = code_t
 
-        geo_key = (
-            self._norm_key, dev_key, self.NFIN, self.L, self.temperature)
-        geo_t = _SHARED_GEO_TENSORS.get(geo_key)
-        if geo_t is None:
-            geo_t = torch.tensor(
-                self._geo_norm, dtype=torch.float32, device=self._device)
-            _SHARED_GEO_TENSORS[geo_key] = geo_t
-        self._geo_norm_t = geo_t
+        self._bind_geometry_tensor()
 
         s = self._norm_stats
         norm_key = (self._norm_key, dev_key)
@@ -507,14 +507,20 @@ class _MOSFETNNBase(Component):
         return (v_clamped - self._v_mean) / self._v_std_t
 
     def _prep_voltages(
-        self, voltages: Dict[str, float],
+        self,
+        voltages: Dict[str, float],
+        raw_voltages: Optional[Tuple[float, float, float, float]] = None,
     ) -> Tuple[torch.Tensor, float, float]:
         """Returns (x_full normalised, v_d_nn, v_s_nn)."""
-        v_d_nn, v_g_nn, v_s_nn, v_b_nn = self._raw_voltages(voltages)
+        raw = raw_voltages or self._raw_voltages(voltages)
+        v_d_nn, v_g_nn, v_s_nn, v_b_nn = raw
         v_raw = torch.tensor(
             [v_d_nn, v_g_nn, v_s_nn, v_b_nn],
             dtype=torch.float32, device=self._device)
-        v_norm = self._clamp_norm_voltages(v_raw)
+        if self.evaluator_boundary == "raw-directnet":
+            v_norm = (v_raw - self._v_mean) / self._v_std_t
+        else:
+            v_norm = self._clamp_norm_voltages(v_raw)
         x = torch.cat([v_norm, self._geo_norm_t]).unsqueeze(0)
         return x, v_d_nn, v_s_nn
 
@@ -589,7 +595,9 @@ class _MOSFETNNBase(Component):
         gmb_phys = -self._denorm_deriv(
             "id", in_col=3, deriv_norm=gi[3], phys_val=id_phys)
 
-        gds_phys = self._guard_gds(id_phys, gds_phys)
+        if gds_phys <= 0.0:
+            self._record_activation(
+                "negative_gds_guard", {"id": id_phys, "gds": gds_phys})
 
         result = {
             "id": id_phys, "gm": gm_phys, "gds": gds_phys, "gmb": gmb_phys,
@@ -609,7 +617,19 @@ class _MOSFETNNBase(Component):
             result["cdd"] = self._denorm_deriv(
                 "qd", in_col=0, deriv_norm=gqd[0], phys_val=qd_phys)
 
-        return self._apply_vds_correction(result, vds=v_d_nn - v_s_nn)
+        vds = v_d_nn - v_s_nn
+        if self.evaluator_boundary == "raw-directnet":
+            # Trace what production would have activated at the identical raw
+            # network state, but discard that preview and return the untouched
+            # physical DirectNet values/Jacobian.
+            if self._correction_trace_enabled:
+                preview = dict(result)
+                preview["gds"] = self._guard_gds(id_phys, gds_phys)
+                self._apply_vds_correction(preview, vds=vds)
+            return result
+
+        result["gds"] = self._guard_gds(id_phys, gds_phys)
+        return self._apply_vds_correction(result, vds=vds)
 
     def _eval(self, voltages: Dict[str, float]) -> Dict[str, float]:
         v_tuple = self._v_tuple(voltages)
@@ -618,7 +638,9 @@ class _MOSFETNNBase(Component):
                 return self._eval_cache
 
         need_caps = self._caps_required
-        x, v_d_nn, v_s_nn = self._prep_voltages(voltages)
+        raw_voltages = self._raw_voltages(voltages)
+        self._begin_evaluator_trace(raw_voltages)
+        x, v_d_nn, v_s_nn = self._prep_voltages(voltages, raw_voltages)
 
         if self._fused_jac_available(self._nn_model):
             with torch.no_grad():
@@ -704,6 +726,15 @@ class _MOSFETNNBase(Component):
         raw_v: Dict[int, List[Tuple[float, float, float, float]]] = {}
         v_tuples: Dict[int, List[Tuple[float, ...]]] = {}
         for m in mosfets:
+            boundary = m.evaluator_boundary
+            if boundary == "raw-directnet":
+                # Raw inference deliberately uses unclamped inputs and skips
+                # the vectorized production correction tail. Let the ordinary
+                # per-device evaluator provide that exact diagnostic path.
+                continue
+            if boundary != "native":
+                raise ValueError(
+                    f"Unsupported NN evaluator boundary {boundary!r}")
             v_tuple = m._v_tuple(voltages)
             if (m._cache_voltages == v_tuple and m._eval_cache is not None
                     and (m._cache_has_caps or not m._caps_required)):
@@ -751,6 +782,13 @@ class _MOSFETNNBase(Component):
                     raw_v[key], pmos_arr)
                 tuples = v_tuples[key]
                 for i, m in enumerate(devs):
+                    if m._correction_trace_enabled:
+                        m._begin_evaluator_trace(raw_v[key][i])
+                        m._unpack_eval(
+                            out[i], grad_id[i],
+                            grad_qg[i] if grad_qg is not None else None,
+                            grad_qd[i] if grad_qd is not None else None,
+                            raw_v[key][i][0], raw_v[key][i][2])
                     m._eval_cache = results[i]
                     m._cache_voltages = tuples[i]
                     m._cache_has_caps = need_caps
@@ -786,6 +824,13 @@ class _MOSFETNNBase(Component):
                 ref, out, grad_id, grad_qg, grad_qd, raw_v[key], pmos_arr)
             tuples = v_tuples[key]
             for i, m in enumerate(devs):
+                if m._correction_trace_enabled:
+                    m._begin_evaluator_trace(raw_v[key][i])
+                    m._unpack_eval(
+                        out[i], grad_id[i],
+                        grad_qg[i] if grad_qg is not None else None,
+                        grad_qd[i] if grad_qd is not None else None,
+                        raw_v[key][i][0], raw_v[key][i][2])
                 m._eval_cache = results[i]
                 m._cache_voltages = tuples[i]
                 m._cache_has_caps = need_caps
@@ -1031,7 +1076,7 @@ class _MOSFETNNBase(Component):
 
         Requires the opt-in flag AND a model that implements it AND an
         instance whose ``id`` column is not re-composed by an EKV core or
-        monotone residual. False for BSIM-AR and PFN, whose forwards are
+        monotone residual. False for BSIM-AR, whose forward is
         not plain MLPs.
         """
         return (
@@ -1108,6 +1153,98 @@ class _MOSFETNNBase(Component):
         else:
             out_factor = 1.0
         return float(deriv_norm) * out_std * out_factor / in_std
+
+    def configure_evaluator(
+        self, boundary: str, correction_trace: bool = False,
+    ) -> None:
+        """Select an explicit diagnostic evaluator and reset its trace."""
+        if boundary not in ("native", "raw-directnet"):
+            raise ValueError(f"Unsupported NN evaluator boundary {boundary!r}")
+        if boundary == "raw-directnet" and not self._supports_raw_directnet:
+            raise ValueError(
+                "The raw-directnet evaluator boundary requires DirectNet")
+        if (boundary != self.evaluator_boundary
+                or bool(correction_trace) != self._correction_trace_enabled):
+            self.clear_cache()
+        self.evaluator_boundary = boundary
+        self._correction_trace_enabled = bool(correction_trace)
+        self._trace_eval_count = 0
+        self._trace_max_support_distance = 0.0
+        self._trace_max_support_state = None
+        self._trace_first_activation = {}
+        self._trace_current_state = None
+
+    def evaluator_trace(self) -> Dict[str, Any]:
+        """Return the opt-in, JSON-safe correction activation trace."""
+        return {
+            "device": self.name,
+            "evaluator_boundary": self.evaluator_boundary,
+            "evaluations": self._trace_eval_count,
+            "max_normalized_support_distance": (
+                self._trace_max_support_distance),
+            "max_support_state": (
+                dict(self._trace_max_support_state)
+                if self._trace_max_support_state is not None else None),
+            "first_activation": {
+                name: dict(state)
+                for name, state in self._trace_first_activation.items()
+            },
+        }
+
+    def _begin_evaluator_trace(
+        self, raw: Tuple[float, float, float, float],
+    ) -> None:
+        """Start one evaluator trace record after a cache miss.
+
+        Support distance is the L-infinity distance outside the four-voltage
+        training box after z-score normalization. ``input_clamp`` activates
+        when that distance becomes non-zero; treating the softplus blend's
+        infinitesimal in-box movement as activation would mark every eval and
+        would not identify the first support escape this diagnostic needs.
+        """
+        if not self._correction_trace_enabled:
+            self._trace_current_state = None
+            return
+        self._trace_eval_count += 1
+        values = np.asarray(raw, dtype=np.float64)
+        means = self._norm_stats.input_mean[:4]
+        std = self._norm_stats.input_std[:4].copy()
+        std[std < 1e-12] = 1.0
+        normalized = (values - means) / std
+        lower = (self._norm_stats.input_min[:4] - means) / std
+        upper = (self._norm_stats.input_max[:4] - means) / std
+        outside = np.maximum(np.maximum(lower - normalized, 0.0),
+                             normalized - upper)
+        distance = float(np.max(outside))
+        v_d, v_g, v_s, v_b = raw
+        state: Dict[str, Any] = {
+            "eval_index": self._trace_eval_count,
+            "vd": float(v_d), "vg": float(v_g),
+            "vs": float(v_s), "vb": float(v_b),
+            "vds": float(v_d - v_s), "vgs": float(v_g - v_s),
+            "vbs": float(v_b - v_s),
+            "normalized_support_distance": distance,
+        }
+        self._trace_current_state = state
+        if (self._trace_max_support_state is None
+                or distance > self._trace_max_support_distance):
+            self._trace_max_support_distance = distance
+            self._trace_max_support_state = dict(state)
+        if distance > 0.0:
+            self._record_activation("input_clamp")
+
+    def _record_activation(
+        self, name: str, details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Store only the first activation of one production correction."""
+        if (not self._correction_trace_enabled
+                or name in self._trace_first_activation
+                or self._trace_current_state is None):
+            return
+        state = dict(self._trace_current_state)
+        if details:
+            state.update(details)
+        self._trace_first_activation[name] = state
 
     @staticmethod
     def _guard_gds(id_phys: float, gds_phys: float) -> float:
@@ -1193,6 +1330,8 @@ class _MOSFETNNBase(Component):
         # (a) Rail-restoring extrapolation
         if abs_vds > VDD_train:
             overshoot = abs_vds - VDD_train
+            self._record_activation(
+                "rail_extrapolation", {"overshoot": overshoot})
             g_max = 1.0e-3       # 1 mS scale
             x_ref = 0.5 * VDD_train
             x_cap = 5.0 * x_ref  # transition to linear past 5·x_ref
@@ -1231,13 +1370,21 @@ class _MOSFETNNBase(Component):
         if normal_dir:
             f_id = f_sym
         else:
-            f_id = f_sym * self._reverse_taper(abs_vds, VDD_train)
+            reverse_taper = self._reverse_taper(abs_vds, VDD_train)
+            if reverse_taper < 1.0:
+                self._record_activation(
+                    "reverse_taper", {"factor": reverse_taper})
+            f_id = f_sym * reverse_taper
 
         id_raw = result["id"]
         result["id"] = id_raw * f_id
         result["gm"] *= f_id
         result["gmb"] *= f_id
         result["gds"] = result["gds"] * f_sym + abs(id_raw) * exp_sym / VT
+        if result["gds"] <= 0.0:
+            self._record_activation(
+                "negative_gds_guard",
+                {"id": result["id"], "gds": result["gds"]})
         result["gds"] = self._guard_gds(result["id"], result["gds"])
 
         # (d) wrong-sign clamp, scoped by direction: reverse conduction
@@ -1252,6 +1399,8 @@ class _MOSFETNNBase(Component):
                 (self._is_pmos and result["id"] > 0.0)
                 or (not self._is_pmos and result["id"] < 0.0))
         if wrong:
+            self._record_activation(
+                "sign_clamp", {"id": result["id"]})
             result["id"] = 0.0
             result["gm"] = 0.0
             result["gmb"] = 0.0
@@ -1273,7 +1422,9 @@ class _MOSFETNNBase(Component):
         self, voltages: Dict[str, float],
     ) -> Tuple[float, float, float]:
         r = self._eval(voltages)
-        return r["gds"], r["gm"], r["gmb"]
+        return (
+            self.m * r["gds"], self.m * r["gm"], self.m * r["gmb"],
+        )
 
     @staticmethod
     def require_caps(components) -> None:
@@ -1303,13 +1454,15 @@ class _MOSFETNNBase(Component):
             self._caps_required = True
             self.clear_cache()
         r = self._eval(voltages)
-        return {k: r[k] for k in ("cgg", "cgd", "cgs", "cdg", "cdd")}
+        return {
+            k: self.m * r[k] for k in ("cgg", "cgd", "cgs", "cdg", "cdd")
+        }
 
     def get_charges(
         self, voltages: Dict[str, float],
     ) -> Dict[str, float]:
         r = self._eval(voltages)
-        return {k: r[k] for k in ("qg", "qd", "qs", "qb")}
+        return {k: self.m * r[k] for k in ("qg", "qd", "qs", "qb")}
 
     # ── Transient charge state ───────────────────────────────────────
 
@@ -1344,6 +1497,50 @@ class _MOSFETNNBase(Component):
         if cap_currents is not None:
             self._i_prev_gate = cap_currents.get("i_gate", 0.0)
             self._i_prev_drain = cap_currents.get("i_drain", 0.0)
+
+    def set_temperature(self, temperature_kelvin: float) -> None:
+        """Rebind the temperature feature used by NN inference.
+
+        Temperature is part of the constant geometry tensor, not the voltage
+        tuple used as the evaluation-cache key.  A temperature sweep therefore
+        has to rebuild that tensor and clear both the current cache and the
+        transient charge history.
+        """
+        if temperature_kelvin <= 200.0:
+            raise ValueError(
+                f"Temperature must be in Kelvin (> 200 K), got "
+                f"{temperature_kelvin}. Use temp_K = temp_C + 273.15.")
+
+        self.temperature = float(temperature_kelvin)
+        self._refresh_geometry()
+        self._bind_geometry_tensor()
+
+        self.clear_cache()
+        self._q_prev = None
+        self._q_prev2 = None
+        self._v_prev_tran = None
+
+    def _refresh_geometry(self) -> None:
+        """Recompute normalized geometry after a geometry feature changes."""
+        nfin_log = float(np.log2(max(self.NFIN, 1.0)))
+        geo_raw = np.array(
+            [nfin_log, self.L, self.temperature], dtype=np.float64)
+        geo_std = self._norm_stats.input_std[4:7].copy()
+        geo_std[geo_std < 1e-12] = 1.0
+        self._geo_norm = (
+            (geo_raw - self._norm_stats.input_mean[4:7]) / geo_std)
+
+    def _bind_geometry_tensor(self) -> None:
+        """Share the normalized geometry tensor for this device geometry."""
+        dev_key = str(self._device)
+        geo_key = (
+            self._norm_key, dev_key, self.NFIN, self.L, self.temperature)
+        geo_t = _SHARED_GEO_TENSORS.get(geo_key)
+        if geo_t is None:
+            geo_t = torch.tensor(
+                self._geo_norm, dtype=torch.float32, device=self._device)
+            _SHARED_GEO_TENSORS[geo_key] = geo_t
+        self._geo_norm_t = geo_t
 
     def clear_cache(self) -> None:
         self._eval_cache = None

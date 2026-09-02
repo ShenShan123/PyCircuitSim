@@ -5,8 +5,8 @@
 [![PyTorch](https://img.shields.io/badge/PyTorch-2.2.0-red)](https://pytorch.org/)
 [![PyG](https://img.shields.io/badge/PyG-2.6.1-orange)](https://pytorch-geometric.readthedocs.io/)
 
-Shared data, model, loss, training, and evaluation package for DirectNet,
-BSIM-AR, and PFN. BSIM-AR is the autoregressive architecture from
+Shared data, model, loss, training, and evaluation package for DirectNet and
+BSIM-AR. BSIM-AR is the autoregressive architecture from
 "An Autoregressive Compact Model"; it is one family in this package.
 
 ## 📑 Table of Contents
@@ -47,7 +47,7 @@ BSIMAR addresses these challenges in Compact Model:
 
 ## 📁 Repository Structure
 
-The package covers three complementary architectures:
+The package covers two complementary architectures:
 
 - **`DirectNet`** — baseline MLP predicting all 13 outputs in a single
   forward pass. Fast to train, used as the reference for comparison.
@@ -62,13 +62,18 @@ The package covers three complementary architectures:
   tracker. The earlier v3 Vov-LDS axis, the v5 Phase B slope-match
   loss / structural Vds gate, and the AR-finetune tail were all
   removed in the trim.
-- **`TabPFNCompact`** — scaled-down TabPFN-v3 port used by LEVEL=75 PFN.
+
+Both architectures also support the isolated six-surface full-terminal
+contract. DirectNet-Full checkpoints use `dnf`; all-autoregressive
+BSIM-AR-Full checkpoints use `tff` and a configuration sidecar declaring the
+target order `qg,qb,qd,i_d,i_g,i_b`. The canonical dataset and normalization
+order remains `i_d,i_g,i_b,qd,qg,qb`.
 
 ```text
 external_compact_models/neural_network/
 ├── config.py                  technology and architecture configuration
 ├── data/                      datasets and normalization
-├── models/                    DirectNet, BSIM-AR Transformer, and TabPFN
+├── models/                    DirectNet and BSIM-AR Transformer
 ├── losses/                    shared physical-space losses
 ├── training/                  family trainers
 ├── eval/                      metrics and labels
@@ -153,6 +158,15 @@ PYTHONPATH=external_compact_models conda run -n pycircuitsim \
 Both commands read `external_compact_models/neural_network/data/datasets/*.npz`
 (or a path you pass via `--data`) and write checkpoints + plots under
 `external_compact_models/neural_network/{checkpoints,results}/`.
+Training accepts only canonical datasets whose `.npz.complete` marker matches
+the NPZ checksum, row count, clean source commit, OSDI/modelcard provenance,
+and zero-rejection manifest. Regenerate legacy or diagnostic NPZ files before
+training; there is no silent fallback.
+
+Add `--output-contract full-terminal --apply-filter off` to train the
+six-surface family. The CLI chooses `dnf` for DirectNet and `tff` for the
+Transformer so neither can overwrite the reduced or other full-terminal
+architecture.
 
 #### BSIMAR v3 Medium results on `universal_nmos` (legacy reference)
 
@@ -282,4 +296,3 @@ If you find this work useful for your research, please consider citing:
 ## 📄 License
 
 This project is licensed under the MIT License - see the LICENSE file for details.
-

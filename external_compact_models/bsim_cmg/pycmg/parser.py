@@ -342,7 +342,10 @@ def _find_length_variant(
 
 
 def subdivide_l_bin(
-    lmin: float, lmax: float, max_l_ratio: Optional[float] = None,
+    lmin: float,
+    lmax: float,
+    max_l_ratio: Optional[float] = None,
+    include_upper: bool = False,
 ) -> List[float]:
     """Geometric L knots inside ``[lmin, lmax)`` for one PDK length bin.
 
@@ -355,26 +358,29 @@ def subdivide_l_bin(
     drift further (V7.4.2 investigation — the ring-oscillator bias).
 
     With ``max_l_ratio`` set, the bin is split into the fewest equal
-    geometric steps whose ratio does not exceed it, and every knot except
-    the upper edge is returned. The upper edge is excluded because it is
-    the next bin's ``lmin`` and is contributed by that bin — for the
-    topmost bin it stays unsampled, exactly as before.
+    geometric steps whose ratio does not exceed it. The upper edge is
+    normally excluded because the next bin contributes it as ``lmin``.
+    ``include_upper`` includes it for the terminal PDK length bin.
 
     Args:
         lmin: Bin lower length edge (m).
         lmax: Bin upper length edge (m).
         max_l_ratio: Largest allowed ratio between adjacent knots. ``None``
             or <= 1.0 disables subdivision.
+        include_upper: Include ``lmax`` as the final knot.
 
     Returns:
         Ascending list of L values, always starting with ``lmin``.
     """
     if (max_l_ratio is None or max_l_ratio <= 1.0
             or lmax <= lmin or lmin <= 0.0):
-        return [lmin]
+        return [lmin, lmax] if include_upper and lmax > lmin else [lmin]
     n_steps = max(1, math.ceil(math.log(lmax / lmin) / math.log(max_l_ratio)))
     step = (lmax / lmin) ** (1.0 / n_steps)
-    return [lmin * step ** k for k in range(n_steps)]
+    points = [lmin * step ** k for k in range(n_steps)]
+    if include_upper:
+        points.append(lmax)
+    return points
 
 
 def scan_pdk_geometry_combos(
@@ -404,9 +410,16 @@ def scan_pdk_geometry_combos(
     """
     variants = _scan_all_variants(path, base_name)
 
+    terminal_lmax = max(v.lmax for v in variants)
+    subdividing = max_l_ratio is not None and max_l_ratio > 1.0
     combos: set[Tuple[float, float]] = set()
     for v in variants:
-        for L in subdivide_l_bin(v.lmin, v.lmax, max_l_ratio):
+        include_upper = subdividing and math.isclose(
+            v.lmax, terminal_lmax, rel_tol=1e-12, abs_tol=0.0,
+        )
+        for L in subdivide_l_bin(
+            v.lmin, v.lmax, max_l_ratio, include_upper=include_upper,
+        ):
             if v.nfinmin is not None:
                 combos.add((L, v.nfinmin))
             if v.nfinmax is not None:

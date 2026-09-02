@@ -70,8 +70,7 @@ logs/
 v6_3_1_checkpoints/
 /tools/
 external_compact_models/neural_network/data/datasets_v2_backup/
-# V7.4.0 datasets + checkpoints, kept on disk as the control the V7.4.2
-# L-densified rebuild is measured against (docs/plans/2026-08-10-v742-*).
+# Historical V7.4 archives are local-only if deliberately restored.
 external_compact_models/neural_network/v740_archive/
 
 # PyCircuitSim-vs-NGSPICE comparison output (regenerable by run_compare.py;

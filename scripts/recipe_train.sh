@@ -34,22 +34,55 @@
 set -u
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SELF="$ROOT/scripts/$(basename "${BASH_SOURCE[0]}")"
-CKPT="$ROOT/external_compact_models/neural_network/checkpoints"
-DS="$ROOT/external_compact_models/neural_network/data/datasets"
-LOGDIR="$ROOT/results/recipe_bench/train_logs"
-mkdir -p "$LOGDIR"
+
+if [ "${1:-}" = "-h" ] || [ "${1:-}" = "--help" ]; then
+  cat <<'EOF'
+Usage: [ENV=VALUE ...] bash scripts/recipe_train.sh [--force]
+
+Environment:
+  MODEL        direct | transformer (default: direct)
+  OUTPUT_CONTRACT  reduced | full-terminal (default: reduced)
+  RECIPES      space-separated recipes (use clean for clean checkpoints)
+  TECHS        space-separated lowercase technology names
+  SIZES        space-separated small | medium | large | xl
+  DEVS         space-separated nmos | pmos
+  GPUS         space-separated physical GPU IDs
+  NSTREAMS     maximum concurrent training jobs
+  TRAIN_OMP    CPU threads per training job
+  EXTRA_ARGS   extra neural_network.cli.train arguments
+  BSIMAR_DATA_DIR  dataset input directory
+  BSIMAR_CHECKPOINT_DIR  checkpoint output/selection directory
+  RECIPE_TRAIN_LOG_DIR   training-log directory
+EOF
+  exit 0
+fi
+CKPT="${BSIMAR_CHECKPOINT_DIR:-$ROOT/external_compact_models/neural_network/checkpoints}"
+DS="${BSIMAR_DATA_DIR:-$ROOT/external_compact_models/neural_network/data/datasets}"
+LOGDIR="${RECIPE_TRAIN_LOG_DIR:-$ROOT/results/recipe_bench/train_logs}"
+mkdir -p "$CKPT" "$LOGDIR"
 read -r -a GPU_IDS <<< "${GPUS:-0 1 2}"
 NGPU=${#GPU_IDS[@]}
 NSTREAMS="${NSTREAMS:-9}"
 MODEL="${MODEL:-direct}"
-case "$MODEL" in
-  direct)      TAG="dn" ;;
-  transformer) TAG="tf" ;;
-  tabpfn)      TAG="pfn" ;;
-  *) echo "[train] UNKNOWN MODEL=$MODEL (direct|transformer|tabpfn)"; exit 1 ;;
+OUTPUT_CONTRACT="${OUTPUT_CONTRACT:-reduced}"
+case "$MODEL:$OUTPUT_CONTRACT" in
+  direct:reduced)            TAG="dn" ;;
+  transformer:reduced)       TAG="tf" ;;
+  direct:full-terminal)      TAG="dnf" ;;
+  transformer:full-terminal) TAG="tff" ;;
+  *) echo "[train] UNKNOWN MODEL=$MODEL (direct|transformer)"; exit 1 ;;
 esac
-export MODEL
+export MODEL OUTPUT_CONTRACT
 export PYTHONPATH="$ROOT/external_compact_models${PYTHONPATH:+:$PYTHONPATH}"
+
+required_sidecars_exist () {
+  local stem="$1"
+  [ -f "$CKPT/${stem}_norm.npz" ] || return 1
+  case "$TAG" in
+    dn|dnf) return 0 ;;
+    tf|tff) [ -f "$CKPT/${stem}_config.npz" ] ;;
+  esac
+}
 
 # ── recipe → extra train args. 'clean' is the control (no addendum); it is
 #    normally NOT retrained here (the production tsmc{X}_dn_{size} ckpts serve
@@ -132,14 +165,20 @@ if [ "${1:-}" = "_one" ]; then
   fi
   ckpt="$CKPT/${name}_best.pt"
   log="$LOGDIR/${name}.log"
-  if [ -f "$ckpt" ] && [ "$force" != "--force" ]; then
-    # `_best.pt` alone is NOT proof of a completed run (a killed run leaves a
-    # best-so-far file) — the .complete marker is; warn when it is absent
-    [ -f "$ckpt.complete" ] || echo "[train] WARN $name exists WITHOUT completion marker (killed run? --force to retrain)"
+  if [ -f "$ckpt" ] && [ -f "$ckpt.complete" ] \
+      && required_sidecars_exist "$name" && [ "$force" != "--force" ]; then
     echo "[train] SKIP existing $name"; exit 0
+  fi
+  if [ -f "$ckpt" ] && [ "$force" != "--force" ]; then
+    echo "[train] RETRAIN incomplete $name (checkpoint, sidecar, or completion marker missing)"
   fi
   extra="$(recipe_args "$recipe")"
   if [ "$extra" = "__UNKNOWN__" ]; then echo "[train] UNKNOWN recipe $recipe"; exit 1; fi
+  if [ "$OUTPUT_CONTRACT" = "full-terminal" ]; then
+    job_data="$DS/${tech}_dnf_${dev}.npz"
+  else
+    job_data="$DS/${tech}_${dev}.npz"
+  fi
   # Curriculum (warm-start) recipes — the "*ft" family fine-tunes from its OWN
   # clean same-size checkpoint. Locality (init-from) is THE basin-preserving
   # lever (plan §2/§4). Injected here (not in recipe_args) because it is
@@ -167,15 +206,13 @@ if [ "${1:-}" = "_one" ]; then
   # dataset {tech}_cor_{dev}.npz (from v6_4_7_s12_append_corridors.py). Uniform:
   # every (tech,dev) trains on its OWN corridor set — mechanical, not hand-picked.
   case "$recipe" in
-    crit*|csobcrit) cordata="$DS/${tech}_corro_${dev}.npz"   # combo always uses ring-only corridor data
-          if [ ! -f "$cordata" ]; then echo "[train] MISSING corridor dataset $cordata"; exit 1; fi
-          extra="$extra --data ${cordata}" ;;
+    crit*|csobcrit) job_data="$DS/${tech}_corro_${dev}.npz" ;; # combo always uses ring-only corridor data
     cor*) corvar="${recipe/ft/}"   # cor->cor, corft->cor, corr->corr, corrft->corr
           corvar="${corvar%%[0-9]*}"  # strip weight suffix: corro15->corro
-          cordata="$DS/${tech}_${corvar}_${dev}.npz"
-          if [ ! -f "$cordata" ]; then echo "[train] MISSING corridor dataset $cordata"; exit 1; fi
-          extra="$extra --data ${cordata}" ;;
+          job_data="$DS/${tech}_${corvar}_${dev}.npz" ;;
   esac
+  if [ ! -f "$job_data" ]; then echo "[train] MISSING dataset $job_data"; exit 1; fi
+  extra="$extra --data ${job_data}"
   extra="$extra ${EXTRA_ARGS:-}"
   expname=""
   if [ "$recipe" != "clean" ]; then
@@ -185,17 +222,23 @@ if [ "${1:-}" = "_one" ]; then
   # V6.8: pin CPU threads per job. Un-pinned, each torch process spawns a
   # near-full-core OpenMP pool; at NSTREAMS=6-9 concurrent jobs the box hit
   # loadavg ~400/192 with GPUs starved at 56-78% util. TRAIN_OMP=4 default.
+  rm -f "$ckpt.complete"
   CUDA_VISIBLE_DEVICES="$gpu" OMP_NUM_THREADS="${TRAIN_OMP:-4}" MKL_NUM_THREADS="${TRAIN_OMP:-4}" \
     conda run --no-capture-output -n pycircuitsim python -u -m neural_network.cli.train \
     --model "$MODEL" --size "$size" --device-type "$dev" --tech-scope "$tech" \
+    --output-contract "$OUTPUT_CONTRACT" \
     --apply-filter off --swa-mode ema --seed 42 --cuda --overwrite \
     $expname $extra \
     > "$log" 2>&1
   rc=$?
-  if [ $rc -eq 0 ] && [ -f "$ckpt" ]; then
-    touch "$ckpt.complete"
+  if [ $rc -eq 0 ] && [ -f "$ckpt" ] && required_sidecars_exist "$name"; then
+    if ! touch "$ckpt.complete"; then
+      echo "[train] LIFECYCLE ERROR $name: could not create completion marker" >&2
+      exit 3
+    fi
     echo "[train] DONE $name"
   else
+    rm -f "$ckpt.complete"
     # audit B3 — a failed train produces NO artifact, so there is nothing for a
     # downstream gate to judge; exit 3 (never 255: xargs aborts the run on 255)
     # so the dispatcher fails loudly instead of printing FAIL and returning 0.
@@ -206,7 +249,16 @@ if [ "${1:-}" = "_one" ]; then
 fi
 
 # ---- dispatcher ----
+if [ "$#" -gt 1 ]; then
+  echo "[train] UNKNOWN arguments: $*" >&2
+  echo "Usage: [ENV=VALUE ...] bash scripts/recipe_train.sh [--force]" >&2
+  exit 2
+fi
 FORCE="${1:-}"
+if [ -n "$FORCE" ] && [ "$FORCE" != "--force" ]; then
+  echo "[train] UNKNOWN argument: $FORCE (expected --force or --help)" >&2
+  exit 2
+fi
 read -r -a recipes <<< "${RECIPES:-csob sob ekv}"
 read -r -a techs   <<< "${TECHS:-tsmc5 tsmc7 tsmc12 tsmc16}"
 read -r -a sizes   <<< "${SIZES:-large xl}"
@@ -214,7 +266,12 @@ read -r -a devs    <<< "${DEVS:-nmos pmos}"
 
 missing=0
 for tech in "${techs[@]}"; do for dev in "${devs[@]}"; do
-  [ -f "$DS/${tech}_${dev}.npz" ] || { echo "[train] MISSING dataset $DS/${tech}_${dev}.npz"; missing=1; }
+  if [ "$OUTPUT_CONTRACT" = "full-terminal" ]; then
+    dataset="$DS/${tech}_dnf_${dev}.npz"
+  else
+    dataset="$DS/${tech}_${dev}.npz"
+  fi
+  [ -f "$dataset" ] || { echo "[train] MISSING dataset $dataset"; missing=1; }
 done; done
 [ "$missing" -eq 0 ] || { echo "[train] ABORT: datasets incomplete"; exit 1; }
 
@@ -233,7 +290,10 @@ done; done
 lines=(); i=0
 for size in "${sizes[@]}"; do for recipe in "${recipes[@]}"; do for tech in "${techs[@]}"; do for dev in "${devs[@]}"; do
   if [ "$recipe" = clean ]; then _nm="${tech}_${TAG}_${size}_${dev}"; else _nm="${tech}_${TAG}_${recipe}_${size}_${dev}"; fi
-  if [ -f "$CKPT/${_nm}_best.pt.complete" ] && [ "$FORCE" != "--force" ]; then continue; fi
+  if [ -f "$CKPT/${_nm}_best.pt" ] \
+      && [ -f "$CKPT/${_nm}_best.pt.complete" ] \
+      && required_sidecars_exist "$_nm" \
+      && [ "$FORCE" != "--force" ]; then continue; fi
   lines+=("$recipe $tech $size $dev ${GPU_IDS[$((i % NGPU))]} ${FORCE:-noforce}")
   i=$((i+1))
 done; done; done; done

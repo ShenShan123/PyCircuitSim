@@ -66,6 +66,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from tests.common.nn import nrmse, mre, tech_code_in_vocab  # noqa: E402
+from tests.common.base import (  # noqa: E402
+    SIMPLE_DECKS, deck_tokens, render_deck_text,
+)
 from helpers import bake_inst_params  # noqa: E402
 from neural_network.config import CHECKPOINT_DIR, OSDI_PATH  # noqa: E402
 
@@ -109,6 +112,20 @@ INV_TRAN_PW = 1e-9         # 1ns pulse width
 INV_TRAN_TD = 0.2e-9       # 200ps delay
 
 
+def _render_inverter_deck(filename: str, values: Dict[str, str]) -> str:
+    """Render an authoritative inverter example with strict tokens."""
+    path = SIMPLE_DECKS / filename
+    template = path.read_text()
+    required = deck_tokens(template)
+    missing = [name for name in required if name not in values]
+    if missing:
+        raise KeyError(f"{filename}: missing substitutions {missing}")
+    return render_deck_text(
+        template, {name: values[name] for name in required},
+        source_name=filename,
+    )
+
+
 @dataclass(frozen=True)
 class InvCircuitParams:
     """Per-config circuit/timing overrides for the inverter transient runners.
@@ -148,6 +165,9 @@ class TestTechConfig:
     l_pmos: float = 0.0    # PMOS channel length [m] (0 = same as l_nmos)
     pmos_model: str = ""   # NGSPICE PMOS model name
     nn_pmos_vt: str = ""   # VT= for PMOS (empty = same as NMOS)
+    temperature_c: float = 27.0
+    dc_vds_scale: float = 0.5
+    dc_vbs: float = 0.0
 
     # Inverter-specific geometry. 0 = fall back to single-device l_nmos / effective_l_pmos / nfin.
     # Use these to align the inverter test point with the per-tech NN training bins
@@ -501,7 +521,7 @@ def get_available_checkpoints() -> Dict[str, Optional[Path]]:
 
         # DirectNet v4 (tech-code embedding) or env override.
         # When neither env nor `v4_dn_universal_*` is available, fall back
-        # to any present per-tech (`tsmc{5,7}_dn_medium_*`) or refactor
+        # to any present per-tech production checkpoint or refactor
         # universal (`refac_dn_medium_*`) checkpoint — the path is only a
         # *existence sentinel*: the netlist builders for the inverter
         # tests omit MODEL_PATH for per-tech/refac stems so the parser's
@@ -511,13 +531,13 @@ def get_available_checkpoints() -> Dict[str, Optional[Path]]:
                 dn_ovr, dn_var, ("_best.pt",))
         else:
             fallbacks = [
+                CHECKPOINT_DIR / f"{tech}_dn_{size}_{dev}_best.pt"
+                for size in ("large", "medium", "small", "xl")
+                for tech in ("tsmc5", "tsmc6", "tsmc7", "tsmc12", "tsmc16")
+            ] + [
                 CHECKPOINT_DIR / f"v4_dn_universal_{dev}_best.pt",
                 CHECKPOINT_DIR / f"refac_dn_medium_{dev}_best.pt",
                 CHECKPOINT_DIR / f"refac_dn_small_{dev}_best.pt",
-                CHECKPOINT_DIR / f"tsmc5_dn_medium_{dev}_best.pt",
-                CHECKPOINT_DIR / f"tsmc7_dn_medium_{dev}_best.pt",
-                CHECKPOINT_DIR / f"tsmc5_dn_small_{dev}_best.pt",
-                CHECKPOINT_DIR / f"tsmc7_dn_small_{dev}_best.pt",
             ]
             checkpoints[f"directnet_v4{suffix}"] = next(
                 (p for p in fallbacks if p.exists()), None)
@@ -537,17 +557,18 @@ def run_ngspice_nmos_dc(
 ) -> Dict[str, np.ndarray]:
     """Run NGSPICE NMOS Id-Vgs DC sweep. Returns {sweep, id}."""
     baked = create_baked_modelcard(tech, work_dir)
-    vds_bias = round(tech.vdd * 0.5, 4)
+    vds_bias = round(tech.vdd * tech.dc_vds_scale, 4)
 
     # Netlist
     netlist_path = work_dir / f"ngspice_nmos_dc_{tech.name}.cir"
     netlist_content = (
         f"* NMOS Id-Vgs DC (NGSPICE ground truth, {tech.name})\n"
         f'.include "{baked}"\n'
-        f".temp 27\n"
+        f".temp {tech.temperature_c:g}\n"
         f"Vds d 0 {vds_bias}\n"
         f"Vgs g 0 0.0\n"
-        f"N1 d g 0 0 {tech.nmos_model}\n"
+        f"Vbs b 0 {tech.dc_vbs:g}\n"
+        f"N1 d g 0 b {tech.nmos_model}\n"
         f".dc Vgs 0 {tech.vdd} 0.005\n"
         f".end\n"
     )
@@ -603,7 +624,9 @@ def run_ngspice_nmos_dc(
     if not np.all(np.isfinite(data)):
         raise RuntimeError(f"NGSPICE output contains NaN/Inf for {tech.name}")
 
-    return {"sweep": data[:, 0], "id": np.abs(data[:, 1])}
+    # NGSPICE reports current entering Vds; PyCircuitSim reports current
+    # leaving the drain. Convert conventions without discarding sign.
+    return {"sweep": data[:, 0], "id": -data[:, 1]}
 
 
 # ---------------------------------------------------------------------------
@@ -617,7 +640,7 @@ def run_pycircuitsim_cmg_nmos_dc(
     from pycircuitsim.simulation import run_dc_sweep
     from pycircuitsim.visualizer import Visualizer
 
-    vds_bias = round(tech.vdd * 0.5, 4)
+    vds_bias = round(tech.vdd * tech.dc_vds_scale, 4)
     l_nm = tech.l_nmos * 1e9
 
     netlist_path = work_dir / f"pycircuitsim_cmg_nmos_dc_{tech.name}.sp"
@@ -652,6 +675,7 @@ def run_pycircuitsim_cmg_nmos_dc(
         results = run_dc_sweep(
             circuit, parser.analysis_params, vis, out_dir,
             f"cmg_nmos_{tech.name}",
+            require_convergence=True,
         )
     finally:
         logging.disable(logging.NOTSET)
@@ -684,7 +708,7 @@ def run_pycircuitsim_nn_nmos_dc(
     from pycircuitsim.simulation import run_dc_sweep
     from pycircuitsim.visualizer import Visualizer
 
-    vds_bias = round(tech.vdd * 0.5, 4)
+    vds_bias = round(tech.vdd * tech.dc_vds_scale, 4)
     l_nm = tech.l_nmos * 1e9
 
     netlist_path = work_dir / f"nn_{model_name}_nmos_dc_{tech.name}.sp"
@@ -703,8 +727,10 @@ def run_pycircuitsim_nn_nmos_dc(
         f"* NN NMOS Id-Vgs ({model_name}, {tech.name})\n"
         f"Vds 1 0 {vds_bias}\n"
         f"Vgs 2 0 0.0\n"
-        f"Mn1 1 2 0 0 nmos_nn L={l_nm:.0f}n NFIN={tech.nfin}\n"
+        f"Vbs 3 0 {tech.dc_vbs:g}\n"
+        f"Mn1 1 2 0 3 nmos_nn L={l_nm:.0f}n NFIN={tech.nfin}\n"
         f".model nmos_nn NMOS ({model_params})\n"
+        f".temp {tech.temperature_c:g}\n"
         f".dc Vgs 0 {tech.vdd} 0.005\n"
         f".end\n"
     )
@@ -723,12 +749,13 @@ def run_pycircuitsim_nn_nmos_dc(
         results = run_dc_sweep(
             circuit, parser.analysis_params, vis, out_dir,
             f"{model_name}_nmos_{tech.name}",
+            require_convergence=True,
         )
     finally:
         logging.disable(logging.NOTSET)
 
     sweep = np.array(results["2"])
-    signal = np.abs(np.array(results["i(Mn1)"]))
+    signal = np.array(results["i(Mn1)"])
     return {"sweep": sweep, "id": signal}
 
 
@@ -912,16 +939,17 @@ def run_ngspice_pmos_dc(
     Vgs swept from 0 to -VDD, Vds biased at -VDD/2.
     """
     baked = create_baked_pmos_modelcard(tech, work_dir)
-    vds_bias = round(-tech.vdd * 0.5, 4)
+    vds_bias = round(-tech.vdd * tech.dc_vds_scale, 4)
 
     netlist_path = work_dir / f"ngspice_pmos_dc_{tech.name}.cir"
     netlist_content = (
         f"* PMOS Id-Vgs DC (NGSPICE ground truth, {tech.name})\n"
         f'.include "{baked}"\n'
-        f".temp 27\n"
+        f".temp {tech.temperature_c:g}\n"
         f"Vds d 0 {vds_bias}\n"
         f"Vgs g 0 0.0\n"
-        f"N1 d g 0 0 {tech.pmos_model}\n"
+        f"Vbs b 0 {tech.dc_vbs:g}\n"
+        f"N1 d g 0 b {tech.pmos_model}\n"
         f".dc Vgs 0 {-tech.vdd} -0.005\n"
         f".end\n"
     )
@@ -973,11 +1001,11 @@ def run_ngspice_pmos_dc(
     if not np.all(np.isfinite(data)):
         raise RuntimeError(f"NGSPICE PMOS output contains NaN/Inf for {tech.name}")
 
-    # Use |Vgs| for sweep (PMOS sweeps negative) and |Id| for current
+    # Use |Vgs| for an ascending interpolation axis; retain signed current.
     sweep = np.abs(data[:, 0])
     # Sort by ascending |Vgs| for consistent interpolation
     sort_idx = np.argsort(sweep)
-    return {"sweep": sweep[sort_idx], "id": np.abs(data[sort_idx, 1])}
+    return {"sweep": sweep[sort_idx], "id": data[sort_idx, 1]}
 
 
 # ---------------------------------------------------------------------------
@@ -998,7 +1026,7 @@ def run_pycircuitsim_nn_pmos_dc(
     from pycircuitsim.simulation import run_dc_sweep
     from pycircuitsim.visualizer import Visualizer
 
-    vds_bias = round(-tech.vdd * 0.5, 4)
+    vds_bias = round(-tech.vdd * tech.dc_vds_scale, 4)
     l_nm = tech.effective_l_pmos * 1e9
 
     netlist_path = work_dir / f"nn_{model_name}_pmos_dc_{tech.name}.sp"
@@ -1016,8 +1044,10 @@ def run_pycircuitsim_nn_pmos_dc(
         f"* NN PMOS Id-Vgs ({model_name}, {tech.name})\n"
         f"Vds 1 0 {vds_bias}\n"
         f"Vgs 2 0 0.0\n"
-        f"Mp1 1 2 0 0 pmos_nn L={l_nm:.0f}n NFIN={tech.nfin}\n"
+        f"Vbs 3 0 {tech.dc_vbs:g}\n"
+        f"Mp1 1 2 0 3 pmos_nn L={l_nm:.0f}n NFIN={tech.nfin}\n"
         f".model pmos_nn PMOS ({model_params})\n"
+        f".temp {tech.temperature_c:g}\n"
         f".dc Vgs 0 {-tech.vdd} -0.005\n"
         f".end\n"
     )
@@ -1036,13 +1066,14 @@ def run_pycircuitsim_nn_pmos_dc(
         results = run_dc_sweep(
             circuit, parser.analysis_params, vis, out_dir,
             f"{model_name}_pmos_{tech.name}",
+            require_convergence=True,
         )
     finally:
         logging.disable(logging.NOTSET)
 
-    # Use |Vgs| for sweep (PMOS sweeps negative) and |Id| for current
+    # Use |Vgs| for an ascending interpolation axis; retain signed current.
     sweep = np.abs(np.array(results["2"]))
-    signal = np.abs(np.array(results["i(Mp1)"]))
+    signal = np.array(results["i(Mp1)"])
     # Sort by ascending |Vgs|
     sort_idx = np.argsort(sweep)
     return {"sweep": sweep[sort_idx], "id": signal[sort_idx]}
@@ -1059,17 +1090,16 @@ def run_ngspice_inverter_vtc(
     baked_pmos = create_baked_inv_pmos_modelcard(tech, work_dir)
 
     netlist_path = work_dir / f"ngspice_inverter_vtc_{tech.name}.cir"
-    netlist_content = (
-        f"* CMOS Inverter VTC (NGSPICE, {tech.name})\n"
-        f'.include "{baked_nmos}"\n'
-        f'.include "{baked_pmos}"\n'
-        f".temp 27\n"
-        f"Vdd vdd 0 {tech.vdd}\n"
-        f"Vin in 0 0.0\n"
-        f"Nn out in 0 0 {tech.nmos_model}\n"
-        f"Np out in vdd vdd {tech.pmos_model}\n"
-        f".dc Vin 0 {tech.vdd} 0.005\n"
-        f".end\n"
+    netlist_content = _render_inverter_deck(
+        "bsimcmg_inverter_dc.cir", {
+            "BAKED_NMOS": str(baked_nmos),
+            "BAKED_PMOS": str(baked_pmos),
+            "VDD": f"{tech.vdd:g}",
+            "TEMP": f"{tech.temperature_c:g}",
+            "NMOS": tech.nmos_model,
+            "PMOS": tech.pmos_model,
+            "ANALYSIS": f".dc Vin 0 {tech.vdd:g} 0.005",
+        },
     )
     netlist_path.write_text(netlist_content)
 
@@ -1130,9 +1160,9 @@ def _cascade_handles_stem(path: Optional[Path]) -> bool:
     can route to the right checkpoint based on the netlist's TECH=.
 
     For these stems we deliberately omit MODEL_PATH in the netlist so a
-    single test invocation can pick TSMC5 medium for TSMC5 netlists, TSMC7
-    medium for TSMC7 netlists, etc. — instead of pinning ONE tech's net for
-    every tech (bug report B1). All four per-tech ``tsmc{5,7,12,16}_dn_*``
+    single test invocation can pick TSMC5 large for TSMC5 netlists, TSMC7
+    large for TSMC7 netlists, etc. — instead of pinning ONE tech's net for
+    every tech (bug report B1). All five per-tech ``tsmc{5,6,7,12,16}_dn_*``
     stems route through the parser's preempt cascade; ``refac_dn_*`` is the
     universal-refactor preset the cascade also recognises. An explicit env
     pin (``PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}``) still wins because the
@@ -1192,19 +1222,15 @@ def run_pycircuitsim_nn_inverter_vtc(
     if pmos_model_path is not None and not _cascade_handles_stem(pmos_model_path):
         pmos_params += f" MODEL_PATH={pmos_model_path}"
 
-    content = (
-        f"* NN CMOS Inverter VTC ({model_name}, {tech.name})\n"
-        f"Vdd 1 0 {tech.vdd}\n"
-        f"Vin 2 0 0.0\n"
-        f"Xinv 2 3 1 inv NFN={nfin} NFP={nfin_p}\n"
-        f".subckt inv i o vdd NFN=1 NFP=1\n"
-        f"Mn1 o i 0 0 nmos_nn L={l_nmos_nm:.0f}n NFIN=NFN\n"
-        f"Mp1 o i vdd vdd pmos_nn L={l_pmos_nm:.0f}n NFIN=NFP\n"
-        f".ends\n"
-        f".model nmos_nn NMOS ({nmos_params})\n"
-        f".model pmos_nn PMOS ({pmos_params})\n"
-        f".dc Vin 0 {tech.vdd} 0.005\n"
-        f".end\n"
+    content = _render_inverter_deck(
+        "directnet_inverter_dc.sp", {
+            "VDD": f"{tech.vdd:g}",
+            "LN": f"{l_nmos_nm:g}n", "LP": f"{l_pmos_nm:g}n",
+            "NFN": str(nfin), "NFP": str(nfin_p),
+            "NMOS_PARAMS": nmos_params, "PMOS_PARAMS": pmos_params,
+            "TEMP": f"{tech.temperature_c:g}",
+            "ANALYSIS": f".dc Vin 0 {tech.vdd:g} 0.005",
+        },
     )
     netlist_path.write_text(content)
 
@@ -1221,12 +1247,13 @@ def run_pycircuitsim_nn_inverter_vtc(
         results = run_dc_sweep(
             circuit, parser.analysis_params, vis, out_dir,
             f"{model_name}_inverter_{tech.name}",
+            require_convergence=True,
         )
     finally:
         logging.disable(logging.NOTSET)
 
-    sweep = np.array(results["2"])   # Vin node
-    vout = np.array(results["3"])    # Vout node
+    sweep = np.array(results["in"])
+    vout = np.array(results["out"])
     return {"sweep": sweep, "vout": vout}
 
 
@@ -1349,20 +1376,17 @@ def run_ngspice_inverter_tran(
     per = cp.tr + cp.pw + cp.tf + max(cp.pw, 1.0e-9)
 
     netlist_path = work_dir / f"ngspice_inverter_tran_{tech.name}.cir"
-    content = (
-        f"* CMOS Inverter Transient (NGSPICE, {tech.name})\n"
-        f'.include "{baked_nmos}"\n'
-        f'.include "{baked_pmos}"\n'
-        f".temp 27\n"
-        f"Vdd vdd 0 {tech.vdd}\n"
-        f"Vin in 0 PULSE(0 {tech.vdd} {cp.td} {cp.tr}"
-        f" {cp.tf} {cp.pw} {per})\n"
-        f"Nn out in 0 0 {tech.nmos_model}\n"
-        f"Np out in vdd vdd {tech.pmos_model}\n"
-        f"Cload out 0 {cp.cload}\n"
-        f".ic V(out)={tech.vdd}\n"
-        f".tran {INV_TRAN_TSTEP} {cp.tstop} uic\n"
-        f".end\n"
+    content = _render_inverter_deck(
+        "bsimcmg_inverter_tran.cir", {
+            "BAKED_NMOS": str(baked_nmos),
+            "BAKED_PMOS": str(baked_pmos),
+            "VDD": f"{tech.vdd:g}", "TEMP": f"{tech.temperature_c:g}",
+            "TD": f"{cp.td:g}", "TR": f"{cp.tr:g}",
+            "TF": f"{cp.tf:g}", "PW": f"{cp.pw:g}",
+            "PER": f"{per:g}", "CLOAD": f"{cp.cload:g}",
+            "NMOS": tech.nmos_model, "PMOS": tech.pmos_model,
+            "ANALYSIS": f".tran {INV_TRAN_TSTEP:g} {cp.tstop:g} uic",
+        },
     )
     netlist_path.write_text(content)
 
@@ -1435,8 +1459,7 @@ def run_pycircuitsim_nn_inverter_tran(
     ``circuit`` overrides Cload / input slew / pulse width / delay / tstop;
     ``circuit=None`` uses the legacy module-global fixed point.
     """
-    from pycircuitsim.parser import Parser
-    from pycircuitsim.solver import DCSolver, TransientSolver
+    from tests.common.circuit_benchmarks import run_directnet_transient
 
     cp = circuit or InvCircuitParams()
     l_nmos_nm = tech.effective_inv_l_nmos * 1e9
@@ -1454,107 +1477,31 @@ def run_pycircuitsim_nn_inverter_tran(
         pmos_params += f" MODEL_PATH={pmos_model_path}"
 
     netlist_path = work_dir / f"nn_{model_name}_inverter_tran_{tech.name}.sp"
-    content = (
-        f"* NN Inverter Transient ({model_name}, {tech.name})\n"
-        f"Vdd 1 0 {tech.vdd}\n"
-        f"Vin 2 0 PULSE 0 {tech.vdd} {cp.td} {cp.tr}"
-        f" {cp.tf} {cp.pw} {per}\n"
-        f"Xinv 2 3 1 inv NFN={nfin} NFP={nfin_p}\n"
-        f"Cload 3 0 {cp.cload}\n"
-        f".subckt inv i o vdd NFN=1 NFP=1\n"
-        f"Mn1 o i 0 0 nmos_nn L={l_nmos_nm:.0f}n NFIN=NFN\n"
-        f"Mp1 o i vdd vdd pmos_nn L={l_pmos_nm:.0f}n NFIN=NFP\n"
-        f".ends\n"
-        f".model nmos_nn NMOS ({nmos_params})\n"
-        f".model pmos_nn PMOS ({pmos_params})\n"
-        f".ic V(3)={tech.vdd}\n"
-        f".tran {INV_TRAN_TSTEP} {cp.tstop}\n"
-        f".end\n"
+    content = _render_inverter_deck(
+        "nn_inverter_tran.sp", {
+            "VDD": f"{tech.vdd:g}",
+            "TD": f"{cp.td:g}", "TR": f"{cp.tr:g}",
+            "TF": f"{cp.tf:g}", "PW": f"{cp.pw:g}",
+            "PER": f"{per:g}", "CLOAD": f"{cp.cload:g}",
+            "LN": f"{l_nmos_nm:g}n", "LP": f"{l_pmos_nm:g}n",
+            "NFN": str(nfin), "NFP": str(nfin_p),
+            "NMOS_PARAMS": nmos_params, "PMOS_PARAMS": pmos_params,
+            "TEMP": f"{tech.temperature_c:g}",
+            "ANALYSIS": f".tran {INV_TRAN_TSTEP:g} {cp.tstop:g} uic",
+        },
     )
     netlist_path.write_text(content)
 
-    logging.disable(logging.CRITICAL)
-    solver: Optional[TransientSolver] = None
-    nr_failed = False
-    nr_error_msg = ""
-    try:
-        parser = Parser()
-        parser.parse_file(str(netlist_path))
-        circuit = parser.circuit
-
-        time_step: float = parser.analysis_params["tstep"]
-        final_time: float = parser.analysis_params["tstop"]
-
-        # Stage 1: DC OP
-        initial_guess = circuit.initial_conditions if circuit.initial_conditions else None
-        # V5 Phase A retry-design: try fast-path first, retry with GMIN
-        # only on convergence failure. Mirrors `_solve_dc_with_retry`
-        # in simulation.py.
-        op_solver = DCSolver(
-            circuit, initial_guess=initial_guess, use_source_stepping=True,
-            use_gmin_stepping=False,
-        )
-        try:
-            op_solution = op_solver.solve()
-            if not getattr(op_solver, "_last_solve_converged", True):
-                raise RuntimeError("fast-path NR did not converge for NN inverter DC OP")
-        except (RuntimeError, np.linalg.LinAlgError):
-            op_solver = DCSolver(
-                circuit, initial_guess=initial_guess, use_source_stepping=True,
-                use_gmin_stepping=True,
-            )
-            op_solution = op_solver.solve()
-
-        # Stage 2: Transient
-        solver = TransientSolver(
-            circuit,
-            t_stop=final_time,
-            dt=time_step,
-            initial_guess=op_solution,
-            use_gmin_stepping=True,
-            gmin_initial=1e-9,
-            gmin_final=1e-12,
-            gmin_steps=5,
-            use_pseudo_transient=True,
-            pseudo_transient_steps=5,
-            pseudo_transient_cap=1e-12,
-            debug=False,
-            nr_tolerance=1e-7,
-        )
-        try:
-            results = solver.solve()
-        except RuntimeError as e:
-            # V5 Phase A — A3.2: partial-result fallback. If NR exhausts
-            # mid-transient, recover the committed waveform up to the
-            # last successful step so the test reports a numeric FAIL
-            # row instead of an ERROR row.
-            nr_failed = True
-            nr_error_msg = str(e)
-            last_step = getattr(solver, "_last_committed_step", 0)
-            if last_step >= 2:
-                truncated_n = last_step + 1
-                results = {
-                    "time": solver._partial_time[:truncated_n].copy(),
-                }
-                for node, arr in solver._partial_voltages.items():
-                    results[node] = arr[:truncated_n].copy()
-            else:
-                # No usable partial data — re-raise.
-                raise
-    finally:
-        logging.disable(logging.NOTSET)
+    results, nr_failed, nr_error_msg = run_directnet_transient(netlist_path)
 
     out = {
         "time": results["time"],
-        "v(out)": results["3"],
-        "v(in)": results["2"],
+        "v(out)": results["out"],
+        "v(in)": results["in"],
     }
     if nr_failed:
         out["_nr_partial"] = True
         out["_nr_error_msg"] = nr_error_msg
-    # Surface dt-halve event log if any (Phase A diagnostic).
-    if solver is not None:
-        out["_dt_halve_events"] = list(solver._dt_halve_events)
     return out
 
 
@@ -2851,6 +2798,7 @@ def _eval_nn_single_op(
         results = run_dc_sweep(
             circuit, parser.analysis_params, vis, out_dir,
             f"sign_{model_name}",
+            require_convergence=True,
         )
     finally:
         logging.disable(logging.NOTSET)
@@ -3082,6 +3030,7 @@ def run_pycircuitsim_nn_nmos_idvds(
         results = run_dc_sweep(
             circuit, parser.analysis_params, vis, out_dir,
             f"{model_name}_idvds_{tech.name}",
+            require_convergence=True,
         )
     finally:
         logging.disable(logging.NOTSET)

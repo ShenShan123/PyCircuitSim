@@ -28,10 +28,11 @@ The solver handles:
 """
 import functools
 import os
-from typing import Dict, List, Tuple, Optional
+from dataclasses import dataclass
+from typing import Any, Callable, Dict, List, Tuple, Optional
 from pathlib import Path
 import numpy as np
-from scipy.sparse import lil_matrix, issparse
+from scipy.sparse import lil_matrix, issparse, spmatrix
 from scipy.sparse.linalg import spsolve, splu
 from pycircuitsim.circuit import Circuit
 from pycircuitsim.models.passive import VoltageSource, Capacitor
@@ -113,6 +114,19 @@ def _solve_mna(mna_matrix, rhs: np.ndarray) -> np.ndarray:
 # gap: well above any converged inverter point, well below a stalled one.
 _RESID_ABS_FLOOR: float = 1e-6
 
+# V7.6.3 — keep full-terminal NN Newton iterates inside the checkpoint's
+# certified voltage support. This changes only the iteration path, not the
+# converged circuit equations.
+_DIRECTNET_FULL_DV_LIMIT: float = 0.1
+
+
+@dataclass(frozen=True)
+class _VoltageSourceTailFit:
+    """Topology-stable source incidence and its least-squares projector."""
+
+    incidence: np.ndarray
+    projector: np.ndarray
+
 
 def _mna_residual_inf(mna_matrix, rhs: np.ndarray, x: np.ndarray) -> float:
     """Return ‖rhs − A·x‖∞ — the MNA residual at iterate ``x``.
@@ -141,6 +155,114 @@ def _mna_residual_inf(mna_matrix, rhs: np.ndarray, x: np.ndarray) -> float:
     if not np.all(np.isfinite(resid)):
         return float("inf")
     return float(np.max(np.abs(resid)))
+
+
+def _branch_current_projector(incidence: np.ndarray) -> np.ndarray:
+    """Return the least-squares branch-current projector for an incidence matrix."""
+    if incidence.shape[1] == 0:
+        return np.empty((0, incidence.shape[0]), dtype=np.float64)
+    rcond = np.finfo(np.float64).eps * max(incidence.shape)
+    return np.linalg.pinv(incidence, rcond=rcond)
+
+
+def _voltage_source_tail_projector(
+    circuit: Circuit,
+    node_map: Dict[str, int],
+    num_nodes: int,
+    num_branches: int,
+) -> np.ndarray:
+    """Cache the topology-stable least-squares projector for voltage sources.
+
+    The B/C incidence block is set solely by voltage-source terminal nodes, so
+    it survives every nonlinear re-stamp.  ``pinv`` uses the same default rank
+    cutoff as ``lstsq(..., rcond=None)`` while avoiding a fresh SVD per Newton
+    iteration, including rank-deficient ideal-source loops.
+    """
+    if num_branches == 0:
+        return np.empty((0, num_nodes), dtype=np.float64)
+    key = (_topo_key(circuit), num_nodes, num_branches)
+    cached = getattr(circuit, "_pcs_voltage_source_tail_projector", None)
+    if cached is not None and cached[0] == key:
+        return cached[1].projector
+
+    incidence = np.zeros((num_nodes, num_branches), dtype=np.float64)
+    branch = 0
+    for component in circuit.components:
+        if not isinstance(component, VoltageSource):
+            continue
+        pos_node, neg_node = component.nodes
+        if pos_node != "0" and pos_node in node_map:
+            incidence[node_map[pos_node], branch] += 1.0
+        if neg_node != "0" and neg_node in node_map:
+            incidence[node_map[neg_node], branch] -= 1.0
+        branch += 1
+    if branch != num_branches:
+        raise ValueError(
+            f"expected {num_branches} voltage-source branches, found {branch}"
+        )
+    projector = _branch_current_projector(incidence)
+    circuit._pcs_voltage_source_tail_projector = (
+        key, _VoltageSourceTailFit(incidence=incidence, projector=projector),
+    )
+    return projector
+
+
+def _mna_residual_at_node_voltages(
+    mna_matrix: np.ndarray | spmatrix,
+    rhs: np.ndarray,
+    node_voltages: np.ndarray,
+    num_nodes: int,
+    tail_projector: Optional[np.ndarray] = None,
+) -> Tuple[float, float]:
+    """Evaluate a candidate node state with its voltage-source currents fitted.
+
+    Node voltages alone are not a complete MNA iterate: the augmented tail
+    contains one current unknown per ideal voltage source. Leaving that tail at
+    zero adds the supply current to the apparent KCL residual and lets the
+    voltage-valued source rows inflate a current tolerance. Recover the branch
+    currents that best balance the node rows, then evaluate the full MNA
+    residual (including the voltage constraints). The returned scale is formed
+    only from node/KCL RHS entries, whose units are amperes.
+
+    Args:
+        mna_matrix: Fully stamped MNA matrix.
+        rhs: Fully stamped MNA right-hand side.
+        node_voltages: Candidate values for the leading node-voltage block.
+        num_nodes: Size of the node-voltage block.
+        tail_projector: Cached least-squares projector for ideal-source branch
+            currents, when the circuit topology is unchanged.
+
+    Returns:
+        ``(residual_inf, current_rhs_scale)`` for convergence gating.
+    """
+    node_values = np.asarray(node_voltages, dtype=np.float64)
+    if node_values.shape != (num_nodes,):
+        raise ValueError(
+            f"expected {num_nodes} node voltages, got {node_values.shape}"
+        )
+    matrix_size = int(mna_matrix.shape[0])
+    iterate = np.zeros(matrix_size, dtype=np.float64)
+    iterate[:num_nodes] = node_values
+
+    num_branches = matrix_size - num_nodes
+    if num_branches > 0:
+        if tail_projector is None:
+            incidence = np.asarray(mna_matrix[:num_nodes, num_nodes:].toarray()
+                                   if issparse(mna_matrix)
+                                   else mna_matrix[:num_nodes, num_nodes:])
+            tail_projector = _branch_current_projector(incidence)
+        if tail_projector.shape != (num_branches, num_nodes):
+            raise ValueError(
+                "tail projector shape does not match the MNA branch block"
+            )
+        node_balance = rhs[:num_nodes] - mna_matrix.dot(iterate)[:num_nodes]
+        iterate[num_nodes:] = tail_projector.dot(node_balance)
+
+    current_rhs = rhs[:num_nodes]
+    current_scale = (
+        float(np.max(np.abs(current_rhs))) if current_rhs.size else 0.0
+    )
+    return _mna_residual_inf(mna_matrix, rhs, iterate), current_scale
 
 
 def _lm_augment(mna_matrix, lam: float):
@@ -198,8 +320,13 @@ def _mosfet_types() -> tuple:
     except ImportError:
         pass
     try:
-        from pycircuitsim.models.mosfet_pfn import NMOS_PFN, PMOS_PFN
-        types.extend([NMOS_PFN, PMOS_PFN])
+        from pycircuitsim.models.mosfet_directnet_full import NMOS_DNF, PMOS_DNF
+        types.extend([NMOS_DNF, PMOS_DNF])
+    except ImportError:
+        pass
+    try:
+        from pycircuitsim.models.mosfet_bsimar_full import NMOS_TFF, PMOS_TFF
+        types.extend([NMOS_TFF, PMOS_TFF])
     except ImportError:
         pass
     return tuple(types)
@@ -232,8 +359,13 @@ def _pmos_types() -> tuple:
     except ImportError:
         pass
     try:
-        from pycircuitsim.models.mosfet_pfn import PMOS_PFN
-        types.append(PMOS_PFN)
+        from pycircuitsim.models.mosfet_directnet_full import PMOS_DNF
+        types.append(PMOS_DNF)
+    except ImportError:
+        pass
+    try:
+        from pycircuitsim.models.mosfet_bsimar_full import PMOS_TFF
+        types.append(PMOS_TFF)
     except ImportError:
         pass
     return tuple(types)
@@ -262,14 +394,6 @@ def _nn_mosfet_types() -> tuple:
     try:
         from pycircuitsim.models.mosfet_bsimar import NMOS_BSIMAR, PMOS_BSIMAR
         types.extend([NMOS_BSIMAR, PMOS_BSIMAR])
-    except ImportError:
-        pass
-    # V6.9: LEVEL=75 TabPFN — one-shot forward, row-independent by
-    # construction (queries only cross-attend to the frozen context), so
-    # the batched pre-warm applies unchanged.
-    try:
-        from pycircuitsim.models.mosfet_pfn import NMOS_PFN, PMOS_PFN
-        types.extend([NMOS_PFN, PMOS_PFN])
     except ImportError:
         pass
     return tuple(types)
@@ -339,8 +463,56 @@ def _has_nn_device(circuit: Circuit) -> bool:
     if cached is not None and cached[0] == key:
         return cached[1]
     from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase
-    val = any(isinstance(c, _MOSFETNNBase) for c in circuit.components)
+    try:
+        from pycircuitsim.models.mosfet_directnet_full import (
+            _FullTerminalNNBase,
+        )
+        nn_types = (_MOSFETNNBase, _FullTerminalNNBase)
+    except ImportError:
+        nn_types = (_MOSFETNNBase,)
+    val = any(isinstance(c, nn_types) for c in circuit.components)
     circuit._pcs_has_nn_cache = (key, val)
+    return val
+
+
+def _selected_full_stamp(
+    device: object, attribute: str,
+) -> Optional[Callable[..., Any]]:
+    """Return a full-terminal stamp unless its explicit boundary disables it."""
+    boundary = getattr(device, "evaluator_boundary", "native")
+    if boundary in ("reduced-osdi", "raw-directnet"):
+        return None
+    if boundary != "native":
+        raise ValueError(f"Unsupported evaluator boundary {boundary!r}")
+    return getattr(device, attribute, None)
+
+
+def _full_current_stamp(device: object) -> Optional[Callable[..., Any]]:
+    """Select the device's full terminal-current stamp, when active."""
+    return _selected_full_stamp(device, "get_terminal_stamp")
+
+
+def _full_charge_stamp(device: object) -> Optional[Callable[..., Any]]:
+    """Select the device's full terminal-charge stamp, when active."""
+    return _selected_full_stamp(device, "get_charge_stamp")
+
+
+def _has_directnet_full_device(circuit: Circuit) -> bool:
+    """Return whether the circuit contains a LEVEL=75/76 full-terminal NN."""
+    key = _topo_key(circuit)
+    cached = getattr(circuit, "_pcs_has_full_nn_cache", None)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    try:
+        from pycircuitsim.models.mosfet_directnet_full import NMOS_DNF, PMOS_DNF
+        from pycircuitsim.models.mosfet_bsimar_full import NMOS_TFF, PMOS_TFF
+        val = any(
+            isinstance(component, (NMOS_DNF, PMOS_DNF, NMOS_TFF, PMOS_TFF))
+            for component in circuit.components
+        )
+    except ImportError:
+        val = False
+    circuit._pcs_has_full_nn_cache = (key, val)
     return val
 
 
@@ -354,13 +526,13 @@ def _has_full_stamp_device(circuit: Circuit) -> bool:
     cached = getattr(circuit, "_pcs_has_l72_cache", None)
     if cached is not None and cached[0] == key:
         return cached[1]
-    val = any(hasattr(c, "get_terminal_stamp") for c in circuit.components)
+    val = any(_full_current_stamp(c) is not None for c in circuit.components)
     circuit._pcs_has_l72_cache = (key, val)
     return val
 
 
 def _require_nn_caps(circuit: Circuit) -> None:
-    """Tell every NN device in ``circuit`` that this analysis reads caps.
+    """Tell every NN device that this analysis reads charge Jacobians.
 
     Only ``TransientSolver`` and ``ACSolver`` consume MOSFET
     capacitances. Marking them here lets a ``.dc`` / ``.op`` run skip the
@@ -369,6 +541,11 @@ def _require_nn_caps(circuit: Circuit) -> None:
     circuits with no NN device, and ``get_capacitances`` self-heals if
     some other caller needs caps anyway.
     """
+    for component in circuit.components:
+        require = getattr(component, "require_capacitance_jacobians", None)
+        if callable(require):
+            require()
+
     from pycircuitsim.models.mosfet_nn import _MOSFETNNBase
     _MOSFETNNBase.require_caps(circuit.components)
 
@@ -457,7 +634,7 @@ def _stamp_mosfet_dc(
     # cycles around a residual its Jacobian cannot see. Devices exposing
     # get_terminal_stamp() stamp all four KCL rows from the condensed
     # OSDI Jacobian instead, exactly as NGSPICE loads the model.
-    full_stamp = getattr(mosfet, "get_terminal_stamp", None)
+    full_stamp = _full_current_stamp(mosfet)
     if full_stamp is not None:
         i_out, g4 = full_stamp(voltages)
         idx = [node_map.get(n) if n not in ("0", "GND") else None
@@ -822,18 +999,17 @@ class DCSolver:
             use_gmin_stepping: Enable DC GMIN stepping for bistable convergence (default: False)
             force_ic: Enforce .ic as voltage constraints, not just initial guess (default: False)
             dv_limit: Per-iteration, per-node |ΔV| trust-region cap in volts
-                (default None = OFF, historical behaviour). There is otherwise
-                NO voltage limiting on the LEVEL=72 path: `mosfet_cmg.py` hands
+                (default None = 0.1 V for full-terminal NN models and OFF for
+                non-NN models). There is otherwise NO voltage limiting on the
+                LEVEL=72 path: `mosfet_cmg.py` hands
                 raw node voltages to OSDI, so one bad Newton step (measured:
                 a 2 µA current source into a node still at the 1e-12 S gds
                 floor asks for ΔV ≈ 2e6 V) reaches the compact model as
                 `g=-505225 V` and OSDI's internal-node solve raises. Capping
                 the step is SPICE's own answer to this. NN circuits (LEVEL
-                73/74/75) already cap at one supply rail unconditionally; a
-                value here overrides that cap for them too.
-                PERTURBING, hence default-off: the cap changes the Newton PATH
-                (not the fixed point), so it is not bit-identical on a circuit
-                where it engages.
+                73/74) already cap at one supply rail unconditionally; LEVEL=75
+                caps at 0.1 V. A value here overrides either automatic cap.
+                The cap changes the Newton PATH, not the fixed point.
 
                 MEASURED DEAD END, kept here so it is not retried: also
                 ramping the CURRENT sources with the source-stepping homotopy
@@ -868,7 +1044,11 @@ class DCSolver:
         self.gmin = gmin
         self.use_gmin_stepping = use_gmin_stepping
         self.force_ic = force_ic
-        self.dv_limit = dv_limit
+        self.dv_limit = (
+            _DIRECTNET_FULL_DV_LIMIT
+            if dv_limit is None and _has_directnet_full_device(circuit)
+            else dv_limit
+        )
         self.nodesets = nodesets
         # True while the clamped (MODEINITFIX) pre-solve is running, so the
         # released re-solve and the gmin-fallback recursion do not re-enter it.
@@ -1194,6 +1374,9 @@ class DCSolver:
 
         num_voltage_sources = self.circuit.count_voltage_sources()
         matrix_size = num_nodes + num_voltage_sources
+        tail_projector = _voltage_source_tail_projector(
+            self.circuit, node_map, num_nodes, num_voltage_sources,
+        )
 
         # Store original voltage source values for source stepping
         original_voltages = []
@@ -1359,16 +1542,14 @@ class DCSolver:
                     if nn_extra is not None:
                         mna_solve = mna_solve + nn_extra
 
-                    # Current iterate as a full MNA vector (node voltages in
-                    # the leading slots; branch-current slots left at 0 —
-                    # they only scale the residual, not the descent test).
-                    current_iterate = np.zeros(matrix_size)
-                    current_iterate[:n_nodes] = v_arr
-
-                    # MNA residual ‖b − A·v‖∞ at the current iterate
-                    # (Phase 6b): the nonlinear KCL mismatch before the
-                    # Newton step. LM uses this to detect overshoot.
-                    iter_residual = _mna_residual_inf(mna_solve, rhs, current_iterate)
+                    # Complete the node state with the ideal-source branch
+                    # currents before measuring KCL. A zero branch tail makes
+                    # the supply current look like nonlinear residual.
+                    iter_residual, iter_rhs_scale = (
+                        _mna_residual_at_node_voltages(
+                            mna_solve, rhs, v_arr, n_nodes, tail_projector,
+                        )
+                    )
 
                     # Solve the MNA system
                     try:
@@ -1557,9 +1738,8 @@ class DCSolver:
                     # cleanly separates the two and never misfires on a
                     # SPICE-converged inverter point.
                     if all_converged and _has_nn_device(self.circuit):
-                        rhs_scale = float(np.max(np.abs(rhs))) if rhs.size else 0.0
                         resid_threshold = max(_RESID_ABS_FLOOR,
-                                              100.0 * self.reltol * rhs_scale)
+                                              100.0 * self.reltol * iter_rhs_scale)
                         if iter_residual > resid_threshold:
                             all_converged = False
 
@@ -1775,8 +1955,7 @@ class DCSolver:
         if (not self._last_solve_converged
                 and not self.use_gmin_stepping
                 and not getattr(self, "_in_gmin_fallback", False)
-                and any(hasattr(c, "get_terminal_stamp")
-                        for c in self.circuit.components)):
+                and _has_full_stamp_device(self.circuit)):
             # The ladder replaces source stepping (two homotopies at once
             # just splits the NR budget 20 ways) and needs a real
             # iteration budget of its own. If the ladder ALSO fails, the
@@ -1823,7 +2002,7 @@ class DCSolver:
         num_nodes: int,
         matrix_size: int,
         gmin_level: float,
-    ) -> tuple:
+    ) -> Tuple[float, float]:
         """Re-stamp the DC MNA system at ``voltages`` and return its residual.
 
         Phase 6b. Used to validate the oscillation-detection averaged
@@ -1842,7 +2021,7 @@ class DCSolver:
 
         Returns:
             ``(residual_inf, rhs_scale)`` — the residual ‖b−A·v‖∞ and the
-            RHS infinity-norm used to scale the acceptance threshold.
+            current-valued node-RHS norm used to scale its threshold.
         """
         mna = _create_mna_matrix(matrix_size)
         rhs = np.zeros(matrix_size)
@@ -1860,11 +2039,15 @@ class DCSolver:
         self._stamp_voltage_sources(mna, rhs, node_map, num_nodes, voltages=voltages)
         if gmin_level > self.gmin:
             self._apply_gmin_stepping(mna, node_map, gmin_level)
-        iterate = np.zeros(matrix_size)
-        for idx, node in enumerate(nodes):
-            iterate[idx] = voltages[node]
-        rhs_scale = float(np.max(np.abs(rhs))) if rhs.size else 0.0
-        return _mna_residual_inf(mna, rhs, iterate), rhs_scale
+        node_values = np.fromiter(
+            (voltages[node] for node in nodes), np.float64, num_nodes,
+        )
+        return _mna_residual_at_node_voltages(
+            mna, rhs, node_values, num_nodes,
+            _voltage_source_tail_projector(
+                self.circuit, node_map, num_nodes, matrix_size - num_nodes,
+            ),
+        )
 
     def _stamp_voltage_sources(
         self,
@@ -2064,9 +2247,8 @@ class TransientSolver:
                 disabled — for decks carrying `.options method=gear maxord=2`,
                 where trapezoid ringing corrupts slew/overshoot metrics.
             dv_limit: Per-iteration, per-node |ΔV| trust-region cap in volts,
-                applied at EVERY timestep (default None = OFF, historical
-                behaviour). The transient twin of ``DCSolver(dv_limit=...)``;
-                see there for why it exists and why it is default-off.
+                applied at EVERY timestep. ``None`` selects the automatic
+                family cap described by ``DCSolver``.
             refine_output: V7.5.2 — LTE-driven local refinement ON THE
                 OUTPUT AXIS (default False = OFF, byte-identical; env
                 ``PYCIRCUITSIM_TRAN_REFINE=1`` also enables). The fixed
@@ -2154,8 +2336,12 @@ class TransientSolver:
         # actually in force is self._integration_method below.
         self.integration_method = integration_method
 
-        # Per-iteration |ΔV| trust-region cap (None = off); see __init__ docs.
-        self.dv_limit = dv_limit
+        # Per-iteration explicit/automatic |ΔV| cap; see __init__ docs.
+        self.dv_limit = (
+            _DIRECTNET_FULL_DV_LIMIT
+            if dv_limit is None and _has_directnet_full_device(circuit)
+            else dv_limit
+        )
 
         # Integration method: 'be', 'trap', or 'bdf2'
         self._integration_method = 'be'
@@ -2534,6 +2720,9 @@ class TransientSolver:
         n_nodes = len(nodes)
         v_arr = np.fromiter(
             (voltages[nd] for nd in nodes), np.float64, n_nodes)
+        tail_projector = _voltage_source_tail_projector(
+            self.circuit, node_map, n_nodes, num_voltage_sources,
+        )
         vs_constrained_nodes = set()
         for component in self.circuit.components:
             if isinstance(component, VoltageSource):
@@ -2608,12 +2797,11 @@ class TransientSolver:
             if nn_extra is not None:
                 mna_solve = mna_solve + nn_extra
 
-            # Current iterate as a full MNA vector (Phase 6a/6b).
-            current_iterate = np.zeros(matrix_size)
-            current_iterate[:n_nodes] = v_arr
-
-            # MNA residual ‖b−A·v‖∞ at the current iterate (Phase 6b).
-            iter_residual = _mna_residual_inf(mna_solve, rhs, current_iterate)
+            # Complete the node state with ideal-source branch currents before
+            # measuring the nonlinear KCL residual (DC uses the same helper).
+            iter_residual, iter_rhs_scale = _mna_residual_at_node_voltages(
+                mna_solve, rhs, v_arr, n_nodes, tail_projector,
+            )
 
             # Solve for voltage updates
             try:
@@ -2735,8 +2923,10 @@ class TransientSolver:
             # generous (see the DC analog) so it never misfires on a
             # SPICE-converged timestep.
             if all_converged and _has_nn_device(self.circuit):
-                rhs_scale = float(np.max(np.abs(rhs))) if rhs.size else 0.0
-                resid_threshold = max(_RESID_ABS_FLOOR, 100.0 * self.reltol * rhs_scale)
+                resid_threshold = max(
+                    _RESID_ABS_FLOOR,
+                    100.0 * self.reltol * iter_rhs_scale,
+                )
                 if iter_residual > resid_threshold:
                     all_converged = False
 
@@ -2915,7 +3105,7 @@ class TransientSolver:
         # Newton iteration AMPLIFY the error ~15x. Devices exposing
         # get_charge_stamp stamp the condensed reactive OSDI Jacobian
         # directly — true dQ/dV, bulk row and column included.
-        full_q = getattr(mosfet, "get_charge_stamp", None)
+        full_q = _full_charge_stamp(mosfet)
         if full_q is not None:
             if getattr(mosfet, "_q_prev", None) is None:
                 return
@@ -3065,7 +3255,7 @@ class TransientSolver:
         matrix_size: int,
         gmin: float,
         time: float,
-    ) -> tuple:
+    ) -> Tuple[float, float]:
         """Re-stamp the transient MNA system at ``voltages``; return its residual.
 
         Phase 6b. Validates the oscillation-detection averaged solution
@@ -3103,11 +3293,12 @@ class TransientSolver:
                                              voltages, limit=False)
         if gmin > self.gmin_final:
             self._apply_gmin_stepping(mna, node_map, gmin)
-        iterate = np.zeros(matrix_size)
-        for idx, node in enumerate(nodes):
-            iterate[idx] = voltages[node]
-        rhs_scale = float(np.max(np.abs(rhs))) if rhs.size else 0.0
-        return _mna_residual_inf(mna, rhs, iterate), rhs_scale
+        node_values = np.fromiter(
+            (voltages[node] for node in nodes), np.float64, num_nodes,
+        )
+        return _mna_residual_at_node_voltages(
+            mna, rhs, node_values, num_nodes,
+        )
 
     def solve(self) -> Dict[str, np.ndarray]:
         """
@@ -3572,7 +3763,7 @@ class TransientSolver:
                                     terminal_currents["i_drain"] = coeff * charges_new["qd"] - h_d
                                     # V7.5.1: the full 4-terminal charge
                                     # companion needs source/bulk history too.
-                                    if hasattr(component, "get_charge_stamp"):
+                                    if _full_charge_stamp(component) is not None:
                                         for key, name in (("qs", "i_source"),
                                                           ("qb", "i_bulk")):
                                             if method == 'bdf2' and hasattr(component, '_q_prev2') and component._q_prev2 is not None:
@@ -4058,6 +4249,10 @@ class ACSolver:
             dc_solver = DCSolver(self.circuit)
             with dc_solver:
                 self.dc_solution = dc_solver.solve()
+            if not dc_solver._last_solve_converged:
+                raise RuntimeError(
+                    "AC analysis requires a converged DC operating point"
+                )
 
         # Get circuit topology
         nodes = self.circuit.get_nodes()
@@ -4227,9 +4422,16 @@ class ACSolver:
             # defect, same hazard). Devices exposing get_terminal_stamp
             # carry Y = G4 + jw*C4 from the condensed OSDI Jacobians,
             # evaluated once at the DC OP — exactly NGSPICE's AC load.
-            if hasattr(component, "get_terminal_stamp"):
-                _, g4 = component.get_terminal_stamp(self.dc_solution)
-                _, c4 = component.get_charge_stamp(self.dc_solution)
+            full_current = _full_current_stamp(component)
+            if full_current is not None:
+                full_charge = _full_charge_stamp(component)
+                if full_charge is None:
+                    raise RuntimeError(
+                        f"{component.name} exposes a full current stamp without "
+                        "a full charge stamp"
+                    )
+                _, g4 = full_current(self.dc_solution)
+                _, c4 = full_charge(self.dc_solution)
                 # NO external gmin here: the DC stamp's gmin across
                 # d-s/d-b/s-b is a Newton convergence aid; NGSPICE's AC
                 # load carries only the model's own Jacobian (the OSDI

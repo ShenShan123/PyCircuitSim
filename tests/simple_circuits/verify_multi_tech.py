@@ -38,7 +38,7 @@ from __future__ import annotations
 import argparse
 import sys
 from pathlib import Path
-from typing import List
+from typing import List, Tuple
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
@@ -69,6 +69,15 @@ from tests.common.bsimcmg_tran import (  # noqa: E402
 
 DC_RESULTS_DIR = PROJECT_ROOT / "tests" / "verify_multi_tech_dc_results"
 TRAN_RESULTS_DIR = PROJECT_ROOT / "tests" / "verify_multi_tech_tran_results"
+
+
+def _pn_ratio_pairs(tech: TechProfile) -> Tuple[Tuple[int, int], ...]:
+    """Exact dataset/PDK-supported (NMOS, PMOS) fin-count pairs."""
+    if tech.name in ("TSMC6", "TSMC7"):
+        return ((6, 3), (2, 3), (3, 6))
+    if tech.single_file:
+        return ((20, 10), (10, 15), (10, 20))
+    return ((4, 2), (2, 3), (2, 4))
 
 
 def build_dc_parametric(tech: TechProfile) -> List[DCTestConfig]:
@@ -111,19 +120,13 @@ def build_dc_parametric(tech: TechProfile) -> List[DCTestConfig]:
             nfin_n=nfin, nfin_p=nfin,
         ))
 
-    # P/N ratio sweep (NFIN_P varies, NFIN_N = default)
-    for ratio in [0.5, 1.5, 2.0]:
-        nfin_p = max(2, round(tech.default_nfin * ratio))
-        if nfin_p == tech.default_nfin:
-            continue  # same as baseline
-        # TSMC naive modelcards are NFIN-group-specific; skip if NFIN_P
-        # leaves the default group [N, N+1] (ASAP7 single-file covers all)
-        if not tech.single_file and nfin_p > tech.default_nfin + 1:
-            continue
+    # Exact legal P/N pairs keep all three advertised ratios in the matrix.
+    for nfin_n, nfin_p in _pn_ratio_pairs(tech):
+        ratio = nfin_p / nfin_n
         tag = f"pn_{ratio:.1f}".replace(".", "p")
         configs.append(make_dc_config(
             tech, INVERTER_VTC, config_name=tag, sweep_type="pn_ratio",
-            nfin_p=nfin_p,
+            nfin_n=nfin_n, nfin_p=nfin_p,
         ))
 
     return configs
@@ -134,19 +137,12 @@ def build_tran_parametric(tech: TechProfile) -> List[TestConfig]:
     vt = tech.default_vt_pair
     configs: List[TestConfig] = []
 
-    # P/N ratio sweep (NFIN_P varies, NFIN_N = default)
-    for ratio in [0.5, 1.5, 2.0]:
-        nfin_p = max(2, round(tech.default_nfin * ratio))
-        if nfin_p == tech.default_nfin:
-            continue  # same as baseline
-        # TSMC naive modelcards are NFIN-group-specific; skip if NFIN_P
-        # leaves the default group [N, N+1] (ASAP7 single-file covers all)
-        if not tech.single_file and nfin_p > tech.default_nfin + 1:
-            continue
+    for nfin_n, nfin_p in _pn_ratio_pairs(tech):
+        ratio = nfin_p / nfin_n
         tag = f"pn_{ratio:.1f}".replace(".", "p")
         configs.append(make_baseline(
             tech, vt=vt, config_name=tag, sweep_type="pn_ratio",
-            nfin_p=nfin_p,
+            nfin_n=nfin_n, nfin_p=nfin_p,
         ))
 
     # VDD sweep (+/- 0.1V)

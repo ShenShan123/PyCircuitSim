@@ -38,7 +38,8 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
         NFIN: float,
         temperature: float = 300.15,
         tech_code: Optional[int] = None,
-    ):
+        multiplier: float = 1.0,
+    ) -> None:
         from neural_network.models.transformer import TransformerEncoderModel
 
         model_path_obj = Path(model_path)
@@ -76,6 +77,7 @@ class _MOSFETBSIMARBase(_MOSFETNNBase):
         super().__init__(
             name=name, nodes=nodes, model_path=model_path,
             L=L, NFIN=NFIN, temperature=temperature, tech_code=tech_code,
+            multiplier=multiplier,
             model_factory=_build,
             output_layout="bsimar",
         )
@@ -89,7 +91,7 @@ class NMOS_BSIMAR(_MOSFETBSIMARBase):
     """N-channel BSIMAR MOSFET (LEVEL=74)."""
 
     def calculate_current(self, voltages: Dict[str, float]) -> float:
-        return -self._eval(voltages)["id"]
+        return -self.m * self._eval(voltages)["id"]
 
 
 class PMOS_BSIMAR(_MOSFETBSIMARBase):
@@ -100,4 +102,4 @@ class PMOS_BSIMAR(_MOSFETBSIMARBase):
         self._is_pmos = True
 
     def calculate_current(self, voltages: Dict[str, float]) -> float:
-        return self._eval(voltages)["id"]
+        return self.m * self._eval(voltages)["id"]

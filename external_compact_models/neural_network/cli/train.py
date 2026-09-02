@@ -21,15 +21,23 @@ import torch
 
 from neural_network.config import (
     CHECKPOINT_DIR, DATA_DIR,
-    DirectNetConfig, TransformerConfig, TabPFNConfig,
+    DirectNetConfig, TransformerConfig,
     LOCAL_VARIANT_CODES, VALID_TECH_SCOPES, tech_scope_vocab_size,
 )
 from neural_network.training.trainer import (
-    train_directnet, train_transformer, train_tabpfn,
+    train_directnet, train_transformer,
 )
 from neural_network.utils.seed import set_seed
 
 import numpy as np
+
+from neural_network.data.dataset import validate_canonical_dataset
+from neural_network.data.contracts import (
+    FULL_TERMINAL_OUTPUT_CONTRACT,
+    REDUCED_OUTPUT_CONTRACT,
+    dataset_filename,
+)
+from neural_network.data.normalize import FULL_TERMINAL_OUTPUT_COLUMN_ORDER
 
 
 # All TSMC + ASAP7 tech names for the per-tech `--tech-scope` auto-exclude.
@@ -101,40 +109,6 @@ SIZE_PRESETS = {
         d_model=384, nhead=8, num_layers=8, dim_feedforward=1536,
         dropout=0.2, batch_size=1024, max_epochs=300,
         patience=80, lr=6e-4),
-    # V6.9 — TabPFN-style in-context compact model (LEVEL=75). Param
-    # counts mirror the transformer tiers (0.69M / 2.03M / 4.65M) so the
-    # capacity curves are comparable. ctx_len = frozen-context rows.
-    ("tabpfn", "small"): dict(
-        embed_dim=64, n_inducing=32, dist_blocks=2, dist_heads=4,
-        agg_blocks=2, agg_heads=4, n_cls_tokens=2, icl_num_blocks=3,
-        icl_heads=4, ctx_len=1024, batch_size=1024, max_epochs=80,
-        patience=25, lr=6e-4),
-    ("tabpfn", "medium"): dict(
-        embed_dim=96, n_inducing=32, dist_blocks=3, dist_heads=6,
-        agg_blocks=3, agg_heads=6, n_cls_tokens=2, icl_num_blocks=4,
-        icl_heads=6, ctx_len=2048, batch_size=1024, max_epochs=150,
-        patience=40, lr=5e-4),
-    # large: 150-epoch cosine. Unlike small/medium (dataloader-bound,
-    # ~118 s/epoch), large is COMPUTE-bound (~12 min/epoch with 2 jobs/GPU
-    # on shared 4090s) — a 300-epoch schedule is ~2.5 GPU-days/checkpoint.
-    # The V6.10 campaign trained this tier with --amp (bf16, the V6.8
-    # opt-in wall-clock lever).
-    ("tabpfn", "large"): dict(
-        embed_dim=128, n_inducing=48, dist_blocks=3, dist_heads=8,
-        agg_blocks=3, agg_heads=8, n_cls_tokens=2, icl_num_blocks=6,
-        icl_heads=8, ctx_len=2048, batch_size=1024, max_epochs=150,
-        patience=50, lr=4e-4),
-    # V7.1.0 — PFN XL tier, completing the 4-scale matrix for all three NN
-    # families. 14.86M params mirrors the transformer xl (14.81M), and the
-    # ICL width W = embed_dim * n_cls_tokens = 384 equals transformer-xl's
-    # d_model, so the capacity axis stays comparable across families.
-    # lr 3e-4, not large's 4e-4: the V6.10 large wave logged 8 divergence
-    # collapses (5/8 at 4e-4) and this stack is 50 % deeper on the ICL side.
-    ("tabpfn", "xl"): dict(
-        embed_dim=192, n_inducing=64, dist_blocks=4, dist_heads=12,
-        agg_blocks=4, agg_heads=12, n_cls_tokens=2, icl_num_blocks=9,
-        icl_heads=12, ctx_len=2048, batch_size=1024, max_epochs=150,
-        patience=50, lr=3e-4),
 }
 
 
@@ -155,18 +129,29 @@ def _parse_class_weights(spec: Optional[str]) -> Optional[Dict[str, float]]:
     return out or None
 
 
+def _parse_class_names(spec: Optional[str]) -> Optional[set[str]]:
+    """Parse a comma-separated sample-class list; empty means disabled."""
+    if not spec:
+        return None
+    names = {name.strip() for name in spec.split(",") if name.strip()}
+    return names or None
+
+
 def _resolve_data_path(args: argparse.Namespace) -> Path:
     if args.data:
         return Path(args.data)
-    if args.tech_scope != "universal":
-        return DATA_DIR / f"{args.tech_scope}_{args.device_type}.npz"
-    return DATA_DIR / f"universal_{args.device_type}.npz"
+    return DATA_DIR / dataset_filename(
+        args.tech_scope, args.device_type, args.output_contract,
+    )
 
 
 def _make_save_prefix(args: argparse.Namespace) -> str:
     if args.exp_name:
         return f"{args.exp_name}_{args.device_type}"
-    tag = {"direct": "dn", "transformer": "tf", "tabpfn": "pfn"}[args.model]
+    if args.output_contract == FULL_TERMINAL_OUTPUT_CONTRACT:
+        tag = {"direct": "dnf", "transformer": "tff"}[args.model]
+    else:
+        tag = {"direct": "dn", "transformer": "tf"}[args.model]
     suffix = ""
     if args.loss_preset != "default":
         suffix = f"_{args.loss_preset}"
@@ -181,6 +166,11 @@ def _run(args: argparse.Namespace) -> None:
     data_path = _resolve_data_path(args)
     if not data_path.exists():
         print(f"Dataset not found: {data_path}")
+        sys.exit(1)
+    try:
+        validate_canonical_dataset(data_path)
+    except ValueError as exc:
+        print(f"ERROR: non-canonical training dataset: {exc}")
         sys.exit(1)
 
     save_prefix = _make_save_prefix(args)
@@ -226,6 +216,52 @@ def _run(args: argparse.Namespace) -> None:
         if args.num_tech_codes is None:
             args.num_tech_codes = tech_scope_vocab_size("universal")
 
+    full_terminal = args.output_contract == FULL_TERMINAL_OUTPUT_CONTRACT
+    if full_terminal:
+        incompatible = (
+            args.loss_preset != "default"
+            or args.sobolev
+            or args.charge_sobolev
+            or args.monotonic
+            or args.ekv_core
+        )
+        if incompatible:
+            print(
+                "[error] --output-contract full-terminal is a separate "
+                "six-surface family and is incompatible with legacy loss "
+                "presets or reduced-head auxiliary paths."
+            )
+            sys.exit(2)
+        if args.subthresh and args.model != "transformer":
+            print(
+                "[error] full-terminal --subthresh is currently supported "
+                "only by the Level76 Transformer family."
+            )
+            sys.exit(2)
+        if args.apply_filter != "off":
+            print(
+                "[error] --output-contract full-terminal requires "
+                "--apply-filter off; its current columns are i_d/i_g/i_b, "
+                "not the legacy id filter contract."
+            )
+            sys.exit(2)
+    if args.full_terminal_ar_targets is not None and (
+        not full_terminal or args.model != "transformer"
+    ):
+        print(
+            "[error] --full-terminal-ar-targets requires "
+            "--model transformer --output-contract full-terminal."
+        )
+        sys.exit(2)
+    if args.autoregressive_training and (
+        not full_terminal or args.model != "transformer"
+    ):
+        print(
+            "[error] --autoregressive-training requires "
+            "--model transformer --output-contract full-terminal."
+        )
+        sys.exit(2)
+
     if (args.model, args.size) not in SIZE_PRESETS:
         print(f"[error] no preset for --model {args.model} "
               f"--size {args.size}")
@@ -252,6 +288,9 @@ def _run(args: argparse.Namespace) -> None:
         swa_mode=args.swa_mode, ema_decay=args.ema_decay,
         apply_filter=(args.apply_filter == "on"),
         class_weights=_parse_class_weights(args.class_weights),
+        split_mode=args.split_mode,
+        training_overlay_classes=_parse_class_names(
+            args.training_overlay_classes),
     )
 
     # Phase 7 (V6.4.2) soft physics constraints — DirectNet only, opt-in.
@@ -289,21 +328,18 @@ def _run(args: argparse.Namespace) -> None:
         print("[error] --charge-sobolev needs the qg/qd + cgg/cgd/cdg/cdd "
               "columns; it is incompatible with the e2 output-subset preset.")
         sys.exit(2)
-    if args.amp and (args.sobolev or args.subthresh or args.charge_sobolev):
+    if args.amp and (args.sobolev or args.charge_sobolev):
         print("[error] --amp is incompatible with the double-backward aux "
-              "losses (sobolev / subthresh / charge-sobolev).")
+              "losses (sobolev / charge-sobolev).")
         sys.exit(2)
-    # V6.9 phase 1: TabPFN trains on the plain LDS-MAE recipe only.
-    if args.model == "tabpfn" and (
-            args.sobolev or args.subthresh or args.charge_sobolev):
-        print("[error] the sobolev / subthresh / charge-sobolev aux losses "
-              "are not supported for --model tabpfn (phase 1).")
-        sys.exit(2)
-
     if args.model == "direct":
         cfg = DirectNetConfig(**preset)
         train_directnet(
             str(data_path), config=cfg,
+            output_columns=(
+                list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER)
+                if full_terminal else None
+            ),
             column_weights=loss_preset["column_weights"],
             output_subset=loss_preset["output_subset"],
             sobolev=args.sobolev, lam_sobolev=args.lam_sobolev,
@@ -324,18 +360,6 @@ def _run(args: argparse.Namespace) -> None:
             amp=args.amp,
             **common,
         )
-    elif args.model == "tabpfn":
-        if (loss_preset["output_subset"] is not None
-                or loss_preset["column_weights"] is not None):
-            print("[warn] loss presets are DirectNet-only; "
-                  "TabPFN ignores them")
-        cfg = TabPFNConfig(**preset)
-        train_tabpfn(
-            str(data_path), config=cfg,
-            init_from=args.init_from,
-            amp=args.amp,
-            **common,
-        )
     else:
         if (loss_preset["output_subset"] is not None
                 or loss_preset["column_weights"] is not None):
@@ -344,6 +368,10 @@ def _run(args: argparse.Namespace) -> None:
         cfg = TransformerConfig(**preset)
         train_transformer(
             str(data_path), config=cfg,
+            output_columns=(
+                list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER)
+                if full_terminal else None
+            ),
             sobolev=args.sobolev, lam_sobolev=args.lam_sobolev,
             sobolev_floor=args.sobolev_floor,
             sobolev_strong_boost=args.sobolev_strong_boost,
@@ -360,6 +388,8 @@ def _run(args: argparse.Namespace) -> None:
             charge_sobolev_floor=args.charge_sobolev_floor,
             init_from=args.init_from,
             amp=args.amp,
+            full_terminal_ar_target_dim=args.full_terminal_ar_targets,
+            autoregressive_training=args.autoregressive_training,
             **common,
         )
 
@@ -367,7 +397,7 @@ def _run(args: argparse.Namespace) -> None:
 def main() -> None:
     p = argparse.ArgumentParser(
         description="Unified BSIMAR / DirectNet training CLI")
-    p.add_argument("--model", choices=["direct", "transformer", "tabpfn"],
+    p.add_argument("--model", choices=["direct", "transformer"],
                    default="direct")
     p.add_argument("--size", choices=["small", "medium", "large", "xl"],
                    default="medium",
@@ -375,6 +405,29 @@ def main() -> None:
     p.add_argument("--device-type", choices=["nmos", "pmos"], default="nmos")
     p.add_argument("--data", type=str, default=None,
                    help="Path to .npz dataset (auto-resolved if omitted)")
+    p.add_argument(
+        "--output-contract",
+        choices=[REDUCED_OUTPUT_CONTRACT, FULL_TERMINAL_OUTPUT_CONTRACT],
+        default=REDUCED_OUTPUT_CONTRACT,
+        help="Train the legacy 13-head reduced model or the V7.6.0 "
+             "six-surface full-terminal DirectNet/BSIM-AR families.",
+    )
+    p.add_argument(
+        "--full-terminal-ar-targets",
+        type=int,
+        choices=[3, 6],
+        default=None,
+        help="Level-76 architecture arm: 6 keeps every surface "
+             "autoregressive; 3 keeps qg/qb/qd autoregressive and emits "
+             "i_d/i_g/i_b through the parallel tail. Unset preserves 6.",
+    )
+    p.add_argument(
+        "--autoregressive-training",
+        action="store_true",
+        help="Fine-tune LEVEL=76 using the same predicted-prefix rollout "
+             "used at inference. Full-terminal Transformer only; unset "
+             "preserves teacher forcing.",
+    )
 
     # Per-flag overrides (None means: use the size-preset default)
     p.add_argument("--epochs", type=int, default=None)
@@ -384,6 +437,11 @@ def main() -> None:
     p.add_argument("--max-rows", type=int, default=None,
                    help="Cap dataset rows (after filter / exclude) for "
                         "fast smoke runs")
+    p.add_argument(
+        "--split-mode", choices=["combo", "random"], default="combo",
+        help="Hold out complete (technology, VT, L, NFIN, temperature) "
+             "combinations by default; 'random' is interpolation-only.",
+    )
 
     p.add_argument("--cuda", action="store_true")
     p.add_argument("--amp", action="store_true",
@@ -409,8 +467,10 @@ def main() -> None:
                         "auto-set --exclude-techs (all other techs), "
                         "--num-tech-codes (per-tech vocab + UNKNOWN), "
                         "default --data path, and the save_prefix "
-                        "(tsmc{5,7}_dn_<size>_<dev>) recognized by the "
-                        "parser preempt cascade.")
+                        "(tsmc{5,7}_dn_<size>_<dev>, or *_dnf_* for the "
+                        "full DirectNet and *_tff_* for full BSIM-AR) "
+                        "recognized by the parser "
+                        "preempt cascade.")
     p.add_argument("--exp-name", type=str, default=None,
                    help="Override the auto-generated save_prefix")
     p.add_argument("--overwrite", action="store_true")
@@ -437,6 +497,12 @@ def main() -> None:
                         "'subthresh=4.0,reverse_vds=2.0'. Folded into the "
                         "LDS tensor and renormalized to unit mean per "
                         "target. Requires a sample_class-tagged dataset.")
+    p.add_argument(
+        "--training-overlay-classes", type=str, default=None,
+        help="Comma-separated circuit-derived sample classes that must be "
+             "training evidence. With --split-mode combo, complete affected "
+             "technology/geometry strata move to training and are reported.",
+    )
     p.add_argument("--loss-preset",
                    choices=sorted(LOSS_PRESETS.keys()),
                    default="default",
@@ -472,12 +538,12 @@ def main() -> None:
                         "(fine-tune; architecture must match --size / "
                         "--tech-scope).")
 
-    # V6.4.7 S11 (P3) — subthreshold id value+ceiling term, DirectNet only.
+    # V6.4.7 S11 (P3) — subthreshold drain-current value+ceiling term.
     p.add_argument("--subthresh", action="store_true",
                    help="Add the subthreshold id value+ceiling term "
                         "(asinh-s2 sub-uA value MAE + sign-agnostic OFF "
-                        "ceiling hinge). Targets SRAM force_ic. DirectNet "
-                        "only; requires asinh output norm.")
+                        "ceiling hinge). Targets weak-inversion circuit "
+                        "states; requires asinh output norm.")
     p.add_argument("--lam-subthresh", type=float, default=0.05,
                    help="Subthreshold term weight λ (default 0.05). The "
                         "asinh-s2 term is O(1)/row vs the ~5e-3 base MAE, so "

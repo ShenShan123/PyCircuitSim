@@ -49,7 +49,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from tests.common.complex import BENCH  # noqa: E402
+from tests.common.circuit_benchmarks import BENCH  # noqa: E402
 
 DEFAULT_TECHS = ["TSMC5", "TSMC7", "TSMC12", "TSMC16"]
 TRAN = ".tran 0.05n 2n"

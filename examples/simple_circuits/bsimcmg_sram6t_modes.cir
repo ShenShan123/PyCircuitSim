@@ -1,0 +1,20 @@
+* Full 6T SRAM hold/read/write modes — LEVEL=72 reference
+.include "<BAKED_LIB>"
+Vdd vdd 0 <VDD>
+Vbn bn 0 <BODY_N>
+Vbp bp 0 <BODY_P>
+Vwl wl 0 <WL_SPEC>
+Vbl bl 0 <BL_SPEC>
+Vblb blb 0 <BLB_SPEC>
+Np_l q qb vdd bp <PMOS>
+Nn_l q qb 0 bn <NMOS>
+Np_r qb q vdd bp <PMOS>
+Nn_r qb q 0 bn <NMOS>
+Nn_al bl wl q bn <NMOS>
+Nn_ar blb wl qb bn <NMOS>
+Cq q 0 2f
+Cqb qb 0 2f
+.ic V(q)=<Q_IC> V(qb)=<QB_IC>
+.temp <TEMP>
+<ANALYSIS>
+.end

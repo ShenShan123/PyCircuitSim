@@ -25,14 +25,31 @@ Inputs array layout (N, 4):
 
 from __future__ import annotations
 
+import hashlib
+import json
 import math
 import time
+from collections import Counter
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from neural_network.data.contracts import (
+    CANONICAL_SAFETY_REJECTION_REASONS,
+    FULL_TERMINAL_OUTPUT_COLUMN_ORDER,
+    FULL_TERMINAL_OUTPUT_CONTRACT,
+    REDUCED_OUTPUT_CONTRACT,
+)
+
 from .sweep import NN_OUTPUT_COLUMNS, find_threshold
+
+
+OUTPUT_CONTRACTS: Dict[str, Sequence[str]] = {
+    REDUCED_OUTPUT_CONTRACT: NN_OUTPUT_COLUMNS,
+    FULL_TERMINAL_OUTPUT_CONTRACT: FULL_TERMINAL_OUTPUT_COLUMN_ORDER,
+}
 from .model import Model, Instance
 from .nn_config import (
     OSDI_PATH,
@@ -102,6 +119,34 @@ SAMPLE_CLASS_CODES: Dict[str, int] = {
 }
 
 
+def _sha256(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for block in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(block)
+    return digest.hexdigest()
+
+
+def _source_hash_metadata(bins: Sequence[BinSpec]) -> Dict[str, object]:
+    """Hash the exact OSDI binary and modelcards selected by the manifest."""
+    cards: Dict[str, str] = {}
+    for spec in bins:
+        tech = TECH_CONFIGS[spec.tech_name]
+        path = Path(tech.resolve_modelcard(
+            spec.device_type, spec.variant, spec.L, spec.NFIN,
+        )).resolve()
+        key = str(path)
+        if key not in cards:
+            cards[key] = _sha256(path)
+    osdi = Path(OSDI_PATH).resolve()
+    return {
+        "generator_release": "V7.6.3",
+        "osdi_path": str(osdi),
+        "osdi_sha256": _sha256(osdi),
+        "modelcard_sha256_json": json.dumps(cards, sort_keys=True),
+    }
+
+
 # ── Defaults ──────────────────────────────────────────────────────────────────
 
 # D1: temperature sweep (paper §3 — full operating range, in Kelvin).
@@ -110,6 +155,7 @@ DEFAULT_TEMPERATURES_K: Tuple[float, ...] = (
     300.15,   #  27 °C
     398.15,   # 125 °C
 )
+DEFAULT_MAX_L_RATIO: float = 1.35
 
 # D3: voltage box widening factor. paper uses 1.0 (i.e. [0, 1]·VDD).
 # v5p (V5'): revert B2 box-factor change. Restore V4 B1 default 2.0.
@@ -182,6 +228,7 @@ class BinSpec:
     n_vbs_lhs: int = DEFAULT_N_VBS_LHS
     # V6.4.7 S9b addition:
     enable_subvt_off: bool = DEFAULT_SUBVT_OFF
+    output_contract: str = "reduced"
 
 
 # ── Model + instance with smoke test (D6) ────────────────────────────────────
@@ -260,19 +307,66 @@ def eval_single_point(
     _silent: bool = False,
 ) -> Optional[Dict[str, float]]:
     """Evaluate one bias point. Returns None on failure or non-physical result."""
+    result, _reason = _eval_single_point_with_reason(
+        inst, vd, vg, vs, vb, _silent=_silent,
+    )
+    return result
+
+
+def _eval_single_point_with_reason(
+    inst: Instance,
+    vd: float,
+    vg: float,
+    vs: float = 0.0,
+    vb: float = 0.0,
+    *,
+    _silent: bool = False,
+    output_contract: str = "reduced",
+) -> Tuple[Optional[Dict[str, float]], str]:
+    """Evaluate one point and retain the rejection reason for manifests."""
+    if output_contract not in OUTPUT_CONTRACTS:
+        raise ValueError(
+            f"unknown output contract {output_contract!r}; expected one of "
+            f"{sorted(OUTPUT_CONTRACTS)}"
+        )
     try:
         result = inst.eval_dc({"d": vd, "g": vg, "s": vs, "e": vb})
-        out = {k: result[k] for k in NN_OUTPUT_COLUMNS}
+        if output_contract == FULL_TERMINAL_OUTPUT_CONTRACT:
+            terminal_values = [
+                result[key]
+                for key in ("id", "ig", "is", "ie", "qd", "qg", "qs", "qb")
+            ]
+            if any(not math.isfinite(value) for value in terminal_values):
+                return None, "non_finite_output"
+            if any(abs(result[key]) > 1.0
+                   for key in ("id", "ig", "is", "ie")):
+                return None, "terminal_current_over_1A"
+            # OSDI currents point into the external terminals. Store the
+            # three independent surfaces in the solver's positive-leaving
+            # convention; source is reconstructed by KCL at inference.
+            out = {
+                "i_d": -result["id"],
+                "i_g": -result["ig"],
+                "i_b": -result["ie"],
+                "qd": result["qd"],
+                "qg": result["qg"],
+                "qb": result["qb"],
+            }
+        else:
+            out = {k: result[k] for k in NN_OUTPUT_COLUMNS}
         if any(math.isnan(v) or math.isinf(v) for v in out.values()):
-            return None
-        if abs(out["id"]) > 1.0:
-            return None
-        return out
+            return None, "non_finite_output"
+        if output_contract == "reduced" and abs(out["id"]) > 1.0:
+            return None, "terminal_current_over_1A"
+        return out, ""
     except Exception as exc:
         if not _silent:
             print(f"  WARNING: eval_dc failed at "
                   f"Vd={vd:.3f} Vg={vg:.3f} Vb={vb:.3f}: {exc}")
-        return None
+        if (isinstance(exc, RuntimeError)
+                and str(exc).startswith("Internal node NR failed to converge")):
+            return None, "internal_node_solve_failed"
+        return None, f"eval_exception:{type(exc).__name__}"
 
 
 # ── Sampling (D2 + D3) ───────────────────────────────────────────────────────
@@ -438,14 +532,19 @@ def _anchor_points(
 def _vds_zero_line_points(
     vdd: float,
     is_pmos: bool,
+    voltage_box_factor: float = 2.0,
 ) -> List[Tuple[float, float, float]]:
     """Dense samples along Vds=0 to enforce the Id(Vds=0)=0 boundary.
 
-    Returns (vg, vd=0, vbs) tuples spanning the full Vg range at Vds=0.
-    60 points per bin (20 Vg x 3 Vbs).
+    Returns (vg, vd=0, vbs) tuples spanning the declared Vg range at Vds=0.
+    The legacy reduced contract keeps its 2x-VDD default; the full-terminal
+    family passes its explicit certified-envelope factor. 60 points per bin
+    (20 Vg x 3 Vbs).
     """
+    if voltage_box_factor <= 0.0:
+        raise ValueError("voltage_box_factor must be positive")
     s = -1.0 if is_pmos else 1.0
-    vg_steps = np.linspace(0, s * 2.0 * vdd, 20)
+    vg_steps = np.linspace(0, s * voltage_box_factor * vdd, 20)
     vbs_steps = [0.0, s * 0.25 * vdd, s * 0.5 * vdd]
     return [(float(vg), 0.0, float(vbs)) for vg in vg_steps for vbs in vbs_steps]
 
@@ -570,6 +669,8 @@ def _reverse_vds_points(
 def _tg_corridor_points(
     vdd: float,
     is_pmos: bool,
+    *,
+    tech_name: str = "",
 ) -> List[Tuple[float, float, float]]:
     """V6.7 transmission-gate / pass-device corridor.
 
@@ -592,16 +693,27 @@ def _tg_corridor_points(
     switchcap over-charge to exactly this corner (raw NN id ≈ 0 where OSDI
     conducts ~µA; PMOS caps 30-60% under-predicted). This overlay samples the
     circuit-realistic loci that produce it, parameterized by the actual DOF:
-    (gate_rail, body_rail, vin, source) → (Vgs, Vds, Vbs). 2 gate × 2 body × 4
-    vin × 16 source = 256 raw loci/bin; only the points OUTSIDE the
+    (gate_rail, body_rail, vin, source) → (Vgs, Vds, Vbs). 2 gate × 2 body × 6
+    vin × 18 source = 432 raw loci/bin; only the points OUTSIDE the
     already-sampled box (|Vds| > 0.30·VDD or |Vbs| > 0.25·VDD) are kept so the
     overlay is the gap-fill, not a re-sample. NMOS-positive convention; mirror
-    through the origin for PMOS (``s = -1``).
+    through the origin for PMOS (``s = -1``). TSMC5/16 NMOS use the wider
+    50% source guard required by their op-amp trajectories; all other devices
+    retain the latch-stable 20% guard.
     """
     s = -1.0 if is_pmos else 1.0
     rails = [0.0, s * vdd]                          # gate / body sit at a rail
-    vin_levels = [s * f * vdd for f in (0.2, 0.4, 0.6, 0.8)]
-    src_levels = np.linspace(0.0, s * vdd, 16)      # source sweeps rail-to-rail
+    vin_levels = [s * f * vdd for f in (0.0, 0.2, 0.4, 0.6, 0.8, 1.0)]
+    source_guard = (
+        0.50
+        if not is_pmos and tech_name.lower() in {"tsmc5", "tsmc16"}
+        else 0.20
+    )
+    src_levels = np.concatenate((
+        [-s * source_guard * vdd],
+        np.linspace(0.0, s * vdd, 16),
+        [s * (1.0 + source_guard) * vdd],
+    ))
     pts: List[Tuple[float, float, float]] = []
     seen: set = set()
     for g_rail in rails:
@@ -808,17 +920,26 @@ def generate_one_bin(spec: BinSpec) -> Optional[Dict[str, np.ndarray]]:
     outputs: List[np.ndarray] = []
     classes: List[int] = []
     failed = 0
+    failed_inputs: List[np.ndarray] = []
+    failed_classes: List[int] = []
+    failure_reasons: List[str] = []
 
     def _eval_and_keep(vg: float, vd: float, vbs: float, klass: int) -> bool:
         nonlocal failed
-        result = eval_single_point(inst, vd=float(vd), vg=float(vg),
-                                   vs=0.0, vb=float(vbs))
+        result, reason = _eval_single_point_with_reason(
+            inst, vd=float(vd), vg=float(vg), vs=0.0, vb=float(vbs),
+            output_contract=spec.output_contract,
+        )
         if result is None:
             failed += 1
+            failed_inputs.append(np.array([vd, vg, 0.0, vbs]))
+            failed_classes.append(klass)
+            failure_reasons.append(reason)
             return False
         inputs.append(np.array([vd, vg, 0.0, vbs]))
         geometry.append(geo.copy())
-        outputs.append(np.array([result[k] for k in NN_OUTPUT_COLUMNS]))
+        output_columns = OUTPUT_CONTRACTS[spec.output_contract]
+        outputs.append(np.array([result[k] for k in output_columns]))
         classes.append(klass)
         return True
 
@@ -832,14 +953,30 @@ def generate_one_bin(spec: BinSpec) -> Optional[Dict[str, np.ndarray]]:
     # V6.3 adds the reverse_vds corridor (Vd<0 NMOS frame; mirror for PMOS)
     # so the NN learns reverse conduction instead of relying on the
     # mosfet_nn.py f_id=0 reverse clamp.
+    vds_zero_factor = (
+        spec.voltage_box_factor
+        if spec.output_contract == FULL_TERMINAL_OUTPUT_CONTRACT else 2.0
+    )
+    for vg, vd, vbs in _vds_zero_line_points(
+        spec.vdd, is_pmos, voltage_box_factor=vds_zero_factor,
+    ):
+        _eval_and_keep(
+            vg, vd, vbs, SAMPLE_CLASS_CODES["vds_zero"],
+        )
+
     for _gen_fn, _klass in (
-        (_vds_zero_line_points, SAMPLE_CLASS_CODES["vds_zero"]),
         (_subthreshold_transition_points, SAMPLE_CLASS_CODES["subthresh"]),
         (_small_vds_points, SAMPLE_CLASS_CODES["small_vds"]),
         (_reverse_vds_points, SAMPLE_CLASS_CODES["reverse_vds"]),
     ):
         for vg, vd, vbs in _gen_fn(spec.vdd, is_pmos):
             _eval_and_keep(vg, vd, vbs, _klass)
+    for vg, vd, vbs in _tg_corridor_points(
+        spec.vdd,
+        is_pmos,
+        tech_name=spec.tech_name,
+    ):
+        _eval_and_keep(vg, vd, vbs, SAMPLE_CLASS_CODES["tg_corridor"])
 
     # v5 plan §4-B1: inverter trip-point overlay. Vth_n / Vth_p is
     # determined per-bin via the peak-gm coarse sweep (find_threshold)
@@ -943,6 +1080,10 @@ def generate_one_bin(spec: BinSpec) -> Optional[Dict[str, np.ndarray]]:
         "sample_class": np.asarray(classes, dtype=np.int8),
         "n_kept": len(inputs),
         "n_failed": failed,
+        "n_requested": len(inputs) + failed,
+        "failed_inputs": np.asarray(failed_inputs, dtype=np.float64).reshape(-1, 4),
+        "failed_class": np.asarray(failed_classes, dtype=np.int8),
+        "failure_reasons": np.asarray(failure_reasons, dtype=str),
     }
 
 
@@ -966,7 +1107,8 @@ def enumerate_bins(
     overshoot_per_axis: int = DEFAULT_OVERSHOOT_PER_AXIS,
     n_vbs_lhs: int = DEFAULT_N_VBS_LHS,
     enable_subvt_off: bool = DEFAULT_SUBVT_OFF,
-    max_l_ratio: Optional[float] = None,
+    max_l_ratio: Optional[float] = DEFAULT_MAX_L_RATIO,
+    output_contract: str = "reduced",
 ) -> List[BinSpec]:
     """Enumerate every (variant, L, NFIN, T) bin spec for a tech/polarity.
 
@@ -974,6 +1116,11 @@ def enumerate_bins(
     bin; see ``NNTechConfig.get_geometry_combos``. Unset reproduces the
     lower-corner-only grid.
     """
+    if output_contract not in OUTPUT_CONTRACTS:
+        raise ValueError(
+            f"unknown output contract {output_contract!r}; expected one of "
+            f"{sorted(OUTPUT_CONTRACTS)}"
+        )
     variants = variant_names or tech.variant_names
     if not variants:
         raise ValueError(
@@ -1014,6 +1161,7 @@ def enumerate_bins(
                     overshoot_per_axis=overshoot_per_axis,
                     n_vbs_lhs=n_vbs_lhs,
                     enable_subvt_off=enable_subvt_off,
+                    output_contract=output_contract,
                 ))
                 counter += 1
     return bins
@@ -1025,20 +1173,59 @@ def _assemble(
     bin_results: List[Optional[Dict[str, np.ndarray]]],
     metadata: Dict,
     verbose: bool,
+    bin_specs: Optional[List[BinSpec]] = None,
+    allow_rejected_points: bool = False,
+    allow_safety_rejections: bool = False,
 ) -> Dict[str, np.ndarray]:
+    if allow_rejected_points and allow_safety_rejections:
+        raise ValueError(
+            "diagnostic and canonical safety-rejection modes are exclusive"
+        )
     inputs_list, geo_list, out_list, cls_list = [], [], [], []
     n_kept_total = 0
     n_failed_total = 0
     n_bins_kept = 0
     n_bins_dropped = 0
 
-    for r in bin_results:
+    manifest: List[Dict[str, object]] = []
+    for index, r in enumerate(bin_results):
+        spec = bin_specs[index] if bin_specs is not None else None
+        key = ({
+            "tech": spec.tech_name,
+            "device": spec.device_type,
+            "variant": spec.variant,
+            "L": spec.L,
+            "NFIN": spec.NFIN,
+            "temperature_k": spec.temperature_k,
+        } if spec is not None else {"index": index})
         if r is None:
             n_bins_dropped += 1
+            manifest.append({
+                **key, "status": "dropped", "requested": 0, "kept": 0,
+                "rejected": 0,
+                "reason": "model_instance_or_smoke_test_failed",
+            })
             continue
         n_bins_kept += 1
         n_kept_total += int(r["n_kept"])
         n_failed_total += int(r["n_failed"])
+        reasons = [str(v) for v in r.get("failure_reasons", [])]
+        reason_counts = dict(sorted(Counter(reasons).items()))
+        manifest.append({
+            **key,
+            "status": "complete" if not reasons else "partial",
+            "requested": int(r.get("n_requested", r["n_kept"])),
+            "kept": int(r["n_kept"]),
+            "rejected": int(r["n_failed"]),
+            "failure_reason_counts": reason_counts,
+            "failed_coordinates": np.asarray(
+                r.get("failed_inputs", np.empty((0, 4))),
+                dtype=np.float64,
+            ).tolist(),
+            "failed_sample_classes": np.asarray(
+                r.get("failed_class", np.empty(0)), dtype=np.int8,
+            ).astype(int).tolist(),
+        })
         inputs_list.append(r["inputs"])
         geo_list.append(r["geometry"])
         out_list.append(r["outputs"])
@@ -1052,6 +1239,40 @@ def _assemble(
                         SAMPLE_CLASS_CODES["lhs"], dtype=np.int8)
             )
 
+    rejected_reasons = {
+        reason
+        for row in manifest
+        for reason in row.get("failure_reason_counts", {})
+    }
+    unexpected_reasons = sorted(
+        rejected_reasons.difference(CANONICAL_SAFETY_REJECTION_REASONS)
+    )
+    if n_bins_dropped or n_failed_total:
+        summary = (f"dataset generation rejected {n_failed_total} points and "
+                   f"dropped {n_bins_dropped} bins")
+        canonical_safety_only = (
+            allow_safety_rejections
+            and not n_bins_dropped
+            and not unexpected_reasons
+        )
+        if not allow_rejected_points and not canonical_safety_only:
+            detail = (
+                f"; unapproved rejection reasons: {unexpected_reasons}"
+                if unexpected_reasons else ""
+            )
+            raise RuntimeError(
+                summary + detail
+                + "; rerun with allow_rejected_points=True only for "
+                  "a diagnostic artifact"
+            )
+        if verbose:
+            mode = (
+                "diagnostic artifact requested"
+                if allow_rejected_points else
+                "approved safety exclusions recorded"
+            )
+            print(f"  WARNING: {summary}; {mode}")
+
     if not inputs_list:
         raise RuntimeError(
             "No samples generated — every bin failed. Check the OSDI binary "
@@ -1062,6 +1283,27 @@ def _assemble(
     geometry = np.concatenate(geo_list, axis=0)
     outputs = np.concatenate(out_list, axis=0)
     sample_class = np.concatenate(cls_list, axis=0).astype(np.int8)
+    output_contract = str(metadata.get("output_contract", "reduced"))
+    dataset_variant = (
+        "v760_full_terminal_core_plus_tg"
+        if output_contract == FULL_TERMINAL_OUTPUT_CONTRACT
+        else "v7517_generated_core_plus_tg"
+    )
+    metadata.update({
+        "dataset_variant": dataset_variant,
+        "generated_sample_class_names": np.array([
+            SAMPLE_CLASS_NAMES[int(code)] for code in np.unique(sample_class)
+        ]),
+        "externally_appended_sample_class_names": np.array([], dtype=str),
+        "manifest_json": json.dumps(manifest, sort_keys=True),
+        "requested_rows": np.int64(n_kept_total + n_failed_total),
+        "kept_rows": np.int64(n_kept_total),
+        "rejected_rows": np.int64(n_failed_total),
+        "kept_bins": np.int64(n_bins_kept),
+        "dropped_bins": np.int64(n_bins_dropped),
+        "allow_rejected_points": np.bool_(allow_rejected_points),
+        "allow_safety_rejections": np.bool_(allow_safety_rejections),
+    })
 
     if verbose:
         print(f"\nDataset assembled: "
@@ -1153,7 +1395,10 @@ def generate_dataset(
     overshoot_per_axis: int = DEFAULT_OVERSHOOT_PER_AXIS,
     n_vbs_lhs: int = DEFAULT_N_VBS_LHS,
     enable_subvt_off: bool = DEFAULT_SUBVT_OFF,
-    max_l_ratio: Optional[float] = None,
+    max_l_ratio: Optional[float] = DEFAULT_MAX_L_RATIO,
+    allow_rejected_points: bool = False,
+    allow_safety_rejections: bool = False,
+    output_contract: str = "reduced",
 ) -> Dict[str, np.ndarray]:
     """Generate training data for one tech/polarity across all bins.
 
@@ -1192,6 +1437,7 @@ def generate_dataset(
         n_vbs_lhs=n_vbs_lhs,
         enable_subvt_off=enable_subvt_off,
         max_l_ratio=max_l_ratio,
+        output_contract=output_contract,
     )
 
     if verbose:
@@ -1218,7 +1464,8 @@ def generate_dataset(
         "vdd": tech.vdd,
         "temperatures_k": np.array(temperatures, dtype=np.float64),
         "voltage_box_factor": voltage_box_factor,
-        "output_columns": np.array(NN_OUTPUT_COLUMNS),
+        "output_columns": np.array(OUTPUT_CONTRACTS[output_contract]),
+        "output_contract": output_contract,
         "variants": np.array(variant_names or tech.variant_names),
         "sampler": sampler,
         "grid_per_axis": grid_per_axis,
@@ -1233,7 +1480,12 @@ def generate_dataset(
         "max_l_ratio": np.float64(
             max_l_ratio if max_l_ratio is not None else 0.0),
     }
-    return _assemble(results, metadata, verbose=verbose)
+    metadata.update(_source_hash_metadata(bins))
+    return _assemble(
+        results, metadata, verbose=verbose, bin_specs=bins,
+        allow_rejected_points=allow_rejected_points,
+        allow_safety_rejections=allow_safety_rejections,
+    )
 
 
 def generate_universal_dataset(
@@ -1255,7 +1507,10 @@ def generate_universal_dataset(
     n_vbs_lhs: int = DEFAULT_N_VBS_LHS,
     enable_subvt_off: bool = DEFAULT_SUBVT_OFF,
     exclude_techs: Optional[Sequence[str]] = None,
-    max_l_ratio: Optional[float] = None,
+    max_l_ratio: Optional[float] = DEFAULT_MAX_L_RATIO,
+    allow_rejected_points: bool = False,
+    allow_safety_rejections: bool = False,
+    output_contract: str = "reduced",
 ) -> Dict[str, np.ndarray]:
     """Concatenate per-tech datasets across all 5 technologies and variants.
 
@@ -1290,6 +1545,7 @@ def generate_universal_dataset(
             n_vbs_lhs=n_vbs_lhs,
             enable_subvt_off=enable_subvt_off,
             max_l_ratio=max_l_ratio,
+            output_contract=output_contract,
         ))
 
     if verbose:
@@ -1311,7 +1567,8 @@ def generate_universal_dataset(
         "vdd": 0.0,
         "temperatures_k": np.array(temperatures, dtype=np.float64),
         "voltage_box_factor": voltage_box_factor,
-        "output_columns": np.array(NN_OUTPUT_COLUMNS),
+        "output_columns": np.array(OUTPUT_CONTRACTS[output_contract]),
+        "output_contract": output_contract,
         "variants": np.array(included_techs),
         "sampler": sampler,
         "grid_per_axis": grid_per_axis,
@@ -1327,4 +1584,9 @@ def generate_universal_dataset(
         "max_l_ratio": np.float64(
             max_l_ratio if max_l_ratio is not None else 0.0),
     }
-    return _assemble(results, metadata, verbose=verbose)
+    metadata.update(_source_hash_metadata(all_bins))
+    return _assemble(
+        results, metadata, verbose=verbose, bin_specs=all_bins,
+        allow_rejected_points=allow_rejected_points,
+        allow_safety_rejections=allow_safety_rejections,
+    )

@@ -23,7 +23,7 @@ Design choices (paper + v3 sprint findings):
 - **GPT-2 scaled residual init (B4)**.
 
 Input:  (B, 7) continuous + (B,) integer tech codes
-Output: (B, 13) — outputs in BSIMAR (paper) AR order.
+Output: (B, target_dim) — outputs in the configured autoregressive order.
 """
 
 import math
@@ -56,7 +56,10 @@ class TransformerEncoderModel(nn.Module):
 
     Args:
         input_dim:  7 — continuous features [V(4), NFIN_log, L, T].
-        target_dim: Must be 13 (BSIMAR_COLUMN_ORDER).
+        target_dim: Number of predicted targets.
+        ar_target_dim: Number of targets generated autoregressively. Remaining
+            targets use the legacy parallel head. The default 8 preserves the
+            13-target reduced BSIM-AR checkpoint contract.
         d_model:    Transformer hidden dimension.
         nhead:      Number of attention heads.
         num_layers: Number of Transformer encoder layers.
@@ -73,7 +76,9 @@ class TransformerEncoderModel(nn.Module):
             universal vocab's 17 falls out of the same rule (18 - 1).
     """
 
-    # P4 — parallel C-block constants.
+    # P4 — legacy parallel C-block defaults. Kept as class constants because
+    # existing tests and checkpoints describe the reduced 8+5 contract with
+    # these names; instances may now choose a different AR split.
     CAP_START: int = 8
     N_CAPS: int = 5
 
@@ -95,7 +100,8 @@ class TransformerEncoderModel(nn.Module):
         num_tech_codes: int = 22,
         tech_embed_dropout: float = 0.0,
         unknown_code_id: int | None = None,
-    ):
+        ar_target_dim: int = CAP_START,
+    ) -> None:
         super().__init__()
 
         assert input_dim == 7, (
@@ -103,9 +109,12 @@ class TransformerEncoderModel(nn.Module):
             "[V(4), NFIN_log, L, T], got "
             f"input_dim={input_dim}"
         )
-        assert target_dim == 13, (
-            f"BSIMAR assumes BSIMAR_COLUMN_ORDER, got target_dim={target_dim}"
-        )
+        if target_dim <= 0:
+            raise ValueError(f"target_dim must be positive, got {target_dim}")
+        if not 1 <= ar_target_dim <= target_dim:
+            raise ValueError(
+                "ar_target_dim must be in [1, target_dim], got "
+                f"{ar_target_dim} for target_dim={target_dim}")
 
         self.raw_input_dim = input_dim
         self.target_dim = target_dim
@@ -116,8 +125,12 @@ class TransformerEncoderModel(nn.Module):
         # A2 — 3 context tokens.
         self.input_dim = self.N_GROUPED_INPUT_TOKENS
 
-        # P4 — AR sequence = first 8 targets (charges + currents/conds).
-        self.ar_target_dim = self.CAP_START
+        # P4 — legacy checkpoints use 8 AR targets followed by 5 parallel
+        # capacitances. Full-terminal BSIM-AR records either a six-target AR
+        # chain or a three-charge AR chain plus three parallel currents in its
+        # architecture sidecar, without adding new state-dict keys.
+        self.ar_target_dim = int(ar_target_dim)
+        self.parallel_target_dim = target_dim - self.ar_target_dim
 
         # Scalar projection for start token + AR target tokens.
         self.input_projection = nn.Linear(1, d_model)
@@ -233,19 +246,21 @@ class TransformerEncoderModel(nn.Module):
             outs.append(head(hidden[:, k]).squeeze(-1))
         return torch.stack(outs, dim=1)
 
-    def _parallel_cap_head(
+    def _parallel_tail_head(
         self, last_hidden: torch.Tensor
     ) -> torch.Tensor:
-        """P4: emit all N_CAPS cap outputs in parallel from a single hidden state."""
+        """Emit the configured non-AR tail from one hidden state."""
+        if self.parallel_target_dim == 0:
+            return last_hidden.new_empty((last_hidden.size(0), 0))
         device = last_hidden.device
         cap_token_ids = torch.arange(
-            self.input_dim + 1 + self.CAP_START,
-            self.input_dim + 1 + self.CAP_START + self.N_CAPS,
+            self.input_dim + 1 + self.ar_target_dim,
+            self.input_dim + 1 + self.target_dim,
             device=device,
         )
         cap_te = self.token_type_emb(cap_token_ids)
         cap_h = last_hidden.unsqueeze(1) + cap_te.unsqueeze(0)
-        return self._project_outputs(cap_h, start_idx=self.CAP_START)
+        return self._project_outputs(cap_h, start_idx=self.ar_target_dim)
 
     # ── V7.0.4: autoregressive prefix cache (plan lever I4) ──────────
     #
@@ -398,9 +413,9 @@ class TransformerEncoderModel(nn.Module):
             last_hidden = self._encoder_append(token, cache)[:, -1, :]
             next_pos += 1
 
-        pred_caps = self._parallel_cap_head(last_hidden)
+        pred_tail = self._parallel_tail_head(last_hidden)
         pred_qic = torch.stack(predictions, dim=1)
-        return torch.cat([pred_qic, pred_caps], dim=1)
+        return torch.cat([pred_qic, pred_tail], dim=1)
 
     def forward(
         self,
@@ -444,9 +459,9 @@ class TransformerEncoderModel(nn.Module):
 
             qic_hidden = encoder_out[:, -self.ar_target_dim:]
             pred_qic = self._project_outputs(qic_hidden, start_idx=0)
-            pred_caps = self._parallel_cap_head(encoder_out[:, -1, :])
+            pred_tail = self._parallel_tail_head(encoder_out[:, -1, :])
 
-            return torch.cat([pred_qic, pred_caps], dim=1)
+            return torch.cat([pred_qic, pred_tail], dim=1)
 
         # Inference: autoregressive generation
         context_emb = self._embed_context(x, tech_codes)
@@ -480,6 +495,6 @@ class TransformerEncoderModel(nn.Module):
                     [ar_scalars, next_pred.unsqueeze(1)], dim=1)
 
         assert last_encoder_out is not None
-        pred_caps = self._parallel_cap_head(last_encoder_out[:, -1, :])
+        pred_tail = self._parallel_tail_head(last_encoder_out[:, -1, :])
         pred_qic = torch.stack(predictions, dim=1)
-        return torch.cat([pred_qic, pred_caps], dim=1)
+        return torch.cat([pred_qic, pred_tail], dim=1)

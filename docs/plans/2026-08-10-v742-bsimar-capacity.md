@@ -29,7 +29,7 @@ conducting decades goes 2.2 % → 0.8 % → 0.3 % → 0.3 %; `cgg` 1.0 → 0.4 �
 0.2 %. There is no band where a larger tier is worse.
 
 **The solver / harness — refuted.** The native-L72 control
-(`tests/diag/diag_l72_complex_control.py`) runs the byte-identical ring deck through
+(`tests/diag/diag_l72_circuit_control.py`) runs the byte-identical ring deck through
 PyCircuitSim's own solver with the ground-truth OSDI model: TSMC5 and TSMC7
 match NGSPICE to **0.00 %**, TSMC12/16 to 0.77 %/0.64 %. The gap is entirely
 model-surface-owned.
@@ -66,7 +66,7 @@ never supervised — while the bins themselves are wide:
 | TSMC16 | [16, 20] | 16 | **on-grid — exact** |
 
 The complex-circuit benchmarks pin NMOS `L=16 nm` / PMOS `L=20 nm`
-(`tests/common/complex.py`). PMOS 20 nm is a knot for all five techs; NMOS
+(`tests/common/circuit_benchmarks.py`). PMOS 20 nm is a knot for all five techs; NMOS
 16 nm is a knot for exactly two. `BenchTech`'s docstring claims the benchmark
 geometry is "trained for NMOS L=16nm … so the model interpolates rather than
 extrapolates" — that has not been true of these datasets.

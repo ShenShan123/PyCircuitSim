@@ -21,8 +21,10 @@ This module is the frozen contract between those three: the dataclasses they
 pass each other and the deck/control tables copied from ``finalize.py``. Renaming
 anything here breaks all three at once, so treat the names as fixed.
 
-Ground truth is always NGSPICE on the identical BSIM-CMG (LEVEL=72) OSDI model.
-No NN model family (LEVEL=73/74/75) is involved anywhere in this package.
+Ground truth is always NGSPICE on the identical BSIM-CMG (LEVEL=72) OSDI
+model.  The PyCircuitSim side may use that same reference implementation or a
+selected NN compact model; the selected level is carried on every translated
+deck and result artifact.
 """
 
 from __future__ import annotations
@@ -147,6 +149,7 @@ class TranslatedDeck:
     stability: Optional[Tuple[str, str, str]]
     temp_c: Optional[float]
     warnings: List[str]
+    model_level: int = 72
 
 
 @dataclass

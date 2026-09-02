@@ -21,8 +21,9 @@ difference in what ``AVG from=-40 to=125`` was taken to mean.  ``ng`` vs
 NGSPICE on NGSPICE's own data; if that column disagrees, nothing else in the
 row can be trusted.
 
-Only LEVEL=72 (BSIM-CMG via PyCMG/OSDI) is involved.  No NN model family
-(LEVEL=73/74/75) is imported, instantiated or invoked.
+NGSPICE always runs LEVEL=72 BSIM-CMG via OSDI.  PyCircuitSim may run that
+same implementation or DirectNet LEVEL=73; the selected family and exact
+checkpoint hashes are recorded in every result row.
 
 DC QUALITY IS THE WHOLE GAME
 ----------------------------
@@ -107,6 +108,7 @@ import argparse
 import json
 import math
 import os
+import shutil
 import sys
 import time
 from dataclasses import asdict, dataclass, replace
@@ -126,6 +128,7 @@ from . import (
 )
 from . import measure as measure_mod
 from . import translate
+from .provenance import artifact_record, executable_record, file_sha256
 
 # ── Repository wiring ────────────────────────────────────────────────────
 
@@ -323,6 +326,154 @@ class SimOptions:
     stride: int = 1
     max_seconds: Optional[float] = None
     ng_timeout: float = 1800.0
+    evaluator_boundary: str = "native"
+    correction_trace: bool = False
+
+    def __post_init__(self) -> None:
+        """Reject misspelled diagnostic boundaries before a campaign starts."""
+        if self.evaluator_boundary not in (
+            "native", "reduced-osdi", "raw-directnet",
+        ):
+            raise ValueError(
+                f"Unsupported evaluator boundary {self.evaluator_boundary!r}; "
+                "expected 'native', 'reduced-osdi', or 'raw-directnet'"
+            )
+
+
+_PY_MODEL_FAMILIES: Dict[int, str] = {
+    72: "bsim_cmg", 73: "directnet", 75: "directnet_full",
+    76: "bsimar_full",
+}
+
+
+def _checkpoint_pin(device: str, model_level: int) -> Optional[str]:
+    """Return the effective explicit neural-model pin for one polarity."""
+    level_tag = {73: "DN", 75: "DNF", 76: "TFF"}.get(model_level)
+    if level_tag is None:
+        raise ValueError(
+            f"LEVEL={model_level} does not use a supported NN checkpoint"
+        )
+    names = (
+        f"PYCIRCUITSIM_NN_CHECKPOINT_{level_tag}_{device.upper()}",
+        f"PYCIRCUITSIM_NN_CHECKPOINT_{device.upper()}",
+        "PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE",
+    )
+    return next((os.environ[name].strip() for name in names
+                 if os.environ.get(name)), None)
+
+
+def _validate_evaluator_boundary(model_level: int, opts: SimOptions) -> None:
+    """Validate the diagnostic boundary against the selected compact model."""
+    if opts.evaluator_boundary == "reduced-osdi" and model_level != 72:
+        raise ValueError(
+            "The reduced-osdi evaluator boundary requires model LEVEL=72"
+        )
+    if opts.evaluator_boundary == "raw-directnet" and model_level != 73:
+        raise ValueError(
+            "The raw-directnet evaluator boundary requires model LEVEL=73"
+        )
+    if opts.correction_trace and model_level != 73:
+        raise ValueError(
+            "DirectNet correction tracing requires model LEVEL=73"
+        )
+
+
+def _model_provenance(
+    td: TranslatedDeck, opts: SimOptions = SimOptions(),
+) -> Dict[str, Any]:
+    """Describe the PyCircuitSim compact model used for one result row."""
+    _validate_evaluator_boundary(td.model_level, opts)
+    family = _PY_MODEL_FAMILIES.get(td.model_level)
+    if family is None:
+        raise SimFailure(f"Unsupported PyCircuitSim model level {td.model_level}")
+    out: Dict[str, Any] = {
+        "family": family, "level": td.model_level, "tech": td.tech,
+    }
+    if opts.evaluator_boundary != "native":
+        out["evaluator_boundary"] = opts.evaluator_boundary
+    if opts.correction_trace:
+        out["correction_trace"] = True
+    if td.model_level not in (73, 75, 76):
+        return out
+
+    from neural_network.config import CHECKPOINT_DIR           # noqa: PLC0415
+
+    checkpoints: Dict[str, Any] = {}
+    for device in ("nmos", "pmos"):
+        pin = _checkpoint_pin(device, td.model_level)
+        if pin is None:
+            checkpoints[device] = {"selection": "automatic"}
+            continue
+        if pin.endswith(f"_{device}"):
+            stem = pin
+        elif pin.endswith("_nmos") or pin.endswith("_pmos"):
+            raise SimFailure(
+                f"Neural-model pin {pin!r} names the opposite polarity for "
+                f"{device}")
+        else:
+            stem = f"{pin}_{device}"
+        checkpoint = CHECKPOINT_DIR / f"{stem}_best.pt"
+        norm = CHECKPOINT_DIR / f"{stem}_norm.npz"
+        if not checkpoint.is_file() or not norm.is_file():
+            raise SimFailure(
+                f"Neural-model provenance cannot resolve {stem}: expected "
+                f"{checkpoint} and {norm}")
+        completion = checkpoint.with_suffix(checkpoint.suffix + ".complete")
+        checkpoints[device] = {
+            "selection": "explicit",
+            "stem": stem,
+            "checkpoint": str(checkpoint.resolve()),
+            "checkpoint_sha256": file_sha256(checkpoint),
+            "norm": str(norm.resolve()),
+            "norm_sha256": file_sha256(norm),
+            "complete": completion.is_file(),
+        }
+        if completion.is_file():
+            checkpoints[device]["completion"] = str(completion.resolve())
+            checkpoints[device]["completion_sha256"] = file_sha256(completion)
+        if td.model_level == 76:
+            config = CHECKPOINT_DIR / f"{stem}_config.npz"
+            if not config.is_file():
+                raise SimFailure(
+                    f"BSIM-AR-Full provenance cannot resolve {config}")
+            checkpoints[device]["config"] = str(config.resolve())
+            checkpoints[device]["config_sha256"] = file_sha256(config)
+    out["checkpoints"] = checkpoints
+    return out
+
+
+def _reference_provenance(td: TranslatedDeck) -> Dict[str, Any]:
+    """Fingerprint every local artifact that defines NGSPICE ground truth."""
+    from meas import NGSPICE                                  # noqa: PLC0415
+    from pycmg_lib import OSDI_PATH                           # noqa: PLC0415
+
+    executable = Path(NGSPICE)
+    if not executable.is_file():
+        resolved = shutil.which(NGSPICE)
+        if resolved is None:
+            raise SimFailure(f"NGSPICE executable not found: {NGSPICE}")
+        executable = Path(resolved)
+    return {
+        "family": "bsim_cmg",
+        "level": 72,
+        "modelcard": artifact_record(td.modelcard_path),
+        "osdi": artifact_record(OSDI_PATH),
+        "ngspice": executable_record(executable),
+    }
+
+
+def _campaign_policy_from_environment() -> Optional[Dict[str, Any]]:
+    """Decode the exact campaign-owned fidelity policy for this row."""
+    raw = os.environ.get("PYCIRCUITSIM_BENCH_CAMPAIGN_POLICY")
+    if raw is None:
+        return None
+    try:
+        value = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise SimFailure(f"Invalid campaign policy JSON: {exc}") from exc
+    if not isinstance(value, dict):
+        raise SimFailure("Campaign policy must decode to a JSON object")
+    return value
 
 
 # ── NGSPICE grid reproduction ────────────────────────────────────────────
@@ -672,9 +823,32 @@ def _fail(meta: Dict[str, Any], message: str) -> "SimFailure":
 
 
 def _mosfets(circuit) -> list:
-    """Every LEVEL=72 device in the circuit (the only devices we ever touch)."""
-    from pycircuitsim.models.mosfet_cmg import MOSFET_CMG       # noqa: PLC0415
-    return [c for c in circuit.components if isinstance(c, MOSFET_CMG)]
+    """Every MOSFET device in the circuit, independent of compact-model level."""
+    from pycircuitsim.solver import _mosfet_types              # noqa: PLC0415
+    return [c for c in circuit.components if isinstance(c, _mosfet_types())]
+
+
+def _configure_evaluator_boundary(
+    circuit: Any, model_level: int, opts: SimOptions,
+) -> None:
+    """Configure parsed compact-model instances before any solver is built."""
+    _validate_evaluator_boundary(model_level, opts)
+    for device in _mosfets(circuit):
+        configure = getattr(device, "configure_evaluator", None)
+        if callable(configure):
+            configure(opts.evaluator_boundary, opts.correction_trace)
+        else:
+            device.evaluator_boundary = opts.evaluator_boundary
+
+
+def _correction_traces(circuit: Any) -> List[Dict[str, Any]]:
+    """Return JSON-safe traces from devices configured to collect them."""
+    traces: List[Dict[str, Any]] = []
+    for device in _mosfets(circuit):
+        get_trace = getattr(device, "evaluator_trace", None)
+        if callable(get_trace):
+            traces.append(get_trace())
+    return traces
 
 
 def _supply_rail(circuit) -> float:
@@ -847,6 +1021,7 @@ def simulate(td: TranslatedDeck, plan: AnalysisPlan, work: Path,
     wall-clock budget truncated the run.
     """
     circuit, netlist = build_circuit(td, work)
+    _configure_evaluator_boundary(circuit, td.model_level, opts)
     rail = _supply_rail(circuit)
     dv_limit = rail if opts.dv_limit is None else opts.dv_limit
     nodes = _node_table(circuit)
@@ -855,6 +1030,8 @@ def simulate(td: TranslatedDeck, plan: AnalysisPlan, work: Path,
         "netlist": str(netlist), "stride": opts.stride,
         "dv_limit": dv_limit, "max_iterations": opts.max_iterations,
         "use_source_stepping": opts.use_source_stepping,
+        "evaluator_boundary": opts.evaluator_boundary,
+        "correction_trace_enabled": opts.correction_trace,
         "devices": len(_mosfets(circuit)),
         "nodes": len(nodes), "failures": [], "failed": 0, "flag_failed": 0,
         "truncated_at": None,
@@ -865,18 +1042,25 @@ def simulate(td: TranslatedDeck, plan: AnalysisPlan, work: Path,
         _apply_temperature(circuit, td.temp_c)
         meta["temp_c"] = td.temp_c
 
-    if plan.kind == "ac":
-        result = _simulate_ac(td, plan, circuit, nodes, opts, dv_limit, meta)
-    elif plan.kind in ("dc_source", "dc_temp"):
-        result = _simulate_dc(td, plan, circuit, nodes, sources, opts,
-                              dv_limit, meta)
-    elif plan.kind == "tran":
-        result = _simulate_tran(td, plan, circuit, nodes, sources, opts,
-                                dv_limit, meta)
-    else:
-        raise SimFailure(f"Unsupported plan kind {plan.kind!r}")
+    try:
+        if plan.kind == "ac":
+            result = _simulate_ac(td, plan, circuit, nodes, opts, dv_limit, meta)
+        elif plan.kind in ("dc_source", "dc_temp"):
+            result = _simulate_dc(td, plan, circuit, nodes, sources, opts,
+                                  dv_limit, meta)
+        elif plan.kind == "tran":
+            result = _simulate_tran(td, plan, circuit, nodes, sources, opts,
+                                    dv_limit, meta)
+        else:
+            raise SimFailure(f"Unsupported plan kind {plan.kind!r}")
+    except Exception:  # noqa: BLE001 -- attach trace, then preserve the error
+        if opts.correction_trace:
+            meta["correction_trace"] = _correction_traces(circuit)
+        raise
 
     result.meta["seconds"] = time.perf_counter() - started
+    if opts.correction_trace:
+        result.meta["correction_trace"] = _correction_traces(circuit)
     return result
 
 
@@ -894,6 +1078,11 @@ def _simulate_ac(td: TranslatedDeck, plan: AnalysisPlan, circuit,
     meta["dc_converged"] = converged
     if voltages is None:
         raise _fail(meta, f"DC operating point failed: {error}")
+    if not converged:
+        raise _fail(
+            meta,
+            "DC operating point did not converge; refusing AC linearization",
+        )
     meta["dc_error"] = error
     meta["operating_point"] = {n.lower(): float(v) for n, v in voltages.items()
                                if n not in ("0", "GND")}
@@ -970,8 +1159,9 @@ def _simulate_dc(td: TranslatedDeck, plan: AnalysisPlan, circuit,
     meta["points"] = len(points)
     # `solved` is "produced a finite solution", `flag_ok` is "and the solver
     # said so". They differ, routinely and in both directions; see above.
-    meta["solved"] = len(points) - meta["failed"] - (
-        len(points) - (meta["truncated_at"] or len(points)))
+    attempted = (len(points) if meta["truncated_at"] is None
+                 else int(meta["truncated_at"]))
+    meta["solved"] = attempted - meta["failed"]
     meta["flag_ok"] = int(ok.sum())
     x_name = "temp-sweep" if is_temp else (plan.source or "sweep")
     return SweepResult(kind="dc", x_name=x_name, x=points, v=v, i=i, ok=ok,
@@ -1130,6 +1320,59 @@ def _line_tag(deck: str) -> str:
 
 # ── Operating-point comparison ───────────────────────────────────────────
 
+def _voltage_error_stats(
+    pairs: Sequence[Tuple[float, float]],
+) -> Dict[str, Any]:
+    """Error metrics plus sufficient statistics for cross-row aggregation.
+
+    MRE uses a symmetric denominator so ground-adjacent nodes cannot turn a
+    microvolt difference into an unbounded percentage. NRMSE is normalized by
+    the reference voltage range (or its absolute scale for a constant vector).
+    The sums make the per-technology R²/NRMSE exact when campaign rows are
+    combined, rather than averaging already-normalized row scores.
+    """
+    if not pairs:
+        return {
+            "n": 0, "mre": None, "r2": None, "nrmse": None,
+            "max_error": None, "sum_squared_error": 0.0,
+            "relative_error_sum": 0.0, "truth_sum": 0.0,
+            "truth_sum_squared": 0.0, "truth_min": None, "truth_max": None,
+        }
+    predicted = np.asarray([a for a, _ in pairs], dtype=np.float64)
+    truth = np.asarray([b for _, b in pairs], dtype=np.float64)
+    errors = predicted - truth
+    squared = errors * errors
+    ss_res = float(np.sum(squared))
+    truth_sum = float(np.sum(truth))
+    truth_sum_squared = float(np.sum(truth * truth))
+    truth_min = float(np.min(truth))
+    truth_max = float(np.max(truth))
+    scale = truth_max - truth_min
+    if scale <= 0.0:
+        scale = max(abs(truth_min), abs(truth_max), 1e-12)
+    denom = np.maximum(
+        np.maximum(np.abs(predicted), np.abs(truth)), 1e-12
+    )
+    relative_error_sum = float(np.sum(np.abs(errors) / denom))
+    n = len(pairs)
+    ss_total = truth_sum_squared - truth_sum * truth_sum / n
+    r2 = (1.0 - ss_res / ss_total) if ss_total > 0.0 else (
+        1.0 if ss_res == 0.0 else None
+    )
+    return {
+        "n": n,
+        "mre": relative_error_sum / n,
+        "r2": r2,
+        "nrmse": math.sqrt(ss_res / n) / scale,
+        "max_error": float(np.max(np.abs(errors))),
+        "sum_squared_error": ss_res,
+        "relative_error_sum": relative_error_sum,
+        "truth_sum": truth_sum,
+        "truth_sum_squared": truth_sum_squared,
+        "truth_min": truth_min,
+        "truth_max": truth_max,
+    }
+
 def op_delta(py: Dict[str, float], ng: Dict[str, float],
              top_n: int = 5) -> Dict[str, Any]:
     """Node-by-node operating-point comparison, worst first.
@@ -1143,6 +1386,9 @@ def op_delta(py: Dict[str, float], ng: Dict[str, float],
     deltas.sort(key=lambda item: -abs(item[1]))
     rms = (math.sqrt(sum(d * d for _, d in deltas) / len(deltas))
            if deltas else None)
+    stats = _voltage_error_stats(
+        [(float(py[node]), float(ng[node])) for node in common]
+    )
     return {
         "n_compared": len(deltas),
         "only_pycircuitsim": sorted(set(py) - set(ng)),
@@ -1150,6 +1396,7 @@ def op_delta(py: Dict[str, float], ng: Dict[str, float],
         "worst_node": deltas[0][0] if deltas else None,
         "worst_abs": abs(deltas[0][1]) if deltas else None,
         "rms": rms,
+        "error_stats": stats,
         "top": [{"node": n, "delta": d} for n, d in deltas[:top_n]],
     }
 
@@ -1179,6 +1426,7 @@ def sweep_delta(py: SweepResult, ng: SweepResult,
     worst: List[Tuple[str, float, float]] = []
     total = 0
     acc = 0.0
+    pairs: List[Tuple[float, float]] = []
     for node in common_nodes:
         py_arr = np.real(np.asarray(py.v[node])).astype(np.float64)
         ng_arr = np.real(np.asarray(ng.v[node])).astype(np.float64)
@@ -1190,6 +1438,7 @@ def sweep_delta(py: SweepResult, ng: SweepResult,
             if not (math.isfinite(a) and math.isfinite(b)):
                 continue
             delta = abs(a - b)
+            pairs.append((float(a), float(b)))
             node_points += 1
             acc += delta * delta
             if delta > node_worst:
@@ -1209,7 +1458,96 @@ def sweep_delta(py: SweepResult, ng: SweepResult,
         "worst_node": worst[0][0] if worst else None,
         "worst_abs": worst[0][1] if worst else None,
         "rms": math.sqrt(acc / total) if total else None,
+        "error_stats": _voltage_error_stats(pairs),
         "top": [{"node": n, "delta": d, "at": at} for n, d, at in worst[:top_n]],
+    }
+
+
+def _merge_error_stats(reports: Sequence[Dict[str, Any]]) -> Dict[str, Any]:
+    """Merge sufficient statistics without averaging normalized metrics."""
+    stats = [report.get("error_stats") for report in reports]
+    usable = [value for value in stats
+              if isinstance(value, dict) and value.get("n")]
+    if not usable:
+        return _voltage_error_stats([])
+    n = sum(int(value["n"]) for value in usable)
+    ss_res = sum(float(value["sum_squared_error"]) for value in usable)
+    relative_error_sum = sum(
+        float(value["relative_error_sum"]) for value in usable)
+    truth_sum = sum(float(value["truth_sum"]) for value in usable)
+    truth_sum_squared = sum(
+        float(value["truth_sum_squared"]) for value in usable)
+    truth_min = min(float(value["truth_min"]) for value in usable)
+    truth_max = max(float(value["truth_max"]) for value in usable)
+    max_error = max(float(value["max_error"]) for value in usable)
+    scale = truth_max - truth_min
+    if scale <= 0.0:
+        scale = max(abs(truth_min), abs(truth_max), 1e-12)
+    ss_total = truth_sum_squared - truth_sum * truth_sum / n
+    return {
+        "n": n,
+        "mre": relative_error_sum / n,
+        "r2": (1.0 - ss_res / ss_total) if ss_total > 0.0 else (
+            1.0 if ss_res == 0.0 else None
+        ),
+        "nrmse": math.sqrt(ss_res / n) / scale,
+        "max_error": max_error,
+        "sum_squared_error": ss_res,
+        "relative_error_sum": relative_error_sum,
+        "truth_sum": truth_sum,
+        "truth_sum_squared": truth_sum_squared,
+        "truth_min": truth_min,
+        "truth_max": truth_max,
+    }
+
+
+def _merge_voltage_deltas(
+    reports: Sequence[Optional[Dict[str, Any]]],
+    *,
+    top_n: int = 5,
+) -> Optional[Dict[str, Any]]:
+    """Combine comparable voltage reports from every scored sweep segment."""
+    usable = [report for report in reports
+              if isinstance(report, dict) and "error" not in report]
+    if not usable:
+        return None
+    stats = _merge_error_stats(usable)
+    top_by_node: Dict[str, Dict[str, Any]] = {}
+    for segment, report in enumerate(usable):
+        for item in report.get("top", []):
+            node = item.get("node")
+            delta = item.get("delta")
+            if not isinstance(node, str) or not isinstance(delta, (int, float)):
+                continue
+            current = top_by_node.get(node)
+            if current is None or abs(float(delta)) > abs(float(current["delta"])):
+                current = dict(item)
+                current["segment"] = segment
+                top_by_node[node] = current
+    top = sorted(
+        top_by_node.values(), key=lambda item: -abs(float(item["delta"])))
+    n = int(stats["n"])
+    ss_res = float(stats["sum_squared_error"])
+    return {
+        "n_compared": n,
+        "matched_points": sum(int(report.get("matched_points", 0))
+                              for report in usable),
+        "n_flag_ok": sum(int(report.get("n_flag_ok", 0))
+                         for report in usable),
+        "only_pycircuitsim": sorted({
+            node for report in usable
+            for node in report.get("only_pycircuitsim", [])
+        }),
+        "only_ngspice": sorted({
+            node for report in usable
+            for node in report.get("only_ngspice", [])
+        }),
+        "worst_node": top[0]["node"] if top else None,
+        "worst_abs": abs(float(top[0]["delta"])) if top else None,
+        "rms": math.sqrt(ss_res / n) if n else None,
+        "error_stats": stats,
+        "top": top[:top_n],
+        "segments": len(usable),
     }
 
 
@@ -1240,11 +1578,16 @@ def compare_translated(td: TranslatedDeck, work: Path,
     Returns:
         A JSON-serialisable dict; see the module docstring for the columns.
     """
+    _validate_evaluator_boundary(td.model_level, opts)
     work.mkdir(parents=True, exist_ok=True)
     out: Dict[str, Any] = {
         "schema": SCHEMA_VERSION,
+        "code_commit": os.environ.get("PYCIRCUITSIM_BENCH_CODE_COMMIT"),
         "tech": td.tech, "category": td.category, "design": td.design,
         "deck": td.deck, "devices": td.devices,
+        "py_model": _model_provenance(td, opts),
+        "ground_truth": _reference_provenance(td),
+        "campaign_policy": _campaign_policy_from_environment(),
         "control": [plan.control for plan in td.plans],
         "plans": [asdict(plan) for plan in td.plans],
         "translate_warnings": list(td.warnings),
@@ -1295,7 +1638,12 @@ def compare_translated(td: TranslatedDeck, work: Path,
     py_partial_op: Optional[Dict[str, float]] = None
     try:
         for plan in td.plans:
-            sweep = simulate(td, plan, work, opts)
+            plan_started = time.perf_counter()
+            try:
+                sweep = simulate(td, plan, work, opts)
+            except Exception:                       # noqa: BLE001 -- re-raised
+                py_seconds += time.perf_counter() - plan_started
+                raise
             py_sweeps.append(sweep)
             py_seconds += float(sweep.meta.get("seconds", 0.0))
             py_metrics = measure_result(td, plan, sweep, seed=py_metrics)
@@ -1309,7 +1657,8 @@ def compare_translated(td: TranslatedDeck, work: Path,
             out["pycircuitsim"]["partial"] = {
                 k: partial.get(k) for k in
                 ("dc_seconds", "dc_converged", "dc_error", "failures",
-                 "integration_method", "dt", "devices", "nodes")}
+                 "integration_method", "dt", "refine_output",
+                 "refine_max_dt", "devices", "nodes", "correction_trace")}
     out["pycircuitsim"]["metrics"] = py_metrics
     out["pycircuitsim"]["seconds"] = py_seconds
 
@@ -1555,7 +1904,11 @@ def compare_with_recovery(td: TranslatedDeck, work: Path,
                        "op_delta": row["op_delta"],
                        "verdict": row["verdict"]},
     }
-    out["op_delta"] = seg_rows["cold"]["op_delta"]
+    out["op_delta"] = _merge_voltage_deltas([
+        seg_rows[label]["op_delta"] for label in seg_rows
+    ])
+    if out["op_delta"] is not None:
+        out["op_delta"]["source"] = "recovery-segments"
     out["compare"]["py_vs_ng"] = measure_mod.compare_metrics(
         out["pycircuitsim"]["metrics"], out["ngspice"]["metrics"], rtol=rtol,
         atol_by_key=METRIC_ATOL)
@@ -1573,17 +1926,36 @@ def _full_control(td: TranslatedDeck) -> str:
 def _sweep_summary(plan: AnalysisPlan, sweep: SweepResult) -> Dict[str, Any]:
     """The per-sweep honesty record that lands in the JSON."""
     meta = sweep.meta
+    axis = np.asarray(sweep.x)
+    expected = len(axis)
+    result_arrays = [
+        np.asarray(values)
+        for table in (sweep.v, sweep.i)
+        for values in table.values()
+    ]
+    finite = bool(
+        expected > 0
+        and sweep.v
+        and np.all(np.isfinite(axis))
+        and all(values.size == expected and np.all(np.isfinite(values))
+                for values in result_arrays)
+    )
     return {
         "kind": plan.kind, "label": plan.label,
+        "finite": finite,
         "points": meta.get("points"), "solved": meta.get("solved"),
         "failed": meta.get("failed"), "flag_ok": meta.get("flag_ok"),
         "flag_failed": meta.get("flag_failed"),
         "seconds": meta.get("seconds"), "dc_seconds": meta.get("dc_seconds"),
         "dc_converged": meta.get("dc_converged"),
         "stride": meta.get("stride"), "dv_limit": meta.get("dv_limit"),
+        "evaluator_boundary": meta.get("evaluator_boundary"),
+        "correction_trace": meta.get("correction_trace"),
         "truncated_at": meta.get("truncated_at"),
         "integration_method": meta.get("integration_method"),
         "dt": meta.get("dt"),
+        "refine_output": meta.get("refine_output"),
+        "refine_max_dt": meta.get("refine_max_dt"),
         "branch_current_gaps": meta.get("branch_current_gaps"),
         "failures": meta.get("failures", []),
     }
@@ -1617,7 +1989,12 @@ def _op_delta_for(td: TranslatedDeck, py_sweeps: Sequence[SweepResult],
     """
     py_op: Optional[Dict[str, float]] = None
     if py_sweeps and ng_sweeps and py_sweeps[0].kind == "dc":
-        report = sweep_delta(py_sweeps[0], ng_sweeps[0])
+        report = _merge_voltage_deltas([
+            sweep_delta(py_sweep, ng_sweep)
+            for py_sweep, ng_sweep in zip(py_sweeps, ng_sweeps)
+        ])
+        if report is None:
+            return None
         report["source"] = "per-point-sweep"
         return report
     if py_sweeps:
@@ -1740,7 +2117,8 @@ def compare_deck(design_dir: Path, deck: str, *, tech: str, category: str,
                  work: Path, opts: SimOptions = SimOptions(),
                  control: Optional[str] = None,
                  rtol: float = 0.02,
-                 recovery: bool = True) -> Dict[str, Any]:
+                 recovery: bool = True,
+                 model_level: int = 72) -> Dict[str, Any]:
     """Translate one deck and score it under both simulators.
 
     Args:
@@ -1754,7 +2132,8 @@ def compare_deck(design_dir: Path, deck: str, *, tech: str, category: str,
             degraded into a plausible wrong answer
     """
     td = translate.translate_deck(design_dir, deck, tech=tech,
-                                  category=category, control=control)
+                                  category=category, control=control,
+                                  model_level=model_level)
     if recovery:
         row = compare_with_recovery(td, work, opts, rtol=rtol)
     else:
@@ -1884,11 +2263,54 @@ def _fmt(value: Any, spec: str = ".6g") -> str:
         return str(value)
 
 
+def deck_fully_agrees(verdict: Dict[str, Any]) -> bool:
+    """Return whether one scored deck satisfies the campaign pass contract."""
+    return bool(
+        verdict.get("ran") is True
+        and verdict.get("ng_ran") is True
+        and verdict.get("engine_ok") is True
+        and verdict["measured"] > 0
+        and verdict["agree"] == verdict["measured"]
+        and verdict["missing_py"] == 0
+    )
+
+
+def deck_sweeps_complete(row: Dict[str, Any]) -> bool:
+    """Require every PyCircuitSim sweep point to have a converged result."""
+    sweeps = row.get("pycircuitsim", {}).get("sweeps", [])
+    if not sweeps:
+        return False
+    for sweep in sweeps:
+        kind = sweep.get("kind")
+        points = sweep.get("points")
+        solved = sweep.get("solved")
+        refined_tran = (
+            kind == "tran"
+            and sweep.get("refine_output") is True
+            and isinstance(solved, int)
+            and isinstance(points, int)
+            and solved >= points
+        )
+        if (kind not in ("dc_source", "dc_temp", "ac", "tran")
+                or sweep.get("finite") is not True
+                or not isinstance(points, int) or points <= 0
+                or (solved != points and not refined_tran)
+                or sweep.get("failed") != 0
+                or sweep.get("truncated_at") is not None):
+            return False
+        flag_ok = sweep.get("flag_ok")
+        if kind in ("dc_source", "dc_temp") and flag_ok != points:
+            return False
+        if kind in ("ac", "tran") and sweep.get("dc_converged") is not True:
+            return False
+    return True
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     """CLI: one deck, one design, or a whole category."""
     parser = argparse.ArgumentParser(
-        description="Score AnalogGym decks: PyCircuitSim vs NGSPICE "
-                    "(BSIM-CMG LEVEL=72 both sides).")
+        description="Score AnalogGym decks: a selected PyCircuitSim compact "
+                    "model vs NGSPICE BSIM-CMG LEVEL=72.")
     parser.add_argument("--root", type=Path, default=BENCH_ROOT,
                         help="tree holding designs_tsmc* (default: %(default)s)")
     parser.add_argument("--tech", default="tsmc5",
@@ -1930,11 +2352,46 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                         help="NGSPICE timeout in seconds (default: %(default)s)")
     parser.add_argument("--rtol", type=float, default=0.02,
                         help="metric agreement tolerance (default: %(default)s)")
+    parser.add_argument(
+        "--model-level", type=int, choices=sorted(_PY_MODEL_FAMILIES),
+        default=72,
+        help="PyCircuitSim compact-model level: 72=BSIM-CMG, 73=DirectNet, "
+             "75=DirectNet-Full (default: %(default)s)",
+    )
+    parser.add_argument(
+        "--evaluator-boundary",
+        choices=("native", "reduced-osdi", "raw-directnet"),
+        default="native",
+        help="device evaluator boundary: native, exact OSDI through the "
+             "classic reduced drain/source path (LEVEL=72), or uncorrected "
+             "DirectNet (LEVEL=73; default: %(default)s)",
+    )
+    parser.add_argument(
+        "--trace-corrections", action="store_true",
+        help="record DirectNet support distance and first correction "
+             "activations in result metadata (LEVEL=73 only)",
+    )
     parser.add_argument("--no-recovery", action="store_true",
                         help="do not fall back to the outward-from-25 C "
                              "segments when a monolithic temperature sweep "
                              "loses its Newton branch (amplifier tb_dc only)")
+    parser.add_argument(
+        "--require-full-agreement",
+        action="store_true",
+        help="exit nonzero unless every selected deck satisfies the full "
+             "campaign agreement predicate",
+    )
     args = parser.parse_args(argv)
+    try:
+        _validate_evaluator_boundary(
+            args.model_level,
+            SimOptions(
+                evaluator_boundary=args.evaluator_boundary,
+                correction_trace=args.trace_corrections,
+            ),
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
     _pin_design_tree(args.root, args.tech)
 
     out_dir = args.out or (args.root / "pycircuitsim_bench_results")
@@ -1944,7 +2401,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         use_source_stepping=args.source_stepping,
         reltol=args.solver_reltol, vntol=args.solver_vntol,
         stride=args.stride, max_seconds=args.max_seconds,
-        ng_timeout=args.ng_timeout)
+        ng_timeout=args.ng_timeout,
+        evaluator_boundary=args.evaluator_boundary,
+        correction_trace=args.trace_corrections)
 
     designs = ([args.root / f"designs_{args.tech.lower()}" / args.category
                 / args.design] if args.design
@@ -1960,7 +2419,8 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 row = compare_deck(design_dir, deck, tech=args.tech.lower(),
                                    category=args.category, work=work,
                                    opts=opts, rtol=args.rtol,
-                                   recovery=not args.no_recovery)
+                                   recovery=not args.no_recovery,
+                                   model_level=args.model_level)
             except Exception as exc:                # noqa: BLE001 -- reported
                 failures += 1
                 print(f"\n=== {args.tech}/{args.category}/{design_dir.name}/"
@@ -1969,7 +2429,12 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
                 continue
             _print_row(row)
             write_result(row, out_dir)
-            if not row["verdict"]["ran"] or not row["verdict"]["ng_ran"]:
+            if (args.require_full_agreement
+                    and not (deck_fully_agrees(row["verdict"])
+                             and deck_sweeps_complete(row))):
+                failures += 1
+            elif (not row["verdict"]["ran"]
+                  or not row["verdict"]["ng_ran"]):
                 failures += 1
     return 1 if failures else 0
 
