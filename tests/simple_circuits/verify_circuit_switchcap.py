@@ -43,22 +43,19 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "tests"))
 
-from tests.common.base import SIMPLE_DECKS, render_reference_deck  # noqa: E402
 from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech, active_model_label,
     active_model_name,
     get_baked_modelcard, run_ngspice_wrdata,
-    render_directnet_text, run_directnet_transient, full_metrics, fmt_metrics,
+    run_directnet_transient, full_metrics, fmt_metrics,
+    SwitchCapParams, ngspice_switchcap, directnet_switchcap,
 )
+from tests.common.gate_result import GateResult  # noqa: E402
 
 CHARGE_TOL = 0.05          # +/-5% of VDD on charge-transfer level
 DROOP_TOL = 0.10           # +/-10% of NGSPICE hold droop (relative part)
 DROOP_FLOOR_FRAC = 1e-3    # absolute floor on the droop gate: 0.1% of VDD
 TRAN_TSTEP = 5e-12
-TRAN_TSTOP = 12e-9
-CLK_PER = 4e-9
-TEMPLATE = SIMPLE_DECKS / "directnet_switchcap_tran.sp"
-NG_TEMPLATE = SIMPLE_DECKS / "bsimcmg_switchcap_tran.cir"
 
 # sample-window end (just before the 1st sample phase closes) and a hold-window
 # pair to measure droop. The clock: td=0.5n, sample (phi high) pw=1.9n.
@@ -84,24 +81,12 @@ def ngspice_sc_body(bt: BenchTech, baked: Path) -> Dict[str, str]:
 
     Pure (returns text) so verify_circuit_sweep_canaries can diff it against the
     parametric ``tests.common.circuit_benchmarks.ngspice_switchcap`` builder (B8)."""
-    body = render_reference_deck(NG_TEMPLATE, {
-        "BAKED_LIB": str(baked),
-        "VDD": f"{bt.vdd}",
-        "VIN": f"{_vin(bt)}",
-        "NMOS": bt.nmos_model,
-        "PMOS": bt.pmos_model,
-    }, body_only=True)
-    return {"body": body, "signals": "v(vsamp)",
-            "analysis": f"tran {TRAN_TSTEP:.1e} {TRAN_TSTOP:.1e} uic"}
+    return ngspice_switchcap(bt, SwitchCapParams(), baked)
 
 
 def directnet_sc_deck(bt: BenchTech) -> str:
-    """Single-point DirectNet switched-cap ship-gate deck text (render + Vin
-    rewrite). Pure text so the canary diffs the REAL deck against the sweep
-    builder rather than a hand-copied replica (B8). The template ships Vin at
-    0.48 (0.6*0.80); rewrite per tech."""
-    text = render_directnet_text(TEMPLATE.read_text(), bt)
-    return text.replace("Vin vin 0 0.48", f"Vin vin 0 {_vin(bt)}")
+    """Render the single-point NN switched-capacitor qualification deck."""
+    return directnet_switchcap(bt, SwitchCapParams())
 
 
 def run_ngspice_sc(bt: BenchTech, work_dir: Path) -> Dict[str, np.ndarray]:
@@ -112,7 +97,10 @@ def run_ngspice_sc(bt: BenchTech, work_dir: Path) -> Dict[str, np.ndarray]:
     return {"time": data[:, 0], "vsamp": data[:, 1]}
 
 
-def run_directnet_sc(bt: BenchTech, work_dir: Path):
+def run_directnet_sc(
+    bt: BenchTech,
+    work_dir: Path,
+) -> Tuple[Dict[str, np.ndarray], bool, str]:
     netlist = work_dir / f"switchcap_{bt.name}.sp"
     netlist.parent.mkdir(parents=True, exist_ok=True)
     netlist.write_text(directnet_sc_deck(bt))
@@ -232,6 +220,12 @@ def main() -> int:
     for r in results:
         if "error" in r:
             print(f"{r['tech']:8s} | ERROR — {r['error'][:54]}")
+            print(GateResult(
+                case_id="switchcap", tech=r["tech"], corner="nominal",
+                analysis="sample_hold", role="qualification", status="error",
+                error=r["error"], reference_converged="ng_charge" in r,
+                candidate_converged=False,
+            ).marker())
             continue
         status = "PASS" if r.get("passed") else "FAIL"
         n_pass += int(r.get("passed", False))
@@ -240,6 +234,25 @@ def main() -> int:
               f"{r['charge_err_pct']:8.2f} | "
               f"{r['droop_pct_of_allowance']:10.1f} | "
               f"{r['nrmse_pct']:7.2f} | {status:>8s}")
+        print(GateResult(
+            case_id="switchcap", tech=r["tech"], corner="nominal",
+            analysis="sample_hold", role="qualification",
+            status="pass" if r.get("passed") else "fail",
+            metrics={
+                "metric": r["charge_err_pct"],
+                "charge_err_pct": r["charge_err_pct"],
+                "droop_pct_of_allowance": r["droop_pct_of_allowance"],
+                "mre_pct": r["mre_pct"], "r2": r["r2"],
+                "nrmse_pct": r["nrmse_pct"], "max_err": r["max_err"],
+            },
+            domain={
+                "reference_charge_v": r["ng_charge"],
+                "candidate_charge_v": r["dn_charge"],
+                "reference_droop_v": r["ng_droop"],
+                "candidate_droop_v": r["dn_droop"],
+            },
+            candidate_converged=not r["partial"], partial=r["partial"],
+        ).marker())
     print(f"\n  {n_pass}/{len(results)} passed both charge + droop gates")
     # B10: surface the verdict in the exit code (consumers also parse stdout).
     # empty results (all techs skipped) must not exit green

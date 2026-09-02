@@ -395,7 +395,8 @@ conda run -n pycircuitsim python tests/simple_circuits/verify_subckt.py
 conda run -n pycircuitsim python tests/simple_circuits/verify_ac.py
 ```
 
-Finish the default LEVEL=73 score matrix with the four multi-device cells:
+Finish the default LEVEL=73 `simple-v1` score matrix with the four
+multi-device cells:
 
 ```bash
 conda run -n pycircuitsim python \
@@ -407,6 +408,34 @@ conda run -n pycircuitsim python \
 conda run -n pycircuitsim python \
   tests/simple_circuits/verify_circuit_switchcap.py
 ```
+
+The historical campaign keys for these four cases start with
+`verify_complex_`; those names are compatibility aliases only. The circuits
+are simple and their authoritative candidate/reference deck pairs live in
+`examples/simple_circuits/`.
+
+Validate the versioned catalog and every rendered topology/corner without
+running a model, then run selected held-out `simple-v2` diagnostics:
+
+```bash
+conda run -n pycircuitsim python \
+  tests/simple_circuits/verify_simple_circuit_catalog.py
+conda run -n pycircuitsim python \
+  tests/simple_circuits/verify_circuit_sweep_canaries.py
+conda run -n pycircuitsim python \
+  tests/simple_circuits/verify_circuit_topologies.py --list
+conda run -n pycircuitsim python \
+  tests/simple_circuits/verify_circuit_topologies.py \
+  --case current_mirror,inverter_chain --tech TSMC5 --corner nominal
+```
+
+`simple-v2` covers complementary source followers/common-gate stages, current
+mirrors, an open FO4 chain, transmission-gate DC/hold behavior, ideal- and
+active-tail differential pairs, cascode stacks, NAND2/NOR2, and full 6T SRAM
+modes across DC, transient, and AC. It is diagnostic and held out from
+training; it does not change the `simple-v1` `/20` score. See
+[`docs/accuracy/simple-circuits-v2-topologies.md`](docs/accuracy/simple-circuits-v2-topologies.md)
+for the case, corner, metric, support-diagnostic, and promotion contracts.
 
 ### Run the complete clean checkpoint matrix
 
@@ -441,6 +470,14 @@ done
 conda run -n pycircuitsim python scripts/v730_docs_build.py
 conda run -n pycircuitsim python scripts/v730_docs_build.py --check
 ```
+
+The same generator also writes a nominal-corner `jobs_simple_v2.txt` screening
+pool. Run it into an isolated `V710_OUT`; use the unified CLI's `--corner all`
+mode for full corner characterization, and audit nominal campaign coverage with
+`scripts/v730_coverage.py --simple-version simple-v2`. Simple-circuit artifacts
+use `PYCIRCUITSIM_SIMPLE_RESULTS`; the old
+`PYCIRCUITSIM_COMPLEX_RESULTS` name is accepted only for persisted campaign
+compatibility.
 
 These gates own NN circuit accuracy. Their definitions and thresholds are in
 [`docs/accuracy/methodology.md`](docs/accuracy/methodology.md); generated

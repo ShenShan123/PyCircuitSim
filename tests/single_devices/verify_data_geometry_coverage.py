@@ -41,6 +41,11 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from tests.common.circuit_benchmarks import BENCH, BENCH_TECHS  # noqa: E402
+from tests.common.simple_circuit_catalog import SIMPLE_V2, cases  # noqa: E402
+from tests.common.simple_circuit_harness import (  # noqa: E402
+    CORNERS,
+    apply_corner,
+)
 from neural_network.config import (  # noqa: E402
     DATA_DIR,
     TECH_CONFIGS,
@@ -170,23 +175,44 @@ def _evaluation_geometries() -> List[EvalGeometry]:
     return points
 
 
+def _simple_circuit_geometries() -> List[EvalGeometry]:
+    """Unique device coordinates exercised by the simple-v2 corner matrix."""
+    device_kinds = sorted({
+        dev
+        for case in cases(score_version=SIMPLE_V2)
+        for dev in case.device_kinds
+    })
+    points: List[EvalGeometry] = []
+    seen: set[Tuple[str, str, str, float, float, float]] = set()
+    for name in BENCH_TECHS:
+        for corner_name, corner in CORNERS.items():
+            bt = apply_corner(BENCH[name], corner)
+            for dev in device_kinds:
+                vt = (bt.effective_nmos_vt if dev == "nmos"
+                      else bt.effective_pmos_vt)
+                length = bt.l_nmos if dev == "nmos" else bt.l_pmos
+                nfin = bt.nfin if dev == "nmos" else bt.effective_nfin_p
+                temperature_k = bt.temperature_c + 273.15
+                key = (bt.nn_tech, dev, vt, length, float(nfin), temperature_k)
+                if key in seen:
+                    continue
+                seen.add(key)
+                points.append(EvalGeometry(
+                    f"{name}:simple-v2:{corner_name}:{dev}",
+                    bt.nn_tech,
+                    dev,
+                    vt,
+                    length,
+                    float(nfin),
+                    temperature_k,
+                ))
+    return points
+
+
 def check(max_l_ratio: float, max_nfin_ratio: float) -> List[Tuple[str, bool,
                                                                   str]]:
     results: List[Tuple[str, bool, str]] = []
-    points = _evaluation_geometries()
-    for name in BENCH_TECHS:
-        bt = BENCH[name]
-        points.extend((
-            EvalGeometry(
-                f"{name}:complex:nmos", bt.nn_tech, "nmos",
-                bt.effective_nmos_vt, bt.l_nmos, float(bt.nfin), 300.15,
-            ),
-            EvalGeometry(
-                f"{name}:complex:pmos", bt.nn_tech, "pmos",
-                bt.effective_pmos_vt, bt.l_pmos,
-                float(bt.effective_nfin_p), 300.15,
-            ),
-        ))
+    points = [*_evaluation_geometries(), *_simple_circuit_geometries()]
 
     for point in points:
         cfg = TECH_CONFIGS[point.tech]

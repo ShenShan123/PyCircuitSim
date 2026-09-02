@@ -2,7 +2,7 @@
 # V7.1.0 re-gate — re-measure every accuracy number that was produced by the
 # pre-A3 (gds sign bug) code and never re-measured in the V6.13.0 campaign.
 #
-# V6.13.0 re-ran the complex 16-cell matrix for all 28 on-disk checkpoint
+# V6.13.0 re-ran the simple-circuit 16-cell matrix for all 28 on-disk checkpoint
 # groups, but the *device* suites (nn_ac, opamp_ac, multi_tech_dc/tran) only
 # for the resolver-DEFAULT stem of each family (DirectNet production `large`,
 # BSIM-AR `large`). Every per-size / per-recipe device+AC number
@@ -20,7 +20,7 @@
 #
 # Verdict = the suite's EXIT CODE (AGENTS.md gate methodology), recorded in the
 # log's trailing marker. CPU-pinned, repo ngspice, per-job isolated results dir
-# (both PYCIRCUITSIM_NN_RESULTS and PYCIRCUITSIM_COMPLEX_RESULTS) so jobs fan
+# (both PYCIRCUITSIM_NN_RESULTS and PYCIRCUITSIM_SIMPLE_RESULTS) so jobs fan
 # out safely — the harness scratch dirs are keyed by (circuit, tech) only.
 #
 # Usage:
@@ -201,12 +201,20 @@ if [ "${1:-}" = "_one" ]; then
   preflight_python
 
   iso="$SCRATCH/${tag}_${variant}_${tlc}_${suite}_omp${omp}"
-  export PYCIRCUITSIM_COMPLEX_RESULTS="$iso/cplx" PYCIRCUITSIM_NN_RESULTS="$iso/nn"
-  mkdir -p "$PYCIRCUITSIM_COMPLEX_RESULTS" "$PYCIRCUITSIM_NN_RESULTS"
+  export PYCIRCUITSIM_SIMPLE_RESULTS="$iso/simple" PYCIRCUITSIM_NN_RESULTS="$iso/nn"
+  # Compatibility for historical workers that still read the old variable.
+  export PYCIRCUITSIM_COMPLEX_RESULTS="$PYCIRCUITSIM_SIMPLE_RESULTS"
+  mkdir -p "$PYCIRCUITSIM_SIMPLE_RESULTS" "$PYCIRCUITSIM_NN_RESULTS"
 
   # Campaign suite IDs are persisted in historical evidence. Keep those keys
   # stable while resolving renamed simple-circuit modules on disk.
-  script_suite="${suite/verify_complex_/verify_circuit_}"
+  case_args=()
+  if [[ "$suite" == verify_circuit_topologies__* ]]; then
+    script_suite="verify_circuit_topologies"
+    case_args=(--case "${suite#verify_circuit_topologies__}")
+  else
+    script_suite="${suite/verify_complex_/verify_circuit_}"
+  fi
   test_file="$ROOT/tests/simple_circuits/${script_suite}.py"
   if [ "$suite" = "verify_nn_multi_tech_dc" ]; then
     test_file="$ROOT/tests/single_devices/${suite}.py"
@@ -218,7 +226,7 @@ if [ "${1:-}" = "_one" ]; then
   echo "[v710] RUN $tag/$variant/$tlc/$suite/omp$omp"
   echo "===V710_PROVENANCE sha256=$provenance===" > "$log"
   OMP_NUM_THREADS=$omp MKL_NUM_THREADS=$omp PYCIRCUITSIM_TORCH_THREADS=$omp \
-    "$PY" -u "$test_file" --tech "$tuc" >> "$log" 2>&1
+    "$PY" -u "$test_file" --tech "$tuc" "${case_args[@]}" >> "$log" 2>&1
   rc=$?
   if ! verify_checkpoint_provenance "$tag" "$variant" "$tlc"; then
     echo "===V710_DONE rc=infra===" >> "$log"

@@ -1,0 +1,16 @@
+* Complementary two-device current mirrors — LEVEL=72 reference
+.include "<BAKED_LIB>"
+Vdd vdd 0 <VDD>
+Vbn bn 0 <BODY_N>
+Vbp bp 0 <BODY_P>
+Irefn vdd nr <IBIAS>
+Nn_ref nr nr 0 bn <NMOS>
+Voutn on 0 0
+Nn_out on nr 0 bn <NMOS>
+Irefp pr 0 <IBIAS>
+Np_ref pr pr vdd bp <PMOS>
+Voutp op 0 <VDD>
+Np_out op pr vdd bp <PMOS>
+.temp <TEMP>
+<ANALYSIS>
+.end

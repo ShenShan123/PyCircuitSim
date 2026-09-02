@@ -8,7 +8,8 @@ rather than transcription.
 
 Emits:
   * ``REPORT.md`` — per (tag, variant): device AC, opamp open-loop AC, device
-    DC/transient, the complex 4x4 matrix, and the strict OMP{1,2,4} verdicts.
+    DC/transient, the simple-v1 4x5 matrix, strict OMP{1,2,4} verdicts, and
+    separate simple-v2 diagnostic rows.
   * ``data.json`` — the same, machine-readable.
 
 Usage: python scripts/v710_regate_collect.py [--root results/v710_regate]
@@ -19,11 +20,30 @@ import argparse
 import hashlib
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Dict, List, Optional
 
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tests.common.gate_result import parse_result_markers  # noqa: E402
+from tests.common.simple_circuit_catalog import (  # noqa: E402
+    SIMPLE_V1,
+    SIMPLE_V2,
+    cases,
+)
+
 TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
-CIRCS = ["ring_osc", "opamp", "sram_snm", "switchcap"]
+SIMPLE_V1_CASES = cases(score_version=SIMPLE_V1)
+SIMPLE_V2_CASES = cases(score_version=SIMPLE_V2)
+CIRCS = [case.result_key for case in SIMPLE_V1_CASES]
+LEGACY_SUITE_BY_RESULT = {
+    case.result_key: case.legacy_suite_id
+    for case in SIMPLE_V1_CASES
+    if case.legacy_suite_id is not None
+}
 FAMILY = {
     "dn": "DirectNet (L73)",
     "tf": "BSIM-AR (L74)",
@@ -142,8 +162,40 @@ def collect(root: Path, require_manifest: bool = False) -> Dict:
         g = out.setdefault(tag, {}).setdefault(variant, {})
         cell = g.setdefault(suite, {}).setdefault(tech_dir.upper(), {})
         entry: Dict = {"rc": rc}
+        structured = parse_result_markers(txt)
 
-        if suite == "verify_nn_ac":
+        if structured:
+            entry["results"] = structured
+            statuses = {str(item.get("status", "")).upper()
+                        for item in structured}
+            if "ERROR" in statuses:
+                entry["status"] = "ERROR"
+                entry["error"] = "; ".join(
+                    str(item.get("error", ""))
+                    for item in structured if item.get("status") == "error"
+                )
+            elif "FAIL" in statuses:
+                entry["status"] = "FAIL"
+            elif "DIAGNOSTIC" in statuses:
+                entry["status"] = "DIAGNOSTIC"
+            else:
+                entry["status"] = "PASS"
+            explicit_metrics = [
+                item.get("metrics", {}).get("metric")
+                for item in structured
+                if isinstance(item.get("metrics"), dict)
+                and item.get("metrics", {}).get("metric") is not None
+            ]
+            nrmse_values = [
+                item.get("metrics", {}).get("nrmse_pct")
+                for item in structured
+                if isinstance(item.get("metrics"), dict)
+                and item.get("metrics", {}).get("nrmse_pct") is not None
+            ]
+            values = explicit_metrics or nrmse_values
+            if values:
+                entry["metric"] = max(float(value) for value in values)
+        elif suite == "verify_nn_ac":
             for m in _AC_ROW.finditer(txt):
                 entry[m.group(2)] = {
                     "gain0_err_db": m.group(3), "f3db_ratio": m.group(4),
@@ -188,7 +240,7 @@ def collect(root: Path, require_manifest: bool = False) -> Dict:
                     vals = pat.findall(txt)
                     if vals:
                         entry["metric"] = float(vals[-1])
-        if suite.startswith("verify_complex_"):
+        if not structured and suite.startswith("verify_complex_"):
             error = _summary_error(txt, tech_dir)
             if error is not None:
                 entry.update(status="ERROR", error=error)
@@ -316,13 +368,13 @@ def render(data: Dict) -> str:
                       f"| min R² | max error {error_unit} |",
                       "|---|---|---|---|---|---|---|", *rows, ""]
 
-            have_circ = [c for c in CIRCS if f"verify_complex_{c}" in g]
+            have_circ = [c for c in CIRCS if LEGACY_SUITE_BY_RESULT[c] in g]
             if have_circ:
                 rows, npass, ntot = [], 0, 0
                 for t in TECHS:
                     cs = []
                     for c in CIRCS:
-                        cell = g.get(f"verify_complex_{c}", {}).get(t, {})
+                        cell = g.get(LEGACY_SUITE_BY_RESULT[c], {}).get(t, {})
                         if not cell:
                             cs.append("—"); continue
                         v = _verdict(cell)
@@ -332,7 +384,7 @@ def render(data: Dict) -> str:
                             npass += v == "PASS"
                         cs.append(f"{v}" + (f" {m:.2f}%" if m is not None else ""))
                     rows.append(f"| {t} | " + " | ".join(cs) + " |")
-                L += [f"**Complex matrix (single-run OMP=1): {npass}/{ntot}**", "",
+                L += [f"**Simple-v1 matrix (single-run OMP=1): {npass}/{ntot}**", "",
                       "| tech | " + " | ".join(CIRCS) + " |",
                       "|---|" + "---|" * len(CIRCS), *rows, ""]
 
@@ -340,7 +392,7 @@ def render(data: Dict) -> str:
                 for t in TECHS:
                     cs = []
                     for c in CIRCS:
-                        cell = g.get(f"verify_complex_{c}", {}).get(t, {})
+                        cell = g.get(LEGACY_SUITE_BY_RESULT[c], {}).get(t, {})
                         if not cell:
                             cs.append("—"); continue
                         s = _strict(cell) if c in ("opamp", "ring_osc") else _verdict(cell)
@@ -354,6 +406,35 @@ def render(data: Dict) -> str:
                       f"deterministic): {spass}/{stot}, {flips} FLIP**", "",
                       "| tech | " + " | ".join(CIRCS) + " |",
                       "|---|" + "---|" * len(CIRCS), *srows, ""]
+
+            diagnostic_cases = [
+                case for case in SIMPLE_V2_CASES if case.campaign_suite in g
+            ]
+            if diagnostic_cases:
+                rows: List[str] = []
+                for case in diagnostic_cases:
+                    cells = g[case.campaign_suite]
+                    for tech in TECHS:
+                        entry = cells.get(tech, {}).get("omp1")
+                        if entry is None:
+                            rows.append(f"| {case.case_id} | {tech} | — | — |")
+                            continue
+                        status = entry.get("status", "INVALID")
+                        metric = entry.get("metric")
+                        metric_text = "—" if metric is None else f"{metric:.3f}"
+                        rows.append(
+                            f"| {case.case_id} | {tech} | {status} | "
+                            f"{metric_text} |"
+                        )
+                L += [
+                    "**Simple-v2 nominal held-out topology diagnostics (not "
+                    "included in the simple-v1 score)**",
+                    "",
+                    "| case | tech | outcome | worst NRMSE % |",
+                    "|---|---|---|---|",
+                    *rows,
+                    "",
+                ]
     return "\n".join(L) + "\n"
 
 

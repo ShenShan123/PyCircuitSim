@@ -3,12 +3,13 @@
 Built in V6.4.8+ (``docs/CHANGELOG.md``). Mirrors the
 inverter sweep harness (``tests/common/nn_sweep.py``) but for the opamp /
 ring-oscillator / switched-cap / 6T-SRAM benchmarks. Sweeps technology, VT
-(symmetric + asymmetric N/P), geometry (L / NFIN / P-N fin ratio), VDD, and
-per-circuit input stimuli, baseline-gated, against the NGSPICE BSIM-CMG
+(symmetric + asymmetric N/P), geometry (L / NFIN / P-N fin ratio), VDD,
+temperature, a joint stress corner, and per-circuit input stimuli,
+baseline-gated, against the NGSPICE BSIM-CMG
 (LEVEL=72) ground truth — never a simplified model (AGENTS.md Validation rule).
 
-The four single-point ``verify_circuit_*.py`` ship gates are UNTOUCHED; this is
-additive infra. Hard gates: every swept config is a real PASS/FAIL at the
+The four single-point ``verify_circuit_*.py`` qualification definitions remain
+unchanged. Hard gates: every swept config is a real PASS/FAIL at the
 circuit's domain tolerance. Bake / OSDI-Fatal / absent-checkpoint /
 out-of-region → ERROR (never a silent FAIL). 3-state exit code:
   0 = every attempted config PASSED and >=1 config ran,
@@ -70,7 +71,9 @@ SC_DROOP_FLOOR = 1e-3        # absolute floor on the droop gate (0.1% VDD)
 SRAM_NRMSE_TOL = 0.10        # butterfly-lobe curve NRMSE vs NGSPICE (B5/B7)
 
 # --- sweep dimensions -------------------------------------------------------
-SHARED_DIMS = ["vt_sym", "vt_asym", "l", "nfin", "pn_ratio", "vdd"]
+SHARED_DIMS = [
+    "vt_sym", "vt_asym", "l", "nfin", "pn_ratio", "vdd", "temp", "joint",
+]
 STIM_DIMS: Dict[str, List[str]] = {
     "opamp": ["vcm", "cc", "cl", "span"],
     "ringosc": ["n_stages", "cload"],
@@ -79,7 +82,9 @@ STIM_DIMS: Dict[str, List[str]] = {
 }
 # SRAM uses its lobe NFIN as the geometry corner (bench_variant nfin), so its
 # "nfin" dim is a real corner sweep; pn_ratio is meaningless for a 6T cell.
-SRAM_DIMS = ["nfin", "vt_sym", "vt_asym", "l", "wl_frac", "vdd"]
+SRAM_DIMS = [
+    "nfin", "vt_sym", "vt_asym", "l", "wl_frac", "vdd", "temp", "joint",
+]
 
 DEFAULT_STIM = {
     "opamp": OpAmpParams(),
@@ -188,6 +193,38 @@ def _shared_variants(tech_key: str,
                 continue
             out.append((bench_variant(bt0, vdd=vdd), _vdd_tag(vdd),
                         {"vdd": vdd}))
+    elif dimension == "temp":
+        for temperature_c in (-25.0, 125.0):
+            tag = f"temp_{temperature_c:g}c".replace("-", "m")
+            out.append((
+                bench_variant(bt0, temperature_c=temperature_c),
+                tag,
+                {"temperature_c": temperature_c},
+            ))
+    elif dimension == "joint":
+        # Combine axes that are otherwise varied one at a time to expose
+        # compounding interpolation errors without making a factorial sweep.
+        joint_vdd = round(bt0.vdd * 0.9, 3)
+        out.append((
+            bench_variant(
+                bt0,
+                vdd=joint_vdd,
+                l_nmos=20e-9,
+                l_pmos=20e-9,
+                nfin=3,
+                nfin_p=2,
+                temperature_c=125.0,
+            ),
+            "joint_hot_lowvdd_ln20_lp20_n3_p2",
+            {
+                "vdd": joint_vdd,
+                "temperature_c": 125.0,
+                "l_nmos_nm": 20,
+                "l_pmos_nm": 20,
+                "nfin": 3,
+                "nfin_p": 2,
+            },
+        ))
     return out
 
 
@@ -257,7 +294,8 @@ def build_parametric(circuit: str, tech_key: str,
     cfgs: List[CircuitSweepConfig] = []
     for d in dims:
         if d in SHARED_DIMS or (circuit == "sram" and d in
-                                ("vt_sym", "vt_asym", "l", "nfin", "vdd")):
+                                ("vt_sym", "vt_asym", "l", "nfin", "vdd",
+                                 "temp", "joint")):
             for bt, cname, swept in _shared_variants(tech_key, d):
                 cfgs.append(CircuitSweepConfig(
                     bt, tech_key, circuit, base_stim, d, cname, swept))
@@ -343,7 +381,7 @@ def run_single_ringosc(cfg: CircuitSweepConfig,
     except Exception as exc:  # noqa: BLE001
         return _err(cfg, f"bake: {type(exc).__name__}: {exc}")
 
-    def _ng(tstop: float):
+    def _ng(tstop: float) -> Tuple[np.ndarray, np.ndarray]:
         spec = ngspice_ringosc(bt, p, baked, tstop)
         data = run_ngspice_wrdata(spec["body"], spec["signals"], work_dir,
                                   f"ro_{cfg.label}", spec["analysis"])
@@ -517,7 +555,7 @@ def run_single_sram(cfg: CircuitSweepConfig,
     snm_err = (abs(dn_snm - ng_snm) / ng_snm * 100.0
                if ng_snm > 1e-6 else float("nan"))
     # B7: the SRAM sweep baseline must use the SAME pass definition as the
-    # authoritative single-point ship gate (historical suite key
+    # authoritative single-point ship gate (historical compatibility suite key
     # verify_complex_sram_snm) —
     # positivity AND NGSPICE-NRMSE tracking. force_ic is a self-consistency
     # convergence probe (not an NGSPICE comparison): it is reported but NOT
@@ -768,6 +806,17 @@ def driver_main(circuit: str) -> int:
                     help="fail loud on checkpoint drift vs recorded manifest")
     args = ap.parse_args()
     techs = [t.strip() for t in args.tech.split(",")]
+    unknown_techs = [tech for tech in techs if tech not in BENCH]
+    if unknown_techs:
+        ap.error(
+            f"unknown technologies {unknown_techs}; available: {list(BENCH)}"
+        )
+    valid_dimensions = set(all_dimensions(circuit)) | {"all"}
+    if args.dimension not in valid_dimensions:
+        ap.error(
+            f"unknown dimension {args.dimension!r}; available: "
+            f"{sorted(valid_dimensions)}"
+        )
 
     results_dir = RESULTS_BASE / circuit / "sweep"
     print("=" * 96)

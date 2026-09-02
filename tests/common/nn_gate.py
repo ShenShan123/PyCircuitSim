@@ -66,6 +66,9 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from tests.common.nn import nrmse, mre, tech_code_in_vocab  # noqa: E402
+from tests.common.base import (  # noqa: E402
+    SIMPLE_DECKS, deck_tokens, render_deck_text,
+)
 from helpers import bake_inst_params  # noqa: E402
 from neural_network.config import CHECKPOINT_DIR, OSDI_PATH  # noqa: E402
 
@@ -107,6 +110,20 @@ INV_TRAN_TR = 50e-12       # 50ps rise
 INV_TRAN_TF = 50e-12       # 50ps fall
 INV_TRAN_PW = 1e-9         # 1ns pulse width
 INV_TRAN_TD = 0.2e-9       # 200ps delay
+
+
+def _render_inverter_deck(filename: str, values: Dict[str, str]) -> str:
+    """Render an authoritative inverter example with strict tokens."""
+    path = SIMPLE_DECKS / filename
+    template = path.read_text()
+    required = deck_tokens(template)
+    missing = [name for name in required if name not in values]
+    if missing:
+        raise KeyError(f"{filename}: missing substitutions {missing}")
+    return render_deck_text(
+        template, {name: values[name] for name in required},
+        source_name=filename,
+    )
 
 
 @dataclass(frozen=True)
@@ -1073,17 +1090,16 @@ def run_ngspice_inverter_vtc(
     baked_pmos = create_baked_inv_pmos_modelcard(tech, work_dir)
 
     netlist_path = work_dir / f"ngspice_inverter_vtc_{tech.name}.cir"
-    netlist_content = (
-        f"* CMOS Inverter VTC (NGSPICE, {tech.name})\n"
-        f'.include "{baked_nmos}"\n'
-        f'.include "{baked_pmos}"\n'
-        f".temp 27\n"
-        f"Vdd vdd 0 {tech.vdd}\n"
-        f"Vin in 0 0.0\n"
-        f"Nn out in 0 0 {tech.nmos_model}\n"
-        f"Np out in vdd vdd {tech.pmos_model}\n"
-        f".dc Vin 0 {tech.vdd} 0.005\n"
-        f".end\n"
+    netlist_content = _render_inverter_deck(
+        "bsimcmg_inverter_dc.cir", {
+            "BAKED_NMOS": str(baked_nmos),
+            "BAKED_PMOS": str(baked_pmos),
+            "VDD": f"{tech.vdd:g}",
+            "TEMP": f"{tech.temperature_c:g}",
+            "NMOS": tech.nmos_model,
+            "PMOS": tech.pmos_model,
+            "ANALYSIS": f".dc Vin 0 {tech.vdd:g} 0.005",
+        },
     )
     netlist_path.write_text(netlist_content)
 
@@ -1206,20 +1222,15 @@ def run_pycircuitsim_nn_inverter_vtc(
     if pmos_model_path is not None and not _cascade_handles_stem(pmos_model_path):
         pmos_params += f" MODEL_PATH={pmos_model_path}"
 
-    content = (
-        f"* NN CMOS Inverter VTC ({model_name}, {tech.name})\n"
-        f"Vdd 1 0 {tech.vdd}\n"
-        f"Vin 2 0 0.0\n"
-        f"Xinv 2 3 1 inv NFN={nfin} NFP={nfin_p}\n"
-        f".subckt inv i o vdd NFN=1 NFP=1\n"
-        f"Mn1 o i 0 0 nmos_nn L={l_nmos_nm:.0f}n NFIN=NFN\n"
-        f"Mp1 o i vdd vdd pmos_nn L={l_pmos_nm:.0f}n NFIN=NFP\n"
-        f".ends\n"
-        f".model nmos_nn NMOS ({nmos_params})\n"
-        f".model pmos_nn PMOS ({pmos_params})\n"
-        f".temp {tech.temperature_c:g}\n"
-        f".dc Vin 0 {tech.vdd} 0.005\n"
-        f".end\n"
+    content = _render_inverter_deck(
+        "directnet_inverter_dc.sp", {
+            "VDD": f"{tech.vdd:g}",
+            "LN": f"{l_nmos_nm:g}n", "LP": f"{l_pmos_nm:g}n",
+            "NFN": str(nfin), "NFP": str(nfin_p),
+            "NMOS_PARAMS": nmos_params, "PMOS_PARAMS": pmos_params,
+            "TEMP": f"{tech.temperature_c:g}",
+            "ANALYSIS": f".dc Vin 0 {tech.vdd:g} 0.005",
+        },
     )
     netlist_path.write_text(content)
 
@@ -1241,8 +1252,8 @@ def run_pycircuitsim_nn_inverter_vtc(
     finally:
         logging.disable(logging.NOTSET)
 
-    sweep = np.array(results["2"])   # Vin node
-    vout = np.array(results["3"])    # Vout node
+    sweep = np.array(results["in"])
+    vout = np.array(results["out"])
     return {"sweep": sweep, "vout": vout}
 
 
@@ -1365,20 +1376,17 @@ def run_ngspice_inverter_tran(
     per = cp.tr + cp.pw + cp.tf + max(cp.pw, 1.0e-9)
 
     netlist_path = work_dir / f"ngspice_inverter_tran_{tech.name}.cir"
-    content = (
-        f"* CMOS Inverter Transient (NGSPICE, {tech.name})\n"
-        f'.include "{baked_nmos}"\n'
-        f'.include "{baked_pmos}"\n'
-        f".temp 27\n"
-        f"Vdd vdd 0 {tech.vdd}\n"
-        f"Vin in 0 PULSE(0 {tech.vdd} {cp.td} {cp.tr}"
-        f" {cp.tf} {cp.pw} {per})\n"
-        f"Nn out in 0 0 {tech.nmos_model}\n"
-        f"Np out in vdd vdd {tech.pmos_model}\n"
-        f"Cload out 0 {cp.cload}\n"
-        f".ic V(out)={tech.vdd}\n"
-        f".tran {INV_TRAN_TSTEP} {cp.tstop} uic\n"
-        f".end\n"
+    content = _render_inverter_deck(
+        "bsimcmg_inverter_tran.cir", {
+            "BAKED_NMOS": str(baked_nmos),
+            "BAKED_PMOS": str(baked_pmos),
+            "VDD": f"{tech.vdd:g}", "TEMP": f"{tech.temperature_c:g}",
+            "TD": f"{cp.td:g}", "TR": f"{cp.tr:g}",
+            "TF": f"{cp.tf:g}", "PW": f"{cp.pw:g}",
+            "PER": f"{per:g}", "CLOAD": f"{cp.cload:g}",
+            "NMOS": tech.nmos_model, "PMOS": tech.pmos_model,
+            "ANALYSIS": f".tran {INV_TRAN_TSTEP:g} {cp.tstop:g} uic",
+        },
     )
     netlist_path.write_text(content)
 
@@ -1451,8 +1459,7 @@ def run_pycircuitsim_nn_inverter_tran(
     ``circuit`` overrides Cload / input slew / pulse width / delay / tstop;
     ``circuit=None`` uses the legacy module-global fixed point.
     """
-    from pycircuitsim.parser import Parser
-    from pycircuitsim.solver import DCSolver, TransientSolver
+    from tests.common.circuit_benchmarks import run_directnet_transient
 
     cp = circuit or InvCircuitParams()
     l_nmos_nm = tech.effective_inv_l_nmos * 1e9
@@ -1470,107 +1477,31 @@ def run_pycircuitsim_nn_inverter_tran(
         pmos_params += f" MODEL_PATH={pmos_model_path}"
 
     netlist_path = work_dir / f"nn_{model_name}_inverter_tran_{tech.name}.sp"
-    content = (
-        f"* NN Inverter Transient ({model_name}, {tech.name})\n"
-        f"Vdd 1 0 {tech.vdd}\n"
-        f"Vin 2 0 PULSE 0 {tech.vdd} {cp.td} {cp.tr}"
-        f" {cp.tf} {cp.pw} {per}\n"
-        f"Xinv 2 3 1 inv NFN={nfin} NFP={nfin_p}\n"
-        f"Cload 3 0 {cp.cload}\n"
-        f".subckt inv i o vdd NFN=1 NFP=1\n"
-        f"Mn1 o i 0 0 nmos_nn L={l_nmos_nm:.0f}n NFIN=NFN\n"
-        f"Mp1 o i vdd vdd pmos_nn L={l_pmos_nm:.0f}n NFIN=NFP\n"
-        f".ends\n"
-        f".model nmos_nn NMOS ({nmos_params})\n"
-        f".model pmos_nn PMOS ({pmos_params})\n"
-        f".ic V(3)={tech.vdd}\n"
-        f".tran {INV_TRAN_TSTEP} {cp.tstop}\n"
-        f".end\n"
+    content = _render_inverter_deck(
+        "nn_inverter_tran.sp", {
+            "VDD": f"{tech.vdd:g}",
+            "TD": f"{cp.td:g}", "TR": f"{cp.tr:g}",
+            "TF": f"{cp.tf:g}", "PW": f"{cp.pw:g}",
+            "PER": f"{per:g}", "CLOAD": f"{cp.cload:g}",
+            "LN": f"{l_nmos_nm:g}n", "LP": f"{l_pmos_nm:g}n",
+            "NFN": str(nfin), "NFP": str(nfin_p),
+            "NMOS_PARAMS": nmos_params, "PMOS_PARAMS": pmos_params,
+            "TEMP": f"{tech.temperature_c:g}",
+            "ANALYSIS": f".tran {INV_TRAN_TSTEP:g} {cp.tstop:g} uic",
+        },
     )
     netlist_path.write_text(content)
 
-    logging.disable(logging.CRITICAL)
-    solver: Optional[TransientSolver] = None
-    nr_failed = False
-    nr_error_msg = ""
-    try:
-        parser = Parser()
-        parser.parse_file(str(netlist_path))
-        circuit = parser.circuit
-
-        time_step: float = parser.analysis_params["tstep"]
-        final_time: float = parser.analysis_params["tstop"]
-
-        # Stage 1: DC OP
-        initial_guess = circuit.initial_conditions if circuit.initial_conditions else None
-        # V5 Phase A retry-design: try fast-path first, retry with GMIN
-        # only on convergence failure. Mirrors `_solve_dc_with_retry`
-        # in simulation.py.
-        op_solver = DCSolver(
-            circuit, initial_guess=initial_guess, use_source_stepping=True,
-            use_gmin_stepping=False,
-        )
-        try:
-            op_solution = op_solver.solve()
-            if not getattr(op_solver, "_last_solve_converged", True):
-                raise RuntimeError("fast-path NR did not converge for NN inverter DC OP")
-        except (RuntimeError, np.linalg.LinAlgError):
-            op_solver = DCSolver(
-                circuit, initial_guess=initial_guess, use_source_stepping=True,
-                use_gmin_stepping=True,
-            )
-            op_solution = op_solver.solve()
-
-        # Stage 2: Transient
-        solver = TransientSolver(
-            circuit,
-            t_stop=final_time,
-            dt=time_step,
-            initial_guess=op_solution,
-            use_gmin_stepping=True,
-            gmin_initial=1e-9,
-            gmin_final=1e-12,
-            gmin_steps=5,
-            use_pseudo_transient=True,
-            pseudo_transient_steps=5,
-            pseudo_transient_cap=1e-12,
-            debug=False,
-            nr_tolerance=1e-7,
-        )
-        try:
-            results = solver.solve()
-        except RuntimeError as e:
-            # V5 Phase A — A3.2: partial-result fallback. If NR exhausts
-            # mid-transient, recover the committed waveform up to the
-            # last successful step so the test reports a numeric FAIL
-            # row instead of an ERROR row.
-            nr_failed = True
-            nr_error_msg = str(e)
-            last_step = getattr(solver, "_last_committed_step", 0)
-            if last_step >= 2:
-                truncated_n = last_step + 1
-                results = {
-                    "time": solver._partial_time[:truncated_n].copy(),
-                }
-                for node, arr in solver._partial_voltages.items():
-                    results[node] = arr[:truncated_n].copy()
-            else:
-                # No usable partial data — re-raise.
-                raise
-    finally:
-        logging.disable(logging.NOTSET)
+    results, nr_failed, nr_error_msg = run_directnet_transient(netlist_path)
 
     out = {
         "time": results["time"],
-        "v(out)": results["3"],
-        "v(in)": results["2"],
+        "v(out)": results["out"],
+        "v(in)": results["in"],
     }
     if nr_failed:
         out["_nr_partial"] = True
         out["_nr_error_msg"] = nr_error_msg
-    # Surface dt-halve event log if any (Phase A diagnostic).
-    if solver is not None:
-        out["_dt_halve_events"] = list(solver._dt_halve_events)
     return out
 
 

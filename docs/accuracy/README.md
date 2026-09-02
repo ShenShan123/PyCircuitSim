@@ -8,6 +8,7 @@ contract before comparing results.
 
 | file | scope |
 |---|---|
+| [`simple-circuits-v2-topologies.md`](simple-circuits-v2-topologies.md) | held-out simple-topology catalog, corner matrix, harness and promotion contract |
 | [`DirectNet-L73-clean.md`](DirectNet-L73-clean.md) | production DirectNet, all clean tiers |
 | [`BSIM-AR-L74-clean.md`](BSIM-AR-L74-clean.md) | autoregressive Transformer, all clean tiers |
 | [`DirectNet-L75-clean.md`](DirectNet-L75-clean.md) | full-terminal DirectNet production qualification and AnalogGym accuracy |

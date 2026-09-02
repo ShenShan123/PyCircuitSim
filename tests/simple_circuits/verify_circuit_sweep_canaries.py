@@ -1,135 +1,104 @@
 #!/usr/bin/env python3
-"""Equivalence canaries for the circuit benchmark sweep builders (plan C2/C4).
+"""Pure deck-rendering and topology-parity canaries for simple circuits.
 
-The parametric builders in ``tests/common/circuit_benchmarks.py`` must, at their default
-(baseline) stimulus, reproduce the single-point ship-gate decks line-for-line —
-otherwise a sweep "baseline" silently diverges from the authoritative
-``verify_circuit_*.py`` gate. These canaries assert that, normalized for
-whitespace/comments, the sweep builder line-set equals the REAL ship-gate deck
-for BOTH the DirectNet and the NGSPICE-ground-truth side of every circuit:
-
-  opamp / ring / switchcap / sram, ×
-  DirectNet deck        : sweep builder == the single-point ``*_deck(bt)``
-  NGSPICE ground truth  : sweep builder body == the single-point ``*_body`` body
-
-Crucially this diffs against the **actual** single-point deck-producing
-functions imported from the verify scripts (``directnet_opamp_deck``,
-``ngspice_opamp_body``, …) — NOT a hand-copied replica that can silently drift
-from the ship-gate rewrite logic (bug report B8). The single-point and sweep
-NGSPICE bodies share the SAME baked modelcard here, so the ``.include`` line is
-identical and is compared like every other line.
-
-No simulation is run; this is a pure string-equivalence guard. Run cheap, often.
+Candidate and LEVEL=72 experiments are rendered from their paired files under
+``examples/simple_circuits``. This check compares the actual rendered
+connectivity for every catalog analysis and also exercises the topology-
+changing ring sweep; no simulator or checkpoint is required.
 """
 from __future__ import annotations
 
-import functools
 import sys
 from pathlib import Path
-
-print = functools.partial(print, flush=True)  # type: ignore[assignment]
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "tests"))
 
 from tests.common.circuit_benchmarks import (  # noqa: E402
-    BENCH, BENCH_TECHS,
-    OpAmpParams, RingOscParams, SwitchCapParams, SramParams,
-    directnet_opamp, directnet_ringosc, directnet_switchcap, directnet_sram_lobe,
-    ngspice_opamp, ngspice_ringosc, ngspice_switchcap, ngspice_sram_lobe,
-    get_baked_modelcard,
+    BENCH, BENCH_TECHS, RingOscParams, directnet_ringosc,
+    ngspice_ringosc,
 )
-# REAL single-point ship-gate deck producers (B8): diff the sweep builders
-# against these, not against hand-copied replicas.
-from tests.simple_circuits.verify_circuit_opamp import (  # noqa: E402
-    directnet_opamp_deck, ngspice_opamp_body)
-from tests.simple_circuits.verify_circuit_ring_osc import (  # noqa: E402
-    directnet_ring_deck, ngspice_ring_body)
-from tests.simple_circuits.verify_circuit_switchcap import (  # noqa: E402
-    directnet_sc_deck, ngspice_sc_body)
-from tests.simple_circuits.verify_circuit_sram_snm import (  # noqa: E402
-    directnet_sram_lobe_deck, ngspice_sram_lobe_body)
-
-# The sweep ring/switchcap probe window the orchestrator uses at baseline.
-RING_TSTOP = 1.2e-9
-
-
-def norm_set(text: str) -> set:
-    return set(" ".join(l.split()) for l in text.splitlines()
-              if l.strip() and not l.strip().startswith("*"))
-
-
-def _diff(tag: str, side: str, sweep_text: str, ship_text: str) -> int:
-    """Compare a sweep builder's line-set against the REAL ship-gate deck.
-
-    Returns 1 on mismatch (and prints the asymmetric diff), 0 on identity.
-    """
-    s, r = norm_set(sweep_text), norm_set(ship_text)
-    if s != r:
-        print(f"  [{side}] {tag:9s} FAIL")
-        print("     sweep-only:", s - r)
-        print("     ship-only :", r - s)
-        return 1
-    print(f"  [{side}] {tag:9s} line-set identical (vs REAL ship-gate deck)")
-    return 0
+from tests.common.base import SIMPLE_DECKS, deck_tokens, render_deck_text  # noqa: E402
+from tests.common.simple_circuit_catalog import CASES  # noqa: E402
+from tests.common.simple_circuit_harness import (  # noqa: E402
+    CORNERS, render_case_decks, topology_mismatch,
+)
 
 
 def main() -> int:
-    fails = 0
-    print("=" * 70)
-    print("Circuit sweep builder equivalence canaries")
-    print("  (sweep baseline builders  ==  REAL single-point ship-gate decks)")
-    print("=" * 70)
+    failures: list[str] = []
+    fake_baked = PROJECT_ROOT / "results" / "_topology_fake_bsimcmg.lib"
+    for tech_name in BENCH_TECHS:
+        bt = BENCH[tech_name]
+        for case in CASES:
+            for corner_name, corner in CORNERS.items():
+                for analysis in case.analyses:
+                    try:
+                        candidate, reference = render_case_decks(
+                            case, analysis, bt, corner,
+                            baked_lib=fake_baked,
+                        )
+                        mismatch = topology_mismatch(candidate, reference)
+                    except Exception as exc:  # noqa: BLE001
+                        mismatch = f"{type(exc).__name__}: {exc}"
+                    if mismatch:
+                        failures.append(
+                            f"{tech_name}/{case.case_id}/{corner_name}/"
+                            f"{analysis.name}: {mismatch}")
 
-    for name in BENCH_TECHS:
-        bt = BENCH[name]
-        print(f"\n--- {name} ---")
-        wd = PROJECT_ROOT / "tests" / "verify_complex_results" / "_canary" / name
-        try:
-            baked = get_baked_modelcard(bt, bt.nfin, wd,
-                                        nfin_p=bt.effective_nfin_p)
-        except Exception as exc:  # noqa: BLE001
-            print(f"  bake ERROR ({exc}) — cannot run NGSPICE-side checks")
-            fails += 1
-            continue
+        # The stage-count sweep is the only topology-changing legacy
+        # dimension. Render both adapters from the same ring template and
+        # prove parity at every declared odd count, not only at the baseline.
+        for n_stages in (3, 5, 7, 9):
+            params = RingOscParams(n_stages=n_stages)
+            candidate = directnet_ringosc(bt, params, params.tstop)
+            reference = ngspice_ringosc(
+                bt, params, fake_baked, params.tstop,
+            )["body"]
+            mismatch = topology_mismatch(candidate, reference)
+            if mismatch:
+                failures.append(
+                    f"{tech_name}/ring_osc/n_stages={n_stages}: {mismatch}")
 
-        # --- DirectNet decks: sweep builder == single-point ship-gate deck ---
-        fails += _diff("opamp", "DN",
-                       directnet_opamp(bt, OpAmpParams()),
-                       directnet_opamp_deck(bt))
-        fails += _diff("ring", "DN",
-                       directnet_ringosc(bt, RingOscParams(), RING_TSTOP),
-                       directnet_ring_deck(bt))
-        fails += _diff("switchcap", "DN",
-                       directnet_switchcap(bt, SwitchCapParams()),
-                       directnet_sc_deck(bt))
-        fails += _diff("sram", "DN",
-                       directnet_sram_lobe(bt, SramParams(), bt.nfin),
-                       directnet_sram_lobe_deck(bt, bt.nfin))
+        inverter_values = {
+            "VDD": f"{bt.vdd:g}", "LN": f"{bt.l_nmos * 1e9:g}n",
+            "LP": f"{bt.l_pmos * 1e9:g}n", "NFN": str(bt.nfin),
+            "NFP": str(bt.effective_nfin_p), "NMOS_PARAMS": "LEVEL=73",
+            "PMOS_PARAMS": "LEVEL=73", "TEMP": f"{bt.temperature_c:g}",
+            "ANALYSIS": ".dc Vin 0 1 0.1", "BAKED_NMOS": "/tmp/n.lib",
+            "BAKED_PMOS": "/tmp/p.lib", "NMOS": bt.nmos_model,
+            "PMOS": bt.pmos_model, "TD": "0.2n", "TR": "50p",
+            "TF": "50p", "PW": "1n", "PER": "2.1n", "CLOAD": "1f",
+        }
+        for candidate_name, reference_name in (
+            ("directnet_inverter_dc.sp", "bsimcmg_inverter_dc.cir"),
+            ("nn_inverter_tran.sp", "bsimcmg_inverter_tran.cir"),
+        ):
+            rendered = []
+            for filename in (candidate_name, reference_name):
+                template = (SIMPLE_DECKS / filename).read_text()
+                substitutions = {
+                    token: inverter_values[token] for token in deck_tokens(template)
+                }
+                rendered.append(render_deck_text(
+                    template, substitutions, source_name=filename,
+                ))
+            mismatch = topology_mismatch(rendered[0], rendered[1])
+            if mismatch:
+                failures.append(
+                    f"{tech_name}/inverter/{candidate_name}: {mismatch}")
 
-        # --- NGSPICE ground-truth bodies: sweep builder == single-point body --
-        # Same baked modelcard is passed to both sides, so the `.include` line
-        # is identical and is part of the compared line-set (B8: the old canary
-        # only asserted the sweep body was non-degenerate and never compared).
-        fails += _diff("opamp", "ng",
-                       ngspice_opamp(bt, OpAmpParams(), baked)["body"],
-                       ngspice_opamp_body(bt, baked)["body"])
-        fails += _diff("ring", "ng",
-                       ngspice_ringosc(bt, RingOscParams(), baked, RING_TSTOP)["body"],
-                       ngspice_ring_body(bt, baked)["body"])
-        fails += _diff("switchcap", "ng",
-                       ngspice_switchcap(bt, SwitchCapParams(), baked)["body"],
-                       ngspice_sc_body(bt, baked)["body"])
-        fails += _diff("sram", "ng",
-                       ngspice_sram_lobe(bt, SramParams(), bt.nfin, baked)["body"],
-                       ngspice_sram_lobe_body(bt, bt.nfin, baked)["body"])
-
-    print("\n" + "-" * 70)
-    print(f"RESULT: {'ALL CANARIES PASS' if fails == 0 else f'{fails} CANARY FAILURE(S)'}")
-    return 1 if fails else 0
+    if failures:
+        for failure in failures:
+            print(f"FAIL: {failure}")
+        return 1
+    print(
+        f"PASS: {len(BENCH_TECHS)} technologies × {len(CASES)} catalog "
+        f"cases × {len(CORNERS)} corners plus ring stage-count variants "
+        "and inverter gate pairs have identical topology")
+    return 0
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    raise SystemExit(main())

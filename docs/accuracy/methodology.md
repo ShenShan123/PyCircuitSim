@@ -23,16 +23,20 @@ The separately scored experimental full-terminal families are DirectNet-Full
 The authoritative verdict is the verification script's exit code, not a
 printed metric interpreted by eye.
 
-| complex gate | pass condition |
+| simple-v1 qualification gate | pass condition |
 |---|---|
 | `verify_circuit_ring_osc.py` | period error ≤ 5% |
 | `verify_circuit_opamp.py` | open-loop DC gain error ≤ 10%; trip shift is diagnostic |
 | `verify_circuit_sram_snm.py` | every lobe is positive and lobe NRMSE ≤ 10% at every NFIN corner |
 | `verify_circuit_switchcap.py` | transfer error ≤ 5% of VDD and droop ≤ max(10% of reference droop, 0.1% of VDD) |
 
-The complex score is 4 circuits × 5 technologies = **20 cells per tier**.
+The simple-v1 score is 4 circuits × 5 technologies = **20 cells per tier**.
 Reports before V7.3 used four electrically distinct technologies and `/16`;
 rescale before comparing totals.
+
+Historical campaign evidence retains `verify_complex_*` suite IDs. Those are
+compatibility aliases for these four simple circuits, not membership in
+`examples/complex_circuits/`.
 
 | device gate | pass condition or purpose |
 |---|---|
@@ -42,6 +46,23 @@ rescale before comparing totals.
 | `verify_nn_ac.py` | gain error ≤ 1.5 dB, f3dB ratio 0.7–1.43, magnitude NRMSE ≤ 10%; phase is diagnostic |
 | `verify_circuit_opamp_ac.py` | gain error ≤ 3 dB, GBW ratio 0.6–1.67, PM error ≤ 15°, valid refined reference bias, converged NN operating point |
 | `verify_nn_lifted_source_dc.py` | source-relative-frame canary, NRMSE ≤ 10% |
+
+### Simple-v2 topology diagnostics
+
+`verify_circuit_topologies.py` adds a held-out composition ladder covering
+source followers, common-gate stages, current mirrors, an open inverter chain,
+transmission-gate DC and hold behavior, ideal- and active-tail differential
+pairs, cascode stacks, NAND2/NOR2, and full 6T SRAM operating modes. It runs
+DC, transient, and AC analyses from paired files in `examples/simple_circuits/`.
+The complete contract is in
+[`simple-circuits-v2-topologies.md`](simple-circuits-v2-topologies.md).
+
+Simple-v2 rows are **diagnostics**, are held out from training, and do not
+change the historical simple-v1 `/20` denominator. Promotion requires a
+separately versioned denominator, at least three stable LEVEL=72 repeats,
+frozen thresholds, and a complete CPU-pinned campaign. Numerical mismatches
+remain diagnostic; an uncharacterizable requested cell is an explicit
+`ERROR`.
 
 ## 3. Determinism and execution
 
@@ -60,7 +81,9 @@ floating-point-perturbing optimizations require separate fidelity gates and
 never replace the CPU score.
 
 Every cell receives an isolated result directory. Parallel jobs must not share
-`PYCIRCUITSIM_COMPLEX_RESULTS` or `PYCIRCUITSIM_NN_RESULTS`.
+`PYCIRCUITSIM_SIMPLE_RESULTS` or `PYCIRCUITSIM_NN_RESULTS`.
+`PYCIRCUITSIM_COMPLEX_RESULTS` remains a fallback compatibility alias for old
+campaign launchers.
 
 ## 4. Reported metrics
 
@@ -68,6 +91,13 @@ Device AC scores `/10` (NMOS and PMOS × 5 technologies); opamp AC scores
 `/5`. Reports include per-technology MRE, R², NRMSE, and maximum voltage error.
 Charge-sensitive AC gates use autograd charge derivatives and may move
 independently of DC accuracy.
+
+Simple-circuit workers emit schema-stable `GateResult` JSON markers containing
+case, technology, corner, analysis, role, convergence state, aggregate trace
+metrics, and domain metrics. The collector consumes these markers before
+falling back to legacy human-readable regexes. Multi-signal traces retain
+signed source currents; transient comparisons may additionally report
+phase-aligned NRMSE without replacing the unaligned metric.
 
 ## 5. Evidence validity
 
