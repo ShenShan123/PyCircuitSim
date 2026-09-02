@@ -1,0 +1,16 @@
+* Complementary source followers with explicit body terminals — LEVEL=72 reference
+.include "<BAKED_LIB>"
+Vddn vddn 0 <VDD>
+Vddp vddp 0 <VDD>
+Vgn gn 0 <HALF_VDD>
+Vgp gp 0 <HALF_VDD>
+Vbn bn 0 <BODY_N>
+Vbp bp 0 <BODY_P>
+Nn_sf vddn gn sn bn <NMOS>
+Rn sn 0 20k
+Np_sf 0 gp sp bp <PMOS>
+Rp vddp sp 20k
+.ic V(sn)=<FOLLOW_N_IC> V(sp)=<FOLLOW_P_IC>
+.temp <TEMP>
+<ANALYSIS>
+.end

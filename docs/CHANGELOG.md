@@ -18,6 +18,26 @@ per-commit chronology and superseded prose remain in Git history.
 
 ## V7.6 — full-terminal families and closure
 
+### Post-V7.6.4 — versioned simple-topology diagnostics (2026-09-02)
+
+- Versioned the existing ring/opamp/SRAM-SNM/switched-capacitor qualification
+  matrix as `simple-v1` without changing its `/20` denominator. Historical
+  `verify_complex_*` campaign IDs remain aliases only; these are simple
+  circuits and continue to live under `examples/simple_circuits/`.
+- Added 12 held-out `simple-v2` topology pairs spanning source-driven stages,
+  mirrors/cascodes, open logic chains and stacks, transmission gates,
+  differential pairs, and full 6T SRAM modes across DC, transient and AC.
+  Every candidate/reference pair is strictly rendered and topology-checked
+  before simulation against the identical LEVEL=72 OSDI reference.
+- Added engine-neutral multi-signal traces, signed-current/domain metrics,
+  structured gate-result markers, LEVEL=72 accepted-trajectory support checks,
+  reference-repeat diagnostics, temperature/body/supply/fin-ratio/joint
+  corners, and catalog-driven geometry coverage.
+- Added a separate `simple_v2` campaign pool, version-selectable coverage and
+  diagnostic report collection. The historical clean pool stays 480 jobs;
+  the new diagnostics do not enter qualification totals until a new frozen
+  score version satisfies the documented promotion rule.
+
 ### Post-V7.6.4 — LEVEL=76 simple-circuit recovery (2026-09-01)
 
 - Made the parser apply the global Celsius `.temp` card to LEVEL=72–76

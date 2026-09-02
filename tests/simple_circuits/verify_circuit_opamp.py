@@ -34,13 +34,14 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "tests"))
 
-from tests.common.base import SIMPLE_DECKS, render_reference_deck  # noqa: E402
 from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech, active_model_label,
     active_model_name,
     get_baked_modelcard, run_ngspice_wrdata,
-    render_directnet_text, run_directnet_dc_sweep, full_metrics, fmt_metrics,
+    run_directnet_dc_sweep, full_metrics, fmt_metrics,
+    OpAmpParams, ngspice_opamp, directnet_opamp,
 )
+from tests.common.gate_result import GateResult  # noqa: E402
 
 GAIN_TOL = 0.10            # +/-10% open-loop DC gain gate
 # audit B5c: an NGSPICE reference gain below this V/V means the cell is biased
@@ -48,15 +49,6 @@ GAIN_TOL = 0.10            # +/-10% open-loop DC gain gate
 # certify it. Mirrors the parametric twin (tests/common/circuit_sweep.py
 # OPAMP_MIN_GAIN). The shipped cells sit at 160-190 V/V, ~30x above the floor.
 OPAMP_MIN_GAIN = 5.0
-TEMPLATE = SIMPLE_DECKS / "directnet_opamp_miller_dc.sp"
-NG_TEMPLATE = SIMPLE_DECKS / "bsimcmg_opamp_miller_dc.cir"
-
-
-def _bias(bt: BenchTech) -> Tuple[float, float, float]:
-    """Return (Vcm, Vbn, Vbp) — common-mode + the two bias rails."""
-    return (round(bt.vdd * 0.55, 3),
-            round(bt.vdd * 0.45, 3),
-            round(bt.vdd * 0.55, 3))
 
 
 def _gain_trip(sweep: np.ndarray, vout: np.ndarray,
@@ -105,35 +97,12 @@ def ngspice_opamp_body(bt: BenchTech, baked: Path) -> Dict[str, str]:
     Pure (returns text) so verify_circuit_sweep_canaries can diff it against the
     parametric ``tests.common.circuit_benchmarks.ngspice_opamp`` builder (bug report B8).
     """
-    vcm, vbn, vbp = _bias(bt)
-    body = render_reference_deck(NG_TEMPLATE, {
-        "BAKED_LIB": str(baked),
-        "VDD": f"{bt.vdd}",
-        "VBN": f"{vbn}",
-        "VBP": f"{vbp}",
-        "VCM": f"{vcm}",
-        "NMOS": bt.nmos_model,
-        "PMOS": bt.pmos_model,
-    }, body_only=True)
-    lo, hi = round(vcm - 0.15, 3), round(vcm + 0.15, 3)
-    return {"body": body, "signals": "v(vout)",
-            "analysis": f"dc Vinp {lo} {hi} 0.002"}
+    return ngspice_opamp(bt, OpAmpParams(), baked)
 
 
 def directnet_opamp_deck(bt: BenchTech) -> str:
-    """Single-point DirectNet opamp ship-gate deck text (render + per-tech
-    bias rewrites). Pure text so the equivalence canary diffs the REAL deck
-    (not a hand-copied replica) against the sweep builder (bug report B8)."""
-    vcm, vbn, vbp = _bias(bt)
-    # the template ships TSMC12 0.80V bias rails; rewrite per tech
-    text = render_directnet_text(TEMPLATE.read_text(), bt)
-    text = text.replace("Vbn vbn 0 0.36", f"Vbn vbn 0 {vbn}")
-    text = text.replace("Vbp vbp 0 0.44", f"Vbp vbp 0 {vbp}")
-    text = text.replace("Vinn inn 0 0.44", f"Vinn inn 0 {vcm}")
-    text = text.replace("Vinp inp 0 0.44", f"Vinp inp 0 {vcm}")
-    lo, hi = round(vcm - 0.15, 3), round(vcm + 0.15, 3)
-    return text.replace(".dc Vinp 0.29 0.59 0.002",
-                        f".dc Vinp {lo} {hi} 0.002")
+    """Render the single-point NN opamp qualification deck."""
+    return directnet_opamp(bt, OpAmpParams())
 
 
 def run_ngspice_opamp(bt: BenchTech, work_dir: Path) -> Dict[str, np.ndarray]:
@@ -243,6 +212,12 @@ def main() -> int:
     for r in results:
         if "error" in r:
             print(f"{r['tech']:8s} | ERROR — {r['error'][:54]}")
+            print(GateResult(
+                case_id="opamp", tech=r["tech"], corner="nominal",
+                analysis="transfer", role="qualification", status="error",
+                error=r["error"], reference_converged="ng_gain" in r,
+                candidate_converged=False,
+            ).marker())
             continue
         status = "PASS" if r.get("passed") else "FAIL"
         n_pass += int(r.get("passed", False))
@@ -251,6 +226,22 @@ def main() -> int:
               f"{r['gain_err_pct']:9.2f} | "
               f"{r['trip_shift_mV']:8.2f}mV | {r['nrmse_pct']:7.2f} | "
               f"{status:>8s}")
+        print(GateResult(
+            case_id="opamp", tech=r["tech"], corner="nominal",
+            analysis="transfer", role="qualification",
+            status="pass" if r.get("passed") else "fail",
+            metrics={
+                "metric": r["gain_err_pct"],
+                "gain_err_pct": r["gain_err_pct"],
+                "trip_shift_mV": r["trip_shift_mV"],
+                "mre_pct": r["mre_pct"], "r2": r["r2"],
+                "nrmse_pct": r["nrmse_pct"], "max_err": r["max_err"],
+            },
+            domain={
+                "reference_gain_v_per_v": r["ng_gain"],
+                "candidate_gain_v_per_v": r["dn_gain"],
+            },
+        ).marker())
     print(f"\n  {n_pass}/{len(results)} within +/-{GAIN_TOL*100:.0f}% gain gate")
     # B10: surface the verdict in the exit code (consumers also parse stdout).
     # empty results (all techs skipped) must not exit green

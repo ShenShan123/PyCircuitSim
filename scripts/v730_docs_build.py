@@ -10,7 +10,7 @@ substituted into `<!--MARKER-->` slots, so no table in the reports can drift
 from the evidence. Markers:
 
     <!--HEADLINE-->     per-tier /20 strict summary
-    <!--TESTCASE-->     one tier x tech matrix per complex testcase
+    <!--TESTCASE-->     one tier x tech matrix per simple-v1 testcase
     <!--BYTECH-->       per-tech roll-up across tiers and testcases
     <!--BYSCALE-->      per-scale roll-up across techs and testcases
     <!--DEVICE-->       parametric DC / transient, device AC, opamp AC
@@ -19,7 +19,7 @@ from the evidence. Markers:
 
 Available sources (each rendered report is pinned to one complete pass):
 
-    results/a3_regate/REPORT.md    V6.13.0, complex matrix, single-run
+    results/a3_regate/REPORT.md    V6.13.0, simple-v1 matrix, single-run
     results/v710_regate/data.json  V7.1.0, device + AC + strict OMP
     results/v730_regate/data.json  V7.3.0 recipe campaign
     results/v740_regate/data.json  V7.4.0, clean DN + BSIM-AR rebuild
@@ -39,6 +39,7 @@ import hashlib
 import json
 import pathlib
 import re
+import sys
 from typing import Dict, Generator, List, Optional, Tuple
 
 if __package__:
@@ -47,6 +48,14 @@ else:
     from v710_regate_collect import is_verdict
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tests.common.simple_circuit_catalog import (  # noqa: E402
+    SIMPLE_V1,
+    cases,
+)
+
 TPL = ROOT / "scripts" / "accuracy_doc_templates"
 DOCS = ROOT / "docs" / "accuracy"
 
@@ -55,12 +64,20 @@ DOCS = ROOT / "docs" / "accuracy"
 # rather than the /16 every earlier report used. No total below is comparable
 # to a pre-V7.3.0 total without rescaling.
 TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
-CIRCS = ["ring_osc", "opamp", "sram_snm", "switchcap"]
+SIMPLE_V1_CASES = cases(score_version=SIMPLE_V1)
+CIRCS = [case.result_key for case in SIMPLE_V1_CASES]
+SUITE_FOR_CIRC = {
+    case.result_key: case.legacy_suite_id
+    for case in SIMPLE_V1_CASES
+    if case.legacy_suite_id is not None
+}
 CIRC_LABEL = {
-    "ring_osc": ("Ring oscillator", "period error %, gate ≤5 %"),
-    "opamp": ("Two-stage Miller opamp (DC)", "open-loop gain error %, gate ≤10 %"),
-    "sram_snm": ("6T SRAM read SNM", "worst lobe NRMSE %, gate ≤10 % and all lobes positive"),
-    "switchcap": ("Switched-capacitor cell", "charge error % of VDD, gate ≤5 %"),
+    case.result_key: (
+        case.report_label or case.label,
+        case.report_gate_text
+        or f"{case.gate_metric}, gate {case.gate_condition}",
+    )
+    for case in SIMPLE_V1_CASES
 }
 TIERS = ["small", "medium", "large", "xl"]
 FAM = {
@@ -73,10 +90,11 @@ FILE_STEM = {
 }
 STRICT_OMP = ("omp1", "omp2", "omp4")
 REPORT_SUITES: Dict[str, Tuple[str, ...]] = {
-    "verify_complex_ring_osc": STRICT_OMP,
-    "verify_complex_opamp": STRICT_OMP,
-    "verify_complex_sram_snm": ("omp1",),
-    "verify_complex_switchcap": ("omp1",),
+    **{
+        case.legacy_suite_id: tuple(f"omp{value}" for value in case.omp_threads)
+        for case in SIMPLE_V1_CASES
+        if case.legacy_suite_id is not None
+    },
     "verify_nn_multi_tech_dc": ("omp1",),
     "verify_nn_multi_tech_tran": ("omp1",),
     "verify_nn_ac": ("omp1",),
@@ -84,10 +102,11 @@ REPORT_SUITES: Dict[str, Tuple[str, ...]] = {
 }
 
 _REPORT_PAYLOAD_KEYS: Dict[str, Tuple[str, ...]] = {
-    "verify_complex_ring_osc": ("metric",),
-    "verify_complex_opamp": ("metric",),
-    "verify_complex_sram_snm": ("metric",),
-    "verify_complex_switchcap": ("metric",),
+    **{
+        case.legacy_suite_id: ("metric",)
+        for case in SIMPLE_V1_CASES
+        if case.legacy_suite_id is not None
+    },
     "verify_nn_multi_tech_dc": (
         "n", "n_pass", "mean_nrmse", "max_nrmse", "mean_mre", "min_r2",
         "max_error",
@@ -128,7 +147,7 @@ RECIPES: Dict[str, List[Tuple[str, str]]] = {
 
 # ── evidence ────────────────────────────────────────────────────────────────
 def load_a3() -> Dict[Tuple[str, str, str, str], Tuple[str, float]]:
-    """V6.13.0 complex matrix, parsed out of its markdown report.
+    """V6.13.0 simple-v1 matrix, parsed out of its markdown report.
 
     Group headings read `### \\`dn/clean/large\\` — 15/16`; the clean/large
     group is the production slot, whose variant name differs from the tier.
@@ -210,7 +229,7 @@ PRESERVED_REPORT_SHA256: Dict[Tuple[str, bool], str] = {
     ("tf", True): "c79255aabecd3e9b1b320e403e747d790482046a829b1c40c44299d6bd758a2e",
 }
 PRESERVED_README_SHA256 = (
-    "c7b2743dbfaab7adddfb8abd19ea76b3a4a75264aa7b49f152d69e7f358b8f69"
+    "b04b4b40858b34fd4f94071180284e9d50fcd0281a4353b0d588c5c063ec5f5a"
 )
 
 
@@ -239,7 +258,13 @@ def raw(tag: str, variant: str, suite: str, tech: str) -> Optional[Dict]:
     return None
 
 
-def at(tag: str, variant: str, suite: str, tech: str, omp: str = "omp1"):
+def at(
+    tag: str,
+    variant: str,
+    suite: str,
+    tech: str,
+    omp: str = "omp1",
+) -> Optional[Dict]:
     e = raw(tag, variant, suite, tech)
     return e.get(omp) if e else None
 
@@ -250,7 +275,7 @@ def clean_variant(tag: str, tier: str, tech: str) -> str:
 
 def strict(tag: str, variant: str, circ: str, tech: str
            ) -> Tuple[Optional[str], Optional[float]]:
-    """Strict verdict for one complex cell: PASS only at every thread count.
+    """Strict verdict for one simple-v1 cell at every required thread count.
 
     ring_osc and opamp sit on multistable fixed points, so a single-run pass on
     a cell that flips is an artifact (methodology.md §3). sram_snm and
@@ -258,7 +283,7 @@ def strict(tag: str, variant: str, circ: str, tech: str
     A cell measured only by V6.13.0 falls back to its single-run verdict and is
     reported as such, never silently promoted to strict.
     """
-    suite = f"verify_complex_{circ}"
+    suite = SUITE_FOR_CIRC[circ]
     e = raw(tag, variant, suite, tech)
     if e:
         omps = STRICT_OMP if circ in ("ring_osc", "opamp") else ("omp1",)
@@ -314,8 +339,11 @@ def _variant(tag: str, key: str, tech: str, recipes: bool) -> str:
 
 
 def headline(tag: str, recipes: bool) -> str:
-    rows = ["| group | strict /20 | ring_osc | opamp | sram_snm | switchcap | flips | open cells |",
-            "|---|---|---|---|---|---|---|---|"]
+    rows = [
+        "| group | strict /20 | " + " | ".join(CIRCS)
+        + " | flips | open cells |",
+        "|---|" + "---|" * (len(CIRCS) + 3),
+    ]
     for label, key in _groups(tag, recipes):
         # Per-circuit denominators are counted, not divided out of the total:
         # a partly-measured group has different denominators per circuit, and
@@ -660,7 +688,10 @@ def _matrix_complete_in_pass(tag: str, recipes: bool, version: str) -> bool:
     return True
 
 
-def scoreboard(_tag=None, _recipes=None) -> str:
+def scoreboard(
+    _tag: Optional[str] = None,
+    _recipes: Optional[bool] = None,
+) -> str:
     out = ["| LEVEL | family | role | current / best clean | historical best recipe | CPU cost |",
            "|---|---|---|---|---|---|"]
     for tag in ("dn", "tf", "dnf", "tff"):
@@ -701,7 +732,7 @@ def scoreboard(_tag=None, _recipes=None) -> str:
 
 
 def _techs_measured(tag: str, recipes: bool) -> List[str]:
-    """Techs with at least one measured complex cell in this report's groups."""
+    """Techs with at least one measured simple-v1 cell in these groups."""
     got = []
     for tech in TECHS:
         for _, key in _groups(tag, recipes):
@@ -726,20 +757,22 @@ def denominator_note(tag: Optional[str], recipes: Optional[bool]) -> str:
         ]
     else:
         scopes = [(tag, bool(recipes))]
-    sizes = {len(_techs_measured(t, r)) * 4 for t, r in scopes}
+    sizes = {len(_techs_measured(t, r)) * len(CIRCS) for t, r in scopes}
     sizes.discard(0)
     if sizes == {20}:
-        return ("Totals are **/20** — 4 circuits × 5 techs, TSMC6 included "
+        return (f"Totals are **/20** — {len(CIRCS)} circuits × 5 techs, "
+                "TSMC6 included "
                 "(`methodology.md` §2). Earlier reports scored /16 over four "
                 "techs, so a "
                 "/20 total here and a /16 total there can be the same "
                 "measurement.")
     if not sizes:
-        return "No complex cells measured yet."
+        return "No simple-v1 cells measured yet."
     lo, hi = min(sizes), max(sizes)
     span = f"**/{lo}**" if lo == hi else f"**/{lo}–/{hi}**"
     return (f"Totals are {span}, against the /20 these reports target "
-            f"(4 circuits × 5 techs): some groups have no TSMC6 checkpoint "
+            f"({len(CIRCS)} circuits × 5 techs): some groups have no TSMC6 "
+            "checkpoint "
             f"measured yet. **Compare the fractions, not the counts.**")
 
 

@@ -245,6 +245,68 @@ TECH_COLORS: Dict[str, str] = {
 _DECK_TOKEN_RE = re.compile(r"<([A-Z][A-Z0-9_]*)>")
 
 
+def deck_tokens(text: str) -> Tuple[str, ...]:
+    """Return the sorted, unique placeholder names used by a deck.
+
+    Keeping token discovery beside rendering lets callers build one broad set
+    of technology substitutions and then pass only the values a particular
+    deck declares.  ``render_deck_text`` still enforces the important strict
+    contract: missing and stale substitutions are errors.
+    """
+    active = "\n".join(
+        line for line in text.splitlines()
+        if not line.lstrip().startswith("*")
+    )
+    return tuple(sorted(set(_DECK_TOKEN_RE.findall(active))))
+
+
+def render_deck_text(
+    template_text: str,
+    subs: Dict[str, str],
+    *,
+    source_name: str = "<memory>",
+    body_only: bool = False,
+) -> str:
+    """Render example-deck text with strict placeholder validation.
+
+    This is the engine-neutral implementation behind
+    :func:`render_reference_deck`.  Both the LEVEL=72 reference adapter and
+    the NN candidate adapter use it, so neither adapter needs a private
+    netlist-rewrite convention.
+    """
+    lines: List[str] = []
+    saw_title = False
+    for raw in template_text.splitlines():
+        stripped = raw.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("*"):
+            if body_only or saw_title:
+                continue
+            saw_title = True
+            lines.append(" ".join(stripped.split()))
+            continue
+        if body_only and stripped.lower() == ".end":
+            continue
+        lines.append(" ".join(stripped.split()))
+
+    text = "\n".join(lines)
+    found = set(_DECK_TOKEN_RE.findall(text))
+    missing = found - set(subs)
+    if missing:
+        raise KeyError(
+            f"{source_name}: no substitution for "
+            f"{sorted(missing)} (supplied: {sorted(subs)})")
+    unused = set(subs) - found
+    if unused:
+        raise KeyError(
+            f"{source_name}: substitutions {sorted(unused)} match no "
+            "token in the deck — the template changed under the caller")
+
+    rendered = _DECK_TOKEN_RE.sub(lambda m: subs[m.group(1)], text)
+    return rendered if body_only else rendered + "\n"
+
+
 def render_reference_deck(template_path: Path, subs: Dict[str, str], *,
                           body_only: bool = False) -> str:
     """Render a deck from ``examples/`` into runnable netlist text.
@@ -276,38 +338,10 @@ def render_reference_deck(template_path: Path, subs: Dict[str, str], *,
     parameterizing something it is not, which is the exact failure this
     function exists to prevent.
     """
-    lines: List[str] = []
-    saw_title = False
-    for raw in template_path.read_text().splitlines():
-        stripped = raw.strip()
-        if not stripped:
-            continue
-        if stripped.startswith("*"):
-            # Full decks keep exactly one title line (NGSPICE eats line 1).
-            if body_only or saw_title:
-                continue
-            saw_title = True
-            lines.append(" ".join(stripped.split()))
-            continue
-        if body_only and stripped.lower() == ".end":
-            continue
-        lines.append(" ".join(stripped.split()))
-
-    text = "\n".join(lines)
-    found = set(_DECK_TOKEN_RE.findall(text))
-    missing = found - set(subs)
-    if missing:
-        raise KeyError(
-            f"{template_path.name}: no substitution for "
-            f"{sorted(missing)} (supplied: {sorted(subs)})")
-    unused = set(subs) - found
-    if unused:
-        raise KeyError(
-            f"{template_path.name}: substitutions {sorted(unused)} match no "
-            f"token in the deck — the template changed under the caller")
-
-    rendered = _DECK_TOKEN_RE.sub(lambda m: subs[m.group(1)], text)
-    return rendered if body_only else rendered + "\n"
+    return render_deck_text(
+        template_path.read_text(), subs,
+        source_name=template_path.name, body_only=body_only,
+    )
 
 
 # ---------------------------------------------------------------------------

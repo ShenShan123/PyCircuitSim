@@ -34,6 +34,8 @@ from pycircuitsim.solver import (
 )
 from pycircuitsim.circuit import Circuit
 from pycircuitsim.models.passive import VoltageSource
+from tests.common.gate_result import GateResult
+from tests.common.simple_circuit_catalog import SIMPLE_V1, SIMPLE_V2
 from tests.simple_circuits import verify_circuit_opamp_ac as opamp_ac
 from tests.simple_circuits import verify_nn_ac
 
@@ -459,6 +461,43 @@ def _check_clean_pool() -> None:
     assert full_parsed == full_expected
     assert len(full_clean) == len(full_parsed) == 480
 
+    diagnostic = jobs.build_pools()["simple_v2"]
+    diagnostic_parsed = {tuple(line.split()) for line in diagnostic}
+    diagnostic_expected = {
+        (tag, variant, tech, suite, "1")
+        for tag in ("dn", "tf", "dnf", "tff")
+        for variant in ("small", "medium", "large", "xl")
+        for tech in ("TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16")
+        for suite in jobs.SIMPLE_V2_SUITES
+    }
+    assert diagnostic_parsed == diagnostic_expected
+    assert len(diagnostic) == len(diagnostic_parsed) == 960
+    assert coverage.suites_for(SIMPLE_V1) == coverage.SUITES
+    selected_v2 = coverage.suites_for(SIMPLE_V2)
+    assert set(jobs.SIMPLE_V2_SUITES) <= set(selected_v2)
+    assert not set(coverage.SIMPLE_V1_SUITES) & set(selected_v2)
+
+
+def _check_structured_simple_results_survive_collection() -> None:
+    """New topology metrics must not depend on human-readable log regexes."""
+    with tempfile.TemporaryDirectory() as raw:
+        root = Path(raw)
+        log = (root / "dn" / "small" / "tsmc5"
+               / "verify_circuit_topologies__current_mirror.omp1.log")
+        log.parent.mkdir(parents=True)
+        result = GateResult(
+            case_id="current_mirror", tech="TSMC5", corner="nominal",
+            analysis="nmos", role="diagnostic", status="diagnostic",
+            metrics={"nrmse_pct": 3.25, "ratio_error_pct": 0.2},
+        )
+        log.write_text(result.marker() + "\n===V710_DONE rc=0===\n")
+        entry = collect.collect(root)["dn"]["small"][
+            "verify_circuit_topologies__current_mirror"
+        ]["TSMC5"]["omp1"]
+        assert entry["status"] == "DIAGNOSTIC"
+        assert entry["metric"] == 3.25
+        assert entry["results"][0]["metrics"]["ratio_error_pct"] == 0.2
+
 
 def _check_job_generator_help_is_read_only() -> None:
     """A standard ``--help`` request must not become an output directory."""
@@ -584,9 +623,15 @@ def _check_regate_readiness_and_family_ownership() -> None:
         checkpoint_dir.mkdir()
         runner = root / "runner"
         observed = root / "force-level.txt"
+        observed_args = root / "runner-args.txt"
         _write_executable(
             runner,
-            "#!/usr/bin/env bash\nprintf '%s\\n' \"$PYCIRCUITSIM_NN_FORCE_LEVEL\" > \"$FAKE_FORCE_LOG\"\necho stub-suite-ran\n",
+            "#!/usr/bin/env bash\n"
+            "printf '%s\\n' \"$PYCIRCUITSIM_NN_FORCE_LEVEL\" > \"$FAKE_FORCE_LOG\"\n"
+            "printf '%s\\n' \"$*\" >> \"$FAKE_ARGS_LOG\"\n"
+            "printf '%s\\n' \"$PYCIRCUITSIM_SIMPLE_RESULTS|$PYCIRCUITSIM_COMPLEX_RESULTS\" "
+            ">> \"$FAKE_RESULTS_LOG\"\n"
+            "echo stub-suite-ran\n",
         )
         env = os.environ.copy()
         env.update({
@@ -596,6 +641,8 @@ def _check_regate_readiness_and_family_ownership() -> None:
             "V710_OUT": str(root / "out"),
             "V710_SCRATCH": str(root / "scratch"),
             "FAKE_FORCE_LOG": str(observed),
+            "FAKE_ARGS_LOG": str(observed_args),
+            "FAKE_RESULTS_LOG": str(root / "runner-results.txt"),
             "PYCIRCUITSIM_NN_FORCE_LEVEL": "75",
             "V710_CAMPAIGN_DIGEST": "0" * 64,
             "V710_TEST_BYPASS_MANIFEST": "1",
@@ -622,6 +669,26 @@ def _check_regate_readiness_and_family_ownership() -> None:
                              check=False, timeout=10)
         assert ran.returncode == 0, ran.stdout + ran.stderr
         assert observed.read_text().strip() == "73"
+
+        diagnostic_command = [
+            "bash", str(ROOT / "scripts" / "v710_regate.sh"), "_one",
+            "dn", "small", "TSMC5",
+            "verify_circuit_topologies__current_mirror", "1",
+        ]
+        diagnostic = subprocess.run(
+            diagnostic_command, env=env, capture_output=True, text=True,
+            check=False, timeout=10,
+        )
+        assert diagnostic.returncode == 0, diagnostic.stdout + diagnostic.stderr
+        calls = observed_args.read_text().splitlines()
+        assert any(
+            "verify_circuit_topologies.py --tech TSMC5 --case current_mirror"
+            in call for call in calls
+        )
+        result_roots = (root / "runner-results.txt").read_text().splitlines()
+        assert all(left == right for left, right in (
+            line.split("|", 1) for line in result_roots
+        ))
 
         _ready_checkpoint(checkpoint_dir, "tf", config=False)
         with patch.object(coverage, "CKPT", checkpoint_dir):
@@ -971,6 +1038,7 @@ def main() -> int:
     _check_error_rows_count_in_device_denominators()
     _check_explicit_circuit_errors_are_complete_failures()
     _check_clean_pool()
+    _check_structured_simple_results_survive_collection()
     _check_job_generator_help_is_read_only()
     _check_training_lifecycle_subprocesses()
     _check_training_cli_contract()

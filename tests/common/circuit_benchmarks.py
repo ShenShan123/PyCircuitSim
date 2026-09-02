@@ -21,13 +21,13 @@ This module owns the shared plumbing:
   * NGSPICE batch runner wrappers,
   * metric helpers (NRMSE / MRE / R^2 / MaxErr).
 
-The four verify scripts own their own netlist text and orchestration; they
-import from here so all four share one modelcard cache and one NGSPICE path.
+The paired files in ``examples/simple_circuits`` own each tested topology.
+The four verify scripts own orchestration and import from here so they share
+one strict renderer, modelcard cache, and NGSPICE path.
 """
 from __future__ import annotations
 
 import os
-import re
 from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Set, Tuple
@@ -49,13 +49,13 @@ except (ImportError, ValueError):  # pragma: no cover
 from tests.common.base import (
     PROJECT_ROOT, OSDI_PATH, NGSPICE_BIN,
     ALL_TECHS, TechProfile, VtPair,
-    bake_inst_params, run_ngspice_subprocess,
+    bake_inst_params, deck_tokens, render_deck_text, run_ngspice_subprocess,
 )
 from tests.common.nn import nrmse as _nrmse_pct, mre as _mre_pct
 
 # ---------------------------------------------------------------------------
-# Benchmark techs — only the four with V6.3.1 DirectNet checkpoints.
-# ASAP7 is out of scope; LEVEL=74 BSIMAR out of scope.
+# Benchmark technologies with per-technology NN checkpoints. ASAP7 remains
+# outside the NN checkpoint scope.
 # ---------------------------------------------------------------------------
 BENCH_TECHS: List[str] = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 _MODEL_NAMES = {
@@ -97,8 +97,12 @@ def active_model_label() -> str:
 # decks. Default = the committed in-tree path (unchanged for normal runs).
 import os as _os  # noqa: E402
 RESULTS_BASE = Path(_os.environ.get(
-    "PYCIRCUITSIM_COMPLEX_RESULTS",
-    str(PROJECT_ROOT / "tests" / "verify_complex_results")))
+    "PYCIRCUITSIM_SIMPLE_RESULTS",
+    _os.environ.get(
+        "PYCIRCUITSIM_COMPLEX_RESULTS",  # persisted campaign compatibility
+        str(PROJECT_ROOT / "tests" / "verify_simple_results"),
+    ),
+))
 
 
 # ---------------------------------------------------------------------------
@@ -108,9 +112,9 @@ RESULTS_BASE = Path(_os.environ.get(
 class BenchTech:
     """Resolved benchmark device geometry for one technology.
 
-    DirectNet per-tech checkpoints (``tsmc{5,7,12,16}_dn_medium_{nmos,pmos}``)
-    are trained for NMOS L=16nm / PMOS L=20nm; the benchmark circuits pin those
-    geometries so the model interpolates rather than extrapolates.
+    The clean per-technology NN checkpoints use NMOS L=16 nm and PMOS L=20 nm;
+    the nominal benchmark pins those geometries while declared corners test
+    the additional training-grid points explicitly.
     """
     name: str          # e.g. "TSMC5"
     nn_tech: str        # TECH= netlist parameter, e.g. "tsmc5"
@@ -122,6 +126,7 @@ class BenchTech:
     nfin: int           # default fin count (NMOS fin count)
     nmos_model: str     # NGSPICE/BSIM-CMG model name (modelcard)
     pmos_model: str     # NGSPICE/BSIM-CMG model name (modelcard)
+    temperature_c: float = 27.0
     # --- parametric-sweep extensions (default-empty → all existing callers
     #     resolve to the symmetric `vt` / `nfin`, so behaviour is preserved) ---
     nmos_vt: str = ""   # asymmetric NMOS VT (falls back to `vt`)
@@ -168,7 +173,7 @@ def _resolve_bench_tech(name: str) -> BenchTech:
         l_nmos=16e-9,
         l_pmos=20e-9,
         tfin=prof.tfin,
-        nfin=prof.default_nfin,   # 2 for all four TSMC nodes
+        nfin=prof.default_nfin,
         nmos_model=vp.nmos_model,
         pmos_model=vp.pmos_model,
         nmos_vt=ckpt_vt,
@@ -235,7 +240,8 @@ def bench_variant(base: BenchTech, **overrides: Any) -> BenchTech:
         repl["pmos_model"] = vp.pmos_model   # PMOS side from its OWN VtPair
 
     # Plain geometry / supply overrides pass through unchanged.
-    for k in ("l_nmos", "l_pmos", "nfin", "nfin_p", "vdd"):
+    for k in ("l_nmos", "l_pmos", "nfin", "nfin_p", "vdd",
+              "temperature_c"):
         if k in overrides:
             repl[k] = overrides.pop(k)
     if overrides:
@@ -396,7 +402,7 @@ def fmt_metrics(m: Dict[str, float], err_scale: float = 1e3,
 # ---------------------------------------------------------------------------
 # PyCircuitSim DirectNet runner plumbing (shared parse/solve helpers)
 # ---------------------------------------------------------------------------
-def parse_netlist(netlist_path: Path):
+def parse_netlist(netlist_path: Path) -> Any:
     """Parse a PyCircuitSim netlist; return the Parser (caller reads .circuit).
 
     The DirectNet LEVEL=73 models self-resolve their per-tech checkpoint from
@@ -409,37 +415,45 @@ def parse_netlist(netlist_path: Path):
     return parser
 
 
-def render_directnet_text(template_text: str, bt: BenchTech) -> str:
-    """Per-tech rewrite of a DirectNet template's text (TECH/VT/VDD).
+def render_directnet_text(
+    template_text: str,
+    bt: BenchTech,
+    substitutions: Optional[Dict[str, str]] = None,
+) -> str:
+    """Render an NN example template using explicit named placeholders.
 
-    Pure (string-in, string-out) so the single-point verify scripts can build
-    their ship-gate deck text WITHOUT touching the filesystem, and the
-    equivalence canary (verify_circuit_sweep_canaries) can diff that exact text
-    against the sweep builders. ``render_directnet_netlist`` is the file-writing
-    wrapper around this.
+    The former implementation globally replaced every standalone ``0.80`` and
+    guessed which ``VT=svt`` belonged to which polarity.  That silently
+    rewrote unrelated rails and could not express asymmetric VT, temperature,
+    or geometry.  Templates must now declare every varying value explicitly;
+    missing case-specific values fail loud.
     """
-    text = template_text.replace("TECH=tsmc12", f"TECH={bt.nn_tech}")
-    text = text.replace("VT=svt", f"VT={bt.vt}")
-    # Rescale EVERY 0.80 V rail to the tech VDD. The templates are authored at
-    # the TSMC12/16 rail (0.80 V); for the 0.65/0.75 V nodes every standalone
-    # 0.80 token is a supply rail — the Vdd line, the PULSE clock amplitude
-    # (`PULSE 0 0.80`), SRAM word/bit lines (`Vwl wl 0 0.80`), and the `.ic`
-    # rails (`=0.80`). The earlier targeted `Vdd vdd 0 0.80` / `=0.80` replaces
-    # MISSED the space-delimited clock/rail values, so on tsmc5/tsmc7 the
-    # DirectNet clock over-drove the pass gates to 0.80 V while NGSPICE clocked
-    # to VDD — different experiments (the tsmc5 switchcap "11.8% over-charge").
-    # Geometry (`L=16n`, `NFIN=2`) carries no 0.80 token, so a whole-number
-    # match is safe. A no-op on tsmc12/16 (0.80 -> 0.80).
-    return re.sub(r"(?<![\w.])0\.80(?![\w])", f"{bt.vdd}", text)
+    values = {
+        "LEVEL": str(_active_model_level()), "TECH": bt.nn_tech,
+        "NVT": bt.effective_nmos_vt, "PVT": bt.effective_pmos_vt,
+        "VDD": f"{bt.vdd:g}", "LN": f"{bt.l_nmos * 1e9:g}n",
+        "LP": f"{bt.l_pmos * 1e9:g}n", "NFN": str(bt.nfin),
+        "NFP": str(bt.effective_nfin_p),
+        "TEMP": f"{bt.temperature_c:g}",
+    }
+    values.update(substitutions or {})
+    required = deck_tokens(template_text)
+    missing = [name for name in required if name not in values]
+    if missing:
+        raise KeyError(f"DirectNet template needs substitutions {missing}")
+    return render_deck_text(
+        template_text, {name: values[name] for name in required},
+        source_name="DirectNet template",
+    )
 
 
 def render_directnet_netlist(template_path: Path, bt: BenchTech,
                              out_path: Path) -> Path:
     """Write a per-tech DirectNet netlist from an examples/ template.
 
-    The examples/simple_circuits/directnet_*.sp files carry TSMC12/svt/0.80 V
-    placeholders; this swaps in the benchmark tech's TECH= / VT= / VDD so the
-    parser preempt cascade resolves the right ``tsmc{X}_dn_medium`` checkpoint.
+    The templates declare all circuit-varying values as named tokens.  Strict
+    rendering selects the requested model family, technology, VT, supply,
+    geometry, and temperature without rewriting unrelated numeric literals.
     """
     text = render_directnet_text(template_path.read_text(), bt)
     out_path.parent.mkdir(parents=True, exist_ok=True)
@@ -447,7 +461,9 @@ def render_directnet_netlist(template_path: Path, bt: BenchTech,
     return out_path
 
 
-def run_directnet_transient(netlist_path: Path):
+def run_directnet_transient(
+    netlist_path: Path,
+) -> Tuple[Dict[str, np.ndarray], bool, str]:
     """Parse + DC-OP + transient-solve a DirectNet netlist.
 
     Returns ``(results_dict, partial_flag, err_msg)``. On a mid-transient NR
@@ -471,7 +487,7 @@ def run_directnet_transient(netlist_path: Path):
         guess = circuit.initial_conditions or None
 
         # uic-equivalent start (V6.4.7 S5b): the NGSPICE side of every
-        # complex benchmark runs `tran ... uic`, integrating from `.ic`
+        # simple-circuit benchmark runs `tran ... uic`, integrating from `.ic`
         # exactly. Using `.ic` only as an NR guess lets the OP converge to
         # the model's unconstrained leakage equilibrium (the S5 SC dump
         # measured vsamp(0)=0.39-0.70 V instead of the .ic 0 V), so the two
@@ -535,12 +551,21 @@ def run_directnet_transient(netlist_path: Path):
                     results[node] = arr[:n].copy()
             else:
                 raise
+        n_results = len(results["time"])
+        for source_name, values in getattr(solver, "source_currents", {}).items():
+            current = np.asarray(values)[:n_results]
+            if current.size == n_results and np.all(np.isfinite(current)):
+                results[f"i({source_name})"] = current.copy()
     finally:
         logging.disable(logging.NOTSET)
     return results, partial, err_msg
 
 
-def run_directnet_dc_sweep(netlist_path: Path, work_dir: Path, tag: str):
+def run_directnet_dc_sweep(
+    netlist_path: Path,
+    work_dir: Path,
+    tag: str,
+) -> Dict[str, np.ndarray]:
     """Parse + DC-sweep a DirectNet netlist; return the run_dc_sweep results."""
     import logging
     from pycircuitsim.simulation import run_dc_sweep
@@ -562,13 +587,13 @@ def run_directnet_dc_sweep(netlist_path: Path, work_dir: Path, tag: str):
 
 
 # ===========================================================================
-# Parametric sweep harness (plan 2026-06-20): stimulus dataclasses (Step 3),
-# shared measurement helpers + programmatic builders (Step 4).
+# Parametric sweep harness: stimulus dataclasses, shared measurement helpers,
+# and authoritative example-deck adapters.
 #
 # Every stimulus field defaults to today's single-point value, so a bare
 # ``Params()`` reproduces the ship-gate circuit. NGSPICE builders emit device
 # lines with NO instance params (OSDI rejects them — all geometry lives in the
-# baked .model); DirectNet builders emit per-device ``L=..n NFIN=..`` (the
+# baked .model); NN builders emit per-device ``L=..n NFIN=..`` (the
 # PyCircuitSim parser accepts instance params). The two PULSE syntaxes are kept
 # deliberately distinct (NGSPICE ``PULSE(...)`` vs PyCircuitSim space-separated).
 # ===========================================================================
@@ -719,209 +744,171 @@ def sc_windows(p: SwitchCapParams) -> Tuple[float, float, float, float,
     return sample_end, hold_start, hold_end, tstop, pw, per
 
 
-# --- programmatic builders: opamp -------------------------------------------
+# --- authoritative example adapters: opamp ----------------------------------
+def _catalog_pair(
+    case_id: str,
+    bt: BenchTech,
+    baked: Path,
+    *,
+    candidate_card: str,
+    reference_card: str,
+    substitutions: Optional[Dict[str, str]] = None,
+    ring_n_stages: int = 5,
+    ring_cload: float = 0.5e-15,
+) -> Tuple[str, str]:
+    """Render one parametric twin from the authoritative example pair."""
+    from tests.common.simple_circuit_catalog import get_case
+    from tests.common.simple_circuit_harness import (
+        CORNERS, render_case_decks,
+    )
+
+    case = get_case(case_id)
+    analysis = replace(
+        case.analyses[0], candidate_card=candidate_card,
+        reference_card=reference_card,
+    )
+    return render_case_decks(
+        case, analysis, bt, CORNERS["nominal"], baked_lib=baked,
+        substitutions=substitutions, ring_n_stages=ring_n_stages,
+        ring_cload=ring_cload,
+    )
+
+
+def _catalog_body(deck: str) -> str:
+    """Drop title and .end before embedding a rendered reference in control."""
+    return "\n".join(
+        line for line in deck.splitlines()
+        if line.strip().lower() != ".end"
+        and not line.lstrip().startswith("*")
+    )
+
+
 def ngspice_opamp(bt: BenchTech, p: OpAmpParams, baked: Path) -> Dict[str, str]:
     vcm, vbn, vbp = opamp_bias(bt, p)
-    n, pm = bt.nmos_model, bt.pmos_model
-    body = [f'.include "{baked}"', ".temp 27", f"Vdd vdd 0 {_f(bt.vdd)}",
-            f"Vbn vbn 0 {_f(vbn)}", f"Vbp vbp 0 {_f(vbp)}",
-            f"Vinn inn 0 {_f(vcm)}", f"Vinp inp 0 {_f(vcm)}",
-            f"Nn1 n1 inp vtail 0 {n}", f"Nn2 vo1i inn vtail 0 {n}",
-            f"Np3 n1 n1 vdd vdd {pm}", f"Np4 vo1i n1 vdd vdd {pm}",
-            f"Nn5 vtail vbn 0 0 {n}",
-            f"Np6 vout vo1i vdd vdd {pm}", f"Nn7 vout vbn 0 0 {n}",
-            f"Cc vo1i vout {_cap(p.cc)}", f"CL vout 0 {_cap(p.cl)}"]
     lo, hi = round(vcm - p.span, 3), round(vcm + p.span, 3)
-    return {"body": "\n".join(body), "signals": "v(vout)",
-            "analysis": f"dc Vinp {_f(lo)} {_f(hi)} {_f(p.step)}"}
+    card = f"dc Vinp {_f(lo)} {_f(hi)} {_f(p.step)}"
+    _, reference = _catalog_pair(
+        "opamp", bt, baked, candidate_card=f".{card}",
+        reference_card=card,
+        substitutions={
+            "VCM": _f(vcm), "VBN": _f(vbn), "VBP": _f(vbp),
+            "CC": _cap(p.cc), "CL": _cap(p.cl),
+            "OPAMP_LO": _f(lo), "OPAMP_HI": _f(hi),
+        },
+    )
+    return {"body": _catalog_body(reference), "signals": "v(vout)",
+            "analysis": card}
 
 
 def directnet_opamp(bt: BenchTech, p: OpAmpParams) -> str:
     vcm, vbn, vbp = opamp_bias(bt, p)
-    ln, lp = bt.l_nmos * 1e9, bt.l_pmos * 1e9
-    nfn, nfp = bt.nfin, bt.effective_nfin_p
     lo, hi = round(vcm - p.span, 3), round(vcm + p.span, 3)
-    # Hierarchical deck (V6.12.0): the two opamp stages are .subckt
-    # instances. Every pre-existing node (n1/vo1i/vtail/vout) stays a port,
-    # so the flattened net names — and every harness/diagnostic probe — are
-    # byte-identical to the historical flat deck.
-    return (
-        f"* Two-stage Miller opamp — DirectNet LEVEL=73 ({bt.name}) [sweep]\n"
-        f"Vdd vdd 0 {_f(bt.vdd)}\n"
-        f"Vbn vbn 0 {_f(vbn)}\n"
-        f"Vbp vbp 0 {_f(vbp)}\n"
-        f"Vinn inn 0 {_f(vcm)}\n"
-        f"Vinp inp 0 {_f(vcm)}\n"
-        f"Xs1 inp inn n1 vo1i vtail vbn vdd ota1\n"
-        f"Xs2 vo1i vout vbn vdd cs2\n"
-        f"Cc vo1i vout {_cap(p.cc)}\n"
-        f"CL vout 0 {_cap(p.cl)}\n"
-        f".subckt ota1 inp inn n1 vo1i vtail vbn vdd\n"
-        f"Mn1 n1   inp vtail 0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
-        f"Mn2 vo1i inn vtail 0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
-        f"Mp3 n1   n1  vdd   vdd pmos_nn L={lp:.0f}n NFIN={nfp}\n"
-        f"Mp4 vo1i n1  vdd   vdd pmos_nn L={lp:.0f}n NFIN={nfp}\n"
-        f"Mn5 vtail vbn 0    0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
-        f".ends\n"
-        f".subckt cs2 g d vbn vdd\n"
-        f"Mp6 d g vdd vdd pmos_nn L={lp:.0f}n NFIN={nfp}\n"
-        f"Mn7 d vbn  0   0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
-        f".ends\n"
-        f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})\n"
-        f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})\n"
-        f".dc Vinp {_f(lo)} {_f(hi)} {_f(p.step)}\n"
-        f".end\n")
+    card = f"dc Vinp {_f(lo)} {_f(hi)} {_f(p.step)}"
+    candidate, _ = _catalog_pair(
+        "opamp", bt, Path("<unused>"), candidate_card=f".{card}",
+        reference_card=card,
+        substitutions={
+            "VCM": _f(vcm), "VBN": _f(vbn), "VBP": _f(vbp),
+            "CC": _cap(p.cc), "CL": _cap(p.cl),
+            "OPAMP_LO": _f(lo), "OPAMP_HI": _f(hi),
+        },
+    )
+    return candidate
 
 
-# --- programmatic builders: ring oscillator ---------------------------------
+# --- authoritative example adapters: ring oscillator ------------------------
 def ngspice_ringosc(bt: BenchTech, p: RingOscParams, baked: Path,
                     tstop: float) -> Dict[str, str]:
-    N = p.n_stages
-    nd = [f"n{i}" for i in range(1, N + 1)]
-    body = [f'.include "{baked}"', ".temp 27", f"Vdd vdd 0 {_f(bt.vdd)}"]
-    for i in range(N):
-        inp = nd[i - 1]            # i=0 → nd[-1]=nN (feedback wrap)
-        body += [f"Np{i} {nd[i]} {inp} vdd vdd {bt.pmos_model}",
-                 f"Nn{i} {nd[i]} {inp} 0 0 {bt.nmos_model}",
-                 f"Cl{i} {nd[i]} 0 {_cap(p.cload)}"]
-    ic = " ".join(f"v(n{i})={'0' if i % 2 == 1 else _f(bt.vdd)}"
-                  for i in range(1, N + 1))
-    body.append(f".ic {ic}")
-    return {"body": "\n".join(body), "signals": f"v(n{N})",
-            "analysis": f"tran {_tp(p.tstep)} {_tn(tstop)} uic"}
+    card = f"tran {_tp(p.tstep)} {_tn(tstop)} uic"
+    _, reference = _catalog_pair(
+        "ring_osc", bt, baked, candidate_card=f".{card}",
+        reference_card=card, ring_n_stages=p.n_stages,
+        ring_cload=p.cload,
+    )
+    return {"body": _catalog_body(reference),
+            "signals": f"v(n{p.n_stages})", "analysis": card}
 
 
 def directnet_ringosc(bt: BenchTech, p: RingOscParams, tstop: float) -> str:
-    N = p.n_stages
-    ln, lp = bt.l_nmos * 1e9, bt.l_pmos * 1e9
-    nfn, nfp = bt.nfin, bt.effective_nfin_p
-    ic = " ".join(f"V(n{i})={'0.0' if i % 2 == 1 else _f(bt.vdd)}"
-                  for i in range(1, N + 1))
-    # Hierarchical deck (V6.12.0): one ringinv .subckt instantiated N times;
-    # stage nodes n1..nN stay top-level via the ports, so probes/period
-    # extraction are unchanged.
-    lines = [f"* {N}-stage ring oscillator — DirectNet LEVEL=73 ({bt.name}) [sweep]",
-             f"Vdd vdd 0 {_f(bt.vdd)}", f".ic {ic}"]
-    for i in range(1, N + 1):
-        inp = f"n{i - 1}" if i > 1 else f"n{N}"
-        lines += [f"Xinv{i} {inp} n{i} vdd ringinv"]
-    lines += [f".subckt ringinv i o vdd",
-              f"Mp o i vdd vdd pmos_nn L={lp:.0f}n NFIN={nfp}",
-              f"Mn o i 0   0   nmos_nn L={ln:.0f}n NFIN={nfn}",
-              f"Cl o 0 {_cap(p.cload)}",
-              f".ends",
-              f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})",
-              f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})",
-              # `uic` matches the ship-gate template (directnet_ring_osc_tran.sp:37);
-              # the sweep transient runner pins .ic nodes regardless, but keeping the
-              # token makes the deck byte-faithful so verify_circuit_sweep_canaries
-              # stays green (bug report B2).
-              f".tran {_tp(p.tstep)} {_tn(tstop)} uic", ".end"]
-    return "\n".join(lines) + "\n"
+    card = f"tran {_tp(p.tstep)} {_tn(tstop)} uic"
+    candidate, _ = _catalog_pair(
+        "ring_osc", bt, Path("<unused>"), candidate_card=f".{card}",
+        reference_card=card, ring_n_stages=p.n_stages,
+        ring_cload=p.cload,
+    )
+    return candidate
 
 
-# --- programmatic builders: switched-cap unit cell --------------------------
+# --- authoritative example adapters: switched-cap unit cell -----------------
 def ngspice_switchcap(bt: BenchTech, p: SwitchCapParams,
                       baked: Path) -> Dict[str, str]:
     _se, _hs, _he, tstop, pw, per = sc_windows(p)
-    n, pm = bt.nmos_model, bt.pmos_model
     vin = round(bt.vdd * p.vin_frac, 3)
-    body = [f'.include "{baked}"', ".temp 27", f"Vdd vdd 0 {_f(bt.vdd)}",
-            f"Vin vin 0 {_f(vin)}",
-            (f"Vphi phi 0 PULSE(0 {_f(bt.vdd)} {_tn(p.td)} {_tn(p.clk_slew)} "
-             f"{_tn(p.clk_slew)} {_tn(pw)} {_tn(per)})"),
-            f"Npc phib phi vdd vdd {pm}", f"Nnc phib phi 0 0 {n}",
-            f"Nnt vin phi vsamp 0 {n}", f"Npt vin phib vsamp vdd {pm}",
-            f"Csample vsamp 0 {_cap(p.csample)}",
-            f".ic v(vsamp)=0 v(phib)={_f(bt.vdd)}"]
-    return {"body": "\n".join(body), "signals": "v(vsamp)",
-            "analysis": f"tran {_tp(p.tstep)} {_tn(tstop)} uic"}
+    card = f"tran {_tp(p.tstep)} {_tn(tstop)} uic"
+    values = {
+        "VIN": _f(vin), "TD": _tn(p.td), "SLEW": _tn(p.clk_slew),
+        "PW": _tn(pw), "PER": _tn(per), "CSAMPLE": _cap(p.csample),
+    }
+    _, reference = _catalog_pair(
+        "switchcap", bt, baked, candidate_card=f".{card}",
+        reference_card=card, substitutions=values,
+    )
+    return {"body": _catalog_body(reference), "signals": "v(vsamp)",
+            "analysis": card}
 
 
 def directnet_switchcap(bt: BenchTech, p: SwitchCapParams) -> str:
     _se, _hs, _he, tstop, pw, per = sc_windows(p)
-    ln, lp = bt.l_nmos * 1e9, bt.l_pmos * 1e9
-    nfn, nfp = bt.nfin, bt.effective_nfin_p
     vin = round(bt.vdd * p.vin_frac, 3)
-    return (
-        f"* Switched-cap unit cell — DirectNet LEVEL=73 ({bt.name}) [sweep]\n"
-        f"Vdd vdd 0 {_f(bt.vdd)}\n"
-        f"Vin vin 0 {_f(vin)}\n"
-        f"Vphi phi 0 PULSE 0 {_f(bt.vdd)} {_tn(p.td)} {_tn(p.clk_slew)} "
-        f"{_tn(p.clk_slew)} {_tn(pw)} {_tn(per)}\n"
-        f"Xck phi phib vdd ckinv\n"
-        f"Xtg vin vsamp phi phib vdd tgate\n"
-        f"Csample vsamp 0 {_cap(p.csample)}\n"
-        f".ic V(vsamp)=0.0 V(phib)={_f(bt.vdd)}\n"
-        f".subckt ckinv i o vdd\n"
-        f"Mpc o i vdd vdd pmos_nn L={lp:.0f}n NFIN={nfp}\n"
-        f"Mnc o i 0   0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
-        f".ends\n"
-        f".subckt tgate a b phi phib vdd\n"
-        f"Mnt a phi  b 0   nmos_nn L={ln:.0f}n NFIN={nfn}\n"
-        f"Mpt a phib b vdd pmos_nn L={lp:.0f}n NFIN={nfp}\n"
-        f".ends\n"
-        f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})\n"
-        f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})\n"
-        # `uic` matches the ship-gate template (directnet_switchcap_tran.sp:33);
-        # byte-faithful with the single-point deck so the equivalence canary is
-        # green (bug report B2). The sweep runner pins .ic nodes regardless.
-        f".tran {_tp(p.tstep)} {_tn(tstop)} uic\n"
-        f".end\n")
+    card = f"tran {_tp(p.tstep)} {_tn(tstop)} uic"
+    candidate, _ = _catalog_pair(
+        "switchcap", bt, Path("<unused>"), candidate_card=f".{card}",
+        reference_card=card,
+        substitutions={
+            "VIN": _f(vin), "TD": _tn(p.td),
+            "SLEW": _tn(p.clk_slew), "PW": _tn(pw), "PER": _tn(per),
+            "CSAMPLE": _cap(p.csample),
+        },
+    )
+    return candidate
 
 
-# --- programmatic builders: 6T SRAM (half-cell lobe + full-cell force_ic) ----
+# --- authoritative example adapters: SRAM lobe + full-cell force_ic ----------
 def ngspice_sram_lobe(bt: BenchTech, p: SramParams, nfin: int,
                       baked: Path) -> Dict[str, str]:
-    n, pm = bt.nmos_model, bt.pmos_model
     wl = round(bt.vdd * p.wl_frac, 3)
-    body = [f'.include "{baked}"', ".temp 27", f"Vdd vdd 0 {_f(bt.vdd)}",
-            f"Vwl wl 0 {_f(wl)}", f"Vbl bl 0 {_f(bt.vdd)}", "Vq q 0 0.0",
-            f"Npl qb q vdd vdd {pm}", f"Nnl qb q 0 0 {n}",
-            f"Nna bl wl qb 0 {n}"]
-    return {"body": "\n".join(body), "signals": "v(qb)",
-            "analysis": f"dc Vq 0 {_f(bt.vdd)} {_f(p.dc_step)}"}
+    render_bt = bench_variant(bt, nfin=nfin, nfin_p=nfin)
+    card = f"dc Vq 0 {_f(bt.vdd)} {_f(p.dc_step)}"
+    _, reference = _catalog_pair(
+        "sram_snm", render_bt, baked, candidate_card=f".{card}",
+        reference_card=card, substitutions={"WL": _f(wl)},
+    )
+    return {"body": _catalog_body(reference), "signals": "v(qb)",
+            "analysis": card}
 
 
 def directnet_sram_lobe(bt: BenchTech, p: SramParams, nfin: int) -> str:
-    ln, lp = bt.l_nmos * 1e9, bt.l_pmos * 1e9
     wl = round(bt.vdd * p.wl_frac, 3)
-    return (
-        f"* SRAM read-SNM half-cell — DirectNet ({bt.name} NFIN={nfin})\n"
-        f"Vdd vdd 0 {_f(bt.vdd)}\n"
-        f"Vwl wl 0 {_f(wl)}\n"
-        f"Vbl bl 0 {_f(bt.vdd)}\n"
-        f"Vq q 0 0.0\n"
-        f"Xinv q qb vdd sraminv NF={nfin}\n"
-        f"Mna bl wl qb 0 nmos_nn L={ln:.0f}n NFIN={nfin}\n"
-        f".subckt sraminv i o vdd NF=1\n"
-        f"Mpl o i vdd vdd pmos_nn L={lp:.0f}n NFIN=NF\n"
-        f"Mnl o i 0   0   nmos_nn L={ln:.0f}n NFIN=NF\n"
-        f".ends\n"
-        f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})\n"
-        f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})\n"
-        f".dc Vq 0 {_f(bt.vdd)} {_f(p.dc_step)}\n"
-        f".end\n")
+    render_bt = bench_variant(bt, nfin=nfin, nfin_p=nfin)
+    card = f"dc Vq 0 {_f(bt.vdd)} {_f(p.dc_step)}"
+    candidate, _ = _catalog_pair(
+        "sram_snm", render_bt, Path("<unused>"),
+        candidate_card=f".{card}", reference_card=card,
+        substitutions={"WL": _f(wl)},
+    )
+    return candidate
 
 
 def directnet_sram_6t(bt: BenchTech, q0: float, qb0: float, nfin: int) -> str:
     """Full cross-coupled 6T cell, wl=OFF/hold (the force_ic retention probe)."""
-    ln, lp = bt.l_nmos * 1e9, bt.l_pmos * 1e9
-    return (
-        f"* 6T SRAM cell — DirectNet ({bt.name}) wl=OFF/hold [sweep]\n"
-        f"Vdd vdd 0 {_f(bt.vdd)}\n"
-        f"Vwl wl 0 0.0\n"
-        f"Vbl bl 0 {_f(bt.vdd)}\n"
-        f"Vblb blb 0 {_f(bt.vdd)}\n"
-        f".ic V(q)={_f(q0)} V(qb)={_f(qb0)}\n"
-        f"Xl q qb vdd sraminv NF={nfin}\n"
-        f"Xr qb q vdd sraminv NF={nfin}\n"
-        f"Mal bl  wl q  0 nmos_nn L={ln:.0f}n NFIN={nfin}\n"
-        f"Mar blb wl qb 0 nmos_nn L={ln:.0f}n NFIN={nfin}\n"
-        f".subckt sraminv i o vdd NF=1\n"
-        f"Mpl o i vdd vdd pmos_nn L={lp:.0f}n NFIN=NF\n"
-        f"Mnl o i 0   0   nmos_nn L={ln:.0f}n NFIN=NF\n"
-        f".ends\n"
-        f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})\n"
-        f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})\n"
-        f".op\n.end\n")
+    render_bt = bench_variant(bt, nfin=nfin, nfin_p=nfin)
+    candidate, _ = _catalog_pair(
+        "sram6t_modes", render_bt, Path("<unused>"),
+        candidate_card=".op", reference_card="op",
+        substitutions={
+            "WL_SPEC": "0", "BL_SPEC": _f(bt.vdd),
+            "BLB_SPEC": _f(bt.vdd), "Q_IC": _f(q0),
+            "QB_IC": _f(qb0),
+        },
+    )
+    return candidate

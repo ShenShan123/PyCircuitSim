@@ -3,7 +3,7 @@
 
 The accuracy campaign has run in three passes that each wrote their own tree:
 
-  results/a3_regate/    V6.13.0, complex matrix only, REPORT.md + OMP_REPORT.md
+  results/a3_regate/    V6.13.0, simple-v1 matrix only, REPORT.md + OMP_REPORT.md
   results/v710_regate/  V7.1.0, device + AC + strict OMP, data.json
   results/v730_regate/  V7.3.0 (this campaign), same layout as v710
 
@@ -26,6 +26,7 @@ import argparse
 import json
 import os
 import pathlib
+import sys
 from typing import Dict, List, Optional, Tuple
 
 if __package__:
@@ -34,6 +35,15 @@ else:
     from v710_regate_collect import is_verdict, rc_of
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+from tests.common.simple_circuit_catalog import (  # noqa: E402
+    SIMPLE_V1,
+    SIMPLE_V2,
+    cases,
+)
+
 CKPT = pathlib.Path(os.environ.get(
     "BSIMAR_CHECKPOINT_DIR",
     ROOT / "external_compact_models" / "neural_network" / "checkpoints",
@@ -49,17 +59,37 @@ FAM = {
 # on multistable fixed points, so their verdict is only bankable if it holds at
 # every thread count (methodology.md §3); the rest are deterministic under the
 # thread pin and are taken from a single run.
-STRICT_OMP = ("1", "2", "4")
-SUITES: Dict[str, Tuple[str, ...]] = {
-    "verify_complex_ring_osc": STRICT_OMP,
-    "verify_complex_opamp": STRICT_OMP,
-    "verify_complex_sram_snm": ("1",),
-    "verify_complex_switchcap": ("1",),
+SIMPLE_V1_SUITES: Dict[str, Tuple[str, ...]] = {
+    case.legacy_suite_id: tuple(str(value) for value in case.omp_threads)
+    for case in cases(score_version=SIMPLE_V1)
+    if case.legacy_suite_id is not None
+}
+SIMPLE_V2_SUITES: Dict[str, Tuple[str, ...]] = {
+    case.campaign_suite: ("1",)
+    for case in cases(score_version=SIMPLE_V2)
+}
+NON_SIMPLE_SUITES: Dict[str, Tuple[str, ...]] = {
     "verify_nn_ac": ("1",),
     "verify_complex_opamp_ac": ("1",),
     "verify_nn_multi_tech_dc": ("1",),
     "verify_nn_multi_tech_tran": ("1",),
 }
+# Historical callers import SUITES and expect the qualification denominator.
+SUITES: Dict[str, Tuple[str, ...]] = {
+    **SIMPLE_V1_SUITES,
+    **NON_SIMPLE_SUITES,
+}
+
+
+def suites_for(simple_version: str) -> Dict[str, Tuple[str, ...]]:
+    """Select a versioned simple-circuit denominator plus device gates."""
+    selected: Dict[str, Tuple[str, ...]] = {}
+    if simple_version in (SIMPLE_V1, "both"):
+        selected.update(SIMPLE_V1_SUITES)
+    if simple_version in (SIMPLE_V2, "both"):
+        selected.update(SIMPLE_V2_SUITES)
+    selected.update(NON_SIMPLE_SUITES)
+    return selected
 
 # The clean control, per family. V7.4.0 retrained every tier of DirectNet and
 # BSIM-AR from scratch on the clean recipe, straight into the production slots,
@@ -232,10 +262,24 @@ def main() -> int:
                     help="Exit nonzero when a requested measurement is "
                          "missing or a requested checkpoint group is "
                          "unavailable")
+    ap.add_argument(
+        "--simple-version", default=SIMPLE_V1,
+        choices=[SIMPLE_V1, SIMPLE_V2, "both"],
+        help="simple-circuit denominator (default preserves historical score)",
+    )
     args = ap.parse_args()
 
     techs = ([t.strip().upper() for t in args.techs.split(",")]
              if args.techs else TECHS)
+    if not techs:
+        ap.error("--techs must select at least one technology")
+    unknown_techs = [tech for tech in techs if tech not in TECHS]
+    if unknown_techs:
+        ap.error(
+            f"unknown technologies {unknown_techs}; available: {TECHS}"
+        )
+    if len(set(techs)) != len(techs):
+        ap.error(f"--techs contains duplicates: {techs}")
     tags = [args.tag] if args.tag else ["dn", "tf", "dnf", "tff"]
     only = ([p.strip() for p in args.passes.split(",")]
             if args.passes else None)
@@ -246,6 +290,7 @@ def main() -> int:
             raise SystemExit(
                 f"--passes: unknown pass name(s) {bad}; known: {sorted(known)}")
     idx = build_index(only)
+    selected_suites = suites_for(args.simple_version)
 
     jobs: List[str] = []
     print(f"{'group':30s} {'tech':7s} {'measured':>9s} {'missing':>8s}  by")
@@ -261,7 +306,7 @@ def main() -> int:
                     print(f"{label:30s} {tech:7s} {'':>9s} {'':>8s}  NO-CKPT")
                     continue
                 have, miss, by = 0, [], set()
-                for suite, omps in SUITES.items():
+                for suite, omps in selected_suites.items():
                     for omp in omps:
                         src = idx.get((tag, variant, tech, suite, omp))
                         if src:
@@ -276,7 +321,7 @@ def main() -> int:
                 print(f"{label:30s} {tech:7s} {have:>9d} {len(miss):>8d}  "
                       f"{','.join(sorted(by)) or '-'}{flag}")
 
-    n_expect = sum(len(v) for v in SUITES.values())
+    n_expect = sum(len(v) for v in selected_suites.values())
     print("-" * 72)
     print(f"cells measured {tot_have}, missing {tot_miss}, "
           f"no-checkpoint groups {tot_nockpt}  ({n_expect} runs per group-tech)")

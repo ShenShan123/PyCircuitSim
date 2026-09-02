@@ -1,0 +1,14 @@
+* Resistor-loaded NMOS differential pair with ideal tail — LEVEL=72 reference
+.include "<BAKED_LIB>"
+Vdd vdd 0 <VDD>
+Vinp inp 0 dc <VCM> ac <AC_INP>
+Vinn inn 0 dc <VCM> ac <AC_INN>
+Vbn bn 0 <BODY_N>
+Rn vdd outn 18k
+Rp vdd outp 18k
+Nn_l outn inp tail bn <NMOS>
+Nn_r outp inn tail bn <NMOS>
+Itail tail 0 <TAIL_CURRENT>
+.temp <TEMP>
+<ANALYSIS>
+.end

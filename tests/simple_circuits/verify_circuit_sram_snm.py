@@ -38,7 +38,6 @@ from __future__ import annotations
 import argparse
 import functools
 import logging
-import re
 import sys
 from pathlib import Path
 from typing import Dict, List
@@ -52,13 +51,14 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "tests"))
 
-from tests.common.base import SIMPLE_DECKS, render_reference_deck  # noqa: E402
 from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech, active_model_label,
     active_model_name,
     get_baked_modelcard, run_ngspice_wrdata, parse_netlist, full_metrics,
-    render_directnet_text,
+    SramParams, ngspice_sram_lobe, directnet_sram_lobe,
+    directnet_sram_6t,
 )
+from tests.common.gate_result import GateResult  # noqa: E402
 
 DEFAULT_NFINS = [2, 5, 10]
 # Ground-truth tracking gate: the DirectNet butterfly lobe must match the
@@ -70,9 +70,6 @@ DEFAULT_NFINS = [2, 5, 10]
 # as diagnostics but are NOT part of the verdict (bug report B5).
 SRAM_NRMSE_TOL = 0.10
 
-NG_TEMPLATE = SIMPLE_DECKS / "bsimcmg_sram_snm_dc.cir"
-TEMPLATE = SIMPLE_DECKS / "directnet_sram_snm_dc.sp"
-SIXT_TEMPLATE = SIMPLE_DECKS / "directnet_sram_6t_op.sp"
 
 
 # ---------------------------------------------------------------------------
@@ -89,14 +86,7 @@ def ngspice_sram_lobe_body(bt: BenchTech, nfin: int, baked: Path) -> Dict[str, s
 
     Pure (returns text) so verify_circuit_sweep_canaries can diff it against the
     parametric ``tests.common.circuit_benchmarks.ngspice_sram_lobe`` builder (B7/B8)."""
-    body = render_reference_deck(NG_TEMPLATE, {
-        "BAKED_LIB": str(baked),
-        "VDD": f"{bt.vdd}",
-        "NMOS": bt.nmos_model,
-        "PMOS": bt.pmos_model,
-    }, body_only=True)
-    return {"body": body, "signals": "v(qb)",
-            "analysis": f"dc Vq 0 {bt.vdd} 0.005"}
+    return ngspice_sram_lobe(bt, SramParams(), nfin, baked)
 
 
 def ngspice_lobe(bt: BenchTech, nfin: int, work_dir: Path) -> Dict[str, np.ndarray]:
@@ -113,19 +103,16 @@ def directnet_sram_lobe_deck(bt: BenchTech, nfin: int) -> str:
     feedback).
 
     The topology is NOT here — it is ``examples/simple_circuits/
-    directnet_sram_snm_dc.sp``, the same arrangement the other three complex
-    gates already use. Until V7.5.8 this gate was the one that carried its own
+    directnet_sram_snm_dc.sp``, the same arrangement the other three
+    simple-circuit gates already use. Until V7.5.8 this gate was the one that
+    carried its own
     copy, which is exactly why its ``examples/`` deck had been free to drift
     (and had: the 6T deck still documented a read bias the gate stopped using
     in V6.4.7).
 
     Pure text so the canary diffs the REAL deck against the sweep builder
     (B7/B8)."""
-    text = render_directnet_text(TEMPLATE.read_text(), bt)
-    # The template is authored at NFIN=2; the gate sweeps the fin count.
-    # "NF=2" and "NFIN=2" are distinct substrings, and `.subckt ... NF=1` and
-    # the `NFIN=NF` bodies carry neither, so both replaces are unambiguous.
-    return text.replace("NF=2", f"NF={nfin}").replace("NFIN=2", f"NFIN={nfin}")
+    return directnet_sram_lobe(bt, SramParams(), nfin)
 
 
 def _directnet_halfcell_netlist(bt: BenchTech, nfin: int, path: Path) -> Path:
@@ -190,19 +177,15 @@ def _directnet_6t_netlist(bt: BenchTech, q_init: float, qb_init: float,
     # BSIM-CMG physics) fails wl=ON 0/8 and passes wl=OFF 8/8 IDENTICALLY to the
     # NN ⇒ the wl=ON gate rejected ground-truth physics (mis-specified); wl=OFF
     # is the correction (ground truth passes it). Read-stability is separately
-    # covered by the butterfly SNM gate. `wl_on=True` reproduces the old
-    # read-disturb probe for diagnostics. See results/v6_4_7/S17c_forceic_harness_fix.md.
-    # Topology + the hold bias come from examples/simple_circuits/
-    # directnet_sram_6t_op.sp. Only the two things that genuinely vary per
-    # call are rewritten here: the storage state and the word line. Both are
-    # whole-line substitutions, so they do not care what the per-tech render
-    # put in the values.
-    wl_v = bt.vdd if wl_on else 0.0
-    text = render_directnet_text(SIXT_TEMPLATE.read_text(), bt)
-    text = re.sub(r"^\.ic .*$", f".ic V(q)={q_init} V(qb)={qb_init}",
-                  text, count=1, flags=re.M)
-    text = re.sub(r"^Vwl wl 0 .*$", f"Vwl wl 0 {wl_v}",
-                  text, count=1, flags=re.M)
+    # covered by the butterfly SNM gate and the paired simple-v2 read mode;
+    # callers cannot silently re-enable the retired wl=ON probe. See
+    # results/v6_4_7/S17c_forceic_harness_fix.md.
+    # Topology + hold bias come from the paired nn_sram6t_modes.sp catalog
+    # deck. Only the two storage-state initial conditions vary per call.
+    if wl_on:
+        raise ValueError(
+            "wl_on read-disturb moved to the paired sram6t_modes diagnostic")
+    text = directnet_sram_6t(bt, q_init, qb_init, bt.nfin)
     path.write_text(text)
     return path
 
@@ -411,6 +394,12 @@ def main() -> int:
     for r in results:
         if "error" in r:
             print(f"{r['tech']:8s} | ERROR — {r['error'][:54]}")
+            print(GateResult(
+                case_id="sram_snm", tech=r["tech"], corner="nfin_sweep",
+                analysis="read_snm", role="qualification", status="error",
+                error=r["error"], reference_converged=False,
+                candidate_converged=False,
+            ).marker())
             continue
         for c in r["corners"]:
             if "error" in c:
@@ -434,6 +423,45 @@ def main() -> int:
               f"|  GATE: {'PASS' if r['all_positive'] else 'FAIL'}  "
               f"(all-positive: {'yes' if r['all_positive'] else 'NO'})")
         n_pass += int(r["all_positive"])
+        comparable = [c for c in r["corners"] if "error" not in c]
+        corner_errors = [c for c in r["corners"] if "error" in c]
+        marker_status = (
+            "error" if corner_errors else
+            ("pass" if r["all_positive"] else "fail")
+        )
+        print(GateResult(
+            case_id="sram_snm", tech=r["tech"], corner="nfin_sweep",
+            analysis="read_snm", role="qualification", status=marker_status,
+            metrics={
+                "metric": max(
+                    (c["nrmse_pct"] for c in comparable),
+                    default=float("nan"),
+                ),
+                "worst_nrmse_pct": max(
+                    (c["nrmse_pct"] for c in comparable),
+                    default=float("nan"),
+                ),
+                "worst_mre_pct": max(
+                    (c["mre_pct"] for c in comparable),
+                    default=float("nan"),
+                ),
+                "min_r2": min(
+                    (c["r2"] for c in comparable),
+                    default=float("nan"),
+                ),
+                "max_err": max(
+                    (c["max_err"] for c in comparable),
+                    default=float("nan"),
+                ),
+            },
+            domain={
+                "nfins": [c["nfin"] for c in r["corners"]],
+                "force_ic": r["force_ic"],
+            },
+            error="; ".join(c["error"] for c in corner_errors),
+            reference_converged=not corner_errors,
+            candidate_converged=not corner_errors,
+        ).marker())
     n_total = len(results)
     print(f"\n  {n_pass}/{n_total} techs pass (positive + NGSPICE-NRMSE-tracking "
           "across NFIN corners)")

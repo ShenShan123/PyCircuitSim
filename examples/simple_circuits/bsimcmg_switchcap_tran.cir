@@ -2,12 +2,12 @@
 *
 * The reference half of the switched-cap gate.
 * `tests/simple_circuits/verify_circuit_switchcap.py` renders this deck per technology and
-* scores the charge-transfer level and hold droop of
-* `directnet_switchcap_tran.sp` against it. Ground truth is ALWAYS NGSPICE on
+* scores the NN candidate in `directnet_switchcap_tran.sp` against its
+* charge-transfer level and hold droop. Ground truth is ALWAYS NGSPICE on
 * the identical BSIM-CMG OSDI model (AGENTS.md Validation rule).
 *
 * <TOKEN> placeholders are substituted by tests.common.base
-* :: render_reference_deck. <BAKED_LIB> is the merged modelcard with
+* renderer. <BAKED_LIB> is the merged modelcard with
 * L / NFIN / TFIN / DEVTYPE baked in. OSDI devices take the N prefix, and
 * NGSPICE wants the parenthesised PULSE syntax (PyCircuitSim takes it
 * space-separated — the two decks differ there on purpose).
@@ -16,11 +16,11 @@
 * .tran statement is supplied by the runner.
 
 .include "<BAKED_LIB>"
-.temp 27
+.temp <TEMP>
 
 Vdd  vdd 0 <VDD>
 Vin  vin 0 <VIN>
-Vphi phi 0 PULSE(0 <VDD> 0.5n 0.1n 0.1n 1.9n 4n)
+Vphi phi 0 PULSE(0 <VDD> <TD> <SLEW> <SLEW> <PW> <PER>)
 
 * --- clock inverter: phi -> phib ---
 Npc phib phi vdd vdd <PMOS>
@@ -30,8 +30,9 @@ Nnc phib phi 0   0   <NMOS>
 Nnt vin phi  vsamp 0   <NMOS>
 Npt vin phib vsamp vdd <PMOS>
 
-Csample vsamp 0 100f
+Csample vsamp 0 <CSAMPLE>
 
 .ic v(vsamp)=0 v(phib)=<VDD>
 
+<ANALYSIS>
 .end

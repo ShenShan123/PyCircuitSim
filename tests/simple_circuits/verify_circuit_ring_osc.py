@@ -22,7 +22,7 @@ import argparse
 import functools
 import sys
 from pathlib import Path
-from typing import Dict, List
+from typing import Dict, List, Tuple
 
 import numpy as np
 
@@ -33,13 +33,14 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "tests"))
 
-from tests.common.base import SIMPLE_DECKS, render_reference_deck  # noqa: E402
 from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech, active_model_label,
     active_model_name,
     get_baked_modelcard, run_ngspice_wrdata,
-    render_directnet_text, run_directnet_transient, full_metrics, fmt_metrics,
+    run_directnet_transient, full_metrics, fmt_metrics,
+    RingOscParams, ngspice_ringosc, directnet_ringosc,
 )
+from tests.common.gate_result import GateResult  # noqa: E402
 
 PERIOD_TOL = 0.05          # +/-5% gate
 # Ring-osc periods sit at ~45-90 ps across TSMC5/7/12/16; 1.2 ns captures
@@ -49,8 +50,6 @@ PERIOD_TOL = 0.05          # +/-5% gate
 TRAN_TSTEP = 2e-12
 TRAN_TSTOP = 1.2e-9
 SETTLE = 0.3e-9           # ignore the startup transient before measuring
-TEMPLATE = SIMPLE_DECKS / "directnet_ring_osc_tran.sp"
-NG_TEMPLATE = SIMPLE_DECKS / "bsimcmg_ring_osc_tran.cir"
 
 
 def _period_from_wave(t: np.ndarray, v: np.ndarray, mid: float,
@@ -81,29 +80,15 @@ def ngspice_ring_body(bt: BenchTech, baked: Path) -> Dict[str, str]:
 
     Pure (returns text) so verify_circuit_sweep_canaries can diff it against the
     parametric ``tests.common.circuit_benchmarks.ngspice_ringosc`` builder (bug report B8).
-    The parametric twin sweeps the stage count, so it still builds its ring in
-    code; the canary is what holds the two identical at 5 stages.
+    The shared catalog renderer expands the stage block for both engines; the
+    canary checks topology parity at every declared stage count.
     """
-    body = render_reference_deck(NG_TEMPLATE, {
-        "BAKED_LIB": str(baked),
-        "VDD": f"{bt.vdd}",
-        "NMOS": bt.nmos_model,
-        "PMOS": bt.pmos_model,
-    }, body_only=True)
-    return {"body": body, "signals": "v(n5)",
-            "analysis": f"tran {TRAN_TSTEP:.1e} {TRAN_TSTOP:.1e} uic"}
+    return ngspice_ringosc(bt, RingOscParams(), baked, TRAN_TSTOP)
 
 
 def directnet_ring_deck(bt: BenchTech) -> str:
-    """Single-point DirectNet ring-osc ship-gate deck text (render + window
-    rewrite). The `.tran` token uses the same ``{:g}`` formatting as the sweep
-    builder (``.tran 2p 1.2n uic``) so the equivalence canary is byte-faithful
-    against the REAL deck rather than a hand-copied replica (bug report B8).
-    ``2p 1.2n`` and ``2p 1.20n`` parse identically — this is cosmetic."""
-    text = render_directnet_text(TEMPLATE.read_text(), bt)
-    return text.replace(
-        ".tran 1p 5n",
-        f".tran {TRAN_TSTEP*1e12:g}p {TRAN_TSTOP*1e9:g}n")
+    """Render the single-point NN ring-oscillator qualification deck."""
+    return directnet_ringosc(bt, RingOscParams(), TRAN_TSTOP)
 
 
 def run_ngspice_ro(bt: BenchTech, work_dir: Path) -> Dict[str, np.ndarray]:
@@ -114,7 +99,10 @@ def run_ngspice_ro(bt: BenchTech, work_dir: Path) -> Dict[str, np.ndarray]:
     return {"time": data[:, 0], "v(n5)": data[:, 1]}
 
 
-def run_directnet_ro(bt: BenchTech, work_dir: Path):
+def run_directnet_ro(
+    bt: BenchTech,
+    work_dir: Path,
+) -> Tuple[Dict[str, np.ndarray], bool, str]:
     netlist = work_dir / f"ring_osc_{bt.name}.sp"
     netlist.parent.mkdir(parents=True, exist_ok=True)
     netlist.write_text(directnet_ring_deck(bt))
@@ -211,6 +199,13 @@ def main() -> int:
     for r in results:
         if "error" in r:
             print(f"{r['tech']:8s} | {'ERROR — '+r['error'][:48]}")
+            print(GateResult(
+                case_id="ring_osc", tech=r["tech"], corner="nominal",
+                analysis="oscillation", role="qualification", status="error",
+                error=r["error"],
+                reference_converged="ng_period" in r,
+                candidate_converged=False,
+            ).marker())
             continue
         status = "PASS" if r.get("passed") else "FAIL"
         n_pass += int(r.get("passed", False))
@@ -218,6 +213,22 @@ def main() -> int:
         print(f"{r['tech']:8s} | {r['ng_period']*1e12:11.2f} | "
               f"{dn*1e12:11.2f} | {r['period_err_pct']:8.2f} | "
               f"{r['nrmse_pct']:7.2f} | {r['r2']:7.4f} | {status:>8s}")
+        print(GateResult(
+            case_id="ring_osc", tech=r["tech"], corner="nominal",
+            analysis="oscillation", role="qualification",
+            status="pass" if r.get("passed") else "fail",
+            metrics={
+                "metric": r["period_err_pct"],
+                "period_err_pct": r["period_err_pct"],
+                "mre_pct": r["mre_pct"], "r2": r["r2"],
+                "nrmse_pct": r["nrmse_pct"], "max_err": r["max_err"],
+            },
+            domain={
+                "reference_period_s": r["ng_period"],
+                "candidate_period_s": r["dn_period"],
+            },
+            candidate_converged=not r["partial"], partial=r["partial"],
+        ).marker())
     print(f"\n  {n_pass}/{len(results)} within +/-{PERIOD_TOL*100:.0f}% period gate")
     # B10: surface the verdict in the exit code (consumers also parse stdout).
     # empty results (all techs skipped) must not exit green
