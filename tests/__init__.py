@@ -1,11 +1,11 @@
 """Test harness root package.
 
 Gates are grouped by the tier of the circuit they gate — `single_devices`
-and `simple_circuits` — mirroring `examples/`; `perf` and
+and `simple_circuits` — mirroring `circuit_templates/`; `perf` and
 `diag` sit outside that axis on purpose (see their own `__init__`).
 Shared infrastructure lives in `tests.common` (base helpers, BSIM-CMG DC/tran,
-NN helpers). Every circuit a gate simulates lives in `examples/` and is
-rendered by the gate — tests carry no netlists of their own.
+NN helpers). Every circuit a gate simulates lives in `circuit_templates/`
+and is rendered by the gate — tests carry no netlists of their own.
 
 **One gate per question** (V7.5.9). A gate whose configs are a subset of
 another gate's matrix, or that differs from its neighbour only by a string,

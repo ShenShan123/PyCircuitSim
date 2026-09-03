@@ -26,7 +26,7 @@ Each project document has one job:
 - [`docs/accuracy/README.md`](docs/accuracy/README.md) indexes current compact-
   model scores; [`docs/accuracy/methodology.md`](docs/accuracy/methodology.md)
   defines gates, thresholds, and evidence provenance.
-- [`examples/README.md`](examples/README.md) defines the unified circuit-template
+- [`circuit_templates/README.md`](circuit_templates/README.md) defines the unified circuit-template
   contract; [`tests/README.md`](tests/README.md) defines test organization and
   artifact placement.
 
@@ -326,7 +326,7 @@ export PYCIRCUITSIM_NN_CHECKPOINT_TF_PMOS=tsmc5_tf_small_pmos
 
 # Run one TSMC5 LEVEL=73-based gate as LEVEL=74.
 conda run -n pycircuitsim python \
-  tests/single_devices/verify_nn_multi_tech_dc.py --tech TSMC5
+  tests/single_devices/verify_nn_multi_tech_dc.py
 ```
 
 Unset `PYCIRCUITSIM_NN_FORCE_LEVEL` before returning to the default DirectNet
@@ -409,7 +409,7 @@ conda run -n pycircuitsim python \
 ```
 
 Each circuit has one authoritative parameterized template in
-`examples/simple_circuits/`. The harness renders both the NN candidate and
+`circuit_templates/`. The harness renders both the NN candidate and
 LEVEL=72 reference deck from that same source.
 
 Validate the versioned catalog and every rendered topology/corner without
@@ -425,6 +425,18 @@ conda run -n pycircuitsim python \
 conda run -n pycircuitsim python \
   tests/simple_circuits/verify_circuit_topologies.py \
   --case current_mirror,inverter_chain --tech TSMC5 --corner nominal
+```
+
+Score the single-device surfaces the parametric DC gate does not reach —
+the output characteristic (`gds`), the subthreshold decades, the triode
+region, and `gm`/`gds`/`gmb` against ground truth:
+
+```bash
+conda run -n pycircuitsim python \
+  tests/single_devices/verify_device_integrity.py --list
+conda run -n pycircuitsim python \
+  tests/single_devices/verify_device_integrity.py \
+  --tech TSMC5 --suite output,subthreshold,linear,derivative
 ```
 
 `simple-v2` covers complementary source followers/common-gate stages, current
@@ -532,7 +544,7 @@ does not alter the pinned seed or scored CPU contract.
 
 ## 5. Sweep the unified circuit templates
 
-Every circuit in `examples/` is a canonical `.spice.tmpl` source. The shared
+Every circuit in `circuit_templates/` is a canonical `.spice.tmpl` source. The shared
 harness supplies the simulator adapter plus technology, VT, NMOS/PMOS geometry,
 P/N ratio, PVT, input slew, output load, bias, and analysis values. Candidate
 and LEVEL=72 reference decks are therefore parameterizations of identical
@@ -565,7 +577,7 @@ conda run -n pycircuitsim python \
 ```
 
 The template vocabulary and extension rules are in
-[`examples/README.md`](examples/README.md). Generated decks, reference traces,
+[`circuit_templates/README.md`](circuit_templates/README.md). Generated decks, reference traces,
 logs, CSV files, and plots are written under `results/tests/`; `tests/` contains
 only harness and verification source.
 
@@ -578,7 +590,7 @@ conda run -n pycircuitsim python main.py path/to/deck.sp \
   --output results/my-run
 ```
 
-Files under `examples/` are strict templates and must first be rendered through
+Files under `circuit_templates/` are strict templates and must first be rendered through
 the test harness; they are not materialized input decks.
 
 A MOS model declaration selects its implementation:
@@ -608,7 +620,7 @@ results/<circuit>/<analysis>/
 ```
 
 Use materialized `.sp` files as direct PyCircuitSim inputs. Verification renders
-both PyCircuitSim and NGSPICE decks from one `.spice.tmpl` file in `examples/`
+both PyCircuitSim and NGSPICE decks from one `.spice.tmpl` file in `circuit_templates/`
 and stores the generated files under `results/`.
 
 ## Performance controls
@@ -633,9 +645,12 @@ pycircuitsim/                         parser, solver, simulation, models
 PDKs/                                technology modelcards (TSMC files private)
 external_compact_models/bsim_cmg/    BSIM-CMG evaluator and data generator
 external_compact_models/neural_network/  shared NN data/model/training package
-examples/single_devices/             parameterized device templates
-examples/simple_circuits/             parameterized circuit templates
-examples/subcircuits/                 flat/hierarchical parser templates
+circuit_templates/L0_devices/         one device, every terminal biased
+circuit_templates/L1_primitives/      one device on a passive load
+circuit_templates/L2_stages/          coupled devices, ideal bias rails
+circuit_templates/L3_blocks/          internal bias generation or state
+circuit_templates/L4_systems/         closed negative-feedback systems
+circuit_templates/subcircuits/        flat/hierarchical parser templates
 tests/single_devices/                 device-level gates
 tests/simple_circuits/                circuit-level gates
 tests/common/                         shared render/compare infrastructure

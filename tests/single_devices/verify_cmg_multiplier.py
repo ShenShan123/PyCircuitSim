@@ -46,7 +46,7 @@ from tests.common.core_gates import (
     rel_err,
     report,
 )
-from tests.common.base import DEVICE_DECKS, SIMPLE_DECKS, render_template
+from tests.common.base import DEVICE_DECKS, template_deck, render_template
 
 RESULTS_DIR = PROJECT_ROOT / "results" / "tests" / "cmg_multiplier"
 
@@ -330,7 +330,7 @@ def test_ac() -> bool:
         "SOURCE_NODE": "0", "BULK_NODE": "0",
         "OUTPUT_LOAD": "Cload out 0 10f",
     }
-    deck = render_template(SIMPLE_DECKS / "common_source.spice.tmpl", {
+    deck = render_template(template_deck("common_source.spice.tmpl"), {
         **cs_common, "MODEL_SETUP": f'.include "{baked}"',
         "DEVICE_PREFIX": "N", "DEVICE": f"nmos_rvt m={m}",
         "ANALYSIS": "",
@@ -342,7 +342,7 @@ def test_ac() -> bool:
 
     from pycircuitsim.solver import ACSolver, DCSolver
 
-    ps_deck = render_template(SIMPLE_DECKS / "common_source.spice.tmpl", {
+    ps_deck = render_template(template_deck("common_source.spice.tmpl"), {
         **cs_common, "MODEL_SETUP": ".model nmos1 NMOS (LEVEL=72)",
         "DEVICE_PREFIX": "M", "DEVICE": f"nmos1 L=30n NFIN=10 m={m}",
         "ANALYSIS": ".ac dec 1 1e6 1e9",

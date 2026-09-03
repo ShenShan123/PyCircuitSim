@@ -16,7 +16,7 @@ Keep each fact in one authoritative place:
 - Put gate definitions and scoreboard summaries in `docs/accuracy/`.
 - Put all simulation artifacts in `results/`.
 - Put every test-circuit topology in one parameterized template under
-  `examples/`.
+  `circuit_templates/`.
 
 Link to the owner instead of copying its content into another document.
 
@@ -176,11 +176,29 @@ causes slowness rather than incorrect results.
 
 ## Verification discipline
 
-Use one `.spice.tmpl` file in `examples/` as the single source for each tested
-circuit. Render both candidate and reference decks through `tests.common.base`;
+Order `circuit_templates/` by what a circuit demands of a compact model, not
+by application: `L0_devices` biases one device from ideal sources,
+`L1_primitives` adds a passive load, `L2_stages` couples devices while every
+gate rail stays ideal, `L3_blocks` makes the model determine an operating
+point, and `L4_systems` closes a negative-feedback loop. Declare each case's
+`tier` in the catalog and let `template_deck()` verify it against the file's
+location; a topology present in two tiers is an error, not a convenience.
+
+At least one `L4_systems` transient must run without `uic`. Every other
+transient in the catalog is handed its initial state through `.ic`, so that is
+the only place cold-start basin entry is exercised.
+
+Report convergence separately from error, always. A solve that did not reach a
+physical fixed point is an `ERROR` row that keeps its denominator slot and
+never enters a numeric aggregate; recovering its numbers for reading is
+allowed only under a key no scoring path consumes. Folding the two together is
+how a 0/10 AC score came to mean an unconverged DC operating point.
+
+Use one `.spice.tmpl` file in `circuit_templates/` as the single source for
+each tested circuit. Render both candidate and reference decks through `tests.common.base`;
 verification modules must not embed or privately copy netlists. Store every
 materialized netlist and simulation artifact under `results/`, never `tests/`
-or `examples/`.
+or `circuit_templates/`.
 
 Before interpreting a numerical mismatch:
 

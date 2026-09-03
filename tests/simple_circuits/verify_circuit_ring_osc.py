@@ -74,7 +74,7 @@ def _period_from_wave(t: np.ndarray, v: np.ndarray, mid: float,
 def ngspice_ring_body(bt: BenchTech, baked: Path) -> Dict[str, str]:
     """Single-point NGSPICE ring-osc ground-truth deck body (no .control/.end).
 
-    The topology is NOT here — it is ``examples/simple_circuits/
+    The topology is NOT here — it is ``circuit_templates/
     ring_oscillator.spice.tmpl``, rendered per tech. This function owns the
     supply, the seed and the transient window, nothing else.
 

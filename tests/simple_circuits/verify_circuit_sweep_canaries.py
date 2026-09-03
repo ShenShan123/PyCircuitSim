@@ -2,7 +2,7 @@
 """Pure deck-rendering and topology-parity canaries for simple circuits.
 
 Candidate and LEVEL=72 experiments are rendered from one shared template under
-``examples/simple_circuits``. This check compares the actual rendered
+``circuit_templates``. This check compares the actual rendered
 connectivity for every catalog analysis and also exercises the topology-
 changing ring sweep; no simulator or checkpoint is required.
 """
@@ -19,7 +19,7 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BENCH_TECHS, RingOscParams, directnet_ringosc,
     ngspice_ringosc,
 )
-from tests.common.base import SIMPLE_DECKS, deck_tokens, render_deck_text  # noqa: E402
+from tests.common.base import deck_tokens, template_deck, render_deck_text  # noqa: E402
 from tests.common.simple_circuit_catalog import CASES  # noqa: E402
 from tests.common.simple_circuit_harness import (  # noqa: E402
     CORNERS, render_case_decks, topology_mismatch,
@@ -61,7 +61,7 @@ def main() -> int:
                 failures.append(
                     f"{tech_name}/ring_osc/n_stages={n_stages}: {mismatch}")
 
-        inverter_path = SIMPLE_DECKS / "inverter.spice.tmpl"
+        inverter_path = template_deck("inverter.spice.tmpl")
         inverter_template = inverter_path.read_text()
         common = {
             "VDD": f"{bt.vdd:g}", "TEMP": f"{bt.temperature_c:g}",

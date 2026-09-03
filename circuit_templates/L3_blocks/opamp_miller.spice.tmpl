@@ -1,11 +1,11 @@
 * Two-stage Miller-compensated opamp
 <MODEL_SETUP>
 .temp <TEMP>
-Vdd vdd 0 <VDD>
+Vdd vdd 0 <VDD_SPEC>
 Vbn vbn 0 <VBN>
 Vbp vbp 0 <VBP>
-Vinn inn 0 <VCM>
-Vinp inp 0 <VCM>
+Vinn inn 0 <VINN_SPEC>
+Vinp inp 0 <VINP_SPEC>
 <N_PREFIX>n1 n1 inp vtail 0 <N_DEVICE>
 <N_PREFIX>n2 vo1i inn vtail 0 <N_DEVICE>
 <P_PREFIX>p3 n1 n1 vdd vdd <P_DEVICE>

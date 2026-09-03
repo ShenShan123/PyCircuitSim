@@ -48,7 +48,7 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
     get_baked_modelcard,
     run_ngspice_wrdata,
 )
-from tests.common.base import SIMPLE_DECKS, render_template  # noqa: E402
+from tests.common.base import template_deck, render_template  # noqa: E402
 from tests.common.circuit_ac import (  # noqa: E402
     ac_freq_grid, run_ngspice_ac_baked, run_directnet_ac, ac_metrics_extended,
     fmt_hz,
@@ -60,7 +60,7 @@ import os as _os  # noqa: E402
 RESULTS_BASE = Path(_os.environ.get(
     "PYCIRCUITSIM_NN_RESULTS",
     str(PROJECT_ROOT / "results" / "tests" / "nn_ac")))
-CS_TEMPLATE = SIMPLE_DECKS / "common_source.spice.tmpl"
+CS_TEMPLATE = template_deck("common_source.spice.tmpl")
 
 # CS-amp passive load (matches verify_ac.py L2 scale).
 RD = "50k"

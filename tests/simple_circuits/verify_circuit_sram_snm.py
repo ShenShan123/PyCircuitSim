@@ -78,7 +78,7 @@ SRAM_NRMSE_TOL = 0.10
 def ngspice_sram_lobe_body(bt: BenchTech, nfin: int, baked: Path) -> Dict[str, str]:
     """Single-point NGSPICE SRAM half-cell ground-truth deck body.
 
-    The topology is NOT here — it is ``examples/simple_circuits/
+    The topology is NOT here — it is ``circuit_templates/
     sram_snm_half_cell.spice.tmpl``, rendered per tech. This function owns the read
     bias and the sweep, nothing else. ``nfin`` reaches the devices through the
     baked modelcard, which is why it appears in the signature but not in the
@@ -102,11 +102,11 @@ def directnet_sram_lobe_deck(bt: BenchTech, nfin: int) -> str:
     """Single-point DirectNet SRAM half-cell ship-gate deck text (broken
     feedback).
 
-    The topology is NOT here — it is ``examples/simple_circuits/
+    The topology is NOT here — it is ``circuit_templates/
     sram_snm_half_cell.spice.tmpl``, the same arrangement the other three
     simple-circuit gates already use. Until V7.5.8 this gate was the one that
     carried its own
-    copy, which is exactly why its ``examples/`` deck had been free to drift
+    copy, which is exactly why its ``circuit_templates/`` deck had been free to drift
     (and had: the 6T deck still documented a read bias the gate stopped using
     in V6.4.7).
 

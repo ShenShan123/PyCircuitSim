@@ -31,7 +31,7 @@ import matplotlib.pyplot as plt
 # ---------------------------------------------------------------------------
 from tests.common.base import (  # noqa: F401  (public gate re-exports)
     PROJECT_ROOT, OSDI_PATH, MODELCARDS_DIR, NGSPICE_BIN,
-    DEVICE_DECKS, SIMPLE_DECKS,
+    DEVICE_DECKS, template_deck,
     VtPair, TechProfile, ALL_TECHS, TECH_ORDER, TECH_COLORS,
     bake_inst_params, render_template,
     run_ngspice_subprocess,
@@ -251,7 +251,7 @@ def create_ngspice_dc_netlist(
         signals = ["i(Vd)"]
 
     else:  # INVERTER_VTC
-        content = render_template(SIMPLE_DECKS / "inverter.spice.tmpl", {
+        content = render_template(template_deck("inverter.spice.tmpl"), {
             "MODEL_SETUP": f'.include "{baked}"', "TEMP": "27",
             "VDD": f"{config.vdd}", "INPUT_SPEC": "0",
             "N_PREFIX": "N", "P_PREFIX": "N",
@@ -369,7 +369,7 @@ def create_pycircuitsim_dc_netlist(config: DCTestConfig, work_dir: Path) -> Path
     else:  # INVERTER_VTC
         l_n_nm = config.l_nmos * 1e9
         l_p_nm = config.l_pmos * 1e9
-        content = render_template(SIMPLE_DECKS / "inverter.spice.tmpl", {
+        content = render_template(template_deck("inverter.spice.tmpl"), {
             "MODEL_SETUP": (
                 f".model {vt.nmos_model} NMOS (LEVEL=72)\n"
                 f".model {vt.pmos_model} PMOS (LEVEL=72)"

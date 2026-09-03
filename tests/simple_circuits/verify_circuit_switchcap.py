@@ -75,7 +75,7 @@ def _at(t: np.ndarray, v: np.ndarray, t0: float) -> float:
 def ngspice_sc_body(bt: BenchTech, baked: Path) -> Dict[str, str]:
     """Single-point NGSPICE switched-cap ground-truth deck body.
 
-    The topology is NOT here — it is ``examples/simple_circuits/
+    The topology is NOT here — it is ``circuit_templates/
     switched_capacitor.spice.tmpl``, rendered per tech. This function owns the
     sampled level and the transient window, nothing else.
 

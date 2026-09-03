@@ -5,11 +5,11 @@ Vbn bn 0 <BODY_N>
 Vbp bp 0 <BODY_P>
 Irefn vdd nr <IBIAS>
 <N_PREFIX>n_ref nr nr 0 bn <N_DEVICE>
-Voutn on 0 0
+Voutn on 0 <MIRROR_OUT_N>
 <N_PREFIX>n_out on nr 0 bn <N_DEVICE>
 Irefp pr 0 <IBIAS>
 <P_PREFIX>p_ref pr pr vdd bp <P_DEVICE>
-Voutp op 0 <VDD>
+Voutp op 0 <MIRROR_OUT_P>
 <P_PREFIX>p_out op pr vdd bp <P_DEVICE>
 <OUTPUT_LOAD>
 .temp <TEMP>

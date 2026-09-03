@@ -21,7 +21,7 @@ This module owns the shared plumbing:
   * NGSPICE batch runner wrappers,
   * metric helpers (NRMSE / MRE / R^2 / MaxErr).
 
-One parameterized file in ``examples/simple_circuits`` owns each topology.
+One parameterized file in ``circuit_templates`` owns each topology.
 The four verify scripts own orchestration and import from here so they share
 one strict renderer, modelcard cache, and NGSPICE path.
 """
@@ -84,6 +84,11 @@ def _active_model_level() -> int | str:
 def active_model_name() -> str:
     """Return the short NN-family name selected by the force-level hook."""
     return _MODEL_NAMES.get(_active_model_level(), "NN")
+
+
+def active_model_level() -> int:
+    """Return the validated NN model level selected for this campaign."""
+    return int(_active_model_level())
 
 
 def active_model_label() -> str:
@@ -516,8 +521,16 @@ def run_directnet_dc_sweep(
     netlist_path: Path,
     work_dir: Path,
     tag: str,
+    *,
+    require_convergence: bool = True,
 ) -> Dict[str, np.ndarray]:
-    """Parse + DC-sweep a DirectNet netlist; return the run_dc_sweep results."""
+    """Parse + DC-sweep a DirectNet netlist; return the run_dc_sweep results.
+
+    ``require_convergence`` defaults to True: an accuracy gate must never read
+    a sweep point that did not reach a physical fixed point.  Diagnostics may
+    pass False to recover the numbers behind a convergence failure, and are
+    responsible for keeping the resulting row out of any pass/fail aggregate.
+    """
     import logging
     from pycircuitsim.simulation import run_dc_sweep
     from pycircuitsim.visualizer import Visualizer
@@ -530,7 +543,7 @@ def run_directnet_dc_sweep(
         out_dir.mkdir(parents=True, exist_ok=True)
         results = run_dc_sweep(
             circuit, parser.analysis_params, Visualizer(), out_dir, tag,
-            require_convergence=True,
+            require_convergence=require_convergence,
         )
     finally:
         logging.disable(logging.NOTSET)

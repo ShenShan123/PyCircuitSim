@@ -54,7 +54,7 @@ source followers, common-gate stages, current mirrors, an open inverter chain,
 transmission-gate DC and hold behavior, ideal- and active-tail differential
 pairs, cascode stacks, NAND2/NOR2, and full 6T SRAM operating modes. It runs
 DC, transient, and AC analyses from canonical templates in
-`examples/simple_circuits/`.
+`circuit_templates/`.
 The complete contract is in
 [`simple-circuits-v2-topologies.md`](simple-circuits-v2-topologies.md).
 

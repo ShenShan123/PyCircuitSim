@@ -1,0 +1,17 @@
+* Complementary MOS-referenced voltages with no ideal bias anywhere
+* Each branch pins its own node through a diode-connected device fed by a
+* resistor from the rail. At the low end of a supply ramp both branches sit
+* in subthreshold, so the output is dominated by exactly the surface a
+* linear-axis Id-Vgs metric cannot see.
+<MODEL_SETUP>
+Vdd vdd 0 <VDD>
+Vbn bn 0 <BODY_N>
+Vbp bp 0 <BODY_P>
+Rn vdd nr <REF_RBIAS>
+<N_PREFIX>n_ref nr nr 0 bn <N_DEVICE>
+Rp np 0 <REF_RBIAS>
+<P_PREFIX>p_ref np np vdd bp <P_DEVICE>
+<OUTPUT_LOAD>
+.temp <TEMP>
+<ANALYSIS>
+.end

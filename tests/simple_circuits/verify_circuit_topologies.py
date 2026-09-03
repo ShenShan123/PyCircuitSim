@@ -155,9 +155,15 @@ def main(argv: List[str] | None = None) -> int:
                     else:
                         nrmse = result.metrics.get("nrmse_pct")
                         max_err = result.metrics.get("max_err")
+                        # Convergence is printed beside the error, never
+                        # folded into it: a partial transient and an accurate
+                        # one must not read the same on a terminal.
+                        state = ("converged" if result.candidate_converged
+                                 else ("partial" if result.partial
+                                       else "NOT-CONVERGED"))
                         print(f"  {result.analysis:22s} "
                               f"NRMSE={nrmse:.3f}% MaxErr={max_err:.6g} "
-                              f"{result.status.upper()}")
+                              f"{result.status.upper()} [{state}]")
                     print(result.marker())
 
     output = RESULTS_BASE / "simple-v2" / "latest_results.json"
@@ -165,9 +171,12 @@ def main(argv: List[str] | None = None) -> int:
     errors = sum(result.status == "error" for result in all_results)
     failures = sum(result.status == "fail" for result in all_results)
     diagnostics = sum(result.status == "diagnostic" for result in all_results)
+    unconverged = sum(not result.candidate_converged for result in all_results)
     print("\n" + "=" * 88)
     print(f"RESULT: {diagnostics} characterized, {failures} qualification "
           f"failures, {errors} errors; JSON={output}")
+    print(f"CONVERGED: {len(all_results) - unconverged}/{len(all_results)} "
+          "candidate solves reached a physical fixed point")
     return 0 if all_results and not errors and not failures else 1
 
 

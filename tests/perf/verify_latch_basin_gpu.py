@@ -50,7 +50,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from tests.common.circuit_benchmarks import BENCH  # noqa: E402
-from tests.common.base import SIMPLE_DECKS, render_template  # noqa: E402
+from tests.common.base import template_deck, render_template  # noqa: E402
 
 DEFAULT_TECHS = ["TSMC5", "TSMC7", "TSMC12", "TSMC16"]
 TRAN = ".tran 0.05n 2n"
@@ -65,7 +65,7 @@ def render_cell(tech: str, state_q1: bool) -> str:
     ln = f"{bt.l_nmos * 1e9:.0f}n"
     lp = f"{bt.l_pmos * 1e9:.0f}n"
     nf, nfp = bt.nfin, bt.effective_nfin_p
-    return render_template(SIMPLE_DECKS / "sram6t_modes.spice.tmpl", {
+    return render_template(template_deck("sram6t_modes.spice.tmpl"), {
         "MODEL_SETUP": (
             f".model nmos_nn NMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.vt})\n"
             f".model pmos_nn PMOS (LEVEL=73 TECH={bt.nn_tech} VT={bt.vt})"

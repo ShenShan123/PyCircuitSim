@@ -90,7 +90,7 @@ def _verdict(ng_gain: float, dn_gain: float) -> Tuple[float, bool, str]:
 def ngspice_opamp_body(bt: BenchTech, baked: Path) -> Dict[str, str]:
     """Single-point NGSPICE opamp ground-truth deck body (no .control/.end).
 
-    The topology is NOT here — it is ``examples/simple_circuits/
+    The topology is NOT here — it is ``circuit_templates/
     opamp_miller.spice.tmpl``, rendered per tech. This function owns the
     bias and the sweep window, nothing else.
 

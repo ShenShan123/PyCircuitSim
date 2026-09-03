@@ -1,0 +1,24 @@
+* Constant-gm (beta-multiplier) self-biased current reference
+* Nothing here sets the operating point except the devices themselves: the
+* PMOS mirror supplies the NMOS mirror, which supplies the PMOS mirror. The
+* cell has a second, degenerate zero-current solution, so a weak resistive
+* start-up path breaks it. Rstart is a resistor rather than a long-channel
+* MOSFET because the harness renders one geometry per polarity, and a
+* minimum-length start-up device would keep conducting in steady state.
+* The degeneration branch is two devices in parallel, giving the K=2 width
+* ratio the constant-gm relation needs from a single device token.
+<MODEL_SETUP>
+Vdd vdd 0 <VDD>
+Vbn bn 0 <BODY_N>
+Vbp bp 0 <BODY_P>
+<P_PREFIX>p_mir na nb vdd bp <P_DEVICE>
+<P_PREFIX>p_dio nb nb vdd bp <P_DEVICE>
+<N_PREFIX>n_dio na na 0 bn <N_DEVICE>
+<N_PREFIX>n_dega nb na ns bn <N_DEVICE>
+<N_PREFIX>n_degb nb na ns bn <N_DEVICE>
+Rs ns 0 <BETA_RS>
+Rstart vdd na <BETA_RSTART>
+<OUTPUT_LOAD>
+.temp <TEMP>
+<ANALYSIS>
+.end

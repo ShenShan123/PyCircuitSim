@@ -1,0 +1,207 @@
+---
+title: V7.6.7 Evaluation Coverage — device integrity, circuit expansion, self-bias and feedback
+type: coverage
+date: 2026-09-02
+status: delivered
+delivered: 2026-09-02
+---
+
+# V7.6.7 evaluation coverage
+
+## Why this plan exists
+
+Two published measurements contradict each other:
+
+| model | simple-v1 strict | device AC | inverter | production basket |
+|---|---|---|---|---|
+| DirectNet-Full L75 `large` ([report](../accuracy/DirectNet-L75-clean.md)) | **20/20** | 10/10 | 100/100 | **0/248** AnalogGym ([V7.6.4 closure](2026-08-29-v764-complex-circuit-closure-loop.md)) |
+| DirectNet L73 `large` — the **served** family | **9/20** | 0/10 | — | not measured |
+
+A family can pass the entire scored matrix and still fail to solve a single
+production analog block. V7.6.6 then retired the AnalogGym corpus as an
+executable gate, so no gate in this repository can currently reproduce the
+`0/248` result. The measurement ceiling is a seven-transistor opamp.
+
+This plan does not attempt to recover complex-circuit accuracy. It closes the
+gap between what the suite *measures* and what actually breaks, so that a
+future recovery effort has an instrument that moves before production does.
+
+## Fixed contract
+
+- Ground truth stays NGSPICE on the identical BSIM-CMG LEVEL=72 OSDI model.
+  No new reference is introduced by this plan.
+- Every new topology is one `.spice.tmpl` under `circuit_templates/`, rendered strictly
+  for both adapters, topology-checked before simulation.
+- Everything added here is a **diagnostic**. The historical simple-v1 `/20`
+  denominator, its four cases, and its thresholds are unchanged. Nothing in
+  this plan may alter a published score.
+- New device suites report metrics and convergence; a threshold is frozen only
+  after the promotion rule in
+  [`simple-circuits-v2-topologies.md`](../accuracy/simple-circuits-v2-topologies.md)
+  is satisfied.
+- Scored execution remains CPU with one OpenMP, MKL and Torch thread.
+
+## Diagnosis this plan acts on
+
+Three mechanisms are absent from the current suite, and all three are present
+in the failures the V7.6.4 loop could not close.
+
+### D1 — no transient starts from a computed operating point
+
+Every transient card in the catalog is `tran … uic`, and every corresponding
+template carries `.ic`. Cold-start Newton basin entry — the mechanism V7.6.4
+isolated — is exercised by DC cases only.
+
+### D2 — every bias comes from an ideal source
+
+`opamp_miller` (`Vbn`/`Vbp`), `cascode_stack` (four ideal bias rails),
+`current_mirror` (ideal `Iref`), `diffpair_active` (ideal `Vtailg`). No case
+has an operating point the model itself has to determine. The only feedback
+anywhere is the SRAM latch, and it is `.ic`-initialised into its basin.
+
+### D3 — no scale rung between 7 devices and 40
+
+Largest coupled analog network: 7 devices. Largest case overall: 10 devices
+(inverter chain, electrically decoupled). AnalogGym designs are 20–60. A
+failure is therefore binary and unlocalisable.
+
+### D4 — the device suite never gates the derivative or the tails
+
+`verify_nn_multi_tech_dc` is Id–Vgs at a single `Vds = 0.5·VDD`, linear scale,
+plus one reverse-VDS configuration. Never gated: output characteristics
+(`gds`), subthreshold on a log axis (`Ioff`, `SS`), the triode region
+(`Ron`), and `gm`/`gds`/`gmb` against ground truth. The existing Jacobian
+probe compares the network against finite differences *of itself*; it is
+self-consistency, not accuracy.
+
+## Phases
+
+### Phase 1 — single-device integrity
+
+One new gate, `tests/single_devices/verify_device_integrity.py`, with four
+suites rendered from the canonical `mosfet.spice.tmpl` and compared against
+LEVEL=72 on an identical deck:
+
+| suite | sweep | what it gates that nothing else does |
+|---|---|---|
+| `output` | Id–Vds family at 4 Vgs | saturation `gds`, output resistance, knee position |
+| `subthreshold` | Id–Vgs, log-decade metrics | `Ioff`, subthreshold slope, the leakage floor |
+| `linear` | Id–Vds through `Vds ≈ 0` | triode `Ron`, origin symmetry, wrong-sign leakage |
+| `derivative` | matched central differences of both engines | `gm`, `gds`, `gmb` versus ground truth |
+
+The derivative suite differentiates **both** engines with the identical
+stencil on the identical grid, so it measures surface-derivative fidelity
+rather than analytic-versus-FD stencil error. NMOS and PMOS are both run.
+
+Every row reports its own convergence state separately from its error, so a
+non-converged sweep can never be read as an accuracy number.
+
+### Phase 2 — expand existing simple-circuit coverage
+
+No new topology files; existing templates gain analyses and metrics.
+
+| case | added |
+|---|---|
+| `opamp` (L3) | closed-loop unity-gain DC transfer, closed-loop step settling, CMRR, PSRR+ |
+| `current_mirror` | reference-current decade sweep (subthreshold → strong inversion mirror ratio) |
+| `cascode_stack` | self-biased variant whose cascode rail is generated by a device branch |
+| `diffpair_*` | CMRR reported as a metric from the differential/common-mode AC pair |
+| `ring_osc` | supply-scaled period diagnostic, and a **cold-start** transient with no `.ic` |
+| `switchcap` | multi-cycle accumulated charge error |
+| `sram6t_modes` | write-margin sweep |
+
+### Phase 3 — Tier A (self-bias) and Tier B (feedback)
+
+New held-out diagnostic cases, all in the existing `simple-v2` diagnostic
+ladder, all with structured `GateResult` markers:
+
+**Tier A — the operating point is determined by the model (attacks D2):**
+
+- `beta_multiplier` — constant-`gm` bias cell with a start-up device.
+  Multiple DC solutions; the model must select the right one.
+- `self_biased_cascode` — cascode rail generated by a diode-connected branch
+  rather than an ideal source.
+- `mos_ratio_reference` — MOS-only ratio reference; subthreshold-dominated
+  output, no ideal bias anywhere.
+
+**Tier B — closed negative-feedback loops (attacks D1 and D3):**
+
+- `unity_gain_buffer` — the Miller opamp closed in unity gain; DC transfer
+  error and settling.
+- `ota_5t_buffer` — 5T OTA in unity gain with an on-chip mirror bias.
+- `ldo_regulator` — error amp, pass device, resistive divider, load step:
+  line regulation, load regulation, and settling.
+
+Every Tier B case runs at least one transient **without** `uic`, closing D1.
+`ldo_regulator` is the first case with a device count above ten in a single
+coupled bias network, opening the D3 ladder.
+
+## Constraints discovered before writing code
+
+`pycircuitsim/parser.py` dispatches only `R`, `C`, `L`, `V`, `I`, `M`, `X`,
+and only `.op`, `.dc`, `.tran`, `.ac` analyses. Therefore:
+
+- no `E`/`F`/`G`/`H` controlled sources — CMRR and PSRR must be built from
+  `.ac` on real sources, never from behavioural elements;
+- no diodes or BJTs — a true bandgap is out of scope, so Tier A uses MOS-only
+  ratio references;
+- no `.noise`, `.pz`, `.disto`, `.sens`.
+
+These are contract facts, not a wish list; nothing in this plan needs them.
+
+## Success criteria
+
+1. Every new gate renders both decks from one template and passes topology
+   parity before simulating.
+2. Every new suite emits schema-stable `GateResult` markers, keeps `ERROR`
+   rows in its denominator, and aggregates numerics only over rows that
+   produced them.
+3. The catalog contract check covers every new template and case.
+4. `simple-v1` remains four qualification cases at `/20` with unchanged
+   thresholds, and the existing gates keep their current verdicts.
+5. `circuit_templates/` is ordered by difficulty, and the tier a case belongs to is
+   declared in the catalog and verified against the file's location.
+
+## What was built, and where it differs from the plan
+
+Phases 1–3 shipped. Measurements are in
+[the coverage report](../accuracy/device-and-feedback-coverage-v767.md);
+the shipped inventory is in [`docs/CHANGELOG.md`](../CHANGELOG.md).
+
+Three deviations, all deliberate:
+
+- **The ring cold-start transient was dropped.** A symmetric ring released
+  from its DC operating point sits at the metastable point; whether it starts
+  is decided by floating-point asymmetry, so the test would measure arithmetic
+  luck rather than the model. The cold-start requirement (D1) is instead
+  carried by Tier B, where a settling loop has a unique, well-posed solution.
+  `ring_osc_supply` kept the supply axis and added dynamic supply current.
+- **Tier A's start-up element is a resistor, not a device.** The harness
+  renders one geometry per polarity, and a minimum-length start-up MOSFET
+  keeps conducting in steady state, which turns the constant-gm cell into a
+  two-leg bias network. A weak resistive path breaks the degenerate solution
+  without changing what the loop devices have to solve.
+- **A fourth L1 case was added that the plan did not list.** `diode_load`
+  exists because the self-bias failure reproduced in two elements, and a
+  finding reproducible in two elements belongs at the bottom of the ladder,
+  not inside a five-device cell.
+
+Two defects were found in the work itself and are recorded because both were
+silent:
+
+- Parameterizing the opamp's sources froze `VINP_SPEC`/`VINN_SPEC` to the
+  nominal bias, so the parametric sweep's `VCM` override stopped reaching the
+  deck. Derived source specs are now resolved after case overrides, and
+  `tests/test_v767_template_tiers.py` pins the behaviour.
+- `diode_load` declared a required metric that no metric profile emitted. The
+  schema check could not catch it because it is skipped whenever a row errors,
+  which that case always did. The catalog check now verifies every declared
+  metric profile against the harness's implemented vocabulary.
+
+## Deliberately out of scope
+
+- Restoring any part of the AnalogGym corpus. That needs its own plan and its
+  own frozen denominator.
+- Promoting any diagnostic into `simple-v1`.
+- Retraining, re-gating, or republishing any accuracy report. This plan builds
+  the instrument; it does not take the measurement.

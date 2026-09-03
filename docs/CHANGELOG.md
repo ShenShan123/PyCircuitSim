@@ -17,6 +17,74 @@ remain in Git history.
 
 ## V7.6 — full-terminal families and closure
 
+### V7.6.7 — evaluation coverage: device integrity, self-bias, and feedback (2026-09-02)
+
+Motivated by a contradiction the reports already carried: DirectNet-Full L75
+`large` scores 20/20 strict simple-v1, 10/10 device AC and 100/100 inverter
+configurations while solving 0/248 AnalogGym decks, and V7.6.6 then retired
+that corpus as an executable gate. The plan and its diagnosis are in
+[`docs/plans/2026-09-02-v767-evaluation-coverage.md`](plans/2026-09-02-v767-evaluation-coverage.md).
+Everything added here is a diagnostic; the simple-v1 `/20` denominator, its
+four cases, and its thresholds are unchanged, and the frozen cells still
+render byte-identically.
+
+**Template tree.** Renamed `examples/` to `circuit_templates/` and reordered it
+by what a circuit demands of a compact model rather than by application:
+`L0_devices`, `L1_primitives`, `L2_stages`, `L3_blocks`, `L4_systems`, plus the
+orthogonal `subcircuits/` parser fixtures. Each catalog case declares its
+`tier`, and `template_deck()` resolves a bare template name to its tier,
+rejecting a name that no tier owns or that two tiers both claim.
+
+**Single-device integrity.** Added `verify_device_integrity.py` and
+`tests/common/device_integrity.py`: output characteristics (`gds`),
+subthreshold decades (`Ioff`, subthreshold slope), the triode region (`Ron`,
+origin symmetry), and `gm`/`gds`/`gmb` differentiated from both engines with
+the identical stencil. Both engines are measured as `id = -i(Vds)`, one
+definition rather than a per-engine correction. Previously the only scored
+device sweep was Id–Vgs on a linear axis at a single `Vds = 0.5*VDD`.
+
+**Expanded existing coverage.** Mirror ratio across a reference-current range;
+opamp CMRR and PSRR from a differential/common-mode/supply AC triple; CMRR
+reported for both differential pairs; SRAM write-margin trip point; a
+ten-period switched-capacitor accumulation; ring period plus dynamic supply
+current. Source specs became tokens so one opamp topology serves both the
+frozen DC transfer and the new rejection experiments.
+
+**New held-out cases.** Tier A removes the ideal bias: `diode_load`,
+`beta_multiplier`, `self_biased_cascode`, `mos_ratio_reference`. Tier B closes
+a negative-feedback loop: `unity_gain_buffer`, `ota_5t_buffer`,
+`ldo_regulator` — the last being eight coupled devices with all bias internal,
+the first case above the previous seven-device ceiling. Every L4 case runs at
+least one transient without `uic`, and the catalog check enforces it; before
+this, every transient in the catalog was handed its initial state through
+`.ic`.
+
+**Reporting.** Convergence is reported beside error, never folded into it. A
+DC row that does not converge stays an `ERROR` and keeps its denominator slot,
+but now carries an `unconverged_diagnostic` payload from one repeat run
+without the convergence requirement, which no scoring path reads. Signals
+whose reference has no dynamic range are held out of the case aggregate and
+the exclusion is recorded, so a sub-millivolt error on a reported bias rail no
+longer produces a six-figure NRMSE.
+
+**Contract checks added,** each verified to fail when violated: a case
+declaring no device kinds must have no body token in its template; a derived
+metric must name a known ratio; an L4 system must declare a transient and not
+every one of them may use `uic`.
+
+**Measured on the served DirectNet L73 `large` checkpoints.** Reported in
+[the coverage report](accuracy/device-and-feedback-coverage-v767.md). The
+sharpest result is a two-element reproducer: a diode-connected NMOS fed
+through a resistor from the rail does not satisfy the convergence contract,
+while the same device fed by an ideal current source does, and LEVEL=72
+converges on both through the same solver. Every diode-connected device in the
+previous catalog was fed by an ideal current source.
+
+**Campaign wiring needed no changes.** `v710_regate_jobs.py` and
+`v730_coverage.py` derive their suites from the catalog, so all 22 simple-v2
+cases enumerate automatically.
+
+
 ### V7.6.6 — clean repository and full-terminal requalification (2026-09-02)
 
 - Retired the AnalogGym `examples/complex_circuits/` corpus and its dedicated
@@ -35,7 +103,7 @@ remain in Git history.
   `results/tests/`, changed every default output root, and added a catalog guard
   against materialized decks or result files returning to source directories.
   Root pytest discovery now excludes archived worktrees under `results/`.
-- Added `examples/README.md` and `tests/README.md` as the template and test-tree
+- Added `circuit_templates/README.md` and `tests/README.md` as the template and test-tree
   contracts.
 - Removed unused internal buffers, telemetry, normalization wrappers, imports,
   locals, historical collectors, retired AnalogGym-only tests, and orphaned
@@ -50,7 +118,7 @@ remain in Git history.
 
 - Versioned the existing ring/opamp/SRAM-SNM/switched-capacitor qualification
   matrix as `simple-v1` without changing its `/20` denominator. These simple
-  circuits continue to live under `examples/simple_circuits/`.
+  circuits continue to live under `circuit_templates/`.
 - Added 12 held-out `simple-v2` topology pairs spanning source-driven stages,
   mirrors/cascodes, open logic chains and stacks, transmission gates,
   differential pairs, and full 6T SRAM modes across DC, transient and AC.

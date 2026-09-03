@@ -391,7 +391,7 @@ def test_dataset_generator_marks_untracked_templates_dirty(
             return subprocess.CompletedProcess(command, 0, "a" * 40 + "\n", "")
         if command[1:] == ["status", "--porcelain"]:
             return subprocess.CompletedProcess(
-                command, 0, "?? examples/new.spice.tmpl\n", "",
+                command, 0, "?? circuit_templates/new.spice.tmpl\n", "",
             )
         return subprocess.CompletedProcess(command, 0, "", "")
 
@@ -423,11 +423,11 @@ def test_campaign_manifest_rejects_untracked_templates(
 
     def fake_git(_root: Path, *args: str) -> str:
         if args == ("status", "--porcelain"):
-            return "?? examples/new.spice.tmpl"
+            return "?? circuit_templates/new.spice.tmpl"
         if args == ("status", "--porcelain", "--untracked-files=no"):
             return ""
         if args == ("ls-files", "--others", "--exclude-standard"):
-            return "examples/new.spice.tmpl"
+            return "circuit_templates/new.spice.tmpl"
         if args == ("rev-parse", "HEAD"):
             return "a" * 40
         raise AssertionError(f"unexpected git invocation: {args}")

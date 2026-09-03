@@ -43,10 +43,57 @@ NGSPICE_BIN = os.environ.get(
 
 #: Every circuit a gate simulates is a file under here — gates render these,
 #: they never carry a topology of their own. See ``render_template``.
-EXAMPLES_DIR = PROJECT_ROOT / "examples"
-DEVICE_DECKS = EXAMPLES_DIR / "single_devices"
-SIMPLE_DECKS = EXAMPLES_DIR / "simple_circuits"
-SUBCIRCUIT_DECKS = EXAMPLES_DIR / "subcircuits"
+TEMPLATES_DIR = PROJECT_ROOT / "circuit_templates"
+
+#: Circuit templates are ordered by what they demand of a compact model, not
+#: by application domain.  The ladder is the point: L0 biases one device from
+#: ideal sources, L1 adds passive loading, L2 couples several devices while
+#: every bias rail stays ideal, L3 makes the model determine an operating
+#: point (internal bias generation or internal state), and L4 closes a
+#: negative-feedback loop around it.  A gate that passes L2 and fails L3 has
+#: localized its failure to basin selection rather than pointwise error.
+CIRCUIT_TIERS: Tuple[str, ...] = (
+    "L0_devices",
+    "L1_primitives",
+    "L2_stages",
+    "L3_blocks",
+    "L4_systems",
+)
+TIER_DIRS: Dict[str, Path] = {
+    tier: TEMPLATES_DIR / tier for tier in CIRCUIT_TIERS
+}
+DEVICE_DECKS = TIER_DIRS["L0_devices"]
+SUBCIRCUIT_DECKS = TEMPLATES_DIR / "subcircuits"
+
+
+def template_deck(name: str, *, tier: str = "") -> Path:
+    """Resolve one template filename to its difficulty tier.
+
+    Callers name a topology, not a directory, so a template can be re-tiered
+    without editing every gate.  Resolution is strict in both directions: an
+    unknown ``tier``, a file that is absent from the tier it declares, a name
+    no tier owns, and a name two tiers both own are all errors.  The ambiguity
+    check is the one that matters — two copies of a topology is exactly the
+    drift that ``circuit_templates/`` exists to prevent.
+    """
+    if tier:
+        if tier not in TIER_DIRS:
+            raise ValueError(
+                f"unknown circuit tier {tier!r}; available: {list(CIRCUIT_TIERS)}")
+        path = TIER_DIRS[tier] / name
+        if not path.is_file():
+            raise FileNotFoundError(f"{name!r} is not in tier {tier!r}")
+        return path
+    found = [TIER_DIRS[candidate] / name for candidate in CIRCUIT_TIERS
+             if (TIER_DIRS[candidate] / name).is_file()]
+    if not found:
+        raise FileNotFoundError(
+            f"no circuit tier owns {name!r}; searched {list(CIRCUIT_TIERS)}")
+    if len(found) > 1:
+        raise ValueError(
+            f"{name!r} is duplicated across tiers: "
+            + ", ".join(str(path.parent.name) for path in found))
+    return found[0]
 from helpers import bake_inst_params as bake_inst_params  # noqa: E402
 
 
@@ -239,7 +286,7 @@ TECH_COLORS: Dict[str, str] = {
 
 
 # ---------------------------------------------------------------------------
-# examples/ reference-deck rendering
+# circuit_templates/ reference-deck rendering
 # ---------------------------------------------------------------------------
 _DECK_TOKEN_RE = re.compile(r"<([A-Z][A-Z0-9_]*)>")
 
@@ -308,13 +355,13 @@ def render_deck_text(
 
 def render_template(template_path: Path, subs: Dict[str, str], *,
                     body_only: bool = False) -> str:
-    """Render an ``examples/`` template into runnable netlist text.
+    """Render an ``circuit_templates/`` template into runnable netlist text.
 
     The gates own stimulus and tolerances; they do NOT own topology. Every
-    circuit a gate simulates is a file under ``examples/``, and this is how it
+    circuit a gate simulates is a file under ``circuit_templates/``, and this is how it
     gets read. Keeping one copy is the point: a topology that lives in both a
     documentation deck and an f-string builder drifts, silently, and the
-    ``examples/`` copy is the one nobody re-runs.
+    ``circuit_templates/`` copy is the one nobody re-runs.
 
     The template is a SPICE deck annotated with ``<TOKEN>`` placeholders for the
     values that vary per technology (``<VDD>``, ``<NMOS>``, the baked-modelcard

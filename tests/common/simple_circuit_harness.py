@@ -17,7 +17,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 import numpy as np
 
 from tests.common.base import (
-    OSDI_PATH, SIMPLE_DECKS, deck_tokens, render_deck_text,
+    OSDI_PATH, deck_tokens, template_deck, render_deck_text,
     run_ngspice_subprocess,
 )
 from tests.common.circuit_benchmarks import (
@@ -248,6 +248,56 @@ def _common_substitutions(
         "VBP": _number(0.55 * vdd),
         "OPAMP_LO": _number(vcm - 0.15),
         "OPAMP_HI": _number(vcm + 0.15),
+        # Source specs are tokens so one topology can serve the DC transfer
+        # and the small-signal rejection experiments.  The defaults render
+        # byte-identically to the pre-token deck, which is what keeps the
+        # frozen simple-v1 opamp cell unchanged.
+        "VDD_SPEC": _number(vdd),
+        "VINP_SPEC": _number(vcm),
+        "VINN_SPEC": _number(vcm),
+        "MIRROR_OUT_N": "0",
+        "MIRROR_OUT_P": _number(vdd),
+        "MID_RAIL": _number(0.5 * vdd),
+        # Mirror reference-current window: from deep subthreshold to several
+        # times the nominal bias, so the mirror ratio is scored across the
+        # inversion transition rather than at one operating current.
+        "IREF_LO": _number(0.05e-6 * bt.nfin / 2.0),
+        "IREF_HI": _number(20e-6 * bt.nfin / 2.0),
+        "IREF_STEP": _number(0.5e-6 * bt.nfin / 2.0),
+        # --- Tier A: self-biased cells ----------------------------------
+        # Rs sets the constant-gm operating current through the K=2 width
+        # ratio; 20k lands the cell near the subthreshold/strong-inversion
+        # boundary, which is where a fitted model is least constrained.
+        "BETA_RS": "20k",
+        "BETA_RSTART": "10e6",
+        "REF_RBIAS": "500k",
+        "DIODE_RLOAD": "200k",
+        "CASCODE_OUT": _number(0.6 * vdd),
+        # --- Tier B: closed-loop systems --------------------------------
+        "BUFFER_IN": _number(0.5 * vdd),
+        "BUF_LO": _number(0.30 * vdd),
+        "BUF_HI": _number(0.70 * vdd),
+        "BUF_TSTEP": "5p",
+        "BUF_TSTOP": "6n",
+        "BUFFER_STEP": (
+            f"{'PULSE(' if reference else 'PULSE'} "
+            f"{_number(0.45 * vdd)} {_number(0.55 * vdd)} 1n 50p 50p 2n 6n"
+            f"{')' if reference else ''}"
+        ),
+        "IBIAS_CELL": _number(2e-6 * bt.nfin / 2.0),
+        "LDO_VREF": _number(0.35 * vdd),
+        "LDO_RFB1": "200k",
+        "LDO_RFB2": "200k",
+        "LDO_COUT": "500f",
+        "LDO_VDD_LO": _number(0.80 * vdd),
+        "LDO_TSTEP": "10p",
+        "LDO_TSTOP": "20n",
+        "LDO_LOAD_DC": _number(1e-6 * bt.nfin / 2.0),
+        "LDO_LOAD_STEP": (
+            f"{'PULSE(' if reference else 'PULSE'} "
+            f"{_number(1e-6 * bt.nfin / 2.0)} {_number(8e-6 * bt.nfin / 2.0)} "
+            f"5n 100p 100p 8n 20n{')' if reference else ''}"
+        ),
         "CC": "20f",
         "CL": "50f",
         "WL": _number(vdd),
@@ -303,6 +353,19 @@ def _common_substitutions(
     return values
 
 
+#: Source specs whose default is another token's value.  These must be
+#: resolved AFTER case-level overrides are applied, not while the base
+#: substitution table is built: a caller that overrides ``VCM`` (the
+#: parametric opamp sweep does) would otherwise have its override silently
+#: dropped, because the spec had already been frozen to the unoverridden bias.
+_SPEC_DEFAULTS: Dict[str, str] = {
+    "VDD_SPEC": "<VDD>",
+    "VINP_SPEC": "<VCM>",
+    "VINN_SPEC": "<VCM>",
+    "MIRROR_OUT_P": "<VDD>",
+}
+
+
 def _render_one(
     case: CircuitCase,
     analysis: AnalysisSpec,
@@ -316,13 +379,17 @@ def _render_one(
     ring_cload: float = 0.5e-15,
 ) -> str:
     relative = case.template
-    path = SIMPLE_DECKS / relative
+    path = template_deck(relative, tier=case.tier)
     template = path.read_text()
     available = _common_substitutions(
         bt, corner, reference=reference, baked_lib=baked_lib,
         ring_n_stages=ring_n_stages, ring_cload=ring_cload,
     )
-    available.update(substitutions or {})
+    overrides = dict(substitutions or {})
+    available.update(overrides)
+    for name, default in _SPEC_DEFAULTS.items():
+        if name not in overrides:
+            available[name] = _expand(default, available)
     for name, raw in analysis.substitutions().items():
         available[name] = _expand(raw, available)
     # Reference analysis is executed explicitly in the NGSPICE control block;
@@ -352,6 +419,9 @@ def _resolved_analysis(
     reference_values = _common_substitutions(
         bt, corner, reference=True, baked_lib=Path("<unused>"),
     )
+    for values in (candidate_values, reference_values):
+        for name, default in _SPEC_DEFAULTS.items():
+            values[name] = _expand(default, values)
     for name, raw in analysis.substitutions().items():
         candidate_values[name] = _expand(raw, candidate_values)
         reference_values[name] = _expand(raw, reference_values)
@@ -630,6 +700,8 @@ def run_candidate_trace(
     analysis: AnalysisSpec,
     work_dir: Path,
     tag: str,
+    *,
+    require_convergence: bool = True,
 ) -> Tuple[Trace, Path]:
     """Run the NN adapter and return a structured trace plus rendered path."""
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -639,12 +711,15 @@ def run_candidate_trace(
     try:
         if analysis.kind == "dc":
             parser = parse_netlist(path)
-            results = run_directnet_dc_sweep(path, work_dir, tag)
+            results = run_directnet_dc_sweep(
+                path, work_dir, tag, require_convergence=require_convergence,
+            )
             first = _lookup_signal(results, analysis.signals[0])
             axis = _dc_axis(parser.analysis_params, first.size)
             values = {signal: _lookup_signal(results, signal)
                       for signal in analysis.signals}
-            trace = Trace("sweep", axis, values)
+            trace = Trace("sweep", axis, values,
+                          converged=require_convergence)
         elif analysis.kind == "tran":
             results, partial, error = run_directnet_transient(path)
             values = {signal: _lookup_signal(results, signal)
@@ -781,6 +856,25 @@ def _period(axis: np.ndarray, values: np.ndarray, level: float) -> float:
     return float(np.mean(np.diff(crossings)))
 
 
+#: Every metric profile ``_domain_metrics`` implements.  A case naming a
+#: profile that is not here emits no domain metrics at all, which shows up
+#: only as a missing required metric on a run where nothing errored — far too
+#: late.  The catalog contract check verifies membership instead.
+METRIC_PROFILES: frozenset = frozenset({
+    "trace", "transient", "ac",
+    "source_follower", "gain", "opamp", "ring_osc", "current_mirror",
+    "cascode", "cascode_ac", "inverter_chain", "logic_tran", "logic_vtc",
+    "transmission_gate", "hold_droop", "switchcap", "diffpair",
+    "diffpair_diff_ac", "diffpair_cm_ac", "sram_hold", "sram_read",
+    "sram_write", "sram_snm",
+    # V7.6.7 additions
+    "mirror_iref", "opamp_diff_ac", "opamp_cm_ac", "opamp_supply_ac",
+    "switchcap_multicycle", "ring_supply", "sram_write_margin",
+    "diode_load", "self_bias_cell", "self_bias_cascode", "mos_reference",
+    "unity_gain", "settling", "line_regulation", "load_regulation",
+})
+
+
 def _domain_metrics(
     profile: str,
     grid: np.ndarray,
@@ -895,13 +989,231 @@ def _domain_metrics(
     if profile == "diffpair_diff_ac" and len(names) >= 2:
         gain_t = float(np.abs(candidate[names[1]][0] - candidate[names[0]][0]))
         gain_r = float(np.abs(reference[names[1]][0] - reference[names[0]][0]))
-        domain["diff_gain_error_pct"] = _relative_error(gain_t, gain_r)
+        domain.update(diff_gain_test=gain_t, diff_gain_ref=gain_r,
+                      diff_gain_error_pct=_relative_error(gain_t, gain_r))
     if profile == "diffpair_cm_ac" and len(names) >= 2:
         gain_t = float(np.abs((candidate[names[1]][0]
                               + candidate[names[0]][0]) / 2.0))
         gain_r = float(np.abs((reference[names[1]][0]
                               + reference[names[0]][0]) / 2.0))
-        domain["cm_gain_error_pct"] = _relative_error(gain_t, gain_r)
+        domain.update(cm_gain_test=gain_t, cm_gain_ref=gain_r,
+                      cm_gain_error_pct=_relative_error(gain_t, gain_r))
+    if profile in ("opamp_diff_ac", "opamp_cm_ac", "opamp_supply_ac"):
+        # Low-frequency magnitude of the single output.  The rejection ratios
+        # are formed from these gains by `_derive_case_metrics`; no analysis
+        # can produce a ratio on its own because each drives one stimulus.
+        key = {"opamp_diff_ac": "diff", "opamp_cm_ac": "cm",
+               "opamp_supply_ac": "supply"}[profile]
+        gain_t = float(np.abs(candidate[names[0]][0]))
+        gain_r = float(np.abs(reference[names[0]][0]))
+        domain.update(**{
+            f"{key}_gain_test": gain_t, f"{key}_gain_ref": gain_r,
+            f"{key}_gain_error_pct": _relative_error(gain_t, gain_r),
+        })
+    if profile == "mirror_iref":
+        # The sweep axis *is* the reference current, so the mirror ratio is
+        # the measured output current divided by the axis.  Points at a
+        # negligible reference current carry no ratio and are dropped from the
+        # aggregate rather than being clamped into it.
+        name = names[0]
+        usable = np.abs(grid) > 1e-12
+        if int(np.count_nonzero(usable)) >= 3:
+            ratio_t = np.abs(np.real(candidate[name][usable])) / np.abs(grid[usable])
+            ratio_r = np.abs(np.real(reference[name][usable])) / np.abs(grid[usable])
+            errors = np.abs(ratio_t - ratio_r) / np.maximum(np.abs(ratio_r), 1e-30)
+            domain.update(
+                iref_points=int(np.count_nonzero(usable)),
+                iref_ratio_test=float(np.median(ratio_t)),
+                iref_ratio_ref=float(np.median(ratio_r)),
+                iref_ratio_error_pct=float(np.median(errors) * 100.0),
+                iref_worst_ratio_error_pct=float(np.max(errors) * 100.0),
+            )
+    if profile == "switchcap_multicycle":
+        name = names[0]
+        test = np.real(candidate[name])
+        ref = np.real(reference[name])
+        # Compare drift accumulated after the first quarter of the window, so
+        # a constant offset in the first sample does not masquerade as drift
+        # and vice versa.
+        start = max(grid.size // 4, 1)
+        drift_t = float(test[-1] - test[start])
+        drift_r = float(ref[-1] - ref[start])
+        domain.update(
+            cycle_drift_test_v=drift_t, cycle_drift_ref_v=drift_r,
+            cycle_drift_error_v=abs(drift_t - drift_r),
+            final_sample_error_v=abs(float(test[-1] - ref[-1])),
+        )
+    if profile == "ring_supply":
+        voltage = next((name for name in names if name.lower().startswith("v(")),
+                       names[0])
+        test = _period(grid, np.real(candidate[voltage]), vdd / 2.0)
+        ref = _period(grid, np.real(reference[voltage]), vdd / 2.0)
+        domain.update(period_test_s=test, period_ref_s=ref,
+                      period_error_pct=_relative_error(test, ref))
+        current = next((name for name in names
+                        if name.lower().startswith("i(")), "")
+        if current:
+            # Mean supply draw over the settled window: an oscillator's
+            # dynamic current is set by the charge model, which no other
+            # simple-circuit metric observes.
+            settled = slice(max(grid.size // 4, 1), None)
+            draw_t = float(np.mean(np.abs(np.real(candidate[current][settled]))))
+            draw_r = float(np.mean(np.abs(np.real(reference[current][settled]))))
+            domain.update(
+                supply_current_test_a=draw_t, supply_current_ref_a=draw_r,
+                supply_current_error_pct=_relative_error(draw_t, draw_r),
+            )
+    if profile == "diode_load":
+        # With the load line fixed by the resistor, the node voltage IS the
+        # model's answer: there is no source imposing the current, so the
+        # diode drop is the whole result.
+        domain["diode_drop_error_v"] = max(
+            abs(float(np.real(candidate[name][-1])
+                      - np.real(reference[name][-1])))
+            for name in names
+        )
+        domain["diode_drop_worst_error_v"] = max(
+            float(np.max(np.abs(np.real(candidate[name])
+                                - np.real(reference[name]))))
+            for name in names
+        )
+    if profile == "self_bias_cell":
+        # Supply ramp of a self-biased cell.  Both engines are asked the same
+        # two questions: how much current the loop settles at, and at which
+        # supply it leaves the degenerate zero-current solution.
+        current = next((name for name in names
+                        if name.lower().startswith("i(")), "")
+        voltages = [name for name in names if name.lower().startswith("v(")]
+        if current:
+            draw_t = float(abs(np.real(candidate[current][-1])))
+            draw_r = float(abs(np.real(reference[current][-1])))
+            domain.update(
+                bias_current_test_a=draw_t, bias_current_ref_a=draw_r,
+                bias_current_error_pct=_relative_error(draw_t, draw_r),
+            )
+            starts = []
+            for values in (candidate[current], reference[current]):
+                magnitude = np.abs(np.real(values))
+                target = 0.5 * float(magnitude[-1])
+                reached = np.flatnonzero(magnitude >= target)
+                starts.append(float(grid[reached[0]]) if reached.size
+                              else float("nan"))
+            domain.update(startup_vdd_test_v=starts[0],
+                          startup_vdd_ref_v=starts[1],
+                          startup_vdd_error_v=abs(starts[0] - starts[1]))
+        if voltages:
+            domain["bias_node_error_v"] = max(
+                abs(float(np.real(candidate[name][-1])
+                          - np.real(reference[name][-1])))
+                for name in voltages
+            )
+    if profile == "self_bias_cascode":
+        current = next((name for name in names
+                        if name.lower().startswith("i(")), names[0])
+        compliance = grid >= 0.5 * vdd
+        if int(np.count_nonzero(compliance)) >= 3:
+            gt = np.gradient(np.real(candidate[current]), grid)
+            gr = np.gradient(np.real(reference[current]), grid)
+            domain["output_resistance_error_pct"] = _relative_error(
+                1.0 / (np.median(np.abs(gt[compliance])) + 1e-30),
+                1.0 / (np.median(np.abs(gr[compliance])) + 1e-30),
+            )
+        # The internally generated rails are the point of this case: report
+        # them so a compliance error can be attributed to bias generation
+        # rather than to the cascode devices.
+        rails = [name for name in names if name.lower().startswith("v(")]
+        if rails:
+            domain["bias_node_error_v"] = max(
+                abs(float(np.median(np.real(candidate[name]))
+                          - np.median(np.real(reference[name]))))
+                for name in rails
+            )
+    if profile == "mos_reference":
+        name = names[0]
+        test = np.real(candidate[name])
+        ref = np.real(reference[name])
+        domain["vref_error_v"] = abs(float(test[-1] - ref[-1]))
+        # Line sensitivity over the top of the supply ramp: dVref/dVdd is what
+        # a reference is actually specified on, and it is a derivative the
+        # pointwise device metrics never constrain.
+        top = grid >= 0.7 * float(np.max(grid))
+        if int(np.count_nonzero(top)) >= 3:
+            slope_t = float(np.polyfit(grid[top], test[top], 1)[0])
+            slope_r = float(np.polyfit(grid[top], ref[top], 1)[0])
+            domain.update(
+                line_sensitivity_test=slope_t, line_sensitivity_ref=slope_r,
+                line_sensitivity_error_pct=_relative_error(slope_t, slope_r),
+            )
+    if profile == "unity_gain" and len(names) >= 2:
+        out_name, in_name = names[0], names[1]
+        test_out = np.real(candidate[out_name])
+        ref_out = np.real(reference[out_name])
+        drive = np.real(reference[in_name])
+        # A unity-gain buffer should reproduce its input.  Report the closed
+        # loop's own follower error for each engine, then their difference.
+        domain.update(
+            follow_error_test_v=float(np.max(np.abs(test_out - drive))),
+            follow_error_ref_v=float(np.max(np.abs(ref_out - drive))),
+            follow_error_v=abs(float(np.max(np.abs(test_out - drive)))
+                               - float(np.max(np.abs(ref_out - drive)))),
+        )
+        gain_t = _gradient_gain(grid, test_out)
+        gain_r = _gradient_gain(grid, ref_out)
+        domain["closed_loop_gain_error_pct"] = _relative_error(gain_t, gain_r)
+    if profile == "settling" and len(names) >= 2:
+        out_name = names[0]
+        test = np.real(candidate[out_name])
+        ref = np.real(reference[out_name])
+        settles = []
+        overshoots = []
+        for values in (test, ref):
+            final = float(values[-1])
+            span = float(np.ptp(values))
+            band = max(0.02 * span, 1e-6)
+            outside = np.flatnonzero(np.abs(values - final) > band)
+            settles.append(float(grid[outside[-1]]) if outside.size
+                           else float(grid[0]))
+            overshoots.append(float(np.max(values) - final))
+        domain.update(
+            settling_test_s=settles[0], settling_ref_s=settles[1],
+            settling_error_pct=_relative_error(settles[0], settles[1]),
+            overshoot_error_v=abs(overshoots[0] - overshoots[1]),
+        )
+    if profile == "line_regulation":
+        name = names[0]
+        test = np.real(candidate[name])
+        ref = np.real(reference[name])
+        domain["vout_error_v"] = abs(float(test[-1] - ref[-1]))
+        slope_t = float(np.polyfit(grid, test, 1)[0])
+        slope_r = float(np.polyfit(grid, ref, 1)[0])
+        domain.update(
+            line_regulation_test=slope_t, line_regulation_ref=slope_r,
+            line_regulation_error_pct=_relative_error(slope_t, slope_r),
+        )
+    if profile == "load_regulation":
+        name = names[0]
+        test = np.real(candidate[name])
+        ref = np.real(reference[name])
+        # Droop is measured from each engine's own pre-step level, so a static
+        # output offset does not leak into the transient load-step metric.
+        pre = max(grid.size // 5, 1)
+        droops = []
+        recoveries = []
+        for values in (test, ref):
+            level = float(np.median(values[:pre]))
+            droops.append(level - float(np.min(values[pre:])))
+            recoveries.append(float(values[-1]) - level)
+        domain.update(
+            load_droop_test_v=droops[0], load_droop_ref_v=droops[1],
+            load_droop_error_v=abs(droops[0] - droops[1]),
+            recovery_error_v=abs(recoveries[0] - recoveries[1]),
+        )
+    if profile == "sram_write_margin":
+        name = names[0]
+        trip_t = _crossing(grid, np.real(candidate[name]), vdd / 2.0)
+        trip_r = _crossing(grid, np.real(reference[name]), vdd / 2.0)
+        domain.update(write_trip_test_v=trip_t, write_trip_ref_v=trip_r,
+                      write_trip_error_v=abs(trip_t - trip_r))
     if profile == "logic_vtc":
         name = names[0]
         trip_t = _crossing(grid, np.real(candidate[name]), vdd / 2.0)
@@ -975,6 +1287,18 @@ def compare_traces(
     voltage = [(name, item) for name, item in aggregate
                if name.lower().startswith("v(")]
     scored = voltage or aggregate
+    # NRMSE and R2 are normalized by the reference's dynamic range, so a
+    # signal that barely moves — an internally generated bias rail reported
+    # for attribution, say — yields an enormous NRMSE from a sub-millivolt
+    # error. Those signals keep their own per-signal metrics and their domain
+    # metric; they are only held out of the case aggregate, and which ones
+    # were held out is recorded rather than left implicit.
+    flat = [name for name, _ in scored
+            if float(np.ptp(np.real(reference_values[name])))
+            < max(1e-6, 1e-4 * vdd)]
+    if flat and len(flat) < len(scored):
+        metrics["flat_signals_excluded"] = float(len(flat))
+        scored = [(name, item) for name, item in scored if name not in flat]
     metrics.update({
         "mre_pct": max(item["mre_pct"] for _, item in scored),
         "r2": min(item["r2"] for _, item in scored),
@@ -1088,6 +1412,60 @@ def _reference_stability(
             "reference_repeat_nrmse_pct": worst}
 
 
+def _unconverged_diagnostic(
+    case: CircuitCase,
+    analysis: AnalysisSpec,
+    base_bt: BenchTech,
+    corner: Corner,
+    work_dir: Path,
+    failure: Exception,
+    *,
+    reference_converged: bool,
+) -> Dict[str, Any]:
+    """Recover the numbers behind a DC convergence failure, for reading only.
+
+    A row that did not converge stays an ``error``: it never becomes a pass,
+    never enters a numeric aggregate, and keeps its slot in the denominator.
+    But "did not converge" and "was 200 mV out" are different facts about a
+    model, and collapsing them is how a 0/10 AC score came to mean an
+    unconverged DC operating point.  So the sweep is repeated once without the
+    convergence requirement and its metrics are filed under a separate key
+    that no scoring path reads.
+
+    Only DC is recovered.  A transient already returns its committed prefix
+    with ``partial=True``, and an AC response linearised about a state that is
+    not a fixed point is not a measurement of anything.
+    """
+    if analysis.kind != "dc" or not reference_converged:
+        return {}
+    if "did not converge" not in str(failure):
+        return {}
+    bt = apply_corner(base_bt, corner)
+    try:
+        resolved = _resolved_analysis(analysis, bt, corner)
+        baked = get_baked_modelcard(
+            bt, bt.nfin, work_dir, nfin_p=bt.effective_nfin_p,
+        )
+        candidate_deck, reference_deck = render_case_decks(
+            case, resolved, base_bt, corner, baked_lib=baked,
+        )
+        reference = run_reference_trace(
+            reference_deck, resolved, work_dir,
+            f"{case.case_id}_{analysis.name}_unconv_ref",
+        )
+        candidate, _ = run_candidate_trace(
+            candidate_deck, resolved, work_dir,
+            f"{case.case_id}_{analysis.name}_unconv",
+            require_convergence=False,
+        )
+        metrics, domain = compare_traces(
+            candidate, reference, resolved, vdd=bt.vdd,
+        )
+        return {"unconverged_diagnostic": {**metrics, **domain}}
+    except Exception:  # noqa: BLE001 — a diagnostic must never mask the failure
+        return {}
+
+
 def run_case_analysis(
     case: CircuitCase,
     analysis: AnalysisSpec,
@@ -1157,14 +1535,82 @@ def run_case_analysis(
             partial=candidate.partial,
         )
     except Exception as exc:  # noqa: BLE001 - evidence rows retain all errors
+        domain = _unconverged_diagnostic(
+            case, analysis, base_bt, corner, work_dir, exc,
+            reference_converged=reference_converged,
+        )
         return GateResult(
             case_id=case.case_id, tech=bt.name, corner=corner.name,
             analysis=analysis.name, role=case.role, status="error",
             error=f"{type(exc).__name__}: {exc}",
+            domain=domain,
             reference_converged=reference_converged,
             candidate_converged=candidate_converged,
             partial=partial,
         )
+
+
+#: Derived quantity -> (numerator gain, denominator gain, reported stem).
+#: A rejection ratio is a property of a *pair* of experiments, so it cannot be
+#: produced by the per-analysis metric path and is formed here instead.
+_DERIVED_RATIOS: Dict[str, Tuple[str, str]] = {
+    "cmrr": ("diff_gain", "cm_gain"),
+    "psrr": ("diff_gain", "supply_gain"),
+}
+
+
+def _gain(domains: Mapping[str, Mapping[str, Any]], key: str) -> float:
+    for domain in domains.values():
+        if key in domain:
+            return float(domain[key])
+    return float("nan")
+
+
+def _derive_case_metrics(
+    case: CircuitCase, results: Sequence[GateResult],
+) -> List[GateResult]:
+    """Form this case's cross-analysis quantities as their own result rows.
+
+    A missing input is an ``error`` row rather than a silent omission: a
+    rejection ratio that quietly disappears because one AC sweep failed would
+    shrink the denominator exactly where the failure is most interesting.
+    """
+    if not case.derived_metrics:
+        return []
+    domains = {result.analysis: result.domain for result in results
+               if result.status != "error"}
+    metrics: Dict[str, float] = {}
+    domain: Dict[str, Any] = {}
+    missing: List[str] = []
+    for name in case.derived_metrics:
+        numerator, denominator = _DERIVED_RATIOS[name]
+        for role in ("test", "ref"):
+            top = _gain(domains, f"{numerator}_{role}")
+            bottom = _gain(domains, f"{denominator}_{role}")
+            if not np.isfinite(top) or not np.isfinite(bottom)                     or top <= 0.0 or bottom <= 0.0:
+                missing.append(f"{name}:{role}")
+                domain[f"{name}_db_{role}"] = float("nan")
+                continue
+            domain[f"{name}_db_{role}"] = 20.0 * math.log10(top / bottom)
+        error = abs(domain.get(f"{name}_db_test", float("nan"))
+                    - domain.get(f"{name}_db_ref", float("nan")))
+        domain[f"{name}_db_error"] = error
+    if missing:
+        return [GateResult(
+            case_id=case.case_id, tech=results[0].tech,
+            corner=results[0].corner, analysis="derived", role=case.role,
+            status="error",
+            error=f"derived metrics lack finite inputs: {sorted(set(missing))}",
+            reference_converged=all(r.reference_converged for r in results),
+            candidate_converged=all(r.candidate_converged for r in results),
+        )]
+    return [GateResult(
+        case_id=case.case_id, tech=results[0].tech, corner=results[0].corner,
+        analysis="derived", role=case.role, status="diagnostic",
+        metrics=metrics, domain=domain,
+        reference_converged=all(r.reference_converged for r in results),
+        candidate_converged=all(r.candidate_converged for r in results),
+    )]
 
 
 def run_case(
@@ -1188,6 +1634,7 @@ def run_case(
         )
         for analysis in case.analyses
     ]
+    results.extend(_derive_case_metrics(case, results))
     if not any(result.status == "error" for result in results):
         produced = {
             key

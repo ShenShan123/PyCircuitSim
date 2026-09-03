@@ -10,10 +10,13 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from tests.common.base import (  # noqa: E402
-    EXAMPLES_DIR, SIMPLE_DECKS, SUBCIRCUIT_DECKS,
-    deck_tokens, render_deck_text,
+    CIRCUIT_TIERS, TEMPLATES_DIR, SUBCIRCUIT_DECKS,
+    deck_tokens, template_deck, render_deck_text,
 )
 from tests.common.gate_result import GateResult, parse_result_markers  # noqa: E402
+from tests.common.simple_circuit_harness import (  # noqa: E402
+    METRIC_PROFILES, _DERIVED_RATIOS,
+)
 from tests.common.simple_circuit_catalog import (  # noqa: E402
     CASES, DIAGNOSTIC, QUALIFICATION, SIMPLE_V1, SIMPLE_V2, cases,
 )
@@ -23,8 +26,8 @@ def main() -> int:
     failures: list[str] = []
 
     raw_decks = sorted(
-        path.relative_to(EXAMPLES_DIR)
-        for path in EXAMPLES_DIR.rglob("*")
+        path.relative_to(TEMPLATES_DIR)
+        for path in TEMPLATES_DIR.rglob("*")
         if path.is_file() and path.suffix.lower() in {".cir", ".sp", ".spice"}
     )
     if raw_decks:
@@ -74,11 +77,16 @@ def main() -> int:
             failures.append(f"duplicate case ID: {case.case_id}")
         seen.add(case.case_id)
         relative = case.template
-        path = SIMPLE_DECKS / relative
-        catalog_paths.add(path)
-        if not path.is_file():
-            failures.append(f"{case.case_id}: missing template {relative}")
+        if case.tier not in CIRCUIT_TIERS:
+            failures.append(
+                f"{case.case_id}: undeclared difficulty tier {case.tier!r}")
             continue
+        try:
+            path = template_deck(relative, tier=case.tier)
+        except (FileNotFoundError, ValueError) as exc:
+            failures.append(f"{case.case_id}: {exc}")
+            continue
+        catalog_paths.add(path)
         text = path.read_text()
         tokens = deck_tokens(text)
         for token in ("ANALYSIS", "MODEL_SETUP"):
@@ -96,9 +104,49 @@ def main() -> int:
                         f"{relative}: {case.case_id} {device} body-bias "
                         f"corner needs one of {alternatives}"
                     )
+            # Declaring no device kinds excuses a case from the body-bias
+            # corner. That is only honest when the template genuinely has no
+            # body terminal to move, so verify the claim instead of trusting
+            # it — otherwise the check is opt-out rather than enforced.
+            if not case.device_kinds:
+                body_tokens = sorted(
+                    token for token in tokens
+                    if token.startswith("BODY_")
+                )
+                if body_tokens:
+                    failures.append(
+                        f"{relative}: {case.case_id} declares no device kinds "
+                        f"but its template exposes {body_tokens}"
+                    )
+        for spec in case.analyses:
+            if spec.metric_profile not in METRIC_PROFILES:
+                failures.append(
+                    f"{case.case_id}/{spec.name}: unknown metric profile "
+                    f"{spec.metric_profile!r}; a case naming one emits no "
+                    "domain metrics at all"
+                )
+        for name in case.derived_metrics:
+            if name not in _DERIVED_RATIOS:
+                failures.append(
+                    f"{case.case_id}: unknown derived metric {name!r}; "
+                    f"available: {sorted(_DERIVED_RATIOS)}"
+                )
+        # Tier B exists to exercise the cold-start path. A closed-loop system
+        # whose every transient carries `uic` is handed the answer it was
+        # added to compute, so require at least one transient that does not.
+        if case.tier == "L4_systems":
+            transients = [spec for spec in case.analyses if spec.kind == "tran"]
+            if not transients:
+                failures.append(
+                    f"{case.case_id}: an L4 system must declare a transient")
+            elif all("uic" in spec.card.lower() for spec in transients):
+                failures.append(
+                    f"{case.case_id}: every L4 transient uses uic; at least "
+                    "one must start from a computed operating point"
+                )
 
     standalone: dict[Path, dict[str, str]] = {
-        SIMPLE_DECKS / "inverter.spice.tmpl": {
+        template_deck("inverter.spice.tmpl"): {
             "MODEL_SETUP": (
                 ".model n NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)\n"
                 ".model p PMOS (LEVEL=73 TECH=tsmc5 VT=lvt)"
@@ -110,12 +158,12 @@ def main() -> int:
             "OUTPUT_LOAD": "Cload out 0 5f", "INITIAL_CONDITION": "",
             "ANALYSIS": ".op",
         },
-        SIMPLE_DECKS / "rc_lowpass.spice.tmpl": {
+        template_deck("rc_lowpass.spice.tmpl"): {
             "TEMP": "27", "INPUT_DC": "0", "INPUT_AC": "1",
             "INPUT_PHASE": "0", "RESISTANCE": "1k",
             "CAPACITANCE": "1p", "ANALYSIS": ".ac dec 1 1 10",
         },
-        SIMPLE_DECKS / "common_source.spice.tmpl": {
+        template_deck("common_source.spice.tmpl"): {
             "MODEL_SETUP": ".model n NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)",
             "TEMP": "27", "VDD": "0.65", "INPUT_SPEC": "DC=0.3 AC=1 0",
             "LOAD_NETWORK": "Rd vdd out 50k", "BULK_NETWORK": "",
@@ -123,7 +171,7 @@ def main() -> int:
             "DEVICE": "n L=16n NFIN=2", "OUTPUT_LOAD": "",
             "ANALYSIS": ".ac dec 1 1 10",
         },
-        EXAMPLES_DIR / "single_devices" / "mosfet.spice.tmpl": {
+        template_deck("mosfet.spice.tmpl"): {
             "MODEL_SETUP": ".model n NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)",
             "TEMP": "27", "DRAIN_BIAS": "Vd d 0 0.5",
             "GATE_BIAS": "Vg g 0 0.3", "SOURCE_BIAS": "Vs s 0 0",
@@ -198,18 +246,18 @@ def main() -> int:
             "ANALYSIS": ".tran 10p 5n",
         },
     }
-    all_templates = set(EXAMPLES_DIR.rglob("*.spice.tmpl"))
+    all_templates = set(TEMPLATES_DIR.rglob("*.spice.tmpl"))
     unowned = all_templates - catalog_paths - set(standalone)
     if unowned:
         failures.append(
             "templates lack a catalog or standalone rendering contract: "
-            + ", ".join(str(path.relative_to(EXAMPLES_DIR))
+            + ", ".join(str(path.relative_to(TEMPLATES_DIR))
                         for path in sorted(unowned))
         )
     for path, substitutions in standalone.items():
         if not path.is_file():
             failures.append(
-                f"missing standalone template {path.relative_to(EXAMPLES_DIR)}"
+                f"missing standalone template {path.relative_to(TEMPLATES_DIR)}"
             )
             continue
         try:

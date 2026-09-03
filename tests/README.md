@@ -1,7 +1,7 @@
 # Verification tests
 
 `tests/` contains verification intent and reusable harness code. Circuit
-topology is owned by the parameterized templates in [`examples/`](../examples/README.md),
+topology is owned by the parameterized templates in [`circuit_templates/`](../circuit_templates/README.md),
 and every persistent simulator artifact is written below `results/`.
 
 ## Layout
@@ -9,7 +9,9 @@ and every persistent simulator artifact is written below `results/`.
 - `common/` provides strict template rendering, technology profiles, candidate
   and LEVEL=72 adapters, trace comparison, and campaign result contracts.
 - `single_devices/` verifies terminal currents, geometry coverage, lifted-source
-  behavior, and compact-model device sweeps.
+  behavior, compact-model device sweeps, and — through
+  `verify_device_integrity.py` — the output characteristic, subthreshold
+  decades, triode region, and `gm`/`gds`/`gmb` against ground truth.
 - `simple_circuits/` verifies operating point, DC, transient, AC, topology
   parity, parameter corners, and accuracy-campaign tooling.
 - `perf/` contains opt-in performance and solution-basin checks.
@@ -25,6 +27,10 @@ and every persistent simulator artifact is written below `results/`.
   differences are interpreted.
 - Qualification gates and diagnostics remain distinct; a diagnostic result is
   not promotion evidence.
+- Convergence is reported separately from error. A solve that did not reach a
+  physical fixed point is an `ERROR` row that keeps its slot in the
+  denominator and is never averaged into an accuracy number; where the numbers
+  behind it are recoverable they are filed under a key no scoring path reads.
 - Unknown technologies, cases, corners, or analyses must fail before a campaign
   starts.
 - Generated `.sp`, `.cir`, CSV, JSON, logs, plots, and reports belong under
@@ -32,12 +38,13 @@ and every persistent simulator artifact is written below `results/`.
 
 Minimal malformed strings that test parser rejection are grammar fixtures, not
 runnable circuit topologies. They may remain next to their assertions, but any
-valid deck sent to a simulator must be rendered from `examples/`.
+valid deck sent to a simulator must be rendered from `circuit_templates/`.
 
 The fast catalog contract in
 `simple_circuits/verify_simple_circuit_catalog.py` checks the inventory,
-strict rendering, topology parity, corner matrix, and repository placement
-rules. The versioned simple-circuit entry point is
+declared difficulty tiers, strict rendering, topology parity, corner matrix,
+derived-metric names, the cold-start rule for L4 systems, and repository
+placement. The versioned simple-circuit entry point is
 `simple_circuits/verify_circuit_topologies.py`.
 
 Environment setup, supported commands, and the five-stage workflow are

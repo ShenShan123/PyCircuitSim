@@ -1,0 +1,19 @@
+* Diode-connected devices fed by a resistor from the rail
+* The smallest circuit whose operating point is an intersection of a
+* resistive load line with the device's own surface, rather than a current
+* the deck imposes. Every other diode-connected device in this catalog
+* (current_mirror, cascode_stack, self_biased_cascode) is fed by an ideal
+* current source, which pins the current and leaves only the voltage to
+* solve; here both are the model's to find.
+<MODEL_SETUP>
+Vdd vdd 0 <VDD>
+Vbn bn 0 <BODY_N>
+Vbp bp 0 <BODY_P>
+Rn vdd nr <DIODE_RLOAD>
+<N_PREFIX>n_dio nr nr 0 bn <N_DEVICE>
+Rp np 0 <DIODE_RLOAD>
+<P_PREFIX>p_dio np np vdd bp <P_DEVICE>
+<OUTPUT_LOAD>
+.temp <TEMP>
+<ANALYSIS>
+.end

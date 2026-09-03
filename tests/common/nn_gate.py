@@ -66,7 +66,7 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from tests.common.nn import nrmse, mre, tech_code_in_vocab  # noqa: E402
 from tests.common.base import (  # noqa: E402
-    DEVICE_DECKS, SIMPLE_DECKS, deck_tokens, render_deck_text, render_template,
+    DEVICE_DECKS, deck_tokens, template_deck, render_deck_text, render_template,
 )
 from helpers import bake_inst_params  # noqa: E402
 from neural_network.config import CHECKPOINT_DIR, OSDI_PATH  # noqa: E402
@@ -131,7 +131,7 @@ INV_TRAN_TD = 0.2e-9       # 200ps delay
 
 def _render_inverter_deck(values: Dict[str, str]) -> str:
     """Render the authoritative inverter template with strict tokens."""
-    path = SIMPLE_DECKS / "inverter.spice.tmpl"
+    path = template_deck("inverter.spice.tmpl")
     template = path.read_text()
     required = deck_tokens(template)
     missing = [name for name in required if name not in values]

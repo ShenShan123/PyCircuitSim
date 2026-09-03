@@ -44,7 +44,7 @@ from tests.common.bsimcmg_tran import (  # noqa: E402
     OSDI_PATH,
 )
 from tests.common.base import (  # noqa: E402
-    SIMPLE_DECKS, SUBCIRCUIT_DECKS, render_template,
+    SUBCIRCUIT_DECKS, template_deck, render_template,
 )
 
 RESULTS_DIR = PROJECT_ROOT / "results" / "tests" / "subckt"
@@ -197,7 +197,7 @@ def level0() -> List[Tuple[str, bool, str]]:
 # Level 1 — linear equivalence (no NGSPICE)
 # ---------------------------------------------------------------------------
 def _fixture(name: str, substitutions: Dict[str, str]) -> str:
-    """Render one parameterized subcircuit fixture from ``examples/``."""
+    """Render one parameterized subcircuit fixture from ``circuit_templates/``."""
     return render_template(SUBCIRCUIT_DECKS / name, substitutions)
 
 
@@ -229,7 +229,7 @@ def level1() -> List[Tuple[str, bool, str]]:
 
     # T2: RC lowpass AC equivalence
     freqs_f, res_f = run_ac(parse_deck(render_template(
-        SIMPLE_DECKS / "rc_lowpass.spice.tmpl", {
+        template_deck("rc_lowpass.spice.tmpl"), {
             "TEMP": "27", "INPUT_DC": "0", "INPUT_AC": "1",
             "INPUT_PHASE": "0", "RESISTANCE": "1k",
             "CAPACITANCE": "159.155n", "ANALYSIS": ".ac dec 20 10 1e6",

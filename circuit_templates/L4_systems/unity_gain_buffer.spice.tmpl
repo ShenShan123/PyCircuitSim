@@ -1,0 +1,26 @@
+* Two-stage Miller opamp closed in unity gain
+* Feedback goes to the n1 gate, not the n2 gate. In the opamp_miller
+* topology the mirror-side input is the INVERTING one: raising it pulls n1
+* down, which drives vo1i up through p4 and turns the p6 output device off.
+* Closing the loop on the other input gives positive feedback and rails the
+* output in both engines, which is how this polarity was caught.
+* The inverting input is the output node, so the operating point is a
+* property of the closed loop rather than of any swept source. There is no
+* .ic card: a transient on this deck must start from a computed DC operating
+* point, which is the cold-start path every uic transient in the suite skips.
+<MODEL_SETUP>
+.temp <TEMP>
+Vdd vdd 0 <VDD>
+Vbn vbn 0 <VBN>
+Vin vin 0 <BUFFER_IN>
+<N_PREFIX>n1 n1 vout vtail 0 <N_DEVICE>
+<N_PREFIX>n2 vo1i vin vtail 0 <N_DEVICE>
+<P_PREFIX>p3 n1 n1 vdd vdd <P_DEVICE>
+<P_PREFIX>p4 vo1i n1 vdd vdd <P_DEVICE>
+<N_PREFIX>n5 vtail vbn 0 0 <N_DEVICE>
+<P_PREFIX>p6 vout vo1i vdd vdd <P_DEVICE>
+<N_PREFIX>n7 vout vbn 0 0 <N_DEVICE>
+Cc vo1i vout <CC>
+CL vout 0 <CL>
+<ANALYSIS>
+.end

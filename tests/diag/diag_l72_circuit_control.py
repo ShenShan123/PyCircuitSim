@@ -34,7 +34,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "tests"))
 
 from tests.common.circuit_benchmarks import BENCH, RESULTS_BASE, BenchTech  # noqa: E402
-from tests.common.base import SIMPLE_DECKS, render_template  # noqa: E402
+from tests.common.base import template_deck, render_template  # noqa: E402
 from tests.common.simple_circuit_harness import render_ring_stages  # noqa: E402
 from pycircuitsim.parser import Parser  # noqa: E402
 from pycircuitsim.solver import DCSolver, TransientSolver  # noqa: E402
@@ -145,7 +145,7 @@ def ring(bt: BenchTech) -> Dict:
         cload=0.5e-15,
         vdd=vdd,
     )
-    deck = render_template(SIMPLE_DECKS / "ring_oscillator.spice.tmpl", {
+    deck = render_template(template_deck("ring_oscillator.spice.tmpl"), {
         "MODEL_SETUP": (
             f".model {n} NMOS (LEVEL=72)\n"
             f".model {p} PMOS (LEVEL=72)"
@@ -196,7 +196,7 @@ def opamp(bt: BenchTech) -> Dict:
     vcm, vbn, vbp = _bias(bt)
     lo, hi = round(vcm - 0.15, 3), round(vcm + 0.15, 3)
 
-    deck = render_template(SIMPLE_DECKS / "opamp_miller.spice.tmpl", {
+    deck = render_template(template_deck("opamp_miller.spice.tmpl"), {
         "MODEL_SETUP": (
             f".model {n} NMOS (LEVEL=72)\n"
             f".model {p} PMOS (LEVEL=72)"

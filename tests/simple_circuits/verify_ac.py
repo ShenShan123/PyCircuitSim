@@ -43,7 +43,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from tests.common.base import (
     OSDI_PATH,
-    SIMPLE_DECKS,
+    template_deck,
     render_template,
     run_ngspice_subprocess,
 )
@@ -56,11 +56,11 @@ from tests.common.bsimcmg_tran import (
 RESULTS_DIR = PROJECT_ROOT / "results" / "tests" / "ac"
 
 # Levels 1 and 2 own stimulus and tolerances, not topology: both circuits are
-# decks in examples/ (V7.5.9 — they had been f-strings here AND decks there,
+# decks in circuit_templates/ (V7.5.9 — they had been f-strings here AND decks there,
 # the drift hazard tests/__init__ names). Level 3's floating-bulk pair stays
 # programmatic: it sweeps polarity, so no single deck expresses it.
-RC_TEMPLATE = SIMPLE_DECKS / "rc_lowpass.spice.tmpl"
-CS_TEMPLATE = SIMPLE_DECKS / "common_source.spice.tmpl"
+RC_TEMPLATE = template_deck("rc_lowpass.spice.tmpl")
+CS_TEMPLATE = template_deck("common_source.spice.tmpl")
 
 # Acceptance thresholds.  L1 is purely linear so it must match tightly; L2
 # carries the OP match (~0.05% from the DC suite) plus the cap condensation.

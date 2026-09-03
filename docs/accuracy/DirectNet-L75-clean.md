@@ -9,7 +9,7 @@ are closed analytically. NGSPICE LEVEL=72 on the identical BSIM-CMG OSDI model
 is ground truth.
 
 The campaign covers the declared gates backed by canonical parameterized
-templates in `examples/simple_circuits/`. Results from earlier checkpoints are
+templates in `circuit_templates/`. Results from earlier checkpoints are
 not mixed into this campaign.
 
 Gate definitions and denominator rules are owned by
