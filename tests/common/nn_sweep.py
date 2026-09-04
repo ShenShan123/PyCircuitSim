@@ -1,7 +1,7 @@
-"""V6.3.2 parametric NN test harness — shared config + orchestration.
+"""V6.3.2 parametric NN-family test harness — shared orchestration.
 
 Mirrors the BSIM-CMG L3 harness (``tests/common/bsimcmg_{dc,tran}.py`` +
-``tests/verify_multi_tech_{dc,tran}.py``) for DirectNet (LEVEL=73) NN models.
+``tests/verify_multi_tech_{dc,tran}.py``) for the selected LEVEL=73--76 model.
 Two driver scripts consume this module:
 
   - ``verify_nn_multi_tech_dc.py``   — single-device Id-Vgs over L / NFIN / VT
@@ -44,18 +44,22 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 
 from tests.common.base import ALL_TECHS  # noqa: E402  (base.py TechProfile registry)
+from tests.common.circuit_benchmarks import (  # noqa: E402
+    active_model_level,
+)
+from tests.common.gate_result import GateResult  # noqa: E402
 from tests.common.nn import mre, nrmse  # noqa: E402
 from tests.common.nn_gate import (  # noqa: E402
     ALL_TEST_TECHS,
     INV_TRAN_TD,
     INV_TRAN_TF,
     INV_TRAN_TR,
+    INV_TRAN_TSTEP,
     INV_TRAN_TSTOP,
     TRAN_STARTUP_EXCL,
     TECH_COLORS,
     InvCircuitParams,
     TestTechConfig,
-    get_available_checkpoints,
     run_ngspice_inverter_tran,
     run_ngspice_inverter_vtc,
     run_ngspice_nmos_dc,
@@ -65,6 +69,7 @@ from tests.common.nn_gate import (  # noqa: E402
     run_pycircuitsim_nn_nmos_dc,
     run_pycircuitsim_nn_pmos_dc,
 )
+from tests.common.simple_circuit_harness import RunSpec  # noqa: E402
 
 # Techs in scope for V6.3.2: the four TSMC nodes with V6.3.1 DirectNet
 # checkpoints. ASAP7 excluded.
@@ -75,8 +80,15 @@ NN_TECHS: List[str] = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 DC_NRMSE_PASS = 10.0
 INV_NRMSE_PASS = 15.0
 
-NN_LEVEL = 73          # DirectNet
-NN_MODEL_NAME = "directnet_v4"
+def active_nn_contract() -> tuple[int, str]:
+    """Return the selected family level and filesystem-safe result label."""
+    level = active_model_level()
+    return level, {
+        73: "directnet_v4",
+        74: "bsimar_v4",
+        75: "directnet_full",
+        76: "bsimar_full",
+    }[level]
 
 
 # ---------------------------------------------------------------------------
@@ -95,6 +107,18 @@ def curve_metrics(
     Returns ``nrmse`` (%), ``mre`` (%), ``r2``, ``max_err`` (raw y units).
     ``x_min`` optionally clips the low end (used to drop transient startup).
     """
+    for label, axis, values in (
+        ("reference", ref_x, ref_y),
+        ("candidate", test_x, test_y),
+    ):
+        if axis.ndim != 1 or values.ndim != 1 or axis.size != values.size:
+            raise RuntimeError(f"{label} curve is not an aligned 1-D trace")
+        if axis.size < 3:
+            raise RuntimeError(f"{label} curve has fewer than three points")
+        if not np.all(np.isfinite(axis)) or not np.all(np.isfinite(values)):
+            raise RuntimeError(f"{label} curve contains non-finite values")
+        if np.any(np.diff(axis) <= 0.0):
+            raise RuntimeError(f"{label} curve axis is not strictly increasing")
     lo = max(ref_x[0], test_x[0])
     hi = min(ref_x[-1], test_x[-1])
     if x_min is not None:
@@ -114,6 +138,45 @@ def curve_metrics(
         "r2": r2,
         "max_err": float(np.max(np.abs(ti - ry))),
     }
+
+
+def validate_curve_trace(
+    axis: np.ndarray,
+    values: np.ndarray,
+    *,
+    expected_start: float,
+    expected_stop: float,
+    max_step: float,
+    label: str,
+    allow_missing_stop: bool = False,
+) -> None:
+    """Require a complete finite trace before any interpolation or scoring."""
+    x = np.asarray(axis, dtype=float)
+    y = np.asarray(values, dtype=float)
+    if x.ndim != 1 or y.ndim != 1 or x.size != y.size or x.size < 3:
+        raise RuntimeError(f"{label} is not a complete aligned 1-D trace")
+    if not np.all(np.isfinite(x)) or not np.all(np.isfinite(y)):
+        raise RuntimeError(f"{label} contains non-finite values")
+    gaps = np.diff(x)
+    if np.any(gaps <= 0.0):
+        raise RuntimeError(f"{label} axis is not strictly increasing")
+    endpoint_tolerance = max(abs(max_step) * 0.51, 1e-15)
+    if abs(float(x[0]) - expected_start) > endpoint_tolerance:
+        raise RuntimeError(
+            f"{label} starts at {x[0]:g}, expected {expected_start:g}"
+        )
+    stop_tolerance = (
+        max(endpoint_tolerance, abs(max_step) * 1.01)
+        if allow_missing_stop else endpoint_tolerance
+    )
+    if abs(float(x[-1]) - expected_stop) > stop_tolerance:
+        raise RuntimeError(
+            f"{label} stops at {x[-1]:g}, expected {expected_stop:g}"
+        )
+    if float(np.max(gaps)) > abs(max_step) * (1.0 + 1e-6):
+        raise RuntimeError(
+            f"{label} has a gap {np.max(gaps):g} larger than {max_step:g}"
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -350,11 +413,26 @@ def build_inv_parametric(tech_key: str, analysis: str) -> List[NNInvSweepConfig]
 # ---------------------------------------------------------------------------
 # Single-test orchestrators
 # ---------------------------------------------------------------------------
-def _fail(cfg, error: str) -> Dict[str, object]:
+def _fail(
+    cfg: object,
+    error: str,
+    *,
+    reference_converged: bool,
+    candidate_converged: bool,
+) -> Dict[str, object]:
+    if not reference_converged:
+        error_kind = "reference"
+    elif not candidate_converged:
+        error_kind = "candidate"
+    else:
+        error_kind = "result_schema"
     return {
         "config": cfg, "passed": False, "error": error,
         "nrmse": float("nan"), "mre": float("nan"),
         "r2": float("nan"), "max_err": float("nan"),
+        "reference_converged": reference_converged,
+        "candidate_converged": candidate_converged,
+        "error_kind": error_kind,
     }
 
 
@@ -364,24 +442,56 @@ def run_single_nn_dc(
     """Run one single-device Id-Vgs config: NGSPICE truth vs DirectNet."""
     work_dir.mkdir(parents=True, exist_ok=True)
     tech = cfg.tech
+    level, model_name = active_nn_contract()
+    reference_converged = False
+    candidate_converged = False
     try:
         if cfg.device == "nmos":
             ref = run_ngspice_nmos_dc(tech, work_dir)
+            rx = ref["sweep"]
+            r_order = np.argsort(rx)
+            validate_curve_trace(
+                rx[r_order], ref["id"][r_order],
+                expected_start=0.0, expected_stop=tech.vdd, max_step=0.005,
+                label=f"{cfg.label} reference",
+                allow_missing_stop=True,
+            )
+            reference_converged = True
             test = run_pycircuitsim_nn_nmos_dc(
-                tech, work_dir, NN_LEVEL, NN_MODEL_NAME, model_path=None)
-            rx, tx = ref["sweep"], test["sweep"]
+                tech, work_dir, level, model_name, model_path=None)
+            tx = test["sweep"]
         else:
             ref = run_ngspice_pmos_dc(tech, work_dir)
-            test = run_pycircuitsim_nn_pmos_dc(
-                tech, work_dir, NN_LEVEL, NN_MODEL_NAME, model_path=None)
             # PMOS NGSPICE sweep is negative-going; align on |Vgs|.
-            rx, tx = np.abs(ref["sweep"]), np.abs(test["sweep"])
-        r_order = np.argsort(rx)
+            rx = np.abs(ref["sweep"])
+            r_order = np.argsort(rx)
+            validate_curve_trace(
+                rx[r_order], ref["id"][r_order],
+                expected_start=0.0, expected_stop=tech.vdd, max_step=0.005,
+                label=f"{cfg.label} reference",
+                allow_missing_stop=True,
+            )
+            reference_converged = True
+            test = run_pycircuitsim_nn_pmos_dc(
+                tech, work_dir, level, model_name, model_path=None)
+            tx = np.abs(test["sweep"])
         t_order = np.argsort(tx)
+        validate_curve_trace(
+            tx[t_order], test["id"][t_order],
+            expected_start=0.0, expected_stop=tech.vdd, max_step=0.005,
+            label=f"{cfg.label} candidate",
+            allow_missing_stop=True,
+        )
+        candidate_converged = True
         m = curve_metrics(
             rx[r_order], ref["id"][r_order], tx[t_order], test["id"][t_order])
     except Exception as exc:  # noqa: BLE001 — report, never crash the sweep
-        return _fail(cfg, f"{type(exc).__name__}: {exc}")
+        return _fail(
+            cfg,
+            f"{type(exc).__name__}: {exc}",
+            reference_converged=reference_converged,
+            candidate_converged=candidate_converged,
+        )
 
     return {
         "config": cfg, "passed": m["nrmse"] < DC_NRMSE_PASS, "error": "",
@@ -396,20 +506,44 @@ def run_single_nn_inv(
     """Run one inverter config: NGSPICE truth vs DirectNet (VTC or transient)."""
     work_dir.mkdir(parents=True, exist_ok=True)
     tech = cfg.tech
-    dn_n = checkpoints.get("directnet_v4_nmos")
-    dn_p = checkpoints.get("directnet_v4_pmos")
+    level, model_name = active_nn_contract()
+    dn_n = checkpoints.get("nmos")
+    dn_p = checkpoints.get("pmos")
+    reference_converged = False
+    candidate_converged = False
     try:
         if cfg.analysis == "vtc":
             ref = run_ngspice_inverter_vtc(tech, work_dir)
+            validate_curve_trace(
+                ref["sweep"], ref["vout"],
+                expected_start=0.0, expected_stop=tech.vdd, max_step=0.005,
+                label=f"{cfg.label} reference",
+                allow_missing_stop=True,
+            )
+            reference_converged = True
             test = run_pycircuitsim_nn_inverter_vtc(
-                tech, work_dir, NN_LEVEL, NN_MODEL_NAME, dn_n, dn_p)
+                tech, work_dir, level, model_name, dn_n, dn_p)
+            validate_curve_trace(
+                test["sweep"], test["vout"],
+                expected_start=0.0, expected_stop=tech.vdd, max_step=0.005,
+                label=f"{cfg.label} candidate",
+                allow_missing_stop=True,
+            )
+            candidate_converged = True
             m = curve_metrics(
                 ref["sweep"], ref["vout"], test["sweep"], test["vout"])
         else:
             circuit = cfg.circuit or InvCircuitParams()
             ref = run_ngspice_inverter_tran(tech, work_dir, circuit=circuit)
+            validate_curve_trace(
+                ref["time"], ref["v(out)"],
+                expected_start=0.0, expected_stop=circuit.tstop,
+                max_step=INV_TRAN_TSTEP,
+                label=f"{cfg.label} reference",
+            )
+            reference_converged = True
             test = run_pycircuitsim_nn_inverter_tran(
-                tech, work_dir, NN_LEVEL, NN_MODEL_NAME, dn_n, dn_p,
+                tech, work_dir, level, model_name, dn_n, dn_p,
                 circuit=circuit)
             # B4: a mid-transient NR divergence is recovered as a truncated
             # waveform (`_nr_partial`); curve_metrics would score only the
@@ -417,11 +551,23 @@ def run_single_nn_inv(
             # either an explicit partial flag or a too-short waveform as FAIL.
             if test.get("_nr_partial") or len(test["time"]) < 3:
                 raise RuntimeError("NN transient truncated — NR diverged")
+            validate_curve_trace(
+                test["time"], test["v(out)"],
+                expected_start=0.0, expected_stop=circuit.tstop,
+                max_step=INV_TRAN_TSTEP,
+                label=f"{cfg.label} candidate",
+            )
+            candidate_converged = True
             m = curve_metrics(
                 ref["time"], ref["v(out)"], test["time"], test["v(out)"],
                 x_min=TRAN_STARTUP_EXCL)
     except Exception as exc:  # noqa: BLE001
-        return _fail(cfg, f"{type(exc).__name__}: {exc}")
+        return _fail(
+            cfg,
+            f"{type(exc).__name__}: {exc}",
+            reference_converged=reference_converged,
+            candidate_converged=candidate_converged,
+        )
 
     return {
         "config": cfg, "passed": m["nrmse"] < INV_NRMSE_PASS, "error": "",
@@ -442,7 +588,9 @@ def run_nn_multi_tech(
     run_single_fn: Callable,
 ) -> List[Dict[str, object]]:
     """Run the complete declared matrix without denominator shrinkage."""
-    checkpoints = get_available_checkpoints()
+    # Per-technology checkpoint resolution is owned by the parser. Passing a
+    # legacy DirectNet sentinel here can mislabel or block forced families.
+    checkpoints: Dict[str, object] = {}
     results: List[Dict[str, object]] = []
     for tk in tech_keys:
         print(f"\n{'=' * 70}\n  {tk} — {dimension}\n{'=' * 70}")
@@ -464,6 +612,79 @@ def run_nn_multi_tech(
                 f"expected {expected_labels}, got {observed_labels}"
             )
     return results
+
+
+def sweep_gate_results(
+    results: List[Dict[str, object]],
+    run_spec: RunSpec,
+    *,
+    case_id: str,
+    max_error_unit: str,
+) -> List[GateResult]:
+    """Convert every declared parametric result into provenance-bound evidence."""
+    provenance = run_spec.result_fields()
+    rows: List[GateResult] = []
+    for result in results:
+        cfg = result["config"]
+        error = str(result.get("error", ""))
+        identity = {
+            "case_id": case_id,
+            "tech": str(cfg.tech_key),
+            "corner": str(cfg.sweep_type),
+            "analysis": str(cfg.label),
+            "role": "qualification",
+        }
+        if error:
+            reference_converged = bool(result.get(
+                "reference_converged", False,
+            ))
+            candidate_converged = bool(result.get(
+                "candidate_converged", False,
+            ))
+            error_kind = str(result.get("error_kind", "unknown"))
+            execution_state = (
+                "reference_error" if error_kind == "reference"
+                else "nonconverged" if error_kind == "candidate"
+                else "error"
+            )
+            rows.append(GateResult(
+                **identity,
+                status="error",
+                error=error,
+                reference_converged=reference_converged,
+                candidate_converged=candidate_converged,
+                execution_state=execution_state,
+                error_kind=error_kind,
+                **provenance,
+            ))
+            continue
+        metrics = {
+            "nrmse_pct": float(result["nrmse"]),
+            "mre_pct": float(result["mre"]),
+            "r2": float(result["r2"]),
+            "max_err": float(result["max_err"]),
+        }
+        if not all(np.isfinite(value) for value in metrics.values()):
+            rows.append(GateResult(
+                **identity,
+                status="error",
+                error="parametric comparison produced non-finite metrics",
+                execution_state="error",
+                error_kind="result_schema",
+                **provenance,
+            ))
+            continue
+        rows.append(GateResult(
+            **identity,
+            status="pass" if bool(result["passed"]) else "fail",
+            metrics=metrics,
+            domain={
+                "max_error_unit": max_error_unit,
+                "swept": dict(cfg.swept),
+            },
+            **provenance,
+        ))
+    return rows
 
 
 def _print_result_line(res: Dict[str, object]) -> None:

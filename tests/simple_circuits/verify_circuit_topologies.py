@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import os
 import sys
+from numbers import Real
 from pathlib import Path
 from typing import Iterable, List, Tuple
 
@@ -61,6 +63,35 @@ def _write_results(path: Path, results: Iterable[GateResult]) -> None:
     payload = [result.payload() for result in results]
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
+
+
+def _result_line(result: GateResult) -> str:
+    """Format trace and cross-analysis rows without assuming one schema."""
+    if result.status == "error":
+        return f"  {result.analysis:22s} ERROR {result.error}"
+    state = (
+        "converged" if result.candidate_converged
+        else "partial" if result.partial
+        else "NOT-CONVERGED"
+    )
+    nrmse = result.metrics.get("nrmse_pct")
+    max_err = result.metrics.get("max_err")
+    if isinstance(nrmse, Real) and isinstance(max_err, Real) \
+            and math.isfinite(float(nrmse)) and math.isfinite(float(max_err)):
+        detail = f"NRMSE={float(nrmse):.3f}% MaxErr={float(max_err):.6g}"
+    else:
+        derived = [
+            f"{name}={float(value):g}"
+            for name, value in sorted(result.domain.items())
+            if name.endswith("_db_error")
+            and isinstance(value, Real)
+            and math.isfinite(float(value))
+        ]
+        detail = " ".join(derived) or "no aggregate trace metrics"
+    return (
+        f"  {result.analysis:22s} {detail} "
+        f"{result.status.upper()} [{state}]"
+    )
 
 
 def main(argv: List[str] | None = None) -> int:
@@ -151,20 +182,6 @@ def main(argv: List[str] | None = None) -> int:
         parser.error(str(exc))
     except FileNotFoundError as exc:
         parser.error(str(exc))
-    explicit_corner_selection = args.corner != "all"
-    no_op_cells = [
-        f"{case.case_id}/{tech}/{corner_name}"
-        for case in selected_cases
-        for tech in techs
-        for corner_name in corner_names
-        if not applicable_analyses(case, BENCH[tech], CORNERS[corner_name])
-    ]
-    if explicit_corner_selection and no_op_cells:
-        parser.error(
-            "selected corner is unsupported or changes no observed physical "
-            f"field for: {no_op_cells}"
-        )
-
     all_results: List[GateResult] = []
     for case in selected_cases:
         for tech in techs:
@@ -192,20 +209,7 @@ def main(argv: List[str] | None = None) -> int:
                 )
                 for result in results:
                     all_results.append(result)
-                    if result.status == "error":
-                        print(f"  {result.analysis:22s} ERROR {result.error}")
-                    else:
-                        nrmse = result.metrics.get("nrmse_pct")
-                        max_err = result.metrics.get("max_err")
-                        # Convergence is printed beside the error, never
-                        # folded into it: a partial transient and an accurate
-                        # one must not read the same on a terminal.
-                        state = ("converged" if result.candidate_converged
-                                 else ("partial" if result.partial
-                                       else "NOT-CONVERGED"))
-                        print(f"  {result.analysis:22s} "
-                              f"NRMSE={nrmse:.3f}% MaxErr={max_err:.6g} "
-                              f"{result.status.upper()} [{state}]")
+                    print(_result_line(result))
                     print(result.marker())
 
     output = (

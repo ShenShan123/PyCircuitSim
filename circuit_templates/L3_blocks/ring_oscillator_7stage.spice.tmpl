@@ -1,9 +1,9 @@
-* Odd-stage CMOS ring oscillator
+* Seven-stage CMOS ring oscillator
 <MODEL_SETUP>
 .temp <TEMP>
 Vdd vdd 0 <VDD>
-<P_PREFIX>p1 n1 n5 vdd vdd <P_DEVICE>
-<N_PREFIX>n1 n1 n5 0 0 <N_DEVICE>
+<P_PREFIX>p1 n1 n7 vdd vdd <P_DEVICE>
+<N_PREFIX>n1 n1 n7 0 0 <N_DEVICE>
 Cl1 n1 0 <RING_CLOAD>
 <P_PREFIX>p2 n2 n1 vdd vdd <P_DEVICE>
 <N_PREFIX>n2 n2 n1 0 0 <N_DEVICE>
@@ -17,6 +17,12 @@ Cl4 n4 0 <RING_CLOAD>
 <P_PREFIX>p5 n5 n4 vdd vdd <P_DEVICE>
 <N_PREFIX>n5 n5 n4 0 0 <N_DEVICE>
 Cl5 n5 0 <RING_CLOAD>
-.ic V(n1)=0 V(n2)=<VDD> V(n3)=0 V(n4)=<VDD> V(n5)=0
+<P_PREFIX>p6 n6 n5 vdd vdd <P_DEVICE>
+<N_PREFIX>n6 n6 n5 0 0 <N_DEVICE>
+Cl6 n6 0 <RING_CLOAD>
+<P_PREFIX>p7 n7 n6 vdd vdd <P_DEVICE>
+<N_PREFIX>n7 n7 n6 0 0 <N_DEVICE>
+Cl7 n7 0 <RING_CLOAD>
+.ic V(n1)=0 V(n2)=<VDD> V(n3)=0 V(n4)=<VDD> V(n5)=0 V(n6)=<VDD> V(n7)=0
 <ANALYSIS>
 .end

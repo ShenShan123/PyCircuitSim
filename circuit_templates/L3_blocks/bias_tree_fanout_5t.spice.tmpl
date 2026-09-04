@@ -1,0 +1,22 @@
+* Five-device generated-bias mirror fanout
+<MODEL_SETUP>
+Vdd vdd 0 <VDD>
+Vbn bn 0 <BODY_N>
+Iref vdd nbias <IBIAS>
+<N_PREFIX>n_ref nbias nbias 0 bn <N_DEVICE>
+<N_PREFIX>n_out1 o1 nbias 0 bn <N_DEVICE>
+Rout1 vdd o1 50k
+Cout1 o1 0 2f
+<N_PREFIX>n_out2 o2 nbias 0 bn <N_DEVICE>
+Rout2 vdd o2 50k
+Cout2 o2 0 2f
+<N_PREFIX>n_out3 o3 nbias 0 bn <N_DEVICE>
+Rout3 vdd o3 50k
+Cout3 o3 0 2f
+<N_PREFIX>n_out4 o4 nbias 0 bn <N_DEVICE>
+Rout4 vdd o4 50k
+Cout4 o4 0 2f
+.ic V(nbias)=<BIAS_N> V(o1)=<VDD> V(o2)=<VDD> V(o3)=<VDD> V(o4)=<VDD>
+.temp <TEMP>
+<ANALYSIS>
+.end

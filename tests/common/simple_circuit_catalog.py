@@ -229,6 +229,62 @@ def _op(
 #: AC grid for high-gain stages: low enough to sample the DC gain of a
 #: Miller-compensated opamp, wide enough to keep the unity-gain crossing.
 _OPAMP_AC_CARD = "ac dec 10 10 1e11"
+_COMMON_SOURCE_OUTPUT_LOAD = ("OUTPUT_LOAD", "Cload out 0 10f")
+_N_ACTIVE_LOAD_SUBS: Tuple[Tuple[str, str], ...] = (
+    ("INPUT_PREFIX", "<N_PREFIX>n_"),
+    ("LOAD_PREFIX", "<P_PREFIX>p_"),
+    ("INPUT_DEVICE", "<N_INPUT_DEVICE>"),
+    ("LOAD_DEVICE", "<P_LOAD_DEVICE>"),
+    ("INPUT_BODY", "bn"),
+    ("LOAD_BODY", "bp"),
+    ("LOAD_SOURCE", "vdd"),
+    ("TAIL_POS", "tail"),
+    ("TAIL_NEG", "0"),
+    ("INP_DC", "<VCM>"),
+    ("INN_DC", "<VCM>"),
+    ("INP_AC", "0"),
+    ("INN_AC", "0"),
+)
+_P_ACTIVE_LOAD_SUBS: Tuple[Tuple[str, str], ...] = (
+    ("INPUT_PREFIX", "<P_PREFIX>p_"),
+    ("LOAD_PREFIX", "<N_PREFIX>n_"),
+    ("INPUT_DEVICE", "<P_INPUT_DEVICE>"),
+    ("LOAD_DEVICE", "<N_LOAD_DEVICE>"),
+    ("INPUT_BODY", "bp"),
+    ("LOAD_BODY", "bn"),
+    ("LOAD_SOURCE", "0"),
+    ("TAIL_POS", "vdd"),
+    ("TAIL_NEG", "tail"),
+    ("INP_DC", "<P_VCM>"),
+    ("INN_DC", "<P_VCM>"),
+    ("INP_AC", "0"),
+    ("INN_AC", "0"),
+)
+
+
+def _bias_fanout_case(device_count: int) -> CircuitCase:
+    """One explicit topology in the generated-bias scale ladder."""
+    return CircuitCase(
+        f"bias_tree_fanout_{device_count}t",
+        f"{device_count}-device generated-bias mirror fanout",
+        f"bias_tree_fanout_{device_count}t.spice.tmpl",
+        SIMPLE_V2,
+        DIAGNOSTIC,
+        (
+            _op(
+                "operating_point",
+                ("v(nbias)", "i(Vdd)"),
+                "bias_fanout_op",
+                device_kinds=("nmos",),
+            ),
+        ),
+        tier="L3_blocks",
+        device_kinds=("nmos",),
+        required_metrics=(
+            "mre_pct", "r2", "nrmse_pct", "max_err",
+            "bias_node_error_v", "supply_current_error_pct",
+        ),
+    )
 
 
 _V1_CASES: Tuple[CircuitCase, ...] = (
@@ -309,6 +365,7 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
                     ("INPUT_SPEC", "DC=<GATE_N> AC=1 0"),
                     ("LOAD_NETWORK", "Rd vdd out <CS_LOAD>"),
                     ("BULK_NETWORK", ""),
+                    _COMMON_SOURCE_OUTPUT_LOAD,
                     ("DEVICE_PREFIX", "<N_PREFIX>n"),
                     ("SOURCE_NODE", "0"), ("BULK_NODE", "0"),
                     ("DEVICE", "<N_DEVICE>"),
@@ -321,6 +378,7 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
                     ("INPUT_SPEC", "DC=<GATE_P> AC=1 0"),
                     ("LOAD_NETWORK", "Rd out 0 <CS_LOAD>"),
                     ("BULK_NETWORK", ""),
+                    _COMMON_SOURCE_OUTPUT_LOAD,
                     ("DEVICE_PREFIX", "<P_PREFIX>p"),
                     ("SOURCE_NODE", "vdd"), ("BULK_NODE", "vdd"),
                     ("DEVICE", "<P_DEVICE>"),
@@ -334,6 +392,7 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
                     ("INPUT_SPEC", "DC=<GATE_N> AC=1 0"),
                     ("LOAD_NETWORK", "Rd vdd out <CS_LOAD>"),
                     ("BULK_NETWORK", "Rb vb 0 <BULK_LOAD>"),
+                    _COMMON_SOURCE_OUTPUT_LOAD,
                     ("DEVICE_PREFIX", "<N_PREFIX>n"),
                     ("SOURCE_NODE", "0"), ("BULK_NODE", "vb"),
                     ("DEVICE", "<N_DEVICE>"),
@@ -347,6 +406,7 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
                     ("INPUT_SPEC", "DC=<GATE_P> AC=1 0"),
                     ("LOAD_NETWORK", "Rd out 0 <CS_LOAD>"),
                     ("BULK_NETWORK", "Rb vb vdd <BULK_LOAD>"),
+                    _COMMON_SOURCE_OUTPUT_LOAD,
                     ("DEVICE_PREFIX", "<P_PREFIX>p"),
                     ("SOURCE_NODE", "vdd"), ("BULK_NODE", "vb"),
                     ("DEVICE", "<P_DEVICE>"),
@@ -536,37 +596,25 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
         SIMPLE_V2, DIAGNOSTIC,
         (
             _op(
-                "nmos_steering", ("v(nout)", "v(nmirror)"),
+                "nmos_steering", ("v(out)", "v(mirror)"),
                 "active_load_op",
-                subs=(("ACTIVE_LOAD_STAGE", "<N_ACTIVE_LOAD_STAGE>"),
-                      ("N_INP_DC", "<N_STEER_INP>"),
-                      ("N_INN_DC", "<VCM>"),
-                      ("N_AC_INP", "0"), ("N_AC_INN", "0"),
-                      ("P_AC_INP", "0"), ("P_AC_INN", "0")),
+                subs=(*_N_ACTIVE_LOAD_SUBS, ("INP_DC", "<N_STEER_INP>")),
             ),
             _op(
-                "pmos_steering", ("v(pout)", "v(pmirror)"),
+                "pmos_steering", ("v(out)", "v(mirror)"),
                 "active_load_op",
-                subs=(("ACTIVE_LOAD_STAGE", "<P_ACTIVE_LOAD_STAGE>"),
-                      ("P_INP_DC", "<P_STEER_INP>"),
-                      ("P_INN_DC", "<P_VCM>"),
-                      ("N_AC_INP", "0"), ("N_AC_INN", "0"),
-                      ("P_AC_INP", "0"), ("P_AC_INN", "0")),
+                subs=(*_P_ACTIVE_LOAD_SUBS, ("INP_DC", "<P_STEER_INP>")),
             ),
             _ac(
-                "nmos_ac", ("v(nout)",), "active_load_ac",
-                subs=(("ACTIVE_LOAD_STAGE", "<N_ACTIVE_LOAD_STAGE>"),
-                      ("N_AC_INP", "1"), ("N_AC_INN", "0"),
-                      ("P_AC_INP", "0"), ("P_AC_INN", "0")),
+                "nmos_ac", ("v(out)",), "active_load_ac",
+                subs=(*_N_ACTIVE_LOAD_SUBS, ("INP_AC", "1")),
             ),
             _ac(
-                "pmos_ac", ("v(pout)",), "active_load_ac",
-                subs=(("ACTIVE_LOAD_STAGE", "<P_ACTIVE_LOAD_STAGE>"),
-                      ("N_AC_INP", "0"), ("N_AC_INN", "0"),
-                      ("P_AC_INP", "1"), ("P_AC_INN", "0")),
+                "pmos_ac", ("v(out)",), "active_load_ac",
+                subs=(*_P_ACTIVE_LOAD_SUBS, ("INP_AC", "1")),
             ),
         ),
-        tier="L2_stages",
+        tier="L3_blocks",
         device_roles=(
             DeviceRoleSpec(
                 "n_input", "N_INPUT_DEVICE", "nmos",
@@ -785,12 +833,13 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
                 ("v(nr)", "v(np)"), "diode_load",
                 subs=(("DIODE_RLOAD", "20k"),)),
             _dc("load_high", "dc Vdd 0 <VDD> 0.005",
-                ("v(nr)", "v(np)"), "diode_load",
-                subs=(("DIODE_RLOAD", "2e6"),)),
+                ("v(nr)", "v(np)"), "mos_reference",
+                subs=(("DIODE_RLOAD", "<REF_RBIAS>"),)),
         ),
         tier="L1_primitives",
         required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
-                          "diode_drop_error_v"),
+                          "diode_drop_error_v", "vref_error_v",
+                          "line_sensitivity_error_pct"),
     ),
 
     # -- Tier A: the model determines the operating point -----------------
@@ -798,28 +847,10 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
     # point is pinned by the deck.  These three remove that support: the
     # solution is whatever the compact model says it is, which is the
     # mechanism the V7.6.4 closure loop isolated and could not reach.
-    CircuitCase(
-        "bias_tree_fanout", "generated bias rail with scalable mirror fanout",
-        "bias_tree_fanout.spice.tmpl",
-        SIMPLE_V2, DIAGNOSTIC,
-        tuple(
-            _op(
-                f"fanout_{count}", ("v(nbias)", "i(Vdd)"),
-                "bias_fanout_op",
-                subs=(("BIAS_BRANCHES", f"<BIAS_BRANCHES_{count}>"),
-                      ("BIAS_FANOUT_IC", f"<BIAS_FANOUT_IC_{count}>"),
-                      ("BIAS_CURRENT_SPEC", "<IBIAS>")),
-                device_kinds=("nmos",),
-            )
-            for count in (2, 4, 8, 16)
-        ),
-        tier="L3_blocks",
-        device_kinds=("nmos",),
-        required_metrics=(
-            "mre_pct", "r2", "nrmse_pct", "max_err",
-            "bias_node_error_v", "supply_current_error_pct",
-        ),
-    ),
+    _bias_fanout_case(3),
+    _bias_fanout_case(5),
+    _bias_fanout_case(9),
+    _bias_fanout_case(17),
     CircuitCase(
         "beta_multiplier", "constant-gm self-biased current reference",
         "beta_multiplier.spice.tmpl",
@@ -851,18 +882,6 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
         required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
                           "output_resistance_error_pct", "bias_node_error_v"),
     ),
-    CircuitCase(
-        "mos_ratio_reference", "complementary MOS-referenced voltages",
-        "diode_load.spice.tmpl",
-        SIMPLE_V2, DIAGNOSTIC,
-        (_dc("supply_ramp", "dc Vdd 0 <VDD> 0.005",
-             ("v(nr)", "v(np)"), "mos_reference",
-             subs=(("DIODE_RLOAD", "<REF_RBIAS>"),)),),
-        tier="L1_primitives",
-        required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
-                          "vref_error_v", "line_sensitivity_error_pct"),
-    ),
-
     # -- Tier B: closed negative-feedback systems --------------------------
     # Each of these runs at least one transient WITHOUT `uic`, so the
     # integration starts from a computed DC operating point instead of from a

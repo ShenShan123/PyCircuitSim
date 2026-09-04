@@ -87,6 +87,12 @@ def main() -> int:
             failures.append(f"{case.case_id}: {exc}")
             continue
         catalog_paths.add(path)
+        if relative == "ring_oscillator.spice.tmpl":
+            for stages in (3, 7, 9):
+                catalog_paths.add(template_deck(
+                    f"ring_oscillator_{stages}stage.spice.tmpl",
+                    tier=case.tier,
+                ))
         text = path.read_text()
         tokens = deck_tokens(text)
         for token in ("ANALYSIS", "MODEL_SETUP"):

@@ -1,0 +1,16 @@
+* Three-stage CMOS ring oscillator
+<MODEL_SETUP>
+.temp <TEMP>
+Vdd vdd 0 <VDD>
+<P_PREFIX>p1 n1 n3 vdd vdd <P_DEVICE>
+<N_PREFIX>n1 n1 n3 0 0 <N_DEVICE>
+Cl1 n1 0 <RING_CLOAD>
+<P_PREFIX>p2 n2 n1 vdd vdd <P_DEVICE>
+<N_PREFIX>n2 n2 n1 0 0 <N_DEVICE>
+Cl2 n2 0 <RING_CLOAD>
+<P_PREFIX>p3 n3 n2 vdd vdd <P_DEVICE>
+<N_PREFIX>n3 n3 n2 0 0 <N_DEVICE>
+Cl3 n3 0 <RING_CLOAD>
+.ic V(n1)=0 V(n2)=<VDD> V(n3)=0
+<ANALYSIS>
+.end

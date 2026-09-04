@@ -1,0 +1,18 @@
+* Differential stage with an active mirror load; polarity is parameterized
+<MODEL_SETUP>
+Vdd vdd 0 <VDD>
+Vbn bn 0 <BODY_N>
+Vbp bp 0 <BODY_P>
+Vinp inp 0 DC=<INP_DC> AC=<INP_AC> 0
+Vinn inn 0 DC=<INN_DC> AC=<INN_AC> 0
+Itail <TAIL_POS> <TAIL_NEG> <ACTIVE_TAIL_CURRENT>
+<INPUT_PREFIX>in_l mirror inp tail <INPUT_BODY> <INPUT_DEVICE>
+<INPUT_PREFIX>in_r out inn tail <INPUT_BODY> <INPUT_DEVICE>
+<LOAD_PREFIX>load_d mirror mirror <LOAD_SOURCE> <LOAD_BODY> <LOAD_DEVICE>
+<LOAD_PREFIX>load_o out mirror <LOAD_SOURCE> <LOAD_BODY> <LOAD_DEVICE>
+Rhi vdd out 20k
+Rlo out 0 20k
+Cout out 0 <DIFFPAIR_CAP>
+.temp <TEMP>
+<ANALYSIS>
+.end

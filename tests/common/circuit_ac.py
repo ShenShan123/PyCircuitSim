@@ -97,6 +97,24 @@ def run_ngspice_ac_baked(
     """
     deck_text = "\n".join(body_lines) + "\n.end\n"
     f_ng, v_ng = run_ngspice_ac(deck_text, work_dir, tag, ac_card, out_node)
+    expected = np.asarray(frequencies, dtype=float)
+    observed = np.asarray(f_ng, dtype=float)
+    values = np.asarray(v_ng, dtype=complex)
+    if observed.ndim != 1 or values.ndim != 1:
+        raise RuntimeError("NGSPICE AC reference must return one-dimensional data")
+    if observed.size != expected.size or values.size != expected.size:
+        raise RuntimeError(
+            "NGSPICE AC reference frequency count mismatch: "
+            f"expected {expected.size}, got {observed.size}/{values.size}"
+        )
+    if not np.all(np.isfinite(observed)) or not np.all(np.isfinite(values)):
+        raise RuntimeError("NGSPICE AC reference contains non-finite values")
+    if observed.size < 2 or np.any(np.diff(observed) <= 0.0):
+        raise RuntimeError("NGSPICE AC reference frequencies are not increasing")
+    if not np.allclose(observed, expected, rtol=1e-8, atol=0.0):
+        raise RuntimeError(
+            "NGSPICE AC reference frequency grid does not match the request"
+        )
     return _interp_to(frequencies, f_ng, v_ng)
 
 
@@ -130,6 +148,11 @@ def run_directnet_ac(
     from pycircuitsim.solver import DCSolver, ACSolver
     from pycircuitsim.simulation import _circuit_has_nn, _solve_dc_with_retry
 
+    requested = np.asarray(frequencies, dtype=float)
+    if requested.ndim != 1 or requested.size < 2 \
+            or not np.all(np.isfinite(requested)) \
+            or np.any(np.diff(requested) <= 0.0):
+        raise ValueError("candidate AC frequencies must be finite and increasing")
     work_dir.mkdir(parents=True, exist_ok=True)
     deck_path = work_dir / f"directnet_{tag}.sp"
     deck_path.write_text(deck_text)
@@ -161,6 +184,13 @@ def run_directnet_ac(
         logging.disable(logging.NOTSET)
 
     vout = np.asarray(ac_results[out_node], dtype=complex)
+    if vout.ndim != 1 or vout.size != requested.size:
+        raise RuntimeError(
+            "candidate AC result count mismatch: "
+            f"expected {requested.size}, got {vout.size}"
+        )
+    if not np.all(np.isfinite(vout)):
+        raise RuntimeError("candidate AC response contains non-finite values")
     dc_op_out = {k: float(v) for k, v in dc_solution.items()
                  if k not in ("0", "GND")}
     return vout, op_converged, dc_op_out

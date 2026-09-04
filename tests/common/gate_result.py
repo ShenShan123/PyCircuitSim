@@ -85,6 +85,16 @@ class GateResult:
         }
         if execution_state not in allowed_states:
             raise ValueError(f"unknown execution state {execution_state!r}")
+        if execution_state == "complete" and (
+            self.partial
+            or not self.reference_converged
+            or not self.candidate_converged
+            or self.control_converged is False
+        ):
+            raise ValueError(
+                "complete execution requires complete, converged reference, "
+                "candidate, and requested control solves"
+            )
         if execution_state != "complete" and self.status != "error":
             raise ValueError(
                 "incomplete execution must use error status; "

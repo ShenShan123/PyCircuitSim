@@ -41,7 +41,8 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, active_model_label, active_model_level,
 )
 from tests.common.device_integrity import (  # noqa: E402
-    DEVICE_KINDS, SUITES, build_sweeps, run_device_suites,
+    DEVICE_KINDS, SUITES, build_sweeps, device_corner_applies,
+    run_device_suites,
 )
 from tests.common.gate_result import GateResult, result_exit_code  # noqa: E402
 from tests.common.simple_circuit_harness import CORNERS  # noqa: E402
@@ -140,6 +141,14 @@ def main(argv: List[str] | None = None) -> int:
     for tech in techs:
         for corner_name in corners:
             print(f"\n--- {tech} / {corner_name} ---")
+            skipped = [
+                device for device in devices
+                if not device_corner_applies(
+                    BENCH[tech], device, CORNERS[corner_name],
+                )
+            ]
+            if skipped:
+                print("  NOT-APPLICABLE: " + ", ".join(skipped))
             work_dir = (
                 RESULTS_BASE / "device-integrity" / f"level-{level}"
                 / tech / corner_name

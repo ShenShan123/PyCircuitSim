@@ -4,8 +4,8 @@ Built in V6.4.8+ (``docs/CHANGELOG.md``). Mirrors the
 inverter sweep harness (``tests/common/nn_sweep.py``) but for the opamp /
 ring-oscillator / switched-cap / 6T-SRAM benchmarks. Sweeps technology, VT
 (symmetric + asymmetric N/P), geometry (L / NFIN / P-N fin ratio), VDD,
-temperature, a joint stress corner, and per-circuit input stimuli,
-baseline-gated, against the NGSPICE BSIM-CMG
+temperature, a joint stress corner, and per-circuit input stimuli. Every
+declared configuration keeps its denominator slot against the NGSPICE BSIM-CMG
 (LEVEL=72) ground truth — never a simplified model (AGENTS.md Validation rule).
 
 The four single-point ``verify_circuit_*.py`` qualification definitions remain
@@ -14,7 +14,7 @@ circuit's domain tolerance. Bake / OSDI-Fatal / absent-checkpoint /
 out-of-region → ERROR (never a silent FAIL). 3-state exit code:
   0 = every attempted config PASSED and >=1 config ran,
   1 = any FAIL,
-  2 = a requested tech was all-ERROR (could-not-characterize).
+  2 = any ERROR (could-not-characterize).
 """
 from __future__ import annotations
 
@@ -47,7 +47,7 @@ from tests.common.base import ALL_TECHS, TECH_COLORS  # noqa: E402
 from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, PROJECT_ROOT, RESULTS_BASE,
     BenchTech, OpAmpParams, RingOscParams, SwitchCapParams, SramParams,
-    bench_variant, usable_vts,
+    bench_variant, opamp_bias, usable_vts,
     get_baked_modelcard, run_ngspice_wrdata,
     run_directnet_transient, run_directnet_dc_sweep,
     full_metrics, gain_trip, period_from_wave, at, snm_from_lobes, sc_windows,
@@ -56,6 +56,7 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
     ngspice_switchcap, directnet_switchcap,
     ngspice_sram_lobe, directnet_sram_lobe, directnet_sram_6t,
 )
+from tests.common.simple_circuit_harness import Trace  # noqa: E402
 
 CKPT_DIR = PROJECT_ROOT / "external_compact_models" / "neural_network" / "checkpoints"
 
@@ -324,6 +325,63 @@ def _result(cfg: CircuitSweepConfig, passed: bool, metrics: Dict[str, float],
             "error": "", **metrics, "domain": domain}
 
 
+def validate_transient_trace(
+    axis: np.ndarray,
+    values: np.ndarray,
+    *,
+    expected_stop: float,
+    max_step: float,
+    label: str,
+    partial: bool = False,
+) -> None:
+    """Reject partial, truncated, non-finite, or internally gapped waveforms."""
+    if partial:
+        raise RuntimeError(f"{label} is a partial transient")
+    try:
+        Trace(
+            "time",
+            np.asarray(axis, dtype=float),
+            {"signal": np.asarray(values, dtype=float)},
+        ).validate(
+            expected_start=0.0,
+            expected_stop=expected_stop,
+            endpoint_tolerance=max_step * 0.51,
+            max_step=max_step,
+            minimum_points=3,
+        )
+    except ValueError as exc:
+        raise RuntimeError(f"{label}: {exc}") from exc
+
+
+def validate_dc_trace(
+    axis: np.ndarray,
+    values: np.ndarray,
+    *,
+    expected_start: float,
+    expected_stop: float,
+    max_step: float,
+    label: str,
+) -> None:
+    """Reject incomplete, non-finite, nonmonotonic, or gapped DC evidence."""
+    expected_points = int(round(
+        abs(expected_stop - expected_start) / max_step,
+    )) + 1
+    try:
+        Trace(
+            "sweep",
+            np.asarray(axis, dtype=float),
+            {"signal": np.asarray(values, dtype=float)},
+        ).validate(
+            expected_start=expected_start,
+            expected_stop=expected_stop,
+            endpoint_tolerance=max_step * 1.01,
+            max_step=max_step,
+            minimum_points=max(3, expected_points - 1),
+        )
+    except ValueError as exc:
+        raise RuntimeError(f"{label}: {exc}") from exc
+
+
 # ===========================================================================
 # Single-test orchestrators
 # ===========================================================================
@@ -340,6 +398,13 @@ def run_single_opamp(cfg: CircuitSweepConfig, work_dir: Path) -> Dict[str, Any]:
         data = run_ngspice_wrdata(spec["body"], spec["signals"], work_dir,
                                   f"opamp_{cfg.label}", spec["analysis"])
         ng_s, ng_v = data[:, 0], data[:, 1]
+        vcm, _vbn, _vbp = opamp_bias(bt, p)
+        lo = round(vcm - p.span, 3)
+        hi = round(vcm + p.span, 3)
+        validate_dc_trace(
+            ng_s, ng_v, expected_start=lo, expected_stop=hi,
+            max_step=p.step, label=f"{cfg.label} reference opamp",
+        )
         ng_gain, ng_trip, _ = gain_trip(ng_s, ng_v, bt.vdd)
     except Exception as exc:  # noqa: BLE001
         return _err(cfg, f"ngspice: {type(exc).__name__}: {exc}")
@@ -351,8 +416,10 @@ def run_single_opamp(cfg: CircuitSweepConfig, work_dir: Path) -> Dict[str, Any]:
         res = run_directnet_dc_sweep(path, work_dir, f"opamp_{cfg.label}")
         dn_s = np.asarray(res["inp"])
         dn_v = np.asarray(res["vout"])
-        if dn_s.size < 3:
-            return _err(cfg, "directnet: empty DC sweep")
+        validate_dc_trace(
+            dn_s, dn_v, expected_start=lo, expected_stop=hi,
+            max_step=p.step, label=f"{cfg.label} candidate opamp",
+        )
         dn_gain, dn_trip, _ = gain_trip(dn_s, dn_v, bt.vdd)
     except Exception as exc:  # noqa: BLE001
         return _err(cfg, f"directnet: {type(exc).__name__}: {exc}")
@@ -384,6 +451,10 @@ def run_single_ringosc(cfg: CircuitSweepConfig,
         spec = ngspice_ringosc(bt, p, baked, tstop)
         data = run_ngspice_wrdata(spec["body"], spec["signals"], work_dir,
                                   f"ro_{cfg.label}", spec["analysis"])
+        validate_transient_trace(
+            data[:, 0], data[:, 1], expected_stop=tstop,
+            max_step=p.tstep, label=f"{cfg.label} reference ring",
+        )
         return data[:, 0], data[:, 1]
 
     try:
@@ -404,28 +475,32 @@ def run_single_ringosc(cfg: CircuitSweepConfig,
     try:
         path = work_dir / f"ro_{cfg.label}.sp"
         path.write_text(directnet_ringosc(bt, p, target))
-        res, partial, _ = run_directnet_transient(path)
+        res, partial, error = run_directnet_transient(path)
         dn_t = np.asarray(res["time"])
         dn_v = np.asarray(res[f"n{p.n_stages}"])
+        validate_transient_trace(
+            dn_t,
+            dn_v,
+            expected_stop=target,
+            max_step=p.tstep,
+            label=f"{cfg.label} candidate ring"
+            + (f" ({error})" if error else ""),
+            partial=partial,
+        )
     except Exception as exc:  # noqa: BLE001
         return _err(cfg, f"directnet: {type(exc).__name__}: {exc}")
 
     dn_per = period_from_wave(dn_t, dn_v, mid, p.settle)
+    if not np.isfinite(dn_per):
+        return _err(cfg, "directnet: complete transient did not oscillate")
     t_lo, t_hi = p.settle, min(ng_t[-1], dn_t[-1])
     m = dict(_NAN_METRICS)
     if t_hi > t_lo and len(dn_t) > 3:
         grid = np.arange(t_lo, t_hi, p.tstep)
         m = full_metrics(np.interp(grid, dn_t, dn_v),
                          np.interp(grid, ng_t, ng_v))
-    if not np.isfinite(dn_per):       # NN failed to oscillate on a good window
-        return _result(cfg, False, m, {
-            "metric": "period_err%", "value": float("nan"),
-            "ng_period_ps": ng_per * 1e12, "dn_period_ps": float("nan"),
-            "period_err_pct": float("nan"), "partial": partial})
     per_err = abs(dn_per - ng_per) / ng_per * 100.0
-    # `not partial` mirrors the single-point ship gate: a diverged transient
-    # whose truncated prefix still crosses within tolerance must not PASS
-    passed = per_err <= RINGOSC_PERIOD_TOL * 100 and not partial
+    passed = per_err <= RINGOSC_PERIOD_TOL * 100
     return _result(cfg, passed, m, {
         "metric": "period_err%", "value": per_err,
         "ng_period_ps": ng_per * 1e12, "dn_period_ps": dn_per * 1e12,
@@ -450,6 +525,10 @@ def run_single_switchcap(cfg: CircuitSweepConfig,
         data = run_ngspice_wrdata(spec["body"], spec["signals"], work_dir,
                                   f"sc_{cfg.label}", spec["analysis"])
         ng_t, ng_v = data[:, 0], data[:, 1]
+        validate_transient_trace(
+            ng_t, ng_v, expected_stop=tstop, max_step=p.tstep,
+            label=f"{cfg.label} reference switchcap",
+        )
     except Exception as exc:  # noqa: BLE001
         return _err(cfg, f"ngspice: {type(exc).__name__}: {exc}")
     ng_charge = at(ng_t, ng_v, se)
@@ -458,11 +537,18 @@ def run_single_switchcap(cfg: CircuitSweepConfig,
     try:
         path = work_dir / f"sc_{cfg.label}.sp"
         path.write_text(directnet_switchcap(bt, p))
-        res, partial, _ = run_directnet_transient(path)
+        res, partial, error = run_directnet_transient(path)
         dn_t = np.asarray(res["time"])
         dn_v = np.asarray(res["vsamp"])
-        if dn_t.size < 3:
-            return _err(cfg, "directnet: transient truncated")
+        validate_transient_trace(
+            dn_t,
+            dn_v,
+            expected_stop=tstop,
+            max_step=p.tstep,
+            label=f"{cfg.label} candidate switchcap"
+            + (f" ({error})" if error else ""),
+            partial=partial,
+        )
     except Exception as exc:  # noqa: BLE001
         return _err(cfg, f"directnet: {type(exc).__name__}: {exc}")
     dn_charge = at(dn_t, dn_v, se)
@@ -474,9 +560,7 @@ def run_single_switchcap(cfg: CircuitSweepConfig,
     charge_err = abs(dn_charge - ng_charge) / bt.vdd * 100.0
     droop_allow = max(SC_DROOP_TOL * abs(ng_droop), SC_DROOP_FLOOR * bt.vdd)
     droop_ok = abs(dn_droop - ng_droop) <= droop_allow
-    # `not partial` mirrors the single-point ship gate (B9): clamped interp
-    # reads off a truncated waveform must not PASS
-    passed = (charge_err <= SC_CHARGE_TOL * 100) and droop_ok and not partial
+    passed = (charge_err <= SC_CHARGE_TOL * 100) and droop_ok
     return _result(cfg, passed, m, {
         "metric": "charge_err%", "value": charge_err,
         "charge_err_pct": charge_err, "ng_charge": ng_charge,
@@ -533,7 +617,16 @@ def run_single_sram(cfg: CircuitSweepConfig,
         data = run_ngspice_wrdata(spec["body"], spec["signals"], work_dir,
                                   f"sram_{cfg.label}", spec["analysis"])
         ng_q, ng_qb = data[:, 0], data[:, 1]
+        validate_dc_trace(
+            ng_q, ng_qb, expected_start=0.0, expected_stop=bt.vdd,
+            max_step=p.dc_step, label=f"{cfg.label} reference SRAM",
+        )
         ng_snm = snm_from_lobes(ng_q, ng_qb)
+        if not np.isfinite(ng_snm) or ng_snm <= 1e-6:
+            return _err(
+                cfg,
+                f"ngspice: reference SNM is not measurable ({ng_snm:g} V)",
+            )
     except Exception as exc:  # noqa: BLE001
         return _err(cfg, f"ngspice: {type(exc).__name__}: {exc}")
     try:
@@ -542,17 +635,22 @@ def run_single_sram(cfg: CircuitSweepConfig,
         res = run_directnet_dc_sweep(path, work_dir, f"sram_{cfg.label}")
         dn_q = np.asarray(res["q"])
         dn_qb = np.asarray(res["qb"])
+        validate_dc_trace(
+            dn_q, dn_qb, expected_start=0.0, expected_stop=bt.vdd,
+            max_step=p.dc_step, label=f"{cfg.label} candidate SRAM",
+        )
     except Exception as exc:  # noqa: BLE001
         return _err(cfg, f"directnet: {type(exc).__name__}: {exc}")
 
     grid = np.linspace(0.0, bt.vdd, 300)
     m = full_metrics(np.interp(grid, dn_q, dn_qb), np.interp(grid, ng_q, ng_qb))
     dn_snm = snm_from_lobes(dn_q, dn_qb)
+    if not np.isfinite(dn_snm):
+        return _err(cfg, "directnet: SNM could not be measured")
     dn_min = float(np.min(dn_qb))
     positive = dn_min >= -1e-3
     nrmse_ok = m["nrmse_pct"] <= SRAM_NRMSE_TOL * 100
-    snm_err = (abs(dn_snm - ng_snm) / ng_snm * 100.0
-               if ng_snm > 1e-6 else float("nan"))
+    snm_err = abs(dn_snm - ng_snm) / ng_snm * 100.0
     # B7: the SRAM sweep baseline must use the SAME pass definition as the
     # authoritative single-point ship gate (historical compatibility suite key
     # verify_circuit_sram_snm) —
@@ -657,22 +755,23 @@ def run_circuit_multi_tech(circuit: str, tech_keys: List[str], dimension: str,
     # audit B5l — a typo'd tech used to SKIP silently here too, shrinking the
     # denominator of every sweep mirror rather than failing. Reject up front.
     unknown = [t for t in tech_keys if t not in BENCH]
-    if unknown:
+    if not tech_keys or unknown or len(tech_keys) != len(set(tech_keys)):
         raise ValueError(
-            f"unknown tech(s) {unknown}. Available: {list(BENCH)}")
+            "technologies must be non-empty and unique; "
+            f"unknown={unknown}, available={list(BENCH)}"
+        )
     verify_checkpoint_pin(tech_keys, results_dir, strict=pin_strict)
     results: List[Dict[str, Any]] = []
     for tk in tech_keys:
         print(f"\n{'=' * 72}\n  {tk} — {circuit} ({dimension})\n{'=' * 72}")
-        base_cfg = make_baseline(circuit, tk)
-        wd = results_dir / tk / "baseline"
-        res = runner(base_cfg, wd)
-        results.append(res)
-        _print_line(res)
-        if res["status"] != "pass":
-            print(f"  baseline {res['status'].upper()} — skipping {tk} sweep")
-            continue
-        for cfg in build_parametric(circuit, tk, dimension):
+        configs = [
+            make_baseline(circuit, tk),
+            *build_parametric(circuit, tk, dimension),
+        ]
+        labels = [config.label for config in configs]
+        if len(labels) != len(set(labels)):
+            raise RuntimeError(f"duplicate declared configs for {tk}/{circuit}")
+        for cfg in configs:
             wd = results_dir / tk / cfg.config_name
             res = runner(cfg, wd)
             results.append(res)
@@ -773,18 +872,12 @@ def plot_summary_bar(results: List[Dict[str, Any]], save_path: Path,
 
 
 def exit_code(results: List[Dict[str, Any]], tech_keys: List[str]) -> int:
-    """3-state: 0 = all attempted PASSED and ≥1 ran; 1 = any FAIL;
-    2 = a requested tech was all-ERROR (could-not-characterize)."""
+    """Return 0 only for a complete pass, 1 for a miss, and 2 for errors."""
+    if not results or not tech_keys \
+            or any(r["status"] == "error" for r in results):
+        return 2
     if any(r["status"] == "fail" for r in results):
         return 1
-    ran = [r for r in results if r["status"] != "error"]
-    # any requested tech that produced only ERROR rows → could-not-characterize
-    for tk in tech_keys:
-        rows = [r for r in results if r["config"].tech_key == tk]
-        if rows and all(r["status"] == "error" for r in rows):
-            return 2
-    if not ran:
-        return 2
     return 0
 
 
@@ -804,11 +897,12 @@ def driver_main(circuit: str) -> int:
     ap.add_argument("--pin-strict", action="store_true",
                     help="fail loud on checkpoint drift vs recorded manifest")
     args = ap.parse_args()
-    techs = [t.strip() for t in args.tech.split(",")]
+    techs = [t.strip() for t in args.tech.split(",") if t.strip()]
     unknown_techs = [tech for tech in techs if tech not in BENCH]
-    if unknown_techs:
+    if not techs or unknown_techs or len(techs) != len(set(techs)):
         ap.error(
-            f"unknown technologies {unknown_techs}; available: {list(BENCH)}"
+            "technologies must be non-empty and unique; "
+            f"unknown={unknown_techs}, available={list(BENCH)}"
         )
     valid_dimensions = set(all_dimensions(circuit)) | {"all"}
     if args.dimension not in valid_dimensions:

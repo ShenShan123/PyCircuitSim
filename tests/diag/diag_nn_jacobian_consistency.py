@@ -47,7 +47,12 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 
-from neural_network.config import CHECKPOINT_DIR, tech_variant_to_code, UNKNOWN_CODE_ID
+from neural_network.config import (  # noqa: E402
+    CHECKPOINT_DIR,
+    LOCAL_VARIANT_CODES,
+    local_variant_code,
+    tech_variant_to_code,
+)
 from neural_network.data.normalize import BSIMARNormStats
 from neural_network.models.direct_net import DirectNet
 
@@ -242,6 +247,56 @@ def load_directnet(
     return model, stats
 
 
+_DEFAULT_VARIANTS: Dict[str, str] = {
+    "tsmc5": "lvt",
+    "tsmc6": "ulvt",
+    "tsmc7": "ulvt",
+    "tsmc12": "svt",
+    "tsmc16": "svt",
+}
+
+
+def resolve_checkpoint_tech_code(
+    ckpt_prefix: str,
+    tech: str,
+    *,
+    num_tech_codes: int,
+) -> int:
+    """Resolve a universal or per-technology checkpoint embedding code."""
+    normalized_tech = tech.lower()
+    scope = next(
+        (
+            candidate for candidate in LOCAL_VARIANT_CODES
+            if ckpt_prefix.lower().startswith(f"{candidate}_")
+        ),
+        "universal",
+    )
+    if scope != "universal" and normalized_tech != scope:
+        raise ValueError(
+            f"{scope} checkpoint cannot evaluate {normalized_tech}"
+        )
+    variant = _DEFAULT_VARIANTS.get(normalized_tech, "svt")
+    code = (
+        local_variant_code(scope, normalized_tech, variant)
+        if scope != "universal"
+        else tech_variant_to_code(normalized_tech, variant)
+    )
+    if num_tech_codes < 1:
+        raise ValueError("checkpoint embedding vocabulary must be non-empty")
+    unknown_code_id = num_tech_codes - 1
+    if code == unknown_code_id:
+        raise ValueError(
+            f"{ckpt_prefix}: {normalized_tech}/{variant} resolved to "
+            f"unknown embedding code {unknown_code_id}"
+        )
+    if not 0 <= code < num_tech_codes:
+        raise ValueError(
+            f"{ckpt_prefix}: {normalized_tech}/{variant} code {code} is "
+            f"outside checkpoint vocabulary 0..{num_tech_codes - 1}"
+        )
+    return code
+
+
 def run_diagnostic(
     ckpt_prefix: str,
     polarity: str,
@@ -273,13 +328,11 @@ def run_diagnostic(
     EPS = 1e-6  # absolute floor for relative-error normalisation
 
     for tech in techs:
-        # Try svt first, fall back to lvt — both are representative in TSMC
-        tech_code = tech_variant_to_code(tech.lower(), "svt")
-        if tech_code == UNKNOWN_CODE_ID:
-            tech_code = tech_variant_to_code(tech.lower(), "lvt")
-        if tech_code == UNKNOWN_CODE_ID:
-            print(f"  skip {tech}: no tech-code in vocab")
-            continue
+        tech_code = resolve_checkpoint_tech_code(
+            ckpt_prefix,
+            tech,
+            num_tech_codes=model.num_tech_codes,
+        )
 
         grid = build_op_grid(vdd_train, polarity)
         for op, region in grid:

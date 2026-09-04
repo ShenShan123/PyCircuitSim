@@ -2,7 +2,8 @@
 """Parametric sweep driver for all four circuit benchmarks (DirectNet vs NGSPICE).
 
 Sweeps tech / VT (sym + asym N/P) / geometry (L / NFIN / P-N ratio) / VDD /
-temperature / joint stress / per-circuit stimulus, baseline-gated, with a
+temperature / joint stress / per-circuit stimulus with a complete denominator
+even when the baseline misses, and a
 3-state exit code (0=all-pass,
 1=any-fail, 2=could-not-characterize). The single-point qualification
 definitions in ``verify_circuit_{opamp,ring_osc,switchcap,sram_snm}.py`` remain

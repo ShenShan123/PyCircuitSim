@@ -44,7 +44,9 @@ from tests.common.circuit_benchmarks import BENCH, BENCH_TECHS  # noqa: E402
 from tests.common.simple_circuit_catalog import SIMPLE_V2, cases  # noqa: E402
 from tests.common.simple_circuit_harness import (  # noqa: E402
     CORNERS,
+    applicable_analyses,
     apply_corner,
+    resolved_device_geometries,
 )
 from neural_network.config import (  # noqa: E402
     DATA_DIR,
@@ -170,35 +172,45 @@ def _evaluation_geometries() -> List[EvalGeometry]:
 
 def _simple_circuit_geometries() -> List[EvalGeometry]:
     """Unique device coordinates exercised by the simple-v2 corner matrix."""
-    device_kinds = sorted({
-        dev
-        for case in cases(score_version=SIMPLE_V2)
-        for dev in case.device_kinds
-    })
     points: List[EvalGeometry] = []
     seen: set[Tuple[str, str, str, float, float, float]] = set()
     for name in BENCH_TECHS:
         for corner_name, corner in CORNERS.items():
+            applicable = [
+                (case, applicable_analyses(case, BENCH[name], corner))
+                for case in cases(score_version=SIMPLE_V2)
+            ]
+            applicable = [(case, analyses) for case, analyses in applicable
+                          if analyses]
+            if not applicable:
+                continue
             bt = apply_corner(BENCH[name], corner)
-            for dev in device_kinds:
-                vt = (bt.effective_nmos_vt if dev == "nmos"
-                      else bt.effective_pmos_vt)
-                length = bt.l_nmos if dev == "nmos" else bt.l_pmos
-                nfin = bt.nfin if dev == "nmos" else bt.effective_nfin_p
-                temperature_k = bt.temperature_c + 273.15
-                key = (bt.nn_tech, dev, vt, length, float(nfin), temperature_k)
-                if key in seen:
-                    continue
-                seen.add(key)
-                points.append(EvalGeometry(
-                    f"{name}:simple-v2:{corner_name}:{dev}",
-                    bt.nn_tech,
-                    dev,
-                    vt,
-                    length,
-                    float(nfin),
-                    temperature_k,
-                ))
+            for case, analyses in applicable:
+                for dev, vt, length, nfin in resolved_device_geometries(
+                    case, analyses, bt,
+                ):
+                    temperature_k = bt.temperature_c + 273.15
+                    key = (
+                        bt.nn_tech,
+                        dev,
+                        vt,
+                        length,
+                        float(nfin),
+                        temperature_k,
+                    )
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    points.append(EvalGeometry(
+                        f"{name}:simple-v2:{case.case_id}:"
+                        f"{corner_name}:{dev}",
+                        bt.nn_tech,
+                        dev,
+                        vt,
+                        length,
+                        float(nfin),
+                        temperature_k,
+                    ))
     return points
 
 

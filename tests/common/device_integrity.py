@@ -54,8 +54,9 @@ from tests.common.circuit_benchmarks import (
     run_directnet_dc_sweep,
 )
 from tests.common.gate_result import GateResult
+from tests.common.simple_circuit_catalog import AnalysisSpec
 from tests.common.simple_circuit_harness import (
-    Corner, RunSpec, apply_corner, topology_mismatch,
+    Corner, RunSpec, apply_corner, physical_deck_mismatch,
 )
 
 TEMPLATE = DEVICE_DECKS / "mosfet.spice.tmpl"
@@ -116,6 +117,41 @@ class SweepSpec:
 def _sign(device: str) -> float:
     """Polarity of the device's own bias frame."""
     return 1.0 if device == "nmos" else -1.0
+
+
+def device_corner_applies(
+    base_bt: BenchTech,
+    device: str,
+    corner: Corner,
+) -> bool:
+    """Whether a corner changes a field exercised by this device polarity."""
+    if device not in DEVICE_KINDS:
+        raise ValueError(f"unknown device kind {device!r}")
+    if corner.name == "nominal":
+        return True
+    # The integrity matrix already has an explicit Vbs derivative sweep. The
+    # circuit-only body rail corner is not consumed by these source-relative
+    # device decks and must not create a duplicate nominal row.
+    if corner.body_reverse_frac:
+        return False
+    try:
+        stressed = apply_corner(base_bt, corner)
+    except ValueError:
+        return False
+    if stressed.vdd != base_bt.vdd \
+            or stressed.temperature_c != base_bt.temperature_c:
+        return True
+    if device == "nmos":
+        return (
+            stressed.l_nmos != base_bt.l_nmos
+            or stressed.nfin != base_bt.nfin
+            or stressed.effective_nmos_vt != base_bt.effective_nmos_vt
+        )
+    return (
+        stressed.l_pmos != base_bt.l_pmos
+        or stressed.effective_nfin_p != base_bt.effective_nfin_p
+        or stressed.effective_pmos_vt != base_bt.effective_pmos_vt
+    )
 
 
 def build_sweeps(bt: BenchTech, device: str) -> Tuple[SweepSpec, ...]:
@@ -252,14 +288,54 @@ class DeviceTrace:
     current: np.ndarray
     converged: bool = True
 
-    def validate(self) -> None:
-        if self.axis.ndim != 1 or self.axis.size < 3:
+    def validate(
+        self,
+        *,
+        expected_start: Optional[float] = None,
+        expected_stop: Optional[float] = None,
+        endpoint_tolerance: float = 0.0,
+        max_step: Optional[float] = None,
+        minimum_points: Optional[int] = None,
+    ) -> None:
+        axis = np.asarray(self.axis, dtype=float)
+        current = np.asarray(self.current, dtype=float)
+        if axis.ndim != 1 or axis.size < 3:
             raise ValueError("device sweep needs at least three points")
-        if self.current.shape != self.axis.shape:
+        if minimum_points is not None and axis.size < minimum_points:
+            raise ValueError(
+                f"device sweep has {axis.size} points; expected at least "
+                f"{minimum_points}"
+            )
+        if current.shape != axis.shape:
             raise ValueError("device sweep axis/current length mismatch")
-        if not np.all(np.isfinite(self.axis)) or \
-                not np.all(np.isfinite(self.current)):
+        if not np.all(np.isfinite(axis)) or not np.all(np.isfinite(current)):
             raise ValueError("device sweep contains NaN/Inf")
+        delta = np.diff(axis)
+        if not (np.all(delta > 0.0) or np.all(delta < 0.0)):
+            raise ValueError("device sweep axis must be strictly monotonic")
+        if max_step is not None:
+            if not math.isfinite(max_step) or max_step <= 0.0:
+                raise ValueError("device sweep maximum step must be positive")
+            largest = float(np.max(np.abs(delta)))
+            if largest > max_step * (1.0 + 1e-9) + 1e-18:
+                raise ValueError(
+                    f"device sweep axis gap {largest:g} exceeds declared "
+                    f"step {max_step:g}"
+                )
+        span = abs(float(axis[-1] - axis[0]))
+        atol = max(1e-18, span * 1e-9, endpoint_tolerance)
+        if expected_start is not None and not np.isclose(
+            axis[0], expected_start, rtol=1e-9, atol=atol,
+        ):
+            raise ValueError(
+                f"device sweep starts at {axis[0]:g}, not {expected_start:g}"
+            )
+        if expected_stop is not None and not np.isclose(
+            axis[-1], expected_stop, rtol=1e-9, atol=atol,
+        ):
+            raise ValueError(
+                f"device sweep stops at {axis[-1]:g}, not {expected_stop:g}"
+            )
 
 
 def run_reference_sweep(
@@ -293,7 +369,15 @@ def run_reference_sweep(
         raise RuntimeError(
             f"NGSPICE wrdata width {data.shape} is not one real vector")
     trace = DeviceTrace(data[:, 0], -data[:, 1])
-    trace.validate()
+    trace.validate(
+        expected_start=spec.start,
+        expected_stop=spec.stop,
+        endpoint_tolerance=abs(spec.step) * (1.0 + 1e-9),
+        max_step=abs(spec.step),
+        minimum_points=max(
+            int(round(abs((spec.stop - spec.start) / spec.step))), 3,
+        ),
+    )
     return trace
 
 
@@ -319,7 +403,15 @@ def run_candidate_sweep(
     axis = (float(params["start"])
             + float(params["step"]) * np.arange(current.size, dtype=float))
     trace = DeviceTrace(axis, current)
-    trace.validate()
+    trace.validate(
+        expected_start=spec.start,
+        expected_stop=spec.stop,
+        endpoint_tolerance=abs(spec.step) * (1.0 + 1e-9),
+        max_step=abs(spec.step),
+        minimum_points=max(
+            int(round(abs((spec.stop - spec.start) / spec.step))), 3,
+        ),
+    )
     return trace
 
 
@@ -408,15 +500,24 @@ def suite_metrics(
     domain: Dict[str, object] = {}
 
     if spec.suite == "output":
-        window = np.abs(grid) >= 0.5 * vdd
+        order = np.argsort(np.abs(grid))
+        drive = np.abs(grid[order])
+        test_current = candidate[order]
+        ref_current = reference[order]
+        window = drive >= 0.5 * vdd
         if int(np.count_nonzero(window)) >= 3:
-            gds_test = float(np.median(np.abs(_slope(grid, candidate)[window])))
-            gds_ref = float(np.median(np.abs(_slope(grid, reference)[window])))
+            gds_test = float(np.median(np.abs(
+                _slope(drive, test_current)[window]
+            )))
+            gds_ref = float(np.median(np.abs(
+                _slope(drive, ref_current)[window]
+            )))
             domain.update(
                 gds_sat_test_s=gds_test, gds_sat_ref_s=gds_ref,
                 gds_sat_error_pct=_relative_error(gds_test, gds_ref),
             )
-        idsat_test, idsat_ref = float(candidate[-1]), float(reference[-1])
+        idsat_test = float(test_current[-1])
+        idsat_ref = float(ref_current[-1])
         domain.update(
             idsat_test_a=idsat_test, idsat_ref_a=idsat_ref,
             idsat_error_pct=_relative_error(idsat_test, idsat_ref),
@@ -425,18 +526,25 @@ def suite_metrics(
         # the top of the sweep.  A model that saturates too early or too late
         # misplaces every compliance limit built on it.
         knees = []
-        for values in (candidate, reference):
+        for values in (test_current, ref_current):
             target = 0.9 * abs(values[-1])
             reached = np.flatnonzero(np.abs(values) >= target)
-            knees.append(float(abs(grid[reached[0]])) if reached.size
+            knees.append(float(drive[reached[0]]) if reached.size
                          else float("nan"))
         domain.update(knee_vds_test_v=knees[0], knee_vds_ref_v=knees[1],
                       knee_vds_error_v=abs(knees[0] - knees[1]))
 
     elif spec.suite == "subthreshold":
-        floor = max(float(np.max(np.abs(reference))) * 1e-12, 1e-18)
-        test_dec = _decades(candidate, floor)
-        ref_dec = _decades(reference, floor)
+        # Put both polarities in increasing |Vgs| order. The shared comparison
+        # grid is numerically ascending, which means a PMOS trace otherwise
+        # starts at its on-state and silently reports that current as Ioff.
+        order = np.argsort(np.abs(grid))
+        drive = np.abs(grid[order])
+        test_current = candidate[order]
+        ref_current = reference[order]
+        floor = max(float(np.max(np.abs(ref_current))) * 1e-12, 1e-18)
+        test_dec = _decades(test_current, floor)
+        ref_dec = _decades(ref_current, floor)
         span = float(np.ptp(ref_dec))
         errors = np.abs(test_dec - ref_dec)
         domain.update(
@@ -445,14 +553,18 @@ def suite_metrics(
             log_decade_nrmse_pct=(
                 float(np.sqrt(np.mean(errors ** 2)) / span * 100.0)
                 if span > 1e-9 else float("nan")),
-            ioff_test_a=float(abs(candidate[0])),
-            ioff_ref_a=float(abs(reference[0])),
+            ioff_test_a=float(abs(test_current[0])),
+            ioff_ref_a=float(abs(ref_current[0])),
             ioff_error_pct=_relative_error(
-                float(abs(candidate[0])), float(abs(reference[0]))),
+                float(abs(test_current[0])), float(abs(ref_current[0]))),
         )
-        window = _subthreshold_window(grid, reference)
-        ss_test = _slope_mv_per_decade(grid, candidate, window, floor)
-        ss_ref = _slope_mv_per_decade(grid, reference, window, floor)
+        window = _subthreshold_window(drive, ref_current)
+        ss_test = _slope_mv_per_decade(
+            drive, test_current, window, floor,
+        )
+        ss_ref = _slope_mv_per_decade(
+            drive, ref_current, window, floor,
+        )
         domain.update(
             ss_window_points=int(np.count_nonzero(window)),
             ss_test_mv_dec=ss_test, ss_ref_mv_dec=ss_ref,
@@ -518,6 +630,48 @@ def suite_metrics(
     return metrics, domain
 
 
+_DEVICE_METRIC_CONTRACTS: Dict[str, Tuple[str, ...]] = {
+    "output": (
+        "gds_sat_error_pct", "idsat_error_pct", "knee_vds_error_v",
+    ),
+    "subthreshold": (
+        "max_decade_error", "log_decade_nrmse_pct", "ioff_error_pct",
+        "ss_test_mv_dec", "ss_ref_mv_dec", "ss_error_pct",
+    ),
+    "linear": (
+        "ron_error_pct", "ron_forward_error_pct", "zero_offset_error_a",
+    ),
+    "derivative": (
+        "deriv_nrmse_pct", "deriv_mre_pct", "deriv_r2",
+        "deriv_max_err", "deriv_sign_agreement_pct",
+    ),
+}
+
+
+def validate_device_metrics(
+    spec: SweepSpec,
+    metrics: Dict[str, float],
+    domain: Dict[str, object],
+) -> None:
+    """Require every quantity promised by a device suite to be finite."""
+    payload: Dict[str, object] = {**metrics, **domain}
+    required = (
+        "mre_pct", "r2", "nrmse_pct", "max_err",
+        *_DEVICE_METRIC_CONTRACTS[spec.suite],
+    )
+    invalid = [
+        name for name in required
+        if name not in payload
+        or isinstance(payload[name], (bool, np.bool_))
+        or not isinstance(
+            payload[name], (int, float, np.integer, np.floating),
+        )
+        or not np.isfinite(payload[name])
+    ]
+    if invalid:
+        raise ValueError(f"missing or non-finite device metrics: {invalid}")
+
+
 # ---------------------------------------------------------------------------
 # Orchestration
 # ---------------------------------------------------------------------------
@@ -550,7 +704,23 @@ def run_sweep(
         candidate_deck, reference_deck = render_device_decks(
             spec, bt, baked_lib=baked, level=level,
         )
-        mismatch = topology_mismatch(candidate_deck, reference_deck)
+        analysis = AnalysisSpec(
+            spec.label,
+            "dc",
+            f"dc {spec.sweep_source} {spec.start:.12g} "
+            f"{spec.stop:.12g} {spec.step:.12g}",
+            ("i(Vds)",),
+            device_kinds=(spec.device,),
+        )
+        mismatch = physical_deck_mismatch(
+            candidate_deck,
+            reference_deck,
+            analysis,
+            bt,
+            baked_lib=baked,
+            model_level=level,
+            device_kinds=(spec.device,),
+        )
         if mismatch:
             raise ValueError(mismatch)
 
@@ -570,6 +740,7 @@ def run_sweep(
         test = _interpolate(grid, candidate)
         truth = _interpolate(grid, references[0])
         metrics, domain = suite_metrics(spec, grid, test, truth, vdd=bt.vdd)
+        validate_device_metrics(spec, metrics, domain)
         domain["reference_repeats"] = len(references)
         if len(references) > 1:
             worst = 0.0
@@ -630,10 +801,16 @@ def run_device_suites(
     unknown_devices = [name for name in devices if name not in DEVICE_KINDS]
     if unknown_devices:
         raise ValueError(f"unknown device kinds {unknown_devices}")
+    selected_devices = [
+        device for device in devices
+        if device_corner_applies(base_bt, device, corner)
+    ]
+    if not selected_devices:
+        return []
     bt = apply_corner(base_bt, corner)
     results: List[GateResult] = []
     run_spec = RunSpec.from_environment()
-    for device in devices:
+    for device in selected_devices:
         for spec in build_sweeps(bt, device):
             if spec.suite not in suites:
                 continue

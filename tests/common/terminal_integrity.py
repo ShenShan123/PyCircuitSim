@@ -18,9 +18,16 @@ from tests.common.circuit_benchmarks import (
     run_ngspice_wrdata,
 )
 from tests.common.gate_result import GateResult
+from tests.common.simple_circuit_catalog import AnalysisSpec
 from tests.common.simple_circuit_harness import (
     RunSpec,
-    topology_mismatch,
+    Trace,
+    analysis_endpoint_tolerance,
+    analysis_minimum_points,
+    analysis_max_step,
+    analysis_axis_limits,
+    physical_deck_mismatch,
+    validate_analysis_metrics,
 )
 
 
@@ -129,6 +136,16 @@ def capacitance_from_admittance(
     if not math.isfinite(frequency_hz) or frequency_hz <= 0.0:
         raise ValueError("AC frequency must be finite and positive")
     return np.imag(matrix) / (2.0 * math.pi * frequency_hz)
+
+
+def device_admittance_from_source_currents(
+    source_currents: np.ndarray,
+) -> np.ndarray:
+    """Convert MNA voltage-source branch currents to device terminal current."""
+    currents = np.asarray(source_currents, dtype=complex)
+    if not np.all(np.isfinite(currents)):
+        raise ValueError("terminal source currents contain NaN/Inf")
+    return -currents
 
 
 def _polarity(device: str) -> float:
@@ -327,7 +344,22 @@ def run_terminal_current_sweep(
         candidate, reference, card = render_terminal_sweep_decks(
             bt, device, sweep, baked_lib=baked, level=run_spec.model_level,
         )
-        mismatch = topology_mismatch(candidate, reference)
+        analysis = AnalysisSpec(
+            sweep.name,
+            "dc",
+            card,
+            tuple(f"i(V{name.upper()})" for name in TERMINALS),
+            device_kinds=(device,),
+        )
+        mismatch = physical_deck_mismatch(
+            candidate,
+            reference,
+            analysis,
+            bt,
+            baked_lib=baked,
+            model_level=run_spec.model_level,
+            device_kinds=(device,),
+        )
         if mismatch:
             raise ValueError(mismatch)
         signals = " ".join(f"i(V{name.upper()})" for name in TERMINALS)
@@ -362,6 +394,23 @@ def run_terminal_current_sweep(
             * np.arange(candidate_count, dtype=float)
         )
         reference_axis = np.asarray(reference_data[:, 0], dtype=float)
+        start, stop = analysis_axis_limits(analysis)
+        for trace in (
+            Trace("sweep", candidate_axis, dict(candidate_currents)),
+            Trace(
+                "sweep",
+                reference_axis,
+                dict(reference_currents),
+                reference=True,
+            ),
+        ):
+            trace.validate(
+                expected_start=start,
+                expected_stop=stop,
+                endpoint_tolerance=analysis_endpoint_tolerance(analysis),
+                max_step=analysis_max_step(analysis),
+                minimum_points=analysis_minimum_points(analysis),
+            )
         lo = max(float(np.min(candidate_axis)), float(np.min(reference_axis)))
         hi = min(float(np.max(candidate_axis)), float(np.max(reference_axis)))
         grid = np.linspace(lo, hi, min(candidate_axis.size, reference_axis.size))
@@ -389,6 +438,7 @@ def run_terminal_current_sweep(
         metrics, domain = terminal_current_metrics(
             candidate_currents, reference_currents,
         )
+        validate_analysis_metrics(analysis, metrics, {})
         domain.update(
             terminal_current_capability=(
                 "full" if run_spec.model_level in {75, 76} else "reduced"
@@ -508,10 +558,10 @@ def _candidate_ac_currents(deck: str, path: Path) -> np.ndarray:
     result = ACSolver(circuit, dc_solution=dc_solution).solve(
         np.asarray([AC_FREQUENCY_HZ]),
     )
-    return np.asarray(
+    return device_admittance_from_source_currents(np.asarray(
         [result[f"i(V{terminal})"][0] for terminal in TERMINALS],
         dtype=complex,
-    )
+    ))
 
 
 def _reference_ac_currents(
@@ -524,9 +574,18 @@ def _reference_ac_currents(
 
     signals = tuple(f"i(V{terminal.upper()})" for terminal in TERMINALS)
     trace = _run_ngspice_ac_trace(deck, signals, card, work_dir, tag)
-    return np.asarray(
-        [trace.signals[signal][0] for signal in signals], dtype=complex,
+    trace.validate(
+        expected_start=AC_FREQUENCY_HZ,
+        expected_stop=AC_FREQUENCY_HZ,
+        minimum_points=1,
     )
+    if trace.axis.size != 1:
+        raise ValueError(
+            f"terminal AC expected one frequency, got {trace.axis.size}"
+        )
+    return device_admittance_from_source_currents(np.asarray(
+        [trace.signals[signal][0] for signal in signals], dtype=complex,
+    ))
 
 
 def run_terminal_capacitance_bias(
@@ -551,7 +610,22 @@ def run_terminal_capacitance_bias(
                 bt, device, bias, excited,
                 baked_lib=baked, level=run_spec.model_level,
             )
-            mismatch = topology_mismatch(candidate, reference)
+            analysis = AnalysisSpec(
+                f"{bias.name}_{excited}",
+                "ac",
+                card,
+                tuple(f"i(V{name.upper()})" for name in TERMINALS),
+                device_kinds=(device,),
+            )
+            mismatch = physical_deck_mismatch(
+                candidate,
+                reference,
+                analysis,
+                bt,
+                baked_lib=baked,
+                model_level=run_spec.model_level,
+                device_kinds=(device,),
+            )
             if mismatch:
                 raise ValueError(mismatch)
             stage = "reference"
@@ -576,6 +650,7 @@ def run_terminal_capacitance_bias(
             reference_c.ravel() * 1e15,
         ))
         metrics["max_err"] *= 1e-15
+        validate_analysis_metrics(analysis, metrics, {})
         domain: Dict[str, Any] = {
             "capacitance_max_error_f": float(
                 np.max(np.abs(candidate_c - reference_c))

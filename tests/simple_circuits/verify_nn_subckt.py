@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import argparse
+from collections import Counter
 import json
 import os
 import sys
 from pathlib import Path
-from typing import Dict, Tuple
+from typing import Any, Dict, Mapping, Tuple
 
 import numpy as np
 
@@ -28,11 +29,22 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
     BenchTech,
     full_metrics,
     get_baked_modelcard,
+    parse_netlist,
     run_directnet_transient,
     run_ngspice_wrdata,
 )
 from tests.common.gate_result import GateResult, result_exit_code  # noqa: E402
-from tests.common.simple_circuit_harness import RunSpec, topology_mismatch  # noqa: E402
+from tests.common.simple_circuit_catalog import AnalysisSpec  # noqa: E402
+from tests.common.simple_circuit_harness import (  # noqa: E402
+    RunSpec,
+    Trace,
+    analysis_endpoint_tolerance,
+    analysis_minimum_points,
+    analysis_max_step,
+    analysis_axis_limits,
+    physical_deck_mismatch,
+    validate_analysis_metrics,
+)
 
 
 def _family_parameter(level: int) -> str:
@@ -128,6 +140,80 @@ def _candidate_trace(deck: str, path: Path) -> Tuple[np.ndarray, np.ndarray, boo
     )
 
 
+_PHYSICAL_ATTRIBUTES = (
+    "value", "resistance", "capacitance", "inductance",
+    "L", "NFIN", "m", "temperature", "ac_magnitude", "ac_phase",
+    "v1", "v2", "i1", "i2", "td", "tr", "tf", "pw", "per",
+)
+
+
+def _frozen_value(value: Any) -> Any:
+    """Convert parsed metadata into a deterministic, hashable value."""
+    if isinstance(value, Mapping):
+        return tuple(sorted(
+            (str(key), _frozen_value(item)) for key, item in value.items()
+        ))
+    if isinstance(value, (list, tuple)):
+        return tuple(_frozen_value(item) for item in value)
+    if isinstance(value, (float, np.floating)):
+        return float(value).hex()
+    return value
+
+
+def _resolved_candidate_signature(
+    parsed: Any,
+    *,
+    node_aliases: Mapping[str, str],
+) -> Tuple[Any, ...]:
+    aliases = {key.lower(): value.lower() for key, value in node_aliases.items()}
+
+    def node_name(value: str) -> str:
+        lowered = value.lower()
+        if lowered == "gnd":
+            lowered = "0"
+        return aliases.get(lowered, lowered)
+
+    components: Counter[Tuple[Any, ...]] = Counter()
+    for component in parsed.circuit.components:
+        attributes = tuple(
+            (name, _frozen_value(getattr(component, name)))
+            for name in _PHYSICAL_ATTRIBUTES
+            if hasattr(component, name)
+        )
+        components[(
+            type(component).__name__,
+            tuple(node_name(node) for node in component.nodes),
+            attributes,
+        )] += 1
+    initial_conditions = tuple(sorted(
+        (node_name(node), _frozen_value(value))
+        for node, value in parsed.circuit.initial_conditions.items()
+    ))
+    return (
+        tuple(sorted(components.items(), key=repr)),
+        initial_conditions,
+        parsed.analysis_type,
+        _frozen_value(parsed.analysis_params),
+        _frozen_value(parsed.models),
+        _frozen_value(parsed._temperature_kelvin),
+    )
+
+
+def flattened_candidate_mismatch(flat: Any, hierarchical: Any) -> str:
+    """Compare parsed flat and hierarchy-expanded physical experiments."""
+    flat_signature = _resolved_candidate_signature(flat, node_aliases={})
+    hierarchical_signature = _resolved_candidate_signature(
+        hierarchical,
+        node_aliases={"Xbuf.m": "mid"},
+    )
+    if flat_signature == hierarchical_signature:
+        return ""
+    return (
+        "resolved hierarchy mismatch: "
+        f"flat={flat_signature!r}; hierarchical={hierarchical_signature!r}"
+    )
+
+
 def run_nn_subckt_case(
     bt: BenchTech,
     work_dir: Path,
@@ -144,7 +230,26 @@ def run_nn_subckt_case(
         )
         flat, hierarchical = render_candidate_pair(bt, run_spec)
         reference, card = render_reference(bt, baked)
-        mismatch = topology_mismatch(flat, reference)
+        analysis = AnalysisSpec(
+            "buffer", "tran", card, ("v(out)",),
+        )
+        mismatch = physical_deck_mismatch(
+            flat,
+            reference,
+            analysis,
+            bt,
+            baked_lib=baked,
+            model_level=run_spec.model_level,
+        )
+        if mismatch:
+            raise ValueError(mismatch)
+        flat_path = work_dir / "candidate_flat.sp"
+        hierarchical_path = work_dir / "candidate_hierarchical.sp"
+        flat_path.write_text(flat)
+        hierarchical_path.write_text(hierarchical)
+        flat_parser = parse_netlist(flat_path)
+        hierarchical_parser = parse_netlist(hierarchical_path)
+        mismatch = flattened_candidate_mismatch(flat_parser, hierarchical_parser)
         if mismatch:
             raise ValueError(mismatch)
         stage = "reference"
@@ -156,13 +261,26 @@ def run_nn_subckt_case(
         reference_converged = True
         stage = "candidate"
         flat_time, flat_out, flat_partial = _candidate_trace(
-            flat, work_dir / "candidate_flat.sp",
+            flat, flat_path,
         )
         hier_time, hier_out, hier_partial = _candidate_trace(
-            hierarchical, work_dir / "candidate_hierarchical.sp",
+            hierarchical, hierarchical_path,
         )
         if flat_partial or hier_partial:
             raise RuntimeError("flat or hierarchical transient ended early")
+        start, stop = analysis_axis_limits(analysis)
+        for trace in (
+            Trace("time", ref_time, {"v(out)": ref_out}, reference=True),
+            Trace("time", flat_time, {"v(out)": flat_out}),
+            Trace("time", hier_time, {"v(out)": hier_out}),
+        ):
+            trace.validate(
+                expected_start=start,
+                expected_stop=stop,
+                endpoint_tolerance=analysis_endpoint_tolerance(analysis),
+                max_step=analysis_max_step(analysis),
+                minimum_points=analysis_minimum_points(analysis),
+            )
         lo = max(ref_time[0], flat_time[0], hier_time[0])
         hi = min(ref_time[-1], flat_time[-1], hier_time[-1])
         if hi < 4e-9 * (1.0 - 1e-9):
@@ -187,6 +305,7 @@ def run_nn_subckt_case(
             "hierarchical_nrmse_pct": float(hier_metrics["nrmse_pct"]),
             "flat_hierarchical_max_error_v": float(equivalence["max_err"]),
         }
+        validate_analysis_metrics(analysis, metrics, domain)
         return GateResult(
             case_id="nn_subckt",
             tech=bt.name,

@@ -8,6 +8,7 @@ contract before comparing results.
 
 | file | scope |
 |---|---|
+| [`v768-template-harness-audit.md`](v768-template-harness-audit.md) | V7.6.8 template inventory, redundancy review, harness repairs, and smoke evidence; not a score |
 | [`simple-circuits-v2-topologies.md`](simple-circuits-v2-topologies.md) | held-out simple-topology catalog, corner matrix, harness and promotion contract |
 | [`device-and-feedback-coverage-v767.md`](device-and-feedback-coverage-v767.md) | V7.6.7 device-integrity and self-bias/feedback diagnostics; characterization, not a score |
 | [`DirectNet-L73-clean.md`](DirectNet-L73-clean.md) | production DirectNet, all clean tiers |

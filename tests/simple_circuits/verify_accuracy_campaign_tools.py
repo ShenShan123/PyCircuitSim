@@ -35,6 +35,7 @@ from pycircuitsim.circuit import Circuit
 from pycircuitsim.models.passive import VoltageSource
 from tests.common.gate_result import GateResult
 from tests.common.simple_circuit_catalog import SIMPLE_V1, SIMPLE_V2, get_case
+from tests.common.simple_circuit_harness import analysis_metric_vocabulary
 from tests.simple_circuits import verify_circuit_opamp_ac as opamp_ac
 from tests.simple_circuits import verify_nn_ac
 
@@ -210,7 +211,7 @@ def _check_verdict_predicate(predicate: Callable[[object], bool]) -> None:
     """Require scientific exits while rejecting infrastructure outcomes."""
     assert predicate({"rc": "0"})
     assert predicate({"rc": "1"})
-    for rc in ("RACED", "no-ckpt", "-1", "124", "126", None):
+    for rc in ("2", "RACED", "no-ckpt", "-1", "124", "126", None):
         assert not predicate({"rc": rc}), rc
 
 
@@ -376,7 +377,54 @@ def _check_explicit_circuit_errors_are_complete_failures() -> None:
         for suite, (summary, _error_fragment) in logs.items():
             log = root / "dn" / "small" / "tsmc5" / f"{suite}.omp1.log"
             log.parent.mkdir(parents=True, exist_ok=True)
-            log.write_text(summary + "===V710_DONE rc=1===\n")
+            marker = ""
+            case = collect.CATALOG_BY_SUITE.get(suite)
+            if case is not None:
+                marker = GateResult(
+                    case_id=case.case_id,
+                    tech="TSMC5",
+                    corner=(
+                        "nfin_sweep" if case.case_id == "sram_snm"
+                        else "nominal"
+                    ),
+                    analysis=case.analyses[0].name,
+                    role=case.role,
+                    status="error",
+                    error=_error_fragment,
+                    reference_converged=True,
+                    candidate_converged=False,
+                    execution_state="error",
+                    error_kind="candidate",
+                    model_family="DirectNet",
+                    model_level=73,
+                    checkpoint_pins={
+                        "nmos": "tsmc5_dn_small_nmos",
+                        "pmos": "tsmc5_dn_small_pmos",
+                    },
+                    thread_settings={"omp": 1, "mkl": 1, "torch": 1},
+                ).marker() + "\n"
+            elif suite == "verify_circuit_opamp_ac":
+                marker = GateResult(
+                    case_id="opamp_ac",
+                    tech="TSMC5",
+                    corner="nominal",
+                    analysis="open_loop",
+                    role="qualification",
+                    status="error",
+                    error=_error_fragment,
+                    reference_converged=True,
+                    candidate_converged=False,
+                    execution_state="nonconverged",
+                    error_kind="candidate",
+                    model_family="DirectNet",
+                    model_level=73,
+                    checkpoint_pins={
+                        "nmos": "tsmc5_dn_small_nmos",
+                        "pmos": "tsmc5_dn_small_pmos",
+                    },
+                    thread_settings={"omp": 1, "mkl": 1, "torch": 1},
+                ).marker() + "\n"
+            log.write_text(summary + marker + "===V710_DONE rc=1===\n")
 
         data = collect.collect(root)
         for suite, (_summary, error_fragment) in logs.items():
@@ -483,10 +531,21 @@ def _check_structured_simple_results_survive_collection() -> None:
                 case_id=case.case_id, tech="TSMC5", corner="nominal",
                 analysis=analysis.name, role="diagnostic", status="diagnostic",
                 metrics={
-                    "nrmse_pct": 3.25,
-                    "ratio_error_pct": 0.2,
-                    analysis.headline_metric: 0.2,
+                    name: (
+                        3.25 if name == "nrmse_pct"
+                        else 0.99 if name == "r2"
+                        else 0.2
+                    )
+                    for name in analysis_metric_vocabulary(analysis)
                 },
+                model_family="DirectNet",
+                model_level=73,
+                checkpoint_pins={
+                    "nmos": "tsmc5_dn_small_nmos",
+                    "pmos": "tsmc5_dn_small_pmos",
+                },
+                campaign_manifest_sha256="",
+                thread_settings={"omp": 1, "mkl": 1, "torch": 1},
             )
             for analysis in case.analyses
         ]
@@ -776,6 +835,140 @@ exit 1
         assert "===V710_DONE rc=1===" not in log.read_text()
 
 
+def _coverage_entry(
+    suite: str,
+    variant: str,
+    omp: int | str,
+) -> dict[str, object]:
+    """Return complete structured failure evidence for one coverage cell."""
+    from tests.common.circuit_benchmarks import BENCH
+    from tests.common.device_integrity import build_sweeps
+    from tests.common.nn_sweep import (
+        build_dc_parametric,
+        build_inv_parametric,
+        make_dc_baseline,
+        make_inv_baseline,
+    )
+    from tests.common.terminal_integrity import terminal_biases, terminal_sweeps
+
+    identities: list[tuple[str, str, str, str]] = []
+    case = collect.CATALOG_BY_SUITE.get(suite)
+    if case is not None:
+        identities = [
+            (case.case_id, analysis.name, "nominal", case.role)
+            for analysis in case.analyses
+        ]
+        if case.derived_metrics:
+            identities.append((case.case_id, "derived", "nominal", case.role))
+    elif suite == "verify_device_integrity":
+        identities = [
+            (
+                f"device_{spec.suite}",
+                f"{device}_{spec.label}",
+                "nominal",
+                "diagnostic",
+            )
+            for device in ("nmos", "pmos")
+            for spec in build_sweeps(BENCH["TSMC5"], device)
+        ]
+    elif suite == "verify_terminal_integrity":
+        identities = [
+            ("terminal_currents", f"{device}_{sweep.name}", "nominal", "diagnostic")
+            for device in ("nmos", "pmos")
+            for sweep in terminal_sweeps(BENCH["TSMC5"], device)
+        ] + [
+            (
+                "terminal_capacitance",
+                f"{device}_{bias.name}",
+                "nominal",
+                "diagnostic",
+            )
+            for device in ("nmos", "pmos")
+            for bias in terminal_biases(BENCH["TSMC5"], device)
+        ]
+    elif suite == "verify_nn_subckt":
+        identities = [("nn_subckt", "buffer", "nominal", "diagnostic")]
+    elif suite == "verify_nn_ac":
+        identities = [
+            ("nn_ac", device, "nominal", "qualification")
+            for device in ("nmos", "pmos")
+        ]
+    elif suite == "verify_circuit_opamp_ac":
+        identities = [("opamp_ac", "open_loop", "nominal", "qualification")]
+    elif suite == "verify_nn_multi_tech_dc":
+        configs = [
+            config
+            for device in ("nmos", "pmos")
+            for config in (
+                make_dc_baseline("TSMC5", device),
+                *build_dc_parametric("TSMC5", device),
+            )
+        ]
+        identities = [
+            (
+                "nn_parametric_dc",
+                config.label,
+                config.sweep_type,
+                "qualification",
+            )
+            for config in configs
+        ]
+    elif suite == "verify_nn_multi_tech_tran":
+        configs = [
+            config
+            for analysis in ("vtc", "tran")
+            for config in (
+                make_inv_baseline("TSMC5", analysis),
+                *build_inv_parametric("TSMC5", analysis),
+            )
+        ]
+        identities = [
+            (
+                "nn_parametric_inverter",
+                config.label,
+                config.sweep_type,
+                "qualification",
+            )
+            for config in configs
+        ]
+    else:
+        raise AssertionError(f"unhandled coverage suite {suite}")
+
+    thread_count = int(omp)
+    rows = [
+        GateResult(
+            case_id=case_id,
+            tech="TSMC5",
+            corner=corner,
+            analysis=analysis,
+            role=role,
+            status="error",
+            error="candidate did not converge",
+            candidate_converged=False,
+            execution_state="nonconverged",
+            error_kind="candidate",
+            model_family="DirectNet",
+            model_level=73,
+            checkpoint_pins={
+                "nmos": f"tsmc5_dn_{variant}_nmos",
+                "pmos": f"tsmc5_dn_{variant}_pmos",
+            },
+            thread_settings={
+                "omp": thread_count,
+                "mkl": thread_count,
+                "torch": thread_count,
+            },
+        ).payload()
+        for case_id, analysis, corner, role in identities
+    ]
+    return {
+        "rc": "1",
+        "result_complete": True,
+        "results": rows,
+        "status": "ERROR",
+    }
+
+
 def _coverage_data() -> dict[str, dict]:
     """Return one complete TSMC5 DirectNet clean coverage snapshot."""
     return {
@@ -783,7 +976,7 @@ def _coverage_data() -> dict[str, dict]:
             variant: {
                 suite: {
                     "TSMC5": {
-                        f"omp{omp}": {"rc": "0"}
+                        f"omp{omp}": _coverage_entry(suite, variant, omp)
                         for omp in omps
                     },
                 }

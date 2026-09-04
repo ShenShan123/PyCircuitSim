@@ -193,17 +193,36 @@ class Trace:
         expected_start: Optional[float] = None,
         expected_stop: Optional[float] = None,
         endpoint_tolerance: float = 0.0,
+        max_step: Optional[float] = None,
+        minimum_points: Optional[int] = None,
     ) -> None:
         """Fail loud on incomplete, ragged, or non-finite evidence."""
         self.axis = np.asarray(self.axis, dtype=float)
         if self.axis.ndim != 1 or self.axis.size == 0:
             raise ValueError("trace axis must be a non-empty vector")
+        if minimum_points is not None:
+            if minimum_points < 1:
+                raise ValueError("trace minimum point count must be positive")
+            if self.axis.size < minimum_points:
+                raise ValueError(
+                    f"trace has {self.axis.size} points; expected at least "
+                    f"{minimum_points}"
+                )
         if not np.all(np.isfinite(self.axis)):
             raise ValueError("trace axis contains NaN/Inf")
         if self.axis.size > 1:
             delta = np.diff(self.axis)
             if not (np.all(delta > 0.0) or np.all(delta < 0.0)):
                 raise ValueError("trace axis must be strictly monotonic")
+            if max_step is not None:
+                if not math.isfinite(max_step) or max_step <= 0.0:
+                    raise ValueError("trace maximum step must be finite and positive")
+                largest = float(np.max(np.abs(delta)))
+                if largest > max_step * (1.0 + 1e-9) + 1e-18:
+                    raise ValueError(
+                        f"trace axis gap {largest:g} exceeds declared step "
+                        f"{max_step:g}"
+                    )
         span = abs(float(self.axis[-1] - self.axis[0]))
         atol = max(1e-18, span * 1e-9)
         if expected_start is not None and not np.isclose(
@@ -277,6 +296,39 @@ def analysis_endpoint_tolerance(analysis: AnalysisSpec) -> float:
     if analysis.kind == "tran" and len(parts) in {3, 4}:
         return abs(_analysis_number(parts[1])) * (1.0 + 1e-9)
     return 0.0
+
+
+def analysis_max_step(analysis: AnalysisSpec) -> Optional[float]:
+    """Return the largest legal linear DC/transient output-axis increment."""
+    parts = analysis.card.lstrip(".").split()
+    if analysis.kind == "dc" and len(parts) == 5:
+        return abs(_analysis_number(parts[4]))
+    if analysis.kind == "tran" and len(parts) in {3, 4}:
+        return abs(_analysis_number(parts[1]))
+    return None
+
+
+def analysis_minimum_points(analysis: AnalysisSpec) -> Optional[int]:
+    """Minimum complete trace length for fixed-grid DC, AC, and OP cards."""
+    parts = analysis.card.lstrip(".").split()
+    if analysis.kind == "op":
+        return 1
+    if analysis.kind == "dc" and len(parts) == 5:
+        start, stop = analysis_axis_limits(analysis)
+        step = abs(_analysis_number(parts[4]))
+        expected = int(round(abs(stop - start) / step)) + 1
+        return max(expected - 1, 1)
+    if analysis.kind == "ac" and len(parts) == 5:
+        points = int(parts[2])
+        start, stop = analysis_axis_limits(analysis)
+        sweep = parts[1].lower()
+        if sweep == "dec":
+            return int(round(math.log10(stop / start) * points)) + 1
+        if sweep == "oct":
+            return int(round(math.log2(stop / start) * points)) + 1
+        if sweep == "lin":
+            return points
+    return None
 
 
 def apply_corner(bt: BenchTech, corner: Corner) -> BenchTech:
@@ -401,58 +453,6 @@ def _expand(value: str, available: Mapping[str, str]) -> str:
     raise ValueError(f"recursive deck substitution did not terminate: {value}")
 
 
-def render_ring_stages(
-    *,
-    n_stages: int,
-    p_prefix: str,
-    n_prefix: str,
-    p_device: str,
-    n_device: str,
-    cload: float,
-    vdd: float,
-) -> Tuple[str, str]:
-    """Build the variable odd-stage block used by the canonical ring template."""
-    if n_stages < 3 or n_stages % 2 == 0:
-        raise ValueError("ring oscillator needs an odd stage count >= 3")
-    lines: List[str] = []
-    for index in range(1, n_stages + 1):
-        inp = f"n{index - 1}" if index > 1 else f"n{n_stages}"
-        out = f"n{index}"
-        lines.extend((
-            f"{p_prefix}p{index} {out} {inp} vdd vdd {p_device}",
-            f"{n_prefix}n{index} {out} {inp} 0 0 {n_device}",
-        ))
-        lines.append(f"Cl{index} {out} 0 {_spice_cap(cload)}")
-    ic = " ".join(
-        f"V(n{index})={'0' if index % 2 else _number(vdd)}"
-        for index in range(1, n_stages + 1)
-    )
-    return "\n".join(lines), ic
-
-
-def render_bias_fanout(
-    *,
-    branches: int,
-    n_prefix: str,
-    n_device: str,
-    vdd: float,
-) -> Tuple[str, str]:
-    """Render a shared-bias mirror fanout and its deterministic initial state."""
-    if branches < 1:
-        raise ValueError("bias fanout needs at least one branch")
-    lines: List[str] = []
-    initial = [f"V(nbias)={_number(0.45 * vdd)}"]
-    for index in range(1, branches + 1):
-        node = f"o{index}"
-        lines.extend((
-            f"{n_prefix}n_out{index} {node} nbias 0 bn {n_device}",
-            f"Rout{index} vdd {node} 50k",
-            f"Cout{index} {node} 0 2f",
-        ))
-        initial.append(f"V({node})={_number(vdd)}")
-    return "\n".join(lines), " ".join(initial)
-
-
 def _common_substitutions(
     bt: BenchTech,
     corner: Corner,
@@ -509,24 +509,10 @@ def _common_substitutions(
             f"pmos_nn L={_spice_length(bt.l_pmos)} "
             f"NFIN={bt.effective_nfin_p}"
         )
-    ring_stages, ring_ic = render_ring_stages(
-        n_stages=ring_n_stages,
-        p_prefix=p_prefix,
-        n_prefix=n_prefix,
-        p_device=p_device,
-        n_device=n_device,
-        cload=ring_cload,
-        vdd=vdd,
-    )
-    fanouts = {
-        count: render_bias_fanout(
-            branches=count,
-            n_prefix=n_prefix,
-            n_device=n_device,
-            vdd=vdd,
+    if ring_n_stages not in {3, 5, 7, 9}:
+        raise ValueError(
+            f"ring stage count {ring_n_stages} has no authoritative template"
         )
-        for count in (2, 4, 8, 16)
-    }
     values = {
         "LEVEL": str(level),
         "TECH": bt.nn_tech,
@@ -663,39 +649,8 @@ def _common_substitutions(
         "OUTPUT_LOAD": "",
         "AC_INP": "1",
         "AC_INN": "0",
-        "N_AC_INP": "0",
-        "N_AC_INN": "0",
-        "P_AC_INP": "0",
-        "P_AC_INN": "0",
         "DIFFPAIR_CAP": "5f",
         "ACTIVE_TAIL_CURRENT": _number(2e-6 * bt.nfin / 2.0),
-        "N_ACTIVE_LOAD_STAGE": (
-            "Vninp ninp 0 DC=<N_INP_DC> AC=<N_AC_INP> 0\n"
-            "Vninn ninn 0 DC=<N_INN_DC> AC=<N_AC_INN> 0\n"
-            "Itailn ntail 0 <ACTIVE_TAIL_CURRENT>\n"
-            "<N_PREFIX>n_in_l nmirror ninp ntail bn <N_INPUT_DEVICE>\n"
-            "<N_PREFIX>n_in_r nout ninn ntail bn <N_INPUT_DEVICE>\n"
-            "<P_PREFIX>p_load_d nmirror nmirror vdd bp <P_LOAD_DEVICE>\n"
-            "<P_PREFIX>p_load_o nout nmirror vdd bp <P_LOAD_DEVICE>\n"
-            "Rn_hi vdd nout 20k\nRn_lo nout 0 20k\n"
-            "Cno nout 0 <DIFFPAIR_CAP>"
-        ),
-        "P_ACTIVE_LOAD_STAGE": (
-            "Vpinp pinp 0 DC=<P_INP_DC> AC=<P_AC_INP> 0\n"
-            "Vpinn pinn 0 DC=<P_INN_DC> AC=<P_AC_INN> 0\n"
-            "Itailp vdd ptail <ACTIVE_TAIL_CURRENT>\n"
-            "<P_PREFIX>p_in_l pmirror pinp ptail bp <P_INPUT_DEVICE>\n"
-            "<P_PREFIX>p_in_r pout pinn ptail bp <P_INPUT_DEVICE>\n"
-            "<N_PREFIX>n_load_d pmirror pmirror 0 bn <N_LOAD_DEVICE>\n"
-            "<N_PREFIX>n_load_o pout pmirror 0 bn <N_LOAD_DEVICE>\n"
-            "Rp_hi vdd pout 20k\nRp_lo pout 0 20k\n"
-            "Cpo pout 0 <DIFFPAIR_CAP>"
-        ),
-        "ACTIVE_LOAD_STAGE": "<N_ACTIVE_LOAD_STAGE>",
-        "N_INP_DC": "<VCM>",
-        "N_INN_DC": "<VCM>",
-        "P_INP_DC": "<P_VCM>",
-        "P_INN_DC": "<P_VCM>",
         "VA_SPEC": "0",
         "VB_SPEC": "0",
         "WL_SPEC": "0",
@@ -713,8 +668,7 @@ def _common_substitutions(
         "P_DEVICE": p_device,
         "PULSE_OPEN": "PULSE(" if reference else "PULSE",
         "PULSE_CLOSE": ")" if reference else "",
-        "RING_STAGES": ring_stages,
-        "RING_IC": ring_ic,
+        "RING_CLOAD": _spice_cap(ring_cload),
         "BIAS_CURRENT_SPEC": (
             f"{'PULSE(' if reference else 'PULSE'} "
             f"{_number(0.2e-6 * bt.nfin / 2.0)} "
@@ -722,11 +676,6 @@ def _common_substitutions(
             f"{')' if reference else ''}"
         ),
     }
-    for count, (branches, initial) in fanouts.items():
-        values[f"BIAS_BRANCHES_{count}"] = branches
-        values[f"BIAS_FANOUT_IC_{count}"] = initial
-    values["BIAS_BRANCHES"] = fanouts[2][0]
-    values["BIAS_FANOUT_IC"] = fanouts[2][1]
     return values
 
 
@@ -768,6 +717,39 @@ def _resolved_role(
         "candidate_model": f"{role.name}_nn",
         "reference_model": f"v768_{case.case_id}_{role.name}",
     }
+
+
+def resolved_device_geometries(
+    case: CircuitCase,
+    analyses: Sequence[AnalysisSpec],
+    bt: BenchTech,
+) -> Tuple[Tuple[str, str, float, int], ...]:
+    """Return the distinct polarity/VT/L/NFIN points a case instantiates."""
+    if case.device_roles:
+        geometries = [
+            (
+                role.polarity,
+                str(resolved["vt"]),
+                float(resolved["length"]),
+                int(resolved["nfin"]),
+            )
+            for role in case.device_roles
+            for resolved in (_resolved_role(case, role, bt),)
+        ]
+    else:
+        kinds = sorted({kind for analysis in analyses
+                        for kind in analysis.device_kinds})
+        geometries = [
+            (
+                kind,
+                bt.effective_pmos_vt if kind == "pmos"
+                else bt.effective_nmos_vt,
+                bt.l_pmos if kind == "pmos" else bt.l_nmos,
+                bt.effective_nfin_p if kind == "pmos" else bt.nfin,
+            )
+            for kind in kinds
+        ]
+    return tuple(dict.fromkeys(geometries))
 
 
 def _role_substitutions(
@@ -902,6 +884,17 @@ def _render_one(
     ring_cload: float = 0.5e-15,
 ) -> str:
     relative = case.template
+    if relative == "ring_oscillator.spice.tmpl":
+        relative = {
+            3: "ring_oscillator_3stage.spice.tmpl",
+            5: "ring_oscillator.spice.tmpl",
+            7: "ring_oscillator_7stage.spice.tmpl",
+            9: "ring_oscillator_9stage.spice.tmpl",
+        }.get(ring_n_stages, "")
+        if not relative:
+            raise ValueError(
+                f"ring stage count {ring_n_stages} has no authoritative template"
+            )
     path = template_deck(relative, tier=case.tier)
     template = path.read_text()
     available = _common_substitutions(
@@ -1112,8 +1105,8 @@ def topology_signature(text: str) -> Counter[Tuple[str, ...]]:
             signature[(prefix.lower(), parts[1].lower(),
                        parts[2].lower(), _normalized_spec(parts[3:]))] += 1
         elif prefix in ("V", "I"):
-            signature[(prefix.lower(), parts[1].lower(), parts[2].lower(),
-                       _source_kind(parts),
+            signature[(prefix.lower(), head.lower(), parts[1].lower(),
+                       parts[2].lower(), _source_kind(parts),
                        _normalized_spec(parts[3:]))] += 1
         else:
             raise ValueError(f"unsupported topology card in parity check: {line}")
@@ -1133,7 +1126,7 @@ def connectivity_signature(text: str) -> Counter[Tuple[str, ...]]:
         elif kind in {"r", "c", "l"}:
             projected = item[:3]
         elif kind in {"v", "i"}:
-            projected = item[:4]
+            projected = (item[0], item[2], item[3], item[4])
         else:
             projected = item
         signature[projected] += count
@@ -1179,6 +1172,8 @@ def physical_deck_mismatch(
     baked_lib: Path,
     case: Optional[CircuitCase] = None,
     model_level: Optional[int] = None,
+    device_kinds: Optional[Sequence[str]] = None,
+    control: bool = False,
 ) -> str:
     """Return any physical or compact-model binding drift between adapters."""
     mismatch = topology_mismatch(candidate, reference)
@@ -1216,18 +1211,31 @@ def physical_deck_mismatch(
         )
 
     declarations = _model_declarations(candidate)
-    expected_level = str(model_level or active_model_level())
+    expected_level = "72" if control else str(model_level or active_model_level())
     if case is not None and case.device_roles:
         expected_models = {
-            str(_resolved_role(case, role, bt)["candidate_model"]): (
+            str(_resolved_role(case, role, bt)[
+                "reference_model" if control else "candidate_model"
+            ]): (
                 role.polarity, str(_resolved_role(case, role, bt)["vt"]),
             )
             for role in case.device_roles
         }
     else:
+        all_models = {
+            (bt.nmos_model if control else "nmos_nn"): (
+                "nmos", bt.effective_nmos_vt,
+            ),
+            (bt.pmos_model if control else "pmos_nn"): (
+                "pmos", bt.effective_pmos_vt,
+            ),
+        }
+        selected_kinds = set(device_kinds or ("nmos", "pmos"))
+        if not selected_kinds <= {"nmos", "pmos"}:
+            return f"unknown device kinds in parity contract: {sorted(selected_kinds)}"
         expected_models = {
-            "nmos_nn": ("nmos", bt.effective_nmos_vt),
-            "pmos_nn": ("pmos", bt.effective_pmos_vt),
+            name: values for name, values in all_models.items()
+            if values[0] in selected_kinds
         }
     for name, (kind, vt) in expected_models.items():
         declaration = declarations.get(name)
@@ -1236,9 +1244,14 @@ def physical_deck_mismatch(
         actual_kind, params = declaration
         expected_params = {
             "LEVEL": expected_level,
-            "TECH": bt.nn_tech,
-            "VT": vt,
         }
+        if not control:
+            expected_params.update({"TECH": bt.nn_tech, "VT": vt})
+        if not control and expected_level in {"75", "76"}:
+            expected_params["FAMILY"] = {
+                "75": "directnet-full",
+                "76": "bsimar-full",
+            }[expected_level]
         if actual_kind != kind or any(
             params.get(key, "").lower() != value.lower()
             for key, value in expected_params.items()
@@ -1279,7 +1292,8 @@ def physical_deck_mismatch(
                 if len(parts) < 6 or parts[5].lower() != reference_model:
                     return f"reference {polarity} model binding mismatch: {raw.strip()}"
                 continue
-            if len(parts) < 6 or parts[5].lower() != candidate_model:
+            expected_model = reference_model if control else candidate_model
+            if len(parts) < 6 or parts[5].lower() != expected_model:
                 return f"candidate {polarity} model binding mismatch: {raw.strip()}"
             params = {
                 key.upper(): value
@@ -1298,6 +1312,18 @@ def physical_deck_mismatch(
                     f"L={actual_l:g}, NFIN={actual_nfin}; "
                     f"expected L={length:g}, NFIN={nfin}"
                 )
+            if control:
+                try:
+                    actual_tfin = _analysis_number(params["TFIN"])
+                except (KeyError, ValueError):
+                    return f"control geometry is missing TFIN: {raw.strip()}"
+                if not math.isclose(
+                    actual_tfin, bt.tfin, rel_tol=1e-12, abs_tol=1e-18,
+                ):
+                    return (
+                        f"control TFIN mismatch: {actual_tfin:g}; "
+                        f"expected {bt.tfin:g}"
+                    )
     return ""
 
 
@@ -1416,6 +1442,8 @@ def run_reference_trace(
         expected_start=start,
         expected_stop=stop,
         endpoint_tolerance=analysis_endpoint_tolerance(analysis),
+        max_step=analysis_max_step(analysis),
+        minimum_points=analysis_minimum_points(analysis),
     )
     return trace
 
@@ -1563,13 +1591,15 @@ def run_candidate_trace(
     finally:
         logging.disable(logging.NOTSET)
     if trace.partial:
-        trace.validate()
+        trace.validate(max_step=analysis_max_step(analysis))
     else:
         start, stop = analysis_axis_limits(analysis)
         trace.validate(
             expected_start=start,
             expected_stop=stop,
             endpoint_tolerance=analysis_endpoint_tolerance(analysis),
+            max_step=analysis_max_step(analysis),
+            minimum_points=analysis_minimum_points(analysis),
         )
     return trace, path
 
@@ -1676,6 +1706,8 @@ def run_level72_control_trace(
         expected_start=start,
         expected_stop=stop,
         endpoint_tolerance=analysis_endpoint_tolerance(analysis),
+        max_step=analysis_max_step(analysis),
+        minimum_points=analysis_minimum_points(analysis),
     )
     return trace
 
@@ -1992,9 +2024,27 @@ def validate_analysis_metrics(
     missing = sorted(name for name in required if name not in payload)
     if missing:
         raise ValueError(f"missing required metrics: {missing}")
+    boolean_metrics = {"positive", "retention"}
+    nonnumeric = sorted(
+        name for name in required
+        if (
+            name in boolean_metrics
+            and not isinstance(payload[name], (bool, np.bool_))
+        ) or (
+            name not in boolean_metrics
+            and (
+                isinstance(payload[name], (bool, np.bool_))
+                or not isinstance(
+                    payload[name], (int, float, np.integer, np.floating),
+                )
+            )
+        )
+    )
+    if nonnumeric:
+        raise ValueError(f"required metrics must be numeric: {nonnumeric}")
     nonfinite = sorted(
         name for name in required
-        if isinstance(payload[name], (float, np.floating))
+        if not isinstance(payload[name], (bool, np.bool_))
         and not np.isfinite(payload[name])
     )
     if nonfinite:
@@ -2858,7 +2908,16 @@ def run_case_analysis(
                 corner,
                 baked_lib=baked,
             )
-            control_mismatch = topology_mismatch(control_deck, reference_deck)
+            control_mismatch = physical_deck_mismatch(
+                control_deck,
+                reference_deck,
+                resolved_analysis,
+                bt,
+                baked_lib=baked,
+                case=case,
+                model_level=72,
+                control=True,
+            )
             if control_mismatch:
                 raise ValueError(f"LEVEL=72 control {control_mismatch}")
             control = run_level72_control_trace(

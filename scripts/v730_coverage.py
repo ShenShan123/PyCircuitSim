@@ -31,10 +31,22 @@ from typing import Dict, List, Optional, Tuple
 
 if __package__:
     from .v710_regate_collect import (
-        is_verdict, rc_of, structured_contract_error,
+        STRUCTURED_SUITES,
+        campaign_manifest_digest,
+        is_verdict,
+        log_provenance_error,
+        rc_of,
+        structured_contract_error,
     )
 else:
-    from v710_regate_collect import is_verdict, rc_of, structured_contract_error
+    from v710_regate_collect import (  # type: ignore[no-redef]
+        STRUCTURED_SUITES,
+        campaign_manifest_digest,
+        is_verdict,
+        log_provenance_error,
+        rc_of,
+        structured_contract_error,
+    )
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -155,6 +167,7 @@ def scan_logs(root: pathlib.Path) -> Dict[CellKey, Optional[str]]:
     ``None`` lets callers suppress a stale JSON verdict for the same cell.
     """
     out: Dict[CellKey, Optional[str]] = {}
+    expected_provenance = campaign_manifest_digest(root)
     for log in root.glob("*/*/*/*.omp*.log"):
         suite, _, omp = log.name[:-4].partition(".omp")
         key = (log.parent.parent.parent.name, log.parent.parent.name,
@@ -164,10 +177,24 @@ def scan_logs(root: pathlib.Path) -> Dict[CellKey, Optional[str]]:
         except OSError:
             out[key] = None
             continue
+        if log_provenance_error(txt, expected_provenance):
+            out[key] = None
+            continue
         rc = rc_of(txt)
         structured = parse_result_markers(txt)
+        tag, variant, tech, _suite, raw_omp = key
+        if suite in STRUCTURED_SUITES and not structured:
+            out[key] = None
+            continue
         if structured and structured_contract_error(
-            suite, log.parent.name, structured,
+            suite,
+            log.parent.name,
+            structured,
+            expected_provenance=expected_provenance,
+            completion_rc=rc,
+            campaign_tag=tag,
+            campaign_variant=variant,
+            expected_omp=int(raw_omp) if raw_omp.isdigit() else None,
         ):
             out[key] = None
             continue
@@ -191,6 +218,7 @@ def build_index(
             continue
         pass_idx: Dict[CellKey, str] = {}
         data = load_json_pass(root)
+        expected_provenance = campaign_manifest_digest(root)
         for tag, variants in data.items():
             for variant, suites in variants.items():
                 for suite, techs in suites.items():
@@ -198,8 +226,31 @@ def build_index(
                         for omp in omps:
                             if not omp.startswith("omp"):
                                 continue
-                            if not is_verdict(omps[omp]):
+                            entry = omps[omp]
+                            if not is_verdict(entry):
                                 continue
+                            if suite in STRUCTURED_SUITES:
+                                results = entry.get("results")
+                                raw_omp = omp[3:]
+                                if entry.get("result_complete") is not True \
+                                        or not isinstance(results, list) \
+                                        or not results \
+                                        or structured_contract_error(
+                                            suite,
+                                            tech,
+                                            results,
+                                            expected_provenance=(
+                                                expected_provenance
+                                            ),
+                                            completion_rc=str(entry.get("rc")),
+                                            campaign_tag=tag,
+                                            campaign_variant=variant,
+                                            expected_omp=(
+                                                int(raw_omp)
+                                                if raw_omp.isdigit() else None
+                                            ),
+                                        ):
+                                    continue
                             pass_idx[(tag, variant, tech, suite, omp[3:])] = name
         for key, rc in scan_logs(root).items():
             pass_idx.pop(key, None)

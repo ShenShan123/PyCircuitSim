@@ -48,6 +48,10 @@ Placeholders use uppercase angle-bracket tokens such as `<VDD>` and `<NFN>`.
 Rendering is strict: a missing value or a supplied value unused by the template
 is an error. Keep the topology, element names, sources, loads, and analysis
 slot in the template; keep sweep selection and pass/fail policy in `tests/`.
+Different device counts are different topologies: the bias-fanout scale ladder
+therefore owns explicit 3T, 5T, 9T, and 17T files instead of injecting devices
+from harness code. The ring stage-count sweep likewise owns explicit 3-, 5-,
+7-, and 9-stage templates.
 
 The common parameter groups are:
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pytest
@@ -28,6 +29,7 @@ from tests.common.simple_circuit_harness import (
     physical_deck_mismatch,
     render_case_control_deck,
     render_case_decks,
+    topology_signature,
     topology_mismatch,
     validate_analysis_metrics,
 )
@@ -128,6 +130,21 @@ def test_incomplete_execution_cannot_be_reported_as_characterized(
         )
 
 
+def test_explicit_complete_state_cannot_override_incomplete_execution() -> None:
+    with pytest.raises(ValueError, match="complete execution"):
+        GateResult(
+            case_id="case",
+            tech="TSMC12",
+            corner="nominal",
+            analysis="analysis",
+            role="diagnostic",
+            status="diagnostic",
+            candidate_converged=False,
+            partial=True,
+            execution_state="complete",
+        )
+
+
 def test_error_result_names_execution_state_and_origin() -> None:
     result = GateResult(
         case_id="case",
@@ -215,6 +232,127 @@ def test_transient_trace_allows_first_internal_substep() -> None:
     )
 
 
+def test_trace_rejects_internal_gaps_larger_than_the_declared_step() -> None:
+    trace = Trace(
+        "sweep",
+        np.asarray([0.0, 0.8]),
+        {"v(out)": np.asarray([0.0, 1.0])},
+    )
+
+    with pytest.raises(ValueError, match="gap"):
+        trace.validate(
+            expected_start=0.0,
+            expected_stop=0.8,
+            endpoint_tolerance=0.0050000001,
+            max_step=0.005,
+        )
+
+
+def test_trace_allows_at_most_one_missing_dc_endpoint() -> None:
+    trace = Trace(
+        "sweep",
+        np.arange(0.005, 0.8, 0.005),
+        {"v(out)": np.arange(0.005, 0.8, 0.005)},
+    )
+
+    with pytest.raises(ValueError, match="points"):
+        trace.validate(
+            expected_start=0.0,
+            expected_stop=0.8,
+            endpoint_tolerance=0.0050000001,
+            max_step=0.005,
+            minimum_points=160,
+        )
+
+
+def test_device_trace_rejects_nonmonotonic_or_incomplete_sweeps() -> None:
+    from tests.common.device_integrity import DeviceTrace
+
+    nonmonotonic = DeviceTrace(
+        np.asarray([0.0, 0.2, 0.1]),
+        np.asarray([0.0, 1.0, 2.0]),
+    )
+    incomplete = DeviceTrace(
+        np.asarray([0.0, 0.4, 0.8]),
+        np.asarray([0.0, 1.0, 2.0]),
+    )
+
+    with pytest.raises(ValueError, match="monotonic"):
+        nonmonotonic.validate()
+    with pytest.raises(ValueError, match="gap"):
+        incomplete.validate(
+            expected_start=0.0,
+            expected_stop=0.8,
+            endpoint_tolerance=0.0050000001,
+            max_step=0.005,
+        )
+
+
+def test_pmos_subthreshold_metrics_start_at_zero_gate_overdrive() -> None:
+    from tests.common.device_integrity import (
+        SweepSpec,
+        suite_metrics,
+        validate_device_metrics,
+    )
+
+    grid = np.linspace(-0.44, 0.0, 101)
+    reference = 1e-12 * 10.0 ** (np.abs(grid) / 0.08)
+    spec = SweepSpec(
+        suite="subthreshold",
+        label="idvg_log",
+        device="pmos",
+        axis="vgs",
+        start=0.0,
+        stop=-0.44,
+        step=-0.0044,
+        vds=-0.4,
+    )
+
+    metrics, domain = suite_metrics(
+        spec,
+        grid,
+        reference,
+        reference,
+        vdd=0.8,
+    )
+
+    assert domain["ioff_ref_a"] == pytest.approx(1e-12)
+    assert domain["ss_ref_mv_dec"] == pytest.approx(80.0, rel=0.02)
+    validate_device_metrics(spec, metrics, domain)
+
+    domain["ss_ref_mv_dec"] = None
+    with pytest.raises(ValueError, match="ss_ref_mv_dec"):
+        validate_device_metrics(spec, metrics, domain)
+
+
+def test_pmos_output_metrics_end_at_maximum_drain_overdrive() -> None:
+    from tests.common.device_integrity import SweepSpec, suite_metrics
+
+    grid = np.linspace(-0.8, -0.02, 40)
+    current = -np.minimum(np.abs(grid) / 0.2, 1.0)
+    spec = SweepSpec(
+        suite="output",
+        label="vgs1.00",
+        device="pmos",
+        axis="vds",
+        start=-0.02,
+        stop=-0.8,
+        step=-0.02,
+        vgs=-0.8,
+    )
+
+    _metrics, domain = suite_metrics(
+        spec,
+        grid,
+        current,
+        current,
+        vdd=0.8,
+    )
+
+    assert domain["idsat_ref_a"] == pytest.approx(-1.0)
+    assert domain["knee_vds_ref_v"] < 0.3
+
+
 def test_switching_metrics_sample_clock_defined_hold_windows() -> None:
     axis = np.arange(9, dtype=float)
     clock = np.asarray([0, 1, 1, 0, 0, 1, 1, 0, 0], dtype=float)
@@ -280,6 +418,27 @@ def test_metric_contract_rejects_missing_or_nonfinite_events(
         validate_analysis_metrics(analysis, metrics, domain)
 
 
+@pytest.mark.parametrize("invalid", (None, "not-a-number", True))
+def test_metric_contract_rejects_nonnumeric_required_values(
+    invalid: object,
+) -> None:
+    analysis = AnalysisSpec(
+        "trace",
+        "dc",
+        "dc Vin 0 1 0.1",
+        ("v(out)",),
+    )
+    metrics = {
+        "mre_pct": 0.0,
+        "r2": 1.0,
+        "nrmse_pct": invalid,
+        "max_err": 0.0,
+    }
+
+    with pytest.raises(ValueError, match="numeric"):
+        validate_analysis_metrics(analysis, metrics, {})
+
+
 @pytest.mark.parametrize(
     ("old", "new"),
     (
@@ -313,6 +472,13 @@ def test_physical_parity_normalizes_equivalent_pulse_syntax() -> None:
     reference = "Vclk clk 0 PULSE(0 1 1n 1p 1p 2n 4n)\n.end\n"
 
     assert topology_mismatch(candidate, reference) == ""
+
+
+def test_physical_parity_preserves_independent_source_identity() -> None:
+    candidate = "Va a 0 0\nVb b 0 0\n.end\n"
+    reference = "Vb a 0 0\nVa b 0 0\n.end\n"
+
+    assert "physical deck mismatch" in topology_mismatch(candidate, reference)
 
 
 @pytest.mark.parametrize(
@@ -354,6 +520,39 @@ def test_physical_manifest_detects_candidate_model_binding_drift(
         resolved,
         BENCH["TSMC12"],
         baked_lib=Path("/frozen/tsmc12.lib"),
+    )
+
+
+def test_single_device_physical_parity_detects_geometry_drift(
+    tmp_path: Path,
+) -> None:
+    from tests.common.device_integrity import build_sweeps, render_device_decks
+
+    bt = BENCH["TSMC12"]
+    spec = build_sweeps(bt, "nmos")[0]
+    baked = tmp_path / "baked.lib"
+    candidate, reference = render_device_decks(
+        spec,
+        bt,
+        baked_lib=baked,
+        level=75,
+    )
+    analysis = AnalysisSpec(
+        spec.label,
+        "dc",
+        f"dc {spec.sweep_source} {spec.start:.12g} "
+        f"{spec.stop:.12g} {spec.step:.12g}",
+        ("i(Vds)",),
+    )
+
+    assert "geometry mismatch" in physical_deck_mismatch(
+        candidate.replace("L=16n", "L=24n"),
+        reference,
+        analysis,
+        bt,
+        baked_lib=baked,
+        model_level=75,
+        device_kinds=("nmos",),
     )
 
 
@@ -447,13 +646,62 @@ def test_distinct_template_files_do_not_duplicate_a_topology(
         )
 
 
+def test_simple_v2_has_one_campaign_case_per_template() -> None:
+    owners: dict[str, str] = {}
+    duplicates: list[tuple[str, str, str]] = []
+    for case in cases(score_version="simple-v2"):
+        previous = owners.setdefault(case.template, case.case_id)
+        if previous != case.case_id:
+            duplicates.append((case.template, previous, case.case_id))
+
+    assert duplicates == []
+
+
+def test_catalog_has_no_duplicate_physical_experiments(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "73")
+    seen: dict[object, str] = {}
+    for case in cases():
+        for analysis in case.analyses:
+            candidate, _ = render_case_decks(
+                case,
+                analysis,
+                BENCH["TSMC12"],
+                CORNERS["nominal"],
+                baked_lib=Path("/frozen/tsmc12.lib"),
+            )
+            cards = tuple(
+                line.lower() for line in candidate.splitlines()
+                if line.lower().startswith((".op", ".dc", ".tran", ".ac"))
+            )
+            key = (
+                tuple(sorted(topology_signature(candidate).items())),
+                cards,
+                analysis.signals,
+                analysis.metric_profile,
+            )
+            identity = f"{case.case_id}/{analysis.name}"
+            assert key not in seen, f"{identity} duplicates {seen.get(key)}"
+            seen[key] = identity
+
+
+def test_diode_load_high_impedance_analysis_owns_line_sensitivity() -> None:
+    case = next(item for item in cases() if item.case_id == "diode_load")
+    analysis = next(item for item in case.analyses if item.name == "load_high")
+
+    assert analysis.metric_profile == "mos_reference"
+    assert {"vref_error_v", "line_sensitivity_error_pct"} <= set(
+        case.required_metrics
+    )
+
+
 @pytest.mark.parametrize(
     ("case_id", "tier"),
     (
         ("sram_snm", "L2_stages"),
         ("transmission_gate_dc", "L2_stages"),
         ("transmission_gate_hold", "L3_blocks"),
-        ("mos_ratio_reference", "L1_primitives"),
     ),
 )
 def test_cases_are_tiered_by_the_crutches_the_deck_supplies(
@@ -517,6 +765,44 @@ def test_case_matrix_omits_analysis_level_noop_rows() -> None:
     assert [analysis.name for analysis in selected] == ["pmos"]
 
 
+@pytest.mark.parametrize(
+    ("device", "corner", "expected"),
+    (
+        ("nmos", "pn_n3p2", True),
+        ("nmos", "pn_n2p3", False),
+        ("pmos", "pn_n3p2", False),
+        ("pmos", "pn_n2p3", True),
+        ("nmos", "lp_16", False),
+        ("pmos", "ln_20", False),
+        ("nmos", "body_reverse", False),
+        ("pmos", "body_reverse", False),
+    ),
+)
+def test_device_integrity_corner_matrix_omits_noop_rows(
+    device: str,
+    corner: str,
+    expected: bool,
+) -> None:
+    from tests.common.device_integrity import device_corner_applies
+
+    assert device_corner_applies(
+        BENCH["TSMC12"], device, CORNERS[corner]
+    ) is expected
+
+
+def test_device_integrity_skips_fully_unsupported_corner_before_applying_it(
+    tmp_path: Path,
+) -> None:
+    from tests.common.device_integrity import run_device_suites
+
+    assert run_device_suites(
+        BENCH["TSMC7"],
+        CORNERS["vt_alternate"],
+        tmp_path,
+        level=73,
+    ) == []
+
+
 def test_declared_nn_stress_matrix_includes_vt_and_independent_geometry() -> None:
     assert {
         "vt_alternate", "vt_asymmetric", "ln_20", "lp_16", "nfin_high",
@@ -559,6 +845,15 @@ def test_collector_rejects_incomplete_catalog_result_markers(
         analysis="nmos",
         role="diagnostic",
         status="diagnostic",
+        metrics={"mre_pct": 0.0, "r2": 1.0,
+                 "nrmse_pct": 0.0, "max_err": 0.0},
+        model_family="DirectNet",
+        model_level=73,
+        checkpoint_pins={
+            "nmos": "tsmc12_dn_large_nmos",
+            "pmos": "tsmc12_dn_large_pmos",
+        },
+        thread_settings={"omp": 1, "mkl": 1, "torch": 1},
     )
     log.write_text(marker.marker() + "\n===V710_DONE rc=0===\n")
 
@@ -567,6 +862,314 @@ def test_collector_rejects_incomplete_catalog_result_markers(
     assert entry["result_complete"] is False
     assert "missing result markers" in entry["error"]
     assert not is_verdict(entry)
+
+
+def test_known_structured_suite_cannot_complete_without_markers(
+    tmp_path: Path,
+) -> None:
+    from scripts import v730_coverage as coverage
+    from scripts.v710_regate_collect import collect, is_verdict
+
+    suite = "verify_circuit_topologies__inverter_chain"
+    log = tmp_path / "dn" / "large" / "tsmc12" / f"{suite}.omp1.log"
+    log.parent.mkdir(parents=True)
+    log.write_text("===V710_DONE rc=0===\n")
+
+    entry = collect(tmp_path)["dn"]["large"][suite]["TSMC12"]["omp1"]
+    scanned = coverage.scan_logs(tmp_path)
+
+    assert entry["result_complete"] is False
+    assert "no result markers" in entry["error"]
+    assert not is_verdict(entry)
+    assert next(iter(scanned.values())) is None
+
+
+def test_collector_rejects_structured_rows_without_provenance(
+    tmp_path: Path,
+) -> None:
+    from scripts.v710_regate_collect import collect, is_verdict
+
+    suite = "verify_circuit_topologies__inverter_chain"
+    log = tmp_path / "dn" / "large" / "tsmc12" / f"{suite}.omp1.log"
+    log.parent.mkdir(parents=True)
+    marker = GateResult(
+        case_id="inverter_chain",
+        tech="TSMC12",
+        corner="nominal",
+        analysis="fo4",
+        role="diagnostic",
+        status="diagnostic",
+        metrics={
+            "mre_pct": 0.0,
+            "r2": 1.0,
+            "nrmse_pct": 0.0,
+            "max_err": 0.0,
+        },
+    )
+    log.write_text(marker.marker() + "\n===V710_DONE rc=0===\n")
+
+    entry = collect(tmp_path)["dn"]["large"][suite]["TSMC12"]["omp1"]
+
+    assert entry["result_complete"] is False
+    assert "provenance" in entry["error"]
+    assert not is_verdict(entry)
+
+
+def test_collector_matches_each_row_to_the_campaign_manifest(
+    tmp_path: Path,
+) -> None:
+    from scripts import v730_coverage as coverage
+    from scripts.v710_regate_collect import collect, is_verdict
+
+    manifest = tmp_path / "campaign_manifest.json"
+    manifest.write_text('{"campaign":"test"}\n')
+    digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
+    suite = "verify_circuit_topologies__inverter_chain"
+    log = tmp_path / "dn" / "large" / "tsmc12" / f"{suite}.omp1.log"
+    log.parent.mkdir(parents=True)
+    marker = GateResult(
+        case_id="inverter_chain",
+        tech="TSMC12",
+        corner="nominal",
+        analysis="fo4",
+        role="diagnostic",
+        status="diagnostic",
+        metrics={
+            "mre_pct": 0.0,
+            "r2": 1.0,
+            "nrmse_pct": 0.0,
+            "max_err": 0.0,
+            "delay_error_pct": 0.0,
+            "rise_fall_error_pct": 0.0,
+            "amplitude_error_pct": 0.0,
+            "phase_aligned_nrmse_pct": 0.0,
+        },
+        model_family="DirectNet",
+        model_level=73,
+        checkpoint_pins={
+            "nmos": "tsmc12_dn_large_nmos",
+            "pmos": "tsmc12_dn_large_pmos",
+        },
+        campaign_manifest_sha256="",
+        thread_settings={"omp": 1, "mkl": 1, "torch": 1},
+    )
+    log.write_text(
+        f"===V710_PROVENANCE sha256={digest}===\n"
+        + marker.marker()
+        + "\n===V710_DONE rc=0===\n"
+    )
+
+    entry = collect(tmp_path, require_manifest=True)["dn"]["large"][suite][
+        "TSMC12"
+    ]["omp1"]
+    scanned = coverage.scan_logs(tmp_path)
+
+    assert entry["result_complete"] is False
+    assert "campaign provenance mismatch" in entry["error"]
+    assert not is_verdict(entry)
+    assert next(iter(scanned.values())) is None
+
+
+def test_infrastructure_exit_is_not_a_scientific_verdict() -> None:
+    from scripts.v710_regate_collect import is_verdict
+
+    assert not is_verdict({"rc": "2"})
+
+
+def test_parametric_circuit_sweep_cannot_exit_green_with_error_rows() -> None:
+    from tests.common.circuit_sweep import exit_code
+
+    results = [
+        {"status": "pass", "config": SimpleNamespace(tech_key="TSMC12")},
+        {"status": "error", "config": SimpleNamespace(tech_key="TSMC12")},
+    ]
+
+    assert exit_code(results, ["TSMC12"]) == 2
+
+
+def test_collector_rejects_completion_code_that_disagrees_with_rows(
+    tmp_path: Path,
+) -> None:
+    from scripts.v710_regate_collect import collect, is_verdict
+
+    suite = "verify_circuit_topologies__inverter_chain"
+    log = tmp_path / "dn" / "large" / "tsmc12" / f"{suite}.omp1.log"
+    log.parent.mkdir(parents=True)
+    marker = GateResult(
+        case_id="inverter_chain",
+        tech="TSMC12",
+        corner="nominal",
+        analysis="fo4",
+        role="diagnostic",
+        status="diagnostic",
+        metrics={"mre_pct": 0.0, "r2": 1.0,
+                 "nrmse_pct": 0.0, "max_err": 0.0},
+        model_family="DirectNet",
+        model_level=73,
+        checkpoint_pins={
+            "nmos": "tsmc12_dn_large_nmos",
+            "pmos": "tsmc12_dn_large_pmos",
+        },
+        thread_settings={"omp": 1, "mkl": 1, "torch": 1},
+    )
+    log.write_text(marker.marker() + "\n===V710_DONE rc=1===\n")
+
+    entry = collect(tmp_path)["dn"]["large"][suite]["TSMC12"]["omp1"]
+
+    assert entry["result_complete"] is False
+    assert "completion code" in entry["error"]
+    assert not is_verdict(entry)
+
+
+def test_collector_rejects_characterized_row_without_numeric_evidence(
+    tmp_path: Path,
+) -> None:
+    from scripts.v710_regate_collect import collect, is_verdict
+
+    suite = "verify_circuit_topologies__inverter_chain"
+    log = tmp_path / "dn" / "large" / "tsmc12" / f"{suite}.omp1.log"
+    log.parent.mkdir(parents=True)
+    marker = GateResult(
+        case_id="inverter_chain",
+        tech="TSMC12",
+        corner="nominal",
+        analysis="fo4",
+        role="diagnostic",
+        status="diagnostic",
+        model_family="DirectNet",
+        model_level=73,
+        thread_settings={"omp": 1, "mkl": 1, "torch": 1},
+    )
+    log.write_text(marker.marker() + "\n===V710_DONE rc=0===\n")
+
+    entry = collect(tmp_path)["dn"]["large"][suite]["TSMC12"]["omp1"]
+
+    assert entry["result_complete"] is False
+    assert "numeric evidence" in entry["error"]
+    assert not is_verdict(entry)
+
+
+def test_collector_rejects_model_family_that_disagrees_with_campaign_tag(
+    tmp_path: Path,
+) -> None:
+    from scripts.v710_regate_collect import collect, is_verdict
+
+    suite = "verify_circuit_topologies__inverter_chain"
+    log = tmp_path / "dn" / "large" / "tsmc12" / f"{suite}.omp1.log"
+    log.parent.mkdir(parents=True)
+    marker = GateResult(
+        case_id="inverter_chain",
+        tech="TSMC12",
+        corner="nominal",
+        analysis="fo4",
+        role="diagnostic",
+        status="diagnostic",
+        metrics={"mre_pct": 0.0, "r2": 1.0,
+                 "nrmse_pct": 0.0, "max_err": 0.0},
+        model_family="DirectNet-Full",
+        model_level=75,
+        thread_settings={"omp": 1, "mkl": 1, "torch": 1},
+    )
+    log.write_text(marker.marker() + "\n===V710_DONE rc=0===\n")
+
+    entry = collect(tmp_path)["dn"]["large"][suite]["TSMC12"]["omp1"]
+
+    assert entry["result_complete"] is False
+    assert "campaign tag" in entry["error"]
+    assert not is_verdict(entry)
+
+
+def test_structured_contract_binds_role_metrics_pins_and_threads() -> None:
+    from scripts.v710_regate_collect import structured_contract_error
+
+    base = GateResult(
+        case_id="inverter_chain",
+        tech="TSMC12",
+        corner="nominal",
+        analysis="fo4",
+        role="diagnostic",
+        status="diagnostic",
+        metrics={
+            "mre_pct": 0.0,
+            "r2": 1.0,
+            "nrmse_pct": 0.0,
+            "max_err": 0.0,
+            "delay_error_pct": 0.0,
+            "rise_fall_error_pct": 0.0,
+            "amplitude_error_pct": 0.0,
+            "phase_aligned_nrmse_pct": 0.0,
+        },
+        model_family="DirectNet",
+        model_level=73,
+        checkpoint_pins={
+            "nmos": "tsmc12_dn_large_nmos",
+            "pmos": "tsmc12_dn_large_pmos",
+        },
+        thread_settings={"omp": 1, "mkl": 1, "torch": 1},
+    ).payload()
+    kwargs = {
+        "campaign_tag": "dn",
+        "campaign_variant": "large",
+        "expected_omp": 1,
+    }
+
+    wrong_role = {**base, "role": "qualification", "status": "pass"}
+    assert "role" in structured_contract_error(
+        "verify_circuit_topologies__inverter_chain",
+        "TSMC12",
+        [wrong_role],
+        **kwargs,
+    )
+
+    wrong_metrics = {**base, "metrics": {"garbage": 1.0}}
+    assert "required metrics" in structured_contract_error(
+        "verify_circuit_topologies__inverter_chain",
+        "TSMC12",
+        [wrong_metrics],
+        **kwargs,
+    )
+
+    wrong_threads = {
+        **base,
+        "thread_settings": {"omp": 2, "mkl": 2, "torch": 2},
+    }
+    assert "thread" in structured_contract_error(
+        "verify_circuit_topologies__inverter_chain",
+        "TSMC12",
+        [wrong_threads],
+        **kwargs,
+    )
+
+    wrong_pins = {**base, "checkpoint_pins": {}}
+    assert "checkpoint" in structured_contract_error(
+        "verify_circuit_topologies__inverter_chain",
+        "TSMC12",
+        [wrong_pins],
+        **kwargs,
+    )
+
+
+def test_structured_contract_rejects_nonfinite_derived_metric() -> None:
+    from scripts.v710_regate_collect import structured_contract_error
+
+    derived = GateResult(
+        case_id="diffpair_ideal",
+        tech="TSMC12",
+        corner="nominal",
+        analysis="derived",
+        role="diagnostic",
+        status="diagnostic",
+        domain={"cmrr_db_error": None},
+        model_family="DirectNet",
+        model_level=73,
+        thread_settings={"omp": 1, "mkl": 1, "torch": 1},
+    ).payload()
+
+    assert "derived metric" in structured_contract_error(
+        "verify_circuit_topologies__diffpair_ideal",
+        "TSMC12",
+        [derived],
+    )
 
 
 def test_catalog_declares_domain_headline_metrics() -> None:
@@ -665,6 +1268,24 @@ def test_ac_terminal_currents_form_the_transcapacitance_matrix() -> None:
     np.testing.assert_allclose(observed.sum(axis=1), 0.0, atol=1e-30)
 
 
+def test_terminal_source_current_is_negated_to_device_admittance() -> None:
+    from tests.common.terminal_integrity import (
+        device_admittance_from_source_currents,
+    )
+
+    frequency = 1e6
+    capacitance = 1e-12
+    source_current = -1j * 2.0 * np.pi * frequency * capacitance
+
+    observed = device_admittance_from_source_currents(
+        np.asarray([source_current]),
+    )
+
+    assert observed[0].imag / (2.0 * np.pi * frequency) == pytest.approx(
+        capacitance
+    )
+
+
 def test_terminal_renderer_declares_full_model_family() -> None:
     from tests.common.terminal_integrity import (
         render_terminal_sweep_decks,
@@ -708,6 +1329,24 @@ def test_standalone_active_templates_are_catalog_experiments(
     assert {analysis.name for analysis in case.analyses} == analyses
 
 
+def test_common_source_bandwidth_analyses_render_a_measurable_load_pole(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
+    case = next(item for item in cases() if item.case_id == "common_source_nn")
+
+    for analysis in case.analyses:
+        candidate, reference = render_case_decks(
+            case,
+            analysis,
+            BENCH["TSMC12"],
+            CORNERS["nominal"],
+            baked_lib=Path("/frozen/tsmc12.lib"),
+        )
+        assert "Cload out 0 10f" in candidate
+        assert "Cload out 0 10f" in reference
+
+
 def test_sram_exercises_both_storage_states_and_write_directions() -> None:
     case = next(item for item in cases() if item.case_id == "sram6t_modes")
 
@@ -732,14 +1371,23 @@ def test_l4_systems_include_closed_loop_small_signal_diagnostics() -> None:
 def test_active_load_diffpair_bridges_both_input_polarities() -> None:
     case = next(item for item in cases() if item.case_id == "diffpair_active_load")
 
-    assert case.tier == "L2_stages"
+    assert case.tier == "L3_blocks"
     assert {analysis.name for analysis in case.analyses} == {
         "nmos_steering", "pmos_steering", "nmos_ac", "pmos_ac",
     }
     assert template_deck(case.template, tier=case.tier).is_file()
 
 
-def test_generated_active_load_stage_receives_analysis_overrides(
+def test_active_load_topology_is_owned_by_its_template() -> None:
+    case = next(item for item in cases() if item.case_id == "diffpair_active_load")
+    text = template_deck(case.template, tier=case.tier).read_text()
+
+    assert "<ACTIVE_LOAD_STAGE>" not in text
+    assert "<INPUT_PREFIX>in_l" in text
+    assert "<LOAD_PREFIX>load_d" in text
+
+
+def test_active_load_template_receives_analysis_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "73")
@@ -754,20 +1402,25 @@ def test_generated_active_load_stage_receives_analysis_overrides(
         baked_lib=Path("/frozen/roles.lib"),
     )
 
-    assert "Vninp ninp 0 DC=0.44 AC=1 0" in candidate
-    assert "Vninn ninn 0 DC=0.44 AC=0 0" in candidate
+    assert "Vinp inp 0 DC=0.44 AC=1 0" in candidate
+    assert "Vinn inn 0 DC=0.44 AC=0 0" in candidate
 
 
 def test_bias_fanout_provides_a_real_device_count_ladder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "73")
-    case = next(item for item in cases() if item.case_id == "bias_tree_fanout")
+    fanout_cases = [
+        case for case in cases()
+        if case.case_id.startswith("bias_tree_fanout_")
+    ]
     counts = []
-    for analysis in case.analyses:
+    for case in fanout_cases:
+        template = template_deck(case.template, tier=case.tier).read_text()
+        assert "<BIAS_BRANCHES>" not in template
         candidate, _ = render_case_decks(
             case,
-            analysis,
+            case.analyses[0],
             BENCH["TSMC12"],
             CORNERS["nominal"],
             baked_lib=Path("/frozen/tsmc12.lib"),
@@ -777,6 +1430,12 @@ def test_bias_fanout_provides_a_real_device_count_ladder(
             if item[0] == "mos"
         ))
 
+    assert [case.case_id for case in fanout_cases] == [
+        "bias_tree_fanout_3t",
+        "bias_tree_fanout_5t",
+        "bias_tree_fanout_9t",
+        "bias_tree_fanout_17t",
+    ]
     assert counts == [3, 5, 9, 17]
 
 
@@ -868,6 +1527,10 @@ def test_nn_hierarchy_renderer_uses_selected_family_and_instance_parameters(
 def test_level72_control_renders_the_same_physical_experiment() -> None:
     case = next(item for item in cases() if item.case_id == "diode_load")
     analysis = case.analyses[1]
+    resolved_analysis = replace(
+        analysis,
+        card=analysis.card.replace("<VDD>", f"{BENCH['TSMC12'].vdd:g}"),
+    )
     baked = Path("/frozen/tsmc12.lib")
     candidate, reference = render_case_decks(
         case, analysis, BENCH["TSMC12"], CORNERS["nominal"], baked_lib=baked,
@@ -878,8 +1541,29 @@ def test_level72_control_renders_the_same_physical_experiment() -> None:
 
     assert "LEVEL=72" in control
     assert "TECH=" not in control and "VT=" not in control
-    assert topology_mismatch(control, reference) == ""
+    assert physical_deck_mismatch(
+        control,
+        reference,
+        resolved_analysis,
+        BENCH["TSMC12"],
+        baked_lib=baked,
+        case=case,
+        model_level=72,
+        control=True,
+    ) == ""
     assert topology_mismatch(candidate, reference) == ""
+
+    wrong_geometry = control.replace("L=16n", "L=24n", 1)
+    assert "geometry mismatch" in physical_deck_mismatch(
+        wrong_geometry,
+        reference,
+        resolved_analysis,
+        BENCH["TSMC12"],
+        baked_lib=baked,
+        case=case,
+        model_level=72,
+        control=True,
+    )
 
 
 def test_explicit_run_spec_owns_rendered_model_family(
@@ -900,3 +1584,616 @@ def test_explicit_run_spec_owns_rendered_model_family(
 
     assert "LEVEL=76" in candidate
     assert "FAMILY=bsimar-full" in candidate
+
+
+def test_legacy_campaign_decks_render_the_selected_model_family(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from tests.common.nn_sweep import active_nn_contract
+    from tests.simple_circuits.verify_nn_ac import _directnet_deck
+
+    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
+
+    deck = _directnet_deck(
+        BENCH["TSMC12"],
+        "nmos",
+        0.4,
+        "ac dec 1 1e3 1e6",
+    )
+
+    assert "LEVEL=75 FAMILY=directnet-full" in deck
+    assert active_nn_contract() == (75, "directnet_full")
+
+
+def test_topology_cli_prints_derived_rows_without_trace_metrics(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from tests.simple_circuits import verify_circuit_topologies as cli
+
+    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
+    monkeypatch.setattr(cli, "RESULTS_BASE", tmp_path)
+    derived = GateResult(
+        case_id="diffpair_ideal",
+        tech="TSMC12",
+        corner="nominal",
+        analysis="derived",
+        role="diagnostic",
+        status="diagnostic",
+        domain={"cmrr_db_error": 1.25},
+        model_family="DirectNet-Full",
+        model_level=75,
+        checkpoint_pins={},
+        campaign_manifest_sha256="",
+        thread_settings={"omp": 1, "mkl": 1, "torch": 1},
+    )
+    monkeypatch.setattr(cli, "run_case", lambda *_args, **_kwargs: [derived])
+
+    assert cli.main([
+        "--case", "diffpair_ideal",
+        "--tech", "TSMC12",
+        "--corner", "nominal",
+    ]) == 0
+    assert "cmrr_db_error=1.25" in capsys.readouterr().out
+
+
+def test_topology_cli_skips_unsupported_cells_without_dropping_valid_ones(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from tests.simple_circuits import verify_circuit_topologies as cli
+
+    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
+    monkeypatch.setattr(cli, "RESULTS_BASE", tmp_path)
+
+    def characterized(case: object, tech: object, corner: object, *_args: object,
+                      **_kwargs: object) -> list[GateResult]:
+        return [GateResult(
+            case_id="diode_load",
+            tech=getattr(tech, "name"),
+            corner=getattr(corner, "name"),
+            analysis="op_nominal",
+            role="diagnostic",
+            status="diagnostic",
+            metrics={"mre_pct": 0.0, "r2": 1.0,
+                     "nrmse_pct": 0.0, "max_err": 0.0},
+            model_family="DirectNet-Full",
+            model_level=75,
+            thread_settings={"omp": 1, "mkl": 1, "torch": 1},
+        )]
+
+    monkeypatch.setattr(cli, "run_case", characterized)
+
+    assert cli.main([
+        "--case", "diode_load",
+        "--tech", "TSMC5,TSMC7",
+        "--corner", "vt_alternate",
+    ]) == 0
+    output = capsys.readouterr().out
+    assert "diode_load / TSMC5 / vt_alternate" in output
+    assert "diode_load / TSMC7 / vt_alternate NOT-APPLICABLE" in output
+
+
+def test_simple_circuit_geometry_inventory_skips_unsupported_corners_and_roles(
+) -> None:
+    from tests.single_devices.verify_data_geometry_coverage import (
+        _simple_circuit_geometries,
+    )
+
+    points = _simple_circuit_geometries()
+    coordinates = {
+        (point.tech, point.dev, point.vt, point.length, point.nfin)
+        for point in points
+    }
+
+    assert ("tsmc12", "nmos", "svt", 16e-9, 4.0) in coordinates
+    assert ("tsmc12", "nmos", "svt", 16e-9, 6.0) in coordinates
+    assert not any(
+        point.tech == "tsmc7" and "vt_alternate" in point.label
+        for point in points
+    )
+
+
+def test_jacobian_diagnostic_uses_checkpoint_local_technology_codes() -> None:
+    from tests.diag.diag_nn_jacobian_consistency import (
+        resolve_checkpoint_tech_code,
+    )
+
+    assert resolve_checkpoint_tech_code(
+        "tsmc12_dn_large_nmos",
+        "tsmc12",
+        num_tech_codes=6,
+    ) == 0
+    with pytest.raises(ValueError, match="cannot evaluate tsmc5"):
+        resolve_checkpoint_tech_code(
+            "tsmc12_dn_large_nmos",
+            "tsmc5",
+            num_tech_codes=6,
+        )
+    with pytest.raises(ValueError, match="unknown embedding code"):
+        resolve_checkpoint_tech_code(
+            "tsmc12_dn_large_nmos",
+            "tsmc12",
+            num_tech_codes=1,
+        )
+
+
+def test_transient_op_convergence_guard_rejects_failed_retry() -> None:
+    from tests.common.circuit_benchmarks import _require_converged_op
+
+    solution = {"out": 0.4}
+    assert _require_converged_op(
+        SimpleNamespace(_last_solve_converged=True),
+        solution,
+        "DC OP fast path",
+    ) is solution
+    with pytest.raises(RuntimeError, match="DC OP GMIN retry did not converge"):
+        _require_converged_op(
+            SimpleNamespace(_last_solve_converged=False),
+            solution,
+            "DC OP GMIN retry",
+        )
+
+
+@pytest.mark.parametrize(
+    ("module_name", "dimension_flag", "dimension"),
+    [
+        ("tests.single_devices.verify_nn_multi_tech_dc", "--device", "nmos"),
+        ("tests.simple_circuits.verify_nn_multi_tech_tran", "--analysis", "vtc"),
+    ],
+)
+def test_parametric_cli_banner_names_forced_family(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    module_name: str,
+    dimension_flag: str,
+    dimension: str,
+) -> None:
+    import importlib
+
+    module = importlib.import_module(module_name)
+    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
+    monkeypatch.setattr(module, "run_nn_multi_tech", lambda *_args: [object()])
+    monkeypatch.setattr(
+        module,
+        "print_nn_summary_table",
+        lambda *_args, **_kwargs: {"pass": 1, "fail": 0, "error": 0},
+    )
+    monkeypatch.setattr(module, "save_nn_summary_csv", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "plot_nn_summary_bar", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(module, "sweep_gate_results", lambda *_args, **_kwargs: [
+        GateResult(
+            case_id="stub", tech="TSMC12", corner="nominal",
+            analysis="stub", role="qualification", status="pass",
+            metrics={"nrmse_pct": 0.0},
+        ),
+    ])
+
+    assert module.main(["--tech", "TSMC12", dimension_flag, dimension]) == 0
+    assert "DirectNet-Full (LEVEL=75)" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize(
+    ("module_name", "argv"),
+    [
+        ("tests.single_devices.verify_nn_multi_tech_dc", ["--tech", ""]),
+        (
+            "tests.single_devices.verify_nn_multi_tech_dc",
+            ["--tech", "TSMC12,TSMC12"],
+        ),
+        (
+            "tests.simple_circuits.verify_nn_multi_tech_tran",
+            ["--analysis", ""],
+        ),
+        (
+            "tests.simple_circuits.verify_nn_multi_tech_tran",
+            ["--analysis", "vtc,vtc"],
+        ),
+    ],
+)
+def test_parametric_clis_reject_empty_and_duplicate_axes(
+    module_name: str,
+    argv: list[str],
+) -> None:
+    import importlib
+
+    module = importlib.import_module(module_name)
+    with pytest.raises(SystemExit) as exc_info:
+        module.main(argv)
+    assert exc_info.value.code == 2
+
+
+def test_flattened_hierarchy_parity_checks_resolved_device_geometry() -> None:
+    from tests.simple_circuits.verify_nn_subckt import (
+        flattened_candidate_mismatch,
+    )
+
+    class PMOS:
+        def __init__(self, nodes: list[str], nfin: float = 2.0) -> None:
+            self.nodes = nodes
+            self.L = 20e-9
+            self.NFIN = nfin
+            self.m = 1.0
+            self.temperature = 300.15
+
+    flat = SimpleNamespace(
+        circuit=SimpleNamespace(
+            components=[PMOS(["mid", "in", "vdd", "vdd"])],
+            initial_conditions={"mid": 0.8},
+        ),
+        analysis_type="tran",
+        analysis_params={"tstep": 2e-12, "tstop": 4e-9, "uic": True},
+        models={"pmos_nn": {"type": "PMOS", "params": {"LEVEL": 75.0}}},
+        _temperature_kelvin=300.15,
+    )
+    hierarchical = SimpleNamespace(
+        circuit=SimpleNamespace(
+            components=[PMOS(["Xbuf.m", "in", "vdd", "vdd"])],
+            initial_conditions={"Xbuf.m": 0.8},
+        ),
+        analysis_type=flat.analysis_type,
+        analysis_params=flat.analysis_params,
+        models=flat.models,
+        _temperature_kelvin=flat._temperature_kelvin,
+    )
+
+    assert flattened_candidate_mismatch(flat, hierarchical) == ""
+    hierarchical.circuit.components[0].NFIN = 3.0
+    assert "resolved hierarchy mismatch" in flattened_candidate_mismatch(
+        flat, hierarchical,
+    )
+
+
+def test_nn_ac_cli_emits_one_provenance_row_per_requested_device(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from tests.common.gate_result import parse_result_markers
+    from tests.simple_circuits import verify_nn_ac as cli
+
+    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
+    monkeypatch.setattr(cli, "RESULTS_BASE", tmp_path)
+    monkeypatch.setattr(cli, "_print_result", lambda _result: None)
+
+    def result(tech: str, device: str) -> dict[str, object]:
+        return {
+            "tech": tech,
+            "device": device,
+            "passed": True,
+            "op_ok": True,
+            "op_valid": True,
+            "ng_vbias": 0.3,
+            "nn_vbias": 0.31,
+            "ng_vout": 0.4,
+            "nn_vout": 0.4,
+            "m": {
+                "gain0_db_err": 0.1,
+                "f3db_ratio": 1.0,
+                "mag_nrmse": 0.01,
+                "phase_maxerr_inband_deg": 2.0,
+            },
+            "aggregate": {
+                "mre_pct": 1.0,
+                "r2": 0.99,
+                "nrmse_pct": 1.0,
+                "max_err": 0.01,
+            },
+        }
+
+    monkeypatch.setattr(cli, "eval_cs_amp", result)
+
+    assert cli.main([
+        "--tech", "TSMC12", "--device", "nmos,pmos",
+    ]) == 0
+    rows = parse_result_markers(capsys.readouterr().out)
+    assert [(row["case_id"], row["analysis"]) for row in rows] == [
+        ("nn_ac", "nmos"),
+        ("nn_ac", "pmos"),
+    ]
+    assert {(row["model_family"], row["model_level"]) for row in rows} == {
+        ("DirectNet-Full", 75),
+    }
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--tech", ""],
+        ["--tech", "TSMC12,TSMC12"],
+        ["--device", ""],
+        ["--device", "nmos,nmos"],
+    ],
+)
+def test_nn_ac_cli_rejects_empty_and_duplicate_axes(argv: list[str]) -> None:
+    from tests.simple_circuits import verify_nn_ac as cli
+
+    with pytest.raises(SystemExit) as exc_info:
+        cli.main(argv)
+    assert exc_info.value.code == 2
+
+
+def test_parametric_error_row_preserves_candidate_convergence_stage() -> None:
+    from tests.common.nn_sweep import sweep_gate_results
+
+    cfg = SimpleNamespace(
+        tech_key="TSMC12",
+        sweep_type="cload",
+        label="TSMC12_tran_cload_100fF",
+        swept={"cload_fF": 100},
+    )
+    rows = sweep_gate_results(
+        [{
+            "config": cfg,
+            "passed": False,
+            "error": "RuntimeError: transient did not converge",
+            "reference_converged": True,
+            "candidate_converged": False,
+            "error_kind": "candidate",
+        }],
+        RunSpec(75, "DirectNet-Full"),
+        case_id="nn_parametric_inverter",
+        max_error_unit="mV",
+    )
+
+    assert len(rows) == 1
+    assert rows[0].reference_converged is True
+    assert rows[0].candidate_converged is False
+    assert rows[0].execution_state == "nonconverged"
+    assert rows[0].error_kind == "candidate"
+
+
+def test_opamp_ac_cli_emits_provenance_bound_result(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from tests.common.gate_result import parse_result_markers
+    from tests.simple_circuits import verify_circuit_opamp_ac as cli
+
+    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
+    monkeypatch.setattr(cli, "_print_result", lambda _result: None)
+    monkeypatch.setattr(cli, "eval_opamp_ac", lambda tech: {
+        "tech": tech,
+        "passed": True,
+        "op_ok": True,
+        "reference_op_valid": True,
+        "nn_op_valid": True,
+        "ng_trip": 0.4,
+        "nn_trip": 0.41,
+        "ng_vout": 0.4,
+        "nn_vout": 0.4,
+        "m": {
+            "gain0_db_err": 0.1,
+            "gbw_ratio": 1.0,
+            "pm_err": 2.0,
+            "mag_nrmse": 0.01,
+        },
+        "aggregate": {
+            "mre_pct": 1.0,
+            "r2": 0.99,
+            "nrmse_pct": 1.0,
+            "max_err": 0.01,
+        },
+    })
+
+    assert cli.main(["--tech", "TSMC12"]) == 0
+    rows = parse_result_markers(capsys.readouterr().out)
+    assert len(rows) == 1
+    assert rows[0]["case_id"] == "opamp_ac"
+    assert rows[0]["analysis"] == "open_loop"
+    assert rows[0]["model_family"] == "DirectNet-Full"
+
+
+def test_ngspice_ac_adapter_rejects_a_truncated_reference_grid(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from tests.common import circuit_ac
+
+    expected = np.geomspace(1e3, 1e6, 7)
+    monkeypatch.setattr(
+        circuit_ac,
+        "run_ngspice_ac",
+        lambda *_args, **_kwargs: (
+            expected[:-1],
+            np.ones(expected.size - 1, dtype=complex),
+        ),
+    )
+
+    with pytest.raises(RuntimeError, match="frequency count"):
+        circuit_ac.run_ngspice_ac_baked(
+            ["V1 in 0 AC=1"],
+            tmp_path,
+            "truncated",
+            "ac dec 2 1e3 1e6",
+            "out",
+            expected,
+        )
+
+
+def test_parametric_curve_validator_rejects_a_truncated_reference() -> None:
+    from tests.common.nn_sweep import validate_curve_trace
+
+    axis = np.arange(0.0, 0.8, 0.1)
+    with pytest.raises(RuntimeError, match="stops at"):
+        validate_curve_trace(
+            axis,
+            np.zeros_like(axis),
+            expected_start=0.0,
+            expected_stop=0.8,
+            max_step=0.1,
+            label="reference VTC",
+        )
+
+
+def test_legacy_circuit_sweep_keeps_configs_after_baseline_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from tests.common import circuit_sweep
+
+    baseline = circuit_sweep.make_baseline("ringosc", "TSMC12")
+    corners = [
+        replace(baseline, sweep_type="cload", config_name=f"corner-{index}")
+        for index in (1, 2)
+    ]
+    called: list[str] = []
+
+    def run(config: object, _work_dir: Path) -> dict[str, object]:
+        called.append(config.config_name)
+        if config.config_name == "baseline":
+            return circuit_sweep._err(config, "baseline failed")
+        return circuit_sweep._result(
+            config,
+            True,
+            {"mre_pct": 0.0, "r2": 1.0,
+             "nrmse_pct": 0.0, "max_err": 0.0},
+            {"metric": "period_err%", "value": 0.0},
+        )
+
+    monkeypatch.setitem(circuit_sweep._RUNNERS, "ringosc", run)
+    monkeypatch.setattr(
+        circuit_sweep, "verify_checkpoint_pin", lambda *_args, **_kwargs: {},
+    )
+    monkeypatch.setattr(
+        circuit_sweep, "build_parametric", lambda *_args: corners,
+    )
+
+    results = circuit_sweep.run_circuit_multi_tech(
+        "ringosc", ["TSMC12"], "cload", tmp_path,
+    )
+
+    assert called == ["baseline", "corner-1", "corner-2"]
+    assert [result["config"].config_name for result in results] == called
+
+
+def test_legacy_circuit_sweep_rejects_partial_or_truncated_transient() -> None:
+    from tests.common.circuit_sweep import validate_transient_trace
+
+    axis = np.arange(0.0, 1.0e-9, 0.1e-9)
+    with pytest.raises(RuntimeError, match="partial transient"):
+        validate_transient_trace(
+            axis,
+            np.zeros_like(axis),
+            expected_stop=1.0e-9,
+            max_step=0.1e-9,
+            label="candidate ring",
+            partial=True,
+        )
+    with pytest.raises(RuntimeError, match="requested stop"):
+        validate_transient_trace(
+            axis[:-1],
+            np.zeros_like(axis[:-1]),
+            expected_stop=1.0e-9,
+            max_step=0.1e-9,
+            label="reference switchcap",
+        )
+
+
+def test_legacy_circuit_sweep_rejects_bad_dc_axes() -> None:
+    from tests.common.circuit_sweep import validate_dc_trace
+
+    with pytest.raises(RuntimeError, match="expected at least"):
+        validate_dc_trace(
+            np.array([0.0, 0.1, 0.2]),
+            np.zeros(3),
+            expected_start=0.0,
+            expected_stop=0.5,
+            max_step=0.1,
+            label="SRAM reference",
+        )
+    with pytest.raises(RuntimeError, match="strictly monotonic"):
+        validate_dc_trace(
+            np.array([0.0, 0.1, 0.05, 0.2, 0.3, 0.4, 0.5]),
+            np.zeros(7),
+            expected_start=0.0,
+            expected_stop=0.5,
+            max_step=0.1,
+            label="opamp candidate",
+        )
+    with pytest.raises(RuntimeError, match="expected at least"):
+        validate_dc_trace(
+            np.array([0.1, 0.2, 0.3, 0.4]),
+            np.zeros(4),
+            expected_start=0.0,
+            expected_stop=0.5,
+            max_step=0.1,
+            label="both endpoints missing",
+        )
+
+
+def test_legacy_circuit_sweep_rejects_duplicate_technologies(
+    tmp_path: Path,
+) -> None:
+    from tests.common.circuit_sweep import run_circuit_multi_tech
+
+    with pytest.raises(ValueError, match="unique"):
+        run_circuit_multi_tech(
+            "ringosc", ["TSMC12", "TSMC12"], "cload", tmp_path,
+        )
+
+
+def test_complete_nonoscillating_ring_is_an_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from tests.common import circuit_sweep
+
+    cfg = circuit_sweep.make_baseline("ringosc", "TSMC12")
+    p = cfg.stim
+    time = np.arange(0.0, p.tstop + p.tstep * 0.5, p.tstep)
+    values = np.zeros_like(time)
+    periods = iter([0.05e-9, float("nan")])
+    monkeypatch.setattr(
+        circuit_sweep, "get_baked_modelcard", lambda *_args, **_kwargs: tmp_path / "x",
+    )
+    monkeypatch.setattr(circuit_sweep, "ngspice_ringosc", lambda *_args: {
+        "body": "", "signals": "v(n5)", "analysis": "tran 2p 1.2n uic",
+    })
+    monkeypatch.setattr(
+        circuit_sweep,
+        "run_ngspice_wrdata",
+        lambda *_args, **_kwargs: np.column_stack((time, values)),
+    )
+    monkeypatch.setattr(circuit_sweep, "period_from_wave", lambda *_args: next(periods))
+    monkeypatch.setattr(circuit_sweep, "directnet_ringosc", lambda *_args: "* deck\n")
+    monkeypatch.setattr(
+        circuit_sweep,
+        "run_directnet_transient",
+        lambda *_args: ({"time": time, "n5": values}, False, ""),
+    )
+
+    result = circuit_sweep.run_single_ringosc(cfg, tmp_path)
+
+    assert result["status"] == "error"
+    assert "did not oscillate" in result["error"]
+    assert np.isnan(result["nrmse_pct"])
+
+
+def test_near_zero_reference_snm_is_an_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from tests.common import circuit_sweep
+
+    cfg = circuit_sweep.make_baseline("sram", "TSMC12")
+    axis = np.arange(0.0, cfg.bt.vdd + 0.0025, cfg.stim.dc_step)
+    monkeypatch.setattr(
+        circuit_sweep, "get_baked_modelcard", lambda *_args, **_kwargs: tmp_path / "x",
+    )
+    monkeypatch.setattr(circuit_sweep, "ngspice_sram_lobe", lambda *_args: {
+        "body": "", "signals": "v(qb)", "analysis": "dc Vq 0 0.8 0.005",
+    })
+    monkeypatch.setattr(
+        circuit_sweep,
+        "run_ngspice_wrdata",
+        lambda *_args, **_kwargs: np.column_stack((axis, axis)),
+    )
+    monkeypatch.setattr(circuit_sweep, "snm_from_lobes", lambda *_args: 0.0)
+
+    result = circuit_sweep.run_single_sram(cfg, tmp_path)
+
+    assert result["status"] == "error"
+    assert "reference SNM is not measurable" in result["error"]

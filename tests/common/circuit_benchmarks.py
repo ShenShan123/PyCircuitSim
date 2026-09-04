@@ -96,6 +96,19 @@ def active_model_label() -> str:
     level = _active_model_level()
     return f"{_MODEL_NAMES.get(level, 'NN')} (LEVEL={level})"
 
+
+def nn_model_parameters(level: int, tech: str, vt: str) -> str:
+    """Render an explicit LEVEL=73-76 NN family declaration."""
+    family = {
+        73: "",
+        74: "",
+        75: " FAMILY=directnet-full",
+        76: " FAMILY=bsimar-full",
+    }.get(level)
+    if family is None:
+        raise ValueError(f"unsupported NN model level {level}")
+    return f"LEVEL={level}{family} TECH={tech} VT={vt}"
+
 # RESULTS_BASE is env-overridable so parallel sweeps (e.g. the V6.5.4 checkpoint
 # bake-off) can give each worker an isolated output dir — otherwise concurrent
 # runs of the same (gate, tech) clobber each other's baked modelcards / NGSPICE
@@ -417,6 +430,17 @@ def parse_netlist(netlist_path: Path) -> Any:
     return parser
 
 
+def _require_converged_op(
+    solver: Any,
+    solution: Dict[str, float],
+    stage: str,
+) -> Dict[str, float]:
+    """Reject a DC operating point that did not reach a physical fixed point."""
+    if not getattr(solver, "_last_solve_converged", True):
+        raise RuntimeError(f"{stage} did not converge")
+    return solution
+
+
 def run_directnet_transient(
     netlist_path: Path,
     *,
@@ -476,14 +500,16 @@ def run_directnet_transient(
             op = DCSolver(circuit, initial_guess=guess,
                           use_source_stepping=True, use_gmin_stepping=False)
             try:
-                op_sol = op.solve()
-                if not getattr(op, "_last_solve_converged", True):
-                    raise RuntimeError("DC OP fast path did not converge")
+                op_sol = _require_converged_op(
+                    op, op.solve(), "DC OP fast path",
+                )
             except (RuntimeError, np.linalg.LinAlgError):
                 op = DCSolver(circuit, initial_guess=guess,
                               use_source_stepping=True,
                               use_gmin_stepping=True)
-                op_sol = op.solve()
+                op_sol = _require_converged_op(
+                    op, op.solve(), "DC OP GMIN retry",
+                )
         finally:
             for vs in _uic_temps:
                 circuit.components.remove(vs)

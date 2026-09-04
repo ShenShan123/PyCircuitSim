@@ -51,9 +51,8 @@ def main() -> int:
                             f"{tech_name}/{case.case_id}/{corner_name}/"
                             f"{analysis.name}: {mismatch}")
 
-        # The stage-count sweep is the only topology-changing legacy
-        # dimension. Render both adapters from the same ring template and
-        # prove parity at every declared odd count, not only at the baseline.
+        # Each declared stage count owns a template. Render both adapters from
+        # the selected file and prove parity, not only at the baseline.
         for n_stages in (3, 5, 7, 9):
             params = RingOscParams(n_stages=n_stages)
             candidate = directnet_ringosc(bt, params, params.tstop)

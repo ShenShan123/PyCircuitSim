@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Device-level NN AC (small-signal) gate — DirectNet LEVEL=73 vs NGSPICE BSIM-CMG.
+"""Device-level NN AC gate — selected LEVEL=73--76 family vs BSIM-CMG.
 
 The PRIMARY per-checkpoint AC accuracy gate. For each (tech, device) it builds a
 resistively-loaded common-source amplifier and compares the DirectNet (LEVEL=73)
@@ -18,12 +18,9 @@ derivative fidelity.
 Geometry is pinned to the checkpoint training bins (NMOS L=16n, PMOS L=20n,
 NFIN from the tech profile) so the model interpolates, not extrapolates.
 
-Bias: the amplifier operating point is the mid-rail (Vout ≈ VDD/2) point — a
-well-defined high-gain amplifying bias — located on the NGSPICE side
-(``find_ng_bias``) and, independently, on the DirectNet side (``find_nn_bias``).
-Each side linearizes about its OWN mid-rail DC OP, so the result is the
-realistic end-to-end AC accuracy a user would see (it folds in any NN Vth
-offset, exactly as a real AC sim would).
+Bias: LEVEL=72 locates the physical mid-rail source voltage. Both engines then
+linearize at that identical input bias. Any NN threshold offset therefore
+remains visible instead of silently changing the experiment.
 
 Run CPU-pinned, repo ngspice (AGENTS.md gate methodology):
 
@@ -44,7 +41,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from tests.common.circuit_benchmarks import (  # noqa: E402
-    BENCH, BENCH_TECHS, BenchTech, active_model_label, active_model_name,
+    BENCH, BENCH_TECHS, BenchTech, active_model_label, active_model_level,
+    active_model_name, nn_model_parameters,
+    full_metrics,
     get_baked_modelcard,
     run_ngspice_wrdata,
 )
@@ -52,6 +51,13 @@ from tests.common.base import template_deck, render_template  # noqa: E402
 from tests.common.circuit_ac import (  # noqa: E402
     ac_freq_grid, run_ngspice_ac_baked, run_directnet_ac, ac_metrics_extended,
     fmt_hz,
+)
+from tests.common.gate_result import GateResult, result_exit_code  # noqa: E402
+from tests.common.simple_circuit_catalog import AnalysisSpec  # noqa: E402
+from tests.common.simple_circuit_harness import (  # noqa: E402
+    RunSpec,
+    Trace,
+    physical_deck_mismatch,
 )
 
 # Env-overridable so parallel checkpoint bake-offs can isolate output dirs
@@ -80,6 +86,23 @@ MAG_NRMSE_TOL = 0.10              # 10% of peak |V| (overall magnitude shape)
 # Cgd-feedforward RHP-zero phase lag the NN does not reproduce. That feedforward
 # phase is a distinct limitation from the (excellent) cap-driven pole/gain, so
 # the gate scores the magnitude-domain cap fidelity and the phase is a diagnostic.
+
+
+class _ExecutionFailure(RuntimeError):
+    """Carry engine-stage convergence through the per-cell error boundary."""
+
+    def __init__(
+        self,
+        error: Exception,
+        *,
+        error_kind: str,
+        reference_converged: bool,
+        candidate_converged: bool,
+    ) -> None:
+        super().__init__(f"{type(error).__name__}: {error}")
+        self.error_kind = error_kind
+        self.reference_converged = reference_converged
+        self.candidate_converged = candidate_converged
 
 
 # ---------------------------------------------------------------------------
@@ -119,7 +142,9 @@ def _ngspice_body(
     deck = render_template(CS_TEMPLATE, {
         **_common_source_values(bt, device, vbias_token),
         "MODEL_SETUP": f'.include "{baked}"',
-        "DEVICE_PREFIX": "N", "DEVICE": model, "ANALYSIS": "",
+        "DEVICE_PREFIX": "Np" if device == "pmos" else "Nn",
+        "DEVICE": model,
+        "ANALYSIS": "",
     }, body_only=True)
     return deck.splitlines()
 
@@ -128,25 +153,27 @@ def _directnet_deck(
     bt: BenchTech, device: str, vbias: float, ac_card: str,
 ) -> str:
     """Render the candidate adapter from the common-source template."""
+    level = active_model_level()
     if device == "nmos":
         ln = bt.l_nmos * 1e9
         model_setup = (
             f".model nmos_nn NMOS "
-            f"(LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_nmos_vt})"
+            f"({nn_model_parameters(level, bt.nn_tech, bt.effective_nmos_vt)})"
         )
         model = f"nmos_nn L={ln:.0f}n NFIN={bt.nfin}"
     elif device == "pmos":
         lp = bt.l_pmos * 1e9
         model_setup = (
             f".model pmos_nn PMOS "
-            f"(LEVEL=73 TECH={bt.nn_tech} VT={bt.effective_pmos_vt})"
+            f"({nn_model_parameters(level, bt.nn_tech, bt.effective_pmos_vt)})"
         )
         model = f"pmos_nn L={lp:.0f}n NFIN={bt.effective_nfin_p}"
     else:
         raise ValueError(f"unknown common-source polarity: {device}")
     return render_template(CS_TEMPLATE, {
         **_common_source_values(bt, device, f"DC={vbias:g} AC=1 0"),
-        "MODEL_SETUP": model_setup, "DEVICE_PREFIX": "M",
+        "MODEL_SETUP": model_setup,
+        "DEVICE_PREFIX": "Mp" if device == "pmos" else "Mn",
         "DEVICE": model, "ANALYSIS": f".{ac_card}",
     })
 
@@ -167,102 +194,99 @@ def find_ng_bias(bt, device: str, baked: Path, work_dir: Path,
     data = run_ngspice_wrdata(
         "\n".join(body), "v(out)", work_dir, f"{tag}_biassweep",
         f"dc Vin 0 {bt.vdd:g} 0.005")
+    Trace(
+        "vin",
+        np.asarray(data[:, 0], dtype=float),
+        {"v(out)": np.asarray(data[:, 1], dtype=float)},
+        reference=True,
+    ).validate(
+        expected_start=0.0,
+        expected_stop=bt.vdd,
+        endpoint_tolerance=0.00255,
+        max_step=0.005,
+        minimum_points=int(round(bt.vdd / 0.005)) + 1,
+    )
     vin, vout = data[:, 0], data[:, 1]
     i = int(np.argmin(np.abs(vout - bt.vdd / 2.0)))
     return round(float(vin[i]), 3), float(vout[i])
-
-
-def find_nn_bias(bt, device: str, work_dir: Path,
-                 tag: str) -> Tuple[float, float]:
-    """DirectNet mid-rail bias via FRESH per-point DC-OP solves (Vout≈VDD/2).
-
-    Biasing the NN at ITS OWN amplifying OP — not NGSPICE's — is essential: a
-    Vth offset shifts the high-gain Vin window, and at NGSPICE's bias the NN
-    device sits at the conduction edge (railed Vout, pathological gm), giving a
-    spurious gain. The fresh _solve_dc_with_retry path is reliable here; the
-    continuation DC SWEEP (run_directnet_dc_sweep) rails on these high-gain
-    single stages and must NOT be used. Parses once and re-solves over a Vin
-    scan by mutating the Vin source value.
-    """
-    import logging
-    from pycircuitsim.parser import Parser
-    from pycircuitsim.solver import DCSolver
-    from pycircuitsim.simulation import _circuit_has_nn, _solve_dc_with_retry
-    from pycircuitsim.models.passive import VoltageSource
-
-    _, ac_card = ac_freq_grid("cs_amp")
-    deck = _directnet_deck(bt, device, 0.0, ac_card)
-    deck_path = work_dir / f"{tag}_nnbias.sp"
-    deck_path.write_text(deck)
-
-    logging.disable(logging.CRITICAL)
-    try:
-        parser = Parser()
-        parser.parse_file(str(deck_path))
-        circuit = parser.circuit
-        has_nn = _circuit_has_nn(circuit)
-        vin_src = next(c for c in circuit.components
-                       if isinstance(c, VoltageSource) and c.name.lower() == "vin")
-        best_v, best_out, best_d = 0.0, float("nan"), float("inf")
-        for vin in np.arange(0.0, bt.vdd + 1e-9, 0.02):
-            vin_src.value = float(vin)
-
-            def _solve(use_gmin: bool):
-                s = DCSolver(circuit, use_source_stepping=True,
-                             use_gmin_stepping=use_gmin)
-                return s, s.solve()
-            try:
-                solver, op = _solve_dc_with_retry(circuit, has_nn, _solve)
-            except Exception:  # noqa: BLE001
-                continue
-            # Do NOT discard non-converged points: a high-gain CS-amp trip trips
-            # the strict NR flag yet the pseudo-transient fallback returns a
-            # physically sensible, smooth transfer curve usable for bias finding.
-            out = op.get("out", float("nan"))
-            if not np.isfinite(out):
-                continue
-            d = abs(out - bt.vdd / 2.0)
-            if d < best_d:
-                best_d, best_v, best_out = d, float(vin), float(out)
-    finally:
-        logging.disable(logging.NOTSET)
-    return round(best_v, 3), best_out
 
 
 # ---------------------------------------------------------------------------
 # Per-(tech, device) AC evaluation
 # ---------------------------------------------------------------------------
 def eval_cs_amp(tech: str, device: str) -> Dict[str, object]:
-    bt = BENCH[tech]
-    work_dir = RESULTS_BASE / tech
-    work_dir.mkdir(parents=True, exist_ok=True)
-    tag = f"{tech.lower()}_{device}"
-    baked = get_baked_modelcard(bt, bt.nfin, work_dir, nfin_p=bt.effective_nfin_p)
-    freqs, ac_card = ac_freq_grid("cs_amp")
+    reference_converged = False
+    candidate_converged = False
+    stage = "reference"
+    try:
+        bt = BENCH[tech]
+        work_dir = RESULTS_BASE / tech
+        work_dir.mkdir(parents=True, exist_ok=True)
+        tag = f"{tech.lower()}_{device}"
+        baked = get_baked_modelcard(
+            bt, bt.nfin, work_dir, nfin_p=bt.effective_nfin_p,
+        )
+        freqs, ac_card = ac_freq_grid("cs_amp")
 
-    # Each side at its OWN mid-rail (Vout≈VDD/2) amplifying bias.
-    ng_vbias, ng_vout = find_ng_bias(bt, device, baked, work_dir, tag)
-    nn_vbias, _ = find_nn_bias(bt, device, work_dir, tag)
+        # LEVEL=72 locates the physical bias; both engines solve that same
+        # source condition so the AC comparison remains one experiment.
+        ng_vbias, ng_vout = find_ng_bias(bt, device, baked, work_dir, tag)
+        source = f"DC={ng_vbias:g} AC=1 0"
+        ng_body = _ngspice_body(bt, device, baked, source)
+        nn_deck = _directnet_deck(bt, device, ng_vbias, ac_card)
+        analysis = AnalysisSpec(
+            "common_source_ac",
+            "ac",
+            ac_card,
+            ("v(out)",),
+            device_kinds=(device,),
+        )
+        stage = "result_schema"
+        mismatch = physical_deck_mismatch(
+            nn_deck,
+            "\n".join(ng_body) + "\n",
+            analysis,
+            bt,
+            baked_lib=baked,
+            model_level=active_model_level(),
+            device_kinds=(device,),
+        )
+        if mismatch:
+            raise ValueError(mismatch)
+        stage = "reference"
+        v_ng = run_ngspice_ac_baked(
+            ng_body, work_dir, f"{tag}_ac", ac_card, "out", freqs,
+        )
+        reference_converged = True
 
-    ng_body = _ngspice_body(bt, device, baked, f"dc {ng_vbias:g} ac 1")
-    v_ng = run_ngspice_ac_baked(ng_body, work_dir, f"{tag}_ac", ac_card,
-                                "out", freqs)
+        stage = "candidate"
+        v_dn, op_ok, dc_op = run_directnet_ac(
+            nn_deck, work_dir, f"{tag}_ac", freqs, "out",
+        )
+        candidate_converged = bool(op_ok)
+        nn_vout = dc_op.get("out", float("nan"))
+        op_valid = (
+            np.isfinite(nn_vout)
+            and 0.15 * bt.vdd < nn_vout < 0.85 * bt.vdd
+        )
 
-    nn_deck = _directnet_deck(bt, device, nn_vbias, ac_card)
-    v_dn, op_ok, dc_op = run_directnet_ac(nn_deck, work_dir, f"{tag}_ac",
-                                          freqs, "out")
-    nn_vout = dc_op.get("out", float("nan"))
-    # Voltage placement and Newton convergence answer different questions: a
-    # mid-rail pseudo-transient state can look plausible but is not a DC fixed
-    # point. AC must linearize around a converged operating point.
-    op_valid = (np.isfinite(nn_vout)
-                and 0.15 * bt.vdd < nn_vout < 0.85 * bt.vdd)
-
-    m = ac_metrics_extended(freqs, v_dn, v_ng)
-    passed = ac_gate_passes(op_ok, bool(op_valid), m)
-    return dict(tech=tech, device=device, ng_vbias=ng_vbias, nn_vbias=nn_vbias,
-                ng_vout=ng_vout, nn_vout=nn_vout, op_ok=op_ok,
-                op_valid=bool(op_valid), dc_op=dc_op, m=m, passed=bool(passed))
+        stage = "result_schema"
+        m = ac_metrics_extended(freqs, v_dn, v_ng)
+        aggregate = full_metrics(np.abs(v_dn), np.abs(v_ng))
+        passed = ac_gate_passes(op_ok, bool(op_valid), m)
+        return dict(
+            tech=tech, device=device, ng_vbias=ng_vbias,
+            nn_vbias=ng_vbias, ng_vout=ng_vout, nn_vout=nn_vout,
+            op_ok=op_ok, op_valid=bool(op_valid), dc_op=dc_op, m=m,
+            aggregate=aggregate, passed=bool(passed),
+        )
+    except Exception as exc:
+        raise _ExecutionFailure(
+            exc,
+            error_kind=stage,
+            reference_converged=reference_converged,
+            candidate_converged=candidate_converged,
+        ) from exc
 
 
 def ac_gate_passes(op_converged: bool, op_valid: bool,
@@ -310,14 +334,90 @@ def _print_result(r: Dict[str, object]) -> None:
         f"[diagnostic, not gated — G4 Cgd RHP-zero]")
 
 
+def _ac_gate_result(
+    result: Dict[str, object],
+    run_spec: RunSpec,
+) -> GateResult:
+    """Convert one device result into a provenance-bound campaign row."""
+    identity = {
+        "case_id": "nn_ac",
+        "tech": str(result["tech"]),
+        "corner": "nominal",
+        "analysis": str(result["device"]),
+        "role": "qualification",
+    }
+    provenance = run_spec.result_fields()
+    if "error" in result:
+        error_kind = str(result.get("error_kind", "unknown"))
+        reference_converged = bool(result.get("reference_converged", False))
+        candidate_converged = bool(result.get("candidate_converged", False))
+        return GateResult(
+            **identity,
+            status="error",
+            error=str(result["error"]),
+            reference_converged=reference_converged,
+            candidate_converged=candidate_converged,
+            execution_state=(
+                "reference_error" if error_kind == "reference"
+                else "nonconverged" if error_kind == "candidate"
+                else "error"
+            ),
+            error_kind=error_kind,
+            **provenance,
+        )
+    if not bool(result.get("op_ok", False)):
+        return GateResult(
+            **identity,
+            status="error",
+            error="candidate DC operating point did not converge",
+            candidate_converged=False,
+            execution_state="nonconverged",
+            error_kind="candidate",
+            **provenance,
+        )
+    metrics_raw = result["m"]
+    aggregate = result["aggregate"]
+    metrics = {
+        "gain0_db_error": float(metrics_raw["gain0_db_err"]),
+        "bandwidth_ratio": float(metrics_raw["f3db_ratio"]),
+        "phase_error_deg": float(metrics_raw["phase_maxerr_inband_deg"]),
+        "mag_nrmse_pct": float(metrics_raw["mag_nrmse"]) * 100.0,
+        "mre_pct": float(aggregate["mre_pct"]),
+        "r2": float(aggregate["r2"]),
+        "nrmse_pct": float(aggregate["nrmse_pct"]),
+        "max_err": float(aggregate["max_err"]),
+    }
+    if not all(np.isfinite(value) for value in metrics.values()):
+        return GateResult(
+            **identity,
+            status="error",
+            error="AC comparison produced non-finite required metrics",
+            execution_state="error",
+            error_kind="candidate",
+            **provenance,
+        )
+    domain = {
+        name: float(result[name])
+        for name in ("ng_vbias", "nn_vbias", "ng_vout", "nn_vout")
+        if name in result and np.isfinite(float(result[name]))
+    }
+    return GateResult(
+        **identity,
+        status="pass" if bool(result["passed"]) else "fail",
+        metrics=metrics,
+        domain=domain,
+        **provenance,
+    )
+
+
 # ---------------------------------------------------------------------------
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--tech", default=",".join(BENCH_TECHS),
                     help="comma-separated techs (default: all)")
     ap.add_argument("--device", default="nmos,pmos",
                     help="comma-separated devices (default: nmos,pmos)")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     techs = [t.strip().upper() for t in args.tech.split(",") if t.strip()]
     devices = [d.strip().lower() for d in args.device.split(",") if d.strip()]
@@ -325,14 +425,26 @@ def main() -> int:
     unknown_techs = [tech for tech in techs if tech not in BENCH]
     unknown_devices = [device for device in devices
                        if device not in {"nmos", "pmos"}]
-    if not techs or unknown_techs:
-        print(f"ERROR: unknown tech(s) {unknown_techs or techs}. "
-              f"Available: {list(BENCH)}")
-        return 1
-    if not devices or unknown_devices:
-        print(f"ERROR: unknown device(s) {unknown_devices or devices}. "
-              "Available: ['nmos', 'pmos']")
-        return 1
+    if not techs or unknown_techs or len(techs) != len(set(techs)):
+        ap.error(
+            f"invalid or duplicate tech(s) {unknown_techs or techs}; "
+            f"available: {list(BENCH)}"
+        )
+    if not devices or unknown_devices or len(devices) != len(set(devices)):
+        ap.error(
+            f"invalid or duplicate device(s) {unknown_devices or devices}; "
+            "available: ['nmos', 'pmos']"
+        )
+    try:
+        run_spec = RunSpec.from_environment()
+        run_spec.validate_checkpoint_pins(Path(_os.environ.get(
+            "BSIMAR_CHECKPOINT_DIR",
+            PROJECT_ROOT / "external_compact_models" / "neural_network"
+            / "checkpoints",
+        )))
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"ERROR: {exc}")
+        return 2
 
     RESULTS_BASE.mkdir(parents=True, exist_ok=True)
     print("\n" + "*" * 78)
@@ -349,8 +461,19 @@ def main() -> int:
                 rows.append(r)
             except Exception as exc:  # noqa: BLE001 — fail loud per config
                 print(f"  {tech} {device} CS-amp: ERROR {exc}")
-                rows.append(dict(tech=tech, device=device, error=str(exc),
-                                 passed=False))
+                rows.append(dict(
+                    tech=tech,
+                    device=device,
+                    error=str(exc),
+                    passed=False,
+                    error_kind=getattr(exc, "error_kind", "unknown"),
+                    reference_converged=getattr(
+                        exc, "reference_converged", False,
+                    ),
+                    candidate_converged=getattr(
+                        exc, "candidate_converged", False,
+                    ),
+                ))
 
     # Human-readable summary table; structured markers carry campaign verdicts.
     print("\n" + "=" * 78)
@@ -379,11 +502,15 @@ def main() -> int:
               f"{f3:.3f} | {m['mag_nrmse']*100:.2f} | "
               f"{m['phase_maxerr_inband_deg']:.2f} | {status}")
 
+    gate_rows = [_ac_gate_result(row, run_spec) for row in rows]
+    for row in gate_rows:
+        print(row.marker())
+
     n = len(rows)
     print(f"\n  Total: {n_pass}/{n} PASS")
     print(f"RESULT: {n_pass}/{n} device AC gates passed")
     print("=" * 78)
-    return 0 if (n > 0 and n_pass == n) else 1
+    return result_exit_code(gate_rows)
 
 
 if __name__ == "__main__":

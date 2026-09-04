@@ -283,11 +283,15 @@ def level1() -> List[Tuple[str, bool, str]]:
         vs = VoltageSource(f"_V_uic_{node}", [node, "0"], val)
         circuit.components.append(vs)
         temps.append(vs)
+    if temps:
+        circuit.invalidate_topology()
     try:
         op = DCSolver(circuit, initial_guess=circuit.initial_conditions).solve()
     finally:
         for vs in temps:
             circuit.components.remove(vs)
+        if temps:
+            circuit.invalidate_topology()
     pin_ok = abs(op["hold"] - 0.75) < 1e-9 and abs(op["X1.m"] - 0.2) < 1e-9
     results.append((".ic in body + hierarchical map + uic pin",
                     ic_ok and pin_ok,

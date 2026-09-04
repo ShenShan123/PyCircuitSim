@@ -65,6 +65,37 @@ reference/control rows for terminal integrity, active load, the 17-device
 ladder, inverter energy, and NN hierarchy. These are diagnostics, not a new
 published score or threshold campaign.
 
+**Post-change harness audit.** The executable review in
+[`v768-template-harness-audit.md`](accuracy/v768-template-harness-audit.md)
+fixed a derived-row CLI crash, an unmeasurable common-source bandwidth,
+PMOS subthreshold ordering, corner/role geometry enumeration, incomplete-axis
+acceptance, physical-parity gaps, stale diagnostics, and fail-open campaign and
+parametric-sweep exits. `mos_ratio_reference` was merged into
+`diode_load/load_high`; active-load and 3/5/9/17-device scale topology now lives
+entirely in explicit L3 templates, as do the 3/5/7/9-stage ring variants. The
+legacy device-AC, opamp-AC, and NN parametric suites now emit complete,
+provenance-bound result rows; historical regex-only logs cannot satisfy
+coverage. The frozen `simple-v1` cells remain byte-identical and no diagnostic
+was promoted.
+
+**AC gate-definition correction.** Device and opamp AC comparison now uses one
+physical bias located by the LEVEL=72 reference, rather than independently
+moving each model to its own peak-gain point. Both adapters are parity-checked
+at that bias, raw DC/AC axes are validated before interpolation, and each row
+reports MRE, R², NRMSE, and maximum error in addition to its AC figures of
+merit. The historical device-AC `/10` and opamp-AC `/5` results used the old
+per-engine-bias definition and are not comparable to the current gates; they
+remain historical records pending a new five-technology campaign. A pinned
+TSMC12 LEVEL=75 smoke passed both device polarities and produced an 8.91 dB
+opamp gain miss under the corrected shared-bias experiment.
+
+**Legacy sweep closure.** The circuit-parametric driver now executes every
+declared cell even when its baseline misses, rejects duplicate technology
+selections, and validates complete DC/transient axes for opamp, ring,
+switched-capacitor, and SRAM runs. Partial transients, nonoscillation, and
+unmeasurable reference SNM remain explicit `ERROR` rows and never enter numeric
+aggregates.
+
 ### V7.6.7 — evaluation coverage: device integrity, self-bias, and feedback (2026-09-02)
 
 Motivated by a contradiction the reports already carried: DirectNet-Full L75

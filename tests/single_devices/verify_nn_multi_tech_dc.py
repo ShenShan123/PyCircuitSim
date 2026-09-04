@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""V6.3.2 — NN single-device parametric DC verification.
+"""V6.3.2 — NN-family single-device parametric DC verification.
 
-Sweeps DirectNet (LEVEL=73) NMOS & PMOS Id-Vgs against NGSPICE BSIM-CMG ground
-truth over device geometry:
+Sweeps the selected LEVEL=73--76 NN family for NMOS & PMOS Id-Vgs against
+NGSPICE BSIM-CMG ground truth over device geometry:
 
   - Baseline: 1 Id-Vgs per tech/device (tech-default L/NFIN/VT)
   - L sweep:    per-tech modelcard L values (skip default)
   - NFIN sweep: symmetric NFIN [5, 10] (skip default 2)
   - VT sweep:   per-tech VT variants (skip default)
 
-The parametric sweep runs only for tech/device pairs that pass baseline.
+Every declared baseline and parametric cell keeps its denominator slot.
 Off-bin L/NFIN points exercise NN extrapolation beyond the per-tech training
 bins — elevated NRMSE/MRE there is expected model behaviour, not a fault.
 
-ASAP7 is out of scope; DirectNet only. For
-reproducible results invoke with ``OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`` — the
-harness also pins torch to one thread (see tests/common/nn_sweep.py).
+ASAP7 is out of scope. For reproducible results invoke with
+``OMP_NUM_THREADS=1 MKL_NUM_THREADS=1`` — the harness also pins torch to one
+thread (see tests/common/nn_sweep.py).
 
 Usage:
     OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \\
@@ -41,7 +41,11 @@ from tests.common.nn_sweep import (  # noqa: E402
     run_nn_multi_tech,
     run_single_nn_dc,
     save_nn_summary_csv,
+    sweep_gate_results,
 )
+from tests.common.circuit_benchmarks import active_model_label  # noqa: E402
+from tests.common.gate_result import result_exit_code  # noqa: E402
+from tests.common.simple_circuit_harness import RunSpec  # noqa: E402
 
 # Env-overridable so parallel checkpoint bake-offs can isolate output dirs
 # (same idiom as the shared simple-circuit results root).
@@ -51,7 +55,7 @@ RESULTS_DIR = Path(_os.environ.get(
     str(PROJECT_ROOT / "results" / "tests" / "nn_multi_tech_dc")))
 
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument(
         "--tech", default=",".join(NN_TECHS),
@@ -59,11 +63,15 @@ def main() -> int:
     parser.add_argument(
         "--device", default="nmos,pmos",
         help="comma-separated devices: nmos, pmos (default: both)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
     tech_keys = [t.strip() for t in args.tech.split(",") if t.strip()]
     devices = [d.strip().lower() for d in args.device.split(",") if d.strip()]
 
+    if not tech_keys or len(tech_keys) != len(set(tech_keys)):
+        parser.error("--tech must select one or more unique technologies")
+    if not devices or len(devices) != len(set(devices)):
+        parser.error("--device must select one or more unique devices")
     for tk in tech_keys:
         if tk not in NN_TECHS:
             print(f"ERROR: tech '{tk}' not in scope {NN_TECHS} "
@@ -75,17 +83,27 @@ def main() -> int:
             return 2
 
     print("=" * 70)
-    print("  V6.3.2 — NN single-device parametric DC verification")
+    model_label = active_model_label()
+    print(f"  V6.3.2 — {model_label} single-device parametric DC verification")
     print("=" * 70)
     print(f"  Techs:   {tech_keys}")
     print(f"  Devices: {devices}")
-    print(f"  DC acceptance: NRMSE < 10%")
+    print("  DC acceptance: NRMSE < 10%")
+
+    try:
+        run_spec = RunSpec.from_environment()
+        run_spec.validate_checkpoint_pins(Path(_os.environ.get(
+            "BSIMAR_CHECKPOINT_DIR",
+            PROJECT_ROOT / "external_compact_models" / "neural_network"
+            / "checkpoints",
+        )))
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"ERROR: {exc}")
+        return 2
 
     results = []
-    # audit B5d — get_available_checkpoints() now RAISES on a pinned-but-absent
-    # stem instead of printing a SKIP with no result row. Catch it here so this
-    # gate reports the same clean "ERROR: ... / rc 1" as tests/common/nn_gate.py
-    # rather than a traceback.
+    # Runtime resolution failures remain explicit infrastructure outcomes;
+    # the complete declared config list is otherwise always executed.
     try:
         for device in devices:
             results.extend(run_nn_multi_tech(
@@ -94,22 +112,31 @@ def main() -> int:
             ))
     except FileNotFoundError as exc:
         print(f"ERROR: {exc}")
-        return 1
+        return 2
 
     counts = print_nn_summary_table(results, kind="dc")
     save_nn_summary_csv(
         results, RESULTS_DIR / "verify_nn_multi_tech_dc_summary.csv", kind="dc")
     plot_nn_summary_bar(
         results, RESULTS_DIR / "verify_nn_multi_tech_dc_summary.png",
-        "V6.3.2 NN single-device DC parametric sweep", kind="dc")
+        f"V6.3.2 {model_label} single-device DC parametric sweep", kind="dc")
+    gate_rows = sweep_gate_results(
+        results,
+        run_spec,
+        case_id="nn_parametric_dc",
+        max_error_unit="A",
+    )
+    for row in gate_rows:
+        print(row.marker())
 
     print()
-    if counts["fail"] == 0 and counts["error"] == 0:
+    exit_code = result_exit_code(gate_rows)
+    if exit_code == 0:
         print(f"  RESULT: ALL {counts['pass']} configs PASSED")
-        return 0
-    print(f"  RESULT: {counts['fail']} FAIL, {counts['error']} ERROR "
-          f"out of {len(results)}")
-    return 1
+    else:
+        print(f"  RESULT: {counts['fail']} FAIL, {counts['error']} ERROR "
+              f"out of {len(results)}")
+    return exit_code
 
 
 if __name__ == "__main__":

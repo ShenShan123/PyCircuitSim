@@ -37,6 +37,7 @@ from scripts.v710_regate_manifest import (  # noqa: E402
     _verify_group,
 )
 from tests.common import nn_sweep  # noqa: E402
+from tests.common.gate_result import GateResult  # noqa: E402
 
 
 def test_stratified_cap_keeps_every_stratum() -> None:
@@ -502,8 +503,6 @@ def test_failed_baseline_does_not_shrink_denominator(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    monkeypatch.setattr(nn_sweep, "get_available_checkpoints", lambda: {})
-
     def make_baseline(_tech: str, _dimension: str) -> _Config:
         return _Config("baseline", "baseline")
 
@@ -520,3 +519,187 @@ def test_failed_baseline_does_not_shrink_denominator(
     assert [result["config"].label for result in results] == [
         "baseline", "corner-a", "corner-b",
     ]
+
+
+def _ac_campaign_row(device: str, *, complete_metrics: bool = True) -> GateResult:
+    metrics = {
+        "gain0_db_error": 0.1,
+        "bandwidth_ratio": 1.0,
+        "nrmse_pct": 1.0,
+        "phase_error_deg": 2.0,
+        "mag_nrmse_pct": 1.0,
+        "mre_pct": 1.0,
+        "r2": 0.99,
+        "max_err": 0.01,
+    }
+    if not complete_metrics:
+        del metrics["bandwidth_ratio"]
+    return GateResult(
+        case_id="nn_ac",
+        tech="TSMC12",
+        corner="nominal",
+        analysis=device,
+        role="qualification",
+        status="pass",
+        metrics=metrics,
+        model_family="DirectNet",
+        model_level=73,
+        checkpoint_pins={
+            "nmos": "tsmc12_dn_small_nmos",
+            "pmos": "tsmc12_dn_small_pmos",
+        },
+        thread_settings={"omp": 1, "mkl": 1, "torch": 1},
+    )
+
+
+def test_structured_nn_ac_rows_drive_report_and_completeness(tmp_path: Path) -> None:
+    from scripts.v710_regate_collect import render
+
+    root = tmp_path / "campaign"
+    log = root / "dn" / "small" / "tsmc12" / "verify_nn_ac.omp1.log"
+    log.parent.mkdir(parents=True)
+    log.write_text(
+        "\n".join([
+            _ac_campaign_row("nmos").marker(),
+            _ac_campaign_row("pmos").marker(),
+            "===V710_DONE rc=0===",
+        ]) + "\n"
+    )
+
+    data = collect(root)
+    entry = data["dn"]["small"]["verify_nn_ac"]["TSMC12"]["omp1"]
+    assert entry["result_complete"] is True
+    assert entry["nmos"]["status"] == "PASS"
+    assert entry["pmos"]["f3db_ratio"] == 1.0
+    assert "**Device CS-amp AC: 2/2**" in render(data)
+
+
+def test_malformed_structured_nn_row_is_invalid_without_crashing(
+    tmp_path: Path,
+) -> None:
+    root = tmp_path / "campaign"
+    log = root / "dn" / "small" / "tsmc12" / "verify_nn_ac.omp1.log"
+    log.parent.mkdir(parents=True)
+    log.write_text(
+        "\n".join([
+            _ac_campaign_row("nmos", complete_metrics=False).marker(),
+            _ac_campaign_row("pmos").marker(),
+            "===V710_DONE rc=0===",
+        ]) + "\n"
+    )
+
+    entry = collect(root)["dn"]["small"]["verify_nn_ac"]["TSMC12"]["omp1"]
+    assert entry["result_complete"] is False
+    assert entry["status"] == "ERROR"
+    assert "missing required metrics" in entry["error"]
+
+
+def test_unstructured_nn_logs_are_display_only_not_coverage(tmp_path: Path) -> None:
+    from scripts import v730_coverage
+
+    log = tmp_path / "dn" / "small" / "tsmc12" / "verify_nn_ac.omp1.log"
+    log.parent.mkdir(parents=True)
+    log.write_text(
+        "  AC | tsmc12_nmos | 0.1 | 1.0 | 1.0 | 2.0 | PASS\n"
+        "===V710_DONE rc=0===\n"
+    )
+
+    scanned = v730_coverage.scan_logs(tmp_path)
+    assert list(scanned.values()) == [None]
+
+
+def test_legacy_json_cannot_satisfy_a_structured_coverage_cell(
+    tmp_path: Path,
+) -> None:
+    from scripts import v730_coverage
+
+    (tmp_path / "data.json").write_text(json.dumps({
+        "dn": {
+            "small": {
+                "verify_nn_ac": {
+                    "TSMC12": {"omp1": {"rc": "0"}},
+                },
+            },
+        },
+    }))
+    previous = v730_coverage.PASSES
+    v730_coverage.PASSES = [("test", tmp_path)]
+    try:
+        index = v730_coverage.build_index(["test"])
+    finally:
+        v730_coverage.PASSES = previous
+
+    assert index == {}
+
+
+def test_structured_nn_rows_bind_the_declared_corner(tmp_path: Path) -> None:
+    root = tmp_path / "campaign"
+    log = root / "dn" / "small" / "tsmc12" / "verify_nn_ac.omp1.log"
+    log.parent.mkdir(parents=True)
+    wrong = _ac_campaign_row("nmos").payload()
+    wrong["corner"] = "hot"
+    log.write_text(
+        "\n".join([
+            GateResult(**wrong).marker(),
+            _ac_campaign_row("pmos").marker(),
+            "===V710_DONE rc=0===",
+        ]) + "\n"
+    )
+
+    entry = collect(root)["dn"]["small"]["verify_nn_ac"]["TSMC12"]["omp1"]
+    assert entry["result_complete"] is False
+    assert "corner mismatch" in entry["error"]
+
+
+def test_all_error_parametric_denominator_renders_without_numeric_aggregate(
+    tmp_path: Path,
+) -> None:
+    from scripts.v710_regate_collect import render
+
+    root = tmp_path / "campaign"
+    log = (
+        root / "dn" / "small" / "tsmc12"
+        / "verify_nn_multi_tech_dc.omp1.log"
+    )
+    log.parent.mkdir(parents=True)
+    configs = [
+        config
+        for device in ("nmos", "pmos")
+        for config in (
+            nn_sweep.make_dc_baseline("TSMC12", device),
+            *nn_sweep.build_dc_parametric("TSMC12", device),
+        )
+    ]
+    rows = [
+        GateResult(
+            case_id="nn_parametric_dc",
+            tech="TSMC12",
+            corner=config.sweep_type,
+            analysis=config.label,
+            role="qualification",
+            status="error",
+            error="candidate did not converge",
+            candidate_converged=False,
+            execution_state="nonconverged",
+            error_kind="candidate",
+            model_family="DirectNet",
+            model_level=73,
+            checkpoint_pins={
+                "nmos": "tsmc12_dn_small_nmos",
+                "pmos": "tsmc12_dn_small_pmos",
+            },
+            thread_settings={"omp": 1, "mkl": 1, "torch": 1},
+        )
+        for config in configs
+    ]
+    log.write_text(
+        "\n".join([*(row.marker() for row in rows), "===V710_DONE rc=1==="])
+        + "\n"
+    )
+
+    data = collect(root)
+    entry = data["dn"]["small"]["verify_nn_multi_tech_dc"]["TSMC12"]["omp1"]
+    assert entry["result_complete"] is True
+    assert entry["n_pass"] == 0
+    assert "max_error" not in entry
+    assert f"| TSMC12 | 0/{len(configs)} | — | — | — | — | — |" in render(data)

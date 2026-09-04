@@ -33,9 +33,15 @@ sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models" / "bsim_cmg" / "tests"))
 
-from tests.common.circuit_benchmarks import BENCH, RESULTS_BASE, BenchTech  # noqa: E402
+from tests.common.circuit_benchmarks import (  # noqa: E402
+    BENCH,
+    RESULTS_BASE,
+    BenchTech,
+    OpAmpParams,
+    gain_trip,
+    opamp_bias,
+)
 from tests.common.base import template_deck, render_template  # noqa: E402
-from tests.common.simple_circuit_harness import render_ring_stages  # noqa: E402
 from pycircuitsim.parser import Parser  # noqa: E402
 from pycircuitsim.solver import DCSolver, TransientSolver  # noqa: E402
 from pycircuitsim.models.passive import VoltageSource  # noqa: E402
@@ -81,12 +87,16 @@ def _uic_op(circuit):
                 vs = VoltageSource(f"_V_uic_{node}", [node, "0"], val)
                 circuit.components.append(vs)
                 temps.append(vs)
+        if temps:
+            circuit.invalidate_topology()
     try:
         op = DCSolver(circuit, initial_guess=guess,
                       use_source_stepping=True).solve()
     finally:
         for vs in temps:
             circuit.components.remove(vs)
+        if temps:
+            circuit.invalidate_topology()
     return op
 
 
@@ -132,26 +142,20 @@ def ring(bt: BenchTech) -> Dict:
     vdd, tfin_nm = bt.vdd, bt.tfin * 1e9
     ln, lp, nf = bt.l_nmos * 1e9, bt.l_pmos * 1e9, bt.nfin
 
-    stages, initial_conditions = render_ring_stages(
-        n_stages=5,
-        p_prefix="M",
-        n_prefix="M",
-        p_device=(
-            f"{p} L={lp:.0f}n NFIN={nf} TFIN={tfin_nm:.1f}n"
-        ),
-        n_device=(
-            f"{n} L={ln:.0f}n NFIN={nf} TFIN={tfin_nm:.1f}n"
-        ),
-        cload=0.5e-15,
-        vdd=vdd,
-    )
     deck = render_template(template_deck("ring_oscillator.spice.tmpl"), {
         "MODEL_SETUP": (
             f".model {n} NMOS (LEVEL=72)\n"
             f".model {p} PMOS (LEVEL=72)"
         ),
         "TEMP": "27", "VDD": f"{vdd}",
-        "RING_STAGES": stages, "RING_IC": initial_conditions,
+        "N_PREFIX": "M", "P_PREFIX": "M",
+        "N_DEVICE": (
+            f"{n} L={ln:.0f}n NFIN={nf} TFIN={tfin_nm:.1f}n"
+        ),
+        "P_DEVICE": (
+            f"{p} L={lp:.0f}n NFIN={nf} TFIN={tfin_nm:.1f}n"
+        ),
+        "RING_CLOAD": "0.5f",
         "ANALYSIS": f".tran {RO_TSTEP:.0e} {RO_TSTOP:.0e}",
     })
 
@@ -185,7 +189,7 @@ def ring(bt: BenchTech) -> Dict:
 
 def opamp(bt: BenchTech) -> Dict:
     """L72-in-PyCircuitSim two-stage Miller opamp DC gain vs NGSPICE."""
-    from tests.simple_circuits.verify_circuit_opamp import run_ngspice_opamp, _bias, _gain_trip
+    from tests.simple_circuits.verify_circuit_opamp import run_ngspice_opamp
     from pycircuitsim.simulation import run_dc_sweep
     from pycircuitsim.visualizer import Visualizer
     work = RESULTS_BASE / "l72_control" / "opamp" / bt.name
@@ -193,7 +197,7 @@ def opamp(bt: BenchTech) -> Dict:
     merged, n, p = _merged_card(bt, work)
     vdd, tfin_nm = bt.vdd, bt.tfin * 1e9
     ln, lp, nf = bt.l_nmos * 1e9, bt.l_pmos * 1e9, bt.nfin
-    vcm, vbn, vbp = _bias(bt)
+    vcm, vbn, vbp = opamp_bias(bt, OpAmpParams())
     lo, hi = round(vcm - 0.15, 3), round(vcm + 0.15, 3)
 
     deck = render_template(template_deck("opamp_miller.spice.tmpl"), {
@@ -201,8 +205,9 @@ def opamp(bt: BenchTech) -> Dict:
             f".model {n} NMOS (LEVEL=72)\n"
             f".model {p} PMOS (LEVEL=72)"
         ),
-        "TEMP": "27", "VDD": f"{vdd}",
-        "VBN": f"{vbn}", "VBP": f"{vbp}", "VCM": f"{vcm}",
+        "TEMP": "27", "VDD_SPEC": f"{vdd}",
+        "VBN": f"{vbn}", "VBP": f"{vbp}",
+        "VINP_SPEC": f"{vcm}", "VINN_SPEC": f"{vcm}",
         "N_PREFIX": "M", "P_PREFIX": "M",
         "N_DEVICE": (
             f"{n} L={ln:.0f}n NFIN={nf} TFIN={tfin_nm:.1f}n"
@@ -239,9 +244,9 @@ def opamp(bt: BenchTech) -> Dict:
         logging.disable(logging.NOTSET)
 
     sweep = np.asarray(results["inp"]); vout = np.asarray(results["vout"])
-    l72_gain, l72_trip, _ = _gain_trip(sweep, vout, vdd)
+    l72_gain, l72_trip, _ = gain_trip(sweep, vout, vdd)
     ng = run_ngspice_opamp(bt, work)
-    ng_gain, ng_trip, _ = _gain_trip(ng["sweep"], ng["vout"], vdd)
+    ng_gain, ng_trip, _ = gain_trip(ng["sweep"], ng["vout"], vdd)
     err = abs(l72_gain - ng_gain) / ng_gain * 100.0 if ng_gain > 0 else float("nan")
     verdict = _verdict(err, 10.0,
                        "L72 or NGSPICE gain undefined/non-positive")

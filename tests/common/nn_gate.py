@@ -68,6 +68,7 @@ from tests.common.nn import nrmse, mre, tech_code_in_vocab  # noqa: E402
 from tests.common.base import (  # noqa: E402
     DEVICE_DECKS, deck_tokens, template_deck, render_deck_text, render_template,
 )
+from tests.common.circuit_benchmarks import nn_model_parameters  # noqa: E402
 from helpers import bake_inst_params  # noqa: E402
 from neural_network.config import CHECKPOINT_DIR, OSDI_PATH  # noqa: E402
 
@@ -90,6 +91,7 @@ TRAN_NRMSE_THRESHOLD = 0.15    # 15% of Vdd
 
 # Inverter VTC threshold
 VTC_NRMSE_THRESHOLD = 0.15     # 15% for inverter VTC
+
 
 # Transient parameters (NMOS-only pulse response)
 TRAN_TSTEP = 10e-12   # 10ps
@@ -730,7 +732,9 @@ def run_pycircuitsim_nn_nmos_dc(
     netlist_path = work_dir / f"nn_{model_name}_nmos_dc_{tech.name}.sp"
 
     # Build model params string
-    model_params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={tech.nn_vt}"
+    model_params = nn_model_parameters(
+        level, tech.nn_tech_key, tech.nn_vt,
+    )
     # Omit MODEL_PATH for stems the parser's per-tech preempt cascade handles
     # (tsmc{5,7,12,16}_dn_* / refac_dn_*) so each tech resolves its OWN
     # checkpoint from TECH= instead of being pinned to whichever single tech the
@@ -877,7 +881,9 @@ def run_pycircuitsim_nn_nmos_tran(
     l_nm = tech.l_nmos * 1e9
     per = TRAN_TR + TRAN_PW + TRAN_TF + max(TRAN_PW, 1.0e-9)
 
-    model_params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={tech.nn_vt}"
+    model_params = nn_model_parameters(
+        level, tech.nn_tech_key, tech.nn_vt,
+    )
     # Omit MODEL_PATH for stems the parser's per-tech preempt cascade handles
     # (tsmc{5,7,12,16}_dn_* / refac_dn_*) so each tech resolves its OWN
     # checkpoint from TECH= instead of being pinned to whichever single tech the
@@ -1047,7 +1053,9 @@ def run_pycircuitsim_nn_pmos_dc(
 
     netlist_path = work_dir / f"nn_{model_name}_pmos_dc_{tech.name}.sp"
 
-    model_params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={tech.effective_pmos_vt}"
+    model_params = nn_model_parameters(
+        level, tech.nn_tech_key, tech.effective_pmos_vt,
+    )
     # Omit MODEL_PATH for stems the parser's per-tech preempt cascade handles
     # (tsmc{5,7,12,16}_dn_* / refac_dn_*) so each tech resolves its OWN
     # checkpoint from TECH= instead of being pinned to whichever single tech the
@@ -1232,11 +1240,15 @@ def run_pycircuitsim_nn_inverter_vtc(
 
     netlist_path = work_dir / f"nn_{model_name}_inverter_vtc_{tech.name}.sp"
 
-    nmos_params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={tech.nn_vt}"
+    nmos_params = nn_model_parameters(
+        level, tech.nn_tech_key, tech.nn_vt,
+    )
     if nmos_model_path is not None and not _cascade_handles_stem(nmos_model_path):
         nmos_params += f" MODEL_PATH={nmos_model_path}"
 
-    pmos_params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={tech.effective_pmos_vt}"
+    pmos_params = nn_model_parameters(
+        level, tech.nn_tech_key, tech.effective_pmos_vt,
+    )
     if pmos_model_path is not None and not _cascade_handles_stem(pmos_model_path):
         pmos_params += f" MODEL_PATH={pmos_model_path}"
 
@@ -1498,11 +1510,15 @@ def run_pycircuitsim_nn_inverter_tran(
     nfin_p = tech.effective_inv_nfin_p
     per = cp.tr + cp.pw + cp.tf + max(cp.pw, 1.0e-9)
 
-    nmos_params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={tech.nn_vt}"
+    nmos_params = nn_model_parameters(
+        level, tech.nn_tech_key, tech.nn_vt,
+    )
     if nmos_model_path is not None and not _cascade_handles_stem(nmos_model_path):
         nmos_params += f" MODEL_PATH={nmos_model_path}"
 
-    pmos_params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={tech.effective_pmos_vt}"
+    pmos_params = nn_model_parameters(
+        level, tech.nn_tech_key, tech.effective_pmos_vt,
+    )
     if pmos_model_path is not None and not _cascade_handles_stem(pmos_model_path):
         pmos_params += f" MODEL_PATH={pmos_model_path}"
 
@@ -2802,7 +2818,7 @@ def _eval_nn_single_op(
         dev_name = "Mn1"
         dev_type = "NMOS"
 
-    params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={vt_key}"
+    params = nn_model_parameters(level, tech.nn_tech_key, vt_key)
     # See B1 note above: let the parser resolve the per-tech checkpoint for
     # cascade-handled stems rather than pinning one tech's net for all techs.
     if model_path is not None and not _cascade_handles_stem(model_path):
@@ -3029,7 +3045,9 @@ def run_pycircuitsim_nn_nmos_idvds(
     from pycircuitsim.visualizer import Visualizer
 
     l_nm = tech.l_nmos * 1e9
-    model_params = f"LEVEL={level} TECH={tech.nn_tech_key} VT={tech.nn_vt}"
+    model_params = nn_model_parameters(
+        level, tech.nn_tech_key, tech.nn_vt,
+    )
     # Omit MODEL_PATH for stems the parser's per-tech preempt cascade handles
     # (tsmc{5,7,12,16}_dn_* / refac_dn_*) so each tech resolves its OWN
     # checkpoint from TECH= instead of being pinned to whichever single tech the

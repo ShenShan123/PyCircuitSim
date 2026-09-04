@@ -1,0 +1,34 @@
+* Nine-device generated-bias mirror fanout
+<MODEL_SETUP>
+Vdd vdd 0 <VDD>
+Vbn bn 0 <BODY_N>
+Iref vdd nbias <IBIAS>
+<N_PREFIX>n_ref nbias nbias 0 bn <N_DEVICE>
+<N_PREFIX>n_out1 o1 nbias 0 bn <N_DEVICE>
+Rout1 vdd o1 50k
+Cout1 o1 0 2f
+<N_PREFIX>n_out2 o2 nbias 0 bn <N_DEVICE>
+Rout2 vdd o2 50k
+Cout2 o2 0 2f
+<N_PREFIX>n_out3 o3 nbias 0 bn <N_DEVICE>
+Rout3 vdd o3 50k
+Cout3 o3 0 2f
+<N_PREFIX>n_out4 o4 nbias 0 bn <N_DEVICE>
+Rout4 vdd o4 50k
+Cout4 o4 0 2f
+<N_PREFIX>n_out5 o5 nbias 0 bn <N_DEVICE>
+Rout5 vdd o5 50k
+Cout5 o5 0 2f
+<N_PREFIX>n_out6 o6 nbias 0 bn <N_DEVICE>
+Rout6 vdd o6 50k
+Cout6 o6 0 2f
+<N_PREFIX>n_out7 o7 nbias 0 bn <N_DEVICE>
+Rout7 vdd o7 50k
+Cout7 o7 0 2f
+<N_PREFIX>n_out8 o8 nbias 0 bn <N_DEVICE>
+Rout8 vdd o8 50k
+Cout8 o8 0 2f
+.ic V(nbias)=<BIAS_N> V(o1)=<VDD> V(o2)=<VDD> V(o3)=<VDD> V(o4)=<VDD> V(o5)=<VDD> V(o6)=<VDD> V(o7)=<VDD> V(o8)=<VDD>
+.temp <TEMP>
+<ANALYSIS>
+.end
