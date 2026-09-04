@@ -11,7 +11,8 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from tests.common.base import (  # noqa: E402
     CIRCUIT_TIERS, TEMPLATES_DIR, SUBCIRCUIT_DECKS,
-    control_deck, deck_tokens, template_deck, render_deck_text,
+    control_deck, deck_tokens, parse_no_options, template_deck,
+    render_deck_text,
 )
 from tests.common.gate_result import GateResult, parse_result_markers  # noqa: E402
 from tests.common.simple_circuit_harness import (  # noqa: E402
@@ -333,4 +334,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    parse_no_options(__doc__ or "")
     raise SystemExit(main())

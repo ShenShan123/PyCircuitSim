@@ -14,7 +14,7 @@ builders so the L72-in-PyCircuitSim run and the NGSPICE run are byte-identical
 circuits — only the simulator differs.
 
 Usage:
-    NGSPICE_BIN=$PWD/tools/ngspice-45.2/bin/ngspice \
+    NGSPICE_BIN=/usr/local/ngspice-45.2/bin/ngspice \
       conda run -n pycircuitsim python tests/diag/diag_l72_circuit_control.py \
       --circuit ring,opamp --tech TSMC5,TSMC7,TSMC12,TSMC16
 """

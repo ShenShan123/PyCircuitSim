@@ -17,6 +17,76 @@ remain in Git history.
 
 ## V7.6 — full-terminal families and closure
 
+### V7.6.9 — harness coverage audit: untested features and engine agreement (2026-09-04)
+
+Asked what the harness does not test at all, rather than whether the catalog is
+consistent. The executable review is
+[`v769-harness-audit.md`](accuracy/v769-harness-audit.md). No diagnostic was
+promoted, no threshold moved, and the frozen `simple-v1` `/20` denominator is
+unchanged.
+
+**Coverage restored.** Three simulator-free gate suites — the catalog contract,
+the 4,854-cell render/parity canary, and the 600-job campaign tooling — were
+reachable only by running each script by hand and never entered
+`pytest -q tests`, the run `tests/README.md` calls authoritative. They are now
+collected. Five V7.5 core gates had been deleted while `tests/common/core_gates.py`
+still advertised them, leaving `Inductor`, `TransientSolver(integration_method=)`
+and in-place `set_temperature` with no test anywhere; transient branch currents
+and the current-source sign convention had none directly. All five questions
+return as hermetic contracts, the RL check against `jwL/(R + jwL)` rather than
+against PyCircuitSim itself. Collected suite: 256 to 357 tests.
+
+**Engine agreement is now checked, not assumed — and one reading was wrong.**
+Candidate/reference parity compares two decks rendered from one template; it
+cannot see a card that NGSPICE honours and PyCircuitSim drops. Every template
+and every rendered deck is now held against the parser's real support surface.
+
+`Parser._parse_value` read `m` as mega where SPICE — and therefore the NGSPICE
+reference — reads milli, and refused `meg`, `mil` and trailing unit text:
+`Rload out 0 1m` was 1 MOhm to the candidate and 1 mOhm to the reference on a
+byte-identical deck, and no parity check could see it. The parser now follows
+SPICE, against a scale-factor table **measured on NGSPICE 45.2** rather than
+declared. `Parser._eval_expr` carried a second copy of the same bug and could
+not evaluate `10n` or `1e-3` in a `{...}` subcircuit parameter at all. Nothing
+in the repository used the suffix, so no result moves.
+
+Directives the parser drops are no longer dropped in silence:
+`Parser.PHYSICAL_DIRECTIVES` names the ones NGSPICE acts on that change the
+circuit, and each is warned once per deck. Presentation-only cards stay quiet,
+and every deck still parses. `.op` is recorded as honoured through the
+no-analysis fallback rather than silenced.
+
+`AGENTS.md` claimed `.options cshunt`/`rshunt` were applied; the only
+implementation was in the AnalogGym bench translator deleted in V7.6.6. The
+contract now states that, keeps the measured V7.5.10 lesson for any
+reimplementation, and the parser warns when it drops the card.
+
+**Enrichment.** Four-terminal currents and the 4x4 transcapacitance matrix now
+accept the same fourteen-corner matrix `verify_device_integrity` already swept,
+opt-in through `--corner` and defaulting to `nominal`, so the charge surface the
+LEVEL=75/76 families exist to provide is no longer measured at one temperature
+and one geometry. `cascode_ac` was the only AC profile with an empty metric
+contract; it now scores each polarity's gain and headlines the worse of the two.
+
+**Repairs.** Ten gate entry points ignored their argument vector — `--tech` was
+silently dropped and `--help` launched NGSPICE on six of them — and now reject
+an unknown flag. Six instructions pointed `NGSPICE_BIN` at a bundled
+`tools/ngspice-45.2` that does not exist in this checkout. Two stale module
+paths and one empty directory were removed.
+
+**One regression, caught and fixed.** Reordering `UNIT_SUFFIXES` broke
+`_eval_expr`'s dict lookup and took `verify_subckt` from 11/11 to 7/8. The
+collected unit suite stayed green throughout; only re-running the
+simulator-backed gates found it. Both the lookup and the exponent handling are
+now under contract, and the gate is back at 11/11.
+
+**Kept, with the reason recorded.** `verify_nn_inverter`/`verify_nn_dc` are
+configuration subsets of the parametric gates and call the same suite bodies,
+but apply the tight qualification thresholds where the parametric gates apply
+loose stress thresholds; that is one gate per question. The two full-terminal
+family contract modules duplicate four questions across families and are
+flagged for a parametrized merge rather than merged unilaterally.
+
 ### V7.6.8 — fail-closed circuit evidence and missing-model coverage (2026-09-03)
 
 Kept the published simple-v1 `/20` score unchanged and froze SHA-256 hashes for

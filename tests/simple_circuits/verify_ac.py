@@ -26,7 +26,7 @@ Two levels, both gated against ground truth (never a self-defined equation):
 Run CPU-pinned, with the repo ngspice (AGENTS.md gate methodology):
 
     CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \\
-        NGSPICE_BIN="$PWD/tools/ngspice-45.2/bin/ngspice" \\
+        NGSPICE_BIN="/usr/local/ngspice-45.2/bin/ngspice" \\
         python tests/simple_circuits/verify_ac.py
 """
 from __future__ import annotations
@@ -44,6 +44,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 from tests.common.base import (
     OSDI_PATH,
     control_deck,
+    parse_no_options,
     template_deck,
     render_template,
     run_ngspice_subprocess,
@@ -512,4 +513,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    parse_no_options(__doc__ or "")
     sys.exit(main())

@@ -25,7 +25,7 @@ remains visible instead of silently changing the experiment.
 Run CPU-pinned, repo ngspice (AGENTS.md gate methodology):
 
     CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \\
-        NGSPICE_BIN="$PWD/tools/ngspice-45.2/bin/ngspice" \\
+        NGSPICE_BIN="/usr/local/ngspice-45.2/bin/ngspice" \\
         python tests/simple_circuits/verify_nn_ac.py --tech TSMC12
 """
 from __future__ import annotations

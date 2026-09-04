@@ -1,4 +1,13 @@
-"""Four-terminal physical diagnostics for NN compact models."""
+"""Four-terminal physical diagnostics for NN compact models.
+
+Currents and the 4x4 transcapacitance matrix are the surfaces the full-terminal
+LEVEL=75/76 families add, and until V7.6.9 both were measured at one nominal
+geometry and one nominal temperature — while ``device_integrity`` already swept
+the same device across all fourteen declared corners. A charge model can be
+exact at 27 C / NFIN=2 and wrong at 125 C or NFIN=5, so the corner axis is now
+the same one, opt-in through ``--corner`` and defaulting to ``nominal`` so no
+existing campaign denominator moves.
+"""
 from __future__ import annotations
 
 import math
@@ -17,11 +26,15 @@ from tests.common.circuit_benchmarks import (
     run_directnet_dc_sweep,
     run_ngspice_wrdata,
 )
+from tests.common.device_integrity import device_corner_applies
 from tests.common.gate_result import GateResult
 from tests.common.simple_circuit_catalog import AnalysisSpec
 from tests.common.simple_circuit_harness import (
+    CORNERS,
+    Corner,
     RunSpec,
     Trace,
+    apply_corner,
     analysis_endpoint_tolerance,
     analysis_minimum_points,
     analysis_max_step,
@@ -332,6 +345,7 @@ def run_terminal_current_sweep(
     sweep: TerminalSweep,
     work_dir: Path,
     run_spec: RunSpec,
+    corner: Corner = CORNERS["nominal"],
 ) -> GateResult:
     """Run and compare one physical four-terminal current sweep."""
     provenance = run_spec.result_fields()
@@ -449,7 +463,7 @@ def run_terminal_current_sweep(
         return GateResult(
             case_id="terminal_currents",
             tech=bt.name,
-            corner="nominal",
+            corner=corner.name,
             analysis=f"{device}_{sweep.name}",
             role="diagnostic",
             status="diagnostic",
@@ -461,7 +475,7 @@ def run_terminal_current_sweep(
         return GateResult(
             case_id="terminal_currents",
             tech=bt.name,
-            corner="nominal",
+            corner=corner.name,
             analysis=f"{device}_{sweep.name}",
             role="diagnostic",
             status="error",
@@ -594,6 +608,7 @@ def run_terminal_capacitance_bias(
     bias: TerminalBias,
     work_dir: Path,
     run_spec: RunSpec,
+    corner: Corner = CORNERS["nominal"],
 ) -> GateResult:
     """Build and compare the complete four-terminal quasi-static C matrix."""
     provenance = run_spec.result_fields()
@@ -673,7 +688,7 @@ def run_terminal_capacitance_bias(
         return GateResult(
             case_id="terminal_capacitance",
             tech=bt.name,
-            corner="nominal",
+            corner=corner.name,
             analysis=f"{device}_{bias.name}",
             role="diagnostic",
             status="diagnostic",
@@ -685,7 +700,7 @@ def run_terminal_capacitance_bias(
         return GateResult(
             case_id="terminal_capacitance",
             tech=bt.name,
-            corner="nominal",
+            corner=corner.name,
             analysis=f"{device}_{bias.name}",
             role="diagnostic",
             status="error",
@@ -707,23 +722,52 @@ def run_terminal_capacitance_bias(
         )
 
 
+def terminal_corner_applies(
+    base_bt: BenchTech,
+    device: str,
+    corner: Corner,
+) -> bool:
+    """Whether a corner changes a field these source-relative decks observe.
+
+    Delegates to the device-integrity rule so the two single-device gates
+    cannot disagree about which corners are no-ops for a polarity — a corner
+    that changes nothing must not create a denominator row.
+    """
+    return device_corner_applies(base_bt, device, corner)
+
+
 def run_terminal_integrity(
     bt: BenchTech,
     devices: Sequence[str],
     work_dir: Path,
     run_spec: RunSpec,
+    corner: Corner = CORNERS["nominal"],
 ) -> List[GateResult]:
-    """Run all declared terminal-current and transcapacitance diagnostics."""
+    """Run all declared terminal-current and transcapacitance diagnostics.
+
+    ``bt`` is the *base* technology; the corner is applied here so that the
+    sweep and bias grids are built from the stressed supply, and so the caller
+    cannot pass a stressed profile and an unrelated corner label.
+    """
+    selected = [device for device in devices
+                if terminal_corner_applies(bt, device, corner)]
+    if not selected:
+        # ``apply_corner`` raises for a stress this technology cannot express
+        # (TSMC7 has no alternate trained VT). Filtering first keeps that an
+        # empty result rather than an infrastructure error, exactly as
+        # ``run_device_suites`` does.
+        return []
+    stressed = apply_corner(bt, corner)
     results: List[GateResult] = []
-    for device in devices:
-        for sweep in terminal_sweeps(bt, device):
+    for device in selected:
+        for sweep in terminal_sweeps(stressed, device):
             results.append(run_terminal_current_sweep(
-                bt, device, sweep, work_dir / device / "dc" / sweep.name,
-                run_spec,
+                stressed, device, sweep,
+                work_dir / device / "dc" / sweep.name, run_spec, corner,
             ))
-        for bias in terminal_biases(bt, device):
+        for bias in terminal_biases(stressed, device):
             results.append(run_terminal_capacitance_bias(
-                bt, device, bias, work_dir / device / "ac" / bias.name,
-                run_spec,
+                stressed, device, bias,
+                work_dir / device / "ac" / bias.name, run_spec, corner,
             ))
     return results

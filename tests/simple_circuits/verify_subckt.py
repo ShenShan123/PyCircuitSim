@@ -44,7 +44,7 @@ from tests.common.bsimcmg_tran import (  # noqa: E402
     OSDI_PATH,
 )
 from tests.common.base import (  # noqa: E402
-    SUBCIRCUIT_DECKS, control_deck, render_template,
+    SUBCIRCUIT_DECKS, control_deck, parse_no_options, render_template,
 )
 from tests.common.simple_circuit_harness import Trace  # noqa: E402
 
@@ -618,4 +618,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    parse_no_options(__doc__ or "")
     sys.exit(main())

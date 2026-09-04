@@ -8,13 +8,14 @@ DC and transient common modules.
 """
 from __future__ import annotations
 
+import argparse
 import os
 import re
 import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import numpy as np
 import matplotlib
@@ -103,6 +104,28 @@ def control_deck(name: str) -> Path:
     if not path.is_file():
         raise FileNotFoundError(f"no solver control owns {name!r}")
     return path
+
+
+def parse_no_options(description: str, argv: Optional[List[str]] = None) -> None:
+    """Give a fixed-matrix gate the repo's argparse surface.
+
+    A gate whose matrix is not selectable still has to answer ``--help`` and
+    reject an unknown flag. Without this, ``--tech TSMC5`` on such a gate is
+    silently dropped and the operator reads a full-matrix result as if it were
+    the requested subset — the same failure mode the accuracy CLIs already
+    guard against by rejecting unknown technologies before running.
+
+    Args:
+        description: One-line gate description shown by ``--help``.
+        argv: Argument vector to check (default: ``sys.argv[1:]``).
+
+    Raises:
+        SystemExit: On ``--help`` (code 0) or any unexpected argument (code 2).
+    """
+    parser = argparse.ArgumentParser(
+        description=f"{description} This gate runs a fixed matrix and takes "
+                    "no options.")
+    parser.parse_args(sys.argv[1:] if argv is None else argv)
 
 
 from helpers import bake_inst_params as bake_inst_params  # noqa: F401, E402

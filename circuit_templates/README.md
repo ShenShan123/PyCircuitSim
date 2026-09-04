@@ -89,6 +89,27 @@ The common parameter groups are:
 | Loading | `OUTPUT_LOAD` and topology-specific load tokens | Add or change output capacitance, resistance, and fanout |
 | Analysis | `ANALYSIS` | Insert the gate-owned `.op`, `.dc`, `.tran`, or `.ac` card |
 
+### What a template may not contain
+
+A template may only use cards and value syntax that NGSPICE and PyCircuitSim
+read identically. This is not covered by candidate/reference parity: both decks
+render from the same file, so a card that one engine honours and the other
+drops produces two different problems and a clean parity report.
+`tests/test_deck_engine_compatibility.py` enforces the rule against the
+parser's real support surface in `tests/common/parser_support.py`. Two limits
+it exists to catch:
+
+- `.options`, `.nodeset`, `.param` and the other directives
+  `Parser.parse_line` does not implement are dropped. Those that change the
+  circuit are named in `Parser.PHYSICAL_DIRECTIVES` and warn when dropped, but
+  a template must not carry one at all. `.op` is the one card that looks
+  unhandled and is not: it leaves `analysis_type` unset, which the runner reads
+  as "single DC operating point", so both engines agree.
+- Values use SPICE scale factors and V7.6.9 corrected the parser to match
+  NGSPICE, so `1m` is milli, `1meg` is mega, and `2.2kohm` is 2200 in both
+  engines. Before that fix `m` meant mega here, a 1e9 divergence on a
+  byte-identical deck.
+
 A token exists so that one topology can serve several experiments. The opamp's
 source specs (`VDD_SPEC`, `VINP_SPEC`, `VINN_SPEC`) are the worked example:
 their defaults render byte-identically to the pre-token deck, which is what

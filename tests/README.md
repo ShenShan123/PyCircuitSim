@@ -6,17 +6,45 @@ and every persistent simulator artifact is written below `results/`.
 
 ## Layout
 
+Two kinds of test live here and they are collected differently.
+
+**Gate scripts** are `verify_*.py` / `diag_*.py` entry points, grouped by the
+tier of circuit they gate. They are run by hand or by a campaign, and most need
+NGSPICE, a PDK card, and an NN checkpoint:
+
 - `common/` provides strict template rendering, technology profiles, candidate
   and LEVEL=72 adapters, trace comparison, and campaign result contracts.
 - `single_devices/` verifies four-terminal currents and the 4x4 physical
-  transcapacitance matrix, geometry coverage, lifted-source behavior,
-  compact-model device sweeps, and — through
+  transcapacitance matrix across the declared corner matrix, geometry
+  coverage, lifted-source behavior, compact-model device sweeps, and — through
   `verify_device_integrity.py` — the output characteristic, subthreshold
   decades, triode region, and `gm`/`gds`/`gmb` against ground truth.
 - `simple_circuits/` verifies operating point, DC, transient, AC, topology
   parity, parameter corners, and accuracy-campaign tooling.
 - `perf/` contains opt-in performance and solution-basin checks.
 - `diag/` contains explanatory probes that are not release gates.
+
+**Contract modules** are the `test_*.py` files at this directory's root. They
+need no simulator and run in the collected `pytest` suite. Each owns one seam:
+
+| Module | Seam it holds |
+|---|---|
+| `test_circuit_harness_contracts.py` | the catalog-driven experiment seam: frozen renders, trace/metric validity, physical parity, provenance, collectors, and the gate CLIs |
+| `test_v767_template_tiers.py` | tier resolution and the frozen token defaults |
+| `test_deck_engine_compatibility.py` | cards and value syntax both engines must read identically |
+| `test_core_device_contracts.py` | the non-compact-model core: `Inductor`, integration method, current-source sign, transient branch currents, temperature rebinding |
+| `test_subcircuit_harness_contracts.py` | the standalone hierarchy harness |
+| `test_reduced_osdi_boundary.py`, `test_raw_directnet_boundary.py` | the two device-evaluation boundaries |
+| `test_v760_*`, `test_v761_*`, `test_v764_*` | full-terminal dataset, family, and corridor contracts |
+| `test_v7517_coverage_contracts.py` | dataset splits, provenance, and campaign coverage |
+| `test_hermetic_gate_suites.py` | wiring, not assertions: runs the three simulator-free gate suites |
+
+Three gate scripts need no simulator at all —
+`verify_simple_circuit_catalog.py`, `verify_circuit_sweep_canaries.py`, and
+`verify_accuracy_campaign_tools.py`. They stay runnable as scripts for a
+campaign operator and are also executed by `test_hermetic_gate_suites.py`, so
+the collected run covers them. A new simulator-free gate suite belongs in that
+list.
 
 ## Test contract
 
@@ -40,6 +68,17 @@ and every persistent simulator artifact is written below `results/`.
   below a non-scoring diagnostic key. Required event metrics must be finite.
 - Every structured row records model family/level, explicit checkpoint pins,
   campaign provenance when present, and CPU thread settings.
+- Every card and value in a rendered deck must mean the same thing to both
+  engines. Deck-to-deck parity cannot see a card one engine honours and the
+  other silently drops, so `test_deck_engine_compatibility.py` holds every
+  template and rendered deck against the parser's real support surface. Its
+  scale-factor table in `common/parser_support.py` was measured on NGSPICE
+  45.2, not copied from the parser: a reference the candidate defines is not a
+  reference. `Parser.PHYSICAL_DIRECTIVES` warns when a dropped card would have
+  changed the circuit.
+- A gate that takes no options still answers `--help` and rejects an unknown
+  flag (`common/base.py:parse_no_options`). A silently ignored `--tech` would
+  let an operator read a full-matrix result as the subset they asked for.
 - Generated `.sp`, `.cir`, CSV, JSON, logs, plots, and reports belong under
   `results/tests/` or another campaign directory below `results/`, never here.
 

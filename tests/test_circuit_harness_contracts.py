@@ -24,6 +24,7 @@ from tests.common.simple_circuit_harness import (
     analysis_applies_to_corner,
     applicable_analyses,
     clock_hold_samples,
+    compare_traces,
     connectivity_signature,
     get_case_baked_modelcard,
     physical_deck_mismatch,
@@ -803,6 +804,48 @@ def test_device_integrity_skips_fully_unsupported_corner_before_applying_it(
     ) == []
 
 
+def test_terminal_integrity_sweeps_the_same_corner_matrix_as_device_integrity(
+    tmp_path: Path,
+) -> None:
+    """The charge surface must be reachable at the corners the current one is.
+
+    Currents and the 4x4 transcapacitance matrix were nominal-only through
+    V7.6.8, so a full-terminal family could be exact at 27 C and wrong at
+    125 C with no row to say so. The two single-device gates now share one
+    applicability rule, and a corner that is a no-op for a polarity still
+    creates no denominator row.
+    """
+    from tests.common.device_integrity import device_corner_applies
+    from tests.common.terminal_integrity import (
+        run_terminal_integrity, terminal_corner_applies,
+    )
+
+    for device in ("nmos", "pmos"):
+        for corner in CORNERS.values():
+            assert terminal_corner_applies(
+                BENCH["TSMC12"], device, corner,
+            ) is device_corner_applies(BENCH["TSMC12"], device, corner)
+
+    # TSMC7 has no alternate VT pair, so the corner cannot be applied at all
+    # and must produce nothing rather than an unlabelled nominal repeat.
+    assert run_terminal_integrity(
+        BENCH["TSMC7"], ["nmos", "pmos"], tmp_path,
+        RunSpec(model_level=73, model_family="DirectNet"),
+        CORNERS["vt_alternate"],
+    ) == []
+
+
+def test_terminal_integrity_rows_carry_the_requested_corner_label() -> None:
+    """A stressed row that still reported ``nominal`` would corrupt collection."""
+    import inspect
+
+    from tests.common import terminal_integrity
+
+    source = inspect.getsource(terminal_integrity)
+    assert 'corner="nominal"' not in source
+    assert source.count("corner=corner.name") == 4
+
+
 def test_declared_nn_stress_matrix_includes_vt_and_independent_geometry() -> None:
     assert {
         "vt_alternate", "vt_asymmetric", "ln_20", "lp_16", "nfin_high",
@@ -1170,6 +1213,42 @@ def test_structured_contract_rejects_nonfinite_derived_metric() -> None:
         "TSMC12",
         [derived],
     )
+
+
+def test_cascode_ac_scores_each_polarity_and_headlines_the_worse() -> None:
+    """The complementary cascode's small-signal gain must reach the row.
+
+    Until V7.6.9 ``cascode_ac`` was the only AC profile with an empty metric
+    contract, so a cascode whose NMOS branch had lost half its gain reported
+    the same trace NRMSE as one that had not. Averaging the two branches is
+    equally wrong: NMOS and PMOS are separate NN checkpoints, so one healthy
+    polarity must not cover for the other.
+    """
+    analysis = next(
+        item
+        for case in cases() if case.case_id == "cascode_stack"
+        for item in case.analyses if item.name == "gain"
+    )
+    frequencies = np.asarray([1e3, 1e4, 1e5])
+    reference = Trace(
+        "frequency", frequencies,
+        {"v(nac)": np.full(3, 20.0 + 0j), "v(pac)": np.full(3, 10.0 + 0j)},
+        reference=True,
+    )
+    candidate = Trace(
+        "frequency", frequencies,
+        {"v(nac)": np.full(3, 10.0 + 0j), "v(pac)": np.full(3, 9.5 + 0j)},
+    )
+
+    _, domain = compare_traces(candidate, reference, analysis, vdd=0.8)
+
+    assert domain["nmos_gain_error_pct"] == pytest.approx(50.0)
+    assert domain["pmos_gain_error_pct"] == pytest.approx(5.0)
+    assert domain["cascode_gain_worst_error_pct"] == pytest.approx(50.0)
+    assert analysis.headline_metric == "cascode_gain_worst_error_pct"
+    validate_analysis_metrics(analysis, {
+        "mre_pct": 0.0, "r2": 1.0, "nrmse_pct": 0.0, "max_err": 0.0,
+    }, domain)
 
 
 def test_catalog_declares_domain_headline_metrics() -> None:

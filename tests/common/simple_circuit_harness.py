@@ -252,19 +252,18 @@ class Trace:
             self.signals[name] = array
 
 
-_ANALYSIS_SUFFIXES: Dict[str, float] = {
-    "t": 1e12, "g": 1e9, "m": 1e6, "k": 1e3,
-    "u": 1e-6, "n": 1e-9, "p": 1e-12, "f": 1e-15,
-}
-
-
 def _analysis_number(raw: str) -> float:
-    """Parse the numeric subset accepted in analysis cards."""
-    token = raw.strip()
-    suffix = token[-1].lower() if len(token) > 1 else ""
-    if suffix in _ANALYSIS_SUFFIXES:
-        return float(token[:-1]) * _ANALYSIS_SUFFIXES[suffix]
-    return float(token)
+    """Parse one number out of an analysis card.
+
+    Delegates to the netlist parser so an axis limit derived here and the value
+    the simulator actually uses can never disagree.  This module previously
+    carried its own suffix table that read ``m`` as mega, the same divergence
+    from NGSPICE that ``Parser.UNIT_SUFFIXES`` carried until V7.6.9; a
+    ``.tran 1n 10m`` card would have declared a 10 Ms axis for a 10 ms sweep.
+    """
+    from pycircuitsim.parser import Parser
+
+    return Parser._parse_value(raw)
 
 
 def analysis_axis_limits(analysis: AnalysisSpec) -> Tuple[float, float]:
@@ -1878,7 +1877,18 @@ def _period(axis: np.ndarray, values: np.ndarray, level: float) -> float:
 #: the catalog vocabulary and the runtime evidence contract: an event metric
 #: that cannot be measured is an error, not a present-but-NaN result.
 METRIC_CONTRACTS: Dict[str, Tuple[str, ...]] = {
-    "trace": (), "transient": (), "ac": (), "cascode_ac": (),
+    "trace": (), "transient": (), "ac": (),
+    # V7.6.9: this was the only AC profile in the catalog with no domain
+    # metric, so the complementary cascode's small-signal gain — the quantity
+    # the stage exists to produce — was scored as trace NRMSE alone. Bandwidth
+    # is deliberately not required: the AC branches carry a resistive load and
+    # no explicit output capacitance, so the -3 dB point need not fall inside
+    # the declared sweep (the V7.6.8 common-source correction).
+    "cascode_ac": (
+        "nmos_gain_test", "nmos_gain_ref", "nmos_gain_error_pct",
+        "pmos_gain_test", "pmos_gain_ref", "pmos_gain_error_pct",
+        "cascode_gain_worst_error_pct",
+    ),
     "common_source_ac": (
         "gain_test", "gain_ref", "gain_error_pct", "bandwidth_test_hz",
         "bandwidth_ref_hz", "bandwidth_error_pct",
@@ -2086,6 +2096,23 @@ def _domain_metrics(
             domain["bulk_response_max_error_v"] = float(np.max(np.abs(
                 candidate[bulk] - reference[bulk]
             )))
+    if profile == "cascode_ac" and len(names) >= 2:
+        # Score the NMOS and PMOS branches separately and headline the worse
+        # of the two. Averaging them would let a healthy polarity mask a
+        # broken one, and the two branches are two different networks in the
+        # NN — nmos and pmos are separate checkpoints.
+        worst = 0.0
+        for polarity, output in zip(("nmos", "pmos"), names):
+            gain_test = float(np.abs(candidate[output][0]))
+            gain_ref = float(np.abs(reference[output][0]))
+            error = _relative_error(gain_test, gain_ref)
+            domain.update({
+                f"{polarity}_gain_test": gain_test,
+                f"{polarity}_gain_ref": gain_ref,
+                f"{polarity}_gain_error_pct": error,
+            })
+            worst = max(worst, error)
+        domain["cascode_gain_worst_error_pct"] = worst
     if profile == "active_load_op" and len(names) >= 2:
         domain.update(
             output_error_v=abs(float(np.real(

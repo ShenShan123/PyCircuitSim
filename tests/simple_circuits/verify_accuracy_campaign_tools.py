@@ -33,6 +33,7 @@ from pycircuitsim.solver import (
 )
 from pycircuitsim.circuit import Circuit
 from pycircuitsim.models.passive import VoltageSource
+from tests.common.base import parse_no_options
 from tests.common.gate_result import GateResult
 from tests.common.simple_circuit_catalog import SIMPLE_V1, SIMPLE_V2, get_case
 from tests.common.simple_circuit_harness import analysis_metric_vocabulary
@@ -1286,4 +1287,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    parse_no_options(__doc__ or "")
     raise SystemExit(main())

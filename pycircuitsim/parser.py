@@ -49,13 +49,21 @@ Ground:
 - "0" and "gnd" (any case) are the global ground spellings; both are
   canonicalized to "0" at parse time, at top level and inside subcircuits.
 
-Value suffixes supported:
-- k/K: kilo (1e3)
-- u/U: micro (1e-6)
-- n/N: nano (1e-9)
-- p/P: pico (1e-12)
+Value scale factors (SPICE semantics, case-insensitive, longest match first,
+trailing unit text ignored — see Parser.UNIT_SUFFIXES):
+- t: tera (1e12)        - m: milli (1e-3)
+- g: giga (1e9)         - u: micro (1e-6)
+- meg: mega (1e6)       - n: nano (1e-9)
+- k: kilo (1e3)         - p: pico (1e-12)
+- mil: 25.4e-6          - f: femto (1e-15)
+
+Directives NGSPICE acts on that this parser does not implement are dropped;
+those that change the circuit are named in Parser.PHYSICAL_DIRECTIVES and are
+warned about, because a silent drop makes the two engines solve different
+circuits from one deck.
 """
 from typing import Any, Dict, Optional, Set, Tuple
+import logging
 import math
 import os
 import re
@@ -66,6 +74,8 @@ from pathlib import Path
 _NN_PARENT = Path(__file__).resolve().parent.parent / "external_compact_models"
 if str(_NN_PARENT) not in sys.path:
     sys.path.insert(0, str(_NN_PARENT))
+
+_logger = logging.getLogger(__name__)
 
 from pycircuitsim.circuit import Circuit
 from pycircuitsim.models import (
@@ -470,25 +480,34 @@ class Parser:
         models: Dictionary of model definitions (name -> type + params)
     """
 
-    # Unit suffix multipliers
-    UNIT_SUFFIXES = {
-        't': 1e12,  # tera
-        'T': 1e12,
-        'g': 1e9,   # giga
-        'G': 1e9,
-        'm': 1e6,   # mega (milli is less common in circuits)
-        'M': 1e6,
-        'k': 1e3,   # kilo
-        'K': 1e3,
-        'u': 1e-6,  # micro
-        'U': 1e-6,
-        'n': 1e-9,  # nano
-        'N': 1e-9,
-        'p': 1e-12, # pico
-        'P': 1e-12,
-        'f': 1e-15, # femto
-        'F': 1e-15,
-    }
+    #: SPICE scale-factor suffixes, longest spelling first so that MEG and MIL
+    #: are matched before the single-character M.  Matching is
+    #: case-insensitive and any trailing unit text is ignored, exactly as
+    #: NGSPICE does: `1kohm` is 1e3 and `10uF` is 1e-5.
+    #:
+    #: V7.6.9: `m` used to mean 1e6 here on the reasoning that "milli is less
+    #: common in circuits".  NGSPICE — the ground-truth engine every gate
+    #: compares against — reads `m` as milli and `meg` as mega, so a deck
+    #: carrying `Rload out 0 1m` rendered byte-identically for both engines and
+    #: described two circuits nine orders of magnitude apart.  Deck-to-deck
+    #: parity cannot see that, which is why it survived until the V7.6.9
+    #: harness audit.  No deck in this repository used the suffix.
+    UNIT_SUFFIXES: Tuple[Tuple[str, float], ...] = (
+        ('meg', 1e6),
+        ('mil', 25.4e-6),
+        ('t', 1e12),
+        ('g', 1e9),
+        ('k', 1e3),
+        ('m', 1e-3),
+        ('u', 1e-6),
+        ('n', 1e-9),
+        ('p', 1e-12),
+        ('f', 1e-15),
+    )
+
+    #: A number with an optional SPICE scale factor and trailing unit text.
+    _VALUE_PATTERN = re.compile(
+        r'^([+-]?(?:\d+\.?\d*|\.\d+)(?:[eE][+-]?\d+)?)([a-zA-Z]*)$')
 
     #: Node names that denote global ground, compared case-insensitively
     #: (audit C6i). These are exactly the spellings the rest of the codebase
@@ -537,6 +556,9 @@ class Parser:
         # parse_file and flattened names share one global namespace, so a
         # cross-file repeat is a genuine duplicate.
         self._seen_inst_paths: Set[str] = set()
+        # Physics-changing directives already reported for this parser, so a
+        # 400-line deck warns once per directive rather than once per card.
+        self._warned_directives: Set[str] = set()
         self._osdi_path = osdi_path or BSIMCMG_OSDI_PATH
         self._modelcard_base_dir = modelcard_base_dir or GENERIC_MODELCARD_DIR
         self._explicit_modelcard = modelcard_path
@@ -708,37 +730,87 @@ class Parser:
             # into silence, so a top-level `Nm1 ...` (ngspice OSDI prefix) or
             # `L1 ...` parsed to a circuit with the device simply GONE — the
             # one failure mode that yields a plausible-looking wrong number
-            # instead of an error. Unknown `.`-directives stay ignored (repo
-            # decks carry `.end`, `.option`, `.measure`, ...).
+            # instead of an error. Unknown `.`-directives are still dropped
+            # rather than rejected — real decks carry `.end`, `.option`,
+            # `.measure` — but the ones that change the circuit are announced
+            # by `_note_ignored_directive`.
             raise ValueError(
                 f"Unrecognized device card (unsupported device type): {line}")
-        # Ignore other directives (.option, .measure, etc.)
+        else:
+            self._note_ignored_directive(line)
 
-    def _parse_value(self, value_str: str) -> float:
+    #: Directives NGSPICE acts on that change the physical problem, and that
+    #: this parser does not implement. Dropping one silently makes the two
+    #: engines solve different circuits from the same deck text, which no
+    #: deck-to-deck parity check can detect — so the drop is announced.
+    #: `.options cshunt/rshunt` is the worked example: NGSPICE stamps a
+    #: capacitor or resistor from every node to ground at parse time.
+    PHYSICAL_DIRECTIVES: Set[str] = {
+        '.disto', '.global', '.nodeset', '.noise', '.option', '.options',
+        '.param', '.pz', '.sens',
+    }
+
+    def _note_ignored_directive(self, line: str) -> None:
+        """Warn once per deck about a dropped directive that changes physics.
+
+        Presentation-only cards (`.end`, `.print`, `.save`, `.measure`, ...)
+        are dropped without comment: they do not change the circuit NGSPICE
+        solves, so ignoring them keeps the two engines in agreement.
         """
-        Convert a value string with optional unit suffix to a float.
+        directive = line.split()[0].lower() if line.split() else ''
+        if directive not in self.PHYSICAL_DIRECTIVES:
+            return
+        if directive in self._warned_directives:
+            return
+        self._warned_directives.add(directive)
+        _logger.warning(
+            "%s is not implemented and was ignored; NGSPICE applies it, so "
+            "this deck describes a different circuit in each engine: %s",
+            directive, line,
+        )
+
+    @classmethod
+    def _parse_value(cls, value_str: str) -> float:
+        """
+        Convert a value string with an optional SPICE scale factor to a float.
+
+        Follows NGSPICE: the scale factor is case-insensitive, MEG and MIL are
+        matched before M, and any trailing unit text is ignored. Reading a
+        value differently from the reference engine is not a loud failure —
+        both decks still render identically and both engines still converge —
+        so this must agree with NGSPICE rather than be merely self-consistent.
 
         Args:
-            value_str: Value string (e.g., "1k", "10u", "3.3", "100p")
+            value_str: Value string (e.g., "1k", "10u", "3.3", "100p", "1meg",
+                "2.2kohm")
 
         Returns:
             Floating point value
 
+        Raises:
+            ValueError: If the string is not a number with an optional scale
+                factor.
+
         Examples:
-            >>> parser._parse_value("1k")
+            >>> Parser._parse_value("1k")
             1000.0
-            >>> parser._parse_value("10n")
-            1e-08
-            >>> parser._parse_value("3.3")
+            >>> Parser._parse_value("1m")
+            0.001
+            >>> Parser._parse_value("1meg")
+            1000000.0
+            >>> Parser._parse_value("3.3")
             3.3
         """
-        # Check if the last character is a unit suffix
-        if len(value_str) > 1 and value_str[-1] in self.UNIT_SUFFIXES:
-            multiplier = self.UNIT_SUFFIXES[value_str[-1]]
-            return float(value_str[:-1]) * multiplier
-
-        # No suffix, just convert to float
-        return float(value_str)
+        match = cls._VALUE_PATTERN.match(value_str.strip())
+        if match is None:
+            raise ValueError(f"Invalid numeric value: {value_str!r}")
+        number, suffix = match.group(1), match.group(2).lower()
+        for spelling, multiplier in cls.UNIT_SUFFIXES:
+            if suffix.startswith(spelling):
+                return float(number) * multiplier
+        # No recognized scale factor: any trailing text is a unit name, which
+        # NGSPICE also ignores ("2.2ohm" is 2.2).
+        return float(number)
 
     @classmethod
     def _canon_node(cls, node: str) -> str:
@@ -1783,11 +1855,20 @@ class Parser:
         the residue is charset-checked.
         """
         def _num(m: "re.Match") -> str:
-            return repr(float(m.group(1)) * self.UNIT_SUFFIXES[m.group(2)])
+            return repr(self._parse_value(m.group(0)))
 
-        # Numeric literals with unit suffixes -> plain floats
+        # Numeric literals with scale factors -> plain floats. The whole
+        # alphabetic run is consumed and handed to _parse_value so an
+        # expression reads `2meg` and `2.2kohm` exactly as a card value does;
+        # a number followed by letters is always a scaled literal here,
+        # because SPICE expressions have no implicit multiplication.
+        #
+        # The lookahead keeps a scientific-notation exponent out of the suffix.
+        # Without it the engine backtracks `1e-3*2` into `1` + suffix `e`,
+        # substitutes 1.0, and evaluates the remaining `-3*2` to -5 — a wrong
+        # number rather than an error.
         substituted = re.sub(
-            r'(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)([tTgGmMkKuUnNpPfF])\b',
+            r'(\d+(?:\.\d+)?(?:[eE][+-]?\d+)?)(?![eE][+-]?\d)([A-Za-z]+)\b',
             _num, expr)
 
         def _ident(m: "re.Match") -> str:
@@ -1802,7 +1883,12 @@ class Parser:
             raise ValueError(
                 f"Unknown parameter '{m.group(0)}' in expression '{expr}'")
 
-        substituted = re.sub(r'[A-Za-z_][A-Za-z_0-9]*', _ident, substituted)
+        # A letter that follows a digit or a decimal point belongs to a
+        # numeric literal's exponent, not to a parameter name: `10n` becomes
+        # `1e-08` above, and without this guard the `e` is looked up as a
+        # parameter and every scaled literal fails to evaluate.
+        substituted = re.sub(
+            r'(?<![0-9.])[A-Za-z_][A-Za-z_0-9]*', _ident, substituted)
         if not re.fullmatch(r"[-+*/(). 0-9eE]*", substituted):
             raise ValueError(f"Unsupported syntax in expression '{expr}'")
         try:

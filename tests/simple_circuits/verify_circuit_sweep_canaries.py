@@ -19,7 +19,9 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BENCH_TECHS, RingOscParams, directnet_ringosc,
     ngspice_ringosc,
 )
-from tests.common.base import deck_tokens, template_deck, render_deck_text  # noqa: E402
+from tests.common.base import (  # noqa: E402
+    deck_tokens, parse_no_options, template_deck, render_deck_text,
+)
 from tests.common.simple_circuit_catalog import CASES  # noqa: E402
 from tests.common.simple_circuit_harness import (  # noqa: E402
     CORNERS, analysis_applies_to_corner, render_case_decks, topology_mismatch,
@@ -128,4 +130,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    parse_no_options(__doc__ or "")
     raise SystemExit(main())

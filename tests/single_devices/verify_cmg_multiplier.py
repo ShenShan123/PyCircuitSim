@@ -46,7 +46,9 @@ from tests.common.core_gates import (
     rel_err,
     report,
 )
-from tests.common.base import DEVICE_DECKS, template_deck, render_template
+from tests.common.base import (
+    DEVICE_DECKS, parse_no_options, template_deck, render_template,
+)
 
 RESULTS_DIR = PROJECT_ROOT / "results" / "tests" / "cmg_multiplier"
 
@@ -389,4 +391,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    parse_no_options(__doc__ or "")
     sys.exit(main())

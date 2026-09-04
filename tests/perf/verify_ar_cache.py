@@ -45,6 +45,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 
+from tests.common.base import parse_no_options  # noqa: E402
 import neural_network.models.transformer as transformer_mod  # noqa: E402
 from neural_network.config import CHECKPOINT_DIR  # noqa: E402
 from neural_network.models.transformer import TransformerEncoderModel  # noqa: E402
@@ -265,4 +266,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    parse_no_options(__doc__ or "")
     sys.exit(main())

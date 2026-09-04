@@ -6,7 +6,7 @@ to generate BSIM-CMG data, train a compact model, and increase validation scope
 from devices to circuits while keeping NGSPICE on the identical OSDI model as
 ground truth.
 
-Current release: **V7.6.6**.
+Current release: **V7.6.9**.
 
 LEVEL=73 DirectNet `large` is the served NN path. LEVEL=74 is the optional
 autoregressive family. LEVEL=75 and 76 remain experimental and are not served
@@ -440,7 +440,7 @@ conda run -n pycircuitsim python \
   --tech TSMC5 --suite output,subthreshold,linear,derivative
 conda run -n pycircuitsim python \
   tests/single_devices/verify_terminal_integrity.py \
-  --tech TSMC5 --device nmos,pmos
+  --tech TSMC5 --device nmos,pmos --corner nominal,temp_hot,nfin_high
 conda run -n pycircuitsim python \
   tests/simple_circuits/verify_nn_subckt.py --tech TSMC5
 ```
@@ -471,7 +471,7 @@ awk '$1 == "dn" || $1 == "tf"' \
 BSIMAR_CHECKPOINT_DIR="$PWD/results/v7516_clean/checkpoints" \
 V710_OUT="$PWD/results/v7517_clean" \
 V710_SCRATCH=/tmp/pycircuitsim-v7517-clean \
-NGSPICE_BIN="${NGSPICE_BIN:-$PWD/tools/ngspice-45.2/bin/ngspice}" \
+NGSPICE_BIN="${NGSPICE_BIN:-/usr/local/ngspice-45.2/bin/ngspice}" \
 JOBS=/tmp/pycircuitsim-v7517-jobs/jobs_clean_dn_tf.txt PAR=32 \
 NN_PY="$(conda run -n pycircuitsim which python)" \
 bash scripts/v710_regate.sh

@@ -108,9 +108,28 @@ outer bounds.
   only when `_last_solve_converged` is false. LEVEL=72 follows its own solver
   path.
 - Implement `.nodeset` as an initial clamp followed by an unconstrained solve.
-  A permanently clamped node changes the circuit.
-- Apply `.options cshunt` and `.options rshunt` as circuit elements after
-  subcircuit flattening so every resolved node receives the intended element.
+  A permanently clamped node changes the circuit. This is a `DCSolver`
+  argument; the parser does not read a `.nodeset` card.
+- The parser implements `.ac`, `.dc`, `.tran`, `.temp`, `.ic`, `.model`,
+  `.include`, `.subckt`/`.ends`, and treats a bare `.op` as the no-analysis
+  operating point. It ignores every other directive. Ignoring one that NGSPICE
+  acts on makes the two engines solve different circuits from one deck text,
+  and no deck-to-deck parity check can see it, so `Parser.PHYSICAL_DIRECTIVES`
+  names those and the parser warns when it drops one. Add a directive to that
+  set when it changes the circuit, not when it changes the output listing.
+- `.options cshunt` and `.options rshunt` are circuit elements, not knobs:
+  NGSPICE stamps a capacitor or resistor from every node to ground at parse
+  time, worth 14% on a measured amplifier slew rate (V7.5.10). The only
+  implementation lived in the AnalogGym bench translator removed in V7.6.6, so
+  the core parser does not apply them today. If they are reimplemented, add
+  the elements after subcircuit flattening so every resolved node receives
+  one.
+- Values use SPICE scale factors, matched longest-first and case-insensitively
+  with trailing unit text ignored: `m` is milli and `meg` is mega. Reading a
+  value differently from NGSPICE is not a loud failure — both decks render
+  identically and both engines converge — so
+  `tests/test_deck_engine_compatibility.py` holds the parser against a table
+  measured on NGSPICE rather than against itself.
 
 ### Transient
 

@@ -28,7 +28,9 @@ from tests.common.bsimcmg_op import (  # noqa: E402
     bake_inst_params, get_mosfet_current_from_solution, pass_fail,
     relative_error, run_ngspice_custom, run_ngspice_op, run_pycircuitsim_op,
 )
-from tests.common.base import DEVICE_DECKS, render_template  # noqa: E402
+from tests.common.base import (  # noqa: E402
+    DEVICE_DECKS, parse_no_options, render_template,
+)
 
 _relative_error = relative_error
 _pass_fail = pass_fail
@@ -245,4 +247,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    parse_no_options(__doc__ or "")
     sys.exit(main())

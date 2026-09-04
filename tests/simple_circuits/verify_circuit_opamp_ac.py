@@ -15,7 +15,7 @@ Ground truth is ALWAYS NGSPICE BSIM-CMG (AGENTS.md Validation rule).
 Run CPU-pinned, repo ngspice:
 
     CUDA_VISIBLE_DEVICES="" OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \\
-        NGSPICE_BIN="$PWD/tools/ngspice-45.2/bin/ngspice" \\
+        NGSPICE_BIN="/usr/local/ngspice-45.2/bin/ngspice" \\
         python tests/simple_circuits/verify_circuit_opamp_ac.py --tech TSMC12
 """
 from __future__ import annotations

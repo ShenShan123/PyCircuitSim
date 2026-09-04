@@ -840,7 +840,7 @@ class _MOSFETNNBase(Component):
     ) -> List[Dict[str, float]]:
         """V7.2.0 Phase 2a-full: the whole ``_unpack_eval`` tail for a
         group, vectorised in float64 numpy — bit-identical per element to
-        N calls of the scalar tail (gated by ``tests/verify_batched_tail.py``).
+        N calls of the scalar tail (gated by ``tests/perf/verify_batched_tail.py``).
 
         ``ref`` supplies the group-shared denorm constants (all derived
         from the checkpoint/norm file that keyed the group); the only

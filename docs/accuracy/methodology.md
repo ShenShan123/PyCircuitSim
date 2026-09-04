@@ -7,7 +7,7 @@ family-specific measurements belong in the corresponding `*-clean.md` report.
 ## 1. Ground truth and scope
 
 The reference is **NGSPICE using the identical BSIM-CMG LEVEL=72 OSDI model**
-(`tools/ngspice-45.2/bin/ngspice`, selected through `NGSPICE_BIN`). Reference
+(`/usr/local/ngspice-45.2/bin/ngspice`, selected through `NGSPICE_BIN`). Reference
 and candidate use the same netlist, modelcard, geometry, sources, options, and
 analysis limits; only the MOSFET model changes.
 

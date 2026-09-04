@@ -11,7 +11,7 @@ The input is biased at each end of the rail (0 V, then VDD): the two points
 where the inverter is fully switched and the expected output is unambiguous.
 Criterion: V(out) within 1% relative error of NGSPICE.
 
-The topology lives once in ``circuit_templates/L1_primitives/inverter.spice.tmpl``;
+The topology lives once in ``circuit_templates/L2_stages/inverter.spice.tmpl``;
 the gate renders PyCircuitSim and NGSPICE model adapters from that template.
 
 Usage:
@@ -27,7 +27,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from tests.common.base import template_deck, render_template  # noqa: E402
+from tests.common.base import (  # noqa: E402
+    parse_no_options, template_deck, render_template,
+)
 from tests.common.bsimcmg_op import (  # noqa: E402
     L, MODELCARD_PATH, NFIN, NMOS_INST_PARAMS, OSDI_PATH, PMOS_INST_PARAMS,
     RESULTS_DIR, VDD, bake_inst_params, pass_fail, run_ngspice_custom,
@@ -174,4 +176,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    parse_no_options(__doc__ or "")
     sys.exit(main())

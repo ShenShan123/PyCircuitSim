@@ -35,6 +35,7 @@ _PROFILE_HEADLINES: Dict[str, str] = {
     "diffpair_diff_ac": "diff_gain_error_pct",
     "diffpair_cm_ac": "cm_gain_error_pct",
     "cascode": "output_resistance_error_pct",
+    "cascode_ac": "cascode_gain_worst_error_pct",
     "logic_vtc": "trip_shift_v",
     "logic_tran": "delay_error_pct",
     "sram_hold": "hold_margin_error_v",
@@ -653,7 +654,8 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
         ),
         tier="L2_stages",
         required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
-                          "output_resistance_error_pct"),
+                          "output_resistance_error_pct",
+                          "cascode_gain_worst_error_pct"),
     ),
     CircuitCase(
         "nand2", "two-input CMOS NAND",

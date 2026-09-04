@@ -56,6 +56,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 
+from tests.common.base import parse_no_options  # noqa: E402
 from pycircuitsim.models.mosfet_nn import (  # noqa: E402
     _MOSFETNNBase, _stacked_group_inputs)
 from pycircuitsim.models.mosfet_directnet import NMOS_NN, PMOS_NN  # noqa: E402
@@ -319,4 +320,5 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    parse_no_options(__doc__ or "")
     sys.exit(main())

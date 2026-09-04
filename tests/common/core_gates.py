@@ -1,11 +1,17 @@
 """Shared NGSPICE probe helpers for the V7.5 core-feature gates.
 
-Used by ``verify_cmg_multiplier.py``, ``verify_inductor.py``,
+Used by ``verify_cmg_multiplier.py`` — the surviving NGSPICE gate for the
+compact-model core additions.
+
+The five sibling gates this docstring used to name (``verify_inductor.py``,
 ``verify_current_source_ngspice.py``, ``verify_cmg_set_temperature.py``,
-``verify_tran_branch_current.py`` and ``verify_tran_gear2.py`` — the gates for
-the compact-model core additions (instance multiplier ``m=``, Inductor, NGSPICE
-current-source sign / PULSE, in-place ``set_temperature``, transient branch
-currents, Gear-2 integration).
+``verify_tran_branch_current.py``, ``verify_tran_gear2.py``) were deleted
+without a replacement, which left ``Inductor``, ``integration_method``,
+in-place ``set_temperature``, and transient branch currents with no test at
+all. V7.6.9 restored those questions as hermetic contracts in
+``tests/test_core_device_contracts.py`` rather than as NGSPICE gates: they are
+parser/solver seams, so an in-process assertion catches the same regressions
+without a simulator dependency that can rot unnoticed.
 
 Everything here is a thin wrapper over ``tests.common.base``: one function
 writes a deck + a ``.control`` runner, runs NGSPICE and returns the ``wrdata``
