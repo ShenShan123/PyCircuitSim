@@ -22,18 +22,22 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
 from tests.common.base import deck_tokens, template_deck, render_deck_text  # noqa: E402
 from tests.common.simple_circuit_catalog import CASES  # noqa: E402
 from tests.common.simple_circuit_harness import (  # noqa: E402
-    CORNERS, render_case_decks, topology_mismatch,
+    CORNERS, analysis_applies_to_corner, render_case_decks, topology_mismatch,
 )
 
 
 def main() -> int:
     failures: list[str] = []
+    checked = 0
     fake_baked = PROJECT_ROOT / "results" / "_topology_fake_bsimcmg.lib"
     for tech_name in BENCH_TECHS:
         bt = BENCH[tech_name]
         for case in CASES:
             for corner_name, corner in CORNERS.items():
                 for analysis in case.analyses:
+                    if not analysis_applies_to_corner(case, analysis, bt, corner):
+                        continue
+                    checked += 1
                     try:
                         candidate, reference = render_case_decks(
                             case, analysis, bt, corner,
@@ -118,8 +122,8 @@ def main() -> int:
             print(f"FAIL: {failure}")
         return 1
     print(
-        f"PASS: {len(BENCH_TECHS)} technologies × {len(CASES)} catalog "
-        f"cases × {len(CORNERS)} corners plus ring stage-count variants "
+        f"PASS: {checked} applicable technology/case/analysis/corner renders "
+        "plus ring stage-count variants "
         "and inverter gate pairs have identical topology")
     return 0
 

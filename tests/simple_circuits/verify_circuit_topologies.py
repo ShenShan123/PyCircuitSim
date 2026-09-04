@@ -30,12 +30,12 @@ if str(PROJECT_ROOT) not in sys.path:
 from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, active_model_label,
 )
-from tests.common.gate_result import GateResult  # noqa: E402
+from tests.common.gate_result import GateResult, result_exit_code  # noqa: E402
 from tests.common.simple_circuit_catalog import (  # noqa: E402
     SIMPLE_V2, CircuitCase, cases, get_case,
 )
 from tests.common.simple_circuit_harness import (  # noqa: E402
-    CORNERS, run_case,
+    CORNERS, RunSpec, applicable_analyses, run_case,
 )
 
 
@@ -84,6 +84,10 @@ def main(argv: List[str] | None = None) -> int:
     parser.add_argument(
         "--no-support-diagnostic", action="store_true",
         help="skip accepted-LEVEL=72 trajectory support inspection",
+    )
+    parser.add_argument(
+        "--level72-control", action="store_true",
+        help="also run PyCircuitSim LEVEL=72 to isolate solver-owned failures",
     )
     parser.add_argument("--list", action="store_true",
                         help="list cases/corners without running")
@@ -136,17 +140,55 @@ def main(argv: List[str] | None = None) -> int:
     print("Role: diagnostic (not part of the historical simple-v1 /20 score)")
     print("=" * 88)
 
+    try:
+        run_spec = RunSpec.from_environment()
+        run_spec.validate_checkpoint_pins(Path(os.environ.get(
+            "BSIMAR_CHECKPOINT_DIR",
+            PROJECT_ROOT / "external_compact_models" / "neural_network"
+            / "checkpoints",
+        )))
+    except ValueError as exc:
+        parser.error(str(exc))
+    except FileNotFoundError as exc:
+        parser.error(str(exc))
+    explicit_corner_selection = args.corner != "all"
+    no_op_cells = [
+        f"{case.case_id}/{tech}/{corner_name}"
+        for case in selected_cases
+        for tech in techs
+        for corner_name in corner_names
+        if not applicable_analyses(case, BENCH[tech], CORNERS[corner_name])
+    ]
+    if explicit_corner_selection and no_op_cells:
+        parser.error(
+            "selected corner is unsupported or changes no observed physical "
+            f"field for: {no_op_cells}"
+        )
+
     all_results: List[GateResult] = []
     for case in selected_cases:
         for tech in techs:
             for corner_name in corner_names:
+                if not applicable_analyses(
+                    case, BENCH[tech], CORNERS[corner_name],
+                ):
+                    print(
+                        f"\n--- {case.case_id} / {tech} / {corner_name} "
+                        "NOT-APPLICABLE ---"
+                    )
+                    continue
                 print(f"\n--- {case.case_id} / {tech} / {corner_name} ---")
-                work_dir = (RESULTS_BASE / "simple-v2" / case.case_id /
-                            tech / corner_name)
+                work_dir = (
+                    RESULTS_BASE / "simple-v2"
+                    / f"level-{run_spec.model_level}" / case.case_id
+                    / tech / corner_name
+                )
                 results = run_case(
                     case, BENCH[tech], CORNERS[corner_name], work_dir,
                     reference_repeats=args.reference_repeats,
                     diagnose_support=not args.no_support_diagnostic,
+                    run_spec=run_spec,
+                    run_level72_control=args.level72_control,
                 )
                 for result in results:
                     all_results.append(result)
@@ -166,7 +208,10 @@ def main(argv: List[str] | None = None) -> int:
                               f"{result.status.upper()} [{state}]")
                     print(result.marker())
 
-    output = RESULTS_BASE / "simple-v2" / "latest_results.json"
+    output = (
+        RESULTS_BASE / "simple-v2" / f"level-{run_spec.model_level}"
+        / "latest_results.json"
+    )
     _write_results(output, all_results)
     errors = sum(result.status == "error" for result in all_results)
     failures = sum(result.status == "fail" for result in all_results)
@@ -177,7 +222,7 @@ def main(argv: List[str] | None = None) -> int:
           f"failures, {errors} errors; JSON={output}")
     print(f"CONVERGED: {len(all_results) - unconverged}/{len(all_results)} "
           "candidate solves reached a physical fixed point")
-    return 0 if all_results and not errors and not failures else 1
+    return result_exit_code(all_results)
 
 
 if __name__ == "__main__":

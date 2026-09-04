@@ -17,6 +17,54 @@ remain in Git history.
 
 ## V7.6 — full-terminal families and closure
 
+### V7.6.8 — fail-closed circuit evidence and missing-model coverage (2026-09-03)
+
+Kept the published simple-v1 `/20` score unchanged and froze SHA-256 hashes for
+all 40 rendered candidate/reference decks (four cases, five technologies, two
+adapters). The collected unit suite and catalog checks now fail if a later
+renderer change moves any of those bytes.
+
+**Evidence harness.** A partial or unconverged solve can no longer be emitted
+as a characterized diagnostic. Traces require finite, monotonic, complete axes;
+one declared DC/transient increment is allowed only for simulator endpoint
+roundoff. Metric profiles declare required finite outputs, result rows record
+the selected LEVEL=73–76 family, checkpoint pins, campaign digest, thread
+settings, execution state, and error origin, and campaign collection rejects a
+missing, duplicate, or unexpected catalog marker. Physical parity now includes
+passive/source values, source waveforms, temperature, initial-condition values,
+analysis cards, VT, L, and NFIN. PyCircuitSim LEVEL=72 is available as a third,
+opt-in control adapter so solver-owned failures remain inconclusive.
+
+**Catalog repair.** Moved the passive RC deck to `controls/`; moved the coupled
+inverter, transmission-gate DC, transmission-gate hold, and forced-input SRAM
+half-cell to tiers matching the crutches they actually remove. Collapsed the
+duplicate `mos_ratio_reference` topology into a high-impedance analysis of
+`diode_load`. Corners now include alternate/asymmetric VT, independent N/P
+length, and high-NFIN cases, and are filtered per analysis/device role so a
+no-op corner cannot create a denominator row. Named device roles support
+independent L/NFIN/VT and distinct baked OSDI aliases.
+
+**New diagnostics.** Added physical four-terminal current/KCL sweeps and a
+four-excitation 4x4 transcapacitance matrix; NN floating-bulk common-source AC;
+inverter leakage, delay, and switching energy; both SRAM states and write
+directions; L4 closed-loop AC/PSRR/output-impedance analyses; an NMOS/PMOS
+active-mirror-loaded differential stage; a 3/5/9/17-device generated-bias
+fanout ladder; a 12-MOS cold-start feedback proxy; and flat-versus-nested NN
+subcircuit execution for all four NN families. Device-integrity, terminal, and
+hierarchy suites are now part of campaign generation and coverage.
+
+**Instrument corrections found during smoke qualification.** Sequential
+analysis substitutions had frozen generated AC sources at zero; overrides are
+now registered before recursive expansion. NGSPICE `.op` scales and one-step
+DC/transient endpoint differences are canonicalized without accepting arbitrary
+truncation. The first active-load DC sweep, fanout transient, and wide 12-MOS
+DC transfer were withdrawn because LEVEL=72 controls showed they were
+solver-owned or reference-invalid; fixed-bias OP or already-qualified
+transient/AC questions replaced them. TSMC12 LEVEL=73 smokes produced complete
+reference/control rows for terminal integrity, active load, the 17-device
+ladder, inverter energy, and NN hierarchy. These are diagnostics, not a new
+published score or threshold campaign.
+
 ### V7.6.7 — evaluation coverage: device integrity, self-bias, and feedback (2026-09-02)
 
 Motivated by a contradiction the reports already carried: DirectNet-Full L75
@@ -53,8 +101,9 @@ frozen DC transfer and the new rejection experiments.
 **New held-out cases.** Tier A removes the ideal bias: `diode_load`,
 `beta_multiplier`, `self_biased_cascode`, `mos_ratio_reference`. Tier B closes
 a negative-feedback loop: `unity_gain_buffer`, `ota_5t_buffer`,
-`ldo_regulator` — the last being eight coupled devices with all bias internal,
-the first case above the previous seven-device ceiling. Every L4 case runs at
+`ldo_regulator` — the last has seven coupled MOSFETs with all bias internal.
+The original above-ten-device claim was incorrect and is retracted by V7.6.8.
+Every L4 case runs at
 least one transient without `uic`, and the catalog check enforces it; before
 this, every transient in the catalog was handed its initial state through
 `.ic`.

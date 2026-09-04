@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import math
+import os
 import re
 from collections import Counter
 from dataclasses import dataclass, field, replace
@@ -17,17 +18,18 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 import numpy as np
 
 from tests.common.base import (
-    OSDI_PATH, deck_tokens, template_deck, render_deck_text,
+    OSDI_PATH, bake_inst_params, deck_tokens, template_deck, render_deck_text,
     run_ngspice_subprocess,
 )
 from tests.common.circuit_benchmarks import (
-    BenchTech, active_model_label, bench_variant, full_metrics,
+    BenchTech, active_model_label, active_model_level, active_model_name,
+    bench_variant, full_metrics, usable_vts,
     get_baked_modelcard, parse_netlist, run_directnet_dc_sweep,
     run_directnet_transient, run_ngspice_wrdata,
 )
 from tests.common.gate_result import GateResult
 from tests.common.simple_circuit_catalog import (
-    AnalysisSpec, CircuitCase, DIAGNOSTIC,
+    AnalysisSpec, CircuitCase, DeviceRoleSpec, DIAGNOSTIC,
 )
 
 
@@ -43,6 +45,7 @@ class Corner:
     nfin_p: Optional[int] = None
     l_nmos: Optional[float] = None
     l_pmos: Optional[float] = None
+    vt_mode: str = ""
 
 
 CORNERS: Dict[str, Corner] = {
@@ -58,7 +61,117 @@ CORNERS: Dict[str, Corner] = {
         "joint_hot_lowvdd", vdd_scale=0.90, temperature_c=125.0,
         nfin=3, nfin_p=2, l_nmos=20e-9, l_pmos=20e-9,
     ),
+    "vt_alternate": Corner("vt_alternate", vt_mode="alternate"),
+    "vt_asymmetric": Corner("vt_asymmetric", vt_mode="asymmetric"),
+    "ln_20": Corner("ln_20", l_nmos=20e-9),
+    "lp_16": Corner("lp_16", l_pmos=16e-9),
+    "nfin_high": Corner("nfin_high", nfin=5, nfin_p=5),
 }
+
+
+@dataclass(frozen=True)
+class RunSpec:
+    """Explicit NN family and provenance for one experiment invocation."""
+
+    model_level: int
+    model_family: str
+    checkpoint_pins: Tuple[Tuple[str, str], ...] = ()
+    campaign_manifest_sha256: str = ""
+    omp_threads: int = 1
+    mkl_threads: int = 1
+    torch_threads: int = 1
+
+    def __post_init__(self) -> None:
+        expected = {
+            73: "DirectNet", 74: "BSIM-AR",
+            75: "DirectNet-Full", 76: "BSIM-AR-Full",
+        }
+        if self.model_level not in expected:
+            raise ValueError(f"unsupported NN model level {self.model_level}")
+        if self.model_family != expected[self.model_level]:
+            raise ValueError(
+                f"model family/level mismatch: {self.model_family!r} / "
+                f"{self.model_level}"
+            )
+        if self.campaign_manifest_sha256 and not re.fullmatch(
+            r"[0-9a-f]{64}", self.campaign_manifest_sha256,
+        ):
+            raise ValueError("campaign manifest digest must be 64 lowercase hex chars")
+        if min(self.omp_threads, self.mkl_threads, self.torch_threads) < 1:
+            raise ValueError("thread counts must be positive")
+
+    def result_fields(self) -> Dict[str, Any]:
+        """Return the provenance fields copied onto every result row."""
+        return {
+            "model_family": self.model_family,
+            "model_level": self.model_level,
+            "checkpoint_pins": dict(self.checkpoint_pins),
+            "campaign_manifest_sha256": self.campaign_manifest_sha256,
+            "thread_settings": {
+                "omp": self.omp_threads,
+                "mkl": self.mkl_threads,
+                "torch": self.torch_threads,
+            },
+        }
+
+    def validate_checkpoint_pins(self, checkpoint_dir: Path) -> None:
+        """Fail before reference work when an explicit NN bundle is incomplete."""
+        for polarity, raw_pin in self.checkpoint_pins:
+            raw = Path(raw_pin)
+            base = raw if raw.is_absolute() else checkpoint_dir / raw
+            if base.name.endswith("_best.pt"):
+                model = base
+                stem = base.with_name(base.name[:-len("_best.pt")])
+            else:
+                model = base.with_name(base.name + "_best.pt")
+                stem = base
+            required = [
+                model,
+                stem.with_name(stem.name + "_norm.npz"),
+                model.with_name(model.name + ".complete"),
+            ]
+            if self.model_level in {74, 76}:
+                required.append(stem.with_name(stem.name + "_config.npz"))
+            missing = [path for path in required if not path.is_file()]
+            if missing:
+                raise FileNotFoundError(
+                    f"explicit {polarity} checkpoint bundle is incomplete: "
+                    + ", ".join(str(path) for path in missing)
+                )
+
+    @classmethod
+    def from_environment(cls) -> "RunSpec":
+        """Resolve the effective model and execution settings once per run."""
+        level = active_model_level()
+        tag = {73: "DN", 74: "TF", 75: "DNF", 76: "TFF"}[level]
+        pins = []
+        for polarity in ("nmos", "pmos"):
+            suffix = polarity.upper()
+            value = os.environ.get(
+                f"PYCIRCUITSIM_NN_CHECKPOINT_{tag}_{suffix}",
+                os.environ.get(f"PYCIRCUITSIM_NN_CHECKPOINT_{suffix}", ""),
+            )
+            if value:
+                pins.append((polarity, value))
+
+        def _threads(name: str) -> int:
+            raw = os.environ.get(name, "1")
+            try:
+                return int(raw)
+            except ValueError as exc:
+                raise ValueError(f"{name}={raw!r} is not an integer") from exc
+
+        return cls(
+            model_level=level,
+            model_family=active_model_name(),
+            checkpoint_pins=tuple(pins),
+            campaign_manifest_sha256=os.environ.get(
+                "PYCIRCUITSIM_CAMPAIGN_MANIFEST_SHA256", "",
+            ),
+            omp_threads=_threads("OMP_NUM_THREADS"),
+            mkl_threads=_threads("MKL_NUM_THREADS"),
+            torch_threads=_threads("PYCIRCUITSIM_TORCH_THREADS"),
+        )
 
 
 @dataclass
@@ -74,13 +187,41 @@ class Trace:
     error: str = ""
     metadata: Dict[str, Any] = field(default_factory=dict)
 
-    def validate(self) -> None:
-        """Fail loud on empty, ragged, or non-finite numerical evidence."""
+    def validate(
+        self,
+        *,
+        expected_start: Optional[float] = None,
+        expected_stop: Optional[float] = None,
+        endpoint_tolerance: float = 0.0,
+    ) -> None:
+        """Fail loud on incomplete, ragged, or non-finite evidence."""
         self.axis = np.asarray(self.axis, dtype=float)
         if self.axis.ndim != 1 or self.axis.size == 0:
             raise ValueError("trace axis must be a non-empty vector")
         if not np.all(np.isfinite(self.axis)):
             raise ValueError("trace axis contains NaN/Inf")
+        if self.axis.size > 1:
+            delta = np.diff(self.axis)
+            if not (np.all(delta > 0.0) or np.all(delta < 0.0)):
+                raise ValueError("trace axis must be strictly monotonic")
+        span = abs(float(self.axis[-1] - self.axis[0]))
+        atol = max(1e-18, span * 1e-9)
+        if expected_start is not None and not np.isclose(
+            self.axis[0], expected_start, rtol=1e-9,
+            atol=max(atol, endpoint_tolerance),
+        ):
+            raise ValueError(
+                f"trace starts at {self.axis[0]:g}, not requested "
+                f"{expected_start:g}"
+            )
+        if expected_stop is not None and not np.isclose(
+            self.axis[-1], expected_stop, rtol=1e-9,
+            atol=max(atol, endpoint_tolerance),
+        ):
+            raise ValueError(
+                f"trace does not reach requested stop {expected_stop:g}; "
+                f"last point is {self.axis[-1]:g}"
+            )
         for name, values in self.signals.items():
             array = np.asarray(values)
             if array.ndim != 1 or array.size != self.axis.size:
@@ -90,6 +231,52 @@ class Trace:
             if not np.all(np.isfinite(array)):
                 raise ValueError(f"trace {name} contains NaN/Inf")
             self.signals[name] = array
+
+
+_ANALYSIS_SUFFIXES: Dict[str, float] = {
+    "t": 1e12, "g": 1e9, "m": 1e6, "k": 1e3,
+    "u": 1e-6, "n": 1e-9, "p": 1e-12, "f": 1e-15,
+}
+
+
+def _analysis_number(raw: str) -> float:
+    """Parse the numeric subset accepted in analysis cards."""
+    token = raw.strip()
+    suffix = token[-1].lower() if len(token) > 1 else ""
+    if suffix in _ANALYSIS_SUFFIXES:
+        return float(token[:-1]) * _ANALYSIS_SUFFIXES[suffix]
+    return float(token)
+
+
+def analysis_axis_limits(analysis: AnalysisSpec) -> Tuple[float, float]:
+    """Return the requested first and last independent-variable values."""
+    parts = analysis.card.lstrip(".").split()
+    if not parts or parts[0].lower() != analysis.kind:
+        raise ValueError(
+            f"analysis {analysis.name!r} kind/card mismatch: "
+            f"{analysis.kind!r} vs {analysis.card!r}"
+        )
+    if analysis.kind == "op":
+        if len(parts) != 1:
+            raise ValueError(f"invalid OP card {analysis.card!r}")
+        return 0.0, 0.0
+    if analysis.kind == "dc" and len(parts) == 5:
+        return _analysis_number(parts[2]), _analysis_number(parts[3])
+    if analysis.kind == "tran" and len(parts) in {3, 4}:
+        return 0.0, _analysis_number(parts[2])
+    if analysis.kind == "ac" and len(parts) == 5:
+        return _analysis_number(parts[3]), _analysis_number(parts[4])
+    raise ValueError(f"unsupported analysis card {analysis.card!r}")
+
+
+def analysis_endpoint_tolerance(analysis: AnalysisSpec) -> float:
+    """Allow only one declared DC increment for floating-loop roundoff."""
+    parts = analysis.card.lstrip(".").split()
+    if analysis.kind == "dc" and len(parts) == 5:
+        return abs(_analysis_number(parts[4])) * (1.0 + 1e-9)
+    if analysis.kind == "tran" and len(parts) in {3, 4}:
+        return abs(_analysis_number(parts[1])) * (1.0 + 1e-9)
+    return 0.0
 
 
 def apply_corner(bt: BenchTech, corner: Corner) -> BenchTech:
@@ -102,10 +289,87 @@ def apply_corner(bt: BenchTech, corner: Corner) -> BenchTech:
     if corner.nfin_p is not None:
         values["nfin_p"] = corner.nfin_p
     if corner.l_nmos is not None:
+        if corner.l_nmos not in bt.profile.l_values:
+            raise ValueError(
+                f"{bt.name} has no NMOS L={corner.l_nmos * 1e9:g} nm corner"
+            )
         values["l_nmos"] = corner.l_nmos
     if corner.l_pmos is not None:
+        if corner.l_pmos not in bt.profile.l_values:
+            raise ValueError(
+                f"{bt.name} has no PMOS L={corner.l_pmos * 1e9:g} nm corner"
+            )
         values["l_pmos"] = corner.l_pmos
+    if corner.vt_mode:
+        available = usable_vts(bt.name)
+        alternates = [
+            pair.vt_name for pair in bt.profile.vt_pairs
+            if pair.vt_name in available and pair.vt_name != bt.vt
+        ]
+        if not alternates:
+            raise ValueError(f"{bt.name} has no alternate trained VT")
+        alternate = alternates[0]
+        if corner.vt_mode == "alternate":
+            values.update(nmos_vt=alternate, pmos_vt=alternate)
+        elif corner.vt_mode == "asymmetric":
+            values.update(nmos_vt=bt.effective_nmos_vt, pmos_vt=alternate)
+        else:
+            raise ValueError(f"unknown VT corner mode {corner.vt_mode!r}")
     return bench_variant(bt, **values)
+
+
+def analysis_applies_to_corner(
+    case: CircuitCase,
+    analysis: AnalysisSpec,
+    base_bt: BenchTech,
+    corner: Corner,
+) -> bool:
+    """Whether a corner changes a physical field observed by this analysis."""
+    if corner.name == "nominal":
+        return True
+    kinds = set(analysis.device_kinds)
+    if corner.body_reverse_frac:
+        tokens = set(deck_tokens(
+            template_deck(case.template, tier=case.tier).read_text()
+        ))
+        body_tokens = {
+            "nmos": {"BODY_N", "BODY_N_NODE"},
+            "pmos": {"BODY_P", "BODY_P_NODE"},
+        }
+        return any(tokens & body_tokens[kind] for kind in kinds)
+
+    try:
+        stressed = apply_corner(base_bt, corner)
+    except ValueError:
+        return False
+    if stressed.vdd != base_bt.vdd \
+            or stressed.temperature_c != base_bt.temperature_c:
+        return True
+    if "nmos" in kinds and (
+        stressed.l_nmos != base_bt.l_nmos
+        or stressed.nfin != base_bt.nfin
+        or stressed.effective_nmos_vt != base_bt.effective_nmos_vt
+    ):
+        return True
+    if "pmos" in kinds and (
+        stressed.l_pmos != base_bt.l_pmos
+        or stressed.effective_nfin_p != base_bt.effective_nfin_p
+        or stressed.effective_pmos_vt != base_bt.effective_pmos_vt
+    ):
+        return True
+    return False
+
+
+def applicable_analyses(
+    case: CircuitCase,
+    base_bt: BenchTech,
+    corner: Corner,
+) -> Tuple[AnalysisSpec, ...]:
+    """Return only analyses whose observed physics changes at this corner."""
+    return tuple(
+        analysis for analysis in case.analyses
+        if analysis_applies_to_corner(case, analysis, base_bt, corner)
+    )
 
 
 def _number(value: float) -> str:
@@ -166,31 +430,75 @@ def render_ring_stages(
     return "\n".join(lines), ic
 
 
+def render_bias_fanout(
+    *,
+    branches: int,
+    n_prefix: str,
+    n_device: str,
+    vdd: float,
+) -> Tuple[str, str]:
+    """Render a shared-bias mirror fanout and its deterministic initial state."""
+    if branches < 1:
+        raise ValueError("bias fanout needs at least one branch")
+    lines: List[str] = []
+    initial = [f"V(nbias)={_number(0.45 * vdd)}"]
+    for index in range(1, branches + 1):
+        node = f"o{index}"
+        lines.extend((
+            f"{n_prefix}n_out{index} {node} nbias 0 bn {n_device}",
+            f"Rout{index} vdd {node} 50k",
+            f"Cout{index} {node} 0 2f",
+        ))
+        initial.append(f"V({node})={_number(vdd)}")
+    return "\n".join(lines), " ".join(initial)
+
+
 def _common_substitutions(
     bt: BenchTech,
     corner: Corner,
     *,
     reference: bool,
     baked_lib: Path,
+    control: bool = False,
+    model_level: Optional[int] = None,
     ring_n_stages: int = 5,
     ring_cload: float = 0.5e-15,
 ) -> Dict[str, str]:
     vdd = bt.vdd
     reverse = corner.body_reverse_frac * vdd
-    level = {"DirectNet": 73, "BSIM-AR": 74,
-             "DirectNet-Full": 75, "BSIM-AR-Full": 76}.get(
-                 active_model_label().split(" (")[0], 73)
+    level = model_level or {
+        "DirectNet": 73, "BSIM-AR": 74,
+        "DirectNet-Full": 75, "BSIM-AR-Full": 76,
+    }.get(active_model_label().split(" (")[0], 73)
     vcm = 0.55 * vdd
     if reference:
         model_setup = f'.include "{baked_lib}"'
         n_prefix = p_prefix = "N"
         n_device = bt.nmos_model
         p_device = bt.pmos_model
-    else:
+    elif control:
         model_setup = (
-            f".model nmos_nn NMOS (LEVEL={level} TECH={bt.nn_tech} "
+            f".model {bt.nmos_model} NMOS (LEVEL=72)\n"
+            f".model {bt.pmos_model} PMOS (LEVEL=72)"
+        )
+        n_prefix = p_prefix = "M"
+        n_device = (
+            f"{bt.nmos_model} L={_spice_length(bt.l_nmos)} "
+            f"NFIN={bt.nfin} TFIN={_spice_length(bt.tfin)}"
+        )
+        p_device = (
+            f"{bt.pmos_model} L={_spice_length(bt.l_pmos)} "
+            f"NFIN={bt.effective_nfin_p} TFIN={_spice_length(bt.tfin)}"
+        )
+    else:
+        family = {
+            75: " FAMILY=directnet-full",
+            76: " FAMILY=bsimar-full",
+        }.get(level, "")
+        model_setup = (
+            f".model nmos_nn NMOS (LEVEL={level}{family} TECH={bt.nn_tech} "
             f"VT={bt.effective_nmos_vt})\n"
-            f".model pmos_nn PMOS (LEVEL={level} TECH={bt.nn_tech} "
+            f".model pmos_nn PMOS (LEVEL={level}{family} TECH={bt.nn_tech} "
             f"VT={bt.effective_pmos_vt})"
         )
         n_prefix = p_prefix = "M"
@@ -210,6 +518,15 @@ def _common_substitutions(
         cload=ring_cload,
         vdd=vdd,
     )
+    fanouts = {
+        count: render_bias_fanout(
+            branches=count,
+            n_prefix=n_prefix,
+            n_device=n_device,
+            vdd=vdd,
+        )
+        for count in (2, 4, 8, 16)
+    }
     values = {
         "LEVEL": str(level),
         "TECH": bt.nn_tech,
@@ -244,6 +561,11 @@ def _common_substitutions(
         "VCM": _number(vcm),
         "DIFF_LO": _number(vcm - 0.10 * vdd),
         "DIFF_HI": _number(vcm + 0.10 * vdd),
+        "P_VCM": _number(0.45 * vdd),
+        "P_DIFF_LO": _number(0.45 * vdd - 0.06 * vdd),
+        "P_DIFF_HI": _number(0.45 * vdd + 0.06 * vdd),
+        "N_STEER_INP": _number(vcm + 0.02 * vdd),
+        "P_STEER_INP": _number(0.45 * vdd - 0.02 * vdd),
         "VBN": _number(0.45 * vdd),
         "VBP": _number(0.55 * vdd),
         "OPAMP_LO": _number(vcm - 0.15),
@@ -286,6 +608,7 @@ def _common_substitutions(
         ),
         "IBIAS_CELL": _number(2e-6 * bt.nfin / 2.0),
         "LDO_VREF": _number(0.35 * vdd),
+        "LDO_VDD_SPEC": _number(vdd),
         "LDO_RFB1": "200k",
         "LDO_RFB2": "200k",
         "LDO_COUT": "500f",
@@ -327,9 +650,52 @@ def _common_substitutions(
         "STORAGE_LOADS": "Cq q 0 2f\nCqb qb 0 2f",
         "LOGIC_LOAD": "5f",
         "HOLD_LOAD": "100f",
+        "CS_LOAD": "50k",
+        "BULK_LOAD": "100k",
+        "INPUT_SPEC": "0",
+        "LOAD_NETWORK": "",
+        "BULK_NETWORK": "",
+        "DEVICE_PREFIX": f"{n_prefix}n",
+        "SOURCE_NODE": "0",
+        "BULK_NODE": "0",
+        "DEVICE": n_device,
+        "INITIAL_CONDITION": "",
         "OUTPUT_LOAD": "",
         "AC_INP": "1",
         "AC_INN": "0",
+        "N_AC_INP": "0",
+        "N_AC_INN": "0",
+        "P_AC_INP": "0",
+        "P_AC_INN": "0",
+        "DIFFPAIR_CAP": "5f",
+        "ACTIVE_TAIL_CURRENT": _number(2e-6 * bt.nfin / 2.0),
+        "N_ACTIVE_LOAD_STAGE": (
+            "Vninp ninp 0 DC=<N_INP_DC> AC=<N_AC_INP> 0\n"
+            "Vninn ninn 0 DC=<N_INN_DC> AC=<N_AC_INN> 0\n"
+            "Itailn ntail 0 <ACTIVE_TAIL_CURRENT>\n"
+            "<N_PREFIX>n_in_l nmirror ninp ntail bn <N_INPUT_DEVICE>\n"
+            "<N_PREFIX>n_in_r nout ninn ntail bn <N_INPUT_DEVICE>\n"
+            "<P_PREFIX>p_load_d nmirror nmirror vdd bp <P_LOAD_DEVICE>\n"
+            "<P_PREFIX>p_load_o nout nmirror vdd bp <P_LOAD_DEVICE>\n"
+            "Rn_hi vdd nout 20k\nRn_lo nout 0 20k\n"
+            "Cno nout 0 <DIFFPAIR_CAP>"
+        ),
+        "P_ACTIVE_LOAD_STAGE": (
+            "Vpinp pinp 0 DC=<P_INP_DC> AC=<P_AC_INP> 0\n"
+            "Vpinn pinn 0 DC=<P_INN_DC> AC=<P_AC_INN> 0\n"
+            "Itailp vdd ptail <ACTIVE_TAIL_CURRENT>\n"
+            "<P_PREFIX>p_in_l pmirror pinp ptail bp <P_INPUT_DEVICE>\n"
+            "<P_PREFIX>p_in_r pout pinn ptail bp <P_INPUT_DEVICE>\n"
+            "<N_PREFIX>n_load_d pmirror pmirror 0 bn <N_LOAD_DEVICE>\n"
+            "<N_PREFIX>n_load_o pout pmirror 0 bn <N_LOAD_DEVICE>\n"
+            "Rp_hi vdd pout 20k\nRp_lo pout 0 20k\n"
+            "Cpo pout 0 <DIFFPAIR_CAP>"
+        ),
+        "ACTIVE_LOAD_STAGE": "<N_ACTIVE_LOAD_STAGE>",
+        "N_INP_DC": "<VCM>",
+        "N_INN_DC": "<VCM>",
+        "P_INP_DC": "<P_VCM>",
+        "P_INN_DC": "<P_VCM>",
         "VA_SPEC": "0",
         "VB_SPEC": "0",
         "WL_SPEC": "0",
@@ -349,7 +715,18 @@ def _common_substitutions(
         "PULSE_CLOSE": ")" if reference else "",
         "RING_STAGES": ring_stages,
         "RING_IC": ring_ic,
+        "BIAS_CURRENT_SPEC": (
+            f"{'PULSE(' if reference else 'PULSE'} "
+            f"{_number(0.2e-6 * bt.nfin / 2.0)} "
+            f"{_number(5e-6 * bt.nfin / 2.0)} 0.5n 50p 50p 3n 6n"
+            f"{')' if reference else ''}"
+        ),
     }
+    for count, (branches, initial) in fanouts.items():
+        values[f"BIAS_BRANCHES_{count}"] = branches
+        values[f"BIAS_FANOUT_IC_{count}"] = initial
+    values["BIAS_BRANCHES"] = fanouts[2][0]
+    values["BIAS_FANOUT_IC"] = fanouts[2][1]
     return values
 
 
@@ -366,6 +743,150 @@ _SPEC_DEFAULTS: Dict[str, str] = {
 }
 
 
+def _resolved_role(
+    case: CircuitCase,
+    role: DeviceRoleSpec,
+    bt: BenchTech,
+) -> Dict[str, Any]:
+    is_pmos = role.polarity == "pmos"
+    length = role.length_m or (bt.l_pmos if is_pmos else bt.l_nmos)
+    base_nfin = bt.effective_nfin_p if is_pmos else bt.nfin
+    nfin = base_nfin + role.nfin_delta
+    if nfin < 1:
+        raise ValueError(f"{case.case_id}/{role.name}: NFIN must be positive")
+    vt = role.vt or (
+        bt.effective_pmos_vt if is_pmos else bt.effective_nmos_vt
+    )
+    pair = bt.profile.get_vt_pair(vt)
+    source_model = pair.pmos_model if is_pmos else pair.nmos_model
+    return {
+        "polarity": role.polarity,
+        "length": length,
+        "nfin": nfin,
+        "vt": vt,
+        "source_model": source_model,
+        "candidate_model": f"{role.name}_nn",
+        "reference_model": f"v768_{case.case_id}_{role.name}",
+    }
+
+
+def _role_substitutions(
+    case: CircuitCase,
+    bt: BenchTech,
+    *,
+    reference: bool,
+    baked_lib: Path,
+    level: int,
+    control: bool = False,
+) -> Dict[str, str]:
+    if not case.device_roles:
+        return {}
+    values: Dict[str, str] = {}
+    declarations: List[str] = []
+    for role in case.device_roles:
+        resolved = _resolved_role(case, role, bt)
+        if reference:
+            values[role.token] = str(resolved["reference_model"])
+        else:
+            kind = "PMOS" if role.polarity == "pmos" else "NMOS"
+            model = (
+                str(resolved["reference_model"])
+                if control else str(resolved["candidate_model"])
+            )
+            family = {
+                75: " FAMILY=directnet-full",
+                76: " FAMILY=bsimar-full",
+            }.get(level, "")
+            declarations.append(
+                f".model {model} {kind} (LEVEL={72 if control else level}"
+                + ("" if control else
+                   f"{family} TECH={bt.nn_tech} VT={resolved['vt']}")
+                + ")"
+            )
+            values[role.token] = (
+                f"{model} L={float(resolved['length']) * 1e9:g}n "
+                f"NFIN={int(resolved['nfin'])}"
+                + (f" TFIN={bt.tfin * 1e9:g}n" if control else "")
+            )
+    values["MODEL_SETUP"] = (
+        f'.include "{baked_lib}"' if reference else "\n".join(declarations)
+    )
+    return values
+
+
+def _role_source_modelcard(
+    bt: BenchTech,
+    role: DeviceRoleSpec,
+    resolved: Mapping[str, Any],
+) -> Path:
+    if bt.profile.single_file:
+        return bt.profile.get_nmos_modelcard(
+            bt.profile.get_vt_pair(str(resolved["vt"])),
+            float(resolved["length"]),
+        )
+    from pycmg.tech import TECH_REGISTRY, resolve_modelcard
+
+    config = TECH_REGISTRY[bt.name]
+    device = config.get_device(str(resolved["source_model"]).replace(
+        "nch_", "nmos_",
+    ).replace("pch_", "pmos_").replace("_mac", ""))
+    return Path(resolve_modelcard(
+        device,
+        config,
+        L=float(resolved["length"]),
+        NFIN=float(resolved["nfin"]),
+    ))
+
+
+def get_case_baked_modelcard(
+    case: CircuitCase,
+    bt: BenchTech,
+    work_dir: Path,
+) -> Path:
+    """Build the ordinary pair or a role-specific OSDI model library."""
+    if not case.device_roles:
+        return get_baked_modelcard(
+            bt, bt.nfin, work_dir, nfin_p=bt.effective_nfin_p,
+        )
+    work_dir.mkdir(parents=True, exist_ok=True)
+    fragments: List[str] = []
+    for role in case.device_roles:
+        resolved = _resolved_role(case, role, bt)
+        source = _role_source_modelcard(bt, role, resolved)
+        if not source.is_file():
+            raise FileNotFoundError(f"role modelcard not found: {source}")
+        alias = str(resolved["reference_model"])
+        original = str(resolved["source_model"])
+        source_text = source.read_text()
+        renamed = re.sub(
+            rf"(?im)^(\s*\.model\s+){re.escape(original)}(\s+)",
+            rf"\g<1>{alias}\g<2>",
+            source_text,
+            count=1,
+        )
+        if renamed == source_text:
+            raise ValueError(
+                f"{case.case_id}/{role.name}: model {original!r} not found"
+            )
+        fragment = work_dir / f"role_{role.name}.lib"
+        fragment.write_text(renamed)
+        bake_inst_params(
+            fragment,
+            fragment,
+            alias,
+            {
+                "L": float(resolved["length"]),
+                "NFIN": float(resolved["nfin"]),
+                "TFIN": bt.tfin,
+                "DEVTYPE": 0 if role.polarity == "pmos" else 1,
+            },
+        )
+        fragments.append(fragment.read_text())
+    library = work_dir / f"baked_roles_{case.case_id}_{bt.name}.lib"
+    library.write_text("\n".join(fragments))
+    return library
+
+
 def _render_one(
     case: CircuitCase,
     analysis: AnalysisSpec,
@@ -374,6 +895,8 @@ def _render_one(
     *,
     reference: bool,
     baked_lib: Path,
+    control: bool = False,
+    model_level: Optional[int] = None,
     substitutions: Optional[Mapping[str, str]] = None,
     ring_n_stages: int = 5,
     ring_cload: float = 0.5e-15,
@@ -383,15 +906,27 @@ def _render_one(
     template = path.read_text()
     available = _common_substitutions(
         bt, corner, reference=reference, baked_lib=baked_lib,
+        control=control,
+        model_level=model_level,
         ring_n_stages=ring_n_stages, ring_cload=ring_cload,
     )
+    available.update(_role_substitutions(
+        case,
+        bt,
+        reference=reference,
+        baked_lib=baked_lib,
+        level=model_level or active_model_level(),
+        control=control,
+    ))
     overrides = dict(substitutions or {})
     available.update(overrides)
     for name, default in _SPEC_DEFAULTS.items():
         if name not in overrides:
             available[name] = _expand(default, available)
-    for name, raw in analysis.substitutions().items():
-        available[name] = _expand(raw, available)
+    analysis_overrides = analysis.substitutions()
+    available.update(analysis_overrides)
+    for name in analysis_overrides:
+        available[name] = _expand(available[name], available)
     # Reference analysis is executed explicitly in the NGSPICE control block;
     # keeping the template slot empty prevents accidental `run` semantics.
     available["ANALYSIS"] = (
@@ -408,6 +943,7 @@ def _render_one(
 
 
 def _resolved_analysis(
+    case: CircuitCase,
     analysis: AnalysisSpec,
     bt: BenchTech,
     corner: Corner,
@@ -419,12 +955,33 @@ def _resolved_analysis(
     reference_values = _common_substitutions(
         bt, corner, reference=True, baked_lib=Path("<unused>"),
     )
+    candidate_values.update(_role_substitutions(
+        case,
+        bt,
+        reference=False,
+        baked_lib=Path("<unused>"),
+        level=active_model_level(),
+    ))
+    reference_values.update(_role_substitutions(
+        case,
+        bt,
+        reference=True,
+        baked_lib=Path("<unused>"),
+        level=active_model_level(),
+    ))
     for values in (candidate_values, reference_values):
         for name, default in _SPEC_DEFAULTS.items():
             values[name] = _expand(default, values)
-    for name, raw in analysis.substitutions().items():
-        candidate_values[name] = _expand(raw, candidate_values)
-        reference_values[name] = _expand(raw, reference_values)
+    analysis_overrides = analysis.substitutions()
+    candidate_values.update(analysis_overrides)
+    reference_values.update(analysis_overrides)
+    for name in analysis_overrides:
+        candidate_values[name] = _expand(
+            candidate_values[name], candidate_values,
+        )
+        reference_values[name] = _expand(
+            reference_values[name], reference_values,
+        )
     candidate_card = _expand(analysis.card, candidate_values)
     reference_card = _expand(analysis.card, reference_values)
     if candidate_card != reference_card:
@@ -445,20 +1002,48 @@ def render_case_decks(
     substitutions: Optional[Mapping[str, str]] = None,
     ring_n_stages: int = 5,
     ring_cload: float = 0.5e-15,
+    model_level: Optional[int] = None,
 ) -> Tuple[str, str]:
     """Render the candidate and LEVEL=72 decks for one identical experiment."""
     bt = apply_corner(base_bt, corner)
     candidate = _render_one(
         case, analysis, bt, corner, reference=False, baked_lib=baked_lib,
         substitutions=substitutions or {}, ring_n_stages=ring_n_stages,
-        ring_cload=ring_cload,
+        ring_cload=ring_cload, model_level=model_level,
     )
     reference = _render_one(
         case, analysis, bt, corner, reference=True, baked_lib=baked_lib,
         substitutions=substitutions or {}, ring_n_stages=ring_n_stages,
-        ring_cload=ring_cload,
+        ring_cload=ring_cload, model_level=model_level,
     )
     return candidate, reference
+
+
+def render_case_control_deck(
+    case: CircuitCase,
+    analysis: AnalysisSpec,
+    base_bt: BenchTech,
+    corner: Corner,
+    *,
+    baked_lib: Path,
+    substitutions: Optional[Mapping[str, str]] = None,
+    ring_n_stages: int = 5,
+    ring_cload: float = 0.5e-15,
+) -> str:
+    """Render the same experiment for PyCircuitSim's LEVEL=72 adapter."""
+    bt = apply_corner(base_bt, corner)
+    return _render_one(
+        case,
+        analysis,
+        bt,
+        corner,
+        reference=False,
+        control=True,
+        baked_lib=baked_lib,
+        substitutions=substitutions or {},
+        ring_n_stages=ring_n_stages,
+        ring_cload=ring_cload,
+    )
 
 
 def _source_kind(parts: Sequence[str]) -> str:
@@ -470,13 +1055,20 @@ def _source_kind(parts: Sequence[str]) -> str:
     return "dc"
 
 
-def topology_signature(text: str) -> Counter[Tuple[str, ...]]:
-    """Canonical connectivity multiset for a flat rendered deck.
+def _normalized_spec(parts: Sequence[str]) -> str:
+    """Normalize equivalent parenthesized and bare SPICE value syntax."""
+    text = " ".join(parts).lower().replace("(", " ").replace(")", " ")
+    return " ".join(text.split())
 
-    Values, model names, and engine-specific M/N device prefixes are ignored;
-    element kind, MOS polarity, terminal order, source kind, and IC nodes are
-    retained.  An unresolved subcircuit instance is rejected because silently
-    ignoring it would turn the parity check into a false assurance.
+
+def topology_signature(text: str) -> Counter[Tuple[str, ...]]:
+    """Canonical physical multiset for a flat rendered deck.
+
+    Engine-specific model names and M/N device prefixes are ignored. Element
+    values, source waveforms, temperature, options, IC values, MOS polarity,
+    and terminal order are retained. An unresolved subcircuit instance is
+    rejected because silently ignoring it would turn the parity check into a
+    false assurance.
     """
     signature: Counter[Tuple[str, ...]] = Counter()
     for raw in text.splitlines():
@@ -486,15 +1078,25 @@ def topology_signature(text: str) -> Counter[Tuple[str, ...]]:
         parts = line.split()
         head = parts[0]
         low = head.lower()
-        if low.startswith((".include", ".model", ".temp", ".end",
-                           ".dc", ".tran", ".ac", ".options")):
+        if low in {".include", ".model", ".end", ".dc", ".tran", ".ac", ".op"}:
+            continue
+        if low.startswith(".temp"):
+            signature[("temp", _normalized_spec(parts[1:]))] += 1
+            continue
+        if low in {".option", ".options"}:
+            signature[("options", _normalized_spec(parts[1:]))] += 1
             continue
         if low == ".ic":
-            nodes = tuple(sorted(
-                match.lower() for match in
-                re.findall(r"v\(([^)]+)\)", line, flags=re.IGNORECASE)
+            assignments = tuple(sorted(
+                (node.lower(), value.lower())
+                for node, value in re.findall(
+                    r"v\(([^)]+)\)\s*=\s*([^\s]+)",
+                    line,
+                    flags=re.IGNORECASE,
+                )
             ))
-            signature[("ic", *nodes)] += 1
+            signature[("ic", *[f"{node}={value}"
+                                for node, value in assignments])] += 1
             continue
         prefix = head[0].upper()
         if prefix == "X":
@@ -508,12 +1110,33 @@ def topology_signature(text: str) -> Counter[Tuple[str, ...]]:
                                            for node in parts[1:5]])] += 1
         elif prefix in ("R", "C", "L"):
             signature[(prefix.lower(), parts[1].lower(),
-                       parts[2].lower())] += 1
+                       parts[2].lower(), _normalized_spec(parts[3:]))] += 1
         elif prefix in ("V", "I"):
             signature[(prefix.lower(), parts[1].lower(), parts[2].lower(),
-                       _source_kind(parts))] += 1
+                       _source_kind(parts),
+                       _normalized_spec(parts[3:]))] += 1
         else:
             raise ValueError(f"unsupported topology card in parity check: {line}")
+    return signature
+
+
+def connectivity_signature(text: str) -> Counter[Tuple[str, ...]]:
+    """Return topology alone, for detecting duplicate template ownership."""
+    physical = topology_signature(text)
+    signature: Counter[Tuple[str, ...]] = Counter()
+    for item, count in physical.items():
+        kind = item[0]
+        if kind in {"temp", "options"}:
+            continue
+        if kind == "ic":
+            projected = ("ic", *(value.split("=", 1)[0] for value in item[1:]))
+        elif kind in {"r", "c", "l"}:
+            projected = item[:3]
+        elif kind in {"v", "i"}:
+            projected = item[:4]
+        else:
+            projected = item
+        signature[projected] += count
     return signature
 
 
@@ -525,8 +1148,157 @@ def topology_mismatch(candidate: str, reference: str) -> str:
         return ""
     candidate_only = list((candidate_sig - reference_sig).elements())
     reference_only = list((reference_sig - candidate_sig).elements())
-    return (f"topology mismatch: candidate-only={candidate_only}; "
+    return (f"physical deck mismatch: candidate-only={candidate_only}; "
             f"reference-only={reference_only}")
+
+
+def _model_declarations(deck: str) -> Dict[str, Tuple[str, Dict[str, str]]]:
+    declarations: Dict[str, Tuple[str, Dict[str, str]]] = {}
+    for raw in deck.splitlines():
+        line = raw.strip()
+        if not line.lower().startswith(".model "):
+            continue
+        parts = line.replace("(", " ").replace(")", " ").split()
+        if len(parts) < 3:
+            raise ValueError(f"malformed model declaration: {line}")
+        params: Dict[str, str] = {}
+        for token in parts[3:]:
+            if "=" in token:
+                name, value = token.split("=", 1)
+                params[name.upper()] = value
+        declarations[parts[1].lower()] = (parts[2].lower(), params)
+    return declarations
+
+
+def physical_deck_mismatch(
+    candidate: str,
+    reference: str,
+    analysis: AnalysisSpec,
+    bt: BenchTech,
+    *,
+    baked_lib: Path,
+    case: Optional[CircuitCase] = None,
+    model_level: Optional[int] = None,
+) -> str:
+    """Return any physical or compact-model binding drift between adapters."""
+    mismatch = topology_mismatch(candidate, reference)
+    if mismatch:
+        return mismatch
+
+    expected_card = "." + analysis.card.lstrip(".").lower()
+    candidate_cards = [
+        line.strip().lower()
+        for line in candidate.splitlines()
+        if line.strip().lower().startswith((".op", ".dc", ".tran", ".ac"))
+    ]
+    if candidate_cards != [expected_card]:
+        return (
+            f"candidate analysis mismatch: expected {[expected_card]}, "
+            f"got {candidate_cards}"
+        )
+    reference_cards = [
+        line.strip().lower()
+        for line in reference.splitlines()
+        if line.strip().lower().startswith((".op", ".dc", ".tran", ".ac"))
+    ]
+    if reference_cards:
+        return f"reference deck unexpectedly embeds analysis cards: {reference_cards}"
+
+    includes = []
+    for raw in reference.splitlines():
+        parts = raw.strip().split(maxsplit=1)
+        if parts and parts[0].lower() == ".include" and len(parts) == 2:
+            includes.append(parts[1].strip().strip('"'))
+    if includes != [str(baked_lib)]:
+        return (
+            f"reference model include mismatch: expected {[str(baked_lib)]}, "
+            f"got {includes}"
+        )
+
+    declarations = _model_declarations(candidate)
+    expected_level = str(model_level or active_model_level())
+    if case is not None and case.device_roles:
+        expected_models = {
+            str(_resolved_role(case, role, bt)["candidate_model"]): (
+                role.polarity, str(_resolved_role(case, role, bt)["vt"]),
+            )
+            for role in case.device_roles
+        }
+    else:
+        expected_models = {
+            "nmos_nn": ("nmos", bt.effective_nmos_vt),
+            "pmos_nn": ("pmos", bt.effective_pmos_vt),
+        }
+    for name, (kind, vt) in expected_models.items():
+        declaration = declarations.get(name)
+        if declaration is None:
+            return f"candidate model declaration missing: {name}"
+        actual_kind, params = declaration
+        expected_params = {
+            "LEVEL": expected_level,
+            "TECH": bt.nn_tech,
+            "VT": vt,
+        }
+        if actual_kind != kind or any(
+            params.get(key, "").lower() != value.lower()
+            for key, value in expected_params.items()
+        ):
+            return (
+                f"candidate model binding mismatch for {name}: "
+                f"kind={actual_kind}, params={params}, expected={expected_params}"
+            )
+
+    role_geometry: Dict[str, Tuple[float, int, str, str]] = {}
+    if case is not None:
+        for role in case.device_roles:
+            resolved = _resolved_role(case, role, bt)
+            for instance in role.instances:
+                role_geometry[instance.lower()] = (
+                    float(resolved["length"]),
+                    int(resolved["nfin"]),
+                    str(resolved["reference_model"]).lower(),
+                    str(resolved["candidate_model"]).lower(),
+                )
+    default_geometry = {
+        "n": (bt.l_nmos, bt.nfin, bt.nmos_model.lower(), "nmos_nn"),
+        "p": (
+            bt.l_pmos, bt.effective_nfin_p, bt.pmos_model.lower(), "pmos_nn",
+        ),
+    }
+    for deck, is_reference in ((candidate, False), (reference, True)):
+        for raw in deck.splitlines():
+            parts = raw.strip().split()
+            if not parts or parts[0][0].upper() not in {"M", "N"}:
+                continue
+            polarity = "p" if len(parts[0]) > 1 and parts[0][1].lower() == "p" else "n"
+            instance = parts[0][1:].lower()
+            length, nfin, reference_model, candidate_model = role_geometry.get(
+                instance, default_geometry[polarity],
+            )
+            if is_reference:
+                if len(parts) < 6 or parts[5].lower() != reference_model:
+                    return f"reference {polarity} model binding mismatch: {raw.strip()}"
+                continue
+            if len(parts) < 6 or parts[5].lower() != candidate_model:
+                return f"candidate {polarity} model binding mismatch: {raw.strip()}"
+            params = {
+                key.upper(): value
+                for token in parts[6:] if "=" in token
+                for key, value in (token.split("=", 1),)
+            }
+            try:
+                actual_l = _analysis_number(params["L"])
+                actual_nfin = int(float(params["NFIN"]))
+            except (KeyError, ValueError):
+                return f"candidate geometry is incomplete: {raw.strip()}"
+            if not math.isclose(actual_l, length, rel_tol=1e-12, abs_tol=1e-18) \
+                    or actual_nfin != nfin:
+                return (
+                    f"candidate {polarity} geometry mismatch: "
+                    f"L={actual_l:g}, NFIN={actual_nfin}; "
+                    f"expected L={length:g}, NFIN={nfin}"
+                )
+    return ""
 
 
 def _body_only(deck: str) -> str:
@@ -627,13 +1399,25 @@ def run_reference_trace(
     signals = list(dict.fromkeys((*analysis.signals, *support_signals)))
     card = analysis.card
     if analysis.kind == "ac":
-        return _run_ngspice_ac_trace(deck, signals, card, work_dir, tag)
-    data = run_ngspice_wrdata(
-        _body_only(deck), " ".join(signals), work_dir, tag, card,
+        trace = _run_ngspice_ac_trace(deck, signals, card, work_dir, tag)
+    else:
+        data = run_ngspice_wrdata(
+            _body_only(deck), " ".join(signals), work_dir, tag, card,
+        )
+        trace = _parse_real_wrdata(
+            data,
+            signals,
+            axis_name="time" if analysis.kind == "tran" else "sweep",
+        )
+        if analysis.kind == "op":
+            trace.axis = np.asarray([0.0])
+    start, stop = analysis_axis_limits(analysis)
+    trace.validate(
+        expected_start=start,
+        expected_stop=stop,
+        endpoint_tolerance=analysis_endpoint_tolerance(analysis),
     )
-    return _parse_real_wrdata(
-        data, signals, axis_name="time" if analysis.kind == "tran" else "sweep",
-    )
+    return trace
 
 
 def _lookup_signal(results: Mapping[str, Any], signal: str) -> np.ndarray:
@@ -695,6 +1479,48 @@ def _run_candidate_ac_trace(
     return trace
 
 
+def _run_candidate_op_trace(
+    path: Path,
+    signals: Sequence[str],
+) -> Trace:
+    """Solve one NN operating point and expose nodes plus source currents."""
+    from pycircuitsim.simulation import _circuit_has_nn, _solve_dc_with_retry
+    from pycircuitsim.solver import DCSolver
+
+    parser = parse_netlist(path)
+    circuit = parser.circuit
+
+    def _solve(use_gmin: bool) -> Tuple[DCSolver, Dict[str, float]]:
+        solver = DCSolver(
+            circuit,
+            initial_guess=circuit.initial_conditions or None,
+            use_source_stepping=True,
+            use_gmin_stepping=use_gmin,
+        )
+        return solver, solver.solve()
+
+    solver, solution = _solve_dc_with_retry(
+        circuit, _circuit_has_nn(circuit), _solve,
+    )
+    converged = bool(getattr(solver, "_last_solve_converged", True))
+    if not converged:
+        raise RuntimeError("candidate operating point did not converge")
+    raw: Dict[str, Any] = dict(solution)
+    for component in circuit.components:
+        try:
+            raw[f"i({component.name})"] = np.asarray([
+                component.calculate_current(solution)
+            ])
+        except (AttributeError, NotImplementedError):
+            continue
+    values = {
+        signal: np.atleast_1d(_lookup_signal(raw, signal)) for signal in signals
+    }
+    trace = Trace("op", np.asarray([0.0]), values, converged=True)
+    trace.validate(expected_start=0.0, expected_stop=0.0)
+    return trace
+
+
 def run_candidate_trace(
     deck: str,
     analysis: AnalysisSpec,
@@ -730,12 +1556,128 @@ def run_candidate_trace(
             )
         elif analysis.kind == "ac":
             trace = _run_candidate_ac_trace(path, analysis.signals)
+        elif analysis.kind == "op":
+            trace = _run_candidate_op_trace(path, analysis.signals)
         else:
             raise ValueError(f"unsupported analysis kind {analysis.kind!r}")
     finally:
         logging.disable(logging.NOTSET)
-    trace.validate()
+    if trace.partial:
+        trace.validate()
+    else:
+        start, stop = analysis_axis_limits(analysis)
+        trace.validate(
+            expected_start=start,
+            expected_stop=stop,
+            endpoint_tolerance=analysis_endpoint_tolerance(analysis),
+        )
     return trace, path
+
+
+def run_level72_control_trace(
+    deck: str,
+    analysis: AnalysisSpec,
+    work_dir: Path,
+    tag: str,
+    *,
+    modelcard: Path,
+) -> Trace:
+    """Run the same deck through PyCircuitSim's LEVEL=72 solver adapter."""
+    from pycircuitsim.parser import Parser
+    from pycircuitsim.simulation import _solve_dc_with_retry
+    from pycircuitsim.solver import ACSolver, DCSolver
+
+    work_dir.mkdir(parents=True, exist_ok=True)
+    path = work_dir / f"control_{tag}.sp"
+    path.write_text(deck)
+    parser = Parser(modelcard_path=str(modelcard))
+    parser.parse_file(str(path))
+    circuit = parser.circuit
+    if analysis.kind == "dc":
+        results = run_directnet_dc_sweep(
+            path,
+            work_dir,
+            f"control_{tag}",
+            require_convergence=True,
+            parsed=parser,
+        )
+        first = _lookup_signal(results, analysis.signals[0])
+        trace = Trace(
+            "sweep",
+            _dc_axis(parser.analysis_params, first.size),
+            {signal: _lookup_signal(results, signal)
+             for signal in analysis.signals},
+        )
+    elif analysis.kind == "tran":
+        results, partial, error = run_directnet_transient(path, parsed=parser)
+        trace = Trace(
+            "time",
+            np.asarray(results["time"]),
+            {signal: _lookup_signal(results, signal)
+             for signal in analysis.signals},
+            converged=not partial,
+            partial=partial,
+            error=error,
+        )
+        if partial:
+            raise RuntimeError(error or "LEVEL=72 control transient ended early")
+    else:
+        def _solve(use_gmin: bool) -> Tuple[DCSolver, Dict[str, float]]:
+            solver = DCSolver(
+                circuit,
+                initial_guess=circuit.initial_conditions or None,
+                use_source_stepping=True,
+                use_gmin_stepping=use_gmin,
+            )
+            return solver, solver.solve()
+
+        solver, solution = _solve_dc_with_retry(circuit, False, _solve)
+        if not solver._last_solve_converged:
+            raise RuntimeError("LEVEL=72 control operating point did not converge")
+        if analysis.kind == "op":
+            raw: Dict[str, Any] = dict(solution)
+            for component in circuit.components:
+                try:
+                    raw[f"i({component.name})"] = np.asarray([
+                        component.calculate_current(solution)
+                    ])
+                except (AttributeError, NotImplementedError):
+                    continue
+            trace = Trace(
+                "op",
+                np.asarray([0.0]),
+                {signal: np.atleast_1d(_lookup_signal(raw, signal))
+                 for signal in analysis.signals},
+            )
+        elif analysis.kind == "ac":
+            start = float(parser.analysis_params["fstart"])
+            stop = float(parser.analysis_params["fstop"])
+            points = int(parser.analysis_params["num_points"])
+            sweep = str(parser.analysis_params["sweep_type"])
+            if sweep == "dec":
+                count = int(round(math.log10(stop / start) * points)) + 1
+                axis = np.logspace(math.log10(start), math.log10(stop), count)
+            elif sweep == "oct":
+                count = int(round(math.log2(stop / start) * points)) + 1
+                axis = np.logspace(math.log10(start), math.log10(stop), count)
+            else:
+                axis = np.linspace(start, stop, points)
+            results = ACSolver(circuit, dc_solution=solution).solve(axis)
+            trace = Trace(
+                "frequency",
+                axis,
+                {signal: _lookup_signal(results, signal)
+                 for signal in analysis.signals},
+            )
+        else:
+            raise ValueError(f"unsupported control analysis {analysis.kind!r}")
+    start, stop = analysis_axis_limits(analysis)
+    trace.validate(
+        expected_start=start,
+        expected_stop=stop,
+        endpoint_tolerance=analysis_endpoint_tolerance(analysis),
+    )
+    return trace
 
 
 def _ascending(axis: np.ndarray, values: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -759,6 +1701,10 @@ def _interpolate(
 
 
 def _common_grid(candidate: Trace, reference: Trace) -> np.ndarray:
+    if candidate.axis.size == reference.axis.size == 1:
+        if not np.isclose(candidate.axis[0], reference.axis[0]):
+            raise ValueError("candidate/reference scalar axes differ")
+        return np.asarray([float(candidate.axis[0])])
     lo = max(float(np.min(candidate.axis)), float(np.min(reference.axis)))
     hi = min(float(np.max(candidate.axis)), float(np.max(reference.axis)))
     if not hi > lo:
@@ -833,6 +1779,38 @@ def _first_edge_duration(
     return float("nan")
 
 
+def _clock_hold_windows(clock: np.ndarray, level: float) -> List[slice]:
+    falling = np.flatnonzero((clock[:-1] > level) & (clock[1:] <= level))
+    rising = np.flatnonzero((clock[:-1] <= level) & (clock[1:] > level))
+    windows: List[slice] = []
+    for edge in falling:
+        start = int(edge + 1)
+        later = rising[rising >= start]
+        stop = int(later[0] + 1) if later.size else int(clock.size)
+        if stop - start >= 2:
+            windows.append(slice(start, stop))
+    return windows
+
+
+def clock_hold_samples(
+    axis: np.ndarray,
+    storage: np.ndarray,
+    clock: np.ndarray,
+    *,
+    level: float,
+) -> np.ndarray:
+    """Sample storage at the center of every clock-defined hold interval."""
+    time = np.asarray(axis, dtype=float)
+    values = np.asarray(storage, dtype=float)
+    clock_values = np.asarray(clock, dtype=float)
+    if time.ndim != 1 or values.shape != time.shape or clock_values.shape != time.shape:
+        raise ValueError("clock hold sampling requires aligned one-dimensional traces")
+    windows = _clock_hold_windows(clock_values, level)
+    return np.asarray([
+        float(np.median(values[window])) for window in windows
+    ], dtype=float)
+
+
 def _relative_error(test: float, reference: float) -> float:
     if not np.isfinite(test) or not np.isfinite(reference) or abs(reference) < 1e-30:
         return float("nan")
@@ -841,6 +1819,22 @@ def _relative_error(test: float, reference: float) -> float:
 
 def _gradient_gain(axis: np.ndarray, values: np.ndarray) -> float:
     return float(np.max(np.abs(np.gradient(values, axis))))
+
+
+def _bandwidth(axis: np.ndarray, values: np.ndarray) -> float:
+    """First reference-independent -3 dB crossing of an AC response."""
+    magnitude = np.abs(values)
+    if magnitude.size < 2 or magnitude[0] <= 0.0:
+        return float("nan")
+    target = float(magnitude[0] / math.sqrt(2.0))
+    indexes = np.flatnonzero(magnitude <= target)
+    if indexes.size == 0 or int(indexes[0]) == 0:
+        return float("nan")
+    index = int(indexes[0])
+    x0, x1 = math.log10(float(axis[index - 1])), math.log10(float(axis[index]))
+    y0, y1 = float(magnitude[index - 1]), float(magnitude[index])
+    fraction = (target - y0) / (y1 - y0) if y1 != y0 else 0.0
+    return float(10.0 ** (x0 + fraction * (x1 - x0)))
 
 
 def _period(axis: np.ndarray, values: np.ndarray, level: float) -> float:
@@ -856,23 +1850,166 @@ def _period(axis: np.ndarray, values: np.ndarray, level: float) -> float:
     return float(np.mean(np.diff(crossings)))
 
 
-#: Every metric profile ``_domain_metrics`` implements.  A case naming a
-#: profile that is not here emits no domain metrics at all, which shows up
-#: only as a missing required metric on a run where nothing errored — far too
-#: late.  The catalog contract check verifies membership instead.
-METRIC_PROFILES: frozenset = frozenset({
-    "trace", "transient", "ac",
-    "source_follower", "gain", "opamp", "ring_osc", "current_mirror",
-    "cascode", "cascode_ac", "inverter_chain", "logic_tran", "logic_vtc",
-    "transmission_gate", "hold_droop", "switchcap", "diffpair",
-    "diffpair_diff_ac", "diffpair_cm_ac", "sram_hold", "sram_read",
-    "sram_write", "sram_snm",
-    # V7.6.7 additions
-    "mirror_iref", "opamp_diff_ac", "opamp_cm_ac", "opamp_supply_ac",
-    "switchcap_multicycle", "ring_supply", "sram_write_margin",
-    "diode_load", "self_bias_cell", "self_bias_cascode", "mos_reference",
-    "unity_gain", "settling", "line_regulation", "load_regulation",
-})
+#: Required domain outputs for every implemented metric profile.  This is both
+#: the catalog vocabulary and the runtime evidence contract: an event metric
+#: that cannot be measured is an error, not a present-but-NaN result.
+METRIC_CONTRACTS: Dict[str, Tuple[str, ...]] = {
+    "trace": (), "transient": (), "ac": (), "cascode_ac": (),
+    "common_source_ac": (
+        "gain_test", "gain_ref", "gain_error_pct", "bandwidth_test_hz",
+        "bandwidth_ref_hz", "bandwidth_error_pct",
+    ),
+    "common_source_floating_ac": (
+        "gain_test", "gain_ref", "gain_error_pct", "bandwidth_test_hz",
+        "bandwidth_ref_hz", "bandwidth_error_pct",
+        "bulk_response_max_error_v",
+    ),
+    "inverter_vtc": ("trip_shift_v", "leakage_error_a"),
+    "inverter_energy": (
+        "delay_error_pct", "energy_test_j", "energy_ref_j",
+        "energy_error_pct", "leakage_error_a",
+    ),
+    "active_load_op": ("output_error_v", "mirror_error_v"),
+    "active_load_ac": (
+        "gain_test", "gain_ref", "gain_error_pct", "bandwidth_test_hz",
+        "bandwidth_ref_hz", "bandwidth_error_pct",
+    ),
+    "source_follower": ("gain_test", "gain_ref", "gain_error_pct"),
+    "gain": ("gain_test", "gain_ref", "gain_error_pct"),
+    "opamp": ("gain_test", "gain_ref", "gain_error_pct"),
+    "ring_osc": ("period_test_s", "period_ref_s", "period_error_pct"),
+    "current_mirror": (
+        "ratio_test", "ratio_ref", "ratio_error_pct",
+        "output_resistance_error_pct",
+    ),
+    "cascode": ("output_resistance_error_pct",),
+    "inverter_chain": (
+        "delay_error_pct", "amplitude_error_pct", "rise_fall_error_pct",
+    ),
+    "logic_tran": (
+        "delay_error_pct", "amplitude_error_pct", "rise_fall_error_pct",
+    ),
+    "logic_vtc": ("trip_shift_v",),
+    "transmission_gate": ("ron_error_pct",),
+    "hold_droop": (
+        "droop_test_v", "droop_ref_v", "droop_error_v",
+        "feedthrough_error_v",
+    ),
+    "switchcap": (
+        "droop_test_v", "droop_ref_v", "droop_error_v",
+        "feedthrough_error_v", "charge_error_vdd_pct",
+    ),
+    "diffpair": ("diff_gain_error_pct",),
+    "diffpair_diff_ac": (
+        "diff_gain_test", "diff_gain_ref", "diff_gain_error_pct",
+    ),
+    "diffpair_cm_ac": (
+        "cm_gain_test", "cm_gain_ref", "cm_gain_error_pct",
+    ),
+    "opamp_diff_ac": (
+        "diff_gain_test", "diff_gain_ref", "diff_gain_error_pct",
+    ),
+    "opamp_cm_ac": ("cm_gain_test", "cm_gain_ref", "cm_gain_error_pct"),
+    "opamp_supply_ac": (
+        "supply_gain_test", "supply_gain_ref", "supply_gain_error_pct",
+    ),
+    "mirror_iref": (
+        "iref_points", "iref_ratio_test", "iref_ratio_ref",
+        "iref_ratio_error_pct", "iref_worst_ratio_error_pct",
+    ),
+    "switchcap_multicycle": (
+        "cycle_drift_test_v", "cycle_drift_ref_v", "cycle_drift_error_v",
+        "final_sample_error_v",
+    ),
+    "ring_supply": (
+        "period_test_s", "period_ref_s", "period_error_pct",
+        "supply_current_test_a", "supply_current_ref_a",
+        "supply_current_error_pct",
+    ),
+    "diode_load": ("diode_drop_error_v", "diode_drop_worst_error_v"),
+    "bias_op": ("bias_current_error_pct", "bias_node_error_v"),
+    "bias_fanout_op": ("bias_node_error_v", "supply_current_error_pct"),
+    "self_bias_cell": (
+        "bias_current_test_a", "bias_current_ref_a",
+        "bias_current_error_pct", "startup_vdd_test_v",
+        "startup_vdd_ref_v", "startup_vdd_error_v", "bias_node_error_v",
+    ),
+    "self_bias_cascode": (
+        "output_resistance_error_pct", "bias_node_error_v",
+    ),
+    "mos_reference": ("vref_error_v", "line_sensitivity_error_pct"),
+    "unity_gain": (
+        "follow_error_test_v", "follow_error_ref_v", "follow_error_v",
+        "closed_loop_gain_error_pct",
+    ),
+    "settling": (
+        "settling_test_s", "settling_ref_s", "settling_error_pct",
+        "overshoot_error_v",
+    ),
+    "line_regulation": (
+        "vout_error_v", "line_regulation_test", "line_regulation_ref",
+        "line_regulation_error_pct",
+    ),
+    "load_regulation": (
+        "load_droop_test_v", "load_droop_ref_v", "load_droop_error_v",
+        "recovery_error_v",
+    ),
+    "closed_loop_ac": (
+        "gain_test", "gain_ref", "gain_error_pct", "bandwidth_test_hz",
+        "bandwidth_ref_hz", "bandwidth_error_pct", "peaking_test_db",
+        "peaking_ref_db", "peaking_error_db",
+    ),
+    "ldo_psrr_ac": ("psrr_test_db", "psrr_ref_db", "psrr_error_db"),
+    "ldo_output_impedance_ac": (
+        "output_impedance_test_ohm", "output_impedance_ref_ohm",
+        "output_impedance_error_pct",
+    ),
+    "sram_write_margin": (
+        "write_trip_test_v", "write_trip_ref_v", "write_trip_error_v",
+    ),
+    "sram_hold": ("hold_margin_error_v", "retention"),
+    "sram_read": ("read_disturb_error_v",),
+    "sram_write": ("write_time_error_pct", "write_final_error_v"),
+    "sram_snm": ("hold_margin_error_v", "retention", "positive"),
+}
+
+METRIC_PROFILES: frozenset = frozenset(METRIC_CONTRACTS)
+_AGGREGATE_METRICS: Tuple[str, ...] = (
+    "mre_pct", "r2", "nrmse_pct", "max_err",
+)
+
+
+def validate_analysis_metrics(
+    analysis: AnalysisSpec,
+    metrics: Mapping[str, Any],
+    domain: Mapping[str, Any],
+) -> None:
+    """Require every promised metric to exist and carry a finite value."""
+    if analysis.metric_profile not in METRIC_CONTRACTS:
+        raise ValueError(f"unknown metric profile {analysis.metric_profile!r}")
+    payload = {**metrics, **domain}
+    required = (*_AGGREGATE_METRICS, *METRIC_CONTRACTS[analysis.metric_profile])
+    missing = sorted(name for name in required if name not in payload)
+    if missing:
+        raise ValueError(f"missing required metrics: {missing}")
+    nonfinite = sorted(
+        name for name in required
+        if isinstance(payload[name], (float, np.floating))
+        and not np.isfinite(payload[name])
+    )
+    if nonfinite:
+        raise ValueError(f"non-finite required metrics: {nonfinite}")
+
+
+def analysis_metric_vocabulary(analysis: AnalysisSpec) -> frozenset[str]:
+    """Return every stable aggregate/domain key this profile can emit."""
+    vocabulary = set(_AGGREGATE_METRICS)
+    vocabulary.update(METRIC_CONTRACTS.get(analysis.metric_profile, ()))
+    if analysis.phase_align:
+        vocabulary.add("phase_aligned_nrmse_pct")
+    if analysis.metric_profile in {"logic_vtc", "logic_tran", "active_load_op"}:
+        vocabulary.add("internal_node_nrmse_pct")
+    return frozenset(vocabulary)
 
 
 def _domain_metrics(
@@ -886,6 +2023,117 @@ def _domain_metrics(
     names = list(candidate)
     if not names:
         return domain
+    if profile in (
+        "common_source_ac", "common_source_floating_ac", "active_load_ac",
+    ):
+        output = names[0]
+        gain_test = float(np.abs(candidate[output][0]))
+        gain_ref = float(np.abs(reference[output][0]))
+        bandwidth_test = _bandwidth(grid, candidate[output])
+        bandwidth_ref = _bandwidth(grid, reference[output])
+        domain.update(
+            gain_test=gain_test,
+            gain_ref=gain_ref,
+            gain_error_pct=_relative_error(gain_test, gain_ref),
+            bandwidth_test_hz=bandwidth_test,
+            bandwidth_ref_hz=bandwidth_ref,
+            bandwidth_error_pct=_relative_error(bandwidth_test, bandwidth_ref),
+        )
+        if profile == "common_source_floating_ac" and len(names) >= 2:
+            bulk = names[1]
+            domain["bulk_response_max_error_v"] = float(np.max(np.abs(
+                candidate[bulk] - reference[bulk]
+            )))
+    if profile == "active_load_op" and len(names) >= 2:
+        domain.update(
+            output_error_v=abs(float(np.real(
+                candidate[names[0]][0] - reference[names[0]][0]
+            ))),
+            mirror_error_v=abs(float(np.real(
+                candidate[names[1]][0] - reference[names[1]][0]
+            ))),
+        )
+    if profile == "closed_loop_ac":
+        output = names[0]
+        test = np.abs(candidate[output])
+        ref = np.abs(reference[output])
+        gain_test, gain_ref = float(test[0]), float(ref[0])
+        bandwidth_test = _bandwidth(grid, candidate[output])
+        bandwidth_ref = _bandwidth(grid, reference[output])
+        peaking_test = 20.0 * math.log10(
+            max(float(np.max(test)) / max(gain_test, 1e-30), 1e-30)
+        )
+        peaking_ref = 20.0 * math.log10(
+            max(float(np.max(ref)) / max(gain_ref, 1e-30), 1e-30)
+        )
+        domain.update(
+            gain_test=gain_test, gain_ref=gain_ref,
+            gain_error_pct=_relative_error(gain_test, gain_ref),
+            bandwidth_test_hz=bandwidth_test,
+            bandwidth_ref_hz=bandwidth_ref,
+            bandwidth_error_pct=_relative_error(bandwidth_test, bandwidth_ref),
+            peaking_test_db=peaking_test, peaking_ref_db=peaking_ref,
+            peaking_error_db=abs(peaking_test - peaking_ref),
+        )
+    if profile == "ldo_psrr_ac":
+        gain_test = float(np.abs(candidate[names[0]][0]))
+        gain_ref = float(np.abs(reference[names[0]][0]))
+        psrr_test = -20.0 * math.log10(max(gain_test, 1e-30))
+        psrr_ref = -20.0 * math.log10(max(gain_ref, 1e-30))
+        domain.update(
+            psrr_test_db=psrr_test,
+            psrr_ref_db=psrr_ref,
+            psrr_error_db=abs(psrr_test - psrr_ref),
+        )
+    if profile == "ldo_output_impedance_ac":
+        impedance_test = float(np.abs(candidate[names[0]][0]))
+        impedance_ref = float(np.abs(reference[names[0]][0]))
+        domain.update(
+            output_impedance_test_ohm=impedance_test,
+            output_impedance_ref_ohm=impedance_ref,
+            output_impedance_error_pct=_relative_error(
+                impedance_test, impedance_ref,
+            ),
+        )
+    if profile == "inverter_vtc" and len(names) >= 2:
+        output, current = names[0], names[1]
+        trip_test = _crossing(grid, np.real(candidate[output]), vdd / 2.0)
+        trip_ref = _crossing(grid, np.real(reference[output]), vdd / 2.0)
+        domain.update(
+            trip_shift_v=abs(trip_test - trip_ref),
+            leakage_error_a=float(np.max(np.abs(
+                np.real(candidate[current][[0, -1]])
+                - np.real(reference[current][[0, -1]])
+            ))),
+        )
+    if profile == "inverter_energy" and len(names) >= 3:
+        input_name, output, current = names[0], names[1], names[2]
+        input_test = _crossing(
+            grid, np.real(candidate[input_name]), vdd / 2.0,
+        )
+        input_ref = _crossing(
+            grid, np.real(reference[input_name]), vdd / 2.0,
+        )
+        output_test = _crossing(grid, np.real(candidate[output]), vdd / 2.0)
+        output_ref = _crossing(grid, np.real(reference[output]), vdd / 2.0)
+        delay_test = abs(output_test - input_test)
+        delay_ref = abs(output_ref - input_ref)
+        energy_test = float(np.trapezoid(
+            np.abs(np.real(candidate[current])), grid,
+        ) * vdd)
+        energy_ref = float(np.trapezoid(
+            np.abs(np.real(reference[current])), grid,
+        ) * vdd)
+        pre = max(grid.size // 8, 1)
+        leakage_test = float(np.mean(np.abs(np.real(candidate[current][:pre]))))
+        leakage_ref = float(np.mean(np.abs(np.real(reference[current][:pre]))))
+        domain.update(
+            delay_error_pct=_relative_error(delay_test, delay_ref),
+            energy_test_j=energy_test,
+            energy_ref_j=energy_ref,
+            energy_error_pct=_relative_error(energy_test, energy_ref),
+            leakage_error_a=abs(leakage_test - leakage_ref),
+        )
     if profile in ("source_follower", "gain", "opamp"):
         name = names[0]
         gain_test = _gradient_gain(grid, np.real(candidate[name]))
@@ -966,16 +2214,33 @@ def _domain_metrics(
             domain["ron_error_pct"] = _relative_error(float(rt), float(rr))
     if profile in ("hold_droop", "switchcap"):
         name = names[0]
-        half = grid.size // 2
-        test_tail = np.real(candidate[name][half:])
-        ref_tail = np.real(reference[name][half:])
+        clock_name = next((item for item in names[1:]
+                           if "phi" in item.lower()), "")
+        windows = (
+            _clock_hold_windows(np.real(reference[clock_name]), vdd / 2.0)
+            if clock_name else []
+        )
+        if windows:
+            window = windows[-1]
+            test_tail = np.real(candidate[name][window])
+            ref_tail = np.real(reference[name][window])
+            edge = window.start
+            feedthrough_t = abs(float(np.real(candidate[name][edge]
+                                              - candidate[name][edge - 1])))
+            feedthrough_r = abs(float(np.real(reference[name][edge]
+                                              - reference[name][edge - 1])))
+        else:
+            half = grid.size // 2
+            test_tail = np.real(candidate[name][half:])
+            ref_tail = np.real(reference[name][half:])
+            feedthrough_t = float(np.max(np.abs(np.diff(test_tail))))
+            feedthrough_r = float(np.max(np.abs(np.diff(ref_tail))))
         droop_t = float(np.ptp(test_tail))
         droop_r = float(np.ptp(ref_tail))
         domain.update(
             droop_test_v=droop_t, droop_ref_v=droop_r,
             droop_error_v=abs(droop_t - droop_r),
-            feedthrough_error_v=abs(float(np.max(np.abs(np.diff(test_tail))))
-                                    - float(np.max(np.abs(np.diff(ref_tail))))),
+            feedthrough_error_v=abs(feedthrough_t - feedthrough_r),
         )
         if profile == "switchcap":
             domain["charge_error_vdd_pct"] = (
@@ -1030,19 +2295,32 @@ def _domain_metrics(
             )
     if profile == "switchcap_multicycle":
         name = names[0]
-        test = np.real(candidate[name])
-        ref = np.real(reference[name])
-        # Compare drift accumulated after the first quarter of the window, so
-        # a constant offset in the first sample does not masquerade as drift
-        # and vice versa.
-        start = max(grid.size // 4, 1)
-        drift_t = float(test[-1] - test[start])
-        drift_r = float(ref[-1] - ref[start])
-        domain.update(
-            cycle_drift_test_v=drift_t, cycle_drift_ref_v=drift_r,
-            cycle_drift_error_v=abs(drift_t - drift_r),
-            final_sample_error_v=abs(float(test[-1] - ref[-1])),
-        )
+        clock_name = next((item for item in names[1:]
+                           if "phi" in item.lower()), "")
+        if clock_name:
+            test_samples = clock_hold_samples(
+                grid, np.real(candidate[name]), np.real(candidate[clock_name]),
+                level=vdd / 2.0,
+            )
+            ref_samples = clock_hold_samples(
+                grid, np.real(reference[name]), np.real(reference[clock_name]),
+                level=vdd / 2.0,
+            )
+            count = min(test_samples.size, ref_samples.size)
+            if count >= 2:
+                test_samples = test_samples[:count]
+                ref_samples = ref_samples[:count]
+                drift_t = float(test_samples[-1] - test_samples[0])
+                drift_r = float(ref_samples[-1] - ref_samples[0])
+                domain.update(
+                    hold_samples=count,
+                    cycle_drift_test_v=drift_t,
+                    cycle_drift_ref_v=drift_r,
+                    cycle_drift_error_v=abs(drift_t - drift_r),
+                    final_sample_error_v=abs(float(
+                        test_samples[-1] - ref_samples[-1]
+                    )),
+                )
     if profile == "ring_supply":
         voltage = next((name for name in names if name.lower().startswith("v(")),
                        names[0])
@@ -1076,6 +2354,32 @@ def _domain_metrics(
             float(np.max(np.abs(np.real(candidate[name])
                                 - np.real(reference[name]))))
             for name in names
+        )
+    if profile == "bias_op":
+        current = next((name for name in names
+                        if name.lower().startswith("i(")), "")
+        voltages = [name for name in names if name.lower().startswith("v(")]
+        if current:
+            current_test = float(abs(np.real(candidate[current][0])))
+            current_ref = float(abs(np.real(reference[current][0])))
+            domain["bias_current_error_pct"] = _relative_error(
+                current_test, current_ref,
+            )
+        if voltages:
+            domain["bias_node_error_v"] = max(
+                abs(float(np.real(candidate[name][0]
+                                  - reference[name][0])))
+                for name in voltages
+            )
+    if profile == "bias_fanout_op" and len(names) >= 2:
+        bias_name, current_name = names[0], names[1]
+        test_bias = np.real(candidate[bias_name])
+        ref_bias = np.real(reference[bias_name])
+        draw_test = float(abs(np.real(candidate[current_name][0])))
+        draw_ref = float(abs(np.real(reference[current_name][0])))
+        domain.update(
+            bias_node_error_v=abs(float(test_bias[-1] - ref_bias[-1])),
+            supply_current_error_pct=_relative_error(draw_test, draw_ref),
         )
     if profile == "self_bias_cell":
         # Supply ramp of a self-biased cell.  Both engines are asked the same
@@ -1269,6 +2573,10 @@ def compare_traces(
         reference_values[signal] = truth
         basic = full_metrics(np.abs(test) if np.iscomplexobj(test) else test,
                              np.abs(truth) if np.iscomplexobj(truth) else truth)
+        if grid.size == 1:
+            difference = abs(float(np.real(test[0] - truth[0])))
+            basic["nrmse_pct"] = difference / max(vdd, 1e-30) * 100.0
+            basic["r2"] = 1.0 if difference <= 1e-12 else 0.0
         per_signal.append((signal, basic))
         prefix = _metric_key(signal)
         for name, value in basic.items():
@@ -1312,6 +2620,12 @@ def compare_traces(
     if analysis.metric_profile in ("logic_vtc", "logic_tran") \
             and len(analysis.signals) >= 2:
         internal_key = _metric_key(analysis.signals[-1])
+        metrics["internal_node_nrmse_pct"] = metrics[
+            f"{internal_key}_nrmse_pct"
+        ]
+    if analysis.metric_profile == "active_load_op" \
+            and len(analysis.signals) >= 2:
+        internal_key = _metric_key(analysis.signals[1])
         metrics["internal_node_nrmse_pct"] = metrics[
             f"{internal_key}_nrmse_pct"
         ]
@@ -1405,11 +2719,18 @@ def _reference_stability(
     if len(traces) < 2:
         return {"reference_repeats": len(traces)}
     worst = 0.0
+    headline_worst = 0.0
     for trace in traces[1:]:
-        metrics, _ = compare_traces(trace, traces[0], analysis, vdd=vdd)
+        metrics, domain = compare_traces(trace, traces[0], analysis, vdd=vdd)
+        validate_analysis_metrics(analysis, metrics, domain)
         worst = max(worst, float(metrics["nrmse_pct"]))
+        headline = {**metrics, **domain}.get(analysis.headline_metric)
+        if isinstance(headline, (float, np.floating)):
+            headline_worst = max(headline_worst, abs(float(headline)))
     return {"reference_repeats": len(traces),
-            "reference_repeat_nrmse_pct": worst}
+            "reference_repeat_nrmse_pct": worst,
+            "reference_repeat_headline_max": headline_worst,
+            "reference_repeat_headline_metric": analysis.headline_metric}
 
 
 def _unconverged_diagnostic(
@@ -1421,6 +2742,7 @@ def _unconverged_diagnostic(
     failure: Exception,
     *,
     reference_converged: bool,
+    run_spec: RunSpec,
 ) -> Dict[str, Any]:
     """Recover the numbers behind a DC convergence failure, for reading only.
 
@@ -1442,12 +2764,15 @@ def _unconverged_diagnostic(
         return {}
     bt = apply_corner(base_bt, corner)
     try:
-        resolved = _resolved_analysis(analysis, bt, corner)
-        baked = get_baked_modelcard(
-            bt, bt.nfin, work_dir, nfin_p=bt.effective_nfin_p,
-        )
+        resolved = _resolved_analysis(case, analysis, bt, corner)
+        baked = get_case_baked_modelcard(case, bt, work_dir)
         candidate_deck, reference_deck = render_case_decks(
-            case, resolved, base_bt, corner, baked_lib=baked,
+            case,
+            resolved,
+            base_bt,
+            corner,
+            baked_lib=baked,
+            model_level=run_spec.model_level,
         )
         reference = run_reference_trace(
             reference_deck, resolved, work_dir,
@@ -1475,25 +2800,44 @@ def run_case_analysis(
     *,
     reference_repeats: int = 1,
     diagnose_support: bool = True,
+    run_spec: Optional[RunSpec] = None,
+    run_level72_control: bool = False,
 ) -> GateResult:
     """Run one complete paired experiment and return a structured result."""
+    resolved_run_spec = run_spec or RunSpec.from_environment()
+    provenance = resolved_run_spec.result_fields()
     bt = apply_corner(base_bt, corner)
     reference_converged = False
     candidate_converged = False
     partial = False
+    control_converged: Optional[bool] = None
+    control_domain: Dict[str, Any] = {}
+    stage = "setup"
     try:
-        resolved_analysis = _resolved_analysis(analysis, bt, corner)
-        baked = get_baked_modelcard(
-            bt, bt.nfin, work_dir, nfin_p=bt.effective_nfin_p,
-        )
+        resolved_analysis = _resolved_analysis(case, analysis, bt, corner)
+        baked = get_case_baked_modelcard(case, bt, work_dir)
         candidate_deck, reference_deck = render_case_decks(
-            case, resolved_analysis, base_bt, corner, baked_lib=baked,
+            case,
+            resolved_analysis,
+            base_bt,
+            corner,
+            baked_lib=baked,
+            model_level=resolved_run_spec.model_level,
         )
-        mismatch = topology_mismatch(candidate_deck, reference_deck)
+        mismatch = physical_deck_mismatch(
+            candidate_deck,
+            reference_deck,
+            resolved_analysis,
+            bt,
+            baked_lib=baked,
+            case=case,
+            model_level=resolved_run_spec.model_level,
+        )
         if mismatch:
             raise ValueError(mismatch)
         support_signals = (_support_voltage_signals(candidate_deck)
                            if diagnose_support and analysis.kind != "ac" else ())
+        stage = "reference"
         references = [
             run_reference_trace(
                 reference_deck, resolved_analysis, work_dir,
@@ -1505,6 +2849,40 @@ def run_case_analysis(
             for index in range(reference_repeats)
         ]
         reference_converged = True
+        if run_level72_control:
+            stage = "control"
+            control_deck = render_case_control_deck(
+                case,
+                resolved_analysis,
+                base_bt,
+                corner,
+                baked_lib=baked,
+            )
+            control_mismatch = topology_mismatch(control_deck, reference_deck)
+            if control_mismatch:
+                raise ValueError(f"LEVEL=72 control {control_mismatch}")
+            control = run_level72_control_trace(
+                control_deck,
+                resolved_analysis,
+                work_dir,
+                f"{case.case_id}_{analysis.name}",
+                modelcard=baked,
+            )
+            control_converged = True
+            control_metrics, control_specific = compare_traces(
+                control, references[0], resolved_analysis, vdd=bt.vdd,
+            )
+            control_nrmse = float(control_metrics["nrmse_pct"])
+            if not np.isfinite(control_nrmse) or \
+                    control_nrmse > case.control_nrmse_limit_pct:
+                raise RuntimeError(
+                    f"LEVEL=72 control NRMSE {control_nrmse:.6g}% exceeds "
+                    f"{case.control_nrmse_limit_pct:g}%"
+                )
+            control_domain = {
+                "level72_control": {**control_metrics, **control_specific}
+            }
+        stage = "candidate"
         candidate, candidate_path = run_candidate_trace(
             candidate_deck, resolved_analysis, work_dir,
             f"{case.case_id}_{analysis.name}",
@@ -1514,8 +2892,29 @@ def run_case_analysis(
         metrics, domain = compare_traces(
             candidate, references[0], resolved_analysis, vdd=bt.vdd,
         )
+        if candidate.partial:
+            return GateResult(
+                case_id=case.case_id,
+                tech=bt.name,
+                corner=corner.name,
+                analysis=analysis.name,
+                role=case.role,
+                status="error",
+                error=candidate.error or "candidate transient ended early",
+                domain={"partial_diagnostic": {**metrics, **domain}},
+                reference_converged=True,
+                candidate_converged=False,
+                control_converged=control_converged,
+                partial=True,
+                execution_state="partial",
+                error_kind="candidate",
+                **provenance,
+            )
+        stage = "metrics"
+        validate_analysis_metrics(resolved_analysis, metrics, domain)
         domain.update(_reference_stability(
             references, resolved_analysis, bt.vdd))
+        domain.update(control_domain)
         if diagnose_support and analysis.kind != "ac":
             domain["reference_support"] = support_diagnostic(
                 candidate_path, references[0],
@@ -1532,13 +2931,28 @@ def run_case_analysis(
             metrics=metrics, domain=domain,
             reference_converged=True,
             candidate_converged=candidate.converged,
+            control_converged=control_converged,
             partial=candidate.partial,
+            **provenance,
         )
     except Exception as exc:  # noqa: BLE001 - evidence rows retain all errors
         domain = _unconverged_diagnostic(
             case, analysis, base_bt, corner, work_dir, exc,
             reference_converged=reference_converged,
+            run_spec=resolved_run_spec,
         )
+        if stage in {"reference", "control"}:
+            execution_state, error_kind = "reference_error", "reference"
+        elif stage == "candidate":
+            execution_state, error_kind = (
+                ("nonconverged", "candidate")
+                if "converg" in str(exc).lower()
+                else ("error", "candidate")
+            )
+        elif stage == "metrics" or "mismatch" in str(exc).lower():
+            execution_state, error_kind = "error", "result_schema"
+        else:
+            execution_state, error_kind = "infrastructure_error", "infrastructure"
         return GateResult(
             case_id=case.case_id, tech=bt.name, corner=corner.name,
             analysis=analysis.name, role=case.role, status="error",
@@ -1546,7 +2960,11 @@ def run_case_analysis(
             domain=domain,
             reference_converged=reference_converged,
             candidate_converged=candidate_converged,
+            control_converged=False if stage == "control" else control_converged,
             partial=partial,
+            execution_state=execution_state,
+            error_kind=error_kind,
+            **provenance,
         )
 
 
@@ -1577,6 +2995,13 @@ def _derive_case_metrics(
     """
     if not case.derived_metrics:
         return []
+    provenance = {
+        "model_family": results[0].model_family,
+        "model_level": results[0].model_level,
+        "checkpoint_pins": results[0].checkpoint_pins,
+        "campaign_manifest_sha256": results[0].campaign_manifest_sha256,
+        "thread_settings": results[0].thread_settings,
+    }
     domains = {result.analysis: result.domain for result in results
                if result.status != "error"}
     metrics: Dict[str, float] = {}
@@ -1603,6 +3028,9 @@ def _derive_case_metrics(
             error=f"derived metrics lack finite inputs: {sorted(set(missing))}",
             reference_converged=all(r.reference_converged for r in results),
             candidate_converged=all(r.candidate_converged for r in results),
+            execution_state="error",
+            error_kind="result_schema",
+            **provenance,
         )]
     return [GateResult(
         case_id=case.case_id, tech=results[0].tech, corner=results[0].corner,
@@ -1610,6 +3038,7 @@ def _derive_case_metrics(
         metrics=metrics, domain=domain,
         reference_converged=all(r.reference_converged for r in results),
         candidate_converged=all(r.candidate_converged for r in results),
+        **provenance,
     )]
 
 
@@ -1621,18 +3050,29 @@ def run_case(
     *,
     reference_repeats: int = 1,
     diagnose_support: bool = True,
+    run_spec: Optional[RunSpec] = None,
+    run_level72_control: bool = False,
 ) -> List[GateResult]:
     """Run every declared analysis and enforce the case-level result schema."""
     if reference_repeats < 1:
         raise ValueError("reference_repeats must be >= 1")
+    resolved_run_spec = run_spec or RunSpec.from_environment()
+    selected_analyses = applicable_analyses(case, base_bt, corner)
+    if not selected_analyses:
+        raise ValueError(
+            f"{case.case_id}/{corner.name} is a no-op: no analysis observes "
+            "a changed physical field"
+        )
     results = [
         run_case_analysis(
             case, analysis, base_bt, corner,
             work_dir / analysis.name,
             reference_repeats=reference_repeats,
             diagnose_support=diagnose_support,
+            run_spec=resolved_run_spec,
+            run_level72_control=run_level72_control,
         )
-        for analysis in case.analyses
+        for analysis in selected_analyses
     ]
     results.extend(_derive_case_metrics(case, results))
     if not any(result.status == "error" for result in results):
@@ -1659,5 +3099,8 @@ def run_case(
                     result.candidate_converged for result in results
                 ),
                 partial=any(result.partial for result in results),
+                execution_state="error",
+                error_kind="result_schema",
+                **resolved_run_spec.result_fields(),
             ))
     return results

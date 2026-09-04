@@ -59,6 +59,7 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
     directnet_sram_6t,
 )
 from tests.common.gate_result import GateResult  # noqa: E402
+from tests.common.simple_circuit_harness import RunSpec  # noqa: E402
 
 DEFAULT_NFINS = [2, 5, 10]
 # Ground-truth tracking gate: the DirectNet butterfly lobe must match the
@@ -399,6 +400,7 @@ def main() -> int:
                 analysis="read_snm", role="qualification", status="error",
                 error=r["error"], reference_converged=False,
                 candidate_converged=False,
+                **RunSpec.from_environment().result_fields(),
             ).marker())
             continue
         for c in r["corners"]:
@@ -460,6 +462,7 @@ def main() -> int:
             error="; ".join(c["error"] for c in corner_errors),
             reference_converged=not corner_errors,
             candidate_converged=not corner_errors,
+            **RunSpec.from_environment().result_fields(),
         ).marker())
     n_total = len(results)
     print(f"\n  {n_pass}/{n_total} techs pass (positive + NGSPICE-NRMSE-tracking "

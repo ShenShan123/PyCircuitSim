@@ -43,6 +43,7 @@ sys.path.insert(0, str(PROJECT_ROOT))
 
 from tests.common.base import (
     OSDI_PATH,
+    control_deck,
     template_deck,
     render_template,
     run_ngspice_subprocess,
@@ -59,7 +60,7 @@ RESULTS_DIR = PROJECT_ROOT / "results" / "tests" / "ac"
 # decks in circuit_templates/ (V7.5.9 — they had been f-strings here AND decks there,
 # the drift hazard tests/__init__ names). Level 3's floating-bulk pair stays
 # programmatic: it sweeps polarity, so no single deck expresses it.
-RC_TEMPLATE = template_deck("rc_lowpass.spice.tmpl")
+RC_TEMPLATE = control_deck("rc_lowpass.spice.tmpl")
 CS_TEMPLATE = template_deck("common_source.spice.tmpl")
 
 # Acceptance thresholds.  L1 is purely linear so it must match tightly; L2

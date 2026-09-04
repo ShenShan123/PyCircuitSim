@@ -424,7 +424,8 @@ conda run -n pycircuitsim python \
   tests/simple_circuits/verify_circuit_topologies.py --list
 conda run -n pycircuitsim python \
   tests/simple_circuits/verify_circuit_topologies.py \
-  --case current_mirror,inverter_chain --tech TSMC5 --corner nominal
+  --case current_mirror,inverter_chain --tech TSMC5 --corner nominal \
+  --level72-control
 ```
 
 Score the single-device surfaces the parametric DC gate does not reach —
@@ -437,12 +438,17 @@ conda run -n pycircuitsim python \
 conda run -n pycircuitsim python \
   tests/single_devices/verify_device_integrity.py \
   --tech TSMC5 --suite output,subthreshold,linear,derivative
+conda run -n pycircuitsim python \
+  tests/single_devices/verify_terminal_integrity.py \
+  --tech TSMC5 --device nmos,pmos
+conda run -n pycircuitsim python \
+  tests/simple_circuits/verify_nn_subckt.py --tech TSMC5
 ```
 
-`simple-v2` covers complementary source followers/common-gate stages, current
-mirrors, an open FO4 chain, transmission-gate DC/hold behavior, ideal- and
-active-tail differential pairs, cascode stacks, NAND2/NOR2, and full 6T SRAM
-modes across DC, transient, and AC. It is diagnostic and held out from
+`simple-v2` covers device-role sizing, floating bulk, switching energy,
+transmission gates, differential/active loads, self-bias, both SRAM states,
+3/5/9/17-device scale, and closed-loop systems through 12 MOSFETs across OP,
+DC, transient, and AC. It is diagnostic and held out from
 training; it does not change the `simple-v1` `/20` score. See
 [`docs/accuracy/simple-circuits-v2-topologies.md`](docs/accuracy/simple-circuits-v2-topologies.md)
 for the case, corner, metric, support-diagnostic, and promotion contracts.
@@ -450,9 +456,10 @@ for the case, corner, metric, support-diagnostic, and promotion contracts.
 ### Run the complete clean checkpoint matrix
 
 Generate the full family pool, then select the DirectNet/BSIM-AR S/M/L/XL
-matrix used by V7.5.17. It is exactly **480 jobs**: two families × four tiers ×
-five technologies, with the required OMP repeats. Require complete coverage
-for both current families before rebuilding the generated reports:
+matrix. The historical V7.5.17 manifest had 480 jobs; V7.6.8 adds device
+integrity, terminal integrity, and NN hierarchy, so the current pool is
+**600 jobs**. Do not compare or merge those denominators. Require complete
+coverage for both current families before rebuilding a V7.6.8 report:
 
 ```bash
 conda run -n pycircuitsim python \
@@ -573,7 +580,8 @@ only the cases and conditions needed for a focused gate:
 ```bash
 conda run -n pycircuitsim python \
   tests/simple_circuits/verify_circuit_topologies.py \
-  --case current_mirror,inverter_chain --tech TSMC5 --corner all
+  --case current_mirror,inverter_chain --tech TSMC5 --corner all \
+  --level72-control
 ```
 
 The template vocabulary and extension rules are in

@@ -64,6 +64,7 @@ TIER_DIRS: Dict[str, Path] = {
 }
 DEVICE_DECKS = TIER_DIRS["L0_devices"]
 SUBCIRCUIT_DECKS = TEMPLATES_DIR / "subcircuits"
+CONTROLS_DIR = TEMPLATES_DIR / "controls"
 
 
 def template_deck(name: str, *, tier: str = "") -> Path:
@@ -94,7 +95,19 @@ def template_deck(name: str, *, tier: str = "") -> Path:
             f"{name!r} is duplicated across tiers: "
             + ", ".join(str(path.parent.name) for path in found))
     return found[0]
-from helpers import bake_inst_params as bake_inst_params  # noqa: E402
+
+
+def control_deck(name: str) -> Path:
+    """Resolve a solver-control template outside the compact-model ladder."""
+    path = CONTROLS_DIR / name
+    if not path.is_file():
+        raise FileNotFoundError(f"no solver control owns {name!r}")
+    return path
+
+
+from helpers import bake_inst_params as bake_inst_params  # noqa: F401, E402
+
+__all__ = ["bake_inst_params"]
 
 
 # ---------------------------------------------------------------------------
@@ -418,10 +431,24 @@ def run_ngspice_subprocess(
     csv_path.unlink(missing_ok=True)
     log_path.unlink(missing_ok=True)
 
-    res = subprocess.run(
-        [NGSPICE_BIN, "-b", "-o", str(log_path), str(runner_path)],
-        capture_output=True, text=True,
-    )
+    raw_timeout = os.environ.get("PYCIRCUITSIM_NGSPICE_TIMEOUT_S", "600")
+    try:
+        timeout = float(raw_timeout)
+    except ValueError as exc:
+        raise ValueError(
+            f"PYCIRCUITSIM_NGSPICE_TIMEOUT_S={raw_timeout!r} is not numeric"
+        ) from exc
+    if timeout <= 0.0:
+        raise ValueError("PYCIRCUITSIM_NGSPICE_TIMEOUT_S must be positive")
+    try:
+        res = subprocess.run(
+            [NGSPICE_BIN, "-b", "-o", str(log_path), str(runner_path)],
+            capture_output=True, text=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError(
+            f"NGSPICE timed out after {timeout:g}s for {runner_path}"
+        ) from exc
 
     # Non-zero exit is a hard failure. NGSPICE returns 0 on a healthy batch run;
     # anything else means the simulation did not complete, so nothing downstream

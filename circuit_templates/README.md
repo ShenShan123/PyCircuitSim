@@ -23,9 +23,11 @@ one more crutch:
 | `L3_blocks/` | the supply only | internally generated bias, or internal state |
 | `L4_systems/` | the supply and a reference | a closed negative-feedback solution |
 
-`subcircuits/` sits outside the ladder. Those are flat/hierarchical fixture
-pairs that verify subcircuit expansion, parameter passing, and initial
-conditions — they test the parser, not the compact model.
+Two directories sit outside the ladder. `subcircuits/` owns flat/hierarchical
+fixture pairs for expansion, parameter passing, initial conditions, and NN
+model resolution. `controls/` owns passive solver controls such as the RC
+low-pass; a circuit with no compact-model device cannot honestly occupy a
+compact-model difficulty tier.
 
 ### Reading a failure by tier
 
@@ -53,7 +55,7 @@ The common parameter groups are:
 |---|---|---|
 | Simulator adapter | `MODEL_SETUP`, `N_PREFIX`, `P_PREFIX`, `N_DEVICE`, `P_DEVICE` | Render the same topology for an NN model or LEVEL=72 OSDI reference |
 | Technology and VT | `TECH`, `NVT`, `PVT`, `LEVEL` | Select technology, threshold variants, and compact-model family |
-| Geometry and P/N ratio | `LN`, `LP`, `NFN`, `NFP` | Vary channel lengths and independent NMOS/PMOS fin counts |
+| Geometry and P/N ratio | `LN`, `LP`, `NFN`, `NFP`, role-specific `*_DEVICE` | Vary global or named-role L/NFIN/VT independently |
 | PVT and body bias | `VDD`, `TEMP`, `BODY_N`, `BODY_P` | Apply supply, temperature, and body-bias corners |
 | Stimulus | `INPUT_RISE`, `INPUT_FALL`, timing and bias tokens | Vary slew, period, duty cycle, common mode, and DC bias |
 | Loading | `OUTPUT_LOAD` and topology-specific load tokens | Add or change output capacitance, resistance, and fanout |
@@ -69,8 +71,9 @@ serves the CMRR and PSRR experiments.
 
 `tests/common/simple_circuit_catalog.py` owns the topology inventory, the
 analysis metadata, and each case's declared `tier`.
-`tests/common/simple_circuit_harness.py` owns corners and the two simulator
-adapters. `tests/common/base.py` owns strict rendering and `template_deck()`,
+`tests/common/simple_circuit_harness.py` owns corners and the NN, NGSPICE
+LEVEL=72, and PyCircuitSim LEVEL=72-control adapters. `tests/common/base.py`
+owns strict rendering, `template_deck()`, and `control_deck()`,
 which resolves a bare template name to its tier and rejects a name that two
 tiers both claim.
 

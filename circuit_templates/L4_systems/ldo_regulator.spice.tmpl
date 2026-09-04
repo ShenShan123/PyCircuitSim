@@ -1,12 +1,12 @@
 * Low-dropout regulator: 5T error amplifier, PMOS pass device, RC load
-* Eight coupled MOSFETs with every internal bias generated on chip. The loop
+* Seven coupled MOSFETs with every internal bias generated on chip. The loop
 * is negative through p_pass: a rise at nfb pulls ea1 down, which drives eao
 * up, which turns the pass device off. Line regulation is a supply sweep and
 * load regulation a current step, matching the two measurements the retired
 * AnalogGym LDO testbenches used. No .ic card anywhere.
 <MODEL_SETUP>
 .temp <TEMP>
-Vdd vdd 0 <VDD>
+Vdd vdd 0 <LDO_VDD_SPEC>
 Vref vref 0 <LDO_VREF>
 Ibias vdd nbias <IBIAS_CELL>
 <N_PREFIX>n_bias nbias nbias 0 0 <N_DEVICE>

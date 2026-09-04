@@ -42,6 +42,7 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
     OpAmpParams, ngspice_opamp, directnet_opamp,
 )
 from tests.common.gate_result import GateResult  # noqa: E402
+from tests.common.simple_circuit_harness import RunSpec  # noqa: E402
 
 GAIN_TOL = 0.10            # +/-10% open-loop DC gain gate
 # audit B5c: an NGSPICE reference gain below this V/V means the cell is biased
@@ -217,6 +218,7 @@ def main() -> int:
                 analysis="transfer", role="qualification", status="error",
                 error=r["error"], reference_converged="ng_gain" in r,
                 candidate_converged=False,
+                **RunSpec.from_environment().result_fields(),
             ).marker())
             continue
         status = "PASS" if r.get("passed") else "FAIL"
@@ -241,6 +243,7 @@ def main() -> int:
                 "reference_gain_v_per_v": r["ng_gain"],
                 "candidate_gain_v_per_v": r["dn_gain"],
             },
+            **RunSpec.from_environment().result_fields(),
         ).marker())
     print(f"\n  {n_pass}/{len(results)} within +/-{GAIN_TOL*100:.0f}% gain gate")
     # B10: surface the verdict in the exit code (consumers also parse stdout).

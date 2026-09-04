@@ -30,9 +30,11 @@ import sys
 from typing import Dict, List, Optional, Tuple
 
 if __package__:
-    from .v710_regate_collect import is_verdict, rc_of
+    from .v710_regate_collect import (
+        is_verdict, rc_of, structured_contract_error,
+    )
 else:
-    from v710_regate_collect import is_verdict, rc_of
+    from v710_regate_collect import is_verdict, rc_of, structured_contract_error
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -43,6 +45,7 @@ from tests.common.simple_circuit_catalog import (  # noqa: E402
     SIMPLE_V2,
     cases,
 )
+from tests.common.gate_result import parse_result_markers  # noqa: E402
 
 CKPT = pathlib.Path(os.environ.get(
     "BSIMAR_CHECKPOINT_DIR",
@@ -68,6 +71,9 @@ SIMPLE_V2_SUITES: Dict[str, Tuple[str, ...]] = {
     for case in cases(score_version=SIMPLE_V2)
 }
 NON_SIMPLE_SUITES: Dict[str, Tuple[str, ...]] = {
+    "verify_device_integrity": ("1",),
+    "verify_terminal_integrity": ("1",),
+    "verify_nn_subckt": ("1",),
     "verify_nn_ac": ("1",),
     "verify_circuit_opamp_ac": ("1",),
     "verify_nn_multi_tech_dc": ("1",),
@@ -159,6 +165,12 @@ def scan_logs(root: pathlib.Path) -> Dict[CellKey, Optional[str]]:
             out[key] = None
             continue
         rc = rc_of(txt)
+        structured = parse_result_markers(txt)
+        if structured and structured_contract_error(
+            suite, log.parent.name, structured,
+        ):
+            out[key] = None
+            continue
         out[key] = rc if is_verdict({"rc": rc}) else None
     return out
 

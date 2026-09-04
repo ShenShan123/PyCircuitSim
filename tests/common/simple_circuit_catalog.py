@@ -15,6 +15,54 @@ SIMPLE_V2 = "simple-v2"
 QUALIFICATION = "qualification"
 DIAGNOSTIC = "diagnostic"
 
+_PROFILE_HEADLINES: Dict[str, str] = {
+    "common_source_ac": "bandwidth_error_pct",
+    "common_source_floating_ac": "bulk_response_max_error_v",
+    "inverter_vtc": "trip_shift_v",
+    "inverter_energy": "energy_error_pct",
+    "active_load_op": "output_error_v",
+    "active_load_ac": "bandwidth_error_pct",
+    "source_follower": "gain_error_pct",
+    "gain": "gain_error_pct",
+    "opamp": "gain_error_pct",
+    "ring_osc": "period_error_pct",
+    "current_mirror": "ratio_error_pct",
+    "mirror_iref": "iref_worst_ratio_error_pct",
+    "inverter_chain": "delay_error_pct",
+    "transmission_gate": "ron_error_pct",
+    "hold_droop": "droop_error_v",
+    "diffpair": "diff_gain_error_pct",
+    "diffpair_diff_ac": "diff_gain_error_pct",
+    "diffpair_cm_ac": "cm_gain_error_pct",
+    "cascode": "output_resistance_error_pct",
+    "logic_vtc": "trip_shift_v",
+    "logic_tran": "delay_error_pct",
+    "sram_hold": "hold_margin_error_v",
+    "sram_read": "read_disturb_error_v",
+    "sram_write": "write_time_error_pct",
+    "sram_write_margin": "write_trip_error_v",
+    "sram_snm": "nrmse_pct",
+    "opamp_diff_ac": "diff_gain_error_pct",
+    "opamp_cm_ac": "cm_gain_error_pct",
+    "opamp_supply_ac": "supply_gain_error_pct",
+    "switchcap": "charge_error_vdd_pct",
+    "switchcap_multicycle": "cycle_drift_error_v",
+    "ring_supply": "period_error_pct",
+    "diode_load": "diode_drop_worst_error_v",
+    "bias_op": "bias_node_error_v",
+    "bias_fanout_op": "bias_node_error_v",
+    "self_bias_cell": "bias_current_error_pct",
+    "self_bias_cascode": "output_resistance_error_pct",
+    "mos_reference": "line_sensitivity_error_pct",
+    "unity_gain": "follow_error_v",
+    "settling": "settling_error_pct",
+    "line_regulation": "line_regulation_error_pct",
+    "load_regulation": "load_droop_error_v",
+    "closed_loop_ac": "bandwidth_error_pct",
+    "ldo_psrr_ac": "psrr_error_db",
+    "ldo_output_impedance_ac": "output_impedance_error_pct",
+}
+
 
 @dataclass(frozen=True)
 class AnalysisSpec:
@@ -27,10 +75,35 @@ class AnalysisSpec:
     metric_profile: str = "trace"
     phase_align: bool = False
     template_substitutions: Tuple[Tuple[str, str], ...] = ()
+    device_kinds: Tuple[str, ...] = ("nmos", "pmos")
 
     def substitutions(self) -> Dict[str, str]:
         """Return experiment-specific values for the shared template."""
         return dict(self.template_substitutions)
+
+    @property
+    def headline_metric(self) -> str:
+        """Metric that answers this analysis's primary diagnostic question."""
+        return _PROFILE_HEADLINES.get(self.metric_profile, "nrmse_pct")
+
+
+@dataclass(frozen=True)
+class DeviceRoleSpec:
+    """One independently bindable geometry/VT role in a circuit template."""
+
+    name: str
+    token: str
+    polarity: str
+    instances: Tuple[str, ...]
+    nfin_delta: int = 0
+    length_m: Optional[float] = None
+    vt: str = ""
+
+    def __post_init__(self) -> None:
+        if self.polarity not in {"nmos", "pmos"}:
+            raise ValueError(f"unknown role polarity {self.polarity!r}")
+        if not self.name or not self.token or not self.instances:
+            raise ValueError("device roles require a name, token, and instances")
 
 
 @dataclass(frozen=True)
@@ -49,6 +122,7 @@ class CircuitCase:
     #: than inferred from it.
     tier: str = ""
     device_kinds: Tuple[str, ...] = ("nmos", "pmos")
+    device_roles: Tuple[DeviceRoleSpec, ...] = ()
     omp_threads: Tuple[int, ...] = (1,)
     required_metrics: Tuple[str, ...] = (
         "mre_pct", "r2", "nrmse_pct", "max_err",
@@ -64,6 +138,7 @@ class CircuitCase:
     #: A rejection ratio is the motivating example: CMRR needs the
     #: differential and common-mode gains, which no single analysis produces.
     derived_metrics: Tuple[str, ...] = ()
+    control_nrmse_limit_pct: float = 1.0
 
     @property
     def campaign_suite(self) -> str:
@@ -83,10 +158,12 @@ def _dc(
     profile: str = "trace",
     *,
     subs: Tuple[Tuple[str, str], ...] = (),
+    device_kinds: Tuple[str, ...] = ("nmos", "pmos"),
 ) -> AnalysisSpec:
     return AnalysisSpec(
         name=name, kind="dc", card=card, signals=signals,
         metric_profile=profile, template_substitutions=subs,
+        device_kinds=device_kinds,
     )
 
 
@@ -98,11 +175,12 @@ def _tran(
     *,
     phase_align: bool = False,
     subs: Tuple[Tuple[str, str], ...] = (),
+    device_kinds: Tuple[str, ...] = ("nmos", "pmos"),
 ) -> AnalysisSpec:
     return AnalysisSpec(
         name=name, kind="tran", card=card, signals=signals,
         metric_profile=profile, phase_align=phase_align,
-        template_substitutions=subs,
+        template_substitutions=subs, device_kinds=device_kinds,
     )
 
 
@@ -113,6 +191,7 @@ def _ac(
     *,
     subs: Tuple[Tuple[str, str], ...] = (),
     card: str = "ac dec 12 1e3 1e11",
+    device_kinds: Tuple[str, ...] = ("nmos", "pmos"),
 ) -> AnalysisSpec:
     """One AC experiment.
 
@@ -124,6 +203,26 @@ def _ac(
     return AnalysisSpec(
         name=name, kind="ac", card=card, signals=signals,
         metric_profile=profile, template_substitutions=subs,
+        device_kinds=device_kinds,
+    )
+
+
+def _op(
+    name: str,
+    signals: Tuple[str, ...],
+    profile: str = "trace",
+    *,
+    subs: Tuple[Tuple[str, str], ...] = (),
+    device_kinds: Tuple[str, ...] = ("nmos", "pmos"),
+) -> AnalysisSpec:
+    return AnalysisSpec(
+        name=name,
+        kind="op",
+        card="op",
+        signals=signals,
+        metric_profile=profile,
+        template_substitutions=subs,
+        device_kinds=device_kinds,
     )
 
 
@@ -169,7 +268,7 @@ _V1_CASES: Tuple[CircuitCase, ...] = (
         SIMPLE_V1, QUALIFICATION,
         (_dc("read_snm", "dc Vq 0 <VDD> 0.005", ("v(qb)",),
              "sram_snm"),),
-        tier="L3_blocks",
+        tier="L2_stages",
         report_key="sram_snm", suite_id="verify_circuit_sram_snm",
         training_use="qualification_only",
         gate_metric="worst lobe NRMSE %",
@@ -200,14 +299,111 @@ _V1_CASES: Tuple[CircuitCase, ...] = (
 
 _V2_CASES: Tuple[CircuitCase, ...] = (
     CircuitCase(
+        "common_source_nn", "common-source terminal and floating-bulk AC",
+        "common_source.spice.tmpl",
+        SIMPLE_V2, DIAGNOSTIC,
+        (
+            _ac(
+                "nmos_fixed", ("v(out)",), "common_source_ac",
+                subs=(
+                    ("INPUT_SPEC", "DC=<GATE_N> AC=1 0"),
+                    ("LOAD_NETWORK", "Rd vdd out <CS_LOAD>"),
+                    ("BULK_NETWORK", ""),
+                    ("DEVICE_PREFIX", "<N_PREFIX>n"),
+                    ("SOURCE_NODE", "0"), ("BULK_NODE", "0"),
+                    ("DEVICE", "<N_DEVICE>"),
+                ),
+                device_kinds=("nmos",),
+            ),
+            _ac(
+                "pmos_fixed", ("v(out)",), "common_source_ac",
+                subs=(
+                    ("INPUT_SPEC", "DC=<GATE_P> AC=1 0"),
+                    ("LOAD_NETWORK", "Rd out 0 <CS_LOAD>"),
+                    ("BULK_NETWORK", ""),
+                    ("DEVICE_PREFIX", "<P_PREFIX>p"),
+                    ("SOURCE_NODE", "vdd"), ("BULK_NODE", "vdd"),
+                    ("DEVICE", "<P_DEVICE>"),
+                ),
+                device_kinds=("pmos",),
+            ),
+            _ac(
+                "nmos_floating", ("v(out)", "v(vb)"),
+                "common_source_floating_ac",
+                subs=(
+                    ("INPUT_SPEC", "DC=<GATE_N> AC=1 0"),
+                    ("LOAD_NETWORK", "Rd vdd out <CS_LOAD>"),
+                    ("BULK_NETWORK", "Rb vb 0 <BULK_LOAD>"),
+                    ("DEVICE_PREFIX", "<N_PREFIX>n"),
+                    ("SOURCE_NODE", "0"), ("BULK_NODE", "vb"),
+                    ("DEVICE", "<N_DEVICE>"),
+                ),
+                device_kinds=("nmos",),
+            ),
+            _ac(
+                "pmos_floating", ("v(out)", "v(vb)"),
+                "common_source_floating_ac",
+                subs=(
+                    ("INPUT_SPEC", "DC=<GATE_P> AC=1 0"),
+                    ("LOAD_NETWORK", "Rd out 0 <CS_LOAD>"),
+                    ("BULK_NETWORK", "Rb vb vdd <BULK_LOAD>"),
+                    ("DEVICE_PREFIX", "<P_PREFIX>p"),
+                    ("SOURCE_NODE", "vdd"), ("BULK_NODE", "vb"),
+                    ("DEVICE", "<P_DEVICE>"),
+                ),
+                device_kinds=("pmos",),
+            ),
+        ),
+        tier="L1_primitives",
+        device_kinds=(),
+        required_metrics=(
+            "mre_pct", "r2", "nrmse_pct", "max_err",
+            "gain_error_pct", "bandwidth_error_pct",
+            "bulk_response_max_error_v",
+        ),
+    ),
+    CircuitCase(
+        "inverter_energy", "inverter VTC, switching energy, and leakage",
+        "inverter.spice.tmpl",
+        SIMPLE_V2, DIAGNOSTIC,
+        (
+            _dc(
+                "vtc", "dc Vin 0 <VDD> 0.005",
+                ("v(out)", "i(Vdd)"), "inverter_vtc",
+                subs=(
+                    ("INPUT_SPEC", "0"),
+                    ("OUTPUT_LOAD", "Cload out 0 <LOGIC_LOAD>"),
+                    ("INITIAL_CONDITION", ""),
+                ),
+            ),
+            _tran(
+                "switching", "tran 2p 4n uic",
+                ("v(in)", "v(out)", "i(Vdd)"), "inverter_energy",
+                subs=(
+                    ("INPUT_SPEC", "<PULSE_OPEN> 0 <VDD> <INPUT_DELAY> "
+                     "<INPUT_RISE> <INPUT_FALL> <INPUT_WIDTH> "
+                     "<INPUT_PERIOD> <PULSE_CLOSE>"),
+                    ("OUTPUT_LOAD", "Cload out 0 <LOGIC_LOAD>"),
+                    ("INITIAL_CONDITION", ".ic V(out)=<VDD>"),
+                ),
+            ),
+        ),
+        tier="L2_stages",
+        device_kinds=(),
+        required_metrics=(
+            "mre_pct", "r2", "nrmse_pct", "max_err", "trip_shift_v",
+            "leakage_error_a", "delay_error_pct", "energy_error_pct",
+        ),
+    ),
+    CircuitCase(
         "source_follower", "complementary source followers with body effect",
         "source_follower.spice.tmpl",
         SIMPLE_V2, DIAGNOSTIC,
         (
             _dc("nmos", "dc Vgn 0 <VDD> 0.005", ("v(sn)", "i(Vddn)"),
-                "source_follower"),
+                "source_follower", device_kinds=("nmos",)),
             _dc("pmos", "dc Vgp <VDD> 0 -0.005", ("v(sp)", "i(Vddp)"),
-                "source_follower"),
+                "source_follower", device_kinds=("pmos",)),
         ),
         tier="L1_primitives",
     ),
@@ -217,9 +413,9 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
         SIMPLE_V2, DIAGNOSTIC,
         (
             _dc("nmos", "dc Vsn 0 <HALF_VDD> 0.005",
-                ("v(dn)", "i(Vsn)"), "gain"),
+                ("v(dn)", "i(Vsn)"), "gain", device_kinds=("nmos",)),
             _dc("pmos", "dc Vsp <VDD> <HALF_VDD> -0.005",
-                ("v(dp)", "i(Vsp)"), "gain"),
+                ("v(dp)", "i(Vsp)"), "gain", device_kinds=("pmos",)),
         ),
         tier="L1_primitives",
     ),
@@ -229,19 +425,21 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
         SIMPLE_V2, DIAGNOSTIC,
         (
             _dc("nmos", "dc Voutn 0 <VDD> 0.005",
-                ("i(Voutn)",), "current_mirror"),
+                ("i(Voutn)",), "current_mirror", device_kinds=("nmos",)),
             _dc("pmos", "dc Voutp <VDD> 0 -0.005",
-                ("i(Voutp)",), "current_mirror"),
+                ("i(Voutp)",), "current_mirror", device_kinds=("pmos",)),
             # Mirror accuracy versus bias current.  The compliance sweeps above
             # score one operating current; this one walks the reference from
             # deep subthreshold up through strong inversion, where the ratio
             # error of a fitted model is largest and least constrained.
             _dc("nmos_iref", "dc Irefn <IREF_LO> <IREF_HI> <IREF_STEP>",
                 ("i(Voutn)",), "mirror_iref",
-                subs=(("MIRROR_OUT_N", "<MID_RAIL>"),)),
+                subs=(("MIRROR_OUT_N", "<MID_RAIL>"),),
+                device_kinds=("nmos",)),
             _dc("pmos_iref", "dc Irefp <IREF_LO> <IREF_HI> <IREF_STEP>",
                 ("i(Voutp)",), "mirror_iref",
-                subs=(("MIRROR_OUT_P", "<MID_RAIL>"),)),
+                subs=(("MIRROR_OUT_P", "<MID_RAIL>"),),
+                device_kinds=("pmos",)),
         ),
         tier="L2_stages",
         required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
@@ -270,7 +468,7 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
             _dc("reverse", "dc Vrev 0 <VDD> 0.005",
                 ("v(inr)", "i(Vrev)"), "transmission_gate"),
         ),
-        tier="L1_primitives",
+        tier="L2_stages",
         required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
                           "ron_error_pct"),
     ),
@@ -280,7 +478,7 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
         SIMPLE_V2, DIAGNOSTIC,
         (_tran("hold", "tran 2p 4n uic", ("v(hold)", "v(phi)"),
                "hold_droop"),),
-        tier="L1_primitives",
+        tier="L3_blocks",
         required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
                           "droop_error_v", "feedthrough_error_v"),
     ),
@@ -290,13 +488,16 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
         SIMPLE_V2, DIAGNOSTIC,
         (
             _dc("steering", "dc Vinp <DIFF_LO> <DIFF_HI> 0.001",
-                ("v(outn)", "v(outp)"), "diffpair"),
+                ("v(outn)", "v(outp)"), "diffpair",
+                device_kinds=("nmos",)),
             _ac("differential_ac", ("v(outn)", "v(outp)"),
                 "diffpair_diff_ac",
-                subs=(("AC_INP", "1"), ("AC_INN", "0"))),
+                subs=(("AC_INP", "1"), ("AC_INN", "0")),
+                device_kinds=("nmos",)),
             _ac("common_mode_ac", ("v(outn)", "v(outp)"),
                 "diffpair_cm_ac",
-                subs=(("AC_INP", "1"), ("AC_INN", "1"))),
+                subs=(("AC_INP", "1"), ("AC_INN", "1")),
+                device_kinds=("nmos",)),
         ),
         tier="L2_stages",
         device_kinds=("nmos",),
@@ -311,13 +512,16 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
         SIMPLE_V2, DIAGNOSTIC,
         (
             _dc("steering", "dc Vinp <DIFF_LO> <DIFF_HI> 0.001",
-                ("v(outn)", "v(outp)"), "diffpair"),
+                ("v(outn)", "v(outp)"), "diffpair",
+                device_kinds=("nmos",)),
             _ac("differential_ac", ("v(outn)", "v(outp)"),
                 "diffpair_diff_ac",
-                subs=(("AC_INP", "1"), ("AC_INN", "0"))),
+                subs=(("AC_INP", "1"), ("AC_INN", "0")),
+                device_kinds=("nmos",)),
             _ac("common_mode_ac", ("v(outn)", "v(outp)"),
                 "diffpair_cm_ac",
-                subs=(("AC_INP", "1"), ("AC_INN", "1"))),
+                subs=(("AC_INP", "1"), ("AC_INN", "1")),
+                device_kinds=("nmos",)),
         ),
         tier="L2_stages",
         device_kinds=("nmos",),
@@ -327,14 +531,76 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
                           "cmrr_db_error"),
     ),
     CircuitCase(
+        "diffpair_active_load", "differential stages with active mirror loads",
+        "diffpair_active_load.spice.tmpl",
+        SIMPLE_V2, DIAGNOSTIC,
+        (
+            _op(
+                "nmos_steering", ("v(nout)", "v(nmirror)"),
+                "active_load_op",
+                subs=(("ACTIVE_LOAD_STAGE", "<N_ACTIVE_LOAD_STAGE>"),
+                      ("N_INP_DC", "<N_STEER_INP>"),
+                      ("N_INN_DC", "<VCM>"),
+                      ("N_AC_INP", "0"), ("N_AC_INN", "0"),
+                      ("P_AC_INP", "0"), ("P_AC_INN", "0")),
+            ),
+            _op(
+                "pmos_steering", ("v(pout)", "v(pmirror)"),
+                "active_load_op",
+                subs=(("ACTIVE_LOAD_STAGE", "<P_ACTIVE_LOAD_STAGE>"),
+                      ("P_INP_DC", "<P_STEER_INP>"),
+                      ("P_INN_DC", "<P_VCM>"),
+                      ("N_AC_INP", "0"), ("N_AC_INN", "0"),
+                      ("P_AC_INP", "0"), ("P_AC_INN", "0")),
+            ),
+            _ac(
+                "nmos_ac", ("v(nout)",), "active_load_ac",
+                subs=(("ACTIVE_LOAD_STAGE", "<N_ACTIVE_LOAD_STAGE>"),
+                      ("N_AC_INP", "1"), ("N_AC_INN", "0"),
+                      ("P_AC_INP", "0"), ("P_AC_INN", "0")),
+            ),
+            _ac(
+                "pmos_ac", ("v(pout)",), "active_load_ac",
+                subs=(("ACTIVE_LOAD_STAGE", "<P_ACTIVE_LOAD_STAGE>"),
+                      ("N_AC_INP", "0"), ("N_AC_INN", "0"),
+                      ("P_AC_INP", "1"), ("P_AC_INN", "0")),
+            ),
+        ),
+        tier="L2_stages",
+        device_roles=(
+            DeviceRoleSpec(
+                "n_input", "N_INPUT_DEVICE", "nmos",
+                ("n_in_l", "n_in_r"), nfin_delta=1,
+            ),
+            DeviceRoleSpec(
+                "p_load", "P_LOAD_DEVICE", "pmos",
+                ("p_load_d", "p_load_o"),
+            ),
+            DeviceRoleSpec(
+                "p_input", "P_INPUT_DEVICE", "pmos",
+                ("p_in_l", "p_in_r"), nfin_delta=1,
+            ),
+            DeviceRoleSpec(
+                "n_load", "N_LOAD_DEVICE", "nmos",
+                ("n_load_d", "n_load_o"),
+            ),
+        ),
+        required_metrics=(
+            "mre_pct", "r2", "nrmse_pct", "max_err", "output_error_v",
+            "internal_node_nrmse_pct", "bandwidth_error_pct",
+        ),
+    ),
+    CircuitCase(
         "cascode_stack", "complementary cascode/current-source stacks",
         "cascode_stack.spice.tmpl",
         SIMPLE_V2, DIAGNOSTIC,
         (
             _dc("nmos_compliance", "dc Voutn 0 <VDD> 0.005",
-                ("i(Voutn)", "v(nx)"), "cascode"),
+                ("i(Voutn)", "v(nx)"), "cascode",
+                device_kinds=("nmos",)),
             _dc("pmos_compliance", "dc Voutp <VDD> 0 -0.005",
-                ("i(Voutp)", "v(px)"), "cascode"),
+                ("i(Voutp)", "v(px)"), "cascode",
+                device_kinds=("pmos",)),
             _ac("gain", ("v(nac)", "v(pac)"), "cascode_ac"),
         ),
         tier="L2_stages",
@@ -393,16 +659,35 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
             _tran("hold", "tran 2p 3n uic", ("v(q)", "v(qb)"), "sram_hold",
                   subs=(("WL_SPEC", "0"), ("BL_SPEC", "<VDD>"),
                         ("BLB_SPEC", "<VDD>"))),
+            _tran("hold_state0", "tran 2p 3n uic",
+                  ("v(q)", "v(qb)"), "sram_hold",
+                  subs=(("WL_SPEC", "0"), ("BL_SPEC", "<VDD>"),
+                        ("BLB_SPEC", "<VDD>"), ("Q_IC", "0"),
+                        ("QB_IC", "<VDD>"))),
             _tran("read", "tran 2p 3n uic", ("v(q)", "v(qb)"), "sram_read",
                   subs=(("WL_SPEC", "<PULSE_OPEN> 0 <VDD> <INPUT_DELAY> "
                                     "<INPUT_RISE> <INPUT_FALL> <SRAM_WL_WIDTH> "
                                     "<SRAM_WL_PERIOD> <PULSE_CLOSE>"),
                         ("BL_SPEC", "<VDD>"), ("BLB_SPEC", "<VDD>"))),
+            _tran("read_state0", "tran 2p 3n uic",
+                  ("v(q)", "v(qb)"), "sram_read",
+                  subs=(("WL_SPEC", "<PULSE_OPEN> 0 <VDD> <INPUT_DELAY> "
+                                    "<INPUT_RISE> <INPUT_FALL> <SRAM_WL_WIDTH> "
+                                    "<SRAM_WL_PERIOD> <PULSE_CLOSE>"),
+                        ("BL_SPEC", "<VDD>"), ("BLB_SPEC", "<VDD>"),
+                        ("Q_IC", "0"), ("QB_IC", "<VDD>"))),
             _tran("write", "tran 2p 3n uic", ("v(q)", "v(qb)"), "sram_write",
                   subs=(("WL_SPEC", "<PULSE_OPEN> 0 <VDD> <INPUT_DELAY> "
                                     "<INPUT_RISE> <INPUT_FALL> <SRAM_WL_WIDTH> "
                                     "<SRAM_WL_PERIOD> <PULSE_CLOSE>"),
                         ("BL_SPEC", "0"), ("BLB_SPEC", "<VDD>"))),
+            _tran("write_state0", "tran 2p 3n uic",
+                  ("v(qb)", "v(q)"), "sram_write",
+                  subs=(("WL_SPEC", "<PULSE_OPEN> 0 <VDD> <INPUT_DELAY> "
+                                    "<INPUT_RISE> <INPUT_FALL> <SRAM_WL_WIDTH> "
+                                    "<SRAM_WL_PERIOD> <PULSE_CLOSE>"),
+                        ("BL_SPEC", "<VDD>"), ("BLB_SPEC", "0"),
+                        ("Q_IC", "0"), ("QB_IC", "<VDD>"))),
             # Write margin: hold the wordline on and walk the bitline down
             # until the cell flips.  The trip point is a property of the
             # latch's regenerative loop, so it moves with the model's
@@ -411,6 +696,11 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
                 ("v(q)", "v(qb)"), "sram_write_margin",
                 subs=(("WL_SPEC", "<VDD>"), ("BL_SPEC", "<VDD>"),
                       ("BLB_SPEC", "<VDD>"))),
+            _dc("write_margin_state0", "dc Vblb <VDD> 0 -0.005",
+                ("v(qb)", "v(q)"), "sram_write_margin",
+                subs=(("WL_SPEC", "<VDD>"), ("BL_SPEC", "<VDD>"),
+                      ("BLB_SPEC", "<VDD>"), ("Q_IC", "0"),
+                      ("QB_IC", "<VDD>"))),
         ),
         tier="L3_blocks",
         required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
@@ -454,8 +744,8 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
         # Ten clock periods rather than the scored cell's three.  A per-cycle
         # charge error that is inside threshold on the first sample can still
         # accumulate; a three-cycle window cannot distinguish the two.
-        (_tran("accumulate", "tran 5p 40n uic", ("v(vsamp)",),
-               "switchcap_multicycle"),),
+        (_tran("accumulate", "tran 5p 40n uic",
+               ("v(vsamp)", "v(phi)"), "switchcap_multicycle"),),
         tier="L3_blocks",
         device_kinds=(),
         required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
@@ -485,8 +775,19 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
         # not imposed by the deck.  This is the bottom rung of the self-bias
         # ladder: if it fails, nothing above it can be read as a composition
         # effect.
-        (_dc("supply_ramp", "dc Vdd 0 <VDD> 0.005",
-             ("v(nr)", "v(np)"), "diode_load"),),
+        (
+            _op("op_nominal", ("v(nr)", "v(np)"), "diode_load"),
+            _dc("supply_ramp", "dc Vdd 0 <VDD> 0.005",
+                ("v(nr)", "v(np)"), "diode_load"),
+            _dc("supply_down", "dc Vdd <VDD> 0 -0.005",
+                ("v(nr)", "v(np)"), "diode_load"),
+            _dc("load_low", "dc Vdd 0 <VDD> 0.005",
+                ("v(nr)", "v(np)"), "diode_load",
+                subs=(("DIODE_RLOAD", "20k"),)),
+            _dc("load_high", "dc Vdd 0 <VDD> 0.005",
+                ("v(nr)", "v(np)"), "diode_load",
+                subs=(("DIODE_RLOAD", "2e6"),)),
+        ),
         tier="L1_primitives",
         required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
                           "diode_drop_error_v"),
@@ -498,14 +799,41 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
     # solution is whatever the compact model says it is, which is the
     # mechanism the V7.6.4 closure loop isolated and could not reach.
     CircuitCase(
+        "bias_tree_fanout", "generated bias rail with scalable mirror fanout",
+        "bias_tree_fanout.spice.tmpl",
+        SIMPLE_V2, DIAGNOSTIC,
+        tuple(
+            _op(
+                f"fanout_{count}", ("v(nbias)", "i(Vdd)"),
+                "bias_fanout_op",
+                subs=(("BIAS_BRANCHES", f"<BIAS_BRANCHES_{count}>"),
+                      ("BIAS_FANOUT_IC", f"<BIAS_FANOUT_IC_{count}>"),
+                      ("BIAS_CURRENT_SPEC", "<IBIAS>")),
+                device_kinds=("nmos",),
+            )
+            for count in (2, 4, 8, 16)
+        ),
+        tier="L3_blocks",
+        device_kinds=("nmos",),
+        required_metrics=(
+            "mre_pct", "r2", "nrmse_pct", "max_err",
+            "bias_node_error_v", "supply_current_error_pct",
+        ),
+    ),
+    CircuitCase(
         "beta_multiplier", "constant-gm self-biased current reference",
         "beta_multiplier.spice.tmpl",
         SIMPLE_V2, DIAGNOSTIC,
         # A supply ramp is the start-up trajectory: the cell has a degenerate
         # zero-current solution, so this sweep asks whether the candidate
         # leaves it at the same supply the reference does.
-        (_dc("supply_ramp", "dc Vdd 0 <VDD> 0.005",
-             ("v(na)", "v(nb)", "i(Vdd)"), "self_bias_cell"),),
+        (
+            _op("op_nominal", ("v(na)", "v(nb)", "i(Vdd)"), "bias_op"),
+            _dc("supply_ramp", "dc Vdd 0 <VDD> 0.005",
+                ("v(na)", "v(nb)", "i(Vdd)"), "self_bias_cell"),
+            _dc("supply_down", "dc Vdd <VDD> 0 -0.005",
+                ("v(na)", "v(nb)", "i(Vdd)"), "trace"),
+        ),
         tier="L3_blocks",
         required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
                           "bias_current_error_pct", "startup_vdd_error_v",
@@ -516,7 +844,8 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
         "self_biased_cascode.spice.tmpl",
         SIMPLE_V2, DIAGNOSTIC,
         (_dc("nmos_compliance", "dc Voutn 0 <VDD> 0.005",
-             ("i(Voutn)", "v(nx)", "v(nc)", "v(nb)"), "self_bias_cascode"),),
+             ("i(Voutn)", "v(nx)", "v(nc)", "v(nb)"), "self_bias_cascode",
+             device_kinds=("nmos",)),),
         tier="L3_blocks",
         device_kinds=("nmos",),
         required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
@@ -524,11 +853,12 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
     ),
     CircuitCase(
         "mos_ratio_reference", "complementary MOS-referenced voltages",
-        "mos_ratio_reference.spice.tmpl",
+        "diode_load.spice.tmpl",
         SIMPLE_V2, DIAGNOSTIC,
         (_dc("supply_ramp", "dc Vdd 0 <VDD> 0.005",
-             ("v(nr)", "v(np)"), "mos_reference"),),
-        tier="L3_blocks",
+             ("v(nr)", "v(np)"), "mos_reference",
+             subs=(("DIODE_RLOAD", "<REF_RBIAS>"),)),),
+        tier="L1_primitives",
         required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
                           "vref_error_v", "line_sensitivity_error_pct"),
     ),
@@ -547,12 +877,16 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
             _tran("settling", "tran <BUF_TSTEP> <BUF_TSTOP>",
                   ("v(vout)", "v(vin)"), "settling",
                   subs=(("BUFFER_IN", "<BUFFER_STEP>"),)),
+            _ac("closed_loop_ac", ("v(vout)",), "closed_loop_ac",
+                subs=(("BUFFER_IN", "DC=<MID_RAIL> AC=1 0"),),
+                card="ac dec 10 10 1e11"),
         ),
         tier="L4_systems",
         device_kinds=(),
         required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
                           "follow_error_v", "closed_loop_gain_error_pct",
-                          "settling_error_pct", "overshoot_error_v"),
+                          "settling_error_pct", "overshoot_error_v",
+                          "bandwidth_error_pct", "peaking_error_db"),
     ),
     CircuitCase(
         "ota_5t_buffer", "5T OTA in unity gain with on-chip bias",
@@ -564,12 +898,37 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
             _tran("settling", "tran <BUF_TSTEP> <BUF_TSTOP>",
                   ("v(vout)", "v(vin)"), "settling",
                   subs=(("BUFFER_IN", "<BUFFER_STEP>"),)),
+            _ac("closed_loop_ac", ("v(vout)",), "closed_loop_ac",
+                subs=(("BUFFER_IN", "DC=<MID_RAIL> AC=1 0"),),
+                card="ac dec 10 10 1e11"),
         ),
         tier="L4_systems",
         device_kinds=(),
         required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
                           "follow_error_v", "closed_loop_gain_error_pct",
-                          "settling_error_pct", "overshoot_error_v"),
+                          "settling_error_pct", "overshoot_error_v",
+                          "bandwidth_error_pct", "peaking_error_db"),
+    ),
+    CircuitCase(
+        "multistage_buffer_12t",
+        "12T self-biased Miller amplifier with buffered unity feedback",
+        "multistage_buffer_12t.spice.tmpl",
+        SIMPLE_V2, DIAGNOSTIC,
+        (
+            _tran("settling", "tran <BUF_TSTEP> <BUF_TSTOP>",
+                  ("v(vout)", "v(vin)"), "settling",
+                  subs=(("BUFFER_IN", "<BUFFER_STEP>"),)),
+            _ac("closed_loop_ac", ("v(vout)",), "closed_loop_ac",
+                subs=(("BUFFER_IN", "DC=<MID_RAIL> AC=1 0"),),
+                card="ac dec 10 10 1e11"),
+        ),
+        tier="L4_systems",
+        device_kinds=(),
+        required_metrics=(
+            "mre_pct", "r2", "nrmse_pct", "max_err",
+            "settling_error_pct", "overshoot_error_v",
+            "bandwidth_error_pct", "peaking_error_db",
+        ),
     ),
     CircuitCase(
         "ldo_regulator", "LDO: 5T error amp, PMOS pass device, RC load",
@@ -582,12 +941,22 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
             _tran("load_step", "tran <LDO_TSTEP> <LDO_TSTOP>",
                   ("v(vout)",), "load_regulation",
                   subs=(("LDO_LOAD_SPEC", "<LDO_LOAD_STEP>"),)),
+            _ac("supply_ac", ("v(vout)",), "ldo_psrr_ac",
+                subs=(("LDO_VDD_SPEC", "DC=<VDD> AC=1 0"),
+                      ("LDO_LOAD_SPEC", "DC=<LDO_LOAD_DC> AC=0 0")),
+                card="ac dec 10 10 1e10"),
+            _ac("output_impedance_ac", ("v(vout)",),
+                "ldo_output_impedance_ac",
+                subs=(("LDO_VDD_SPEC", "DC=<VDD> AC=0 0"),
+                      ("LDO_LOAD_SPEC", "DC=<LDO_LOAD_DC> AC=1 0")),
+                card="ac dec 10 10 1e10"),
         ),
         tier="L4_systems",
         device_kinds=(),
         required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
                           "line_regulation_error_pct", "vout_error_v",
-                          "load_droop_error_v", "recovery_error_v"),
+                          "load_droop_error_v", "recovery_error_v",
+                          "psrr_error_db", "output_impedance_error_pct"),
     ),
 )
 

@@ -1,0 +1,11 @@
+* Generated NMOS bias rail with a parameterized dynamic mirror fanout
+<MODEL_SETUP>
+Vdd vdd 0 <VDD>
+Vbn bn 0 <BODY_N>
+Iref vdd nbias <BIAS_CURRENT_SPEC>
+<N_PREFIX>n_ref nbias nbias 0 bn <N_DEVICE>
+<BIAS_BRANCHES>
+.ic <BIAS_FANOUT_IC>
+.temp <TEMP>
+<ANALYSIS>
+.end

@@ -34,7 +34,7 @@ from pycircuitsim.solver import (
 from pycircuitsim.circuit import Circuit
 from pycircuitsim.models.passive import VoltageSource
 from tests.common.gate_result import GateResult
-from tests.common.simple_circuit_catalog import SIMPLE_V1, SIMPLE_V2
+from tests.common.simple_circuit_catalog import SIMPLE_V1, SIMPLE_V2, get_case
 from tests.simple_circuits import verify_circuit_opamp_ac as opamp_ac
 from tests.simple_circuits import verify_nn_ac
 
@@ -451,7 +451,7 @@ def _check_clean_pool() -> None:
         for omp in omps
     }
     assert full_parsed == full_expected
-    assert len(full_clean) == len(full_parsed) == 480
+    assert len(full_clean) == len(full_parsed) == len(full_expected)
 
     diagnostic = jobs.build_pools()["simple_v2"]
     diagnostic_parsed = {tuple(line.split()) for line in diagnostic}
@@ -463,7 +463,7 @@ def _check_clean_pool() -> None:
         for suite in jobs.SIMPLE_V2_SUITES
     }
     assert diagnostic_parsed == diagnostic_expected
-    assert len(diagnostic) == len(diagnostic_parsed) == 960
+    assert len(diagnostic) == len(diagnostic_parsed) == len(diagnostic_expected)
     assert coverage.suites_for(SIMPLE_V1) == coverage.SUITES
     selected_v2 = coverage.suites_for(SIMPLE_V2)
     assert set(jobs.SIMPLE_V2_SUITES) <= set(selected_v2)
@@ -477,12 +477,23 @@ def _check_structured_simple_results_survive_collection() -> None:
         log = (root / "dn" / "small" / "tsmc5"
                / "verify_circuit_topologies__current_mirror.omp1.log")
         log.parent.mkdir(parents=True)
-        result = GateResult(
-            case_id="current_mirror", tech="TSMC5", corner="nominal",
-            analysis="nmos", role="diagnostic", status="diagnostic",
-            metrics={"nrmse_pct": 3.25, "ratio_error_pct": 0.2},
+        case = get_case("current_mirror")
+        results = [
+            GateResult(
+                case_id=case.case_id, tech="TSMC5", corner="nominal",
+                analysis=analysis.name, role="diagnostic", status="diagnostic",
+                metrics={
+                    "nrmse_pct": 3.25,
+                    "ratio_error_pct": 0.2,
+                    analysis.headline_metric: 0.2,
+                },
+            )
+            for analysis in case.analyses
+        ]
+        log.write_text(
+            "\n".join(result.marker() for result in results)
+            + "\n===V710_DONE rc=0===\n"
         )
-        log.write_text(result.marker() + "\n===V710_DONE rc=0===\n")
         entry = collect.collect(root)["dn"]["small"][
             "verify_circuit_topologies__current_mirror"
         ]["TSMC5"]["omp1"]
@@ -1061,7 +1072,19 @@ def main() -> int:
         line.split(maxsplit=1)[0] in docs.CURRENT_CLEAN_TAGS
         for line in clean_pool
     )
-    assert current_jobs == 480
+    per_family = (
+        len(jobs.CLEAN_VARIANTS)
+        * len(jobs.CLEAN_TECHS)
+        * (
+            len(jobs.DEVICE_SUITES)
+            + len(jobs.DETERMINISTIC)
+            + 3 * len(jobs.MULTISTABLE)
+        )
+    )
+    clean_tags = {line.split(maxsplit=1)[0] for line in clean_pool}
+    assert current_jobs == len(
+        clean_tags.intersection(docs.CURRENT_CLEAN_TAGS)
+    ) * per_family
     print(
         f"Accuracy campaign tools: {clean_jobs} unique clean jobs; "
         f"{current_jobs} current DirectNet/BSIM-AR jobs; invalid outcomes excluded"

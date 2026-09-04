@@ -20,7 +20,7 @@ from pathlib import Path
 import pytest
 
 from tests.common.base import (
-    CIRCUIT_TIERS, TEMPLATES_DIR, deck_tokens, template_deck,
+    CIRCUIT_TIERS, CONTROLS_DIR, TEMPLATES_DIR, deck_tokens, template_deck,
 )
 from tests.common.circuit_benchmarks import BENCH, OpAmpParams, directnet_opamp
 from tests.common.simple_circuit_catalog import CASES, SIMPLE_V2, cases
@@ -71,6 +71,7 @@ def test_tier_directories_are_the_only_template_homes() -> None:
     owned = {path for tier in CIRCUIT_TIERS
              for path in (TEMPLATES_DIR / tier).glob("*.spice.tmpl")}
     owned |= set((TEMPLATES_DIR / "subcircuits").glob("*.spice.tmpl"))
+    owned |= set(CONTROLS_DIR.glob("*.spice.tmpl"))
     assert set(TEMPLATES_DIR.rglob("*.spice.tmpl")) == owned
 
 

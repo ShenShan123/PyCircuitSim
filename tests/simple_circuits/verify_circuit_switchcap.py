@@ -51,6 +51,7 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
     SwitchCapParams, ngspice_switchcap, directnet_switchcap,
 )
 from tests.common.gate_result import GateResult  # noqa: E402
+from tests.common.simple_circuit_harness import RunSpec  # noqa: E402
 
 CHARGE_TOL = 0.05          # +/-5% of VDD on charge-transfer level
 DROOP_TOL = 0.10           # +/-10% of NGSPICE hold droop (relative part)
@@ -174,7 +175,8 @@ def run_one(bt: BenchTech) -> Dict:
     return {"tech": bt.name, "ng_charge": ng_charge, "dn_charge": dn_charge,
             "charge_err_pct": charge_err, "ng_droop": ng_droop,
             "dn_droop": dn_droop, "droop_pct_of_allowance": droop_err,
-            "partial": partial, "passed": passed, **metrics}
+            "partial": partial, "partial_error": err,
+            "passed": passed, **metrics}
 
 
 def main() -> int:
@@ -225,6 +227,7 @@ def main() -> int:
                 analysis="sample_hold", role="qualification", status="error",
                 error=r["error"], reference_converged="ng_charge" in r,
                 candidate_converged=False,
+                **RunSpec.from_environment().result_fields(),
             ).marker())
             continue
         status = "PASS" if r.get("passed") else "FAIL"
@@ -237,7 +240,8 @@ def main() -> int:
         print(GateResult(
             case_id="switchcap", tech=r["tech"], corner="nominal",
             analysis="sample_hold", role="qualification",
-            status="pass" if r.get("passed") else "fail",
+            status=("error" if r["partial"] else
+                    ("pass" if r.get("passed") else "fail")),
             metrics={
                 "metric": r["charge_err_pct"],
                 "charge_err_pct": r["charge_err_pct"],
@@ -252,6 +256,11 @@ def main() -> int:
                 "candidate_droop_v": r["dn_droop"],
             },
             candidate_converged=not r["partial"], partial=r["partial"],
+            error=(r.get("partial_error") or "partial transient")
+            if r["partial"] else "",
+            execution_state="partial" if r["partial"] else "complete",
+            error_kind="candidate" if r["partial"] else "",
+            **RunSpec.from_environment().result_fields(),
         ).marker())
     print(f"\n  {n_pass}/{len(results)} passed both charge + droop gates")
     # B10: surface the verdict in the exit code (consumers also parse stdout).

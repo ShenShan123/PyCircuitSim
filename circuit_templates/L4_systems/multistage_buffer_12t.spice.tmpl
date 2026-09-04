@@ -1,0 +1,23 @@
+* Twelve-MOS self-biased multistage amplifier in unity feedback
+<MODEL_SETUP>
+.temp <TEMP>
+Vdd vdd 0 <VDD>
+Vin vin 0 <BUFFER_IN>
+Ibias vdd nbias <IBIAS_CELL>
+<N_PREFIX>n_bias nbias nbias 0 0 <N_DEVICE>
+<N_PREFIX>n1 n1 vout tail 0 <N_DEVICE>
+<N_PREFIX>n2 vo1i vin tail 0 <N_DEVICE>
+<P_PREFIX>p3 n1 n1 vdd vdd <P_DEVICE>
+<P_PREFIX>p4 vo1i n1 vdd vdd <P_DEVICE>
+<N_PREFIX>n5 tail nbias 0 0 <N_DEVICE>
+<P_PREFIX>p6 vcore vo1i vdd vdd <P_DEVICE>
+<N_PREFIX>n7 vcore nbias 0 0 <N_DEVICE>
+Cc vo1i vcore <CC>
+<P_PREFIX>p8 vpre vcore vdd vdd <P_DEVICE>
+<N_PREFIX>n8 vpre vcore 0 0 <N_DEVICE>
+<P_PREFIX>p9 vout vpre vdd vdd <P_DEVICE>
+<N_PREFIX>n9 vout vpre 0 0 <N_DEVICE>
+Cpre vpre 0 10f
+CL vout 0 <CL>
+<ANALYSIS>
+.end

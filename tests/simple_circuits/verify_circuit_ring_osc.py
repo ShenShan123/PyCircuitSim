@@ -41,6 +41,7 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
     RingOscParams, ngspice_ringosc, directnet_ringosc,
 )
 from tests.common.gate_result import GateResult  # noqa: E402
+from tests.common.simple_circuit_harness import RunSpec  # noqa: E402
 
 PERIOD_TOL = 0.05          # +/-5% gate
 # Ring-osc periods sit at ~45-90 ps across TSMC5/7/12/16; 1.2 ns captures
@@ -156,6 +157,7 @@ def run_one(bt: BenchTech) -> Dict:
           f"{'PASS' if passed else 'FAIL'}")
     return {"tech": bt.name, "ng_period": ng_per, "dn_period": dn_per,
             "period_err_pct": per_err, "partial": partial,
+            "partial_error": err,
             "passed": passed, **metrics}
 
 
@@ -205,6 +207,7 @@ def main() -> int:
                 error=r["error"],
                 reference_converged="ng_period" in r,
                 candidate_converged=False,
+                **RunSpec.from_environment().result_fields(),
             ).marker())
             continue
         status = "PASS" if r.get("passed") else "FAIL"
@@ -216,7 +219,8 @@ def main() -> int:
         print(GateResult(
             case_id="ring_osc", tech=r["tech"], corner="nominal",
             analysis="oscillation", role="qualification",
-            status="pass" if r.get("passed") else "fail",
+            status=("error" if r["partial"] else
+                    ("pass" if r.get("passed") else "fail")),
             metrics={
                 "metric": r["period_err_pct"],
                 "period_err_pct": r["period_err_pct"],
@@ -228,6 +232,11 @@ def main() -> int:
                 "candidate_period_s": r["dn_period"],
             },
             candidate_converged=not r["partial"], partial=r["partial"],
+            error=(r.get("partial_error") or "partial transient")
+            if r["partial"] else "",
+            execution_state="partial" if r["partial"] else "complete",
+            error_kind="candidate" if r["partial"] else "",
+            **RunSpec.from_environment().result_fields(),
         ).marker())
     print(f"\n  {n_pass}/{len(results)} within +/-{PERIOD_TOL*100:.0f}% period gate")
     # B10: surface the verdict in the exit code (consumers also parse stdout).

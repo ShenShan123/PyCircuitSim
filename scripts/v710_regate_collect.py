@@ -38,6 +38,7 @@ from tests.common.simple_circuit_catalog import (  # noqa: E402
 TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 SIMPLE_V1_CASES = cases(score_version=SIMPLE_V1)
 SIMPLE_V2_CASES = cases(score_version=SIMPLE_V2)
+SIMPLE_V2_BY_SUITE = {case.campaign_suite: case for case in SIMPLE_V2_CASES}
 CIRCS = [case.result_key for case in SIMPLE_V1_CASES]
 SUITE_BY_RESULT = {
     case.result_key: case.campaign_suite
@@ -130,11 +131,94 @@ def is_verdict(entry: object) -> bool:
     """Whether an entry reached a scientific PASS/FAIL verdict."""
     if not isinstance(entry, dict):
         return False
+    if entry.get("result_complete") is False:
+        return False
     try:
         rc = int(entry.get("rc"))
     except (TypeError, ValueError):
         return False
     return 0 <= rc < 126 and rc != 124
+
+
+def structured_contract_error(
+    suite: str,
+    tech: str,
+    results: List[Dict],
+) -> str:
+    """Return why a structured catalog result set is incomplete."""
+    case = SIMPLE_V2_BY_SUITE.get(suite)
+    if case is None:
+        expected_pairs: List[tuple[str, str]] = []
+        if suite == "verify_device_integrity":
+            from tests.common.circuit_benchmarks import BENCH
+            from tests.common.device_integrity import build_sweeps
+
+            expected_pairs = [
+                (f"device_{spec.suite}", f"{device}_{spec.label}")
+                for device in ("nmos", "pmos")
+                for spec in build_sweeps(BENCH[tech.upper()], device)
+            ]
+        elif suite == "verify_terminal_integrity":
+            from tests.common.circuit_benchmarks import BENCH
+            from tests.common.terminal_integrity import (
+                terminal_biases, terminal_sweeps,
+            )
+
+            expected_pairs = [
+                ("terminal_currents", f"{device}_{sweep.name}")
+                for device in ("nmos", "pmos")
+                for sweep in terminal_sweeps(BENCH[tech.upper()], device)
+            ] + [
+                ("terminal_capacitance", f"{device}_{bias.name}")
+                for device in ("nmos", "pmos")
+                for bias in terminal_biases(BENCH[tech.upper()], device)
+            ]
+        elif suite == "verify_nn_subckt":
+            expected_pairs = [("nn_subckt", "buffer")]
+        if not expected_pairs:
+            return ""
+        observed_pairs = [
+            (str(result.get("case_id", "")), str(result.get("analysis", "")))
+            for result in results
+        ]
+        if sorted(observed_pairs) != sorted(expected_pairs):
+            missing = sorted(set(expected_pairs) - set(observed_pairs))
+            unexpected = sorted(set(observed_pairs) - set(expected_pairs))
+            return (
+                f"suite result markers are incomplete; missing result markers="
+                f"{missing}, unexpected={unexpected}, "
+                f"expected_count={len(expected_pairs)}, "
+                f"observed_count={len(observed_pairs)}"
+            )
+        wrong_tech = [result.get("tech") for result in results
+                      if str(result.get("tech", "")).upper() != tech.upper()]
+        if wrong_tech:
+            return f"suite result marker technology mismatch: {wrong_tech}"
+        return ""
+    expected = [analysis.name for analysis in case.analyses]
+    if case.derived_metrics:
+        expected.append("derived")
+    observed = [str(result.get("analysis", "")) for result in results]
+    missing = sorted(set(expected) - set(observed))
+    unexpected = sorted(set(observed) - set(expected))
+    duplicates = sorted({name for name in observed if observed.count(name) > 1})
+    if missing or unexpected or duplicates or len(observed) != len(expected):
+        return (
+            f"catalog result markers are incomplete; missing result markers="
+            f"{missing}, unexpected={unexpected}, duplicates={duplicates}, "
+            f"expected_count={len(expected)}, observed_count={len(observed)}"
+        )
+    wrong_case = [result.get("case_id") for result in results
+                  if result.get("case_id") != case.case_id]
+    wrong_tech = [result.get("tech") for result in results
+                  if str(result.get("tech", "")).upper() != tech.upper()]
+    corners = {str(result.get("corner", "")) for result in results}
+    if wrong_case or wrong_tech or len(corners) != 1 or "" in corners:
+        return (
+            f"catalog result marker identity mismatch: cases={wrong_case}, "
+            f"techs={wrong_tech}, corners={sorted(corners)}"
+        )
+    return ""
 
 
 def collect(root: Path, require_manifest: bool = False) -> Dict:
@@ -165,9 +249,17 @@ def collect(root: Path, require_manifest: bool = False) -> Dict:
 
         if structured:
             entry["results"] = structured
+            contract_error = structured_contract_error(
+                suite, tech_dir, structured,
+            )
+            entry["result_complete"] = not bool(contract_error)
+            if contract_error:
+                entry.update(status="ERROR", error=contract_error)
             statuses = {str(item.get("status", "")).upper()
                         for item in structured}
-            if "ERROR" in statuses:
+            if contract_error:
+                pass
+            elif "ERROR" in statuses:
                 entry["status"] = "ERROR"
                 entry["error"] = "; ".join(
                     str(item.get("error", ""))
@@ -194,6 +286,23 @@ def collect(root: Path, require_manifest: bool = False) -> Dict:
             values = explicit_metrics or nrmse_values
             if values:
                 entry["metric"] = max(float(value) for value in values)
+            case = SIMPLE_V2_BY_SUITE.get(suite)
+            if case is not None and not contract_error:
+                by_analysis = {
+                    str(item.get("analysis", "")): item for item in structured
+                }
+                headlines: Dict[str, Dict[str, object]] = {}
+                for analysis in case.analyses:
+                    item = by_analysis[analysis.name]
+                    payload = {
+                        **item.get("metrics", {}),
+                        **item.get("domain", {}),
+                    }
+                    headlines[analysis.name] = {
+                        "metric": analysis.headline_metric,
+                        "value": payload.get(analysis.headline_metric),
+                    }
+                entry["headline_metrics"] = headlines
         elif suite == "verify_nn_ac":
             for m in _AC_ROW.finditer(txt):
                 entry[m.group(2)] = {
@@ -419,8 +528,12 @@ def render(data: Dict) -> str:
                             rows.append(f"| {case.case_id} | {tech} | — | — |")
                             continue
                         status = entry.get("status", "INVALID")
-                        metric = entry.get("metric")
-                        metric_text = "—" if metric is None else f"{metric:.3f}"
+                        headlines = entry.get("headline_metrics", {})
+                        metric_text = "; ".join(
+                            f"{name}:{item['metric']}={item['value']:.4g}"
+                            for name, item in headlines.items()
+                            if item.get("value") is not None
+                        ) or "—"
                         rows.append(
                             f"| {case.case_id} | {tech} | {status} | "
                             f"{metric_text} |"
@@ -429,7 +542,7 @@ def render(data: Dict) -> str:
                     "**Simple-v2 nominal held-out topology diagnostics (not "
                     "included in the simple-v1 score)**",
                     "",
-                    "| case | tech | outcome | worst NRMSE % |",
+                    "| case | tech | outcome | headline metrics |",
                     "|---|---|---|---|",
                     *rows,
                     "",

@@ -6,7 +6,8 @@ One line per job: ``tag variant TECH suite omp``.
 Pools (write one file each so they can be dispatched with different PAR):
 
 * ``dn``   — DirectNet, all 10 on-disk variants, full re-gate
-             (4 device suites + 4 circuit benchmarks + OMP{1,2,4} on opamp/ring).
+             (7 device/integration suites + 4 circuit benchmarks, with
+             OMP{1,2,4} on opamp/ring).
 * ``tf_dev``    — BSIM-AR device suites only, 5 priority variants (~40x per eval).
 * ``tf_strict`` — BSIM-AR strict-OMP sweep for the `large` corridor recipes,
                   the one gap BSIM-AR-L74-clean.md flags explicitly.
@@ -36,6 +37,9 @@ TECHS = ["TSMC5", "TSMC7", "TSMC12", "TSMC16"]
 CLEAN_TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 
 DEVICE_SUITES = [
+    "verify_device_integrity",        # full DC surface/derivative diagnostics
+    "verify_terminal_integrity",      # terminal currents + 4x4 capacitance
+    "verify_nn_subckt",               # flat/nested NN model integration
     "verify_nn_ac",                 # device CS-amp small-signal
     "verify_circuit_opamp_ac",      # two-stage Miller open-loop AC
     "verify_nn_multi_tech_dc",      # parametric Id-Vgs

@@ -42,7 +42,7 @@ import logging
 import math
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, List, Sequence, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -54,7 +54,9 @@ from tests.common.circuit_benchmarks import (
     run_directnet_dc_sweep,
 )
 from tests.common.gate_result import GateResult
-from tests.common.simple_circuit_harness import Corner, apply_corner, topology_mismatch
+from tests.common.simple_circuit_harness import (
+    Corner, RunSpec, apply_corner, topology_mismatch,
+)
 
 TEMPLATE = DEVICE_DECKS / "mosfet.spice.tmpl"
 
@@ -211,6 +213,10 @@ def render_device_decks(
     stem = "pdut" if is_pmos else "dut"
     card = (f"dc {spec.sweep_source} {spec.start:.12g} {spec.stop:.12g} "
             f"{spec.step:.12g}")
+    family = {
+        75: " FAMILY=directnet-full",
+        76: " FAMILY=bsimar-full",
+    }.get(level, "")
 
     reference = render_template(TEMPLATE, {
         **shared,
@@ -225,7 +231,8 @@ def render_device_decks(
         **shared,
         "MODEL_SETUP": (
             f".model {spec.device}_nn {device_kind} "
-            f"(LEVEL={level} TECH={bt.nn_tech} VT={vt})"
+            f"(LEVEL={level}{family} "
+            f"TECH={bt.nn_tech} VT={vt})"
         ),
         "DEVICE_NAME": f"M{stem}",
         "DEVICE": f"{spec.device}_nn L={length * 1e9:g}n NFIN={nfin}",
@@ -522,10 +529,17 @@ def run_sweep(
     *,
     level: int,
     reference_repeats: int = 1,
+    run_spec: Optional[RunSpec] = None,
 ) -> GateResult:
     """Run one paired sweep and return a structured, schema-stable result."""
     if reference_repeats < 1:
         raise ValueError("reference_repeats must be >= 1")
+    resolved_run_spec = run_spec or RunSpec.from_environment()
+    if resolved_run_spec.model_level != level:
+        raise ValueError(
+            f"run spec LEVEL={resolved_run_spec.model_level} != requested {level}"
+        )
+    provenance = resolved_run_spec.result_fields()
     bt = apply_corner(base_bt, corner)
     reference_converged = False
     candidate_converged = False
@@ -576,6 +590,7 @@ def run_sweep(
             analysis=f"{spec.device}_{spec.label}", role="diagnostic",
             status="diagnostic", metrics=metrics, domain=domain,
             reference_converged=True, candidate_converged=candidate.converged,
+            **provenance,
         )
     except Exception as exc:  # noqa: BLE001 — an error row keeps its denominator slot
         return GateResult(
@@ -584,6 +599,17 @@ def run_sweep(
             status="error", error=f"{type(exc).__name__}: {exc}",
             reference_converged=reference_converged,
             candidate_converged=candidate_converged,
+            execution_state=(
+                "reference_error" if not reference_converged
+                else "nonconverged" if "converg" in str(exc).lower()
+                else "infrastructure_error"
+            ),
+            error_kind=(
+                "reference" if not reference_converged
+                else "candidate" if "converg" in str(exc).lower()
+                else "infrastructure"
+            ),
+            **provenance,
         )
 
 
@@ -606,6 +632,7 @@ def run_device_suites(
         raise ValueError(f"unknown device kinds {unknown_devices}")
     bt = apply_corner(base_bt, corner)
     results: List[GateResult] = []
+    run_spec = RunSpec.from_environment()
     for device in devices:
         for spec in build_sweeps(bt, device):
             if spec.suite not in suites:
@@ -614,5 +641,6 @@ def run_device_suites(
                 spec, base_bt, corner,
                 work_dir / spec.suite / device,
                 level=level, reference_repeats=reference_repeats,
+                run_spec=run_spec,
             ))
     return results

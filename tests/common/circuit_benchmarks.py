@@ -419,6 +419,8 @@ def parse_netlist(netlist_path: Path) -> Any:
 
 def run_directnet_transient(
     netlist_path: Path,
+    *,
+    parsed: Optional[Any] = None,
 ) -> Tuple[Dict[str, np.ndarray], bool, str]:
     """Parse + DC-OP + transient-solve a DirectNet netlist.
 
@@ -435,7 +437,7 @@ def run_directnet_transient(
     partial = False
     err_msg = ""
     try:
-        parser = parse_netlist(netlist_path)
+        parser = parsed or parse_netlist(netlist_path)
         circuit = parser.circuit
         dt = parser.analysis_params["tstep"]
         t_stop = parser.analysis_params["tstop"]
@@ -523,6 +525,7 @@ def run_directnet_dc_sweep(
     tag: str,
     *,
     require_convergence: bool = True,
+    parsed: Optional[Any] = None,
 ) -> Dict[str, np.ndarray]:
     """Parse + DC-sweep a DirectNet netlist; return the run_dc_sweep results.
 
@@ -537,7 +540,7 @@ def run_directnet_dc_sweep(
 
     logging.disable(logging.CRITICAL)
     try:
-        parser = parse_netlist(netlist_path)
+        parser = parsed or parse_netlist(netlist_path)
         circuit = parser.circuit
         out_dir = work_dir / f"{tag}_dcsweep"
         out_dir.mkdir(parents=True, exist_ok=True)

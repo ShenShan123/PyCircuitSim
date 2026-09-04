@@ -43,8 +43,9 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
 from tests.common.device_integrity import (  # noqa: E402
     DEVICE_KINDS, SUITES, build_sweeps, run_device_suites,
 )
-from tests.common.gate_result import GateResult  # noqa: E402
+from tests.common.gate_result import GateResult, result_exit_code  # noqa: E402
 from tests.common.simple_circuit_harness import CORNERS  # noqa: E402
+from tests.common.simple_circuit_harness import RunSpec  # noqa: E402
 
 
 #: One headline number per suite, chosen so a reader can localize a failure
@@ -119,6 +120,14 @@ def main(argv: List[str] | None = None) -> int:
         return 0
 
     level = active_model_level()
+    try:
+        RunSpec.from_environment().validate_checkpoint_pins(Path(os.environ.get(
+            "BSIMAR_CHECKPOINT_DIR",
+            PROJECT_ROOT / "external_compact_models" / "neural_network"
+            / "checkpoints",
+        )))
+    except (FileNotFoundError, ValueError) as exc:
+        parser.error(str(exc))
     print("=" * 88)
     print(f"Single-device integrity — {active_model_label()} vs NGSPICE "
           "BSIM-CMG LEVEL=72")
@@ -131,7 +140,10 @@ def main(argv: List[str] | None = None) -> int:
     for tech in techs:
         for corner_name in corners:
             print(f"\n--- {tech} / {corner_name} ---")
-            work_dir = RESULTS_BASE / "device-integrity" / tech / corner_name
+            work_dir = (
+                RESULTS_BASE / "device-integrity" / f"level-{level}"
+                / tech / corner_name
+            )
             results = run_device_suites(
                 BENCH[tech], CORNERS[corner_name], work_dir,
                 level=level, suites=suites, devices=devices,
@@ -152,7 +164,10 @@ def main(argv: List[str] | None = None) -> int:
                           f"{HEADLINE[suite]}={shown}")
                 print(result.marker())
 
-    output = RESULTS_BASE / "device-integrity" / "latest_results.json"
+    output = (
+        RESULTS_BASE / "device-integrity" / f"level-{level}"
+        / "latest_results.json"
+    )
     _write_results(output, all_results)
 
     errors = [result for result in all_results if result.status == "error"]
@@ -171,7 +186,7 @@ def main(argv: List[str] | None = None) -> int:
         print(f"  ERROR {result.tech}/{result.corner}/{result.case_id}/"
               f"{result.analysis}: {result.error}")
     print(f"JSON={output}")
-    return 0 if all_results and not errors else 1
+    return result_exit_code(all_results)
 
 
 if __name__ == "__main__":

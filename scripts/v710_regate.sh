@@ -212,14 +212,15 @@ if [ "${1:-}" = "_one" ]; then
     script_suite="$suite"
   fi
   test_file="$ROOT/tests/simple_circuits/${script_suite}.py"
-  if [ "$suite" = "verify_nn_multi_tech_dc" ]; then
-    test_file="$ROOT/tests/single_devices/${suite}.py"
+  if [ ! -f "$test_file" ]; then
+    test_file="$ROOT/tests/single_devices/${script_suite}.py"
   fi
   [ -f "$test_file" ] || {
     echo "[v710] UNKNOWN suite path: $suite" > "$log"
     exit 3
   }
   echo "[v710] RUN $tag/$variant/$tlc/$suite/omp$omp"
+  export PYCIRCUITSIM_CAMPAIGN_MANIFEST_SHA256="$provenance"
   echo "===V710_PROVENANCE sha256=$provenance===" > "$log"
   OMP_NUM_THREADS=$omp MKL_NUM_THREADS=$omp PYCIRCUITSIM_TORCH_THREADS=$omp \
     "$PY" -u "$test_file" --tech "$tuc" "${case_args[@]}" >> "$log" 2>&1
@@ -227,6 +228,11 @@ if [ "${1:-}" = "_one" ]; then
   if ! verify_checkpoint_provenance "$tag" "$variant" "$tlc"; then
     echo "===V710_DONE rc=infra===" >> "$log"
     echo "[v710] checkpoint provenance drift during $tag/$variant/$tlc" >&2
+    exit 3
+  fi
+  if [ "$rc" -eq 2 ]; then
+    echo "===V710_DONE rc=infra===" >> "$log"
+    echo "[v710] INFRA $tag/$variant/$tlc/$suite/omp$omp: worker classified infrastructure failure" >&2
     exit 3
   fi
   if [ "$rc" -ne 0 ] && grep -q '^Traceback (most recent call last):' "$log"; then

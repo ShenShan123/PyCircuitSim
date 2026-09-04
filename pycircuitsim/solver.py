@@ -4254,6 +4254,14 @@ class ACSolver:
         num_freqs = len(frequencies)
         voltages_over_freq = {node: np.zeros(num_freqs, dtype=complex) for node in nodes}
         voltages_over_freq["frequency"] = frequencies
+        voltage_sources = [
+            component for component in self.circuit.components
+            if isinstance(component, VoltageSource)
+        ]
+        for source in voltage_sources:
+            voltages_over_freq[f"i({source.name})"] = np.zeros(
+                num_freqs, dtype=complex,
+            )
 
         # Precompute small-signal MOSFET parameters ONCE at the DC operating
         # point. gm/gds/gmb and the terminal capacitances are linearizations
@@ -4298,6 +4306,10 @@ class ACSolver:
             # Extract complex node voltages from solution
             for idx, node in enumerate(nodes):
                 voltages_over_freq[node][freq_idx] = complex(solution[idx])
+            for source_idx, source in enumerate(voltage_sources):
+                voltages_over_freq[f"i({source.name})"][freq_idx] = complex(
+                    solution[num_nodes + source_idx]
+                )
 
         return voltages_over_freq
 

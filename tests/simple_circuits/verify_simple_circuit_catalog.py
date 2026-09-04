@@ -11,11 +11,11 @@ if str(PROJECT_ROOT) not in sys.path:
 
 from tests.common.base import (  # noqa: E402
     CIRCUIT_TIERS, TEMPLATES_DIR, SUBCIRCUIT_DECKS,
-    deck_tokens, template_deck, render_deck_text,
+    control_deck, deck_tokens, template_deck, render_deck_text,
 )
 from tests.common.gate_result import GateResult, parse_result_markers  # noqa: E402
 from tests.common.simple_circuit_harness import (  # noqa: E402
-    METRIC_PROFILES, _DERIVED_RATIOS,
+    METRIC_PROFILES, _DERIVED_RATIOS, analysis_metric_vocabulary,
 )
 from tests.common.simple_circuit_catalog import (  # noqa: E402
     CASES, DIAGNOSTIC, QUALIFICATION, SIMPLE_V1, SIMPLE_V2, cases,
@@ -66,7 +66,7 @@ def main() -> int:
     if any(not case.gate_metric or not case.gate_condition for case in v1):
         failures.append("simple-v1 qualification metadata must declare its gate")
     analysis_kinds = {analysis.kind for case in v2 for analysis in case.analyses}
-    if analysis_kinds != {"dc", "tran", "ac"}:
+    if analysis_kinds != {"op", "dc", "tran", "ac"}:
         failures.append(
             f"simple-v2 must exercise DC/transient/AC; got {analysis_kinds}")
 
@@ -131,6 +131,19 @@ def main() -> int:
                     f"{case.case_id}: unknown derived metric {name!r}; "
                     f"available: {sorted(_DERIVED_RATIOS)}"
                 )
+        promised = {
+            metric
+            for spec in case.analyses
+            for metric in analysis_metric_vocabulary(spec)
+        }
+        promised.update(
+            f"{name}_db_error" for name in case.derived_metrics
+        )
+        undeclared = sorted(set(case.required_metrics) - promised)
+        if undeclared:
+            failures.append(
+                f"{case.case_id}: required metrics have no producer: {undeclared}"
+            )
         # Tier B exists to exercise the cold-start path. A closed-loop system
         # whose every transient carries `uic` is handed the answer it was
         # added to compute, so require at least one transient that does not.
@@ -146,30 +159,10 @@ def main() -> int:
                 )
 
     standalone: dict[Path, dict[str, str]] = {
-        template_deck("inverter.spice.tmpl"): {
-            "MODEL_SETUP": (
-                ".model n NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)\n"
-                ".model p PMOS (LEVEL=73 TECH=tsmc5 VT=lvt)"
-            ),
-            "TEMP": "27", "VDD": "0.65", "INPUT_SPEC": "0",
-            "N_PREFIX": "M", "P_PREFIX": "M",
-            "N_DEVICE": "n L=16n NFIN=2",
-            "P_DEVICE": "p L=20n NFIN=3",
-            "OUTPUT_LOAD": "Cload out 0 5f", "INITIAL_CONDITION": "",
-            "ANALYSIS": ".op",
-        },
-        template_deck("rc_lowpass.spice.tmpl"): {
+        control_deck("rc_lowpass.spice.tmpl"): {
             "TEMP": "27", "INPUT_DC": "0", "INPUT_AC": "1",
             "INPUT_PHASE": "0", "RESISTANCE": "1k",
             "CAPACITANCE": "1p", "ANALYSIS": ".ac dec 1 1 10",
-        },
-        template_deck("common_source.spice.tmpl"): {
-            "MODEL_SETUP": ".model n NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)",
-            "TEMP": "27", "VDD": "0.65", "INPUT_SPEC": "DC=0.3 AC=1 0",
-            "LOAD_NETWORK": "Rd vdd out 50k", "BULK_NETWORK": "",
-            "DEVICE_PREFIX": "M", "SOURCE_NODE": "0", "BULK_NODE": "0",
-            "DEVICE": "n L=16n NFIN=2", "OUTPUT_LOAD": "",
-            "ANALYSIS": ".ac dec 1 1 10",
         },
         template_deck("mosfet.spice.tmpl"): {
             "MODEL_SETUP": ".model n NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)",
@@ -297,6 +290,7 @@ def main() -> int:
         expected_corners = {
             "nominal", "temp_cold", "temp_hot", "vdd_low", "vdd_high",
             "body_reverse", "pn_n3p2", "pn_n2p3", "joint_hot_lowvdd",
+            "vt_alternate", "vt_asymmetric", "ln_20", "lp_16", "nfin_high",
         }
         if set(CORNERS) != expected_corners:
             failures.append(

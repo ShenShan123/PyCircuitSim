@@ -46,14 +46,16 @@ missing gate.
 | `verify_nn_ac.py` | gain error ≤ 1.5 dB, f3dB ratio 0.7–1.43, magnitude NRMSE ≤ 10%; phase is diagnostic |
 | `verify_circuit_opamp_ac.py` | gain error ≤ 3 dB, GBW ratio 0.6–1.67, PM error ≤ 15°, valid refined reference bias, converged NN operating point |
 | `verify_nn_lifted_source_dc.py` | source-relative-frame canary, NRMSE ≤ 10% |
+| `verify_device_integrity.py` | diagnostic output/subthreshold/linear-region and `gm`/`gds`/`gmb` accuracy |
+| `verify_terminal_integrity.py` | diagnostic four-terminal current/KCL and 4x4 transcapacitance accuracy |
+| `verify_nn_subckt.py` | diagnostic flat-versus-nested NN equivalence against LEVEL=72 |
 
 ### Simple-v2 topology diagnostics
 
 `verify_circuit_topologies.py` adds a held-out composition ladder covering
-source followers, common-gate stages, current mirrors, an open inverter chain,
-transmission-gate DC and hold behavior, ideal- and active-tail differential
-pairs, cascode stacks, NAND2/NOR2, and full 6T SRAM operating modes. It runs
-DC, transient, and AC analyses from canonical templates in
+single-stage, logic, transmission-gate, differential, active-load, self-bias,
+stateful, scale, and closed-feedback behavior. It runs OP, DC, transient, and
+AC analyses from canonical templates in
 `circuit_templates/`.
 The complete contract is in
 [`simple-circuits-v2-topologies.md`](simple-circuits-v2-topologies.md).
@@ -121,8 +123,10 @@ A report is publishable only when all of the following hold:
 - Reference and candidate decks are rendered and compared before a numerical
   mismatch is attributed to the model.
 
-The V7.5.17 clean matrix contains DirectNet and BSIM-AR × 4 tiers × 5
-technologies × 12 gate invocations = **480 jobs**.
+The frozen V7.5.17 clean matrix contains DirectNet and BSIM-AR × 4 tiers × 5
+technologies × 12 gate invocations = **480 jobs**. V7.6.8 adds three diagnostic
+invocations per group/technology, making a fresh current-family pool **600
+jobs**; those denominators must not be merged or compared as if identical.
 The V7.6.6 full-terminal matrix applies the same 480-job denominator to freshly
 trained DirectNet-Full and BSIM-AR-Full models in one separate, non-backfilled
 campaign.

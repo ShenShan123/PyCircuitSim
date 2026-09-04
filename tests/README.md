@@ -8,8 +8,9 @@ and every persistent simulator artifact is written below `results/`.
 
 - `common/` provides strict template rendering, technology profiles, candidate
   and LEVEL=72 adapters, trace comparison, and campaign result contracts.
-- `single_devices/` verifies terminal currents, geometry coverage, lifted-source
-  behavior, compact-model device sweeps, and — through
+- `single_devices/` verifies four-terminal currents and the 4x4 physical
+  transcapacitance matrix, geometry coverage, lifted-source behavior,
+  compact-model device sweeps, and — through
   `verify_device_integrity.py` — the output characteristic, subthreshold
   decades, triode region, and `gm`/`gds`/`gmb` against ground truth.
 - `simple_circuits/` verifies operating point, DC, transient, AC, topology
@@ -23,8 +24,10 @@ and every persistent simulator artifact is written below `results/`.
 - A test selects a canonical template and supplies technology, VT, geometry,
   P/N ratio, PVT, slew, load, bias, and analysis values through the shared
   renderer.
-- Candidate and reference decks must have topology parity before numerical
-  differences are interpreted.
+- Candidate and reference decks must have physical parity—including values,
+  waveforms, temperature, ICs, analysis limits, and device bindings—before
+  numerical differences are interpreted. PyCircuitSim LEVEL=72 is the
+  attribution control, never a replacement reference.
 - Qualification gates and diagnostics remain distinct; a diagnostic result is
   not promotion evidence.
 - Convergence is reported separately from error. A solve that did not reach a
@@ -33,6 +36,10 @@ and every persistent simulator artifact is written below `results/`.
   behind it are recoverable they are filed under a key no scoring path reads.
 - Unknown technologies, cases, corners, or analyses must fail before a campaign
   starts.
+- A partial/nonconverged trace is always an `ERROR`; recovered values live only
+  below a non-scoring diagnostic key. Required event metrics must be finite.
+- Every structured row records model family/level, explicit checkpoint pins,
+  campaign provenance when present, and CPU thread settings.
 - Generated `.sp`, `.cir`, CSV, JSON, logs, plots, and reports belong under
   `results/tests/` or another campaign directory below `results/`, never here.
 
