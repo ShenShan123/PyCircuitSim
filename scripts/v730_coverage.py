@@ -1,21 +1,13 @@
 #!/usr/bin/env python3
-"""V7.3.0 — one coverage map over every accuracy measurement on disk.
+"""Map full-terminal accuracy coverage and emit missing campaign jobs.
 
-The accuracy campaign has run in three passes that each wrote their own tree:
-
-  results/a3_regate/    V6.13.0, simple-v1 matrix only, REPORT.md + OMP_REPORT.md
-  results/v710_regate/  V7.1.0, device + AC + strict OMP, data.json
-  results/v730_regate/  V7.3.0 (this campaign), same layout as v710
-
-Nothing so far could answer "is cell X measured, and by which pass?" without
-reading all three by eye. This tool answers it: it merges the passes with
-newest-wins precedence, compares the result against the coverage the new
-reports require, and emits the missing cells as a job file the gate driver
-(`scripts/v710_regate.sh`) consumes directly.
+The tool merges retained LEVEL=75/76 campaign passes with newest-wins
+precedence, compares them with the selected denominator, and emits missing
+cells in the format consumed by ``scripts/v710_regate.sh``.
 
     python scripts/v730_coverage.py                      # coverage report
     python scripts/v730_coverage.py --emit-jobs jobs.txt # what is still missing
-    python scripts/v730_coverage.py --emit-jobs j.txt --tag tf --set recipes
+    python scripts/v730_coverage.py --emit-jobs j.txt --tag tff --set clean
 
 A cell with no checkpoint on disk is reported as NO-CKPT, never as a gap: it is
 work that cannot be run, not work that was forgotten.
@@ -66,7 +58,6 @@ CKPT = pathlib.Path(os.environ.get(
 
 TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 FAM = {
-    "dn": "DirectNet", "tf": "BSIM-AR",
     "dnf": "DirectNet-Full", "tff": "BSIM-AR-Full",
 }
 
@@ -108,43 +99,22 @@ def suites_for(simple_version: str) -> Dict[str, Tuple[str, ...]]:
     selected.update(NON_SIMPLE_SUITES)
     return selected
 
-# The clean control, per family. V7.4.0 retrained every tier of DirectNet and
-# BSIM-AR from scratch on the clean recipe, straight into the production slots,
-# so clean@large is now simply `large` for both — the v660clean archive detour
-# (needed while the DN `large` slot carried the crit30f curriculum) is gone.
 CLEAN: Dict[str, Dict[str, str]] = {
-    "dn": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
-    "tf": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
     "dnf": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
     "tff": {"small": "small", "medium": "medium", "large": "large", "xl": "xl"},
 }
 CLEAN_TECH_OVERRIDE: Dict[Tuple[str, str, str], str] = {}
 
-# Recipes that survive the V7.3.0 filter (docs/plans/2026-07-27-...md §5).
-# Everything else is archive-only or demoted to the dead-end table.
 RECIPES: Dict[str, List[str]] = {
-    "dn": ["crit30f_large", "crit15m_xl", "corroft_xl", "csob_large"],
-    "tf": ["corroft_medium", "corro15_medium",
-           "corroft_large", "crit15m_large", "crit30_large",
-           "corroft_xl", "corro15_xl", "crit15m_xl", "crit30_xl"],
     "dnf": [],
     "tff": [],
 }
 
-# Newest pass wins: a cell re-measured in V7.3.0 supersedes its V7.1.0 value,
-# which supersedes the V6.13.0 one.
-PASSES = [("a3", ROOT / "results" / "a3_regate"),
-          ("v710", ROOT / "results" / "v710_regate"),
-          ("v730", ROOT / "results" / "v730_regate"),
-          ("v740", ROOT / "results" / "v740_regate"),
-          ("v742", ROOT / "results" / "v742_regate"),
-          ("simple-recheck", ROOT / "results" / "simple_recheck_24c181a"),
-          ("v7516-clean", ROOT / "results" / "v7516_clean"),
-          ("v7517-clean", ROOT / "results" / "v7517_clean"),
-          ("v761-full-clean", ROOT / "results" / "v761_full_clean"),
+PASSES = [("v761-full-clean", ROOT / "results" / "v761_full_clean"),
           ("v762-directnet-full", ROOT / "results" /
            "v762_directnet_full_clean"),
-          ("v766-full-clean", ROOT / "results" / "v766_full_clean")]
+          ("v766-full-clean", ROOT / "results" / "v766_full_clean"),
+          ("v770-full-clean", ROOT / "results" / "v770_full_clean")]
 
 CellKey = Tuple[str, str, str, str, str]
 
@@ -281,7 +251,7 @@ def ckpt_exists(tag: str, variant: str, tech: str,
                 return False
             if not (stem.with_name(stem.name + "_best.pt.complete")).exists():
                 return False
-            if tag in ("tf", "tff") and not (
+            if tag == "tff" and not (
                 stem.with_name(stem.name + "_config.npz")
             ).exists():
                 return False
@@ -304,7 +274,7 @@ def groups(tag: str, which: str) -> List[Tuple[str, bool]]:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="V7.3.0 accuracy coverage map")
+    ap = argparse.ArgumentParser(description="Full-terminal accuracy coverage map")
     ap.add_argument("--emit-jobs", type=pathlib.Path, default=None,
                     help="Write missing cells as a v710_regate.sh job file")
     ap.add_argument("--tag", default=None, choices=sorted(FAM),
@@ -343,7 +313,7 @@ def main() -> int:
         )
     if len(set(techs)) != len(techs):
         ap.error(f"--techs contains duplicates: {techs}")
-    tags = [args.tag] if args.tag else ["dn", "tf", "dnf", "tff"]
+    tags = [args.tag] if args.tag else ["dnf", "tff"]
     only = ([p.strip() for p in args.passes.split(",")]
             if args.passes else None)
     if only is not None:

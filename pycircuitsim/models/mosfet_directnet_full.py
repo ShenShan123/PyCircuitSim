@@ -119,10 +119,6 @@ def _load_artifacts(
             f"Unsupported normalization mode {norm_stats.mode!r}")
 
     state = torch.load(str(checkpoint), weights_only=True, map_location="cpu")
-    if any(key.startswith(("mono.", "core.")) for key in state):
-        raise ValueError(
-            "Full-terminal DirectNet requires the plain six-surface "
-            "architecture")
     from neural_network.models.direct_net import DirectNet
 
     net_keys = sorted(

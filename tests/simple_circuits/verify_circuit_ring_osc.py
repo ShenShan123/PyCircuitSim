@@ -4,7 +4,7 @@
 Part of the DirectNet V6.4 sprint, Phase 3 benchmark harness.
 
 Measures the oscillation period of a 5-stage ring oscillator built from
-DirectNet (LEVEL=73) inverters (PyCircuitSim transient) and compares it to the
+DirectNet-Full (LEVEL=75) inverters (PyCircuitSim transient) and compares them to
 NGSPICE BSIM-CMG (LEVEL=72) ground truth.
 
 Gate: DirectNet period within +/-5% of NGSPICE per technology (TSMC5/7/12/16).

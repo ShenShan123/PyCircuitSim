@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""NN compact-model device gate: DirectNet / BSIM-AR vs BSIM-CMG.
+"""NN device gate: DirectNet-Full / BSIM-AR-Full vs BSIM-CMG.
 
 Single NMOS and PMOS across the TSMC techs — Id-Vgs DC sweeps and the NMOS
 transient. This is the model surface itself: there is no circuit here to
@@ -35,7 +35,7 @@ from tests.common.nn_gate import (  # noqa: E402
 
 def main() -> int:
     ap = tech_arg_parser(
-        "NN device verification: DirectNet + BSIM-AR vs BSIM-CMG")
+        "NN device verification: full-terminal families vs BSIM-CMG")
     ap.add_argument("--dc-only", action="store_true",
                     help="Run NMOS DC tests only")
     ap.add_argument("--tran-only", action="store_true",

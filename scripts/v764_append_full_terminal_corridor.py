@@ -3,8 +3,8 @@
 
 The trajectory fragment supplies only source-relative bias coordinates and
 geometry.  Every six-surface target is re-evaluated on the identical BSIM-CMG
-OSDI model before append; legacy reduced-current targets are never converted
-or treated as truth.  The parent dataset remains untouched, and the output is
+OSDI model before append; no derived current or derivative targets are treated
+as truth. The parent dataset remains untouched, and the output is
 campaign-ready only after its label sidecars and completion marker exist.
 """
 
@@ -325,7 +325,6 @@ def append_corridor(
     ) -> Tuple[Optional[Mapping[str, float]], str]:
         return _eval_single_point_with_reason(
             instance, vd=vd, vg=vg, vs=vs, vb=vb, _silent=True,
-            output_contract=FULL_TERMINAL_OUTPUT_CONTRACT,
         )
 
     corridor_outputs = evaluate_terminal_rows(corridor_inputs, _evaluate)

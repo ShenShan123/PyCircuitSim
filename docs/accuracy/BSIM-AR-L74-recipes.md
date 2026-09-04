@@ -1,5 +1,8 @@
 # BSIM-AR (LEVEL=74) — recipe variants
 
+> Historical evidence only: V7.7.0 removed the LEVEL=74 runtime, trainer, and
+> checkpoints. Commands and options in this report are not supported.
+
 A **recipe** is one identical training addendum applied to every
 (tech × device × size) checkpoint (`methodology.md` §5). The control is the
 clean model in [`BSIM-AR-L74-clean.md`](BSIM-AR-L74-clean.md); the recipe map

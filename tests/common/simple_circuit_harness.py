@@ -83,7 +83,6 @@ class RunSpec:
 
     def __post_init__(self) -> None:
         expected = {
-            73: "DirectNet", 74: "BSIM-AR",
             75: "DirectNet-Full", 76: "BSIM-AR-Full",
         }
         if self.model_level not in expected:
@@ -130,7 +129,7 @@ class RunSpec:
                 stem.with_name(stem.name + "_norm.npz"),
                 model.with_name(model.name + ".complete"),
             ]
-            if self.model_level in {74, 76}:
+            if self.model_level == 76:
                 required.append(stem.with_name(stem.name + "_config.npz"))
             missing = [path for path in required if not path.is_file()]
             if missing:
@@ -143,7 +142,7 @@ class RunSpec:
     def from_environment(cls) -> "RunSpec":
         """Resolve the effective model and execution settings once per run."""
         level = active_model_level()
-        tag = {73: "DN", 74: "TF", 75: "DNF", 76: "TFF"}[level]
+        tag = {75: "DNF", 76: "TFF"}[level]
         pins = []
         for polarity in ("nmos", "pmos"):
             suffix = polarity.upper()
@@ -481,9 +480,8 @@ def _common_substitutions(
     vdd = bt.vdd
     reverse = corner.body_reverse_frac * vdd
     level = model_level or {
-        "DirectNet": 73, "BSIM-AR": 74,
         "DirectNet-Full": 75, "BSIM-AR-Full": 76,
-    }.get(active_model_label().split(" (")[0], 73)
+    }.get(active_model_label().split(" (")[0], 75)
     vcm = 0.55 * vdd
     if reference:
         model_setup = f'.include "{baked_lib}"'
@@ -505,14 +503,10 @@ def _common_substitutions(
             f"NFIN={bt.effective_nfin_p} TFIN={_spice_length(bt.tfin)}"
         )
     else:
-        family = {
-            75: " FAMILY=directnet-full",
-            76: " FAMILY=bsimar-full",
-        }.get(level, "")
         model_setup = (
-            f".model nmos_nn NMOS (LEVEL={level}{family} TECH={bt.nn_tech} "
+            f".model nmos_nn NMOS (LEVEL={level} TECH={bt.nn_tech} "
             f"VT={bt.effective_nmos_vt})\n"
-            f".model pmos_nn PMOS (LEVEL={level}{family} TECH={bt.nn_tech} "
+            f".model pmos_nn PMOS (LEVEL={level} TECH={bt.nn_tech} "
             f"VT={bt.effective_pmos_vt})"
         )
         n_prefix = p_prefix = "M"
@@ -790,14 +784,10 @@ def _role_substitutions(
                 str(resolved["reference_model"])
                 if control else str(resolved["candidate_model"])
             )
-            family = {
-                75: " FAMILY=directnet-full",
-                76: " FAMILY=bsimar-full",
-            }.get(level, "")
             declarations.append(
                 f".model {model} {kind} (LEVEL={72 if control else level}"
                 + ("" if control else
-                   f"{family} TECH={bt.nn_tech} VT={resolved['vt']}")
+                   f" TECH={bt.nn_tech} VT={resolved['vt']}")
                 + ")"
             )
             values[role.token] = (
@@ -1262,11 +1252,6 @@ def physical_deck_mismatch(
         }
         if not control:
             expected_params.update({"TECH": bt.nn_tech, "VT": vt})
-        if not control and expected_level in {"75", "76"}:
-            expected_params["FAMILY"] = {
-                "75": "directnet-full",
-                "76": "bsimar-full",
-            }[expected_level]
         if actual_kind != kind or any(
             params.get(key, "").lower() != value.lower()
             for key, value in expected_params.items()

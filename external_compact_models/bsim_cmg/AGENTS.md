@@ -155,7 +155,7 @@ PyCMG provides comprehensive model outputs covering currents, derivatives, charg
 
 - **ids**: Drain-source current computed as `Id - Is` for common-source configuration
 - **All outputs verified** against NGSPICE ground truth using same OSDI binary
-- **Capacitance condensation**: Full internal capacitance matrix reduced to terminal terminals
+- **Capacitance condensation**: full internal capacitance matrix condensed to external terminals
 - **Full coverage**: 17/17 critical model outputs implemented and tested
 
 ### Return Values
@@ -277,12 +277,12 @@ openvaf -I bsim-cmg-va/code -o bsimcmg.osdi bsim-cmg-va/code/bsimcmg_main.va
 - The OSDI reactive Jacobian (dQ/dV) uses **Y-matrix convention** where off-diagonal entries are negative. SPICE capacitance variables (cgd, cgs, cdg) use the **opposite** sign. Off-diagonal entries must be negated when extracting from the condensed matrix; diagonal entries (cgg, cdd) need no sign flip.
 
 ### Neural Dataset Output Contracts
-- Keep reduced and full-terminal datasets at distinct default paths. The
-  full-terminal filename carries the `dnf` family tag.
-- The full-terminal `vds_zero` sample class must honor the declared
-  `voltage_box_factor`. The reduced contract retains its legacy 2x envelope.
-  Applying the 2x envelope to full-terminal PMOS data produced over-1 A
-  terminal currents and rejected otherwise legal bins.
+- Generate only the full-terminal independent surfaces
+  `i_d,i_g,i_b,qd,qg,qb`. The architecture-neutral filename retains the
+  `dnf` tag for artifact provenance.
+- The `vds_zero` sample class must honor the declared `voltage_box_factor`.
+  Applying an implicit 2x envelope to PMOS data produced over-1 A terminal
+  currents and rejected otherwise legal bins.
 
 ### NGSPICE OSDI Limitations
 - **No instance-line parameters**: NGSPICE OSDI cannot accept instance parameters on the device line (e.g., `N1 d g s e model L=16e-9` fails silently). All geometric parameters must be **baked into the `.model` block**.
@@ -342,10 +342,8 @@ openvaf -I bsim-cmg-va/code -o bsimcmg.osdi bsim-cmg-va/code/bsimcmg_main.va
 - Each (L, NFIN) bin gets its own `Model()` instance to avoid shared-buffer corruption (see "Instance / Model Isolation" constraint).
 - NFIN < 2 is always filtered out (convergence failures documented above).
 - Keep the pass-device transient source guard at 50% beyond the rails only for
-  TSMC5/16 NMOS and at 20% for every other device. Fine-tune these datasets
-  from the manifest-pinned control checkpoint: an older PMOS warm start
-  inverted the scalar boundary and cut the device gate from 114/129 to 58/129.
-- LEVEL=75 DC and transient solves use a 0.1 V per-iteration node-voltage cap.
+  TSMC5/16 NMOS and at 20% for every other device.
+- LEVEL=75/76 DC and transient solves use a 0.1 V per-iteration node-voltage cap.
   A rail-sized step can leave certified support even when the physical fixed
   point is inside it; the tighter cap preserves both SRAM latch states.
 
@@ -378,9 +376,9 @@ openvaf -I bsim-cmg-va/code -o bsimcmg.osdi bsim-cmg-va/code/bsimcmg_main.va
 - Sensitivity analysis: `pycmg/sensitivity.py` with OAT perturbation, `scripts/sensitivity_analysis.py` CLI.
 - Sensitivity tests: `tests/test_sensitivity.py` (7 tests).
 - NN training config: `pycmg/nn_config.py` (ProcessParams, NNTechConfig, extract_process_params, TECH_CONFIGS). No hardcoded process params; extracted on-the-fly from modelcards.
-- NN data generation: `pycmg/nn_generate.py` (generate_dataset, generate_universal_dataset). PDK-driven (L, NFIN) combos, source-relative voltage frame, .npz output (inputs/geometry/outputs). 954 total geometry combos across 5 techs, 21 variants.
+- NN data generation: `pycmg/nn_generate.py` (generate_dataset, generate_universal_dataset). PDK-driven (L, NFIN) combos, source-relative voltage frame, and six-surface `.npz` output.
 - NN data CLI: `scripts/generate_nn_data.py` (--device, --tech, --universal, --n-dense-mid).
-- Sweep extensions: `NN_OUTPUT_COLUMNS` (13 subset of OUTPUT_KEYS), `save_npz()`, `build_voltage_grid()` extended with `v_min`, `n_dense_mid`, `vth_center` params.
+- Sweep extensions: `save_npz()` plus `build_voltage_grid()` support for `v_min`, `n_dense_mid`, and `vth_center`.
 - **Not yet covered**: I/O voltage-domain devices (1.2V/1.8V), PVT corners (SS/FF), RF variants.
 
 ## Technology Modelcard Verification

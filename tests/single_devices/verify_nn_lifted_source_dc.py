@@ -1,11 +1,8 @@
 #!/usr/bin/env python3
-"""V6.4.7 P0 diagnostic — lifted-source NMOS Id-Vgs vs NGSPICE BSIM-CMG.
+"""Lifted-source full-terminal NN NMOS Id-Vgs vs NGSPICE BSIM-CMG.
 
-Quantifies the `_raw_voltages` NMOS source-frame bug
-(``pycircuitsim/models/mosfet_nn.py:232-243``): NMOS terminal voltages are
-passed ABSOLUTE into a network trained at Vs=0, so a source lifted above
-ground is evaluated at phantom Vgs/Vds (inflated by +Vs) with Vbs=0 instead
-of -Vs. PMOS is source-shifted and unaffected.
+Guards the source-relative inference contract: a source lifted above ground
+must be evaluated at shifted Vd/Vg/Vb while the NN's Vs input remains zero.
 
 Sweep: NMOS Id-Vgs per tech (TSMC5/7/12/16) at tech-default L/NFIN/VT with
 absolute terminal voltages Vs=vs0, Vb=0, Vd=VDD, Vg = 0..VDD (5 mV grid),
@@ -14,7 +11,7 @@ sits at VDD here (the 55-config gate biases Vds=VDD/2), so the control
 matches the existing grounded baseline qualitatively (few-% NRMSE), not
 bit-for-bit.
 
-The NN side runs through the real LEVEL=73 netlist ``.dc`` path with four
+The NN side runs through the selected LEVEL=75/76 ``.dc`` path with four
 independent DC V-sources, so `_raw_voltages` sees absolute node voltages.
 Ground truth is the same NGSPICE OSDI BSIM-CMG mechanism as
 ``verify_nn_multi_tech_dc.py`` — never a simplified equation.
@@ -58,6 +55,11 @@ from tests.common.nn_gate import (  # noqa: E402
     OSDI_PATH,
     TestTechConfig,
     create_baked_modelcard,
+)
+from tests.common.circuit_benchmarks import (  # noqa: E402
+    active_model_label,
+    active_model_level,
+    nn_model_parameters,
 )
 
 VS0_FRACTIONS: List[float] = [0.0, 0.1, 0.2]   # source lift, fraction of VDD
@@ -113,7 +115,7 @@ def run_ngspice_nmos_dc_lifted(
 def run_nn_nmos_dc_lifted(
     tech: TestTechConfig, work_dir: Path, vs0: float,
 ) -> Dict[str, np.ndarray]:
-    """DirectNet (LEVEL=73) Id-Vgs through the real pycircuitsim .dc path."""
+    """Run the selected full-terminal NN through the real ``.dc`` path."""
     from pycircuitsim.parser import Parser
     from pycircuitsim.simulation import run_dc_sweep
     from pycircuitsim.visualizer import Visualizer
@@ -124,7 +126,7 @@ def run_nn_nmos_dc_lifted(
         DEVICE_DECKS / "mosfet.spice.tmpl", {
             "MODEL_SETUP": (
                 f".model nmos_nn NMOS "
-                f"(LEVEL=73 TECH={tech.nn_tech_key} VT={tech.nn_vt})"
+                f"({nn_model_parameters(active_model_level(), tech.nn_tech_key, tech.nn_vt)})"
             ),
             "TEMP": "27", "DRAIN_BIAS": f"Vd d 0 {tech.vdd:g}",
             "GATE_BIAS": "Vg g 0 0", "SOURCE_BIAS": f"Vs s 0 {vs0:g}",
@@ -213,9 +215,9 @@ def main(argv: List[str] | None = None) -> int:
     lines = [
         f"# Lifted-source NMOS Id-Vgs sweep — {args.label} (V6.4.7 P0)",
         "",
-        "DirectNet LEVEL=73 vs NGSPICE OSDI BSIM-CMG, absolute terminals"
+        f"{active_model_label()} vs NGSPICE OSDI BSIM-CMG, absolute terminals"
         " Vs=vs0, Vb=0, Vd=VDD, Vg=0..VDD (5 mV grid)."
-        " `_raw_voltages` NMOS source-frame canary (mosfet_nn.py:232-243).",
+        " Full-terminal source-frame canary.",
         "Note: Vd=VDD here; the 55-config grounded gate biases Vds=VDD/2,"
         " so vs0=0 is a qualitative (not bit-exact) control.",
         "",

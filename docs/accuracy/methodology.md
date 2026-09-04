@@ -13,10 +13,10 @@ analysis limits; only the MOSFET model changes.
 
 Simplified equations, hand-written approximations, and PyCircuitSim output are
 not independent references. LEVEL=72 is the yardstick, not a graded family.
-The graded reduced NN families are DirectNet (LEVEL=73) and BSIM-AR (74).
-The separately scored experimental full-terminal families are DirectNet-Full
-(75) and BSIM-AR-Full (76). All use TSMC5/6/7/12/16 and the `small`, `medium`,
-`large`, and `xl` tiers.
+The graded NN families are DirectNet-Full (LEVEL=75) and BSIM-AR-Full
+(LEVEL=76). LEVEL=75 is the default runtime family. Both use
+TSMC5/6/7/12/16 and the `small`, `medium`, `large`, and `xl` tiers. Retired
+LEVEL=73/74 measurements remain historical evidence only.
 
 ## 2. Gates
 
@@ -91,7 +91,7 @@ jobs must not share `PYCIRCUITSIM_SIMPLE_RESULTS` or
 
 Device AC scores `/10` (NMOS and PMOS × 5 technologies); opamp AC scores
 `/5`. Reports include per-technology MRE, R², NRMSE, and maximum voltage error.
-Charge-sensitive AC gates use autograd charge derivatives and may move
+Charge-sensitive AC gates use the full autograd charge matrix and may move
 independently of DC accuracy.
 
 Simple-circuit workers emit schema-stable `GateResult` JSON markers containing
@@ -123,13 +123,11 @@ A report is publishable only when all of the following hold:
 - Reference and candidate decks are rendered and compared before a numerical
   mismatch is attributed to the model.
 
-The frozen V7.5.17 clean matrix contains DirectNet and BSIM-AR × 4 tiers × 5
-technologies × 12 gate invocations = **480 jobs**. V7.6.8 adds three diagnostic
-invocations per group/technology, making a fresh current-family pool **600
-jobs**; those denominators must not be merged or compared as if identical.
-The V7.6.6 full-terminal matrix applies the same 480-job denominator to freshly
-trained DirectNet-Full and BSIM-AR-Full models in one separate, non-backfilled
-campaign.
+The current clean pool contains DirectNet-Full and BSIM-AR-Full × 4 tiers × 5
+technologies, with every catalog and device suite generated from one source.
+`scripts/v710_regate_jobs.py` is the denominator source of truth; record its
+job count and digest with every campaign. Older 480- and 600-job campaigns are
+not interchangeable when their suite sets differ.
 Report generation fails closed unless the applicable matrix and checkpoint
 artifacts are complete.
 
@@ -139,9 +137,8 @@ A gate result belongs to a specific checkpoint, solver commit, and gate
 contract. Re-gating fixed weights is comparable only when those inputs match;
 retraining the same recipe is stochastic.
 
-The V6.13 `gds` correction makes pre-fix device-DC results comparable because
-the DC fixed point is invariant. Pre-fix AC, transient, and opamp results are
-not comparable. The detailed history is in the changelog.
+Retired-family and pre-full-terminal results are not current-family evidence.
+The detailed comparability history remains in the changelog and dated reports.
 
 ## 7. TSMC6 controlled repeat
 
@@ -150,10 +147,9 @@ electrical response are identical. It remains in the five-tech denominator as
 a controlled repeat, not an independent ground truth. Differences between its
 NN verdicts and TSMC7's measure training and Newton-basin variability.
 
-## 8. Measurement caveats and V7.5.17 corrections
+## 8. Measurement caveats and harness corrections
 
-V7.5.17 retains the V7.5.16 solver corrections and adds coverage-audit
-contracts:
+The retained solver and coverage-audit contracts are:
 
 - Residual probes recover ideal-voltage-source branch currents and scale the
   tolerance from current-valued node rows, so they measure the complete MNA
@@ -167,11 +163,11 @@ contracts:
 - Every declared parametric cell remains in the denominator, including after
   baseline failure; the matrix directly covers temperature, body bias,
   reverse VDS, joint geometry/temperature corners, and three legal N/P ratios.
-- Dataset generation fails on missing rows/bins, records a hashed manifest and
+- Full-terminal dataset generation fails on missing rows/bins, records a hashed manifest and
   checksum-bound completion marker, and training rejects diagnostic, stale,
   dirty-source, or incomplete artifacts. The default training split holds out
   complete technology/VT/L/NFIN/temperature groups.
-- Every V7.5.17 worker log carries the digest of one immutable campaign
+- Every worker log carries the digest of one immutable campaign
   manifest covering the source commit, jobs, NGSPICE/OSDI/PDKs, and every
   checkpoint sidecar. Collection and report generation reject mixed or
   missing provenance.
@@ -190,7 +186,6 @@ Use the `pycircuitsim` conda environment and repository NGSPICE binary. The
 authoritative launch, coverage, and report-build commands are in the
 [README](../../README.md#run-the-complete-clean-checkpoint-matrix).
 
-Raw V7.5.17 evidence is stored under `results/v7517_clean/`. Historical raw
-trees are not mixed into the current pass. If complete local evidence is
-absent, the builder may preserve an already committed report only when its
-pinned SHA-256 matches; it must never synthesize a partial replacement.
+Historical raw trees are not mixed into a current pass. If complete local
+evidence is absent, the builder may preserve an already committed report only
+when its pinned SHA-256 matches; it must never synthesize a partial replacement.

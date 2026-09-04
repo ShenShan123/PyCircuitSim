@@ -12,7 +12,7 @@
 #
 # This driver closes both gaps. One job = (tag, variant, tech, suite, omp):
 #
-#   tag      dn | tf | dnf | tff   (LEVEL 73 / 74 / 75 / 76)
+#   tag      dnf | tff   (LEVEL 75 / 76)
 #   variant  small | medium | large | xl | <recipe>_<size>
 #              -> checkpoint stem {tech}_{tag}_{variant}_{nmos,pmos}
 #   suite    any tests/verify_*.py taking --tech
@@ -25,7 +25,7 @@
 #
 # Usage:
 #   PAR=24 JOBS=jobs.txt bash scripts/v710_regate.sh          # dispatch a pool
-#   bash scripts/v710_regate.sh _one dn small TSMC16 verify_nn_ac 1
+#   bash scripts/v710_regate.sh _one dnf small TSMC16 verify_nn_ac 1
 #
 # Resumable: a job whose verdict log already carries ===V710_DONE is skipped.
 # A recorded NO-CKPT remains a no-verdict and is retried when both checkpoints
@@ -84,7 +84,7 @@ checkpoint_ready () {
     [ -f "$CKPT/${stem}_norm.npz" ] || return 1
     [ -f "$CKPT/${stem}_best.pt.complete" ] || return 1
     case "$tag" in
-      tf|tff) [ -f "$CKPT/${stem}_config.npz" ] || return 1 ;;
+      tff) [ -f "$CKPT/${stem}_config.npz" ] || return 1 ;;
     esac
   done
 }
@@ -188,10 +188,6 @@ if [ "${1:-}" = "_one" ]; then
   # numerically neutral — the strict-OMP probe still varies the thread count.
   export OMP_WAIT_POLICY=passive KMP_BLOCKTIME=0
   case "$tag" in
-    tf)  export PYCIRCUITSIM_NN_CHECKPOINT_TF_NMOS="$sn"  PYCIRCUITSIM_NN_CHECKPOINT_TF_PMOS="$sp"
-         export PYCIRCUITSIM_NN_FORCE_LEVEL=74 ;;
-    dn)  export PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS="$sn"  PYCIRCUITSIM_NN_CHECKPOINT_DN_PMOS="$sp"
-         export PYCIRCUITSIM_NN_FORCE_LEVEL=73 ;;
     dnf) export PYCIRCUITSIM_NN_CHECKPOINT_DNF_NMOS="$sn" PYCIRCUITSIM_NN_CHECKPOINT_DNF_PMOS="$sp"
          export PYCIRCUITSIM_NN_FORCE_LEVEL=75 ;;
     tff) export PYCIRCUITSIM_NN_CHECKPOINT_TFF_NMOS="$sn" PYCIRCUITSIM_NN_CHECKPOINT_TFF_PMOS="$sp"

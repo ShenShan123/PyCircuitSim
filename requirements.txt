@@ -1,13 +1,14 @@
-# PyCircuitSim + bsimar (DirectNet LEVEL=73 + BSIM-AR LEVEL=74) runtime deps.
+# PyCircuitSim full-terminal NN runtime and training dependencies.
 #
 # Install with:
-#   pip install -r requirements.txt
+#   http_proxy=http://127.0.0.1:2080 https_proxy=https://127.0.0.1:2080 \
+#     pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 #
 # PyTorch is intentionally NOT pinned here — install the CPU or CUDA build
 # that matches your hardware. For the pycircuitsim conda env we currently
-# use torch 2.10.0. Example commands:
-#   pip install torch                          # CPU
-#   pip install torch --index-url https://download.pytorch.org/whl/cu121  # CUDA 12.1
+# use torch 2.10.0. Install through the configured proxy and Tsinghua mirror:
+#   http_proxy=http://127.0.0.1:2080 https_proxy=https://127.0.0.1:2080 \
+#     pip install torch -i https://pypi.tuna.tsinghua.edu.cn/simple
 #
 # Tsinghua mirror (recommended for users in China — see AGENTS.md):
 #   pip install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
@@ -36,9 +37,10 @@ pybind11>=2.11
 pytest>=7.0
 
 # ── PyTorch (install separately) ─────────────────────────────────────────────
-# The LEVEL=73 (DirectNet) and LEVEL=74 (BSIM-AR) compact models are
+# The LEVEL=75 (DirectNet-Full) and LEVEL=76 (BSIM-AR-Full) models are
 # PyTorch-backed. Installing torch is required to run NN inference or the
 # bsimar training CLI, but the solver itself (LEVEL=72 + passives) works
 # without it.
 #
-#   pip install torch>=2.2
+#   http_proxy=http://127.0.0.1:2080 https_proxy=https://127.0.0.1:2080 \
+#     pip install 'torch>=2.2' -i https://pypi.tuna.tsinghua.edu.cn/simple

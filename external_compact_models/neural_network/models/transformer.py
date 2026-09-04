@@ -15,7 +15,7 @@ Transformer, followed by AR target tokens with causal masking.
 Design choices (paper + v3 sprint findings):
 
 - **Grouped input tokens (A2)** — always on.
-- **Parallel cap head (P4)** — always on.
+- **Optional parallel current tail** — configured by ``ar_target_dim``.
 - **Scalar projection + learned token-type embedding (B1)**.
 - **Pre-LN encoder layers (B2)** — ``norm_first=True``.
 - **GELU feed-forward activation (B5)**.
@@ -58,8 +58,7 @@ class TransformerEncoderModel(nn.Module):
         input_dim:  7 — continuous features [V(4), NFIN_log, L, T].
         target_dim: Number of predicted targets.
         ar_target_dim: Number of targets generated autoregressively. Remaining
-            targets use the legacy parallel head. The default 8 preserves the
-            13-target reduced BSIM-AR checkpoint contract.
+            targets use the parallel tail. The default generates all six.
         d_model:    Transformer hidden dimension.
         nhead:      Number of attention heads.
         num_layers: Number of Transformer encoder layers.
@@ -76,12 +75,6 @@ class TransformerEncoderModel(nn.Module):
             universal vocab's 17 falls out of the same rule (18 - 1).
     """
 
-    # P4 — legacy parallel C-block defaults. Kept as class constants because
-    # existing tests and checkpoints describe the reduced 8+5 contract with
-    # these names; instances may now choose a different AR split.
-    CAP_START: int = 8
-    N_CAPS: int = 5
-
     # A2 — grouped input layout.
     VOLTAGE_SLICE = slice(0, 4)
     GEOM_SLICE = slice(4, 7)
@@ -90,7 +83,7 @@ class TransformerEncoderModel(nn.Module):
     def __init__(
         self,
         input_dim: int = 7,
-        target_dim: int = 13,
+        target_dim: int = 6,
         d_model: int = 256,
         nhead: int = 8,
         num_layers: int = 6,
@@ -100,7 +93,7 @@ class TransformerEncoderModel(nn.Module):
         num_tech_codes: int = 22,
         tech_embed_dropout: float = 0.0,
         unknown_code_id: int | None = None,
-        ar_target_dim: int = CAP_START,
+        ar_target_dim: int = 6,
     ) -> None:
         super().__init__()
 
@@ -125,10 +118,8 @@ class TransformerEncoderModel(nn.Module):
         # A2 — 3 context tokens.
         self.input_dim = self.N_GROUPED_INPUT_TOKENS
 
-        # P4 — legacy checkpoints use 8 AR targets followed by 5 parallel
-        # capacitances. Full-terminal BSIM-AR records either a six-target AR
-        # chain or a three-charge AR chain plus three parallel currents in its
-        # architecture sidecar, without adding new state-dict keys.
+        # Full-terminal BSIM-AR records either a six-target AR chain or a
+        # three-charge AR chain plus three parallel currents in its sidecar.
         self.ar_target_dim = int(ar_target_dim)
         self.parallel_target_dim = target_dim - self.ar_target_dim
 
@@ -433,7 +424,7 @@ class TransformerEncoderModel(nn.Module):
             tech_codes: (B,) integer tech-variant codes (required).
 
         Returns:
-            (B, target_dim) predicted outputs in BSIMAR_COLUMN_ORDER.
+            (B, target_dim) predictions in the configured terminal order.
         """
         assert tech_codes is not None, "tech_codes is required"
         batch_size = x.size(0)

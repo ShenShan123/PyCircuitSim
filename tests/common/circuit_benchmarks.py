@@ -1,8 +1,8 @@
-"""Shared infrastructure for the DirectNet circuit benchmark harness.
+"""Shared infrastructure for the full-terminal NN circuit benchmark harness.
 
 Phase 3 of the DirectNet V6.4 sprint.
 
-Four benchmark circuits exercise DirectNet (LEVEL=73) on larger topologies than
+Four benchmark circuits exercise DirectNet-Full (LEVEL=75) on larger topologies than
 a single inverter:
 
   3a  verify_circuit_ring_osc.py   — 5-stage CMOS ring oscillator (.tran)
@@ -16,7 +16,7 @@ Ground truth is ALWAYS NGSPICE BSIM-CMG (LEVEL=72) via the bsimcmg OSDI binary
 This module owns the shared plumbing:
   * baked-modelcard generation (NGSPICE side, L/NFIN/TFIN injected),
   * merged-modelcard generation (PyCircuitSim BSIM-CMG side — unused for the
-    DirectNet runs, kept for parity / sanity checks),
+    NN runs, kept for parity / sanity checks),
   * the per-tech benchmark device geometry,
   * NGSPICE batch runner wrappers,
   * metric helpers (NRMSE / MRE / R^2 / MaxErr).
@@ -58,15 +58,12 @@ from tests.common.nn import nrmse as _nrmse_pct, mre as _mre_pct
 # outside the NN checkpoint scope.
 # ---------------------------------------------------------------------------
 BENCH_TECHS: List[str] = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
-_MODEL_NAMES = {
-    73: "DirectNet", 74: "BSIM-AR", 75: "DirectNet-Full",
-    76: "BSIM-AR-Full",
-}
+_MODEL_NAMES = {75: "DirectNet-Full", 76: "BSIM-AR-Full"}
 
 
 def _active_model_level() -> int | str:
     """Return the supported campaign force level or fail loudly."""
-    raw_level = os.environ.get("PYCIRCUITSIM_NN_FORCE_LEVEL", "73")
+    raw_level = os.environ.get("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
     try:
         level = int(raw_level)
     except ValueError as exc:
@@ -76,7 +73,7 @@ def _active_model_level() -> int | str:
     if level not in _MODEL_NAMES:
         raise ValueError(
             f"unsupported NN model level {level}; supported levels are "
-            "73, 74, 75, and 76"
+            "75 and 76"
         )
     return level
 
@@ -98,16 +95,10 @@ def active_model_label() -> str:
 
 
 def nn_model_parameters(level: int, tech: str, vt: str) -> str:
-    """Render an explicit LEVEL=73-76 NN family declaration."""
-    family = {
-        73: "",
-        74: "",
-        75: " FAMILY=directnet-full",
-        76: " FAMILY=bsimar-full",
-    }.get(level)
-    if family is None:
+    """Render an explicit full-terminal NN family declaration."""
+    if level not in _MODEL_NAMES:
         raise ValueError(f"unsupported NN model level {level}")
-    return f"LEVEL={level}{family} TECH={tech} VT={vt}"
+    return f"LEVEL={level} TECH={tech} VT={vt}"
 
 # RESULTS_BASE is env-overridable so parallel sweeps (e.g. the V6.5.4 checkpoint
 # bake-off) can give each worker an isolated output dir — otherwise concurrent
@@ -420,7 +411,7 @@ def fmt_metrics(m: Dict[str, float], err_scale: float = 1e3,
 def parse_netlist(netlist_path: Path) -> Any:
     """Parse a PyCircuitSim netlist; return the Parser (caller reads .circuit).
 
-    The DirectNet LEVEL=73 models self-resolve their per-tech checkpoint from
+    The full-terminal NN models resolve their per-tech checkpoint from
     the netlist's ``TECH=`` / ``VT=`` via the parser preempt cascade — no
     model_name_map / modelcard_path needed.
     """

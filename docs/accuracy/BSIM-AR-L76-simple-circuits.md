@@ -1,9 +1,13 @@
 # BSIM-AR-Full (LEVEL=76) — TSMC5 simple-circuit recovery
 
+> V7.7.0 policy note: LEVEL=76 remains the supported autoregressive
+> full-terminal alternative after LEVEL=73/74 retirement. This dated TSMC5
+> campaign is still not a five-technology qualification.
+
 ## Scope and verdict
 
-This is a TSMC5 development campaign for the experimental full-terminal
-BSIM-AR family. Ground truth is NGSPICE with the identical LEVEL=72 BSIM-CMG
+This is a TSMC5 development campaign for the full-terminal BSIM-AR family.
+Ground truth is NGSPICE with the identical LEVEL=72 BSIM-CMG
 OSDI model. It is not a five-technology clean-matrix qualification and its
 counts must not be compared with the `/20` clean scoreboards.
 

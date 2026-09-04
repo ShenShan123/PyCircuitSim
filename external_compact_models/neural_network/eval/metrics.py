@@ -30,8 +30,8 @@ def compute_physical_metrics(
     by the inverse-transform conditioning.
 
     Args:
-        pred_norm: (N, 13) normalized predictions.
-        true_norm: (N, 13) normalized ground truth.
+        pred_norm: (N, 6) normalized predictions.
+        true_norm: (N, 6) normalized ground truth.
         normalizer: Fitted normalizer with denormalize_outputs() method.
         mre_threshold_pct: Per-target valid threshold as a fraction of
             peak |y|. Default 0.001 = 0.1% of peak.
@@ -44,8 +44,8 @@ def compute_physical_metrics(
     pred_phys = normalizer.denormalize_outputs(pred_norm)
     true_phys = normalizer.denormalize_outputs(true_norm)
 
-    # Use the normalizer's own column list when available (E2 4-output
-    # head); fall back to the canonical 13-column order.
+    # Use the persisted column list, falling back to the canonical six-surface
+    # order for bundles created before the field became mandatory.
     column_names = (
         normalizer.stats.output_columns
         if (normalizer.stats is not None

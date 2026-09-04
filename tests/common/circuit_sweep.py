@@ -1,4 +1,4 @@
-"""Parametric sweep harness for the four DirectNet circuit benchmarks.
+"""Parametric sweep harness for the four full-terminal NN benchmarks.
 
 Built in V6.4.8+ (``docs/CHANGELOG.md``). Mirrors the
 inverter sweep harness (``tests/common/nn_sweep.py``) but for the opamp /
@@ -45,7 +45,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from tests.common.base import ALL_TECHS, TECH_COLORS  # noqa: E402
 from tests.common.circuit_benchmarks import (  # noqa: E402
-    BENCH, PROJECT_ROOT, RESULTS_BASE,
+    BENCH, PROJECT_ROOT, RESULTS_BASE, active_model_level,
     BenchTech, OpAmpParams, RingOscParams, SwitchCapParams, SramParams,
     bench_variant, opamp_bias, usable_vts,
     get_baked_modelcard, run_ngspice_wrdata,
@@ -685,13 +685,17 @@ CIRCUITS: Tuple[str, ...] = tuple(_RUNNERS)
 # ===========================================================================
 def checkpoint_manifest(tech_keys: List[str]) -> Dict[str, str]:
     man: Dict[str, str] = {}
+    level = active_model_level()
+    env_tag, stem_tag = {75: ("DNF", "dnf"), 76: ("TFF", "tff")}[level]
     for tk in sorted(set(tech_keys)):
         scope = tk.lower()
         for dev in ("nmos", "pmos"):
             # hash the checkpoint the runtime actually loads: env pin first,
             # else the resolver's large-first per-tech cascade (hashing a
             # fixed tier would watch the wrong file for drift)
-            pin = (os.environ.get(f"PYCIRCUITSIM_NN_CHECKPOINT_DN_{dev.upper()}")
+            pin = (os.environ.get(
+                       f"PYCIRCUITSIM_NN_CHECKPOINT_{env_tag}_{dev.upper()}"
+                   )
                    or os.environ.get(f"PYCIRCUITSIM_NN_CHECKPOINT_{dev.upper()}")
                    or os.environ.get("PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE"))
             if pin:
@@ -704,7 +708,7 @@ def checkpoint_manifest(tech_keys: List[str]) -> Dict[str, str]:
             if pin:
                 cands = [CKPT_DIR / f"{stem}_best.pt"]
             else:
-                cands = [CKPT_DIR / f"{scope}_dn_{size}_{dev}_best.pt"
+                cands = [CKPT_DIR / f"{scope}_{stem_tag}_{size}_{dev}_best.pt"
                          for size in ("large", "medium", "small", "xl")]
             f = next((c for c in cands if c.exists()), None)
             man[f"{scope}_{dev}"] = (

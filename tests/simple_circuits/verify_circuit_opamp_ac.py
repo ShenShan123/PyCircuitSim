@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Circuit AC gate — two-stage Miller opamp open-loop frequency response.
 
-The selected LEVEL=73--76 NN family is compared with NGSPICE BSIM-CMG
+The selected LEVEL=75/76 NN family is compared with NGSPICE BSIM-CMG
 (LEVEL=72) on the identical opamp topology used by the DC opamp gate. Measures
 the small-signal open-loop response: DC gain, gain-bandwidth / unity-gain
 frequency, phase margin, −3 dB bandwidth.

@@ -36,9 +36,9 @@ need no simulator and run in the collected `pytest` suite. Each owns one seam:
 | `test_deck_engine_compatibility.py` | cards and value syntax both engines must read identically |
 | `test_core_device_contracts.py` | the non-compact-model core: `Inductor`, integration method, current-source sign, transient branch currents, temperature rebinding |
 | `test_subcircuit_harness_contracts.py` | the standalone hierarchy harness |
-| `test_reduced_osdi_boundary.py`, `test_raw_directnet_boundary.py` | the two device-evaluation boundaries |
+| `test_full_terminal_solver_boundary.py` | mandatory four-terminal DC/transient/AC solver seam |
 | `test_full_terminal_*` | full-terminal dataset, family, and corridor contracts |
-| `test_nn_multiplier_contracts.py` | reduced-family instance multiplier behavior |
+| `test_full_terminal_model_contracts.py` | both NN families, closure, multipliers, parser selection, and artifact integrity |
 | `test_dataset_and_campaign_contracts.py` | dataset splits, provenance, and campaign coverage |
 | `test_release_metadata.py` | package/README release identity |
 | `test_hermetic_gate_suites.py` | wiring, not assertions: runs the three simulator-free gate suites |

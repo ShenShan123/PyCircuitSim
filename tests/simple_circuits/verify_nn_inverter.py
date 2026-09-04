@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""NN compact-model inverter gate: DirectNet / BSIM-AR vs BSIM-CMG.
+"""NN inverter gate: DirectNet-Full / BSIM-AR-Full vs BSIM-CMG.
 
 CMOS inverter VTC and pulse response across the TSMC techs. This is the first
 tier where devices interact, so it is where a model error that cancels in a
@@ -35,7 +35,7 @@ from tests.common.nn_gate import (  # noqa: E402
 
 def main() -> int:
     ap = tech_arg_parser(
-        "NN inverter verification: DirectNet + BSIM-AR vs BSIM-CMG")
+        "NN inverter verification: full-terminal families vs BSIM-CMG")
     ap.add_argument("--vtc-only", action="store_true",
                     help="Run the inverter VTC (DC) tests only")
     ap.add_argument("--tran-only", action="store_true",

@@ -4,7 +4,7 @@
 Part of the DirectNet V6.4 sprint, Phase 3 benchmark harness.
 
 Runs a DC transfer sweep of a two-stage Miller opamp built from DirectNet
-(LEVEL=73) transistors and compares against the NGSPICE BSIM-CMG (LEVEL=72)
+(LEVEL=75 by default) transistors and compares against NGSPICE BSIM-CMG (LEVEL=72)
 ground truth. Extracts open-loop DC gain (peak |dVout/dVin|), trip point
 (Vin where Vout = VDD/2) and the worst output-rail slew step.
 

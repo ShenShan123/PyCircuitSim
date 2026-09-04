@@ -1,5 +1,8 @@
 # V7.6.9 test-harness audit
 
+> Historical audit: V7.7.0 removed the reduced LEVEL=73/74 implementation and
+> the reduced-only tests referenced below.
+
 Date: 2026-09-04
 
 Audited baseline: `88f447e` (`V7.6.9`); fixes are in this follow-up commit.

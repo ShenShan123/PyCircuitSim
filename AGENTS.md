@@ -25,7 +25,7 @@ Link to the owner instead of copying its content into another document.
 Use NGSPICE on the identical BSIM-CMG OSDI model as circuit ground truth.
 Simplified equations, hand-written CMG approximations, and PyCircuitSim output
 cannot serve as independent references. Keep LEVEL=72 as the reference model
-for LEVEL=73–75 training and gates.
+for LEVEL=75/76 training and gates.
 
 ## Read before editing
 
@@ -51,31 +51,13 @@ introduced.
 Use OSDI terminal current `id`, not channel current `ids`; in this backend
 `ids = id - is` is approximately twice the intended drain terminal current.
 
-At the device boundary:
-
-- NMOS `calculate_current()` returns `-result["id"]`.
-- PMOS `calculate_current()` returns `result["id"]`.
-- Solver stamping uses one convention: positive current leaves the drain.
-- Preserve the signs of `gm` and `gmb`.
-- Floor the stamped drain conductance with `max(gds, 1e-12)`; `abs(gds)` turns
-  a large negative derivative into a large positive one and destabilizes NR.
-
-The reduced NN stamp is:
-
-```python
-i_leaving = -i_ds if is_pmos else i_ds
-i_eq = i_leaving - g_ds * v_ds - g_m * v_gs - g_mb * v_bs
-rhs[d_idx] -= i_eq
-rhs[s_idx] += i_eq
-```
-
-Stamp every VCCS with all four matrix entries. A partial stamp breaks the
-Jacobian even when single-device current values look correct.
-
-LEVEL=72 exposes four terminal currents and charge derivatives. Stamp the full
+LEVEL=72, 75, and 76 expose four terminal currents and charge derivatives.
+Stamp the full
 terminal-current Jacobian and full transcapacitance matrix, including bulk and
 gate leakage. Enforce KCL/charge closure at the interface rather than dropping
-rows to imitate the reduced NN model.
+rows. The device/runtime boundary uses positive current leaving each terminal;
+scalar `calculate_current()` exists only for comparison consumers and is not a
+solver stamp.
 
 Evaluate OSDI terminals in a source-relative frame:
 `(Vd - Vs, Vg - Vs, 0, Vb - Vs)`. Apply voltage limiting to evaluation
@@ -163,15 +145,15 @@ Apply the source-relative voltage frame to NMOS and PMOS alike. Training uses
 `verify_nn_lifted_source_dc.py` as the canary for this rule.
 
 Import full-terminal contract names and column order from
-`neural_network.data.contracts`; `data.normalize` owns transforms and reduced
-model ordering, not schema re-exports.
+`neural_network.data.contracts`; `data.normalize` owns transforms and persisted
+statistics, not schema re-exports.
 
 Per-technology models use a local embedding vocabulary. Derive
 `unknown_code_id` as `num_tech_codes - 1`; never reuse the universal UNKNOWN
 identifier. At inference, map `(scope, tech, variant)` through
 `neural_network.config.local_variant_code()`.
 
-For LEVEL=73–75:
+For LEVEL=75/76:
 
 - Require `TECH` and `VT` in the netlist model declaration.
 - Keep ASAP7 outside the NN checkpoint scope.
@@ -179,18 +161,17 @@ For LEVEL=73–75:
   Raise when the pinned path is missing.
 - Resolve per-tech stems large-first before considering a universal fallback.
 - Require architecture sidecars where the family loader needs them.
-- Compute `qs = -(qg + qd + qb)` analytically to preserve charge conservation.
-- Reject NaN/Inf, `|id| > 1 A`, and failed PyCMG internal-node solves during
+- Compute source current and `qs = -(qg + qd + qb)` analytically to preserve
+  KCL and charge conservation.
+- Reject NaN/Inf, any terminal current over 1 A, and failed PyCMG internal-node solves during
   dataset creation. Keep unstable NFIN=1 bins out of training.
 
-Preserve checkpoint-compatible optional structures even when their flags are
-off. In particular, keep `_MonotoneVgResidual` and its `mono.*` keys, the EKV
-backbone and `core.*` keys, and Sobolev/subthreshold/charge-Sobolev loss paths.
-Existing checkpoints depend on those state-dict shapes.
+LEVEL=73/74 are retired. Do not restore reduced current/derivative heads,
+classic drain-source stamps, or fallback checkpoint aliases for them.
 
 DC/OP should skip NN charge Jacobians. `TransientSolver` and `ACSolver` must
 declare `_require_nn_caps`; any new capacitance consumer must do the same.
-`get_capacitances()` remains a self-healing fallback so a missed declaration
+`get_charge_stamp()` remains a self-healing fallback so a missed declaration
 causes slowness rather than incorrect results.
 
 ## Verification discipline
@@ -249,10 +230,10 @@ does not count as evidence. Make each gate answer one question, and test NMOS
 and PMOS through single-device OP/DC, inverter VTC/transient, and derivative-
 sensitive circuit behavior before promoting a model.
 
-Accuracy CLIs must reject unknown technologies, devices, and analyses before
-running so a typo cannot shrink a denominator. When a LEVEL=73 deck is
-retargeted with `PYCIRCUITSIM_NN_FORCE_LEVEL`, every human-readable banner must
-name the selected family rather than the deck's original family.
+Accuracy CLIs must reject unknown technologies, devices, analyses, and NN
+levels before running so a typo cannot shrink a denominator. The campaign
+family selector accepts only LEVEL=75/76, and every banner must name the
+selected family.
 
 The clean re-gate driver must reject a missing or dependency-incomplete
 `NN_PY`; never silently fall back to another interpreter. An unhandled Python
@@ -277,14 +258,9 @@ Classify every optimization before enabling it:
 - A floating-point-perturbing optimization ships disabled until a full
   accuracy re-gate clears it.
 
-Keep CPU, flags-off execution as the scored contract. Keep CUDA inference,
-fused Jacobians, and autoregressive caching opt-in. Preserve exact per-element
-gates for batched/fused paths and latch-basin gates for changes that can alter
-the nonlinear solution basin.
-
-Previous experiments found no useful production path in TF32, `torch.compile`,
-or bfloat16 DirectNet inference. Revisit them only with a new hypothesis and a
-predeclared metric, not as routine cleanup.
+Keep CPU, flags-off execution as the scored contract. Autoregressive caching
+is opt-in and requires its focused numerical-equivalence gate. Any change that
+can alter a nonlinear solution basin requires a latch-basin gate before use.
 
 ## Change workflow
 

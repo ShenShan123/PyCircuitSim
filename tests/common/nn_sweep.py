@@ -1,7 +1,7 @@
 """V6.3.2 parametric NN-family test harness — shared orchestration.
 
 Mirrors the BSIM-CMG L3 harness (``tests/common/bsimcmg_{dc,tran}.py`` +
-``tests/verify_multi_tech_{dc,tran}.py``) for the selected LEVEL=73--76 model.
+``tests/verify_multi_tech_{dc,tran}.py``) for the selected LEVEL=75/76 model.
 Two driver scripts consume this module:
 
   - ``verify_nn_multi_tech_dc.py``   — single-device Id-Vgs over L / NFIN / VT
@@ -84,8 +84,6 @@ def active_nn_contract() -> tuple[int, str]:
     """Return the selected family level and filesystem-safe result label."""
     level = active_model_level()
     return level, {
-        73: "directnet_v4",
-        74: "bsimar_v4",
         75: "directnet_full",
         76: "bsimar_full",
     }[level]

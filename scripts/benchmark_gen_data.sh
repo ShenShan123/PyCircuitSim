@@ -1,10 +1,9 @@
 #!/usr/bin/env bash
-# Benchmark Phase B — regenerate per-tech NN datasets for the S/M/L capacity study.
+# Regenerate canonical per-tech full-terminal NN datasets.
 #
 # Uses the canonical "regen-v2" data recipe (grid sampler + inverter-trip overlay
-# + subthreshold/OFF densification) but writes the UNVERSIONED filename
-# `{tech}_{dev}.npz`, exactly what `neural_network.cli.train` resolves by default
-# (datasets/<tech-scope>_<device-type>.npz). Covers ALL Vth variants (--variants
+# + subthreshold/OFF densification) and writes `{tech}_dnf_{dev}.npz`, exactly
+# what `neural_network.cli.train` resolves by default. Covers all Vth variants
 # all, the default) and the full L/NFIN/T geometry grid per tech.
 #
 # Runs all 10 (tech x device) jobs concurrently.
@@ -19,15 +18,7 @@ GEN="$ROOT/external_compact_models/bsim_cmg/scripts/generate_nn_data.py"
 OUTDIR="${BSIMAR_DATA_DIR:-$ROOT/external_compact_models/neural_network/data/datasets}"
 LOGDIR="${BENCHMARK_GEN_LOG_DIR:-$ROOT/results/benchmark_sml/gen_logs}"
 WORKERS="${1:-20}"
-OUTPUT_CONTRACT="${OUTPUT_CONTRACT:-reduced}"
-case "$OUTPUT_CONTRACT" in
-  reduced) DATA_TAG=""; CONTRACT_EXTRA=() ;;
-  full-terminal)
-    DATA_TAG="_dnf"
-    CONTRACT_EXTRA=(--allow-safety-rejections)
-    ;;
-  *) echo "[gen] UNKNOWN OUTPUT_CONTRACT=$OUTPUT_CONTRACT" >&2; exit 2 ;;
-esac
+DATA_TAG="_dnf"
 mkdir -p "$OUTDIR" "$LOGDIR"
 
 techs=(tsmc5 tsmc6 tsmc7 tsmc12 tsmc16)
@@ -50,8 +41,7 @@ for tech in "${techs[@]}"; do
       NUMEXPR_NUM_THREADS=1 conda run -n pycircuitsim python -u "$GEN" \
         --device "$dev" --tech "$tech" \
         --enable-inv-trip --enable-subvt-off \
-        --output-contract "$OUTPUT_CONTRACT" \
-        "${CONTRACT_EXTRA[@]}" \
+        --allow-safety-rejections \
         --data-dir "$OUTDIR" \
         --max-l-ratio 1.35 \
         --n-workers "$WORKERS" ${GEN_EXTRA:-} \

@@ -16,7 +16,7 @@ PULSE clock. The harness measures:
     |ng_droop| <= 1 uV. Droop%alw in the summary is the disagreement as
     % of the allowance (<=100 passes).
 
-The DirectNet (LEVEL=73) transmission gate runs in PyCircuitSim transient;
+The DirectNet-Full (LEVEL=75) transmission gate runs in PyCircuitSim transient;
 NGSPICE BSIM-CMG (LEVEL=72) is the ground truth.
 
 Ground truth is ALWAYS NGSPICE BSIM-CMG (AGENTS.md Validation rule).

@@ -5,7 +5,6 @@ from collections.abc import Callable
 
 import pytest
 
-from tests.perf.verify_latch_basin_gpu import main as latch_basin_main
 from tests.simple_circuits.verify_bsimcmg_tran_comprehensive import (
     main as bsimcmg_tran_main,
 )
@@ -43,8 +42,6 @@ GateMain = Callable[[list[str] | None], int]
         (nn_subckt_main, ["--analysis", "dc,unknown"]),
         (nn_subckt_main, ["--analysis", "dc,dc"]),
         (nn_subckt_main, ["--analysis", "dc,"]),
-        (latch_basin_main, ["--tech", "TSMC5,unknown"]),
-        (latch_basin_main, ["--tech", "TSMC5,TSMC5"]),
     ),
 )
 def test_parametric_gate_rejects_invalid_or_duplicate_selection(

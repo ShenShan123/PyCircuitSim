@@ -50,8 +50,6 @@ from pycmg.sweep import save_npz
 
 from neural_network.data.sampling import stratified_sample_indices
 from neural_network.data.contracts import (
-    FULL_TERMINAL_OUTPUT_CONTRACT,
-    REDUCED_OUTPUT_CONTRACT,
     dataset_filename,
 )
 
@@ -216,9 +214,8 @@ def main() -> None:
     parser.add_argument(
         "--version", default="",
         help="Version tag inserted after the scope in output filenames "
-             "(e.g. 'v5' -> universal_v5_nmos.npz, or "
-             "universal_v5_dnf_nmos.npz for full-terminal data). Empty "
-             "preserves the unversioned name.",
+             "(e.g. 'v5' -> universal_v5_dnf_nmos.npz). Empty preserves "
+             "the unversioned name.",
     )
     parser.add_argument(
         "--exclude-techs", default="",
@@ -274,14 +271,6 @@ def main() -> None:
              "NaN/Inf, >1 A terminal-current, or internal-node-solve safety "
              "failures. Dropped bins and other failures remain fatal.",
     )
-    parser.add_argument(
-        "--output-contract",
-        choices=[REDUCED_OUTPUT_CONTRACT, FULL_TERMINAL_OUTPUT_CONTRACT],
-        default=REDUCED_OUTPUT_CONTRACT,
-        help="Training targets: legacy reduced 13-head outputs or the "
-             "V7.6.0 six-surface full-terminal contract.",
-    )
-
     parser.add_argument("--data-dir", type=Path, default=None,
                         help="Output directory for .npz files")
     args = parser.parse_args()
@@ -331,7 +320,6 @@ def main() -> None:
         max_l_ratio=args.max_l_ratio,
         allow_rejected_points=args.allow_rejected_points,
         allow_safety_rejections=args.allow_safety_rejections,
-        output_contract=args.output_contract,
     )
 
     if args.universal:
@@ -343,7 +331,7 @@ def main() -> None:
             )
             _add_run_provenance(data)
             out = data_dir / dataset_filename(
-                "universal", device_type, args.output_contract, version_tag,
+                "universal", device_type, version_tag,
             )
             save_npz(data["inputs"], data["geometry"], data["outputs"],
                      out, metadata=data["metadata"],
@@ -378,8 +366,7 @@ def main() -> None:
             )
             _add_run_provenance(data)
             out = data_dir / dataset_filename(
-                tech.name.lower(), device_type, args.output_contract,
-                version_tag,
+                tech.name.lower(), device_type, version_tag,
             )
             save_npz(data["inputs"], data["geometry"], data["outputs"],
                      out, metadata=data["metadata"],

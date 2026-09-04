@@ -1,13 +1,12 @@
 # DirectNet-Full (LEVEL=75) — clean full-terminal scan
 
-This experimental DirectNet learns six independent OSDI terminal surfaces:
+This default DirectNet family learns six independent OSDI terminal surfaces:
 `i_d`, `i_g`, `i_b`, `qd`, `qg`, and `qb`. Source current and charge are
 closed analytically, and the solver stamps the full current and charge
 Jacobians. LEVEL=72 on the identical BSIM-CMG OSDI model is the reference.
 
 Clean means one uniform run per technology, polarity, and tier with
-`--output-contract full-terminal --apply-filter off --swa-mode ema --seed 42`.
-No reduced-head loss or correction path is enabled.
+`--swa-mode ema --seed 42` through the full-terminal-only trainer.
 
 <!--PROVENANCE-->
 
@@ -16,8 +15,8 @@ owned by [`methodology.md`](methodology.md).
 
 ## Status
 
-LEVEL=75 remains an experimental family. This clean scan updates its evidence;
-it does not change the served LEVEL=73 DirectNet path.
+LEVEL=75 is the maintained default. This report still gates scientific claims
+on the measured rows; default status does not turn failures into passes.
 
 ## Headline — circuit gates by tier
 

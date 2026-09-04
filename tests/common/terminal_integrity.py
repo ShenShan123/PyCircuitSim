@@ -240,7 +240,7 @@ def _device_values(
     else:
         nn_model = f"{device}_nn"
         setup = (
-            f".model {nn_model} {kind} (LEVEL={{LEVEL}}{{FAMILY}} "
+            f".model {nn_model} {kind} (LEVEL={{LEVEL}} "
             f"TECH={bt.nn_tech} VT={vt})"
         )
         name = "Mpdut" if is_pmos else "Mndut"
@@ -275,12 +275,6 @@ def _render_terminal_deck(
         "ANALYSIS": "" if reference else f".{analysis}",
     }
     values["MODEL_SETUP"] = values["MODEL_SETUP"].replace("{LEVEL}", str(level))
-    values["MODEL_SETUP"] = values["MODEL_SETUP"].replace(
-        "{FAMILY}",
-        {75: " FAMILY=directnet-full", 76: " FAMILY=bsimar-full"}.get(
-            level, "",
-        ),
-    )
     return render_template(TEMPLATE, values)
 
 
@@ -454,10 +448,8 @@ def run_terminal_current_sweep(
         )
         validate_analysis_metrics(analysis, metrics, {})
         domain.update(
-            terminal_current_capability=(
-                "full" if run_spec.model_level in {75, 76} else "reduced"
-            ),
-            gate_bulk_accuracy_supported=run_spec.model_level in {75, 76},
+            terminal_current_capability="full",
+            gate_bulk_accuracy_supported=True,
             sweep_source=parser.analysis_params["source"],
         )
         return GateResult(

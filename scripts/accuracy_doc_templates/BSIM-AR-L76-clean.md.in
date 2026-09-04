@@ -1,14 +1,14 @@
 # BSIM-AR-Full (LEVEL=76) — clean full-terminal scan
 
-This experimental Transformer learns the same six independent OSDI terminal
+This autoregressive Transformer learns the same six independent OSDI terminal
 surfaces as LEVEL=75. It emits `qg`, `qb`, `qd`, `i_d`, `i_g`, and `i_b`
 autoregressively; normalization remains in the canonical full-terminal order.
 Source current and charge and both full Jacobians are reconstructed at the
 shared physical boundary. LEVEL=72 is the ground truth.
 
 Clean means one uniform run per technology, polarity, and tier with
-`--model transformer --output-contract full-terminal --apply-filter off
---swa-mode ema --seed 42`. No reduced-head auxiliary loss is enabled.
+`--model transformer --swa-mode ema --seed 42` through the full-terminal-only
+trainer.
 
 <!--PROVENANCE-->
 
@@ -17,8 +17,8 @@ owned by [`methodology.md`](methodology.md).
 
 ## Status
 
-LEVEL=76 remains experimental. This clean scan updates its evidence without
-changing automatic checkpoint resolution.
+LEVEL=76 is the supported autoregressive alternative. This scan reports its
+evidence without changing the DirectNet-Full default.
 
 ## Headline — circuit gates by tier
 

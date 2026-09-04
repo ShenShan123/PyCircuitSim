@@ -39,45 +39,45 @@ from tests.common.simple_circuit_harness import (
 
 
 SIMPLE_V1_RENDER_SHA256 = {
-    "ring_osc/TSMC5/oscillation/candidate": "38a46b102bdf51bcaf592dbcf83e9786b37f4db13ca841fe3c38216599ba57d7",
+    "ring_osc/TSMC5/oscillation/candidate": "aac8e6630c50ec4935b6a3e5aa9421c85b4dd933679d4622b7df871ebd32109f",
     "ring_osc/TSMC5/oscillation/reference": "da6e10f2d1595eacf5fed709761057143d676c3dbe5ddae54af04b80ea9720d5",
-    "ring_osc/TSMC6/oscillation/candidate": "ec9396227df2588f7eb264ee8458d1337cc62bb64e96c0d60d17977cbb8507b9",
+    "ring_osc/TSMC6/oscillation/candidate": "40924c02f9e9d1144fd0324756ff67f670091a5d7669026708c2bd14c85961f2",
     "ring_osc/TSMC6/oscillation/reference": "7ead6db6f53c18345bf1c40e79290cf9f26431a295c9eff47e7388af1ebf087f",
-    "ring_osc/TSMC7/oscillation/candidate": "c972d6f8924fd20fad423b1be49f4bd4c38bfacbec3dd1cc5ca04138d8d6b513",
+    "ring_osc/TSMC7/oscillation/candidate": "2151c283d5427934a82258aec33a78cd5ec0c1dee289070d33162bdc77769718",
     "ring_osc/TSMC7/oscillation/reference": "cb460189e28b273b4fd74c2e867ea21d0431458225c80ea475b654188ac40862",
-    "ring_osc/TSMC12/oscillation/candidate": "460e8c4c0f08e8b6404bbf0468bc240b82ed1b480cd469edac5f72af18142efe",
+    "ring_osc/TSMC12/oscillation/candidate": "a8a13a3e58b0a1f5bcdb79a4de60f76e2e8195db3ffc845eb37a7917a816a39c",
     "ring_osc/TSMC12/oscillation/reference": "5aee490637000e72646c6cb604c391d586e95b8d2fb94241030751fc30ba8298",
-    "ring_osc/TSMC16/oscillation/candidate": "d1fdab0c7c06af42b6728188997123f94201074aaa2c22c15c47505a2d696070",
+    "ring_osc/TSMC16/oscillation/candidate": "ade73239fc8fb39ef89e34ee4ef3af0ed8a46663f30eed25f1df2f42d7cbd88e",
     "ring_osc/TSMC16/oscillation/reference": "42723c573b4392e1f450b6f9c32b4a3a3e33e2213fde2df6977cf83c21ed1706",
-    "opamp/TSMC5/transfer/candidate": "d94da28d84590a54e1f0924a9d020b8715599e18f76cf69665c126aa5871b016",
+    "opamp/TSMC5/transfer/candidate": "93aa3a269635a291293be90f0c5f0416cc18dc3b30a30df1dead3d40364733db",
     "opamp/TSMC5/transfer/reference": "87c58c7f441e633c005106142da736b3c51bc6d4e997350a052e7c524f6fd0f4",
-    "opamp/TSMC6/transfer/candidate": "49775605dcf105620d6d13be5fe0e1539f91c41103180da163b830f5ea8fa0f5",
+    "opamp/TSMC6/transfer/candidate": "15adbd182aea480c2a1708b1b768bf7ffb7afa5777c5b83c8f909981b0a22635",
     "opamp/TSMC6/transfer/reference": "b13f1ed340b1aeb38a933b6a1bae368675b3dfdc004d255a191357b361771932",
-    "opamp/TSMC7/transfer/candidate": "80b856aa34587257710ad973b3a175b56a722e7a0645b96e184ffb7ea34cf91a",
+    "opamp/TSMC7/transfer/candidate": "7f7398774997b44a5868dc5b89a50cd2e1e759f469ba377bf5b2cfd5d116a097",
     "opamp/TSMC7/transfer/reference": "151f6996af0c6f13b594f9f29ff04615b75b161945c9fa9f85c899081e04c39a",
-    "opamp/TSMC12/transfer/candidate": "720bd2d2bbcd9efe4d6121026e4fbb5cd652f4317fe1630629b75cd7fb052862",
+    "opamp/TSMC12/transfer/candidate": "2eeb64592f4c27c8f3eafea3ce26d7a58a56f77e25a36967b91f8630e9507a98",
     "opamp/TSMC12/transfer/reference": "d326f56c577952758cf15b94297eaef221b47e6b2ba8bd815a15c8613ba68e07",
-    "opamp/TSMC16/transfer/candidate": "62ee8845c102d0b69b4952a3d1a90b9697af3556f22ea97532ec64b6e5ef51d1",
+    "opamp/TSMC16/transfer/candidate": "d7185d6e3c3a7bb37579a949f9eda9b06bfabe82d85b966e919b7e5addcbb386",
     "opamp/TSMC16/transfer/reference": "7006cce697bea9a058b760643f94bd021a8511a5f72939c22673d15994d202cd",
-    "sram_snm/TSMC5/read_snm/candidate": "fc11ac7c3c5e746a612fa61acd4d09224cc1ffbf3ee03aa7f384cbd019e28d79",
+    "sram_snm/TSMC5/read_snm/candidate": "85170258d6f372f44c0e8a5a672eae1cc50b71014313789bfad1517ad0adcb90",
     "sram_snm/TSMC5/read_snm/reference": "d45d7c492d90d6edb78603cc0ccc322a2925fe3cf5da57c62d8c535b0a590fb4",
-    "sram_snm/TSMC6/read_snm/candidate": "a51abf6b3e7de2e37a0cada8fcc3e37f1dbb06a3914b89de6168e4007b184bf3",
+    "sram_snm/TSMC6/read_snm/candidate": "b17bd3013ceed40f80f0c82f8e4d9271a7570bd240b5cb19195dc224f0edea03",
     "sram_snm/TSMC6/read_snm/reference": "e3417280bb466c6f91905f8529ab47c0fd23ff4f8ca86f3e3a5bc7b22d3b32e3",
-    "sram_snm/TSMC7/read_snm/candidate": "289c1d79026208198268db0ccb39684c6c78cb004e7d968c8df9766de059d8fb",
+    "sram_snm/TSMC7/read_snm/candidate": "254ce8cce5200b65dc35379df52f130df2fdf6903140298d13548fe7c119eb97",
     "sram_snm/TSMC7/read_snm/reference": "4bd587d58f267c5cfe1778ff86ddd8dbc8fb7134e83e39e7d83104961af4c04f",
-    "sram_snm/TSMC12/read_snm/candidate": "6eb4558cdfd6c2e41ee102f0b817ebdd424f91f971d0c8e23513770ec10b3320",
+    "sram_snm/TSMC12/read_snm/candidate": "59d0715c731308f4a65828e7a82774b603905ff0501eec702ddb9b7eadd7e948",
     "sram_snm/TSMC12/read_snm/reference": "b783a6838fd06268916dc827a821cc58616cc0ea2fa68f584bd9fb2031188361",
-    "sram_snm/TSMC16/read_snm/candidate": "7794ed738e065719cb2b25ee817254fae84b444c653102a2759ff1b255df3e39",
+    "sram_snm/TSMC16/read_snm/candidate": "fa2805eadc1df5525dcc57a5fc43c5338f13a9f8973d89f87c0f754648a4344f",
     "sram_snm/TSMC16/read_snm/reference": "4da8b84a262cfdbefc9ecdc1c44b7b2897797a9fe0d23aa281c7418b0a4a3c0d",
-    "switchcap/TSMC5/sample_hold/candidate": "bf4637e18f49fbce6fc76acf9b5248bad8d0b1b3db9b88937542e07b880712ad",
+    "switchcap/TSMC5/sample_hold/candidate": "e50b4d25a3971b5b69b96650db657f215e5f0fc64f98c88d0b911322496ad773",
     "switchcap/TSMC5/sample_hold/reference": "c114c2b6363f44355aef77e5f0f076f16a1fbba1f2135875008127f6c470cbe8",
-    "switchcap/TSMC6/sample_hold/candidate": "cfb9efa1d482af5d94805f95ceed2e79e1f7133242b0159e38935292437f7f6e",
+    "switchcap/TSMC6/sample_hold/candidate": "833625fc018a72f6e358c3fd294dec6b2c3e1d44fde5168a29045003a10658c9",
     "switchcap/TSMC6/sample_hold/reference": "c915b52daf0a7ae23f112a0cf39a413a63933ecc3247c9c2c43e2a1f0759d730",
-    "switchcap/TSMC7/sample_hold/candidate": "17d29631785e18024426b813ae17a813779225807ce787b11a424d245c6d9651",
+    "switchcap/TSMC7/sample_hold/candidate": "0790033de8712c16b7a30ffedfa1ac303f9bc7ef17e8442f057caf6bb5e519bc",
     "switchcap/TSMC7/sample_hold/reference": "b06c4815da0ef0ccf7388256b8762d1deacf74886bd303836714bc5569d89f81",
-    "switchcap/TSMC12/sample_hold/candidate": "1f337b3a956fde5600bbb4fc6ce5f525314505f278f435c96ade9133b7b70c38",
+    "switchcap/TSMC12/sample_hold/candidate": "63a14b6891347cc29d4ede8bb40ad7a896fe21197d5275ad9025a03b16876395",
     "switchcap/TSMC12/sample_hold/reference": "33cf30dca3e3472edeed9a10e1762422fe4550f90d92a83fa391fe863deee86a",
-    "switchcap/TSMC16/sample_hold/candidate": "bb6dd14cf90fa8c4220ba81c78524f9b8b4edbc2d5b862b388ccc9bc736147b8",
+    "switchcap/TSMC16/sample_hold/candidate": "6447e4e7cb29874f15bfa9246ff8272c35c71ccec2e745093ce9ee836a02ea82",
     "switchcap/TSMC16/sample_hold/reference": "fe5db7d06db2f08a193155d7edc24e30c9322b33ceabe3b923c38a76280b707b",
 }
 
@@ -86,7 +86,7 @@ def test_simple_v1_rendered_decks_are_frozen(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Published simple-v1 cells must remain byte-identical."""
-    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "73")
+    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
     observed: dict[str, str] = {}
     for case in cases(score_version=SIMPLE_V1):
         for tech_name in BENCH_TECHS:
@@ -493,7 +493,7 @@ def test_physical_manifest_detects_candidate_model_binding_drift(
     old: str,
     new: str,
 ) -> None:
-    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "73")
+    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
     case = next(item for item in cases() if item.case_id == "current_mirror")
     analysis = case.analyses[0]
     candidate, reference = render_case_decks(
@@ -584,8 +584,8 @@ def test_run_spec_captures_model_pins_threads_and_campaign(
 
 def test_run_spec_rejects_a_missing_explicit_checkpoint(tmp_path: Path) -> None:
     spec = RunSpec(
-        73,
-        "DirectNet",
+        75,
+        "DirectNet-Full",
         checkpoint_pins=(("nmos", "missing_nmos"),),
     )
 
@@ -632,7 +632,7 @@ def test_ac_solver_exposes_complex_voltage_source_currents() -> None:
 def test_distinct_template_files_do_not_duplicate_a_topology(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "73")
+    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
     signatures: dict[object, str] = {}
     for case in cases():
         candidate, _ = render_case_decks(
@@ -663,7 +663,7 @@ def test_simple_v2_has_one_campaign_case_per_template() -> None:
 def test_catalog_has_no_duplicate_physical_experiments(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "73")
+    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
     seen: dict[object, str] = {}
     for case in cases():
         for analysis in case.analyses:
@@ -802,7 +802,7 @@ def test_device_integrity_skips_fully_unsupported_corner_before_applying_it(
         BENCH["TSMC7"],
         CORNERS["vt_alternate"],
         tmp_path,
-        level=73,
+        level=75,
     ) == []
 
 
@@ -832,7 +832,7 @@ def test_terminal_integrity_sweeps_the_same_corner_matrix_as_device_integrity(
     # and must produce nothing rather than an unlabelled nominal repeat.
     assert run_terminal_integrity(
         BENCH["TSMC7"], ["nmos", "pmos"], tmp_path,
-        RunSpec(model_level=73, model_family="DirectNet"),
+        RunSpec(model_level=75, model_family="DirectNet-Full"),
         CORNERS["vt_alternate"],
     ) == []
 
@@ -881,7 +881,7 @@ def test_collector_rejects_incomplete_catalog_result_markers(
     from scripts.v710_regate_collect import collect, is_verdict
 
     suite = "verify_circuit_topologies__current_mirror"
-    log = tmp_path / "dn" / "large" / "tsmc12" / f"{suite}.omp1.log"
+    log = tmp_path / "dnf" / "large" / "tsmc12" / f"{suite}.omp1.log"
     log.parent.mkdir(parents=True)
     marker = GateResult(
         case_id="current_mirror",
@@ -892,17 +892,17 @@ def test_collector_rejects_incomplete_catalog_result_markers(
         status="diagnostic",
         metrics={"mre_pct": 0.0, "r2": 1.0,
                  "nrmse_pct": 0.0, "max_err": 0.0},
-        model_family="DirectNet",
-        model_level=73,
+        model_family="DirectNet-Full",
+        model_level=75,
         checkpoint_pins={
-            "nmos": "tsmc12_dn_large_nmos",
-            "pmos": "tsmc12_dn_large_pmos",
+            "nmos": "tsmc12_dnf_large_nmos",
+            "pmos": "tsmc12_dnf_large_pmos",
         },
         thread_settings={"omp": 1, "mkl": 1, "torch": 1},
     )
     log.write_text(marker.marker() + "\n===V710_DONE rc=0===\n")
 
-    entry = collect(tmp_path)["dn"]["large"][suite]["TSMC12"]["omp1"]
+    entry = collect(tmp_path)["dnf"]["large"][suite]["TSMC12"]["omp1"]
 
     assert entry["result_complete"] is False
     assert "missing result markers" in entry["error"]
@@ -916,11 +916,11 @@ def test_known_structured_suite_cannot_complete_without_markers(
     from scripts.v710_regate_collect import collect, is_verdict
 
     suite = "verify_circuit_topologies__inverter_chain"
-    log = tmp_path / "dn" / "large" / "tsmc12" / f"{suite}.omp1.log"
+    log = tmp_path / "dnf" / "large" / "tsmc12" / f"{suite}.omp1.log"
     log.parent.mkdir(parents=True)
     log.write_text("===V710_DONE rc=0===\n")
 
-    entry = collect(tmp_path)["dn"]["large"][suite]["TSMC12"]["omp1"]
+    entry = collect(tmp_path)["dnf"]["large"][suite]["TSMC12"]["omp1"]
     scanned = coverage.scan_logs(tmp_path)
 
     assert entry["result_complete"] is False
@@ -935,7 +935,7 @@ def test_collector_rejects_structured_rows_without_provenance(
     from scripts.v710_regate_collect import collect, is_verdict
 
     suite = "verify_circuit_topologies__inverter_chain"
-    log = tmp_path / "dn" / "large" / "tsmc12" / f"{suite}.omp1.log"
+    log = tmp_path / "dnf" / "large" / "tsmc12" / f"{suite}.omp1.log"
     log.parent.mkdir(parents=True)
     marker = GateResult(
         case_id="inverter_chain",
@@ -953,7 +953,7 @@ def test_collector_rejects_structured_rows_without_provenance(
     )
     log.write_text(marker.marker() + "\n===V710_DONE rc=0===\n")
 
-    entry = collect(tmp_path)["dn"]["large"][suite]["TSMC12"]["omp1"]
+    entry = collect(tmp_path)["dnf"]["large"][suite]["TSMC12"]["omp1"]
 
     assert entry["result_complete"] is False
     assert "provenance" in entry["error"]
@@ -970,7 +970,7 @@ def test_collector_matches_each_row_to_the_campaign_manifest(
     manifest.write_text('{"campaign":"test"}\n')
     digest = hashlib.sha256(manifest.read_bytes()).hexdigest()
     suite = "verify_circuit_topologies__inverter_chain"
-    log = tmp_path / "dn" / "large" / "tsmc12" / f"{suite}.omp1.log"
+    log = tmp_path / "dnf" / "large" / "tsmc12" / f"{suite}.omp1.log"
     log.parent.mkdir(parents=True)
     marker = GateResult(
         case_id="inverter_chain",
@@ -989,11 +989,11 @@ def test_collector_matches_each_row_to_the_campaign_manifest(
             "amplitude_error_pct": 0.0,
             "phase_aligned_nrmse_pct": 0.0,
         },
-        model_family="DirectNet",
-        model_level=73,
+        model_family="DirectNet-Full",
+        model_level=75,
         checkpoint_pins={
-            "nmos": "tsmc12_dn_large_nmos",
-            "pmos": "tsmc12_dn_large_pmos",
+            "nmos": "tsmc12_dnf_large_nmos",
+            "pmos": "tsmc12_dnf_large_pmos",
         },
         campaign_manifest_sha256="",
         thread_settings={"omp": 1, "mkl": 1, "torch": 1},
@@ -1004,7 +1004,7 @@ def test_collector_matches_each_row_to_the_campaign_manifest(
         + "\n===V710_DONE rc=0===\n"
     )
 
-    entry = collect(tmp_path, require_manifest=True)["dn"]["large"][suite][
+    entry = collect(tmp_path, require_manifest=True)["dnf"]["large"][suite][
         "TSMC12"
     ]["omp1"]
     scanned = coverage.scan_logs(tmp_path)
@@ -1038,69 +1038,7 @@ def test_collector_rejects_completion_code_that_disagrees_with_rows(
     from scripts.v710_regate_collect import collect, is_verdict
 
     suite = "verify_circuit_topologies__inverter_chain"
-    log = tmp_path / "dn" / "large" / "tsmc12" / f"{suite}.omp1.log"
-    log.parent.mkdir(parents=True)
-    marker = GateResult(
-        case_id="inverter_chain",
-        tech="TSMC12",
-        corner="nominal",
-        analysis="fo4",
-        role="diagnostic",
-        status="diagnostic",
-        metrics={"mre_pct": 0.0, "r2": 1.0,
-                 "nrmse_pct": 0.0, "max_err": 0.0},
-        model_family="DirectNet",
-        model_level=73,
-        checkpoint_pins={
-            "nmos": "tsmc12_dn_large_nmos",
-            "pmos": "tsmc12_dn_large_pmos",
-        },
-        thread_settings={"omp": 1, "mkl": 1, "torch": 1},
-    )
-    log.write_text(marker.marker() + "\n===V710_DONE rc=1===\n")
-
-    entry = collect(tmp_path)["dn"]["large"][suite]["TSMC12"]["omp1"]
-
-    assert entry["result_complete"] is False
-    assert "completion code" in entry["error"]
-    assert not is_verdict(entry)
-
-
-def test_collector_rejects_characterized_row_without_numeric_evidence(
-    tmp_path: Path,
-) -> None:
-    from scripts.v710_regate_collect import collect, is_verdict
-
-    suite = "verify_circuit_topologies__inverter_chain"
-    log = tmp_path / "dn" / "large" / "tsmc12" / f"{suite}.omp1.log"
-    log.parent.mkdir(parents=True)
-    marker = GateResult(
-        case_id="inverter_chain",
-        tech="TSMC12",
-        corner="nominal",
-        analysis="fo4",
-        role="diagnostic",
-        status="diagnostic",
-        model_family="DirectNet",
-        model_level=73,
-        thread_settings={"omp": 1, "mkl": 1, "torch": 1},
-    )
-    log.write_text(marker.marker() + "\n===V710_DONE rc=0===\n")
-
-    entry = collect(tmp_path)["dn"]["large"][suite]["TSMC12"]["omp1"]
-
-    assert entry["result_complete"] is False
-    assert "numeric evidence" in entry["error"]
-    assert not is_verdict(entry)
-
-
-def test_collector_rejects_model_family_that_disagrees_with_campaign_tag(
-    tmp_path: Path,
-) -> None:
-    from scripts.v710_regate_collect import collect, is_verdict
-
-    suite = "verify_circuit_topologies__inverter_chain"
-    log = tmp_path / "dn" / "large" / "tsmc12" / f"{suite}.omp1.log"
+    log = tmp_path / "dnf" / "large" / "tsmc12" / f"{suite}.omp1.log"
     log.parent.mkdir(parents=True)
     marker = GateResult(
         case_id="inverter_chain",
@@ -1113,11 +1051,73 @@ def test_collector_rejects_model_family_that_disagrees_with_campaign_tag(
                  "nrmse_pct": 0.0, "max_err": 0.0},
         model_family="DirectNet-Full",
         model_level=75,
+        checkpoint_pins={
+            "nmos": "tsmc12_dnf_large_nmos",
+            "pmos": "tsmc12_dnf_large_pmos",
+        },
+        thread_settings={"omp": 1, "mkl": 1, "torch": 1},
+    )
+    log.write_text(marker.marker() + "\n===V710_DONE rc=1===\n")
+
+    entry = collect(tmp_path)["dnf"]["large"][suite]["TSMC12"]["omp1"]
+
+    assert entry["result_complete"] is False
+    assert "completion code" in entry["error"]
+    assert not is_verdict(entry)
+
+
+def test_collector_rejects_characterized_row_without_numeric_evidence(
+    tmp_path: Path,
+) -> None:
+    from scripts.v710_regate_collect import collect, is_verdict
+
+    suite = "verify_circuit_topologies__inverter_chain"
+    log = tmp_path / "dnf" / "large" / "tsmc12" / f"{suite}.omp1.log"
+    log.parent.mkdir(parents=True)
+    marker = GateResult(
+        case_id="inverter_chain",
+        tech="TSMC12",
+        corner="nominal",
+        analysis="fo4",
+        role="diagnostic",
+        status="diagnostic",
+        model_family="DirectNet-Full",
+        model_level=75,
         thread_settings={"omp": 1, "mkl": 1, "torch": 1},
     )
     log.write_text(marker.marker() + "\n===V710_DONE rc=0===\n")
 
-    entry = collect(tmp_path)["dn"]["large"][suite]["TSMC12"]["omp1"]
+    entry = collect(tmp_path)["dnf"]["large"][suite]["TSMC12"]["omp1"]
+
+    assert entry["result_complete"] is False
+    assert "numeric evidence" in entry["error"]
+    assert not is_verdict(entry)
+
+
+def test_collector_rejects_model_family_that_disagrees_with_campaign_tag(
+    tmp_path: Path,
+) -> None:
+    from scripts.v710_regate_collect import collect, is_verdict
+
+    suite = "verify_circuit_topologies__inverter_chain"
+    log = tmp_path / "dnf" / "large" / "tsmc12" / f"{suite}.omp1.log"
+    log.parent.mkdir(parents=True)
+    marker = GateResult(
+        case_id="inverter_chain",
+        tech="TSMC12",
+        corner="nominal",
+        analysis="fo4",
+        role="diagnostic",
+        status="diagnostic",
+        metrics={"mre_pct": 0.0, "r2": 1.0,
+                 "nrmse_pct": 0.0, "max_err": 0.0},
+        model_family="BSIM-AR-Full",
+        model_level=76,
+        thread_settings={"omp": 1, "mkl": 1, "torch": 1},
+    )
+    log.write_text(marker.marker() + "\n===V710_DONE rc=0===\n")
+
+    entry = collect(tmp_path)["dnf"]["large"][suite]["TSMC12"]["omp1"]
 
     assert entry["result_complete"] is False
     assert "campaign tag" in entry["error"]
@@ -1144,16 +1144,16 @@ def test_structured_contract_binds_role_metrics_pins_and_threads() -> None:
             "amplitude_error_pct": 0.0,
             "phase_aligned_nrmse_pct": 0.0,
         },
-        model_family="DirectNet",
-        model_level=73,
+        model_family="DirectNet-Full",
+        model_level=75,
         checkpoint_pins={
-            "nmos": "tsmc12_dn_large_nmos",
-            "pmos": "tsmc12_dn_large_pmos",
+            "nmos": "tsmc12_dnf_large_nmos",
+            "pmos": "tsmc12_dnf_large_pmos",
         },
         thread_settings={"omp": 1, "mkl": 1, "torch": 1},
     ).payload()
     kwargs = {
-        "campaign_tag": "dn",
+        "campaign_tag": "dnf",
         "campaign_variant": "large",
         "expected_omp": 1,
     }
@@ -1205,8 +1205,8 @@ def test_structured_contract_rejects_nonfinite_derived_metric() -> None:
         role="diagnostic",
         status="diagnostic",
         domain={"cmrr_db_error": None},
-        model_family="DirectNet",
-        model_level=73,
+        model_family="DirectNet-Full",
+        model_level=75,
         thread_settings={"omp": 1, "mkl": 1, "torch": 1},
     ).payload()
 
@@ -1309,8 +1309,8 @@ def test_run_case_derives_exact_cmrr_and_psrr_db(
                 f"{stem}_gain_ref": reference_gain,
                 f"{stem}_gain_error_pct": 0.0,
             },
-            model_family="DirectNet",
-            model_level=73,
+            model_family="DirectNet-Full",
+            model_level=75,
             thread_settings={"omp": 1, "mkl": 1, "torch": 1},
         )
 
@@ -1321,7 +1321,7 @@ def test_run_case_derives_exact_cmrr_and_psrr_db(
         BENCH["TSMC12"],
         CORNERS["nominal"],
         tmp_path,
-        run_spec=RunSpec(73, "DirectNet"),
+        run_spec=RunSpec(75, "DirectNet-Full"),
     )
     derived = next(result for result in results if result.analysis == "derived")
 
@@ -1438,7 +1438,7 @@ def test_terminal_source_current_is_negated_to_device_admittance() -> None:
     )
 
 
-def test_terminal_renderer_declares_full_model_family() -> None:
+def test_terminal_renderer_declares_full_model_level() -> None:
     from tests.common.terminal_integrity import (
         render_terminal_sweep_decks,
         terminal_sweeps,
@@ -1452,7 +1452,8 @@ def test_terminal_renderer_declares_full_model_family() -> None:
         level=76,
     )
 
-    assert "LEVEL=76 FAMILY=bsimar-full" in candidate
+    assert "LEVEL=76" in candidate
+    assert "FAMILY=" not in candidate
 
 
 @pytest.mark.parametrize(
@@ -1542,7 +1543,7 @@ def test_active_load_topology_is_owned_by_its_template() -> None:
 def test_active_load_template_receives_analysis_overrides(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "73")
+    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
     case = next(item for item in cases() if item.case_id == "diffpair_active_load")
     analysis = next(item for item in case.analyses if item.name == "nmos_ac")
 
@@ -1561,7 +1562,7 @@ def test_active_load_template_receives_analysis_overrides(
 def test_bias_fanout_provides_a_real_device_count_ladder(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "73")
+    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
     fanout_cases = [
         case for case in cases()
         if case.case_id.startswith("bias_tree_fanout_")
@@ -1594,7 +1595,7 @@ def test_bias_fanout_provides_a_real_device_count_ladder(
 def test_large_feedback_proxy_exceeds_the_old_ten_device_ceiling(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "73")
+    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
     case = next(
         item for item in cases() if item.case_id == "multistage_buffer_12t"
     )
@@ -1651,7 +1652,7 @@ def test_pmos_generated_cascode_bias_uses_a_passive_load_line() -> None:
 def test_named_device_roles_render_independent_geometry_and_reference_aliases(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "73")
+    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
     case = next(item for item in cases() if item.case_id == "diffpair_active_load")
     candidate, reference = render_case_decks(
         case,
@@ -1769,7 +1770,7 @@ def test_nn_hierarchy_classifies_only_convergence_as_a_scientific_error(
     monkeypatch.setattr(subckt, "run_candidate_trace", _fail_candidate)
 
     result = subckt.run_nn_subckt_analysis(
-        BENCH["TSMC12"], analysis, tmp_path, RunSpec(73, "DirectNet"),
+        BENCH["TSMC12"], analysis, tmp_path, RunSpec(75, "DirectNet-Full"),
     )
 
     assert result.execution_state == execution_state
@@ -1821,7 +1822,7 @@ def test_level72_control_renders_the_same_physical_experiment() -> None:
 def test_explicit_run_spec_owns_rendered_model_family(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "73")
+    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
     case = next(item for item in cases() if item.case_id == "diode_load")
     run_spec = RunSpec(76, "BSIM-AR-Full")
 
@@ -1835,10 +1836,10 @@ def test_explicit_run_spec_owns_rendered_model_family(
     )
 
     assert "LEVEL=76" in candidate
-    assert "FAMILY=bsimar-full" in candidate
+    assert "FAMILY=" not in candidate
 
 
-def test_legacy_campaign_decks_render_the_selected_model_family(
+def test_campaign_decks_render_the_selected_model_family(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from tests.common.nn_sweep import active_nn_contract
@@ -1853,7 +1854,8 @@ def test_legacy_campaign_decks_render_the_selected_model_family(
         "ac dec 1 1e3 1e6",
     )
 
-    assert "LEVEL=75 FAMILY=directnet-full" in deck
+    assert "LEVEL=75" in deck
+    assert "FAMILY=" not in deck
     assert active_nn_contract() == (75, "directnet_full")
 
 
@@ -1946,30 +1948,6 @@ def test_simple_circuit_geometry_inventory_skips_unsupported_corners_and_roles(
         point.tech == "tsmc7" and "vt_alternate" in point.label
         for point in points
     )
-
-
-def test_jacobian_diagnostic_uses_checkpoint_local_technology_codes() -> None:
-    from tests.diag.diag_nn_jacobian_consistency import (
-        resolve_checkpoint_tech_code,
-    )
-
-    assert resolve_checkpoint_tech_code(
-        "tsmc12_dn_large_nmos",
-        "tsmc12",
-        num_tech_codes=6,
-    ) == 0
-    with pytest.raises(ValueError, match="cannot evaluate tsmc5"):
-        resolve_checkpoint_tech_code(
-            "tsmc12_dn_large_nmos",
-            "tsmc5",
-            num_tech_codes=6,
-        )
-    with pytest.raises(ValueError, match="unknown embedding code"):
-        resolve_checkpoint_tech_code(
-            "tsmc12_dn_large_nmos",
-            "tsmc12",
-            num_tech_codes=1,
-        )
 
 
 def test_transient_op_convergence_guard_rejects_failed_retry() -> None:

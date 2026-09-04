@@ -28,48 +28,24 @@ from typing import Optional
 
 import numpy as np
 
+from neural_network.data.contracts import FULL_TERMINAL_OUTPUT_COLUMN_ORDER
+
 # ── Output column ordering and floors ──────────────────────────────────────
 
-OUTPUT_COLUMN_ORDER = [
-    "id", "gm", "gds", "gmb",
-    "qg", "qd", "qs", "qb",
-    "cgg", "cgd", "cgs", "cdg", "cdd",
-]
-
-# BSIM-AR autoregressive order (paper §4.2): Q-V → I-V → C-V.
-BSIMAR_COLUMN_ORDER = [
-    "qg", "qb", "qd", "qs",
-    "id", "gm", "gds", "gmb",
-    "cgg", "cgd", "cgs", "cdg", "cdd",
-]
+OUTPUT_COLUMN_ORDER = list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER)
 
 # Per-target floor magnitudes used by the asinh scale fit. Samples with
 # |y_k| below the floor contribute the floor (not the value) to the
 # geometric-mean scale s_k, so a noisy near-zero sample cannot collapse
 # the scale.
 _OUTPUT_LOG_FLOORS = {
-    "id": 1e-18, "gm": 1e-18, "gds": 1e-18, "gmb": 1e-18,
     "i_d": 1e-18, "i_g": 1e-18, "i_b": 1e-18,
-    "qg": 1e-19, "qd": 1e-19, "qs": 1e-19, "qb": 1e-19,
-    "cgg": 1e-20, "cgd": 1e-20, "cgs": 1e-20, "cdg": 1e-20, "cdd": 1e-20,
+    "qg": 1e-19, "qd": 1e-19, "qb": 1e-19,
 }
 
 # LOO sprint S2 (2026-04-10): pin gmb / qb scales so a TSMC-only train
 # pool cannot collapse them below physically meaningful magnitudes.
-_OUTPUT_ASINH_SCALE_MIN = {"gmb": 1e-5, "qb": 1e-15}
-
-_REORDER_IDX = [OUTPUT_COLUMN_ORDER.index(c) for c in BSIMAR_COLUMN_ORDER]
-_UNREORDER_IDX = [BSIMAR_COLUMN_ORDER.index(c) for c in OUTPUT_COLUMN_ORDER]
-
-
-def reorder_outputs(arr: np.ndarray) -> np.ndarray:
-    """OUTPUT_COLUMN_ORDER → BSIMAR_COLUMN_ORDER."""
-    return arr[:, _REORDER_IDX]
-
-
-def unreorder_outputs(arr: np.ndarray) -> np.ndarray:
-    """BSIMAR_COLUMN_ORDER → OUTPUT_COLUMN_ORDER."""
-    return arr[:, _UNREORDER_IDX]
+_OUTPUT_ASINH_SCALE_MIN = {"qb": 1e-15}
 
 
 # ── Geometry helper ────────────────────────────────────────────────────────
@@ -101,9 +77,7 @@ class NormStats:
     ``asinh_scale``     — per-target s_k (asinh mode only).
     ``output_columns``  — names of the output columns this normalizer
                           was fit on, in model-output order. Defaults to
-                          the full 13-column ``OUTPUT_COLUMN_ORDER``;
-                          E2 4-output head saves a 4-name list.
-    ``phys_best_metric`` — phys-best aggregator (``"median"`` trustworthy).
+                          the six-surface ``OUTPUT_COLUMN_ORDER``.
     """
     mode: str
     input_mean: np.ndarray
@@ -114,7 +88,6 @@ class NormStats:
     output_std: np.ndarray
     asinh_scale: Optional[np.ndarray] = None
     output_columns: Optional[list[str]] = None
-    phys_best_metric: str = "median"
 
     def save(self, path: str) -> None:
         data = {
@@ -125,7 +98,6 @@ class NormStats:
             "input_max": self.input_max,
             "output_mean": self.output_mean,
             "output_std": self.output_std,
-            "phys_best_metric": np.array(str(self.phys_best_metric)),
         }
         if self.asinh_scale is not None:
             data["asinh_scale"] = self.asinh_scale
@@ -149,14 +121,7 @@ class NormStats:
             output_columns=(
                 [str(c) for c in d["output_columns"]]
                 if "output_columns" in d.files else None),
-            phys_best_metric=(
-                str(d["phys_best_metric"]) if "phys_best_metric" in d.files
-                else "legacy_mean"),
         )
-
-
-# Back-compat alias (older simulator code imports this name).
-BSIMARNormStats = NormStats
 
 
 # ── Common base ────────────────────────────────────────────────────────────

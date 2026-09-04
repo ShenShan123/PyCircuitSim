@@ -25,7 +25,6 @@ from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
 from .tech import TECH_REGISTRY as _PYCMG_REGISTRY, resolve_modelcard, TechConfig
-from .sweep import NN_OUTPUT_COLUMNS
 
 # PyCMG root: two levels up from pycmg/nn_config.py  →  PyCMG/
 PYCMG_DIR: Path = Path(__file__).resolve().parents[1]
@@ -38,9 +37,6 @@ PROCESS_PARAM_NAMES: List[str] = [
     "PHIG", "U0", "VSAT", "EOT", "ETA0", "CIT", "RDSW",
     "CFS", "TOXP", "CGSL", "UA", "EU",
 ]
-
-# NN output targets — re-exported from sweep for convenience
-OUTPUT_COLUMNS: List[str] = NN_OUTPUT_COLUMNS
 
 # Full NN input feature names (19 total)
 INPUT_COLUMNS: List[str] = [

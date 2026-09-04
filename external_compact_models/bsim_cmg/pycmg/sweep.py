@@ -34,14 +34,6 @@ OUTPUT_KEYS: List[str] = [
     "cgg", "cgd", "cgs", "cdg", "cdd",
 ]
 
-# NN training target columns — subset of OUTPUT_KEYS (13 of 17)
-# Excludes ig, is, ie, ids which are not needed for circuit simulation.
-NN_OUTPUT_COLUMNS: List[str] = [
-    "id", "gm", "gds", "gmb",
-    "qg", "qd", "qs", "qb",
-    "cgg", "cgd", "cgs", "cdg", "cdd",
-]
-
 GEOM_COLUMNS: List[str] = ["tech", "device", "L", "NFIN", "TFIN", "temp_K"]
 
 VOLTAGE_COLUMNS: List[str] = ["Vg", "Vd", "Vs", "Ve", "Vth"]
@@ -577,7 +569,7 @@ def save_npz(
       inputs       (N, 4)  — source-relative terminal voltages [Vd, Vg, Vs, Vb]
       geometry     (N, 15) — [NFIN, L, T, PHIG, U0, VSAT, EOT, ETA0, CIT, RDSW,
                               CFS, TOXP, CGSL, UA, EU]
-      outputs      (N, 13) — NN_OUTPUT_COLUMNS order
+      outputs      (N, 6)  — full-terminal independent surfaces
       sample_class (N,)    — int8 codes (B1; only present when supplied)
 
     Optional metadata keys are saved as ``meta_<key>`` arrays.
@@ -585,7 +577,7 @@ def save_npz(
     Args:
         inputs: (N, 4) float64 array.
         geometry: (N, 15) float64 array.
-        outputs: (N, 13) float64 array.
+        outputs: (N, 6) float64 array.
         output_path: Destination file path.
         metadata: Optional dict of scalar/array metadata.
         sample_class: Optional (N,) int8 array tagging each row's origin

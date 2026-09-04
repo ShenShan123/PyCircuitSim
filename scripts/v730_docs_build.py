@@ -1,10 +1,9 @@
 #!/usr/bin/env python3
 """Build active accuracy reports from measurement, not transcription.
 
-Emits clean reports for all four NN families and historical recipe reports for
-the reduced families into ``docs/accuracy/``:
+Emits clean reports for the two full-terminal NN families into
+``docs/accuracy/``:
 
-    {DirectNet-L73, BSIM-AR-L74}-{clean, recipes}.md
     {DirectNet-L75, BSIM-AR-L76}-clean.md
 
 The prose lives in scripts/accuracy_doc_templates/*.md.in and the tables are
@@ -16,17 +15,9 @@ from the evidence. Markers:
     <!--BYTECH-->       per-tech roll-up across tiers and testcases
     <!--BYSCALE-->      per-scale roll-up across techs and testcases
     <!--DEVICE-->       parametric DC / transient, device AC, opamp AC
-    <!--RECIPES-->      recipe x tier gate table (recipes reports only)
-    <!--RECIPEDELTA-->  per-testcase recipe-vs-clean deltas (recipes reports)
 
 Available sources (each rendered report is pinned to one complete pass):
 
-    results/a3_regate/REPORT.md    V6.13.0, simple-v1 matrix, single-run
-    results/v710_regate/data.json  V7.1.0, device + AC + strict OMP
-    results/v730_regate/data.json  V7.3.0 recipe campaign
-    results/v740_regate/data.json  V7.4.0, clean DN + BSIM-AR rebuild
-    results/v7516_clean/data.json   V7.5.16, clean DirectNet/BSIM-AR re-gate
-    results/v7517_clean/data.json   V7.5.17, audited clean re-gate
     results/v766_full_clean/data.json V7.6.6, full-terminal clean re-gate
 
 Run after any re-gate:
@@ -41,7 +32,6 @@ from contextlib import contextmanager
 import hashlib
 import json
 import pathlib
-import re
 import sys
 from typing import Dict, Generator, List, Optional, Tuple
 
@@ -83,11 +73,9 @@ CIRC_LABEL = {
 }
 TIERS = ["small", "medium", "large", "xl"]
 FAM = {
-    "dn": "DirectNet", "tf": "BSIM-AR",
     "dnf": "DirectNet-Full", "tff": "BSIM-AR-Full",
 }
 FILE_STEM = {
-    "dn": "DirectNet-L73", "tf": "BSIM-AR-L74",
     "dnf": "DirectNet-L75", "tff": "BSIM-AR-L76",
 }
 STRICT_OMP = ("omp1", "omp2", "omp4")
@@ -123,58 +111,19 @@ _DEVICE_AC_PAYLOAD_KEYS = (
     "gain0_err_db", "f3db_ratio", "mag_nrmse_pct", "status",
 )
 
-# Clean control per family. V7.4.0 retrained DirectNet and BSIM-AR from scratch
-# on the clean recipe into the production slots at every tier, so clean@large is
-# simply `large` — the v660clean archive detour (needed while the DN `large`
-# slot carried the crit30f curriculum) no longer applies.
 CLEAN = {
-    "dn": {t: t for t in TIERS},
-    "tf": {t: t for t in TIERS},
     "dnf": {t: t for t in TIERS},
     "tff": {t: t for t in TIERS},
 }
 CLEAN_OVERRIDE: Dict[Tuple[str, str, str], str] = {}
 
 RECIPES: Dict[str, List[Tuple[str, str]]] = {
-    "dn": [("crit30f", "large"), ("csob", "large"),
-           ("corroft", "xl"), ("crit15m", "xl")],
-    "tf": [("corroft", "medium"), ("corro15", "medium"),
-           ("corroft", "large"), ("crit15m", "large"), ("crit30", "large"),
-           ("corroft", "xl"), ("corro15", "xl"),
-           ("crit15m", "xl"), ("crit30", "xl")],
+    "dnf": [],
+    "tff": [],
 }
 
 
 # ── evidence ────────────────────────────────────────────────────────────────
-def load_a3() -> Dict[Tuple[str, str, str, str], Tuple[str, float]]:
-    """V6.13.0 simple-v1 matrix, parsed out of its markdown report.
-
-    Group headings read `### \\`dn/clean/large\\` — 15/16`; the clean/large
-    group is the production slot, whose variant name differs from the tier.
-    """
-    src = ROOT / "results/a3_regate/REPORT.md"
-    if not src.exists():
-        return {}
-    out: Dict[Tuple[str, str, str, str], Tuple[str, float]] = {}
-    cur: Optional[Tuple[str, str]] = None
-    for line in src.read_text().splitlines():
-        m = re.match(r"^### `([a-z]+)/([a-z0-9]+)/(\w+)` — ", line)
-        if m:
-            tag, recipe, tier = m.groups()
-            variant = tier if recipe == "clean" else f"{recipe}_{tier}"
-            cur = (tag, variant)
-            continue
-        m = re.match(r"^\| (TSMC\d+) \| (.+) \|$", line)
-        if m and cur:
-            vals = [p.strip() for p in m.group(2).split("|")]
-            for circ, v in zip(CIRCS, vals):
-                mm = re.match(r"(PASS|FAIL)\s+([\d.]+)%", v)
-                if mm:
-                    out[(cur[0], cur[1], m.group(1), circ)] = (
-                        mm.group(1), float(mm.group(2)))
-    return out
-
-
 def load_json(name: str) -> Dict:
     p = ROOT / "results" / name / "data.json"
     if not p.exists():
@@ -185,21 +134,13 @@ def load_json(name: str) -> Dict:
         return {}
 
 
-A3 = load_a3()
-PASSES = [("V7.1.0", load_json("v710_regate")), ("V7.3.0", load_json("v730_regate")),
-          ("V7.4.0", load_json("v740_regate")),
-          ("V7.4.2", load_json("v742_regate")),
-          ("2026-08-19 recheck", load_json("simple_recheck_24c181a")),
-          ("V7.5.16", load_json("v7516_clean")),
-          ("V7.5.17", load_json("v7517_clean")),
-          ("V7.6.1", load_json("v761_directnet_full_clean")),
+PASSES = [("V7.6.1", load_json("v761_directnet_full_clean")),
           ("V7.6.1 combined", load_json("v761_full_clean")),
           ("V7.6.2", load_json("v762_directnet_full_clean")),
           ("V7.6.6", load_json("v766_full_clean"))]
 PASS_DATA = dict(PASSES)
 ACTIVE_PASS: Optional[str] = None
 CAMPAIGN_EVIDENCE: Dict[str, Tuple[str, int, int]] = {
-    "V7.5.17": ("v7517_clean", 480, 280),
     "V7.6.1": ("v761_directnet_full_clean", 240, 120),
     "V7.6.1 combined": ("v761_full_clean", 480, 280),
     "V7.6.2": ("v762_directnet_full_clean", 240, 120),
@@ -209,30 +150,21 @@ CAMPAIGN_EVIDENCE: Dict[str, Tuple[str, int, int]] = {
 # Every report is rendered from one coherent campaign. A later partial pass is
 # never allowed to backfill itself from older cells and overwrite a complete
 # published report.
-# DirectNet and BSIM-AR use one complete V7.5.17 campaign.
-# The builder never backfills a partial current campaign from older cells.
 REPORT_PASS: Dict[Tuple[str, bool], str] = {
-    ("dn", False): "V7.5.17",
-    ("tf", False): "V7.5.17",
     ("dnf", False): "V7.6.6",
     ("tff", False): "V7.6.6",
-    ("dn", True): "V7.3.0",
-    ("tf", True): "V7.3.0",
 }
 
-CURRENT_CLEAN_TAGS = ("dn", "tf", "dnf", "tff")
+CURRENT_CLEAN_TAGS = ("dnf", "tff")
 README_REQUIRED_CLEAN_TAGS = ("dnf", "tff")
 
-# The new hardware does not carry the raw V7.3 recipe trees. These digests
-# make the retained rendered reports immutable and keep --check meaningful.
+# A preserved report digest is allowed only when its raw campaign is absent.
 PRESERVED_REPORT_SHA256: Dict[Tuple[str, bool], str] = {
-    ("dn", False): "501eec0b9f8e813a4e33ce7ffbf56b1f4c27fcfb251f2216d8e864a19c6faa0d",
-    ("dn", True): "34b80c4665e4d2bab4cd3192955c7a1b0afacd651ab85d335fe00099d0c4c290",
-    ("tf", False): "61dd6c094212b5dc24cf7155f9c5bc616df231e0e2cd68172753ff9139257cd5",
-    ("tf", True): "52162e5eee8fdbfac251bd653eaa4eaeb03027dd15193d42ed5d49334180af72",
+    ("dnf", False): "16e0a268af73c328c97a986a64452066c19ff633884e53d12f8a5905aa524c00",
+    ("tff", False): "52770afe913622f9ef5621794347314aa78f23b99b1d3f1b5b7391b4d9996f18",
 }
 PRESERVED_README_SHA256 = (
-    "b04b4b40858b34fd4f94071180284e9d50fcd0281a4353b0d588c5c063ec5f5a"
+    "0760e8b6a999af1831faec9946b4058095f24a791563e3496528624ca6b26b4a"
 )
 
 
@@ -303,8 +235,7 @@ def strict(tag: str, variant: str, circ: str, tech: str
             if "0" in rcs:
                 return ("FLIP", metric)
             return ("FAIL", metric)
-    a = A3.get((tag, variant, tech, circ))
-    return (a[0], a[1]) if a else (None, None)
+    return None, None
 
 
 # The headline metric each testcase reports, and the threshold it is judged
@@ -567,31 +498,21 @@ def recipe_delta(tag: str) -> str:
 
 
 FAMILY_META = {
-    "dn": ("73", "**production**", "1.5 ms @ `large`"),
-    "tf": ("74", "higher fidelity", "61.5 ms @ `medium`"),
-    "dnf": ("75", "experimental full-terminal", "see report"),
-    "tff": ("76", "experimental full-terminal", "see report"),
+    "dnf": ("75", "**default**", "see report"),
+    "tff": ("76", "autoregressive alternative", "see report"),
 }
 
 # Raw campaign trees are local evidence and may be absent on another clone.
 # These values are the durable published fallback for the README only; the
 # rendered labels still identify the code state that produced each result.
 HISTORICAL_CLEAN: Dict[str, Tuple[str, str, int, int]] = {
-    "dn": ("V7.5.17", "xl", 10, 20),
-    "tf": ("V7.5.17", "large", 12, 20),
-    "dnf": ("V7.6.0", "—", 0, 0),
+    "dnf": ("V7.6.6", "large", 20, 20),
     "tff": ("V7.6.1", "—", 0, 0),
 }
 HISTORICAL_CLEAN_TEXT = {
-    "dn": "V7.5.17 `large` **9/20** served; `xl` **10/20** best",
-    "tf": "V7.5.17 `large` **12/20**",
+    "dnf": "V7.6.6 `large` **20/20** simple-circuit matrix",
+    "tff": "no complete five-technology clean matrix",
 }
-HISTORICAL_RECIPE: Dict[str, Tuple[str, int, int]] = {
-    "dn": ("`crit15m`@xl", 19, 20),
-    "tf": ("`corroft`@medium", 20, 20),
-}
-
-
 def _score(tag: str, key: str, recipes: bool) -> Tuple[int, int]:
     p = n = 0
     for tech in TECHS:
@@ -664,18 +585,10 @@ def _campaign_provenance_complete(version: str) -> bool:
     )
 
 
-def _v7517_provenance_complete() -> bool:
-    """Backward-compatible provenance hook used by campaign-tool checks."""
-    return _campaign_provenance_complete("V7.5.17")
-
-
 def _matrix_complete_in_pass(tag: str, recipes: bool, version: str) -> bool:
     """Whether one pass fully measured every table cell in this report."""
-    if version == "V7.5.17":
-        if not _v7517_provenance_complete():
-            return False
-    elif (version in CAMPAIGN_EVIDENCE
-          and not _campaign_provenance_complete(version)):
+    if (version in CAMPAIGN_EVIDENCE
+            and not _campaign_provenance_complete(version)):
         return False
     data = PASS_DATA.get(version, {})
     if not data:
@@ -699,42 +612,23 @@ def scoreboard(
     _tag: Optional[str] = None,
     _recipes: Optional[bool] = None,
 ) -> str:
-    out = ["| LEVEL | family | role | current / best clean | historical best recipe | CPU cost |",
-           "|---|---|---|---|---|---|"]
-    for tag in ("dn", "tf", "dnf", "tff"):
+    out = ["| LEVEL | family | role | current evidence | CPU cost |",
+           "|---|---|---|---|---|"]
+    for tag in ("dnf", "tff"):
         lvl, role, cost = FAMILY_META[tag]
         clean_version = REPORT_PASS[(tag, False)]
         clean_complete = _matrix_complete_in_pass(tag, False, clean_version)
-        recipe_complete = (
-            tag in RECIPES
-            and _matrix_complete_in_pass(tag, True, "V7.3.0")
-        )
         if clean_complete:
             with evidence_pass(clean_version):
                 cl, cp, cn = _best(tag, False)
             clean_source_version = clean_version.removesuffix(" recheck")
         else:
             clean_source_version, cl, cp, cn = HISTORICAL_CLEAN[tag]
-        if recipe_complete:
-            with evidence_pass("V7.3.0"):
-                rl, rp, rn = _best(tag, True)
-        elif tag in HISTORICAL_RECIPE:
-            rl, rp, rn = HISTORICAL_RECIPE[tag]
-        else:
-            rl, rp, rn = "none", 0, 0
         if not clean_complete and tag in HISTORICAL_CLEAN_TEXT:
             c = HISTORICAL_CLEAN_TEXT[tag]
-        elif tag == "dn" and clean_complete:
-            with evidence_pass(clean_version):
-                served_pass, served_total = _score(tag, "large", False)
-            c = (f"{clean_source_version} `large` "
-                 f"**{served_pass}/{served_total}** served; "
-                 f"`{cl}` **{cp}/{cn}** best")
         else:
             c = f"{clean_source_version} `{cl}` **{cp}/{cn}**"
-        r = (f"V7.3 {rl} **{rp}/{rn}**"
-             if rn else "none")
-        out.append(f"| {lvl} | **{FAM[tag]}** | {role} | {c} | {r} | {cost} |")
+        out.append(f"| {lvl} | **{FAM[tag]}** | {role} | {c} | {cost} |")
     out.append("")
     out.append("Strict = passes at OMP ∈ {1, 2, 4}. " + denominator_note(None, None))
     return "\n".join(out)
@@ -760,10 +654,7 @@ def denominator_note(tag: Optional[str], recipes: Optional[bool]) -> str:
     guarantees it is wrong half the time; deriving it cannot be.
     """
     if tag is None:
-        scopes = [
-            *((t, r) for t in ("dn", "tf") for r in (False, True)),
-            ("dnf", False), ("tff", False),
-        ]
+        scopes = [("dnf", False), ("tff", False)]
     else:
         scopes = [(tag, bool(recipes))]
     sizes = {len(_techs_measured(t, r)) * len(CIRCS) for t, r in scopes}
@@ -881,7 +772,7 @@ def build_readme(check: bool) -> bool:
 
 
 def main() -> int:
-    ap = argparse.ArgumentParser(description="Build the four accuracy reports")
+    ap = argparse.ArgumentParser(description="Build full-terminal accuracy reports")
     ap.add_argument("--check", action="store_true",
                     help="Verify the committed files match the evidence; "
                          "do not write. Exit 1 if any is stale.")
@@ -889,25 +780,20 @@ def main() -> int:
     # prevents partial regeneration; --only remains a convenient way to limit
     # output to the family currently being worked on.
     ap.add_argument("--only", default=None,
-                    help="Comma list of families to build (dn,tf,dnf,tff). "
+                    help="Comma list of families to build (dnf,tff). "
                          "Default: all. The README scoreboard spans families, "
                          "so it is skipped unless all are built.")
-    ap.add_argument("--recipes", choices=["both", "clean", "recipes"],
-                    default="both", help="Which report of each family to build")
     args = ap.parse_args()
 
     tags = ([t.strip() for t in args.only.split(",")] if args.only
-            else ["dn", "tf", "dnf", "tff"])
+            else ["dnf", "tff"])
     unknown = [t for t in tags if t not in FAM]
     if unknown:
         ap.error(f"unknown family {unknown}; choose from {sorted(FAM)}")
-    kinds = {"both": (False, True), "clean": (False,), "recipes": (True,)}[args.recipes]
-
     ok = True
     for tag in tags:
-        for recipes in kinds:
-            ok &= build(tag, recipes, args.check)
-    if args.only is None and args.recipes == "both":
+        ok &= build(tag, False, args.check)
+    if args.only is None:
         ok &= build_readme(args.check)
     else:
         print("[docs] README scoreboard skipped (partial build)")

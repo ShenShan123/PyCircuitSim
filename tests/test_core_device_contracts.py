@@ -19,6 +19,8 @@ independent reference; nothing here compares a compact model against itself.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import sys
 from pathlib import Path
 
@@ -30,14 +32,15 @@ from pycircuitsim.circuit import Circuit
 from pycircuitsim.models.passive import (
     CurrentSource, Inductor, Resistor, VoltageSource,
 )
-from pycircuitsim.models.mosfet_directnet import NMOS_NN
+from pycircuitsim.models.mosfet_directnet_full import NMOS_DNF
 from pycircuitsim.parser import Parser
 from pycircuitsim.solver import ACSolver, DCSolver, TransientSolver
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 
-from neural_network.data.normalize import NormStats, OUTPUT_COLUMN_ORDER
+from neural_network.data.contracts import FULL_TERMINAL_OUTPUT_COLUMN_ORDER
+from neural_network.data.normalize import NormStats
 from neural_network.models.direct_net import DirectNet
 
 
@@ -51,15 +54,16 @@ def _parse(text: str, tmp_path: Path) -> Parser:
 
 
 @pytest.fixture()
-def nn_device(tmp_path: Path) -> NMOS_NN:
-    """A LEVEL=73 device on a deterministic in-tmpdir checkpoint.
+def nn_device(tmp_path: Path) -> NMOS_DNF:
+    """A LEVEL=75 device on a deterministic in-tmpdir checkpoint.
 
     Temperature rebinding is a base-class contract shared by every NN family,
     so a synthetic checkpoint answers it without pinning the test to whichever
     trained artifacts happen to be on this machine.
     """
     model = DirectNet(
-        input_dim=7, hidden_dim=8, n_layers=1, output_dim=13,
+        input_dim=7, hidden_dim=8, n_layers=1,
+        output_dim=len(FULL_TERMINAL_OUTPUT_COLUMN_ORDER),
         num_tech_codes=2, tech_embed_dim=2, tech_embed_dropout=0.0,
         unknown_code_id=1,
     )
@@ -77,11 +81,21 @@ def nn_device(tmp_path: Path) -> NMOS_NN:
             [-0.8, -0.8, -0.8, -0.8, 0.0, 0.0, 200.0], dtype=np.float64),
         input_max=np.asarray(
             [0.8, 0.8, 0.8, 0.8, 8.0, 1e-6, 500.0], dtype=np.float64),
-        output_mean=np.zeros(13, dtype=np.float64),
-        output_std=np.asarray([1e-4] * 4 + [1e-15] * 9, dtype=np.float64),
-        output_columns=list(OUTPUT_COLUMN_ORDER),
+        output_mean=np.zeros(6, dtype=np.float64),
+        output_std=np.asarray([1e-4] * 3 + [1e-15] * 3, dtype=np.float64),
+        output_columns=list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER),
     ).save(str(tmp_path / "core_probe_norm.npz"))
-    return NMOS_NN(
+    norm_path = tmp_path / "core_probe_norm.npz"
+    marker = {
+        "family": "directnet-full",
+        "checkpoint": checkpoint.name,
+        "checkpoint_sha256": hashlib.sha256(checkpoint.read_bytes()).hexdigest(),
+        "normalization": norm_path.name,
+        "normalization_sha256": hashlib.sha256(norm_path.read_bytes()).hexdigest(),
+        "output_columns": list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER),
+    }
+    checkpoint.with_suffix(".pt.complete").write_text(json.dumps(marker))
+    return NMOS_DNF(
         "Mprobe", ["d", "g", "s", "b"], str(checkpoint),
         L=16e-9, NFIN=2.0, tech_code=0,
     )
@@ -319,7 +333,7 @@ def test_temp_card_rejects_a_kelvin_value_and_a_malformed_card(
 
 
 def test_set_temperature_rebinds_geometry_and_drops_the_stale_cache(
-    nn_device: "NMOS_NN",
+    nn_device: "NMOS_DNF",
 ) -> None:
     """A temperature change at unchanged voltages must not return a stale value.
 
@@ -330,19 +344,19 @@ def test_set_temperature_rebinds_geometry_and_drops_the_stale_cache(
     / ``temp_hot`` corner row depends on not happening.
     """
     voltages = {"d": 0.5, "g": 0.6, "s": 0.0, "b": 0.0}
-    nn_device._eval(voltages)
+    nn_device.get_terminal_stamp(voltages)
     assert nn_device._eval_cache is not None
-    before = nn_device._geo_norm.copy()
+    before = nn_device._raw_inputs(voltages).copy()
 
     nn_device.set_temperature(398.15)
 
     assert nn_device.temperature == pytest.approx(398.15)
     assert nn_device._eval_cache is None
     assert nn_device._q_prev is None
-    assert not np.array_equal(nn_device._geo_norm, before)
+    assert not np.array_equal(nn_device._raw_inputs(voltages), before)
 
 
-def test_set_temperature_rejects_a_celsius_value(nn_device: "NMOS_NN") -> None:
+def test_set_temperature_rejects_a_celsius_value(nn_device: "NMOS_DNF") -> None:
     """``temp_C`` passed where ``temp_K`` is expected must fail, not run cold."""
     with pytest.raises(ValueError, match="Kelvin"):
         nn_device.set_temperature(125.0)

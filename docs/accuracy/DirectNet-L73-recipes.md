@@ -1,5 +1,8 @@
 # DirectNet (LEVEL=73) — recipe variants
 
+> Historical evidence only: V7.7.0 removed the LEVEL=73 runtime, trainer, and
+> checkpoints. Commands and options in this report are not supported.
+
 A **recipe** is one identical training addendum applied to every
 (tech × device × size) checkpoint — never a per-tech or per-gate special
 (`methodology.md` §5). Everything here therefore compares like with like: the

@@ -59,21 +59,24 @@ def _recipe_worker(
 set -u
 printf 'invoked\\n' >> "$FAKE_CONDA_LOG"
 case "$FAKE_TRAIN_MODE" in
-  success|marker-fail)
-    stem="$BSIMAR_CHECKPOINT_DIR/tsmc5_dn_small_nmos"
+  success|no-marker)
+    stem="$BSIMAR_CHECKPOINT_DIR/tsmc5_dnf_small_nmos"
     : > "${stem}_best.pt"
     : > "${stem}_norm.npz"
+    if [ "$FAKE_TRAIN_MODE" = success ]; then
+      : > "${stem}_best.pt.complete"
+    fi
     ;;
   fail) exit 1 ;;
   *) exit 99 ;;
 esac
     """,
     )
-    if mode == "marker-fail":
-        _write_executable(
-            fake_bin / "touch",
-            "#!/usr/bin/env bash\necho marker-write-failed >&2\nexit 1\n",
-        )
+    data_dir = root / "data"
+    data_dir.mkdir(exist_ok=True)
+    dataset = data_dir / "tsmc5_dnf_nmos.npz"
+    dataset.touch()
+    dataset.with_suffix(".npz.complete").touch()
     env = os.environ.copy()
     env.update({
         "PATH": f"{fake_bin}:{env['PATH']}",
@@ -82,6 +85,7 @@ esac
         "FAKE_CONDA_LOG": str(root / "conda.log"),
         "FAKE_TRAIN_MODE": mode,
         "MODEL": "direct",
+        "BSIMAR_DATA_DIR": str(data_dir),
     })
     return subprocess.run(
         ["bash", str(ROOT / "scripts" / "recipe_train.sh"), "_one",
@@ -101,7 +105,7 @@ def _ready_checkpoint(
         stem.with_name(stem.name + "_norm.npz").touch()
         if complete:
             stem.with_name(stem.name + "_best.pt.complete").touch()
-        if tag == "tf" and config:
+        if tag == "tff" and config:
             stem.with_name(stem.name + "_config.npz").touch()
 
 
@@ -152,11 +156,11 @@ def _check_rank_deficient_tail_projector() -> None:
 def _check_nn_ac_banner_tracks_forced_family() -> None:
     """Gate output must identify the NN family actually selected by the parser."""
     with patch.dict(os.environ, {}, clear=True):
-        assert verify_nn_ac.active_model_label() == "DirectNet (LEVEL=73)"
-        assert verify_nn_ac.active_model_name() == "DirectNet"
-    with patch.dict(os.environ, {"PYCIRCUITSIM_NN_FORCE_LEVEL": "74"}, clear=True):
-        assert verify_nn_ac.active_model_label() == "BSIM-AR (LEVEL=74)"
-        assert verify_nn_ac.active_model_name() == "BSIM-AR"
+        assert verify_nn_ac.active_model_label() == "DirectNet-Full (LEVEL=75)"
+        assert verify_nn_ac.active_model_name() == "DirectNet-Full"
+    with patch.dict(os.environ, {"PYCIRCUITSIM_NN_FORCE_LEVEL": "76"}, clear=True):
+        assert verify_nn_ac.active_model_label() == "BSIM-AR-Full (LEVEL=76)"
+        assert verify_nn_ac.active_model_name() == "BSIM-AR-Full"
     with patch.dict(os.environ, {"PYCIRCUITSIM_NN_FORCE_LEVEL": "75"}, clear=True):
         assert verify_nn_ac.active_model_label() == (
             "DirectNet-Full (LEVEL=75)"
@@ -174,10 +178,10 @@ def _check_nn_ac_banner_tracks_forced_family() -> None:
         },
     }
     printed = io.StringIO()
-    with patch.dict(os.environ, {"PYCIRCUITSIM_NN_FORCE_LEVEL": "74"},
+    with patch.dict(os.environ, {"PYCIRCUITSIM_NN_FORCE_LEVEL": "76"},
                     clear=True), redirect_stdout(printed):
         opamp_ac._print_result(result)
-    assert "BSIM-AR DC OP" in printed.getvalue()
+    assert "BSIM-AR-Full DC OP" in printed.getvalue()
     assert "NN DC OP" not in printed.getvalue()
 
 
@@ -220,7 +224,7 @@ def _check_log_scan() -> None:
     """Raw logs must override stale JSON, including unfinished attempts."""
     with tempfile.TemporaryDirectory() as raw:
         root = Path(raw)
-        cell = root / "dn" / "small" / "tsmc5"
+        cell = root / "dnf" / "small" / "tsmc5"
         cell.mkdir(parents=True)
         (cell / "pass.omp1.log").write_text("===V710_DONE rc=0===\n")
         (cell / "fail.omp1.log").write_text("===V710_DONE rc=1===\n")
@@ -251,7 +255,7 @@ def _check_log_scan() -> None:
             "fail": {"TSMC5": {"omp1": {"rc": "0"}}},
         })
         (root / "data.json").write_text(json.dumps({
-            "dn": {"small": stale_suites},
+            "dnf": {"small": stale_suites},
         }))
         old_passes = coverage.PASSES
         coverage.PASSES = [("test", root)]
@@ -267,10 +271,10 @@ def _check_lock_contention() -> None:
     with tempfile.TemporaryDirectory() as raw:
         root = Path(raw)
         out = root / "results"
-        log = out / "dn" / "small" / "tsmc5" / "verify_nn_ac.omp1.log"
+        log = out / "dnf" / "small" / "tsmc5" / "verify_nn_ac.omp1.log"
         log.parent.mkdir(parents=True)
         job_file = root / "jobs.txt"
-        job_file.write_text("dn small TSMC5 verify_nn_ac 1\n")
+        job_file.write_text("dnf small TSMC5 verify_nn_ac 1\n")
         with Path(f"{log}.lock").open("w") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             env = os.environ.copy()
@@ -291,14 +295,14 @@ def _check_lock_contention() -> None:
                 timeout=10,
             )
         assert result.returncode == 123, result.stdout + result.stderr
-        assert "ACTIVE dn/small/tsmc5/verify_nn_ac/omp1" in result.stdout
+        assert "ACTIVE dnf/small/tsmc5/verify_nn_ac/omp1" in result.stdout
         assert not log.exists()
 
 
 def _check_invalid_rendering() -> None:
     """An invalid row without parsed metrics must remain visibly invalid."""
     report = collect.render({
-        "dn": {
+        "dnf": {
             "small": {
                 "verify_nn_multi_tech_dc": {
                     "TSMC5": {"omp1": {"rc": "RACED"}},
@@ -313,7 +317,7 @@ def _check_invalid_rendering() -> None:
 def _check_device_metrics_survive_collection() -> None:
     """Per-tech reports must retain Rule 13's R² and maximum-error evidence."""
     with tempfile.TemporaryDirectory() as raw:
-        log = (Path(raw) / "dn" / "small" / "tsmc5"
+        log = (Path(raw) / "dnf" / "small" / "tsmc5"
                / "verify_nn_multi_tech_dc.omp1.log")
         log.parent.mkdir(parents=True)
         log.write_text(
@@ -321,7 +325,7 @@ def _check_device_metrics_survive_collection() -> None:
             "R2= 0.95000  MaxErr=4.000e-06  PASS\n"
             "===V710_DONE rc=0===\n"
         )
-        entry = collect.collect(Path(raw))["dn"]["small"][
+        entry = collect.collect(Path(raw))["dnf"]["small"][
             "verify_nn_multi_tech_dc"
         ]["TSMC5"]["omp1"]
         assert entry["min_r2"] == 0.95
@@ -332,7 +336,7 @@ def _check_device_metrics_survive_collection() -> None:
 def _check_error_rows_count_in_device_denominators() -> None:
     """A parsed ERROR row remains a failed configuration, not a dropped row."""
     with tempfile.TemporaryDirectory() as raw:
-        log = (Path(raw) / "dn" / "small" / "tsmc5"
+        log = (Path(raw) / "dnf" / "small" / "tsmc5"
                / "verify_nn_multi_tech_dc.omp1.log")
         log.parent.mkdir(parents=True)
         log.write_text(
@@ -341,7 +345,7 @@ def _check_error_rows_count_in_device_denominators() -> None:
             "  TSMC5_pmos_base ERROR: reference solver failed\n"
             "===V710_DONE rc=1===\n"
         )
-        entry = collect.collect(Path(raw))["dn"]["small"][
+        entry = collect.collect(Path(raw))["dnf"]["small"][
             "verify_nn_multi_tech_dc"
         ]["TSMC5"]["omp1"]
         assert entry["n"] == 2
@@ -376,7 +380,7 @@ def _check_explicit_circuit_errors_are_complete_failures() -> None:
             ),
         }
         for suite, (summary, _error_fragment) in logs.items():
-            log = root / "dn" / "small" / "tsmc5" / f"{suite}.omp1.log"
+            log = root / "dnf" / "small" / "tsmc5" / f"{suite}.omp1.log"
             log.parent.mkdir(parents=True, exist_ok=True)
             marker = ""
             case = collect.CATALOG_BY_SUITE.get(suite)
@@ -396,11 +400,11 @@ def _check_explicit_circuit_errors_are_complete_failures() -> None:
                     candidate_converged=False,
                     execution_state="error",
                     error_kind="candidate",
-                    model_family="DirectNet",
-                    model_level=73,
+                    model_family="DirectNet-Full",
+                    model_level=75,
                     checkpoint_pins={
-                        "nmos": "tsmc5_dn_small_nmos",
-                        "pmos": "tsmc5_dn_small_pmos",
+                        "nmos": "tsmc5_dnf_small_nmos",
+                        "pmos": "tsmc5_dnf_small_pmos",
                     },
                     thread_settings={"omp": 1, "mkl": 1, "torch": 1},
                 ).marker() + "\n"
@@ -417,11 +421,11 @@ def _check_explicit_circuit_errors_are_complete_failures() -> None:
                     candidate_converged=False,
                     execution_state="nonconverged",
                     error_kind="candidate",
-                    model_family="DirectNet",
-                    model_level=73,
+                    model_family="DirectNet-Full",
+                    model_level=75,
                     checkpoint_pins={
-                        "nmos": "tsmc5_dn_small_nmos",
-                        "pmos": "tsmc5_dn_small_pmos",
+                        "nmos": "tsmc5_dnf_small_nmos",
+                        "pmos": "tsmc5_dnf_small_pmos",
                     },
                     thread_settings={"omp": 1, "mkl": 1, "torch": 1},
                 ).marker() + "\n"
@@ -429,7 +433,7 @@ def _check_explicit_circuit_errors_are_complete_failures() -> None:
 
         data = collect.collect(root)
         for suite, (_summary, error_fragment) in logs.items():
-            entry = data["dn"]["small"][suite]["TSMC5"]["omp1"]
+            entry = data["dnf"]["small"][suite]["TSMC5"]["omp1"]
             assert entry["status"] == "ERROR"
             assert error_fragment in entry["error"]
             assert docs._report_result_complete(suite, entry)
@@ -441,7 +445,7 @@ def _check_explicit_circuit_errors_are_complete_failures() -> None:
                 suite, {"rc": "0", "status": "ERROR", "error": "bad"},
             )
 
-        ring = data["dn"]["small"]["verify_circuit_ring_osc"]["TSMC5"]
+        ring = data["dnf"]["small"]["verify_circuit_ring_osc"]["TSMC5"]
         assert collect._verdict(ring) == "ERROR"
         assert docs.verdict_mark("ERROR", None) == "ERROR"
 
@@ -472,7 +476,7 @@ def _check_clean_pool() -> None:
     parsed = {tuple(line.split()) for line in clean}
     expected = {
         (tag, variant, tech, suite, str(omp))
-        for tag in ("dn", "tf")
+        for tag in ("dnf", "tff")
         for variant in ("small", "medium", "large", "xl")
         for tech in ("TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16")
         for suite, omps in {
@@ -485,28 +489,11 @@ def _check_clean_pool() -> None:
     assert parsed == expected
     assert len(clean) == len(parsed)
 
-    full_clean = jobs.build_pools()["full_clean"]
-    full_parsed = {tuple(line.split()) for line in full_clean}
-    full_expected = {
-        (tag, variant, tech, suite, str(omp))
-        for tag in ("dnf", "tff")
-        for variant in ("small", "medium", "large", "xl")
-        for tech in ("TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16")
-        for suite, omps in {
-            **{suite: (1,) for suite in jobs.DEVICE_SUITES},
-            **{suite: (1,) for suite in jobs.DETERMINISTIC},
-            **{suite: (1, 2, 4) for suite in jobs.MULTISTABLE},
-        }.items()
-        for omp in omps
-    }
-    assert full_parsed == full_expected
-    assert len(full_clean) == len(full_parsed) == len(full_expected)
-
     diagnostic = jobs.build_pools()["simple_v2"]
     diagnostic_parsed = {tuple(line.split()) for line in diagnostic}
     diagnostic_expected = {
         (tag, variant, tech, suite, "1")
-        for tag in ("dn", "tf", "dnf", "tff")
+        for tag in ("dnf", "tff")
         for variant in ("small", "medium", "large", "xl")
         for tech in ("TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16")
         for suite in jobs.SIMPLE_V2_SUITES
@@ -523,7 +510,7 @@ def _check_structured_simple_results_survive_collection() -> None:
     """New topology metrics must not depend on human-readable log regexes."""
     with tempfile.TemporaryDirectory() as raw:
         root = Path(raw)
-        log = (root / "dn" / "small" / "tsmc5"
+        log = (root / "dnf" / "small" / "tsmc5"
                / "verify_circuit_topologies__current_mirror.omp1.log")
         log.parent.mkdir(parents=True)
         case = get_case("current_mirror")
@@ -539,11 +526,11 @@ def _check_structured_simple_results_survive_collection() -> None:
                     )
                     for name in analysis_metric_vocabulary(analysis)
                 },
-                model_family="DirectNet",
-                model_level=73,
+                model_family="DirectNet-Full",
+                model_level=75,
                 checkpoint_pins={
-                    "nmos": "tsmc5_dn_small_nmos",
-                    "pmos": "tsmc5_dn_small_pmos",
+                    "nmos": "tsmc5_dnf_small_nmos",
+                    "pmos": "tsmc5_dnf_small_pmos",
                 },
                 campaign_manifest_sha256="",
                 thread_settings={"omp": 1, "mkl": 1, "torch": 1},
@@ -554,7 +541,7 @@ def _check_structured_simple_results_survive_collection() -> None:
             "\n".join(result.marker() for result in results)
             + "\n===V710_DONE rc=0===\n"
         )
-        entry = collect.collect(root)["dn"]["small"][
+        entry = collect.collect(root)["dnf"]["small"][
             "verify_circuit_topologies__current_mirror"
         ]["TSMC5"]["omp1"]
         assert entry["status"] == "DIAGNOSTIC"
@@ -584,7 +571,7 @@ def _check_training_lifecycle_subprocesses() -> None:
         root = Path(raw)
         checkpoint_dir = root / "checkpoints"
         checkpoint_dir.mkdir()
-        stem = checkpoint_dir / "tsmc5_dn_small_nmos"
+        stem = checkpoint_dir / "tsmc5_dnf_small_nmos"
 
         for suffix in ("_best.pt", "_norm.npz", "_best.pt.complete"):
             stem.with_name(stem.name + suffix).touch()
@@ -605,9 +592,9 @@ def _check_training_lifecycle_subprocesses() -> None:
         assert not stem.with_name(stem.name + "_best.pt.complete").exists()
 
         stem.with_name(stem.name + "_norm.npz").touch()
-        marker_failure = _recipe_worker(root, checkpoint_dir, "marker-fail")
+        marker_failure = _recipe_worker(root, checkpoint_dir, "no-marker")
         assert marker_failure.returncode == 3
-        assert "LIFECYCLE ERROR" in marker_failure.stderr
+        assert "FAIL" in marker_failure.stderr
         assert not stem.with_name(stem.name + "_best.pt.complete").exists()
 
 
@@ -639,7 +626,6 @@ def _check_isolated_dataset_root_is_forwarded() -> None:
             "BSIMAR_DATA_DIR": str(data_dir),
             "BENCHMARK_GEN_LOG_DIR": str(root / "gen-logs"),
             "FAKE_CONDA_ARGS": str(invocations),
-            "OUTPUT_CONTRACT": "full-terminal",
         })
         generated = subprocess.run(
             ["bash", str(ROOT / "scripts" / "benchmark_gen_data.sh"), "1"],
@@ -654,6 +640,7 @@ def _check_isolated_dataset_root_is_forwarded() -> None:
         checkpoint_dir.mkdir()
         data_path = data_dir / "tsmc5_dnf_nmos.npz"
         data_path.touch()
+        data_path.with_suffix(".npz.complete").touch()
         _write_executable(
             fake_bin / "conda",
             """#!/usr/bin/env bash
@@ -661,6 +648,7 @@ printf '%s\\n' "$*" >> "$FAKE_CONDA_ARGS"
 stem="$BSIMAR_CHECKPOINT_DIR/tsmc5_dnf_small_nmos"
 : > "${stem}_best.pt"
 : > "${stem}_norm.npz"
+: > "${stem}_best.pt.complete"
 """,
         )
         env.update({
@@ -711,31 +699,31 @@ def _check_regate_readiness_and_family_ownership() -> None:
             "V710_TEST_BYPASS_MANIFEST": "1",
         })
         command = ["bash", str(ROOT / "scripts" / "v710_regate.sh"), "_one",
-                   "dn", "small", "TSMC5", "verify_nn_ac", "1"]
+                   "dnf", "small", "TSMC5", "verify_nn_ac", "1"]
 
-        _ready_checkpoint(checkpoint_dir, "dn", complete=False)
+        _ready_checkpoint(checkpoint_dir, "dnf", complete=False)
         blocked = subprocess.run(command, env=env, capture_output=True, text=True,
                                 check=False, timeout=10)
         assert blocked.returncode == 3
         assert "NO-CKPT" in blocked.stdout
         assert not observed.exists()
 
-        (checkpoint_dir / "tsmc5_dn_small_nmos_norm.npz").unlink()
+        (checkpoint_dir / "tsmc5_dnf_small_nmos_norm.npz").unlink()
         partial = subprocess.run(command, env=env, capture_output=True, text=True,
                                  check=False, timeout=10)
         assert partial.returncode == 3
         assert "still no verdict" in partial.stdout
         assert not observed.exists()
 
-        _ready_checkpoint(checkpoint_dir, "dn")
+        _ready_checkpoint(checkpoint_dir, "dnf")
         ran = subprocess.run(command, env=env, capture_output=True, text=True,
                              check=False, timeout=10)
         assert ran.returncode == 0, ran.stdout + ran.stderr
-        assert observed.read_text().strip() == "73"
+        assert observed.read_text().strip() == "75"
 
         diagnostic_command = [
             "bash", str(ROOT / "scripts" / "v710_regate.sh"), "_one",
-            "dn", "small", "TSMC5",
+            "dnf", "small", "TSMC5",
             "verify_circuit_topologies__current_mirror", "1",
         ]
         diagnostic = subprocess.run(
@@ -755,9 +743,9 @@ def _check_regate_readiness_and_family_ownership() -> None:
         assert result_roots
         assert all(Path(line).name == "simple" for line in result_roots)
 
-        _ready_checkpoint(checkpoint_dir, "tf", config=False)
+        _ready_checkpoint(checkpoint_dir, "tff", config=False)
         with patch.object(coverage, "CKPT", checkpoint_dir):
-            assert not coverage.ckpt_exists("tf", "small", "TSMC5", True)
+            assert not coverage.ckpt_exists("tff", "small", "TSMC5", True)
     regate_source = (ROOT / "scripts" / "v710_regate.sh").read_text()
     assert 'NG="${NGSPICE_BIN:-' in regate_source
     for script in ("recipe_train.sh", "v710_regate.sh"):
@@ -805,7 +793,7 @@ def _check_regate_interpreter_failures_are_infrastructure() -> None:
 
         checkpoint_dir = root / "checkpoints"
         checkpoint_dir.mkdir()
-        _ready_checkpoint(checkpoint_dir, "dn")
+        _ready_checkpoint(checkpoint_dir, "dnf")
         runner = root / "traceback-python"
         _write_executable(
             runner,
@@ -826,11 +814,11 @@ exit 1
         })
         gate = subprocess.run(
             ["bash", str(ROOT / "scripts" / "v710_regate.sh"), "_one",
-             "dn", "small", "TSMC5", "verify_nn_ac", "1"],
+             "dnf", "small", "TSMC5", "verify_nn_ac", "1"],
             env=env, capture_output=True, text=True, check=False, timeout=10,
         )
         assert gate.returncode == 3
-        log = (root / "out" / "dn" / "small" / "tsmc5"
+        log = (root / "out" / "dnf" / "small" / "tsmc5"
                / "verify_nn_ac.omp1.log")
         assert "===V710_DONE rc=infra===" in log.read_text()
         assert "===V710_DONE rc=1===" not in log.read_text()
@@ -953,11 +941,11 @@ def _coverage_entry(
             candidate_converged=False,
             execution_state="nonconverged",
             error_kind="candidate",
-            model_family="DirectNet",
-            model_level=73,
+            model_family="DirectNet-Full",
+            model_level=75,
             checkpoint_pins={
-                "nmos": f"tsmc5_dn_{variant}_nmos",
-                "pmos": f"tsmc5_dn_{variant}_pmos",
+                "nmos": f"tsmc5_dnf_{variant}_nmos",
+                "pmos": f"tsmc5_dnf_{variant}_pmos",
             },
             thread_settings={
                 "omp": thread_count,
@@ -978,7 +966,7 @@ def _coverage_entry(
 def _coverage_data() -> dict[str, dict]:
     """Return one complete TSMC5 DirectNet clean coverage snapshot."""
     return {
-        "dn": {
+        "dnf": {
             variant: {
                 suite: {
                     "TSMC5": {
@@ -1001,15 +989,15 @@ def _check_fail_on_gaps() -> None:
         checkpoints.mkdir()
         for variant in ("small", "medium", "large", "xl"):
             for device in ("nmos", "pmos"):
-                stem = checkpoints / f"tsmc5_dn_{variant}_{device}"
+                stem = checkpoints / f"tsmc5_dnf_{variant}_{device}"
                 for suffix in ("_best.pt", "_norm.npz", "_best.pt.complete"):
                     stem.with_name(stem.name + suffix).touch()
 
         data = _coverage_data()
-        del data["dn"]["small"]["verify_circuit_ring_osc"]["TSMC5"]["omp4"]
+        del data["dnf"]["small"]["verify_circuit_ring_osc"]["TSMC5"]["omp4"]
         (root / "data.json").write_text(json.dumps(data))
         args = [
-            "v730_coverage.py", "--tag", "dn", "--set", "clean",
+            "v730_coverage.py", "--tag", "dnf", "--set", "clean",
             "--techs", "TSMC5", "--passes", "test", "--require-complete",
         ]
         old_argv, old_ckpt, old_passes = sys.argv, coverage.CKPT, coverage.PASSES
@@ -1074,7 +1062,7 @@ def _check_report_payload_completeness() -> None:
                 assert not docs._report_result_complete(suite, incomplete)
 
     data = {
-        "dn": {
+        "dnf": {
             variant: {
                 suite: {
                     tech: {
@@ -1091,13 +1079,13 @@ def _check_report_payload_completeness() -> None:
     old_data = docs.PASS_DATA
     docs.PASS_DATA = {"test": data}
     try:
-        assert docs._matrix_complete_in_pass("dn", False, "test")
-        cell = data["dn"]["small"]["verify_circuit_ring_osc"]["TSMC5"]["omp1"]
+        assert docs._matrix_complete_in_pass("dnf", False, "test")
+        cell = data["dnf"]["small"]["verify_circuit_ring_osc"]["TSMC5"]["omp1"]
         del cell["metric"]
-        assert not docs._matrix_complete_in_pass("dn", False, "test")
+        assert not docs._matrix_complete_in_pass("dnf", False, "test")
         cell["metric"] = 12.0
         cell["rc"] = "124"
-        assert not docs._matrix_complete_in_pass("dn", False, "test")
+        assert not docs._matrix_complete_in_pass("dnf", False, "test")
     finally:
         docs.PASS_DATA = old_data
 
@@ -1130,22 +1118,20 @@ def _check_readme_uses_all_current_families() -> None:
 
         old_root, old_tpl, old_docs = docs.ROOT, docs.TPL, docs.DOCS
         old_data, old_pass = docs.PASS_DATA, docs.REPORT_PASS
-        old_provenance = docs._v7517_provenance_complete
         docs.ROOT = root
         docs.TPL = templates
         docs.DOCS = rendered
-        docs.PASS_DATA = {"V7.5.17": data}
+        docs.PASS_DATA = {"test": data}
         docs.REPORT_PASS = {
             **old_pass,
-            **{(tag, False): "V7.5.17"
+            **{(tag, False): "test"
                for tag in docs.CURRENT_CLEAN_TAGS},
         }
-        docs._v7517_provenance_complete = lambda: True
         try:
             with redirect_stdout(io.StringIO()):
                 assert docs.build_readme(check=False)
             result = (rendered / "README.md").read_text()
-            assert "V7.5.17 `small` **0/20**" in result
+            assert "test `small` **0/20**" in result
             assert "| 75 |" in result
             assert "| 76 |" in result
         finally:
@@ -1154,7 +1140,6 @@ def _check_readme_uses_all_current_families() -> None:
             docs.DOCS = old_docs
             docs.PASS_DATA = old_data
             docs.REPORT_PASS = old_pass
-            docs._v7517_provenance_complete = old_provenance
 
 
 def _check_v766_full_clean_registration() -> None:
@@ -1176,9 +1161,9 @@ def _check_incomplete_reports_preserve_verified_output() -> None:
         rendered = root / "rendered"
         templates.mkdir()
         rendered.mkdir()
-        (templates / "DirectNet-L73-clean.md.in").write_text("<!--SCOREBOARD-->\n")
+        (templates / "DirectNet-L75-clean.md.in").write_text("<!--SCOREBOARD-->\n")
         (templates / "README.md.in").write_text("<!--SCOREBOARD-->\n")
-        destination = rendered / "DirectNet-L73-clean.md"
+        destination = rendered / "DirectNet-L75-clean.md"
         original = b"preserved rendered evidence\n"
         destination.write_bytes(original)
         readme_destination = rendered / "README.md"
@@ -1193,19 +1178,19 @@ def _check_incomplete_reports_preserve_verified_output() -> None:
         docs.TPL = templates
         docs.DOCS = rendered
         docs.PASS_DATA = {"V7.5.16": {}}
-        docs.REPORT_PASS = {**old_pass, ("dn", False): "V7.5.16"}
+        docs.REPORT_PASS = {**old_pass, ("dnf", False): "V7.5.16"}
         docs.PRESERVED_REPORT_SHA256 = {
             **old_hashes,
-            ("dn", False): hashlib.sha256(original).hexdigest(),
+            ("dnf", False): hashlib.sha256(original).hexdigest(),
         }
         docs.PRESERVED_README_SHA256 = hashlib.sha256(readme_original).hexdigest()
         try:
             with redirect_stdout(io.StringIO()):
-                assert docs.build("dn", False, check=False)
+                assert docs.build("dnf", False, check=False)
             assert destination.read_bytes() == original
             destination.write_bytes(b"drifted rendered evidence\n")
             with redirect_stdout(io.StringIO()):
-                assert not docs.build("dn", False, check=False)
+                assert not docs.build("dnf", False, check=False)
 
             with redirect_stdout(io.StringIO()):
                 assert docs.build_readme(check=False)
@@ -1214,7 +1199,7 @@ def _check_incomplete_reports_preserve_verified_output() -> None:
             with redirect_stdout(io.StringIO()):
                 assert not docs.build_readme(check=False)
             scoreboard = docs.scoreboard()
-            assert "V7.5.17 `large` **9/20** served" in scoreboard
+            assert "V7.6.6 `large` **20/20** simple-circuit matrix" in scoreboard
             assert "V7.5.16 `large`" not in scoreboard
         finally:
             docs.TPL = old_tpl
@@ -1273,7 +1258,7 @@ def main() -> int:
     )
     per_family = (
         len(jobs.CLEAN_VARIANTS)
-        * len(jobs.CLEAN_TECHS)
+        * len(jobs.TECHS)
         * (
             len(jobs.DEVICE_SUITES)
             + len(jobs.DETERMINISTIC)
@@ -1286,7 +1271,7 @@ def main() -> int:
     ) * per_family
     print(
         f"Accuracy campaign tools: {clean_jobs} unique clean jobs; "
-        f"{current_jobs} current DirectNet/BSIM-AR jobs; invalid outcomes excluded"
+        f"{current_jobs} full-terminal NN jobs; invalid outcomes excluded"
     )
     return 0
 

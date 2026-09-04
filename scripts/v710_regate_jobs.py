@@ -1,19 +1,12 @@
 #!/usr/bin/env python3
-"""Generate V7.1.0 re-gate job lists for scripts/v710_regate.sh.
+"""Generate full-terminal re-gate job lists for scripts/v710_regate.sh.
 
 One line per job: ``tag variant TECH suite omp``.
 
 Pools (write one file each so they can be dispatched with different PAR):
 
-* ``dn``   — DirectNet, all 10 on-disk variants, full re-gate
-             (7 device/integration suites + 4 circuit benchmarks, with
-             OMP{1,2,4} on opamp/ring).
-* ``tf_dev``    — BSIM-AR device suites only, 5 priority variants (~40x per eval).
-* ``tf_strict`` — BSIM-AR strict-OMP sweep for the `large` corridor recipes,
-                  the one gap BSIM-AR-L74-clean.md flags explicitly.
-* ``clean`` — reduced DirectNet and BSIM-AR clean S/M/L/XL tiers.
-* ``full_clean`` — full-terminal DirectNet and BSIM-AR clean S/M/L/XL tiers.
-* ``simple_v2`` — nominal held-out topology screen for every clean family.
+* ``clean`` — DirectNet-Full and BSIM-AR-Full S/M/L/XL tiers.
+* ``simple_v2`` — nominal held-out topology screen for both families.
 
 Usage: python scripts/v710_regate_jobs.py <outdir>
 """
@@ -33,8 +26,7 @@ from tests.common.simple_circuit_catalog import (  # noqa: E402
     cases,
 )
 
-TECHS = ["TSMC5", "TSMC7", "TSMC12", "TSMC16"]
-CLEAN_TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
+TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 
 DEVICE_SUITES = [
     "verify_device_integrity",        # full DC surface/derivative diagnostics
@@ -59,13 +51,6 @@ DETERMINISTIC = [
 ]
 SIMPLE_V2_SUITES = [case.campaign_suite for case in _SIMPLE_V2_CASES]
 
-DN_VARIANTS = [
-    "small", "medium", "large", "xl",          # `large` = production crit30f weights
-    "v660clean_large", "crit30f_large", "csob_large",
-    "corroft_xl", "crit10_xl", "crit15m_xl",
-]
-TF_DEV_VARIANTS = ["small", "medium", "large", "xl", "corroft_medium"]
-TF_STRICT_VARIANTS = ["corroft_large", "crit15m_large", "crit30_large", "corro15_medium"]
 CLEAN_VARIANTS = ["small", "medium", "large", "xl"]
 
 
@@ -87,22 +72,12 @@ def full(
     return jobs
 
 
-def device_only(tag: str, variants: list[str]) -> list[str]:
-    return [f"{tag} {v} {t} {s} 1"
-            for v in variants for t in TECHS for s in DEVICE_SUITES]
-
-
-def strict_only(tag: str, variants: list[str]) -> list[str]:
-    return [f"{tag} {v} {t} {s} {omp}"
-            for v in variants for t in TECHS for s in MULTISTABLE for omp in (1, 2, 4)]
-
-
 def simple_v2(tag: str, variants: list[str]) -> list[str]:
     """Nominal diagnostic cells stay OMP=1 and outside qualification totals."""
     return [
         f"{tag} {variant} {tech} {suite} 1"
         for variant in variants
-        for tech in CLEAN_TECHS
+        for tech in TECHS
         for suite in SIMPLE_V2_SUITES
     ]
 
@@ -110,20 +85,11 @@ def simple_v2(tag: str, variants: list[str]) -> list[str]:
 def build_pools() -> dict[str, list[str]]:
     """Return every campaign pool from one testable source of truth."""
     return {
-        "dn": full("dn", DN_VARIANTS),
-        "tf_dev": device_only("tf", TF_DEV_VARIANTS),
-        "tf_strict": strict_only("tf", TF_STRICT_VARIANTS),
         "clean": [
-            *full("dn", CLEAN_VARIANTS, CLEAN_TECHS),
-            *full("tf", CLEAN_VARIANTS, CLEAN_TECHS),
-        ],
-        "full_clean": [
-            *full("dnf", CLEAN_VARIANTS, CLEAN_TECHS),
-            *full("tff", CLEAN_VARIANTS, CLEAN_TECHS),
+            *full("dnf", CLEAN_VARIANTS),
+            *full("tff", CLEAN_VARIANTS),
         ],
         "simple_v2": [
-            *simple_v2("dn", CLEAN_VARIANTS),
-            *simple_v2("tf", CLEAN_VARIANTS),
             *simple_v2("dnf", CLEAN_VARIANTS),
             *simple_v2("tff", CLEAN_VARIANTS),
         ],

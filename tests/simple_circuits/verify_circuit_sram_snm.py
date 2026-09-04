@@ -11,7 +11,7 @@ lobe swaps q <-> qb. SNM is the side of the largest square that fits between
 the two lobes.
 
 Both lobes are produced by:
-  (i)  DirectNet (LEVEL=73) half-cell DC sweeps (PyCircuitSim),
+  (i)  DirectNet-Full (LEVEL=75) half-cell DC sweeps (PyCircuitSim),
   (ii) the NGSPICE BSIM-CMG (LEVEL=72) ground truth.
 
 It additionally solves the full cross-coupled 6T cell with ``force_ic=True``
@@ -118,7 +118,7 @@ def directnet_sram_lobe_deck(bt: BenchTech, nfin: int) -> str:
 
 
 def _directnet_halfcell_netlist(bt: BenchTech, nfin: int, path: Path) -> Path:
-    """A DirectNet (LEVEL=73) SRAM half-cell with broken feedback."""
+    """A DirectNet-Full SRAM half-cell with broken feedback."""
     path.write_text(directnet_sram_lobe_deck(bt, nfin))
     return path
 

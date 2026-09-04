@@ -1,29 +1,31 @@
-"""MAE + LDS loss for BSIMAR / DirectNet training.
+"""Losses for six-surface DirectNet-Full and BSIM-AR-Full training."""
 
-The production loss is plain MAE multiplied by per-target Label
-Distribution Smoothing weights (Yang et al., ICML 2021). Computed
-once on the train split and broadcast over batches.
-"""
+from __future__ import annotations
 
 import numpy as np
 import torch
-import torch.nn as nn
-from scipy.ndimage import gaussian_filter1d, convolve1d
+from scipy.ndimage import convolve1d, gaussian_filter1d
 from scipy.signal.windows import triang
+from torch import nn
+
+from neural_network.data.contracts import FULL_TERMINAL_OUTPUT_COLUMN_ORDER
 
 
 def _kernel(kernel: str, ks: int, sigma: float) -> np.ndarray:
-    assert kernel in ("gaussian", "triang", "laplace")
+    if kernel not in ("gaussian", "triang", "laplace"):
+        raise ValueError(f"unsupported LDS kernel: {kernel}")
     half = (ks - 1) // 2
     if kernel == "gaussian":
         base = [0.0] * half + [1.0] + [0.0] * half
-        w = gaussian_filter1d(base, sigma=sigma)
+        weights = gaussian_filter1d(base, sigma=sigma)
     elif kernel == "triang":
-        w = triang(ks)
+        weights = triang(ks)
     else:
-        f = lambda x: np.exp(-abs(x) / sigma) / (2.0 * sigma)
-        w = np.array([f(x) for x in range(-half, half + 1)])
-    return w / w.max()
+        weights = np.array([
+            np.exp(-abs(value) / sigma) / (2.0 * sigma)
+            for value in range(-half, half + 1)
+        ])
+    return weights / weights.max()
 
 
 def compute_lds_weights_per_target(
@@ -34,36 +36,36 @@ def compute_lds_weights_per_target(
     lds_sigma: float = 0.8,
     strategy: str = "uniform",
 ) -> np.ndarray:
-    """Per-sample LDS weight, one column per target. Mean-normalised."""
+    """Return mean-normalized LDS weights for every sample and surface."""
     from sklearn.preprocessing import KBinsDiscretizer
 
-    n, d = y_train.shape
-    weights = np.ones((n, d), dtype=np.float32)
+    n_rows, n_targets = y_train.shape
+    result = np.ones((n_rows, n_targets), dtype=np.float32)
     kernel = _kernel(lds_kernel, lds_ks, lds_sigma)
-
-    for k in range(d):
-        col = y_train[:, k:k + 1]
-        if col.max() == col.min():
+    for target in range(n_targets):
+        column = y_train[:, target:target + 1]
+        if column.max() == column.min():
             continue
-        try:
-            disc = KBinsDiscretizer(
-                n_bins=n_bins, encode="ordinal", strategy=strategy)
-            bin_idx = disc.fit_transform(col).flatten().astype(int)
-        except Exception:
-            continue
+        discretizer = KBinsDiscretizer(
+            n_bins=n_bins, encode="ordinal", strategy=strategy,
+        )
+        bin_index = discretizer.fit_transform(column).ravel().astype(int)
         counts = np.clip(
-            np.bincount(bin_idx, minlength=n_bins).astype(np.float32),
-            1e-8, None)
+            np.bincount(bin_index, minlength=n_bins).astype(np.float32),
+            1e-8,
+            None,
+        )
         smoothed = np.clip(
-            convolve1d(counts, weights=kernel, mode="constant"), 1e-8, None)
-        eff = np.clip(smoothed[bin_idx], 1e-4, None)
-        w = np.clip(1.0 / eff, 0.01, 100.0)
-        weights[:, k] = w / w.mean()
-    return weights
+            convolve1d(counts, weights=kernel, mode="constant"), 1e-8, None,
+        )
+        effective = np.clip(smoothed[bin_index], 1e-4, None)
+        weights = np.clip(1.0 / effective, 0.01, 100.0)
+        result[:, target] = weights / weights.mean()
+    return result
 
 
 class MAELoss(nn.Module):
-    """MAE with optional per-sample-per-target weights."""
+    """MAE with optional per-sample, per-surface weights."""
 
     def forward(
         self,
@@ -71,374 +73,16 @@ class MAELoss(nn.Module):
         y_true: torch.Tensor,
         weights: torch.Tensor | None = None,
     ) -> torch.Tensor:
-        ae = torch.abs(y_pred - y_true)
+        absolute_error = torch.abs(y_pred - y_true)
         if weights is not None:
             if weights.dim() == 1:
                 weights = weights.unsqueeze(1)
-            ae = ae * weights
-        return ae.mean()
-
-
-# ── Sobolev id-derivative consistency loss (V6.4.7 P4 / S10) ─────────────────
-#
-# Couples the autograd ∂id/∂V the SOLVER consumes to the OSDI
-# gm/gds/gmb columns the 13-head loss already supervises. The predicted gm/gds
-# /gmb *heads* are accurate (~1 % NRMSE), but the autograd slope of the id
-# head — the only Jacobian NR uses — drifts (S10 deriv-fidelity ref: NMOS gds
-# 6-13 %, PMOS gds 20-70 %). This term supervises that slope.
-#
-# id-CHANNELS ONLY. The V5 Phase-C 8-channel form (id + 5 cap channels) was
-# net-detrimental at S-scale (results/v5_phase_c_jac_loss_ab_2026_05_07.md);
-# the chain-rule transform is recovered from `git show 930c274`, but restricted
-# to the three id channels per the P4 design.
-#
-# SAME SPACE AS THE GATE: the comparison happens in the normalized-asinh
-# derivative space the deriv-fidelity scorer measures
-# (scripts/v6_4_7_deriv_fidelity.py), so the term supervises exactly the
-# quantity the P4 promotion gate scores.
-#
-# SIGN CONVENTION (the P0-I §2 trap, settled empirically — see
-# `_verify_sobolev_target` in scripts/v6_4_7_s10_sign_check.py and the scorer
-# float64-FD selfcheck): the stored OSDI opvars are positive-magnitude
-# conductances while the stored `id` keeps the PyCMG terminal sign, so
-#     stored gm  = -d(id_stored)/dVg
-#     stored gds = -d(id_stored)/dVd
-#     stored gmb = -d(id_stored)/dVb
-# i.e. a UNIFORM negation of all three channels maps autograd ∂id/∂V to the
-# OSDI columns — for BOTH device types. This is NOT the 930c274 "gds is the
-# diagonal so no flip" rule: that comment is wrong for this stored convention
-# (it would compare ∂id/∂Vd against +gds, doubling the gds residual). The
-# scorer's float64 central-FD selfcheck (<0.5 % median rel err) and a
-# well-trained control-v2 net (autograd ∂id/∂Vd already ≈ -gds to ~7 % for
-# NMOS) both confirm the uniform negation.
-
-# ⚠ THE STORED gds COLUMN IS SIGN-FLIPPED IN THE REVERSE-Vds CORRIDOR.
-# The OSDI `gds` *opvar* flips sign in reverse Vds (the model swaps source and
-# drain internally) while the true derivative does not. Verified by finite
-# difference — tsmc5 nmos at Vds = -0.033 V: true -d(id)/dVd = +3.124e-03 S,
-# opvar = -3.124e-03 S. In forward Vds the opvar equals -d(id)/dVd to 4-5
-# digits for both device types. The generator stores the raw opvar, so every
-# dataset's `gds` column is wrong-signed throughout the reverse corridor, and
-# the trained gds head reproduces the flip (84-99.8 % sign agreement with it).
-# See the 2026-07-21 systematic audit §A3-data (docs/CHANGELOG.md V6.13.x).
-#
-# Currently latent, and the guard below keeps it that way: no shipped or
-# documented checkpoint supervises the id-derivative channels. But the `sob`
-# recipe is `--sobolev --sobolev-corridor-only`, which would apply the gds
-# target *precisely on corridor rows* — maximum overlap with the corruption.
-# Fix the generator convention before enabling gds here, and note that the
-# simulator's stamped gds is the autograd Jacobian of the `id` head, not this
-# column, so inference is unaffected.
-SOBOLEV_GDS_IS_REVERSE_CORRUPTED: bool = True
-
-# (target_name, voltage-input column index) — ∂id/∂V_col vs the stored target.
-SOBOLEV_ID_CHANNELS: list[tuple[str, int]] = [
-    ("gm", 1),    # ∂id/∂Vg  vs gm
-    ("gds", 0),   # ∂id/∂Vd  vs gds — see SOBOLEV_GDS_IS_REVERSE_CORRUPTED
-    ("gmb", 3),   # ∂id/∂Vb  vs gmb
-]
-
-
-class SobolevIdLoss(nn.Module):
-    """λ · mean_chan MAE(autograd ∂id/∂V, -target) in normalized-asinh space.
-
-    DirectNet-only (asinh output norm). For each id channel the autograd
-    derivative ``∂(id_norm)/∂(V_norm)`` is compared against the supervised
-    gm/gds/gmb target transformed into the same normalized-derivative units
-    via the asinh chain rule:
-
-        d(id_norm)/d(V_norm) = (in_std_V / out_std_id)
-            · d(id_phys)/d(V) / sqrt(s_id² + id_phys²)
-        target_in_norm = -target_phys · in_std_V / out_std_id
-                          / sqrt(s_id² + id_phys_pred²)
-
-    Rows with ``|id_true| <= id_floor`` are masked out (their OSDI gm/gds/gmb
-    are solve-tolerance noise with random sign — supervising slopes on noise
-    is the V5 Phase-C failure mode; P4 rev-3 (iii) trust-floor mask). Rows
-    with ``|id_true| > strong_floor`` may be up-weighted by ``strong_boost``
-    to emphasise the conducting / opamp-gain corridor (gain ∝ gm/gds at
-    strong inversion; P4 rev-2 corridor importance without P5's harvested
-    classes).
-    """
-
-    def __init__(
-        self,
-        lam: float = 0.1,
-        column_order: list[str] | None = None,
-        id_floor: float = 1e-12,
-        strong_boost: float = 1.0,
-        strong_floor: float = 1e-6,
-        corridor_only: bool = False,
-    ) -> None:
-        super().__init__()
-        self.lam = float(lam)
-        self.id_floor = float(id_floor)
-        self.strong_boost = float(strong_boost)
-        self.strong_floor = float(strong_floor)
-        # corridor_only: hard-mask to the conducting / opamp-gain corridor
-        # (|id_true| > strong_floor) instead of the noise trust-floor. Focuses
-        # the term on the op-point slope rather than diluting it across the
-        # mass of weak-inversion rows (the plan's predicted failure mode of a
-        # globally-uniform λ).
-        self.corridor_only = bool(corridor_only)
-        from neural_network.data.normalize import OUTPUT_COLUMN_ORDER
-        self.column_order = column_order or OUTPUT_COLUMN_ORDER
-        col = {c: i for i, c in enumerate(self.column_order)}
-        if "id" not in col:
-            raise ValueError("SobolevIdLoss requires an 'id' output column")
-        if SOBOLEV_GDS_IS_REVERSE_CORRUPTED and "gds" in col and any(
-                t == "gds" for t, _ in SOBOLEV_ID_CHANNELS):
-            raise ValueError(
-                "The supervised `gds` column is sign-flipped throughout the "
-                "reverse-Vds corridor (the OSDI gds opvar flips sign there "
-                "while the true derivative does not; audit A3-data), so this "
-                "loss would train the id head against a wrong-signed slope on "
-                "exactly the rows --sobolev-corridor-only selects. Fix the "
-                "sign convention in the data generator and regenerate, then "
-                "set SOBOLEV_GDS_IS_REVERSE_CORRUPTED = False. Refusing "
-                "rather than silently dropping the channel, so no run reports "
-                "a Sobolev number it did not actually measure.")
-        self.id_col = col["id"]
-        # (target_col, voltage_input_col) for channels present in this order.
-        self.channels: list[tuple[int, int]] = [
-            (col[t], vidx) for (t, vidx) in SOBOLEV_ID_CHANNELS if t in col]
-
-    def forward(
-        self,
-        x_norm: torch.Tensor,           # (B, in_dim) requires_grad=True
-        y_pred_norm: torch.Tensor,      # (B, out_dim)
-        y_true_norm: torch.Tensor,      # (B, out_dim)
-        in_std: torch.Tensor,           # (in_dim,)
-        out_std: torch.Tensor,          # (out_dim,)
-        out_mean: torch.Tensor,         # (out_dim,)
-        asinh_scale: torch.Tensor,      # (out_dim,)
-        weights: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Caller must set ``x_norm.requires_grad_(True)`` before the forward
-        pass that produced ``y_pred_norm``."""
-        idc = self.id_col
-        s_id = asinh_scale[idc]
-        out_std_id = out_std[idc]
-
-        # Predicted id physical (chain-rule denominator factor).
-        u_id = y_pred_norm[:, idc] * out_std_id + out_mean[idc]
-        id_phys_pred = s_id * torch.sinh(u_id)
-        factor = torch.sqrt(s_id * s_id + id_phys_pred * id_phys_pred + 1e-30)
-
-        # True id physical → trust-floor / corridor mask + strong boost.
-        with torch.no_grad():
-            u_id_t = y_true_norm[:, idc] * out_std_id + out_mean[idc]
-            abs_id_true = torch.abs(s_id * torch.sinh(u_id_t))
-            hard_floor = (self.strong_floor if self.corridor_only
-                          else self.id_floor)
-            row_w = (abs_id_true > hard_floor).to(y_pred_norm.dtype)
-            if self.strong_boost != 1.0 and not self.corridor_only:
-                row_w = row_w * torch.where(
-                    abs_id_true > self.strong_floor,
-                    torch.as_tensor(self.strong_boost, dtype=row_w.dtype,
-                                    device=row_w.device),
-                    torch.ones((), dtype=row_w.dtype, device=row_w.device))
-
-        # One autograd.grad: all 3 channels differentiate the SAME id head,
-        # and DirectNet is per-row independent, so grad of the column-sum is
-        # the per-row gradient (same trick as the scorer / _MOSFETNNBase).
-        g = torch.autograd.grad(
-            y_pred_norm[:, idc].sum(), x_norm,
-            create_graph=True, retain_graph=True)[0]   # (B, in_dim)
-
-        norm_rows = row_w.sum().clamp_min(1.0)
-        total = torch.zeros((), device=y_pred_norm.device,
-                            dtype=y_pred_norm.dtype)
-        n_chan = 0
-        for tgt_col, vcol in self.channels:
-            u_tgt = y_true_norm[:, tgt_col] * out_std[tgt_col] + out_mean[tgt_col]
-            tgt_phys = asinh_scale[tgt_col] * torch.sinh(u_tgt)
-            # UNIFORM negation (all three id channels) — see class docstring.
-            tgt_in_norm = -tgt_phys * in_std[vcol] / out_std_id / factor
-            ae = torch.abs(g[:, vcol] - tgt_in_norm) * row_w
-            if weights is not None:
-                w = weights[:, tgt_col] if weights.dim() == 2 else weights
-                ae = ae * w
-            total = total + ae.sum() / norm_rows
-            n_chan += 1
-        if n_chan == 0:
-            return total
-        return self.lam * total / n_chan
-
-
-# ── Charge-derivative (cap) Sobolev consistency loss (V6.5.2 / charge channels) ─
-#
-# The TRANSIENT and AC solvers consume the small-signal capacitances as the
-# AUTOGRAD derivatives of the predicted terminal charges qg/qd
-# (mosfet_nn._unpack_eval / solver._stamp_cap_ac / _stamp_mosfet_transient):
-#
-#     cgg_sim = +∂qg/∂Vg     cgd_sim = +∂qg/∂Vd     (raw autograd, NO flip)
-#     cdg_sim = +∂qd/∂Vg     cdd_sim = +∂qd/∂Vd
-#
-# The directly-predicted cgg..cdd OUTPUT COLUMNS are supervised in training but
-# NEVER read at inference. So — exactly as SobolevIdLoss couples the autograd
-# ∂id/∂V to the supervised gm/gds/gmb — this term couples the autograd ∂q/∂V to
-# the supervised cap columns, the quantity the AC pole / switchcap charge / RO
-# timing actually depend on. The autograd cap can drift from the (accurate)
-# supervised cap column (V6.5.2 diag: ~1% on the grid average but up to ~25% on
-# mid-trajectory corners), the cap analogue of the S10 id-slope drift.
-#
-# SIGN CONVENTION (V6.5.2 diag, rooted in pycmg/model._condense_caps):
-# OSDI stores the SPICE condensed caps with the OFF-DIAGONALS NEGATED
-# (cgd_data = −∂Qg/∂Vd, cdg_data = −∂Qd/∂Vg) while the diagonals are unflipped
-# (cgg_data = +∂Qg/∂Vg, cdd_data = +∂Qd/∂Vd). The autograd ∂q/∂V is the raw
-# derivative, so the per-channel sign that maps autograd→OSDI is +,−,−,+:
-#
-#     autograd ∂qg/∂Vg  vs  +cgg      autograd ∂qg/∂Vd  vs  −cgd
-#     autograd ∂qd/∂Vg  vs  −cdg      autograd ∂qd/∂Vd  vs  +cdd
-#
-# (cgs = ∂qg/∂Vs is degenerate — Vs≡0 in training — and the AC stamp does not
-# consume it, so it is deliberately excluded.) The asinh chain rule and masking
-# mirror SobolevIdLoss; the differentiated head is qg/qd (its own asinh scale).
-
-# (target_cap, charge_head, voltage_input_col, sign)
-CHARGE_SOBOLEV_CHANNELS: list[tuple[str, str, int, float]] = [
-    ("cgg", "qg", 1, +1.0),   # ∂qg/∂Vg  vs  +cgg
-    ("cgd", "qg", 0, -1.0),   # ∂qg/∂Vd  vs  −cgd
-    ("cdg", "qd", 1, -1.0),   # ∂qd/∂Vg  vs  −cdg
-    ("cdd", "qd", 0, +1.0),   # ∂qd/∂Vd  vs  +cdd
-]
-
-
-class ChargeSobolevLoss(nn.Module):
-    """λ · mean_chan MAE(autograd ∂q/∂V, sign·cap_target) in normalized-asinh space.
-
-    DirectNet-only (asinh output norm). For each cap channel the autograd
-    derivative ``∂(q_norm)/∂(V_norm)`` of the relevant charge head is compared
-    against the supervised cap column transformed into the same
-    normalized-derivative units via the asinh chain rule on the CHARGE head:
-
-        d(q_norm)/d(V_norm) = (in_std_V / out_std_q)
-            · d(q_phys)/dV / sqrt(s_q² + q_phys_pred²)
-        target_in_norm = sign · cap_phys · in_std_V / out_std_q
-                          / sqrt(s_q² + q_phys_pred²)
-
-    Two ``autograd.grad`` calls (qg, qd column-sums; DirectNet is per-row
-    independent so the column-sum gradient is the per-row gradient). Rows whose
-    cap target is below ``cap_floor`` (noise) are masked per channel. Honours
-    the per-target LDS / class ``weights`` (so ``--class-weights`` can steer the
-    term toward the reverse_vds / vbs corridors where the autograd cap drifts).
-    """
-
-    def __init__(
-        self,
-        lam: float = 0.05,
-        column_order: list[str] | None = None,
-        cap_floor: float = 1e-19,
-    ) -> None:
-        super().__init__()
-        self.lam = float(lam)
-        self.cap_floor = float(cap_floor)
-        from neural_network.data.normalize import OUTPUT_COLUMN_ORDER
-        self.column_order = column_order or OUTPUT_COLUMN_ORDER
-        col = {c: i for i, c in enumerate(self.column_order)}
-        for q in ("qg", "qd"):
-            if q not in col:
-                raise ValueError(f"ChargeSobolevLoss requires a '{q}' column")
-        # Group channels by charge head so each head differentiates once.
-        # head -> list of (cap_col, vcol, sign)
-        self.heads: dict[str, list[tuple[int, int, float]]] = {}
-        self.head_col: dict[str, int] = {}
-        for cap, head, vcol, sign in CHARGE_SOBOLEV_CHANNELS:
-            if cap not in col or head not in col:
-                continue
-            self.heads.setdefault(head, []).append((col[cap], vcol, sign))
-            self.head_col[head] = col[head]
-
-    def forward(
-        self,
-        x_norm: torch.Tensor,           # (B, in_dim) requires_grad=True
-        y_pred_norm: torch.Tensor,      # (B, out_dim)
-        y_true_norm: torch.Tensor,      # (B, out_dim)
-        in_std: torch.Tensor,           # (in_dim,)
-        out_std: torch.Tensor,          # (out_dim,)
-        out_mean: torch.Tensor,         # (out_dim,)
-        asinh_scale: torch.Tensor,      # (out_dim,)
-        weights: torch.Tensor | None = None,
-    ) -> torch.Tensor:
-        """Caller must set ``x_norm.requires_grad_(True)`` before the forward."""
-        total = torch.zeros((), device=y_pred_norm.device,
-                            dtype=y_pred_norm.dtype)
-        n_chan = 0
-        for head, chans in self.heads.items():
-            qc = self.head_col[head]
-            s_q = asinh_scale[qc]
-            out_std_q = out_std[qc]
-            # Predicted physical charge → asinh chain-rule denominator factor.
-            u_q = y_pred_norm[:, qc] * out_std_q + out_mean[qc]
-            q_phys_pred = s_q * torch.sinh(u_q)
-            factor = torch.sqrt(s_q * s_q + q_phys_pred * q_phys_pred + 1e-40)
-            # One autograd.grad per charge head (column-sum trick).
-            g = torch.autograd.grad(
-                y_pred_norm[:, qc].sum(), x_norm,
-                create_graph=True, retain_graph=True)[0]    # (B, in_dim)
-            for cap_col, vcol, sign in chans:
-                u_t = (y_true_norm[:, cap_col] * out_std[cap_col]
-                       + out_mean[cap_col])
-                cap_phys = asinh_scale[cap_col] * torch.sinh(u_t)
-                with torch.no_grad():
-                    row_w = (cap_phys.abs() > self.cap_floor).to(
-                        y_pred_norm.dtype)
-                tgt_in_norm = (sign * cap_phys * in_std[vcol]
-                               / out_std_q / factor)
-                ae = torch.abs(g[:, vcol] - tgt_in_norm) * row_w
-                if weights is not None:
-                    w = (weights[:, cap_col] if weights.dim() == 2 else weights)
-                    ae = ae * w
-                total = total + ae.sum() / row_w.sum().clamp_min(1.0)
-                n_chan += 1
-        if n_chan == 0:
-            return total
-        return self.lam * total / n_chan
-
-
-# ── Subthreshold id value loss (V6.4.7 P3 / S11) ────────────────────────────
-#
-# Target: the SRAM force_ic inboard attractor (0/8). At the stuck fixed point
-# the pinning NMOS over-predicts its weak-inversion current ~7.5x (NN 6.36 vs
-# OSDI 0.84 uA at Vov ~ +45 mV) and the hard-OFF PMOS predicts +0.50 uA where
-# OSDI is ~0 (P0-D, results/v6_4_6/phase0_D_sram_attractor.md). The released
-# cell therefore cannot suppress the OFF branch enough to rail.
-#
-# WHY THE STANDARD LOSS MISSES IT: the global asinh scale s_id ~ 2.6e-5 maps
-# the whole sub-uA roll-off to ~0.01 % of normalized range — a 1 nA error is
-# asinh(1e-9/2.6e-5) ~ 4e-5, ~zero loss mass. The regen-v2 data HAS the rows
-# (S9b: ~15 % of each cell below 1 uA, ~6.7 % below 1 nA) but the asinh+LDS
-# transform gives them no signal. This term re-scales the subthreshold band
-# with a SMALL asinh scale s2 ~ 1e-9 so each weak-inversion decade carries
-# unit-order loss (asinh ~ log above s2 ⇒ decade-balanced by construction).
-#
-# TWO BANDS (plan P3 Stage-1 (i),(ii),(vi)):
-#   1. VALUE (Huber, sign-aware): id_floor < |id_true| < upper — teaches the
-#      true sub-uA value, directly suppressing the 7.5x pinning over-prediction.
-#      asinh preserves sign ⇒ reverse_vds rows with genuine negative id are
-#      supervised correctly (plan (iii) needs no special-case).
-#   2. CEILING HINGE (sign-AGNOSTIC): |id_true| <= off_floor — penalize only
-#      relu(|id_pred| above k*NFIN*1nA). Suppresses the hard-OFF over-prediction
-#      WITHOUT ever injecting current (never a floor — NOT the D4 Ioff_rail
-#      dead end). Sign-agnostic ⇒ the random-sign sub-floor OSDI noise (the
-#      v5 §4-B4 filter rationale) is irrelevant, and a reverse_vds row that
-#      genuinely conducts has |id_true| > off_floor so it is auto-exempt.
-#
-# The term is ADDED to the MAE+LDS loss (does not replace it) so strong
-# inversion / the ~20x VTC trip gain band is untouched (upper mask = 1e-6).
+            absolute_error = absolute_error * weights
+        return absolute_error.mean()
 
 
 class SubthresholdIdLoss(nn.Module):
-    """λ · (Huber value term + ceiling_w · ceiling hinge) in asinh(id/s2) space.
-
-    Supports the reduced ``id`` and full-terminal ``i_d`` drain-current
-    columns under asinh output normalization. ``s2`` (default 1e-9) sets the
-    subthreshold resolution; ``upper`` (1e-6) caps the value band below the
-    trip gain; ``id_floor`` (data trust floor, 1e-12 post-regen) masks the
-    value MAE; ``off_floor`` (1e-10) selects the hard-OFF rows the ceiling
-    hinge suppresses; ``ceiling_k`` sets the per-fin OFF ceiling k·NFIN·1nA.
-    """
+    """Resolve weak-inversion ``i_d`` values and suppress hard-OFF leakage."""
 
     def __init__(
         self,
@@ -463,66 +107,76 @@ class SubthresholdIdLoss(nn.Module):
         self.ceiling_w = float(ceiling_w)
         self.huber_delta = float(huber_delta)
         self.nfin_col = int(nfin_col)
-        from neural_network.data.normalize import OUTPUT_COLUMN_ORDER
-        self.column_order = column_order or OUTPUT_COLUMN_ORDER
-        col = {c: i for i, c in enumerate(self.column_order)}
-        drain_column = "id" if "id" in col else "i_d"
-        if drain_column not in col:
-            raise ValueError(
-                "SubthresholdIdLoss requires an 'id' or 'i_d' output column"
-            )
-        self.id_col = col[drain_column]
+        columns = column_order or list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER)
+        if "i_d" not in columns:
+            raise ValueError("SubthresholdIdLoss requires an 'i_d' column")
+        self.id_col = columns.index("i_d")
 
     @staticmethod
-    def _huber(r: torch.Tensor, delta: float) -> torch.Tensor:
-        a = r.abs()
-        return torch.where(a <= delta, 0.5 * r * r, delta * (a - 0.5 * delta))
+    def _huber(residual: torch.Tensor, delta: float) -> torch.Tensor:
+        absolute = residual.abs()
+        return torch.where(
+            absolute <= delta,
+            0.5 * residual * residual,
+            delta * (absolute - 0.5 * delta),
+        )
 
     def forward(
         self,
-        x_norm: torch.Tensor,           # (B, in_dim)
-        y_pred_norm: torch.Tensor,      # (B, out_dim)
-        y_true_norm: torch.Tensor,      # (B, out_dim)
-        in_mean: torch.Tensor,          # (in_dim,)
-        in_std: torch.Tensor,           # (in_dim,)
-        out_std: torch.Tensor,          # (out_dim,)
-        out_mean: torch.Tensor,         # (out_dim,)
-        asinh_scale: torch.Tensor,      # (out_dim,)
+        x_norm: torch.Tensor,
+        y_pred_norm: torch.Tensor,
+        y_true_norm: torch.Tensor,
+        in_mean: torch.Tensor,
+        in_std: torch.Tensor,
+        out_std: torch.Tensor,
+        out_mean: torch.Tensor,
+        asinh_scale: torch.Tensor,
     ) -> torch.Tensor:
-        idc = self.id_col
-        s_id = asinh_scale[idc]
-        out_std_id = out_std[idc]
-        s2 = self.s2
-
-        # Predicted physical id (clamp the asinh argument for sinh safety).
-        u_pred = (y_pred_norm[:, idc] * out_std_id + out_mean[idc]).clamp(-30.0, 30.0)
-        id_phys_pred = s_id * torch.sinh(u_pred)
+        index = self.id_col
+        output_scale = out_std[index]
+        physical_scale = asinh_scale[index]
+        predicted_inner = (
+            y_pred_norm[:, index] * output_scale + out_mean[index]
+        ).clamp(-30.0, 30.0)
+        predicted_current = physical_scale * torch.sinh(predicted_inner)
 
         with torch.no_grad():
-            u_true = (y_true_norm[:, idc] * out_std_id + out_mean[idc]).clamp(-30.0, 30.0)
-            id_phys_true = s_id * torch.sinh(u_true)
-            abs_id_true = id_phys_true.abs()
-            value_mask = ((abs_id_true > self.id_floor)
-                          & (abs_id_true < self.upper)).to(y_pred_norm.dtype)
-            off_mask = (abs_id_true <= self.off_floor).to(y_pred_norm.dtype)
-            # Per-fin OFF ceiling: recover physical NFIN from the normalized
-            # log2(NFIN) input column. NFIN never carries gradient here.
-            nfin_log2 = (x_norm[:, self.nfin_col] * in_std[self.nfin_col]
-                         + in_mean[self.nfin_col])
-            nfin = torch.pow(torch.as_tensor(2.0, device=x_norm.device,
-                                             dtype=x_norm.dtype), nfin_log2)
+            true_inner = (
+                y_true_norm[:, index] * output_scale + out_mean[index]
+            ).clamp(-30.0, 30.0)
+            true_current = physical_scale * torch.sinh(true_inner)
+            absolute_true = true_current.abs()
+            value_mask = (
+                (absolute_true > self.id_floor) & (absolute_true < self.upper)
+            ).to(y_pred_norm.dtype)
+            off_mask = (absolute_true <= self.off_floor).to(y_pred_norm.dtype)
+            nfin_log2 = (
+                x_norm[:, self.nfin_col] * in_std[self.nfin_col]
+                + in_mean[self.nfin_col]
+            )
+            nfin = torch.pow(
+                torch.as_tensor(2.0, device=x_norm.device, dtype=x_norm.dtype),
+                nfin_log2,
+            )
             ceiling = (self.ceiling_k * nfin * 1e-9).clamp_min(1e-30)
-            a_true = torch.asinh(id_phys_true / s2)
-            a_ceil = torch.asinh(ceiling / s2)
+            true_resolved = torch.asinh(true_current / self.s2)
+            ceiling_resolved = torch.asinh(ceiling / self.s2)
 
-        # 1. VALUE term (sign-aware, Huber in asinh-s2 space).
-        a_pred = torch.asinh(id_phys_pred / s2)
-        val = self._huber(a_pred - a_true, self.huber_delta) * value_mask
-        val_term = val.sum() / value_mask.sum().clamp_min(1.0)
+        predicted_resolved = torch.asinh(predicted_current / self.s2)
+        value_error = self._huber(
+            predicted_resolved - true_resolved, self.huber_delta,
+        ) * value_mask
+        value_term = value_error.sum() / value_mask.sum().clamp_min(1.0)
 
-        # 2. CEILING hinge (sign-agnostic magnitude suppression).
-        a_absp = torch.asinh(id_phys_pred.abs() / s2)
-        hinge = torch.relu(a_absp - a_ceil) * off_mask
-        ceil_term = hinge.sum() / off_mask.sum().clamp_min(1.0)
+        off_error = torch.relu(
+            torch.asinh(predicted_current.abs() / self.s2) - ceiling_resolved,
+        ) * off_mask
+        off_term = off_error.sum() / off_mask.sum().clamp_min(1.0)
+        return self.lam * (value_term + self.ceiling_w * off_term)
 
-        return self.lam * (val_term + self.ceiling_w * ceil_term)
+
+__all__ = [
+    "MAELoss",
+    "SubthresholdIdLoss",
+    "compute_lds_weights_per_target",
+]

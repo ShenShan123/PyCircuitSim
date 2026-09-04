@@ -26,9 +26,10 @@ from neural_network.data.sampling import (  # noqa: E402
     stratified_sample_indices,
 )
 from neural_network.data.dataset import validate_canonical_dataset  # noqa: E402
+from neural_network.data.contracts import (  # noqa: E402
+    FULL_TERMINAL_OUTPUT_COLUMN_ORDER,
+)
 from neural_network.data import dataset as dataset_module  # noqa: E402
-from neural_network.cli import train as train_cli  # noqa: E402
-from pycircuitsim.parser import Parser  # noqa: E402
 from scripts.v710_regate_collect import collect  # noqa: E402
 from scripts import v710_regate_manifest as manifest_module  # noqa: E402
 from scripts.v710_regate_manifest import (  # noqa: E402
@@ -38,6 +39,9 @@ from scripts.v710_regate_manifest import (  # noqa: E402
 )
 from tests.common import nn_sweep  # noqa: E402
 from tests.common.gate_result import GateResult  # noqa: E402
+
+
+FULL_COLUMNS = list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER)
 
 
 def test_stratified_cap_keeps_every_stratum() -> None:
@@ -80,7 +84,11 @@ def test_loader_passes_full_combo_strata_to_grouped_split(
     ])
     np.savez(
         path, inputs=np.arange(24, dtype=float).reshape(6, 4),
-        geometry=geometry, outputs=np.arange(6, dtype=float)[:, None] + 1.0,
+        geometry=geometry,
+        outputs=np.repeat(
+            np.arange(6, dtype=float)[:, None] + 1.0, 6, axis=1,
+        ),
+        meta_output_columns=np.asarray(FULL_COLUMNS),
     )
     tech_codes = np.asarray([0, 0, 1, 1, 1, 1])
     monkeypatch.setattr(
@@ -97,7 +105,7 @@ def test_loader_passes_full_combo_strata_to_grouped_split(
 
     monkeypatch.setattr(dataset_module, "grouped_split_indices", _capture)
     dataset_module.load_and_split_bsimar(
-        str(path), ["id"], "nmos", apply_filter=False,
+        str(path), "nmos",
     )
     np.testing.assert_array_equal(
         observed[0], np.column_stack([tech_codes, geometry[:, :3]]),
@@ -120,7 +128,10 @@ def test_training_overlay_moves_its_whole_combo_stratum_to_train(
         path,
         inputs=np.arange(24, dtype=float).reshape(6, 4),
         geometry=geometry,
-        outputs=np.arange(6, dtype=float)[:, None] + 1.0,
+        outputs=np.repeat(
+            np.arange(6, dtype=float)[:, None] + 1.0, 6, axis=1,
+        ),
+        meta_output_columns=np.asarray(FULL_COLUMNS),
         sample_class=np.asarray([0, 0, 0, 0, 1, 0], dtype=np.int8),
         meta_sample_class_names=np.asarray(["grid", "traj_corridor"]),
     )
@@ -138,7 +149,7 @@ def test_training_overlay_moves_its_whole_combo_stratum_to_train(
 
     train, validation, test, _normalizer = (
         dataset_module.load_and_split_bsimar(
-            str(path), ["id"], "nmos", apply_filter=False,
+            str(path), "nmos",
             training_overlay_classes={"traj_corridor"},
         )
     )
@@ -156,7 +167,9 @@ def test_training_overlay_rejects_unknown_class_and_random_split(
     np.savez(
         path,
         inputs=np.zeros((3, 4)), geometry=np.zeros((3, 15)),
-        outputs=np.ones((3, 1)), sample_class=np.asarray([0, 1, 0]),
+        outputs=np.ones((3, 6)),
+        meta_output_columns=np.asarray(FULL_COLUMNS),
+        sample_class=np.asarray([0, 1, 0]),
         meta_sample_class_names=np.asarray(["grid", "traj_corridor"]),
     )
     monkeypatch.setattr(
@@ -166,12 +179,12 @@ def test_training_overlay_rejects_unknown_class_and_random_split(
 
     with pytest.raises(ValueError, match="not in dataset"):
         dataset_module.load_and_split_bsimar(
-            str(path), ["id"], "nmos", apply_filter=False,
+            str(path), "nmos",
             training_overlay_classes={"missing"},
         )
     with pytest.raises(ValueError, match="require split_mode='combo'"):
         dataset_module.load_and_split_bsimar(
-            str(path), ["id"], "nmos", apply_filter=False,
+            str(path), "nmos",
             split_mode="random",
             training_overlay_classes={"traj_corridor"},
         )
@@ -181,7 +194,7 @@ def _bin_result(n_failed: int) -> Dict[str, np.ndarray]:
     return {
         "inputs": np.zeros((1, 4)),
         "geometry": np.zeros((1, 15)),
-        "outputs": np.zeros((1, 13)),
+        "outputs": np.zeros((1, 6)),
         "sample_class": np.zeros(1, dtype=np.int8),
         "n_kept": np.asarray(1),
         "n_failed": np.asarray(n_failed),
@@ -253,7 +266,8 @@ def _write_canonical_dataset(tmp_path: Path, **overrides: object) -> Path:
     arrays: Dict[str, np.ndarray] = {
         "inputs": np.zeros((4, 4)),
         "geometry": np.zeros((4, 15)),
-        "outputs": np.zeros((4, 13)),
+        "outputs": np.zeros((4, 6)),
+        "meta_output_columns": np.asarray(FULL_COLUMNS),
     }
     arrays.update({f"meta_{key}": np.asarray(value)
                    for key, value in metadata.items()})
@@ -322,25 +336,11 @@ def test_canonical_dataset_validator_rejects_empty_model_provenance(
         validate_canonical_dataset(path)
 
 
-def test_retired_pfn_level_and_training_choice_are_rejected(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    parser = Parser()
-    parser.parse_line(".model retired NMOS (LEVEL=75 TECH=tsmc5 VT=svt)")
-    with pytest.raises(ValueError, match="Unsupported MOSFET LEVEL=75"):
-        parser.parse_line("M1 d g s b retired L=16n NFIN=2")
-
-    monkeypatch.setattr(sys, "argv", ["train", "--model", "tabpfn"])
-    with pytest.raises(SystemExit) as exc_info:
-        train_cli.main()
-    assert exc_info.value.code == 2
-
-
 def test_collector_preserves_temperature_rows_and_provenance(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "campaign"
-    log = root / "dn" / "large" / "tsmc5" / "verify_nn_multi_tech_dc.omp1.log"
+    log = root / "dnf" / "large" / "tsmc5" / "verify_nn_multi_tech_dc.omp1.log"
     log.parent.mkdir(parents=True)
     manifest = root / "campaign_manifest.json"
     manifest.write_text("{}\n")
@@ -354,7 +354,7 @@ def test_collector_preserves_temperature_rows_and_provenance(
         "===V710_DONE rc=1===\n"
     )
     data = collect(root, require_manifest=True)
-    entry = data["dn"]["large"]["verify_nn_multi_tech_dc"]["TSMC5"]["omp1"]
+    entry = data["dnf"]["large"]["verify_nn_multi_tech_dc"]["TSMC5"]["omp1"]
     assert entry["n"] == 2
     assert set(entry["rows"]) == {
         "TSMC5_nmos_temp_-25c", "TSMC5_nmos_temp_+125c",
@@ -367,17 +367,25 @@ def test_collector_preserves_temperature_rows_and_provenance(
 def test_campaign_manifest_detects_checkpoint_mutation(tmp_path: Path) -> None:
     checkpoints = tmp_path / "checkpoints"
     checkpoints.mkdir()
-    group = ("dn", "small", "tsmc5")
+    group = ("dnf", "small", "tsmc5")
     for device in ("nmos", "pmos"):
-        stem = f"tsmc5_dn_small_{device}"
-        for suffix in ("_best.pt", "_norm.npz", "_best.pt.complete"):
-            (checkpoints / f"{stem}{suffix}").write_bytes(b"original")
+        stem = f"tsmc5_dnf_small_{device}"
+        (checkpoints / f"{stem}_best.pt").write_bytes(b"original")
+        (checkpoints / f"{stem}_norm.npz").write_bytes(b"original")
+        (checkpoints / f"{stem}_best.pt.complete").write_text(json.dumps({
+            "dataset": f"tsmc5_dnf_{device}.npz",
+            "dataset_sha256": "a" * 64,
+            "dataset_completion_marker": f"tsmc5_dnf_{device}.npz.complete",
+            "dataset_completion_marker_sha256": "b" * 64,
+            "dataset_source_commit": "c" * 40,
+        }))
     manifest = tmp_path / "campaign_manifest.json"
     manifest.write_text(json.dumps({
         "checkpoint_sha256": _artifact_hashes(checkpoints, {group}),
+        "dataset_provenance": _dataset_provenance(checkpoints, {group}),
     }))
     _verify_group(manifest, checkpoints, group)
-    (checkpoints / "tsmc5_dn_small_nmos_best.pt").write_bytes(b"mutated")
+    (checkpoints / "tsmc5_dnf_small_nmos_best.pt").write_bytes(b"mutated")
     with pytest.raises(ValueError, match="checkpoint artifacts drifted"):
         _verify_group(manifest, checkpoints, group)
 
@@ -410,11 +418,11 @@ def test_campaign_manifest_rejects_untracked_templates(
     checkpoints = tmp_path / "checkpoints"
     checkpoints.mkdir()
     for device in ("nmos", "pmos"):
-        stem = f"tsmc5_dn_small_{device}"
+        stem = f"tsmc5_dnf_small_{device}"
         for suffix in ("_best.pt", "_norm.npz", "_best.pt.complete"):
             (checkpoints / f"{stem}{suffix}").write_bytes(b"artifact")
     jobs = tmp_path / "jobs.txt"
-    jobs.write_text("dn small TSMC5 verify_nn_ac 1\n")
+    jobs.write_text("dnf small TSMC5 verify_nn_ac 1\n")
     ngspice = tmp_path / "ngspice"
     ngspice.write_bytes(b"ngspice")
     osdi = tmp_path / "bsimcmg.osdi"
@@ -542,11 +550,11 @@ def _ac_campaign_row(device: str, *, complete_metrics: bool = True) -> GateResul
         role="qualification",
         status="pass",
         metrics=metrics,
-        model_family="DirectNet",
-        model_level=73,
+        model_family="DirectNet-Full",
+        model_level=75,
         checkpoint_pins={
-            "nmos": "tsmc12_dn_small_nmos",
-            "pmos": "tsmc12_dn_small_pmos",
+            "nmos": "tsmc12_dnf_small_nmos",
+            "pmos": "tsmc12_dnf_small_pmos",
         },
         thread_settings={"omp": 1, "mkl": 1, "torch": 1},
     )
@@ -556,7 +564,7 @@ def test_structured_nn_ac_rows_drive_report_and_completeness(tmp_path: Path) -> 
     from scripts.v710_regate_collect import render
 
     root = tmp_path / "campaign"
-    log = root / "dn" / "small" / "tsmc12" / "verify_nn_ac.omp1.log"
+    log = root / "dnf" / "small" / "tsmc12" / "verify_nn_ac.omp1.log"
     log.parent.mkdir(parents=True)
     log.write_text(
         "\n".join([
@@ -567,7 +575,7 @@ def test_structured_nn_ac_rows_drive_report_and_completeness(tmp_path: Path) -> 
     )
 
     data = collect(root)
-    entry = data["dn"]["small"]["verify_nn_ac"]["TSMC12"]["omp1"]
+    entry = data["dnf"]["small"]["verify_nn_ac"]["TSMC12"]["omp1"]
     assert entry["result_complete"] is True
     assert entry["nmos"]["status"] == "PASS"
     assert entry["pmos"]["f3db_ratio"] == 1.0
@@ -578,7 +586,7 @@ def test_malformed_structured_nn_row_is_invalid_without_crashing(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "campaign"
-    log = root / "dn" / "small" / "tsmc12" / "verify_nn_ac.omp1.log"
+    log = root / "dnf" / "small" / "tsmc12" / "verify_nn_ac.omp1.log"
     log.parent.mkdir(parents=True)
     log.write_text(
         "\n".join([
@@ -588,7 +596,7 @@ def test_malformed_structured_nn_row_is_invalid_without_crashing(
         ]) + "\n"
     )
 
-    entry = collect(root)["dn"]["small"]["verify_nn_ac"]["TSMC12"]["omp1"]
+    entry = collect(root)["dnf"]["small"]["verify_nn_ac"]["TSMC12"]["omp1"]
     assert entry["result_complete"] is False
     assert entry["status"] == "ERROR"
     assert "missing required metrics" in entry["error"]
@@ -597,7 +605,7 @@ def test_malformed_structured_nn_row_is_invalid_without_crashing(
 def test_unstructured_nn_logs_are_display_only_not_coverage(tmp_path: Path) -> None:
     from scripts import v730_coverage
 
-    log = tmp_path / "dn" / "small" / "tsmc12" / "verify_nn_ac.omp1.log"
+    log = tmp_path / "dnf" / "small" / "tsmc12" / "verify_nn_ac.omp1.log"
     log.parent.mkdir(parents=True)
     log.write_text(
         "  AC | tsmc12_nmos | 0.1 | 1.0 | 1.0 | 2.0 | PASS\n"
@@ -614,7 +622,7 @@ def test_legacy_json_cannot_satisfy_a_structured_coverage_cell(
     from scripts import v730_coverage
 
     (tmp_path / "data.json").write_text(json.dumps({
-        "dn": {
+        "dnf": {
             "small": {
                 "verify_nn_ac": {
                     "TSMC12": {"omp1": {"rc": "0"}},
@@ -634,7 +642,7 @@ def test_legacy_json_cannot_satisfy_a_structured_coverage_cell(
 
 def test_structured_nn_rows_bind_the_declared_corner(tmp_path: Path) -> None:
     root = tmp_path / "campaign"
-    log = root / "dn" / "small" / "tsmc12" / "verify_nn_ac.omp1.log"
+    log = root / "dnf" / "small" / "tsmc12" / "verify_nn_ac.omp1.log"
     log.parent.mkdir(parents=True)
     wrong = _ac_campaign_row("nmos").payload()
     wrong["corner"] = "hot"
@@ -646,7 +654,7 @@ def test_structured_nn_rows_bind_the_declared_corner(tmp_path: Path) -> None:
         ]) + "\n"
     )
 
-    entry = collect(root)["dn"]["small"]["verify_nn_ac"]["TSMC12"]["omp1"]
+    entry = collect(root)["dnf"]["small"]["verify_nn_ac"]["TSMC12"]["omp1"]
     assert entry["result_complete"] is False
     assert "corner mismatch" in entry["error"]
 
@@ -658,7 +666,7 @@ def test_all_error_parametric_denominator_renders_without_numeric_aggregate(
 
     root = tmp_path / "campaign"
     log = (
-        root / "dn" / "small" / "tsmc12"
+        root / "dnf" / "small" / "tsmc12"
         / "verify_nn_multi_tech_dc.omp1.log"
     )
     log.parent.mkdir(parents=True)
@@ -682,11 +690,11 @@ def test_all_error_parametric_denominator_renders_without_numeric_aggregate(
             candidate_converged=False,
             execution_state="nonconverged",
             error_kind="candidate",
-            model_family="DirectNet",
-            model_level=73,
+            model_family="DirectNet-Full",
+            model_level=75,
             checkpoint_pins={
-                "nmos": "tsmc12_dn_small_nmos",
-                "pmos": "tsmc12_dn_small_pmos",
+                "nmos": "tsmc12_dnf_small_nmos",
+                "pmos": "tsmc12_dnf_small_pmos",
             },
             thread_settings={"omp": 1, "mkl": 1, "torch": 1},
         )
@@ -698,7 +706,7 @@ def test_all_error_parametric_denominator_renders_without_numeric_aggregate(
     )
 
     data = collect(root)
-    entry = data["dn"]["small"]["verify_nn_multi_tech_dc"]["TSMC12"]["omp1"]
+    entry = data["dnf"]["small"]["verify_nn_multi_tech_dc"]["TSMC12"]["omp1"]
     assert entry["result_complete"] is True
     assert entry["n_pass"] == 0
     assert "max_error" not in entry

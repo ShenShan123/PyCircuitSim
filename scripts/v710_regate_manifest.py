@@ -13,6 +13,9 @@ from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple
 
 
+VALID_TAGS = {"dnf", "tff"}
+
+
 def _sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as handle:
@@ -39,6 +42,10 @@ def _jobs(path: Path) -> Tuple[List[str], Set[Tuple[str, str, str]]]:
         if len(parts) != 5:
             raise ValueError(f"invalid campaign job: {line}")
         tag, variant, tech, _suite, _omp = parts
+        if tag not in VALID_TAGS:
+            raise ValueError(
+                f"invalid campaign family {tag!r}; expected dnf or tff"
+            )
         groups.add((tag, variant, tech.lower()))
     return lines, groups
 
@@ -52,7 +59,7 @@ def _artifact_hashes(
         for device in ("nmos", "pmos"):
             stem = f"{tech}_{tag}_{variant}_{device}"
             suffixes = ["_best.pt", "_norm.npz", "_best.pt.complete"]
-            if tag in ("tf", "tff"):
+            if tag == "tff":
                 suffixes.append("_config.npz")
             for suffix in suffixes:
                 path = checkpoints / f"{stem}{suffix}"
@@ -69,8 +76,6 @@ def _dataset_provenance(
     sha256_pattern = re.compile(r"[0-9a-f]{64}")
     commit_pattern = re.compile(r"[0-9a-f]{40}")
     for tag, variant, tech in sorted(groups):
-        if tag not in ("dnf", "tff"):
-            continue
         for device in ("nmos", "pmos"):
             name = f"{tech}_{tag}_{variant}_{device}_best.pt.complete"
             marker_path = checkpoints / name

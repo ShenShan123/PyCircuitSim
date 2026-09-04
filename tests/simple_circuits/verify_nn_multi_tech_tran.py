@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """V6.3.2 — NN-family inverter parametric verification (VTC + transient).
 
-Sweeps the selected LEVEL=73--76 NN-family CMOS inverter against NGSPICE
+Sweeps the selected LEVEL=75/76 NN-family CMOS inverter against NGSPICE
 BSIM-CMG ground truth over circuit-level parameters:
 
   - Baseline:   1 VTC + 1 transient per tech (tech defaults)

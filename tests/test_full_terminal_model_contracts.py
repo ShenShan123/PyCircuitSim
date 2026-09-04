@@ -31,7 +31,7 @@ from pycircuitsim.models.mosfet_directnet_full import (
     NMOS_DNF,
     PMOS_DNF,
 )
-from pycircuitsim.parser import Parser
+from pycircuitsim.parser import Parser, _resolve_nn_checkpoint_uncached
 from pycircuitsim.solver import (
     _full_charge_stamp,
     _full_current_stamp,
@@ -256,6 +256,35 @@ def test_scalar_current_sign_does_not_mutate_full_terminal_stamp(
     np.testing.assert_array_equal(jacobian_after, jacobian_before)
 
 
+@pytest.mark.parametrize("polarity", ("nmos", "pmos"))
+def test_instance_multiplier_scales_every_solver_facing_surface(
+    family: FullTerminalFamily,
+    checkpoint: Path,
+    polarity: str,
+) -> None:
+    device_type = family.nmos_type if polarity == "nmos" else family.pmos_type
+    reference = device_type(
+        "M1", ["d", "g", "s", "b"], str(checkpoint),
+        L=16e-9, NFIN=2.0, tech_code=0,
+    )
+    multiplied = device_type(
+        "M4", ["d", "g", "s", "b"], str(checkpoint),
+        L=16e-9, NFIN=2.0, tech_code=0, multiplier=4.0,
+    )
+    _bind_linear(reference, family)
+    _bind_linear(multiplied, family)
+
+    reference_current, reference_g = reference.get_terminal_stamp(VOLTAGES)
+    multiplied_current, multiplied_g = multiplied.get_terminal_stamp(VOLTAGES)
+    reference_charge, reference_c = reference.get_charge_stamp(VOLTAGES)
+    multiplied_charge, multiplied_c = multiplied.get_charge_stamp(VOLTAGES)
+
+    np.testing.assert_allclose(multiplied_current, 4.0 * reference_current)
+    np.testing.assert_allclose(multiplied_g, 4.0 * reference_g)
+    np.testing.assert_allclose(multiplied_charge, 4.0 * reference_charge)
+    np.testing.assert_allclose(multiplied_c, 4.0 * reference_c)
+
+
 def test_full_terminal_families_reject_outside_certified_support(
     family: FullTerminalFamily,
     checkpoint: Path,
@@ -311,7 +340,7 @@ def test_full_terminal_families_reject_artifact_checksum_mutation(
         )
 
 
-def test_full_terminal_level_requires_explicit_family_and_force_retargets(
+def test_full_terminal_level_is_the_default_family_selector(
     family: FullTerminalFamily,
     checkpoint: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -322,26 +351,41 @@ def test_full_terminal_level_requires_explicit_family_and_force_retargets(
     )
     parser = Parser()
     parser.parse_line(
-        f".model full NMOS (LEVEL={family.level} "
-        f"FAMILY={family.family_parameter} TECH=tsmc5 VT=svt)"
+        f".model full NMOS (LEVEL={family.level} TECH=tsmc5 VT=svt)"
     )
     parser.parse_line("M1 d g s b full L=16n NFIN=2 m=3")
     device = parser.circuit.components[-1]
     assert isinstance(device, family.nmos_type)
     assert device.m == 3.0
 
-    missing_family = Parser()
-    missing_family.parse_line(
-        f".model bad NMOS (LEVEL={family.level} TECH=tsmc5 VT=svt)"
+    asserted = Parser()
+    asserted.parse_line(
+        f".model asserted NMOS (LEVEL={family.level} "
+        f"FAMILY={family.family_parameter} TECH=tsmc5 VT=svt)"
+    )
+    asserted.parse_line("M2 d g s b asserted L=16n NFIN=2")
+    assert isinstance(asserted.circuit.components[-1], family.nmos_type)
+
+    wrong_family = Parser()
+    other_family = (
+        "bsimar-full" if family is DIRECTNET_FULL else "directnet-full"
+    )
+    wrong_family.parse_line(
+        f".model bad NMOS (LEVEL={family.level} FAMILY={other_family} "
+        "TECH=tsmc5 VT=svt)"
     )
     with pytest.raises(ValueError, match=f"FAMILY={family.family_parameter}"):
-        missing_family.parse_line("M1 d g s b bad L=16n NFIN=2")
+        wrong_family.parse_line("M3 d g s b bad L=16n NFIN=2")
 
-    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", str(family.level))
-    forced = Parser()
-    forced.parse_line(".model old NMOS (LEVEL=73 TECH=tsmc5 VT=svt)")
-    forced.parse_line("M1 d g s b old L=16n NFIN=2")
-    assert isinstance(forced.circuit.components[-1], family.nmos_type)
+
+@pytest.mark.parametrize("level", (73, 74))
+def test_retired_reduced_levels_are_rejected(level: int) -> None:
+    parser = Parser()
+    parser.parse_line(
+        f".model retired NMOS (LEVEL={level} TECH=tsmc5 VT=svt)"
+    )
+    with pytest.raises(ValueError, match="Unsupported MOSFET LEVEL"):
+        parser.parse_line("M1 d g s b retired L=16n NFIN=2")
 
 
 def test_full_terminal_family_requires_completion_marker(
@@ -356,6 +400,43 @@ def test_full_terminal_family_requires_completion_marker(
         )
 
 
+@pytest.mark.parametrize(("level", "tag"), ((75, "dnf"), (76, "tff")))
+def test_automatic_resolution_skips_incomplete_larger_bundle(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    level: int,
+    tag: str,
+) -> None:
+    import neural_network.config as nn_config
+
+    monkeypatch.setattr(nn_config, "CHECKPOINT_DIR", tmp_path)
+    for name in (
+        f"PYCIRCUITSIM_NN_CHECKPOINT_{tag.upper()}_NMOS",
+        "PYCIRCUITSIM_NN_CHECKPOINT_NMOS",
+        "PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    large = tmp_path / f"tsmc5_{tag}_large_nmos_best.pt"
+    large.touch()
+    medium_stem = tmp_path / f"tsmc5_{tag}_medium_nmos"
+    medium_model = medium_stem.with_name(medium_stem.name + "_best.pt")
+    medium_model.touch()
+    medium_stem.with_name(medium_stem.name + "_norm.npz").touch()
+    medium_model.with_name(medium_model.name + ".complete").touch()
+    if level == 76:
+        medium_stem.with_name(medium_stem.name + "_config.npz").touch()
+
+    path, _code, _name, _scope = _resolve_nn_checkpoint_uncached(
+        level=level,
+        device_key="nmos",
+        tech_key="tsmc5",
+        vt_key="svt",
+        explicit_path=None,
+    )
+
+    assert Path(path) == medium_model
+
+
 def test_netlist_temperature_rebinds_both_full_terminal_families(
     family: FullTerminalFamily,
     checkpoint: Path,
@@ -368,8 +449,7 @@ def test_netlist_temperature_rebinds_both_full_terminal_families(
     parser = Parser()
     parser.parse_line(".temp 125")
     parser.parse_line(
-        f".model full NMOS (LEVEL={family.level} "
-        f"FAMILY={family.family_parameter} TECH=tsmc5 VT=svt)"
+        f".model full NMOS (LEVEL={family.level} TECH=tsmc5 VT=svt)"
     )
     parser.parse_line("M1 d g s b full L=16n NFIN=2")
     device = parser.circuit.components[-1]
@@ -421,13 +501,8 @@ def test_directnet_full_charge_jacobians_are_lazy_and_self_healing(
     assert grad_calls == 15
 
 
-def test_six_target_transformer_preserves_reduced_family_default() -> None:
-    legacy = TransformerEncoderModel(
-        d_model=8, nhead=2, num_layers=1, dim_feedforward=16, dropout=0.0,
-    )
-    full = TransformerEncoderModel(
-        target_dim=6,
-        ar_target_dim=6,
+def test_transformer_defaults_to_the_six_surface_contract() -> None:
+    model = TransformerEncoderModel(
         d_model=8,
         nhead=2,
         num_layers=1,
@@ -436,6 +511,5 @@ def test_six_target_transformer_preserves_reduced_family_default() -> None:
     )
     inputs = torch.zeros((2, 7))
     codes = torch.zeros(2, dtype=torch.long)
-    assert legacy(inputs, tech_codes=codes).shape == (2, 13)
-    assert full(inputs, tech_codes=codes).shape == (2, 6)
-    assert full(inputs, torch.zeros((2, 6)), tech_codes=codes).shape == (2, 6)
+    assert model(inputs, tech_codes=codes).shape == (2, 6)
+    assert model(inputs, torch.zeros((2, 6)), tech_codes=codes).shape == (2, 6)

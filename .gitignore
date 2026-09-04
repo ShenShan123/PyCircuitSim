@@ -49,14 +49,10 @@ exp_queue.log
 
 # Claude Code
 .claude_statusline_exec.sh
-nn_model/data/datasets/*.npz
 
 # Neural compact-model training datasets (large binaries, regenerable via
 # the BSIM-CMG evaluator)
 external_compact_models/neural_network/data/datasets/
-external_compact_models/neural_network/data/datasets_v3/
-external_compact_models/neural_network/data/datasets_v4_lhs/
-external_compact_models/neural_network/data/datasets_tmp_for_d1/
 
 # Local Claude tool config
 .claude/
@@ -65,12 +61,7 @@ external_compact_models/neural_network/data/datasets_tmp_for_d1/
 training_logs/
 logs/
 
-# Local V6.3.1 checkpoint backup (kept on disk for rollback; not tracked)
-v6_3_1_checkpoints/
 /tools/
-external_compact_models/neural_network/data/datasets_v2_backup/
-# Historical V7.4 archives are local-only if deliberately restored.
-external_compact_models/neural_network/v740_archive/
 
 # BSIM-CMG build output and private PDK assets. A fresh checkout contains only
 # the tracked ASAP7 cards; raw TSMC cards and local archives remain untracked.

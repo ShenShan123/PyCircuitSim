@@ -15,6 +15,41 @@ remain in Git history.
   quarantined, or pruned. Compare totals only when the basket is identical.
 - Current generated reports, not this ledger, own detailed score tables.
 
+## V7.7 — full-terminal-only NN stack
+
+### V7.7.0 — retire reduced compact-model families (2026-09-04)
+
+DirectNet-Full LEVEL=75 is now the default NN family and BSIM-AR-Full LEVEL=76
+is the supported autoregressive alternative. LEVEL=73/74 are rejected rather
+than silently remapped: keeping their level numbers while changing terminal
+physics would make an old deck solve a different model without saying so.
+
+Removed the reduced NN runtime base and both adapters, the classic
+`gm/gds/gmb` drain-source solver stamp, reduced transient/AC capacitance
+reconstruction, reduced batching/fused-Jacobian paths, and their performance
+probes. Every supported MOSFET now supplies complete 4x4 current and charge
+stamps or fails loudly.
+
+Dataset generation and training now have one six-surface contract:
+`i_d,i_g,i_b,qd,qg,qb`. Removed output-contract selection, the 13-head schema,
+reduced filtering/subsets, derivative-head losses, monotone/EKV checkpoint
+compatibility, and reduced recipe scripts. Campaign generation, collection,
+coverage, and report tooling now accept only `dnf`/`tff` families.
+
+Purged 280 ignored reduced checkpoint files (about 990 MiB) from the default
+checkpoint directory. Preserved all `results/v766_full_*` evidence and linked
+complete full-terminal artifacts into the default local locations. All 40 DNF
+bundles are complete; only polarity-paired complete TFF tiers were linked, so
+an incomplete or mixed-tier default cannot masquerade as ready. These ignored
+artifact changes are local and are not represented by the Git commit.
+
+This maintenance decision supersedes the earlier recommendation not to use
+LEVEL=75 generally, but does not rewrite its evidence: the latest report is
+20/20 on the declared simple-circuit matrix, 115/129 on parametric device DC,
+and 2/5 on Miller AC. LEVEL=76 still lacks a complete five-technology clean
+matrix. No new accuracy promotion is claimed. The collected unit suite passes
+560 tests with two CPU pin-memory warnings.
+
 ## V7.6 — full-terminal families and closure
 
 ### V7.6.10 — metric oracles, hierarchy breadth, and stale-test purge (2026-09-04)

@@ -70,7 +70,7 @@ import re
 import sys
 from pathlib import Path
 
-# Make the neural compact-model package importable for LEVEL=73-76 resolution.
+# Make the neural compact-model package importable for LEVEL=75/76 resolution.
 _NN_PARENT = Path(__file__).resolve().parent.parent / "external_compact_models"
 if str(_NN_PARENT) not in sys.path:
     sys.path.insert(0, str(_NN_PARENT))
@@ -96,43 +96,20 @@ from pycircuitsim.config import (
 # ── V7.2.0 Phase 1a: per-file caches + collapsed per-device logging ──────
 #
 # The NN resolver runs once per MOSFET *instance*. On an SRAM array that
-# used to mean one `[NN-resolver]` stdout line and (for LEVEL=74) one
-# norm.npz deserialisation per device — 6,144 lines / loads for a 32×32
+# used to mean one `[NN-resolver]` stdout line and one artifact-resolution
+# walk per device — 6,144 repeated operations for a 32×32
 # array resolving to the same two checkpoints. The caches below make the
 # per-device cost O(1) after the first device; the log collapse keeps the
 # resolution visible (first occurrence prints immediately, unchanged
 # format) while `_flush_resolver_log` emits one `[xN devices]` summary
 # per distinct resolution at the end of the parse.
 
-_PHYS_METRIC_CACHE: Dict[Tuple[str, int, int], bool] = {}
 _RESOLVER_LOG_COUNTS: Dict[Tuple, list] = {}
 # Memo for the cascade itself (~10 Path.exists() per device otherwise).
 # Lives for ONE parse: cleared in `_flush_resolver_log`, so a checkpoint
 # landing on disk between parses is picked up, and mid-parse env changes
 # are impossible (parse is single-threaded).
 _RESOLUTION_MEMO: Dict[Tuple, Tuple[str, int, str, str]] = {}
-
-
-def _phys_best_trustworthy(phys_path: Path, norm_path: Path) -> bool:
-    """Whether ``phys_path`` may be preferred over the plain ``_best.pt``:
-    true iff the sibling norm.npz declares the median phys aggregator
-    (post-2026-05-03 fix). Cached per (path, mtime, size) — this used to
-    re-load the norm.npz once per device instance."""
-    if not (phys_path.exists() and norm_path.exists()):
-        return False
-    try:
-        st = norm_path.stat()
-        key = (str(norm_path), int(st.st_mtime_ns), int(st.st_size))
-        hit = _PHYS_METRIC_CACHE.get(key)
-        if hit is None:
-            from neural_network.data.normalize import BSIMARNormStats
-            _ns = BSIMARNormStats.load(str(norm_path))
-            hit = (getattr(_ns, "phys_best_metric", "legacy_mean")
-                   == "median")
-            _PHYS_METRIC_CACHE[key] = hit
-        return hit
-    except Exception:
-        return False
 
 
 def _resolver_log(key: Tuple, first_line: str) -> None:
@@ -156,6 +133,19 @@ def _flush_resolver_log() -> None:
     _RESOLUTION_MEMO.clear()
 
 
+def _nn_bundle_ready(checkpoint: Path, level: int) -> bool:
+    """Return whether an automatically resolved full-terminal bundle is complete."""
+    stem = checkpoint.with_name(checkpoint.name.removesuffix("_best.pt"))
+    required = [
+        checkpoint,
+        stem.with_name(stem.name + "_norm.npz"),
+        checkpoint.with_name(checkpoint.name + ".complete"),
+    ]
+    if level == 76:
+        required.append(stem.with_name(stem.name + "_config.npz"))
+    return all(path.is_file() for path in required)
+
+
 def _resolve_nn_checkpoint(
     *,
     level: int,
@@ -165,7 +155,7 @@ def _resolve_nn_checkpoint(
     explicit_path: Optional[str],
     netlist_name: str,
 ) -> Tuple[str, int]:
-    """Resolve checkpoint path and tech code for LEVEL=73/74/75/76.
+    """Resolve checkpoint path and tech code for LEVEL=75/76.
 
     V7.2.0 Phase 1c: memoizing wrapper. The cascade result cannot differ
     between two devices with the same (level, polarity, tech, VT,
@@ -229,14 +219,10 @@ def _resolve_nn_checkpoint_uncached(
     vt_key: str,
     explicit_path: Optional[str],
 ) -> Tuple[str, int, str, str]:
-    """Resolve (path, tech_code, chk_name, scope) for LEVEL=73/74/75/76.
+    """Resolve (path, tech_code, checkpoint name, scope) for LEVEL=75/76.
 
-    Cascade: explicit ``MODEL_PATH`` > per-tech > universal > bare.
-    For LEVEL=74 (BSIMAR) the universal cascade prefers ``_best.phys.pt``
-    over ``_best.pt`` only when the matching ``_norm.npz`` was saved with
-    the median-aggregated phys-score (post-2026-05-03 fix); pre-fix
-    files default to ``_best.pt`` to avoid the AR-rollout id-column
-    blowup.
+    Cascade: environment pin > explicit ``MODEL_PATH`` > per-tech >
+    universal > bare.
     """
     from neural_network.config import (
         CHECKPOINT_DIR, LOCAL_VARIANT_CODES, local_variant_code,
@@ -244,14 +230,16 @@ def _resolve_nn_checkpoint_uncached(
 
     # ── Env-var override (V5 Phase C): force a specific exp prefix ──────
     # Per-(level, polarity) env vars, then per-polarity, then global:
-    #   PYCIRCUITSIM_NN_CHECKPOINT_DN_NMOS / _DN_PMOS  — LEVEL=73, polarity
-    #   PYCIRCUITSIM_NN_CHECKPOINT_TF_NMOS / _TF_PMOS  — LEVEL=74, polarity
+    #   PYCIRCUITSIM_NN_CHECKPOINT_DNF_NMOS / _DNF_PMOS — LEVEL=75
+    #   PYCIRCUITSIM_NN_CHECKPOINT_TFF_NMOS / _TFF_PMOS — LEVEL=76
     #   PYCIRCUITSIM_NN_CHECKPOINT_NMOS / _PMOS        — all levels, polarity
     #   PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE            — all levels, both polarities
     # The override prefix is treated as the trainer save_prefix; when it
     # ends in "_nmos"/"_pmos" the polarity is honoured.
     import os
-    level_tag = {73: "DN", 74: "TF", 75: "DNF", 76: "TFF"}[level]
+    if level not in (75, 76):
+        raise ValueError(f"unsupported NN model level {level}")
+    level_tag = {75: "DNF", 76: "TFF"}[level]
     level_polarity_env = (
         f"PYCIRCUITSIM_NN_CHECKPOINT_{level_tag}_{device_key.upper()}")
     per_polarity_env = (
@@ -285,129 +273,20 @@ def _resolve_nn_checkpoint_uncached(
         else:
             base = f"{ovr}_{device_key}"
 
-        if level in (73, 75, 76):
-            ovr_path = CHECKPOINT_DIR / f"{base}_best.pt"
-            if ovr_path.exists():
-                explicit_path = str(ovr_path)
-            else:
-                # a pinned-but-absent checkpoint must fail LOUDLY: falling
-                # through to the resolver cascade would silently evaluate
-                # a different model (typically production `large`) under
-                # the pinned recipe's name
-                raise FileNotFoundError(
-                    f"NN checkpoint override '{ovr}' -> {ovr_path} "
-                    "does not exist; refusing silent fallback to the "
-                    "resolver cascade")
-        else:  # level == 74
-            phys_path = CHECKPOINT_DIR / f"{base}_best.phys.pt"
-            plain_path = CHECKPOINT_DIR / f"{base}_best.pt"
-            norm_path = CHECKPOINT_DIR / f"{base}_norm.npz"
-            phys_trustworthy = _phys_best_trustworthy(phys_path, norm_path)
-            if phys_trustworthy:
-                explicit_path = str(phys_path)
-            elif plain_path.exists():
-                explicit_path = str(plain_path)
-            elif phys_path.exists():
-                explicit_path = str(phys_path)
-            else:
-                raise FileNotFoundError(
-                    f"NN checkpoint override '{ovr}' -> {plain_path} "
-                    f"(or {phys_path.name}) does not exist; refusing "
-                    "silent fallback to the resolver cascade")
+        ovr_path = CHECKPOINT_DIR / f"{base}_best.pt"
+        if ovr_path.exists():
+            explicit_path = str(ovr_path)
+        else:
+            # A pinned-but-absent checkpoint must fail loudly: falling
+            # through would evaluate a different model under the pin's name.
+            raise FileNotFoundError(
+                f"NN checkpoint override '{ovr}' -> {ovr_path} "
+                "does not exist; refusing silent fallback to the "
+                "resolver cascade")
 
     if explicit_path is not None:
         path = explicit_path
-    elif level == 73:
-        # Cascade: per-tech dedicated > refactor universal presets >
-        # v4-re universal > legacy v4 universal > per-tech-bare > bare.
-        #
-        # Per-tech dedicated slots (`tsmc{5,6,7,12,16}_dn_{size}_{dev}_best.pt`)
-        # preempt the universal cascade when the netlist's tech matches.
-        # The trained model uses a SHRUNK local-vocab embedding; the
-        # tech_code remap below keys off the file's `tsmc{X}_dn_` prefix.
-        #
-        # V6.6.0: `large` is the uniform production capacity tier (the best
-        # uniform-recipe gate pass-rate, 13/16, vs medium's 10/16; capacity
-        # peaks at large then over-fits at xl). So the bare resolver default
-        # prefers `large` first, then falls back medium > small > xl. The
-        # benchmark/gate harness still pins any specific tier explicitly via
-        # PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}, so this only sets the
-        # no-override production default.
-        per_tech_preempt: list = []
-        if tech_key in LOCAL_VARIANT_CODES:
-            per_tech_preempt = [
-                CHECKPOINT_DIR / f"{tech_key}_dn_large_{device_key}_best.pt",
-                CHECKPOINT_DIR / f"{tech_key}_dn_medium_{device_key}_best.pt",
-                CHECKPOINT_DIR / f"{tech_key}_dn_small_{device_key}_best.pt",
-                CHECKPOINT_DIR / f"{tech_key}_dn_xl_{device_key}_best.pt",
-            ]
-        candidates = per_tech_preempt + [
-            CHECKPOINT_DIR / f"refac_dn_medium_{device_key}_best.pt",
-            CHECKPOINT_DIR / f"refac_dn_small_{device_key}_best.pt",
-            CHECKPOINT_DIR / f"refac_dn_large_{device_key}_best.pt",
-            CHECKPOINT_DIR / f"v4_re_dn_universal_{device_key}_best.pt",
-            CHECKPOINT_DIR / f"v4_dn_universal_{device_key}_best.pt",
-            CHECKPOINT_DIR / f"{tech_key}_{device_key}_best.pt",
-            CHECKPOINT_DIR / f"{device_key}_best.pt",
-        ]
-        path = next((str(p) for p in candidates if p.exists()),
-                    str(candidates[-1]))
-    elif level == 74:
-        # Cascade: per-tech dedicated > v4-re universal > legacy v4 universal
-        # > per-tech-bare > bare.
-        #
-        # V6.8: per-tech dedicated Transformer slots
-        # (`tsmc{5,7,12,16}_tf_{size}_{dev}_best.pt`) preempt the universal
-        # cascade when the netlist's tech matches — the exact mirror of the
-        # LEVEL=73 preempt. Same large-first production ordering; the trained
-        # model uses a SHRUNK local-vocab embedding (Rule 16) keyed off the
-        # `tsmc{X}_tf_` stem below.
-        #
-        # For each universal candidate prefer `_best.phys.pt` only when the
-        # norm.npz declares `phys_best_metric == "median"` (post-2026-05-03 fix).
-        def _select(prefix: str) -> Optional[str]:
-            phys_path = CHECKPOINT_DIR / f"{prefix}_{device_key}_best.phys.pt"
-            plain_path = CHECKPOINT_DIR / f"{prefix}_{device_key}_best.pt"
-            norm_path = CHECKPOINT_DIR / f"{prefix}_{device_key}_norm.npz"
-            phys_trustworthy = _phys_best_trustworthy(phys_path, norm_path)
-            if phys_trustworthy:
-                return str(phys_path)
-            if plain_path.exists():
-                return str(plain_path)
-            if phys_path.exists():
-                # Last-resort fallback when no plain best.pt is on disk.
-                return str(phys_path)
-            return None
-
-        per_tech_path = CHECKPOINT_DIR / f"ar_{tech_key}_{device_key}_best.pt"
-        bare_path = CHECKPOINT_DIR / f"ar_{device_key}_best.pt"
-
-        per_tech_preempt = []
-        if tech_key in LOCAL_VARIANT_CODES:
-            per_tech_preempt = [
-                CHECKPOINT_DIR / f"{tech_key}_tf_large_{device_key}_best.pt",
-                CHECKPOINT_DIR / f"{tech_key}_tf_medium_{device_key}_best.pt",
-                CHECKPOINT_DIR / f"{tech_key}_tf_small_{device_key}_best.pt",
-                CHECKPOINT_DIR / f"{tech_key}_tf_xl_{device_key}_best.pt",
-            ]
-
-        # Cascade: per-tech preempt > refactor presets > v4-re > legacy v4
-        # > per-tech-bare > bare.
-        path = next((str(p) for p in per_tech_preempt if p.exists()), None)
-        if path is None:
-            path = (
-                _select("refac_tf_medium")
-                or _select("refac_tf_small")
-                or _select("refac_tf_large")
-                or _select("v4_re_universal")
-                or _select("v4_universal")
-            )
-        if path is None:
-            if per_tech_path.exists():
-                path = str(per_tech_path)
-            else:
-                path = str(bare_path)
-    elif level == 75:  # explicit directnet-full opt-in only
+    elif level == 75:
         per_tech_preempt: list = []
         if tech_key in LOCAL_VARIANT_CODES:
             per_tech_preempt = [
@@ -424,9 +303,9 @@ def _resolve_nn_checkpoint_uncached(
             CHECKPOINT_DIR / f"dnf_{tech_key}_{device_key}_best.pt",
             CHECKPOINT_DIR / f"dnf_{device_key}_best.pt",
         ]
-        path = next((str(p) for p in candidates if p.exists()),
+        path = next((str(p) for p in candidates if _nn_bundle_ready(p, level)),
                     str(candidates[-1]))
-    else:  # level == 76, explicit bsimar-full opt-in only
+    else:  # level == 76
         per_tech_preempt: list = []
         if tech_key in LOCAL_VARIANT_CODES:
             per_tech_preempt = [
@@ -443,18 +322,16 @@ def _resolve_nn_checkpoint_uncached(
             CHECKPOINT_DIR / f"tff_{tech_key}_{device_key}_best.pt",
             CHECKPOINT_DIR / f"tff_{device_key}_best.pt",
         ]
-        path = next((str(p) for p in candidates if p.exists()),
+        path = next((str(p) for p in candidates if _nn_bundle_ready(p, level)),
                     str(candidates[-1]))
 
     # Determine vocab scope from the resolved checkpoint name.
-    # `tsmc{X}_dn_*` (DirectNet) / `tsmc{X}_tf_*` (BSIMAR Transformer)
-    # => local per-tech vocab; else universal.
+    # Per-tech full-terminal stems use a local vocabulary; everything else
+    # uses the universal vocabulary.
     chk_name = Path(path).name
     scope = "universal"
     for s in LOCAL_VARIANT_CODES:
-        if (chk_name.startswith(f"{s}_dn_")
-                or chk_name.startswith(f"{s}_tf_")
-                or chk_name.startswith(f"{s}_dnf_")
+        if (chk_name.startswith(f"{s}_dnf_")
                 or chk_name.startswith(f"{s}_tff_")):
             scope = s
             break
@@ -1044,7 +921,7 @@ class Parser:
         """
         Parse a MOSFET line: M<name> <d> <g> <s> <b> <model> L=<l> W=<w> [NFIN=<nf> ...].
 
-        Supports Level 72/BSIM-CMG (L, NFIN, TFIN, HFIN, FPITCH) and Level 73/NN.
+        Supports LEVEL=72 BSIM-CMG and full-terminal LEVEL=75/76 NN models.
 
         Args:
             line: MOSFET definition line
@@ -1104,7 +981,7 @@ class Parser:
         model_type = model_def['type']
         model_params = model_def['params']
 
-        # Check model level (72 = BSIM-CMG, 73 = NN)
+        # Check model level (72 = BSIM-CMG; 75/76 = full-terminal NN).
         level = model_params.get('LEVEL', 72)
 
         if level == 72:
@@ -1205,79 +1082,36 @@ class Parser:
             else:
                 raise ValueError(f"Unknown MOSFET model type: {model_type}")
 
-        elif level in (73, 74, 75, 76):
-            # NN compact models: LEVEL=73 (DirectNet), LEVEL=74 (BSIM-AR),
-            # explicit LEVEL=75 FAMILY=directnet-full, or explicit LEVEL=76
-            # FAMILY=bsimar-full. Only legacy NN decks may be retargeted by
-            # the campaign hook.
-            #
-            # Harness hook: PYCIRCUITSIM_NN_FORCE_LEVEL={73,74,75,76}
-            # retargets every NN model card at parse time, so the ENTIRE
-            # gate/sweep/AC harness (whose netlists carry LEVEL=73 tokens)
-            # can run the BSIM-AR Transformer without rendering parallel decks.
-            # NGSPICE reference decks (LEVEL=72) are untouched.
-            if level in (75, 76):
-                family = str(model_params.get('FAMILY') or "").lower()
-                required_family = {
-                    75: "directnet-full", 76: "bsimar-full",
-                }[level]
-                if family != required_family:
-                    raise ValueError(
-                        f"Unsupported MOSFET LEVEL={level} without explicit "
-                        f"FAMILY={required_family}")
-            else:
-                import os as _os
-                _force = _os.environ.get("PYCIRCUITSIM_NN_FORCE_LEVEL")
-                if _force:
-                    try:
-                        force_level = int(_force)
-                    except ValueError as exc:
-                        raise ValueError(
-                            f"PYCIRCUITSIM_NN_FORCE_LEVEL={_force!r} is not "
-                            "an integer") from exc
-                    if force_level not in (73, 74, 75, 76):
-                        raise ValueError(
-                            f"unsupported NN model level {force_level}; "
-                            "supported levels are 73 (DirectNet), 74 "
-                            "(BSIM-AR), 75 (DirectNet-Full), and 76 "
-                            "(BSIM-AR-Full)")
-                else:
-                    force_level = level
-                if force_level != level:
-                    # V7.2.0 Phase 1a: collapsed — one line per M instance.
-                    _resolver_log(
-                        ("force-level", level, force_level),
-                        f"[NN-resolver] FORCE LEVEL {level}->{force_level} "
-                        f"(PYCIRCUITSIM_NN_FORCE_LEVEL) for {name}")
-                    level = force_level
-            label = {
-                73: "DirectNet", 74: "BSIM-AR", 75: "DirectNet-Full",
-                76: "BSIM-AR-Full",
+        elif level in (75, 76):
+            # The only NN compact models are the two full-terminal families.
+            # LEVEL uniquely selects the family; FAMILY remains accepted as
+            # an optional assertion for existing decks.
+            family = str(model_params.get('FAMILY') or "").lower()
+            required_family = {
+                75: "directnet-full", 76: "bsimar-full",
             }[level]
-            if level in (75, 76):
-                missing = [
-                    key for key in ("TECH", "VT")
-                    if not model_params.get(key)
-                ]
-                if missing:
-                    raise ValueError(
-                        f"{label} (forced LEVEL={level}) requires explicit "
-                        + " and ".join(missing)
-                    )
+            if family and family != required_family:
+                raise ValueError(
+                    f"MOSFET LEVEL={level} requires FAMILY={required_family}, "
+                    f"got FAMILY={family}")
+            label = {
+                75: "DirectNet-Full", 76: "BSIM-AR-Full",
+            }[level]
+            missing = [
+                key for key in ("TECH", "VT")
+                if not model_params.get(key)
+            ]
+            if missing:
+                raise ValueError(
+                    f"{label} (LEVEL={level}) requires explicit "
+                    + " and ".join(missing)
+                )
             if NFIN is None:
                 raise ValueError(
                     f"{label} (LEVEL={level}) MOSFET missing NFIN parameter: {line}")
 
             try:
-                if level == 73:
-                    from pycircuitsim.models.mosfet_directnet import (
-                        NMOS_NN as _NMOS, PMOS_NN as _PMOS,
-                    )
-                elif level == 74:
-                    from pycircuitsim.models.mosfet_bsimar import (
-                        NMOS_BSIMAR as _NMOS, PMOS_BSIMAR as _PMOS,
-                    )
-                elif level == 75:
+                if level == 75:
                     from pycircuitsim.models.mosfet_directnet_full import (
                         NMOS_DNF as _NMOS, PMOS_DNF as _PMOS,
                     )
@@ -1318,12 +1152,18 @@ class Parser:
                 raise ValueError(f"Unknown MOSFET model type: {model_type}")
 
         else:
+            if level in (73, 74):
+                replacement = 75 if level == 73 else 76
+                raise ValueError(
+                    f"Unsupported MOSFET LEVEL={level}: the reduced NN "
+                    f"family is retired; regenerate a full-terminal "
+                    f"checkpoint and use LEVEL={replacement}"
+                )
             raise ValueError(
                 f"Unsupported MOSFET LEVEL={level}. "
                 f"Supported levels: LEVEL=72 (BSIM-CMG), "
-                f"LEVEL=73 (DirectNet), LEVEL=74 (BSIM-AR), and explicit "
-                f"LEVEL=75 FAMILY=directnet-full or "
-                f"LEVEL=76 FAMILY=bsimar-full"
+                f"LEVEL=75 (DirectNet-Full), and "
+                f"LEVEL=76 (BSIM-AR-Full)"
             )
 
         self.circuit.add_component(mosfet)

@@ -1,42 +1,25 @@
 # Accuracy reports
 
-Ground truth is always NGSPICE using the identical BSIM-CMG LEVEL=72 OSDI
-model. See [`methodology.md`](methodology.md) for the shared gate and evidence
-contract before comparing results.
+Ground truth is NGSPICE using the identical BSIM-CMG LEVEL=72 OSDI model.
+See [`methodology.md`](methodology.md) for gate and evidence rules.
 
-## Reports
+## Current NN policy
+
+DirectNet-Full LEVEL=75 is the default NN path. BSIM-AR-Full LEVEL=76 is the
+autoregressive alternative. LEVEL=73/74 reports are historical evidence only.
+
+## Current reports
 
 | file | scope |
 |---|---|
-| [`simple-circuits-v2-topologies.md`](simple-circuits-v2-topologies.md) | held-out simple-topology catalog, corner matrix, harness and promotion contract |
-| [`DirectNet-L73-clean.md`](DirectNet-L73-clean.md) | production DirectNet, all clean tiers |
-| [`BSIM-AR-L74-clean.md`](BSIM-AR-L74-clean.md) | autoregressive Transformer, all clean tiers |
-| [`DirectNet-L75-clean.md`](DirectNet-L75-clean.md) | full-terminal DirectNet production qualification |
-| [`DirectNet-L75-v763-targeted.md`](DirectNet-L75-v763-targeted.md) | V7.6.3 targeted four-scale recovery; not a clean-matrix replacement |
-| [`DirectNet-L75-v764-terminal-followup.md`](DirectNet-L75-v764-terminal-followup.md) | terminal-length, globalization, matched-data, and Jacobian experiments; no promotion |
-| [`BSIM-AR-L76-clean.md`](BSIM-AR-L76-clean.md) | full-terminal autoregressive Transformer, all clean tiers |
-| [`DirectNet-L73-recipes.md`](DirectNet-L73-recipes.md) | historical DirectNet recipe study |
-| [`BSIM-AR-L74-recipes.md`](BSIM-AR-L74-recipes.md) | historical BSIM-AR recipe study |
-| [`simple-circuits-recheck-2026-08-19.md`](simple-circuits-recheck-2026-08-19.md) | superseded V7.5.15 campaign audit trail |
-| [`archive-pre-gds-fix.md`](archive-pre-gds-fix.md) | retracted pre-V6.13 claims |
+| [`DirectNet-L75-clean.md`](DirectNet-L75-clean.md) | latest LEVEL=75 clean qualification and gaps |
+| [`BSIM-AR-L76-simple-circuits.md`](BSIM-AR-L76-simple-circuits.md) | TSMC5 LEVEL=76 recovery; not a five-tech matrix |
+| [`simple-circuits-v2-topologies.md`](simple-circuits-v2-topologies.md) | held-out topology and promotion contract |
 
 ## Clean scoreboard
 
 <!--SCOREBOARD-->
 
-The reduced rows remain pinned to the published V7.5.17 CPU campaign. Both
-full-terminal rows come from the combined V7.6.6 clean pass. Recipe columns
-are historical and are not direct deltas against the current clean contracts.
-
-TSMC6 remains in the denominator as a controlled repeat of TSMC7. Their
-LEVEL=72 data are identical, so disagreement measures training and Newton-basin
-variability rather than an independent technology result.
-
-## Evidence and reproduction
-
-Each family report is published only from one complete campaign. The V7.6.6
-full-terminal evidence requires 480 jobs and 280 checkpoint artifacts; partial
-passes are never backfilled from older evidence. Raw evidence is local and
-gitignored under `results/v766_full_clean/`, with datasets, checkpoints, and
-training logs in the sibling `results/v766_full_*` roots. Reproduction commands
-are owned by the repository [README](../../README.md).
+Default status does not rewrite measured limitations. Reports require one
+complete provenance-bound campaign; partial passes are never backfilled.
+Reproduction commands live in the repository [README](../../README.md).

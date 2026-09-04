@@ -53,14 +53,10 @@ SUITE_BY_RESULT = {
     for case in SIMPLE_V1_CASES
 }
 FAMILY = {
-    "dn": "DirectNet (L73)",
-    "tf": "BSIM-AR (L74)",
     "dnf": "DirectNet-Full (L75)",
     "tff": "BSIM-AR-Full (L76)",
 }
 MODEL_BY_TAG = {
-    "dn": (73, "DirectNet"),
-    "tf": (74, "BSIM-AR"),
     "dnf": (75, "DirectNet-Full"),
     "tff": (76, "BSIM-AR-Full"),
 }
@@ -195,8 +191,6 @@ def _structured_schema_error(
     except (TypeError, ValueError) as exc:
         return f"invalid GateResult row: {exc}"
     expected_families = {
-        73: "DirectNet",
-        74: "BSIM-AR",
         75: "DirectNet-Full",
         76: "BSIM-AR-Full",
     }
@@ -860,7 +854,7 @@ def render(data: Dict) -> str:
                     "guard fix, post V7.0.x perf work, opt-in perf flags OFF), CPU-pinned,",
                     "repo ngspice, per-job isolated results dir. Verdict = suite exit code.",
                     ""]
-    for tag in ("dn", "tf", "dnf", "tff"):
+    for tag in ("dnf", "tff"):
         if tag not in data:
             continue
         L += [f"## {FAMILY[tag]}", ""]

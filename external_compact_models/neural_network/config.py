@@ -1,12 +1,12 @@
-"""Configuration for BSIMAR training and inference.
+"""Configuration for full-terminal NN training and inference.
 
-- Re-exports PyCMG's `nn_config` (tech registry, output columns).
+- Re-exports PyCMG's technology registry.
 - Defines project paths: checkpoints, results, data.
 - Defines training hyperparameter dataclasses for both architectures.
 - Defines the tech-variant code registry (discrete tech embedding).
 
-Downstream consumers (pycircuitsim parser, mosfet_directnet, mosfet_bsimar,
-tests) should import from here.
+Downstream consumers should import technology and checkpoint configuration
+from here, and output schemas from ``neural_network.data.contracts``.
 """
 
 import sys
@@ -38,7 +38,6 @@ from pycmg.nn_config import (  # noqa: E402,F401  (public re-exports)
     DEFAULT_TEMPERATURE,
     NNTechConfig,
     TECH_CONFIGS,
-    OUTPUT_COLUMNS,
     DEFAULT_NFIN_VALUES,
 )
 
@@ -303,9 +302,8 @@ def tech_scope_vocab_size(scope: str) -> int:
     exists), so a dataset carrying one would index past an 18-row
     ``nn.Embedding``; training on ASAP7 needs an explicit
     ``--num-tech-codes 22`` and an ASAP7-aware checkpoint. Widening this
-    return value instead would resize the embedding for every universal
-    run and break ``load_state_dict`` on the 18-code ``u716_dn_*``
-    checkpoints, so the range is guarded at load time
+    return value instead would resize every universal model's embedding, so
+    the range is guarded at load time
     (``trainer._assert_codes_in_vocab``, audit C6q) rather than here.
     """
     if scope == "universal":

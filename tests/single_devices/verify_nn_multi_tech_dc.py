@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """V6.3.2 — NN-family single-device parametric DC verification.
 
-Sweeps the selected LEVEL=73--76 NN family for NMOS & PMOS Id-Vgs against
+Sweeps the selected LEVEL=75/76 NN family for NMOS & PMOS Id-Vgs against
 NGSPICE BSIM-CMG ground truth over device geometry:
 
   - Baseline: 1 Id-Vgs per tech/device (tech-default L/NFIN/VT)

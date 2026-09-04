@@ -2,6 +2,10 @@
 
 Date: 2026-09-01
 
+> V7.7.0 policy note: LEVEL=75 is now the default NN runtime and the reduced
+> LEVEL=73/74 implementations are retired. No new numerical campaign was run
+> for that maintenance decision; every limitation recorded below still stands.
+
 This is the latest clean, source-pinned qualification of the four-terminal
 `large` DirectNet-Full model. It learns the independent OSDI surfaces
 `i_d`, `i_g`, `i_b`, `qd`, `qg`, and `qb`; source current and charge
@@ -112,8 +116,8 @@ not converge.
   `9cac5e9af8d603fe35231a26e11adfc0494e1b56` (clean).
 - Training matrix: five technologies × NMOS/PMOS, 10 fresh full-terminal
   datasets and 10 `large` checkpoints, 58,940,980 accepted rows total.
-- Recipe: `--output-contract full-terminal --apply-filter off --swa-mode ema
-  --seed 42`, trained from scratch in an isolated
+- Recipe: the full-terminal-only trainer with `--swa-mode ema --seed 42`,
+  trained from scratch in an isolated
   `BSIMAR_CHECKPOINT_DIR`.
 - Checkpoint bundles: model, normalization sidecar, dataset provenance, and
   completion marker hashes all validated.
@@ -149,8 +153,8 @@ rejected attempt are mixed into this report.
 
 ## Qualification decision
 
-The four-terminal `large` DirectNet-Full checkpoints are **qualified for the
-declared simple-circuit matrix**: 20/20 strict cells, 100/100 inverter
-configurations, and 10/10 device AC cells pass. They are **not yet qualified
-as a general LEVEL=75 replacement** because 14/129 device-DC configurations
-and three of five Miller open-loop AC cells remain open.
+The four-terminal `large` checkpoints are **qualified for the declared
+simple-circuit matrix**: 20/20 strict cells, 100/100 inverter configurations,
+and 10/10 device AC cells pass. V7.7.0 selects them as the maintained default,
+but that policy does not erase the 14/129 device-DC misses or the three open
+Miller AC cells.

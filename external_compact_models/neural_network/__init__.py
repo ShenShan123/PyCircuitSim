@@ -1,18 +1,16 @@
-"""BSIMAR: NN-based MOSFET compact modeling.
+"""Full-terminal NN-based MOSFET compact modeling.
 
 Unified training + inference package for two complementary architectures:
 
-- **DirectNet** (baseline) — `neural_network.models.direct_net.DirectNet`
-    Fast MLP with tech-code embedding that predicts all 13 I-V / Q-V / C-V
-    outputs in one forward pass. Used as the reference model for comparison.
+- **DirectNet-Full** — `neural_network.models.direct_net.DirectNet`
+    Fast MLP with a tech-code embedding and six terminal surfaces.
 
-- **BSIM-AR Transformer** — `neural_network.models.transformer.TransformerEncoderModel`
-    Autoregressive Transformer encoder that generates outputs one-by-one with
-    teacher forcing during training. Higher accuracy at higher inference cost.
+- **BSIM-AR-Full** — `neural_network.models.transformer.TransformerEncoderModel`
+    Autoregressive Transformer over the same six terminal surfaces.
 
 Both models share:
 - 7-feature continuous input [V(4), NFIN_log, L, T] + discrete tech-variant code
-- 13-column output (id, gm, gds, gmb, qg, qd, qs, qb, cgg, cgd, cgs, cdg, cdd)
+- six independent current/charge surfaces; source values follow by closure
 - Normalization pipeline (asinh + z-score, or plain z-score)
 - Dataset loading and splits
 
@@ -23,7 +21,6 @@ Data generation is handled externally by PyCMG
 from neural_network.config import (
     OSDI_PATH, DEFAULT_TEMPERATURE,
     NNTechConfig, TECH_CONFIGS,
-    OUTPUT_COLUMNS,
     DEFAULT_NFIN_VALUES,
     NN_ROOT, CHECKPOINT_DIR, RESULTS_DIR, DATA_DIR,
     DirectNetConfig, TransformerConfig,
@@ -37,7 +34,7 @@ from neural_network.config import (
 __all__ = [
     "OSDI_PATH", "DEFAULT_TEMPERATURE",
     "NNTechConfig", "TECH_CONFIGS", "TechConfig",
-    "OUTPUT_COLUMNS", "INPUT_COLUMNS", "INPUT_DIM",
+    "INPUT_COLUMNS", "INPUT_DIM",
     "DEFAULT_NFIN_VALUES",
     "NN_ROOT", "CHECKPOINT_DIR", "RESULTS_DIR", "DATA_DIR",
     "DirectNetConfig", "TransformerConfig",

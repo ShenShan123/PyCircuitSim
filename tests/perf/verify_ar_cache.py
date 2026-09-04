@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verification suite for the LEVEL=74 AR prefix cache (V7.0.4, lever I4).
+"""Verification suite for the LEVEL=76 AR prefix cache.
 
 ``PYCIRCUITSIM_NN_AR_CACHE=1`` replaces the BSIM-AR inference loop's
 re-encode-the-whole-prefix-every-step with a per-layer K/V cache that
@@ -50,14 +50,13 @@ import neural_network.models.transformer as transformer_mod  # noqa: E402
 from neural_network.config import CHECKPOINT_DIR  # noqa: E402
 from neural_network.models.transformer import TransformerEncoderModel  # noqa: E402
 
-# Cover both device polarities, all three shipped sizes, and more than one
-# tech — d_model / nhead / num_layers all vary across these.
+# Cover both polarities and every complete architecture tier currently served.
 STEMS = [
-    "tsmc5_tf_large_nmos",
-    "tsmc5_tf_large_pmos",
-    "tsmc7_tf_medium_nmos",
-    "tsmc12_tf_small_pmos",
-    "tsmc16_tf_large_nmos",
+    "tsmc5_tff_medium_nmos",
+    "tsmc5_tff_medium_pmos",
+    "tsmc7_tff_small_nmos",
+    "tsmc12_tff_small_pmos",
+    "tsmc16_tff_small_nmos",
 ]
 
 RTOL = 1e-4
@@ -79,6 +78,7 @@ def _load(stem: str) -> Tuple[TransformerEncoderModel, int]:
         dim_feedforward=int(cfg["dim_feedforward"]),
         dropout=float(cfg["dropout"]),
         num_tech_codes=n_vocab,
+        ar_target_dim=int(cfg["ar_target_dim"]),
     )
     model.load_state_dict(
         torch.load(str(ckpt_path), weights_only=True, map_location="cpu"))
@@ -92,7 +92,7 @@ def _eval_like_solver(
     tech_codes: torch.Tensor,
     n_bwd: int = 3,
 ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
-    """Reproduce ``_MOSFETNNBase._eval``: enable_grad forward + N backwards.
+    """Reproduce the full-terminal runtime's grad-enabled inference pattern.
 
     The grad context is not incidental — ``TransformerEncoderLayer`` has a
     fused whole-sequence fast path that PyTorch only allows under
@@ -240,7 +240,7 @@ def level2() -> List[Result]:
 
 def main() -> int:
     print("=" * 72)
-    print("LEVEL=74 AR prefix cache verification (V7.0.4)")
+    print("LEVEL=76 AR prefix cache verification")
     print("=" * 72)
 
     all_results: List[Result] = []

@@ -116,7 +116,7 @@ class GateResult:
             "result_schema", "unknown",
         }:
             raise ValueError(f"unknown error kind {error_kind!r}")
-        if self.model_level and self.model_level not in {73, 74, 75, 76}:
+        if self.model_level and self.model_level not in {75, 76}:
             raise ValueError(f"unsupported NN model level {self.model_level}")
         if self.model_level and not self.model_family:
             raise ValueError("model family is required when model level is recorded")

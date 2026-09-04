@@ -249,11 +249,6 @@ def render_device_decks(
     stem = "pdut" if is_pmos else "dut"
     card = (f"dc {spec.sweep_source} {spec.start:.12g} {spec.stop:.12g} "
             f"{spec.step:.12g}")
-    family = {
-        75: " FAMILY=directnet-full",
-        76: " FAMILY=bsimar-full",
-    }.get(level, "")
-
     reference = render_template(TEMPLATE, {
         **shared,
         "MODEL_SETUP": f'.include "{baked_lib}"',
@@ -267,7 +262,7 @@ def render_device_decks(
         **shared,
         "MODEL_SETUP": (
             f".model {spec.device}_nn {device_kind} "
-            f"(LEVEL={level}{family} "
+            f"(LEVEL={level} "
             f"TECH={bt.nn_tech} VT={vt})"
         ),
         "DEVICE_NAME": f"M{stem}",

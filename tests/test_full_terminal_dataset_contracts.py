@@ -18,11 +18,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 from neural_network.data import dataset as dataset_module
 from neural_network.cli import train as train_cli
 from neural_network.config import DirectNetConfig, TransformerConfig
-from neural_network.data.contracts import (
-    FULL_TERMINAL_OUTPUT_CONTRACT,
-    REDUCED_OUTPUT_CONTRACT,
-    dataset_filename,
-)
+from neural_network.data.contracts import dataset_filename
 from neural_network.losses.bni_mae import SubthresholdIdLoss
 from neural_network.training import trainer
 from pycmg import nn_generate
@@ -57,24 +53,17 @@ class _Instance:
         }
 
 
-def test_output_contracts_use_isolated_default_artifact_names() -> None:
+def test_full_terminal_datasets_use_the_canonical_artifact_name() -> None:
+    assert dataset_filename("tsmc5", "nmos") == "tsmc5_dnf_nmos.npz"
     assert dataset_filename(
-        "tsmc5", "nmos", REDUCED_OUTPUT_CONTRACT,
-    ) == "tsmc5_nmos.npz"
-    assert dataset_filename(
-        "tsmc5", "nmos", FULL_TERMINAL_OUTPUT_CONTRACT,
-    ) == "tsmc5_dnf_nmos.npz"
-    assert dataset_filename(
-        "universal", "pmos", FULL_TERMINAL_OUTPUT_CONTRACT, "v760",
+        "universal", "pmos", "v760",
     ) == "universal_v760_dnf_pmos.npz"
 
 
 def test_full_terminal_cli_defaults_match_level75_artifacts() -> None:
     per_tech = train_cli.argparse.Namespace(
         data=None, tech_scope="tsmc5", device_type="nmos",
-        output_contract=FULL_TERMINAL_OUTPUT_CONTRACT,
         exp_name=None, model="direct", size="large",
-        loss_preset="default",
     )
     universal = train_cli.argparse.Namespace(
         **{**vars(per_tech), "tech_scope": "universal"},
@@ -149,7 +138,7 @@ def test_full_terminal_vds_zero_respects_declared_voltage_envelope() -> None:
 
 def test_generator_emits_solver_positive_independent_surfaces() -> None:
     result, reason = nn_generate._eval_single_point_with_reason(
-        _Instance(), 0.2, 0.3, output_contract="full-terminal",
+        _Instance(), 0.2, 0.3,
     )
     assert reason == ""
     assert result == {
@@ -168,7 +157,7 @@ def test_full_terminal_rejection_checks_every_terminal_current() -> None:
         **_Instance().eval_dc({}), "ig": 2.0,
     }
     result, reason = nn_generate._eval_single_point_with_reason(
-        instance, 0.2, 0.3, output_contract="full-terminal",
+        instance, 0.2, 0.3,
     )
     assert result is None
     assert reason == "terminal_current_over_1A"
@@ -180,7 +169,7 @@ def test_full_terminal_rejects_nonfinite_dependent_terminal() -> None:
         **_Instance().eval_dc({}), "qs": float("nan"),
     }
     result, reason = nn_generate._eval_single_point_with_reason(
-        instance, 0.2, 0.3, output_contract="full-terminal",
+        instance, 0.2, 0.3,
     )
     assert result is None
     assert reason == "non_finite_output"
@@ -192,7 +181,7 @@ def test_internal_node_failure_has_auditable_safety_reason() -> None:
         RuntimeError("Internal node NR failed to converge at d=0.2000")
     )
     result, reason = nn_generate._eval_single_point_with_reason(
-        instance, 0.2, 0.3, output_contract="full-terminal", _silent=True,
+        instance, 0.2, 0.3, _silent=True,
     )
     assert result is None
     assert reason == "internal_node_solve_failed"
@@ -223,17 +212,24 @@ def test_loader_uses_dataset_declared_output_columns(
     )
 
     train, validation, test, normalizer = dataset_module.load_and_split_bsimar(
-        str(path), FULL_COLUMNS, "nmos", apply_filter=False,
+        str(path), "nmos",
         norm_mode="zscore", split_mode="random", seed=3,
     )
     assert sum(map(len, (train, validation, test))) == 8
     assert train.outputs.shape[1] == 6
     assert normalizer.stats.output_columns == FULL_COLUMNS
 
+    bad_path = tmp_path / "bad-columns.npz"
+    np.savez(
+        bad_path,
+        inputs=np.zeros((8, 4)),
+        geometry=np.zeros((8, 15)),
+        outputs=outputs,
+        meta_output_columns=np.asarray(list(reversed(FULL_COLUMNS))),
+    )
     with pytest.raises(ValueError, match="declared output columns"):
         dataset_module.load_and_split_bsimar(
-            str(path), list(reversed(FULL_COLUMNS)), "nmos",
-            apply_filter=False, norm_mode="zscore", split_mode="random",
+            str(bad_path), "nmos", norm_mode="zscore", split_mode="random",
         )
 
 
@@ -253,14 +249,13 @@ def test_training_cli_routes_full_terminal_contract(
     monkeypatch.setattr(sys, "argv", [
         "train", "--model", "direct", "--size", "small",
         "--device-type", "nmos", "--data", str(data_path),
-        "--output-contract", "full-terminal", "--apply-filter", "off",
         "--exp-name", "v760_full_smoke",
     ])
 
     train_cli.main()
 
-    assert observed["output_columns"] == FULL_COLUMNS
-    assert observed["apply_filter"] is False
+    assert "output_columns" not in observed
+    assert "apply_filter" not in observed
 
 
 def test_training_cli_routes_full_terminal_transformer(
@@ -279,7 +274,6 @@ def test_training_cli_routes_full_terminal_transformer(
     monkeypatch.setattr(sys, "argv", [
         "train", "--model", "transformer", "--size", "small",
         "--device-type", "nmos", "--data", str(data_path),
-        "--output-contract", "full-terminal", "--apply-filter", "off",
         "--full-terminal-ar-targets", "3",
         "--autoregressive-training",
         "--training-overlay-classes", "traj_corridor,hot",
@@ -289,8 +283,8 @@ def test_training_cli_routes_full_terminal_transformer(
 
     train_cli.main()
 
-    assert observed["output_columns"] == FULL_COLUMNS
-    assert observed["apply_filter"] is False
+    assert "output_columns" not in observed
+    assert "apply_filter" not in observed
     assert observed["full_terminal_ar_target_dim"] == 3
     assert observed["autoregressive_training"] is True
     assert observed["subthresh"] is True
@@ -298,6 +292,28 @@ def test_training_cli_routes_full_terminal_transformer(
     assert observed["training_overlay_classes"] == {
         "traj_corridor", "hot",
     }
+
+
+@pytest.mark.parametrize(
+    "retired_option",
+    (
+        "--output-contract",
+        "--apply-filter",
+        "--loss-preset",
+        "--sobolev",
+        "--charge-sobolev",
+        "--monotonic",
+        "--ekv-core",
+    ),
+)
+def test_training_cli_rejects_retired_reduced_options(
+    retired_option: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(sys, "argv", ["train", retired_option])
+    with pytest.raises(SystemExit) as exc_info:
+        train_cli.main()
+    assert exc_info.value.code == 2
 
 
 def test_subthreshold_loss_accepts_full_terminal_drain_column() -> None:
@@ -407,21 +423,10 @@ def test_transformer_training_can_use_autoregressive_runtime_path() -> None:
     assert teacher_model.seen_autoregressive == [False, False]
 
 
-def test_autoregressive_training_requires_full_terminal_contract() -> None:
-    with pytest.raises(ValueError, match="full-terminal"):
-        trainer.train_transformer(
-            "unused.npz",
-            save_prefix="unused",
-            autoregressive_training=True,
-        )
-
-
 def test_full_terminal_transformer_uses_distinct_checkpoint_stem() -> None:
     args = train_cli.argparse.Namespace(
         data=None, tech_scope="tsmc5", device_type="nmos",
-        output_contract=FULL_TERMINAL_OUTPUT_CONTRACT,
         exp_name=None, model="transformer", size="large",
-        loss_preset="default",
     )
     assert train_cli._resolve_data_path(args).name == "tsmc5_dnf_nmos.npz"
     assert train_cli._make_save_prefix(args) == "tsmc5_tff_large_nmos"
@@ -464,8 +469,7 @@ def test_full_terminal_training_writes_runtime_complete_artifacts(
             max_epochs=1, patience=1,
         ),
         save_prefix="dnf_smoke", device_str="cpu", overwrite=True,
-        num_tech_codes=2, p_unknown=0.0, apply_filter=False,
-        split_mode="random", output_columns=FULL_COLUMNS,
+        num_tech_codes=2, p_unknown=0.0, split_mode="random",
     )
 
     marker_path = tmp_path / "dnf_smoke_best.pt.complete"
@@ -481,16 +485,6 @@ def test_full_terminal_training_writes_runtime_complete_artifacts(
     assert marker["dataset_completion_marker_sha256"] == hashlib.sha256(
         dataset_marker.read_bytes()).hexdigest()
     assert marker["dataset_source_commit"] == "a" * 40
-
-
-def test_full_terminal_training_rejects_legacy_head_options() -> None:
-    with pytest.raises(ValueError, match="separate six-surface"):
-        trainer.train_directnet(
-            "unused.npz",
-            output_columns=FULL_COLUMNS,
-            output_subset=["i_d"],
-            apply_filter=False,
-        )
 
 
 def test_full_terminal_transformer_writes_verified_bundle(
@@ -530,8 +524,7 @@ def test_full_terminal_transformer_writes_verified_bundle(
             dim_feedforward=16, dropout=0.0, max_epochs=1, patience=1,
         ),
         save_prefix="tff_smoke", device_str="cpu", overwrite=True,
-        num_tech_codes=2, p_unknown=0.0, apply_filter=False,
-        split_mode="random", output_columns=FULL_COLUMNS,
+        num_tech_codes=2, p_unknown=0.0, split_mode="random",
         full_terminal_ar_target_dim=3, subthresh=True,
         autoregressive_training=True,
     )

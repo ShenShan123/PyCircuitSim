@@ -1,12 +1,10 @@
 # Neural compact-model package
 
 This package contains the shared data, normalization, model, loss, training,
-and evaluation code for PyCircuitSim's four neural compact-model families.
+and evaluation code for PyCircuitSim's two full-terminal compact-model families.
 
 | tag | LEVEL | architecture | output contract |
 |---|---:|---|---|
-| `dn` | 73 | DirectNet MLP | reduced 13-output |
-| `tf` | 74 | BSIM-AR Transformer | reduced 13-output |
 | `dnf` | 75 | DirectNet MLP | full-terminal six-surface |
 | `tff` | 76 | BSIM-AR Transformer | full-terminal six-surface |
 
@@ -31,13 +29,13 @@ external_compact_models/neural_network/
 ```
 
 PyCMG generates source-relative training data from the same BSIM-CMG OSDI
-binary used by NGSPICE ground truth. `data/contracts.py` owns output-contract
-names and ordered schemas; `data/normalize.py` owns transforms and persisted
+binary used by NGSPICE ground truth. `data/contracts.py` owns the ordered
+six-surface schema; `data/normalize.py` owns transforms and persisted
 normalization statistics.
 
 ## Full-terminal contract
 
-LEVEL=75 and 76 learn `i_d`, `i_g`, `i_b`, `qd`, `qg`, and `qb`. Source
+LEVEL=75/76 learn `i_d`, `i_g`, `i_b`, `qd`, `qg`, and `qb`. Source
 current and charge are reconstructed analytically to preserve closure. The
 canonical dataset and normalization order is
 `i_d,i_g,i_b,qd,qg,qb`; BSIM-AR emits the same surfaces in its declared
@@ -55,6 +53,5 @@ inference reject missing, stale, dirty-source, or checksum-mismatched bundles.
 ## Development checks
 
 Run package changes through the root unit suite and the PyCMG reference suite
-documented in the repository README. Preserve the optional monotone, EKV,
-Sobolev, subthreshold, and charge-Sobolev structures: existing checkpoints
-depend on their state-dict shapes even when those options are disabled.
+documented in the repository README. LEVEL=73/74 checkpoints and their
+13-output compatibility paths are intentionally unsupported.

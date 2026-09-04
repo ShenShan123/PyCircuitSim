@@ -172,7 +172,7 @@ def main() -> int:
             "CAPACITANCE": "1p", "ANALYSIS": ".ac dec 1 1 10",
         },
         template_deck("mosfet.spice.tmpl"): {
-            "MODEL_SETUP": ".model n NMOS (LEVEL=73 TECH=tsmc5 VT=lvt)",
+            "MODEL_SETUP": ".model n NMOS (LEVEL=75 TECH=tsmc5 VT=lvt)",
             "TEMP": "27", "DRAIN_BIAS": "Vd d 0 0.5",
             "GATE_BIAS": "Vg g 0 0.3", "SOURCE_BIAS": "Vs s 0 0",
             "BULK_BIAS": "Vb b 0 0", "DEVICE_NAME": "Mdut",

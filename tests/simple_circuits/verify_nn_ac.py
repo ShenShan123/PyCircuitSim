@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Device-level NN AC gate — selected LEVEL=73--76 family vs BSIM-CMG.
+"""Device-level NN AC gate — selected LEVEL=75/76 family vs BSIM-CMG.
 
 The PRIMARY per-checkpoint AC accuracy gate. For each (tech, device) it builds a
-resistively-loaded common-source amplifier and compares the DirectNet (LEVEL=73)
+resistively-loaded common-source amplifier and compares the selected NN family
 frequency response against the IDENTICAL-topology NGSPICE BSIM-CMG (LEVEL=72)
 ground truth. This directly probes each checkpoint's small-signal fidelity:
 
@@ -10,10 +10,8 @@ ground truth. This directly probes each checkpoint's small-signal fidelity:
   * −3 dB corner        → output transcapacitance (Cgd Miller + Cdd) accuracy,
   * phase               → the combined pole/zero structure.
 
-Crucially the NN's AC capacitances are autograd derivatives of the predicted
-terminal charges (mosfet_nn._eval: cgd = ∂qg/∂Vd, cdd = ∂qd/∂Vd, …), a quantity
-no prior test gated — this is the first measurement of NN charge-surface
-derivative fidelity.
+Crucially the NN's AC matrix is the autograd derivative of all predicted
+terminal charges, so this gate measures charge-surface derivative fidelity.
 
 Geometry is pinned to the checkpoint training bins (NMOS L=16n, PMOS L=20n,
 NFIN from the tech profile) so the model interpolates, not extrapolates.

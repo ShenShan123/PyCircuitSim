@@ -8,13 +8,16 @@ import hashlib
 import json
 import re
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, Union
+from typing import List, Optional, Set, Tuple, Union
 
 import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from neural_network.data.contracts import CANONICAL_SAFETY_REJECTION_REASONS
+from neural_network.data.contracts import (
+    CANONICAL_SAFETY_REJECTION_REASONS,
+    FULL_TERMINAL_OUTPUT_COLUMN_ORDER,
+)
 from neural_network.data.normalize import _NormalizerBase, normalizer_for
 from neural_network.data.sampling import (
     grouped_split_indices,
@@ -53,11 +56,6 @@ class MOSFETDataset(Dataset):
     def __getitem__(self, idx: int):
         return self.inputs[idx], self.outputs[idx], self.tech_codes[idx]
 
-
-# Drop rows below the modelcard noise floor for Id. Charges and caps are
-# absorbed by the asinh per-target scale, so the only useful filter is on
-# Id (v5 plan §4-B4).
-DEFAULT_FILTER_THRESHOLDS: Dict[str, float] = {"id": 1e-15}
 
 # Legacy sample_class code for rows of unknown origin — mirrors
 # PyCMG nn_generate._assemble, which tags pre-B1 bins as "lhs" (code 6).
@@ -187,19 +185,6 @@ def validate_canonical_dataset(data_path: Union[str, Path]) -> None:
             raise ValueError("dataset provenance contains unknown values")
 
 
-def filter_small_targets(
-    outputs: np.ndarray,
-    column_names: List[str],
-    thresholds: Optional[Dict[str, float]] = None,
-) -> np.ndarray:
-    thresholds = thresholds or DEFAULT_FILTER_THRESHOLDS
-    mask = np.ones(len(outputs), dtype=bool)
-    for i, name in enumerate(column_names):
-        if name in thresholds:
-            mask &= np.abs(outputs[:, i]) > thresholds[name]
-    return mask
-
-
 def _promote_training_overlay_strata(
     combo_strata: np.ndarray,
     sample_class: np.ndarray,
@@ -261,26 +246,18 @@ def _promote_training_overlay_strata(
 
 def load_and_split_bsimar(
     data_path: str,
-    column_names: List[str],
     device_type: str,
     norm_mode: str = "asinh",
     train_ratio: float = 0.8,
     val_ratio: float = 0.1,
     seed: int = 42,
-    apply_filter: bool = True,
-    filter_thresholds: Optional[Dict[str, float]] = None,
     exclude_techs: Optional[Set[str]] = None,
     max_rows: Optional[int] = None,
-    output_subset: Optional[List[str]] = None,
     tech_scope: str = "universal",
     split_mode: str = "combo",
     training_overlay_classes: Optional[Set[str]] = None,
 ) -> Tuple[MOSFETDataset, MOSFETDataset, MOSFETDataset, _NormalizerBase]:
-    """Load .npz, label, optionally filter / exclude techs / cap, split, normalise.
-
-    ``output_subset``: optional list of column names from
-    ``OUTPUT_COLUMN_ORDER``. If given, only those columns are kept on
-    every split, and the normalizer's stats are sized to the subset.
+    """Load, validate, split, and normalize a six-surface dataset.
 
     ``tech_scope``: one of ``"universal"`` (no remap; default) or a
     per-tech scope name (``"tsmc5"`` / ``"tsmc7"``). When non-universal,
@@ -302,13 +279,13 @@ def load_and_split_bsimar(
     outputs = data["outputs"]
     declared_columns = (
         [str(value) for value in data["meta_output_columns"]]
-        if "meta_output_columns" in data.files else list(column_names)
+        if "meta_output_columns" in data.files else []
     )
-    if declared_columns != list(column_names):
+    expected_columns = list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER)
+    if declared_columns != expected_columns:
         raise ValueError(
-            "dataset declared output columns do not match the requested "
-            f"training contract: declared={declared_columns}, "
-            f"requested={list(column_names)}"
+            "dataset declared output columns do not match the six-surface "
+            f"contract: declared={declared_columns}, expected={expected_columns}"
         )
     if outputs.ndim != 2 or outputs.shape[1] != len(declared_columns):
         raise ValueError(
@@ -351,19 +328,6 @@ def load_and_split_bsimar(
                 f"training overlay classes {unknown_overlay_classes} not in "
                 f"dataset sample classes {sample_class_names}"
             )
-
-    n0 = len(outputs)
-    if apply_filter:
-        keep = filter_small_targets(outputs, column_names, filter_thresholds)
-        inputs, geometry, outputs = inputs[keep], geometry[keep], outputs[keep]
-        tech_codes = tech_codes[keep]
-        sample_class = sample_class[keep]
-        n_drop = n0 - len(outputs)
-        print(f"  Filter Id>1e-15: {n0} -> {len(outputs)} "
-              f"(dropped {n_drop} rows, {100.0 * n_drop / max(n0, 1):.2f}%)")
-    else:
-        print(f"  Filter OFF: keeping all {n0} rows "
-              "(small-Id rows retained)")
 
     if exclude_techs:
         from neural_network.config import TECH_VARIANT_CODES
@@ -416,16 +380,6 @@ def load_and_split_bsimar(
         print(f"  tech_scope={tech_scope}: remapped to local vocab "
               f"(size={len(local_table) + 1})")
 
-    if output_subset is not None:
-        for c in output_subset:
-            if c not in declared_columns:
-                raise ValueError(
-                    f"output_subset column {c!r} not in dataset columns")
-        col_idx = [declared_columns.index(c) for c in output_subset]
-        outputs = outputs[:, col_idx]
-        print(f"  Output subset: kept {len(output_subset)} cols "
-              f"{output_subset}")
-
     if split_mode == "combo":
         combo_strata = np.column_stack([tech_codes, geometry[:, :3]])
         train_idx, val_idx, test_idx = grouped_split_indices(
@@ -448,13 +402,9 @@ def load_and_split_bsimar(
         raise ValueError("split_mode must be 'combo' or 'random'")
 
     normalizer = normalizer_for(norm_mode)
-    selected_columns = (
-        list(output_subset) if output_subset is not None
-        else declared_columns
-    )
     normalizer.fit(
         inputs[train_idx], geometry[train_idx], outputs[train_idx],
-        output_columns=selected_columns,
+        output_columns=declared_columns,
     )
 
     def _make(idxs: np.ndarray) -> MOSFETDataset:

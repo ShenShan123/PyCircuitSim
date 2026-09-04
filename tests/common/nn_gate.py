@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """
-Comprehensive NN compact model verification: BSIMAR v4 (LEVEL=74) and
-DirectNet v4 (LEVEL=73) vs BSIM-CMG (LEVEL=72) ground truth.
+Full-terminal NN compact-model verification against LEVEL=72 ground truth.
 
 .. note:: Run with ``PYTHONUNBUFFERED=1`` to see live progress output.
 
@@ -9,17 +8,11 @@ Tests NMOS DC sweep, PMOS DC sweep, inverter VTC, NMOS pulse-response
 transient, and inverter transient across available technologies.
 Compares against BSIM-CMG NGSPICE ground truth.
 
-Available checkpoints (v4 tech-code embedding):
-- BSIMAR v4 NMOS: v4_universal_nmos_best.phys.pt (+ _norm.npz, _config.npz)
-- BSIMAR v4 PMOS: v4_universal_pmos_best.phys.pt (+ _norm.npz, _config.npz)
-- DirectNet v4 NMOS: v4_dn_universal_nmos_best.pt (+ _norm.npz)
-- DirectNet v4 PMOS: v4_dn_universal_pmos_best.pt (+ _norm.npz)
-
 Strategy:
   1. BSIM-CMG (LEVEL=72) via NGSPICE as ground truth
   2. BSIM-CMG (LEVEL=72) via PyCircuitSim (sanity check)
-  3. BSIMAR v4 (LEVEL=74, tech-code embedding) via PyCircuitSim
-  4. DirectNet v4 (LEVEL=73, tech-code embedding) via PyCircuitSim
+  3. BSIM-AR-Full (LEVEL=76) via PyCircuitSim
+  4. DirectNet-Full (LEVEL=75) via PyCircuitSim
 
 Metrics: NRMSE (%) and MRE (%).
 
@@ -468,102 +461,83 @@ def _env_pin(var_names: Tuple[str, ...]) -> Tuple[Optional[str], str]:
 
 
 def _require_pinned_checkpoint(
-    stem: str, var_name: str, suffixes: Tuple[str, ...],
+    stem: str, var_name: str, *, transformer: bool,
 ) -> Path:
-    """Resolve a pinned stem to the first existing ``<stem><suffix>``.
+    """Resolve a pin only when its complete runtime bundle exists.
 
-    Raises when none of them exists. audit B5d: returning ``None`` here was
+    Returning ``None`` here was
     silently green — every consumer reads ``None`` as "this arm is not
     configured", skips it WITHOUT appending a TestResult row, and the run
     still exits 0 on the other polarity's rows. A pinned stem never falls
-    back (V6.6.6, same rule ``pycircuitsim/parser.py`` enforces), and the
+    back, and the
     parser never gets a chance to enforce it here because no model is
     instantiated on the skipped path.
     """
-    for sfx in suffixes:
-        path = CHECKPOINT_DIR / f"{stem}{sfx}"
-        if path.exists():
-            return path
-    tried = ", ".join(str(CHECKPOINT_DIR / f"{stem}{s}") for s in suffixes)
-    raise FileNotFoundError(
-        f"{var_name} pins '{stem}' but no checkpoint file exists for it "
-        f"(tried {tried}) — pinned stems never fall back (V6.6.6)")
+    model = CHECKPOINT_DIR / f"{stem}_best.pt"
+    missing = _missing_bundle_artifacts(model, transformer=transformer)
+    if missing:
+        raise FileNotFoundError(
+            f"{var_name} pins incomplete checkpoint bundle '{stem}': "
+            + ", ".join(str(path) for path in missing)
+        )
+    return model
+
+
+def _missing_bundle_artifacts(
+    model: Path, *, transformer: bool,
+) -> list[Path]:
+    """Return missing files for one full-terminal runtime bundle."""
+    stem = model.with_name(model.name.removesuffix("_best.pt"))
+    required = [
+        model,
+        stem.with_name(stem.name + "_norm.npz"),
+        model.with_name(model.name + ".complete"),
+    ]
+    if transformer:
+        required.append(stem.with_name(stem.name + "_config.npz"))
+    return [path for path in required if not path.is_file()]
 
 
 def get_available_checkpoints() -> Dict[str, Optional[Path]]:
-    """Check which NN checkpoints are available.
-
-    Returns dict with keys:
-      'bsimar_v4_nmos', 'directnet_v4_nmos',
-      'bsimar_v4_pmos', 'directnet_v4_pmos'.
-    Value is the checkpoint path if available, None otherwise.
-
-    Env-var overrides (per V5'/V6 A/B workflow):
-      PYCIRCUITSIM_NN_CHECKPOINT_TF_{NMOS,PMOS}  — Transformer override
-      PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}  — DirectNet override
-      PYCIRCUITSIM_NN_CHECKPOINT_{NMOS,PMOS}     — both arms (per polarity)
-      PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE        — both arms, both polarities
-    Value should be the checkpoint stem without _best.pt; e.g. ``v6_dn_small_e2_asinh_nmos``.
-
-    Raises:
-        FileNotFoundError: an env pin names a stem with no checkpoint file on
-            disk. Only the *unpinned* fallback arms may yield ``None``.
-    """
+    """Return available LEVEL=75/76 checkpoints, honoring explicit pins."""
     checkpoints: Dict[str, Optional[Path]] = {}
 
     for dev in ("nmos", "pmos"):
-        suffix = f"_{dev}"
-        DEV = dev.upper()
-
-        tf_ovr, tf_var = _env_pin((
-            f"PYCIRCUITSIM_NN_CHECKPOINT_TF_{DEV}",
-            f"PYCIRCUITSIM_NN_CHECKPOINT_{DEV}",
-            "PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE"))
-        dn_ovr, dn_var = _env_pin((
-            f"PYCIRCUITSIM_NN_CHECKPOINT_DN_{DEV}",
-            f"PYCIRCUITSIM_NN_CHECKPOINT_{DEV}",
-            "PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE"))
-
-        # BSIMAR v4 (tech-code embedding, phys-best) or env override
-        if tf_ovr:
-            checkpoints[f"bsimar_v4{suffix}"] = _require_pinned_checkpoint(
-                tf_ovr, tf_var, ("_best.phys.pt", "_best.pt"))
-        else:
-            bsimar_phys = CHECKPOINT_DIR / f"v4_universal_{dev}_best.phys.pt"
-            bsimar_plain = CHECKPOINT_DIR / f"v4_universal_{dev}_best.pt"
-            if bsimar_phys.exists():
-                checkpoints[f"bsimar_v4{suffix}"] = bsimar_phys
-            elif bsimar_plain.exists():
-                checkpoints[f"bsimar_v4{suffix}"] = bsimar_plain
-            else:
-                checkpoints[f"bsimar_v4{suffix}"] = None
-
-        # DirectNet v4 (tech-code embedding) or env override.
-        # When neither env nor `v4_dn_universal_*` is available, fall back
-        # to any present per-tech production checkpoint or refactor
-        # universal (`refac_dn_medium_*`) checkpoint — the path is only a
-        # *existence sentinel*: the netlist builders for the inverter
-        # tests omit MODEL_PATH for per-tech/refac stems so the parser's
-        # preempt cascade selects the right checkpoint for each tech.
-        if dn_ovr:
-            checkpoints[f"directnet_v4{suffix}"] = _require_pinned_checkpoint(
-                dn_ovr, dn_var, ("_best.pt",))
-        else:
-            fallbacks = [
-                CHECKPOINT_DIR / f"{tech}_dn_{size}_{dev}_best.pt"
+        suffix = dev.upper()
+        for key, tag, stem_tag in (
+            ("directnet_full", "DNF", "dnf"),
+            ("bsimar_full", "TFF", "tff"),
+        ):
+            override, variable = _env_pin((
+                f"PYCIRCUITSIM_NN_CHECKPOINT_{tag}_{suffix}",
+                f"PYCIRCUITSIM_NN_CHECKPOINT_{suffix}",
+                "PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE",
+            ))
+            if override:
+                checkpoints[f"{key}_{dev}"] = _require_pinned_checkpoint(
+                    override, variable, transformer=key == "bsimar_full",
+                )
+                continue
+            candidates = [
+                CHECKPOINT_DIR / f"{tech}_{stem_tag}_{size}_{dev}_best.pt"
                 for size in ("large", "medium", "small", "xl")
                 for tech in ("tsmc5", "tsmc6", "tsmc7", "tsmc12", "tsmc16")
             ] + [
-                CHECKPOINT_DIR / f"v4_dn_universal_{dev}_best.pt",
-                CHECKPOINT_DIR / f"refac_dn_medium_{dev}_best.pt",
-                CHECKPOINT_DIR / f"refac_dn_small_{dev}_best.pt",
+                CHECKPOINT_DIR / f"refac_{stem_tag}_{size}_{dev}_best.pt"
+                for size in ("large", "medium", "small", "xl")
             ]
-            checkpoints[f"directnet_v4{suffix}"] = next(
-                (p for p in fallbacks if p.exists()), None)
+            checkpoints[f"{key}_{dev}"] = next(
+                (
+                    path for path in candidates
+                    if not _missing_bundle_artifacts(
+                        path, transformer=key == "bsimar_full",
+                    )
+                ),
+                None,
+            )
 
-    # Backward-compat aliases (NMOS only, used by existing run_dc_tests/run_tran_tests)
-    checkpoints["bsimar_v4"] = checkpoints["bsimar_v4_nmos"]
-    checkpoints["directnet_v4"] = checkpoints["directnet_v4_nmos"]
+    checkpoints["bsimar_full"] = checkpoints["bsimar_full_nmos"]
+    checkpoints["directnet_full"] = checkpoints["directnet_full_nmos"]
 
     return checkpoints
 
@@ -704,7 +678,7 @@ def run_pycircuitsim_cmg_nmos_dc(
 
 
 # ---------------------------------------------------------------------------
-# PyCircuitSim NN NMOS DC — BSIMAR (LEVEL=74) or DirectNet (LEVEL=73)
+# PyCircuitSim NN NMOS DC — BSIMAR (LEVEL=76) or DirectNet (LEVEL=75)
 # ---------------------------------------------------------------------------
 def run_pycircuitsim_nn_nmos_dc(
     tech: TestTechConfig,
@@ -718,9 +692,9 @@ def run_pycircuitsim_nn_nmos_dc(
     Args:
         tech: technology config
         work_dir: output directory
-        level: 73 (DirectNet) or 74 (BSIMAR)
-        model_name: label for this model variant (e.g. "bsimar_v4")
-        model_path: explicit checkpoint path (used for DirectNet v4 MODEL_PATH)
+        level: 75 (DirectNet-Full) or 76 (BSIM-AR-Full)
+        model_name: label for this model variant (e.g. "bsimar_full")
+        model_path: explicit checkpoint path (used for DirectNet-Full MODEL_PATH)
     """
     from pycircuitsim.parser import Parser
     from pycircuitsim.simulation import run_dc_sweep
@@ -736,9 +710,9 @@ def run_pycircuitsim_nn_nmos_dc(
         level, tech.nn_tech_key, tech.nn_vt,
     )
     # Omit MODEL_PATH for stems the parser's per-tech preempt cascade handles
-    # (tsmc{5,7,12,16}_dn_* / refac_dn_*) so each tech resolves its OWN
+    # (tsmc{5,7,12,16}_dnf_* / refac_dnf_*) so each tech resolves its own
     # checkpoint from TECH= instead of being pinned to whichever single tech the
-    # `directnet_v4` alias happened to resolve to (bug report B1). A genuine
+    # `directnet_full` alias happened to resolve to (bug report B1). A genuine
     # env pin still wins (the parser reads it before the preempt).
     if model_path is not None and not _cascade_handles_stem(model_path):
         model_params += f" MODEL_PATH={model_path}"
@@ -885,9 +859,9 @@ def run_pycircuitsim_nn_nmos_tran(
         level, tech.nn_tech_key, tech.nn_vt,
     )
     # Omit MODEL_PATH for stems the parser's per-tech preempt cascade handles
-    # (tsmc{5,7,12,16}_dn_* / refac_dn_*) so each tech resolves its OWN
+    # (tsmc{5,7,12,16}_dnf_* / refac_dnf_*) so each tech resolves its own
     # checkpoint from TECH= instead of being pinned to whichever single tech the
-    # `directnet_v4` alias happened to resolve to (bug report B1). A genuine
+    # `directnet_full` alias happened to resolve to (bug report B1). A genuine
     # env pin still wins (the parser reads it before the preempt).
     if model_path is not None and not _cascade_handles_stem(model_path):
         model_params += f" MODEL_PATH={model_path}"
@@ -1057,9 +1031,9 @@ def run_pycircuitsim_nn_pmos_dc(
         level, tech.nn_tech_key, tech.effective_pmos_vt,
     )
     # Omit MODEL_PATH for stems the parser's per-tech preempt cascade handles
-    # (tsmc{5,7,12,16}_dn_* / refac_dn_*) so each tech resolves its OWN
+    # (tsmc{5,7,12,16}_dnf_* / refac_dnf_*) so each tech resolves its own
     # checkpoint from TECH= instead of being pinned to whichever single tech the
-    # `directnet_v4` alias happened to resolve to (bug report B1). A genuine
+    # `directnet_full` alias happened to resolve to (bug report B1). A genuine
     # env pin still wins (the parser reads it before the preempt).
     if model_path is not None and not _cascade_handles_stem(model_path):
         model_params += f" MODEL_PATH={model_path}"
@@ -1188,10 +1162,10 @@ def _cascade_handles_stem(path: Optional[Path]) -> bool:
     For these stems we deliberately omit MODEL_PATH in the netlist so a
     single test invocation can pick TSMC5 large for TSMC5 netlists, TSMC7
     large for TSMC7 netlists, etc. — instead of pinning ONE tech's net for
-    every tech (bug report B1). All five per-tech ``tsmc{5,6,7,12,16}_dn_*``
-    stems route through the parser's preempt cascade; ``refac_dn_*`` is the
+    every tech. All five per-tech ``tsmc{5,6,7,12,16}_dnf_*`` stems route
+    through the parser's preempt cascade; ``refac_dnf_*`` is the
     universal-refactor preset the cascade also recognises. An explicit env
-    pin (``PYCIRCUITSIM_NN_CHECKPOINT_DN_{NMOS,PMOS}``) still wins because the
+    pin (``PYCIRCUITSIM_NN_CHECKPOINT_DNF_{NMOS,PMOS}``) still wins because the
     parser reads it before the preempt, so omitting MODEL_PATH never defeats
     the benchmark's capacity-tier pinning.
     """
@@ -1199,9 +1173,10 @@ def _cascade_handles_stem(path: Optional[Path]) -> bool:
         return False
     stem = path.name
     return any(stem.startswith(p) for p in (
-        "tsmc5_dn_", "tsmc6_dn_", "tsmc7_dn_", "tsmc12_dn_", "tsmc16_dn_", "refac_dn_",
-        # V6.8: per-tech BSIMAR Transformer stems (LEVEL=74 preempt cascade).
-        "tsmc5_tf_", "tsmc6_tf_", "tsmc7_tf_", "tsmc12_tf_", "tsmc16_tf_", "refac_tf_"))
+        "tsmc5_dnf_", "tsmc6_dnf_", "tsmc7_dnf_", "tsmc12_dnf_",
+        "tsmc16_dnf_", "refac_dnf_", "tsmc5_tff_", "tsmc6_tff_",
+        "tsmc7_tff_", "tsmc12_tff_", "tsmc16_tff_", "refac_tff_",
+    ))
 
 
 def _ckpt_label(path: Path) -> str:
@@ -1332,13 +1307,13 @@ def plot_vtc_comparison_multi(
 
     colors = {
         "cmg_pycircuitsim": "green",
-        "bsimar_v4": "red",
-        "directnet_v4": "purple",
+        "bsimar_full": "red",
+        "directnet_full": "purple",
     }
     linestyles = {
         "cmg_pycircuitsim": "-.",
-        "bsimar_v4": "--",
-        "directnet_v4": ":",
+        "bsimar_full": "--",
+        "directnet_full": ":",
     }
 
     # Panel 1: VTC
@@ -1642,8 +1617,8 @@ def plot_inverter_tran_comparison_multi(
     )
 
     colors = {
-        "bsimar_v4": "red",
-        "directnet_v4": "purple",
+        "bsimar_full": "red",
+        "directnet_full": "purple",
     }
 
     # Panel 1: Input pulse
@@ -1742,13 +1717,13 @@ def plot_dc_comparison_multi(
 
     colors = {
         "cmg_pycircuitsim": "green",
-        "bsimar_v4": "red",
-        "directnet_v4": "purple",
+        "bsimar_full": "red",
+        "directnet_full": "purple",
     }
     linestyles = {
         "cmg_pycircuitsim": "-.",
-        "bsimar_v4": "--",
-        "directnet_v4": ":",
+        "bsimar_full": "--",
+        "directnet_full": ":",
     }
 
     # Linear scale
@@ -1841,8 +1816,8 @@ def plot_tran_comparison_multi(
     )
 
     colors = {
-        "bsimar_v4": "red",
-        "directnet_v4": "purple",
+        "bsimar_full": "red",
+        "directnet_full": "purple",
     }
 
     # Panel 1: Gate pulse
@@ -1996,15 +1971,15 @@ def run_dc_tests(
         if cmg_ok:
             model_results_for_plot["cmg_pycircuitsim"] = (cmg_data, cmg_metrics)
 
-        # 3. BSIMAR v4 (LEVEL=74, tech-code embedding)
-        if checkpoints.get("bsimar_v4") is not None:
-            bsimar_ckpt = checkpoints["bsimar_v4"]
-            print(f"  [3/N] Running BSIMAR v4 (LEVEL=74)...")
+        # 3. BSIM-AR-Full (LEVEL=76, tech-code embedding)
+        if checkpoints.get("bsimar_full") is not None:
+            bsimar_ckpt = checkpoints["bsimar_full"]
+            print(f"  [3/N] Running BSIM-AR-Full (LEVEL=76)...")
             print(f"    Checkpoint: {_ckpt_label(bsimar_ckpt)}")
             try:
                 bsimar_data = run_pycircuitsim_nn_nmos_dc(
-                    tech, work_dir, level=74,
-                    model_name="bsimar_v4",
+                    tech, work_dir, level=76,
+                    model_name="bsimar_full",
                     model_path=bsimar_ckpt,
                 )
                 bsimar_metrics = compare_dc_curves(
@@ -2017,78 +1992,78 @@ def run_dc_tests(
                       f"MRE={bsimar_metrics['mre']:.2f}%  "
                       f"Id_max={bsimar_metrics['max_id_test']:.4e} -> {status}")
                 results.append(TestResult(
-                    tech=tech.name, model="bsimar_v4", analysis="dc",
+                    tech=tech.name, model="bsimar_full", analysis="dc",
                     nrmse_pct=bsimar_metrics["nrmse"],
                     mre_pct=bsimar_metrics["mre"],
                     max_id_ref=bsimar_metrics["max_id_ref"],
                     max_id_test=bsimar_metrics["max_id_test"],
                     passed=passed,
                 ))
-                model_results_for_plot["bsimar_v4"] = (bsimar_data, bsimar_metrics)
+                model_results_for_plot["bsimar_full"] = (bsimar_data, bsimar_metrics)
             except Exception as e:
                 print(f"    ERROR: {e}")
                 results.append(TestResult(
-                    tech=tech.name, model="bsimar_v4", analysis="dc",
+                    tech=tech.name, model="bsimar_full", analysis="dc",
                     nrmse_pct=float("nan"), error=str(e),
                 ))
         else:
-            print(f"  [3/N] BSIMAR v4 -- SKIPPED (no checkpoint)")
+            print(f"  [3/N] BSIM-AR-Full -- SKIPPED (no checkpoint)")
 
-        # 4. DirectNet v4 (LEVEL=73, tech-code embedding, explicit MODEL_PATH)
-        if checkpoints.get("directnet_v4") is not None:
-            dnv4_ckpt = checkpoints["directnet_v4"]
-            print(f"  [4/N] Running DirectNet v4 (LEVEL=73, tech-code embedding)...")
-            print(f"    Checkpoint: {_ckpt_label(dnv4_ckpt)}")
+        # 4. DirectNet-Full (LEVEL=75, tech-code embedding, explicit MODEL_PATH)
+        if checkpoints.get("directnet_full") is not None:
+            dnf_ckpt = checkpoints["directnet_full"]
+            print(f"  [4/N] Running DirectNet-Full (LEVEL=75, tech-code embedding)...")
+            print(f"    Checkpoint: {_ckpt_label(dnf_ckpt)}")
             try:
-                dnv4_data = run_pycircuitsim_nn_nmos_dc(
-                    tech, work_dir, level=73,
-                    model_name="directnet_v4",
-                    model_path=dnv4_ckpt,
+                dnf_data = run_pycircuitsim_nn_nmos_dc(
+                    tech, work_dir, level=75,
+                    model_name="directnet_full",
+                    model_path=dnf_ckpt,
                 )
-                dnv4_metrics = compare_dc_curves(
+                dnf_metrics = compare_dc_curves(
                     ng_data["sweep"], ng_data["id"],
-                    dnv4_data["sweep"], dnv4_data["id"],
+                    dnf_data["sweep"], dnf_data["id"],
                 )
                 # Check for broken model: flat output at ~0.5A
-                id_range = float(dnv4_data["id"].max() - dnv4_data["id"].min())
-                id_max = float(dnv4_data["id"].max())
+                id_range = float(dnf_data["id"].max() - dnf_data["id"].min())
+                id_max = float(dnf_data["id"].max())
                 is_broken = (id_range < 1e-6) or (id_max > 0.1)
 
                 if is_broken:
                     print(f"    WARNING: Model appears BROKEN "
                           f"(Id_range={id_range:.2e}, Id_max={id_max:.2e})")
                     results.append(TestResult(
-                        tech=tech.name, model="directnet_v4", analysis="dc",
-                        nrmse_pct=dnv4_metrics["nrmse"],
-                        mre_pct=dnv4_metrics["mre"],
-                        max_id_ref=dnv4_metrics["max_id_ref"],
-                        max_id_test=dnv4_metrics["max_id_test"],
+                        tech=tech.name, model="directnet_full", analysis="dc",
+                        nrmse_pct=dnf_metrics["nrmse"],
+                        mre_pct=dnf_metrics["mre"],
+                        max_id_ref=dnf_metrics["max_id_ref"],
+                        max_id_test=dnf_metrics["max_id_test"],
                         passed=False,
                         error="BROKEN: flat/extreme output",
                     ))
                 else:
-                    passed = dnv4_metrics["nrmse"] < DC_NRMSE_THRESHOLD_NN * 100
+                    passed = dnf_metrics["nrmse"] < DC_NRMSE_THRESHOLD_NN * 100
                     status = "PASS" if passed else "FAIL"
-                    print(f"    NRMSE={dnv4_metrics['nrmse']:.2f}%  "
-                          f"MRE={dnv4_metrics['mre']:.2f}%  "
-                          f"Id_max={dnv4_metrics['max_id_test']:.4e} -> {status}")
+                    print(f"    NRMSE={dnf_metrics['nrmse']:.2f}%  "
+                          f"MRE={dnf_metrics['mre']:.2f}%  "
+                          f"Id_max={dnf_metrics['max_id_test']:.4e} -> {status}")
                     results.append(TestResult(
-                        tech=tech.name, model="directnet_v4", analysis="dc",
-                        nrmse_pct=dnv4_metrics["nrmse"],
-                        mre_pct=dnv4_metrics["mre"],
-                        max_id_ref=dnv4_metrics["max_id_ref"],
-                        max_id_test=dnv4_metrics["max_id_test"],
+                        tech=tech.name, model="directnet_full", analysis="dc",
+                        nrmse_pct=dnf_metrics["nrmse"],
+                        mre_pct=dnf_metrics["mre"],
+                        max_id_ref=dnf_metrics["max_id_ref"],
+                        max_id_test=dnf_metrics["max_id_test"],
                         passed=passed,
                     ))
-                model_results_for_plot["directnet_v4"] = (dnv4_data, dnv4_metrics)
+                model_results_for_plot["directnet_full"] = (dnf_data, dnf_metrics)
             except Exception as e:
                 print(f"    ERROR: {e}")
                 results.append(TestResult(
-                    tech=tech.name, model="directnet_v4", analysis="dc",
+                    tech=tech.name, model="directnet_full", analysis="dc",
                     nrmse_pct=float("nan"), error=str(e),
                 ))
         else:
-            print(f"  [4/N] DirectNet v4 -- SKIPPED (no checkpoint)")
+            print(f"  [4/N] DirectNet-Full -- SKIPPED (no checkpoint)")
 
         # Plot multi-model comparison
         if model_results_for_plot:
@@ -2111,8 +2086,8 @@ def run_pmos_dc_tests(
     """Run PMOS DC Id-Vgs tests for all techs and NN models."""
     results: List[TestResult] = []
 
-    has_pmos_ckpt = (checkpoints.get("bsimar_v4_pmos") is not None or
-                     checkpoints.get("directnet_v4_pmos") is not None)
+    has_pmos_ckpt = (checkpoints.get("bsimar_full_pmos") is not None or
+                     checkpoints.get("directnet_full_pmos") is not None)
     if not has_pmos_ckpt:
         print("\n  PMOS DC tests -- SKIPPED (no PMOS checkpoints)")
         return results
@@ -2153,15 +2128,15 @@ def run_pmos_dc_tests(
 
         model_results_for_plot: Dict[str, Tuple[Dict[str, np.ndarray], Dict[str, float]]] = {}
 
-        # 2. BSIMAR v4 PMOS
-        if checkpoints.get("bsimar_v4_pmos") is not None:
-            bsimar_ckpt = checkpoints["bsimar_v4_pmos"]
-            print(f"  [2/N] Running BSIMAR v4 PMOS (LEVEL=74)...")
+        # 2. BSIM-AR-Full PMOS
+        if checkpoints.get("bsimar_full_pmos") is not None:
+            bsimar_ckpt = checkpoints["bsimar_full_pmos"]
+            print(f"  [2/N] Running BSIM-AR-Full PMOS (LEVEL=76)...")
             print(f"    Checkpoint: {_ckpt_label(bsimar_ckpt)}")
             try:
                 bsimar_data = run_pycircuitsim_nn_pmos_dc(
-                    tech, work_dir, level=74,
-                    model_name="bsimar_v4",
+                    tech, work_dir, level=76,
+                    model_name="bsimar_full",
                     model_path=bsimar_ckpt,
                 )
                 bsimar_metrics = compare_dc_curves(
@@ -2174,79 +2149,79 @@ def run_pmos_dc_tests(
                       f"MRE={bsimar_metrics['mre']:.2f}%  "
                       f"|Id|_max={bsimar_metrics['max_id_test']:.4e} -> {status}")
                 results.append(TestResult(
-                    tech=tech.name, model="bsimar_v4_pmos", analysis="pmos_dc",
+                    tech=tech.name, model="bsimar_full_pmos", analysis="pmos_dc",
                     nrmse_pct=bsimar_metrics["nrmse"],
                     mre_pct=bsimar_metrics["mre"],
                     max_id_ref=bsimar_metrics["max_id_ref"],
                     max_id_test=bsimar_metrics["max_id_test"],
                     passed=passed,
                 ))
-                model_results_for_plot["bsimar_v4"] = (bsimar_data, bsimar_metrics)
+                model_results_for_plot["bsimar_full"] = (bsimar_data, bsimar_metrics)
             except Exception as e:
                 print(f"    ERROR: {e}")
                 results.append(TestResult(
-                    tech=tech.name, model="bsimar_v4_pmos", analysis="pmos_dc",
+                    tech=tech.name, model="bsimar_full_pmos", analysis="pmos_dc",
                     nrmse_pct=float("nan"), error=str(e),
                 ))
         else:
-            print(f"  [2/N] BSIMAR v4 PMOS -- SKIPPED (no checkpoint)")
+            print(f"  [2/N] BSIM-AR-Full PMOS -- SKIPPED (no checkpoint)")
 
-        # 3. DirectNet v4 PMOS
-        if checkpoints.get("directnet_v4_pmos") is not None:
-            dnv4_ckpt = checkpoints["directnet_v4_pmos"]
-            print(f"  [3/N] Running DirectNet v4 PMOS (LEVEL=73)...")
-            print(f"    Checkpoint: {_ckpt_label(dnv4_ckpt)}")
+        # 3. DirectNet-Full PMOS
+        if checkpoints.get("directnet_full_pmos") is not None:
+            dnf_ckpt = checkpoints["directnet_full_pmos"]
+            print(f"  [3/N] Running DirectNet-Full PMOS (LEVEL=75)...")
+            print(f"    Checkpoint: {_ckpt_label(dnf_ckpt)}")
             try:
-                dnv4_data = run_pycircuitsim_nn_pmos_dc(
-                    tech, work_dir, level=73,
-                    model_name="directnet_v4",
-                    model_path=dnv4_ckpt,
+                dnf_data = run_pycircuitsim_nn_pmos_dc(
+                    tech, work_dir, level=75,
+                    model_name="directnet_full",
+                    model_path=dnf_ckpt,
                 )
-                dnv4_metrics = compare_dc_curves(
+                dnf_metrics = compare_dc_curves(
                     ng_data["sweep"], ng_data["id"],
-                    dnv4_data["sweep"], dnv4_data["id"],
+                    dnf_data["sweep"], dnf_data["id"],
                 )
-                id_range = float(dnv4_data["id"].max() - dnv4_data["id"].min())
-                id_max = float(dnv4_data["id"].max())
+                id_range = float(dnf_data["id"].max() - dnf_data["id"].min())
+                id_max = float(dnf_data["id"].max())
                 is_broken = (id_range < 1e-6) or (id_max > 0.1)
 
                 if is_broken:
                     print(f"    WARNING: PMOS model appears BROKEN "
                           f"(Id_range={id_range:.2e}, Id_max={id_max:.2e})")
                     results.append(TestResult(
-                        tech=tech.name, model="directnet_v4_pmos",
+                        tech=tech.name, model="directnet_full_pmos",
                         analysis="pmos_dc",
-                        nrmse_pct=dnv4_metrics["nrmse"],
-                        mre_pct=dnv4_metrics["mre"],
-                        max_id_ref=dnv4_metrics["max_id_ref"],
-                        max_id_test=dnv4_metrics["max_id_test"],
+                        nrmse_pct=dnf_metrics["nrmse"],
+                        mre_pct=dnf_metrics["mre"],
+                        max_id_ref=dnf_metrics["max_id_ref"],
+                        max_id_test=dnf_metrics["max_id_test"],
                         passed=False,
                         error="BROKEN: flat/extreme output",
                     ))
                 else:
-                    passed = dnv4_metrics["nrmse"] < DC_NRMSE_THRESHOLD_NN * 100
+                    passed = dnf_metrics["nrmse"] < DC_NRMSE_THRESHOLD_NN * 100
                     status = "PASS" if passed else "FAIL"
-                    print(f"    NRMSE={dnv4_metrics['nrmse']:.2f}%  "
-                          f"MRE={dnv4_metrics['mre']:.2f}%  "
-                          f"|Id|_max={dnv4_metrics['max_id_test']:.4e} -> {status}")
+                    print(f"    NRMSE={dnf_metrics['nrmse']:.2f}%  "
+                          f"MRE={dnf_metrics['mre']:.2f}%  "
+                          f"|Id|_max={dnf_metrics['max_id_test']:.4e} -> {status}")
                     results.append(TestResult(
-                        tech=tech.name, model="directnet_v4_pmos",
+                        tech=tech.name, model="directnet_full_pmos",
                         analysis="pmos_dc",
-                        nrmse_pct=dnv4_metrics["nrmse"],
-                        mre_pct=dnv4_metrics["mre"],
-                        max_id_ref=dnv4_metrics["max_id_ref"],
-                        max_id_test=dnv4_metrics["max_id_test"],
+                        nrmse_pct=dnf_metrics["nrmse"],
+                        mre_pct=dnf_metrics["mre"],
+                        max_id_ref=dnf_metrics["max_id_ref"],
+                        max_id_test=dnf_metrics["max_id_test"],
                         passed=passed,
                     ))
-                model_results_for_plot["directnet_v4"] = (dnv4_data, dnv4_metrics)
+                model_results_for_plot["directnet_full"] = (dnf_data, dnf_metrics)
             except Exception as e:
                 print(f"    ERROR: {e}")
                 results.append(TestResult(
-                    tech=tech.name, model="directnet_v4_pmos", analysis="pmos_dc",
+                    tech=tech.name, model="directnet_full_pmos", analysis="pmos_dc",
                     nrmse_pct=float("nan"), error=str(e),
                 ))
         else:
-            print(f"  [3/N] DirectNet v4 PMOS -- SKIPPED (no checkpoint)")
+            print(f"  [3/N] DirectNet-Full PMOS -- SKIPPED (no checkpoint)")
 
         # Plot PMOS comparison
         if model_results_for_plot:
@@ -2307,7 +2282,7 @@ def run_inverter_vtc_tests(
         model_results_for_plot: Dict[str, Tuple[Dict[str, np.ndarray], Dict[str, float]]] = {}
 
         # Test each NN model type that has both NMOS and PMOS checkpoints
-        for model_tag, level in [("bsimar_v4", 74), ("directnet_v4", 73)]:
+        for model_tag, level in [("bsimar_full", 76), ("directnet_full", 75)]:
             nmos_key = f"{model_tag}_nmos"
             pmos_key = f"{model_tag}_pmos"
             nmos_ckpt = checkpoints.get(nmos_key)
@@ -2409,7 +2384,7 @@ def run_inverter_tran_tests(
 
         model_results_for_plot: Dict[str, Tuple[Dict[str, np.ndarray], Dict[str, float]]] = {}
 
-        for model_tag, level in [("bsimar_v4", 74), ("directnet_v4", 73)]:
+        for model_tag, level in [("bsimar_full", 76), ("directnet_full", 75)]:
             nmos_key = f"{model_tag}_nmos"
             pmos_key = f"{model_tag}_pmos"
             nmos_ckpt = checkpoints.get(nmos_key)
@@ -2573,14 +2548,14 @@ def run_tran_tests(
 
         model_results_for_plot: Dict[str, Tuple[Dict[str, np.ndarray], Dict[str, float]]] = {}
 
-        # 2. BSIMAR v4 transient (LEVEL=74, tech-code embedding)
-        if checkpoints.get("bsimar_v4") is not None:
-            print(f"  [2/N] Running BSIMAR v4 (LEVEL=74) transient...")
+        # 2. BSIM-AR-Full transient (LEVEL=76, tech-code embedding)
+        if checkpoints.get("bsimar_full") is not None:
+            print(f"  [2/N] Running BSIM-AR-Full (LEVEL=76) transient...")
             try:
                 bsimar_tran = run_pycircuitsim_nn_nmos_tran(
-                    tech, work_dir, level=74,
-                    model_name="bsimar_v4",
-                    model_path=checkpoints["bsimar_v4"],
+                    tech, work_dir, level=76,
+                    model_name="bsimar_full",
+                    model_path=checkpoints["bsimar_full"],
                 )
                 # Full comparison
                 full_metrics = compare_tran_waveforms(
@@ -2596,47 +2571,47 @@ def run_tran_tests(
                 print(f"    Full NRMSE={full_metrics['nrmse_vdd']:.2f}%  "
                       f"Post-startup NRMSE={post_metrics['nrmse_vdd']:.2f}% -> {status}")
                 results.append(TestResult(
-                    tech=tech.name, model="bsimar_v4", analysis="tran",
+                    tech=tech.name, model="bsimar_full", analysis="tran",
                     nrmse_pct=post_metrics["nrmse_vdd"],
                     passed=passed,
                     extra={"full_nrmse": full_metrics["nrmse_vdd"],
                            "max_err_mv": post_metrics["max_err_v"] * 1e3},
                 ))
-                model_results_for_plot["bsimar_v4"] = (bsimar_tran, post_metrics)
+                model_results_for_plot["bsimar_full"] = (bsimar_tran, post_metrics)
             except Exception as e:
                 print(f"    ERROR: {e}")
                 results.append(TestResult(
-                    tech=tech.name, model="bsimar_v4", analysis="tran",
+                    tech=tech.name, model="bsimar_full", analysis="tran",
                     nrmse_pct=float("nan"), error=str(e),
                 ))
         else:
-            print(f"  [2/N] BSIMAR v4 transient -- SKIPPED")
+            print(f"  [2/N] BSIM-AR-Full transient -- SKIPPED")
 
-        # 3. DirectNet v4 transient (LEVEL=73)
-        if checkpoints.get("directnet_v4") is not None:
-            print(f"  [3/N] Running DirectNet v4 (LEVEL=73) transient...")
+        # 3. DirectNet-Full transient (LEVEL=75)
+        if checkpoints.get("directnet_full") is not None:
+            print(f"  [3/N] Running DirectNet-Full (LEVEL=75) transient...")
             try:
-                dnv4_tran = run_pycircuitsim_nn_nmos_tran(
-                    tech, work_dir, level=73,
-                    model_name="directnet_v4",
-                    model_path=checkpoints["directnet_v4"],
+                dnf_tran = run_pycircuitsim_nn_nmos_tran(
+                    tech, work_dir, level=75,
+                    model_name="directnet_full",
+                    model_path=checkpoints["directnet_full"],
                 )
                 full_metrics = compare_tran_waveforms(
-                    ng_tran, dnv4_tran, tech.vdd, t_start=0.0,
+                    ng_tran, dnf_tran, tech.vdd, t_start=0.0,
                 )
                 post_metrics = compare_tran_waveforms(
-                    ng_tran, dnv4_tran, tech.vdd,
+                    ng_tran, dnf_tran, tech.vdd,
                     t_start=TRAN_STARTUP_EXCL,
                 )
 
                 # Check for broken output
-                v_range = float(dnv4_tran["v(drain)"].max() - dnv4_tran["v(drain)"].min())
+                v_range = float(dnf_tran["v(drain)"].max() - dnf_tran["v(drain)"].min())
                 is_broken = v_range < 0.01
 
                 if is_broken:
                     print(f"    WARNING: Flat transient output (range={v_range:.4f}V)")
                     results.append(TestResult(
-                        tech=tech.name, model="directnet_v4", analysis="tran",
+                        tech=tech.name, model="directnet_full", analysis="tran",
                         nrmse_pct=post_metrics["nrmse_vdd"],
                         passed=False,
                         error="BROKEN: flat transient output",
@@ -2647,21 +2622,21 @@ def run_tran_tests(
                     print(f"    Full NRMSE={full_metrics['nrmse_vdd']:.2f}%  "
                           f"Post-startup NRMSE={post_metrics['nrmse_vdd']:.2f}% -> {status}")
                     results.append(TestResult(
-                        tech=tech.name, model="directnet_v4", analysis="tran",
+                        tech=tech.name, model="directnet_full", analysis="tran",
                         nrmse_pct=post_metrics["nrmse_vdd"],
                         passed=passed,
                         extra={"full_nrmse": full_metrics["nrmse_vdd"],
                                "max_err_mv": post_metrics["max_err_v"] * 1e3},
                     ))
-                model_results_for_plot["directnet_v4"] = (dnv4_tran, post_metrics)
+                model_results_for_plot["directnet_full"] = (dnf_tran, post_metrics)
             except Exception as e:
                 print(f"    ERROR: {e}")
                 results.append(TestResult(
-                    tech=tech.name, model="directnet_v4", analysis="tran",
+                    tech=tech.name, model="directnet_full", analysis="tran",
                     nrmse_pct=float("nan"), error=str(e),
                 ))
         else:
-            print(f"  [3/N] DirectNet v4 transient -- SKIPPED")
+            print(f"  [3/N] DirectNet-Full transient -- SKIPPED")
 
         # Plot multi-model transient comparison
         if model_results_for_plot:
@@ -2899,7 +2874,7 @@ def run_sign_diagnostic(
                 (0.0, -tech.vdd * 0.5, True, ">=0"),
             ]
 
-        for model_tag, level in [("bsimar_v4", 74), ("directnet_v4", 73)]:
+        for model_tag, level in [("bsimar_full", 76), ("directnet_full", 75)]:
             nmos_key = f"{model_tag}_nmos" if f"{model_tag}_nmos" in checkpoints else model_tag
             pmos_key = f"{model_tag}_pmos"
             nmos_ckpt = checkpoints.get(nmos_key) or checkpoints.get(model_tag)
@@ -3049,9 +3024,9 @@ def run_pycircuitsim_nn_nmos_idvds(
         level, tech.nn_tech_key, tech.nn_vt,
     )
     # Omit MODEL_PATH for stems the parser's per-tech preempt cascade handles
-    # (tsmc{5,7,12,16}_dn_* / refac_dn_*) so each tech resolves its OWN
+    # (tsmc{5,7,12,16}_dnf_* / refac_dnf_*) so each tech resolves its own
     # checkpoint from TECH= instead of being pinned to whichever single tech the
-    # `directnet_v4` alias happened to resolve to (bug report B1). A genuine
+    # `directnet_full` alias happened to resolve to (bug report B1). A genuine
     # env pin still wins (the parser reads it before the preempt).
     if model_path is not None and not _cascade_handles_stem(model_path):
         model_params += f" MODEL_PATH={model_path}"
@@ -3097,7 +3072,7 @@ def plot_idvds_diagnostic(
     """Plot Id-Vds at Vgs=0 for BSIM-CMG vs NN models."""
     fig, axes = plt.subplots(2, 1, figsize=(12, 8))
 
-    colors = {"bsimar_v4": "red", "directnet_v4": "purple"}
+    colors = {"bsimar_full": "red", "directnet_full": "purple"}
 
     # Linear scale
     ax1 = axes[0]
@@ -3188,7 +3163,7 @@ def run_idvds_diagnostic(
 
         nn_results: Dict[str, Dict[str, np.ndarray]] = {}
 
-        for model_tag, level in [("bsimar_v4", 74), ("directnet_v4", 73)]:
+        for model_tag, level in [("bsimar_full", 76), ("directnet_full", 75)]:
             nmos_key = (f"{model_tag}_nmos"
                         if f"{model_tag}_nmos" in checkpoints
                         else model_tag)
@@ -3296,7 +3271,10 @@ def run_gate(tech_names: List[str], *,
 
     print("=" * 70)
     print(f"  {title}")
-    print("  BSIMAR (LEVEL=74) + DirectNet (LEVEL=73) vs BSIM-CMG (LEVEL=72)")
+    print(
+        "  BSIM-AR-Full (LEVEL=76) + DirectNet-Full (LEVEL=75) "
+        "vs BSIM-CMG (LEVEL=72)"
+    )
     print("=" * 70)
     print(f"\n  Technologies: {', '.join(tech_names)}")
     print(f"  Suites: NMOS_DC={nmos_dc}  PMOS_DC={pmos_dc}  "
@@ -3305,7 +3283,7 @@ def run_gate(tech_names: List[str], *,
           f"SIGN_DIAG={sign_diag}  IDVDS_DIAG={idvds_diag}")
     print(f"\n  Checkpoint availability:")
     for name, path in checkpoints.items():
-        if name in ("bsimar_v4", "directnet_v4"):
+        if name in ("bsimar_full", "directnet_full"):
             continue  # skip backward-compat aliases
         print(f"    {name:20s}: {path.name if path is not None else 'NOT FOUND'}")
 

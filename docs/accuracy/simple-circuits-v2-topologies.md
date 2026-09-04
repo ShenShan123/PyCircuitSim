@@ -159,7 +159,7 @@ numerical aggregates include only characterized rows.
 `verify_terminal_integrity.py` reuses `L0_devices/mosfet.spice.tmpl` to collect
 all four terminal currents and form a physical 4x4 transcapacitance matrix from
 four AC excitations. `verify_nn_subckt.py` compares flat and nested NN buffers
-in DC, transient, and AC against LEVEL=72 references for LEVEL=73–76.
+in DC, transient, and AC against LEVEL=72 references for LEVEL=75/76.
 
 For checkpoint campaigns, `scripts/v710_regate_jobs.py` writes a separate
 nominal-corner `jobs_simple_v2.txt` screening pool. Full corner characterization

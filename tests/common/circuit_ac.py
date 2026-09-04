@@ -1,7 +1,7 @@
 """Shared infrastructure for the AC (small-signal) circuit benchmark.
 
 V6.5 — extends the DC/transient circuit harness (``circuit_benchmarks.py``) into the
-frequency domain so DirectNet (LEVEL=73) AC accuracy can be gated against NGSPICE
+frequency domain so full-terminal NN AC accuracy can be gated against NGSPICE
 BSIM-CMG (LEVEL=72) ground truth — never a self-defined transfer function
 (AGENTS.md Validation rule).
 
@@ -119,7 +119,7 @@ def run_ngspice_ac_baked(
 
 
 # ---------------------------------------------------------------------------
-# DirectNet (LEVEL=73) AC runner — NN-aware DC operating point
+# Full-terminal NN AC runner — NN-aware DC operating point
 # ---------------------------------------------------------------------------
 def run_directnet_ac(
     deck_text: str,

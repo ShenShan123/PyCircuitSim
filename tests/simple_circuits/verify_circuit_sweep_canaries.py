@@ -74,8 +74,11 @@ def main() -> int:
             "INPUT_SPEC": "0", "ANALYSIS": ".dc Vin 0 1 0.1",
         }
         candidate_values = {
-            **common, "MODEL_SETUP": ".model nmos_nn NMOS (LEVEL=73)\n"
-            ".model pmos_nn PMOS (LEVEL=73)",
+            **common,
+            "MODEL_SETUP": (
+                ".model nmos_nn NMOS (LEVEL=75 TECH=tsmc5 VT=svt)\n"
+                ".model pmos_nn PMOS (LEVEL=75 TECH=tsmc5 VT=svt)"
+            ),
             "N_PREFIX": "M", "P_PREFIX": "M",
             "N_DEVICE": (
                 f"nmos_nn L={bt.l_nmos * 1e9:g}n NFIN={bt.nfin}"

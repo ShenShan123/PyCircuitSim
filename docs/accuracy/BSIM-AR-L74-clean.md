@@ -1,5 +1,8 @@
 # BSIM-AR (LEVEL=74) — the clean recipe
 
+> Historical evidence only: V7.7.0 removed the LEVEL=74 runtime, trainer, and
+> checkpoints. Commands and options in this report are not supported.
+
 **What it is.** An autoregressive Transformer that emits the thirteen outputs
 one token at a time, each conditioned on the ones already produced. It shares
 DirectNet's data, normalization, loss, training and evaluation pipeline

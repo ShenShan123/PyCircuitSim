@@ -1,4 +1,4 @@
-"""Shared helpers for NN compact model verification (LEVEL=73 + LEVEL=74).
+"""Shared helpers for full-terminal NN compact-model verification.
 
 Importing this module guarantees that:
 

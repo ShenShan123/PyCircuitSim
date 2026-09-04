@@ -54,13 +54,6 @@ from tests.common.simple_circuit_harness import (  # noqa: E402
 FLAT_HIERARCHICAL_TOLERANCE_V = 1e-9
 
 
-def _family_parameter(level: int) -> str:
-    return {
-        73: "", 74: "", 75: " FAMILY=directnet-full",
-        76: " FAMILY=bsimar-full",
-    }[level]
-
-
 def _resolved_analysis(bt: BenchTech, analysis: AnalysisSpec) -> AnalysisSpec:
     return replace(analysis, card=analysis.card.replace("<VDD>", f"{bt.vdd:g}"))
 
@@ -86,11 +79,10 @@ def render_candidate_pair(
 ) -> Tuple[str, str]:
     """Render flat and nested buffers with the selected NN family."""
     analysis = _resolved_analysis(bt, analysis)
-    family = _family_parameter(run_spec.model_level)
     setup = (
-        f".model nmos_nn NMOS (LEVEL={run_spec.model_level}{family} "
+        f".model nmos_nn NMOS (LEVEL={run_spec.model_level} "
         f"TECH={bt.nn_tech} VT={bt.effective_nmos_vt})\n"
-        f".model pmos_nn PMOS (LEVEL={run_spec.model_level}{family} "
+        f".model pmos_nn PMOS (LEVEL={run_spec.model_level} "
         f"TECH={bt.nn_tech} VT={bt.effective_pmos_vt})"
     )
     common = {

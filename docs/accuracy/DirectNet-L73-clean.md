@@ -1,5 +1,8 @@
 # DirectNet (LEVEL=73) — the clean recipe
 
+> Historical evidence only: V7.7.0 removed the LEVEL=73 runtime, trainer, and
+> checkpoints. Commands and options in this report are not supported.
+
 **What it is.** A feed-forward MLP compact model. Seven inputs (Vgs, Vds, Vbs,
 NFIN, L, T, and a tech code through `nn.Embedding`), thirteen outputs.
 `gm`/`gds`/`gmb` are the **autograd Jacobian** of the predicted `id`, and the

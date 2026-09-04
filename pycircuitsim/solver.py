@@ -117,7 +117,7 @@ _RESID_ABS_FLOOR: float = 1e-6
 # V7.6.3 — keep full-terminal NN Newton iterates inside the checkpoint's
 # certified voltage support. This changes only the iteration path, not the
 # converged circuit equations.
-_DIRECTNET_FULL_DV_LIMIT: float = 0.1
+_FULL_TERMINAL_NN_DV_LIMIT: float = 0.1
 
 
 @dataclass(frozen=True)
@@ -295,7 +295,7 @@ def _lm_augment(mna_matrix, lam: float):
 
 @functools.lru_cache(maxsize=None)
 def _mosfet_types() -> tuple:
-    """Return tuple of all MOSFET classes (BSIM-CMG, NN, BSIM-AR).
+    """Return the supported BSIM-CMG and full-terminal NN MOSFET classes.
 
     The tuple is fixed once the model modules are importable, but this is
     called once per component per stamp — 4462 times in a 70-point NN DC
@@ -307,16 +307,6 @@ def _mosfet_types() -> tuple:
     try:
         from pycircuitsim.models.mosfet_cmg import NMOS_CMG, PMOS_CMG
         types.extend([NMOS_CMG, PMOS_CMG])
-    except ImportError:
-        pass
-    try:
-        from pycircuitsim.models.mosfet_directnet import NMOS_NN, PMOS_NN
-        types.extend([NMOS_NN, PMOS_NN])
-    except ImportError:
-        pass
-    try:
-        from pycircuitsim.models.mosfet_bsimar import NMOS_BSIMAR, PMOS_BSIMAR
-        types.extend([NMOS_BSIMAR, PMOS_BSIMAR])
     except ImportError:
         pass
     try:
@@ -332,90 +322,9 @@ def _mosfet_types() -> tuple:
     return tuple(types)
 
 
-@functools.lru_cache(maxsize=None)
-def _pmos_types() -> tuple:
-    """Return tuple of all PMOS classes (BSIM-CMG, DirectNet, BSIM-AR).
-
-    The tuple is fixed once the model modules are importable, but this is
-    called once per component per stamp — 4462 times in a 70-point NN DC
-    sweep before V7.0.1, each re-running four ``try: import`` blocks.
-    Memoized: the classes are module-level singletons, so the tuple is a
-    process-lifetime constant.
-    """
-    types = []
-    try:
-        from pycircuitsim.models.mosfet_cmg import PMOS_CMG
-        types.append(PMOS_CMG)
-    except ImportError:
-        pass
-    try:
-        from pycircuitsim.models.mosfet_directnet import PMOS_NN
-        types.append(PMOS_NN)
-    except ImportError:
-        pass
-    try:
-        from pycircuitsim.models.mosfet_bsimar import PMOS_BSIMAR
-        types.append(PMOS_BSIMAR)
-    except ImportError:
-        pass
-    try:
-        from pycircuitsim.models.mosfet_directnet_full import PMOS_DNF
-        types.append(PMOS_DNF)
-    except ImportError:
-        pass
-    try:
-        from pycircuitsim.models.mosfet_bsimar_full import PMOS_TFF
-        types.append(PMOS_TFF)
-    except ImportError:
-        pass
-    return tuple(types)
-
-
-@functools.lru_cache(maxsize=None)
-def _nn_mosfet_types() -> tuple:
-    """Return tuple of NN MOSFET classes eligible for the batched
-    forward+Jacobian pre-warm (plan Phase 5): LEVEL=73 DirectNet and —
-    since V6.8 — LEVEL=74 BSIMAR. LEVEL=72 BSIM-CMG stays per-device.
-
-    BSIMAR's AR-inference forward is batch-row independent (verified:
-    column-sum grad == per-row grad to float noise), and
-    ``_MOSFETNNBase.batch_eval`` is a pure ``_eval_cache`` pre-warm with the
-    per-device path as fallback — so batching it is the same float-noise
-    trade documented for DirectNet (``NN_BATCHED_EVAL=0`` opt-out applies).
-    For the ~8-forwards-per-eval AR loop the per-checkpoint grouping is the
-    single biggest CPU-gate speedup (e.g. ring-osc: 10 devices → 2 groups).
-    """
-    types: list = []
-    try:
-        from pycircuitsim.models.mosfet_directnet import NMOS_NN, PMOS_NN
-        types.extend([NMOS_NN, PMOS_NN])
-    except ImportError:
-        pass
-    try:
-        from pycircuitsim.models.mosfet_bsimar import NMOS_BSIMAR, PMOS_BSIMAR
-        types.extend([NMOS_BSIMAR, PMOS_BSIMAR])
-    except ImportError:
-        pass
-    return tuple(types)
-
-
 def _is_mosfet(component) -> bool:
     """Check if component is any MOSFET variant."""
     return isinstance(component, _mosfet_types())
-
-
-def _is_nn_mosfet(component) -> bool:
-    """Check if component is a LEVEL=73 DirectNet MOSFET.
-
-    R / C / BSIM-CMG (LEVEL=72) stay on the per-device stamping path;
-    only DirectNet devices are collected into the batched eval.
-    """
-    return isinstance(component, _nn_mosfet_types())
-
-
-def _is_pmos(component) -> bool:
-    """Check if component is any PMOS variant."""
-    return isinstance(component, _pmos_types())
 
 
 def _has_non_linear(circuit: Circuit) -> bool:
@@ -435,25 +344,8 @@ def _topo_key(circuit: Circuit):
     return (getattr(circuit, "_topo_version", None), len(circuit.components))
 
 
-def _nn_mosfets(circuit: Circuit) -> list:
-    """The circuit's NN MOSFETs (LEVEL>=73), cached per topology state.
-
-    The per-NR-iteration ``[c for c in components if _is_nn_mosfet(c)]``
-    scan was pure per-device Python executed ~620x per write op (plan
-    Phase 4a hoist). Membership only changes when the component list
-    does, so the list is cached on the circuit keyed by ``_topo_key``.
-    """
-    key = _topo_key(circuit)
-    cached = getattr(circuit, "_pcs_nn_list_cache", None)
-    if cached is not None and cached[0] == key:
-        return cached[1]
-    lst = [c for c in circuit.components if _is_nn_mosfet(c)]
-    circuit._pcs_nn_list_cache = (key, lst)
-    return lst
-
-
 def _has_nn_device(circuit: Circuit) -> bool:
-    """Check if circuit contains any NN compact-model device (LEVEL>=73).
+    """Check if a circuit contains a full-terminal NN device.
 
     Cached per topology state (Phase 4a) — this is called several times
     per NR iteration.
@@ -462,43 +354,24 @@ def _has_nn_device(circuit: Circuit) -> bool:
     cached = getattr(circuit, "_pcs_has_nn_cache", None)
     if cached is not None and cached[0] == key:
         return cached[1]
-    from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase
-    try:
-        from pycircuitsim.models.mosfet_directnet_full import (
-            _FullTerminalNNBase,
-        )
-        nn_types = (_MOSFETNNBase, _FullTerminalNNBase)
-    except ImportError:
-        nn_types = (_MOSFETNNBase,)
-    val = any(isinstance(c, nn_types) for c in circuit.components)
+    from pycircuitsim.models.mosfet_directnet_full import _FullTerminalNNBase
+    val = any(isinstance(c, _FullTerminalNNBase) for c in circuit.components)
     circuit._pcs_has_nn_cache = (key, val)
     return val
 
 
-def _selected_full_stamp(
-    device: object, attribute: str,
-) -> Optional[Callable[..., Any]]:
-    """Return a full-terminal stamp unless its explicit boundary disables it."""
-    boundary = getattr(device, "evaluator_boundary", "native")
-    if boundary in ("reduced-osdi", "raw-directnet"):
-        return None
-    if boundary != "native":
-        raise ValueError(f"Unsupported evaluator boundary {boundary!r}")
-    return getattr(device, attribute, None)
-
-
 def _full_current_stamp(device: object) -> Optional[Callable[..., Any]]:
-    """Select the device's full terminal-current stamp, when active."""
-    return _selected_full_stamp(device, "get_terminal_stamp")
+    """Return the device's full terminal-current stamp, when available."""
+    return getattr(device, "get_terminal_stamp", None)
 
 
 def _full_charge_stamp(device: object) -> Optional[Callable[..., Any]]:
-    """Select the device's full terminal-charge stamp, when active."""
-    return _selected_full_stamp(device, "get_charge_stamp")
+    """Return the device's full terminal-charge stamp, when available."""
+    return getattr(device, "get_charge_stamp", None)
 
 
-def _has_directnet_full_device(circuit: Circuit) -> bool:
-    """Return whether the circuit contains a LEVEL=75/76 full-terminal NN."""
+def _has_full_terminal_nn_device(circuit: Circuit) -> bool:
+    """Return whether the circuit contains a LEVEL=75/76 NN device."""
     key = _topo_key(circuit)
     cached = getattr(circuit, "_pcs_has_full_nn_cache", None)
     if cached is not None and cached[0] == key:
@@ -536,51 +409,14 @@ def _require_nn_caps(circuit: Circuit) -> None:
 
     Only ``TransientSolver`` and ``ACSolver`` consume MOSFET
     capacitances. Marking them here lets a ``.dc`` / ``.op`` run skip the
-    qg / qd autograd sweeps that produce those caps — two of the three
-    backward passes, ~2x on the NN eval path (V7.0.1). A no-op for
-    circuits with no NN device, and ``get_capacitances`` self-heals if
-    some other caller needs caps anyway.
+    charge-surface autograd sweeps. A no-op for circuits with no NN device,
+    and ``get_charge_stamp`` self-heals if another caller needs the matrix.
     """
     for component in circuit.components:
         require = getattr(component, "require_capacitance_jacobians", None)
         if callable(require):
             require()
 
-    from pycircuitsim.models.mosfet_nn import _MOSFETNNBase
-    _MOSFETNNBase.require_caps(circuit.components)
-
-
-def _batch_eval_nn_mosfets(
-    circuit: Circuit, voltages: Dict[str, float],
-) -> None:
-    """Pre-warm every DirectNet MOSFET's eval cache with one stacked
-    forward+Jacobian call per checkpoint (plan Phase 5).
-
-    Collects all LEVEL=73 DirectNet devices and hands them to
-    ``_MOSFETNNBase.batch_eval``, which groups by checkpoint and issues a
-    single batched NN forward + ``autograd.grad`` per group. The
-    subsequent per-device ``_stamp_mosfet_dc`` then hits the warm cache.
-    A no-op when the circuit has no DirectNet device.
-
-    Accuracy note: for a group of ONE device the batched path is exactly
-    bit-identical to the per-device path (it is the same GEMV). For a
-    group of N>1 the stacked GEMM accumulates in a different order than N
-    separate GEMVs — a ~1e-8 last-bit difference in the NN output. On a
-    plain device that is pure floating-point noise; in a high-gain
-    circuit (opamp, ring oscillator) the gain can amplify it into a
-    visible node-voltage / startup-phase shift, though the engineering
-    metrics (DC gain, oscillation period/amplitude) are preserved. Set
-    ``NN_BATCHED_EVAL=0`` to force the per-device path when exact
-    multi-device bit-identity is required. The inverter (always 1 NMOS +
-    1 PMOS → group-of-one) is bit-identical either way.
-    """
-    if os.environ.get("NN_BATCHED_EVAL", "1") == "0":
-        return  # opt out → per-device _eval fallback (bit-identical)
-    nn_mosfets = _nn_mosfets(circuit)  # cached scan (Phase 4a)
-    if not nn_mosfets:
-        return
-    from pycircuitsim.models.mosfet_nn import _MOSFETNNBase
-    _MOSFETNNBase.batch_eval(nn_mosfets, voltages)
 
 
 def _stamp_mosfet_dc(
@@ -595,8 +431,8 @@ def _stamp_mosfet_dc(
     """Stamp MOSFET conductance and NR current source to MNA matrix.
 
     Shared by DCSolver._stamp_mosfet and TransientSolver._stamp_mosfet_transient.
-    The NR linearization stamps g_ds, g_m, g_mb conductances and the equivalent
-    current source i_eq = I_leaving(V0) - g_ds*V_ds0 - g_m*V_gs0 - g_mb*V_bs0.
+    The NR linearization stamps the complete four-terminal current Jacobian and
+    its equivalent current source.
 
     Devices exposing ``nr_limit_voltages`` (LEVEL=72) are EVALUATED at the
     limited bias V0' that method returns, and the whole companion —
@@ -606,8 +442,6 @@ def _stamp_mosfet_dc(
     steps, so circuits that never stray stamp bit-identically.
     ``limit=False`` (residual probes) evaluates at ``voltages`` as given.
     """
-    drain, gate, source, bulk = mosfet.nodes
-
     limiter = getattr(mosfet, "nr_limit_voltages", None) if limit else None
     if limiter is not None:
         voltages = limiter(voltages)
@@ -625,335 +459,39 @@ def _stamp_mosfet_dc(
                     raise
                 voltages = retreat
 
-    # --- Full 4-terminal stamp (V7.5.0, LEVEL=72) ---
-    # The classic 3-conductance companion below linearizes only the
-    # channel: its Jacobian comes from the gm/gds/gmb opvars and its
-    # current routes drain-to-source. BSIM-CMG terminal currents also
-    # carry body-junction and gate-leakage components — dominant at high
-    # temperature — that the opvars know nothing about, so circuit NR
-    # cycles around a residual its Jacobian cannot see. Devices exposing
-    # get_terminal_stamp() stamp all four KCL rows from the condensed
-    # OSDI Jacobian instead, exactly as NGSPICE loads the model.
+    # Every supported MOSFET exposes the complete terminal-current companion.
     full_stamp = _full_current_stamp(mosfet)
-    if full_stamp is not None:
-        i_out, g4 = full_stamp(voltages)
-        idx = [node_map.get(n) if n not in ("0", "GND") else None
-               for n in mosfet.nodes]
-        v_eval = [voltages.get(n, 0.0) for n in mosfet.nodes]
-        # SPICE GMIN across d-s and both body junctions (d-b, s-b):
-        # keeps every terminal row invertible when the device is off.
-        for a, b in ((0, 2), (0, 3), (2, 3)):
-            g4[a, a] += gmin
-            g4[b, b] += gmin
-            g4[a, b] -= gmin
-            g4[b, a] -= gmin
-        for t in range(4):
-            row = idx[t]
-            if row is None:
-                continue
-            i_eq = i_out[t]
-            for j in range(4):
-                i_eq -= g4[t, j] * v_eval[j]
-                col = idx[j]
-                if col is not None:
-                    mna_matrix[row, col] += g4[t, j]
-            rhs[row] -= i_eq
-        return
+    if full_stamp is None:
+        raise TypeError(
+            f"MOSFET {mosfet.name} does not expose get_terminal_stamp()"
+        )
+    i_out, g4 = full_stamp(voltages)
+    idx = [node_map.get(n) if n not in ("0", "GND") else None
+           for n in mosfet.nodes]
+    v_eval = [voltages.get(n, 0.0) for n in mosfet.nodes]
+    # SPICE GMIN across d-s and both body junctions (d-b, s-b): keeps every
+    # terminal row invertible when the device is off.
+    for a, b in ((0, 2), (0, 3), (2, 3)):
+        g4[a, a] += gmin
+        g4[b, b] += gmin
+        g4[a, b] -= gmin
+        g4[b, a] -= gmin
+    for terminal in range(4):
+        row = idx[terminal]
+        if row is None:
+            continue
+        i_eq = i_out[terminal]
+        for column_index in range(4):
+            i_eq -= g4[terminal, column_index] * v_eval[column_index]
+            column = idx[column_index]
+            if column is not None:
+                mna_matrix[row, column] += g4[terminal, column_index]
+        rhs[row] -= i_eq
 
-    # Get conductances (3-tuple: g_ds, g_m, g_mb)
-    g_ds, g_m, g_mb = mosfet.get_conductance(voltages)
-
-    i_ds = mosfet.calculate_current(voltages)
-    g_ds = max(g_ds, gmin)  # SPICE GMIN floor
-
-    # --- Stamp conductances ---
-    # g_ds between drain and source
-    if drain != "0" and drain in node_map:
-        d_idx = node_map[drain]
-        mna_matrix[d_idx, d_idx] += g_ds
-    if source != "0" and source in node_map:
-        s_idx = node_map[source]
-        mna_matrix[s_idx, s_idx] += g_ds
-    if drain != "0" and drain in node_map and source != "0" and source in node_map:
-        d_idx, s_idx = node_map[drain], node_map[source]
-        mna_matrix[d_idx, s_idx] -= g_ds
-        mna_matrix[s_idx, d_idx] -= g_ds
-
-    # g_m transconductance (VCCS: gate controls drain current)
-    if gate != "0" and gate in node_map and drain != "0" and drain in node_map:
-        mna_matrix[node_map[drain], node_map[gate]] += g_m
-    if drain != "0" and drain in node_map and source != "0" and source in node_map:
-        mna_matrix[node_map[drain], node_map[source]] -= g_m
-    if gate != "0" and gate in node_map and source != "0" and source in node_map:
-        mna_matrix[node_map[source], node_map[gate]] -= g_m
-    if source != "0" and source in node_map:
-        mna_matrix[node_map[source], node_map[source]] += g_m
-
-    # g_mb bulk transconductance: i_d = gmb * (v_b - v_s)
-    # Full 4-entry VCCS stamp (matching AC solver pattern at lines 2002-2023).
-    if abs(g_mb) > 1e-12 and bulk != source:
-        # Stamp for drain equation
-        if bulk != "0" and bulk in node_map and drain != "0" and drain in node_map:
-            mna_matrix[node_map[drain], node_map[bulk]] += g_mb
-        if source != "0" and source in node_map and drain != "0" and drain in node_map:
-            mna_matrix[node_map[drain], node_map[source]] -= g_mb
-        # Stamp for source equation
-        if bulk != "0" and bulk in node_map and source != "0" and source in node_map:
-            mna_matrix[node_map[source], node_map[bulk]] -= g_mb
-        if source != "0" and source in node_map:
-            mna_matrix[node_map[source], node_map[source]] += g_mb
-
-    # --- Stamp NR equivalent current source to RHS ---
-    v_d, v_g = voltages.get(drain, 0.0), voltages.get(gate, 0.0)
-    v_s, v_b = voltages.get(source, 0.0), voltages.get(bulk, 0.0)
-    v_ds, v_gs, v_bs = v_d - v_s, v_g - v_s, v_b - v_s
-
-    # Convert to "leaving drain" convention:
-    # NMOS: i_ds positive = leaving drain; PMOS: i_ds positive = INTO drain
-    i_leaving = -i_ds if _is_pmos(mosfet) else i_ds
-    i_eq = i_leaving - g_ds * v_ds - g_m * v_gs - g_mb * v_bs
-
-    if drain != "0" and drain in node_map:
-        rhs[node_map[drain]] -= i_eq
-    if source != "0" and source in node_map:
-        rhs[node_map[source]] += i_eq
-
-
-# ─────────────────────────────────────────────────────────────────────
-# V7.2.0 Phase 3b — batched COO stamping for NN MOSFETs (opt-in)
-#
-# PYCIRCUITSIM_BATCHED_STAMP=1 replaces the per-device lil_matrix writes
-# for LEVEL>=73 devices with one COO assembly per NR iteration:
-# A = lil.tocsr() + coo.tocsr(). LEVEL=72 (OSDI) and all passives stay
-# on the scalar path. PERTURBING: summing duplicate coordinates in
-# CSR-conversion order is a different float accumulation order than
-# sequential lil writes — deterministic run-to-run, but not bit-equal to
-# the scalar path — so this ships default-off and gates with the §8.4
-# flag bundle. The two §4.3 hazards are handled explicitly below:
-# max(g_ds, gmin) is applied per device BEFORE accumulation, and the
-# dynamic abs(g_mb) > 1e-12 stamp mask reproduces the scalar branch.
-# ─────────────────────────────────────────────────────────────────────
-_BATCHED_STAMP = os.environ.get("PYCIRCUITSIM_BATCHED_STAMP", "0") == "1"
 
 #: V7.5.0 diagnostic: PYCIRCUITSIM_NR_TRACE=1 prints one line per NR
 #: iteration (worst node, delta, active limiters) in the transient loop.
 _NR_TRACE = os.environ.get("PYCIRCUITSIM_NR_TRACE", "0") == "1"
-
-
-def _nn_stamp_indices(circuit: Circuit, node_map: Dict[str, int]):
-    """Static per-NN-device index arrays for the batched stamp.
-
-    Topology-invariant, so cached on the circuit keyed by ``_topo_key``
-    (``node_map`` is itself topology-cached, so the key covers it).
-    Ground ("0"/"GND") and absent nodes map to -1.
-    """
-    key = _topo_key(circuit)
-    cached = getattr(circuit, "_pcs_stamp_idx_cache", None)
-    if cached is not None and cached[0] == key:
-        return cached[1]
-    devs = _nn_mosfets(circuit)
-    n = len(devs)
-    d_i = np.empty(n, dtype=np.int64)
-    g_i = np.empty(n, dtype=np.int64)
-    s_i = np.empty(n, dtype=np.int64)
-    b_i = np.empty(n, dtype=np.int64)
-    sign = np.ones(n)          # +1 NMOS, -1 PMOS ("leaving drain" flip)
-    b_ne_s = np.empty(n, dtype=bool)
-    for i, m in enumerate(devs):
-        dn, gn, sn, bn = m.nodes
-        d_i[i] = node_map.get(dn, -1)
-        g_i[i] = node_map.get(gn, -1)
-        s_i[i] = node_map.get(sn, -1)
-        b_i[i] = node_map.get(bn, -1)
-        if _is_pmos(m):
-            sign[i] = -1.0
-        b_ne_s[i] = bn != sn
-    data = (devs, d_i, g_i, s_i, b_i, sign, b_ne_s)
-    circuit._pcs_stamp_idx_cache = (key, data)
-    return data
-
-
-def _stamp_nn_mosfets_batched(
-    circuit: Circuit,
-    node_map: Dict[str, int],
-    matrix_size: int,
-    rhs: np.ndarray,
-    voltages: Dict[str, float],
-    v_arr: np.ndarray,
-    gmin: float,
-    tran_solver=None,
-):
-    """Batched replacement for the per-NN-device stamp loop.
-
-    Accumulates the NR current sources into ``rhs`` (np.add.at, device
-    order) and returns the NN devices' conductance/transcap block as one
-    CSR matrix to be added to the lil-born CSR — or ``None`` when the
-    circuit has no NN device. When ``tran_solver`` is given, the
-    charge-companion (transcap) block of ``_stamp_mosfet_transient`` is
-    included; otherwise this is the DC stamp only.
-
-    The value expressions reproduce ``_stamp_mosfet_dc`` /
-    ``_stamp_mosfet_transient`` term for term; only the accumulation
-    order of coincident matrix entries differs (the documented
-    perturbation this flag gates).
-    """
-    from scipy.sparse import coo_matrix
-
-    idx_data = _nn_stamp_indices(circuit, node_map)
-    devs, d_i, g_i, s_i, b_i, sign, b_ne_s = idx_data
-    n = len(devs)
-    if n == 0:
-        return None
-
-    # Padded node-voltage vector: index -1 lands on the appended 0.0,
-    # matching ``voltages.get(node, 0.0)`` for ground/absent nodes.
-    v_pad = np.concatenate([v_arr, np.zeros(1)])
-
-    gds = np.empty(n)
-    gm = np.empty(n)
-    gmb = np.empty(n)
-    ids = np.empty(n)
-    for i, m in enumerate(devs):
-        gds[i], gm[i], gmb[i] = m.get_conductance(voltages)
-        ids[i] = m.calculate_current(voltages)
-    gds = np.maximum(gds, gmin)   # §4.3: per-device floor BEFORE any sum
-
-    v_d = v_pad[d_i]
-    v_g = v_pad[g_i]
-    v_s = v_pad[s_i]
-    v_b = v_pad[b_i]
-    v_ds = v_d - v_s
-    v_gs = v_g - v_s
-    v_bs = v_b - v_s
-
-    i_leaving = sign * ids
-    i_eq = i_leaving - gds * v_ds - gm * v_gs - gmb * v_bs
-
-    d_ok = d_i >= 0
-    g_ok = g_i >= 0
-    s_ok = s_i >= 0
-    b_ok = b_i >= 0
-    ds_ok = d_ok & s_ok
-
-    np.add.at(rhs, d_i[d_ok], -i_eq[d_ok])
-    np.add.at(rhs, s_i[s_ok], i_eq[s_ok])
-
-    rows: list = []
-    cols: list = []
-    vals: list = []
-
-    def _add(r: np.ndarray, c: np.ndarray, v: np.ndarray,
-             valid: np.ndarray) -> None:
-        if valid.any():
-            rows.append(r[valid])
-            cols.append(c[valid])
-            vals.append(v[valid])
-
-    # gds between drain and source (4 entries)
-    _add(d_i, d_i, gds, d_ok)
-    _add(s_i, s_i, gds, s_ok)
-    _add(d_i, s_i, -gds, ds_ok)
-    _add(s_i, d_i, -gds, ds_ok)
-    # g_m VCCS (4 entries)
-    _add(d_i, g_i, gm, g_ok & d_ok)
-    _add(d_i, s_i, -gm, ds_ok)
-    _add(s_i, g_i, -gm, g_ok & s_ok)
-    _add(s_i, s_i, gm, s_ok)
-    # g_mb VCCS (4 entries, dynamic mask mirrors the scalar branch)
-    mb = (np.abs(gmb) > 1e-12) & b_ne_s
-    _add(d_i, b_i, gmb, mb & b_ok & d_ok)
-    _add(d_i, s_i, -gmb, mb & ds_ok)
-    _add(s_i, b_i, -gmb, mb & b_ok & s_ok)
-    _add(s_i, s_i, gmb, mb & s_ok)
-
-    # ── transcap companion block (transient only) ────────────────────
-    if tran_solver is not None:
-        act = [i for i, m in enumerate(devs)
-               if getattr(m, "_q_prev", None) is not None]
-        if act:
-            k = len(act)
-            dt = tran_solver._current_dt
-            method = getattr(tran_solver, "_integration_method", "trap")
-            qg = np.empty(k)
-            qd = np.empty(k)
-            cgg = np.empty(k)
-            cgd = np.empty(k)
-            cgs = np.empty(k)
-            cdg = np.empty(k)
-            cdd = np.empty(k)
-            h_g = np.empty(k)
-            h_d = np.empty(k)
-            coeff = np.empty(k)
-            for j, i in enumerate(act):
-                m = devs[i]
-                charges = m.get_charges(voltages)
-                caps = m.get_capacitances(voltages)
-                qg[j] = charges["qg"]
-                qd[j] = charges["qd"]
-                cgg[j] = caps.get("cgg", 0.0)
-                cgd[j] = caps.get("cgd", 0.0)
-                cgs[j] = caps.get("cgs", 0.0)
-                cdg[j] = caps.get("cdg", 0.0)
-                cdd[j] = caps.get("cdd", 0.0)
-                q_prev = m._q_prev
-                q_prev2 = getattr(m, "_q_prev2", None)
-                if method == 'bdf2' and q_prev2 is not None:
-                    c_j = 1.5 / dt
-                    h_g[j] = (2.0 / dt) * q_prev["qg"] - (0.5 / dt) * q_prev2["qg"]
-                    h_d[j] = (2.0 / dt) * q_prev["qd"] - (0.5 / dt) * q_prev2["qd"]
-                elif method == 'trap' or (method == 'bdf2' and q_prev2 is None):
-                    c_j = 2.0 / dt
-                    h_g[j] = c_j * q_prev["qg"] + getattr(m, '_i_prev_gate', 0.0)
-                    h_d[j] = c_j * q_prev["qd"] + getattr(m, '_i_prev_drain', 0.0)
-                else:
-                    c_j = 1.0 / dt
-                    h_g[j] = c_j * q_prev["qg"]
-                    h_d[j] = c_j * q_prev["qd"]
-                coeff[j] = c_j
-
-            a = np.asarray(act)
-            da, ga, sa = d_i[a], g_i[a], s_i[a]
-            vg_a, vd_a, vs_a = v_pad[ga], v_pad[da], v_pad[sa]
-            i_g_cap = coeff * qg - h_g
-            i_d_cap = coeff * qd - h_d
-            cds = -(cdg + cdd)
-            csg = -(cgg + cdg)
-            csd = -(cgd + cdd)
-            css = -(cgs + cds)
-            if os.environ.get("NN_SYMMETRIC_CAPS", "0") == "1":
-                cgd = cdg = 0.5 * (cgd + cdg)
-                cgs = csg = 0.5 * (cgs + csg)
-                cds = csd = 0.5 * (cds + csd)
-                css = -(cgs + cds)
-            scale = coeff
-
-            ga_ok = ga >= 0
-            da_ok = da >= 0
-            sa_ok = sa >= 0
-            _add(ga, ga, scale * cgg, ga_ok)
-            _add(ga, da, scale * cgd, ga_ok & da_ok)
-            _add(ga, sa, scale * cgs, ga_ok & sa_ok)
-            _add(da, ga, scale * cdg, da_ok & ga_ok)
-            _add(da, da, scale * cdd, da_ok)
-            _add(da, sa, scale * cds, da_ok & sa_ok)
-            _add(sa, ga, scale * csg, sa_ok & ga_ok)
-            _add(sa, da, scale * csd, sa_ok & da_ok)
-            _add(sa, sa, scale * css, sa_ok)
-
-            e_g = i_g_cap - scale * (cgg * vg_a + cgd * vd_a + cgs * vs_a)
-            e_d = i_d_cap - scale * (cdg * vg_a + cdd * vd_a + cds * vs_a)
-            e_s = -(e_g + e_d)
-            np.add.at(rhs, ga[ga_ok], -e_g[ga_ok])
-            np.add.at(rhs, da[da_ok], -e_d[da_ok])
-            np.add.at(rhs, sa[sa_ok], -e_s[sa_ok])
-
-    if not rows:
-        return None
-    coo = coo_matrix(
-        (np.concatenate(vals),
-         (np.concatenate(rows), np.concatenate(cols))),
-        shape=(matrix_size, matrix_size))
-    return coo.tocsr()
 
 
 class DCSolver:
@@ -1006,9 +544,9 @@ class DCSolver:
                 a 2 µA current source into a node still at the 1e-12 S gds
                 floor asks for ΔV ≈ 2e6 V) reaches the compact model as
                 `g=-505225 V` and OSDI's internal-node solve raises. Capping
-                the step is SPICE's own answer to this. NN circuits (LEVEL
-                73/74) already cap at one supply rail unconditionally; LEVEL=75
-                caps at 0.1 V. A value here overrides either automatic cap.
+                the step is SPICE's own answer to this. Full-terminal NN
+                circuits cap at 0.1 V. A value here overrides that automatic
+                cap.
                 The cap changes the Newton PATH, not the fixed point.
 
                 MEASURED DEAD END, kept here so it is not retried: also
@@ -1045,8 +583,8 @@ class DCSolver:
         self.use_gmin_stepping = use_gmin_stepping
         self.force_ic = force_ic
         self.dv_limit = (
-            _DIRECTNET_FULL_DV_LIMIT
-            if dv_limit is None and _has_directnet_full_device(circuit)
+            _FULL_TERMINAL_NN_DV_LIMIT
+            if dv_limit is None and _has_full_terminal_nn_device(circuit)
             else dv_limit
         )
         self.nodesets = nodesets
@@ -1393,7 +931,7 @@ class DCSolver:
         # tried once per level, so 4 levels x 5 steps = 20 NR sweeps per
         # GMIN-on solve, which dominated the verify wall-time when GMIN
         # was default-on. 2 levels keeps the homotopy useful for the
-        # cells that need it (TSMC5 BSIMAR-M VTC trip-point overflow)
+        # cells that need it (high-gain NN VTC trip-point overflow)
         # while halving the slow-path cost.
         if self.use_gmin_stepping:
             if _has_nn_device(self.circuit):
@@ -1498,31 +1036,13 @@ class DCSolver:
                             component.stamp_conductance(mna_matrix, node_map)
                             component.stamp_rhs(rhs, node_map)
 
-                    # Batched DirectNet (LEVEL=73) forward+Jacobian: one
-                    # stacked NN call per checkpoint pre-warms the eval
-                    # cache so the per-device stamps below hit it. Perf
-                    # only — see _batch_eval_nn_mosfets for the accuracy
-                    # note (exact for group-of-one, e.g. the inverter).
-                    _batch_eval_nn_mosfets(self.circuit, voltages)
-
-                    # Stamp MOSFET conductances and currents.
-                    # Phase 3b (opt-in): NN devices go through one COO
-                    # assembly; LEVEL=72/others stay scalar.
-                    nn_extra = None
-                    if _BATCHED_STAMP:
-                        nn_extra = _stamp_nn_mosfets_batched(
-                            self.circuit, node_map, matrix_size, rhs,
-                            voltages, v_arr, self.gmin)
-                        for component in self.circuit.components:
-                            if (_is_mosfet(component)
-                                    and not _is_nn_mosfet(component)):
-                                self._stamp_mosfet(
-                                    component, mna_matrix, rhs,
-                                    node_map, voltages)
-                    else:
-                        for component in self.circuit.components:
-                            if _is_mosfet(component):
-                                self._stamp_mosfet(component, mna_matrix, rhs, node_map, voltages)
+                    # Stamp every MOSFET through its full terminal companion.
+                    for component in self.circuit.components:
+                        if _is_mosfet(component):
+                            self._stamp_mosfet(
+                                component, mna_matrix, rhs,
+                                node_map, voltages,
+                            )
 
                     # Handle voltage sources (B and C matrices)
                     self._stamp_voltage_sources(mna_matrix, rhs, node_map, num_nodes, voltages=voltages)
@@ -1538,9 +1058,6 @@ class DCSolver:
                     mna_solve = (
                         mna_matrix.tocsr() if issparse(mna_matrix)
                         else mna_matrix)
-                    if nn_extra is not None:
-                        mna_solve = mna_solve + nn_extra
-
                     # Complete the node state with the ideal-source branch
                     # currents before measuring KCL. A zero branch tail makes
                     # the supply current look like nonlinear residual.
@@ -1679,11 +1196,6 @@ class DCSolver:
                     if self.logger:
                         currents = {}
                         conductances = {}
-                        # Pre-warm the batched NN cache for the post-update
-                        # voltages so the per-device current/conductance
-                        # reads below hit it (perf — the logger block
-                        # re-evaluates every MOSFET at the damped iterate).
-                        _batch_eval_nn_mosfets(self.circuit, voltages)
                         for comp in self.circuit.components:
                             try:
                                 current = comp.calculate_current(voltages)
@@ -1914,9 +1426,6 @@ class DCSolver:
             if not _is_mosfet(component):
                 component.stamp_conductance(mna_matrix_final, node_map)
                 component.stamp_rhs(rhs_final, node_map)
-
-        # Batched DirectNet pre-warm for the final operating-point restamp.
-        _batch_eval_nn_mosfets(self.circuit, voltages)
 
         for component in self.circuit.components:
             if _is_mosfet(component):
@@ -2298,10 +1807,9 @@ class TransientSolver:
         self.initial_guess = initial_guess
         self.debug = debug
 
-        # V7.0.1 — transient stamps the MOSFET capacitances every NR
-        # iteration, so the NN devices must compute their qg / qd autograd
-        # Jacobians. Declared once here; a `.dc` / `.op` run never declares
-        # it and skips those two backward passes entirely.
+        # Transient stamps the MOSFET capacitances every NR iteration, so NN
+        # devices must compute their full charge Jacobian. A `.dc` / `.op`
+        # run never declares this requirement.
         _require_nn_caps(circuit)
 
         # Gmin stepping parameters
@@ -2336,8 +1844,8 @@ class TransientSolver:
 
         # Per-iteration explicit/automatic |ΔV| cap; see __init__ docs.
         self.dv_limit = (
-            _DIRECTNET_FULL_DV_LIMIT
-            if dv_limit is None and _has_directnet_full_device(circuit)
+            _FULL_TERMINAL_NN_DV_LIMIT
+            if dv_limit is None and _has_full_terminal_nn_device(circuit)
             else dv_limit
         )
 
@@ -2566,8 +2074,9 @@ class TransientSolver:
         return _has_non_linear(self.circuit)
 
     def _has_nn_devices(self) -> bool:
-        """Return True if the circuit contains any NN compact-model device
-        (LEVEL >= 73). Used to gate the V5 Phase A dt-halve fallback so
+        """Return True if the circuit contains a full-terminal NN device.
+
+        Used to gate the V5 Phase A dt-halve fallback so
         BSIM-CMG (LEVEL=72) transients keep their existing behaviour.
         """
         return _has_nn_device(self.circuit)
@@ -2755,29 +2264,12 @@ class TransientSolver:
             # Stamp voltage sources (with time-varying support)
             self._stamp_voltage_sources(mna_matrix, rhs, node_map, num_nodes, time, voltages)
 
-            # Batched DirectNet (LEVEL=73) forward+Jacobian: one stacked
-            # NN call per checkpoint pre-warms the eval cache so the
-            # per-device transient stamps below hit it. Perf only — see
-            # _batch_eval_nn_mosfets for the accuracy note.
-            _batch_eval_nn_mosfets(self.circuit, voltages)
-
-            # Stamp MOSFETs at current voltage estimate.
-            # Phase 3b (opt-in): NN devices go through one COO assembly
-            # (DC + transcap companion); LEVEL=72/others stay scalar.
-            nn_extra = None
-            if _BATCHED_STAMP:
-                nn_extra = _stamp_nn_mosfets_batched(
-                    self.circuit, node_map, matrix_size, rhs,
-                    voltages, v_arr, self.gmin, tran_solver=self)
-                for component in self.circuit.components:
-                    if (_is_mosfet(component)
-                            and not _is_nn_mosfet(component)):
-                        self._stamp_mosfet_transient(
-                            component, mna_matrix, rhs, node_map, voltages)
-            else:
-                for component in self.circuit.components:
-                    if _is_mosfet(component):
-                        self._stamp_mosfet_transient(component, mna_matrix, rhs, node_map, voltages)
+            # Stamp every MOSFET through its full current/charge companion.
+            for component in self.circuit.components:
+                if _is_mosfet(component):
+                    self._stamp_mosfet_transient(
+                        component, mna_matrix, rhs, node_map, voltages,
+                    )
 
             # Apply Gmin stepping (if enabled)
             if gmin > self.gmin_final:
@@ -2787,9 +2279,6 @@ class TransientSolver:
             # shared by the residual, the solve, and the LM ladder.
             mna_solve = (
                 mna_matrix.tocsr() if issparse(mna_matrix) else mna_matrix)
-            if nn_extra is not None:
-                mna_solve = mna_solve + nn_extra
-
             # Complete the node state with ideal-source branch currents before
             # measuring the nonlinear KCL residual (DC uses the same helper).
             iter_residual, iter_rhs_scale = _mna_residual_at_node_voltages(
@@ -3084,160 +2573,55 @@ class TransientSolver:
             if v_lim is not None:
                 voltages = v_lim
 
-        # --- Charge-based intrinsic capacitance stamping ---
-        # Supports BE, Trapezoidal, and BDF-2 integration methods.
-        # Theory: I_t(n+1) = coeff * Q_t(n+1) - history_terms
-        drain, gate, source, bulk = mosfet.nodes
-
-        # V7.5.1 — full 4-terminal charge companion for LEVEL=72. The 3x3
-        # block below rebuilds a transcap matrix from the 5 SPICE cap
-        # variables plus charge-conservation shortcuts; for floating-bulk
-        # devices that produces SIGN-FLIPPED off-diagonals (measured
-        # stamped +0.758 S vs true -0.758 S at dt=1e-15 on the charge
-        # pump), and a wrong-signed Jacobian at small dt makes every
-        # Newton iteration AMPLIFY the error ~15x. Devices exposing
-        # get_charge_stamp stamp the condensed reactive OSDI Jacobian
-        # directly — true dQ/dV, bulk row and column included.
+        # Charge-based intrinsic capacitance stamping supports BE,
+        # trapezoidal, and BDF-2 integration. Every supported MOSFET exposes
+        # the complete dQ/dV matrix, including bulk and source rows.
         full_q = _full_charge_stamp(mosfet)
-        if full_q is not None:
-            if getattr(mosfet, "_q_prev", None) is None:
-                return
-            q4, c4 = full_q(voltages)
-            dt = self._current_dt
-            method = getattr(self, '_integration_method', 'trap')
-            qp = mosfet._q_prev
-            qp2 = getattr(mosfet, "_q_prev2", None)
-            keys = ("qd", "qg", "qs", "qb")
-            iprev = (getattr(mosfet, "_i_prev_drain", 0.0),
-                     getattr(mosfet, "_i_prev_gate", 0.0),
-                     getattr(mosfet, "_i_prev_source", 0.0),
-                     getattr(mosfet, "_i_prev_bulk", 0.0))
-            if method == 'bdf2' and qp2 is not None:
-                coeff = 1.5 / dt
-                hist = [(2.0 / dt) * qp[k] - (0.5 / dt) * qp2[k] for k in keys]
-            elif method == 'trap' or (method == 'bdf2' and qp2 is None):
-                coeff = 2.0 / dt
-                hist = [coeff * qp[k] + ip for k, ip in zip(keys, iprev)]
-            else:  # 'be'
-                coeff = 1.0 / dt
-                hist = [coeff * qp[k] for k in keys]
-            idx = [node_map.get(n) if n not in ("0", "GND") else None
-                   for n in mosfet.nodes]
-            v_eval = [voltages.get(n, 0.0) for n in mosfet.nodes]
-            for t in range(4):
-                row = idx[t]
-                if row is None:
-                    continue
-                e_t = coeff * q4[t] - hist[t]
-                for j in range(4):
-                    e_t -= coeff * c4[t, j] * v_eval[j]
-                    col = idx[j]
-                    if col is not None:
-                        mna_matrix[row, col] += coeff * c4[t, j]
-                rhs[row] -= e_t
+        if full_q is None:
+            raise TypeError(
+                f"MOSFET {mosfet.name} does not expose get_charge_stamp()"
+            )
+        if getattr(mosfet, "_q_prev", None) is None:
             return
-
-        if hasattr(mosfet, '_q_prev') and mosfet._q_prev is not None:
-            charges = mosfet.get_charges(voltages)
-            caps = mosfet.get_capacitances(voltages)
-            dt = self._current_dt
-
-            # Select integration method coefficients
-            method = getattr(self, '_integration_method', 'trap')
-            if method == 'bdf2' and hasattr(mosfet, '_q_prev2') and mosfet._q_prev2 is not None:
-                coeff = 1.5 / dt
-                h_g = (2.0 / dt) * mosfet._q_prev["qg"] - (0.5 / dt) * mosfet._q_prev2["qg"]
-                h_d = (2.0 / dt) * mosfet._q_prev["qd"] - (0.5 / dt) * mosfet._q_prev2["qd"]
-            elif method == 'trap' or (method == 'bdf2' and mosfet._q_prev2 is None):
-                # Trapezoidal (or fallback when BDF-2 history not yet available)
-                coeff = 2.0 / dt
-                h_g = coeff * mosfet._q_prev["qg"] + getattr(mosfet, '_i_prev_gate', 0.0)
-                h_d = coeff * mosfet._q_prev["qd"] + getattr(mosfet, '_i_prev_drain', 0.0)
-            else:
-                # Backward Euler: no i_prev history term
-                coeff = 1.0 / dt
-                h_g = coeff * mosfet._q_prev["qg"]
-                h_d = coeff * mosfet._q_prev["qd"]
-
-            # Terminal voltages at current NR iterate
-            v_g = voltages.get(gate, 0.0)
-            v_d = voltages.get(drain, 0.0)
-            v_s = voltages.get(source, 0.0)
-
-            # Capacitive currents at NR iterate V0
-            i_g_cap = coeff * charges["qg"] - h_g
-            i_d_cap = coeff * charges["qd"] - h_d
-            # Source by charge conservation: i_s = -(i_g + i_d)
-
-            # Jacobian entries: dI_t/dV_j = coeff * C_tj
-            cgg = caps.get("cgg", 0.0)
-            cgd = caps.get("cgd", 0.0)
-            cgs = caps.get("cgs", 0.0)
-            cdg = caps.get("cdg", 0.0)
-            cdd = caps.get("cdd", 0.0)
-            # Derived from charge conservation on each terminal
-            cds = -(cdg + cdd)
-            csg = -(cgg + cdg)
-            csd = -(cgd + cdd)
-            css = -(cgs + cds)
-
-            # Optional C-stamp symmetrization (Phase 2a, gated by env var).
-            # cgd vs cdg (and cgs/csg, cds/csd) are independent MLP outputs
-            # that can drift asymmetric; under BDF-2 that seeds spurious
-            # damping/growth on oscillators. Replacing each conjugate pair
-            # with its mean restores reciprocity. Default off → bit-identical.
-            if os.environ.get("NN_SYMMETRIC_CAPS", "0") == "1":
-                cgd = cdg = 0.5 * (cgd + cdg)
-                cgs = csg = 0.5 * (cgs + csg)
-                cds = csd = 0.5 * (cds + csd)
-                # Keep the source self-term charge-conserving after the
-                # off-diagonal source entries were replaced.
-                css = -(cgs + cds)
-
-            scale = coeff
-
-            # Node indices (None if ground)
-            g_idx = node_map.get(gate) if gate != "0" else None
-            d_idx = node_map.get(drain) if drain != "0" else None
-            s_idx = node_map.get(source) if source != "0" else None
-
-            # --- Stamp Jacobian (conductance matrix) ---
-            # Gate row: dI_g/dV_g, dI_g/dV_d, dI_g/dV_s
-            if g_idx is not None:
-                mna_matrix[g_idx, g_idx] += scale * cgg
-                if d_idx is not None:
-                    mna_matrix[g_idx, d_idx] += scale * cgd
-                if s_idx is not None:
-                    mna_matrix[g_idx, s_idx] += scale * cgs
-
-            # Drain row: dI_d/dV_g, dI_d/dV_d, dI_d/dV_s
-            if d_idx is not None:
-                if g_idx is not None:
-                    mna_matrix[d_idx, g_idx] += scale * cdg
-                mna_matrix[d_idx, d_idx] += scale * cdd
-                if s_idx is not None:
-                    mna_matrix[d_idx, s_idx] += scale * cds
-
-            # Source row: dI_s/dV_g, dI_s/dV_d, dI_s/dV_s
-            if s_idx is not None:
-                if g_idx is not None:
-                    mna_matrix[s_idx, g_idx] += scale * csg
-                if d_idx is not None:
-                    mna_matrix[s_idx, d_idx] += scale * csd
-                mna_matrix[s_idx, s_idx] += scale * css
-
-            # --- Stamp RHS (NR constant) ---
-            # e_t = I_t(V0) - Σ_j(scale * C_tj * V0_j)
-            e_g = i_g_cap - scale * (cgg * v_g + cgd * v_d + cgs * v_s)
-            e_d = i_d_cap - scale * (cdg * v_g + cdd * v_d + cds * v_s)
-            e_s = -(e_g + e_d)  # Charge conservation
-
-            if g_idx is not None:
-                rhs[g_idx] -= e_g
-            if d_idx is not None:
-                rhs[d_idx] -= e_d
-            if s_idx is not None:
-                rhs[s_idx] -= e_s
+        q4, c4 = full_q(voltages)
+        dt = self._current_dt
+        method = getattr(self, '_integration_method', 'trap')
+        qp = mosfet._q_prev
+        qp2 = getattr(mosfet, "_q_prev2", None)
+        keys = ("qd", "qg", "qs", "qb")
+        iprev = (getattr(mosfet, "_i_prev_drain", 0.0),
+                 getattr(mosfet, "_i_prev_gate", 0.0),
+                 getattr(mosfet, "_i_prev_source", 0.0),
+                 getattr(mosfet, "_i_prev_bulk", 0.0))
+        if method == 'bdf2' and qp2 is not None:
+            coeff = 1.5 / dt
+            hist = [(2.0 / dt) * qp[key] - (0.5 / dt) * qp2[key]
+                    for key in keys]
+        elif method == 'trap' or (method == 'bdf2' and qp2 is None):
+            coeff = 2.0 / dt
+            hist = [coeff * qp[key] + prior
+                    for key, prior in zip(keys, iprev)]
+        else:  # 'be'
+            coeff = 1.0 / dt
+            hist = [coeff * qp[key] for key in keys]
+        idx = [node_map.get(node) if node not in ("0", "GND") else None
+               for node in mosfet.nodes]
+        v_eval = [voltages.get(node, 0.0) for node in mosfet.nodes]
+        for terminal in range(4):
+            row = idx[terminal]
+            if row is None:
+                continue
+            equivalent = coeff * q4[terminal] - hist[terminal]
+            for column_index in range(4):
+                equivalent -= (
+                    coeff * c4[terminal, column_index] * v_eval[column_index]
+                )
+                column = idx[column_index]
+                if column is not None:
+                    mna_matrix[row, column] += (
+                        coeff * c4[terminal, column_index]
+                    )
+            rhs[row] -= equivalent
 
     def _transient_residual_at(
         self,
@@ -3415,15 +2799,7 @@ class TransientSolver:
             if node not in initial_voltages:
                 initial_voltages[node] = 0.0
 
-        # Initialize MOSFET charge state for intrinsic capacitance tracking
-        #
-        # V7.2.0 Phase 2t (opt-in): warm every NN device's eval cache with
-        # one batched call before the per-device init_charge_state loop —
-        # the same cold batch-1 pattern as the per-step commit below, paid
-        # once at t=0. PERTURBING (batched GEMM rows differ from single-row
-        # evals in float32), hence default-off; see the commit-loop note.
-        if os.environ.get("PYCIRCUITSIM_TRAN_BATCH_COMMIT", "0") == "1":
-            _batch_eval_nn_mosfets(self.circuit, initial_voltages)
+        # Initialize MOSFET charge state for intrinsic capacitance tracking.
         for component in self.circuit.components:
             if _is_mosfet(component) and hasattr(component, 'init_charge_state'):
                 component.init_charge_state(initial_voltages)
@@ -3712,23 +3088,6 @@ class TransientSolver:
                         # eval. The solved voltages were never evaluated by
                         # the NR-loop batch eval (it warms the *iterate*,
                         # not the accepted solution), so every device below
-                        # runs a cache-cold batch-1 forward + backwards in
-                        # get_charges — measured 75-85% of transient wall
-                        # at 4x4..16x16 (plan §2.4t). One batched eval at
-                        # timestep_voltages makes those hits warm.
-                        # PERTURBING: a batched GEMM row != the single-row
-                        # eval at the last float32 bit, and the committed
-                        # charge history feeds every later step through the
-                        # companion model — so default OFF behind
-                        # PYCIRCUITSIM_TRAN_BATCH_COMMIT=1, gated with the
-                        # other perturbing phases (§8.4). Flag-unset path
-                        # is byte-identical. _require_nn_caps ran at solver
-                        # entry, so the warmed cache carries the charges.
-                        if os.environ.get(
-                                "PYCIRCUITSIM_TRAN_BATCH_COMMIT", "0") == "1":
-                            _batch_eval_nn_mosfets(
-                                self.circuit, timestep_voltages)
-
                         if refine:
                             _cand_q = []
                         for component in self.circuit.components:
@@ -4263,11 +3622,10 @@ class ACSolver:
                 num_freqs, dtype=complex,
             )
 
-        # Precompute small-signal MOSFET parameters ONCE at the DC operating
-        # point. gm/gds/gmb and the terminal capacitances are linearizations
-        # about the (fixed) operating point, so they do not depend on
-        # frequency. Evaluating the — possibly torch-backed (LEVEL=73) or
-        # OSDI-backed (LEVEL=72) — compact model once per device, instead of
+        # Precompute the full current/charge Jacobians once at the DC operating
+        # point. They are linearizations about the fixed point and do not depend on
+        # frequency. Evaluating the torch-backed NN or OSDI-backed LEVEL=72
+        # compact model once per device, instead of
         # once per (device, frequency), keeps the sweep cheap.
         mosfet_ss = self._precompute_mosfet_small_signal()
 
@@ -4397,121 +3755,24 @@ class ACSolver:
         # VoltageSource handled separately in _stamp_voltage_sources_ac
 
     def _precompute_mosfet_small_signal(self) -> Dict[int, tuple]:
-        """Evaluate every MOSFET's small-signal parameters once at the OP.
-
-        Returns a dict keyed by ``id(mosfet)`` → ``(g_ds, g_m, g_mb, caps)``
-        where ``caps`` is the ``{cgg, cgd, cgs, cdg, cdd}`` dict from
-        ``mosfet.get_capacitances`` (empty dict if the model does not expose
-        capacitances). These are linearizations about the fixed DC operating
-        point and so are frequency-independent — computing them once avoids a
-        per-frequency compact-model re-evaluation (important for the
-        torch-backed LEVEL=73 model).
-        """
+        """Evaluate every MOSFET's full ``(G4, C4)`` block once at the OP."""
         ss: Dict[int, tuple] = {}
         for component in self.circuit.components:
             if not _is_mosfet(component):
                 continue
-            # V7.5.2 — full 4-terminal small-signal block for LEVEL=72.
-            # The 3-conductance + 3x3-cap path below linearizes only the
-            # channel about (g, d, s): junction/gate-leakage conductances
-            # are invisible (the DC solve stopped trusting those opvars in
-            # V7.5.0 for exactly that reason), and the 3x3 cap expansion
-            # stamps SIGN-FLIPPED transcap off-diagonals for devices whose
-            # bulk is not tied to the source rail (the V7.5.1 transient
-            # defect, same hazard). Devices exposing get_terminal_stamp
-            # carry Y = G4 + jw*C4 from the condensed OSDI Jacobians,
-            # evaluated once at the DC OP — exactly NGSPICE's AC load.
             full_current = _full_current_stamp(component)
-            if full_current is not None:
-                full_charge = _full_charge_stamp(component)
-                if full_charge is None:
-                    raise RuntimeError(
-                        f"{component.name} exposes a full current stamp without "
-                        "a full charge stamp"
-                    )
-                _, g4 = full_current(self.dc_solution)
-                _, c4 = full_charge(self.dc_solution)
-                # NO external gmin here: the DC stamp's gmin across
-                # d-s/d-b/s-b is a Newton convergence aid; NGSPICE's AC
-                # load carries only the model's own Jacobian (the OSDI
-                # model handles gmin internally via $simparam). An extra
-                # 1e-12 S across the junctions injects a measurable
-                # spurious signal into high-impedance bulk nodes
-                # (measured: 6% on a 100k-tied NMOS bulk, and a fake
-                # 2.5e-7 V response on a PMOS bulk NGSPICE holds at zero).
-                ss[id(component)] = ("full4", g4, c4)
-                continue
-            conductance_result = component.get_conductance(self.dc_solution)
-            if len(conductance_result) == 2:
-                g_ds, g_m = conductance_result
-                g_mb = 0.0
-            else:
-                g_ds, g_m, g_mb = conductance_result
-            # SPICE GMIN floor for numerical stability (matches DC stamping).
-            g_ds = max(g_ds, 1e-12)
-            if hasattr(component, "get_capacitances"):
-                caps = component.get_capacitances(self.dc_solution)
-            else:
-                caps = {}
-            ss[id(component)] = (g_ds, g_m, g_mb, caps)
+            full_charge = _full_charge_stamp(component)
+            if full_current is None or full_charge is None:
+                raise RuntimeError(
+                    f"{component.name} must expose full current and charge "
+                    "stamps for AC analysis"
+                )
+            _, g4 = full_current(self.dc_solution)
+            _, c4 = full_charge(self.dc_solution)
+            # No external AC GMIN: it is a Newton aid, not part of the
+            # small-signal problem NGSPICE solves.
+            ss[id(component)] = (g4, c4)
         return ss
-
-    def _stamp_cap_ac(
-        self,
-        mna_matrix: np.ndarray,
-        node_map: Dict[str, int],
-        gate: str,
-        drain: str,
-        source: str,
-        caps: Dict[str, float],
-        omega: float,
-    ) -> None:
-        """Stamp the small-signal MOSFET transcapacitances as jω·C admittance.
-
-        The compact models expose the source-referenced, SPICE-sign-convention
-        condensed capacitances {cgg, cgd, cdg, cdd} (PyCMG `_condense_caps`,
-        matching NGSPICE's `@n1[cXX]` operating-point variables). These form
-        the 2-port (gate, drain) capacitance matrix referenced to source:
-
-            I_g = jω [  cgg·(Vg−Vs) − cgd·(Vd−Vs) ]
-            I_d = jω [ −cdg·(Vg−Vs) + cdd·(Vd−Vs) ]
-            I_s = −(I_g + I_d)               (charge conservation / KCL)
-
-        Embedding into the nodal 3×3 over {g, d, s} gives a matrix whose rows
-        and columns each sum to zero, stamped here (× jω). At ω→0 the stamp
-        vanishes, so AC reduces to the resistive small-signal model at DC.
-        """
-        cgg = caps.get("cgg", 0.0)
-        cgd = caps.get("cgd", 0.0)
-        cdg = caps.get("cdg", 0.0)
-        cdd = caps.get("cdd", 0.0)
-        if cgg == 0.0 and cgd == 0.0 and cdg == 0.0 and cdd == 0.0:
-            return
-        jw = 1j * omega
-        # Nodal 3×3 (rows/cols sum to zero):
-        #            gate        drain        source
-        # gate   [  cgg        -cgd          cgd-cgg          ]
-        # drain  [ -cdg         cdd          cdg-cdd          ]
-        # source [  cdg-cgg     cgd-cdd      cgg-cgd-cdg+cdd  ]
-        entries = (
-            (gate,   gate,   cgg),
-            (gate,   drain, -cgd),
-            (gate,   source, cgd - cgg),
-            (drain,  gate,  -cdg),
-            (drain,  drain,  cdd),
-            (drain,  source, cdg - cdd),
-            (source, gate,   cdg - cgg),
-            (source, drain,  cgd - cdd),
-            (source, source, cgg - cgd - cdg + cdd),
-        )
-        for row_node, col_node, val in entries:
-            if val == 0.0:
-                continue
-            if row_node == "0" or row_node not in node_map:
-                continue
-            if col_node == "0" or col_node not in node_map:
-                continue
-            mna_matrix[node_map[row_node], node_map[col_node]] += jw * val
 
     def _stamp_mosfet_ac(
         self,
@@ -4521,115 +3782,22 @@ class ACSolver:
         omega: float,
         ss: tuple,
     ) -> None:
-        """
-        Stamp MOSFET small-signal model for AC analysis.
-
-        Small-signal MOSFET model includes:
-        - gm: transconductance (gate to drain)
-        - gds: output conductance (drain to source)
-        - gmb: bulk transconductance (bulk to drain, if applicable)
-        - Cgg/Cgd/Cdg/Cdd: the source-referenced transcapacitance matrix
-          (Miller-coupled gate-drain feedback + gate/drain self-capacitance),
-          stamped as jω·C by `_stamp_cap_ac`.
-
-        Args:
-            mosfet: MOSFET component (NMOS or PMOS)
-            mna_matrix: Complex MNA matrix to modify (in-place)
-            node_map: Mapping from node names to matrix indices
-            omega: Angular frequency (2*pi*f) in rad/s
-            ss: precomputed (g_ds, g_m, g_mb, caps) at the DC operating point
-        """
-        # Get MOSFET terminals
-        drain = mosfet.nodes[0]
-        gate = mosfet.nodes[1]
-        source = mosfet.nodes[2]
-        bulk = mosfet.nodes[3]
-
-        # V7.5.2 — full 4-terminal admittance for LEVEL=72 (see
-        # _precompute_mosfet_small_signal): Y[t,j] = G4[t,j] + jw*C4[t,j]
-        # over terminal order [d, g, s, b], ground rows/cols dropped.
-        if ss[0] == "full4":
-            _, g4, c4 = ss
-            jw = 1j * omega
-            idx = [node_map.get(n) if n not in ("0", "GND") else None
-                   for n in mosfet.nodes]
-            for t in range(4):
-                row = idx[t]
-                if row is None:
-                    continue
-                for j in range(4):
-                    col = idx[j]
-                    if col is not None:
-                        mna_matrix[row, col] += g4[t, j] + jw * c4[t, j]
-            return
-
-        # Small-signal conductances + capacitances (precomputed once at the OP)
-        g_ds, g_m, g_mb, caps = ss
-
-        # Stamp conductances (same as DC, but to complex matrix)
-        # g_ds between drain and source
-        if drain != "0" and drain in node_map:
-            d_idx = node_map[drain]
-            mna_matrix[d_idx, d_idx] += g_ds
-
-        if source != "0" and source in node_map:
-            s_idx = node_map[source]
-            mna_matrix[s_idx, s_idx] += g_ds
-
-        if drain != "0" and drain in node_map and source != "0" and source in node_map:
-            d_idx = node_map[drain]
-            s_idx = node_map[source]
-            mna_matrix[d_idx, s_idx] -= g_ds
-            mna_matrix[s_idx, d_idx] -= g_ds
-
-        # g_m transconductance: i_d = gm * (v_g - v_s)
-        # Stamp for drain equation (KCL at drain node)
-        if gate != "0" and gate in node_map and drain != "0" and drain in node_map:
-            g_idx = node_map[gate]
-            d_idx = node_map[drain]
-            mna_matrix[d_idx, g_idx] += g_m
-
-        if source != "0" and source in node_map and drain != "0" and drain in node_map:
-            s_idx = node_map[source]
-            d_idx = node_map[drain]
-            mna_matrix[d_idx, s_idx] -= g_m
-
-        # Stamp for source equation (KCL at source node: current into source = -i_d)
-        if gate != "0" and gate in node_map and source != "0" and source in node_map:
-            g_idx = node_map[gate]
-            s_idx = node_map[source]
-            mna_matrix[s_idx, g_idx] -= g_m
-
-        if source != "0" and source in node_map:
-            s_idx = node_map[source]
-            mna_matrix[s_idx, s_idx] += g_m
-
-        # g_mb bulk transconductance: i_d = gmb * (v_b - v_s)
-        if abs(g_mb) > 1e-12 and bulk != source:
-            # Stamp for drain equation
-            if bulk != "0" and bulk in node_map and drain != "0" and drain in node_map:
-                b_idx = node_map[bulk]
-                d_idx = node_map[drain]
-                mna_matrix[d_idx, b_idx] += g_mb
-
-            if source != "0" and source in node_map and drain != "0" and drain in node_map:
-                s_idx = node_map[source]
-                d_idx = node_map[drain]
-                mna_matrix[d_idx, s_idx] -= g_mb
-
-            # Stamp for source equation
-            if bulk != "0" and bulk in node_map and source != "0" and source in node_map:
-                b_idx = node_map[bulk]
-                s_idx = node_map[source]
-                mna_matrix[s_idx, b_idx] -= g_mb
-
-            if source != "0" and source in node_map:
-                s_idx = node_map[source]
-                mna_matrix[s_idx, s_idx] += g_mb
-
-        # Frequency-dependent small-signal capacitances (Cgg/Cgd/Cdg/Cdd) —
-        # the Miller-coupled gate↔drain feedback that sets the device roll-off.
-        self._stamp_cap_ac(mna_matrix, node_map, gate, drain, source, caps, omega)
+        """Stamp the full four-terminal small-signal block ``G + jωC``."""
+        g4, c4 = ss
+        jw = 1j * omega
+        idx = [node_map.get(node) if node not in ("0", "GND") else None
+               for node in mosfet.nodes]
+        for terminal in range(4):
+            row = idx[terminal]
+            if row is None:
+                continue
+            for column_index in range(4):
+                column = idx[column_index]
+                if column is not None:
+                    mna_matrix[row, column] += (
+                        g4[terminal, column_index]
+                        + jw * c4[terminal, column_index]
+                    )
 
     def _stamp_voltage_sources_ac(
         self,

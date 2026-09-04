@@ -18,21 +18,19 @@ _NGSPICE_DEFAULT_FREQUENCY_RELTOL = 1e-3
 
 
 def _circuit_has_nn(circuit: Circuit) -> bool:
-    """Return True if the circuit contains any NN compact-model device
-    (LEVEL >= 73, i.e. DirectNet LEVEL=73 or BSIMAR LEVEL=74).
+    """Return True if the circuit contains a full-terminal NN device.
 
     Used by the DC orchestration to *retry* with GMIN stepping when a
     fast-path NN solve fails. BSIM-CMG (LEVEL=72) circuits never enter
     the retry path so their verification suites stay byte-identical.
 
-    Detection is by isinstance against the NN base class
-    (`_MOSFETNNBase`), which both DirectNet and BSIMAR inherit from.
+    Both LEVEL=75 DirectNet-Full and LEVEL=76 BSIM-AR-Full inherit from the
+    same architecture-neutral runtime base.
     """
     # Local import to avoid a top-level circular import via models.
-    from pycircuitsim.models.mosfet_directnet import _MOSFETNNBase
     from pycircuitsim.models.mosfet_directnet_full import _FullTerminalNNBase
     for comp in circuit.components:
-        if isinstance(comp, (_MOSFETNNBase, _FullTerminalNNBase)):
+        if isinstance(comp, _FullTerminalNNBase):
             return True
     return False
 
