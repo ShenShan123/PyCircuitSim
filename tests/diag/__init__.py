@@ -1,6 +1,6 @@
-"""Diagnostics — NOT pass/fail gates.
+"""Explanatory diagnostics — never promotion or pass/fail evidence.
 
-These use LEVEL=72-in-PyCircuitSim as the reference rather than NGSPICE, which
-is what makes them controls: they isolate an NN-surface gap from a solver gap.
-Never quote a diag_* result as a gate result.
+Diagnostics may compare internal derivatives or inspect solver/model state;
+they do not replace NGSPICE LEVEL=72 ground truth. Never quote a ``diag_*``
+result as a gate result.
 """

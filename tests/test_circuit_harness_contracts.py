@@ -18,6 +18,8 @@ from tests.common.gate_result import GateResult, result_exit_code
 from tests.common.simple_circuit_catalog import AnalysisSpec, SIMPLE_V1, cases
 from tests.common.simple_circuit_harness import (
     CORNERS,
+    CandidateConvergenceError,
+    CandidateSupportError,
     RunSpec,
     Trace,
     analysis_axis_limits,
@@ -1268,6 +1270,77 @@ def test_catalog_declares_domain_headline_metrics() -> None:
     assert observed == expected
 
 
+def test_run_case_derives_exact_cmrr_and_psrr_db(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Rejection ratios use 20*log10 and preserve candidate/reference error."""
+    import tests.common.simple_circuit_harness as harness
+
+    case = next(item for item in cases() if item.case_id == "opamp_rejection")
+    gains = {
+        "differential_ac": ("diff", 100.0, 200.0),
+        "common_mode_ac": ("cm", 1.0, 4.0),
+        "supply_ac": ("supply", 0.1, 0.4),
+    }
+
+    def _result(
+        _case: object,
+        analysis: AnalysisSpec,
+        *_args: object,
+        **_kwargs: object,
+    ) -> GateResult:
+        stem, test_gain, reference_gain = gains[analysis.name]
+        return GateResult(
+            case_id=case.case_id,
+            tech="TSMC12",
+            corner="nominal",
+            analysis=analysis.name,
+            role="diagnostic",
+            status="diagnostic",
+            metrics={
+                "mre_pct": 0.0,
+                "r2": 1.0,
+                "nrmse_pct": 0.0,
+                "max_err": 0.0,
+            },
+            domain={
+                f"{stem}_gain_test": test_gain,
+                f"{stem}_gain_ref": reference_gain,
+                f"{stem}_gain_error_pct": 0.0,
+            },
+            model_family="DirectNet",
+            model_level=73,
+            thread_settings={"omp": 1, "mkl": 1, "torch": 1},
+        )
+
+    monkeypatch.setattr(harness, "run_case_analysis", _result)
+
+    results = harness.run_case(
+        case,
+        BENCH["TSMC12"],
+        CORNERS["nominal"],
+        tmp_path,
+        run_spec=RunSpec(73, "DirectNet"),
+    )
+    derived = next(result for result in results if result.analysis == "derived")
+
+    assert derived.domain["cmrr_db_test"] == pytest.approx(40.0)
+    assert derived.domain["cmrr_db_ref"] == pytest.approx(
+        20.0 * np.log10(50.0)
+    )
+    assert derived.domain["cmrr_db_error"] == pytest.approx(
+        40.0 - 20.0 * np.log10(50.0)
+    )
+    assert derived.domain["psrr_db_test"] == pytest.approx(60.0)
+    assert derived.domain["psrr_db_ref"] == pytest.approx(
+        20.0 * np.log10(500.0)
+    )
+    assert derived.domain["psrr_db_error"] == pytest.approx(
+        60.0 - 20.0 * np.log10(500.0)
+    )
+
+
 @pytest.mark.parametrize(
     ("error_kind", "expected"),
     (
@@ -1542,6 +1615,39 @@ def test_large_feedback_proxy_exceeds_the_old_ten_device_ceiling(
     assert {analysis.kind for analysis in case.analyses} == {"tran", "ac"}
 
 
+def test_generated_cascode_bias_is_exercised_for_both_polarities() -> None:
+    """An NMOS-only self-bias ladder cannot expose a PMOS model asymmetry."""
+    observed = {
+        tuple(case.device_kinds): case.analyses[0].signals[0]
+        for case in cases()
+        if case.case_id.startswith("self_biased_cascode")
+    }
+
+    assert observed == {
+        ("nmos",): "i(Voutn)",
+        ("pmos",): "i(Voutp)",
+    }
+
+
+def test_pmos_generated_cascode_bias_uses_a_passive_load_line() -> None:
+    """An ideal current can force a two-diode PMOS rail below ground."""
+    case = next(
+        item for item in cases()
+        if item.case_id == "self_biased_cascode_pmos"
+    )
+    candidate, reference = render_case_decks(
+        case,
+        case.analyses[0],
+        BENCH["TSMC12"],
+        CORNERS["nominal"],
+        baked_lib=Path("/frozen/tsmc12.lib"),
+    )
+
+    assert "Rrefp pc 0 100k" in candidate
+    assert "Rrefp pc 0 100k" in reference
+    assert "Irefp" not in candidate
+
+
 def test_named_device_roles_render_independent_geometry_and_reference_aliases(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1601,6 +1707,73 @@ def test_nn_hierarchy_renderer_uses_selected_family_and_instance_parameters(
     assert "TECH=tsmc12 VT=svt" in flat
     assert "Xbuf in out vdd buf" in hierarchical
     assert "NFIN=NFP" in hierarchical and "NFIN=NFN" in hierarchical
+
+
+def test_nn_hierarchy_gate_covers_dc_transient_and_ac() -> None:
+    """Flattening can be correct in one solver path and broken in another."""
+    from tests.simple_circuits.verify_nn_subckt import SUBCKT_ANALYSES
+
+    assert {analysis.kind for analysis in SUBCKT_ANALYSES} == {
+        "dc", "tran", "ac",
+    }
+    assert all(analysis.signals == ("v(out)", "v(mid)")
+               for analysis in SUBCKT_ANALYSES)
+
+
+@pytest.mark.parametrize(
+    ("failure", "execution_state", "error_kind"),
+    (
+        (KeyError("candidate results carry no v(out)"),
+         "infrastructure_error", "infrastructure"),
+        (CandidateConvergenceError(
+            "candidate AC operating point did not converge"),
+         "nonconverged", "candidate"),
+        (CandidateSupportError("outside certified support"),
+         "error", "candidate"),
+    ),
+)
+def test_nn_hierarchy_classifies_only_convergence_as_a_scientific_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failure: Exception,
+    execution_state: str,
+    error_kind: str,
+) -> None:
+    import tests.simple_circuits.verify_nn_subckt as subckt
+
+    analysis = subckt.SUBCKT_ANALYSES[0]
+    reference = Trace(
+        "sweep",
+        np.asarray([0.0, 0.8]),
+        {"v(out)": np.asarray([0.0, 0.8]),
+         "v(mid)": np.asarray([0.8, 0.0])},
+        reference=True,
+    )
+    monkeypatch.setattr(subckt, "get_baked_modelcard",
+                        lambda *_args, **_kwargs: tmp_path / "baked.lib")
+    monkeypatch.setattr(subckt, "render_candidate_pair",
+                        lambda *_args, **_kwargs: ("flat", "hierarchical"))
+    monkeypatch.setattr(subckt, "render_reference",
+                        lambda *_args, **_kwargs: "reference")
+    monkeypatch.setattr(subckt, "physical_deck_mismatch",
+                        lambda *_args, **_kwargs: "")
+    monkeypatch.setattr(subckt, "parse_netlist", lambda *_args: object())
+    monkeypatch.setattr(subckt, "flattened_candidate_mismatch",
+                        lambda *_args: "")
+    monkeypatch.setattr(subckt, "run_reference_trace",
+                        lambda *_args, **_kwargs: reference)
+
+    def _fail_candidate(*_args: object, **_kwargs: object) -> object:
+        raise failure
+
+    monkeypatch.setattr(subckt, "run_candidate_trace", _fail_candidate)
+
+    result = subckt.run_nn_subckt_analysis(
+        BENCH["TSMC12"], analysis, tmp_path, RunSpec(73, "DirectNet"),
+    )
+
+    assert result.execution_state == execution_state
+    assert result.error_kind == error_kind
 
 
 def test_level72_control_renders_the_same_physical_experiment() -> None:

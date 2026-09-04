@@ -1,4 +1,4 @@
-"""Focused regressions for the V7.6.0 NN instance-multiplier contract."""
+"""Reduced NN-family instance-multiplier contracts."""
 
 from __future__ import annotations
 

@@ -41,6 +41,10 @@ from tests.common.circuit_sweep import CIRCUITS, driver_main  # noqa: E402
 def main(argv: list[str] | None = None) -> int:
     """``<circuit>`` first, everything else straight through to driver_main."""
     argv = list(sys.argv[1:] if argv is None else argv)
+    if argv and argv[0] in {"-h", "--help"}:
+        print(f"usage: {Path(__file__).name} {{{'|'.join(CIRCUITS)}}} "
+              "[--tech ...] [--dimension ...] [--pin-strict]")
+        return 0
     if not argv or argv[0] not in CIRCUITS:
         print(f"usage: {Path(__file__).name} {{{'|'.join(CIRCUITS)}}} "
               f"[--tech ...] [--dimension ...] [--pin-strict]")

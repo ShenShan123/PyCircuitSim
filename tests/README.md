@@ -30,13 +30,17 @@ need no simulator and run in the collected `pytest` suite. Each owns one seam:
 | Module | Seam it holds |
 |---|---|
 | `test_circuit_harness_contracts.py` | the catalog-driven experiment seam: frozen renders, trace/metric validity, physical parity, provenance, collectors, and the gate CLIs |
-| `test_v767_template_tiers.py` | tier resolution and the frozen token defaults |
+| `test_metric_profile_contracts.py` | known-trace identity and mutation oracles for every live catalog metric profile |
+| `test_gate_cli_contracts.py` | fail-closed empty, duplicate, and unknown gate selections |
+| `test_template_tier_contracts.py` | tier resolution and the frozen token defaults |
 | `test_deck_engine_compatibility.py` | cards and value syntax both engines must read identically |
 | `test_core_device_contracts.py` | the non-compact-model core: `Inductor`, integration method, current-source sign, transient branch currents, temperature rebinding |
 | `test_subcircuit_harness_contracts.py` | the standalone hierarchy harness |
 | `test_reduced_osdi_boundary.py`, `test_raw_directnet_boundary.py` | the two device-evaluation boundaries |
-| `test_v760_*`, `test_v761_*`, `test_v764_*` | full-terminal dataset, family, and corridor contracts |
-| `test_v7517_coverage_contracts.py` | dataset splits, provenance, and campaign coverage |
+| `test_full_terminal_*` | full-terminal dataset, family, and corridor contracts |
+| `test_nn_multiplier_contracts.py` | reduced-family instance multiplier behavior |
+| `test_dataset_and_campaign_contracts.py` | dataset splits, provenance, and campaign coverage |
+| `test_release_metadata.py` | package/README release identity |
 | `test_hermetic_gate_suites.py` | wiring, not assertions: runs the three simulator-free gate suites |
 
 Three gate scripts need no simulator at all —
@@ -62,8 +66,8 @@ list.
   physical fixed point is an `ERROR` row that keeps its slot in the
   denominator and is never averaged into an accuracy number; where the numbers
   behind it are recoverable they are filed under a key no scoring path reads.
-- Unknown technologies, cases, corners, or analyses must fail before a campaign
-  starts.
+- Empty, duplicate, or unknown technologies, devices, cases, corners, sweeps,
+  or analyses must fail before a campaign starts.
 - A partial/nonconverged trace is always an `ERROR`; recovered values live only
   below a non-scoring diagnostic key. Required event metrics must be finite.
 - Every structured row records model family/level, explicit checkpoint pins,
@@ -79,6 +83,10 @@ list.
 - A gate that takes no options still answers `--help` and rejects an unknown
   flag (`common/base.py:parse_no_options`). A silently ignored `--tech` would
   let an operator read a full-matrix result as the subset they asked for.
+- Every catalog analysis layout is exercised with a known identical trace and
+  a targeted mutation through `compare_traces`; exact polarity and derived-dB
+  checks supplement those metamorphic tests. Deck parity alone cannot certify
+  a trip-point, period, delay, droop, bandwidth, or rejection-ratio extractor.
 - Generated `.sp`, `.cir`, CSV, JSON, logs, plots, and reports belong under
   `results/tests/` or another campaign directory below `results/`, never here.
 

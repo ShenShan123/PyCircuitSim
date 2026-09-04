@@ -47,7 +47,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from tests.common.nn_sweep import NN_TECHS, curve_metrics  # noqa: E402
-from tests.common.base import DEVICE_DECKS, render_template  # noqa: E402
+from tests.common.base import (  # noqa: E402
+    DEVICE_DECKS,
+    parse_csv_choices,
+    render_template,
+)
 from tests.common.nn_gate import (  # noqa: E402
     ALL_TEST_TECHS,
     NGSPICE_BIN,
@@ -150,7 +154,7 @@ def run_nn_nmos_dc_lifted(
             "id": np.abs(np.array(results["i(Mdut)"]))}
 
 
-def main() -> int:
+def main(argv: List[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--label", default="postfix",
                     help="output-file label (results/v6_4_7/"
@@ -160,19 +164,13 @@ def main() -> int:
     ap.add_argument("--techs", default=None,
                     help="comma-separated tech filter (e.g. TSMC5,TSMC7); "
                          "needed when env-pinning per-tech recipe checkpoints")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
     techs = list(NN_TECHS)
-    if args.techs:
-        want = {t.strip().upper() for t in args.techs.split(",") if t.strip()}
-        # audit B5n: an unknown tech used to filter `techs` down to [] and
-        # then report a green "0/0 configs PASSED" — silently retiring this
-        # permanent Rule-2 canary. A typo must be loud.
-        unknown = want - {tk.upper() for tk in NN_TECHS}
-        if unknown:
-            print(f"ERROR: unknown tech(s) {sorted(unknown)}. "
-                  f"Available: {NN_TECHS}")
-            return 1
-        techs = [tk for tk in techs if tk.upper() in want]
+    if args.techs is not None:
+        techs = parse_csv_choices(
+            ap, args.techs, flag="--techs", choices=NN_TECHS,
+            normalize=str.upper,
+        )
 
     print("=" * 78)
     print(f"  V6.4.7 — lifted-source NMOS Id-Vgs ({args.label})")

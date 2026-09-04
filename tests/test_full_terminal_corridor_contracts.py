@@ -1,4 +1,4 @@
-"""Focused tests for the V7.6.4 full-terminal trajectory overlay."""
+"""Full-terminal trajectory-overlay contracts."""
 
 from __future__ import annotations
 
@@ -129,4 +129,3 @@ def test_appended_metadata_preserves_parent_audit_and_records_overlay(
     assert manifest[-1]["sample_class"] == "traj_corridor"
     assert manifest[-1]["kept"] == 3
     assert sum(int(row.get("rejected", 0)) for row in manifest) == 2
-

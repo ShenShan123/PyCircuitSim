@@ -1,4 +1,4 @@
-"""V7.6.0 full-terminal generation and dataset-schema contracts."""
+"""Full-terminal generation, training, and dataset-schema contracts."""
 
 from __future__ import annotations
 

@@ -17,6 +17,36 @@ remain in Git history.
 
 ## V7.6 — full-terminal families and closure
 
+### V7.6.10 — metric oracles, hierarchy breadth, and stale-test purge (2026-09-04)
+
+Audited V7.6.9's NN compact-model harness for questions that had declarations
+but no independent behavioral witness. The executable report is
+[`v7610-harness-audit.md`](accuracy/v7610-harness-audit.md). No diagnostic was
+promoted, no threshold moved, and the frozen `simple-v1` `/20` denominator is
+unchanged.
+
+All 80 catalog analysis layouts across the 47 live metric profiles now receive
+a known-trace identity check and a targeted mutation check through
+`compare_traces`, with exact PMOS-compliance and CMRR/PSRR dB oracles. This
+found and fixed the PMOS self-biased-cascode compliance region being measured
+with the NMOS sweep orientation, and removed two unused generic profile names.
+The NN flat/nested buffer gate now executes DC, transient, and AC and the
+campaign collector requires all three rows. TSMC12 LEVEL=73 flat/hierarchical
+differences were 0 V, 0 V, and 1.06e-22 V respectively.
+
+Added a resistor-fed PMOS-only generated-cascode-bias topology. NGSPICE and the
+PyCircuitSim LEVEL=72 control converge; the served LEVEL=73 checkpoint remains
+an explicit nonconvergence with a recoverable, non-scoring diagnostic. The
+3/5/9/17-device generated-bias fanout ladder remains NMOS-only.
+
+Merged the duplicated DirectNet-Full and BSIM-AR-Full contract modules into one
+parametrized family suite, renamed the remaining release-stamped root tests by
+their durable responsibilities, and deleted the closed one-off LEVEL=72
+ring/opamp diagnostic. Standalone gates now share fail-closed comma-selection
+parsing, and package/README version identity is collected. Verification:
+567 tests passed, 4 `simple-v1` + 30 `simple-v2` catalog cases, 4,911 static
+render/parity cells, and 600/600 clean campaign jobs.
+
 ### V7.6.9 — harness coverage audit: untested features and engine agreement (2026-09-04)
 
 Asked what the harness does not test at all, rather than whether the catalog is

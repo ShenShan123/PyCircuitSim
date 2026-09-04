@@ -252,6 +252,14 @@ class Trace:
             self.signals[name] = array
 
 
+class CandidateConvergenceError(RuntimeError):
+    """The candidate model/solver did not produce a complete physical solve."""
+
+
+class CandidateSupportError(ValueError):
+    """The candidate was evaluated outside its certified model support."""
+
+
 def _analysis_number(raw: str) -> float:
     """Parse one number out of an analysis card.
 
@@ -586,6 +594,7 @@ def _common_substitutions(
         "BETA_RSTART": "10e6",
         "REF_RBIAS": "500k",
         "DIODE_RLOAD": "200k",
+        "CASCODE_BIAS_LOAD": "100k",
         "CASCODE_OUT": _number(0.6 * vdd),
         # --- Tier B: closed-loop systems --------------------------------
         "BUFFER_IN": _number(0.5 * vdd),
@@ -1497,7 +1506,9 @@ def _run_candidate_ac_trace(
     solver, dc_solution = _solve_dc_with_retry(circuit, has_nn, _solve)
     converged = bool(getattr(solver, "_last_solve_converged", True))
     if not converged:
-        raise RuntimeError("candidate AC operating point did not converge")
+        raise CandidateConvergenceError(
+            "candidate AC operating point did not converge"
+        )
     frequencies = build_ac_frequencies(parser.analysis_params)
     raw = ACSolver(circuit, dc_solution=dc_solution).solve(frequencies)
     values = {signal: _lookup_signal(raw, signal) for signal in signals}
@@ -1531,7 +1542,9 @@ def _run_candidate_op_trace(
     )
     converged = bool(getattr(solver, "_last_solve_converged", True))
     if not converged:
-        raise RuntimeError("candidate operating point did not converge")
+        raise CandidateConvergenceError(
+            "candidate operating point did not converge"
+        )
     raw: Dict[str, Any] = dict(solution)
     for component in circuit.components:
         try:
@@ -1587,6 +1600,16 @@ def run_candidate_trace(
             trace = _run_candidate_op_trace(path, analysis.signals)
         else:
             raise ValueError(f"unsupported analysis kind {analysis.kind!r}")
+    except (CandidateConvergenceError, CandidateSupportError):
+        raise
+    except ValueError as exc:
+        if "certified support" in str(exc).lower():
+            raise CandidateSupportError(str(exc)) from exc
+        raise
+    except RuntimeError as exc:
+        if "converg" in str(exc).lower():
+            raise CandidateConvergenceError(str(exc)) from exc
+        raise
     finally:
         logging.disable(logging.NOTSET)
     if trace.partial:
@@ -1844,6 +1867,22 @@ def _gradient_gain(axis: np.ndarray, values: np.ndarray) -> float:
     return float(np.max(np.abs(np.gradient(values, axis))))
 
 
+def _compliance_mask(
+    grid: np.ndarray,
+    vdd: float,
+    device_kinds: Sequence[str],
+) -> np.ndarray:
+    """Select saturation/compliance from the declared device polarity."""
+    kinds = set(device_kinds)
+    if kinds == {"nmos"}:
+        return grid >= 0.5 * vdd
+    if kinds == {"pmos"}:
+        return grid <= 0.5 * vdd
+    raise ValueError(
+        "compliance metrics require exactly one declared device polarity"
+    )
+
+
 def _bandwidth(axis: np.ndarray, values: np.ndarray) -> float:
     """First reference-independent -3 dB crossing of an AC response."""
     magnitude = np.abs(values)
@@ -1877,7 +1916,7 @@ def _period(axis: np.ndarray, values: np.ndarray, level: float) -> float:
 #: the catalog vocabulary and the runtime evidence contract: an event metric
 #: that cannot be measured is an error, not a present-but-NaN result.
 METRIC_CONTRACTS: Dict[str, Tuple[str, ...]] = {
-    "trace": (), "transient": (), "ac": (),
+    "trace": (),
     # V7.6.9: this was the only AC profile in the catalog with no domain
     # metric, so the complementary cascode's small-signal gain — the quantity
     # the stage exists to produce — was scored as trace NRMSE alone. Bandwidth
@@ -2070,6 +2109,7 @@ def _domain_metrics(
     candidate: Mapping[str, np.ndarray],
     reference: Mapping[str, np.ndarray],
     vdd: float,
+    device_kinds: Sequence[str],
 ) -> Dict[str, Any]:
     domain: Dict[str, Any] = {}
     names = list(candidate)
@@ -2224,8 +2264,7 @@ def _domain_metrics(
         # Score the saturation/compliance half of each sweep: high Vout for
         # the NMOS sink and low Vout for the PMOS source.  Including the
         # triode knee would turn this into an on-resistance measurement.
-        compliance = (grid <= 0.5 * vdd if "outp" in current_name.lower()
-                      else grid >= 0.5 * vdd)
+        compliance = _compliance_mask(grid, vdd, device_kinds)
         test_ratio = np.median(np.abs(candidate[current_name][compliance]))
         ref_ratio = np.median(np.abs(reference[current_name][compliance]))
         gt = np.gradient(np.real(candidate[current_name]), grid)
@@ -2240,8 +2279,7 @@ def _domain_metrics(
     if profile in ("cascode",):
         current_name = next((name for name in names if name.lower().startswith("i(")),
                             names[0])
-        compliance = (grid <= 0.5 * vdd if "outp" in current_name.lower()
-                      else grid >= 0.5 * vdd)
+        compliance = _compliance_mask(grid, vdd, device_kinds)
         gt = np.gradient(np.real(candidate[current_name]), grid)
         gr = np.gradient(np.real(reference[current_name]), grid)
         domain["output_resistance_error_pct"] = _relative_error(
@@ -2483,7 +2521,7 @@ def _domain_metrics(
     if profile == "self_bias_cascode":
         current = next((name for name in names
                         if name.lower().startswith("i(")), names[0])
-        compliance = grid >= 0.5 * vdd
+        compliance = _compliance_mask(grid, vdd, device_kinds)
         if int(np.count_nonzero(compliance)) >= 3:
             gt = np.gradient(np.real(candidate[current]), grid)
             gr = np.gradient(np.real(reference[current]), grid)
@@ -2699,7 +2737,12 @@ def compare_traces(
             f"{internal_key}_nrmse_pct"
         ]
     domain = _domain_metrics(
-        analysis.metric_profile, grid, candidate_values, reference_values, vdd,
+        analysis.metric_profile,
+        grid,
+        candidate_values,
+        reference_values,
+        vdd,
+        analysis.device_kinds,
     )
     return metrics, domain
 
@@ -3021,11 +3064,13 @@ def run_case_analysis(
         )
         if stage in {"reference", "control"}:
             execution_state, error_kind = "reference_error", "reference"
+        elif isinstance(exc, CandidateConvergenceError):
+            execution_state, error_kind = "nonconverged", "candidate"
+        elif isinstance(exc, CandidateSupportError):
+            execution_state, error_kind = "error", "candidate"
         elif stage == "candidate":
             execution_state, error_kind = (
-                ("nonconverged", "candidate")
-                if "converg" in str(exc).lower()
-                else ("error", "candidate")
+                "infrastructure_error", "infrastructure",
             )
         elif stage == "metrics" or "mismatch" in str(exc).lower():
             execution_state, error_kind = "error", "result_schema"

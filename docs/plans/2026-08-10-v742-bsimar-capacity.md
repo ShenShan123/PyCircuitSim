@@ -29,7 +29,7 @@ conducting decades goes 2.2 % → 0.8 % → 0.3 % → 0.3 %; `cgg` 1.0 → 0.4 �
 0.2 %. There is no band where a larger tier is worse.
 
 **The solver / harness — refuted.** The native-L72 control
-(`tests/diag/diag_l72_circuit_control.py`) runs the byte-identical ring deck through
+(the LEVEL=72 circuit control, retired after V7.6.10) runs the byte-identical ring deck through
 PyCircuitSim's own solver with the ground-truth OSDI model: TSMC5 and TSMC7
 match NGSPICE to **0.00 %**, TSMC12/16 to 0.77 %/0.64 %. The gap is entirely
 model-surface-owned.

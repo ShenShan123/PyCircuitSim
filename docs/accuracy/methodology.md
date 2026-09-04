@@ -48,7 +48,7 @@ missing gate.
 | `verify_nn_lifted_source_dc.py` | source-relative-frame canary, NRMSE ≤ 10% |
 | `verify_device_integrity.py` | diagnostic output/subthreshold/linear-region and `gm`/`gds`/`gmb` accuracy |
 | `verify_terminal_integrity.py` | diagnostic four-terminal current/KCL and 4x4 transcapacitance accuracy |
-| `verify_nn_subckt.py` | diagnostic flat-versus-nested NN equivalence against LEVEL=72 |
+| `verify_nn_subckt.py` | diagnostic flat-versus-nested NN DC, transient, and AC equivalence against LEVEL=72 |
 
 ### Simple-v2 topology diagnostics
 

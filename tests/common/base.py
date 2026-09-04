@@ -15,7 +15,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 import matplotlib
@@ -126,6 +126,32 @@ def parse_no_options(description: str, argv: Optional[List[str]] = None) -> None
         description=f"{description} This gate runs a fixed matrix and takes "
                     "no options.")
     parser.parse_args(sys.argv[1:] if argv is None else argv)
+
+
+def parse_csv_choices(
+    parser: argparse.ArgumentParser,
+    raw: str,
+    *,
+    flag: str,
+    choices: Sequence[str],
+    normalize: Callable[[str], str] = lambda value: value,
+) -> List[str]:
+    """Parse one comma selection without allowing denominator shrinkage.
+
+    Empty, unknown, and duplicate values are command-line errors. A typo mixed
+    with valid values must never run the valid subset and look like a complete
+    accuracy result.
+    """
+    fields = raw.split(",")
+    if not fields or any(not value.strip() for value in fields):
+        parser.error(f"{flag} contains an empty value: {raw!r}")
+    selected = [normalize(value.strip()) for value in fields]
+    unknown = [value for value in selected if value not in choices]
+    if unknown:
+        parser.error(f"unknown {flag} values {unknown}; available: {list(choices)}")
+    if len(selected) != len(set(selected)):
+        parser.error(f"{flag} contains duplicates: {selected}")
+    return selected
 
 
 from helpers import bake_inst_params as bake_inst_params  # noqa: F401, E402

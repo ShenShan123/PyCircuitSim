@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Verify flat and nested NN buffers against one LEVEL=72 reference deck."""
+"""Verify flat and nested NN buffers against LEVEL=72 in DC, transient, and AC."""
 from __future__ import annotations
 
 import argparse
 from collections import Counter
+from dataclasses import replace
 import json
 import os
 import sys
@@ -21,30 +22,36 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from tests.common.base import SUBCIRCUIT_DECKS, render_template  # noqa: E402
+from tests.common.base import (  # noqa: E402
+    SUBCIRCUIT_DECKS,
+    parse_csv_choices,
+    render_template,
+)
 from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH,
     BENCH_TECHS,
     RESULTS_BASE,
     BenchTech,
-    full_metrics,
     get_baked_modelcard,
     parse_netlist,
-    run_directnet_transient,
-    run_ngspice_wrdata,
 )
 from tests.common.gate_result import GateResult, result_exit_code  # noqa: E402
 from tests.common.simple_circuit_catalog import AnalysisSpec  # noqa: E402
+from tests.common.subcircuit_catalog import SUBCKT_ANALYSES  # noqa: E402
 from tests.common.simple_circuit_harness import (  # noqa: E402
+    CandidateConvergenceError,
+    CandidateSupportError,
     RunSpec,
     Trace,
-    analysis_endpoint_tolerance,
-    analysis_minimum_points,
-    analysis_max_step,
-    analysis_axis_limits,
+    compare_traces,
     physical_deck_mismatch,
+    run_candidate_trace,
+    run_reference_trace,
     validate_analysis_metrics,
 )
+
+
+FLAT_HIERARCHICAL_TOLERANCE_V = 1e-9
 
 
 def _family_parameter(level: int) -> str:
@@ -54,8 +61,31 @@ def _family_parameter(level: int) -> str:
     }[level]
 
 
-def render_candidate_pair(bt: BenchTech, run_spec: RunSpec) -> Tuple[str, str]:
+def _resolved_analysis(bt: BenchTech, analysis: AnalysisSpec) -> AnalysisSpec:
+    return replace(analysis, card=analysis.card.replace("<VDD>", f"{bt.vdd:g}"))
+
+
+def _input_spec(
+    bt: BenchTech,
+    analysis: AnalysisSpec,
+    *,
+    reference: bool = False,
+) -> str:
+    if analysis.kind == "tran":
+        pulse = f"0 {bt.vdd:g} 0.5n 50p 50p 1n 2n"
+        return f"PULSE({pulse})" if reference else f"PULSE {pulse}"
+    if analysis.kind == "ac":
+        return "DC=0 AC=1 0"
+    return "0"
+
+
+def render_candidate_pair(
+    bt: BenchTech,
+    run_spec: RunSpec,
+    analysis: AnalysisSpec = SUBCKT_ANALYSES[1],
+) -> Tuple[str, str]:
     """Render flat and nested buffers with the selected NN family."""
+    analysis = _resolved_analysis(bt, analysis)
     family = _family_parameter(run_spec.model_level)
     setup = (
         f".model nmos_nn NMOS (LEVEL={run_spec.model_level}{family} "
@@ -63,16 +93,15 @@ def render_candidate_pair(bt: BenchTech, run_spec: RunSpec) -> Tuple[str, str]:
         f".model pmos_nn PMOS (LEVEL={run_spec.model_level}{family} "
         f"TECH={bt.nn_tech} VT={bt.effective_pmos_vt})"
     )
-    pulse = f"PULSE 0 {bt.vdd:g} 0.5n 50p 50p 1n 2n"
     common = {
         "MODEL_SETUP": setup,
         "TEMP": f"{bt.temperature_c:g}",
         "VDD": f"{bt.vdd:g}",
-        "INPUT_SPEC": pulse,
+        "INPUT_SPEC": _input_spec(bt, analysis),
         "P_PREFIX": "M",
         "N_PREFIX": "M",
         "OUTPUT_LOAD": "Cload out 0 5f",
-        "ANALYSIS": ".tran 2p 4n uic",
+        "ANALYSIS": f".{analysis.card}",
     }
     flat = render_template(
         SUBCIRCUIT_DECKS / "inverter_buffer_flat.spice.tmpl",
@@ -100,16 +129,20 @@ def render_candidate_pair(bt: BenchTech, run_spec: RunSpec) -> Tuple[str, str]:
     return flat, hierarchical
 
 
-def render_reference(bt: BenchTech, baked: Path) -> Tuple[str, str]:
+def render_reference(
+    bt: BenchTech,
+    baked: Path,
+    analysis: AnalysisSpec = SUBCKT_ANALYSES[1],
+) -> str:
     """Render the flat LEVEL=72 ground-truth buffer."""
-    card = "tran 2p 4n uic"
+    analysis = _resolved_analysis(bt, analysis)
     deck = render_template(
         SUBCIRCUIT_DECKS / "inverter_buffer_flat.spice.tmpl",
         {
             "MODEL_SETUP": f'.include "{baked}"',
             "TEMP": f"{bt.temperature_c:g}",
             "VDD": f"{bt.vdd:g}",
-            "INPUT_SPEC": f"PULSE(0 {bt.vdd:g} 0.5n 50p 50p 1n 2n)",
+            "INPUT_SPEC": _input_spec(bt, analysis, reference=True),
             "P_PREFIX": "N",
             "N_PREFIX": "N",
             "P_DEVICE": bt.pmos_model,
@@ -119,25 +152,7 @@ def render_reference(bt: BenchTech, baked: Path) -> Tuple[str, str]:
             "ANALYSIS": "",
         },
     )
-    return deck, card
-
-
-def _body(deck: str) -> str:
-    return "\n".join(
-        line for line in deck.splitlines()
-        if line.strip().lower() != ".end" and not line.lstrip().startswith("*")
-    )
-
-
-def _candidate_trace(deck: str, path: Path) -> Tuple[np.ndarray, np.ndarray, bool]:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(deck)
-    results, partial, _error = run_directnet_transient(path)
-    return (
-        np.asarray(results["time"], dtype=float),
-        np.asarray(results["out"], dtype=float),
-        partial,
-    )
+    return deck
 
 
 _PHYSICAL_ATTRIBUTES = (
@@ -214,12 +229,55 @@ def flattened_candidate_mismatch(flat: Any, hierarchical: Any) -> str:
     )
 
 
-def run_nn_subckt_case(
+def _hierarchical_analysis(analysis: AnalysisSpec) -> AnalysisSpec:
+    return replace(
+        analysis,
+        signals=tuple(
+            "v(Xbuf.m)" if signal == "v(mid)" else signal
+            for signal in analysis.signals
+        ),
+    )
+
+
+def _normalize_hierarchical_signals(trace: Trace) -> None:
+    internal = trace.signals.pop("v(Xbuf.m)", None)
+    if internal is not None:
+        trace.signals["v(mid)"] = internal
+
+
+def _flat_hierarchical_max_error(
+    flat: Trace,
+    hierarchical: Trace,
+    signals: Tuple[str, ...],
+) -> float:
+    """Compare representation-equivalent traces on one shared dense grid."""
+    low = max(float(np.min(flat.axis)), float(np.min(hierarchical.axis)))
+    high = min(float(np.max(flat.axis)), float(np.max(hierarchical.axis)))
+    if high < low:
+        raise ValueError("flat and hierarchical traces do not overlap")
+    count = max(min(flat.axis.size, hierarchical.axis.size, 800), 1)
+    grid = np.linspace(low, high, count)
+    worst = 0.0
+    for signal in signals:
+        flat_values = np.interp(grid, flat.axis, flat.signals[signal])
+        hierarchical_values = np.interp(
+            grid, hierarchical.axis, hierarchical.signals[signal],
+        )
+        worst = max(
+            worst,
+            float(np.max(np.abs(flat_values - hierarchical_values))),
+        )
+    return worst
+
+
+def run_nn_subckt_analysis(
     bt: BenchTech,
+    analysis: AnalysisSpec,
     work_dir: Path,
     run_spec: RunSpec,
 ) -> GateResult:
-    """Compare flat/hierarchical NN execution and LEVEL=72 ground truth."""
+    """Compare one flat/hierarchical NN analysis with LEVEL=72 truth."""
+    analysis = _resolved_analysis(bt, analysis)
     provenance = run_spec.result_fields()
     reference_converged = False
     stage = "setup"
@@ -228,11 +286,8 @@ def run_nn_subckt_case(
         baked = get_baked_modelcard(
             bt, bt.nfin, work_dir, nfin_p=bt.effective_nfin_p,
         )
-        flat, hierarchical = render_candidate_pair(bt, run_spec)
-        reference, card = render_reference(bt, baked)
-        analysis = AnalysisSpec(
-            "buffer", "tran", card, ("v(out)",),
-        )
+        flat, hierarchical = render_candidate_pair(bt, run_spec, analysis)
+        reference = render_reference(bt, baked, analysis)
         mismatch = physical_deck_mismatch(
             flat,
             reference,
@@ -253,64 +308,64 @@ def run_nn_subckt_case(
         if mismatch:
             raise ValueError(mismatch)
         stage = "reference"
-        reference_data = run_ngspice_wrdata(
-            _body(reference), "v(out)", work_dir, "reference", card,
+        reference_trace = run_reference_trace(
+            reference, analysis, work_dir, f"reference_{analysis.name}",
         )
-        ref_time = np.asarray(reference_data[:, 0], dtype=float)
-        ref_out = np.asarray(reference_data[:, 1], dtype=float)
         reference_converged = True
         stage = "candidate"
-        flat_time, flat_out, flat_partial = _candidate_trace(
-            flat, flat_path,
+        flat_trace, _flat_path = run_candidate_trace(
+            flat, analysis, work_dir, f"flat_{analysis.name}",
         )
-        hier_time, hier_out, hier_partial = _candidate_trace(
-            hierarchical, hierarchical_path,
+        hierarchical_trace, _hierarchical_path = run_candidate_trace(
+            hierarchical,
+            _hierarchical_analysis(analysis),
+            work_dir,
+            f"hierarchical_{analysis.name}",
         )
-        if flat_partial or hier_partial:
-            raise RuntimeError("flat or hierarchical transient ended early")
-        start, stop = analysis_axis_limits(analysis)
-        for trace in (
-            Trace("time", ref_time, {"v(out)": ref_out}, reference=True),
-            Trace("time", flat_time, {"v(out)": flat_out}),
-            Trace("time", hier_time, {"v(out)": hier_out}),
-        ):
-            trace.validate(
-                expected_start=start,
-                expected_stop=stop,
-                endpoint_tolerance=analysis_endpoint_tolerance(analysis),
-                max_step=analysis_max_step(analysis),
-                minimum_points=analysis_minimum_points(analysis),
+        _normalize_hierarchical_signals(hierarchical_trace)
+        if flat_trace.partial or hierarchical_trace.partial:
+            raise CandidateConvergenceError(
+                "flat or hierarchical transient ended early"
             )
-        lo = max(ref_time[0], flat_time[0], hier_time[0])
-        hi = min(ref_time[-1], flat_time[-1], hier_time[-1])
-        if hi < 4e-9 * (1.0 - 1e-9):
-            raise RuntimeError(f"hierarchy trace is incomplete at {hi:g} s")
         stage = "metrics"
-        grid = np.linspace(lo, hi, 600)
-        truth = np.interp(grid, ref_time, ref_out)
-        flat_values = np.interp(grid, flat_time, flat_out)
-        hier_values = np.interp(grid, hier_time, hier_out)
-        flat_metrics = full_metrics(flat_values, truth)
-        hier_metrics = full_metrics(hier_values, truth)
-        equivalence = full_metrics(hier_values, flat_values)
+        flat_metrics, _flat_domain = compare_traces(
+            flat_trace, reference_trace, analysis, vdd=bt.vdd,
+        )
+        hierarchical_metrics, _hierarchical_domain = compare_traces(
+            hierarchical_trace, reference_trace, analysis, vdd=bt.vdd,
+        )
+        equivalence_error = _flat_hierarchical_max_error(
+            flat_trace, hierarchical_trace, analysis.signals,
+        )
+        if equivalence_error > FLAT_HIERARCHICAL_TOLERANCE_V:
+            raise RuntimeError(
+                "flat/hierarchical execution differs by "
+                f"{equivalence_error:.6g} V"
+            )
         metrics = {
-            name: max(float(flat_metrics[name]), float(hier_metrics[name]))
+            name: max(
+                float(flat_metrics[name]),
+                float(hierarchical_metrics[name]),
+            )
             if name != "r2" else min(
-                float(flat_metrics[name]), float(hier_metrics[name]),
+                float(flat_metrics[name]),
+                float(hierarchical_metrics[name]),
             )
             for name in ("mre_pct", "r2", "nrmse_pct", "max_err")
         }
         domain: Dict[str, float] = {
             "flat_nrmse_pct": float(flat_metrics["nrmse_pct"]),
-            "hierarchical_nrmse_pct": float(hier_metrics["nrmse_pct"]),
-            "flat_hierarchical_max_error_v": float(equivalence["max_err"]),
+            "hierarchical_nrmse_pct": float(
+                hierarchical_metrics["nrmse_pct"]
+            ),
+            "flat_hierarchical_max_error_v": equivalence_error,
         }
         validate_analysis_metrics(analysis, metrics, domain)
         return GateResult(
             case_id="nn_subckt",
             tech=bt.name,
             corner="nominal",
-            analysis="buffer",
+            analysis=analysis.name,
             role="diagnostic",
             status="diagnostic",
             metrics=metrics,
@@ -318,27 +373,30 @@ def run_nn_subckt_case(
             **provenance,
         )
     except Exception as exc:  # noqa: BLE001 - one explicit denominator row
+        if stage == "reference":
+            execution_state, error_kind = "reference_error", "reference"
+        elif isinstance(exc, CandidateConvergenceError):
+            execution_state, error_kind = "nonconverged", "candidate"
+        elif isinstance(exc, CandidateSupportError):
+            execution_state, error_kind = "error", "candidate"
+        elif stage == "metrics":
+            execution_state, error_kind = "error", "result_schema"
+        else:
+            execution_state, error_kind = (
+                "infrastructure_error", "infrastructure",
+            )
         return GateResult(
             case_id="nn_subckt",
             tech=bt.name,
             corner="nominal",
-            analysis="buffer",
+            analysis=analysis.name,
             role="diagnostic",
             status="error",
             error=f"{type(exc).__name__}: {exc}",
             reference_converged=reference_converged,
             candidate_converged=False,
-            execution_state=(
-                "reference_error" if stage == "reference"
-                else "nonconverged" if stage == "candidate"
-                else "infrastructure_error" if stage == "setup" else "error"
-            ),
-            error_kind=(
-                "reference" if stage == "reference"
-                else "candidate" if stage == "candidate"
-                else "result_schema" if stage == "metrics"
-                else "infrastructure"
-            ),
+            execution_state=execution_state,
+            error_kind=error_kind,
             **provenance,
         )
 
@@ -346,14 +404,25 @@ def run_nn_subckt_case(
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tech", default=",".join(BENCH_TECHS))
+    parser.add_argument(
+        "--analysis",
+        default="dc,tran,ac",
+        help="comma-separated analyses: dc,tran,ac",
+    )
     args = parser.parse_args(argv)
-    techs = [value.strip().upper() for value in args.tech.split(",")
-             if value.strip()]
-    unknown = [tech for tech in techs if tech not in BENCH]
-    if not techs or unknown or len(set(techs)) != len(techs):
-        parser.error(
-            f"invalid technologies {unknown or techs}; available: {list(BENCH)}"
-        )
+    techs = parse_csv_choices(
+        parser, args.tech, flag="--tech", choices=BENCH_TECHS,
+        normalize=str.upper,
+    )
+    available_analyses = {analysis.name: analysis for analysis in SUBCKT_ANALYSES}
+    requested_analyses = parse_csv_choices(
+        parser,
+        args.analysis,
+        flag="--analysis",
+        choices=tuple(available_analyses),
+        normalize=str.lower,
+    )
+    selected_analyses = [available_analyses[name] for name in requested_analyses]
     try:
         run_spec = RunSpec.from_environment()
         run_spec.validate_checkpoint_pins(Path(os.environ.get(
@@ -366,8 +435,14 @@ def main(argv: list[str] | None = None) -> int:
 
     root = RESULTS_BASE / "nn-subckt" / f"level-{run_spec.model_level}"
     results = [
-        run_nn_subckt_case(BENCH[tech], root / tech, run_spec)
+        run_nn_subckt_analysis(
+            BENCH[tech],
+            analysis,
+            root / tech / analysis.name,
+            run_spec,
+        )
         for tech in techs
+        for analysis in selected_analyses
     ]
     for result in results:
         print(result.marker())

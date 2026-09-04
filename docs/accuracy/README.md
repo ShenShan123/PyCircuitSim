@@ -8,6 +8,7 @@ contract before comparing results.
 
 | file | scope |
 |---|---|
+| [`v7610-harness-audit.md`](v7610-harness-audit.md) | V7.6.10 metric-oracle, NN hierarchy, PMOS self-bias, CLI, and stale-test audit; not a score |
 | [`v769-harness-audit.md`](v769-harness-audit.md) | V7.6.9 test-harness coverage audit: uncollected suites, untested shipped features, engine-agreement guard, corner enrichment; not a score |
 | [`v768-template-harness-audit.md`](v768-template-harness-audit.md) | V7.6.8 template inventory, redundancy review, harness repairs, and smoke evidence; not a score |
 | [`simple-circuits-v2-topologies.md`](simple-circuits-v2-topologies.md) | held-out simple-topology catalog, corner matrix, harness and promotion contract |

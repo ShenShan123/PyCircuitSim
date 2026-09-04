@@ -50,7 +50,11 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from tests.common.circuit_benchmarks import BENCH  # noqa: E402
-from tests.common.base import template_deck, render_template  # noqa: E402
+from tests.common.base import (  # noqa: E402
+    parse_csv_choices,
+    render_template,
+    template_deck,
+)
 
 DEFAULT_TECHS = ["TSMC5", "TSMC7", "TSMC12", "TSMC16"]
 TRAN = ".tran 0.05n 2n"
@@ -115,7 +119,7 @@ def col(d: Dict[str, List[float]], name: str) -> List[float]:
     raise KeyError(f"column {name} not in {list(d)}")
 
 
-def main() -> int:
+def main(argv: List[str] | None = None) -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--tech", default=",".join(DEFAULT_TECHS))
     ap.add_argument("--config", default="commit",
@@ -127,8 +131,11 @@ def main() -> int:
                     help="CUDA_VISIBLE_DEVICES for gpu configs")
     ap.add_argument("--ordering", default="NATURAL",
                     help="permc_spec for 'order' configs (Phase 4a')")
-    args = ap.parse_args()
-    techs = [t.strip().upper() for t in args.tech.split(",") if t.strip()]
+    args = ap.parse_args(argv)
+    techs = parse_csv_choices(
+        ap, args.tech, flag="--tech", choices=tuple(BENCH),
+        normalize=str.upper,
+    )
 
     cand_env: Dict[str, str] = {}
     if "commit" in args.config:

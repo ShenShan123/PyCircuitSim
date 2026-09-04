@@ -1,4 +1,4 @@
-"""Contracts for the difficulty-tiered template tree and its token defaults.
+"""Contracts for the compact-model difficulty tiers and token defaults.
 
 These tests exist because two specific mistakes are easy to make here and
 neither shows up as an exception:

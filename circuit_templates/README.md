@@ -45,7 +45,7 @@ tiers.
 | `resistor_tree_{flat,hierarchical}` | local pair | nested instances, quoted/braced expressions, and DC operating point |
 | `ic_hierarchical` | parsed hierarchical state | internal-node naming, parameterized `.ic`, and `uic` pinning |
 | `inverter_hierarchical` | `L2_stages/inverter` | MOS model, L/NFIN, and port propagation through one instance |
-| `inverter_buffer_{flat,hierarchical}` | local pair plus NGSPICE | nested X-in-X expansion, internal `.ic`, NN family resolution, and physical parity |
+| `inverter_buffer_{flat,hierarchical}` | local pair plus NGSPICE | nested X-in-X expansion, internal `.ic`, NN family resolution, and DC/transient/AC physical parity |
 
 Only representation-equivalence fixtures belong here. A test whose primary
 question is device or circuit behavior belongs in `controls/` or L0–L4, even
@@ -62,9 +62,10 @@ from a pointwise current error, and it needs a different fix.
 
 The smallest instance of that defect is `L1_primitives/diode_load.spice.tmpl`:
 a diode-connected device fed through a resistor, where the operating point is
-the intersection of a load line with the model's own surface. Every other
-diode-connected device in this tree is fed by an ideal current source, which
-pins the current and leaves only the voltage to solve.
+the intersection of a load line with the model's own surface. The PMOS-only
+`L3_blocks/self_biased_cascode_pmos.spice.tmpl` extends that load-line question
+to a two-device generated rail. Current-source-fed diode branches instead pin
+the current and leave only the voltage to solve.
 
 ## Template contract
 

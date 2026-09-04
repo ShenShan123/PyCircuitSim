@@ -192,7 +192,7 @@ silent:
 - Parameterizing the opamp's sources froze `VINP_SPEC`/`VINN_SPEC` to the
   nominal bias, so the parametric sweep's `VCM` override stopped reaching the
   deck. Derived source specs are now resolved after case overrides, and
-  `tests/test_v767_template_tiers.py` pins the behaviour.
+  `tests/test_template_tier_contracts.py` pins the behaviour.
 - `diode_load` declared a required metric that no metric profile emitted. The
   schema check could not catch it because it is skipped whenever a row errors,
   which that case always did. The catalog check now verifies every declared

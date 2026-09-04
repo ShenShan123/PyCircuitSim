@@ -370,8 +370,14 @@ def structured_contract_error(
                 analysis: "nominal" for _case_id, analysis in expected_pairs
             }
         elif suite == "verify_nn_subckt":
-            expected_pairs = [("nn_subckt", "buffer")]
-            expected_corners = {"buffer": "nominal"}
+            from tests.common.subcircuit_catalog import SUBCKT_ANALYSES
+
+            expected_pairs = [
+                ("nn_subckt", analysis.name) for analysis in SUBCKT_ANALYSES
+            ]
+            expected_corners = {
+                analysis.name: "nominal" for analysis in SUBCKT_ANALYSES
+            }
         elif suite == "verify_nn_ac":
             expected_pairs = [
                 ("nn_ac", device) for device in ("nmos", "pmos")

@@ -888,7 +888,12 @@ def _coverage_entry(
             for bias in terminal_biases(BENCH["TSMC5"], device)
         ]
     elif suite == "verify_nn_subckt":
-        identities = [("nn_subckt", "buffer", "nominal", "diagnostic")]
+        from tests.common.subcircuit_catalog import SUBCKT_ANALYSES
+
+        identities = [
+            ("nn_subckt", analysis.name, "nominal", "diagnostic")
+            for analysis in SUBCKT_ANALYSES
+        ]
     elif suite == "verify_nn_ac":
         identities = [
             ("nn_ac", device, "nominal", "qualification")

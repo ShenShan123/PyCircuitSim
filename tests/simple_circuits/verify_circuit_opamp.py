@@ -42,6 +42,7 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
     OpAmpParams, ngspice_opamp, directnet_opamp,
 )
 from tests.common.gate_result import GateResult  # noqa: E402
+from tests.common.base import parse_csv_choices  # noqa: E402
 from tests.common.simple_circuit_harness import RunSpec  # noqa: E402
 
 GAIN_TOL = 0.10            # +/-10% open-loop DC gain gate
@@ -173,18 +174,14 @@ def run_one(bt: BenchTech) -> Dict:
             "passed": passed, **metrics}
 
 
-def main() -> int:
+def main(argv: List[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Miller-opamp benchmark 3b")
     ap.add_argument("--tech", default=",".join(BENCH_TECHS))
-    args = ap.parse_args()
-    techs = [t.strip() for t in args.tech.split(",")]
-    # audit B5l: an unknown tech used to print SKIP and never enter `results`,
-    # so `--tech TSMC5,TSMC7X` reported 1/1 and exited 0. Reject up front
-    # (same pattern as tests/common/nn_gate.py).
-    unknown = [t for t in techs if t not in BENCH]
-    if unknown:
-        print(f"ERROR: unknown tech(s) {unknown}. Available: {list(BENCH)}")
-        return 1
+    args = ap.parse_args(argv)
+    techs = parse_csv_choices(
+        ap, args.tech, flag="--tech", choices=BENCH_TECHS,
+        normalize=str.upper,
+    )
 
     print("=" * 78)
     print(f"Benchmark 3b — two-stage Miller opamp: {active_model_label()} "

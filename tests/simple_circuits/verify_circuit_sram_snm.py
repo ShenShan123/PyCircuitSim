@@ -59,6 +59,7 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
     directnet_sram_6t,
 )
 from tests.common.gate_result import GateResult  # noqa: E402
+from tests.common.base import parse_csv_choices  # noqa: E402
 from tests.common.simple_circuit_harness import RunSpec  # noqa: E402
 
 DEFAULT_NFINS = [2, 5, 10]
@@ -349,21 +350,28 @@ def run_one(bt: BenchTech, nfins: List[int]) -> Dict:
             "force_ic": fic, "all_positive": all_pass}
 
 
-def main() -> int:
+def main(argv: List[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="SRAM read-SNM benchmark 3c")
     ap.add_argument("--tech", default=",".join(BENCH_TECHS))
     ap.add_argument("--nfin", default=",".join(str(n) for n in DEFAULT_NFINS),
                     help="comma-separated NFIN corners")
-    args = ap.parse_args()
-    techs = [t.strip() for t in args.tech.split(",")]
-    # audit B5l: an unknown tech used to print SKIP and never enter `results`,
-    # so `--tech TSMC5,TSMC7X` reported 1/1 and exited 0. Reject up front
-    # (same pattern as tests/common/nn_gate.py).
-    unknown = [t for t in techs if t not in BENCH]
-    if unknown:
-        print(f"ERROR: unknown tech(s) {unknown}. Available: {list(BENCH)}")
-        return 1
-    nfins = [int(x) for x in args.nfin.split(",")]
+    args = ap.parse_args(argv)
+    techs = parse_csv_choices(
+        ap, args.tech, flag="--tech", choices=BENCH_TECHS,
+        normalize=str.upper,
+    )
+    nfin_fields = args.nfin.split(",")
+    if not nfin_fields or any(not value.strip() for value in nfin_fields):
+        ap.error(f"--nfin contains an empty value: {args.nfin!r}")
+    raw_nfins = [value.strip() for value in nfin_fields]
+    try:
+        nfins = [int(value) for value in raw_nfins]
+    except ValueError:
+        ap.error(f"--nfin values must be integers: {raw_nfins}")
+    if any(value <= 0 for value in nfins):
+        ap.error(f"--nfin values must be positive: {nfins}")
+    if len(nfins) != len(set(nfins)):
+        ap.error(f"--nfin contains duplicates: {nfins}")
 
     print("=" * 78)
     print(f"Benchmark 3c — 6T SRAM read SNM: {active_model_label()} "

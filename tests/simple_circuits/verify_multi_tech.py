@@ -43,7 +43,11 @@ from typing import List, Tuple
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from tests.common.base import ALL_TECHS, TECH_ORDER, run_multi_tech_main  # noqa: E402
+from tests.common.base import (  # noqa: E402
+    TECH_ORDER,
+    parse_csv_choices,
+    run_multi_tech_main,
+)
 from tests.common.bsimcmg_dc import (  # noqa: E402
     DCTestConfig,
     INVERTER_VTC,
@@ -215,24 +219,22 @@ def run_tran(tech_names: List[str]) -> int:
     )
 
 
-def main() -> int:
+def main(argv: List[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.split("\n", 1)[0])
     parser.add_argument("--analysis", default="dc,tran",
                         help="comma list of dc,tran (default: both)")
     parser.add_argument("--tech", default=",".join(TECH_ORDER),
                         help="comma-separated tech names (default: all)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    analyses = [a.strip().lower() for a in args.analysis.split(",") if a.strip()]
-    for a in analyses:
-        if a not in ("dc", "tran"):
-            print(f"ERROR: unknown analysis '{a}' (expected dc or tran)")
-            return 2
-    tech_names = [t.strip() for t in args.tech.split(",") if t.strip()]
-    for t in tech_names:
-        if t not in ALL_TECHS:
-            print(f"ERROR: Unknown tech '{t}'. Available: {TECH_ORDER}")
-            return 2
+    analyses = parse_csv_choices(
+        parser, args.analysis, flag="--analysis", choices=("dc", "tran"),
+        normalize=str.lower,
+    )
+    tech_names = parse_csv_choices(
+        parser, args.tech, flag="--tech", choices=TECH_ORDER,
+        normalize=str.upper,
+    )
 
     rc = 0
     for a in analyses:

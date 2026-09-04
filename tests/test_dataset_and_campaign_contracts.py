@@ -1,4 +1,4 @@
-"""Focused regression tests for the V7.5.17 coverage-audit contracts."""
+"""Dataset provenance, split, and accuracy-campaign contracts."""
 
 from __future__ import annotations
 

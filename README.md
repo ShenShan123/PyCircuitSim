@@ -6,7 +6,7 @@ to generate BSIM-CMG data, train a compact model, and increase validation scope
 from devices to circuits while keeping NGSPICE on the identical OSDI model as
 ground truth.
 
-Current release: **V7.6.9**.
+Current release: **V7.6.10**.
 
 LEVEL=73 DirectNet `large` is the served NN path. LEVEL=74 is the optional
 autoregressive family. LEVEL=75 and 76 remain experimental and are not served
@@ -347,12 +347,22 @@ export NGSPICE_BIN="${NGSPICE_BIN:-/usr/local/ngspice-45.2/bin/ngspice}"
 test -x "$NGSPICE_BIN"
 ```
 
-First validate LEVEL=72 and the generated geometry domain:
+First validate the LEVEL=72 adapter and generated geometry domain. The OP and
+multiplier gates are focused; the three matrix drivers cover device DC and
+inverter DC/transient variation:
 
 ```bash
 conda run -n pycircuitsim python tests/single_devices/verify_bsimcmg_op.py
 conda run -n pycircuitsim python \
+  tests/simple_circuits/verify_bsimcmg_inverter_op.py
+conda run -n pycircuitsim python \
+  tests/single_devices/verify_cmg_multiplier.py
+conda run -n pycircuitsim python \
   tests/single_devices/verify_bsimcmg_dc_comprehensive.py
+conda run -n pycircuitsim python \
+  tests/simple_circuits/verify_bsimcmg_tran_comprehensive.py
+conda run -n pycircuitsim python \
+  tests/simple_circuits/verify_multi_tech.py --analysis dc,tran
 conda run -n pycircuitsim python \
   tests/single_devices/verify_data_geometry_coverage.py
 ```
@@ -442,13 +452,14 @@ conda run -n pycircuitsim python \
   tests/single_devices/verify_terminal_integrity.py \
   --tech TSMC5 --device nmos,pmos --corner nominal,temp_hot,nfin_high
 conda run -n pycircuitsim python \
-  tests/simple_circuits/verify_nn_subckt.py --tech TSMC5
+  tests/simple_circuits/verify_nn_subckt.py \
+  --tech TSMC5 --analysis dc,tran,ac
 ```
 
 `simple-v2` covers device-role sizing, floating bulk, switching energy,
-transmission gates, differential/active loads, self-bias, both SRAM states,
-3/5/9/17-device scale, and closed-loop systems through 12 MOSFETs across OP,
-DC, transient, and AC. It is diagnostic and held out from
+transmission gates, differential/active loads, NMOS and PMOS generated
+self-bias, both SRAM states, 3/5/9/17-device scale, and closed-loop systems
+through 12 MOSFETs across OP, DC, transient, and AC. It is diagnostic and held out from
 training; it does not change the `simple-v1` `/20` score. See
 [`docs/accuracy/simple-circuits-v2-topologies.md`](docs/accuracy/simple-circuits-v2-topologies.md)
 for the case, corner, metric, support-diagnostic, and promotion contracts.

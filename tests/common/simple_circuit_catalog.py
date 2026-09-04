@@ -884,6 +884,20 @@ _V2_CASES: Tuple[CircuitCase, ...] = (
         required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
                           "output_resistance_error_pct", "bias_node_error_v"),
     ),
+    CircuitCase(
+        "self_biased_cascode_pmos",
+        "PMOS cascode with an internally generated rail",
+        "self_biased_cascode_pmos.spice.tmpl",
+        SIMPLE_V2,
+        DIAGNOSTIC,
+        (_dc("pmos_compliance", "dc Voutp <VDD> 0 -0.005",
+             ("i(Voutp)", "v(px)", "v(pc)", "v(pb)"),
+             "self_bias_cascode", device_kinds=("pmos",)),),
+        tier="L3_blocks",
+        device_kinds=("pmos",),
+        required_metrics=("mre_pct", "r2", "nrmse_pct", "max_err",
+                          "output_resistance_error_pct", "bias_node_error_v"),
+    ),
     # -- Tier B: closed negative-feedback systems --------------------------
     # Each of these runs at least one transient WITHOUT `uic`, so the
     # integration starts from a computed DC operating point instead of from a

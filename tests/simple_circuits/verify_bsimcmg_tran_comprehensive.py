@@ -30,6 +30,7 @@ from tests.common.bsimcmg_tran import (
     make_baseline,
     run_test_suite,
 )
+from tests.common.base import parse_csv_choices  # noqa: E402
 
 RESULTS_DIR = (
     PROJECT_ROOT / "results" / "tests" / "bsimcmg_tran" / "comprehensive"
@@ -113,27 +114,27 @@ def build_configs(
     return configs
 
 
-def main() -> int:
+def main(argv: List[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Level 2: Comprehensive transient verification (VT/L/NFIN)")
     parser.add_argument("--tech", type=str, default=",".join(TECH_ORDER),
                         help="Comma-separated tech names (default: all)")
     parser.add_argument("--sweep", type=str, default="vt,l,nfin",
                         help="Comma-separated sweep types: vt,l,nfin (default: all)")
-    args = parser.parse_args()
+    args = parser.parse_args(argv)
 
-    tech_names = [t.strip() for t in args.tech.split(",")]
-    sweep_types = [s.strip() for s in args.sweep.split(",")]
-
-    for t in tech_names:
-        if t not in ALL_TECHS:
-            print(f"ERROR: Unknown tech '{t}'. Available: {list(ALL_TECHS.keys())}")
-            return 1
+    tech_names = parse_csv_choices(
+        parser, args.tech, flag="--tech", choices=TECH_ORDER,
+        normalize=str.upper,
+    )
+    sweep_types = parse_csv_choices(
+        parser, args.sweep, flag="--sweep", choices=("vt", "l", "nfin"),
+        normalize=str.lower,
+    )
 
     configs = build_configs(tech_names, sweep_types)
     if not configs:
-        print("No test configs generated. Check --tech and --sweep arguments.")
-        return 1
+        parser.error("selected matrix produced no test configurations")
 
     return run_test_suite(
         configs, RESULTS_DIR,

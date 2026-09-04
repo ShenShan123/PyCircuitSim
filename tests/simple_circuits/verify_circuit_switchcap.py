@@ -51,6 +51,7 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
     SwitchCapParams, ngspice_switchcap, directnet_switchcap,
 )
 from tests.common.gate_result import GateResult  # noqa: E402
+from tests.common.base import parse_csv_choices  # noqa: E402
 from tests.common.simple_circuit_harness import RunSpec  # noqa: E402
 
 CHARGE_TOL = 0.05          # +/-5% of VDD on charge-transfer level
@@ -179,18 +180,14 @@ def run_one(bt: BenchTech) -> Dict:
             "passed": passed, **metrics}
 
 
-def main() -> int:
+def main(argv: List[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="Switched-cap benchmark 3d")
     ap.add_argument("--tech", default=",".join(BENCH_TECHS))
-    args = ap.parse_args()
-    techs = [t.strip() for t in args.tech.split(",")]
-    # audit B5l: an unknown tech used to print SKIP and never enter `results`,
-    # so `--tech TSMC5,TSMC7X` reported 1/1 and exited 0. Reject up front
-    # (same pattern as tests/common/nn_gate.py).
-    unknown = [t for t in techs if t not in BENCH]
-    if unknown:
-        print(f"ERROR: unknown tech(s) {unknown}. Available: {list(BENCH)}")
-        return 1
+    args = ap.parse_args(argv)
+    techs = parse_csv_choices(
+        ap, args.tech, flag="--tech", choices=BENCH_TECHS,
+        normalize=str.upper,
+    )
 
     print("=" * 78)
     print(f"Benchmark 3d — switched-cap unit cell: {active_model_label()} "
