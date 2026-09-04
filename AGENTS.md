@@ -184,6 +184,14 @@ point, and `L4_systems` closes a negative-feedback loop. Declare each case's
 `tier` in the catalog and let `template_deck()` verify it against the file's
 location; a topology present in two tiers is an error, not a convenience.
 
+Treat `circuit_templates/subcircuits/` as the representation-equivalence
+exception to the one-topology rule. A flat/hierarchical fixture pair may
+describe the same physical circuit because the netlist representation is the
+tested input. Keep these fixtures out of catalog denominators, and reuse the
+canonical `controls/` or L0–L4 flat template when one already exists. Read the
+subcircuit fixture seam in `circuit_templates/README.md` before adding or moving
+a hierarchy fixture.
+
 At least one `L4_systems` transient must run without `uic`. Every other
 transient in the catalog is handed its initial state through `.ic`, so that is
 the only place cold-start basin entry is exercised.

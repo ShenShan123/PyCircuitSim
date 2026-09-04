@@ -29,6 +29,30 @@ model resolution. `controls/` owns passive solver controls such as the RC
 low-pass; a circuit with no compact-model device cannot honestly occupy a
 compact-model difficulty tier.
 
+### Subcircuit fixture seam
+
+`subcircuits/` is deliberately separate because it classifies a different
+question: whether two netlist representations become the same physical
+circuit. The L0–L4 ladder classifies how much circuit behavior a compact model
+must determine. Mixing those axes would make a parser-expansion failure look
+like a model-fidelity failure and would scatter one harness across several
+tiers.
+
+| Fixtures | Counterpart | Contract |
+|---|---|---|
+| `rc_ladder_{flat,hierarchical}` | local pair | transient flattening, parameter override, and expression evaluation |
+| `rc_lowpass_hierarchical` | `controls/rc_lowpass` | hierarchical AC equivalence without duplicating the canonical flat control |
+| `resistor_tree_{flat,hierarchical}` | local pair | nested instances, quoted/braced expressions, and DC operating point |
+| `ic_hierarchical` | parsed hierarchical state | internal-node naming, parameterized `.ic`, and `uic` pinning |
+| `inverter_hierarchical` | `L2_stages/inverter` | MOS model, L/NFIN, and port propagation through one instance |
+| `inverter_buffer_{flat,hierarchical}` | local pair plus NGSPICE | nested X-in-X expansion, internal `.ic`, NN family resolution, and physical parity |
+
+Only representation-equivalence fixtures belong here. A test whose primary
+question is device or circuit behavior belongs in `controls/` or L0–L4, even
+if one adapter happens to use `.subckt`. Flat fixtures are retained when they
+are the independent equivalence oracle; they are not catalog cases and never
+enter a compact-model denominator.
+
 ### Reading a failure by tier
 
 The ladder exists to localize. A model that passes `L2_stages` and fails

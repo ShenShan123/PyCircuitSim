@@ -77,9 +77,14 @@ L2_PHASE_MAXERR = 5.0     # degrees
 # ---------------------------------------------------------------------------
 def dec_frequencies(n_per_decade: int, fstart: float, fstop: float) -> np.ndarray:
     """Decade-spaced grid identical to NGSPICE `.ac dec N fstart fstop`."""
-    n_dec = np.log10(fstop / fstart)
-    npts = int(round(n_per_decade * n_dec)) + 1
-    return np.logspace(np.log10(fstart), np.log10(fstop), npts)
+    from pycircuitsim.simulation import build_ac_frequencies
+
+    return build_ac_frequencies({
+        "sweep_type": "dec",
+        "num_points": n_per_decade,
+        "fstart": fstart,
+        "fstop": fstop,
+    })
 
 
 # ---------------------------------------------------------------------------

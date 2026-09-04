@@ -96,6 +96,20 @@ switched-capacitor, and SRAM runs. Partial transients, nonoscillation, and
 unmeasurable reference SNM remain explicit `ERROR` rows and never enter numeric
 aggregates.
 
+**Subcircuit seam decision (2026-09-04).** Kept the nine hierarchy fixtures in
+their orthogonal `circuit_templates/subcircuits/` directory rather than
+distributing them by compact-model difficulty. The flat decks are independent
+flattening oracles, not redundant accuracy cases. The standalone harness now
+rejects unconverged DC prerequisites and incomplete candidate/reference traces,
+uses the same complete AC-axis constructor as production orchestration and the
+catalog harness, and verifies the claimed nested L/NFIN propagation. DEC/OCT
+cards now match NGSPICE on integral and fractional bands. Sub-decade DEC and
+all OCT sweeps advance by their native points-per-band ratios, including the
+next point just above the upper bound when NGSPICE's default frequency tolerance
+admits it; DEC spans of at least one decade distribute
+`floor(points*decades)+1` samples across both bounds. Its 11 parser, linear,
+LEVEL=72, and NGSPICE checks remain green.
+
 ### V7.6.7 — evaluation coverage: device integrity, self-bias, and feedback (2026-09-02)
 
 Motivated by a contradiction the reports already carried: DirectNet-Full L75

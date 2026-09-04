@@ -46,6 +46,7 @@ from tests.common.bsimcmg_tran import (  # noqa: E402
 from tests.common.base import (  # noqa: E402
     SUBCIRCUIT_DECKS, control_deck, render_template,
 )
+from tests.common.simple_circuit_harness import Trace  # noqa: E402
 
 RESULTS_DIR = PROJECT_ROOT / "results" / "tests" / "subckt"
 
@@ -68,6 +69,45 @@ def parse_deck(text: str, path: Path, **parser_kwargs: Any) -> Any:
     return parser
 
 
+def require_converged_solution(
+    solver: Any,
+    solution: Dict[str, float],
+    label: str,
+) -> Dict[str, float]:
+    """Return a finite physical fixed point or reject the harness result."""
+    if not bool(getattr(solver, "_last_solve_converged", False)):
+        raise RuntimeError(f"{label} did not converge")
+    if any(not np.isfinite(float(value)) for value in solution.values()):
+        raise RuntimeError(f"{label} contains NaN/Inf")
+    return solution
+
+
+def validate_transient_results(
+    results: Dict[str, np.ndarray],
+    *,
+    tstop: float,
+    tstep: float,
+) -> None:
+    """Require aligned, finite, complete transient evidence."""
+    if "time" not in results:
+        raise ValueError("transient result has no time axis")
+    Trace(
+        "time",
+        np.asarray(results["time"], dtype=float),
+        {
+            name: np.asarray(values)
+            for name, values in results.items()
+            if name != "time"
+        },
+    ).validate(
+        expected_start=0.0,
+        expected_stop=tstop,
+        endpoint_tolerance=tstep * 0.51,
+        max_step=tstep,
+        minimum_points=3,
+    )
+
+
 def run_tran(parser: Any) -> Dict[str, np.ndarray]:
     """Transient run mirroring tests/common/bsimcmg_tran.run_pycircuitsim."""
     from pycircuitsim.solver import DCSolver, TransientSolver
@@ -78,7 +118,11 @@ def run_tran(parser: Any) -> Dict[str, np.ndarray]:
         initial_guess = circuit.initial_conditions or None
         op_solver = DCSolver(circuit, initial_guess=initial_guess,
                              use_source_stepping=True)
-        op_solution = op_solver.solve()
+        op_solution = require_converged_solution(
+            op_solver,
+            op_solver.solve(),
+            "transient operating point",
+        )
         solver = TransientSolver(
             circuit,
             t_stop=parser.analysis_params["tstop"],
@@ -90,7 +134,13 @@ def run_tran(parser: Any) -> Dict[str, np.ndarray]:
             pseudo_transient_cap=1e-12,
             debug=False, nr_tolerance=1e-7,
         )
-        return solver.solve()
+        results = solver.solve()
+        validate_transient_results(
+            results,
+            tstop=float(parser.analysis_params["tstop"]),
+            tstep=float(parser.analysis_params["tstep"]),
+        )
+        return results
     finally:
         logging.disable(logging.NOTSET)
 
@@ -100,31 +150,38 @@ def run_op(parser: Any) -> Dict[str, float]:
 
     logging.disable(logging.CRITICAL)
     try:
-        solver = DCSolver(parser.circuit,
-                          initial_guess=parser.circuit.initial_conditions or None)
-        return solver.solve()
+        solver = DCSolver(
+            parser.circuit,
+            initial_guess=parser.circuit.initial_conditions or None,
+        )
+        return require_converged_solution(
+            solver, solver.solve(), "DC operating point",
+        )
     finally:
         logging.disable(logging.NOTSET)
 
 
 def run_ac(parser: Any) -> Tuple[np.ndarray, Dict[str, np.ndarray]]:
+    from pycircuitsim.simulation import build_ac_frequencies
     from pycircuitsim.solver import ACSolver, DCSolver
 
     p = parser.analysis_params
-    if p["sweep_type"] == "dec":
-        total = int(p["num_points"] * np.log10(p["fstop"] / p["fstart"]))
-        freqs = np.logspace(np.log10(p["fstart"]), np.log10(p["fstop"]), total)
-    elif p["sweep_type"] == "oct":
-        total = int(p["num_points"] * np.log2(p["fstop"] / p["fstart"]))
-        freqs = np.logspace(np.log10(p["fstart"]), np.log10(p["fstop"]), total)
-    else:
-        freqs = np.linspace(p["fstart"], p["fstop"], p["num_points"])
+    freqs = build_ac_frequencies(p)
 
     logging.disable(logging.CRITICAL)
     try:
-        op = DCSolver(parser.circuit).solve()
+        op_solver = DCSolver(parser.circuit)
+        op = require_converged_solution(
+            op_solver, op_solver.solve(), "AC operating point",
+        )
         ac = ACSolver(parser.circuit, dc_solution=op)
-        return freqs, ac.solve(freqs)
+        results = ac.solve(freqs)
+        Trace("frequency", freqs, results).validate(
+            expected_start=float(p["fstart"]),
+            expected_stop=float(freqs[-1]),
+            minimum_points=2,
+        )
+        return freqs, results
     finally:
         logging.disable(logging.NOTSET)
 
@@ -286,7 +343,13 @@ def level1() -> List[Tuple[str, bool, str]]:
     if temps:
         circuit.invalidate_topology()
     try:
-        op = DCSolver(circuit, initial_guess=circuit.initial_conditions).solve()
+        op_solver = DCSolver(
+            circuit,
+            initial_guess=circuit.initial_conditions,
+        )
+        op = require_converged_solution(
+            op_solver, op_solver.solve(), "hierarchical UIC operating point",
+        )
     finally:
         for vs in temps:
             circuit.components.remove(vs)
@@ -427,6 +490,16 @@ def _parse_l72(netlist_path: Path, config: TestConfig, work_dir: Path):
 def _nrmse_vs_ngspice(ng: Dict[str, np.ndarray], t_py: np.ndarray,
                       v_py: np.ndarray, ng_key: str,
                       config: TestConfig) -> Dict[str, float]:
+    validate_transient_results(
+        ng,
+        tstop=float(config.tstop),
+        tstep=float(config.tstep),
+    )
+    validate_transient_results(
+        {"time": np.asarray(t_py), "candidate": np.asarray(v_py)},
+        tstop=float(config.tstop),
+        tstep=float(config.tstep),
+    )
     t_max = min(ng["time"][-1], t_py[-1])
     t_common = np.arange(max(STARTUP_EXCLUSION, ng["time"][0], t_py[0]),
                          t_max, config.tstep)
@@ -474,15 +547,35 @@ def level3() -> List[Tuple[str, bool, str]]:
     parser = _parse_l72(create_subckt_buffer_netlist(config, work),
                         config, work)
     # Hierarchy sanity: nested-instance flattening + .ic on internal node
-    names = sorted(c.name for c in parser.circuit.components)
     want = {"M.Xbuf.X1.Mp1", "M.Xbuf.X1.Mn1", "M.Xbuf.X2.Mp1", "M.Xbuf.X2.Mn1"}
-    hier_ok = want.issubset(set(names)) and "Xbuf.m" in parser.circuit.nodes
+    devices = {
+        component.name: component
+        for component in parser.circuit.components
+        if component.name in want
+    }
+    geometry_ok = all(
+        int(getattr(device, "NFIN", -1))
+        == (config.nfin_p if ".Mp" in name else config.nfin_n)
+        and np.isclose(
+            float(getattr(device, "L", float("nan"))),
+            config.l_pmos if ".Mp" in name else config.l_nmos,
+            rtol=1e-12,
+            atol=1e-18,
+        )
+        for name, device in devices.items()
+    )
+    hier_ok = (
+        set(devices) == want
+        and geometry_ok
+        and "Xbuf.m" in parser.circuit.nodes
+    )
     ic = parser.circuit.initial_conditions
     ic_ok = (abs(ic.get("Xbuf.m", -1) - config.vdd) < 1e-12
              and abs(ic.get("out", -1) - 0.0) < 1e-12)
     results.append(("nested X-in-X flattening + param NFIN + .ic map",
                     hier_ok and ic_ok,
-                    f"devices={sorted(want & set(names))}, ic={ic}"))
+                    f"devices={sorted(devices)}, geometry_ok={geometry_ok}, "
+                    f"ic={ic}"))
 
     sub = run_tran(parser)
     m_out = _nrmse_vs_ngspice(ng, sub["time"], sub["out"], "v(out)", config)

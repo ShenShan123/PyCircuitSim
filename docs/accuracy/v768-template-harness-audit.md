@@ -4,6 +4,8 @@ Date: 2026-09-03
 
 Audited baseline: `12c7769` (`V7.6.8`); fixes are in this follow-up commit.
 
+Subcircuit-seam follow-up: 2026-09-04.
+
 Status: implementation hardening; no diagnostic was promoted and the frozen
 `simple-v1` `/20` denominator is unchanged.
 
@@ -15,8 +17,9 @@ The template inventory and harness are internally consistent after review:
   and 9 subcircuit fixtures;
 - 4 frozen `simple-v1` cases and 29 held-out `simple-v2` cases;
 - 75 `simple-v2` analyses across OP, DC, transient, and AC;
-- no duplicate physical experiment when rendered topology, physical values,
-  analysis card, signals, and metric profile are compared together.
+- no duplicate scored/catalog experiment when rendered topology, physical
+  values, analysis card, signals, and metric profile are compared together;
+  flat/hierarchical parser fixtures are the documented representation seam.
 
 The review found failures that the original unit suite did not exercise. The
 following were corrected:
@@ -64,6 +67,11 @@ following were corrected:
     accept incomplete opamp/SRAM DC axes, and drop every corner after a baseline
     miss. It now runs the complete denominator and fails closed on incomplete or
     undefined events.
+15. The standalone subcircuit harness could use an unconverged operating point
+    or incomplete reference/candidate trace in an equivalence verdict, and its
+    logarithmic AC grid had the wrong sample cardinality. It now requires
+    converged finite prerequisites, complete axes, NGSPICE-compatible integral
+    and fractional DEC/OCT grids, and the declared nested L/NFIN values.
 
 ## Redundancy decisions
 
@@ -111,7 +119,7 @@ covered:
 
 | Surface | Result |
 |---|---|
-| Python unit/contract suite | 240 passed; 2 CPU-only Torch warnings |
+| Python unit/contract suite | 256 passed; 2 CPU-only Torch warnings |
 | Catalog contract | 4 `simple-v1` + 29 `simple-v2` cases |
 | Static render/parity canary | 4,854 applicable cells passed |
 | Training-grid geometry guard | 463/463 coordinates passed |

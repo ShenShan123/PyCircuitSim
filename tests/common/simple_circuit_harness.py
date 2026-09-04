@@ -284,7 +284,15 @@ def analysis_axis_limits(analysis: AnalysisSpec) -> Tuple[float, float]:
     if analysis.kind == "tran" and len(parts) in {3, 4}:
         return 0.0, _analysis_number(parts[2])
     if analysis.kind == "ac" and len(parts) == 5:
-        return _analysis_number(parts[3]), _analysis_number(parts[4])
+        from pycircuitsim.simulation import build_ac_frequencies
+
+        axis = build_ac_frequencies({
+            "sweep_type": parts[1],
+            "num_points": int(parts[2]),
+            "fstart": _analysis_number(parts[3]),
+            "fstop": _analysis_number(parts[4]),
+        })
+        return float(axis[0]), float(axis[-1])
     raise ValueError(f"unsupported analysis card {analysis.card!r}")
 
 
@@ -319,15 +327,14 @@ def analysis_minimum_points(analysis: AnalysisSpec) -> Optional[int]:
         expected = int(round(abs(stop - start) / step)) + 1
         return max(expected - 1, 1)
     if analysis.kind == "ac" and len(parts) == 5:
-        points = int(parts[2])
-        start, stop = analysis_axis_limits(analysis)
-        sweep = parts[1].lower()
-        if sweep == "dec":
-            return int(round(math.log10(stop / start) * points)) + 1
-        if sweep == "oct":
-            return int(round(math.log2(stop / start) * points)) + 1
-        if sweep == "lin":
-            return points
+        from pycircuitsim.simulation import build_ac_frequencies
+
+        return int(build_ac_frequencies({
+            "sweep_type": parts[1],
+            "num_points": int(parts[2]),
+            "fstart": _analysis_number(parts[3]),
+            "fstop": _analysis_number(parts[4]),
+        }).size)
     return None
 
 
@@ -1470,7 +1477,11 @@ def _run_candidate_ac_trace(
     path: Path,
     signals: Sequence[str],
 ) -> Trace:
-    from pycircuitsim.simulation import _circuit_has_nn, _solve_dc_with_retry
+    from pycircuitsim.simulation import (
+        _circuit_has_nn,
+        _solve_dc_with_retry,
+        build_ac_frequencies,
+    )
     from pycircuitsim.solver import ACSolver, DCSolver
 
     parser = parse_netlist(path)
@@ -1488,18 +1499,7 @@ def _run_candidate_ac_trace(
     converged = bool(getattr(solver, "_last_solve_converged", True))
     if not converged:
         raise RuntimeError("candidate AC operating point did not converge")
-    start = float(parser.analysis_params["fstart"])
-    stop = float(parser.analysis_params["fstop"])
-    points = int(parser.analysis_params["num_points"])
-    sweep_type = str(parser.analysis_params["sweep_type"])
-    if sweep_type == "dec":
-        count = int(round(math.log10(stop / start) * points)) + 1
-        frequencies = np.logspace(math.log10(start), math.log10(stop), count)
-    elif sweep_type == "oct":
-        count = int(round(math.log2(stop / start) * points)) + 1
-        frequencies = np.logspace(math.log10(start), math.log10(stop), count)
-    else:
-        frequencies = np.linspace(start, stop, points)
+    frequencies = build_ac_frequencies(parser.analysis_params)
     raw = ACSolver(circuit, dc_solution=dc_solution).solve(frequencies)
     values = {signal: _lookup_signal(raw, signal) for signal in signals}
     trace = Trace("frequency", frequencies, values, converged=converged)
@@ -1614,7 +1614,10 @@ def run_level72_control_trace(
 ) -> Trace:
     """Run the same deck through PyCircuitSim's LEVEL=72 solver adapter."""
     from pycircuitsim.parser import Parser
-    from pycircuitsim.simulation import _solve_dc_with_retry
+    from pycircuitsim.simulation import (
+        _solve_dc_with_retry,
+        build_ac_frequencies,
+    )
     from pycircuitsim.solver import ACSolver, DCSolver
 
     work_dir.mkdir(parents=True, exist_ok=True)
@@ -1680,18 +1683,7 @@ def run_level72_control_trace(
                  for signal in analysis.signals},
             )
         elif analysis.kind == "ac":
-            start = float(parser.analysis_params["fstart"])
-            stop = float(parser.analysis_params["fstop"])
-            points = int(parser.analysis_params["num_points"])
-            sweep = str(parser.analysis_params["sweep_type"])
-            if sweep == "dec":
-                count = int(round(math.log10(stop / start) * points)) + 1
-                axis = np.logspace(math.log10(start), math.log10(stop), count)
-            elif sweep == "oct":
-                count = int(round(math.log2(stop / start) * points)) + 1
-                axis = np.logspace(math.log10(start), math.log10(stop), count)
-            else:
-                axis = np.linspace(start, stop, points)
+            axis = build_ac_frequencies(parser.analysis_params)
             results = ACSolver(circuit, dc_solution=solution).solve(axis)
             trace = Trace(
                 "frequency",

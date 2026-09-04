@@ -14,6 +14,8 @@ from pycircuitsim.parser import Parser
 from pycircuitsim.circuit import Circuit
 from pycircuitsim.visualizer import Visualizer
 
+_NGSPICE_DEFAULT_FREQUENCY_RELTOL = 1e-3
+
 
 def _circuit_has_nn(circuit: Circuit) -> bool:
     """Return True if the circuit contains any NN compact-model device
@@ -751,6 +753,61 @@ def run_dc_op_point(
     logger.info(f"DC operating point saved to: {result_file}")
 
 
+def build_ac_frequencies(params: Dict) -> np.ndarray:
+    """Build NGSPICE-compatible DEC, OCT, or LIN frequency points.
+
+    NGSPICE treats fractional DEC spans shorter than one decade specially:
+    those and all OCT spans advance by the native points-per-band ratio. The
+    next point is retained when it is within NGSPICE's default frequency
+    tolerance above ``fstop``. DEC spans of at least one decade distribute
+    ``floor(points * decades) + 1`` values across both bounds.
+    """
+    sweep_type = str(params["sweep_type"]).lower()
+    num_points = int(params["num_points"])
+    fstart = float(params["fstart"])
+    fstop = float(params["fstop"])
+    if num_points < 1:
+        raise ValueError("AC point count must be positive")
+    if not np.isfinite(fstart) or not np.isfinite(fstop) \
+            or fstart <= 0.0 or fstop < fstart:
+        raise ValueError(
+            f"AC frequencies must satisfy 0 < fstart <= fstop; "
+            f"got {fstart:g}, {fstop:g}"
+        )
+    if sweep_type == "dec":
+        frequency_ratio = 10.0 ** (1.0 / num_points)
+        if fstop < 10.0 * fstart:
+            tolerated_stop = fstop * (
+                1.0 + frequency_ratio * _NGSPICE_DEFAULT_FREQUENCY_RELTOL
+            )
+            span = num_points * np.log10(tolerated_stop / fstart)
+            intervals = int(np.floor(span + 1e-12 * max(1.0, span)))
+            frequencies = fstart * np.power(
+                10.0, np.arange(intervals + 1, dtype=float) / num_points,
+            )
+        else:
+            span = num_points * np.log10(fstop / fstart)
+            intervals = int(np.floor(span + 1e-12 * max(1.0, span)))
+            frequencies = np.logspace(
+                np.log10(fstart), np.log10(fstop), intervals + 1,
+            )
+    elif sweep_type == "oct":
+        frequency_ratio = 2.0 ** (1.0 / num_points)
+        tolerated_stop = fstop * (
+            1.0 + frequency_ratio * _NGSPICE_DEFAULT_FREQUENCY_RELTOL
+        )
+        span = num_points * np.log2(tolerated_stop / fstart)
+        intervals = int(np.floor(span + 1e-12 * max(1.0, span)))
+        frequencies = fstart * np.power(
+            2.0, np.arange(intervals + 1, dtype=float) / num_points,
+        )
+    elif sweep_type == "lin":
+        frequencies = np.linspace(fstart, fstop, num_points)
+    else:
+        raise ValueError(f"unsupported AC sweep type {sweep_type!r}")
+    return np.asarray(frequencies, dtype=float)
+
+
 def run_ac_sweep(
     circuit: Circuit,
     params: Dict,
@@ -814,25 +871,11 @@ def run_ac_sweep(
         if node not in ["0", "GND"]:
             logger.info(f"  V({node}) = {voltage:.6f} V")
 
-    # Step 2: Generate frequency array
+    # Step 2: Generate the complete SPICE frequency array.
     sweep_type = params["sweep_type"]
-    num_points = params["num_points"]
     fstart = params["fstart"]
     fstop = params["fstop"]
-
-    if sweep_type == "dec":
-        # Decade sweep: num_points per decade
-        num_decades = np.log10(fstop / fstart)
-        total_points = int(num_points * num_decades)
-        frequencies = np.logspace(np.log10(fstart), np.log10(fstop), total_points)
-    elif sweep_type == "oct":
-        # Octave sweep: num_points per octave
-        num_octaves = np.log2(fstop / fstart)
-        total_points = int(num_points * num_octaves)
-        frequencies = np.logspace(np.log10(fstart), np.log10(fstop), total_points)
-    else:  # "lin"
-        # Linear sweep: num_points total between fstart and fstop
-        frequencies = np.linspace(fstart, fstop, num_points)
+    frequencies = build_ac_frequencies(params)
 
     logger.info(f"AC sweep: {sweep_type.upper()} {len(frequencies)} points from {fstart:.3e} Hz to {fstop:.3e} Hz")
 
