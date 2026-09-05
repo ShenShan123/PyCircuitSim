@@ -743,8 +743,8 @@ def _subvt_off_points(
     for i, m in enumerate(mags):
         r = eval_single_point(inst, vd=float(vd_ref), vg=float(s * m),
                               vs=0.0, vb=0.0, _silent=True)
-        if r is not None and math.isfinite(r["id"]):
-            aid[i] = abs(r["id"])
+        if r is not None and math.isfinite(r["i_d"]):
+            aid[i] = abs(r["i_d"])
 
     finite = np.isfinite(aid) & (aid > 0.0)
     if int(finite.sum()) < 4:

@@ -30,6 +30,14 @@ default and a simulator-free lock test that inherited that external dependency.
 The driver now uses the same system default as the shared harness; the lock
 test supplies its own executable stub.
 
+The first actual canonical regeneration found a missed six-surface migration:
+`_subvt_off_points()` read `id` from an evaluator that now emits `i_d`, so
+enabling the documented subthreshold overlay crashed every technology/polarity
+with `KeyError` before any dataset completed. The sampler now uses the full
+terminal drain-current name. A regression crosses the real evaluator adapter
+for NMOS/PMOS, including valid, high-leakage, nonfinite, and failed-solve probes.
+The failed kickoff logs remain preserved under `results/v771_campaign/`.
+
 ### V7.7.0 — retire reduced compact-model families (2026-09-04)
 
 DirectNet-Full LEVEL=75 is now the default NN family and BSIM-AR-Full LEVEL=76
