@@ -19,8 +19,8 @@ from typing import Callable
 
 ROOT = Path(__file__).resolve().parents[1]
 STATE = ROOT / "results/v771_campaign"
-DATA = ROOT / "results/v771_full_data"
-CHECKPOINTS = ROOT / "results/v771_full_checkpoints"
+DATA = Path(os.environ.get("BSIMAR_DATA_DIR", ROOT / "results/v771_full_data"))
+CHECKPOINTS = Path(os.environ.get("BSIMAR_CHECKPOINT_DIR", ROOT / "results/v771_full_checkpoints"))
 TECHS = ("tsmc5", "tsmc6", "tsmc7", "tsmc12", "tsmc16")
 DEVICES = ("nmos", "pmos")
 
@@ -188,6 +188,14 @@ def train(python: str, commit: str, env: dict[str, str], gpus: list[str]) -> Non
         pending.put(job)
 
     def worker(gpu: str) -> list[str]:
+        # CUDA's FASTEST_FIRST ordinal can differ from nvidia-smi's physical
+        # index on mixed GPU hosts. UUIDs identify the device in both APIs.
+        gpu_uuid = subprocess.check_output(
+            ["nvidia-smi", f"--id={gpu}", "--query-gpu=uuid", "--format=csv,noheader"],
+            text=True,
+        ).strip()
+        if not gpu_uuid.startswith("GPU-") or "\n" in gpu_uuid:
+            raise RuntimeError(f"cannot identify physical GPU {gpu}: {gpu_uuid!r}")
         errors = []
         while True:
             if pending.empty():
@@ -213,7 +221,7 @@ def train(python: str, commit: str, env: dict[str, str], gpus: list[str]) -> Non
                        "--swa-mode", "ema", "--seed", "42", "--cuda", "--overwrite"]
             try:
                 run_job(f"train-{stem}", command,
-                        {**env, "CUDA_VISIBLE_DEVICES": gpu}, commit,
+                        {**env, "CUDA_VISIBLE_DEVICES": gpu_uuid}, commit,
                         lambda: validate_bundle(stem, commit))
             except Exception as exc:
                 errors.append(str(exc))

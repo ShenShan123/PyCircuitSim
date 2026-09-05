@@ -64,6 +64,30 @@ def test_resume_rejects_a_live_worker(runner: Path) -> None:
     assert not (runner / "logs").exists()
 
 
+def test_training_uses_physical_gpu_identity_despite_cuda_ordinal_order(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An idle physical GPU 0 must not route onto CUDA's fastest busy GPU."""
+    physical_uuid = "GPU-11111111-2222-3333-4444-555555555555"
+    captured: list[str] = []
+
+    def nvidia_query(command: list[str], **kwargs: object) -> str:
+        assert "--id=0" in command
+        return physical_uuid + "\n" if "--query-gpu=uuid" in command else ""
+
+    def run_job(
+        name: str, command: list[str], env: dict[str, str], commit: str,
+        validate: object,
+    ) -> None:
+        captured.append(env["CUDA_VISIBLE_DEVICES"])
+
+    monkeypatch.setattr(campaign.subprocess, "check_output", nvidia_query)
+    monkeypatch.setattr(campaign, "run_job", run_job)
+    monkeypatch.setattr(campaign, "training_jobs", lambda: [("direct", "small", "tsmc5", "nmos")])
+    campaign.train(sys.executable, "a" * 40, {}, ["0"])
+    assert captured == [physical_uuid]
+
+
 @pytest.mark.parametrize("tag", ("dnf", "tff"))
 def test_bundle_validation_binds_configuration_and_source_data(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, tag: str,

@@ -114,6 +114,8 @@ The V7.7.1 regeneration/retraining campaign is scheduled in
 From its clean isolated worktree, start or resume the complete dependency chain:
 
 ```bash
+BSIMAR_DATA_DIR="$PWD/results/v771_r2_data" \
+BSIMAR_CHECKPOINT_DIR="$PWD/results/v771_r2_checkpoints" \
 conda run --no-capture-output -n pycircuitsim python -u \
   scripts/v771_campaign.py --gpus 0,3,4 --generation-workers 4 --gate-parallel 16
 
@@ -125,6 +127,10 @@ The runner writes persistent state and individual attempt logs under
 run one stage for recovery. Completed training jobs are checksum-verified on
 resume; incomplete training restarts from the recorded seed. Keep the worktree
 clean throughout generation, training, and scoring. After evaluation completes:
+
+Pass the same two artifact directory variables when resuming an individual
+stage. GPU numbers identify physical `nvidia-smi` devices; the runner resolves
+their UUIDs for CUDA so mixed GPU models cannot change that mapping.
 
 ```bash
 conda run -n pycircuitsim python scripts/v730_docs_build.py --campaign v771_full_clean

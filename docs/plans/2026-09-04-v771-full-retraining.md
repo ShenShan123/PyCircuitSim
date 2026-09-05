@@ -53,6 +53,15 @@ into this isolated worktree; their original patch is in
 `results/v771_setup/preexisting.patch`. Existing control artifacts stay intact.
 All new raw evidence is below `results/v771_*`; private PDKs remain ignored.
 
+The first clean epoch (`a82369b`) completed all datasets and the TSMC5
+DirectNet-small pair. Its early pilot and temperature-attribution evidence
+remain under `results/v771_pilot_dnf_small/`. CUDA ordinal ordering on this
+mixed A100/RTX host exposed a physical GPU mapping bug when GPU 0 became free.
+The corrected scheduler uses UUIDs. The replacement epoch regenerates data
+into `results/v771_r2_data/` and trains into `results/v771_r2_checkpoints/`;
+the earlier directories remain preserved. Its partial Transformer attempts
+are interrupted runs, not completed models or scientific failures.
+
 Freeze the implementation commit before generating data. The current campaign
 manifest requires dataset and campaign source commits to match. If a later
 behavior fix changes that commit, preserve the previous arm and regenerate a

@@ -38,6 +38,24 @@ terminal drain-current name. A regression crosses the real evaluator adapter
 for NMOS/PMOS, including valid, high-leakage, nonfinite, and failed-solve probes.
 The failed kickoff logs remain preserved under `results/v771_campaign/`.
 
+The first completed DirectNet-small TSMC5 pilot passed 25/26 parametric DC,
+20/20 inverter configurations, and 2/2 device AC. The +125 C NMOS failure
+reproduced in direct NN evaluation (19.47% NRMSE); runtime temperature was
+398.15 K and the direct current agreed with the circuit solver within
+3.4e-19 A on their shared sweep interval. PyCMG versus NGSPICE was 0.0164%
+NRMSE. This attributes that early failure to the learned surface, with no
+solver correction justified. Off-state current and body-derivative diagnostics
+remain weak; these results are not the final campaign or a promotion.
+
+The mixed A100/RTX host exposed another execution bug: CUDA's default
+FASTEST_FIRST device order mapped numeric `CUDA_VISIBLE_DEVICES=0` to a busy
+RTX while the scheduler had checked physical A100 0 with `nvidia-smi`.
+Stopped the affected epoch, preserved its data, complete DirectNet pair and
+partial Transformer logs, and changed allocation to physical GPU UUIDs.
+The replacement epoch uses isolated `v771_r2_data`/`v771_r2_checkpoints` paths
+and fresh source provenance; the numerical model and training recipe are
+unchanged.
+
 ### V7.7.0 — retire reduced compact-model families (2026-09-04)
 
 DirectNet-Full LEVEL=75 is now the default NN family and BSIM-AR-Full LEVEL=76
