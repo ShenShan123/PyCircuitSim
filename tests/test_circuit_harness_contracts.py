@@ -582,6 +582,55 @@ def test_run_spec_captures_model_pins_threads_and_campaign(
     assert (spec.omp_threads, spec.mkl_threads, spec.torch_threads) == (2, 3, 4)
 
 
+@pytest.mark.parametrize(
+    ("level", "resolved", "excluded"),
+    ((75, "directnet_full", "bsimar_full"),
+     (76, "bsimar_full", "directnet_full")),
+)
+def test_nn_gate_resolves_only_the_selected_family(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    level: int,
+    resolved: str,
+    excluded: str,
+) -> None:
+    """A gate run must not fold the other family into its verdict.
+
+    Both families' fallback stems are live production slots, so a box that
+    carries both would otherwise run — and score, and bill ~40x inference
+    for — an unpinned checkpoint the campaign cell never selected, outside
+    the manifest that records what the run measured.
+    """
+    from tests.common import nn_gate
+
+    monkeypatch.setattr(nn_gate, "CHECKPOINT_DIR", tmp_path)
+    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", str(level))
+    for name in (
+        "PYCIRCUITSIM_NN_CHECKPOINT_DNF_NMOS", "PYCIRCUITSIM_NN_CHECKPOINT_DNF_PMOS",
+        "PYCIRCUITSIM_NN_CHECKPOINT_TFF_NMOS", "PYCIRCUITSIM_NN_CHECKPOINT_TFF_PMOS",
+        "PYCIRCUITSIM_NN_CHECKPOINT_NMOS", "PYCIRCUITSIM_NN_CHECKPOINT_PMOS",
+        "PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+    for device in ("nmos", "pmos"):
+        for tag in ("dnf", "tff"):
+            stem = tmp_path / f"tsmc5_{tag}_large_{device}"
+            (tmp_path / f"{stem.name}_best.pt").touch()
+            (tmp_path / f"{stem.name}_norm.npz").touch()
+            (tmp_path / f"{stem.name}_best.pt.complete").touch()
+            if tag == "tff":
+                (tmp_path / f"{stem.name}_config.npz").touch()
+
+    checkpoints = nn_gate.get_available_checkpoints()
+
+    assert checkpoints[f"{resolved}_nmos"] is not None
+    assert checkpoints[f"{resolved}_pmos"] is not None
+    assert checkpoints[resolved] == checkpoints[f"{resolved}_nmos"]
+    assert checkpoints.get(f"{excluded}_nmos") is None
+    assert checkpoints.get(f"{excluded}_pmos") is None
+    assert checkpoints.get(excluded) is None
+
+
 def test_run_spec_rejects_a_missing_explicit_checkpoint(tmp_path: Path) -> None:
     spec = RunSpec(
         75,
@@ -1928,6 +1977,49 @@ def test_topology_cli_skips_unsupported_cells_without_dropping_valid_ones(
     output = capsys.readouterr().out
     assert "diode_load / TSMC5 / vt_alternate" in output
     assert "diode_load / TSMC7 / vt_alternate NOT-APPLICABLE" in output
+
+
+@pytest.mark.parametrize("legacy_present", (False, True))
+def test_geometry_audit_checks_the_full_terminal_training_grid(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    legacy_present: bool,
+) -> None:
+    """An obsolete grid must neither supply nor hide canonical coverage."""
+    from tests.single_devices import verify_data_geometry_coverage as audit
+
+    point = audit.EvalGeometry(
+        "device", "tsmc5", "nmos", "svt", 16e-9, 2.0, 300.15,
+    )
+    np.savez(
+        tmp_path / "tsmc5_dnf_nmos.npz",
+        geometry=np.asarray([[2.0, 16e-9, 300.15]]),
+    )
+    if legacy_present:
+        np.savez(
+            tmp_path / "tsmc5_nmos.npz",
+            geometry=np.asarray([[2.0, 6e-9, 300.15]]),
+        )
+    monkeypatch.setattr(audit, "DATA_DIR", tmp_path)
+    monkeypatch.setattr(audit, "_evaluation_geometries", lambda: [point])
+    monkeypatch.setattr(audit, "_simple_circuit_geometries", lambda: [])
+    monkeypatch.setattr(
+        audit, "_bin_containing", lambda *_args: (6e-9, 20e-9, 2.0, 4.0),
+    )
+    monkeypatch.setattr(
+        audit, "get_or_build_tech_variant_labels",
+        lambda *_args, **_kwargs: np.asarray([0]),
+    )
+    audit._dataset_arrays.cache_clear()
+    audit._dataset_geometry.cache_clear()
+    try:
+        results = audit.check(1.35, 2.0)
+        assert len(results) == 1
+        assert results[0][1], results[0][2]
+        assert "L=16.00nm" in results[0][2]
+    finally:
+        audit._dataset_arrays.cache_clear()
+        audit._dataset_geometry.cache_clear()
 
 
 def test_simple_circuit_geometry_inventory_skips_unsupported_corners_and_roles(

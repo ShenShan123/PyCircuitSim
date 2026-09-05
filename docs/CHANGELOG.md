@@ -50,6 +50,15 @@ and 2/5 on Miller AC. LEVEL=76 still lacks a complete five-technology clean
 matrix. No new accuracy promotion is claimed. The collected unit suite passes
 560 tests with two CPU pin-memory warnings.
 
+Review follow-up: standalone NN gates select only the requested full-terminal
+family. Geometry coverage reads the canonical `dnf` dataset names. Report
+generation can explicitly select the 600-job V7.7.0 clean campaign and rejects
+missing metrics or mismatched provenance before changing reports. The AR-cache
+gate now compares all six charge/current Jacobians; regression mutations cover
+each current gradient in AR3 and AR6. These are harness corrections, with no
+new accuracy promotion. Verification: 585 unit tests and 10/10 AR-cache checks
+passed; the unit suite emitted two CPU pin-memory warnings and no skips.
+
 ## V7.6 — full-terminal families and closure
 
 ### V7.6.10 — metric oracles, hierarchy breadth, and stale-test purge (2026-09-04)

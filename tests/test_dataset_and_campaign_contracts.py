@@ -44,6 +44,148 @@ from tests.common.gate_result import GateResult  # noqa: E402
 FULL_COLUMNS = list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER)
 
 
+@pytest.fixture
+def report_campaign(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    """A complete, checksum-bound report matrix from the new campaign."""
+    from scripts import v730_docs_build as docs
+    from tests.simple_circuits.verify_accuracy_campaign_tools import (
+        _report_payload,
+    )
+
+    root = tmp_path / "results" / "v770_full_clean"
+    root.mkdir(parents=True)
+    data = {
+        tag: {
+            variant: {
+                suite: {
+                    tech: {omp: _report_payload(suite) for omp in required}
+                    for tech in docs.TECHS
+                }
+                for suite, required in docs.REPORT_SUITES.items()
+            }
+            for variant in docs.TIERS
+        }
+        for tag in ("dnf", "tff")
+    }
+    data_path = root / "data.json"
+    data_path.write_text(json.dumps(data))
+    manifest_path = root / "campaign_manifest.json"
+    manifest = {
+        "job_count": 600,
+        "source_commit": "a" * 40,
+        "source_dirty": False,
+        "checkpoint_sha256": {str(i): "b" * 64 for i in range(280)},
+        "pdk_sha256": {"model.l": "c" * 64},
+    }
+    manifest_path.write_text(json.dumps(manifest))
+    (root / "collection_provenance.json").write_text(json.dumps({
+        "campaign_manifest_sha256": hashlib.sha256(
+            manifest_path.read_bytes(),
+        ).hexdigest(),
+        "data_sha256": hashlib.sha256(data_path.read_bytes()).hexdigest(),
+        "source_commit": manifest["source_commit"],
+    }))
+    rendered = tmp_path / "docs"
+    rendered.mkdir()
+    monkeypatch.setattr(docs, "ROOT", tmp_path)
+    monkeypatch.setattr(docs, "DOCS", rendered)
+    monkeypatch.setattr(docs, "PASS_DATA", dict(docs.PASS_DATA))
+    monkeypatch.setattr(docs, "REPORT_PASS", dict(docs.REPORT_PASS))
+    return root
+
+
+def test_report_cli_publishes_the_selected_campaign(
+    report_campaign: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from scripts import v730_docs_build as docs
+
+    monkeypatch.setattr(
+        sys, "argv", ["docs", "--campaign", "v770_full_clean"],
+    )
+    assert docs.main() == 0
+    for stem in ("DirectNet-L75", "BSIM-AR-L76"):
+        report = (docs.DOCS / f"{stem}-clean.md").read_text()
+        assert "V7.7.0" in report
+        assert "600 jobs" in report
+        assert "a" * 40 in report
+        assert "results/v770_full_clean/" in report
+        assert "v766_full_clean" not in report
+    assert "V7.7.0" in (docs.DOCS / "README.md").read_text()
+    monkeypatch.setattr(
+        sys, "argv", ["docs", "--campaign", "v770_full_clean", "--check"],
+    )
+    assert docs.main() == 0
+
+
+@pytest.mark.parametrize("check_only", (False, True))
+@pytest.mark.parametrize(
+    "defect",
+    ("missing_data", "data_drift", "manifest_drift", "missing_metric",
+     "missing_family", "dirty_source", "wrong_job_count"),
+)
+def test_explicit_report_campaign_never_falls_back_to_preserved_reports(
+    report_campaign: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    check_only: bool,
+    defect: str,
+) -> None:
+    from scripts import v730_docs_build as docs
+
+    preserved = "preserved historical report\n"
+    names = ("DirectNet-L75-clean.md", "BSIM-AR-L76-clean.md", "README.md")
+    for name in names:
+        (docs.DOCS / name).write_text(preserved)
+    digest = hashlib.sha256(preserved.encode()).hexdigest()
+    monkeypatch.setattr(
+        docs, "PRESERVED_REPORT_SHA256",
+        {("dnf", False): digest, ("tff", False): digest},
+    )
+    monkeypatch.setattr(docs, "PRESERVED_README_SHA256", digest)
+
+    data_path = report_campaign / "data.json"
+    manifest_path = report_campaign / "campaign_manifest.json"
+    if defect == "missing_data":
+        data_path.unlink()
+    elif defect == "data_drift":
+        data_path.write_text(data_path.read_text() + "\n")
+    elif defect == "manifest_drift":
+        manifest_path.write_text(manifest_path.read_text() + "\n")
+    else:
+        data = json.loads(data_path.read_text())
+        manifest = json.loads(manifest_path.read_text())
+        if defect == "missing_metric":
+            del data["dnf"]["small"]["verify_circuit_ring_osc"]["TSMC5"]["omp1"]["metric"]
+        elif defect == "missing_family":
+            del data["tff"]
+        elif defect == "dirty_source":
+            manifest["source_dirty"] = True
+        elif defect == "wrong_job_count":
+            manifest["job_count"] = 480
+        data_path.write_text(json.dumps(data))
+        manifest_path.write_text(json.dumps(manifest))
+        provenance_path = report_campaign / "collection_provenance.json"
+        provenance = json.loads(provenance_path.read_text())
+        provenance.update(
+            campaign_manifest_sha256=hashlib.sha256(
+                manifest_path.read_bytes(),
+            ).hexdigest(),
+            data_sha256=hashlib.sha256(data_path.read_bytes()).hexdigest(),
+        )
+        provenance_path.write_text(json.dumps(provenance))
+
+    monkeypatch.setattr(
+        sys, "argv",
+        ["docs", "--campaign", "v770_full_clean"]
+        + (["--check"] if check_only else []),
+    )
+    assert docs.main() == 1
+    assert all((docs.DOCS / name).read_text() == preserved for name in names)
+
+
 def test_stratified_cap_keeps_every_stratum() -> None:
     strata = np.asarray([[0], [0], [0], [1], [1], [2], [2], [2], [2]])
     selected = stratified_sample_indices(strata, n_samples=5, seed=7)

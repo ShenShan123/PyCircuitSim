@@ -56,6 +56,7 @@ from neural_network.config import (  # noqa: E402
 from neural_network.eval.loo_labels import (  # noqa: E402
     get_or_build_tech_variant_labels,
 )
+from neural_network.data.contracts import dataset_filename  # noqa: E402
 from tests.common.nn_sweep import (  # noqa: E402
     NN_TECHS,
     build_dc_parametric,
@@ -93,7 +94,7 @@ def _dataset_arrays(
     tech: str,
     dev: str,
 ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
-    path = DATA_DIR / f"{tech}_{dev}.npz"
+    path = DATA_DIR / dataset_filename(tech, dev)
     if not path.exists():
         return None
     with np.load(str(path), allow_pickle=True) as data:
@@ -230,7 +231,8 @@ def check(max_l_ratio: float, max_nfin_ratio: float) -> List[Tuple[str, bool,
         )
         if geo is None:
             results.append((label, False,
-                            f"dataset {point.tech}_{point.dev}.npz not found"))
+                            f"dataset {dataset_filename(point.tech, point.dev)} "
+                            "not found"))
             continue
         pdk_device = cfg.pycmg_tech.get_device(
             f"{point.dev}_{point.vt}").pdk_device

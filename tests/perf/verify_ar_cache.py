@@ -48,6 +48,9 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 from tests.common.base import parse_no_options  # noqa: E402
 import neural_network.models.transformer as transformer_mod  # noqa: E402
 from neural_network.config import CHECKPOINT_DIR  # noqa: E402
+from neural_network.data.contracts import (  # noqa: E402
+    BSIMAR_FULL_TERMINAL_COLUMN_ORDER,
+)
 from neural_network.models.transformer import TransformerEncoderModel  # noqa: E402
 
 # Cover both polarities and every complete architecture tier currently served.
@@ -90,9 +93,9 @@ def _eval_like_solver(
     model: TransformerEncoderModel,
     x: torch.Tensor,
     tech_codes: torch.Tensor,
-    n_bwd: int = 3,
+    n_bwd: int = len(BSIMAR_FULL_TERMINAL_COLUMN_ORDER),
 ) -> Tuple[torch.Tensor, List[torch.Tensor]]:
-    """Reproduce the full-terminal runtime's grad-enabled inference pattern.
+    """Check all charge and current gradients used by the full runtime.
 
     The grad context is not incidental — ``TransformerEncoderLayer`` has a
     fused whole-sequence fast path that PyTorch only allows under

@@ -513,3 +513,39 @@ def test_transformer_defaults_to_the_six_surface_contract() -> None:
     codes = torch.zeros(2, dtype=torch.long)
     assert model(inputs, tech_codes=codes).shape == (2, 6)
     assert model(inputs, torch.zeros((2, 6)), tech_codes=codes).shape == (2, 6)
+
+
+@pytest.mark.parametrize("ar_targets", (3, 6))
+@pytest.mark.parametrize("current", ("i_d", "i_g", "i_b"))
+def test_ar_cache_gate_detects_current_gradient_only_corruption(
+    monkeypatch: pytest.MonkeyPatch,
+    ar_targets: int,
+    current: str,
+) -> None:
+    """Unchanged values and charges cannot excuse a wrong DC Jacobian."""
+    from tests.perf import verify_ar_cache as gate
+
+    with torch.random.fork_rng(devices=[]):
+        torch.manual_seed(770)
+        model = TransformerEncoderModel(
+            d_model=8, nhead=2, num_layers=1, dim_feedforward=16,
+            dropout=0.0, num_tech_codes=2, ar_target_dim=ar_targets,
+        ).eval()
+    monkeypatch.setattr(gate, "STEMS", ["test"])
+    monkeypatch.setattr(gate, "_load", lambda _stem: (model, 2))
+    assert all(ok for _label, ok, _detail in gate.level1())
+    forward = model.forward
+
+    def corrupt_current_gradient(
+        x: torch.Tensor,
+        tech_codes: torch.Tensor,
+    ) -> torch.Tensor:
+        output = forward(x, tech_codes=tech_codes)
+        if gate.transformer_mod._AR_CACHE:
+            selector = output.new_zeros(output.shape[1])
+            selector[TFF_COLUMNS.index(current)] = 1.0
+            output = output + (x[:, :1] - x[:, :1].detach()) * selector
+        return output
+
+    monkeypatch.setattr(model, "forward", corrupt_current_gradient)
+    assert not gate.level1()[0][1], f"missed the {current} Jacobian mutation"

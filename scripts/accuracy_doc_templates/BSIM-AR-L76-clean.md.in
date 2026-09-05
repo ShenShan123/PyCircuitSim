@@ -52,7 +52,7 @@ artifacts and identical gate matrix.
 
 Checkpoints are `tsmc{5,6,7,12,16}_tff_{small,medium,large,xl}_{nmos,pmos}`.
 Each requires `_best.pt`, `_norm.npz`, `_config.npz`, and the checksum-bound
-`_best.pt.complete` marker. This report is the BSIM-AR-Full half of the
-combined 480-job V7.6.6 pass in `results/v766_full_clean/`. See the repository
+`_best.pt.complete` marker. The provenance above identifies the selected
+campaign, its source commit, and its artifact hashes. See the repository
 README for the complete generation, training, gate, coverage, and report
 commands.

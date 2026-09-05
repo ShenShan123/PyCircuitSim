@@ -225,12 +225,18 @@ for family in dnf tff; do
     --require-complete --fail-on-gaps
 done
 
-conda run -n pycircuitsim python scripts/v730_docs_build.py
-conda run -n pycircuitsim python scripts/v730_docs_build.py --check
+conda run -n pycircuitsim python scripts/v730_docs_build.py \
+  --campaign v770_full_clean
+conda run -n pycircuitsim python scripts/v730_docs_build.py \
+  --campaign v770_full_clean --check
 ```
 
 `v710_regate.sh` requires `NN_PY` to name an executable interpreter with NumPy
 and PyTorch. It never falls back to another environment.
+
+`--campaign` requires the selected campaign's complete metrics and matching
+collection provenance before any report is written. Omitting it checks or
+rebuilds the preserved report selection, currently V7.6.6.
 
 ## 5. Sweep unified circuit templates
 

@@ -61,7 +61,9 @@ from tests.common.nn import nrmse, mre, tech_code_in_vocab  # noqa: E402
 from tests.common.base import (  # noqa: E402
     DEVICE_DECKS, deck_tokens, template_deck, render_deck_text, render_template,
 )
-from tests.common.circuit_benchmarks import nn_model_parameters  # noqa: E402
+from tests.common.circuit_benchmarks import (  # noqa: E402
+    active_model_label, active_model_level, nn_model_parameters,
+)
 from helpers import bake_inst_params  # noqa: E402
 from neural_network.config import CHECKPOINT_DIR, OSDI_PATH  # noqa: E402
 
@@ -498,46 +500,62 @@ def _missing_bundle_artifacts(
     return [path for path in required if not path.is_file()]
 
 
+#: Campaign family -> (result key, env-pin tag, checkpoint stem tag).
+_FAMILY_BY_LEVEL: Dict[int, Tuple[str, str, str]] = {
+    75: ("directnet_full", "DNF", "dnf"),
+    76: ("bsimar_full", "TFF", "tff"),
+}
+
+
 def get_available_checkpoints() -> Dict[str, Optional[Path]]:
-    """Return available LEVEL=75/76 checkpoints, honoring explicit pins."""
+    """Return the SELECTED family's checkpoints, honoring explicit pins.
+
+    One gate answers one question, so only the family named by
+    ``PYCIRCUITSIM_NN_FORCE_LEVEL`` (default LEVEL=75) is resolved. Resolving
+    both would fold an unpinned checkpoint of the other family into this run's
+    verdict, its provenance, and — for LEVEL=76 — its ~40x inference cost. That
+    used to be harmless only because the second arm's fallback stems named
+    retired artifacts; V7.7.0 pointed those fallbacks at the live production
+    slots, so on a box carrying both families it silently ran both.
+
+    Keys for the unselected family are absent; every consumer reads through
+    ``.get`` and skips a family it cannot resolve.
+    """
+    level = active_model_level()
+    key, tag, stem_tag = _FAMILY_BY_LEVEL[level]
+    transformer = level == 76
     checkpoints: Dict[str, Optional[Path]] = {}
 
     for dev in ("nmos", "pmos"):
-        suffix = dev.upper()
-        for key, tag, stem_tag in (
-            ("directnet_full", "DNF", "dnf"),
-            ("bsimar_full", "TFF", "tff"),
-        ):
-            override, variable = _env_pin((
-                f"PYCIRCUITSIM_NN_CHECKPOINT_{tag}_{suffix}",
-                f"PYCIRCUITSIM_NN_CHECKPOINT_{suffix}",
-                "PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE",
-            ))
-            if override:
-                checkpoints[f"{key}_{dev}"] = _require_pinned_checkpoint(
-                    override, variable, transformer=key == "bsimar_full",
-                )
-                continue
-            candidates = [
-                CHECKPOINT_DIR / f"{tech}_{stem_tag}_{size}_{dev}_best.pt"
-                for size in ("large", "medium", "small", "xl")
-                for tech in ("tsmc5", "tsmc6", "tsmc7", "tsmc12", "tsmc16")
-            ] + [
-                CHECKPOINT_DIR / f"refac_{stem_tag}_{size}_{dev}_best.pt"
-                for size in ("large", "medium", "small", "xl")
-            ]
-            checkpoints[f"{key}_{dev}"] = next(
-                (
-                    path for path in candidates
-                    if not _missing_bundle_artifacts(
-                        path, transformer=key == "bsimar_full",
-                    )
-                ),
-                None,
+        override, variable = _env_pin((
+            f"PYCIRCUITSIM_NN_CHECKPOINT_{tag}_{dev.upper()}",
+            f"PYCIRCUITSIM_NN_CHECKPOINT_{dev.upper()}",
+            "PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE",
+        ))
+        if override:
+            checkpoints[f"{key}_{dev}"] = _require_pinned_checkpoint(
+                override, variable, transformer=transformer,
             )
+            continue
+        candidates = [
+            CHECKPOINT_DIR / f"{tech}_{stem_tag}_{size}_{dev}_best.pt"
+            for size in ("large", "medium", "small", "xl")
+            for tech in ("tsmc5", "tsmc6", "tsmc7", "tsmc12", "tsmc16")
+        ] + [
+            CHECKPOINT_DIR / f"refac_{stem_tag}_{size}_{dev}_best.pt"
+            for size in ("large", "medium", "small", "xl")
+        ]
+        checkpoints[f"{key}_{dev}"] = next(
+            (
+                path for path in candidates
+                if not _missing_bundle_artifacts(
+                    path, transformer=transformer,
+                )
+            ),
+            None,
+        )
 
-    checkpoints["bsimar_full"] = checkpoints["bsimar_full_nmos"]
-    checkpoints["directnet_full"] = checkpoints["directnet_full_nmos"]
+    checkpoints[key] = checkpoints[f"{key}_nmos"]
 
     return checkpoints
 
@@ -3271,10 +3289,7 @@ def run_gate(tech_names: List[str], *,
 
     print("=" * 70)
     print(f"  {title}")
-    print(
-        "  BSIM-AR-Full (LEVEL=76) + DirectNet-Full (LEVEL=75) "
-        "vs BSIM-CMG (LEVEL=72)"
-    )
+    print(f"  {active_model_label()} vs BSIM-CMG (LEVEL=72)")
     print("=" * 70)
     print(f"\n  Technologies: {', '.join(tech_names)}")
     print(f"  Suites: NMOS_DC={nmos_dc}  PMOS_DC={pmos_dc}  "

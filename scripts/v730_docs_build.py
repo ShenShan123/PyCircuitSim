@@ -19,11 +19,12 @@ from the evidence. Markers:
 Available sources (each rendered report is pinned to one complete pass):
 
     results/v766_full_clean/data.json V7.6.6, full-terminal clean re-gate
+    results/v770_full_clean/data.json V7.7.0, full-terminal clean re-gate
 
 Run after any re-gate:
 
-    python scripts/v710_regate_collect.py --root results/v730_regate
-    python scripts/v730_docs_build.py
+    python scripts/v710_regate_collect.py --root results/v770_full_clean
+    python scripts/v730_docs_build.py --campaign v770_full_clean
 """
 from __future__ import annotations
 
@@ -137,7 +138,8 @@ def load_json(name: str) -> Dict:
 PASSES = [("V7.6.1", load_json("v761_directnet_full_clean")),
           ("V7.6.1 combined", load_json("v761_full_clean")),
           ("V7.6.2", load_json("v762_directnet_full_clean")),
-          ("V7.6.6", load_json("v766_full_clean"))]
+          ("V7.6.6", load_json("v766_full_clean")),
+          ("V7.7.0", load_json("v770_full_clean"))]
 PASS_DATA = dict(PASSES)
 ACTIVE_PASS: Optional[str] = None
 CAMPAIGN_EVIDENCE: Dict[str, Tuple[str, int, int]] = {
@@ -145,6 +147,7 @@ CAMPAIGN_EVIDENCE: Dict[str, Tuple[str, int, int]] = {
     "V7.6.1 combined": ("v761_full_clean", 480, 280),
     "V7.6.2": ("v762_directnet_full_clean", 240, 120),
     "V7.6.6": ("v766_full_clean", 480, 280),
+    "V7.7.0": ("v770_full_clean", 600, 280),
 }
 
 # Every report is rendered from one coherent campaign. A later partial pass is
@@ -513,6 +516,8 @@ HISTORICAL_CLEAN_TEXT = {
     "dnf": "V7.6.6 `large` **20/20** simple-circuit matrix",
     "tff": "no complete five-technology clean matrix",
 }
+
+
 def _score(tag: str, key: str, recipes: bool) -> Tuple[int, int]:
     p = n = 0
     for tech in TECHS:
@@ -567,10 +572,10 @@ def _campaign_provenance_complete(version: str) -> bool:
     try:
         manifest = json.loads(manifest_path.read_text())
         provenance = json.loads(provenance_path.read_text())
+        manifest_digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+        data_digest = hashlib.sha256(data_path.read_bytes()).hexdigest()
     except (OSError, ValueError):
         return False
-    manifest_digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
-    data_digest = hashlib.sha256(data_path.read_bytes()).hexdigest()
     checkpoint_hashes = manifest.get("checkpoint_sha256")
     return (
         manifest.get("job_count") == expected_jobs
@@ -783,6 +788,15 @@ def main() -> int:
                     help="Comma list of families to build (dnf,tff). "
                          "Default: all. The README scoreboard spans families, "
                          "so it is skipped unless all are built.")
+    campaigns = {
+        directory: version
+        for version, (directory, _jobs, _artifacts) in CAMPAIGN_EVIDENCE.items()
+    }
+    ap.add_argument(
+        "--campaign", choices=sorted(campaigns),
+        help="Campaign directory under results/. Explicit selection requires "
+             "complete metrics and provenance; it never uses preserved reports.",
+    )
     args = ap.parse_args()
 
     tags = ([t.strip() for t in args.only.split(",")] if args.only
@@ -790,6 +804,19 @@ def main() -> int:
     unknown = [t for t in tags if t not in FAM]
     if unknown:
         ap.error(f"unknown family {unknown}; choose from {sorted(FAM)}")
+    if args.campaign:
+        version = campaigns[args.campaign]
+        PASS_DATA[version] = load_json(args.campaign)
+        incomplete = [
+            tag for tag in tags
+            if not _matrix_complete_in_pass(tag, False, version)
+        ]
+        if incomplete:
+            print(f"[docs] {args.campaign}: incomplete metrics or provenance "
+                  f"for {', '.join(incomplete)}; reports were not changed")
+            return 1
+        for tag in tags:
+            REPORT_PASS[(tag, False)] = version
     ok = True
     for tag in tags:
         ok &= build(tag, False, args.check)
