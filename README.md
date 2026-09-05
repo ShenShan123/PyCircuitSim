@@ -109,32 +109,35 @@ A canonical dataset has a checksum-bound `.npz.complete` marker and label
 sidecars. Training rejects missing, stale, dirty-source, diagnostic, or
 incomplete artifacts. NFIN=1 is outside the training domain.
 
-The V7.7.1 regeneration/retraining campaign is scheduled in
-[`docs/plans/2026-09-04-v771-full-retraining.md`](docs/plans/2026-09-04-v771-full-retraining.md).
+The V7.7.2 regeneration/retraining campaign is scheduled in
+[`docs/plans/2026-09-05-v772-full-retraining.md`](docs/plans/2026-09-05-v772-full-retraining.md).
 From its clean isolated worktree, start or resume the complete dependency chain:
 
 ```bash
-BSIMAR_DATA_DIR="$PWD/results/v771_r2_data" \
-BSIMAR_CHECKPOINT_DIR="$PWD/results/v771_r2_checkpoints" \
 conda run --no-capture-output -n pycircuitsim python -u \
-  scripts/v771_campaign.py --gpus 0,3,4 --generation-workers 4 --gate-parallel 16
+  scripts/v771_campaign.py --campaign v772 \
+  --gpus 0,3,4 --generation-workers 4 --gate-parallel 16 \
+  --after-training /data2/home/shenshan/PyCircuitSim-v771/results/v771_campaign/state.json
 
-conda run -n pycircuitsim python scripts/v771_campaign.py --status
+conda run -n pycircuitsim python scripts/v771_campaign.py --campaign v772 --status
 ```
 
 The runner writes persistent state and individual attempt logs under
-`results/v771_campaign/`. `--stage data`, `--stage train`, and `--stage evaluate`
+`results/v772_campaign/`, with fresh data and models in `results/v772_full_data/`
+and `results/v772_full_checkpoints/`. `--stage data`, `--stage train`, and `--stage evaluate`
 run one stage for recovery. Completed training jobs are checksum-verified on
 resume; incomplete training restarts from the recorded seed. Keep the worktree
 clean throughout generation, training, and scoring. After evaluation completes:
 
-Pass the same two artifact directory variables when resuming an individual
-stage. GPU numbers identify physical `nvidia-smi` devices; the runner resolves
+Keep `--campaign v772` and any artifact directory overrides when resuming an
+individual stage. `--after-training` preserves the active predecessor's GPU
+allocation; omit it for an independent campaign with available GPUs.
+GPU numbers identify physical `nvidia-smi` devices; the runner resolves
 their UUIDs for CUDA so mixed GPU models cannot change that mapping.
 
 ```bash
-conda run -n pycircuitsim python scripts/v730_docs_build.py --campaign v771_full_clean
-conda run -n pycircuitsim python scripts/v730_docs_build.py --campaign v771_full_clean --check
+conda run -n pycircuitsim python scripts/v730_docs_build.py --campaign v772_full_clean
+conda run -n pycircuitsim python scripts/v730_docs_build.py --campaign v772_full_clean --check
 ```
 
 ## 2. Train a full-terminal compact model

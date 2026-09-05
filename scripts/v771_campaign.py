@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run and resume the V7.7.1 data, training, and evaluation dependencies."""
+"""Run and resume full-terminal data, training, and evaluation dependencies."""
 from __future__ import annotations
 
 import argparse
@@ -18,11 +18,31 @@ import time
 from typing import Callable
 
 ROOT = Path(__file__).resolve().parents[1]
+CAMPAIGN = "v771"
 STATE = ROOT / "results/v771_campaign"
 DATA = Path(os.environ.get("BSIMAR_DATA_DIR", ROOT / "results/v771_full_data"))
 CHECKPOINTS = Path(os.environ.get("BSIMAR_CHECKPOINT_DIR", ROOT / "results/v771_full_checkpoints"))
 TECHS = ("tsmc5", "tsmc6", "tsmc7", "tsmc12", "tsmc16")
 DEVICES = ("nmos", "pmos")
+
+
+def configure_campaign(name: str) -> None:
+    """Keep each release's job state, data, and checkpoints in its own root."""
+    global CAMPAIGN, STATE, DATA, CHECKPOINTS
+    if name not in ("v771", "v772"):
+        raise ValueError(f"unsupported campaign: {name}")
+    CAMPAIGN = name
+    STATE = ROOT / f"results/{name}_campaign"
+    DATA = Path(os.environ.get("BSIMAR_DATA_DIR", ROOT / f"results/{name}_full_data"))
+    CHECKPOINTS = Path(os.environ.get(
+        "BSIMAR_CHECKPOINT_DIR", ROOT / f"results/{name}_full_checkpoints"))
+
+
+def predecessor_training_complete(path: Path) -> bool:
+    """A stopped or failed predecessor has not satisfied the training dependency."""
+    state = json.loads(path.read_text())
+    return ((state.get("stage") == "train" and state.get("status") == "complete")
+            or state.get("stage") == "evaluate")
 
 
 def timestamp() -> str:
@@ -239,7 +259,7 @@ def evaluate(python: str, commit: str, env: dict[str, str], parallel: int) -> No
     job_lists = STATE / "job_lists"
     run_job("gate-jobs", [python, "scripts/v710_regate_jobs.py", str(job_lists)], env, commit)
     for pool in ("clean", "simple_v2"):
-        output = ROOT / "results" / f"v771_full_{pool}"
+        output = ROOT / "results" / f"{CAMPAIGN}_full_{pool}"
         gate_env = {**env, "NN_PY": python, "PAR": str(parallel),
                     "JOBS": str(job_lists / f"jobs_{pool}.txt"),
                     "V710_OUT": str(output), "V710_SCRATCH": str(output / "artifacts"),
@@ -249,12 +269,15 @@ def evaluate(python: str, commit: str, env: dict[str, str], parallel: int) -> No
                 "--root", str(output), "--require-manifest"], env, commit)
     for tag in ("dnf", "tff"):
         run_job(f"coverage-{tag}", [python, "scripts/v730_coverage.py",
-                "--tag", tag, "--set", "clean", "--passes", "v771-full-clean",
+                "--tag", tag, "--set", "clean", "--passes", f"{CAMPAIGN}-full-clean",
                 "--require-complete", "--fail-on-gaps"], env, commit)
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--campaign", choices=("v771", "v772"), default="v771")
+    parser.add_argument("--after-training", type=Path,
+                        help="wait for this predecessor state.json before allocating GPUs")
     parser.add_argument("--stage", choices=("all", "data", "train", "evaluate"), default="all")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--gpus", default="0,3,4")
@@ -262,6 +285,7 @@ def main() -> int:
     parser.add_argument("--gate-parallel", type=int, default=16)
     parser.add_argument("--status", action="store_true")
     args = parser.parse_args()
+    configure_campaign(args.campaign)
     if args.status:
         records = [json.loads(path.read_text()) for path in sorted((STATE / "jobs").glob("*.json"))]
         print(json.dumps(dict(Counter(row["status"] for row in records)), sort_keys=True))
@@ -279,7 +303,7 @@ def main() -> int:
         try:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
-            parser.error("another V7.7.1 campaign runner is active")
+            parser.error(f"another {CAMPAIGN} campaign runner is active")
         commit = git("rev-parse", "HEAD")
         assert_source(commit)
         env = base_environment()
@@ -297,6 +321,15 @@ def main() -> int:
                      "source_commit": commit, "updated_at": timestamp()}
             write_json(STATE / "state.json", state)
             try:
+                if stage == "train" and args.after_training is not None:
+                    state.update(status="waiting", predecessor=str(args.after_training),
+                                 updated_at=timestamp())
+                    write_json(STATE / "state.json", state)
+                    while not predecessor_training_complete(args.after_training):
+                        assert_source(commit)
+                        time.sleep(30)
+                    state.update(status="running", updated_at=timestamp())
+                    write_json(STATE / "state.json", state)
                 action()
             except Exception as exc:
                 state.update(status="failed", error=str(exc), updated_at=timestamp())

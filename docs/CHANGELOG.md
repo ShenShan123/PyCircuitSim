@@ -17,6 +17,22 @@ remain in Git history.
 
 ## V7.7 — full-terminal-only NN stack
 
+### V7.7.2 — complete four-terminal model refresh (in progress)
+
+Prepared a fresh ten-dataset, 80-model S/M/L/XL campaign using the latest
+tested full-terminal generator and harness fixes. The existing dependency
+runner now isolates release state and can wait for the active V7.7.1 training
+to finish before claiming its GPUs. Clean and simple-v2 evidence remain
+separate, and report generation explicitly registers the V7.7.2 campaign.
+The [schedule](plans/2026-09-05-v772-full-retraining.md) records the complete
+scope and release conditions. No completed training or accuracy promotion is
+claimed by this preparation entry.
+
+Preparation verification: 624 project tests and 315 PyCMG tests passed with
+no skips. Three expected warnings cover CPU pin-memory and a missing-device
+selection test. The rendered inventory contains 600 clean and 1,200 simple-v2
+jobs. Fresh training and numerical evaluation remain scheduled work.
+
 ### V7.7.1 — regeneration and retraining (in progress)
 
 Prepared an isolated ten-dataset, 80-bundle full-terminal refresh and a

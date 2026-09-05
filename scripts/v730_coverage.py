@@ -115,7 +115,8 @@ PASSES = [("v761-full-clean", ROOT / "results" / "v761_full_clean"),
            "v762_directnet_full_clean"),
           ("v766-full-clean", ROOT / "results" / "v766_full_clean"),
           ("v770-full-clean", ROOT / "results" / "v770_full_clean"),
-          ("v771-full-clean", ROOT / "results" / "v771_full_clean")]
+          ("v771-full-clean", ROOT / "results" / "v771_full_clean"),
+          ("v772-full-clean", ROOT / "results" / "v772_full_clean")]
 
 CellKey = Tuple[str, str, str, str, str]
 

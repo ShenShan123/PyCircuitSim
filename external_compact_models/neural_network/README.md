@@ -13,6 +13,10 @@ generation, training commands, checkpoint selection, and the five-stage
 verification workflow. Current measurements and qualification decisions live
 in [`docs/accuracy/`](../../docs/accuracy/).
 
+The [V7.7.2 campaign](../../docs/plans/2026-09-05-v772-full-retraining.md)
+regenerates the full dataset and retrains both families at all four sizes in
+isolated artifact directories. Its in-progress models are not promoted bundles.
+
 ## Package boundaries
 
 ```text

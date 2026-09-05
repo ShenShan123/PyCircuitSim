@@ -3,6 +3,10 @@
 Ground truth is NGSPICE using the identical BSIM-CMG LEVEL=72 OSDI model. Read
 [`methodology.md`](methodology.md) before comparing results.
 
+The [V7.7.2 refresh](../plans/2026-09-05-v772-full-retraining.md) is in progress.
+Its fresh S/M/L/XL evidence will replace the reports only after complete
+collection and validation; the measurements below remain historical controls.
+
 ## Current NN policy
 
 V7.7.0 retires the reduced LEVEL=73/74 families. DirectNet-Full (LEVEL=75) is

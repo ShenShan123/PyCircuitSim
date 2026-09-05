@@ -11,6 +11,35 @@ import pytest
 from scripts import v771_campaign as campaign
 
 
+@pytest.mark.parametrize("name", ("v771", "v772"))
+def test_campaign_outputs_are_isolated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, name: str,
+) -> None:
+    for attribute in ("CAMPAIGN", "STATE", "DATA", "CHECKPOINTS"):
+        monkeypatch.setattr(campaign, attribute, getattr(campaign, attribute))
+    monkeypatch.setattr(campaign, "ROOT", tmp_path)
+    monkeypatch.delenv("BSIMAR_DATA_DIR", raising=False)
+    monkeypatch.delenv("BSIMAR_CHECKPOINT_DIR", raising=False)
+    campaign.configure_campaign(name)
+    assert campaign.STATE == tmp_path / f"results/{name}_campaign"
+    assert campaign.DATA == tmp_path / f"results/{name}_full_data"
+    assert campaign.CHECKPOINTS == tmp_path / f"results/{name}_full_checkpoints"
+
+
+@pytest.mark.parametrize(("stage", "status", "ready"), (
+    ("data", "complete", False), ("train", "running", False),
+    ("train", "failed", False), ("train", "waiting", False),
+    ("train", "complete", True), ("evaluate", "running", True),
+    ("evaluate", "failed", True), ("evaluate", "complete", True),
+))
+def test_successor_waits_for_completed_training(
+    tmp_path: Path, stage: str, status: str, ready: bool,
+) -> None:
+    path = tmp_path / "state.json"
+    campaign.write_json(path, {"stage": stage, "status": status})
+    assert campaign.predecessor_training_complete(path) is ready
+
+
 def test_training_inventory_covers_every_supported_model() -> None:
     jobs = campaign.training_jobs()
     expected = {(model, size, tech, device)
