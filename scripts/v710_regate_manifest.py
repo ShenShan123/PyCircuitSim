@@ -14,6 +14,50 @@ from typing import Dict, List, Optional, Set, Tuple
 
 
 VALID_TAGS = {"dnf", "tff"}
+MODEL_SOURCE_PATHS = (
+    "external_compact_models/", "pycircuitsim/", "circuit_templates/", "PDKs/",
+    "requirements.txt", "environment.yml", "pyproject.toml",
+)
+
+
+def _model_source_hash(root: Path, commit: str) -> str:
+    """Bind every tracked model/runtime/template input, excluding Markdown."""
+    entries = []
+    for record in _git(root, "ls-tree", "-rz", "--full-tree", commit).split("\0"):
+        if not record:
+            continue
+        _identity, path = record.split("\t", 1)
+        if path.endswith(".md"):
+            continue
+        if any(path.startswith(prefix) if prefix.endswith("/") else path == prefix
+               for prefix in MODEL_SOURCE_PATHS):
+            entries.append(record)
+    if not entries:
+        raise ValueError("model source inventory is empty")
+    return hashlib.sha256("\0".join(sorted(entries)).encode()).hexdigest()
+
+
+def validate_dataset_source(
+    root: Path, dataset_commits: Set[str], source_commit: str,
+    declared_dataset_commit: Optional[str] = None,
+) -> Dict[str, object]:
+    """Permit an explicit older data source only for identical numerical code."""
+    if not dataset_commits or dataset_commits == {source_commit}:
+        if declared_dataset_commit not in (None, source_commit):
+            raise ValueError("declared dataset source does not match the bundles")
+        return {}
+    if (declared_dataset_commit is None
+            or not re.fullmatch(r"[0-9a-f]{40}", declared_dataset_commit)
+            or dataset_commits != {declared_dataset_commit}):
+        raise ValueError("campaign dataset source commit does not match campaign source commit")
+    data_hash = _model_source_hash(root, declared_dataset_commit)
+    gate_hash = _model_source_hash(root, source_commit)
+    if data_hash != gate_hash:
+        raise ValueError("dataset and gate model/runtime/template sources differ")
+    return {"dataset_source_commit": declared_dataset_commit,
+            "model_source_sha256": gate_hash,
+            "model_source_paths": list(MODEL_SOURCE_PATHS),
+            "model_source_excludes": ["*.md"]}
 
 
 def _sha256(path: Path) -> str:
@@ -163,6 +207,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--ngspice", type=Path)
     parser.add_argument("--osdi", type=Path)
     parser.add_argument("--pdk-root", type=Path)
+    parser.add_argument("--dataset-source-commit",
+                        help="explicit source for bundles with identical model/runtime/template code")
     parser.add_argument(
         "--verify-group", nargs=3, metavar=("TAG", "VARIANT", "TECH"),
     )
@@ -206,11 +252,13 @@ def main(argv: Optional[List[str]] = None) -> int:
     dataset_commits = {
         entry["dataset_source_commit"] for entry in dataset_provenance.values()
     }
-    if dataset_commits and dataset_commits != {source_commit}:
-        raise SystemExit(
-            "campaign dataset source commit does not match campaign source commit"
-        )
+    try:
+        source_identity = validate_dataset_source(
+            root, dataset_commits, source_commit, args.dataset_source_commit)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     manifest = {
+        **source_identity,
         "schema": 2,
         "source_commit": source_commit,
         "source_dirty": False,

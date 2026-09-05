@@ -52,7 +52,7 @@ The `_one` subcommand is internal to the dispatcher.
 EOF
   exit 0
 fi
-NG="${NGSPICE_BIN:-$ROOT/tools/ngspice-45.2/bin/ngspice}"
+NG="${NGSPICE_BIN:-/usr/local/ngspice-45.2/bin/ngspice}"
 CKPT="${BSIMAR_CHECKPOINT_DIR:-$ROOT/external_compact_models/neural_network/checkpoints}"
 OUT="${V710_OUT:-$ROOT/results/v710_regate}"
 SCRATCH="${V710_SCRATCH:-/tmp/v710_regate_scratch}"
@@ -253,9 +253,14 @@ n="$(grep -cve '^\s*$' -e '^#' "$JOBS")"
 if [ "${V710_TEST_BYPASS_MANIFEST:-}" = "1" ]; then
   [ -n "${V710_CAMPAIGN_DIGEST:-}" ] || exit 2
 else
+  source_args=()
+  if [ -n "${V710_DATASET_SOURCE_COMMIT:-}" ]; then
+    source_args+=(--dataset-source-commit "$V710_DATASET_SOURCE_COMMIT")
+  fi
   V710_CAMPAIGN_DIGEST="$("$PY" "$ROOT/scripts/v710_regate_manifest.py" \
     --output "$MANIFEST" --jobs "$JOBS" --checkpoints "$CKPT" \
-    --ngspice "$NG" --osdi "$OSDI" --pdk-root "$ROOT/PDKs")" || exit $?
+    --ngspice "$NG" --osdi "$OSDI" --pdk-root "$ROOT/PDKs" \
+    "${source_args[@]}")" || exit $?
 fi
 export V710_CAMPAIGN_DIGEST
 echo "[v710] pool start: $n jobs, PAR=$PAR, out=$OUT  ($(date '+%F %T'))"

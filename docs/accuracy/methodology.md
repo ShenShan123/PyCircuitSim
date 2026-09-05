@@ -171,6 +171,12 @@ The retained solver and coverage-audit contracts are:
   manifest covering the source commit, jobs, NGSPICE/OSDI/PDKs, and every
   checkpoint sidecar. Collection and report generation reject mixed or
   missing provenance.
+- An explicit older dataset/training source may accompany a newer harness
+  commit only when the tracked numerical-source inventory is identical.
+  The manifest records both commits and the shared inventory hash over
+  compact models, generator, runtime, templates, PDKs, and environment inputs
+  (Markdown excluded). Undeclared changes, mixed dataset commits, or differing
+  numerical inputs are rejected. Original completion markers remain unchanged.
 
 ### 8.4 Run-to-run limits
 

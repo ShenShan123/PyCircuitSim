@@ -151,6 +151,36 @@ def test_generator_emits_solver_positive_independent_surfaces() -> None:
     }
 
 
+@pytest.mark.parametrize("is_pmos", (False, True))
+@pytest.mark.parametrize("mode", ("sweep", "high_leakage", "unconverged", "non_finite"))
+def test_subthreshold_sampler_consumes_full_terminal_evaluator(
+    is_pmos: bool, mode: str,
+) -> None:
+    """Exercise the real schema adapter; synthetic currents test routing only."""
+    class ProbeInstance(_Instance):
+        def eval_dc(self, nodes: dict[str, float]) -> dict[str, float]:
+            if mode == "unconverged":
+                raise RuntimeError("Internal node NR failed to converge")
+            current = 10.0 ** (-14.0 + 16.0 * abs(nodes["g"]))
+            if mode == "high_leakage":
+                current = 1e-3
+            elif mode == "non_finite":
+                current = float("nan")
+            current *= 1.0 if is_pmos else -1.0
+            return {**super().eval_dc(nodes), "id": current,
+                    "ig": 0.0, "ie": 0.0, "is": -current}
+
+    points = nn_generate._subvt_off_points(ProbeInstance(), 1.0, is_pmos)
+    if mode != "sweep":
+        assert points == []
+        return
+    assert points, "a valid subthreshold band must not silently lose its overlay"
+    sign = -1.0 if is_pmos else 1.0
+    assert all(0.0 < sign * vg <= 0.6 and 0.0 < sign * vd <= 1.0
+               for vg, vd, _vb in points)
+    assert {vb for _vg, _vd, vb in points} == {-0.25, 0.0, 0.25}
+
+
 def test_full_terminal_rejection_checks_every_terminal_current() -> None:
     instance = _Instance()
     instance.eval_dc = lambda _nodes: {

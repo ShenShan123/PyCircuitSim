@@ -49,8 +49,6 @@ class MOSFET_CMG(Component):
     Terminal order: [drain, gate, source, bulk]
     """
 
-    evaluator_boundary: str = "native"
-
     def __init__(
         self,
         name: str,

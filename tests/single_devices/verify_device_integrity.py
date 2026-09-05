@@ -180,17 +180,15 @@ def main(argv: List[str] | None = None) -> int:
     _write_results(output, all_results)
 
     errors = [result for result in all_results if result.status == "error"]
-    nonconverged = [result for result in all_results
-                    if result.status != "error" and not result.candidate_converged]
+    converged = sum(result.reference_converged and result.candidate_converged
+                    for result in all_results)
     print("\n" + "=" * 88)
     # Convergence and accuracy are reported as two independent facts.  A gate
     # that folds them together cannot distinguish "wrong" from "never solved",
     # which is exactly how a 0/10 AC score came to mean an unconverged DC
     # operating point.
     print(f"CHARACTERIZED : {len(all_results) - len(errors)}/{len(all_results)}")
-    print(f"CONVERGED     : "
-          f"{len(all_results) - len(errors) - len(nonconverged)}/"
-          f"{len(all_results)}")
+    print(f"CONVERGED     : {converged}/{len(all_results)}")
     for result in errors:
         print(f"  ERROR {result.tech}/{result.corner}/{result.case_id}/"
               f"{result.analysis}: {result.error}")

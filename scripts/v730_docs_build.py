@@ -139,7 +139,9 @@ PASSES = [("V7.6.1", load_json("v761_directnet_full_clean")),
           ("V7.6.1 combined", load_json("v761_full_clean")),
           ("V7.6.2", load_json("v762_directnet_full_clean")),
           ("V7.6.6", load_json("v766_full_clean")),
-          ("V7.7.0", load_json("v770_full_clean"))]
+          ("V7.7.0", load_json("v770_full_clean")),
+          ("V7.7.1", load_json("v771_full_clean")),
+          ("V7.7.2", load_json("v772_full_clean"))]
 PASS_DATA = dict(PASSES)
 ACTIVE_PASS: Optional[str] = None
 CAMPAIGN_EVIDENCE: Dict[str, Tuple[str, int, int]] = {
@@ -148,6 +150,8 @@ CAMPAIGN_EVIDENCE: Dict[str, Tuple[str, int, int]] = {
     "V7.6.2": ("v762_directnet_full_clean", 240, 120),
     "V7.6.6": ("v766_full_clean", 480, 280),
     "V7.7.0": ("v770_full_clean", 600, 280),
+    "V7.7.1": ("v771_full_clean", 600, 280),
+    "V7.7.2": ("v772_full_clean", 600, 280),
 }
 
 # Every report is rendered from one coherent campaign. A later partial pass is
@@ -705,12 +709,16 @@ def campaign_provenance(tag: str) -> str:
     manifest_path = root / "campaign_manifest.json"
     manifest = json.loads(manifest_path.read_text())
     digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    data_source = manifest.get("dataset_source_commit")
+    training = (f" Dataset/training source: `{data_source}`; identical model/runtime/template "
+                f"inventory SHA-256 `{manifest['model_source_sha256']}`."
+                if data_source else "")
     return (
         f"Evidence pass: **{version}**. Campaign manifest SHA-256 "
         f"`{digest}` pins gate commit `{manifest['source_commit']}`, "
         f"{manifest['job_count']} jobs, and "
         f"{len(manifest['checkpoint_sha256'])} checkpoint artifacts. "
-        f"Raw evidence: `results/{directory}/`."
+        f"Raw evidence: `results/{directory}/`.{training}"
     )
 
 

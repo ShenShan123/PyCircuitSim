@@ -282,6 +282,7 @@ def _check_lock_contention() -> None:
                 "JOBS": str(job_file),
                 "PAR": "1",
                 "NN_PY": sys.executable,
+                "NGSPICE_BIN": "/bin/true",
                 "V710_OUT": str(out),
                 "V710_CAMPAIGN_DIGEST": "0" * 64,
                 "V710_TEST_BYPASS_MANIFEST": "1",

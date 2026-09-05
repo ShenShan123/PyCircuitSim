@@ -17,6 +17,91 @@ remain in Git history.
 
 ## V7.7 — full-terminal-only NN stack
 
+### V7.7.2 — complete four-terminal model refresh (in progress)
+
+Prepared a fresh ten-dataset, 80-model S/M/L/XL campaign using the latest
+tested full-terminal generator and harness fixes. The existing dependency
+runner now isolates release state and can wait for the active V7.7.1 training
+to finish before claiming its GPUs. Clean and simple-v2 evidence remain
+separate, and report generation explicitly registers the V7.7.2 campaign.
+The [schedule](plans/2026-09-05-v772-full-retraining.md) records the complete
+scope and release conditions. No completed training or accuracy promotion is
+claimed by this preparation entry.
+
+Preparation verification: 624 project tests and 315 PyCMG tests passed with
+no skips. Three expected warnings cover CPU pin-memory and a missing-device
+selection test. The rendered inventory contains 600 clean and 1,200 simple-v2
+jobs. Fresh training and numerical evaluation remain scheduled work.
+
+User-directed consolidation retains the four completed bundles and three
+live XL jobs from the V7.7.1 queue without restarting them. Stopped duplicate
+generation and separate pilot/release schedules. One V7.7.2 supervisor now
+waits for all 80 successful training jobs, validates the bundles, and starts
+full evaluation automatically. Original artifact provenance stays intact.
+An explicit cross-commit manifest option accepts existing models only after
+exact numerical-source inventory comparison; model/runtime/template changes
+are rejected and default provenance remains strict. Reports name the
+training and evaluation commits separately.
+
+Consolidation verification: 635 project tests passed, no skips. Regression
+tests exercise the training-to-evaluation barrier and reject changed numerical
+source inputs. Two expected CPU pin-memory warnings remain.
+
+### V7.7.1 — regeneration and retraining (in progress)
+
+Prepared an isolated ten-dataset, 80-bundle full-terminal refresh and a
+persistent dependency runner for the complete clean and simple-v2 harness
+pools. The [execution schedule](plans/2026-09-04-v771-full-retraining.md)
+records scope, compute allocation, provenance, and release conditions.
+No new accuracy or promotion is claimed until the complete campaign is scored.
+
+Fresh-worktree preflight exposed the re-gate driver's stale bundled NGSPICE
+default and a simulator-free lock test that inherited that external dependency.
+The driver now uses the same system default as the shared harness; the lock
+test supplies its own executable stub.
+
+The first actual canonical regeneration found a missed six-surface migration:
+`_subvt_off_points()` read `id` from an evaluator that now emits `i_d`, so
+enabling the documented subthreshold overlay crashed every technology/polarity
+with `KeyError` before any dataset completed. The sampler now uses the full
+terminal drain-current name. A regression crosses the real evaluator adapter
+for NMOS/PMOS, including valid, high-leakage, nonfinite, and failed-solve probes.
+The failed kickoff logs remain preserved under `results/v771_campaign/`.
+
+The first completed DirectNet-small TSMC5 pilot passed 25/26 parametric DC,
+20/20 inverter configurations, and 2/2 device AC. The +125 C NMOS failure
+reproduced in direct NN evaluation (19.47% NRMSE); runtime temperature was
+398.15 K and the direct current agreed with the circuit solver within
+3.4e-19 A on their shared sweep interval. PyCMG versus NGSPICE was 0.0164%
+NRMSE. This attributes that early failure to the learned surface, with no
+solver correction justified. Off-state current and body-derivative diagnostics
+remain weak; these results are not the final campaign or a promotion.
+
+The mixed A100/RTX host exposed another execution bug: CUDA's default
+FASTEST_FIRST device order mapped numeric `CUDA_VISIBLE_DEVICES=0` to a busy
+RTX while the scheduler had checked physical A100 0 with `nvidia-smi`.
+Stopped the affected epoch, preserved its data, complete DirectNet pair and
+partial Transformer logs, and changed allocation to physical GPU UUIDs.
+The replacement epoch uses isolated `v771_r2_data`/`v771_r2_checkpoints` paths
+and fresh source provenance; the numerical model and training recipe are
+unchanged.
+
+The Transformer-small pilot exposed a diagnostic classification bug. Both
+subthreshold curves converged, but varied by only 0.200/0.048 current decades
+in the reference-defined window, below the existing 0.5-decade slope
+identifiability requirement. The resulting unavailable slopes were reported
+as infrastructure crashes, and the CLI subtracted those rows from convergence.
+They now remain candidate `ERROR` rows with empty scoring metrics and exit 1;
+other measured quantities are retained only under `uncharacterized_diagnostic`.
+Missing, malformed, and unexpectedly non-finite metric payloads still fail as
+infrastructure. The printed convergence count uses the actual solver flags.
+
+Isolated replay: DirectNet remains 18/18 characterized and converged;
+Transformer is 16/18 characterized and 18/18 converged. All characterized
+metrics are unchanged, and both complete row sets pass the collector contract.
+The unit suite passes 612 tests. A wider 90-job TSMC5 pilot checks both model
+families and every catalog topology before freezing another source epoch.
+
 ### V7.7.0 — retire reduced compact-model families (2026-09-04)
 
 DirectNet-Full LEVEL=75 is now the default NN family and BSIM-AR-Full LEVEL=76
@@ -58,6 +143,20 @@ gate now compares all six charge/current Jacobians; regression mutations cover
 each current gradient in AR3 and AR6. These are harness corrections, with no
 new accuracy promotion. Verification: 585 unit tests and 10/10 AR-cache checks
 passed; the unit suite emitted two CPU pin-memory warnings and no skips.
+
+Post-merge review fix, same day: `tests/common/nn_gate.py` resolved BOTH
+families regardless of the selected one. That was inert while the second arm's
+fallback stems named retired artifacts; renaming them onto the live
+`{tech}_{dnf,tff}_{size}_{dev}` production slots made a run pinned to one
+family silently also run, score, and pay ~40x inference for an unpinned
+checkpoint of the other — outside the run's own checkpoint provenance.
+`get_available_checkpoints()` now resolves only the family named by
+`PYCIRCUITSIM_NN_FORCE_LEVEL`, and the banner names it, matching every other
+harness module. Also retired the inert `MOSFET_CMG.evaluator_boundary`
+attribute (its only reader was deleted with the reduced stamp, so setting it
+would have quietly done nothing) and bumped the dataset generator release tag
+to V7.7.0, since the generator's `inv_trip` overlay is no longer skipped when
+the unused `find_threshold` probe raises. Collected suite: 562 tests.
 
 ## V7.6 — full-terminal families and closure
 

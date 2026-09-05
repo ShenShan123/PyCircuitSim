@@ -131,7 +131,11 @@ def _source_hash_metadata(bins: Sequence[BinSpec]) -> Dict[str, object]:
             cards[key] = _sha256(path)
     osdi = Path(OSDI_PATH).resolve()
     return {
-        "generator_release": "V7.6.6",
+        # V7.7.0 changed what this generator emits: one six-surface contract,
+        # and the inv_trip overlay is no longer skipped when the (unused)
+        # find_threshold probe raised. A dataset written after that change
+        # must not label itself with the release that produced different rows.
+        "generator_release": "V7.7.1",
         "osdi_path": str(osdi),
         "osdi_sha256": _sha256(osdi),
         "modelcard_sha256_json": json.dumps(cards, sort_keys=True),
@@ -739,8 +743,8 @@ def _subvt_off_points(
     for i, m in enumerate(mags):
         r = eval_single_point(inst, vd=float(vd_ref), vg=float(s * m),
                               vs=0.0, vb=0.0, _silent=True)
-        if r is not None and math.isfinite(r["id"]):
-            aid[i] = abs(r["id"])
+        if r is not None and math.isfinite(r["i_d"]):
+            aid[i] = abs(r["i_d"])
 
     finite = np.isfinite(aid) & (aid > 0.0)
     if int(finite.sum()) < 4:

@@ -467,11 +467,11 @@ def _subthreshold_window(
 def _slope_mv_per_decade(
     grid: np.ndarray, current: np.ndarray, window: np.ndarray, floor: float,
 ) -> float:
-    if int(np.count_nonzero(window)) < 4:
+    if int(np.count_nonzero(window)) < _MIN_SS_WINDOW_POINTS:
         return float("nan")
     decades = _decades(current[window], floor)
     axis = np.abs(grid[window])
-    if float(np.ptp(decades)) < 0.5:
+    if float(np.ptp(decades)) < _MIN_SS_DECADES:
         return float("nan")
     slope = float(np.polyfit(decades, axis, 1)[0])
     return abs(slope) * 1e3
@@ -562,6 +562,8 @@ def suite_metrics(
         )
         domain.update(
             ss_window_points=int(np.count_nonzero(window)),
+            ss_test_decades_spanned=(
+                float(np.ptp(test_dec[window])) if np.any(window) else 0.0),
             ss_test_mv_dec=ss_test, ss_ref_mv_dec=ss_ref,
             ss_error_pct=_relative_error(ss_test, ss_ref),
         )
@@ -625,6 +627,14 @@ def suite_metrics(
     return metrics, domain
 
 
+_MIN_SS_WINDOW_POINTS = 4
+_MIN_SS_DECADES = 0.5
+
+
+class CandidateMetricUnavailable(ValueError):
+    """A converged candidate lacks the variation needed for a physical metric."""
+
+
 _DEVICE_METRIC_CONTRACTS: Dict[str, Tuple[str, ...]] = {
     "output": (
         "gds_sat_error_pct", "idsat_error_pct", "knee_vds_error_v",
@@ -664,6 +674,22 @@ def validate_device_metrics(
         or not np.isfinite(payload[name])
     ]
     if invalid:
+        # This is the declared slope identifiability limit, not a missing
+        # metric implementation. Keep malformed payloads and other NaNs loud.
+        slope_fields = {"ss_test_mv_dec", "ss_error_pct"}
+        if (
+            spec.suite == "subthreshold"
+            and set(invalid) == slope_fields
+            and all(isinstance(payload.get(name), (float, np.floating))
+                    and np.isnan(payload[name]) for name in slope_fields)
+            and domain.get("ss_window_points", 0) >= _MIN_SS_WINDOW_POINTS
+            and domain.get("ss_test_decades_spanned", float("nan")) < _MIN_SS_DECADES
+        ):
+            raise CandidateMetricUnavailable(
+                "candidate spans fewer than "
+                f"{_MIN_SS_DECADES:g} current decades in the reference "
+                "subthreshold window; slope is unidentifiable"
+            )
         raise ValueError(f"missing or non-finite device metrics: {invalid}")
 
 
@@ -692,6 +718,8 @@ def run_sweep(
     bt = apply_corner(base_bt, corner)
     reference_converged = False
     candidate_converged = False
+    metrics: Dict[str, float] = {}
+    domain: Dict[str, object] = {}
     try:
         baked = get_baked_modelcard(
             bt, bt.nfin, work_dir, nfin_p=bt.effective_nfin_p,
@@ -759,19 +787,24 @@ def run_sweep(
             **provenance,
         )
     except Exception as exc:  # noqa: BLE001 — an error row keeps its denominator slot
+        unavailable = isinstance(exc, CandidateMetricUnavailable)
         return GateResult(
             case_id=f"device_{spec.suite}", tech=bt.name, corner=corner.name,
             analysis=f"{spec.device}_{spec.label}", role="diagnostic",
             status="error", error=f"{type(exc).__name__}: {exc}",
+            domain=({"uncharacterized_diagnostic": {**metrics, **domain}}
+                    if unavailable else {}),
             reference_converged=reference_converged,
             candidate_converged=candidate_converged,
             execution_state=(
-                "reference_error" if not reference_converged
+                "error" if unavailable
+                else "reference_error" if not reference_converged
                 else "nonconverged" if "converg" in str(exc).lower()
                 else "infrastructure_error"
             ),
             error_kind=(
-                "reference" if not reference_converged
+                "candidate" if unavailable
+                else "reference" if not reference_converged
                 else "candidate" if "converg" in str(exc).lower()
                 else "infrastructure"
             ),

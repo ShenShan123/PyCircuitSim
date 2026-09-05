@@ -109,6 +109,39 @@ A canonical dataset has a checksum-bound `.npz.complete` marker and label
 sidecars. Training rejects missing, stale, dirty-source, diagnostic, or
 incomplete artifacts. NFIN=1 is outside the training domain.
 
+The V7.7.2 regeneration/retraining campaign is scheduled in
+[`docs/plans/2026-09-05-v772-full-retraining.md`](docs/plans/2026-09-05-v772-full-retraining.md).
+V7.7.1 and V7.7.2 now share one training queue, released as V7.7.2. From the
+clean V7.7.2 worktree, start or resume its training-to-evaluation supervisor:
+
+```bash
+conda run --no-capture-output -n pycircuitsim python -u \
+  scripts/v772_consolidate.py \
+  --training-root /data2/home/shenshan/PyCircuitSim-v771 \
+  --training-source 6be83348c1f5db6720d7504ed6dcea874a3a7418 --gate-parallel 16
+
+cat results/v772_campaign/state.json results/v772_campaign/training_progress.json
+```
+
+The supervisor writes state under `results/v772_campaign/`. The frozen
+training worktree retains its regenerated data in `results/v771_r2_data/`
+and bundles in `results/v771_r2_checkpoints/`; these are the consolidated
+campaign's active artifacts. Duplicate generation remains an abandoned
+attempt. Running training jobs continue without restart.
+
+After all 80 training jobs exit successfully, the supervisor validates their
+bundles and starts the 600 clean and 1,200 simple-v2 evaluation jobs. Scoring
+uses the V7.7.2 harness and records both source commits. An explicit original
+dataset source is accepted only when tracked model, generator, runtime,
+template, PDK and environment inputs are identical (Markdown excluded).
+Missing pins, mixed sources, or numerical differences fail closed. Keep both
+worktrees clean while jobs run. After evaluation completes:
+
+```bash
+conda run -n pycircuitsim python scripts/v730_docs_build.py --campaign v772_full_clean
+conda run -n pycircuitsim python scripts/v730_docs_build.py --campaign v772_full_clean --check
+```
+
 ## 2. Train a full-terminal compact model
 
 Train DirectNet-Full for one polarity:
