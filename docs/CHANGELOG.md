@@ -56,6 +56,22 @@ The replacement epoch uses isolated `v771_r2_data`/`v771_r2_checkpoints` paths
 and fresh source provenance; the numerical model and training recipe are
 unchanged.
 
+The Transformer-small pilot exposed a diagnostic classification bug. Both
+subthreshold curves converged, but varied by only 0.200/0.048 current decades
+in the reference-defined window, below the existing 0.5-decade slope
+identifiability requirement. The resulting unavailable slopes were reported
+as infrastructure crashes, and the CLI subtracted those rows from convergence.
+They now remain candidate `ERROR` rows with empty scoring metrics and exit 1;
+other measured quantities are retained only under `uncharacterized_diagnostic`.
+Missing, malformed, and unexpectedly non-finite metric payloads still fail as
+infrastructure. The printed convergence count uses the actual solver flags.
+
+Isolated replay: DirectNet remains 18/18 characterized and converged;
+Transformer is 16/18 characterized and 18/18 converged. All characterized
+metrics are unchanged, and both complete row sets pass the collector contract.
+The unit suite passes 612 tests. A wider 90-job TSMC5 pilot checks both model
+families and every catalog topology before freezing another source epoch.
+
 ### V7.7.0 — retire reduced compact-model families (2026-09-04)
 
 DirectNet-Full LEVEL=75 is now the default NN family and BSIM-AR-Full LEVEL=76
