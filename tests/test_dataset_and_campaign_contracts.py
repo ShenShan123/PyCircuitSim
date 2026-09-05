@@ -122,6 +122,26 @@ def test_report_cli_publishes_the_selected_campaign(
 
 
 @pytest.mark.parametrize("check_only", (False, True))
+def test_v771_report_uses_only_its_registered_complete_campaign(
+    report_campaign: Path, monkeypatch: pytest.MonkeyPatch, check_only: bool,
+) -> None:
+    from scripts import v730_docs_build as docs
+
+    report_campaign.rename(report_campaign.with_name("v771_full_clean"))
+    arguments = ["docs", "--campaign", "v771_full_clean"]
+    monkeypatch.setattr(sys, "argv", arguments)
+    assert docs.main() == 0
+    report = (docs.DOCS / "DirectNet-L75-clean.md").read_text()
+    assert "V7.7.1" in report
+    assert "results/v771_full_clean/" in report
+    assert "600 jobs" in report
+    assert "v770_full_clean" not in report
+    if check_only:
+        monkeypatch.setattr(sys, "argv", arguments + ["--check"])
+        assert docs.main() == 0
+
+
+@pytest.mark.parametrize("check_only", (False, True))
 @pytest.mark.parametrize(
     "defect",
     ("missing_data", "data_drift", "manifest_drift", "missing_metric",

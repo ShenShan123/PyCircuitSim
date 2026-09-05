@@ -52,7 +52,7 @@ The `_one` subcommand is internal to the dispatcher.
 EOF
   exit 0
 fi
-NG="${NGSPICE_BIN:-$ROOT/tools/ngspice-45.2/bin/ngspice}"
+NG="${NGSPICE_BIN:-/usr/local/ngspice-45.2/bin/ngspice}"
 CKPT="${BSIMAR_CHECKPOINT_DIR:-$ROOT/external_compact_models/neural_network/checkpoints}"
 OUT="${V710_OUT:-$ROOT/results/v710_regate}"
 SCRATCH="${V710_SCRATCH:-/tmp/v710_regate_scratch}"

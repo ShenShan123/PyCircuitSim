@@ -131,7 +131,11 @@ def _source_hash_metadata(bins: Sequence[BinSpec]) -> Dict[str, object]:
             cards[key] = _sha256(path)
     osdi = Path(OSDI_PATH).resolve()
     return {
-        "generator_release": "V7.6.6",
+        # V7.7.0 changed what this generator emits: one six-surface contract,
+        # and the inv_trip overlay is no longer skipped when the (unused)
+        # find_threshold probe raised. A dataset written after that change
+        # must not label itself with the release that produced different rows.
+        "generator_release": "V7.7.1",
         "osdi_path": str(osdi),
         "osdi_sha256": _sha256(osdi),
         "modelcard_sha256_json": json.dumps(cards, sort_keys=True),

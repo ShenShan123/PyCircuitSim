@@ -17,6 +17,19 @@ remain in Git history.
 
 ## V7.7 — full-terminal-only NN stack
 
+### V7.7.1 — regeneration and retraining (in progress)
+
+Prepared an isolated ten-dataset, 80-bundle full-terminal refresh and a
+persistent dependency runner for the complete clean and simple-v2 harness
+pools. The [execution schedule](plans/2026-09-04-v771-full-retraining.md)
+records scope, compute allocation, provenance, and release conditions.
+No new accuracy or promotion is claimed until the complete campaign is scored.
+
+Fresh-worktree preflight exposed the re-gate driver's stale bundled NGSPICE
+default and a simulator-free lock test that inherited that external dependency.
+The driver now uses the same system default as the shared harness; the lock
+test supplies its own executable stub.
+
 ### V7.7.0 — retire reduced compact-model families (2026-09-04)
 
 DirectNet-Full LEVEL=75 is now the default NN family and BSIM-AR-Full LEVEL=76
@@ -58,6 +71,20 @@ gate now compares all six charge/current Jacobians; regression mutations cover
 each current gradient in AR3 and AR6. These are harness corrections, with no
 new accuracy promotion. Verification: 585 unit tests and 10/10 AR-cache checks
 passed; the unit suite emitted two CPU pin-memory warnings and no skips.
+
+Post-merge review fix, same day: `tests/common/nn_gate.py` resolved BOTH
+families regardless of the selected one. That was inert while the second arm's
+fallback stems named retired artifacts; renaming them onto the live
+`{tech}_{dnf,tff}_{size}_{dev}` production slots made a run pinned to one
+family silently also run, score, and pay ~40x inference for an unpinned
+checkpoint of the other — outside the run's own checkpoint provenance.
+`get_available_checkpoints()` now resolves only the family named by
+`PYCIRCUITSIM_NN_FORCE_LEVEL`, and the banner names it, matching every other
+harness module. Also retired the inert `MOSFET_CMG.evaluator_boundary`
+attribute (its only reader was deleted with the reduced stamp, so setting it
+would have quietly done nothing) and bumped the dataset generator release tag
+to V7.7.0, since the generator's `inv_trip` overlay is no longer skipped when
+the unused `find_threshold` probe raises. Collected suite: 562 tests.
 
 ## V7.6 — full-terminal families and closure
 

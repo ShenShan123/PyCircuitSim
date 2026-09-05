@@ -418,7 +418,6 @@ def _require_nn_caps(circuit: Circuit) -> None:
             require()
 
 
-
 def _stamp_mosfet_dc(
     mosfet,
     mna_matrix: np.ndarray,
@@ -3084,10 +3083,6 @@ class TransientSolver:
                             if isinstance(component, Capacitor):
                                 component.update_voltage(timestep_voltages)
 
-                        # V7.2.0 Phase 2t (opt-in): batch the commit-path
-                        # eval. The solved voltages were never evaluated by
-                        # the NR-loop batch eval (it warms the *iterate*,
-                        # not the accepted solution), so every device below
                         if refine:
                             _cand_q = []
                         for component in self.circuit.components:

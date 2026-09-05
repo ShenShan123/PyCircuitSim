@@ -109,6 +109,28 @@ A canonical dataset has a checksum-bound `.npz.complete` marker and label
 sidecars. Training rejects missing, stale, dirty-source, diagnostic, or
 incomplete artifacts. NFIN=1 is outside the training domain.
 
+The V7.7.1 regeneration/retraining campaign is scheduled in
+[`docs/plans/2026-09-04-v771-full-retraining.md`](docs/plans/2026-09-04-v771-full-retraining.md).
+From its clean isolated worktree, start or resume the complete dependency chain:
+
+```bash
+conda run --no-capture-output -n pycircuitsim python -u \
+  scripts/v771_campaign.py --gpus 0,3,4 --generation-workers 4 --gate-parallel 16
+
+conda run -n pycircuitsim python scripts/v771_campaign.py --status
+```
+
+The runner writes persistent state and individual attempt logs under
+`results/v771_campaign/`. `--stage data`, `--stage train`, and `--stage evaluate`
+run one stage for recovery. Completed training jobs are checksum-verified on
+resume; incomplete training restarts from the recorded seed. Keep the worktree
+clean throughout generation, training, and scoring. After evaluation completes:
+
+```bash
+conda run -n pycircuitsim python scripts/v730_docs_build.py --campaign v771_full_clean
+conda run -n pycircuitsim python scripts/v730_docs_build.py --campaign v771_full_clean --check
+```
+
 ## 2. Train a full-terminal compact model
 
 Train DirectNet-Full for one polarity:
