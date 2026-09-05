@@ -1,5 +1,9 @@
 # V7.7.1 full-terminal regeneration and retraining
 
+Superseded by the user-authorized [V7.7.2 consolidation](2026-09-05-v772-full-retraining.md).
+The existing queue is retained as its frozen training backend. There is no
+separate V7.7.1 release. The original planning record follows.
+
 Status: preparation; no new accuracy result or model promotion is claimed.
 The release remains V7.7.0 until the final evidence is collected.
 

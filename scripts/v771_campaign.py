@@ -253,9 +253,16 @@ def train(python: str, commit: str, env: dict[str, str], gpus: list[str]) -> Non
 
 
 def evaluate(python: str, commit: str, env: dict[str, str], parallel: int) -> None:
+    if __package__:
+        from .v710_regate_manifest import validate_dataset_source
+    else:
+        from v710_regate_manifest import validate_dataset_source
+    dataset_commit = env.get("V710_DATASET_SOURCE_COMMIT", commit)
+    validate_dataset_source(ROOT, {dataset_commit}, commit,
+                            env.get("V710_DATASET_SOURCE_COMMIT"))
     for model, size, tech, device in training_jobs():
         tag = "dnf" if model == "direct" else "tff"
-        validate_bundle(f"{tech}_{tag}_{size}_{device}", commit)
+        validate_bundle(f"{tech}_{tag}_{size}_{device}", dataset_commit)
     job_lists = STATE / "job_lists"
     run_job("gate-jobs", [python, "scripts/v710_regate_jobs.py", str(job_lists)], env, commit)
     for pool in ("clean", "simple_v2"):
@@ -278,6 +285,8 @@ def main() -> int:
     parser.add_argument("--campaign", choices=("v771", "v772"), default="v771")
     parser.add_argument("--after-training", type=Path,
                         help="wait for this predecessor state.json before allocating GPUs")
+    parser.add_argument("--dataset-source-commit",
+                        help="evaluate existing bundles from an explicitly verified identical model source")
     parser.add_argument("--stage", choices=("all", "data", "train", "evaluate"), default="all")
     parser.add_argument("--python", default=sys.executable)
     parser.add_argument("--gpus", default="0,3,4")
@@ -285,6 +294,8 @@ def main() -> int:
     parser.add_argument("--gate-parallel", type=int, default=16)
     parser.add_argument("--status", action="store_true")
     args = parser.parse_args()
+    if args.dataset_source_commit and args.stage != "evaluate":
+        parser.error("--dataset-source-commit requires --stage evaluate")
     configure_campaign(args.campaign)
     if args.status:
         records = [json.loads(path.read_text()) for path in sorted((STATE / "jobs").glob("*.json"))]
@@ -307,6 +318,8 @@ def main() -> int:
         commit = git("rev-parse", "HEAD")
         assert_source(commit)
         env = base_environment()
+        if args.dataset_source_commit:
+            env["V710_DATASET_SOURCE_COMMIT"] = args.dataset_source_commit
         # An inherited experiment pin or optimization must never select another model.
         for key in list(os.environ):
             if key.startswith(("PYCIRCUITSIM_", "BSIMAR_", "V710_")):

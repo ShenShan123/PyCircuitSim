@@ -41,6 +41,7 @@ need no simulator and run in the collected `pytest` suite. Each owns one seam:
 | `test_full_terminal_model_contracts.py` | both NN families, closure, multipliers, parser selection, and artifact integrity |
 | `test_dataset_and_campaign_contracts.py` | dataset splits, provenance, and campaign coverage |
 | `test_v771_campaign.py` | V7.7.1/V7.7.2 resume, GPU identity, release isolation, and predecessor dependency |
+| `test_campaign_source_equivalence.py`, `test_campaign_training_handoff.py` | numerical-source identity and evaluation after successful training |
 | `test_release_metadata.py` | package/README release identity |
 | `test_hermetic_gate_suites.py` | wiring, not assertions: runs the three simulator-free gate suites |
 

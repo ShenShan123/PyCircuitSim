@@ -14,8 +14,9 @@ verification workflow. Current measurements and qualification decisions live
 in [`docs/accuracy/`](../../docs/accuracy/).
 
 The [V7.7.2 campaign](../../docs/plans/2026-09-05-v772-full-retraining.md)
-regenerates the full dataset and retrains both families at all four sizes in
-isolated artifact directories. Its in-progress models are not promoted bundles.
+retains the already regenerated dataset and ongoing training queue from the
+consolidated V7.7.1 task. Both families cover all four sizes. Original artifact
+provenance is preserved; in-progress models are not promoted bundles.
 
 ## Package boundaries
 

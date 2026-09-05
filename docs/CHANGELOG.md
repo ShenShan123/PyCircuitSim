@@ -33,6 +33,20 @@ no skips. Three expected warnings cover CPU pin-memory and a missing-device
 selection test. The rendered inventory contains 600 clean and 1,200 simple-v2
 jobs. Fresh training and numerical evaluation remain scheduled work.
 
+User-directed consolidation retains the four completed bundles and three
+live XL jobs from the V7.7.1 queue without restarting them. Stopped duplicate
+generation and separate pilot/release schedules. One V7.7.2 supervisor now
+waits for all 80 successful training jobs, validates the bundles, and starts
+full evaluation automatically. Original artifact provenance stays intact.
+An explicit cross-commit manifest option accepts existing models only after
+exact numerical-source inventory comparison; model/runtime/template changes
+are rejected and default provenance remains strict. Reports name the
+training and evaluation commits separately.
+
+Consolidation verification: 635 project tests passed, no skips. Regression
+tests exercise the training-to-evaluation barrier and reject changed numerical
+source inputs. Two expected CPU pin-memory warnings remain.
+
 ### V7.7.1 — regeneration and retraining (in progress)
 
 Prepared an isolated ten-dataset, 80-bundle full-terminal refresh and a

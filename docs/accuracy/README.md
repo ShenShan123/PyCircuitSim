@@ -88,5 +88,5 @@ conda run -n pycircuitsim python scripts/v730_docs_build.py --check
 ```
 
 Raw evidence and generated artifacts remain under `results/` and are ignored by
-Git. Never combine partial passes or reuse checkpoint provenance across source
-commits.
+Git. Never combine partial passes or rewrite checkpoint provenance. Explicit
+training/harness source equivalence follows [methodology §8.3](methodology.md).

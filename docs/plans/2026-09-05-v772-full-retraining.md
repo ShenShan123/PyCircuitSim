@@ -1,86 +1,84 @@
-# V7.7.2 full-terminal regeneration and retraining
+# V7.7.2 consolidated full-terminal campaign
 
-Status: preparation. V7.7.2 is the target release; no new accuracy result or
-model promotion is claimed. Package release metadata changes after scoring.
+Status: training. The user consolidated V7.7.1 and V7.7.2 into one campaign
+and requested automatic evaluation after training. There is one 80-model
+refresh and one final V7.7.2 release. No accuracy promotion is claimed yet.
 
-## Scope and acceptance
+## Scope and completion conditions
 
-Regenerate all ten canonical TSMC5/6/7/12/16 NMOS/PMOS datasets from the
-BSIM-CMG OSDI evaluator. Train both current four-terminal families,
-DirectNet-Full LEVEL=75 and BSIM-AR-Full LEVEL=76, at S/M/L/XL: 80 complete
-bundles. Keep the existing clean recipe, seed 42, grouped split, EMA, full
-generated dataset, and each size's epoch/patience preset. Transformer uses
-the current default six-target training with deployed-rollout validation.
-ASAP7 remains reference-only and LEVEL=73/74 remain retired.
+Retain the ten already regenerated TSMC5/6/7/12/16 NMOS/PMOS datasets and
+train LEVEL=75 DirectNet-Full and LEVEL=76 BSIM-AR-Full at S/M/L/XL: 80
+complete bundles. Keep the existing clean recipe, seed 42, grouped splits,
+EMA, full data, and size-specific epoch/patience presets. Transformer keeps
+six-target training and deployed-rollout validation. ASAP7 is reference-only.
 
-Success means every requested model and harness cell has valid provenance and
-an explicit outcome. It does not mean changing thresholds until every model
-passes. Run both the 600-job clean pool and 1,200-job simple-v2 topology pool
-from the current job catalog. Report convergence separately from MRE, R²,
-NRMSE, and maximum voltage error, by technology, family, and size. Keep
-diagnostics out of qualification totals. The [methodology](../accuracy/methodology.md)
-and [test contract](../../tests/README.md) own the scoring rules.
+After all training jobs succeed, validate every checkpoint and required
+sidecar, then automatically run the 600-job clean pool and 1,200-job simple-v2
+pool. Preserve failures in their denominators and report convergence separately
+from MRE, R², NRMSE, and maximum voltage error by technology/family/size.
+Diagnostics remain outside qualification totals. The [methodology](../accuracy/methodology.md)
+and [test contract](../../tests/README.md) own scoring rules.
 
-## Dependency schedule
+## Schedule and retained work
 
-| Stage | Allocation and sequence | Completion condition |
-|---|---|---|
-| Preflight | first session, CPU | project and PyCMG tests, clean source, private cards and OSDI verified |
-| Fresh generation | 10 jobs, 4 workers each | 10 canonical datasets and validated label sidecars |
-| Training dependency | preserve active V7.7.1 | predecessor records completed training or enters evaluation |
-| Training | physical GPUs 0/3/4, one job per idle GPU | 80 checksum-valid bundles with required sidecars and completion markers |
-| Early canaries | paired TSMC5 small bundles, 2 CPU workers | DC, inverter transient, AC, device and terminal integrity reviewed |
-| Final evaluation | after all training, 16 CPU workers | all clean and simple-v2 cells collected with matching provenance |
-| Release | after analysis and any necessary corrections | reports, related Markdown, V7.7.2 metadata, verification, final commit and push |
+| Stage | State and dependency |
+|---|---|
+| Generation | 10 validated datasets retained from the original queue |
+| Training | four small bundles complete at consolidation; three XL jobs continue without restart; remaining queue unchanged |
+| Full evaluation | starts automatically after all 80 successful training jobs and bundle validation |
+| Analysis and corrections | diagnose scientific failures and fix reproduced bugs with coherent evidence |
+| Release | complete reports, related Markdown, V7.7.2 metadata, verification, final commit and push |
 
-V7.7.1 was already training at kickoff. Preserve its processes and evidence;
-V7.7.2 is a fresh successor unless the user explicitly supersedes that work.
-Data generation can overlap; GPU training waits for its training dependency.
-Foreign GPU processes are never stopped. The worker resolves physical GPU
-UUIDs and waits for an idle device before claiming a job.
+Training uses physical GPUs 0/3/4, one job per idle GPU, identified by UUID.
+Keep other users' processes untouched. Evaluation uses 16 CPU workers; scored
+inference is CPU/OMP/MKL/Torch one thread, with declared thread-stability
+probes separate. Forecast from measured completed jobs and epoch progress;
+do not shorten training or omit models to meet a calendar estimate.
 
-Allow multiple days after GPU availability. At kickoff, predecessor XL jobs
-had reached about 25–30 of 300 epochs in 3–4 hours. Those partial runs are not
-completed-duration evidence. Recalculate forecasts at reviews from completed
-jobs and epoch progress; do not reduce epochs or omit matrix cells to meet a
-calendar estimate. Run small pairs first to expose pipeline failures, then
-long Transformer tiers to reduce the final queue tail.
+The duplicate V7.7.2 generation and standalone pilot schedules were stopped;
+partial artifacts and earlier diagnostics remain preserved. The historical
+V7.7.1 backend service continues only to retain live workers. Its separate
+release and review schedules are retired.
 
-## Source and artifact isolation
+## Source and artifact provenance
 
-Worktree: `/data2/home/shenshan/PyCircuitSim-v772`, branch `release/v7.7.2`.
-Base: `82c4a8c`, including the tested V7.7.1 subthreshold-generator,
-physical-GPU-mapping, and unavailable-device-metric fixes. The original main
-worktree's edits remain untouched; their patch is preserved in
-`results/v772_setup/preexisting.patch`.
+Release/evaluation worktree: `/data2/home/shenshan/PyCircuitSim-v772`, branch
+`release/v7.7.2`. Frozen training worktree:
+`/data2/home/shenshan/PyCircuitSim-v771`, commit
+`6be83348c1f5db6720d7504ed6dcea874a3a7418`.
 
-Fresh data, checkpoints, scheduler state, and evidence live under
-`results/v772_*`. Never reuse predecessor models as newly trained V7.7.2
-models. Freeze a clean source commit before generating data and preserve it
-through scoring. If a behavior change becomes necessary, preserve the prior
-arm, reproduce the failure, fix and verify it, and create a fresh coherent
-source epoch. Never rewrite completion markers or combine partial reports.
-Documentation-only release changes follow completed scoring.
+Active training artifacts remain in the training worktree's
+`results/v771_r2_data` and `results/v771_r2_checkpoints`. Preserve original
+job records, timestamps, hashes, and completion markers. Consolidated state
+and final evaluation evidence live under the release worktree's `results/v772_*`.
+Do not describe retained models as newly retrained in the duplicate attempt.
 
-## Persistent supervision and release handoff
+The explicit consolidation supersedes the original plan to regenerate solely
+because the harness commit changed. Provenance remains strict by default.
+The explicit original-source option requires an exact Git inventory hash over
+tracked compact-model, generator, runtime, template, PDK, and environment
+inputs, excluding Markdown. It rejects numerical differences, undeclared
+source changes, and mixed dataset sources. Manifests and reports name both
+the training and evaluation commits and their identical numerical-source hash.
+The newer source differs in the harness and orchestration only.
 
-The existing campaign runner supports an isolated `v772` selection and records
-commands, environments, source identity, PIDs, elapsed times, and errors.
-Resume verifies finished bundles; interrupted training restarts from its
-recorded seed. Per-job completion markers distinguish best-so-far weights
-from finished training.
+Keep both worktrees clean during execution. Numerical changes still require
+a fresh coherent arm. Never rewrite artifact markers or combine partial
+campaign reports. Documentation-only release changes follow scoring.
 
-The user service persists across terminal disconnection. Queue a review in
-the originating conversation every four hours, on stage changes, and after
-early canaries. Reviews check service/process liveness, data/model counts,
-epoch progress, failures, GPU occupancy, and forecast changes. Missing
-predecessor state fails visibly; a failed predecessor never silently satisfies
-the training dependency. Concrete commands belong in the [README](../../README.md).
+## Persistent supervision and handoff
 
-Before final publication, verify both pool denominators and source manifests,
-analyze all scientific failures and infrastructure errors, generate the clean
-family reports, and summarize simple-v2 results by tier. Update the accuracy
-index, relevant package/test documentation, changelog, README and version
-identity. Run required checks and verify the final commit is pushed. Only
-then write `results/v772_campaign/release_done.json` and disable the V7.7.2
-services/timers. Keep the V7.7.1 schedule independent.
+The V7.7.2 supervisor leaves live training workers untouched and monitors all
+80 job records. Restarting the frozen backend uses `--stage train` and skips
+verified complete bundles. After every training job exits successfully, the
+supervisor stops the old optional evaluation tail, validates the bundles, and
+starts both full evaluation pools under the V7.7.2 harness. An unsuccessful
+training job cannot satisfy this dependency.
+
+Four-hour and stage-change reviews run in the V7.7.2 conversation. Inspect
+service/process liveness, counts, epochs, failed jobs, resources and forecast.
+The [README](../../README.md) owns start/resume commands. After complete
+scoring, update accuracy reports and related documentation, change release
+metadata to V7.7.2, verify, and commit/push. Only after the final push is
+verified, write `results/v772_campaign/release_done.json` and disable the
+V7.7.2 services plus the retained training backend.

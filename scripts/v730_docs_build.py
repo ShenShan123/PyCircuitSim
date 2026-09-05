@@ -709,12 +709,16 @@ def campaign_provenance(tag: str) -> str:
     manifest_path = root / "campaign_manifest.json"
     manifest = json.loads(manifest_path.read_text())
     digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
+    data_source = manifest.get("dataset_source_commit")
+    training = (f" Dataset/training source: `{data_source}`; identical model/runtime/template "
+                f"inventory SHA-256 `{manifest['model_source_sha256']}`."
+                if data_source else "")
     return (
         f"Evidence pass: **{version}**. Campaign manifest SHA-256 "
         f"`{digest}` pins gate commit `{manifest['source_commit']}`, "
         f"{manifest['job_count']} jobs, and "
         f"{len(manifest['checkpoint_sha256'])} checkpoint artifacts. "
-        f"Raw evidence: `results/{directory}/`."
+        f"Raw evidence: `results/{directory}/`.{training}"
     )
 
 

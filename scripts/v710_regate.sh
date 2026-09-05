@@ -253,9 +253,14 @@ n="$(grep -cve '^\s*$' -e '^#' "$JOBS")"
 if [ "${V710_TEST_BYPASS_MANIFEST:-}" = "1" ]; then
   [ -n "${V710_CAMPAIGN_DIGEST:-}" ] || exit 2
 else
+  source_args=()
+  if [ -n "${V710_DATASET_SOURCE_COMMIT:-}" ]; then
+    source_args+=(--dataset-source-commit "$V710_DATASET_SOURCE_COMMIT")
+  fi
   V710_CAMPAIGN_DIGEST="$("$PY" "$ROOT/scripts/v710_regate_manifest.py" \
     --output "$MANIFEST" --jobs "$JOBS" --checkpoints "$CKPT" \
-    --ngspice "$NG" --osdi "$OSDI" --pdk-root "$ROOT/PDKs")" || exit $?
+    --ngspice "$NG" --osdi "$OSDI" --pdk-root "$ROOT/PDKs" \
+    "${source_args[@]}")" || exit $?
 fi
 export V710_CAMPAIGN_DIGEST
 echo "[v710] pool start: $n jobs, PAR=$PAR, out=$OUT  ($(date '+%F %T'))"

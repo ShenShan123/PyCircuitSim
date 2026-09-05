@@ -111,29 +111,31 @@ incomplete artifacts. NFIN=1 is outside the training domain.
 
 The V7.7.2 regeneration/retraining campaign is scheduled in
 [`docs/plans/2026-09-05-v772-full-retraining.md`](docs/plans/2026-09-05-v772-full-retraining.md).
-From its clean isolated worktree, start or resume the complete dependency chain:
+V7.7.1 and V7.7.2 now share one training queue, released as V7.7.2. From the
+clean V7.7.2 worktree, start or resume its training-to-evaluation supervisor:
 
 ```bash
 conda run --no-capture-output -n pycircuitsim python -u \
-  scripts/v771_campaign.py --campaign v772 \
-  --gpus 0,3,4 --generation-workers 4 --gate-parallel 16 \
-  --after-training /data2/home/shenshan/PyCircuitSim-v771/results/v771_campaign/state.json
+  scripts/v772_consolidate.py \
+  --training-root /data2/home/shenshan/PyCircuitSim-v771 \
+  --training-source 6be83348c1f5db6720d7504ed6dcea874a3a7418 --gate-parallel 16
 
-conda run -n pycircuitsim python scripts/v771_campaign.py --campaign v772 --status
+cat results/v772_campaign/state.json results/v772_campaign/training_progress.json
 ```
 
-The runner writes persistent state and individual attempt logs under
-`results/v772_campaign/`, with fresh data and models in `results/v772_full_data/`
-and `results/v772_full_checkpoints/`. `--stage data`, `--stage train`, and `--stage evaluate`
-run one stage for recovery. Completed training jobs are checksum-verified on
-resume; incomplete training restarts from the recorded seed. Keep the worktree
-clean throughout generation, training, and scoring. After evaluation completes:
+The supervisor writes state under `results/v772_campaign/`. The frozen
+training worktree retains its regenerated data in `results/v771_r2_data/`
+and bundles in `results/v771_r2_checkpoints/`; these are the consolidated
+campaign's active artifacts. Duplicate generation remains an abandoned
+attempt. Running training jobs continue without restart.
 
-Keep `--campaign v772` and any artifact directory overrides when resuming an
-individual stage. `--after-training` preserves the active predecessor's GPU
-allocation; omit it for an independent campaign with available GPUs.
-GPU numbers identify physical `nvidia-smi` devices; the runner resolves
-their UUIDs for CUDA so mixed GPU models cannot change that mapping.
+After all 80 training jobs exit successfully, the supervisor validates their
+bundles and starts the 600 clean and 1,200 simple-v2 evaluation jobs. Scoring
+uses the V7.7.2 harness and records both source commits. An explicit original
+dataset source is accepted only when tracked model, generator, runtime,
+template, PDK and environment inputs are identical (Markdown excluded).
+Missing pins, mixed sources, or numerical differences fail closed. Keep both
+worktrees clean while jobs run. After evaluation completes:
 
 ```bash
 conda run -n pycircuitsim python scripts/v730_docs_build.py --campaign v772_full_clean
