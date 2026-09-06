@@ -9,6 +9,7 @@ from typing import List, Dict
 import numpy as np
 
 from pycircuitsim.models.base import Component
+from pycircuitsim.integration import bdf2_coefficients
 
 
 class Resistor(Component):
@@ -832,24 +833,28 @@ class Capacitor(Component):
         """
         return self.nodes
 
-    def get_companion_model(self, dt: float, v_prev: float) -> tuple[float, float]:
+    def get_companion_model(
+        self, dt: float, v_prev: float, previous_dt: float | None = None,
+    ) -> tuple[float, float]:
         """Calculate companion model parameters for transient integration.
 
         Supports three methods:
         - Trapezoidal (2nd order, default): G_eq = 2C/dt, I_eq = G_eq*V_prev + I_prev
         - Backward Euler (1st order): G_eq = C/dt, I_eq = G_eq*V_prev
-        - BDF-2 (2nd order, A-stable): G_eq = 1.5C/dt, I_eq = (2C/dt)*V_prev - (0.5C/dt)*V_prev2
+        - BDF-2 (2nd order): variable-step coefficients from the last two intervals
 
         Args:
             dt: Timestep size in seconds
             v_prev: Voltage across capacitor at previous timestep
+            previous_dt: Last accepted timestep size (None assumes equal steps)
 
         Returns:
             Tuple of (G_eq, I_eq)
         """
         if self._method == 'bdf2':
-            g_eq = 1.5 * self.capacitance / dt
-            i_eq = (2.0 * self.capacitance / dt) * self.v_prev - (0.5 * self.capacitance / dt) * self.v_prev2
+            coeff, history1, history2 = bdf2_coefficients(dt, previous_dt)
+            g_eq = coeff * self.capacitance
+            i_eq = self.capacitance * (history1 * self.v_prev - history2 * self.v_prev2)
         elif self._use_trapezoidal:
             g_eq = 2.0 * self.capacitance / dt
             i_eq = g_eq * v_prev + self._i_prev
@@ -926,8 +931,8 @@ class Capacitor(Component):
     def update_voltage(self, voltages: Dict[str, float]) -> None:
         """Update state after a timestep completes.
 
-        For trapezoidal integration, also computes and stores the capacitor
-        current for use in the next timestep's companion model.
+        Stores the accepted capacitor current for the next companion model,
+        including a backward-Euler restart before a trapezoidal step.
         Rotates voltage history for BDF-2 (v_prev2 = v_prev before update).
         """
         node_i, node_j = self.nodes[0], self.nodes[1]
@@ -938,6 +943,8 @@ class Capacitor(Component):
         if self._use_trapezoidal and self._method != 'bdf2':
             # I_cap(n) = G_eq * (V_new - V_prev) - I_prev
             self._i_prev = self._g_eq * (v_new - self.v_prev) - self._i_prev
+        else:
+            self._i_prev = self._g_eq * v_new - self._i_eq
 
         # Rotate voltage history for BDF-2
         self.v_prev2 = self.v_prev

@@ -35,10 +35,11 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 
 from neural_network.config import DirectNetConfig  # noqa: E402
+from neural_network.data.contracts import FULL_TERMINAL_OUTPUT_COLUMN_ORDER  # noqa: E402
 from neural_network.training import trainer  # noqa: E402
 from neural_network.utils.seed import set_seed  # noqa: E402
 
-FULL_COLUMNS = ["i_d", "i_g", "i_b", "qd", "qg", "qb"]
+FULL_COLUMNS = list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER)
 
 
 # ---------------------------------------------------------------------------

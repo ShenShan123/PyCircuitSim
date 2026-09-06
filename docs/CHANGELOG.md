@@ -83,6 +83,27 @@ expected failure until a fresh re-gated arm lands the fix. Verification: 785
 project tests passed, 2 expected failures, 0 skipped, 5 CPU-only Torch
 warnings; `verify_data_geometry_coverage` 463/463 on the campaign datasets.
 
+V7.7.2 audit follow-up (2026-09-05, this checkout only): fixed the deferred
+BE capacitor-current history defect, actual transient stop-time clipping, and
+variable-step BDF-2 coefficients in passive and full-terminal charge stamps.
+Startup integration now advances after the first accepted piece, and tiny
+positive spans no longer round to zero intervals.
+Added direct rejection/rollback and stiffness-promotion witnesses. The canary
+now rejects stale/truncated sweeps, preserves current signs, covers NMOS and
+PMOS, and reports diagnostic execution failures; the collector requires all
+six rows per checkpoint group. AC phase now appears in the human report.
+Retained LEVEL=72 suites now fail on mixed PASS/ERROR results and reject an
+unconverged transient initialization; parametric errors update tech status.
+The [follow-up audit](accuracy/v772-harness-audit.md#follow-up-audit-and-fixes)
+owns reproductions, verification, and remaining qualification limits. Version
+scope remains V7.7.2; active training and release worktrees are untouched.
+Corrected numerical source requires a separate complete evaluation before
+accuracy promotion; existing campaign provenance is preserved.
+Follow-up verification: 834 tests passed, zero skips or expected failures;
+four ASAP7 LEVEL=72 transient comparisons passed against NGSPICE; all six
+TSMC12 NMOS/PMOS reference-canary curves were complete. Five existing
+CPU pin-memory warnings remain.
+
 ### V7.7.1 — regeneration and retraining (in progress)
 
 Prepared an isolated ten-dataset, 80-bundle full-terminal refresh and a

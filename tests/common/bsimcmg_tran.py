@@ -326,6 +326,8 @@ def run_pycircuitsim(config: TestConfig, work_dir: Path) -> Dict[str, np.ndarray
         op_solver = DCSolver(circuit, initial_guess=initial_guess,
                              use_source_stepping=True)
         op_solution = op_solver.solve()
+        if not op_solver._last_solve_converged:
+            raise RuntimeError("transient initial operating point did not converge")
 
         solver = TransientSolver(
             circuit, t_stop=final_time, dt=time_step,

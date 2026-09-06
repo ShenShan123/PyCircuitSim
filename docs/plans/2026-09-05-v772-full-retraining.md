@@ -76,6 +76,14 @@ runs the 600 + 1,200 jobs only. The geometry guard was run by hand against
 dispatched from the audited source after training completes, into its own
 output root, before the V7.7.2 reports are finalized.
 
+The [follow-up audit](../accuracy/v772-harness-audit.md#follow-up-audit-and-fixes)
+also fixes solver numerics on `main`. That corrected runtime is no longer
+numerically identical to the frozen campaign source. Preserve the active arm
+and its provenance; do not apply those changes during execution or claim the
+existing source-equivalence exception covers them. Corrected-runtime accuracy
+requires a separate complete evaluation with its own provenance. The expanded
+canary requires both polarities; earlier NMOS-only logs are incomplete.
+
 ## Persistent supervision and handoff
 
 The V7.7.2 supervisor leaves live training workers untouched and monitors all

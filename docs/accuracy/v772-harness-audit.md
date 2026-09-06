@@ -6,8 +6,10 @@ Audited baseline: `cb23323` (`main`, clean tree), with the V7.7.1/V7.7.2
 training campaign live in the `PyCircuitSim-v771` and `PyCircuitSim-v772`
 worktrees.
 
-Status: findings closed on `main` on 2026-09-05 (see [Closure](#closure));
-the in-flight V7.7.2 release worktree is unchanged. The qualification
+Status: the original closure on `main` was re-audited on 2026-09-05;
+the [follow-up](#follow-up-audit-and-fixes) fixes the deferred defect and
+additional gaps in that closure. The in-flight V7.7.2 release worktree is
+unchanged. The qualification
 denominators (600 clean, 1,200 simple-v2) did not move. The findings below are
 kept as written; the closure section records what was actually done and where
 the audit's own proposed fix was wrong.
@@ -478,3 +480,66 @@ for V7.7.2 from the audited source afterwards.
 | Addition | `test_entry_point_contracts.py` enumerates all 29 gates and checks `--help` and an unknown flag in process. |
 
 Collected suite after closure: 785 passed, 2 expected failures, 0 skipped.
+
+## Follow-up audit and fixes
+
+Reviewed source: `79e89c7d66f9d6df4d6ae676f528a1b8e75fb2cf`. This follow-up
+remains part of **V7.7.2**. The measurements and closure table above describe
+the earlier commits, not the corrected checkout. The original claim that all
+findings were closed was too broad: expected failures recorded the capacitor
+bug but did not fix it, and CLI/marker coverage did not establish that the
+newly scheduled canary consumed valid reference data.
+
+| Finding | Reproduction and correction |
+|---|---|
+| B6: missing accepted capacitor current | Running the two expected failures normally reproduces a roughly 25% low second RC sample. BE and BDF-2 now commit their companion current, so a subsequent trapezoidal step receives the actual accepted history. Both expected-failure markers are removed. |
+| B6: untested retry and acceptance state | Controlled rejection after a real nonlinear solve proves the next attempt targets an earlier time and retains capacitor and nonzero full-terminal charge history. An LTE rejection restores the same histories and the previous accepted interval. Stiffness tests prove one-way promotion and respect for pinned `trap`/`gear2`. |
+| Missed: final sample used the wrong physical time | A 2.5 ns stop with a 1 ns stride evaluated a ramp at 3 ns and labeled it 2.5 ns; refined output ran past the stop. The final attempted interval now ends at the stop time, including a run shorter than one stride. |
+| Missed: BDF-2 assumed equal accepted intervals | Halving the final interval on a constant-slope ramp made passive and full-terminal capacitor currents 50% low. Shared variable-step coefficients now use the previous **accepted** interval in both stamps and current-history updates. Rejected attempts cannot change that interval. |
+| B6: startup policy counted output intervals instead of accepted pieces | Refinement or retries could accept several BE pieces throughout the first output interval. Only the first accepted piece now uses startup BE; subsequent pieces use the requested policy, with explicit BE restarts after PULSE breakpoints preserved. |
+| Missed: a positive span could round to zero intervals | A stop/stride ratio below the interval-rounding tolerance returned only t=0. A positive stop time now always schedules at least one interval. |
+| A1: stale and incomplete canary references | A failed NGSPICE process could reuse an existing CSV; truncated reference or candidate curves could score their overlapping subset as PASS. The canary now uses the shared subprocess checks and validates finite, monotonic, complete sweep axes before comparison. |
+| A1: PMOS and current-sign blind spots | The scheduled canary used only the NMOS checkpoint and applied `abs()` to both currents. It now tests mirrored NMOS/PMOS source frames and preserves the signed drain current after polarity orientation. Every checkpoint-group cell requires six results: two polarities × three source shifts. A PMOS-only frame regression or reversed current is observable. |
+| A1: diagnostic failures could exit successfully | `--no-gate` returned 0 even when every reference failed. It now emits diagnostic rows, retains ERROR slots, and uses the shared exit policy. Banners name the selected model family and level. |
+| A3: phase disappeared from the human report | A 30° rotation with zero magnitude error reached JSON but not `REPORT.md`. Every completed AC analysis now displays its aggregate phase error beside the headline, including legacy rows whose aggregate is derived from per-signal phase keys. |
+| C11: duplicated training-test schema | The entry-point smoke dataset now imports the authoritative full-terminal column order rather than maintaining another literal list. |
+| Missed: retained LEVEL=72 harness hid execution errors | Both shared legacy orchestrators returned exit 0 for one PASS plus one ERROR, and the transient adapter accepted an unconverged DC operating point. ERROR configurations now make the suite unsuccessful, parametric failures update the technology summary, and an unconverged OP cannot seed transient scoring. |
+
+Two limits of the original wording matter. The geometry preflight verifies
+geometry, VT, and temperature coverage; it does **not** certify every terminal
+voltage trajectory. Reference-support diagnostics own that separate question.
+Also, all 19 catalog AC analyses are intentionally diagnostic under the
+[methodology](methodology.md) and [simple-v2 contract](simple-circuits-v2-topologies.md).
+Requiring and displaying phase does not establish a numerical phase threshold
+or turn those analyses into qualification gates. The retained manual gates and
+declared stimulus-corner limits remain deliberate scope decisions.
+
+The clean and simple-v2 inventories stay at 600 and 1,200 jobs. Canary job
+count remains 40, while its required result count grows from 120 to 240.
+Old NMOS-only canary logs fail the new completeness contract and must be
+rerun in a fresh output root; they cannot be combined into a new report.
+
+Final verification, CPU with OMP/MKL/OpenBLAS pinned to one thread and GPUs
+hidden from these checks:
+
+| Check | Result |
+|---|---|
+| Complete collected suite | 834 passed, 0 skipped, 0 expected failures, 16.13 s; five existing CPU pin-memory warnings |
+| ASAP7 LEVEL=72 inverter transient, all four VT variants | 4/4 PASS, 0 ERROR; converged initial OP required; post-settling NRMSE 0.18–0.26% against the identical NGSPICE OSDI binary |
+| TSMC12 canary reference smoke | All six NMOS/PMOS source-shift curves complete, 161 points each; reference adapter only, no NN accuracy claim |
+| Campaign inventories | 600 clean, 1,200 simple-v2, 40 canary jobs |
+| Repository checks | `git diff --check` clean; both live campaign worktrees clean; original training workers and supervisor still running |
+
+Final logs, materialized decks, reference traces, and source hashes are under
+[`results/v772_harness_followup/`](../../results/v772_harness_followup/).
+The final complete pass is `pytest-final.log`; the final simulator pass is
+`asap7-tran-final.log` and `asap7_tran_final/`. Earlier local passes remain
+separate.
+
+No running process was signalled and neither training/release worktree,
+dataset root, nor checkpoint root was modified. The full NN accuracy campaign
+was not run during retraining. These solver changes alter numerical source;
+the existing source-equivalence check must reject treating them as the same
+evaluation arm. A complete, separately provenanced evaluation of the corrected
+solver is required before publishing corrected V7.7.2 accuracy results. The
+in-flight arm retains its original source and evidence.

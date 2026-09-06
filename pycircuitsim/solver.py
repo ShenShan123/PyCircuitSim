@@ -35,6 +35,7 @@ import numpy as np
 from scipy.sparse import lil_matrix, issparse, spmatrix
 from scipy.sparse.linalg import spsolve, splu
 from pycircuitsim.circuit import Circuit
+from pycircuitsim.integration import bdf2_coefficients
 from pycircuitsim.models.passive import VoltageSource, Capacitor
 from pycircuitsim.logger import Logger, IterationInfo
 
@@ -1764,9 +1765,9 @@ class TransientSolver:
             max_substeps: Max LTE-adaptive sub-steps per output interval (1=disabled, default: 1)
             lte_safety_factor: LTE acceptance threshold (default: 0.5)
             integration_method: 'auto' (default) reproduces the historical
-                ladder BE(step 1) -> Trap(step 2+) -> BDF-2 on stiffness;
-                'gear2' keeps BE for step 1 (as ngspice does) and then pins
-                Gear-2/BDF-2 for every later step with the stiffness trip
+                ladder BE(first accepted piece) -> Trap -> BDF-2 on stiffness;
+                'gear2' keeps BE for the first accepted piece and then pins
+                Gear-2/BDF-2 for every later piece with the stiffness trip
                 disabled — for decks carrying `.options method=gear maxord=2`,
                 where trapezoid ringing corrupts slew/overshoot metrics.
             dv_limit: Per-iteration, per-node |ΔV| trust-region cap in volts,
@@ -1853,6 +1854,7 @@ class TransientSolver:
 
         # Active internal timestep (may differ from self.dt during sub-stepping)
         self._current_dt = dt
+        self._previous_dt: Optional[float] = None
 
         # Requested integrator policy ('auto' | 'gear2'); the per-step method
         # actually in force is self._integration_method below.
@@ -2609,8 +2611,8 @@ class TransientSolver:
                  getattr(mosfet, "_i_prev_source", 0.0),
                  getattr(mosfet, "_i_prev_bulk", 0.0))
         if method == 'bdf2' and qp2 is not None:
-            coeff = 1.5 / dt
-            hist = [(2.0 / dt) * qp[key] - (0.5 / dt) * qp2[key]
+            coeff, history1, history2 = bdf2_coefficients(dt, self._previous_dt)
+            hist = [history1 * qp[key] - history2 * qp2[key]
                     for key in keys]
         elif method == 'trap' or (method == 'bdf2' and qp2 is None):
             coeff = 2.0 / dt
@@ -2740,6 +2742,7 @@ class TransientSolver:
             num_intervals = int(nearest)
         else:
             num_intervals = int(np.ceil(ratio))
+        num_intervals = max(1, num_intervals)
         num_steps = num_intervals + 1
 
         # Initialize storage arrays
@@ -2863,6 +2866,8 @@ class TransientSolver:
         max_substeps = self.max_substeps
         lte_safety_factor = self.lte_safety_factor
 
+        self._previous_dt = None
+
         # Stiffness tracking for BDF-2 auto-switching
         _stiff_switched = False  # Once True, stays on BDF-2
 
@@ -2912,7 +2917,7 @@ class TransientSolver:
         for step in range(1, num_steps):
             # Current output time
             current_time = step * self.dt
-            time[step] = min(current_time, self.t_stop)
+            time[step] = self.t_stop if step == num_steps - 1 else current_time
 
             # Remove pseudo-capacitors after specified steps
             if effective_use_pseudo and step == self.pseudo_transient_steps + 1:
@@ -2920,16 +2925,14 @@ class TransientSolver:
                     print(f"Removing pseudo-capacitors at step {step}")
                 self._remove_pseudo_capacitors()
 
-            # Integration method selection.
-            #   'auto'  : BE (step 1) → Trap (step 2+) → BDF-2 (on stiffness)
-            #   'gear2' : BE (step 1, as ngspice does) → BDF-2 pinned from
-            #             step 2 on, stiffness trip irrelevant. Matches
+            # Integration policy after the first accepted piece. Startup
+            # and breakpoint BE restarts are selected inside the piece loop.
+            #   'auto'  : Trap → BDF-2 (on stiffness)
+            #   'gear2' : BDF-2 pinned, stiffness trip irrelevant. Matches
             #             `.options method=gear maxord=2` decks, where the
             #             trapezoid's ringing corrupts exactly the measured
             #             quantities (slew crossing time, over/undershoot).
-            if step == 1:
-                self._integration_method = 'be'
-            elif self.integration_method == 'gear2':
+            if self.integration_method == 'gear2':
                 self._integration_method = 'bdf2'
             elif self.integration_method == 'trap':
                 # V7.5.2: pinned trapezoid (NGSPICE's default method) —
@@ -2961,10 +2964,15 @@ class TransientSolver:
 
             # Sub-step within this output interval
             n_subs = adaptive_substeps
-            sub_dt = self.dt / n_subs
+            # The last interval can be shorter than the output stride.
+            # Clip the actual solve, not just its reported timestamp.
+            interval_dt = (time[step] - time[step - 1]
+                           if step == num_steps - 1 else self.dt)
+            sub_dt = interval_dt / n_subs
 
             for sub_idx in range(n_subs):
-                sub_time = time[step - 1] + (sub_idx + 1) * sub_dt
+                sub_time = (time[step] if sub_idx == n_subs - 1
+                            else time[step - 1] + (sub_idx + 1) * sub_dt)
                 self._current_dt = sub_dt
 
                 # Retry loop for NR convergence failures.
@@ -3034,22 +3042,28 @@ class TransientSolver:
                         # step method plus the LEGACY (V7.5.3) LTE flavor
                         # inside the guard window — see the guard branch
                         # in the LTE section below.
-                        piece_method = ('be' if _force_be_piece
-                                        else _step_method)
-                        if self._integration_method != piece_method:
-                            self._integration_method = piece_method
-                            _piece_trap = piece_method == 'trap'
-                            for component in self.circuit.components:
-                                if isinstance(component, Capacitor):
-                                    component._use_trapezoidal = _piece_trap
-                                    component._method = piece_method
+                    # A rejected startup piece remains BE until a piece is
+                    # accepted; later pieces in that same output interval
+                    # already use the requested higher-order method.
+                    piece_method = (
+                        'be' if self._previous_dt is None
+                        or (refine and _force_be_piece) else _step_method
+                    )
+                    if self._integration_method != piece_method:
+                        self._integration_method = piece_method
+                        _piece_trap = piece_method == 'trap'
+                        for component in self.circuit.components:
+                            if isinstance(component, Capacitor):
+                                component._use_trapezoidal = _piece_trap
+                                component._method = piece_method
                     try:
                         self._current_dt = piece_dt
 
                         # Update capacitor companion models
                         for component in self.circuit.components:
                             if isinstance(component, Capacitor):
-                                component.get_companion_model(piece_dt, component.v_prev)
+                                component.get_companion_model(
+                                    piece_dt, component.v_prev, self._previous_dt)
 
                         # Solve for node voltages
                         if has_non_linear:
@@ -3109,9 +3123,10 @@ class TransientSolver:
                                     dt_eff = piece_dt
                                     method = self._integration_method
                                     if method == 'bdf2' and hasattr(component, '_q_prev2') and component._q_prev2 is not None:
-                                        coeff = 1.5 / dt_eff
-                                        h_g = (2.0 / dt_eff) * component._q_prev["qg"] - (0.5 / dt_eff) * component._q_prev2["qg"]
-                                        h_d = (2.0 / dt_eff) * component._q_prev["qd"] - (0.5 / dt_eff) * component._q_prev2["qd"]
+                                        coeff, history1, history2 = bdf2_coefficients(
+                                            dt_eff, self._previous_dt)
+                                        h_g = history1 * component._q_prev["qg"] - history2 * component._q_prev2["qg"]
+                                        h_d = history1 * component._q_prev["qd"] - history2 * component._q_prev2["qd"]
                                     elif method == 'trap':
                                         coeff = 2.0 / dt_eff
                                         h_g = coeff * component._q_prev["qg"] + getattr(component, '_i_prev_gate', 0.0)
@@ -3128,7 +3143,7 @@ class TransientSolver:
                                         for key, name in (("qs", "i_source"),
                                                           ("qb", "i_bulk")):
                                             if method == 'bdf2' and hasattr(component, '_q_prev2') and component._q_prev2 is not None:
-                                                h_t = (2.0 / dt_eff) * component._q_prev[key] - (0.5 / dt_eff) * component._q_prev2[key]
+                                                h_t = history1 * component._q_prev[key] - history2 * component._q_prev2[key]
                                             elif method == 'trap':
                                                 h_t = coeff * component._q_prev[key] + getattr(
                                                     component, f"_i_prev_{name[2:]}", 0.0)
@@ -3250,6 +3265,7 @@ class TransientSolver:
                                             else np.asarray(_tail).copy())
 
                         # Advance the march; leave when the interval is done.
+                        self._previous_dt = piece_dt
                         current_voltages = timestep_voltages
                         t_now = t_k
                         pieces_done += 1

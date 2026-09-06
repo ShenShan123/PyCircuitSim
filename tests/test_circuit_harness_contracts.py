@@ -2629,13 +2629,14 @@ def test_collector_requires_every_source_lift_from_the_canary(
     """The canary is complete only when every declared lift reports a row."""
     from scripts.v710_regate_collect import collect, is_verdict
     from tests.single_devices.verify_nn_lifted_source_dc import (
-        VS0_FRACTIONS, lifted_analysis_name,
+        LIFTED_DEVICES, VS0_FRACTIONS, lifted_analysis_name,
     )
 
     suite = "verify_nn_lifted_source_dc"
     log = tmp_path / "dnf" / "large" / "tsmc12" / f"{suite}.omp1.log"
     log.parent.mkdir(parents=True)
-    complete = [_lifted_source_marker(lifted_analysis_name(fraction))
+    complete = [_lifted_source_marker(lifted_analysis_name(fraction, device))
+                for device in LIFTED_DEVICES
                 for fraction in VS0_FRACTIONS]
     log.write_text("\n".join(complete) + "\n===V710_DONE rc=0===\n")
     entry = collect(tmp_path)["dnf"]["large"][suite]["TSMC12"]["omp1"]

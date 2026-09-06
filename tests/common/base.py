@@ -646,12 +646,8 @@ def run_test_suite(
         print(f"RESULT: {n_fail} FAIL, {n_error} ERROR out of {total}")
         return 1
     if n_error > 0:
-        print(f"RESULT: {n_pass} PASS, {n_error} ERROR (modelcard issues) out of {total}")
-        if n_pass == 0:
-            # every test errored (broken ngspice, throwing solver, ...):
-            # nothing was verified, so a green exit would be a lie
-            print("RESULT: 0 PASS — all tests ERRORED, nothing verified")
-            return 1
+        print(f"RESULT: {n_pass} PASS, {n_error} ERROR out of {total}")
+        return 1
     else:
         print(f"RESULT: ALL {n_pass} tests PASSED")
     return 0
@@ -743,9 +739,14 @@ def run_multi_tech_main(
             try:
                 result = run_single_fn(cfg, work_dir)
                 all_results.append(result)
+                if "error" in result:
+                    tech_status[tech.name] = "ERROR"
+                elif not result["passed"] and tech_status[tech.name] != "ERROR":
+                    tech_status[tech.name] = "FAIL"
             except Exception as exc:
                 print(f"    ERROR ({cfg.label}): {exc}")
                 all_results.append({"config": cfg, "error": str(exc), "passed": False})
+                tech_status[tech.name] = "ERROR"
 
     # Summary
     print(f"\n{'='*78}")
@@ -769,12 +770,8 @@ def run_multi_tech_main(
         print(f"RESULT: {n_fail} FAIL, {n_error} ERROR out of {total}")
         return 1
     if n_error > 0:
-        print(f"RESULT: {n_pass} PASS, {n_error} ERROR (modelcard issues) out of {total}")
-        if n_pass == 0:
-            # every test errored (broken ngspice, throwing solver, ...):
-            # nothing was verified, so a green exit would be a lie
-            print("RESULT: 0 PASS — all tests ERRORED, nothing verified")
-            return 1
+        print(f"RESULT: {n_pass} PASS, {n_error} ERROR out of {total}")
+        return 1
     else:
         print(f"RESULT: ALL {n_pass} tests PASSED")
     return 0

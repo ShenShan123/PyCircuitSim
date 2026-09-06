@@ -385,11 +385,12 @@ def structured_contract_error(
             expected_corners = {"open_loop": "nominal"}
         elif suite == "verify_nn_lifted_source_dc":
             from tests.single_devices.verify_nn_lifted_source_dc import (
-                LIFTED_CASE_ID, VS0_FRACTIONS, lifted_analysis_name,
+                LIFTED_CASE_ID, LIFTED_DEVICES, VS0_FRACTIONS, lifted_analysis_name,
             )
 
             expected_pairs = [
-                (LIFTED_CASE_ID, lifted_analysis_name(fraction))
+                (LIFTED_CASE_ID, lifted_analysis_name(fraction, device))
+                for device in LIFTED_DEVICES
                 for fraction in VS0_FRACTIONS
             ]
             expected_corners = {
@@ -816,6 +817,10 @@ def collect(root: Path, require_manifest: bool = False) -> Dict:
                         "metric": analysis.headline_metric,
                         "value": payload.get(analysis.headline_metric),
                     }
+                    if analysis.kind == "ac" and item["status"] != "error":
+                        headlines[analysis.name]["phase_maxerr_deg"] = (
+                            payload["phase_maxerr_deg"]
+                        )
                 entry["headline_metrics"] = headlines
         elif suite in STRUCTURED_SUITES:
             entry.update(
@@ -1047,9 +1052,13 @@ def render(data: Dict) -> str:
                         status = entry.get("status", "INVALID")
                         headlines = entry.get("headline_metrics", {})
                         metric_text = "; ".join(
-                            f"{name}:{item['metric']}={item['value']:.4g}"
+                            f"{name}:{metric}={value:.4g}"
                             for name, item in headlines.items()
-                            if item.get("value") is not None
+                            for metric, value in (
+                                (item["metric"], item.get("value")),
+                                ("phase_maxerr_deg", item.get("phase_maxerr_deg")),
+                            )
+                            if value is not None
                         ) or "—"
                         rows.append(
                             f"| {case.case_id} | {tech} | {status} | "

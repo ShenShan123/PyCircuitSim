@@ -56,8 +56,8 @@ class ClosedFormDevice(NMOS_DNF):
     ``law(v)`` returns ``(i_d, di_d/dv)`` for the controlling voltage
     ``v = V(control) - V(source)``; the source row closes KCL and the source
     column follows from translation invariance, exactly as the trained
-    full-terminal families are stamped.  Charges are zero, so transient
-    dynamics come from explicit capacitors.
+    full-terminal families are stamped.  An optional drain-source capacitance
+    exercises charge history alongside explicit capacitors.
     """
 
     _artifact_loader = staticmethod(lambda _path: (
@@ -66,6 +66,7 @@ class ClosedFormDevice(NMOS_DNF):
 
     def __init__(
         self, name: str, nodes: List[str], law: Law, *, control: str = "d",
+        capacitance: float = 0.0,
     ) -> None:
         super().__init__(
             name, nodes, "/synthetic/closed_form_best.pt",
@@ -73,6 +74,7 @@ class ClosedFormDevice(NMOS_DNF):
         )
         self._law = law
         self._control = {"d": 0, "g": 1}[control]
+        self._capacitance = capacitance
 
     def _eval(
         self, voltages: Dict[str, float],
@@ -86,18 +88,28 @@ class ClosedFormDevice(NMOS_DNF):
         jacobian[0, 2] -= slope
         jacobian[2] = -jacobian[0]
         capacitance = np.zeros((4, 4)) if self._caps_required else None
-        return currents, jacobian, np.zeros(4), capacitance
+        charges = np.zeros(4)
+        charges[0] = self._capacitance * (terminal[0] - terminal[2])
+        charges[2] = -charges[0]
+        if capacitance is not None:
+            capacitance[0, 0] = capacitance[2, 2] = self._capacitance
+            capacitance[0, 2] = capacitance[2, 0] = -self._capacitance
+        return currents, jacobian, charges, capacitance
 
 
 def _linear_law(conductance: float) -> Law:
     return lambda v: (conductance * v, conductance)
 
 
-def _series_circuit(law: Law, resistance: float = 1_000.0) -> Circuit:
+def _series_circuit(
+    law: Law, resistance: float = 1_000.0, *, capacitance: float = 0.0,
+) -> Circuit:
     circuit = Circuit()
     circuit.add_component(VoltageSource("V1", ["in", "0"], 1.0))
     circuit.add_component(Resistor("R1", ["in", "out"], resistance))
-    circuit.add_component(ClosedFormDevice("M1", ["out", "0", "0", "0"], law))
+    circuit.add_component(ClosedFormDevice(
+        "M1", ["out", "0", "0", "0"], law, capacitance=capacitance,
+    ))
     return circuit
 
 
@@ -302,19 +314,174 @@ def test_gear2_ladder_is_backward_euler_then_bdf2_exactly() -> None:
     )
 
 
-@pytest.mark.xfail(
-    strict=True,
-    reason=(
-        "V7.7.2 audit B6: Capacitor.update_voltage leaves _i_prev untouched "
-        "on a backward-Euler step, so the first trapezoidal step drops the BE "
-        "capacitor current (the LEVEL=75/76 charge history does carry it). A "
-        "numerical fix needs a fresh re-gate; deferred past the V7.7.2 arm."
-    ),
-)
 @pytest.mark.parametrize("method", ("auto", "trap"))
 def test_auto_ladder_is_backward_euler_then_trapezoidal_exactly(method: str) -> None:
     np.testing.assert_allclose(
         _rc_response(method), _closed_form("be", "trap"), rtol=1e-9, atol=1e-15,
+    )
+
+
+@pytest.mark.parametrize("method", ("auto", "trap", "gear2"))
+def test_stiffness_promotes_auto_once_and_respects_pinned_methods(
+    monkeypatch: pytest.MonkeyPatch, method: str,
+) -> None:
+    """A hard converged step promotes auto; later easy steps cannot undo it."""
+    circuit = _series_circuit(_linear_law(1e-3))
+    circuit.add_component(Capacitor("C1", ["out", "0"], _RC_C))
+    solver = TransientSolver(
+        circuit, t_stop=6 * _RC_H, dt=_RC_H, integration_method=method,
+        initial_guess={"in": 1.0, "out": 0.0},
+    )
+    solve_step = solver._solve_timestep_newton
+    methods: List[str] = []
+
+    def record_step(**kwargs: object) -> Dict[str, float]:
+        methods.append(solver._integration_method)
+        result = solve_step(**kwargs)
+        # Drive the policy input after a real, converged nonlinear solve.
+        solver._last_nr_iterations = 21 if kwargs["step_index"] == 2 else 2
+        return result
+
+    monkeypatch.setattr(solver, "_solve_timestep_newton", record_step)
+    solver.solve()
+    expected = {
+        "auto": ["be", "trap", "trap", "bdf2", "bdf2", "bdf2"],
+        "trap": ["be"] + ["trap"] * 5,
+        "gear2": ["be"] + ["bdf2"] * 5,
+    }
+    assert methods == expected[method]
+
+
+@pytest.mark.parametrize("refine", (False, True))
+@pytest.mark.parametrize("method", ("trap", "gear2"))
+def test_failed_newton_piece_retries_earlier_without_committing_history(
+    monkeypatch: pytest.MonkeyPatch, refine: bool, method: str,
+) -> None:
+    """Halving must move the target time and keep both device histories intact."""
+    circuit = _series_circuit(_linear_law(1e-3), capacitance=_RC_C)
+    capacitor = Capacitor("C1", ["out", "0"], _RC_C)
+    circuit.add_component(capacitor)
+    solver = TransientSolver(
+        circuit, t_stop=3 * _RC_H, dt=_RC_H, refine_output=refine,
+        initial_guess={"in": 1.0, "out": 0.0}, integration_method=method,
+    )
+    solve_step = solver._solve_timestep_newton
+    attempts: List[tuple] = []
+    rejected_attempt: List[int] = []
+
+    def fail_once(**kwargs: object) -> Dict[str, float]:
+        attempts.append((kwargs["time"], solver._current_dt,
+                         (solver._snapshot_tran_state(), solver._previous_dt)))
+        result = solve_step(**kwargs)
+        if kwargs["step_index"] == 1 and not rejected_attempt:
+            rejected_attempt.append(len(attempts) - 1)
+            raise RuntimeError("controlled nonlinear-step rejection")
+        return result
+
+    monkeypatch.setattr(solver, "_solve_timestep_newton", fail_once)
+    result = solver.solve()
+    index, = rejected_attempt
+    failed_time, failed_dt, failed_state = attempts[index]
+    retry_time, retry_dt, retry_state = attempts[index + 1]
+    assert retry_dt == pytest.approx(failed_dt / 2, rel=1e-12, abs=0)
+    assert retry_time == pytest.approx(failed_time - failed_dt / 2, rel=1e-12, abs=0)
+    assert retry_state == failed_state
+    assert len(solver._dt_halve_events) == 1
+    assert capacitor.v_prev == pytest.approx(result["out"][-1])
+    assert result["time"][-1] == pytest.approx(solver.t_stop, rel=1e-12, abs=0)
+    assert np.all(np.diff(result["time"]) > 0)
+
+
+@pytest.mark.parametrize("method", ("trap", "gear2"))
+def test_lte_rejection_restores_device_history_before_retry(
+    monkeypatch: pytest.MonkeyPatch, method: str,
+) -> None:
+    """A converged candidate rejected by LTE must not seed the next companion."""
+    circuit = _series_circuit(_linear_law(1e-3), capacitance=_RC_C)
+    circuit.add_component(Capacitor("C1", ["out", "0"], _RC_C))
+    solver = TransientSolver(
+        circuit, t_stop=5 * _RC_H, dt=_RC_H, refine_output=True,
+        integration_method=method,
+        initial_guess={"in": 1.0, "out": 0.0},
+    )
+    solve_step = solver._solve_timestep_newton
+    attempts: List[tuple] = []
+    rejected_attempt: List[int] = []
+
+    def record_step(**kwargs: object) -> Dict[str, float]:
+        attempts.append((kwargs["time"], solver._current_dt,
+                         (solver._snapshot_tran_state(), solver._previous_dt)))
+        return solve_step(**kwargs)
+
+    def reject_once(hist: List[tuple], time: float, voltage: np.ndarray) -> float:
+        if not rejected_attempt:
+            rejected_attempt.append(len(attempts) - 1)
+            return 8.0
+        return 0.0
+
+    monkeypatch.setattr(solver, "_solve_timestep_newton", record_step)
+    monkeypatch.setattr(solver, "_refine_lte_ratio", reject_once)
+    result = solver.solve()
+    index, = rejected_attempt
+    failed_time, failed_dt, failed_state = attempts[index]
+    retry_time, retry_dt, retry_state = attempts[index + 1]
+    assert retry_dt == pytest.approx(failed_dt / 2, rel=1e-12, abs=0)
+    assert retry_time < failed_time
+    assert retry_state == failed_state
+    assert np.all(np.diff(result["time"]) > 0)
+    assert len(result["time"]) == len(attempts)  # initial point replaces rejection
+
+
+@pytest.mark.parametrize("refine", (False, True))
+@pytest.mark.parametrize("stop_steps", (0.5, 2.5))
+def test_partial_final_interval_evaluates_sources_at_the_reported_time(
+    refine: bool, stop_steps: float,
+) -> None:
+    """An endpoint clipped in the output must also clip the physical solve."""
+    circuit = Circuit()
+    circuit.add_component(PulseVoltageSource(
+        "V1", ["in", "0"], 0.0, 1.0, 0.0,
+        10 * _RC_H, _RC_H, 10 * _RC_H, 30 * _RC_H,
+    ))
+    circuit.add_component(Resistor("R1", ["in", "0"], _RC_R))
+    solver = TransientSolver(
+        circuit, t_stop=stop_steps * _RC_H, dt=_RC_H,
+        initial_guess={"in": 0.0}, refine_output=refine,
+    )
+    result = solver.solve()
+    assert result["time"][-1] == pytest.approx(solver.t_stop, rel=1e-12, abs=0)
+    assert np.all(result["time"] <= solver.t_stop)
+    np.testing.assert_allclose(result["in"], result["time"] / (10 * _RC_H))
+    np.testing.assert_allclose(solver.source_currents["V1"], -result["in"] / _RC_R)
+
+
+@pytest.mark.parametrize("full_terminal", (False, True))
+def test_gear2_current_on_a_ramp_uses_the_previous_accepted_piece_length(
+    full_terminal: bool,
+) -> None:
+    """d(CV)/dt stays C*slope when the final BDF-2 interval is halved."""
+    circuit = Circuit()
+    circuit.add_component(PulseVoltageSource(
+        "V1", ["in", "0"], 0.0, 1.0, 0.0,
+        10 * _RC_H, _RC_H, 10 * _RC_H, 30 * _RC_H,
+    ))
+    if full_terminal:
+        device = ClosedFormDevice(
+            "M1", ["in", "0", "0", "0"], _linear_law(0.0), capacitance=_RC_C,
+        )
+    else:
+        device = Capacitor("C1", ["in", "0"], _RC_C)
+    circuit.add_component(device)
+    solver = TransientSolver(
+        circuit, t_stop=2.5 * _RC_H, dt=_RC_H, integration_method="gear2",
+        initial_guess={"in": 0.0},
+    )
+    solver.solve()
+    expected_current = _RC_C / (10 * _RC_H)
+    current = device._i_prev_drain if full_terminal else device._i_prev
+    assert current == pytest.approx(expected_current, rel=1e-10)
+    np.testing.assert_allclose(
+        solver.source_currents["V1"][1:], -expected_current, rtol=1e-10,
     )
 
 

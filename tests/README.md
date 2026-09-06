@@ -35,6 +35,10 @@ need no simulator and run in the collected `pytest` suite. Each owns one seam:
 | `test_deck_engine_compatibility.py` | cards and value syntax both engines must read identically |
 | `test_core_device_contracts.py` | the non-compact-model core: `Inductor`, integration method, current-source sign, transient branch currents, temperature rebinding, the NN certified-support bound |
 | `test_solver_numerics_contracts.py` | the solver contracts AGENTS.md states, against closed forms: tolerances and physical GMIN, the GMIN ladders, limiter and oscillation acceptance, the integration ladder, breakpoints, `.nodeset`, the latch basin, the LEVEL=72 window |
+| `test_transient_piece_contracts.py` | integration startup on accepted pieces and positive spans shorter than the output stride |
+| `test_canary_contracts.py` | fresh complete reference/candidate sweeps, both source-frame polarities, current sign, diagnostic errors, and family banners |
+| `test_phase_report_contracts.py` | AC phase errors survive current and legacy structured rows into the human report |
+| `test_legacy_gate_contracts.py` | retained LEVEL=72 suites reject mixed PASS/ERROR success and unconverged transient initialization |
 | `test_technology_registry_contracts.py` | the three technology registries agree, and diverge only where declared |
 | `test_entry_point_contracts.py` | `main.py`, training reproducibility, and the self-enumerated gate inventory |
 | `test_subcircuit_harness_contracts.py` | the standalone hierarchy harness |
@@ -59,7 +63,8 @@ root before any pool is dispatched.
 Which gates a campaign executes is decided by `scripts/v710_regate_jobs.py`:
 the `clean` pool (device suites and the frozen simple-v1 cases), the
 `simple_v2` nominal screen, and the `canary` pool (`verify_nn_lifted_source_dc`
-per checkpoint group). The remaining gates are manual: the LEVEL=72
+per checkpoint group, with six required NMOS/PMOS source-shift rows). Old
+NMOS-only canary cells are incomplete under this contract. The remaining gates are manual: the LEVEL=72
 comprehensive and hierarchy gates, the legacy NN device/inverter gates, the
 parametric sweep driver, and the AR-cache gate.
 
