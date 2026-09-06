@@ -26,19 +26,21 @@ unavailable in this environment. `coverage` 7.16.0 was installed into the
 
 ## Measured baseline
 
-Nothing in this table is a change. It is what the harness is at `cb23323`.
+The first column is what the harness was at `cb23323`; the second is what it
+is after the closure commit on `main`.
 
-| Surface | Measured |
-|---|---|
-| Collected `pytest -q tests` | 635 passed, 0 skipped, 9.7 s |
-| Circuit templates | 45 — 1 control, 1 L0, 4 L1, 10 L2, 16 L3, 4 L4, 9 subckt |
-| Catalog cases | 34 — 4 `simple-v1` qualification, 30 `simple-v2` diagnostic |
-| Catalog analyses | 80 — 34 dc, 19 tran, 19 ac, 8 op |
-| Declared corners | 14 — VDD, temperature, body, NFIN, L, VT |
-| Gate scripts (`verify_*`) | 29 — 12 campaign-driven, 3 run inside `pytest`, 14 manual-only |
-| Root contract modules (`test_*`) | 18 modules, 6,769 lines |
-| Shared harness (`tests/common/`) | 14,999 lines across two parallel stacks |
-| Harness total vs `pycircuitsim/` | 30,609 vs 9,935 lines |
+| Surface | At `cb23323` | After closure |
+|---|---|---|
+| Collected `pytest -q tests` | 635 passed, 0 skipped, 9.7 s | 785 passed, 2 expected failures, 0 skipped, 16 s |
+| Circuit templates | 45 — 1 control, 1 L0, 4 L1, 10 L2, 16 L3, 4 L4, 9 subckt | unchanged |
+| Catalog cases | 34 — 4 `simple-v1` qualification, 30 `simple-v2` diagnostic | unchanged |
+| Catalog analyses | 80 — 34 dc, 19 tran, 19 ac, 8 op | unchanged; every ac analysis now requires `phase_maxerr_deg` |
+| Declared corners | 14 — VDD, temperature, body, NFIN, L, VT | 16 — plus `slew_slow`, `load_heavy` |
+| Gate scripts (`verify_*`) | 29 — 12 campaign-driven, 3 run inside `pytest`, 14 manual-only | 29 — 13 campaign-driven (+ `canary` pool), 1 campaign preflight, 3 inside `pytest`, 12 manual-only; all 29 enumerated by a collected `--help` check |
+| Root contract modules (`test_*`) | 18 modules, 6,769 lines | 21 modules, 7,953 lines |
+| Shared harness (`tests/common/`) | 14,999 lines across two parallel stacks | 14,985 lines (probe helper folded into its caller) |
+| Harness total vs `pycircuitsim/` | 30,609 vs 9,935 lines | 33,411 (incl. the 1,530-line render freeze) vs 9,951 |
+| Frozen renders | 40 `simple-v1` hashes | 40 `simple-v1` + 760 `simple-v2` hashes |
 
 Statement coverage of `pycircuitsim/`, as the collected suite alone and then
 as the union of that suite with four simulator-backed LEVEL=72 gates
@@ -106,10 +108,17 @@ The V7.6.10 audit retained `verify_nn_dc`, `verify_nn_inverter`,
 reasons. This finding does not reopen those decisions. Retained is not
 executed.
 
-Smallest fix: add `verify_data_geometry_coverage` and
+Smallest fix (as proposed): add `verify_data_geometry_coverage` and
 `verify_nn_lifted_source_dc` to `DEVICE_SUITES` in `v710_regate_jobs.py`. Both
 take `--tech`, so `v710_regate.sh` already resolves their paths. The remaining
 twelve are a documented decision to make, not a defect.
+
+Correction at closure: neither gate took `--tech`. The geometry guard had no
+technology flag at all and read `neural_network/data/datasets`, never the
+campaign root, so the 463/463 above was measured on the Sep 2 datasets and
+not on the retrained grid; the canary took `--techs` and wrote no result
+markers. Adding either to `DEVICE_SUITES` would have produced 40 or 80
+infrastructure exits. See [Closure](#closure) for what was done instead.
 
 ### A2. Two harness stacks feed one scoreboard from two technology registries
 
@@ -317,8 +326,13 @@ repeated twice at a fixed seed, asserting identical weights.
 
 ## Merge, deletion and addition candidates
 
-None of these were applied. Each is mechanical once the corresponding finding
-is accepted.
+Applied at closure: the selector merge (seven gates, not four — the two
+parametric NN suites had the same empty-field hole), the `core_gates.py` fold,
+both deletions, and the addition. Not applied: the `circuit_sweep.py` merge.
+The stimulus axis moved into the catalog `Corner` (A4), but the driver and the
+3/7/9-stage ring templates stay: the stage-count axis has no catalog home,
+and the templates are also rendered by the catalog harness's
+`ring_n_stages` path, so they were never the driver's alone.
 
 ### Merge candidates
 
@@ -363,17 +377,20 @@ is accepted.
   flag, keeps that inventory honest as modules come and go, and would have
   surfaced A1 and B9 when they landed.
 
-## Suggested sequencing
+## Suggested sequencing and outcome
 
-Before the V7.7.2 pass publishes numbers: wire `verify_data_geometry_coverage`
-into the campaign job list (A1). It is the guard that a retrained grid still
-contains the benchmark bias points, it needs no simulator and no checkpoint,
-and it takes 64 s. Then add the three-registry consistency test (A2) so the
-two stacks cannot drift apart mid-campaign.
+As proposed: before the V7.7.2 pass publishes numbers, wire
+`verify_data_geometry_coverage` into the campaign (A1) and add the
+three-registry test (A2); before the pass is compared against V7.7.1, freeze
+the `simple-v2` renders (A5).
 
-Before the pass is compared against V7.7.1: freeze the `simple-v2` renders
-(A5). Cross-pass comparability is the reason those 30 diagnostics carry a
-denominator, and a template edit would currently break it silently.
+Outcome: all three landed on `main` before the V7.7.2 evaluate stage started,
+and the geometry guard was run by hand against the campaign datasets
+(`results/v771_r2_data`, 463/463 PASS). The in-flight release worktree
+predates the closure, so its evaluate stage runs the 600 + 1,200 jobs only;
+the 40-job `canary` pool is to be dispatched from the audited source, into its
+own output root, before the V7.7.2 reports are finalized. The render freeze
+protects comparison from this pass onward.
 
 ## Not reopened
 
@@ -396,6 +413,14 @@ denominator, and a template edit would currently break it silently.
   recorded.
 - `simple-v2` remains diagnostic; its thresholds and three-repeat LEVEL=72
   stability matrix are still not frozen.
+- Of the B6 contracts, the stiffness trip to BDF-2, a retry shrinking the
+  attempted step, and commit-after-accept have no hermetic witness: each
+  needs a nonlinear step that fails, which no closed-form device produced.
+- The backward-Euler to trapezoidal seam in `Capacitor.update_voltage` is a
+  known defect, pinned as a strict expected failure and not fixed in this arm.
+- The `circuit_sweep.py` driver is still reachable only by hand; its stimulus
+  axis now has a catalog equivalent, its stage-count axis does not.
+- Statement coverage was not re-measured after closure.
 - No numerical campaign was run in this pass. Every accuracy number in
   `docs/accuracy/` is untouched by it.
 
@@ -412,6 +437,17 @@ denominator, and a template edit would currently break it silently.
 | Empty-selection probe | `--tech "TSMC5,"` exits 0 in `verify_device_integrity`, `verify_terminal_integrity`, `verify_circuit_topologies` |
 | Coverage tooling | `coverage` 7.16.0, statement coverage only; NN and full campaign matrices not run |
 | Repository state | unmodified; 66 artifacts written under `results/tests/`; no campaign worktree touched |
+
+After closure (commit `9964963` on `main`):
+
+| Surface | Result |
+|---|---|
+| Collected unit/contract suite | 785 passed, 2 expected failures, 0 skipped; 5 CPU-only Torch warnings |
+| `verify_data_geometry_coverage --data-dir results/v771_r2_data` | 463/463 PASS on the retrained campaign datasets |
+| `scripts/v710_regate_jobs.py` | 600 clean, 1,200 simple-v2, 40 canary jobs |
+| Empty-selection probe | `--tech "TSMC5,"` exits 2 on all seven formerly hand-rolled gates |
+| Gate inventory | 29 modules answer `--help` with exit 0 and reject an unknown flag with exit 2, in process |
+| Repository state | both campaign worktrees clean and untouched; no campaign process signalled |
 
 No accuracy number, promotion or retraction is claimed by this audit. NGSPICE
 on the identical LEVEL=72 OSDI model remains the only compact-model ground
