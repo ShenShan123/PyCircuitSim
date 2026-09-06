@@ -12,7 +12,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
-from typing import Callable
+from typing import Callable, List, Optional
 from unittest.mock import patch
 
 import numpy as np
@@ -489,6 +489,20 @@ def _check_clean_pool() -> None:
     }
     assert parsed == expected
     assert len(clean) == len(parsed)
+
+    canary = jobs.build_pools()["canary"]
+    canary_parsed = {tuple(line.split()) for line in canary}
+    canary_expected = {
+        (tag, variant, tech, "verify_nn_lifted_source_dc", "1")
+        for tag in ("dnf", "tff")
+        for variant in ("small", "medium", "large", "xl")
+        for tech in ("TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16")
+    }
+    assert canary_parsed == canary_expected
+    assert len(canary) == len(canary_parsed)
+    # The canary answers a runtime-frame question; it must not widen the
+    # clean qualification denominator.
+    assert "verify_nn_lifted_source_dc" not in jobs.DEVICE_SUITES
 
     diagnostic = jobs.build_pools()["simple_v2"]
     diagnostic_parsed = {tuple(line.split()) for line in diagnostic}
@@ -1211,7 +1225,8 @@ def _check_incomplete_reports_preserve_verified_output() -> None:
             docs.PRESERVED_README_SHA256 = old_readme_hash
 
 
-def main() -> int:
+def main(argv: Optional[List[str]] = None) -> int:
+    parse_no_options(__doc__ or "", argv)
     _check_residual_completes_voltage_source_currents()
     _check_rank_deficient_tail_projector()
     _check_nn_ac_banner_tracks_forced_family()
@@ -1278,5 +1293,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    parse_no_options(__doc__ or "")
     raise SystemExit(main())

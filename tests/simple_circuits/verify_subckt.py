@@ -24,7 +24,7 @@ from __future__ import annotations
 import logging
 import sys
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 
@@ -589,7 +589,8 @@ def level3() -> List[Tuple[str, bool, str]]:
 
 
 # ---------------------------------------------------------------------------
-def main() -> int:
+def main(argv: Optional[List[str]] = None) -> int:
+    parse_no_options(__doc__ or "", argv)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     all_results: List[Tuple[str, bool, str]] = []
     print("=" * 72)
@@ -618,5 +619,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    parse_no_options(__doc__ or "")
     sys.exit(main())

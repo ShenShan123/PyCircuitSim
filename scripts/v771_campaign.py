@@ -263,9 +263,15 @@ def evaluate(python: str, commit: str, env: dict[str, str], parallel: int) -> No
     for model, size, tech, device in training_jobs():
         tag = "dnf" if model == "direct" else "tff"
         validate_bundle(f"{tech}_{tag}_{size}_{device}", dataset_commit)
+    # The retrained grid must still resolve every benchmark bias point before
+    # any checkpoint is scored at those points. The guard reads the campaign
+    # dataset root, needs no simulator or checkpoint, and fails the stage.
+    run_job("geometry-coverage",
+            [python, "tests/single_devices/verify_data_geometry_coverage.py",
+             "--data-dir", str(DATA)], env, commit)
     job_lists = STATE / "job_lists"
     run_job("gate-jobs", [python, "scripts/v710_regate_jobs.py", str(job_lists)], env, commit)
-    for pool in ("clean", "simple_v2"):
+    for pool in ("clean", "simple_v2", "canary"):
         output = ROOT / "results" / f"{CAMPAIGN}_full_{pool}"
         gate_env = {**env, "NN_PY": python, "PAR": str(parallel),
                     "JOBS": str(job_lists / f"jobs_{pool}.txt"),

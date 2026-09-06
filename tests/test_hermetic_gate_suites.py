@@ -18,7 +18,7 @@ PDK cards.
 """
 from __future__ import annotations
 
-from typing import Callable
+from typing import Callable, List, Optional
 
 import pytest
 
@@ -43,7 +43,7 @@ from tests.simple_circuits.verify_simple_circuit_catalog import (
 )
 def test_simulator_free_gate_suite_passes(
     suite: str,
-    entry_point: Callable[[], int],
+    entry_point: Callable[[Optional[List[str]]], int],
 ) -> None:
     """A hermetic gate suite must return 0 from the collected unit run."""
-    assert entry_point() == 0, f"{suite} reported failures; see captured output"
+    assert entry_point([]) == 0, f"{suite} reported failures; see captured output"

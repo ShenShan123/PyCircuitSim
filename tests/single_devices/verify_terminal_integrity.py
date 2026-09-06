@@ -17,6 +17,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from tests.common.base import parse_csv_choices  # noqa: E402
 from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH,
     BENCH_TECHS,
@@ -29,10 +30,6 @@ from tests.common.terminal_integrity import (  # noqa: E402
 )
 
 
-def _values(raw: str) -> list[str]:
-    return [value.strip() for value in raw.split(",") if value.strip()]
-
-
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--tech", default=",".join(BENCH_TECHS))
@@ -43,35 +40,17 @@ def main(argv: list[str] | None = None) -> int:
                         help="list the declared corner matrix without running")
     args = parser.parse_args(argv)
 
-    techs = [value.upper() for value in _values(args.tech)]
-    devices = [value.lower() for value in _values(args.device)]
+    techs = parse_csv_choices(
+        parser, args.tech, flag="--tech", choices=list(BENCH),
+        normalize=str.upper,
+    )
+    devices = parse_csv_choices(
+        parser, args.device, flag="--device", choices=["nmos", "pmos"],
+        normalize=str.lower,
+    )
     corners = (list(CORNERS) if args.corner == "all"
-               else _values(args.corner))
-    unknown_techs = [value for value in techs if value not in BENCH]
-    unknown_devices = [value for value in devices
-                       if value not in {"nmos", "pmos"}]
-    unknown_corners = [value for value in corners if value not in CORNERS]
-    if not techs or unknown_techs:
-        parser.error(
-            f"unknown technologies {unknown_techs or techs}; "
-            f"available: {list(BENCH)}"
-        )
-    if not devices or unknown_devices:
-        parser.error(
-            f"unknown devices {unknown_devices or devices}; "
-            "available: ['nmos', 'pmos']"
-        )
-    if not corners or unknown_corners:
-        parser.error(
-            f"unknown corners {unknown_corners or corners}; "
-            f"available: {list(CORNERS)}"
-        )
-    if (len(set(techs)) != len(techs) or len(set(devices)) != len(devices)
-            or len(set(corners)) != len(corners)):
-        parser.error(
-            "technology, device, and corner selections must not contain "
-            "duplicates"
-        )
+               else parse_csv_choices(parser, args.corner, flag="--corner",
+                                      choices=list(CORNERS)))
     if args.list:
         print("terminal-integrity corners: " + ",".join(CORNERS))
         return 0

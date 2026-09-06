@@ -7,6 +7,8 @@ Pools (write one file each so they can be dispatched with different PAR):
 
 * ``clean`` — DirectNet-Full and BSIM-AR-Full S/M/L/XL tiers.
 * ``simple_v2`` — nominal held-out topology screen for both families.
+* ``canary`` — the source-relative-frame canary per checkpoint group. It is
+  its own pool so the qualification denominator of ``clean`` is unchanged.
 
 Usage: python scripts/v710_regate_jobs.py <outdir>
 """
@@ -50,6 +52,10 @@ DETERMINISTIC = [
     if len(case.omp_threads) == 1
 ]
 SIMPLE_V2_SUITES = [case.campaign_suite for case in _SIMPLE_V2_CASES]
+# AGENTS.md names this gate as the canary for the source-relative inference
+# contract. It answers a runtime-frame question per checkpoint group rather
+# than a per-device accuracy question, so it runs outside the clean pool.
+CANARY_SUITES = ["verify_nn_lifted_source_dc"]
 
 CLEAN_VARIANTS = ["small", "medium", "large", "xl"]
 
@@ -82,6 +88,16 @@ def simple_v2(tag: str, variants: list[str]) -> list[str]:
     ]
 
 
+def canary(tag: str, variants: list[str]) -> list[str]:
+    """Runtime-contract canaries: one OMP=1 cell per checkpoint group."""
+    return [
+        f"{tag} {variant} {tech} {suite} 1"
+        for variant in variants
+        for tech in TECHS
+        for suite in CANARY_SUITES
+    ]
+
+
 def build_pools() -> dict[str, list[str]]:
     """Return every campaign pool from one testable source of truth."""
     return {
@@ -92,6 +108,10 @@ def build_pools() -> dict[str, list[str]]:
         "simple_v2": [
             *simple_v2("dnf", CLEAN_VARIANTS),
             *simple_v2("tff", CLEAN_VARIANTS),
+        ],
+        "canary": [
+            *canary("dnf", CLEAN_VARIANTS),
+            *canary("tff", CLEAN_VARIANTS),
         ],
     }
 

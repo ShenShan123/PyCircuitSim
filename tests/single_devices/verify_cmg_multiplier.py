@@ -31,24 +31,95 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Dict, List, Tuple
+from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
-from tests.common.core_gates import (
-    ASAP7_MODELCARD,
-    OSDI_PATH,
-    bake_asap7,
-    ngspice_probe,
-    rel_err,
-    report,
-)
 from tests.common.base import (
-    DEVICE_DECKS, parse_no_options, template_deck, render_template,
+    DEVICE_DECKS, MODELCARDS_DIR, OSDI_PATH, bake_inst_params,
+    parse_no_options, run_ngspice_subprocess, template_deck, render_template,
 )
+
+#: ASAP7 TT modelcard — the same card every existing BSIM-CMG gate uses.
+ASAP7_MODELCARD = MODELCARDS_DIR / "ASAP7" / "7nm_TT_160803.pm"
+
+
+def bake_asap7(work_dir: Path, model_name: str,
+               inst_params: Dict[str, float], tag: str = "") -> Path:
+    """Bake instance params into the ASAP7 card for NGSPICE OSDI.
+
+    NGSPICE's OSDI binding rejects instance parameters on the device line, so
+    L / NFIN / DEVTYPE have to live in the ``.model`` block.
+    """
+    work_dir.mkdir(parents=True, exist_ok=True)
+    dst = work_dir / f"baked_{model_name}{('_' + tag) if tag else ''}.lib"
+    bake_inst_params(ASAP7_MODELCARD, dst, model_name, inst_params)
+    return dst
+
+
+def ngspice_probe(
+    work_dir: Path,
+    label: str,
+    deck_text: str,
+    analysis: str,
+    vectors: Sequence[str],
+    extra_control: Optional[Sequence[str]] = None,
+) -> np.ndarray:
+    """Run one NGSPICE analysis and return its ``wrdata`` matrix.
+
+    ``wrdata`` writes an x column in front of EVERY vector for real data
+    (x, y1, x, y2, ...) and (x, real, imag) for a complex (AC) vector, so the
+    column layout is the caller's business.
+    """
+    work_dir.mkdir(parents=True, exist_ok=True)
+    deck_path = work_dir / f"ng_{label}.cir"
+    runner_path = work_dir / f"ng_{label}_runner.cir"
+    csv_path = work_dir / f"ng_{label}.csv"
+    log_path = work_dir / f"ng_{label}.log"
+
+    deck_path.write_text(deck_text)
+
+    control: List[str] = [
+        "* NGSPICE runner (line 1 is the title — keep this comment)",
+        ".control",
+        "set noaskquit",
+        "set num_threads=1",
+        f"osdi {OSDI_PATH}",
+        f"source {deck_path}",
+        "set filetype=ascii",
+        "set wr_vecnames",
+    ]
+    control.extend(extra_control or [])
+    control.append(analysis)
+    control.append(f"wrdata {csv_path} {' '.join(vectors)}")
+    control.append(".endc")
+    control.append(".end")
+    runner_path.write_text("\n".join(control) + "\n")
+
+    lines = run_ngspice_subprocess(runner_path, log_path, csv_path)
+
+    rows: List[List[float]] = []
+    for line in lines[1:]:  # skip the `set wr_vecnames` header
+        stripped = line.strip()
+        if stripped:
+            rows.append([float(x) for x in stripped.split()])
+    if not rows:
+        raise RuntimeError(f"NGSPICE wrote no data rows: {csv_path}")
+    return np.array(rows, dtype=float)
+
+
+def rel_err(measured: float, reference: float, abs_floor: float) -> float:
+    """Relative error with an absolute floor (avoids blowing up near zero)."""
+    return abs(measured - reference) / max(abs(reference), abs_floor)
+
+
+def report(name: str, ok: bool, detail: str = "") -> bool:
+    """Print one gate line in the repo's `[PASS] ...` style and return ``ok``."""
+    print(f"  [{'PASS' if ok else 'FAIL'}] {name:52s} {detail}")
+    return ok
 
 RESULTS_DIR = PROJECT_ROOT / "results" / "tests" / "cmg_multiplier"
 
@@ -366,7 +437,8 @@ def test_ac() -> bool:
     return ok
 
 
-def main() -> int:
+def main(argv: Optional[List[str]] = None) -> int:
+    parse_no_options(__doc__ or "", argv)
     print("=" * 78)
     print("BSIM-CMG instance multiplier (m=) verification vs NGSPICE 45.2")
     print(f"  ASAP7 TT, L={L*1e9:.0f}nm, NFIN={NFIN:.0f}, OSDI={OSDI_PATH.name}")
@@ -391,5 +463,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    parse_no_options(__doc__ or "")
     sys.exit(main())

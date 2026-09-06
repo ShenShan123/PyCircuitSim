@@ -352,3 +352,110 @@ def test_pmos_self_biased_cascode_scores_the_low_voltage_compliance_region() -> 
     _metrics, domain = compare_traces(candidate, reference, analysis, vdd=VDD)
 
     assert domain["output_resistance_error_pct"] == pytest.approx(50.0)
+
+
+AC_ANALYSES = tuple(
+    (case_id, analysis) for case_id, analysis in CATALOG_ANALYSES
+    if analysis.kind == "ac"
+)
+
+
+@pytest.mark.parametrize(
+    ("case_id", "analysis"),
+    AC_ANALYSES,
+    ids=[f"{case_id}-{analysis.name}" for case_id, analysis in AC_ANALYSES],
+)
+def test_ac_phase_error_is_required_and_sees_a_magnitude_identical_rotation(
+    case_id: str,
+    analysis: AnalysisSpec,
+) -> None:
+    """|H| NRMSE cannot see a phase-only error; ``phase_maxerr_deg`` must.
+
+    A checkpoint with the right magnitude and the wrong transcapacitance
+    phase scored clean on every AC cell of the topology screen before V7.7.2.
+    Rotating every signal by 30 degrees leaves the magnitude aggregates at
+    zero and must read exactly 30 degrees on the required phase aggregate.
+    """
+    del case_id
+    reference = _reference_trace(analysis)
+    rotation = np.exp(1j * np.deg2rad(30.0))
+    candidate = Trace(
+        reference.axis_name,
+        reference.axis.copy(),
+        {name: values * rotation for name, values in reference.signals.items()},
+    )
+
+    metrics, domain = compare_traces(candidate, reference, analysis, vdd=VDD)
+
+    validate_analysis_metrics(analysis, metrics, domain)
+    assert metrics["nrmse_pct"] == pytest.approx(0.0, abs=1e-9)
+    assert metrics["max_err"] == pytest.approx(0.0, abs=1e-9)
+    assert metrics["phase_maxerr_deg"] == pytest.approx(30.0, abs=1e-9)
+    without_phase = {
+        key: value for key, value in metrics.items() if key != "phase_maxerr_deg"
+    }
+    with pytest.raises(ValueError, match="phase_maxerr_deg"):
+        validate_analysis_metrics(analysis, without_phase, domain)
+
+
+#: Mutations whose headline value has a closed form on the synthetic traces.
+#: ``> 1e-12`` proves an extractor reacts; these prove it reacts by the right
+#: amount in the right unit (V7.7.2 audit C10).  An entry is
+#: ``(expected, relative tolerance)``; ``expected`` may be a callable of the
+#: full metric payload when the closed form is a relation between reported
+#: quantities rather than a constant.  Tolerances are exact except where the
+#: extractor interpolates a smooth curve on the test grid.
+_EXACT_HEADLINES: dict[str, tuple[object, float]] = {
+    "transmission_gate": (50.0, 1e-6),      # 0.85x slope -> Ron 1500 vs 1000 Ohm
+    "inverter_energy": (20.0, 1e-9),        # 1.2x supply current -> 20 % energy
+    "self_bias_cell": (20.0, 1e-9),         # 1.2x settled current
+    # 0.16 V droop vs 0.08 V: the error equals the reference droop exactly,
+    # whichever grid sample the exponential recovery starts on.
+    "load_regulation": (lambda p: p["load_droop_ref_v"], 1e-9),
+    "sram_read": (0.05, 1e-3),              # 0.10 V disturb vs 0.05 V (grid peak)
+    "sram_hold": (0.05, 1e-9),              # +50 mV on the stored node
+    "sram_write": (100.0 / 6.0, 1e-5),      # crossing 3.5 ns vs 3.0 ns
+    "sram_write_margin": (0.05, 1e-9),      # trip point shifted by 50 mV
+    "inverter_vtc": (0.05, 1e-9),
+    "logic_vtc": (0.05, 1e-9),
+    "inverter_chain": (100.0, 1e-5),        # 1.0 ns delay vs 0.5 ns
+    "logic_tran": (100.0, 1e-5),
+    "current_mirror": (20.0, 1e-9),         # 1.2x output current
+    "mirror_iref": (20.0, 1e-6),            # 1.2x output current (1 nA floor)
+    "cascode": (100.0 / 6.0, 1e-9),         # 1.2x slope -> Rout 1/1.2
+    "self_bias_cascode": (100.0 / 6.0, 1e-9),
+    "ring_osc": (20.0, 1e-3),               # period 1.6 ns vs 2.0 ns
+    "ring_supply": (20.0, 1e-3),
+    "common_source_ac": (200.0, 1e-2),      # corner 3 MHz vs 1 MHz, log grid
+    "active_load_ac": (200.0, 1e-2),
+    "closed_loop_ac": (200.0, 1e-2),
+    "common_source_floating_ac": (0.1, 1e-6),  # bulk response doubled: 0.1 V
+    "diode_load": (0.05, 1e-9),             # 1.2x of a 0.25 V operating point
+}
+
+
+@pytest.mark.parametrize(
+    "profile",
+    sorted(_EXACT_HEADLINES),
+)
+def test_headline_metrics_report_the_calibrated_mutation_magnitude(
+    profile: str,
+) -> None:
+    analysis = CATALOG_ANALYSES_BY_PROFILE[profile]
+    reference = _reference_trace(analysis)
+    candidate = _mutated_trace(analysis, reference)
+
+    metrics, domain = compare_traces(candidate, reference, analysis, vdd=VDD)
+
+    expected, tolerance = _EXACT_HEADLINES[profile]
+    payload = {**metrics, **domain}
+    if callable(expected):
+        expected = expected(payload)
+    headline = float(payload[analysis.headline_metric])
+    assert headline == pytest.approx(float(expected), rel=tolerance)
+    if profile == "load_regulation":
+        assert payload["load_droop_ref_v"] == pytest.approx(0.08, rel=1e-2)
+
+
+def test_exact_headline_table_names_only_live_profiles() -> None:
+    assert set(_EXACT_HEADLINES) <= set(CATALOG_ANALYSES_BY_PROFILE)

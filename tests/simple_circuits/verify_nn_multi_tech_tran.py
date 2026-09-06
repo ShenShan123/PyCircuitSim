@@ -35,6 +35,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from tests.common.base import parse_csv_choices  # noqa: E402
 from tests.common.nn_sweep import (  # noqa: E402
     NN_TECHS,
     build_inv_parametric,
@@ -68,22 +69,14 @@ def main(argv: list[str] | None = None) -> int:
         help="comma-separated analyses: vtc, tran (default: both)")
     args = parser.parse_args(argv)
 
-    tech_keys = [t.strip() for t in args.tech.split(",") if t.strip()]
-    analyses = [a.strip().lower() for a in args.analysis.split(",") if a.strip()]
-
-    if not tech_keys or len(tech_keys) != len(set(tech_keys)):
-        parser.error("--tech must select one or more unique technologies")
-    if not analyses or len(analyses) != len(set(analyses)):
-        parser.error("--analysis must select one or more unique analyses")
-    for tk in tech_keys:
-        if tk not in NN_TECHS:
-            print(f"ERROR: tech '{tk}' not in scope {NN_TECHS} "
-                  f"(ASAP7 excluded — out of scope)")
-            return 2
-    for an in analyses:
-        if an not in ("vtc", "tran"):
-            print(f"ERROR: analysis '{an}' must be vtc or tran")
-            return 2
+    # ASAP7 is deliberately outside the NN scope, so it is an unknown here.
+    tech_keys = parse_csv_choices(
+        parser, args.tech, flag="--tech", choices=NN_TECHS, normalize=str.upper,
+    )
+    analyses = parse_csv_choices(
+        parser, args.analysis, flag="--analysis", choices=["vtc", "tran"],
+        normalize=str.lower,
+    )
 
     print("=" * 70)
     model_label = active_model_label()

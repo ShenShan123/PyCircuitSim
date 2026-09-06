@@ -67,6 +67,7 @@ STRUCTURED_SUITES = {
     "verify_nn_subckt",
     "verify_nn_ac",
     "verify_circuit_opamp_ac",
+    "verify_nn_lifted_source_dc",
     "verify_nn_multi_tech_dc",
     "verify_nn_multi_tech_tran",
 }
@@ -382,6 +383,18 @@ def structured_contract_error(
         elif suite == "verify_circuit_opamp_ac":
             expected_pairs = [("opamp_ac", "open_loop")]
             expected_corners = {"open_loop": "nominal"}
+        elif suite == "verify_nn_lifted_source_dc":
+            from tests.single_devices.verify_nn_lifted_source_dc import (
+                LIFTED_CASE_ID, VS0_FRACTIONS, lifted_analysis_name,
+            )
+
+            expected_pairs = [
+                (LIFTED_CASE_ID, lifted_analysis_name(fraction))
+                for fraction in VS0_FRACTIONS
+            ]
+            expected_corners = {
+                analysis: "nominal" for _case_id, analysis in expected_pairs
+            }
         elif suite == "verify_nn_multi_tech_dc":
             from tests.common.nn_sweep import (
                 build_dc_parametric,
@@ -462,6 +475,7 @@ def structured_contract_error(
             if suite in {
                 "verify_nn_ac",
                 "verify_circuit_opamp_ac",
+                "verify_nn_lifted_source_dc",
                 "verify_nn_multi_tech_dc",
                 "verify_nn_multi_tech_tran",
             }
@@ -555,6 +569,17 @@ def structured_contract_error(
                         f"{invalid_derived}"
                     )
                 continue
+            if specs[name].kind == "ac" and "phase_maxerr_deg" not in result["metrics"]:
+                # Rows written before V7.7.2 carry only the per-signal phase
+                # errors; the aggregate is derived from that recorded data so
+                # an older complete campaign keeps its verdict.
+                per_signal = [
+                    value for key, value in result["metrics"].items()
+                    if key.endswith("_phase_maxerr_deg")
+                    and isinstance(value, (int, float))
+                ]
+                if per_signal:
+                    result["metrics"]["phase_maxerr_deg"] = max(per_signal)
             try:
                 validate_analysis_metrics(
                     specs[name], result["metrics"], result["domain"],
@@ -910,6 +935,30 @@ def render(data: Dict) -> str:
                       "magNRMSE reported, not gated)", "",
                       "| tech | verdict | dc_gain_err dB | GBW ratio | PM err ° | magNRMSE % |",
                       "|---|---|---|---|---|---|", *rows, ""]
+
+            if "verify_nn_lifted_source_dc" in g:
+                cells = g["verify_nn_lifted_source_dc"]
+                rows, npass, ntot = [], 0, 0
+                for t in TECHS:
+                    c = cells.get(t, {}).get("omp1")
+                    if not c:
+                        rows.append(f"| {t} | — | — |")
+                        continue
+                    if not is_verdict(c):
+                        rows.append(f"| {t} | INVALID | — |")
+                        continue
+                    ntot += 1
+                    npass += c.get("status") == "PASS"
+                    lifts = "; ".join(
+                        f"{item.get('analysis')}:{str(item.get('status', '')).upper()}"
+                        f"({item.get('metrics', {}).get('nrmse_pct', float('nan')):.2f}%)"
+                        for item in c.get("results", [])
+                    ) or "—"
+                    rows.append(f"| {t} | {c.get('status', '—')} | {lifts} |")
+                L += ["**Source-relative frame canary (lifted-source Id-Vgs): "
+                      f"{npass}/{ntot}** (gate: NRMSE ≤ 10% at every lift)", "",
+                      "| tech | verdict | per-lift NRMSE |", "|---|---|---|",
+                      *rows, ""]
 
             for suite, label in (("verify_nn_multi_tech_dc", "Parametric DC (Id-Vgs)"),
                                  ("verify_nn_multi_tech_tran", "Parametric transient")):

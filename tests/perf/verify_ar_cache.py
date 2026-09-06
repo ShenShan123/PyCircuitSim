@@ -36,7 +36,7 @@ from __future__ import annotations
 import sys
 import time
 from pathlib import Path
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -241,7 +241,8 @@ def level2() -> List[Result]:
         f"({speedup:.2f}x)")]
 
 
-def main() -> int:
+def main(argv: Optional[List[str]] = None) -> int:
+    parse_no_options(__doc__ or "", argv)
     print("=" * 72)
     print("LEVEL=76 AR prefix cache verification")
     print("=" * 72)
@@ -269,5 +270,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    parse_no_options(__doc__ or "")
     sys.exit(main())

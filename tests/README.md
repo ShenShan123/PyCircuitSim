@@ -8,8 +8,8 @@ and every persistent simulator artifact is written below `results/`.
 
 Two kinds of test live here and they are collected differently.
 
-**Gate scripts** are `verify_*.py` / `diag_*.py` entry points, grouped by the
-tier of circuit they gate. They are run by hand or by a campaign, and most need
+**Gate scripts** are `verify_*.py` entry points, grouped by the tier of
+circuit they gate. They are run by hand or by a campaign, and most need
 NGSPICE, a PDK card, and an NN checkpoint:
 
 - `common/` provides strict template rendering, technology profiles, candidate
@@ -21,8 +21,7 @@ NGSPICE, a PDK card, and an NN checkpoint:
   decades, triode region, and `gm`/`gds`/`gmb` against ground truth.
 - `simple_circuits/` verifies operating point, DC, transient, AC, topology
   parity, parameter corners, and accuracy-campaign tooling.
-- `perf/` contains opt-in performance and solution-basin checks.
-- `diag/` contains explanatory probes that are not release gates.
+- `perf/` contains the opt-in autoregressive-cache equivalence gate.
 
 **Contract modules** are the `test_*.py` files at this directory's root. They
 need no simulator and run in the collected `pytest` suite. Each owns one seam:
@@ -34,7 +33,10 @@ need no simulator and run in the collected `pytest` suite. Each owns one seam:
 | `test_gate_cli_contracts.py` | fail-closed empty, duplicate, and unknown gate selections |
 | `test_template_tier_contracts.py` | tier resolution and the frozen token defaults |
 | `test_deck_engine_compatibility.py` | cards and value syntax both engines must read identically |
-| `test_core_device_contracts.py` | the non-compact-model core: `Inductor`, integration method, current-source sign, transient branch currents, temperature rebinding |
+| `test_core_device_contracts.py` | the non-compact-model core: `Inductor`, integration method, current-source sign, transient branch currents, temperature rebinding, the NN certified-support bound |
+| `test_solver_numerics_contracts.py` | the solver contracts AGENTS.md states, against closed forms: tolerances and physical GMIN, the GMIN ladders, limiter and oscillation acceptance, the integration ladder, breakpoints, `.nodeset`, the latch basin, the LEVEL=72 window |
+| `test_technology_registry_contracts.py` | the three technology registries agree, and diverge only where declared |
+| `test_entry_point_contracts.py` | `main.py`, training reproducibility, and the self-enumerated gate inventory |
 | `test_subcircuit_harness_contracts.py` | the standalone hierarchy harness |
 | `test_full_terminal_solver_boundary.py` | mandatory four-terminal DC/transient/AC solver seam |
 | `test_full_terminal_*` | full-terminal dataset, family, and corridor contracts |
@@ -50,7 +52,22 @@ Three gate scripts need no simulator at all —
 `verify_accuracy_campaign_tools.py`. They stay runnable as scripts for a
 campaign operator and are also executed by `test_hermetic_gate_suites.py`, so
 the collected run covers them. A new simulator-free gate suite belongs in that
-list.
+list. `verify_data_geometry_coverage.py` needs datasets but no simulator or
+checkpoint; the campaign runner executes it once against the campaign dataset
+root before any pool is dispatched.
+
+Which gates a campaign executes is decided by `scripts/v710_regate_jobs.py`:
+the `clean` pool (device suites and the frozen simple-v1 cases), the
+`simple_v2` nominal screen, and the `canary` pool (`verify_nn_lifted_source_dc`
+per checkpoint group). The remaining gates are manual: the LEVEL=72
+comprehensive and hierarchy gates, the legacy NN device/inverter gates, the
+parametric sweep driver, and the AR-cache gate.
+
+Frozen renders: `test_circuit_harness_contracts.py` pins every nominal
+simple-v1 deck inline and every nominal simple-v2 deck through
+`frozen_simple_v2_renders.py`. A template or harness edit that changes a deck
+must regenerate that module in the same commit
+(`python -c "import tests.test_circuit_harness_contracts as t; t.write_simple_v2_render_freeze()"`).
 
 ## Test contract
 
@@ -83,8 +100,15 @@ list.
   reference. `Parser.PHYSICAL_DIRECTIVES` warns when a dropped card would have
   changed the circuit.
 - A gate that takes no options still answers `--help` and rejects an unknown
-  flag (`common/base.py:parse_no_options`). A silently ignored `--tech` would
-  let an operator read a full-matrix result as the subset they asked for.
+  flag (`common/base.py:parse_no_options`, called inside `main(argv)`). A
+  silently ignored `--tech` would let an operator read a full-matrix result as
+  the subset they asked for. `test_entry_point_contracts.py` enumerates every
+  `verify_*` module and checks both answers.
+- Comma selections go through `common/base.py:parse_csv_choices`; a gate must
+  not reimplement it. The hand-rolled copies dropped an empty field, so
+  `--tech "TSMC5,"` ran the valid subset and exited 0.
+- Every AC analysis carries `phase_maxerr_deg` as a required aggregate; the
+  magnitude NRMSE cannot see a phase-only error.
 - Every catalog analysis layout is exercised with a known identical trace and
   a targeted mutation through `compare_traces`; exact polarity and derived-dB
   checks supplement those metamorphic tests. Deck parity alone cannot certify

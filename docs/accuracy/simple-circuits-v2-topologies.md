@@ -117,12 +117,20 @@ The default diagnostic is nominal. The declared stress matrix adds:
   NFIN-N=3 and NFIN-P=2.
 - `vt_alternate` and `vt_asymmetric`, selected from each technology's trained
   local vocabulary;
-- independent `ln_20`, `lp_16`, and symmetric `nfin_high=5` geometry stresses.
+- independent `ln_20`, `lp_16`, and symmetric `nfin_high=5` geometry stresses;
+- `slew_slow` (4× the rendered input/clock edge times, transient only) and
+  `load_heavy` (2× the capacitive output-load tokens, transient and AC). These
+  stress the stimulus rather than the device; both adapters receive the same
+  scaled deck.
 
 Applicability is evaluated per analysis and observed device polarity. A
 technology without the requested VT/L bin, a body corner on a rail-tied deck,
-or a P-only fin change in an N-only analysis creates no row rather than a
-duplicate nominal denominator slot.
+a P-only fin change in an N-only analysis, or a stimulus corner whose rendered
+deck is byte-identical to nominal creates no row rather than a duplicate
+nominal denominator slot.
+
+Every AC analysis reports `phase_maxerr_deg`, the worst per-signal phase error,
+as a required aggregate next to the magnitude NRMSE.
 
 The older parametric four-circuit sweep also exposes `temp` and `joint`
 dimensions so qualification and diagnostic campaigns share these stress axes.

@@ -66,6 +66,16 @@ Keep both worktrees clean during execution. Numerical changes still require
 a fresh coherent arm. Never rewrite artifact markers or combine partial
 campaign reports. Documentation-only release changes follow scoring.
 
+The V7.7.2 harness audit closure on `main` (2026-09-05) added a dataset
+preflight (`verify_data_geometry_coverage.py` against the campaign dataset
+root) and a 40-job `canary` pool (`verify_nn_lifted_source_dc` per checkpoint
+group) to the evaluate stage without changing the clean or simple-v2
+denominators. The in-flight release worktree predates both: its evaluate stage
+runs the 600 + 1,200 jobs only. The geometry guard was run by hand against
+`results/v771_r2_data` on 2026-09-05 (463/463 PASS); the canary pool is to be
+dispatched from the audited source after training completes, into its own
+output root, before the V7.7.2 reports are finalized.
+
 ## Persistent supervision and handoff
 
 The V7.7.2 supervisor leaves live training workers untouched and monitors all

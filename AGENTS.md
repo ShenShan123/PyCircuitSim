@@ -65,9 +65,12 @@ voltages without corrupting the physical MNA voltages. A nonlinear iteration
 that still applied a limiter is not converged; require an unlimited follow-up
 iteration.
 
-Keep the outer device safety clamps at Vgs ±5 V and Vds ±10 V. The tighter
-LEVEL=72 per-iteration limiting window is an NR aid, not a replacement for the
-outer bounds.
+There is no separate outer voltage clamp. LEVEL=72 evaluates every
+normalized gs/ds/bs pair inside the absolute `_NR_LIM_WINDOW` (±2.5 V) in
+`mosfet_cmg.py`, which both shapes NR steps and bounds the OSDI internal-node
+solve; LEVEL=75/76 raise on any input outside the persisted normalization box
+(`_check_support`) instead of extrapolating a fit. Both bounds are read by
+collected tests; change the constant and the test together.
 
 ## Solver contracts
 
@@ -260,7 +263,10 @@ Classify every optimization before enabling it:
 
 Keep CPU, flags-off execution as the scored contract. Autoregressive caching
 is opt-in and requires its focused numerical-equivalence gate. Any change that
-can alter a nonlinear solution basin requires a latch-basin gate before use.
+can alter a nonlinear solution basin must first pass the latch-basin contract
+in `tests/test_solver_numerics_contracts.py`: add the new opt-in knob to its
+march parametrization so both stored states of the bistable cell are shown to
+survive it.
 
 ## Change workflow
 

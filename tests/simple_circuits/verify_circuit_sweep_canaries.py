@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import List, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -28,7 +29,8 @@ from tests.common.simple_circuit_harness import (  # noqa: E402
 )
 
 
-def main() -> int:
+def main(argv: Optional[List[str]] = None) -> int:
+    parse_no_options(__doc__ or "", argv)
     failures: list[str] = []
     checked = 0
     fake_baked = PROJECT_ROOT / "results" / "_topology_fake_bsimcmg.lib"
@@ -133,5 +135,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    parse_no_options(__doc__ or "")
     raise SystemExit(main())

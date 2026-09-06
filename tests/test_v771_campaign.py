@@ -149,3 +149,40 @@ def test_bundle_validation_binds_configuration_and_source_data(
     (tmp_path / f"{stem}{suffix}").write_bytes(b"changed")
     with pytest.raises(ValueError, match="checksum"):
         campaign.validate_bundle(stem, commit)
+
+
+def test_evaluate_runs_the_geometry_guard_before_any_pool(
+    runner: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A retrained grid must contain the benchmark bias points before scoring.
+
+    The guard reads the campaign dataset root (not the package default), needs
+    no checkpoint, and runs once; the canary pool is dispatched alongside the
+    clean and simple-v2 pools without changing the clean denominator.
+    """
+    from scripts import v710_regate_manifest as manifest
+
+    calls: list[tuple[str, list[str], dict[str, str]]] = []
+    monkeypatch.setattr(campaign, "DATA", runner / "data")
+    monkeypatch.setattr(campaign, "training_jobs", lambda: [])
+    monkeypatch.setattr(manifest, "validate_dataset_source",
+                        lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        campaign, "run_job",
+        lambda name, command, env, commit, validate=None, **kwargs:
+            calls.append((name, list(command), dict(env))),
+    )
+    campaign.evaluate("python", "a" * 40, {}, 4)
+    names = [name for name, _command, _env in calls]
+    assert names[0] == "geometry-coverage"
+    geometry_command = calls[0][1]
+    assert geometry_command[1].endswith("verify_data_geometry_coverage.py")
+    assert geometry_command[-2:] == ["--data-dir", str(runner / "data")]
+    assert names.index("geometry-coverage") < names.index("evaluate-clean")
+    assert [name for name in names if name.startswith("evaluate-")] == [
+        "evaluate-clean", "evaluate-simple_v2", "evaluate-canary",
+    ]
+    canary_env = next(env for name, _c, env in calls if name == "evaluate-canary")
+    assert canary_env["JOBS"].endswith("jobs_canary.txt")
+    assert canary_env["V710_OUT"] != next(
+        env for name, _c, env in calls if name == "evaluate-clean")["V710_OUT"]

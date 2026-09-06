@@ -32,6 +32,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from tests.common.base import parse_csv_choices  # noqa: E402
 from tests.common.nn_sweep import (  # noqa: E402
     NN_TECHS,
     build_dc_parametric,
@@ -65,22 +66,14 @@ def main(argv: list[str] | None = None) -> int:
         help="comma-separated devices: nmos, pmos (default: both)")
     args = parser.parse_args(argv)
 
-    tech_keys = [t.strip() for t in args.tech.split(",") if t.strip()]
-    devices = [d.strip().lower() for d in args.device.split(",") if d.strip()]
-
-    if not tech_keys or len(tech_keys) != len(set(tech_keys)):
-        parser.error("--tech must select one or more unique technologies")
-    if not devices or len(devices) != len(set(devices)):
-        parser.error("--device must select one or more unique devices")
-    for tk in tech_keys:
-        if tk not in NN_TECHS:
-            print(f"ERROR: tech '{tk}' not in scope {NN_TECHS} "
-                  f"(ASAP7 excluded — out of scope)")
-            return 2
-    for dv in devices:
-        if dv not in ("nmos", "pmos"):
-            print(f"ERROR: device '{dv}' must be nmos or pmos")
-            return 2
+    # ASAP7 is deliberately outside the NN scope, so it is an unknown here.
+    tech_keys = parse_csv_choices(
+        parser, args.tech, flag="--tech", choices=NN_TECHS, normalize=str.upper,
+    )
+    devices = parse_csv_choices(
+        parser, args.device, flag="--device", choices=["nmos", "pmos"],
+        normalize=str.lower,
+    )
 
     print("=" * 70)
     model_label = active_model_label()

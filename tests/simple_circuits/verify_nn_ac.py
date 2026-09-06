@@ -38,6 +38,7 @@ import numpy as np
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(PROJECT_ROOT))
 
+from tests.common.base import parse_csv_choices  # noqa: E402
 from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BENCH_TECHS, BenchTech, active_model_label, active_model_level,
     active_model_name, nn_model_parameters,
@@ -417,22 +418,13 @@ def main(argv: list[str] | None = None) -> int:
                     help="comma-separated devices (default: nmos,pmos)")
     args = ap.parse_args(argv)
 
-    techs = [t.strip().upper() for t in args.tech.split(",") if t.strip()]
-    devices = [d.strip().lower() for d in args.device.split(",") if d.strip()]
-
-    unknown_techs = [tech for tech in techs if tech not in BENCH]
-    unknown_devices = [device for device in devices
-                       if device not in {"nmos", "pmos"}]
-    if not techs or unknown_techs or len(techs) != len(set(techs)):
-        ap.error(
-            f"invalid or duplicate tech(s) {unknown_techs or techs}; "
-            f"available: {list(BENCH)}"
-        )
-    if not devices or unknown_devices or len(devices) != len(set(devices)):
-        ap.error(
-            f"invalid or duplicate device(s) {unknown_devices or devices}; "
-            "available: ['nmos', 'pmos']"
-        )
+    techs = parse_csv_choices(
+        ap, args.tech, flag="--tech", choices=list(BENCH), normalize=str.upper,
+    )
+    devices = parse_csv_choices(
+        ap, args.device, flag="--device", choices=["nmos", "pmos"],
+        normalize=str.lower,
+    )
     try:
         run_spec = RunSpec.from_environment()
         run_spec.validate_checkpoint_pins(Path(_os.environ.get(

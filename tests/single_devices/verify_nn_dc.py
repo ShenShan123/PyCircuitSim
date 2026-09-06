@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import List, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -33,7 +34,7 @@ from tests.common.nn_gate import (  # noqa: E402
 )
 
 
-def main() -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     ap = tech_arg_parser(
         "NN device verification: full-terminal families vs BSIM-CMG")
     ap.add_argument("--dc-only", action="store_true",
@@ -46,7 +47,7 @@ def main() -> int:
                     help="Run sign pre-screen diagnostic (Vgs=0 bias points)")
     ap.add_argument("--idvds-diagnostic", action="store_true",
                     help="Run Id-Vds curve diagnostic at Vgs=0")
-    args = ap.parse_args()
+    args = ap.parse_args(argv)
 
     explicit = (args.dc_only or args.tran_only or args.pmos_only
                 or args.sign_diagnostic or args.idvds_diagnostic)

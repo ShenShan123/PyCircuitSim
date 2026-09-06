@@ -5,8 +5,9 @@ These questions were owned by five V7.5 NGSPICE gates — ``verify_inductor``,
 ``verify_tran_branch_current`` and ``verify_tran_gear2`` — that were deleted
 without a replacement. The V7.6.9 harness audit found the result: ``Inductor``,
 ``TransientSolver(integration_method=...)`` and in-place ``set_temperature``
-were shipped features with no test anywhere in ``tests/``, while
-``tests/common/core_gates.py`` still advertised gates for them.
+were shipped features with no test anywhere in ``tests/``, while a shared
+probe helper still advertised gates for them (folded into its one remaining
+caller, ``verify_cmg_multiplier.py``, in V7.7.2).
 
 They come back as hermetic contracts rather than as NGSPICE gates on purpose.
 Every one of them is a parser or solver seam whose failure mode is structural —
@@ -360,3 +361,26 @@ def test_set_temperature_rejects_a_celsius_value(nn_device: "NMOS_DNF") -> None:
     """``temp_C`` passed where ``temp_K`` is expected must fail, not run cold."""
     with pytest.raises(ValueError, match="Kelvin"):
         nn_device.set_temperature(125.0)
+
+
+# ---------------------------------------------------------------------------
+# Outer device bounds for the NN families (V7.7.2 audit B8)
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize(
+    ("node", "voltage"),
+    (("g", 5.0), ("d", 10.0), ("b", -5.0)),
+)
+def test_full_terminal_nn_refuses_a_bias_outside_its_certified_box(
+    nn_device: "NMOS_DNF", node: str, voltage: float,
+) -> None:
+    """LEVEL=75/76 have no hard voltage clamp; the normalization box is the bound.
+
+    AGENTS.md used to state outer clamps at Vgs +/-5 V and Vds +/-10 V that
+    no code implemented.  The real bound is the persisted input box: an
+    evaluation outside it raises rather than extrapolating a fit, and the
+    harness reports that as a support error, not as a number.
+    """
+    inside = {"d": 0.4, "g": 0.4, "s": 0.0, "b": 0.0}
+    assert np.isfinite(nn_device.calculate_current(inside))
+    with pytest.raises(ValueError, match="outside certified support"):
+        nn_device.calculate_current({**inside, node: voltage})

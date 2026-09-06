@@ -37,6 +37,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from tests.common.base import parse_csv_choices  # noqa: E402
 from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, active_model_label, active_model_level,
 )
@@ -59,23 +60,13 @@ HEADLINE: Dict[str, str] = {
 }
 
 
-def _comma_values(raw: str) -> List[str]:
-    return [value.strip() for value in raw.split(",") if value.strip()]
-
-
 def _selection(
     parser: argparse.ArgumentParser, raw: str, available: List[str], flag: str,
 ) -> List[str]:
     """Resolve one comma-separated selection, failing closed on any typo."""
-    selected = list(available) if raw == "all" else _comma_values(raw)
-    if not selected:
-        parser.error(f"{flag} must select at least one value")
-    unknown = [name for name in selected if name not in available]
-    if unknown:
-        parser.error(f"unknown {flag} values {unknown}; available: {available}")
-    if len(set(selected)) != len(selected):
-        parser.error(f"{flag} contains duplicates: {selected}")
-    return selected
+    if raw == "all":
+        return list(available)
+    return parse_csv_choices(parser, raw, flag=flag, choices=list(available))
 
 
 def _write_results(path: Path, results: List[GateResult]) -> None:

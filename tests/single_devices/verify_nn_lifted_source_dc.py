@@ -22,16 +22,22 @@ P0 frame fix and the P2 reverse-clamp work. The pre-fix capture lives at
 ``results/v6_4_7/lifted_source_sweep_prefix.{csv,md}`` (run with
 ``--label prefix --no-gate``).
 
+V7.7.2: the gate is dispatched by the campaign ``canary`` pool (one cell per
+checkpoint group, ``--tech <ONE>``), emits one structured result marker per
+(technology, lift) so the collector can verify the cell is complete, and exits
+through ``result_exit_code`` like every other campaign suite.
+
 Usage:
     OMP_NUM_THREADS=1 MKL_NUM_THREADS=1 \\
       conda run -n pycircuitsim python tests/single_devices/verify_nn_lifted_source_dc.py \\
-      [--label postfix] [--no-gate]
+      [--tech TSMC5,TSMC7] [--label postfix] [--no-gate]
 """
 from __future__ import annotations
 
 import argparse
 import csv
 import logging
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -49,6 +55,7 @@ from tests.common.base import (  # noqa: E402
     parse_csv_choices,
     render_template,
 )
+from tests.common.gate_result import GateResult, result_exit_code  # noqa: E402
 from tests.common.nn_gate import (  # noqa: E402
     ALL_TEST_TECHS,
     NGSPICE_BIN,
@@ -61,11 +68,22 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
     active_model_level,
     nn_model_parameters,
 )
+from tests.common.simple_circuit_harness import RunSpec  # noqa: E402
 
 VS0_FRACTIONS: List[float] = [0.0, 0.1, 0.2]   # source lift, fraction of VDD
 VG_STEP = 0.005                                 # same grid as the 55-cfg gate
 DC_NRMSE_PASS = 10.0                            # % — same gate as the 55-cfg DC
-RESULTS_DIR = PROJECT_ROOT / "results" / "tests" / "nn_lifted_source_dc"
+#: Structured-marker identity shared with the campaign collector.
+LIFTED_CASE_ID = "nn_lifted_source_dc"
+RESULTS_DIR = Path(os.environ.get(
+    "PYCIRCUITSIM_NN_RESULTS",
+    str(PROJECT_ROOT / "results" / "tests" / "nn_lifted_source_dc"),
+))
+
+
+def lifted_analysis_name(fraction: float) -> str:
+    """Marker analysis name for one source lift, e.g. ``vs0_10pct``."""
+    return f"vs0_{round(fraction * 100)}pct"
 
 
 def run_ngspice_nmos_dc_lifted(
@@ -163,37 +181,82 @@ def main(argv: List[str] | None = None) -> int:
                          "lifted_source_sweep_<label>.{csv,md})")
     ap.add_argument("--no-gate", action="store_true",
                     help="diagnostic mode: report metrics, no PASS/FAIL gate")
-    ap.add_argument("--techs", default=None,
+    ap.add_argument("--tech", "--techs", dest="tech", default=None,
                     help="comma-separated tech filter (e.g. TSMC5,TSMC7); "
                          "needed when env-pinning per-tech recipe checkpoints")
     args = ap.parse_args(argv)
     techs = list(NN_TECHS)
-    if args.techs is not None:
+    if args.tech is not None:
         techs = parse_csv_choices(
-            ap, args.techs, flag="--techs", choices=NN_TECHS,
+            ap, args.tech, flag="--tech", choices=NN_TECHS,
             normalize=str.upper,
         )
+    try:
+        run_spec = RunSpec.from_environment()
+        run_spec.validate_checkpoint_pins(Path(os.environ.get(
+            "BSIMAR_CHECKPOINT_DIR",
+            PROJECT_ROOT / "external_compact_models" / "neural_network"
+            / "checkpoints",
+        )))
+    except (FileNotFoundError, ValueError) as exc:
+        print(f"ERROR: {exc}")
+        return 2
+    provenance = run_spec.result_fields()
 
     print("=" * 78)
     print(f"  V6.4.7 — lifted-source NMOS Id-Vgs ({args.label})")
     print("=" * 78)
     rows: List[Dict[str, object]] = []
     curve_rows: List[List[object]] = []
+    results: List[GateResult] = []
     n_pass = 0
     for tk in techs:
         tech = ALL_TEST_TECHS[tk]
         for frac in VS0_FRACTIONS:
             vs0 = round(tech.vdd * frac, 4)
-            wd = RESULTS_DIR / tk / f"vs0_{round(frac * 100)}pct"
+            analysis = lifted_analysis_name(frac)
+            identity = {
+                "case_id": LIFTED_CASE_ID, "tech": tk, "corner": "nominal",
+                "analysis": analysis, "role": "qualification",
+            }
+            wd = RESULTS_DIR / tk / analysis
             wd.mkdir(parents=True, exist_ok=True)
-            ref = run_ngspice_nmos_dc_lifted(tech, wd, vs0)
-            test = run_nn_nmos_dc_lifted(tech, wd, vs0)
+            try:
+                ref = run_ngspice_nmos_dc_lifted(tech, wd, vs0)
+            except RuntimeError as exc:
+                print(f"  {tk:<7s} vs0={vs0:6.3f}V  ERROR reference: {exc}")
+                results.append(GateResult(
+                    **identity, status="error", error=str(exc),
+                    reference_converged=False, error_kind="reference",
+                    **provenance,
+                ))
+                continue
+            try:
+                test = run_nn_nmos_dc_lifted(tech, wd, vs0)
+            except (RuntimeError, ValueError) as exc:
+                print(f"  {tk:<7s} vs0={vs0:6.3f}V  ERROR candidate: {exc}")
+                results.append(GateResult(
+                    **identity, status="error", error=str(exc),
+                    candidate_converged=False, error_kind="candidate",
+                    **provenance,
+                ))
+                continue
             m = curve_metrics(ref["sweep"], ref["id"], test["sweep"], test["id"])
             ok = m["nrmse"] <= DC_NRMSE_PASS
             n_pass += int(ok)
             verdict = "" if args.no_gate else ("  PASS" if ok else "  FAIL")
             rows.append({"tech": tk, "frac": frac, "vs0": vs0, **m,
                          "verdict": verdict.strip()})
+            results.append(GateResult(
+                **identity,
+                status="pass" if ok else "fail",
+                metrics={
+                    "nrmse_pct": float(m["nrmse"]), "mre_pct": float(m["mre"]),
+                    "r2": float(m["r2"]), "max_err": float(m["max_err"]),
+                },
+                domain={"vs0_v": float(vs0), "vs0_fraction": float(frac)},
+                **provenance,
+            ))
             print(f"  {tk:<7s} vs0={vs0:6.3f}V ({frac:.1f}*VDD)  "
                   f"NRMSE={m['nrmse']:7.2f}%  MRE={m['mre']:7.2f}%  "
                   f"R2={m['r2']:8.5f}  MaxErr={m['max_err'] * 1e6:9.3f}uA"
@@ -238,13 +301,15 @@ def main(argv: List[str] | None = None) -> int:
     # audit B5n, defence in depth: `0 == 0` would otherwise exit green on an
     # empty run (e.g. a future tech-gating change or an emptied
     # VS0_FRACTIONS) even though nothing was measured.
-    if not rows:
+    if not results:
         print("\nERROR: no configs ran — nothing under test")
-        return 1
-    total = len(rows)
+        return 2
+    for result in results:
+        print(result.marker())
+    total = len(results)
     print(f"\nRESULT: {n_pass}/{total} configs PASSED "
           f"(NRMSE <= {DC_NRMSE_PASS:.0f}%)")
-    return 0 if n_pass == total else 1
+    return result_exit_code(results)
 
 
 if __name__ == "__main__":

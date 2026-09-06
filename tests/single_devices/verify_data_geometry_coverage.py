@@ -18,13 +18,20 @@ count.
 Fails loud, so the defect cannot silently return the next time datasets are
 regenerated.
 
+The datasets under test are the ones a campaign trains from. ``--data-dir``
+defaults to ``BSIMAR_DATA_DIR`` when that is set (the campaign runner exports
+it) and otherwise to the package default; before V7.7.2 the guard always read
+the package default, so an isolated campaign root was never the grid checked.
+
 Usage:
     conda run -n pycircuitsim python tests/single_devices/verify_data_geometry_coverage.py
     python tests/single_devices/verify_data_geometry_coverage.py --max-l-ratio 1.35
+    python tests/single_devices/verify_data_geometry_coverage.py --data-dir results/v772_full_data
 """
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 from dataclasses import dataclass
 from functools import lru_cache
@@ -91,10 +98,11 @@ def _bin_containing(
 
 @lru_cache(maxsize=None)
 def _dataset_arrays(
+    data_dir: str,
     tech: str,
     dev: str,
 ) -> Optional[Tuple[np.ndarray, np.ndarray]]:
-    path = DATA_DIR / dataset_filename(tech, dev)
+    path = Path(data_dir) / dataset_filename(tech, dev)
     if not path.exists():
         return None
     with np.load(str(path), allow_pickle=True) as data:
@@ -107,12 +115,13 @@ def _dataset_arrays(
 
 @lru_cache(maxsize=None)
 def _dataset_geometry(
+    data_dir: str,
     tech: str,
     dev: str,
     vt: str,
     temperature_k: float,
 ) -> Optional[np.ndarray]:
-    arrays = _dataset_arrays(tech, dev)
+    arrays = _dataset_arrays(data_dir, tech, dev)
     if arrays is None:
         return None
     geometry, labels = arrays
@@ -215,9 +224,18 @@ def _simple_circuit_geometries() -> List[EvalGeometry]:
     return points
 
 
-def check(max_l_ratio: float, max_nfin_ratio: float) -> List[Tuple[str, bool,
-                                                                  str]]:
+def default_data_dir() -> Path:
+    """Campaign-isolated dataset root when exported, else the package default."""
+    return Path(os.environ.get("BSIMAR_DATA_DIR", str(DATA_DIR)))
+
+
+def check(
+    max_l_ratio: float,
+    max_nfin_ratio: float,
+    data_dir: Optional[Path] = None,
+) -> List[Tuple[str, bool, str]]:
     results: List[Tuple[str, bool, str]] = []
+    root = str(data_dir if data_dir is not None else default_data_dir())
     points = [*_evaluation_geometries(), *_simple_circuit_geometries()]
 
     for point in points:
@@ -227,7 +245,7 @@ def check(max_l_ratio: float, max_nfin_ratio: float) -> List[Tuple[str, bool,
         label = (f"{point.label} VT={point.vt} T={point.temperature_k:g}K "
                  f"L={point.length * 1e9:.0f}nm NFIN={point.nfin:g}")
         geo = _dataset_geometry(
-            point.tech, point.dev, point.vt, point.temperature_k,
+            root, point.tech, point.dev, point.vt, point.temperature_k,
         )
         if geo is None:
             results.append((label, False,
@@ -269,20 +287,27 @@ def check(max_l_ratio: float, max_nfin_ratio: float) -> List[Tuple[str, bool,
     return results
 
 
-def main() -> int:
+def main(argv: Optional[List[str]] = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--max-l-ratio", type=float, default=DEFAULT_MAX_L_RATIO)
     p.add_argument("--max-nfin-ratio", type=float,
                    default=DEFAULT_MAX_NFIN_RATIO)
-    a = p.parse_args()
+    p.add_argument("--data-dir", type=Path, default=None,
+                   help="dataset root to check (default: $BSIMAR_DATA_DIR, "
+                        "else the package datasets directory)")
+    a = p.parse_args(argv)
+    data_dir = a.data_dir if a.data_dir is not None else default_data_dir()
+    if not data_dir.is_dir():
+        p.error(f"--data-dir is not a directory: {data_dir}")
 
     print("=" * 96)
     print("Benchmark-geometry coverage in the NN training grid (V7.4.2)")
     print("  A benchmark length is resolved only by knots in its OWN PDK bin —")
     print("  a neighbouring bin uses a different modelcard.")
+    print(f"  datasets: {data_dir}")
     print("=" * 96)
 
-    results = check(a.max_l_ratio, a.max_nfin_ratio)
+    results = check(a.max_l_ratio, a.max_nfin_ratio, data_dir)
     for label, ok, detail in results:
         print(f"  [{'PASS' if ok else 'FAIL'}] {label:34s} {detail}")
 

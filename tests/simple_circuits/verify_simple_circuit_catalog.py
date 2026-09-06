@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
+from typing import List, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -23,7 +24,8 @@ from tests.common.simple_circuit_catalog import (  # noqa: E402
 )
 
 
-def main() -> int:
+def main(argv: Optional[List[str]] = None) -> int:
+    parse_no_options(__doc__ or "", argv)
     failures: list[str] = []
 
     raw_decks = sorted(
@@ -298,6 +300,7 @@ def main() -> int:
             "nominal", "temp_cold", "temp_hot", "vdd_low", "vdd_high",
             "body_reverse", "pn_n3p2", "pn_n2p3", "joint_hot_lowvdd",
             "vt_alternate", "vt_asymmetric", "ln_20", "lp_16", "nfin_high",
+            "slew_slow", "load_heavy",
         }
         if set(CORNERS) != expected_corners:
             failures.append(
@@ -334,5 +337,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    parse_no_options(__doc__ or "")
     raise SystemExit(main())

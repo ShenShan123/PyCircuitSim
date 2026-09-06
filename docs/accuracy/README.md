@@ -36,6 +36,7 @@ TSMC5-only and leaves the Miller opamp as `ERROR`.
 | [`BSIM-AR-L76-simple-circuits.md`](BSIM-AR-L76-simple-circuits.md) | TSMC5 autoregressive recovery and capacity study |
 | [`simple-circuits-v2-topologies.md`](simple-circuits-v2-topologies.md) | held-out topology/corner and promotion contract |
 | [`device-and-feedback-coverage-v767.md`](device-and-feedback-coverage-v767.md) | device-integrity and feedback diagnostics |
+| [`v772-harness-audit.md`](v772-harness-audit.md) | gate-reachability, coverage, and contract-drift review |
 | [`v7610-harness-audit.md`](v7610-harness-audit.md) | metric-oracle, hierarchy, CLI, and stale-test audit |
 | [`v769-harness-audit.md`](v769-harness-audit.md) | harness coverage and engine-agreement audit |
 | [`v768-template-harness-audit.md`](v768-template-harness-audit.md) | template inventory and harness repairs |
@@ -86,6 +87,12 @@ done
 conda run -n pycircuitsim python scripts/v730_docs_build.py
 conda run -n pycircuitsim python scripts/v730_docs_build.py --check
 ```
+
+The job generator also writes `jobs_simple_v2.txt` (nominal held-out screen)
+and `jobs_canary.txt` (the source-relative-frame canary per checkpoint group);
+`scripts/v771_campaign.py --stage evaluate` dispatches all three pools into
+separate output roots after running `verify_data_geometry_coverage.py` once
+against the campaign dataset root.
 
 Raw evidence and generated artifacts remain under `results/` and are ignored by
 Git. Never combine partial passes or rewrite checkpoint provenance. Explicit

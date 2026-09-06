@@ -488,6 +488,24 @@ def _stamp_mosfet_dc(
         rhs[row] -= i_eq
 
 
+def _nr_step_converged(
+    deltas: np.ndarray,
+    scale_a: np.ndarray,
+    scale_b: np.ndarray,
+    reltol: float,
+    vntol: float,
+) -> bool:
+    """SPICE voltage convergence test, shared by the DC and transient loops.
+
+    Per node: ``|dV| < VNTOL + RELTOL * max(|scale_a|, |scale_b|)``; any node
+    at or above its threshold fails the iteration. The callers pass the two
+    voltages the threshold is scaled from (the new iterate and the previous
+    one), so this helper owns the formula and nothing else.
+    """
+    threshold = vntol + reltol * np.maximum(np.abs(scale_a), np.abs(scale_b))
+    return bool(not np.any(deltas >= threshold))
+
+
 #: V7.5.0 diagnostic: PYCIRCUITSIM_NR_TRACE=1 prints one line per NR
 #: iteration (worst node, delta, active limiters) in the transient loop.
 _NR_TRACE = os.environ.get("PYCIRCUITSIM_NR_TRACE", "0") == "1"
@@ -1219,10 +1237,9 @@ class DCSolver:
                     # threshold = vntol + reltol·max(|v_new|, |v_new−dv|),
                     # not converged if any dv ≥ threshold.)
                     if n_nodes:
-                        conv_thr = self.vntol + self.reltol * np.maximum(
-                            np.abs(new_v), np.abs(new_v - deltas_arr))
-                        all_converged = bool(
-                            not np.any(deltas_arr >= conv_thr))
+                        all_converged = _nr_step_converged(
+                            deltas_arr, new_v, new_v - deltas_arr,
+                            self.reltol, self.vntol)
                     else:
                         all_converged = True
 
@@ -2391,9 +2408,8 @@ class TransientSolver:
             # (Phase 2d: vectorised — dv = |sol−old| against
             # vntol + reltol·max(|sol|, |old|), any violation fails.)
             if n_nodes:
-                conv_thr = self.vntol + self.reltol * np.maximum(
-                    np.abs(sol_head), np.abs(v_arr))
-                all_converged = bool(not np.any(dv_arr >= conv_thr))
+                all_converged = _nr_step_converged(
+                    dv_arr, sol_head, v_arr, self.reltol, self.vntol)
             else:
                 all_converged = True
 

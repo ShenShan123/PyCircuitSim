@@ -35,6 +35,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from tests.common.base import parse_csv_choices  # noqa: E402
 from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, BenchTech, OpAmpParams,
     active_model_label, active_model_level, active_model_name, full_metrics,
@@ -415,15 +416,11 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--tech", default=",".join(BENCH_TECHS))
     args = ap.parse_args(argv)
-    techs = [t.strip().upper() for t in args.tech.split(",") if t.strip()]
     # audit B5l — a typo'd tech used to SKIP silently, so `--tech TSMC5,TSMC7X`
     # scored 1/1 and exited 0. Reject up front instead of shrinking the matrix.
-    unknown = [t for t in techs if t not in BENCH]
-    if not techs or unknown or len(techs) != len(set(techs)):
-        ap.error(
-            f"invalid or duplicate tech(s) {unknown or techs}; "
-            f"available: {list(BENCH)}"
-        )
+    techs = parse_csv_choices(
+        ap, args.tech, flag="--tech", choices=list(BENCH), normalize=str.upper,
+    )
     try:
         run_spec = RunSpec.from_environment()
         run_spec.validate_checkpoint_pins(Path(os.environ.get(

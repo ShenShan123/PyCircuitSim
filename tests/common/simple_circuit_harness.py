@@ -13,7 +13,9 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
+from typing import (
+    Any, Dict, FrozenSet, Iterable, List, Mapping, Optional, Sequence, Tuple,
+)
 
 import numpy as np
 
@@ -35,7 +37,14 @@ from tests.common.simple_circuit_catalog import (
 
 @dataclass(frozen=True)
 class Corner:
-    """Technology-independent stress applied before a deck is rendered."""
+    """Technology-independent stress applied before a deck is rendered.
+
+    ``slew_scale`` and ``load_scale`` stress the stimulus rather than the
+    device: they multiply the rendered input/clock edge times and the
+    capacitive output-load tokens (``_SLEW_TOKENS`` / ``_LOAD_TOKENS``).
+    Both adapters receive the same scaled deck, so parity is unchanged; the
+    corner applies only to an analysis whose rendered deck actually changes.
+    """
 
     name: str
     vdd_scale: float = 1.0
@@ -46,6 +55,64 @@ class Corner:
     l_nmos: Optional[float] = None
     l_pmos: Optional[float] = None
     vt_mode: str = ""
+    slew_scale: float = 1.0
+    load_scale: float = 1.0
+
+    @property
+    def stresses_stimulus(self) -> bool:
+        return self.slew_scale != 1.0 or self.load_scale != 1.0
+
+
+#: Rendered edge-time tokens a ``slew_scale`` corner multiplies.
+_SLEW_TOKENS: FrozenSet[str] = frozenset({
+    "INPUT_RISE", "INPUT_FALL", "CLOCK_RISE", "CLOCK_FALL", "SLEW",
+})
+#: Rendered capacitive output-load tokens a ``load_scale`` corner multiplies.
+#: Resistive loads, sampling/storage capacitors, and the composite PULSE
+#: specs of the L4 systems are deliberately not in this set: they define the
+#: circuit under test rather than what it drives.
+_LOAD_TOKENS: FrozenSet[str] = frozenset({
+    "OUTPUT_LOAD", "CHAIN_LOAD", "LOGIC_LOAD", "HOLD_LOAD", "CL",
+    "LDO_COUT", "DIFFPAIR_CAP", "RING_CLOAD",
+})
+_SPICE_TRAILING_VALUE = re.compile(
+    r"^([-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)([A-Za-z]*)$"
+)
+
+
+def _scale_spice_values(text: str, factor: float) -> str:
+    """Multiply the trailing numeric field of every line by ``factor``.
+
+    A stimulus or load token renders either a bare value (``20p``) or a
+    complete element line (``Cload out 0 10f``).  In both the quantity is the
+    last whitespace-separated field; its SPICE scale suffix is preserved.  A
+    line whose last field is not a number (an empty token, or a nested
+    ``<TOKEN>`` still to be expanded) is returned unchanged.
+    """
+    lines = []
+    for line in text.split("\n"):
+        fields = line.split()
+        if fields:
+            match = _SPICE_TRAILING_VALUE.match(fields[-1])
+            if match:
+                number, suffix = match.groups()
+                fields[-1] = f"{float(number) * factor:g}{suffix}"
+                line = " ".join(fields)
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _apply_stimulus_scales(
+    values: Dict[str, str], corner: Corner, names: Iterable[str],
+) -> None:
+    """Scale the stimulus/load tokens among ``names`` in place."""
+    for name in names:
+        if name not in values:
+            continue
+        if corner.slew_scale != 1.0 and name in _SLEW_TOKENS:
+            values[name] = _scale_spice_values(values[name], corner.slew_scale)
+        if corner.load_scale != 1.0 and name in _LOAD_TOKENS:
+            values[name] = _scale_spice_values(values[name], corner.load_scale)
 
 
 CORNERS: Dict[str, Corner] = {
@@ -66,6 +133,10 @@ CORNERS: Dict[str, Corner] = {
     "ln_20": Corner("ln_20", l_nmos=20e-9),
     "lp_16": Corner("lp_16", l_pmos=16e-9),
     "nfin_high": Corner("nfin_high", nfin=5, nfin_p=5),
+    # Stimulus corners (V7.7.2 audit A4): every transient and AC analysis was
+    # characterized at exactly one edge rate and one load per technology.
+    "slew_slow": Corner("slew_slow", slew_scale=4.0),
+    "load_heavy": Corner("load_heavy", load_scale=2.0),
 }
 
 
@@ -393,6 +464,30 @@ def analysis_applies_to_corner(
     if corner.name == "nominal":
         return True
     kinds = set(analysis.device_kinds)
+    if corner.stresses_stimulus:
+        # Edge rate is a transient observable only; capacitive loading moves
+        # transient edges and AC poles alike.  Either applies only when the
+        # rendered deck actually changes, so a template with no scalable
+        # token creates no duplicate nominal slot.
+        slew_kinds = {"tran"} if corner.slew_scale != 1.0 else set()
+        load_kinds = {"tran", "ac"} if corner.load_scale != 1.0 else set()
+        if analysis.kind in (slew_kinds | load_kinds):
+            probe = dict(corner.__dict__)
+            probe["name"] = "nominal"
+            if analysis.kind not in slew_kinds:
+                probe["slew_scale"] = 1.0
+            if analysis.kind not in load_kinds:
+                probe["load_scale"] = 1.0
+            nominal = _render_one(
+                case, analysis, base_bt, CORNERS["nominal"], reference=False,
+                baked_lib=Path("<unused>"), model_level=75,
+            )
+            stressed = _render_one(
+                case, analysis, base_bt, Corner(**probe), reference=False,
+                baked_lib=Path("<unused>"), model_level=75,
+            )
+            if nominal != stressed:
+                return True
     if corner.body_reverse_frac:
         tokens = set(deck_tokens(
             template_deck(case.template, tier=case.tier).read_text()
@@ -921,7 +1016,13 @@ def _render_one(
     for name, default in _SPEC_DEFAULTS.items():
         if name not in overrides:
             available[name] = _expand(default, available)
-    analysis_overrides = analysis.substitutions()
+    # Stimulus corners scale the base tokens before the experiment's own
+    # overrides are expanded, so a composite spec such as the inverter's
+    # ``<INPUT_RISE>``-bearing PULSE inherits the scaled edge, and a literal
+    # override such as ``Cload out 0 10f`` is scaled exactly once.
+    _apply_stimulus_scales(available, corner, list(available))
+    analysis_overrides = dict(analysis.substitutions())
+    _apply_stimulus_scales(analysis_overrides, corner, list(analysis_overrides))
     available.update(analysis_overrides)
     for name in analysis_overrides:
         available[name] = _expand(available[name], available)
@@ -2035,6 +2136,8 @@ METRIC_PROFILES: frozenset = frozenset(METRIC_CONTRACTS)
 _AGGREGATE_METRICS: Tuple[str, ...] = (
     "mre_pct", "r2", "nrmse_pct", "max_err",
 )
+#: Required on every AC analysis in addition to the magnitude aggregates.
+_AC_AGGREGATE_METRICS: Tuple[str, ...] = ("phase_maxerr_deg",)
 
 
 def validate_analysis_metrics(
@@ -2046,7 +2149,11 @@ def validate_analysis_metrics(
     if analysis.metric_profile not in METRIC_CONTRACTS:
         raise ValueError(f"unknown metric profile {analysis.metric_profile!r}")
     payload = {**metrics, **domain}
-    required = (*_AGGREGATE_METRICS, *METRIC_CONTRACTS[analysis.metric_profile])
+    required = (
+        *_AGGREGATE_METRICS,
+        *(_AC_AGGREGATE_METRICS if analysis.kind == "ac" else ()),
+        *METRIC_CONTRACTS[analysis.metric_profile],
+    )
     missing = sorted(name for name in required if name not in payload)
     if missing:
         raise ValueError(f"missing required metrics: {missing}")
@@ -2081,6 +2188,8 @@ def analysis_metric_vocabulary(analysis: AnalysisSpec) -> frozenset[str]:
     """Return every stable aggregate/domain key this profile can emit."""
     vocabulary = set(_AGGREGATE_METRICS)
     vocabulary.update(METRIC_CONTRACTS.get(analysis.metric_profile, ()))
+    if analysis.kind == "ac":
+        vocabulary.update(_AC_AGGREGATE_METRICS)
     if analysis.phase_align:
         vocabulary.add("phase_aligned_nrmse_pct")
     if analysis.metric_profile in {"logic_vtc", "logic_tran", "active_load_op"}:
@@ -2709,6 +2818,15 @@ def compare_traces(
                       if key.endswith("phase_aligned_nrmse_pct")]
     if aligned_values:
         metrics["phase_aligned_nrmse_pct"] = max(aligned_values)
+    # The aggregate NRMSE is taken on |H|, so a candidate with the right
+    # magnitude and the wrong phase scores clean on it.  Phase is the
+    # observable the learned transcapacitance matrix controls most directly;
+    # every AC analysis therefore carries the worst per-signal phase error as
+    # a required aggregate (V7.7.2 audit A3).
+    phase_values = [value for key, value in metrics.items()
+                    if key.endswith("_phase_maxerr_deg")]
+    if phase_values:
+        metrics["phase_maxerr_deg"] = max(phase_values)
     if analysis.metric_profile in ("logic_vtc", "logic_tran") \
             and len(analysis.signals) >= 2:
         internal_key = _metric_key(analysis.signals[-1])

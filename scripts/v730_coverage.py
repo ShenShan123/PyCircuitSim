@@ -30,6 +30,7 @@ if __package__:
         rc_of,
         structured_contract_error,
     )
+    from .v710_regate_jobs import DEVICE_SUITES
 else:
     from v710_regate_collect import (  # type: ignore[no-redef]
         STRUCTURED_SUITES,
@@ -39,6 +40,7 @@ else:
         rc_of,
         structured_contract_error,
     )
+    from v710_regate_jobs import DEVICE_SUITES  # type: ignore[no-redef]
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
@@ -73,14 +75,10 @@ SIMPLE_V2_SUITES: Dict[str, Tuple[str, ...]] = {
     case.campaign_suite: ("1",)
     for case in cases(score_version=SIMPLE_V2)
 }
+# Derived from the job generator so the coverage denominator and the dispatched
+# pool cannot name two different device-suite sets (V7.7.2 audit A2).
 NON_SIMPLE_SUITES: Dict[str, Tuple[str, ...]] = {
-    "verify_device_integrity": ("1",),
-    "verify_terminal_integrity": ("1",),
-    "verify_nn_subckt": ("1",),
-    "verify_nn_ac": ("1",),
-    "verify_circuit_opamp_ac": ("1",),
-    "verify_nn_multi_tech_dc": ("1",),
-    "verify_nn_multi_tech_tran": ("1",),
+    suite: ("1",) for suite in DEVICE_SUITES
 }
 # Historical callers import SUITES and expect the qualification denominator.
 SUITES: Dict[str, Tuple[str, ...]] = {

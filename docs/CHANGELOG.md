@@ -47,6 +47,42 @@ Consolidation verification: 635 project tests passed, no skips. Regression
 tests exercise the training-to-evaluation barrier and reject changed numerical
 source inputs. Two expected CPU pin-memory warnings remain.
 
+Harness audit closure (2026-09-05, `main` only; the in-flight release
+worktree is untouched). The [audit](accuracy/v772-harness-audit.md) records
+each finding and its closure. Two of its proposed fixes were wrong as written:
+the geometry guard takes no `--tech` and read the package dataset directory,
+not the campaign root, so its 463/463 had been measured on the wrong grid; the
+lifted-source canary takes `--techs` and emitted no result markers. The guard
+now honours `--data-dir`/`BSIMAR_DATA_DIR` and runs once as an evaluate-stage
+preflight (463/463 PASS against `results/v771_r2_data` by hand); the canary
+accepts `--tech`, emits structured rows, and is dispatched as its own 40-job
+`canary` pool so the clean denominator is unchanged. `v730_coverage.py` now
+derives its device-suite list from the job generator instead of keeping a
+fourth copy. Contract modules added: three-registry technology agreement with
+the inverter divergence pinned; hermetic solver numerics against closed forms
+(tolerances, both GMIN ladders, limiter and oscillation acceptance, the
+integration ladder, breakpoints, `.nodeset` branch selection, both latch
+basins under the reference and `refine_output` marches, the LEVEL=72 window
+and the LEVEL=75/76 support box); calibrated mutation oracles for 23 metric
+profiles; every AC analysis now requires `phase_maxerr_deg` (the collector
+derives it for pre-V7.7.2 rows); `slew_slow` and `load_heavy` stimulus
+corners; a byte-level freeze of all 760 nominal simple-v2 renders; `main.py`
+and training-reproducibility witnesses; and a self-enumerating `--help`/
+unknown-flag check over all 29 gates. Seven hand-rolled comma selectors were
+replaced by `parse_csv_choices` (`--tech "TSMC5,"` used to exit 0), the
+fixed-matrix gates parse inside `main(argv)`, `core_gates.py` was folded into
+its one caller, and the empty `tests/diag/` package was removed. AGENTS.md no
+longer claims ±5 V/±10 V outer clamps that no code implemented, and names the
+latch-basin contract that replaces the deleted GPU gate.
+
+One numerical defect was found and deliberately not fixed in this arm: after
+the first backward-Euler transient step, `Capacitor.update_voltage` leaves the
+stored current at zero, so the first trapezoidal step drops it (the LEVEL=75/76
+charge history carries it correctly). The closed-form RC contract is a strict
+expected failure until a fresh re-gated arm lands the fix. Verification: 785
+project tests passed, 2 expected failures, 0 skipped, 5 CPU-only Torch
+warnings; `verify_data_geometry_coverage` 463/463 on the campaign datasets.
+
 ### V7.7.1 — regeneration and retraining (in progress)
 
 Prepared an isolated ten-dataset, 80-bundle full-terminal refresh and a

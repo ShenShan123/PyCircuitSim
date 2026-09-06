@@ -487,7 +487,8 @@ def test_floating_bulk(work_dir: Path) -> bool:
 
 
 # ---------------------------------------------------------------------------
-def main() -> int:
+def main(argv: Optional[List[str]] = None) -> int:
+    parse_no_options(__doc__ or "", argv)
     RESULTS_DIR.mkdir(parents=True, exist_ok=True)
     print("\n" + "*" * 70)
     print("  AC Analysis Verification: PyCircuitSim vs NGSPICE (BSIM-CMG ground truth)")
@@ -513,5 +514,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    parse_no_options(__doc__ or "")
     sys.exit(main())

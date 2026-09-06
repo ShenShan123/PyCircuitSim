@@ -29,6 +29,7 @@ PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+from tests.common.base import parse_csv_choices  # noqa: E402
 from tests.common.circuit_benchmarks import (  # noqa: E402
     BENCH, BENCH_TECHS, RESULTS_BASE, active_model_label,
 )
@@ -41,22 +42,18 @@ from tests.common.simple_circuit_harness import (  # noqa: E402
 )
 
 
-def _comma_values(raw: str) -> List[str]:
-    return [value.strip() for value in raw.split(",") if value.strip()]
-
-
-def _select_cases(raw: str) -> Tuple[CircuitCase, ...]:
+def _select_cases(
+    parser: argparse.ArgumentParser, raw: str,
+) -> Tuple[CircuitCase, ...]:
+    """Resolve ``--case``; a simple-v1 id is unknown here, not silently run."""
     available = cases(score_version=SIMPLE_V2)
     if raw == "all":
         return available
-    selected = []
-    for case_id in _comma_values(raw):
-        case = get_case(case_id)
-        if case.score_version != SIMPLE_V2:
-            raise ValueError(
-                f"{case_id!r} belongs to {case.score_version}, not {SIMPLE_V2}")
-        selected.append(case)
-    return tuple(selected)
+    by_id = {case.case_id: case for case in available}
+    selected = parse_csv_choices(
+        parser, raw, flag="--case", choices=list(by_id),
+    )
+    return tuple(by_id[case_id] for case_id in selected)
 
 
 def _write_results(path: Path, results: Iterable[GateResult]) -> None:
@@ -132,34 +129,14 @@ def main(argv: List[str] | None = None) -> int:
         print("corners: " + ",".join(CORNERS))
         return 0
 
-    try:
-        selected_cases = _select_cases(args.case)
-    except ValueError as exc:
-        parser.error(str(exc))
-    if not selected_cases:
-        parser.error("--case must select at least one simple-v2 case")
-    selected_ids = [case.case_id for case in selected_cases]
-    if len(set(selected_ids)) != len(selected_ids):
-        parser.error(f"--case contains duplicates: {selected_ids}")
-    techs = _comma_values(args.tech)
-    if not techs:
-        parser.error("--tech must select at least one technology")
-    unknown_techs = [tech for tech in techs if tech not in BENCH]
-    if unknown_techs:
-        parser.error(
-            f"unknown technologies {unknown_techs}; available: {list(BENCH)}")
-    if len(set(techs)) != len(techs):
-        parser.error(f"--tech contains duplicates: {techs}")
+    selected_cases = _select_cases(parser, args.case)
+    techs = parse_csv_choices(
+        parser, args.tech, flag="--tech", choices=list(BENCH),
+        normalize=str.upper,
+    )
     corner_names = (list(CORNERS) if args.corner == "all"
-                    else _comma_values(args.corner))
-    if not corner_names:
-        parser.error("--corner must select at least one corner")
-    unknown_corners = [name for name in corner_names if name not in CORNERS]
-    if unknown_corners:
-        parser.error(
-            f"unknown corners {unknown_corners}; available: {list(CORNERS)}")
-    if len(set(corner_names)) != len(corner_names):
-        parser.error(f"--corner contains duplicates: {corner_names}")
+                    else parse_csv_choices(parser, args.corner, flag="--corner",
+                                           choices=list(CORNERS)))
     if args.reference_repeats < 1:
         parser.error("--reference-repeats must be >= 1")
 

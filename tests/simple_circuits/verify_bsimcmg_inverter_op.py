@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import sys
 from pathlib import Path
-from typing import Dict
+from typing import Dict, List, Optional
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 if str(PROJECT_ROOT) not in sys.path:
@@ -150,7 +150,8 @@ def test_inverter_op() -> bool:
     return all_pass
 
 
-def main() -> int:
+def main(argv: Optional[List[str]] = None) -> int:
+    parse_no_options(__doc__ or "", argv)
     print()
     print("*" * 70)
     print("  BSIM-CMG inverter OP: PyCircuitSim vs NGSPICE")
@@ -176,5 +177,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    parse_no_options(__doc__ or "")
     sys.exit(main())

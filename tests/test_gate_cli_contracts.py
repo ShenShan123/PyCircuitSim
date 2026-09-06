@@ -9,6 +9,23 @@ from tests.simple_circuits.verify_bsimcmg_tran_comprehensive import (
     main as bsimcmg_tran_main,
 )
 from tests.simple_circuits.verify_circuit_opamp import main as opamp_main
+from tests.simple_circuits.verify_circuit_opamp_ac import main as opamp_ac_main
+from tests.simple_circuits.verify_circuit_topologies import (
+    main as topologies_main,
+)
+from tests.simple_circuits.verify_nn_ac import main as nn_ac_main
+from tests.simple_circuits.verify_nn_multi_tech_tran import (
+    main as multi_tech_tran_main,
+)
+from tests.single_devices.verify_device_integrity import (
+    main as device_integrity_main,
+)
+from tests.single_devices.verify_nn_multi_tech_dc import (
+    main as multi_tech_dc_main,
+)
+from tests.single_devices.verify_terminal_integrity import (
+    main as terminal_integrity_main,
+)
 from tests.simple_circuits.verify_circuit_ring_osc import main as ring_main
 from tests.simple_circuits.verify_circuit_sram_snm import main as sram_main
 from tests.simple_circuits.verify_circuit_sweep import main as circuit_sweep_main
@@ -17,6 +34,9 @@ from tests.simple_circuits.verify_multi_tech import main as multi_tech_main
 from tests.simple_circuits.verify_nn_subckt import main as nn_subckt_main
 from tests.single_devices.verify_bsimcmg_dc_comprehensive import (
     main as bsimcmg_dc_main,
+)
+from tests.single_devices.verify_data_geometry_coverage import (
+    main as geometry_coverage_main,
 )
 from tests.single_devices.verify_nn_lifted_source_dc import (
     main as lifted_source_main,
@@ -39,9 +59,31 @@ GateMain = Callable[[list[str] | None], int]
         (multi_tech_main, ["--tech", "TSMC5,TSMC5"]),
         (lifted_source_main, ["--techs", ""]),
         (lifted_source_main, ["--techs", "TSMC5,TSMC5"]),
+        # The campaign driver passes ``--tech``; the canary must read it.
+        (lifted_source_main, ["--tech", "TSMC5,"]),
+        (lifted_source_main, ["--tech", "TSMC5,unknown"]),
+        (geometry_coverage_main, ["--data-dir", "/nonexistent/datasets"]),
         (nn_subckt_main, ["--analysis", "dc,unknown"]),
         (nn_subckt_main, ["--analysis", "dc,dc"]),
         (nn_subckt_main, ["--analysis", "dc,"]),
+        # V7.7.2: the former hand-rolled selectors dropped an empty field, so
+        # ``--tech "TSMC5,"`` ran the valid subset and exited 0.
+        (device_integrity_main, ["--tech", "TSMC5,"]),
+        (device_integrity_main, ["--device", "nmos,nmos"]),
+        (device_integrity_main, ["--corner", "nominal,unknown"]),
+        (terminal_integrity_main, ["--tech", "TSMC5,"]),
+        (terminal_integrity_main, ["--device", "nmos,unknown"]),
+        (topologies_main, ["--tech", "TSMC5,"]),
+        (topologies_main, ["--case", "current_mirror,"]),
+        (topologies_main, ["--case", "ring_osc"]),        # simple-v1, not v2
+        (topologies_main, ["--corner", "nominal,nominal"]),
+        (nn_ac_main, ["--tech", "TSMC5,"]),
+        (nn_ac_main, ["--device", "nmos,"]),
+        (opamp_ac_main, ["--tech", "TSMC5,"]),
+        (multi_tech_dc_main, ["--tech", "TSMC5,"]),
+        (multi_tech_dc_main, ["--tech", "ASAP7"]),
+        (multi_tech_tran_main, ["--tech", "TSMC5,"]),
+        (multi_tech_tran_main, ["--analysis", "vtc,"]),
     ),
 )
 def test_parametric_gate_rejects_invalid_or_duplicate_selection(
