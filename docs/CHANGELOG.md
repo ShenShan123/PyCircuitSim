@@ -104,6 +104,18 @@ four ASAP7 LEVEL=72 transient comparisons passed against NGSPICE; all six
 TSMC12 NMOS/PMOS reference-canary curves were complete. Five existing
 CPU pin-memory warnings remain.
 
+Second audit follow-up (2026-09-06, `main` only): checked the corrected
+checkout against its own audit document, re-measured statement coverage
+(collected suite 64 %, union with the four LEVEL=72 gates 69 %; `solver.py`
+80 % against 36 % at the audited baseline), and added witnesses for three
+AGENTS.md contracts no pass had enumerated: no GMIN in the AC stamp (a
+100 GΩ / 1 fF node would read 0.909 instead of 1.000), LTE refinement opt-in,
+and the per-tech local variant vocabulary at inference (the existing resolver
+test used TSMC5, whose local and universal codes coincide). The stale
+"still not covered" text was rewritten. Verification: 838 tests passed, 0
+skipped, 0 expected failures; the four LEVEL=72 gates and the geometry guard
+(463/463) passed. No campaign was run; both worktrees untouched.
+
 ### V7.7.1 — regeneration and retraining (in progress)
 
 Prepared an isolated ten-dataset, 80-bundle full-terminal refresh and a

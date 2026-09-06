@@ -437,6 +437,59 @@ def test_automatic_resolution_skips_incomplete_larger_bundle(
     assert Path(path) == medium_model
 
 
+@pytest.mark.parametrize(("level", "tag"), ((75, "dnf"), (76, "tff")))
+def test_resolved_stem_decides_the_variant_vocabulary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    level: int,
+    tag: str,
+) -> None:
+    """A per-tech stem must map ``(tech, VT)`` through its local vocabulary.
+
+    AGENTS.md: per-technology models carry a local embedding vocabulary, so
+    the parser maps ``(scope, tech, variant)`` through ``local_variant_code``.
+    TSMC5 cannot witness this — its local codes equal its universal ones — so
+    this uses TSMC7, where ``svt`` is 0 locally and not 0 universally.  A
+    resolver that lost the scope would index the wrong embedding row and run.
+    """
+    import neural_network.config as nn_config
+
+    monkeypatch.setattr(nn_config, "CHECKPOINT_DIR", tmp_path)
+    for name in (
+        f"PYCIRCUITSIM_NN_CHECKPOINT_{tag.upper()}_NMOS",
+        "PYCIRCUITSIM_NN_CHECKPOINT_NMOS",
+        "PYCIRCUITSIM_NN_CHECKPOINT_OVERRIDE",
+    ):
+        monkeypatch.delenv(name, raising=False)
+
+    def complete_bundle(stem: str) -> Path:
+        model = tmp_path / f"{stem}_best.pt"
+        model.touch()
+        (tmp_path / f"{stem}_norm.npz").touch()
+        model.with_name(model.name + ".complete").touch()
+        if level == 76:
+            (tmp_path / f"{stem}_config.npz").touch()
+        return model
+
+    def resolve() -> tuple:
+        return _resolve_nn_checkpoint_uncached(
+            level=level, device_key="nmos", tech_key="tsmc7", vt_key="svt",
+            explicit_path=None,
+        )
+
+    universal_code = nn_config.tech_variant_to_code("tsmc7", "svt")
+    local_code = nn_config.LOCAL_VARIANT_CODES["tsmc7"][("tsmc7", "svt")]
+    assert local_code == 0 and universal_code != local_code
+
+    universal = complete_bundle(f"refac_{tag}_large_nmos")
+    path, code, _name, scope = resolve()
+    assert (Path(path), scope, code) == (universal, "universal", universal_code)
+
+    per_tech = complete_bundle(f"tsmc7_{tag}_small_nmos")
+    path, code, _name, scope = resolve()
+    assert (Path(path), scope, code) == (per_tech, "tsmc7", local_code)
+
+
 def test_netlist_temperature_rebinds_both_full_terminal_families(
     family: FullTerminalFamily,
     checkpoint: Path,

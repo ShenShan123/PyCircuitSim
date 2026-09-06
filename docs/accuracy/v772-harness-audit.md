@@ -8,9 +8,11 @@ worktrees.
 
 Status: the original closure on `main` was re-audited on 2026-09-05;
 the [follow-up](#follow-up-audit-and-fixes) fixes the deferred defect and
-additional gaps in that closure. The in-flight V7.7.2 release worktree is
-unchanged. The qualification
-denominators (600 clean, 1,200 simple-v2) did not move. The findings below are
+additional gaps in that closure. A [second follow-up](#second-follow-up-audit)
+on 2026-09-06 checked the corrected checkout against this document,
+re-measured coverage, and added witnesses for three contracts neither earlier
+pass had enumerated. The in-flight V7.7.2 release worktree is unchanged. The
+qualification denominators (600 clean, 1,200 simple-v2) did not move. The findings below are
 kept as written; the closure section records what was actually done and where
 the audit's own proposed fix was wrong.
 
@@ -411,20 +413,27 @@ protects comparison from this pass onward.
 
 ## Still not covered
 
+Current as of the [second follow-up](#second-follow-up-audit) (2026-09-06);
+the earlier versions of this list are in Git history.
+
 - The bias-fanout scale ladder remains NMOS-only, as the V7.6.10 audit
   recorded.
 - `simple-v2` remains diagnostic; its thresholds and three-repeat LEVEL=72
   stability matrix are still not frozen.
-- Of the B6 contracts, the stiffness trip to BDF-2, a retry shrinking the
-  attempted step, and commit-after-accept have no hermetic witness: each
-  needs a nonlinear step that fails, which no closed-form device produced.
-- The backward-Euler to trapezoidal seam in `Capacitor.update_voltage` is a
-  known defect, pinned as a strict expected failure and not fixed in this arm.
 - The `circuit_sweep.py` driver is still reachable only by hand; its stimulus
-  axis now has a catalog equivalent, its stage-count axis does not.
-- Statement coverage was not re-measured after closure.
+  axis now has a catalog equivalent, its stage-count axis does not. The twelve
+  manual gates stay manual by decision.
+- `simulation.py`, `visualizer.py` and `logger.py` stay at 11 %, 8 % and 21 %
+  in the collected-suite measurement because the `main.py` witness runs the
+  dispatcher in a subprocess the tracer does not follow. Run directly on the
+  same deck they reach 33 %, 28 % and 66 %. Nothing else in the harness calls
+  `run_simulation`.
+- The 40-job `canary` pool has not been dispatched: training is still running
+  and the pool must run from the audited source into its own output root
+  after it finishes.
 - No numerical campaign was run in this pass. Every accuracy number in
-  `docs/accuracy/` is untouched by it.
+  `docs/accuracy/` is untouched by it, and the corrected solver still needs
+  the separately provenanced evaluation arm the follow-up requires.
 
 ## Verification evidence
 
@@ -469,7 +478,7 @@ for V7.7.2 from the audited source afterwards.
 | A3 | `compare_traces` reports `phase_maxerr_deg` (worst per-signal phase error) and `validate_analysis_metrics` requires it on every AC analysis. A 30° magnitude-identical rotation reads 0 NRMSE and exactly 30° on all 19 analyses. The collector derives the aggregate from per-signal keys for rows written before this change. |
 | A4 | `Corner.slew_scale` / `load_scale`; corners `slew_slow` (4×) and `load_heavy` (2×). Scaling happens before analysis overrides expand, so the inverter's composite PULSE and a literal `Cload out 0 10f` are each scaled once; a corner applies only when the rendered deck changes. Capacitive loads only; sampling/storage capacitors, resistive loads and the L4 composite PULSE specs are out of scope by design. `circuit_sweep.py` was not merged or deleted. |
 | A5 | All 760 nominal simple-v2 candidate/reference renders are frozen in `tests/frozen_simple_v2_renders.py`; a mismatch names the deck. |
-| B6 | `test_solver_numerics_contracts.py`: pinned RELTOL/VNTOL/GMIN, the convergence formula through a shared helper now used by both NR loops, both GMIN ladders by recorded levels, limiter-live rejection, oscillation acceptance within tolerance and rejection of a 1 V two-cycle, BE first step in every mode, exact BE→BDF-2 for `gear2`, PULSE breakpoint coalescing. Not covered: the stiffness trip itself, step-shrinking retries, and commit-after-accept, which need a failing nonlinear step no hermetic device produced. **Defect found**: after the BE first step `Capacitor.update_voltage` leaves `_i_prev` at zero, so the first trapezoidal step drops the BE current (10% low on an RC step after five steps; the LEVEL=75/76 charge path is correct). Pinned as a strict expected failure; a numerical fix requires a fresh re-gated arm. |
+| B6 | `test_solver_numerics_contracts.py`: pinned RELTOL/VNTOL/GMIN, the convergence formula through a shared helper now used by both NR loops, both GMIN ladders by recorded levels, limiter-live rejection, oscillation acceptance within tolerance and rejection of a 1 V two-cycle, BE first step in every mode, exact BE→BDF-2 for `gear2`, PULSE breakpoint coalescing. Not covered: the stiffness trip itself, step-shrinking retries, and commit-after-accept, which need a failing nonlinear step no hermetic device produced. **Defect found**: after the BE first step `Capacitor.update_voltage` leaves `_i_prev` at zero, so the first trapezoidal step drops the BE current (10% low on an RC step after five steps; the LEVEL=75/76 charge path is correct). Pinned as a strict expected failure; a numerical fix requires a fresh re-gated arm. *Superseded by the [follow-up](#follow-up-audit-and-fixes): the defect is fixed and the three uncovered contracts have hermetic witnesses.* |
 | B7 | `.nodeset` on a closed-form bistable node selects `±1/√2` from a `±0.5 V` hint, resolves names case-insensitively, ignores unknown nodes, keeps the plain solve on a failed clamp, and releases the clamp components. |
 | B8 | No code ever implemented ±5 V/±10 V clamps (no commit in history has them). AGENTS.md now states the real bounds: `_NR_LIM_WINDOW = 2.5` for LEVEL=72, read by a test on the tracked ASAP7 card, and the LEVEL=75/76 normalization box, read by a test on the synthetic checkpoint. |
 | B9 | The deleted GPU/batch flags no longer exist. A hermetic bistable cell holds both stored states through the DC hard-`.ic` path and through the reference and `refine_output` transient marches; AGENTS.md names that contract and asks any new basin-perturbing knob to join its parametrization. |
@@ -543,3 +552,95 @@ the existing source-equivalence check must reject treating them as the same
 evaluation arm. A complete, separately provenanced evaluation of the corrected
 solver is required before publishing corrected V7.7.2 accuracy results. The
 in-flight arm retains its original source and evidence.
+
+## Second follow-up audit
+
+Reviewed source: `3f2e1e6` (`main`, clean tree), 2026-09-06. Training and the
+V7.7.2 consolidator were still running in their worktrees and were not
+touched. This pass asked whether the document above matched the checkout it
+described, re-measured what the closure had left unmeasured, and repeated the
+audit's second question — which AGENTS.md contracts have no test — over the
+sections the first two passes had not enumerated.
+
+Each row of the follow-up table was checked against the code: the accepted
+capacitor current is committed for BE and BDF-2 in `Capacitor.update_voltage`;
+the variable-step BDF-2 coefficients live in `pycircuitsim/integration.py` and
+read the previous *accepted* interval in both the passive and the
+full-terminal stamps; the final interval ends at the stop time; a positive
+span schedules at least one interval; the canary requires six rows per
+checkpoint group and the collector expects them; both legacy orchestrators
+exit 1 on any ERROR. No follow-up claim was found wrong.
+
+### Stale text corrected
+
+- The "Still not covered" list still said the three B6 transient contracts had
+  no hermetic witness and that the BE-to-trapezoidal seam was an unfixed
+  expected failure. Both were closed by the follow-up; the list is rewritten
+  above.
+- The B6 closure row now says it is superseded instead of contradicting the
+  follow-up table beneath it.
+- `tests/README.md` did not list `test_device_metric_availability.py`, which
+  reached `main` with the V7.7.1 device-metric fix.
+
+### Contracts found without a witness
+
+| Contract (AGENTS.md) | Why nothing could notice drift | Witness added |
+|---|---|---|
+| "Do not add an external AC GMIN that is absent from the NGSPICE problem" | Stated only as a comment in `ACSolver`. Deck parity cannot see it: no card differs. | `test_ac_solve_stamps_no_gmin_absent_from_the_ngspice_problem`: a 100 GΩ / 1 fF low-pass reads \|H(1 Hz)\| = 1 to 1e-9. A 1e-12 S stamp at that node reads 0.909, checked by mutation. |
+| "Keep LTE refinement opt-in" | No test read the defaults; a flipped default would move every transient number with no gate naming the cause. | `test_lte_refinement_is_opt_in` pins `refine_output=False`, `max_substeps=1`, no `refine_max_dt`, and the `PYCIRCUITSIM_TRAN_REFINE=1` switch. |
+| "At inference, map `(scope, tech, variant)` through `local_variant_code()`" | The resolver test discarded the returned code and used TSMC5, whose local codes equal its universal ones, so a resolver that lost the scope passed. | `test_resolved_stem_decides_the_variant_vocabulary`: for TSMC7 `svt`, a `refac_*` stem yields the universal code and a `tsmc7_*` stem yields local code 0, for both families. |
+
+Contracts checked and found already witnessed: the augmented branch-current
+tail in the KCL residual and `NN_PY` rejection (`verify_accuracy_campaign_tools`,
+run inside `pytest`); the dataset rejection reasons `terminal_current_over_1A`,
+`non_finite_output` and `internal_node_solve_failed`; `_require_nn_caps`;
+`unknown_code_id`; `_is_mosfet`; `invalidate_topology`; the pinned-thread
+campaign contract; `PHYSICAL_DIRECTIVES`; the `cshunt`/`rshunt` non-support.
+
+### Re-measured
+
+| Surface | After closure (`9964963`) | After this pass |
+|---|---|---|
+| Collected `pytest -q tests` | 785 passed, 2 expected failures | 838 passed, 0 expected failures, 0 skipped, 16 s |
+| Root contract modules (`test_*`) | 21 modules, 7,953 lines | 25 modules, 8,712 lines |
+| `tests/**/*.py` | 33,411 lines | 34,247 lines |
+| `pycircuitsim/` | 9,951 lines | 9,992 lines (`integration.py` added) |
+| Gate scripts | 29 | 29, still enumerated by the collected inventory check |
+
+Statement coverage of `pycircuitsim/`, the same two measurements as the
+[baseline](#measured-baseline) (`coverage` 7.16.0, CPU, one thread), with the
+`cb23323` figure in parentheses:
+
+| Module | stmts | collected suite | union with 4 L72 gates |
+|---|---:|---:|---:|
+| `solver.py` | 1591 | 80 % (36 %) | 81 % (60 %) |
+| `parser.py` | 649 | 66 % (66 %) | 77 % (77 %) |
+| `models/mosfet_cmg.py` | 276 | 39 % (17 %) | 75 % (75 %) |
+| `models/mosfet_directnet_full.py` | 264 | 91 % (83 %) | 91 % (83 %) |
+| `models/passive.py` | 280 | 66 % (50 %) | 69 % (68 %) |
+| `simulation.py` | 388 | 11 % (11 %) | 11 % (11 %) |
+| `logger.py` | 107 | 21 % (21 %) | 21 % (21 %) |
+| `visualizer.py` | 136 | 8 % (7 %) | 8 % (7 %) |
+| all of `pycircuitsim/` | 3859 | 64 % | 69 % |
+
+The solver gain is the hermetic B6/B7/B9 modules and the transient-piece
+contracts reaching the NR loops, the GMIN ladders and the piece march in
+process. `simulation.py` did not move for the reason given under
+[Still not covered](#still-not-covered); with `main.py` traced directly the
+union reaches 73 %. The baseline did not record a total, so the last row has
+no comparison.
+
+### Verification
+
+CPU, OMP/MKL/OpenBLAS pinned to one thread, GPUs hidden.
+
+| Check | Result |
+|---|---|
+| Collected suite | 838 passed, 0 skipped, 0 expected failures; five CPU pin-memory warnings |
+| New AC witness against a mutated solve | clean 1e-19 relative error; with a 1e-12 S stamp 9.1 %, so the 1e-9 tolerance is decisive |
+| `verify_bsimcmg_op`, `verify_bsimcmg_inverter_op`, `verify_subckt`, `verify_ac` | 2/2, 1/1, 11/11, 3/3 PASS on NGSPICE 45.2 |
+| `verify_data_geometry_coverage --data-dir results/v771_r2_data` | 463/463 PASS |
+| `main.py` on the RC control deck | exit 0; CSV, listing and plot written |
+| Repository state | `git diff --check` clean; both campaign worktrees untouched; training workers and the consolidator still running |
+
+No accuracy number, promotion or retraction is claimed by this pass.

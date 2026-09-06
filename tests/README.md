@@ -34,7 +34,7 @@ need no simulator and run in the collected `pytest` suite. Each owns one seam:
 | `test_template_tier_contracts.py` | tier resolution and the frozen token defaults |
 | `test_deck_engine_compatibility.py` | cards and value syntax both engines must read identically |
 | `test_core_device_contracts.py` | the non-compact-model core: `Inductor`, integration method, current-source sign, transient branch currents, temperature rebinding, the NN certified-support bound |
-| `test_solver_numerics_contracts.py` | the solver contracts AGENTS.md states, against closed forms: tolerances and physical GMIN, the GMIN ladders, limiter and oscillation acceptance, the integration ladder, breakpoints, `.nodeset`, the latch basin, the LEVEL=72 window |
+| `test_solver_numerics_contracts.py` | the solver contracts AGENTS.md states, against closed forms: tolerances and physical GMIN, the GMIN ladders, limiter and oscillation acceptance, the integration ladder, breakpoints, opt-in LTE refinement, `.nodeset`, the latch basin, the LEVEL=72 window, no GMIN in the AC stamp |
 | `test_transient_piece_contracts.py` | integration startup on accepted pieces and positive spans shorter than the output stride |
 | `test_canary_contracts.py` | fresh complete reference/candidate sweeps, both source-frame polarities, current sign, diagnostic errors, and family banners |
 | `test_phase_report_contracts.py` | AC phase errors survive current and legacy structured rows into the human report |
@@ -44,7 +44,8 @@ need no simulator and run in the collected `pytest` suite. Each owns one seam:
 | `test_subcircuit_harness_contracts.py` | the standalone hierarchy harness |
 | `test_full_terminal_solver_boundary.py` | mandatory four-terminal DC/transient/AC solver seam |
 | `test_full_terminal_*` | full-terminal dataset, family, and corridor contracts |
-| `test_full_terminal_model_contracts.py` | both NN families, closure, multipliers, parser selection, and artifact integrity |
+| `test_full_terminal_model_contracts.py` | both NN families, closure, multipliers, parser selection and the per-tech local vocabulary, and artifact integrity |
+| `test_device_metric_availability.py` | an unavailable candidate slope is a scientific `error` row, never a crash and never a hidden convergence failure |
 | `test_dataset_and_campaign_contracts.py` | dataset splits, provenance, and campaign coverage |
 | `test_v771_campaign.py` | V7.7.1/V7.7.2 resume, GPU identity, release isolation, and predecessor dependency |
 | `test_campaign_source_equivalence.py`, `test_campaign_training_handoff.py` | numerical-source identity and evaluation after successful training |

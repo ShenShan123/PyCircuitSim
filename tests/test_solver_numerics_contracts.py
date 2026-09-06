@@ -30,7 +30,9 @@ from pycircuitsim.models.passive import (
     Capacitor, PulseVoltageSource, Resistor, VoltageSource,
 )
 import pycircuitsim.solver as solver_module
-from pycircuitsim.solver import DCSolver, TransientSolver, _nr_step_converged
+from pycircuitsim.solver import (
+    ACSolver, DCSolver, TransientSolver, _nr_step_converged,
+)
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
@@ -136,6 +138,25 @@ def test_default_tolerances_and_physical_gmin_are_pinned() -> None:
     assert (dc.reltol, dc.vntol, dc.gmin) == (1e-4, 1e-7, 1e-12)
     assert (tran.reltol, tran.vntol, tran.gmin) == (1e-4, 1e-7, 1e-12)
     assert tran.gmin_final == 1e-12
+
+
+def test_lte_refinement_is_opt_in(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The scored transient contract is the fixed output grid.
+
+    AGENTS.md treats output-stride and breakpoint refinement as fidelity
+    controls that require re-gating, so a flipped default would move every
+    published transient number without any gate naming the cause.  The only
+    switches are the constructor argument and ``PYCIRCUITSIM_TRAN_REFINE=1``.
+    """
+    monkeypatch.delenv("PYCIRCUITSIM_TRAN_REFINE", raising=False)
+    monkeypatch.delenv("PYCIRCUITSIM_TRAN_REFINE_MAXDT", raising=False)
+    circuit = _series_circuit(_linear_law(1e-3))
+    tran = TransientSolver(circuit, t_stop=1e-9, dt=1e-11)
+    assert tran.refine_output is False
+    assert tran.max_substeps == 1
+    assert tran._refine_max_dt is None
+    monkeypatch.setenv("PYCIRCUITSIM_TRAN_REFINE", "1")
+    assert TransientSolver(circuit, t_stop=1e-9, dt=1e-11).refine_output is True
 
 
 def test_convergence_test_is_the_spice_form_on_both_scales() -> None:
@@ -638,3 +659,35 @@ def test_level72_evaluation_window_is_the_named_constant() -> None:
     inside = {"d": 0.7, "g": 0.7, "s": 0.0, "b": 0.0}
     assert device.nr_limit_voltages(inside) is inside
     assert device._nr_limited is False
+
+
+# ---------------------------------------------------------------------------
+# AC: no external GMIN in the small-signal problem
+# ---------------------------------------------------------------------------
+def test_ac_solve_stamps_no_gmin_absent_from_the_ngspice_problem() -> None:
+    """A 100 GΩ / 1 fF low-pass must read |H(1 Hz)| = 1 to nine digits.
+
+    AGENTS.md: the physical 1e-12 S GMIN is a Newton aid for the operating
+    point, not part of ``Y = G + jωC``.  At a high-impedance node the two are
+    the same order, so a GMIN carried into the AC stamp would read 0.909 here
+    where NGSPICE reads 1.000 — and deck parity cannot see it, because no
+    card differs.  The closed form is the reference, not the solver.
+    """
+    resistance, capacitance = 1e11, 1e-15
+    circuit = Circuit()
+    circuit.add_component(
+        VoltageSource("V1", ["in", "0"], 0.0, ac_magnitude=1.0),
+    )
+    circuit.add_component(Resistor("R1", ["in", "out"], resistance))
+    circuit.add_component(Capacitor("C1", ["out", "0"], capacitance))
+
+    frequencies = np.asarray([1.0, 1e3, 1e6])
+    result = ACSolver(
+        circuit, dc_solution={"in": 0.0, "out": 0.0, "0": 0.0},
+    ).solve(frequencies)
+
+    omega = 2.0 * np.pi * frequencies
+    expected = 1.0 / (1.0 + 1j * omega * resistance * capacitance)
+    np.testing.assert_allclose(result["out"], expected, rtol=1e-9, atol=0.0)
+    with_gmin = abs((1.0 / resistance) / (1.0 / resistance + 1e-12))
+    assert with_gmin < 0.91  # the deviation the assertion above would catch
