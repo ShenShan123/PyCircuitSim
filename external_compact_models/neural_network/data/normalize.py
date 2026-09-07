@@ -1,7 +1,7 @@
 """Normalization for BSIMAR / DirectNet training data.
 
-Two normalizers, one tiny protocol — every chain-rule conversion lives
-here, so trainers and the simulator never reach into stats fields.
+Shared training transforms and persisted statistics. The runtime models own
+conversion of their full-terminal Jacobians into physical units.
 
 - ``ZScoreNormalizer``  — inputs and outputs use z-score. DirectNet baseline.
 - ``AsinhNormalizer``   — inputs z-score; outputs ``arcsinh(y/s_k) + zscore``
@@ -13,12 +13,9 @@ Both expose the same API:
     n.normalize_inputs(inputs, geometry)    # raw -> normalised
     n.normalize_outputs(outputs)            # raw -> normalised
     n.denormalize_outputs(y_norm)           # normalised -> raw
-    n.denormalize_derivative(deriv_norm,    # ∂y_norm/∂x_norm at y_phys
-                             out_idx, in_idx, y_phys)
-                                            #   -> ∂y_phys/∂x_phys
 
 Persistence is handled by ``NormStats`` which carries an explicit ``mode``
-field; ``NormStats.load(path)`` returns the matching normalizer.
+field; ``normalizer_from_stats`` wraps loaded statistics in the matching normalizer.
 """
 
 from __future__ import annotations
@@ -71,8 +68,8 @@ class NormStats:
 
     ``mode``            — "zscore" | "asinh"
     ``input_mean/std``  — z-score over the 7-col continuous input.
-    ``input_min/max``   — training-domain bounds (metadata only;
-                          used by the simulator to clamp inference inputs).
+    ``input_min/max``   — training-domain bounds; the runtime rejects inputs
+                          outside this support box.
     ``output_mean/std`` — in raw space (zscore) or asinh-space (asinh).
     ``asinh_scale``     — per-target s_k (asinh mode only).
     ``output_columns``  — names of the output columns this normalizer
@@ -180,26 +177,6 @@ class _NormalizerBase:
         u = y_norm.astype(np.float64) * s.output_std + s.output_mean
         return self._from_inner(u)
 
-    def denormalize_derivative(
-        self,
-        deriv_norm: float,
-        out_idx: int,
-        in_idx: int,
-        y_phys: float,
-    ) -> float:
-        """∂y_norm/∂x_norm  →  ∂y_phys/∂x_phys.
-
-        Single source of truth for the chain rule. Subclasses provide
-        the output-side jacobian factor.
-        """
-        s = self._require_stats()
-        in_std = float(s.input_std[in_idx])
-        if in_std < 1e-12:
-            return 0.0
-        out_std = float(s.output_std[out_idx])
-        out_factor = self._output_jacobian_factor(out_idx, y_phys)
-        return float(deriv_norm) * out_std * out_factor / in_std
-
     # — subclass hooks —
 
     def _fit_outputs(
@@ -214,10 +191,6 @@ class _NormalizerBase:
 
     def _from_inner(self, inner: np.ndarray) -> np.ndarray:
         """Inverse of _to_inner."""
-        raise NotImplementedError
-
-    def _output_jacobian_factor(self, out_idx: int, y_phys: float) -> float:
-        """d(y_phys)/d(y_inner): identity for zscore, sqrt(s²+y²) for asinh."""
         raise NotImplementedError
 
     # —
@@ -245,9 +218,6 @@ class ZScoreNormalizer(_NormalizerBase):
 
     def _from_inner(self, inner):
         return inner
-
-    def _output_jacobian_factor(self, out_idx, y_phys):
-        return 1.0
 
 
 # ── Asinh + z-score normalizer (Transformer) ───────────────────────────────
@@ -291,11 +261,6 @@ class AsinhNormalizer(_NormalizerBase):
     def _from_inner(self, inner):
         s = self._require_stats()
         return s.asinh_scale[None, :] * np.sinh(inner)
-
-    def _output_jacobian_factor(self, out_idx, y_phys):
-        s = self._require_stats()
-        scale = float(s.asinh_scale[out_idx])
-        return float(np.sqrt(scale * scale + y_phys * y_phys))
 
 
 # ── Factory + back-compat ──────────────────────────────────────────────────

@@ -35,7 +35,7 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
 )
 from tests.common.gate_result import GateResult, result_exit_code  # noqa: E402
 from tests.common.simple_circuit_catalog import (  # noqa: E402
-    SIMPLE_V2, CircuitCase, cases, get_case,
+    SIMPLE_V2, CircuitCase, cases,
 )
 from tests.common.simple_circuit_harness import (  # noqa: E402
     CORNERS, RunSpec, applicable_analyses, run_case,

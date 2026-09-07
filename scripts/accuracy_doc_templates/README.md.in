@@ -6,7 +6,9 @@ See [`methodology.md`](methodology.md) for gate and evidence rules.
 ## Current NN policy
 
 DirectNet-Full LEVEL=75 is the default NN path. BSIM-AR-Full LEVEL=76 is the
-autoregressive alternative. LEVEL=73/74 reports are historical evidence only.
+autoregressive alternative. Retired LEVEL=73/74 reports are available in Git
+history; [the changelog](../CHANGELOG.md#v775--repository-cleanup) records their
+last revision.
 
 ## Current reports
 

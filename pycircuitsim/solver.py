@@ -609,7 +609,6 @@ class DCSolver:
         # True while the clamped (MODEINITFIX) pre-solve is running, so the
         # released re-solve and the gmin-fallback recursion do not re-enter it.
         self._in_nodeset_clamp: bool = False
-        self.last_solution: Optional[Dict[str, float]] = None
         self._owns_logger = False  # Track if we created the logger (for cleanup)
         # V5 Phase A retry-design: True if the last `solve()` reached
         # SPICE convergence AND the returned voltage vector is finite.
@@ -716,9 +715,6 @@ class DCSolver:
             # Linear solve either succeeds or raises — if we got here,
             # converged.
             self._last_solve_converged = True
-
-        # Store the solution for potential reuse
-        self.last_solution = solution.copy()
 
         return solution
 
@@ -1684,15 +1680,6 @@ class DCSolver:
                     if hasattr(component, 'set_current'):
                         component.set_current(current)
                 vs_idx += 1
-
-    def get_last_solution(self) -> Optional[Dict[str, float]]:
-        """
-        Get the last computed solution from this solver.
-
-        Returns:
-            Dictionary mapping node names to voltages, or None if solve() hasn't been called yet
-        """
-        return self.last_solution
 
     def __repr__(self) -> str:
         """String representation of the solver."""

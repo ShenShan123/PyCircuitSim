@@ -339,8 +339,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         print("A FAIL means the benchmark circuits ask the model for a "
               "geometry the training data never sampled inside the relevant\n"
               "PDK bin. Regenerate with `--max-l-ratio "
-              f"{a.max_l_ratio}` (see docs/plans/2026-08-10-v742-bsimar-"
-              "capacity.md).")
+              f"{a.max_l_ratio}` (see README.md, dataset generation).")
     print("=" * 96)
     return 0 if n_pass == len(results) else 1
 

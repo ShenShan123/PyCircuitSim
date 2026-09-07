@@ -48,7 +48,7 @@ except (ImportError, ValueError):  # pragma: no cover
 
 from tests.common.base import (
     PROJECT_ROOT, OSDI_PATH,
-    ALL_TECHS, TechProfile, VtPair,
+    ALL_TECHS, TechProfile,
     bake_inst_params, run_ngspice_subprocess,
 )
 from tests.common.nn import nrmse as _nrmse_pct, mre as _mre_pct
@@ -142,10 +142,6 @@ class BenchTech:
     @property
     def profile(self) -> TechProfile:
         return ALL_TECHS[self.name]
-
-    @property
-    def vt_pair(self) -> VtPair:
-        return self.profile.get_vt_pair(self.vt)
 
     @property
     def effective_nmos_vt(self) -> str:

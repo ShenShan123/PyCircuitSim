@@ -118,11 +118,6 @@ CLEAN = {
 }
 CLEAN_OVERRIDE: Dict[Tuple[str, str, str], str] = {}
 
-RECIPES: Dict[str, List[Tuple[str, str]]] = {
-    "dnf": [],
-    "tff": [],
-}
-
 
 # ── evidence ────────────────────────────────────────────────────────────────
 def load_json(name: str) -> Dict:
@@ -157,21 +152,21 @@ CAMPAIGN_EVIDENCE: Dict[str, Tuple[str, int, int]] = {
 # Every report is rendered from one coherent campaign. A later partial pass is
 # never allowed to backfill itself from older cells and overwrite a complete
 # published report.
-REPORT_PASS: Dict[Tuple[str, bool], str] = {
-    ("dnf", False): "V7.6.6",
-    ("tff", False): "V7.6.6",
+REPORT_PASS: Dict[str, str] = {
+    "dnf": "V7.6.6",
+    "tff": "V7.6.6",
 }
 
 CURRENT_CLEAN_TAGS = ("dnf", "tff")
 README_REQUIRED_CLEAN_TAGS = ("dnf", "tff")
 
 # A preserved report digest is allowed only when its raw campaign is absent.
-PRESERVED_REPORT_SHA256: Dict[Tuple[str, bool], str] = {
-    ("dnf", False): "16e0a268af73c328c97a986a64452066c19ff633884e53d12f8a5905aa524c00",
-    ("tff", False): "52770afe913622f9ef5621794347314aa78f23b99b1d3f1b5b7391b4d9996f18",
+PRESERVED_REPORT_SHA256: Dict[str, str] = {
+    "dnf": "16e0a268af73c328c97a986a64452066c19ff633884e53d12f8a5905aa524c00",
+    "tff": "52770afe913622f9ef5621794347314aa78f23b99b1d3f1b5b7391b4d9996f18",
 }
 PRESERVED_README_SHA256 = (
-    "0760e8b6a999af1831faec9946b4058095f24a791563e3496528624ca6b26b4a"
+    "e6bd9e701c711bb60ff917c993de05243d64d25d23d4c0ccfdc788f6ad372973"
 )
 
 
@@ -268,24 +263,18 @@ def verdict_mark(v: Optional[str], metric: Optional[float],
 
 
 # ── table builders ──────────────────────────────────────────────────────────
-def _groups(tag: str, recipes: bool) -> List[Tuple[str, str]]:
+def _groups() -> List[Tuple[str, str]]:
     """(label, variant-resolver-key) pairs for the report being built."""
-    if recipes:
-        return [(f"`{r}`@{t}", f"{r}_{t}") for r, t in RECIPES[tag]]
     return [(t, t) for t in TIERS]
 
 
-def _variant(tag: str, key: str, tech: str, recipes: bool) -> str:
-    return key if recipes else clean_variant(tag, key, tech)
-
-
-def headline(tag: str, recipes: bool) -> str:
+def headline(tag: str) -> str:
     rows = [
         "| group | strict /20 | " + " | ".join(CIRCS)
         + " | flips | open cells |",
         "|---|" + "---|" * (len(CIRCS) + 3),
     ]
-    for label, key in _groups(tag, recipes):
+    for label, key in _groups():
         # Per-circuit denominators are counted, not divided out of the total:
         # a partly-measured group has different denominators per circuit, and
         # dividing would quietly report a pass rate against the wrong base.
@@ -293,7 +282,7 @@ def headline(tag: str, recipes: bool) -> str:
         flips, open_cells = 0, []
         for circ in CIRCS:
             for tech in TECHS:
-                v, _ = strict(tag, _variant(tag, key, tech, recipes), circ, tech)
+                v, _ = strict(tag, clean_variant(tag, key, tech), circ, tech)
                 if v is None:
                     continue
                 per[circ][1] += 1
@@ -312,7 +301,7 @@ def headline(tag: str, recipes: bool) -> str:
     return "\n".join(rows)
 
 
-def testcase_tables(tag: str, recipes: bool) -> str:
+def testcase_tables(tag: str) -> str:
     out: List[str] = []
     for circ in CIRCS:
         title, gate = CIRC_LABEL[circ]
@@ -320,10 +309,10 @@ def testcase_tables(tag: str, recipes: bool) -> str:
                 "| group | " + " | ".join(TECHS) + " |",
                 "|---|" + "---|" * len(TECHS)]
         dagger = False
-        for label, key in _groups(tag, recipes):
+        for label, key in _groups():
             cells = []
             for tech in TECHS:
-                v, m = strict(tag, _variant(tag, key, tech, recipes), circ, tech)
+                v, m = strict(tag, clean_variant(tag, key, tech), circ, tech)
                 mark = verdict_mark(v, m, circ)
                 dagger |= mark.endswith("†")
                 cells.append(mark)
@@ -337,15 +326,15 @@ def testcase_tables(tag: str, recipes: bool) -> str:
     return "\n".join(out).rstrip()
 
 
-def by_tech_rollup(tag: str, recipes: bool) -> str:
+def by_tech_rollup(tag: str) -> str:
     out = ["| tech | " + " | ".join(c.replace("_", "\\_") for c in CIRCS) +
            " | all cells |", "|---|" + "---|" * (len(CIRCS) + 1)]
     for tech in TECHS:
         per, tot = [], 0
         for circ in CIRCS:
             p = n = 0
-            for _, key in _groups(tag, recipes):
-                v, _ = strict(tag, _variant(tag, key, tech, recipes), circ, tech)
+            for _, key in _groups():
+                v, _ = strict(tag, clean_variant(tag, key, tech), circ, tech)
                 if v is None:
                     continue
                 n += 1
@@ -360,15 +349,15 @@ def by_tech_rollup(tag: str, recipes: bool) -> str:
     return "\n".join(out)
 
 
-def by_scale_rollup(tag: str, recipes: bool) -> str:
+def by_scale_rollup(tag: str) -> str:
     out = ["| group | " + " | ".join(TECHS) + " | all |",
            "|---|" + "---|" * (len(TECHS) + 1)]
-    for label, key in _groups(tag, recipes):
+    for label, key in _groups():
         cells, tp, tn = [], 0, 0
         for tech in TECHS:
             p = n = 0
             for circ in CIRCS:
-                v, _ = strict(tag, _variant(tag, key, tech, recipes), circ, tech)
+                v, _ = strict(tag, clean_variant(tag, key, tech), circ, tech)
                 if v is None:
                     continue
                 n += 1
@@ -397,7 +386,7 @@ def _ac_mark(r: Optional[Dict]) -> str:
     return "✗ " + ", ".join(why) if why else "✗"
 
 
-def device_tables(tag: str, recipes: bool) -> str:
+def device_tables(tag: str) -> str:
     out: List[str] = []
     for suite, title, error_unit in (
             ("verify_nn_multi_tech_dc", "Parametric DC — `verify_nn_multi_tech_dc`",
@@ -408,10 +397,10 @@ def device_tables(tag: str, recipes: bool) -> str:
                 f"max error {error_unit}; passing/total configs in parentheses)*", "",
                 "| group | " + " | ".join(TECHS) + " | pass |",
                 "|---|" + "---|" * (len(TECHS) + 1)]
-        for label, key in _groups(tag, recipes):
+        for label, key in _groups():
             cells, p, n = [], 0, 0
             for tech in TECHS:
-                e = at(tag, _variant(tag, key, tech, recipes), suite, tech)
+                e = at(tag, clean_variant(tag, key, tech), suite, tech)
                 if not e or "mean_nrmse" not in e:
                     cells.append("—")
                     continue
@@ -431,10 +420,10 @@ def device_tables(tag: str, recipes: bool) -> str:
             "*(gate: gain0 ≤1.5 dB, f3db ratio ∈[0.7, 1.43], magNRMSE ≤10 %)*", "",
             "| group | " + " | ".join(TECHS) + " | pass /10 |",
             "|---|" + "---|" * (len(TECHS) + 1)]
-    for label, key in _groups(tag, recipes):
+    for label, key in _groups():
         cells, p, n = [], 0, 0
         for tech in TECHS:
-            e = at(tag, _variant(tag, key, tech, recipes), "verify_nn_ac", tech)
+            e = at(tag, clean_variant(tag, key, tech), "verify_nn_ac", tech)
             if not e or "nmos" not in e:
                 cells.append("—")
                 continue
@@ -451,10 +440,10 @@ def device_tables(tag: str, recipes: bool) -> str:
             "valid refined reference and converged NN OP)*", "",
             "| group | " + " | ".join(TECHS) + " | pass /5 |",
             "|---|" + "---|" * (len(TECHS) + 1)]
-    for label, key in _groups(tag, recipes):
+    for label, key in _groups():
         cells, p, n = [], 0, 0
         for tech in TECHS:
-            e = at(tag, _variant(tag, key, tech, recipes),
+            e = at(tag, clean_variant(tag, key, tech),
                    "verify_circuit_opamp_ac", tech)
             if not e:
                 cells.append("—")
@@ -471,36 +460,6 @@ def device_tables(tag: str, recipes: bool) -> str:
                 )
         if n:
             out.append(f"| {label} | " + " | ".join(cells) + f" | **{p}/{n}** |")
-    return "\n".join(out)
-
-
-def recipe_delta(tag: str) -> str:
-    """Each recipe's cell-level gain and loss against clean at the same tier.
-
-    Reported as named cells rather than a net count: a recipe that banks two
-    opamps and drops two rings is not "unchanged", and the noise floor makes
-    the net number the least trustworthy part of the comparison.
-    """
-    out = ["| recipe | tier | cells gained vs clean | cells lost vs clean | net |",
-           "|---|---|---|---|---|"]
-    for recipe, tier in RECIPES[tag]:
-        gained, lost = [], []
-        for tech in TECHS:
-            for circ in CIRCS:
-                cv, _ = strict(tag, clean_variant(tag, tier, tech), circ, tech)
-                rv, _ = strict(tag, f"{recipe}_{tier}", circ, tech)
-                if cv is None or rv is None:
-                    continue
-                if rv == "PASS" and cv != "PASS":
-                    gained.append(f"{tech.lower()}-{circ}")
-                elif cv == "PASS" and rv != "PASS":
-                    lost.append(f"{tech.lower()}-{circ}")
-        if not gained and not lost:
-            net = "0"
-        else:
-            net = f"{len(gained) - len(lost):+d}"
-        out.append(f"| `{recipe}` | {tier} | {', '.join(gained) or '—'} | "
-                   f"{', '.join(lost) or '—'} | **{net}** |")
     return "\n".join(out)
 
 
@@ -522,11 +481,11 @@ HISTORICAL_CLEAN_TEXT = {
 }
 
 
-def _score(tag: str, key: str, recipes: bool) -> Tuple[int, int]:
+def _score(tag: str, key: str) -> Tuple[int, int]:
     p = n = 0
     for tech in TECHS:
         for circ in CIRCS:
-            v, _ = strict(tag, _variant(tag, key, tech, recipes), circ, tech)
+            v, _ = strict(tag, clean_variant(tag, key, tech), circ, tech)
             if v is None:
                 continue
             n += 1
@@ -534,11 +493,11 @@ def _score(tag: str, key: str, recipes: bool) -> Tuple[int, int]:
     return p, n
 
 
-def _best(tag: str, recipes: bool) -> Tuple[str, int, int]:
+def _best(tag: str) -> Tuple[str, int, int]:
     """Highest strict pass fraction in the pinned pass; cheaper tie wins."""
     best = ("—", 0, 0)
-    for label, key in _groups(tag, recipes):
-        p, n = _score(tag, key, recipes)
+    for label, key in _groups():
+        p, n = _score(tag, key)
         if n and (not best[2] or p / n > best[1] / best[2]):
             best = (label, p, n)
     return best
@@ -594,7 +553,7 @@ def _campaign_provenance_complete(version: str) -> bool:
     )
 
 
-def _matrix_complete_in_pass(tag: str, recipes: bool, version: str) -> bool:
+def _matrix_complete_in_pass(tag: str, version: str) -> bool:
     """Whether one pass fully measured every table cell in this report."""
     if (version in CAMPAIGN_EVIDENCE
             and not _campaign_provenance_complete(version)):
@@ -602,9 +561,9 @@ def _matrix_complete_in_pass(tag: str, recipes: bool, version: str) -> bool:
     data = PASS_DATA.get(version, {})
     if not data:
         return False
-    for _, key in _groups(tag, recipes):
+    for _, key in _groups():
         for tech in TECHS:
-            variant = _variant(tag, key, tech, recipes)
+            variant = clean_variant(tag, key, tech)
             for suite, required in REPORT_SUITES.items():
                 entry = (data.get(tag, {}).get(variant, {})
                          .get(suite, {}).get(tech))
@@ -617,19 +576,16 @@ def _matrix_complete_in_pass(tag: str, recipes: bool, version: str) -> bool:
     return True
 
 
-def scoreboard(
-    _tag: Optional[str] = None,
-    _recipes: Optional[bool] = None,
-) -> str:
+def scoreboard() -> str:
     out = ["| LEVEL | family | role | current evidence | CPU cost |",
            "|---|---|---|---|---|"]
     for tag in ("dnf", "tff"):
         lvl, role, cost = FAMILY_META[tag]
-        clean_version = REPORT_PASS[(tag, False)]
-        clean_complete = _matrix_complete_in_pass(tag, False, clean_version)
+        clean_version = REPORT_PASS[tag]
+        clean_complete = _matrix_complete_in_pass(tag, clean_version)
         if clean_complete:
             with evidence_pass(clean_version):
-                cl, cp, cn = _best(tag, False)
+                cl, cp, cn = _best(tag)
             clean_source_version = clean_version.removesuffix(" recheck")
         else:
             clean_source_version, cl, cp, cn = HISTORICAL_CLEAN[tag]
@@ -639,34 +595,33 @@ def scoreboard(
             c = f"{clean_source_version} `{cl}` **{cp}/{cn}**"
         out.append(f"| {lvl} | **{FAM[tag]}** | {role} | {c} | {cost} |")
     out.append("")
-    out.append("Strict = passes at OMP ∈ {1, 2, 4}. " + denominator_note(None, None))
+    out.append("Strict = passes at OMP ∈ {1, 2, 4}. " + denominator_note(None))
     return "\n".join(out)
 
 
-def _techs_measured(tag: str, recipes: bool) -> List[str]:
+def _techs_measured(tag: str) -> List[str]:
     """Techs with at least one measured simple-v1 cell in these groups."""
     got = []
     for tech in TECHS:
-        for _, key in _groups(tag, recipes):
-            if any(strict(tag, _variant(tag, key, tech, recipes), c, tech)[0]
+        for _, key in _groups():
+            if any(strict(tag, clean_variant(tag, key, tech), c, tech)[0]
                    for c in CIRCS):
                 got.append(tech)
                 break
     return got
 
 
-def denominator_note(tag: Optional[str], recipes: Optional[bool]) -> str:
+def denominator_note(tag: Optional[str]) -> str:
     """State the denominator the tables actually use, never the intended one.
 
-    TSMC6 recipe checkpoints are trained in V7.3.0, so a recipe report is /16
-    before that wave lands and /20 after. Writing either number into the prose
-    guarantees it is wrong half the time; deriving it cannot be.
+    Count the technologies measured in this pass. A partial matrix must not
+    inherit the denominator of a completed campaign.
     """
     if tag is None:
-        scopes = [("dnf", False), ("tff", False)]
+        scopes = ["dnf", "tff"]
     else:
-        scopes = [(tag, bool(recipes))]
-    sizes = {len(_techs_measured(t, r)) * len(CIRCS) for t, r in scopes}
+        scopes = [tag]
+    sizes = {len(_techs_measured(t)) * len(CIRCS) for t in scopes}
     sizes.discard(0)
     if sizes == {20}:
         return (f"Totals are **/20** — {len(CIRCS)} circuits × 5 techs, "
@@ -686,21 +641,20 @@ def denominator_note(tag: Optional[str], recipes: Optional[bool]) -> str:
 
 
 BUILDERS = {
-    "SCOREBOARD": lambda tag, recipes: scoreboard(),
+    "SCOREBOARD": lambda tag: scoreboard(),
     "DENOM": denominator_note,
     "HEADLINE": headline,
     "TESTCASE": testcase_tables,
     "BYTECH": by_tech_rollup,
     "BYSCALE": by_scale_rollup,
     "DEVICE": device_tables,
-    "RECIPEDELTA": lambda tag, recipes: recipe_delta(tag),
-    "PROVENANCE": lambda tag, recipes: campaign_provenance(tag),
+    "PROVENANCE": lambda tag: campaign_provenance(tag),
 }
 
 
 def campaign_provenance(tag: str) -> str:
     """Render immutable provenance for a generated clean report."""
-    version = REPORT_PASS[(tag, False)]
+    version = REPORT_PASS[tag]
     evidence = CAMPAIGN_EVIDENCE.get(version)
     if evidence is None:
         return f"Evidence pass: {version}."
@@ -722,17 +676,16 @@ def campaign_provenance(tag: str) -> str:
     )
 
 
-def build(tag: str, recipes: bool, check: bool) -> bool:
-    kind = "recipes" if recipes else "clean"
-    tpl = TPL / f"{FILE_STEM[tag]}-{kind}.md.in"
+def build(tag: str, check: bool) -> bool:
+    tpl = TPL / f"{FILE_STEM[tag]}-clean.md.in"
     if not tpl.exists():
-        print(f"  no template for {FILE_STEM[tag]}-{kind}, skipped")
+        print(f"  no template for {FILE_STEM[tag]}-clean, skipped")
         return True
-    version = REPORT_PASS[(tag, recipes)]
-    complete = _matrix_complete_in_pass(tag, recipes, version)
-    dest = DOCS / f"{FILE_STEM[tag]}-{kind}.md"
+    version = REPORT_PASS[tag]
+    complete = _matrix_complete_in_pass(tag, version)
+    dest = DOCS / f"{FILE_STEM[tag]}-clean.md"
     if not complete:
-        expected = PRESERVED_REPORT_SHA256.get((tag, recipes))
+        expected = PRESERVED_REPORT_SHA256.get(tag)
         actual = (hashlib.sha256(dest.read_bytes()).hexdigest()
                   if dest.exists() else None)
         preserved = expected is not None and actual == expected
@@ -744,7 +697,7 @@ def build(tag: str, recipes: bool, check: bool) -> bool:
         for marker, fn in BUILDERS.items():
             token = f"<!--{marker}-->"
             if token in text:
-                text = text.replace(token, fn(tag, recipes))
+                text = text.replace(token, fn(tag))
     if check:
         same = dest.exists() and dest.read_text() == text
         print(f"  {dest.name}: {'up to date' if same else 'STALE'}")
@@ -760,10 +713,10 @@ def build_readme(check: bool) -> bool:
         return True
     dest = DOCS / "README.md"
     incomplete = [
-        f"{tag}@{REPORT_PASS[(tag, False)]}"
+        f"{tag}@{REPORT_PASS[tag]}"
         for tag in README_REQUIRED_CLEAN_TAGS
         if not _matrix_complete_in_pass(
-            tag, False, REPORT_PASS[(tag, False)]
+            tag, REPORT_PASS[tag]
         )
     ]
     if incomplete:
@@ -817,17 +770,17 @@ def main() -> int:
         PASS_DATA[version] = load_json(args.campaign)
         incomplete = [
             tag for tag in tags
-            if not _matrix_complete_in_pass(tag, False, version)
+            if not _matrix_complete_in_pass(tag, version)
         ]
         if incomplete:
             print(f"[docs] {args.campaign}: incomplete metrics or provenance "
                   f"for {', '.join(incomplete)}; reports were not changed")
             return 1
         for tag in tags:
-            REPORT_PASS[(tag, False)] = version
+            REPORT_PASS[tag] = version
     ok = True
     for tag in tags:
-        ok &= build(tag, False, args.check)
+        ok &= build(tag, args.check)
     if args.only is None:
         ok &= build_readme(args.check)
     else:

@@ -17,6 +17,47 @@ remain in Git history.
 
 ## V7.7 — full-terminal-only NN stack
 
+### V7.7.5 — repository cleanup
+
+Removed ten uncalled definitions: the DC last-solution accessor and its
+write-only copy, the unused technology-distinctness helper and private parser,
+the scalar normalizer derivative API and its three hooks, the benchmark VT
+shortcut, the unused opamp deck rewriter, and the retired recipe-delta builder.
+The accuracy report builder now accepts only its live clean-report path;
+recipe-only dispatch, its empty registry, and boolean plumbing are gone. Existing
+report/provenance tests retain their assertions against the simpler interface.
+No device equations, solver convergence rules, gate inventories, or thresholds
+changed.
+
+Removed the four LEVEL=73/74 clean/recipe reports, superseded V7.5.15 recheck,
+pre-fix claims register, completed V7.2 GPU plan, and retired-family V7.4.2
+capacity plan. Their last tracked contents remain at `64ecd33`; recover any
+one with `git show 64ecd33:<path>`. Current LEVEL=75/76 reports, harness audits,
+and unfinished campaign plans remain. The V7.7.3 evaluation-arm plan no longer
+claims ownership of package release metadata. Report checksum preservation
+still applies after updating the accuracy index.
+
+Historical retractions remain binding: pre-`gds`-fix AC/opamp scores and OMP
+flip rankings are invalid; capacity/basin rankings from removed families do
+not qualify current models; TSMC6 repeats TSMC7 rather than adding independent
+technology evidence. The V7.4 capacity decline was traced to unsampled
+intra-bin geometry, not proof that greater capacity hurts autoregression or
+that exposure bias caused the decline. Within-bin geometry coverage remains
+a live dataset gate.
+
+Local cleanup removed 8,320 disposable simulation/test output and cache files
+(358.53 MiB allocated), including obsolete modelcard/NGSPICE scratch directories.
+Datasets, checkpoints, active release worktrees, campaign provenance, private
+PDKs, and cited historical diagnostics are preserved. Ignored artifact deletion
+is local and is not part of the Git patch. V7.7.5 is a maintenance release;
+no new training or accuracy promotion is claimed.
+
+Verification: all 1,101 project tests passed, zero skipped; five existing CPU
+pin-memory warnings. Report checksum preservation, focused Ruff checks
+(`F401`, `F811`, `F821`, `F841`), changed-Python syntax, and all 100 local
+Markdown links passed. Full numerical re-gating, new training, and a separate
+PyCMG suite were not run for this cleanup.
+
 ### V7.7.3 — root NN workflow
 
 Unified `main.py` exposes `simulate`, `data`, `train`, and `evaluate` as

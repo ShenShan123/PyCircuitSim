@@ -466,7 +466,7 @@ def _check_explicit_circuit_errors_are_complete_failures() -> None:
         }
         try:
             with docs.evidence_pass("error_render"):
-                assert "| small | ERROR |" in docs.device_tables("dnf", False)
+                assert "| small | ERROR |" in docs.device_tables("dnf")
         finally:
             docs.PASS_DATA.pop("error_render")
 
@@ -1094,13 +1094,13 @@ def _check_report_payload_completeness() -> None:
     old_data = docs.PASS_DATA
     docs.PASS_DATA = {"test": data}
     try:
-        assert docs._matrix_complete_in_pass("dnf", False, "test")
+        assert docs._matrix_complete_in_pass("dnf", "test")
         cell = data["dnf"]["small"]["verify_circuit_ring_osc"]["TSMC5"]["omp1"]
         del cell["metric"]
-        assert not docs._matrix_complete_in_pass("dnf", False, "test")
+        assert not docs._matrix_complete_in_pass("dnf", "test")
         cell["metric"] = 12.0
         cell["rc"] = "124"
-        assert not docs._matrix_complete_in_pass("dnf", False, "test")
+        assert not docs._matrix_complete_in_pass("dnf", "test")
     finally:
         docs.PASS_DATA = old_data
 
@@ -1139,7 +1139,7 @@ def _check_readme_uses_all_current_families() -> None:
         docs.PASS_DATA = {"test": data}
         docs.REPORT_PASS = {
             **old_pass,
-            **{(tag, False): "test"
+            **{tag: "test"
                for tag in docs.CURRENT_CLEAN_TAGS},
         }
         try:
@@ -1161,8 +1161,8 @@ def _check_v766_full_clean_registration() -> None:
     """Both full-terminal reports must resolve to one combined clean pass."""
     pass_roots = dict(coverage.PASSES)
     assert pass_roots["v766-full-clean"].name == "v766_full_clean"
-    assert docs.REPORT_PASS[("dnf", False)] == "V7.6.6"
-    assert docs.REPORT_PASS[("tff", False)] == "V7.6.6"
+    assert docs.REPORT_PASS["dnf"] == "V7.6.6"
+    assert docs.REPORT_PASS["tff"] == "V7.6.6"
     assert docs.CAMPAIGN_EVIDENCE["V7.6.6"] == (
         "v766_full_clean", 480, 280,
     )
@@ -1193,19 +1193,19 @@ def _check_incomplete_reports_preserve_verified_output() -> None:
         docs.TPL = templates
         docs.DOCS = rendered
         docs.PASS_DATA = {"V7.5.16": {}}
-        docs.REPORT_PASS = {**old_pass, ("dnf", False): "V7.5.16"}
+        docs.REPORT_PASS = {**old_pass, "dnf": "V7.5.16"}
         docs.PRESERVED_REPORT_SHA256 = {
             **old_hashes,
-            ("dnf", False): hashlib.sha256(original).hexdigest(),
+            "dnf": hashlib.sha256(original).hexdigest(),
         }
         docs.PRESERVED_README_SHA256 = hashlib.sha256(readme_original).hexdigest()
         try:
             with redirect_stdout(io.StringIO()):
-                assert docs.build("dnf", False, check=False)
+                assert docs.build("dnf", check=False)
             assert destination.read_bytes() == original
             destination.write_bytes(b"drifted rendered evidence\n")
             with redirect_stdout(io.StringIO()):
-                assert not docs.build("dnf", False, check=False)
+                assert not docs.build("dnf", check=False)
 
             with redirect_stdout(io.StringIO()):
                 assert docs.build_readme(check=False)

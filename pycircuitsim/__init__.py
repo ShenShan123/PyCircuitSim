@@ -1,6 +1,6 @@
 """PyCircuitSim - Simple Python Circuit Simulator"""
 
-__version__ = "7.7.3"
+__version__ = "7.7.5"
 
 from pycircuitsim.circuit import Circuit
 from pycircuitsim.parser import Parser

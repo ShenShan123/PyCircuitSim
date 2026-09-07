@@ -174,8 +174,8 @@ def generation_parser(techs: Sequence[str] = ("asap7", "tsmc5", "tsmc6", "tsmc7"
     # bin (its lower corner), and short-channel bins are wide — TSMC5's
     # shortest spans L in [6, 20] nm. Nothing constrains the model between
     # knots, and higher capacity lets that interpolant drift further, which
-    # is what produced the "capacity hurts BSIM-AR" artifact (docs/plans/
-    # 2026-08-10-v742-bsimar-capacity.md). Default off = legacy grid.
+    # is what produced the "capacity hurts BSIM-AR" artifact (docs/CHANGELOG.md,
+    # V7.4). The default ratio is shared with the generator.
     parser.add_argument(
         "--max-l-ratio", type=float, default=DEFAULT_MAX_L_RATIO,
         help="Sample inside each PDK length bin so no adjacent pair of L "

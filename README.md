@@ -4,7 +4,7 @@ PyCircuitSim is a pure-Python, SPICE-like circuit simulator for BSIM-CMG and
 neural compact models. NGSPICE running the identical BSIM-CMG OSDI model is
 ground truth for every accuracy claim.
 
-Current release: **V7.7.3**.
+Current release: **V7.7.5**.
 
 The NN runtime is full-terminal-only. DirectNet-Full (LEVEL=75) is the default;
 BSIM-AR-Full (LEVEL=76) is the autoregressive alternative. The old reduced

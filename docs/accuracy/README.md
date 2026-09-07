@@ -43,17 +43,13 @@ TSMC5-only and leaves the Miller opamp as `ERROR`.
 | [`v769-harness-audit.md`](v769-harness-audit.md) | harness coverage and engine-agreement audit |
 | [`v768-template-harness-audit.md`](v768-template-harness-audit.md) | template inventory and harness repairs |
 
-## Retired-family historical evidence
+## Retired-family history
 
-These reports preserve measurements and dead ends for the removed 3-terminal
-families. They are not supported runtime or training documentation:
-
-- [`DirectNet-L73-clean.md`](DirectNet-L73-clean.md)
-- [`DirectNet-L73-recipes.md`](DirectNet-L73-recipes.md)
-- [`BSIM-AR-L74-clean.md`](BSIM-AR-L74-clean.md)
-- [`BSIM-AR-L74-recipes.md`](BSIM-AR-L74-recipes.md)
-- [`simple-circuits-recheck-2026-08-19.md`](simple-circuits-recheck-2026-08-19.md)
-- [`archive-pre-gds-fix.md`](archive-pre-gds-fix.md)
+LEVEL=73/74 clean and recipe reports, the superseded V7.5.15 recheck, and
+pre-fix claims register are retained in Git history. The
+[V7.7.5 cleanup ledger](../CHANGELOG.md#v775--repository-cleanup) identifies the
+last revision and the retractions that still apply. These reports describe
+removed runtimes and cannot qualify the current LEVEL=75/76 models.
 
 ## Evidence reproduction
 

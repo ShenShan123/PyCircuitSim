@@ -2,7 +2,8 @@
 
 Status: planned, opened 2026-09-06 after the
 [V7.7.2 harness audit](../accuracy/v772-harness-audit.md) closed on `main`.
-The release stays V7.7.0 in metadata until final evidence is collected.
+This is the V7.7.3 evaluation-arm identifier, not the current package release;
+the repository [README](../../README.md) owns release metadata.
 V7.7.2 is still training in its frozen worktrees and is not touched by this
 arm. No accuracy result or promotion is claimed here.
 
@@ -52,5 +53,5 @@ which V7.7.3 reports must name as such.
 Items 1–3 have complete campaign evidence under `results/v773_*`, reports in
 `docs/accuracy/` that name both source hashes, and a CHANGELOG entry that
 states what moved against V7.7.2 under identical denominators. Items 4–5 land
-with regenerated frozen renders and a rescaled denominator note. Only then do
-`pycircuitsim.__version__` and the README release line move to V7.7.3.
+with regenerated frozen renders and a rescaled denominator note. Package
+workflow and maintenance releases do not imply completion of this evaluation.

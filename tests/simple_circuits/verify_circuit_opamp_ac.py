@@ -119,16 +119,6 @@ def _refined_peak_gain_bias(
     )
 
 
-def _with_dc_sweep(deck: str, lo: float, hi: float, step: float) -> str:
-    """Replace the single opamp ``.dc Vinp`` card with a refined sweep."""
-    lines = deck.splitlines()
-    matches = [i for i, line in enumerate(lines) if line.startswith(".dc Vinp")]
-    if len(matches) != 1:
-        raise ValueError(f"expected one .dc Vinp card, found {len(matches)}")
-    lines[matches[0]] = f".dc Vinp {lo:g} {hi:g} {step:g}"
-    return "\n".join(lines) + "\n"
-
-
 def opamp_ac_gate_passes(
     op_converged: bool,
     reference_op_valid: bool,

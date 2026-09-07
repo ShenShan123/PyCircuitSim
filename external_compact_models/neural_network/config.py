@@ -12,7 +12,7 @@ from here, and output schemas from ``neural_network.data.contracts``.
 import sys
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Dict, FrozenSet, List, Optional, Sequence, Tuple
+from typing import Dict, List, Tuple
 
 # ── Project paths ────────────────────────────────────────────────────────────
 # Path hierarchy (after path-depth collapse):
@@ -185,112 +185,6 @@ def local_variant_code(scope: str, tech: str, variant: str) -> int:
         (tech.lower(), variant.lower()),
         LOCAL_UNKNOWN_CODE_ID[scope],
     )
-
-
-# Tech pairs this project knowingly carries as duplicates. Only tsmc6/tsmc7 is
-# on the list, for the reasons above. Do NOT add a pair here to silence a
-# genuine onboarding mistake — the whole point of the guard is that a PDK can
-# differ substantially on disk while every differing key is inert.
-ACKNOWLEDGED_DUPLICATE_TECHS: FrozenSet[Tuple[str, str]] = frozenset(
-    {("tsmc6", "tsmc7"), ("tsmc7", "tsmc6")})
-
-
-def _bsimcmg_implemented_params() -> frozenset:
-    """Parameter names the open BSIM-CMG Verilog-A actually implements.
-
-    A modelcard key outside this set is inert: the OSDI binary never reads it,
-    so two techs differing only in such keys produce identical currents.
-    """
-    import re
-    from pathlib import Path as _Path
-
-    va_dir = (_Path(__file__).resolve().parents[1] / "bsim_cmg"
-              / "bsim-cmg-va" / "code")
-    if not va_dir.is_dir():
-        raise FileNotFoundError(
-            f"BSIM-CMG Verilog-A source not found at {va_dir} — cannot verify "
-            "tech distinctness. Restore external_compact_models/bsim_cmg/.")
-    decl = re.compile(r"^\s*parameter\s+(?:real|integer)\s+(\w+)", re.MULTILINE)
-    names = set()
-    for src in sorted(va_dir.iterdir()):
-        if src.suffix in (".va", ".include"):
-            names.update(
-                m.lower() for m in decl.findall(src.read_text(errors="replace")))
-    if not names:
-        raise RuntimeError(f"No parameter declarations parsed from {va_dir}")
-    return frozenset(names)
-
-
-def assert_tech_is_distinct(tech: str, against: Optional[Sequence[str]] = None,
-                            ) -> None:
-    """Raise if ``tech`` is electrically indistinguishable from another tech.
-
-    Guards the failure that put TSMC6 in the registry for two campaigns: a PDK
-    can differ substantially on disk while every differing key is a vendor
-    extension the open BSIM-CMG ignores, so the "new" tech trains on data
-    bit-identical to an existing one. Call this before onboarding a tech, not
-    after gating it.
-
-    Compares resolved modelcards restricted to parameters BSIM-CMG actually
-    implements. Techs sharing an identical implemented-parameter fingerprint on
-    every device are the same technology as far as this simulator is concerned.
-
-    A pair listed in ``ACKNOWLEDGED_DUPLICATE_TECHS`` is reported loudly and
-    allowed through, so that a deliberately-carried duplicate (tsmc6/tsmc7)
-    does not require disabling the guard for every other tech.
-
-    Raises:
-        ValueError: if ``tech`` collides with a tech that is not an
-            acknowledged duplicate.
-    """
-    from pycmg.parser import parse_modelcard      # noqa: E402
-    from pycmg.tech import resolve_modelcard       # noqa: E402
-
-    implemented = _bsimcmg_implemented_params()
-    others = list(against) if against is not None else [
-        t for t in TECH_CONFIGS if t.lower() != tech.lower()]
-
-    def fingerprint(name: str) -> Dict[str, Tuple]:
-        cfg = TECH_CONFIGS[name]
-        pycmg_tech = cfg.pycmg_tech
-        out: Dict[str, Tuple] = {}
-        for device_type in ("nmos", "pmos"):
-            for variant in cfg.variant_names:
-                combos = cfg.get_geometry_combos(device_type, variant)
-                if not combos:
-                    continue
-                L, NFIN = combos[0]
-                dev = pycmg_tech.get_device(f"{device_type}_{variant}")
-                card = resolve_modelcard(dev, pycmg_tech, L=L, NFIN=NFIN)
-                params = parse_modelcard(card, dev.model_name).params
-                out[f"{device_type}_{variant}"] = tuple(sorted(
-                    (k, v) for k, v in params.items()
-                    if k.lower() in implemented))
-        return out
-
-    mine = fingerprint(tech)
-    for other in others:
-        try:
-            theirs = fingerprint(other)
-        except Exception:      # a tech whose PDK is absent cannot collide
-            continue
-        if set(mine) == set(theirs) and all(
-                mine[k] == theirs[k] for k in mine):
-            msg = (f"Technology {tech!r} is electrically identical to "
-                   f"{other!r} under BSIM-CMG: every device's "
-                   f"implemented-parameter fingerprint matches, so both train "
-                   f"on the same data. The PDKs may differ on disk, but only "
-                   f"in keys the open BSIM-CMG does not implement "
-                   f"(2026-07-21 systematic audit D1; docs/CHANGELOG.md "
-                   f"V6.13.0 / methodology.md §7).")
-            if (tech.lower(), other.lower()) in ACKNOWLEDGED_DUPLICATE_TECHS:
-                print(f"[tech-guard] ACKNOWLEDGED DUPLICATE: {msg} "
-                      f"Carried deliberately; its rows are a repeat run, not a "
-                      f"sixth technology.")
-                continue
-            raise ValueError(
-                msg + f" Do not onboard {tech!r} as a separate technology "
-                      f"(this is exactly how TSMC6 entered the registry).")
 
 
 def tech_scope_vocab_size(scope: str) -> int:

@@ -166,7 +166,7 @@ def test_explicit_report_campaign_never_falls_back_to_preserved_reports(
     digest = hashlib.sha256(preserved.encode()).hexdigest()
     monkeypatch.setattr(
         docs, "PRESERVED_REPORT_SHA256",
-        {("dnf", False): digest, ("tff", False): digest},
+        {"dnf": digest, "tff": digest},
     )
     monkeypatch.setattr(docs, "PRESERVED_README_SHA256", digest)
 
