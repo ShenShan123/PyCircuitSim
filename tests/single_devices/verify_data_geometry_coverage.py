@@ -48,6 +48,7 @@ sys.path.insert(0, str(PROJECT_ROOT / "external_compact_models"))
 sys.path.insert(0, str(PROJECT_ROOT))
 
 from tests.common.circuit_benchmarks import BENCH, BENCH_TECHS  # noqa: E402
+from tests.common.base import parse_csv_choices  # noqa: E402
 from tests.common.simple_circuit_catalog import SIMPLE_V2, cases  # noqa: E402
 from tests.common.simple_circuit_harness import (  # noqa: E402
     CORNERS,
@@ -180,15 +181,18 @@ def _evaluation_geometries() -> List[EvalGeometry]:
     return points
 
 
-def _simple_circuit_geometries() -> List[EvalGeometry]:
-    """Unique device coordinates exercised by the simple-v2 corner matrix."""
+def _simple_circuit_geometries(case_names: Optional[List[str]] = None) -> List[EvalGeometry]:
+    """Full simple-v2 corners, or nominal coordinates of explicitly selected cases."""
     points: List[EvalGeometry] = []
     seen: set[Tuple[str, str, str, float, float, float]] = set()
+    selected = (cases(score_version=SIMPLE_V2) if case_names is None
+                else tuple(case for case in cases() if case.case_id in case_names))
+    corners = CORNERS.items() if case_names is None else [("nominal", CORNERS["nominal"])]
     for name in BENCH_TECHS:
-        for corner_name, corner in CORNERS.items():
+        for corner_name, corner in corners:
             applicable = [
                 (case, applicable_analyses(case, BENCH[name], corner))
-                for case in cases(score_version=SIMPLE_V2)
+                for case in selected
             ]
             applicable = [(case, analyses) for case, analyses in applicable
                           if analyses]
@@ -212,7 +216,7 @@ def _simple_circuit_geometries() -> List[EvalGeometry]:
                         continue
                     seen.add(key)
                     points.append(EvalGeometry(
-                        f"{name}:simple-v2:{case.case_id}:"
+                        f"{name}:{case.score_version}:{case.case_id}:"
                         f"{corner_name}:{dev}",
                         bt.nn_tech,
                         dev,
@@ -233,12 +237,22 @@ def check(
     max_l_ratio: float,
     max_nfin_ratio: float,
     data_dir: Optional[Path] = None,
+    techs: Optional[List[str]] = None,
+    case_names: Optional[List[str]] = None,
 ) -> List[Tuple[str, bool, str]]:
     results: List[Tuple[str, bool, str]] = []
     root = str(data_dir if data_dir is not None else default_data_dir())
-    points = [*_evaluation_geometries(), *_simple_circuit_geometries()]
+    if case_names is None:
+        points = [*_evaluation_geometries(), *_simple_circuit_geometries()]
+    else:
+        catalog_ids = {case.case_id for case in cases()}
+        points = _simple_circuit_geometries(case_names)
+        if any(name not in catalog_ids for name in case_names):
+            points.extend(_evaluation_geometries())
 
     for point in points:
+        if techs is not None and point.tech.upper() not in techs:
+            continue
         cfg = TECH_CONFIGS[point.tech]
         # PDK paths in the registry are PyCMG-relative.
         pdk = str(_resolve_path(str(cfg.pycmg_tech.pdk_path)))
@@ -295,7 +309,14 @@ def main(argv: Optional[List[str]] = None) -> int:
     p.add_argument("--data-dir", type=Path, default=None,
                    help="dataset root to check (default: $BSIMAR_DATA_DIR, "
                         "else the package datasets directory)")
+    p.add_argument("--tech", default=",".join(BENCH_TECHS),
+                   help="comma-separated technologies (default: all supported technologies)")
+    from scripts.v710_regate_jobs import evaluation_cases
+    p.add_argument("--case", nargs="+", choices=tuple(evaluation_cases()),
+                   help="selected catalog cases/suites; catalog cases use nominal campaign geometry")
     a = p.parse_args(argv)
+    techs = parse_csv_choices(p, a.tech, choices=list(BENCH_TECHS),
+                              flag="--tech", normalize=str.upper)
     data_dir = a.data_dir if a.data_dir is not None else default_data_dir()
     if not data_dir.is_dir():
         p.error(f"--data-dir is not a directory: {data_dir}")
@@ -307,7 +328,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     print(f"  datasets: {data_dir}")
     print("=" * 96)
 
-    results = check(a.max_l_ratio, a.max_nfin_ratio, data_dir)
+    results = check(a.max_l_ratio, a.max_nfin_ratio, data_dir, techs=techs, case_names=a.case)
     for label, ok, detail in results:
         print(f"  [{'PASS' if ok else 'FAIL'}] {label:34s} {detail}")
 

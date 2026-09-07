@@ -41,6 +41,7 @@ need no simulator and run in the collected `pytest` suite. Each owns one seam:
 | `test_legacy_gate_contracts.py` | retained LEVEL=72 suites reject mixed PASS/ERROR success and unconverged transient initialization |
 | `test_technology_registry_contracts.py` | the three technology registries agree, and diverge only where declared |
 | `test_entry_point_contracts.py` | `main.py` and the in-process `run_simulation` dispatcher, training reproducibility, and the self-enumerated gate inventory |
+| `test_nn_workflow.py` | unified `main.py` commands, complete backend option forwarding, loss/recipe selection, named circuit/device inventories, equivalence of separate stages and flow, stage dependencies, artifact protection, and evaluation verdicts |
 | `test_subcircuit_harness_contracts.py` | the standalone hierarchy harness |
 | `test_full_terminal_solver_boundary.py` | mandatory four-terminal DC/transient/AC solver seam |
 | `test_full_terminal_*` | full-terminal dataset, family, and corridor contracts |
@@ -60,6 +61,9 @@ the collected run covers them. A new simulator-free gate suite belongs in that
 list. `verify_data_geometry_coverage.py` needs datasets but no simulator or
 checkpoint; the campaign runner executes it once against the campaign dataset
 root before any pool is dispatched.
+The root NN workflow also runs this guard, scoped to its selected technologies.
+Its catalog selection retains OMP=1 cells and keeps qualification and diagnostic
+pools separate; the versioned release runners retain their full inventories.
 
 Which gates a campaign executes is decided by `scripts/v710_regate_jobs.py`:
 the `clean` pool (device suites and the frozen simple-v1 cases), the

@@ -45,8 +45,9 @@ FULL_COLUMNS = list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER)
 # ---------------------------------------------------------------------------
 # main.py
 # ---------------------------------------------------------------------------
+@pytest.mark.parametrize("command", ([], ["simulate"]))
 def test_main_runs_a_control_deck_and_writes_its_transient_artifacts(
-    tmp_path: Path,
+    tmp_path: Path, command: list[str],
 ) -> None:
     deck = tmp_path / "rc_lowpass.sp"
     deck.write_text(render_template(control_deck("rc_lowpass.spice.tmpl"), {
@@ -57,7 +58,7 @@ def test_main_runs_a_control_deck_and_writes_its_transient_artifacts(
     output = tmp_path / "out"
     env = {**os.environ, "MPLBACKEND": "Agg", "CUDA_VISIBLE_DEVICES": ""}
     completed = subprocess.run(
-        [sys.executable, str(PROJECT_ROOT / "main.py"), str(deck),
+        [sys.executable, str(PROJECT_ROOT / "main.py"), *command, str(deck),
          "-o", str(output)],
         capture_output=True, text=True, env=env, cwd=PROJECT_ROOT, timeout=300,
     )
@@ -68,7 +69,7 @@ def test_main_runs_a_control_deck_and_writes_its_transient_artifacts(
     assert "time" in header and "out" in header
 
     missing = subprocess.run(
-        [sys.executable, str(PROJECT_ROOT / "main.py"), str(tmp_path / "absent.sp")],
+        [sys.executable, str(PROJECT_ROOT / "main.py"), *command, str(tmp_path / "absent.sp")],
         capture_output=True, text=True, env=env, cwd=PROJECT_ROOT, timeout=300,
     )
     assert missing.returncode == 1

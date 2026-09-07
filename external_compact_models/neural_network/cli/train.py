@@ -8,6 +8,8 @@ from pathlib import Path
 
 import torch
 
+from cli_options import training_parser
+
 from neural_network.config import (
     DATA_DIR,
     VALID_TECH_SCOPES,
@@ -207,59 +209,7 @@ def _run(args: argparse.Namespace) -> None:
 
 
 def _parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description="Train a full-terminal DirectNet or BSIM-AR compact model"
-    )
-    parser.add_argument(
-        "--model", choices=["direct", "transformer"], default="direct",
-    )
-    parser.add_argument(
-        "--size", choices=["small", "medium", "large", "xl"],
-        default="medium",
-    )
-    parser.add_argument(
-        "--device-type", choices=["nmos", "pmos"], default="nmos",
-    )
-    parser.add_argument("--data", type=str)
-    parser.add_argument("--epochs", type=int)
-    parser.add_argument("--batch-size", type=int)
-    parser.add_argument("--lr", type=float)
-    parser.add_argument("--patience", type=int)
-    parser.add_argument("--max-rows", type=int)
-    parser.add_argument(
-        "--split-mode", choices=["combo", "random"], default="combo",
-    )
-    parser.add_argument("--cuda", action="store_true")
-    parser.add_argument("--amp", action="store_true")
-    parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--exclude-techs", type=str)
-    parser.add_argument("--num-tech-codes", type=int)
-    parser.add_argument("--p-unknown", type=float, default=0.1)
-    parser.add_argument(
-        "--tech-scope", choices=list(VALID_TECH_SCOPES), default="universal",
-    )
-    parser.add_argument("--exp-name", type=str)
-    parser.add_argument("--overwrite", action="store_true")
-    parser.add_argument(
-        "--swa-mode", choices=["none", "ema", "swa"], default="none",
-    )
-    parser.add_argument("--ema-decay", type=float, default=0.999)
-    parser.add_argument("--class-weights", type=str)
-    parser.add_argument("--training-overlay-classes", type=str)
-    parser.add_argument("--init-from", type=str)
-    parser.add_argument(
-        "--full-terminal-ar-targets", type=int, choices=[3, 6],
-    )
-    parser.add_argument("--autoregressive-training", action="store_true")
-    parser.add_argument("--subthresh", action="store_true")
-    parser.add_argument("--lam-subthresh", type=float, default=0.05)
-    parser.add_argument("--subthresh-s2", type=float, default=1e-9)
-    parser.add_argument("--subthresh-upper", type=float, default=1e-6)
-    parser.add_argument("--subthresh-floor", type=float, default=1e-12)
-    parser.add_argument("--subthresh-off-floor", type=float, default=1e-10)
-    parser.add_argument("--subthresh-ceiling-k", type=float, default=1.0)
-    parser.add_argument("--subthresh-ceiling-w", type=float, default=1.0)
-    return parser
+    return training_parser(VALID_TECH_SCOPES)
 
 
 def main() -> None:

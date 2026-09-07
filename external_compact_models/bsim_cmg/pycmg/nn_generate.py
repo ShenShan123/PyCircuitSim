@@ -36,6 +36,19 @@ from typing import Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
+from cli_options import (
+    DEFAULT_GRID_PER_AXIS,
+    DEFAULT_HOT_PER_AXIS,
+    DEFAULT_JITTER_SIGMA_FRAC,
+    DEFAULT_LHS_SAMPLES_PER_BIN,
+    DEFAULT_MAX_L_RATIO,
+    DEFAULT_N_VBS_LHS,
+    DEFAULT_OVERSHOOT_PER_AXIS,
+    DEFAULT_SAMPLER,
+    DEFAULT_TEMPERATURES_K,
+    DEFAULT_VBS_LEVELS,
+    DEFAULT_VOLTAGE_BOX_FACTOR,
+)
 from neural_network.data.contracts import (
     CANONICAL_SAFETY_REJECTION_REASONS,
     FULL_TERMINAL_OUTPUT_COLUMN_ORDER,
@@ -144,43 +157,13 @@ def _source_hash_metadata(bins: Sequence[BinSpec]) -> Dict[str, object]:
 
 # ── Defaults ──────────────────────────────────────────────────────────────────
 
-# D1: temperature sweep (paper §3 — full operating range, in Kelvin).
-DEFAULT_TEMPERATURES_K: Tuple[float, ...] = (
-    248.15,   # -25 °C
-    300.15,   #  27 °C
-    398.15,   # 125 °C
-)
-DEFAULT_MAX_L_RATIO: float = 1.35
-
-# D3: voltage box widening factor. paper uses 1.0 (i.e. [0, 1]·VDD).
-# v5p (V5'): revert B2 box-factor change. Restore V4 B1 default 2.0.
-# Phase A+B evidence (results/v5_v4_vs_phaseA_vs_phaseAB_2026_05_08.md)
-# showed B2's 1.5 box + overshoot overlay regressed TSMC7/12/16 to
-# NR-runaway 10^12 V. Reverting to V4 B1 box; the ``overshoot`` sample
-# class is also disabled below (DEFAULT_OVERSHOOT_PER_AXIS=0).
-DEFAULT_VOLTAGE_BOX_FACTOR: float = 2.0
-
-# D3: per-bin LHS sample budget. paper uses ~5K/bin for the [0, 1]·VDD
-# range; doubled for [0, 2]·VDD to keep the same density.
-DEFAULT_LHS_SAMPLES_PER_BIN: int = 5000
-
-# B1 (v5 plan §4-B1): hybrid uniform-grid sampler defaults.
-# Replaces LHS for the bulk of the per-bin samples. The grid is
-# strictly more uniform than LHS in the high-current corner that
-# dominates the verifier metric (D1 finding: hot region holds 3.07 %
-# of LHS samples but 16× the verifier-weighted error mass).
-DEFAULT_GRID_PER_AXIS: int = 30        # 30 × 30 = 900 (Vgs, Vds) points
-DEFAULT_VBS_LEVELS: int = 5            # {0, ±0.25, ±0.5}·VDD
-DEFAULT_HOT_PER_AXIS: int = 12         # 12 × 12 hot-region densification
-DEFAULT_JITTER_SIGMA_FRAC: float = 0.05  # σ = 0.05·VDD on each axis
-DEFAULT_SAMPLER: str = "grid"          # "grid" | "lhs"
+# Sampling defaults are imported from cli_options so generation and CLI help
+# use the same values. Current-band probe constants remain local to the evaluator.
 
 # v5p (V5'): all three Phase B overlays default off. inv_trip is
 # turned back on per-bin for TSMC5 only via the gate inside
 # generate_one_bin; B2 (overshoot) and B3 (vbs_lhs) stay off.
 DEFAULT_INV_TRIP: bool = False
-DEFAULT_OVERSHOOT_PER_AXIS: int = 0    # B2 off (caused TSMC7/12/16 regression)
-DEFAULT_N_VBS_LHS: int = 0             # B3 off (caused TSMC7/12/16 regression)
 
 # V6.4.7 S9b: subthreshold/OFF densification overlay (opt-in, off by default
 # so legacy unversioned regen is byte-stable).

@@ -27,6 +27,7 @@ from tests.common.simple_circuit_catalog import (  # noqa: E402
     SIMPLE_V2,
     cases,
 )
+from external_compact_models.cli_options import TRAINING_RECIPES  # noqa: E402
 
 TECHS = ["TSMC5", "TSMC6", "TSMC7", "TSMC12", "TSMC16"]
 
@@ -58,6 +59,50 @@ SIMPLE_V2_SUITES = [case.campaign_suite for case in _SIMPLE_V2_CASES]
 CANARY_SUITES = ["verify_nn_lifted_source_dc"]
 
 CLEAN_VARIANTS = ["small", "medium", "large", "xl"]
+
+
+def evaluation_cases() -> dict[str, dict[str, str]]:
+    """Expose catalog circuit IDs and campaign suite names with their owners."""
+    inventory = {}
+    for case in cases():
+        inventory[case.case_id] = {
+            "group": "simple_circuits", "suite": case.campaign_suite,
+            "pool": "clean" if case.score_version == SIMPLE_V1 else "simple_v2",
+            "role": case.role, "description": case.label,
+        }
+    for suite in [*DEVICE_SUITES, *CANARY_SUITES]:
+        name = suite.removeprefix("verify_")
+        group = ("single_devices" if (ROOT / "tests/single_devices" / f"{suite}.py").is_file()
+                 else "simple_circuits")
+        inventory[name] = {"group": group, "suite": suite,
+                           "pool": "canary" if suite in CANARY_SUITES else "clean",
+                           "role": "suite", "description": suite}
+    return inventory
+
+
+def select_cases(
+    pools: list[str] | None, groups: list[str] | None, names: list[str] | None,
+) -> tuple[list[str], list[str]]:
+    """Resolve explicit selections without silently dropping a requested case."""
+    inventory = evaluation_cases()
+    if names:
+        unknown = set(names) - inventory.keys()
+        if unknown:
+            raise ValueError(f"unknown evaluation cases: {sorted(unknown)}")
+        if groups and any(inventory[name]["group"] not in groups for name in names):
+            raise ValueError("case selection conflicts with --evaluation-group")
+        selected = list(names)
+    else:
+        selected = [name for name, item in inventory.items()
+                    if (not groups or item["group"] in groups)
+                    and (not pools or item["pool"] in pools)]
+    if pools and any(inventory[name]["pool"] not in pools for name in selected):
+        raise ValueError("case selection conflicts with --pools")
+    chosen_pools = [pool for pool in ("clean", "simple_v2", "canary")
+                    if any(inventory[name]["pool"] == pool for name in selected)]
+    if not selected or (pools and set(chosen_pools) != set(pools)):
+        raise ValueError("selection produces an empty evaluation pool")
+    return chosen_pools, selected
 
 
 def full(
@@ -121,10 +166,43 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "outdir", type=Path, help="directory for generated job lists",
     )
+    parser.add_argument("--tech", nargs="+", choices=TECHS, default=TECHS)
+    parser.add_argument("--tag", nargs="+", choices=("dnf", "tff"), default=["dnf", "tff"])
+    parser.add_argument("--size", nargs="+", choices=CLEAN_VARIANTS, default=CLEAN_VARIANTS)
+    parser.add_argument("--omp", nargs="+", choices=("1", "2", "4"), default=["1", "2", "4"])
+    parser.add_argument("--pools", nargs="+", choices=("clean", "simple_v2", "canary"))
+    parser.add_argument("--case", nargs="+", choices=tuple(evaluation_cases()))
+    parser.add_argument("--recipe", nargs="+", choices=tuple(TRAINING_RECIPES), default=["clean"])
     args = parser.parse_args(argv)
+    for name in ("tech", "tag", "size", "omp", "pools", "case", "recipe"):
+        values = getattr(args, name)
+        if values and len(values) != len(set(values)):
+            parser.error(f"--{name} must not contain duplicates")
+    try:
+        selected_pools, selected_cases = select_cases(args.pools, None, args.case)
+    except ValueError as exc:
+        parser.error(str(exc))
+    inventory = evaluation_cases()
+    suites = {inventory[name]["suite"] for name in selected_cases}
     out: Path = args.outdir
-    out.mkdir(parents=True, exist_ok=True)
     pools = build_pools()
+    pools = {name: [line for line in jobs
+                    if line.split()[0] in args.tag and line.split()[1] in args.size
+                    and line.split()[2] in args.tech and line.split()[4] in args.omp
+                    and line.split()[3] in suites]
+             for name, jobs in pools.items() if name in selected_pools}
+    pools = {name: [" ".join([parts[0], parts[1] if recipe == "clean" else f"{recipe}_{parts[1]}",
+                              *parts[2:]])
+                    for recipe in args.recipe for line in jobs for parts in [line.split()]]
+             for name, jobs in pools.items()}
+    if any(not jobs for jobs in pools.values()):
+        parser.error("selection produces an empty pool; include --omp 1")
+    # A different selection must not rewrite a running/resumable campaign.
+    for name, jobs in pools.items():
+        path = out / f"jobs_{name}.txt"
+        if path.exists() and path.read_text() != "\n".join(jobs) + "\n":
+            parser.error(f"job selection changed: {path}; choose a new output directory")
+    out.mkdir(parents=True, exist_ok=True)
     for name, jobs in pools.items():
         p = out / f"jobs_{name}.txt"
         p.write_text("\n".join(jobs) + "\n")

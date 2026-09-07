@@ -39,6 +39,7 @@ debug_*
 
 # Duplicate model files (originals in pycircuitsim/models/)
 external_compact_models/*.py
+!external_compact_models/cli_options.py
 
 # Neural compact-model checkpoints (large binaries, regenerable via training)
 external_compact_models/neural_network/checkpoints/

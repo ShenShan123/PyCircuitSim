@@ -4,7 +4,7 @@ PyCircuitSim is a pure-Python, SPICE-like circuit simulator for BSIM-CMG and
 neural compact models. NGSPICE running the identical BSIM-CMG OSDI model is
 ground truth for every accuracy claim.
 
-Current release: **V7.7.0**.
+Current release: **V7.7.3**.
 
 The NN runtime is full-terminal-only. DirectNet-Full (LEVEL=75) is the default;
 BSIM-AR-Full (LEVEL=76) is the autoregressive alternative. The old reduced
@@ -81,11 +81,267 @@ Inspect current interfaces with `--help`:
 
 ```bash
 conda run -n pycircuitsim python main.py --help
-conda run -n pycircuitsim python -m neural_network.cli.train --help
+conda run -n pycircuitsim python main.py train --help
+PYTHONPATH=external_compact_models conda run -n pycircuitsim python -m neural_network.cli.train --help
 conda run -n pycircuitsim python scripts/v710_regate_jobs.py --help
 bash scripts/recipe_train.sh --help
 bash scripts/v710_regate.sh --help
 ```
+
+## NN workflow from the project root
+
+Use [`main.py`](main.py) for netlist simulation and the entire NN workflow.
+The `data`, `train`, and `evaluate` commands each run one independent stage;
+`flow` runs those same stages in order, stopping if a stage fails. The
+`simulate` command runs a netlist. The numbered sections below describe the
+underlying stages and advanced interfaces.
+
+Activate the environment above. Preview a run, then execute it:
+
+```bash
+conda activate pycircuitsim
+python main.py flow --run-dir results/my_first_nn --dry-run
+python main.py flow --run-dir results/my_first_nn --gpus 0
+```
+
+Defaults are TSMC5, both NMOS and PMOS, DirectNet-Full (LEVEL=75), size
+`small`, and the `clean` and `canary` evaluation pools. Without `--gpus`,
+training uses CPU. Even the small model uses a full canonical dataset;
+generation, training, and circuit gates can take substantial time.
+
+Canonical execution requires a **clean, committed Git worktree**, the private
+cards for the selected technologies, and the built OSDI model. Commit the
+workflow changes before generating canonical data: the existing trainer
+rejects datasets marked as coming from dirty source. `--dry-run` needs only
+Python, works before dependencies or artifacts are installed, and writes nothing.
+
+Run stages separately with the same directory:
+
+```bash
+python main.py data --run-dir results/my_first_nn --workers 8
+python main.py train --run-dir results/my_first_nn --gpus 0
+python main.py evaluate --run-dir results/my_first_nn --parallel 4
+```
+
+Choose either the `flow` command or the separate sequence for a fresh run.
+Keep the same `--tech`, `--model`, and `--size` selections across applicable
+stages. `all` is an alias for `flow`. Selections are space-separated; unknown
+or duplicate entries fail. Add `--dry-run` to any NN command to preview just
+that stage or the complete flow.
+
+| Option | Applies to | Purpose |
+|---|---|---|
+| `--run-dir results/NAME` | all stages | Run output root; default `results/v773_nn` |
+| `--tech tsmc5 tsmc7` | all stages | TSMC5/6/7/12/16; standalone data also accepts `asap7`/`all`, standalone train accepts `universal` |
+| `--data-dir PATH` | all stages | Explicit dataset root; default `<run-dir>/data` |
+| `--model direct transformer` | train, evaluate, flow | LEVEL=75 and LEVEL=76 families |
+| `--size small medium large xl` | train, evaluate, flow | Existing training size presets |
+| `--recipe clean ar3roll` | train, evaluate, flow | Named strategies; use the same selection for training and evaluation |
+| `--checkpoint-dir PATH` | train, evaluate, flow | Explicit bundle root; default `<run-dir>/checkpoints` |
+| `--device nmos` | data, train | Work on one polarity; `flow` and evaluation require both |
+| `--workers 8` | data, flow | Generator processes per dataset |
+| `--gpus 0 1 2` | train, flow | Physical GPU IDs, resolved to UUIDs; one job per selected GPU |
+| `--epochs 80 --batch-size 2048 --seed 42` | train, flow | Optional training overrides |
+| `--pools clean canary simple_v2` | evaluate, flow | Add the separate held-out topology diagnostic pool |
+| `--device-suite nn_multi_tech_dc` | evaluate, flow | Select named single-device suites |
+| `--circuit ring_osc current_mirror` | evaluate, flow | Select named circuit cases; required pools are chosen automatically |
+| `--evaluation-group single_devices` | evaluate, flow | Select all cases in a test group; also accepts `simple_circuits` |
+| `--list-cases` | evaluate, flow | List case names, groups, pools, and evidence roles without running |
+| `--parallel 4` | evaluate, flow | Concurrent gate jobs; each runs on CPU with one thread |
+| `--ngspice /path/to/ngspice` | evaluate, flow | OSDI-capable reference executable; also reads `NGSPICE_BIN` |
+| `--dry-run` | all stages | Print commands, paths, and per-job environment changes |
+
+For both families across the full technology and size matrix:
+
+```bash
+python main.py flow --run-dir results/v773_matrix \
+  --tech tsmc5 tsmc6 tsmc7 tsmc12 tsmc16 \
+  --model direct transformer --size small medium large xl \
+  --gpus 0 1 2 --workers 8 --parallel 8 \
+  --pools clean canary simple_v2 --dry-run
+```
+
+Remove `--dry-run` to execute after choosing available GPUs. Both architectures
+share the generated `*_dnf_{nmos,pmos}.npz` datasets. Training retains the
+existing EMA/seed defaults and the six-target, teacher-forced Transformer
+recipe when `--recipe clean` is selected.
+
+### Configure each stage with arguments
+
+The root CLI and backend CLIs share their argument definitions in
+[`external_compact_models/cli_options.py`](external_compact_models/cli_options.py).
+All generator and trainer settings are exposed. On `data` and `train`, use
+the backend's ordinary option names. The `--data-*` and `--train-*` forms
+also work and keep settings separate in a combined `flow`:
+
+```bash
+python main.py data --help
+python main.py train --help
+python main.py evaluate --help
+
+python main.py flow --run-dir results/custom_nn --tech tsmc5 \
+  --data-sampler grid --data-grid-per-axis 30 --data-vbs-levels 5 \
+  --data-temperatures 248.15,300.15,398.15 --data-seed 17 \
+  --model transformer --size small --recipe ar3roll --gpus 0 \
+  --train-subthresh --train-lam-subthresh 0.1 --train-swa-mode ema \
+  --train-class-weights subvt_off=3.0 --train-seed 42 \
+  --device-suite nn_multi_tech_dc terminal_integrity \
+  --circuit ring_osc current_mirror --dry-run
+```
+
+Shared identity/path options keep their short names: `--tech`, `--device`,
+`--data-dir`, `--checkpoint-dir`, `--model`, and `--size`. `--tech-scope`,
+`--device-type`, and `--n-workers` are accepted aliases; generation workers
+use `--workers`. `--seed` on `flow` controls training; `--data-seed` controls
+generation. Explicit arguments override the selected recipe.
+
+Generator settings below use their standalone `data` names; prefix them
+with `data-` on `flow` (for example, `--data-voltage-box-factor`):
+
+| Configuration | Arguments |
+|---|---|
+| Variants and technology aggregation | `--variants`, `--universal`, `--exclude-techs` |
+| Temperature and repeatability | `--temperatures` (comma-separated Kelvin), `--seed` |
+| Sampler and voltage coverage | `--sampler grid\|lhs`, `--n-lhs-samples`, `--voltage-box-factor` |
+| Grid and densification | `--grid-per-axis`, `--vbs-levels`, `--hot-per-axis`, `--jitter-sigma-frac` |
+| Targeted overlays | `--enable-inv-trip`, `--enable-subvt-off` |
+| Experimental overlays (disabled by default) | `--overshoot-per-axis`, `--n-vbs-lhs` (nonnegative counts; 0 disables) |
+| Progress output | `--quiet` suppresses per-bin progress, retaining summaries and errors |
+| Evaluation tolerance and geometry sampling | `--dc-solve-tol`, `--max-l-ratio` |
+| Output variants | `--version`, `--finetune-size` |
+| Rejected samples | `--allow-safety-rejections`, `--allow-rejected-points` |
+
+The root defaults enable both targeted overlays and declared safety
+rejections. Use `--no-data-enable-inv-trip`, `--no-data-enable-subvt-off`, or
+`--no-data-allow-safety-rejections` to disable them. Boolean backend settings
+have corresponding `--no-data-*`/`--no-train-*` overrides.
+
+```bash
+python main.py data --run-dir results/lhs_data --device nmos --tech tsmc5 \
+  --variants lvt --sampler lhs --n-lhs-samples 5000 \
+  --temperatures 300.15 --voltage-box-factor 2 --max-l-ratio 1.35 \
+  --version trial --finetune-size 8000 --workers 8 --dry-run
+
+python main.py data --run-dir results/universal_data --universal --dry-run
+```
+
+Standalone universal generation defaults to all five TSMC technologies;
+an explicit `--tech` selection controls its included technologies. ASAP7 can
+be generated separately and remains excluded from universal NN training.
+Diagnostic generation with `--allow-rejected-points` writes artifacts but
+does not label them as training-ready.
+
+Training settings use the standalone `train` names below, or the same names
+prefixed with `train-` on `flow`:
+
+| Configuration | Arguments |
+|---|---|
+| Explicit input and split | `--data`, `--max-rows`, `--split-mode combo\|random`, `--exclude-techs` |
+| Optimizer and stopping | `--epochs`, `--batch-size`, `--lr`, `--patience` |
+| Averaging and initialization | `--swa-mode none\|ema\|swa`, `--ema-decay`, `--init-from` |
+| Precision and repeatability | `--amp`, `--cuda` (physical GPU 0), `--seed`; use `--gpus` for an explicit GPU list |
+| Technology embeddings | `--num-tech-codes`, `--p-unknown` |
+| Class weighting and training-only overlays | `--class-weights`, `--training-overlay-classes` |
+| Autoregressive strategy | `--full-terminal-ar-targets 3\|6`, `--autoregressive-training` |
+| Subthreshold auxiliary loss | `--subthresh`, `--lam-subthresh`, `--subthresh-s2`, `--subthresh-upper`, `--subthresh-floor`, `--subthresh-off-floor`, `--subthresh-ceiling-k`, `--subthresh-ceiling-w` |
+| Output naming and replacement | `--exp-name`, `--overwrite` |
+
+The existing base loss is class-weighted BNI-MAE; BSIM-AR additionally supports
+the subthreshold auxiliary term. These flags select the implemented losses
+and strategies. They do not introduce a new numerical loss implementation.
+
+| Recipe | Strategy |
+|---|---|
+| `clean` | Existing baseline; seed 42 and EMA |
+| `s7`, `s17`, `s123` | Alternative seed |
+| `sub` | BSIM-AR with the subthreshold auxiliary loss |
+| `ar3` | BSIM-AR with three autoregressive charge targets |
+| `ar3roll` | Three-target BSIM-AR with autoregressive training rollout |
+| `corridor` | Prepared trajectory-overlay data and class weighting; standalone training |
+
+```bash
+python main.py train --run-dir results/strategy_compare \
+  --data-dir results/my_first_nn/data --model transformer \
+  --recipe clean sub ar3 ar3roll --size small medium --gpus 0 1 \
+  --lr 0.0008 --patience 30 --swa-mode swa --dry-run
+```
+
+Recipe bundles use `{tech}_{tag}_{recipe}_{size}_{device}`; `clean` keeps the
+original `{tech}_{tag}_{size}_{device}` stem. Match `--recipe` when evaluating.
+Keep differently configured runs in distinct directories.
+
+Standalone training accepts explicit versioned datasets, universal scope,
+custom experiment names, and prepared corridor datasets. `--data` requires
+one technology and one polarity; `--exp-name` requires one technology,
+model, size, and recipe. The combined `flow` uses the campaign's canonical
+per-technology names and rejects universal/versioned/diagnostic datasets,
+custom input/output names, and corridor preparation before starting. Such
+artifacts retain their standalone use; they do not bypass campaign contracts.
+
+### Select device suites and named circuits
+
+```bash
+python main.py evaluate --list-cases
+python main.py evaluate --list-cases --evaluation-group single_devices
+
+python main.py evaluate --run-dir results/named_cases \
+  --data-dir results/my_first_nn/data \
+  --checkpoint-dir results/strategy_compare/checkpoints \
+  --tech tsmc5 --model transformer --size small --recipe ar3roll \
+  --device-suite nn_multi_tech_dc terminal_integrity \
+  --circuit ring_osc current_mirror inverter_chain --parallel 4 --dry-run
+```
+
+The list is derived from the campaign suites and circuit catalog, including
+single-device integrity/DC/source-frame suites and named simple circuits.
+Without explicit case/group selection, evaluation retains `clean` and
+`canary`. Named selections choose their owning pools automatically; conflicting
+explicit pools/groups, unknown names, and duplicates are errors. Both NMOS
+and PMOS checkpoint bundles remain required. Selected catalog circuits receive
+nominal geometry checks; device/benchmark suites retain the parametric geometry
+guard. Legacy release runners keep their original complete geometry inventory.
+
+NN workflow paths are resolved relative to the repository, including when invoking
+`/absolute/path/to/main.py` from another directory. Every child uses the invoking
+Python interpreter; no implicit conda switch occurs. The workflow clears
+inherited checkpoint pins and numerical experiment flags for its children.
+
+```text
+results/my_first_nn/
+├── data/                  canonical .npz files, completion markers, labels
+├── checkpoints/           weights, normalization/configuration, completion markers
+├── logs/                  exact commands and separate logs for each attempt
+└── evaluation/
+    ├── job_lists/         selected jobs from the authoritative campaign catalog
+    ├── clean/             REPORT.md, data.json, provenance, gate logs, artifacts
+    └── canary/            separate source-frame contract evidence
+```
+
+The geometry guard runs before evaluation against the selected technologies
+and dataset root. Evaluation uses only the selected catalog cells at OMP=1;
+it is a scoped result, not the full release campaign with OMP=2/4 stability
+probes. `simple_v2` remains diagnostic and does not enlarge qualification
+totals. Gate definitions and metric interpretation belong to
+[`docs/accuracy/methodology.md`](docs/accuracy/methodology.md).
+
+Exit codes: **0** means the requested stages completed with no failed selected
+gates; **1** means complete evaluation contains scientific FAIL/ERROR verdicts;
+**2** means invalid options, missing prerequisites, a failed child, or incomplete
+evidence; **130** means interruption. Read each pool's `REPORT.md` and `data.json`
+for convergence and numerical errors separately.
+
+Data generation and training refuse to replace existing artifacts, including
+partial bundles, by default. Training supports explicit `--overwrite`; use it
+only in the intended experiment directory. For a retry, use a new run/checkpoint directory or train only
+the missing polarity. Reuse data with `--data-dir results/old_run/data`.
+Evaluation can resume its existing logs when source, selection, and bundles
+still match the immutable manifest. Use a new `--run-dir` when changing the
+selection, and pass explicit `--data-dir` and `--checkpoint-dir` to evaluate
+existing artifacts. An older dataset source requires
+`--dataset-source-commit FULL_SHA` and must pass the existing exact source
+inventory comparison. This command does not promote models or overwrite the
+published accuracy reports. The release-specific V7.7.2 supervisor below
+continues to own its ongoing campaign.
 
 ## 1. Generate full-terminal datasets
 
@@ -306,9 +562,12 @@ assertion, but LEVEL uniquely selects the family. NN declarations require
 `TECH` and `VT`; LEVEL=73/74 fail explicitly.
 
 ```bash
-conda run -n pycircuitsim python main.py path/to/deck.sp \
+conda run -n pycircuitsim python main.py simulate path/to/deck.sp \
   --output results/my-run
 ```
+
+The original `python main.py path/to/deck.sp` invocation is also supported.
+Netlist and simulation output paths remain relative to your current directory.
 
 ## Performance and artifact policy
 
@@ -320,3 +579,17 @@ Datasets and checkpoints are ignored by Git. Keep comparison jobs in isolated
 `BSIMAR_DATA_DIR` and `BSIMAR_CHECKPOINT_DIR` roots. Preserve only artifacts
 behind a current score or active comparison, and put materialized simulations
 under `results/`.
+
+## Repository layout
+
+| Path | Role |
+|---|---|
+| `main.py` | Unified CLI: simulate, data, train, evaluate, and flow |
+| `pycircuitsim/` | Parser, circuit representation, solvers, runtime device models |
+| `external_compact_models/bsim_cmg/` | OSDI evaluation and dataset generation |
+| `external_compact_models/neural_network/` | NN data contracts, models, losses, training |
+| `PDKs/` | Technology cards; only ASAP7 is tracked, private TSMC cards stay untracked |
+| `circuit_templates/` | Single-source parameterized circuit topologies |
+| `tests/` | Shared comparison infrastructure, verification gates, unit contracts |
+| `scripts/` | Advanced training recipes and versioned campaign/report tooling |
+| `docs/`, `results/` | Maintained documentation and generated run evidence |

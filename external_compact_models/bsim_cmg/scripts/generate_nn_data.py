@@ -18,7 +18,6 @@ Phase D rewrite features:
 Output goes to --data-dir (default: ../../neural_network/data/datasets/).
 """
 
-import argparse
 import hashlib
 import json
 import os
@@ -32,17 +31,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
 
+from cli_options import generation_parser, _parse_temperatures
 from pycmg.nn_config import TECH_CONFIGS
 from pycmg.nn_generate import (
-    DEFAULT_GRID_PER_AXIS,
-    DEFAULT_HOT_PER_AXIS,
-    DEFAULT_JITTER_SIGMA_FRAC,
-    DEFAULT_LHS_SAMPLES_PER_BIN,
-    DEFAULT_MAX_L_RATIO,
-    DEFAULT_SAMPLER,
-    DEFAULT_TEMPERATURES_K,
-    DEFAULT_VBS_LEVELS,
-    DEFAULT_VOLTAGE_BOX_FACTOR,
     generate_dataset,
     generate_universal_dataset,
 )
@@ -60,9 +51,6 @@ def _default_data_dir() -> Path:
     return (project_root / "external_compact_models" / "neural_network"
             / "data" / "datasets")
 
-
-def _parse_temperatures(arg: str) -> tuple:
-    return tuple(float(x.strip()) for x in arg.split(",") if x.strip())
 
 
 def _save_finetune_split(
@@ -152,127 +140,7 @@ def _add_run_provenance(data: dict) -> None:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(
-        description="Generate NN training data (.npz) from PyCMG BSIM-CMG"
-    )
-    parser.add_argument("--device", choices=["nmos", "pmos", "both"], default="nmos")
-    parser.add_argument("--tech", choices=list(TECH_CONFIGS.keys()) + ["all"],
-                        default="asap7")
-    parser.add_argument("--variants", default="all",
-                        help="Comma-separated variant names (default: all)")
-    parser.add_argument("--universal", action="store_true",
-                        help="Generate universal dataset across all techs/variants")
-
-    # D1
-    parser.add_argument(
-        "--temperatures", type=_parse_temperatures,
-        default=DEFAULT_TEMPERATURES_K,
-        help="Comma-separated temperatures in Kelvin (default: -25, 27, 125 °C)",
-    )
-
-    # D3
-    parser.add_argument("--n-lhs-samples", type=int,
-                        default=DEFAULT_LHS_SAMPLES_PER_BIN,
-                        help="LHS samples per (variant, L, NFIN, T) bin "
-                             "(only used when --sampler=lhs)")
-    parser.add_argument("--voltage-box-factor", type=float,
-                        default=DEFAULT_VOLTAGE_BOX_FACTOR,
-                        help="Voltage box width in units of VDD "
-                             "(2.0 = [0, 2]·VDD; covers NR overshoot)")
-
-    # B1 (v5 plan §4): hybrid uniform-grid sampler.
-    parser.add_argument("--sampler", choices=["grid", "lhs"],
-                        default=DEFAULT_SAMPLER,
-                        help="Bulk-sample sampler: 'grid' = hybrid "
-                             "uniform-grid + jitter + hot densification "
-                             "(default, B1); 'lhs' = legacy Latin Hypercube")
-    parser.add_argument("--grid-per-axis", type=int,
-                        default=DEFAULT_GRID_PER_AXIS,
-                        help="[grid] base 2D grid size per axis (Vgs, Vds)")
-    parser.add_argument("--vbs-levels", type=int,
-                        default=DEFAULT_VBS_LEVELS,
-                        help="[grid] number of Vbs levels {0,±0.25,±0.5}·VDD")
-    parser.add_argument("--hot-per-axis", type=int,
-                        default=DEFAULT_HOT_PER_AXIS,
-                        help="[grid] hot-region densification grid size "
-                             "(0 to disable)")
-    parser.add_argument("--jitter-sigma-frac", type=float,
-                        default=DEFAULT_JITTER_SIGMA_FRAC,
-                        help="[grid] Gaussian jitter sigma in fractions of VDD")
-
-    # D4
-    parser.add_argument("--n-workers", type=int, default=1,
-                        help="Parallel worker count (1 = serial)")
-    parser.add_argument("--seed", type=int, default=42)
-
-    # D8
-    parser.add_argument("--finetune-size", type=int, default=0,
-                        help="If >0, also write finetune_<base>.npz with a "
-                             "stratified random subset of N samples (D8)")
-
-    # v5 plan §4-B5: dataset versioning + tech exclusion.
-    parser.add_argument(
-        "--version", default="",
-        help="Version tag inserted after the scope in output filenames "
-             "(e.g. 'v5' -> universal_v5_dnf_nmos.npz). Empty preserves "
-             "the unversioned name.",
-    )
-    parser.add_argument(
-        "--exclude-techs", default="",
-        help="Comma-separated tech names to exclude from generation "
-             "(case-insensitive). Common v5 use: --exclude-techs asap7.",
-    )
-
-    # v5p (V5'): inv_trip overlay is now opt-in. Default off matches the
-    # V4 B1 base sampler. When set, nn_generate.py additionally gates
-    # the overlay to TSMC5 only.
-    parser.add_argument(
-        "--enable-inv-trip", action="store_true", default=False,
-        help="Enable v5 plan §4-B1 inverter-trip overlay. In V5' this "
-             "is additionally gated to TSMC5 only inside nn_generate.py.",
-    )
-
-    # V6.4.7 S9b: subthreshold/OFF densification + DC-solve floor fix.
-    parser.add_argument(
-        "--enable-subvt-off", action="store_true", default=False,
-        help="Enable the V6.4.7 S9b subthreshold/OFF |id|-space band probe "
-             "(sample_class='subvt_off'). Fills the 1e-12..1e-6 A id decades "
-             "for the decade-occupancy acceptance gate. Requires the "
-             "DC-solve floor fix (see --dc-solve-tol).",
-    )
-    parser.add_argument(
-        "--dc-solve-tol", type=float, default=1e-12,
-        help="OSDI internal-node NR tolerance for generated rows, exported "
-             "as NN_DC_SOLVE_TOL (default 1e-12). The legacy 1e-9 default "
-             "returned EXACT 0 for true |id|<~1e-9 A (the 6-8%% zero-row "
-             "artifact); 1e-12 resolves the sub-nA band. 1e-14 is FP-limited.",
-    )
-
-    # V7.4.2: intra-bin L sampling. The PDK grid gives one L per length
-    # bin (its lower corner), and short-channel bins are wide — TSMC5's
-    # shortest spans L in [6, 20] nm. Nothing constrains the model between
-    # knots, and higher capacity lets that interpolant drift further, which
-    # is what produced the "capacity hurts BSIM-AR" artifact (docs/plans/
-    # 2026-08-10-v742-bsimar-capacity.md). Default off = legacy grid.
-    parser.add_argument(
-        "--max-l-ratio", type=float, default=DEFAULT_MAX_L_RATIO,
-        help="Sample inside each PDK length bin so no adjacent pair of L "
-             "knots differs by more than this ratio (default: 1.35). Costs roughly "
-             "log(bin span)/log(ratio) times the rows.",
-    )
-    parser.add_argument(
-        "--allow-rejected-points", action="store_true",
-        help="Write a diagnostic artifact despite rejected points/bins. "
-             "Canonical datasets fail instead.",
-    )
-    parser.add_argument(
-        "--allow-safety-rejections", action="store_true",
-        help="Keep a canonical dataset after excluding only the declared "
-             "NaN/Inf, >1 A terminal-current, or internal-node-solve safety "
-             "failures. Dropped bins and other failures remain fatal.",
-    )
-    parser.add_argument("--data-dir", type=Path, default=None,
-                        help="Output directory for .npz files")
+    parser = generation_parser(tuple(TECH_CONFIGS))
     args = parser.parse_args()
 
     # V6.4.7 S9b generator floor fix: export the tightened internal-node NR
@@ -309,12 +177,14 @@ def main() -> None:
         voltage_box_factor=args.voltage_box_factor,
         n_workers=args.n_workers,
         seed=args.seed,
-        verbose=True,
+        verbose=not args.quiet,
         sampler=args.sampler,
         grid_per_axis=args.grid_per_axis,
         vbs_levels=args.vbs_levels,
         hot_per_axis=args.hot_per_axis,
         jitter_sigma_frac=args.jitter_sigma_frac,
+        overshoot_per_axis=args.overshoot_per_axis,
+        n_vbs_lhs=args.n_vbs_lhs,
         enable_inv_trip=args.enable_inv_trip,
         enable_subvt_off=args.enable_subvt_off,
         max_l_ratio=args.max_l_ratio,

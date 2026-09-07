@@ -17,6 +17,45 @@ remain in Git history.
 
 ## V7.7 — full-terminal-only NN stack
 
+### V7.7.3 — root NN workflow
+
+Unified `main.py` exposes `simulate`, `data`, `train`, and `evaluate` as
+independent commands, with `flow` executing the three NN stages in order.
+Direct netlist invocation remains supported; `all` aliases `flow`. Runs share an isolated artifact root, use the invoking interpreter,
+support explicit physical GPU selection, and preview without dependencies or
+writes. Existing generator/trainer defaults, completion/provenance checks,
+and NGSPICE comparison gates remain authoritative. Existing datasets and
+checkpoint bundles are protected against replacement.
+
+The campaign job generator and geometry guard now accept validated subsets;
+their default release inventories are preserved. Root evaluation selects
+OMP=1 cells, separates clean/canary/held-out evidence, collects provenance-bound
+reports, and distinguishes failed gates from incomplete execution. README
+documents the root interface and repository layout; package metadata stays 7.7.3.
+This is a workflow release with no newly trained model or accuracy promotion.
+
+Dataset and training parsers now share dependency-free option definitions
+with the root entry point. Every backend setting is available through stage
+arguments, including sampling/temperature/voltage controls, output variants,
+loss weights, auxiliary subthreshold loss, EMA/SWA, initialization, precision,
+and autoregressive strategies. Named recipes preserve distinct checkpoint
+stems through training and evaluation. Device suites and circuit catalog names
+can be listed and selected; their owning pools and nominal circuit geometry
+checks follow that selection. Legacy campaign defaults remain unchanged.
+
+The argument audit also exposed the generator's existing overshoot/body-bias
+overlay counts and progress verbosity. Both experimental overlays stay disabled
+by default. Regression tests exercise actual root-to-backend argument round trips
+and generation-function dispatch, including flow restrictions.
+
+Verification: 1,101 project tests and 48 focused PyCMG API/sweep tests passed,
+0 skipped. Five CPU pin-memory warnings and one deliberate missing-device
+selection warning remain. The 258 workflow contracts cover 87% of the launcher,
+99% of the shared parsers, and 92% of the job selector. A dependency-free
+full-matrix dry run enumerated ten datasets, 80 training jobs, and three
+evaluation pools without creating the run directory. Full data generation,
+training, and numerical re-gating were not run for this CLI change.
+
 ### V7.7.3 — corrected-solver arm and open harness items (planned)
 
 Opened 2026-09-06 after the V7.7.2 harness audit closed on `main`. The audit

@@ -13,6 +13,15 @@ generation, training commands, checkpoint selection, and the five-stage
 verification workflow. Current measurements and qualification decisions live
 in [`docs/accuracy/`](../../docs/accuracy/).
 
+For V7.7.3, the root [`main.py`](../../main.py) provides a shared interface for
+independent `data`, `train`, and `evaluate` stages and their combined `flow`.
+Start with the [root workflow guide](../../README.md#nn-workflow-from-the-project-root)
+for isolated run directories, GPU selection, previews, and evaluation reports.
+Generator and trainer argument definitions are shared in
+[`../cli_options.py`](../cli_options.py). The root CLI exposes those settings,
+named training recipes, and evaluation selection by device suite/circuit name.
+The versioned campaign tools continue to own their release inventories.
+
 The [V7.7.2 campaign](../../docs/plans/2026-09-05-v772-full-retraining.md)
 retains the already regenerated dataset and ongoing training queue from the
 consolidated V7.7.1 task. Both families cover all four sizes. Original artifact
