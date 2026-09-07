@@ -40,7 +40,7 @@ need no simulator and run in the collected `pytest` suite. Each owns one seam:
 | `test_phase_report_contracts.py` | AC phase errors survive current and legacy structured rows into the human report |
 | `test_legacy_gate_contracts.py` | retained LEVEL=72 suites reject mixed PASS/ERROR success and unconverged transient initialization |
 | `test_technology_registry_contracts.py` | the three technology registries agree, and diverge only where declared |
-| `test_entry_point_contracts.py` | `main.py`, training reproducibility, and the self-enumerated gate inventory |
+| `test_entry_point_contracts.py` | `main.py` and the in-process `run_simulation` dispatcher, training reproducibility, and the self-enumerated gate inventory |
 | `test_subcircuit_harness_contracts.py` | the standalone hierarchy harness |
 | `test_full_terminal_solver_boundary.py` | mandatory four-terminal DC/transient/AC solver seam |
 | `test_full_terminal_*` | full-terminal dataset, family, and corridor contracts |

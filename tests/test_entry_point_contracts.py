@@ -75,6 +75,44 @@ def test_main_runs_a_control_deck_and_writes_its_transient_artifacts(
     assert "not found" in missing.stderr.lower()
 
 
+_RC_TOKENS = {
+    "TEMP": "27", "INPUT_DC": "1", "INPUT_AC": "1", "INPUT_PHASE": "",
+    "RESISTANCE": "1k", "CAPACITANCE": "1p",
+}
+
+
+@pytest.mark.parametrize(("analysis", "subdir", "artifact"), (
+    (".tran 10p 1n", "tran", "rc_lowpass_transient.csv"),
+    (".dc V1 0 1 0.25", "dc", "rc_lowpass_dc_sweep.csv"),
+    (".ac dec 5 1k 1meg", "ac", "rc_lowpass_ac_sweep.csv"),
+    (".op", "dc_op", "rc_lowpass_dc_op_point.txt"),
+))
+def test_run_simulation_dispatches_every_analysis_kind_in_process(
+    tmp_path: Path, analysis: str, subdir: str, artifact: str,
+) -> None:
+    """``run_simulation`` routes each analysis card to its runner and writer.
+
+    The subprocess smoke test above proves the CLI.  This in-process witness
+    is the one the coverage tracer can see — the V7.7.2 second follow-up
+    measured ``simulation.py`` at 11 % for exactly that reason — and it walks
+    the three analysis kinds plus the bare operating point the dispatcher
+    owns, each to the artifact a user would open.
+    """
+    import matplotlib
+    matplotlib.use("Agg")
+    from pycircuitsim.simulation import run_simulation
+
+    deck = tmp_path / "rc_lowpass.sp"
+    deck.write_text(render_template(
+        control_deck("rc_lowpass.spice.tmpl"), {**_RC_TOKENS, "ANALYSIS": analysis},
+    ))
+    run_simulation(str(deck), output_dir=str(tmp_path / "out"))
+
+    written = tmp_path / "out" / "rc_lowpass" / subdir / artifact
+    assert written.is_file(), sorted(str(p) for p in tmp_path.rglob("*"))
+    assert "out" in written.read_text().lower()
+
+
 # ---------------------------------------------------------------------------
 # Training determinism
 # ---------------------------------------------------------------------------

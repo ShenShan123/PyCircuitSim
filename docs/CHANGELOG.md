@@ -17,6 +17,21 @@ remain in Git history.
 
 ## V7.7 — full-terminal-only NN stack
 
+### V7.7.3 — corrected-solver arm and open harness items (planned)
+
+Opened 2026-09-06 after the V7.7.2 harness audit closed on `main`. The audit
+follow-up corrected transient numerics, so `main` is no longer the numerical
+source of the in-flight V7.7.2 campaign; V7.7.3 is the separately provenanced
+arm that will score the corrected runtime on the V7.7.2 checkpoints and carry
+the items the audit left open. The
+[plan](plans/2026-09-06-v773-corrected-solver-arm.md) lists them with their
+blockers. Opening commit: the [audit](accuracy/v772-harness-audit.md) was
+compacted into one record of findings, fixes and witnesses, and
+`run_simulation` gained an in-process witness for `.tran`, `.dc`, `.ac` and
+the bare operating point (`simulation.py` collected-suite coverage
+11 % → 74 %). Verification: 842 tests passed, 0 skipped, 0
+expected failures. No accuracy claim; the release stays V7.7.0.
+
 ### V7.7.2 — complete four-terminal model refresh (in progress)
 
 Prepared a fresh ten-dataset, 80-model S/M/L/XL campaign using the latest
@@ -94,7 +109,7 @@ PMOS, and reports diagnostic execution failures; the collector requires all
 six rows per checkpoint group. AC phase now appears in the human report.
 Retained LEVEL=72 suites now fail on mixed PASS/ERROR results and reject an
 unconverged transient initialization; parametric errors update tech status.
-The [follow-up audit](accuracy/v772-harness-audit.md#follow-up-audit-and-fixes)
+The [audit](accuracy/v772-harness-audit.md#numerical-defects-found-and-fixed)
 owns reproductions, verification, and remaining qualification limits. Version
 scope remains V7.7.2; active training and release worktrees are untouched.
 Corrected numerical source requires a separate complete evaluation before

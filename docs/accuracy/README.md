@@ -6,6 +6,8 @@ Ground truth is NGSPICE using the identical BSIM-CMG LEVEL=72 OSDI model. Read
 The [V7.7.2 refresh](../plans/2026-09-05-v772-full-retraining.md) is in progress.
 Its fresh S/M/L/XL evidence will replace the reports only after complete
 collection and validation; the measurements below remain historical controls.
+The corrected solver on `main` is scored separately as
+[V7.7.3](../plans/2026-09-06-v773-corrected-solver-arm.md).
 
 ## Current NN policy
 
