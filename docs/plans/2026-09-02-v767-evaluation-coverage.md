@@ -8,6 +8,11 @@ delivered: 2026-09-02
 
 # V7.6.7 evaluation coverage
 
+> Delivered historical plan. References to the served LEVEL=73 family describe
+> the implementation at delivery. The [accuracy index](../accuracy/README.md)
+> owns current family policy; the [test guide](../../tests/README.md) owns the
+> retained harness inventory.
+
 ## Why this plan exists
 
 Two published measurements contradict each other:

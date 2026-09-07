@@ -20,6 +20,15 @@ Keep each fact in one authoritative place:
 
 Link to the owner instead of copying its content into another document.
 
+Before selecting commands, read the root README. For evaluator or dataset
+changes, follow it to the [PyCMG guide](external_compact_models/bsim_cmg/README.md)
+and nested agent instructions; for training/runtime boundaries, read the
+[NN guide](external_compact_models/neural_network/README.md). Cross-check
+[tests](tests/README.md), [templates](circuit_templates/README.md), and
+[accuracy methodology](docs/accuracy/methodology.md) before interpreting a gate.
+Dated campaign IDs and package release metadata are separate; historical
+plans must not roll back the current version or imply a new accuracy result.
+
 ## Non-negotiable goal
 
 Use NGSPICE on the identical BSIM-CMG OSDI model as circuit ground truth.

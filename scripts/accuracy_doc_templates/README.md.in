@@ -3,6 +3,11 @@
 Ground truth is NGSPICE using the identical BSIM-CMG LEVEL=72 OSDI model.
 See [`methodology.md`](methodology.md) for gate and evidence rules.
 
+The [root README](../../README.md) owns package release metadata. A maintenance
+release does not requalify these measurements; each report names its evidence
+pass. The [campaign plans](../plans/) distinguish frozen training and corrected
+runtime evaluation.
+
 ## Current NN policy
 
 DirectNet-Full LEVEL=75 is the default NN path. BSIM-AR-Full LEVEL=76 is the
@@ -15,6 +20,7 @@ last revision.
 | file | scope |
 |---|---|
 | [`DirectNet-L75-clean.md`](DirectNet-L75-clean.md) | latest LEVEL=75 clean qualification and gaps |
+| [`BSIM-AR-L76-clean.md`](BSIM-AR-L76-clean.md) | clean LEVEL=76 qualification or explicit incomplete-matrix status |
 | [`BSIM-AR-L76-simple-circuits.md`](BSIM-AR-L76-simple-circuits.md) | TSMC5 LEVEL=76 recovery; not a five-tech matrix |
 | [`simple-circuits-v2-topologies.md`](simple-circuits-v2-topologies.md) | held-out topology and promotion contract |
 
@@ -24,4 +30,6 @@ last revision.
 
 Default status does not rewrite measured limitations. Reports require one
 complete provenance-bound campaign; partial passes are never backfilled.
-Reproduction commands live in the repository [README](../../README.md).
+The builder emits clean reports only; named recipe summaries remain in their
+isolated run directories. Reproduction commands live in the repository
+[README](../../README.md#run-the-complete-clean-checkpoint-matrix).

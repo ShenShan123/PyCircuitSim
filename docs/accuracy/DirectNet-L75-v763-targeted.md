@@ -1,5 +1,9 @@
 # DirectNet-Full (LEVEL=75) — V7.6.3 full-scale targeted evaluation
 
+> Historical targeted campaign, not a V7.7.5 re-gate. The AnalogGym tooling
+> used here was retired; measurements and source provenance below remain
+> unchanged. See the [accuracy index](README.md) for maintained gates and reports.
+
 Date: 2026-08-29
 
 This report supersedes the earlier `large`-only V7.6.3 result. It evaluates

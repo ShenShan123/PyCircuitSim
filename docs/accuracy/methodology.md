@@ -16,7 +16,9 @@ not independent references. LEVEL=72 is the yardstick, not a graded family.
 The graded NN families are DirectNet-Full (LEVEL=75) and BSIM-AR-Full
 (LEVEL=76). LEVEL=75 is the default runtime family. Both use
 TSMC5/6/7/12/16 and the `small`, `medium`, `large`, and `xl` tiers. Retired
-LEVEL=73/74 measurements remain historical evidence only.
+LEVEL=73/74 measurements remain historical evidence only. Their retired reports
+are recoverable from the revision recorded in the
+[V7.7.5 cleanup ledger](../CHANGELOG.md#v775--repository-cleanup).
 
 ## 2. Gates
 
@@ -129,7 +131,10 @@ technologies, with every catalog and device suite generated from one source.
 job count and digest with every campaign. Older 480- and 600-job campaigns are
 not interchangeable when their suite sets differ.
 Report generation fails closed unless the applicable matrix and checkpoint
-artifacts are complete.
+artifacts are complete. The shared builder emits clean LEVEL=75/76 reports;
+named recipe evaluations remain separate experiments under their run roots.
+Package maintenance versions do not change a report's campaign or source
+identity and do not imply that an unfinished evaluation has completed.
 
 ## 6. Comparability
 
@@ -154,8 +159,9 @@ The retained solver and coverage-audit contracts are:
 - Residual probes recover ideal-voltage-source branch currents and scale the
   tolerance from current-valued node rows, so they measure the complete MNA
   residual. The topology-stable fit is cached without changing the result.
-- Opamp AC independently refines each simulator's bias at 0.1 mV resolution,
-  validates the NGSPICE reference, and requires a converged NN operating point.
+- Opamp AC locates the maximum-gain bias with an NGSPICE physical fine sweep
+  at 0.1 mV resolution, then uses that same input bias for both engines. It
+  requires an off-rail reference and a converged NN operating point.
 - Family labels and CLI validation fail closed; an invalid interpreter,
   technology, device, or analysis cannot silently shrink a denominator.
 - DC/VTC gates reject every unconverged operating point or sweep point and

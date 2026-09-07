@@ -8,6 +8,10 @@ status: closed
 
 # V7.6.4 complex-circuit closure loop
 
+> Closed historical investigation. The served-family statements and retired
+> AnalogGym commands below apply to that experiment, not the current package.
+> See the [accuracy index](../accuracy/README.md) for maintained evidence.
+
 ## Verdict
 
 The loop did not produce a promotable LEVEL=75 checkpoint or runtime adapter.

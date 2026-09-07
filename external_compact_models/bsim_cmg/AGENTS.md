@@ -13,14 +13,16 @@ Develop a standalone Python interface for the BSIM-CMG Verilog-A model using Ope
 
 The OSDI binary is the single source of truth for all model physics calculations.
 
-## Environment & Tools
-* **OpenVAF Compiler:** `/usr/local/bin/openvaf`
-* **NGSPICE Simulator:** `/usr/local/ngspice-45.2/bin/ngspice`
-* **Build System:** CMake / Make
-* **Python Interface:** ctypes (no C++ compilation needed)
-* **Environment Overrides:**
-    * `NGSPICE_BIN` to point at a custom NGSPICE binary.
-    * `ASAP7_MODELCARD` to point ASAP7 verification at a file or directory.
+## Documentation and execution context
+
+Read the root [README](../../README.md#0-set-up-the-environment) for the conda
+environment and OSDI build. Read its
+[PyCMG reference tools](../../README.md#pycmg-reference-tools) before invoking
+this package's tests: its `tests` namespace is separate from the project suite.
+Use the local [README](README.md) for API and dataset boundaries, and the
+root [AGENTS.md](../../AGENTS.md) for solver-facing terminal conventions.
+Release outcomes and retired workflows belong in the root
+[changelog](../../docs/CHANGELOG.md), not in this instruction file.
 
 ## Directory Structure
 
@@ -45,7 +47,7 @@ external_compact_models/bsim_cmg/
 │   ├── sensitivity.py       # OAT sensitivity analysis (compute_sensitivity, enumerate_model_params)
 │   ├── nn_config.py         # NN training config (ProcessParams, NNTechConfig, extract_process_params)
 │   └── nn_generate.py       # NN .npz data generation using PDK-driven (L, NFIN) combos
-├── tests/                    # Test suite (314 tests)
+├── tests/                    # Evaluator contracts and NGSPICE comparisons
 │   ├── __init__.py          # Package init
 │   ├── conftest.py          # Tiered technology registry (6 base + 18 Vt variants = 24 total)
 │   ├── helpers.py           # NGSPICE runner helpers, comparison functions, modelcard baking
@@ -125,22 +127,24 @@ external_compact_models/bsim_cmg/
   - `standard_bias_points(vdd, device_type)`: Canonical bias points (off/linear/saturation) for DC tests
   - `REGION_NAMES`: `["off", "linear", "saturation"]`
 
-* **`tests/`**: Test suite (314 tests total)
+* **`tests/`**: Evaluator test suite
   - All NGSPICE-backed DC tests use `run_dc_comparison()` from helpers.py and `standard_bias_points()` from conftest.py
   - All NGSPICE-backed tests use `@requires_osdi` skip marker from conftest.py
   - `test_api.py`: Quick smoke tests for public API (no NGSPICE comparison)
-  - `test_dc_jacobian.py`: DC Jacobian (central finite-diff vs analytical), NMOS+PMOS × 5 techs × 3 regions (30 tests)
-  - `test_dc_regions.py`: DC operating regions (off/linear/saturation), NMOS+PMOS × 5 techs × 3 regions (30 tests)
-  - `test_transient.py`: Transient waveform verification, NMOS+PMOS × 5 techs (10 tests)
-  - `test_ac_caps.py`: AC capacitance verification (cgg, cgd, cgs, cdg, cdd) vs NGSPICE (15 tests)
-  - `test_body_bias.py`: Body bias (Ve != 0), NMOS+PMOS × 5 techs × 2 bias types (20 tests)
-  - `test_temperature.py`: Temperature (-40C, 85C, 125C), ASAP7+TSMC7 × NMOS+PMOS (10 tests)
+  - `test_dc_jacobian.py`: DC Jacobian (central finite-diff vs analytical), NMOS+PMOS across the base technology registry and three regions
+  - `test_dc_regions.py`: DC operating regions (off/linear/saturation), NMOS+PMOS across the base technology registry and three regions
+  - `test_transient.py`: Transient waveform verification, NMOS+PMOS across the base technology registry
+  - `test_ac_caps.py`: AC capacitance verification (cgg, cgd, cgs, cdg, cdd) vs NGSPICE
+  - `test_body_bias.py`: Body bias (Ve != 0), NMOS+PMOS across the base technology registry and two bias types
+  - `test_temperature.py`: Temperature (-40C, 85C, 125C), ASAP7 × NMOS+PMOS
   - `test_nfin_scaling.py`: NFIN scaling sanity tests (PyCMG-only)
-  - `test_vt_variants.py`: Vt variant DC verification, NMOS+PMOS × 18 variants × 3 regions (108 tests)
+  - `test_vt_variants.py`: Vt variant DC verification, NMOS+PMOS × 18 variants × 3 regions
 
 ## PyCMG Output Coverage
 
-PyCMG provides comprehensive model outputs covering currents, derivatives, charges, and capacitances. All outputs are verified against NGSPICE using the exact same OSDI binary.
+PyCMG provides currents, derivatives, charges, and capacitances. NGSPICE
+comparisons use the exact same OSDI binary; the selected test matrix defines
+coverage.
 
 ### Supported Outputs (17 total)
 
@@ -153,10 +157,14 @@ PyCMG provides comprehensive model outputs covering currents, derivatives, charg
 
 ### Key Features
 
-- **ids**: Drain-source current computed as `Id - Is` for common-source configuration
-- **All outputs verified** against NGSPICE ground truth using same OSDI binary
+- **id**: use this terminal field for drain-current comparisons. `ids = id - is`
+  is a derived difference, approximately twice `id` in common source. The
+  circuit adapter and NN generator negate raw PyCMG terminal currents to
+  implement positive current leaving each terminal.
+- **Reference comparisons** use NGSPICE with the same OSDI binary
 - **Capacitance condensation**: full internal capacitance matrix condensed to external terminals
-- **Full coverage**: 17/17 critical model outputs implemented and tested
+- **Full terminal stamps** use condensed 4×4 matrices; scalar capacitance
+  summaries are not a substitute for bulk rows and columns.
 
 ### Return Values
 
@@ -176,39 +184,9 @@ result = inst.eval_tran({"d": 0.5, "g": 0.8, "s": 0.0, "e": 0.0}, time=1e-9, del
 
 ### 1. Model Compilation (OpenVAF)
 
-The Verilog-A source must be compiled to OSDI format using OpenVAF.
-
-**Prerequisites:**
-- OpenVAF compiler (v23.5.0+): Install from https://github.com/ngspice/openvaf
-- CMake (v3.20+)
-
-**Build Methods:**
-
-**Option A: Manual CMake build (Recommended)**
-```bash
-# Create build directory
-mkdir -p build
-cd build
-
-# Configure CMake
-cmake ..
-
-# Build OSDI model
-cmake --build . --target osdi
-```
-
-**Option B: Direct OpenVAF compilation**
-```bash
-# Compile Verilog-A directly without CMake
-openvaf -I bsim-cmg-va/code -o bsimcmg.osdi bsim-cmg-va/code/bsimcmg_main.va
-```
-
-**Verification:**
-- Ensure output file exists: `build/osdi/bsimcmg.osdi`
-- File should be a shared object: `file build/osdi/bsimcmg.osdi`
-- Typical size: ~2-3 MB
-
-**Constraint:** Ensure the output is a standard `.osdi` file compatible with NGSPICE and the PyCMG ctypes host.
+Build instructions live in the root [README](../../README.md#0-set-up-the-environment).
+The compiled `.osdi` must be compatible with both NGSPICE and this ctypes host;
+use that identical binary in reference comparisons.
 
 ### 2. Python Interface Layer (ctypes-based OSDI host)
 * **A) Model Card Parser:**
@@ -374,7 +352,7 @@ openvaf -I bsim-cmg-va/code -o bsimcmg.osdi bsim-cmg-va/code/bsimcmg_main.va
 - PDK introspection: `scan_pdk_geometry_combos()` returns all (lmin, nfin) sweep points; `_scan_all_variants()` returns parsed variant metadata.
 - NFIN-aware modelcard generation: `resolve_modelcard()` accepts NFIN to select correct NFIN group variant; cache includes NFIN in filename.
 - Sensitivity analysis: `pycmg/sensitivity.py` with OAT perturbation, `scripts/sensitivity_analysis.py` CLI.
-- Sensitivity tests: `tests/test_sensitivity.py` (7 tests).
+- Sensitivity tests: `tests/test_sensitivity.py`.
 - NN training config: `pycmg/nn_config.py` (ProcessParams, NNTechConfig, extract_process_params, TECH_CONFIGS). No hardcoded process params; extracted on-the-fly from modelcards.
 - NN data generation: `pycmg/nn_generate.py` (generate_dataset, generate_universal_dataset). PDK-driven (L, NFIN) combos, source-relative voltage frame, and six-surface `.npz` output.
 - NN data CLI: `scripts/generate_nn_data.py` (--device, --tech, --universal, --n-dense-mid).

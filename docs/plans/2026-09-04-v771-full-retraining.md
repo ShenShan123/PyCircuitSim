@@ -5,7 +5,9 @@ The existing queue is retained as its frozen training backend. There is no
 separate V7.7.1 release. The original planning record follows.
 
 Status: preparation; no new accuracy result or model promotion is claimed.
-The release remains V7.7.0 until the final evidence is collected.
+At preparation, package metadata was V7.7.0. The
+[root README](../../README.md) now owns the package release; this superseded
+plan does not require rolling it back.
 
 ## Scope and acceptance
 
@@ -32,7 +34,7 @@ and the [harness contract](../../tests/README.md). Do not tune thresholds.
 | Training | days 1–4, revise from measured progress | 80 checksum-valid bundles, including all TFF config sidecars |
 | Device and circuit evaluation | days 3–5 after complete training | all 600 clean jobs and the full simple-v2 diagnostic pool have explicit verdicts |
 | Analysis and corrections | after each failed stage | reproducible bug fixes and fresh evidence for changed behavior |
-| Release | after complete evidence | related Markdown updated, V7.7.1 metadata consistent, checks pass, commit pushed |
+| Release | after complete evidence | related Markdown updated, campaign identity consistent, checks pass, commit pushed |
 
 These are planning allowances, not a deadline. Earlier completed training jobs
 took approximately 13 minutes–7 hours for DirectNet and 1.5–13 hours for

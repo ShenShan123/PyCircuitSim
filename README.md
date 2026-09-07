@@ -6,6 +6,11 @@ ground truth for every accuracy claim.
 
 Current release: **V7.7.5**.
 
+This maintenance release removes dead code, obsolete report scaffolding, and
+disposable artifacts. It adds no new accuracy campaign; the
+[cleanup ledger](docs/CHANGELOG.md#v775--repository-cleanup) records verification
+and how to recover retired documents from Git history.
+
 The NN runtime is full-terminal-only. DirectNet-Full (LEVEL=75) is the default;
 BSIM-AR-Full (LEVEL=76) is the autoregressive alternative. The old reduced
 LEVEL=73/74 families are retired and rejected. Current measurements and known
@@ -20,6 +25,10 @@ limitations are indexed in [`docs/accuracy/`](docs/accuracy/).
   [`docs/accuracy/methodology.md`](docs/accuracy/methodology.md) defines gates.
 - [`circuit_templates/README.md`](circuit_templates/README.md) owns templates;
   [`tests/README.md`](tests/README.md) owns test organization.
+- [`PyCMG`](external_compact_models/bsim_cmg/README.md) and
+  [`neural_network`](external_compact_models/neural_network/README.md) explain
+  package APIs and boundaries; [`ASAP7`](PDKs/ASAP7/README.md) indexes the
+  tracked reference cards.
 
 ## Model levels
 
@@ -41,7 +50,7 @@ NGSPICE 45.2+ with OSDI, OpenVAF, and a built
 
 ```bash
 http_proxy=http://127.0.0.1:2080 \
-https_proxy=https://127.0.0.1:2080 \
+https_proxy=http://127.0.0.1:2080 \
 git clone https://github.com/ShenShan123/PyCircuitSim.git
 cd PyCircuitSim
 
@@ -50,13 +59,9 @@ conda create -n pycircuitsim --override-channels \
   python=3.10
 conda activate pycircuitsim
 
-http_proxy=http://127.0.0.1:2080 \
-https_proxy=https://127.0.0.1:2080 \
 pip install -r requirements.txt \
   -i https://pypi.tuna.tsinghua.edu.cn/simple
 
-http_proxy=http://127.0.0.1:2080 \
-https_proxy=https://127.0.0.1:2080 \
 pip install torch -i https://pypi.tuna.tsinghua.edu.cn/simple
 ```
 
@@ -76,6 +81,10 @@ conda run -n pycircuitsim python -m pytest -q tests
 
 TSMC work also needs the private cards under `PDKs/TSMC*/`; they are untracked.
 ASAP7 cards are bundled, but ASAP7 has no NN checkpoints.
+`NGSPICE_BIN` selects the reference executable. Standalone PyCMG tests accept
+`ASAP7_MODELCARD` as a file or directory override; record any override with
+the evidence. Access Tsinghua's `.cn` package mirrors directly; use the inline
+proxy for foreign services such as GitHub.
 
 Inspect current interfaces with `--help`:
 
@@ -154,7 +163,7 @@ that stage or the complete flow.
 For both families across the full technology and size matrix:
 
 ```bash
-python main.py flow --run-dir results/v773_matrix \
+python main.py flow --run-dir results/full_matrix \
   --tech tsmc5 tsmc6 tsmc7 tsmc12 tsmc16 \
   --model direct transformer --size small medium large xl \
   --gpus 0 1 2 --workers 8 --parallel 8 \
@@ -490,7 +499,7 @@ conda run -n pycircuitsim python tests/simple_circuits/verify_nn_subckt.py \
   --tech TSMC5 --analysis dc,tran,ac
 ```
 
-Run the complete clean campaign:
+### Run the complete clean checkpoint matrix
 
 ```bash
 conda run -n pycircuitsim python \
@@ -526,6 +535,9 @@ and PyTorch. It never falls back to another environment.
 `--campaign` requires the selected campaign's complete metrics and matching
 collection provenance before any report is written. Omitting it checks or
 rebuilds the preserved report selection, currently V7.6.6.
+The report builder produces clean LEVEL=75/76 reports only. Named training
+recipes remain supported by the root workflow; their evaluation summaries
+stay in their isolated run directories.
 
 ## 5. Sweep unified circuit templates
 
@@ -569,6 +581,60 @@ conda run -n pycircuitsim python main.py simulate path/to/deck.sp \
 The original `python main.py path/to/deck.sp` invocation is also supported.
 Netlist and simulation output paths remain relative to your current directory.
 
+## PyCMG reference tools
+
+Run these examples from the repository root in the `pycircuitsim` conda
+environment after building OSDI. The
+[PyCMG guide](external_compact_models/bsim_cmg/README.md) describes the API and
+its current/sign conventions.
+
+```bash
+PYTHONPATH=external_compact_models/bsim_cmg \
+conda run --no-capture-output -n pycircuitsim python - <<'PY'
+from pycmg import Instance, Model
+
+model = Model(
+    "external_compact_models/bsim_cmg/build/osdi/bsimcmg.osdi",
+    "PDKs/ASAP7/7nm_TT_160803.pm",
+    "nmos_rvt",
+)
+device = Instance(model, params={"L": 30e-9, "NFIN": 2.0}, temperature=300.15)
+result = device.eval_dc({"d": 0.7, "g": 0.7, "s": 0.0, "e": 0.0})
+print(f"PyCMG terminal id = {result['id']:.6e} A")
+PY
+```
+
+For a small device-inspection CSV, explicitly place output under `results/`:
+
+```bash
+conda run -n pycircuitsim python \
+  external_compact_models/bsim_cmg/scripts/generate_training_data.py \
+  --osdi external_compact_models/bsim_cmg/build/osdi/bsimcmg.osdi \
+  --tech ASAP7 --devices nmos_rvt --no-sweep-geometry \
+  --temps 27 --vg-points 5 --vd-points 5 \
+  --output-dir results/pycmg_csv
+```
+
+This CSV does not carry the canonical NN dataset contract or completion marker.
+Use [stage 1](#1-generate-full-terminal-datasets) or root `main.py data` for
+LEVEL=75/76 training. Inspect the standalone sensitivity tool's options with
+`python external_compact_models/bsim_cmg/scripts/sensitivity_analysis.py --help`.
+
+The PyCMG suite has its own `tests` package and runs from its package directory:
+
+```bash
+cd external_compact_models/bsim_cmg
+conda run -n pycircuitsim python -m pytest -q tests/test_api.py tests/test_sweep.py
+# Full evaluator/reference suite; requires OSDI, NGSPICE, and the selected PDKs.
+conda run -n pycircuitsim python -m pytest -q tests
+cd ../..
+```
+
+The first command checks API/sweep behavior. The full suite includes NGSPICE
+comparisons; missing model assets can cause skips, which must be reported.
+Standalone PyCMG helpers currently use local `build/modelcards/` and
+`build/ngspice_eval/` caches. Root circuit gates write evidence under `results/`.
+
 ## Performance and artifact policy
 
 CPU, flags-off inference is the scored contract. BSIM-AR's
@@ -579,6 +645,14 @@ Datasets and checkpoints are ignored by Git. Keep comparison jobs in isolated
 `BSIMAR_DATA_DIR` and `BSIMAR_CHECKPOINT_DIR` roots. Preserve only artifacts
 behind a current score or active comparison, and put materialized simulations
 under `results/`.
+
+The V7.7.5 cleanup preserved active release worktrees, datasets, checkpoints,
+and cited diagnostics. Disposable scratch paths are not stable inputs. Before
+removing a result directory, check campaign manifests, report references, and
+running processes; the [cleanup ledger](docs/CHANGELOG.md#v775--repository-cleanup)
+owns the deletion record. Package versions and frozen campaign identifiers are
+separate: updating the package does not finish a campaign or requalify its
+checkpoints.
 
 ## Repository layout
 

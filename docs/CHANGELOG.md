@@ -58,6 +58,24 @@ pin-memory warnings. Report checksum preservation, focused Ruff checks
 Markdown links passed. Full numerical re-gating, new training, and a separate
 PyCMG suite were not run for this cleanup.
 
+Documentation follow-up: cross-linked all seven READMEs and agent guidance
+around the root workflow, package APIs, test/template contracts, and evidence
+owners. Replaced stale PyCMG/ASAP7 examples, corrected the terminal `id` API
+and current-sign explanation, removed copied obsolete inventories, and kept
+generated output in the documented artifact locations. Dated reports now
+label their retired-family context; campaign plans preserve their frozen IDs
+without rolling back package metadata. The methodology now matches the
+implemented shared NGSPICE-refined opamp AC bias. Historical score tables
+and numerical code are unchanged; only the accuracy-index preservation hash
+changed outside Markdown.
+
+Follow-up verification: 51 metadata/report/campaign contracts and 48 PyCMG
+API/sweep tests passed, zero skipped; one expected missing-device warning.
+The documented ASAP7 API and 25-row CSV examples ran successfully. Local
+Markdown targets/anchors, README shell syntax, and preserved-report checksums
+were checked. Full numerical re-gating, training, and the full NGSPICE-backed
+PyCMG suite were not run for this documentation follow-up.
+
 ### V7.7.3 — root NN workflow
 
 Unified `main.py` exposes `simulate`, `data`, `train`, and `evaluate` as

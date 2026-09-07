@@ -1,152 +1,56 @@
-# ASAP7 7nm PDK Modelcards
+# ASAP7 BSIM-CMG modelcards
 
-This directory contains ASAP7 (Arizona State University Predictive Technology 7nm) modelcards for BSIM-CMG FinFET simulation.
+This directory contains the tracked ASAP7 FinFET cards used for LEVEL=72
+reference checks. The repository [README](../../README.md) owns setup,
+commands, and release metadata. ASAP7 is outside the current LEVEL=75/76 NN
+checkpoint scope; private TSMC cards belong in their separate ignored PDK
+folders.
 
-## PDK Information
+## Cards and model names
 
-- **Source**: Arizona State University (ASU)
-- **Technology Node**: 7nm FinFET
-- **Release**: ASAP7 version 1.0 (8/3/2016)
-- **Model**: BSIM-CMG (Berkeley Short-channel IGFET Model for Common Multi-Gate)
-- **Level**: 72 (BSIM-CMG)
+| Process corner | Dated source card | Companion card |
+|---|---|---|
+| Typical–typical | [`7nm_TT_160803.pm`](7nm_TT_160803.pm) | [`7nm_TT.pm`](7nm_TT.pm) |
+| Slow–slow | [`7nm_SS_160803.pm`](7nm_SS_160803.pm) | [`7nm_SS.pm`](7nm_SS.pm) |
+| Fast–fast | [`7nm_FF_160803.pm`](7nm_FF_160803.pm) | [`7nm_FF.pm`](7nm_FF.pm) |
 
-## Available Models
+Each dated card declares four NMOS and four PMOS models:
 
-### NMOS Devices
-| Model Name | Description | Vth Type |
-|-------------|---------------|------------|
-| `nmos_lvt` | Low Threshold Voltage | Lower |Vth| for low-power apps |
-| `nmos_rvt` | Regular Threshold Voltage | Standard |Vth| |
-| `nmos_slvt` | Super-Low Threshold Voltage | Lowest |Vth| |
-| `nmos_sram` | SRAM-optimized | Optimized for SRAM |
+| Variant | NMOS | PMOS |
+|---|---|---|
+| Low threshold | `nmos_lvt` | `pmos_lvt` |
+| Regular threshold | `nmos_rvt` | `pmos_rvt` |
+| Super-low threshold | `nmos_slvt` | `pmos_slvt` |
+| SRAM | `nmos_sram` | `pmos_sram` |
 
-### PMOS Devices
-| Model Name | Description | Vth Type |
-|-------------|---------------|------------|
-| `pmos_lvt` | Low Threshold Voltage | Lower |Vth| for low-power apps |
-| `pmos_rvt` | Regular Threshold Voltage | Standard |Vth| |
-| `pmos_slvt` | Super-Low Threshold Voltage | Lowest |Vth| |
-| `pmos_sram` | SRAM-optimized | Optimized for SRAM |
+Read geometry and process parameters from the selected card. For example, the
+TT card's `hfin=3.2e-8` is **32 nm**, not 3.2 nm. A technology label is not a
+substitute for the instance's L/NFIN/TFIN or its selected process corner.
 
-## PVT Corners
+## Evaluator integration
 
-| Corner | File | Description |
-|--------|-------|-------------|
-| **TT** | `7nm_TT_160803.pm` | Typical-Typical (nominal process) |
-| **SS** | `7nm_SS_160803.pm` | Slow-Slow (worst-case speed) |
-| **FF** | `7nm_FF_160803.pm` | Fast-Fast (best-case speed) |
+The [PyCMG example](../../README.md#pycmg-reference-tools) loads the tracked TT
+card with `Model(osdi_path, modelcard_path, model_name)` and reads the returned
+dictionary's `id` terminal-current field. It uses the current `PDKs/ASAP7/`
+and `build/osdi/` locations.
 
-## Key Parameters
+[`pycmg/parser.py`](../../external_compact_models/bsim_cmg/pycmg/parser.py)
+infers `DEVTYPE` from the `.model` NMOS/PMOS type when the card omits it:
+NMOS is 1, PMOS is 0. No separately patched `with_devtype` card is needed.
+The source cards remain unchanged. Raw PyCMG currents and circuit-stamp
+currents have different sign conventions; the
+[PyCMG API guide](../../external_compact_models/bsim_cmg/README.md#evaluator-api)
+explains the adapter conversion.
 
-### Geometry (Process-dependent)
-- `tfin`: Fin thickness = 6.5-7.0 nm
-- `hfin`: Fin height = 3.2-3.4 nm
-- `l`: Gate length = 21 nm (process default)
-- `eot`: Equivalent oxide thickness = 0.75-1.0 nm (TT), 0.7e-10 (SS/FF)
+Ground truth is NGSPICE loading the same BSIM-CMG OSDI binary. Merely adding
+an `.include` does not load the OSDI model; use the shared test renderer and
+runner described in the [test guide](../../tests/README.md). Materialized
+netlists, traces, and reports belong under root `results/`.
 
-### Electrical
-- `u0`: Carrier mobility
-  - NMOS: ~0.025-0.030 m²/V·s (electron mobility)
-  - PMOS: ~0.020-0.024 m²/V·s (hole mobility)
-  - **Note**: PMOS has lower mobility due to hole vs electron physics
-- `vsat`: Saturation velocity
-  - NMOS: ~70000 m/s
-  - PMOS: ~60000 m/s
-  - Holes are slower than electrons
-- `vth0`: Threshold voltage (calculated by CMG physics)
-  - NMOS: ~0.4-0.5 V (positive for enhancement mode)
-  - PMOS: ~-0.4 to -0.5 V (negative for depletion mode)
+## Evidence
 
-## Usage in PyCMG
-
-```python
-from pycmg import Model, Instance, parse_modelcard
-
-# Load ASAP7 modelcard (same as TSMC naive approach)
-parsed = parse_modelcard(
-    "tech_model_cards/ASAP7/7nm_TT_160803.pm",
-    "nmos_lvt"
-)
-
-# Create model and instance
-model = Model("build-deep-verify/osdi/bsimcmg.osdi", parsed.params)
-inst = Instance(model, params={"L": 30e-9, "NFIN": 2})
-
-# DC analysis
-result = inst.eval_dc({"d": 0.7, "g": 0.7, "s": 0.0, "e": 0.0})
-print(f"Id = {result.id:.6e} A")
-```
-
-## Usage in NGSPICE
-
-**Netlist File** (`test_asap7.cir`):
-
-```spice
-* NGSPICE + OSDI with ASAP7 Modelcard
-.include tech_model_cards/ASAP7/7nm_TT_160803.pm
-
-* NMOS transistor (direct model call)
-N1 d g s e nmos_lvt l=30n nfin=2
-
-* Bias voltages
-Vd d 0 0.7
-Vg g 0 0.7
-Vs s 0 0
-Ve e 0 0
-
-* Analysis
-.temp 27
-.op
-.end
-```
-
-**Running NGSPICE:**
-
-```bash
-export NGSPICE_BIN=/usr/local/ngspice-45.2/bin/ngspice
-ngspice -b test_asap7.cir
-```
-
-## Important Notes
-
-### PMOS vs NMOS Current Differences
-
-**PMOS current is typically 2-3x lower than NMOS** - this is **expected physics**, not a bug!
-
-**Physical Reasons:**
-
-1. **Hole mobility is lower**: µp ≈ 0.022 m²/V·s vs µn ≈ 0.028 m²/V·s
-2. **PMOS needs negative bias**: For PMOS turn-on, use Vgs < 0, Vds < 0
-3. **Sign convention**:
-   - NMOS in saturation: Id is negative (flows OUT of drain in SPICE)
-   - PMOS in saturation: Id is positive (flows INTO drain)
-
-**This is NOT a bug** - the ASAP7 modelcards are complete and correct.
-
-### Verification Status
-
-**PMOS DEVTYPE ISSUE RESOLVED (2026-02-13)**: ASAP7 PMOS models previously exhibited inverted behavior due to missing `devtype` parameter. This is now automatically fixed in PyCMG's `parse_modelcard()` function which injects:
-- `devtype = 1.0` for NMOS models (ntype)
-- `devtype = 0.0` for PMOS models (ptype)
-
-**Technical Details:**
-- BSIM-CMG v107 uses integer parameter `DEVTYPE` to distinguish device types
-- Standard ASAP7 modelcards omit this parameter
-- PyCMG automatically detects model type from `.model` line (nmos/pmos keyword)
-- DEVTYPE is injected during parsing if not already present
-- Implementation: `pycmg/ctypes_host.py` in both `parse_modelcard()` and `_extract_model_params()`
-
-The original ASAP7 modelcard files remain unmodified. The `7nm_TT_160803_with_devtype.pm` file is kept for reference but is no longer needed.
-
-- ✅ All 8 NMOS models complete with ~250 parameters each
-- ✅ All 8 PMOS models complete with ~250 parameters each
-- ✅ PMOS models now work correctly with auto-injected devtype
-- ✅ DC, AC (capacitance), and noise sections present in all models
-- ✅ Both NMOS and PMOS verified against NGSPICE with binary-level consistency
-- ✅ Tolerances: ABS_TOL_I=1e-9, REL_TOL=5e-3
-
-## References
-
-- **ASAP7 Paper**: "Predictive Technology Model for 7nm FinFETs" (ASU, 2016)
-- **BSIM-CMG**: Berkeley BSIM Group
-- **Main agent guidance**: `../../AGENTS.md`
+Bundling TT/SS/FF cards does not claim that every corner has been qualified.
+The test registries select actual device, geometry, and analysis coverage;
+[accuracy reports](../../docs/accuracy/README.md) identify measured campaigns.
+Release outcomes and retired examples remain in the
+[changelog and Git history](../../docs/CHANGELOG.md#v775--repository-cleanup).

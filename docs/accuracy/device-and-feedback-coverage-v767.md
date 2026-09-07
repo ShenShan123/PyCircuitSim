@@ -1,5 +1,9 @@
 # V7.6.7 coverage report — device integrity, self-bias, and feedback
 
+> Historical diagnostic measurements on the then-served LEVEL=73 model.
+> That runtime is retired; these rows do not characterize LEVEL=75/76. The
+> retained diagnostic harness is described in the [test guide](../../tests/README.md).
+
 Ground truth is NGSPICE on the identical BSIM-CMG LEVEL=72 OSDI model, from
 the same `circuit_templates/` source the candidate renders. Gate definitions
 and evidence rules are in [`methodology.md`](methodology.md).

@@ -4,6 +4,12 @@
 topology is owned by the parameterized templates in [`circuit_templates/`](../circuit_templates/README.md),
 and every persistent simulator artifact is written below `results/`.
 
+The [V7.7.5 cleanup](../docs/CHANGELOG.md#v775--repository-cleanup) retained
+the collected contracts, manual gates, and frozen catalog inventories. Only
+uncalled helpers, retired report paths, and disposable output were removed.
+Raw evidence referenced by a campaign or historical diagnostic remains protected
+by the root [artifact policy](../README.md#performance-and-artifact-policy).
+
 ## Layout
 
 Two kinds of test live here and they are collected differently.
@@ -140,11 +146,16 @@ placement. The versioned simple-circuit entry point is
 Environment setup, supported commands, and the five-stage workflow are
 maintained in the repository [README](../README.md).
 
-Run the authoritative unit suite with:
-
-```bash
-conda run -n pycircuitsim python -m pytest -q tests
-```
+The root [setup and verification commands](../README.md#0-set-up-the-environment)
+run the collected project suite. The separate
+[PyCMG reference suite](../README.md#pycmg-reference-tools) runs from its package
+directory because it has a different `tests` package. State skipped tests and
+unavailable model assets explicitly; collection alone is not a passing run.
 
 The root `pytest.ini` excludes `results/` so archived campaign worktrees and
 materialized decks cannot be collected as live tests.
+
+`v730_docs_build.py` emits clean LEVEL=75/76 reports. The report contracts still
+reject incomplete matrices and provenance drift and preserve existing reports
+only when their pinned checksums match. Deleting old simulation scratch output
+does not authorize regenerating a report from partial evidence.

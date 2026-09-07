@@ -2,7 +2,9 @@
 
 Status: training. The user consolidated V7.7.1 and V7.7.2 into one campaign
 and requested automatic evaluation after training. There is one 80-model
-refresh and one final V7.7.2 release. No accuracy promotion is claimed yet.
+refresh and one final V7.7.2 campaign publication. No accuracy promotion is
+claimed yet. V7.7.2 identifies the frozen campaign; the current package release
+is maintained separately in the [root README](../../README.md).
 
 ## Scope and completion conditions
 
@@ -27,7 +29,7 @@ and [test contract](../../tests/README.md) own scoring rules.
 | Training | four small bundles complete at consolidation; three XL jobs continue without restart; remaining queue unchanged |
 | Full evaluation | starts automatically after all 80 successful training jobs and bundle validation |
 | Analysis and corrections | diagnose scientific failures and fix reproduced bugs with coherent evidence |
-| Release | complete reports, related Markdown, V7.7.2 metadata, verification, final commit and push |
+| Release | complete reports, related Markdown, campaign provenance, verification, final commit and push |
 
 Training uses physical GPUs 0/3/4, one job per idle GPU, identified by UUID.
 Keep other users' processes untouched. Evaluation uses 16 CPU workers; scored
@@ -97,7 +99,8 @@ training job cannot satisfy this dependency.
 Four-hour and stage-change reviews run in the V7.7.2 conversation. Inspect
 service/process liveness, counts, epochs, failed jobs, resources and forecast.
 The [README](../../README.md) owns start/resume commands. After complete
-scoring, update accuracy reports and related documentation, change release
-metadata to V7.7.2, verify, and commit/push. Only after the final push is
-verified, write `results/v772_campaign/release_done.json` and disable the
+scoring, update accuracy reports and related documentation with the V7.7.2
+campaign identity, preserve the current package version, verify, and commit/push.
+Only after the final push is verified, write
+`results/v772_campaign/release_done.json` and disable the
 V7.7.2 services plus the retained training backend.

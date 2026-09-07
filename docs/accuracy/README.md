@@ -6,12 +6,14 @@ Ground truth is NGSPICE using the identical BSIM-CMG LEVEL=72 OSDI model. Read
 The [V7.7.2 refresh](../plans/2026-09-05-v772-full-retraining.md) is in progress.
 Its fresh S/M/L/XL evidence will replace the reports only after complete
 collection and validation; the measurements below remain historical controls.
-The corrected solver on `main` is scored separately as
-[V7.7.3](../plans/2026-09-06-v773-corrected-solver-arm.md).
+The corrected solver on `main` awaits its separately provenanced
+[V7.7.3 evaluation arm](../plans/2026-09-06-v773-corrected-solver-arm.md).
+The package release is recorded in the [root README](../../README.md); V7.7.5
+cleanup does not change these campaign verdicts.
 
 ## Current NN policy
 
-V7.7.0 retires the reduced LEVEL=73/74 families. DirectNet-Full (LEVEL=75) is
+V7.7.0 retired the reduced LEVEL=73/74 families. DirectNet-Full (LEVEL=75) is
 the default NN path and BSIM-AR-Full (LEVEL=76) is the autoregressive
 alternative. This is an architecture-maintenance decision, not a new accuracy
 campaign or a retroactive scientific promotion.
@@ -27,11 +29,12 @@ TSMC5-only and leaves the Miller opamp as `ERROR`.
 | 75 | DirectNet-Full | default | [`DirectNet-L75-clean.md`](DirectNet-L75-clean.md) |
 | 76 | BSIM-AR-Full | autoregressive alternative | [`BSIM-AR-L76-simple-circuits.md`](BSIM-AR-L76-simple-circuits.md) |
 
-## Current reports and diagnostics
+## Reports, diagnostics, and historical audits
 
 | file | scope |
 |---|---|
 | [`DirectNet-L75-clean.md`](DirectNet-L75-clean.md) | latest clean LEVEL=75 qualification and open gaps |
+| [`BSIM-AR-L76-clean.md`](BSIM-AR-L76-clean.md) | explicit absence of a complete five-technology clean matrix |
 | [`DirectNet-L75-v763-targeted.md`](DirectNet-L75-v763-targeted.md) | targeted four-scale recovery; not a clean replacement |
 | [`DirectNet-L75-v764-terminal-followup.md`](DirectNet-L75-v764-terminal-followup.md) | terminal-length, globalization, and matched-data experiments |
 | [`DirectNet-L75-V760-recovery.md`](DirectNet-L75-V760-recovery.md) | initial full-terminal attribution and recovery |
@@ -53,45 +56,20 @@ removed runtimes and cannot qualify the current LEVEL=75/76 models.
 
 ## Evidence reproduction
 
-Generate the current full-terminal job pool and collect one complete campaign:
+The [root clean-campaign workflow](../../README.md#run-the-complete-clean-checkpoint-matrix)
+owns launch, collection, coverage, and report-build commands. The
+[root stage interface](../../README.md#nn-workflow-from-the-project-root)
+provides selected device/circuit evaluations in isolated run directories.
 
-```bash
-conda run -n pycircuitsim python \
-  scripts/v710_regate_jobs.py results/v770_full_clean/job_lists
+The job generator writes clean, simple-v2, and source-frame canary pools.
+The current campaign runner dispatches all three after checking geometry
+coverage against the selected dataset root. The frozen V7.7.2 worktree has its
+own inventory; the [campaign plan](../plans/2026-09-05-v772-full-retraining.md)
+records that distinction.
 
-BSIMAR_CHECKPOINT_DIR="$PWD/results/v770_full_checkpoints" \
-V710_OUT="$PWD/results/v770_full_clean" \
-V710_SCRATCH=/tmp/pycircuitsim-v770-full \
-NGSPICE_BIN=/usr/local/ngspice-45.2/bin/ngspice \
-JOBS="$PWD/results/v770_full_clean/job_lists/jobs_clean.txt" PAR=32 \
-NN_PY="$(conda run -n pycircuitsim which python)" \
-bash scripts/v710_regate.sh
-
-conda run -n pycircuitsim python scripts/v710_regate_collect.py \
-  --root results/v770_full_clean --require-manifest
-```
-
-Coverage and report generation fail closed on incomplete bundles or campaign
-cells:
-
-```bash
-for family in dnf tff; do
-  BSIMAR_CHECKPOINT_DIR="$PWD/results/v770_full_checkpoints" \
-  conda run -n pycircuitsim python scripts/v730_coverage.py \
-    --tag "$family" --set clean --passes v770-full-clean \
-    --require-complete --fail-on-gaps
-done
-
-conda run -n pycircuitsim python scripts/v730_docs_build.py
-conda run -n pycircuitsim python scripts/v730_docs_build.py --check
-```
-
-The job generator also writes `jobs_simple_v2.txt` (nominal held-out screen)
-and `jobs_canary.txt` (the source-relative-frame canary per checkpoint group);
-`scripts/v771_campaign.py --stage evaluate` dispatches all three pools into
-separate output roots after running `verify_data_geometry_coverage.py` once
-against the campaign dataset root.
-
-Raw evidence and generated artifacts remain under `results/` and are ignored by
-Git. Never combine partial passes or rewrite checkpoint provenance. Explicit
-training/harness source equivalence follows [methodology §8.3](methodology.md).
+The shared report builder publishes clean LEVEL=75/76 reports only. Without a
+complete matrix it preserves an existing report only if its pinned checksum
+matches. Named training recipes remain supported, but their run summaries do
+not become clean-report evidence. Raw artifacts stay under `results/`, ignored
+by Git; [methodology §8](methodology.md#8-measurement-caveats-and-harness-corrections)
+owns explicit training/harness source equivalence.

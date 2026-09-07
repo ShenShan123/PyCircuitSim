@@ -1,5 +1,9 @@
 # DirectNet-Full (LEVEL=75) — terminal-length follow-up
 
+> Historical experiment ledger. The retired AnalogGym workflow and rejected
+> trial arms below are not current launch instructions. See the
+> [accuracy index](README.md) for maintained evidence.
+
 Date: 2026-08-29
 
 Status: **experimental; no promotion**. This follow-up removed the dominant

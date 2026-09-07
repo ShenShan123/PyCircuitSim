@@ -1,5 +1,9 @@
 # DirectNet-Full LEVEL=75 — V7.6.0 recovery evidence
 
+> Historical V7.6.0 attribution record. LEVEL=73 was the served family then;
+> it is now retired. The [accuracy index](README.md) owns current runtime policy
+> and the latest retained evidence.
+
 ## Verdict
 
 V7.6.0 adds a separate full-terminal DirectNet family because the exact OSDI

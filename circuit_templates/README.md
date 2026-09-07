@@ -7,6 +7,11 @@ rendered from that same file.
 
 Materialized `.sp`, `.cir`, simulator logs, traces, plots, and reports do not
 belong here. The harness writes them below `results/`.
+The [V7.7.5 cleanup](../docs/CHANGELOG.md#v775--repository-cleanup) preserved
+the template inventory and its frozen renders; disposable rendered output
+does not replace these source files. For test entry points and evidence
+retention, see the [test guide](../tests/README.md) and
+[artifact policy](../README.md#performance-and-artifact-policy).
 
 ## Layout — ordered by what a circuit demands of a compact model
 
@@ -124,8 +129,8 @@ analysis metadata, and each case's declared `tier`.
 `tests/common/simple_circuit_harness.py` owns corners and the NN, NGSPICE
 LEVEL=72, and PyCircuitSim LEVEL=72-control adapters. `tests/common/base.py`
 owns strict rendering, `template_deck()`, and `control_deck()`,
-which resolves a bare template name to its tier and rejects a name that two
-tiers both claim.
+with `template_deck()` resolving names to tiers and rejecting duplicates,
+and `control_deck()` resolving passive solver controls.
 
 When adding a circuit: add one template to the tier whose crutches it removes,
 register it in the catalog with that `tier`, and extend the catalog contract
