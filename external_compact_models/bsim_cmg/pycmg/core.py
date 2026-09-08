@@ -280,27 +280,6 @@ class OsdiModel:
         self._desc.setup_model(_INSTANCE_NAME, self._buf.ptr, ctypes.byref(sim_params), ctypes.byref(info))
         _check_init_result(self._desc, info)
 
-    def set_param(self, name: str, value: float) -> None:
-        desc = self._desc
-        if not desc.param_opvar:
-            raise RuntimeError("descriptor has no parameter metadata")
-        for i in range(desc.num_params):
-            param = desc.param_opvar[i]
-            param_name = param.name[0].decode("utf-8", errors="replace") if param.name else ""
-            if param_name and name == param_name:
-                ptr = desc.access(None, self._buf.ptr, i, ACCESS_FLAG_SET)
-                if not ptr:
-                    raise RuntimeError("invalid parameter access")
-                ty = param.flags & PARA_TY_MASK
-                if ty == PARA_TY_INT:
-                    ctypes.cast(ptr, ctypes.POINTER(ctypes.c_int32))[0] = int(value)
-                elif ty == PARA_TY_REAL:
-                    ctypes.cast(ptr, ctypes.POINTER(ctypes.c_double))[0] = float(value)
-                else:
-                    raise RuntimeError(f"string parameter not supported: {name}")
-                return
-        raise RuntimeError(f"parameter not found: {name}")
-
 
 # ---------------------------------------------------------------------------
 # Simulation state management

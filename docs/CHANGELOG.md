@@ -76,6 +76,27 @@ Markdown targets/anchors, README shell syntax, and preserved-report checksums
 were checked. Full numerical re-gating, training, and the full NGSPICE-backed
 PyCMG suite were not run for this documentation follow-up.
 
+Review follow-up: removed the unused generator temperature-parser import,
+`OsdiModel.set_param()`, `ProcessParams.as_dict()`, `NNTechConfig.default_variant`
+and its registry assignments, and the Transformer's write-only `raw_input_dim`.
+Clean reports now use tiers directly instead of identity mappings, an empty
+override registry, and duplicate label/key wrappers. Removed the obsolete
+`pybind11` requirement; PyCMG uses ctypes. The version remains V7.7.5.
+
+The edited compact-model files and requirements change the tracked source
+inventory hash even though numerical paths and checkpoint tensors are
+unchanged. Existing source-equivalence guards remain strict; frozen campaign
+worktrees and original artifact provenance are preserved.
+
+Review follow-up verification: all 1,101 project tests and 48 focused PyCMG
+API/sweep tests passed, zero skipped; five CPU pin-memory warnings and one
+expected missing-device warning. Focused Ruff checks (`F401`, `F811`, `F821`,
+`F841`), changed-Python syntax, preserved-report checksums, and version checks
+passed. All report sections, completeness decisions, and tier selection match
+the previous builder across complete, mixed, partial, and empty synthetic
+matrices for both families. Full numerical re-gating, training, and the full
+NGSPICE-backed PyCMG suite were not run for this follow-up.
+
 ### V7.7.3 — root NN workflow
 
 Unified `main.py` exposes `simulate`, `data`, `train`, and `evaluate` as

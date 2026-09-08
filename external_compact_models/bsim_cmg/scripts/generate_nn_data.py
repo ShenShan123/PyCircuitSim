@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
 
 import numpy as np
 
-from cli_options import generation_parser, _parse_temperatures
+from cli_options import generation_parser
 from pycmg.nn_config import TECH_CONFIGS
 from pycmg.nn_generate import (
     generate_dataset,

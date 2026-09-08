@@ -109,7 +109,6 @@ class TransformerEncoderModel(nn.Module):
                 "ar_target_dim must be in [1, target_dim], got "
                 f"{ar_target_dim} for target_dim={target_dim}")
 
-        self.raw_input_dim = input_dim
         self.target_dim = target_dim
         self.d_model = d_model
         self.nhead = nhead

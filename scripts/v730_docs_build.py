@@ -112,13 +112,6 @@ _DEVICE_AC_PAYLOAD_KEYS = (
     "gain0_err_db", "f3db_ratio", "mag_nrmse_pct", "status",
 )
 
-CLEAN = {
-    "dnf": {t: t for t in TIERS},
-    "tff": {t: t for t in TIERS},
-}
-CLEAN_OVERRIDE: Dict[Tuple[str, str, str], str] = {}
-
-
 # ── evidence ────────────────────────────────────────────────────────────────
 def load_json(name: str) -> Dict:
     p = ROOT / "results" / name / "data.json"
@@ -206,10 +199,6 @@ def at(
     return e.get(omp) if e else None
 
 
-def clean_variant(tag: str, tier: str, tech: str) -> str:
-    return CLEAN_OVERRIDE.get((tag, tier, tech), CLEAN[tag][tier])
-
-
 def strict(tag: str, variant: str, circ: str, tech: str
            ) -> Tuple[Optional[str], Optional[float]]:
     """Strict verdict for one simple-v1 cell at every required thread count.
@@ -263,18 +252,13 @@ def verdict_mark(v: Optional[str], metric: Optional[float],
 
 
 # ── table builders ──────────────────────────────────────────────────────────
-def _groups() -> List[Tuple[str, str]]:
-    """(label, variant-resolver-key) pairs for the report being built."""
-    return [(t, t) for t in TIERS]
-
-
 def headline(tag: str) -> str:
     rows = [
         "| group | strict /20 | " + " | ".join(CIRCS)
         + " | flips | open cells |",
         "|---|" + "---|" * (len(CIRCS) + 3),
     ]
-    for label, key in _groups():
+    for tier in TIERS:
         # Per-circuit denominators are counted, not divided out of the total:
         # a partly-measured group has different denominators per circuit, and
         # dividing would quietly report a pass rate against the wrong base.
@@ -282,7 +266,7 @@ def headline(tag: str) -> str:
         flips, open_cells = 0, []
         for circ in CIRCS:
             for tech in TECHS:
-                v, _ = strict(tag, clean_variant(tag, key, tech), circ, tech)
+                v, _ = strict(tag, tier, circ, tech)
                 if v is None:
                     continue
                 per[circ][1] += 1
@@ -297,7 +281,7 @@ def headline(tag: str) -> str:
         n_pass = sum(p for p, _ in per.values())
         cells = " | ".join(f"{per[c][0]}/{per[c][1]}" for c in CIRCS)
         oc = ", ".join(open_cells) if open_cells else "—"
-        rows.append(f"| {label} | **{n_pass}/{tot}** | {cells} | {flips} | {oc} |")
+        rows.append(f"| {tier} | **{n_pass}/{tot}** | {cells} | {flips} | {oc} |")
     return "\n".join(rows)
 
 
@@ -309,15 +293,15 @@ def testcase_tables(tag: str) -> str:
                 "| group | " + " | ".join(TECHS) + " |",
                 "|---|" + "---|" * len(TECHS)]
         dagger = False
-        for label, key in _groups():
+        for tier in TIERS:
             cells = []
             for tech in TECHS:
-                v, m = strict(tag, clean_variant(tag, key, tech), circ, tech)
+                v, m = strict(tag, tier, circ, tech)
                 mark = verdict_mark(v, m, circ)
                 dagger |= mark.endswith("†")
                 cells.append(mark)
             if any(c != "—" for c in cells):
-                out.append(f"| {label} | " + " | ".join(cells) + " |")
+                out.append(f"| {tier} | " + " | ".join(cells) + " |")
         if dagger:
             out += ["", f"† failed on **{SECOND_CRITERION[circ]}**, the half of this "
                         "gate the headline number does not show — the metric above is "
@@ -333,8 +317,8 @@ def by_tech_rollup(tag: str) -> str:
         per, tot = [], 0
         for circ in CIRCS:
             p = n = 0
-            for _, key in _groups():
-                v, _ = strict(tag, clean_variant(tag, key, tech), circ, tech)
+            for tier in TIERS:
+                v, _ = strict(tag, tier, circ, tech)
                 if v is None:
                     continue
                 n += 1
@@ -352,12 +336,12 @@ def by_tech_rollup(tag: str) -> str:
 def by_scale_rollup(tag: str) -> str:
     out = ["| group | " + " | ".join(TECHS) + " | all |",
            "|---|" + "---|" * (len(TECHS) + 1)]
-    for label, key in _groups():
+    for tier in TIERS:
         cells, tp, tn = [], 0, 0
         for tech in TECHS:
             p = n = 0
             for circ in CIRCS:
-                v, _ = strict(tag, clean_variant(tag, key, tech), circ, tech)
+                v, _ = strict(tag, tier, circ, tech)
                 if v is None:
                     continue
                 n += 1
@@ -366,7 +350,7 @@ def by_scale_rollup(tag: str) -> str:
             tp += p
             tn += n
         if tn:
-            out.append(f"| {label} | " + " | ".join(cells) + f" | **{tp}/{tn}** |")
+            out.append(f"| {tier} | " + " | ".join(cells) + f" | **{tp}/{tn}** |")
     return "\n".join(out)
 
 
@@ -397,10 +381,10 @@ def device_tables(tag: str) -> str:
                 f"max error {error_unit}; passing/total configs in parentheses)*", "",
                 "| group | " + " | ".join(TECHS) + " | pass |",
                 "|---|" + "---|" * (len(TECHS) + 1)]
-        for label, key in _groups():
+        for tier in TIERS:
             cells, p, n = [], 0, 0
             for tech in TECHS:
-                e = at(tag, clean_variant(tag, key, tech), suite, tech)
+                e = at(tag, tier, suite, tech)
                 if not e or "mean_nrmse" not in e:
                     cells.append("—")
                     continue
@@ -413,17 +397,17 @@ def device_tables(tag: str) -> str:
                     f"{e['min_r2']:.3f} / {max_error:.3g}{extra}"
                 )
             if n:
-                out.append(f"| {label} | " + " | ".join(cells) + f" | {p}/{n} |")
+                out.append(f"| {tier} | " + " | ".join(cells) + f" | {p}/{n} |")
         out.append("")
 
     out += ["**Device CS-amp AC** — NMOS / PMOS "
             "*(gate: gain0 ≤1.5 dB, f3db ratio ∈[0.7, 1.43], magNRMSE ≤10 %)*", "",
             "| group | " + " | ".join(TECHS) + " | pass /10 |",
             "|---|" + "---|" * (len(TECHS) + 1)]
-    for label, key in _groups():
+    for tier in TIERS:
         cells, p, n = [], 0, 0
         for tech in TECHS:
-            e = at(tag, clean_variant(tag, key, tech), "verify_nn_ac", tech)
+            e = at(tag, tier, "verify_nn_ac", tech)
             if not e or "nmos" not in e:
                 cells.append("—")
                 continue
@@ -433,18 +417,17 @@ def device_tables(tag: str) -> str:
                     p += e[d]["status"] == "PASS"
             cells.append(" / ".join(_ac_mark(e.get(d)) for d in ("nmos", "pmos")))
         if n:
-            out.append(f"| {label} | " + " | ".join(cells) + f" | **{p}/{n}** |")
+            out.append(f"| {tier} | " + " | ".join(cells) + f" | **{p}/{n}** |")
 
     out += ["", "**Opamp open-loop AC** — DC-gain error "
             "*(gate: ≤3 dB, GBW ratio ∈[0.6, 1.67], PM err ≤15°, "
             "valid refined reference and converged NN OP)*", "",
             "| group | " + " | ".join(TECHS) + " | pass /5 |",
             "|---|" + "---|" * (len(TECHS) + 1)]
-    for label, key in _groups():
+    for tier in TIERS:
         cells, p, n = [], 0, 0
         for tech in TECHS:
-            e = at(tag, clean_variant(tag, key, tech),
-                   "verify_circuit_opamp_ac", tech)
+            e = at(tag, tier, "verify_circuit_opamp_ac", tech)
             if not e:
                 cells.append("—")
                 continue
@@ -459,7 +442,7 @@ def device_tables(tag: str) -> str:
                     f"{e.get('dc_gain_err_db', '—')} dB"
                 )
         if n:
-            out.append(f"| {label} | " + " | ".join(cells) + f" | **{p}/{n}** |")
+            out.append(f"| {tier} | " + " | ".join(cells) + f" | **{p}/{n}** |")
     return "\n".join(out)
 
 
@@ -481,11 +464,11 @@ HISTORICAL_CLEAN_TEXT = {
 }
 
 
-def _score(tag: str, key: str) -> Tuple[int, int]:
+def _score(tag: str, tier: str) -> Tuple[int, int]:
     p = n = 0
     for tech in TECHS:
         for circ in CIRCS:
-            v, _ = strict(tag, clean_variant(tag, key, tech), circ, tech)
+            v, _ = strict(tag, tier, circ, tech)
             if v is None:
                 continue
             n += 1
@@ -496,10 +479,10 @@ def _score(tag: str, key: str) -> Tuple[int, int]:
 def _best(tag: str) -> Tuple[str, int, int]:
     """Highest strict pass fraction in the pinned pass; cheaper tie wins."""
     best = ("—", 0, 0)
-    for label, key in _groups():
-        p, n = _score(tag, key)
+    for tier in TIERS:
+        p, n = _score(tag, tier)
         if n and (not best[2] or p / n > best[1] / best[2]):
-            best = (label, p, n)
+            best = (tier, p, n)
     return best
 
 
@@ -561,11 +544,10 @@ def _matrix_complete_in_pass(tag: str, version: str) -> bool:
     data = PASS_DATA.get(version, {})
     if not data:
         return False
-    for _, key in _groups():
+    for tier in TIERS:
         for tech in TECHS:
-            variant = clean_variant(tag, key, tech)
             for suite, required in REPORT_SUITES.items():
-                entry = (data.get(tag, {}).get(variant, {})
+                entry = (data.get(tag, {}).get(tier, {})
                          .get(suite, {}).get(tech))
                 if not entry or any(
                     omp not in entry
@@ -603,8 +585,8 @@ def _techs_measured(tag: str) -> List[str]:
     """Techs with at least one measured simple-v1 cell in these groups."""
     got = []
     for tech in TECHS:
-        for _, key in _groups():
-            if any(strict(tag, clean_variant(tag, key, tech), c, tech)[0]
+        for tier in TIERS:
+            if any(strict(tag, tier, c, tech)[0]
                    for c in CIRCS):
                 got.append(tech)
                 break

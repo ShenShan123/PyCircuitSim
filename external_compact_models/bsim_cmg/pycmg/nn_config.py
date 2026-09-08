@@ -89,9 +89,6 @@ class ProcessParams:
                 self.eta0, self.cit, self.rdsw,
                 self.cfs, self.toxp, self.cgsl, self.ua, self.eu]
 
-    def as_dict(self) -> Dict[str, float]:
-        return dict(zip(PROCESS_PARAM_NAMES, self.as_array()))
-
 
 def extract_process_params(modelcard_params: Dict[str, float]) -> ProcessParams:
     """Extract the 12 NN process parameters from a parsed modelcard.
@@ -143,7 +140,6 @@ class NNTechConfig:
     vdd_train: float
     variant_names: List[str]
     temperature: float = DEFAULT_TEMPERATURE
-    default_variant: str = ""
     fallback_nfin_values: Optional[List[int]] = None
     fallback_l_values: Optional[List[float]] = None
 
@@ -233,7 +229,6 @@ ASAP7_CONFIG = NNTechConfig(
     pycmg_name="ASAP7",
     vdd_train=0.7,
     variant_names=["rvt", "lvt", "slvt", "sram"],
-    default_variant="rvt",
     # D6: include NFIN=1; failures are caught per-bin in nn_generate.
     fallback_nfin_values=[1, 2, 3, 5, 10, 15, 20, 24],
     # D7: long-channel L sweep — paper §3 trains over [8, 240] nm.
@@ -244,35 +239,30 @@ TSMC5_CONFIG = NNTechConfig(
     pycmg_name="TSMC5",
     vdd_train=0.65,
     variant_names=["svt", "lvt", "ulvt", "elvt"],
-    default_variant="svt",
 )
 
 TSMC6_CONFIG = NNTechConfig(
     pycmg_name="TSMC6",
     vdd_train=0.75,
     variant_names=["svt", "lvt", "ulvt"],
-    default_variant="svt",
 )
 
 TSMC7_CONFIG = NNTechConfig(
     pycmg_name="TSMC7",
     vdd_train=0.75,
     variant_names=["svt", "lvt", "ulvt"],
-    default_variant="svt",
 )
 
 TSMC12_CONFIG = NNTechConfig(
     pycmg_name="TSMC12",
     vdd_train=0.80,
     variant_names=["svt", "lvt", "ulvt", "hvt", "lnvt"],
-    default_variant="svt",
 )
 
 TSMC16_CONFIG = NNTechConfig(
     pycmg_name="TSMC16",
     vdd_train=0.80,
     variant_names=["svt", "lvt", "ulvt", "hvt", "lnvt"],
-    default_variant="svt",
 )
 
 TECH_CONFIGS: Dict[str, NNTechConfig] = {
