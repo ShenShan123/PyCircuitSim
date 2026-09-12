@@ -76,6 +76,14 @@ The separate AR-cache diagnostic also measured a 2.31e-4 relative Jacobian
 deviation on TSMC7 small NMOS against its 1e-4 tolerance; cache-off execution
 remains the scored contract, and that diagnostic failure is retained.
 
+The endpoint repair exposed a canary polarity bug: the PMOS scalar
+`calculate_current()` already uses the project's comparison sign, but the
+canary negated it again, yielding approximately 200% MRE. The candidate now
+reads signed MNA `i(Vd)`, the same observable used by NGSPICE, with matching
+NMOS/PMOS orientation. A boundary test checks both devices and both current
+directions; it cannot hide a wrong sign through an absolute value. Device
+equations and scalar API conventions are unchanged.
+
 ### V7.7.5 — repository cleanup
 
 Removed ten uncalled definitions: the DC last-solution accessor and its

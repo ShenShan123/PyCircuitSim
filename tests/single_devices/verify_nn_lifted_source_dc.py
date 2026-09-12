@@ -187,9 +187,12 @@ def run_nn_dc_lifted(
     finally:
         logging.disable(previous_disable)
     gate = np.asarray(results["g"])
-    current = np.asarray(results["i(Mdut)"])
+    # Match the NGSPICE observable. The legacy PMOS scalar i(Mdut) already
+    # reverses the physical terminal sign; negating it again creates a false
+    # polarity failure. The voltage-source branch retains signed MNA current.
+    current = np.asarray(results["i(Vd)"])
     return {"sweep": gate if is_nmos else tech.vdd - gate,
-            "id": current if is_nmos else -current}
+            "id": -current if is_nmos else current}
 
 
 def main(argv: List[str] | None = None) -> int:
