@@ -64,6 +64,18 @@ as infrastructure failures. Flat and decreasing references are covered for
 both polarities. Missing/malformed metrics, failed NGSPICE runs, partial
 traces, and qualification rows cannot use this exception.
 
+The third arm completed all 1,196 device-stage jobs. Review found the
+lifted-source canary's apparent nonconvergence was missing DC endpoints:
+repeated 5 mV additions crossed 0.8 V by roundoff and the strict loop stopped
+one point early, in both sweep directions. A passive RC control reproduced
+160 candidate versus 161 NGSPICE points. The fourth arm tolerates bounded
+endpoint roundoff and stamps the requested final value, while preserving
+interior step values and avoiding an added point for non-divisible spans.
+The third arm's 1,310 completed jobs and 16 interrupted jobs are preserved.
+The separate AR-cache diagnostic also measured a 2.31e-4 relative Jacobian
+deviation on TSMC7 small NMOS against its 1e-4 tolerance; cache-off execution
+remains the scored contract, and that diagnostic failure is retained.
+
 ### V7.7.5 — repository cleanup
 
 Removed ten uncalled definitions: the DC last-solution accessor and its

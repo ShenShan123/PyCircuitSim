@@ -1,6 +1,6 @@
 # V7.7.2 saved-model evaluation, started 2026-09-12
 
-Status: third arm preparing after a reproduced subthreshold-window defect;
+Status: fourth arm preparing after a reproduced DC-sweep endpoint defect;
 no new accuracy result is claimed. The user authorized
 evaluation after the separate training-only task finished. Its 80 saved
 bundles and completion inventory remain untouched. The current package stays
@@ -12,15 +12,21 @@ Training source: `6be83348c1f5db6720d7504ed6dcea874a3a7418` in
 `/data2/home/shenshan/PyCircuitSim-v771`. Inputs remain in
 `results/v771_r2_data` and `results/v771_r2_checkpoints` there.
 
-Evaluation worktree: `/data2/home/shenshan/PyCircuitSim-v772-eval-r3`, branch
-`eval/v772-all-tests-20260912-r3`, based on audited main `d6ae11c` plus the
-original scheduler, terminal phase repair, and reference-window repair.
+Evaluation worktree: `/data2/home/shenshan/PyCircuitSim-v772-eval-r4`, branch
+`eval/v772-all-tests-20260912-r4`, based on audited main `d6ae11c` plus the
+original scheduler, terminal phase repair, reference-window repair, and
+DC-sweep endpoint repair. The third arm remains at `50a8d6a` in
+`PyCircuitSim-v772-eval-r3`: it completed the 1,196-job device stage and 1,310
+jobs overall before review reproduced truncated DC grids on a passive control.
+NGSPICE returned 161 points for both directions of a 0–0.8 V, 5 mV sweep;
+PyCircuitSim returned 160. Sixteen in-flight jobs were interrupted with their
+partial evidence retained. No earlier logs are reused in this fourth arm.
 The second arm remains at `2014a64` in `PyCircuitSim-v772-eval-r2`: 171 jobs
 completed before the TSMC12 hot/low-VDD PMOS subthreshold window selected
 0.216 decades despite a 4.246-decade reference trace. Both engines converged
 and the decks matched. The repaired selector uses its existing reference-only
 fallback when the initial window fails the unchanged identifiability limits.
-The original successful and failed evidence is not reused in this third arm.
+The original successful and failed evidence is not reused in subsequent arms.
 The first arm remains
 untouched in `/data2/home/shenshan/PyCircuitSim-v772-eval` at `1028046`.
 It completed 20 jobs and stopped with four infrastructure failures: every

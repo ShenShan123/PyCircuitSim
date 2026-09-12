@@ -82,6 +82,49 @@ _RC_TOKENS = {
 }
 
 
+@pytest.mark.parametrize(("start", "stop", "step", "points", "last"), (
+    (0.0, 0.8, 0.005, 161, 0.8),
+    (0.8, 0.0, -0.005, 161, 0.0),
+    (0.0, 0.65, 0.005, 131, 0.65),
+    (0.65, 0.0, -0.005, 131, 0.0),
+    (0.4, 0.4015, 0.00001, 151, 0.4015),
+    (0.4015, 0.4, -0.00001, 151, 0.4),
+    (0.0, 1.0, 0.3, 4, 0.9),
+    (1.0, 0.0, -0.3, 4, 0.1),
+))
+def test_dc_sweep_solves_the_complete_requested_grid(
+    tmp_path: Path, start: float, stop: float, step: float, points: int, last: float,
+) -> None:
+    """Source-step roundoff must not make a converged trace look truncated.
+
+    Exact-endpoint sweeps include their endpoint, while a stop between grid
+    points does not introduce an extra, shorter step. Check physical solved
+    voltages as well as the values supplied to the output writer.
+    """
+    from pycircuitsim.parser import Parser
+    from pycircuitsim.simulation import run_dc_sweep
+
+    class CapturePlot:
+        values: list[float]
+
+        def plot_dc_sweep(self, *, sweep_values: list[float], **kwargs: object) -> None:
+            self.values = sweep_values
+
+    deck = tmp_path / "control.sp"
+    deck.write_text(render_template(control_deck("rc_lowpass.spice.tmpl"), {
+        **_RC_TOKENS, "ANALYSIS": f".dc V1 {start} {stop} {step}",
+    }))
+    parser = Parser()
+    parser.parse_file(str(deck))
+    plot = CapturePlot()
+    result = run_dc_sweep(parser.circuit, parser.analysis_params, plot,
+                          tmp_path, "control", require_convergence=True)
+    assert len(result["in"]) == len(plot.values) == points
+    assert plot.values[-1] == pytest.approx(last, abs=1e-15)
+    np.testing.assert_allclose(result["in"], plot.values, atol=1e-14, rtol=0)
+    np.testing.assert_allclose(result["out"], plot.values, atol=1e-9, rtol=0)
+
+
 @pytest.mark.parametrize(("analysis", "subdir", "artifact"), (
     (".tran 10p 1n", "tran", "rc_lowpass_transient.csv"),
     (".dc V1 0 1 0.25", "dc", "rc_lowpass_dc_sweep.csv"),
