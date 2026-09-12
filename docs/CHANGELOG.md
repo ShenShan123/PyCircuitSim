@@ -55,6 +55,15 @@ NMOS/PMOS exact exponentials, preservation of valid windows, and continued
 rejection of flat references and malformed metrics. Every earlier arm is
 preserved separately; no model weights or simulator equations changed.
 
+The all-corner NGSPICE device screen also found 12 TSMC5/6/7 hot-corner
+subthreshold references whose current is maximal at zero gate bias. Those
+complete, converged sweeps cannot identify the declared rising-window slope.
+They now produce diagnostic `ERROR` rows of kind `reference_metric`, with
+convergence retained and no scored metrics, instead of halting the campaign
+as infrastructure failures. Flat and decreasing references are covered for
+both polarities. Missing/malformed metrics, failed NGSPICE runs, partial
+traces, and qualification rows cannot use this exception.
+
 ### V7.7.5 — repository cleanup
 
 Removed ten uncalled definitions: the DC last-solution accessor and its

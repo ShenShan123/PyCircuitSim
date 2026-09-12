@@ -122,6 +122,14 @@ A report is publishable only when all of the following hold:
   references are infrastructure failures, not scientific FAILs.
 - An `ERROR` row remains in the denominator while numeric aggregates use only
   rows containing valid metrics.
+- A complete, converged reference may lack an identifiable diagnostic metric:
+  for example, a hot device whose current does not rise from its off-state
+  value has no window for the declared subthreshold-slope fit. These rows use
+  `error_kind=reference_metric`, keep `ERROR` status and their denominator slot,
+  and carry no scored metrics. Recovered values remain under
+  `uncharacterized_diagnostic`. This is distinct from a failed reference solve,
+  missing data, or a malformed metric payload, which remain infrastructure
+  failures. Qualification rows cannot use this diagnostic-only category.
 - Reference and candidate decks are rendered and compared before a numerical
   mismatch is attributed to the model.
 

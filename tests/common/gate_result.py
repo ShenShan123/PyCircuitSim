@@ -113,9 +113,18 @@ class GateResult:
             object.__setattr__(self, "error_kind", error_kind)
         if error_kind not in {
             "", "candidate", "reference", "infrastructure", "unsupported",
-            "result_schema", "unknown",
+            "result_schema", "unknown", "reference_metric",
         }:
             raise ValueError(f"unknown error kind {error_kind!r}")
+        if error_kind == "reference_metric" and (
+            self.role != "diagnostic" or self.status != "error"
+            or not self.reference_converged or not self.candidate_converged
+            or self.partial or self.metrics
+        ):
+            raise ValueError(
+                "reference metric unavailability requires complete converged "
+                "diagnostic traces and no scored metrics"
+            )
         if self.model_level and self.model_level not in {75, 76}:
             raise ValueError(f"unsupported NN model level {self.model_level}")
         if self.model_level and not self.model_family:
@@ -154,7 +163,7 @@ def parse_result_markers(text: str) -> list[Dict[str, Any]]:
 
 
 def result_exit_code(results: Sequence[GateResult]) -> int:
-    """Return 0 success, 1 scientific miss, or 2 infrastructure failure."""
+    """Return 0 success, 1 scientific miss/uncharacterizable row, or 2 infrastructure failure."""
     if not results:
         return 2
     infrastructure = {
