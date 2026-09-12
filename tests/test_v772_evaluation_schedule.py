@@ -86,3 +86,21 @@ def test_retry_preserves_the_failed_record_and_simulator_artifacts(
     archived = list((state / "attempts/retry").glob("*/artifacts/trace.csv"))
     assert len(archived) == 1 and archived[0].read_text() == "retained failed trace"
     assert json.loads(archived[0].parents[1].joinpath("job.json").read_text())["status"] == "infrastructure_error"
+
+
+@pytest.mark.parametrize("role", ["contract", "supplemental"])
+def test_fixture_contracts_do_not_inherit_the_real_campaign_dataset(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, role: str,
+) -> None:
+    monkeypatch.setattr(campaign, "ROOT", tmp_path)
+    monkeypatch.setattr(campaign, "STATE", tmp_path / "state")
+    (tmp_path / "state").mkdir()
+    manifest = tmp_path / "results" / f"{campaign.CAMPAIGN}_full_clean/campaign_manifest.json"
+    manifest.parent.mkdir(parents=True)
+    manifest.write_text("{}")
+    command = ("import os; assert ('BSIMAR_DATA_DIR' in os.environ) == "
+               f"{role != 'contract'}; assert ('BSIMAR_CHECKPOINT_DIR' in os.environ) == "
+               f"{role != 'contract'}")
+    result = campaign.run_one(dict(id=role, kind="standalone", role=role, stage=0,
+                                  command=["-c", command], cwd="."), "source")
+    assert result["returncode"] == 0

@@ -28,6 +28,13 @@ checkpoint auditing now honors `BSIMAR_CHECKPOINT_DIR` and labels LEVEL=76
 correctly. No accuracy promotion or new package release is claimed.
 See the [evaluation schedule](plans/2026-09-12-v772-model-evaluation.md).
 
+The first preflight stopped before NN scoring because exported campaign data
+paths overrode two pytest geometry fixtures. The scheduler now removes those
+paths only for fixture-based contracts; real gates retain explicit dataset
+and checkpoint roots. The failed bootstrap is archived separately and the
+evaluation restarts from a fresh source pin. The PyCMG reference suite passed
+315 tests without skips in that bootstrap.
+
 ### V7.7.5 — repository cleanup
 
 Removed ten uncalled definitions: the DC last-solution accessor and its

@@ -266,6 +266,11 @@ def run_one(job: dict[str, Any], source: str) -> dict[str, Any]:
     if shutil.disk_usage(ROOT).free < 60 * 1024**3:
         raise RuntimeError("less than 60 GiB free; pause before launching further simulations")
     env = environment()
+    if job["role"] == "contract":
+        # Fixture-based tests choose their own datasets and checkpoints. Real
+        # campaign paths override those fixtures in the geometry guard.
+        env.pop("BSIMAR_DATA_DIR", None)
+        env.pop("BSIMAR_CHECKPOINT_DIR", None)
     output = ROOT / "results" / f"{CAMPAIGN}_full_{job.get('pool', 'clean')}"
     manifest = output / "campaign_manifest.json"
     digest = sha256(manifest)
