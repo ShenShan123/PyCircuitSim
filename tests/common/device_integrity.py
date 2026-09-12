@@ -459,9 +459,16 @@ def _subthreshold_window(
         return np.zeros(grid.shape, dtype=bool)
     lo = floor * 10.0
     hi = min(ceiling * 1e-3, floor * 1e5)
-    if hi <= lo:
-        hi = math.sqrt(lo * ceiling)
-    return (magnitude >= lo) & (magnitude <= hi)
+    window = (magnitude >= lo) & (magnitude <= hi)
+    # The preferred window can be nonempty yet too narrow to identify SS
+    # at hot/low-VDD corners. Use the existing reference-only fallback for
+    # either insufficient points or insufficient current variation; keep
+    # every already-identifiable window unchanged.
+    if (int(np.count_nonzero(window)) < _MIN_SS_WINDOW_POINTS
+            or float(np.ptp(np.log10(magnitude[window]))) < _MIN_SS_DECADES):
+        hi = max(hi, math.sqrt(lo * ceiling))
+        window = (magnitude >= lo) & (magnitude <= hi)
+    return window
 
 
 def _slope_mv_per_decade(

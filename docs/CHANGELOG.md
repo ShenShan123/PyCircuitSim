@@ -44,6 +44,17 @@ Known 0°, 30°, and 180° perturbations reproduce the bug and verify the repair
 Capacitance values, simulator equations, thresholds, and the 19,266-job
 inventory are unchanged; the second arm starts a complete separate pass.
 
+The second arm completed 171 jobs before a TSMC12 hot/low-VDD PMOS device
+diagnostic could not fit subthreshold slope. Deck parity and both converged
+111-point traces were verified. The reference spanned 4.246 decades, but the
+preferred window retained only 0.216; its fallback ran only for an empty
+range. The third arm applies the existing reference-only fallback whenever
+the initial window lacks the required four points or 0.5 decades. Already
+identifiable windows and both fit requirements remain unchanged. Tests cover
+NMOS/PMOS exact exponentials, preservation of valid windows, and continued
+rejection of flat references and malformed metrics. Every earlier arm is
+preserved separately; no model weights or simulator equations changed.
+
 ### V7.7.5 — repository cleanup
 
 Removed ten uncalled definitions: the DC last-solution accessor and its

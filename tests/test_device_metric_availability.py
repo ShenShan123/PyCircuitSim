@@ -67,6 +67,36 @@ def test_flat_reference_is_not_excused_as_a_candidate_failure(
     assert result_exit_code([result]) == 2
 
 
+@pytest.mark.parametrize("polarity", ("nmos", "pmos"))
+@pytest.mark.parametrize("decades", (4.1, 4.25, 4.49, 4.5))
+def test_reference_window_fits_an_identifiable_exponential(
+    polarity: str, decades: float,
+) -> None:
+    """A narrow initial window must not reject an exact multi-decade curve.
+
+    Low-VDD/hot corners can leave <0.5 decades between 10*Ioff and
+    0.001*Imax. The trace still supports the unchanged fit requirements.
+    """
+    spec = next(spec for spec in device.build_sweeps(BENCH["TSMC5"], polarity)
+                if spec.suite == "subthreshold")
+    grid = np.linspace(0.0, decades * 0.06, 111)
+    current = 1e-10 * 10.0 ** (grid / 0.06)
+    if polarity == "pmos":
+        grid, current = -grid[::-1], -current[::-1]
+    metrics, domain = device.suite_metrics(spec, grid, current, current, vdd=0.8)
+    device.validate_device_metrics(spec, metrics, domain)
+    assert domain["ss_ref_mv_dec"] == pytest.approx(60.0)
+    assert domain["ss_test_mv_dec"] == pytest.approx(60.0)
+    assert domain["ss_error_pct"] == pytest.approx(0.0)
+
+
+def test_identifiable_initial_reference_window_is_preserved() -> None:
+    grid = np.linspace(0.0, 0.42, 141)
+    reference = 1e-12 * 10.0 ** (grid / 0.06)
+    expected = (reference >= reference[0] * 10.0) & (reference <= reference.max() * 1e-3)
+    np.testing.assert_array_equal(device._subthreshold_window(grid, reference), expected)
+
+
 @pytest.mark.parametrize("defect", ("missing", "none", "infinite", "unexpected_nan"))
 def test_malformed_metric_payload_still_fails_as_infrastructure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str,
