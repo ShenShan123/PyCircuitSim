@@ -33,6 +33,18 @@ def test_schedule_keeps_every_pool_cell_and_every_gate_entry_point() -> None:
     assert covered == expected
     assert {job["cwd"] for job in jobs if job["id"] in ("root_contracts", "pycmg_reference")} == {
         ".", "external_compact_models/bsim_cmg"}
+    for suite, applies in (("verify_device_integrity", campaign.device_corner_applies),
+                           ("verify_terminal_integrity", campaign.terminal_corner_applies)):
+        expected = {(tag, size, tech, corner) for tag in ("dnf", "tff")
+                    for size in campaign.CLEAN_VARIANTS for tech in campaign.TECHS
+                    for corner, config in campaign.CORNERS.items()
+                    if corner != "nominal" and any(applies(campaign.BENCH[tech], device, config)
+                                                   for device in ("nmos", "pmos"))}
+        selected = [job for job in jobs if job["role"] == "device-corner-diagnostic"
+                    and job["command"][0].endswith(f"/{suite}.py")]
+        assert {(job["tag"], job["size"], job["tech"], job["command"][-1])
+                for job in selected} == expected
+        assert all(job["stage"] == 1 for job in selected)
 
 
 def test_infrastructure_failure_prevents_admission_of_later_jobs(

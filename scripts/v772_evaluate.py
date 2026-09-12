@@ -25,6 +25,8 @@ from tests.common.simple_circuit_catalog import cases, SIMPLE_V2  # noqa: E402
 from tests.common.simple_circuit_harness import CORNERS, applicable_analyses  # noqa: E402
 from tests.common.circuit_benchmarks import BENCH  # noqa: E402
 from tests.common.circuit_sweep import CIRCUITS, all_dimensions  # noqa: E402
+from tests.common.device_integrity import device_corner_applies  # noqa: E402
+from tests.common.terminal_integrity import terminal_corner_applies  # noqa: E402
 
 CAMPAIGN = "v772_eval_20260912"
 STATE = ROOT / "results" / CAMPAIGN
@@ -117,6 +119,16 @@ def inventory() -> list[dict[str, Any]]:
             for tech in TECHS:
                 group = tag, size, tech
                 prefix = "__".join(group)
+                for suite, applies in (("verify_device_integrity", device_corner_applies),
+                                       ("verify_terminal_integrity", terminal_corner_applies)):
+                    for corner, config in CORNERS.items():
+                        if corner == "nominal" or not any(
+                            applies(BENCH[tech], device, config) for device in ("nmos", "pmos")
+                        ):
+                            continue
+                        add(f"{prefix}__{suite}__{corner}", 1,
+                            [f"tests/single_devices/{suite}.py", "--tech", tech,
+                             "--corner", corner], group=group, role="device-corner-diagnostic")
                 for name, stage, script, options in (
                     ("device", 1, "single_devices/verify_nn_dc.py", []),
                     ("sign", 1, "single_devices/verify_nn_dc.py", ["--sign-diagnostic"]),

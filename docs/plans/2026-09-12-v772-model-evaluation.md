@@ -20,9 +20,9 @@ inventories separately. It does not claim numerical-source equivalence.
 The default source-equivalence rule remains strict.
 
 All five technologies, both polarities, both families, and S/M/L/XL are covered.
-The generated inventory contains **18,354 jobs**. This includes the complete
+The generated inventory contains **19,266 jobs**. This includes the complete
 600 clean, 1,200 simple-v2, and 40 canary pools, 160 supplemental NN jobs,
-14,512 applicable non-nominal topology corner jobs, 1,680 parametric dimension
+912 non-nominal device-integrity jobs, 14,512 applicable non-nominal topology corner jobs, 1,680 parametric dimension
 jobs, 150 reference-stability/control jobs, 9 reference jobs, the root collected
 suite, geometry preflight, and the AR-cache diagnostic. The PyCMG collected
 suite is one reference job and executes its own complete test inventory.
@@ -38,7 +38,7 @@ from the catalog; an inapplicable corner is not fabricated as a passing cell.
 | Stage | Work | Jobs |
 |---|---|---:|
 | 0 | Integrity, root contracts, PyCMG reference suite, geometry | 3 |
-| 1 | NMOS/PMOS currents, derivatives, terminal charge, source frame, device transients, cache diagnostic | 284 |
+| 1 | NMOS/PMOS currents, derivatives, terminal charge, source frame, device transients, all applicable device corners, cache diagnostic | 1,196 |
 | 2 | L1 passive-load primitives, nominal then all applicable corners | 2,164 |
 | 3 | L2 coupled stages, inverter/hierarchy checks, SRAM lobes, corners and sweeps | 5,466 |
 | 4 | L3 internally biased/stateful blocks, opamp AC, corners and sweeps | 8,273 |
