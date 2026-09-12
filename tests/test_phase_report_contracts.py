@@ -12,6 +12,38 @@ from tests.common.simple_circuit_catalog import get_case
 from tests.common.simple_circuit_harness import Trace, compare_traces
 
 
+@pytest.mark.parametrize("phase_degrees", [0.0, 30.0, 180.0])
+def test_terminal_capacitance_reports_phase_from_all_admittance_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, phase_degrees: float,
+) -> None:
+    """Completed terminal AC solves must survive the shared metric contract.
+
+    A rotation of one admittance entry must be visible even when that entry
+    contributes little to the capacitance-matrix aggregate error.
+    """
+    from tests.common import terminal_integrity as terminal
+    from tests.common.circuit_benchmarks import BENCH
+    from tests.common.simple_circuit_harness import RunSpec
+
+    reference = 1e-6 * (1.0 + 1j) * (4.0 * np.eye(4) - np.ones((4, 4)))
+    candidate = reference.copy()
+    candidate[3, 2] *= np.exp(1j * np.deg2rad(phase_degrees))
+    reference_columns = iter(reference.T)
+    candidate_columns = iter(candidate.T)
+    monkeypatch.setattr(terminal, "get_baked_modelcard", lambda *a, **kw: tmp_path / "model.lib")
+    monkeypatch.setattr(terminal, "_reference_ac_currents", lambda *a, **kw: next(reference_columns))
+    monkeypatch.setattr(terminal, "_candidate_ac_currents", lambda *a, **kw: next(candidate_columns))
+    result = terminal.run_terminal_capacitance_bias(
+        BENCH["TSMC12"], "nmos", terminal.TerminalBias("known", 0.4, 0.7, 0.0, 0.0),
+        tmp_path, RunSpec(75, "DirectNet-Full"),
+    )
+    assert result.status == "diagnostic", result.error
+    assert result.reference_converged and result.candidate_converged
+    assert result.metrics["phase_maxerr_deg"] == pytest.approx(phase_degrees)
+    expected_c = candidate.imag / (2 * np.pi * terminal.AC_FREQUENCY_HZ)
+    np.testing.assert_allclose(result.domain["candidate_capacitance_f"], expected_c)
+
+
 @pytest.mark.parametrize("legacy_row", [False, True], ids=["current", "legacy"])
 def test_magnitude_identical_phase_error_reaches_human_report(
     tmp_path: Path, legacy_row: bool,

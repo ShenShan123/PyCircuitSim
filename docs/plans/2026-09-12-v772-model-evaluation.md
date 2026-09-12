@@ -1,6 +1,7 @@
 # V7.7.2 saved-model evaluation, started 2026-09-12
 
-Status: scheduled; no new accuracy result is claimed. The user authorized
+Status: second arm preparing after a reproduced terminal-AC metric defect;
+no new accuracy result is claimed. The user authorized
 evaluation after the separate training-only task finished. Its 80 saved
 bundles and completion inventory remain untouched. The current package stays
 V7.7.5; V7.7.2 identifies the trained models, not this evaluation runtime.
@@ -11,8 +12,13 @@ Training source: `6be83348c1f5db6720d7504ed6dcea874a3a7418` in
 `/data2/home/shenshan/PyCircuitSim-v771`. Inputs remain in
 `results/v771_r2_data` and `results/v771_r2_checkpoints` there.
 
-Evaluation worktree: `/data2/home/shenshan/PyCircuitSim-v772-eval`, branch
-`eval/v772-all-tests-20260912`, based on audited main `d6ae11c`.
+Evaluation worktree: `/data2/home/shenshan/PyCircuitSim-v772-eval-r2`, branch
+`eval/v772-all-tests-20260912-r2`, based on audited main `d6ae11c` plus the
+original scheduler and the terminal phase-metric repair. The first arm remains
+untouched in `/data2/home/shenshan/PyCircuitSim-v772-eval` at `1028046`.
+It completed 20 jobs and stopped with four infrastructure failures: every
+terminal-capacitance row lacked the phase metric required by the AC schema.
+The original logs and manifests are retained and are not reused in this arm.
 The immutable schedule and manifests pin its final committed evaluator,
 checkpoint/sidecar hashes, original dataset source, OSDI, NGSPICE, and PDKs.
 The explicit distinct-runtime manifest records original and evaluation source

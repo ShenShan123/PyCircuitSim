@@ -35,6 +35,15 @@ and checkpoint roots. The failed bootstrap is archived separately and the
 evaluation restarts from a fresh source pin. The PyCMG reference suite passed
 315 tests without skips in that bootstrap.
 
+The first scored arm stopped at 20 completed jobs with four terminal-integrity
+infrastructure failures. Its capacitance path computed a full matrix but did
+not emit the `phase_maxerr_deg` required by the audited AC schema, so all ten
+capacitance rows per affected job were rejected. The second arm records the
+maximum wrapped phase error across the complex 4×4 terminal admittance matrix.
+Known 0°, 30°, and 180° perturbations reproduce the bug and verify the repair.
+Capacitance values, simulator equations, thresholds, and the 19,266-job
+inventory are unchanged; the second arm starts a complete separate pass.
+
 ### V7.7.5 — repository cleanup
 
 Removed ten uncalled definitions: the DC last-solution accessor and its
