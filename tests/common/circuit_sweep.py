@@ -45,7 +45,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 
 from tests.common.base import ALL_TECHS, TECH_COLORS  # noqa: E402
 from tests.common.circuit_benchmarks import (  # noqa: E402
-    BENCH, PROJECT_ROOT, RESULTS_BASE, active_model_level,
+    BENCH, PROJECT_ROOT, RESULTS_BASE, active_model_level, active_model_label,
     BenchTech, OpAmpParams, RingOscParams, SwitchCapParams, SramParams,
     bench_variant, opamp_bias, usable_vts,
     get_baked_modelcard, run_ngspice_wrdata,
@@ -58,7 +58,8 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
 )
 from tests.common.simple_circuit_harness import Trace  # noqa: E402
 
-CKPT_DIR = PROJECT_ROOT / "external_compact_models" / "neural_network" / "checkpoints"
+CKPT_DIR = Path(os.environ.get("BSIMAR_CHECKPOINT_DIR", str(
+    PROJECT_ROOT / "external_compact_models" / "neural_network" / "checkpoints")))
 
 # --- hard-gate thresholds (plan Step 7) -------------------------------------
 OPAMP_GAIN_TOL = 0.10        # |dn-ng|/ng gain gate
@@ -892,7 +893,7 @@ def driver_main(circuit: str) -> int:
     import argparse
 
     ap = argparse.ArgumentParser(
-        description=f"DirectNet circuit benchmark parametric sweep — {circuit}")
+        description=f"{active_model_label()} circuit benchmark parametric sweep — {circuit}")
     ap.add_argument("--tech", default="TSMC7,TSMC16",
                     help="comma-separated techs (default TSMC7,TSMC16 — the "
                          "nodes with checkpoints present here)")
@@ -917,7 +918,7 @@ def driver_main(circuit: str) -> int:
 
     results_dir = RESULTS_BASE / circuit / "sweep"
     print("=" * 96)
-    print(f"DirectNet circuit benchmark parametric sweep — {circuit}")
+    print(f"{active_model_label()} circuit benchmark parametric sweep — {circuit}")
     print(f"  Techs: {', '.join(techs)}   Dimension: {args.dimension}")
     print(f"  Ground truth: NGSPICE BSIM-CMG (LEVEL=72)")
     print("=" * 96)
@@ -928,7 +929,7 @@ def driver_main(circuit: str) -> int:
     techtag = "-".join(techs)
     save_summary_csv(results, results_dir / f"{circuit}_sweep_{techtag}.csv")
     plot_summary_bar(results, results_dir / f"{circuit}_sweep_{techtag}.png",
-                     f"{circuit} parametric sweep ({techtag}) — DirectNet vs NGSPICE")
+                     f"{circuit} parametric sweep ({techtag}) — {active_model_label()} vs NGSPICE")
     code = exit_code(results, techs)
     # R-VT coverage honesty (plan Risk R-VT): state where VT dims were empty.
     for tk in techs:

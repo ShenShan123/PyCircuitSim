@@ -257,6 +257,9 @@ else
   if [ -n "${V710_DATASET_SOURCE_COMMIT:-}" ]; then
     source_args+=(--dataset-source-commit "$V710_DATASET_SOURCE_COMMIT")
   fi
+  if [ -n "${V710_EVALUATION_RUNTIME_COMMIT:-}" ]; then
+    source_args+=(--evaluation-runtime-commit "$V710_EVALUATION_RUNTIME_COMMIT")
+  fi
   V710_CAMPAIGN_DIGEST="$("$PY" "$ROOT/scripts/v710_regate_manifest.py" \
     --output "$MANIFEST" --jobs "$JOBS" --checkpoints "$CKPT" \
     --ngspice "$NG" --osdi "$OSDI" --pdk-root "$ROOT/PDKs" \

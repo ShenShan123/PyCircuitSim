@@ -64,3 +64,51 @@ def test_same_source_rejects_a_misleading_explicit_pin(source_repo: tuple[Path, 
     assert validate_dataset_source(root, {source}, source) == {}
     with pytest.raises(ValueError, match="declared dataset source"):
         validate_dataset_source(root, {source}, source, "0" * 40)
+
+
+def test_corrected_runtime_is_an_explicit_separate_arm(
+    source_repo: tuple[Path, str],
+) -> None:
+    root, source = source_repo
+    (root / "pycircuitsim/solver.py").write_text("corrected transient integration\n")
+    gate = commit(root, "test: corrected evaluation runtime")
+    with pytest.raises(ValueError, match="sources differ"):
+        validate_dataset_source(root, {source}, gate, source)
+    identity = validate_dataset_source(root, {source}, gate, source, gate)
+    assert identity["source_relationship"] == "distinct-evaluation-arm"
+    assert identity["training_source_sha256"] != identity["evaluation_source_sha256"]
+    assert "model_source_sha256" not in identity
+    assert identity["dataset_source_commit"] == source
+    assert identity["evaluation_runtime_commit"] == gate
+    for commits, data_pin, runtime_pin, message in (
+        ({source, gate}, source, gate, "one explicit dataset source"),
+        ({source}, None, gate, "one explicit dataset source"),
+        ({source}, gate, gate, "one explicit dataset source"),
+        ({source}, source, source, "runtime pin does not match"),
+    ):
+        with pytest.raises(ValueError, match=message):
+            validate_dataset_source(root, commits, gate, data_pin, runtime_pin)
+
+
+def test_distinct_arm_report_does_not_claim_source_equivalence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import json
+    from scripts import v730_docs_build as docs
+
+    label = "V7.7.2 models / audited runtime 2026-09-12"
+    campaign = tmp_path / "results/v772_eval_20260912_full_clean"
+    campaign.mkdir(parents=True)
+    (campaign / "campaign_manifest.json").write_text(json.dumps({
+        "source_relationship": "distinct-evaluation-arm",
+        "dataset_source_commit": "a" * 40, "source_commit": "b" * 40,
+        "evaluation_runtime_commit": "b" * 40,
+        "training_source_sha256": "c" * 64, "evaluation_source_sha256": "d" * 64,
+        "job_count": 600, "checkpoint_sha256": {},
+    }))
+    monkeypatch.setattr(docs, "ROOT", tmp_path)
+    monkeypatch.setitem(docs.REPORT_PASS, "dnf", label)
+    text = docs.campaign_provenance("dnf")
+    assert "a" * 40 in text and "b" * 40 in text
+    assert "c" * 64 in text and "d" * 64 in text
+    assert "identical model/runtime/template" not in text

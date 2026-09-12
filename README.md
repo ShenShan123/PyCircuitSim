@@ -407,6 +407,29 @@ conda run -n pycircuitsim python scripts/v730_docs_build.py --campaign v772_full
 conda run -n pycircuitsim python scripts/v730_docs_build.py --campaign v772_full_clean --check
 ```
 
+### V7.7.2 saved-model evaluation
+
+The [2026-09-12 evaluation schedule](docs/plans/2026-09-12-v772-model-evaluation.md)
+evaluates the 80 saved V7.7.2 bundles on a separately pinned audited runtime,
+in order from devices through L4 feedback systems, including manual gates and
+all applicable catalog corners. Run from its isolated evaluation worktree:
+
+```bash
+conda run -n pycircuitsim python scripts/v772_evaluate.py --plan
+conda run --no-capture-output -n pycircuitsim python scripts/v772_evaluate.py --parallel 16
+conda run -n pycircuitsim python scripts/v772_evaluate_review.py
+cat results/v772_eval_20260912/PROGRESS.md
+systemctl --user status pycircuitsim-v772-evaluation.service
+```
+
+The supervisor resumes checksum-verified completed jobs. The low-level
+manifest option `--evaluation-runtime-commit FULL_HEAD_SHA` (or the dispatcher
+environment `V710_EVALUATION_RUNTIME_COMMIT`) creates an explicitly distinct
+runtime arm only with `--dataset-source-commit`; it does not relax the default
+identical-source rule or accept mixed training sources. After the complete
+matrix, the supervisor builds and checks both clean reports; the scheduled
+review completes supplemental accuracy tables and transfers reviewed reports.
+
 ## 2. Train a full-terminal compact model
 
 Train DirectNet-Full for one polarity:

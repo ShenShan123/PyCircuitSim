@@ -17,6 +17,17 @@ remain in Git history.
 
 ## V7.7 — full-terminal-only NN stack
 
+### 2026-09-12 — V7.7.2 model evaluation scheduled
+
+The completed 80-model training inventory is retained unchanged. A separate
+audited-runtime arm now schedules every gate entry point, catalog corner and
+parametric dimension from devices through L4, with persistent supervision.
+Its manifest explicitly distinguishes the original training source from the
+evaluation source; default exact-source checks remain unchanged. Parametric
+checkpoint auditing now honors `BSIMAR_CHECKPOINT_DIR` and labels LEVEL=76
+correctly. No accuracy promotion or new package release is claimed.
+See the [evaluation schedule](plans/2026-09-12-v772-model-evaluation.md).
+
 ### V7.7.5 — repository cleanup
 
 Removed ten uncalled definitions: the DC last-solution accessor and its
