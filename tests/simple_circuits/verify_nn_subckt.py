@@ -334,6 +334,9 @@ def run_nn_subckt_analysis(
                 "flat/hierarchical execution differs by "
                 f"{equivalence_error:.6g} V"
             )
+        metric_names = ["mre_pct", "r2", "nrmse_pct", "max_err"]
+        if analysis.kind == "ac":
+            metric_names.append("phase_maxerr_deg")
         metrics = {
             name: max(
                 float(flat_metrics[name]),
@@ -343,7 +346,7 @@ def run_nn_subckt_analysis(
                 float(flat_metrics[name]),
                 float(hierarchical_metrics[name]),
             )
-            for name in ("mre_pct", "r2", "nrmse_pct", "max_err")
+            for name in metric_names
         }
         domain: Dict[str, float] = {
             "flat_nrmse_pct": float(flat_metrics["nrmse_pct"]),

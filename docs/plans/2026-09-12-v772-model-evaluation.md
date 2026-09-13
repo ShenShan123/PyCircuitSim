@@ -1,6 +1,6 @@
 # V7.7.2 saved-model evaluation, started 2026-09-12
 
-Status: fourth arm preparing after a reproduced DC-sweep endpoint defect;
+Status: fifth arm preparing after a reproduced hierarchy AC-summary defect;
 no new accuracy result is claimed. The user authorized
 evaluation after the separate training-only task finished. Its 80 saved
 bundles and completion inventory remain untouched. The current package stays
@@ -12,10 +12,15 @@ Training source: `6be83348c1f5db6720d7504ed6dcea874a3a7418` in
 `/data2/home/shenshan/PyCircuitSim-v771`. Inputs remain in
 `results/v771_r2_data` and `results/v771_r2_checkpoints` there.
 
-Evaluation worktree: `/data2/home/shenshan/PyCircuitSim-v772-eval-r4`, branch
-`eval/v772-all-tests-20260912-r4`, based on audited main `d6ae11c` plus the
+Evaluation worktree: `/data2/home/shenshan/PyCircuitSim-v772-eval-r5`, branch
+`eval/v772-all-tests-20260912-r5`, based on audited main `d6ae11c` plus the
 original scheduler, terminal phase repair, reference-window repair, and
-DC-sweep endpoint repair. The third arm remains at `50a8d6a` in
+DC-sweep endpoint repair, canary sign repair, and hierarchy AC-summary repair.
+The fourth arm remains at `5e10af8` in `PyCircuitSim-v772-eval-r4`: 3,398 jobs
+completed, including the complete device and L1 stages, before two hierarchy
+AC jobs exposed a summary that discarded the phase metric already calculated
+by the shared comparator. Its evidence is retained and not reused in this arm.
+The third arm remains at `50a8d6a` in
 `PyCircuitSim-v772-eval-r3`: it completed the 1,196-job device stage and 1,310
 jobs overall before review reproduced truncated DC grids on a passive control.
 NGSPICE returned 161 points for both directions of a 0–0.8 V, 5 mV sweep;

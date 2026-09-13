@@ -84,6 +84,16 @@ NMOS/PMOS orientation. A boundary test checks both devices and both current
 directions; it cannot hide a wrong sign through an absolute value. Device
 equations and scalar API conventions are unchanged.
 
+The fourth arm completed 3,398 jobs, including devices and L1, then stopped
+at two hierarchy-AC schema errors. The flat/nested summary selected only four
+aggregate fields and discarded the already-computed `phase_maxerr_deg`.
+The fifth arm retains the worst phase error from both representations. Tests
+exercise the complete DC, transient, and AC summary paths and a known 30°
+phase rotation. The other production metric-validator call sites were checked:
+the shared trace comparator and repaired terminal-admittance path emit phase;
+the collector only validates or derives it from recorded per-signal values.
+The simulation code, checkpoint weights, and 19,266-job inventory are unchanged.
+
 ### V7.7.5 — repository cleanup
 
 Removed ten uncalled definitions: the DC last-solution accessor and its
