@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -119,6 +121,71 @@ def test_sram_gate_rejects_invalid_fin_count_selection(nfin: str) -> None:
         sram_main(["--nfin", nfin])
 
     assert exc_info.value.code == 2
+
+
+def _sram_marker_after_corner_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+    failing_stage: str,
+) -> tuple[int, dict[str, Any]]:
+    """Run the SRAM gate with one engine failing at a single NFIN corner."""
+    import numpy as np
+
+    import tests.simple_circuits.verify_circuit_sram_snm as sram_gate
+    from tests.common.gate_result import parse_result_markers
+
+    def lobe(bt: Any, _nfin: int, _work_dir: Path) -> dict[str, Any]:
+        q = np.linspace(0.0, bt.vdd, 61)
+        return {"q": q, "qb": bt.vdd - q}
+
+    def fail(*_args: object, **_kwargs: object) -> dict[str, Any]:
+        raise RuntimeError("DC operating point did not converge")
+
+    monkeypatch.setattr(sram_gate, "RESULTS_BASE", tmp_path)
+    monkeypatch.setattr(
+        sram_gate, "ngspice_lobe", fail if failing_stage == "reference" else lobe)
+    monkeypatch.setattr(
+        sram_gate, "directnet_lobe", fail if failing_stage == "candidate" else lobe)
+    monkeypatch.setattr(
+        sram_gate, "force_ic_probe",
+        lambda *_args, **_kwargs: {"state1": True, "state0": True})
+    code = sram_gate.main(["--tech", "TSMC16", "--nfin", "5"])
+    markers = parse_result_markers(capsys.readouterr().out)
+    assert len(markers) == 1
+    return code, markers[0]
+
+
+def test_sram_candidate_corner_failure_is_attributed_to_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """NGSPICE converged, so a failed NN corner must not be a reference error.
+
+    The marker used to derive both convergence flags from "any corner
+    errored", which labelled BSIM-AR's own NFIN=5 failure as ``reference``.
+    """
+    code, marker = _sram_marker_after_corner_failure(
+        monkeypatch, capsys, tmp_path, "candidate")
+
+    assert code == 1
+    assert marker["error_kind"] == "candidate"
+    assert marker["reference_converged"] is True
+    assert marker["candidate_converged"] is False
+
+
+def test_sram_reference_corner_failure_is_attributed_to_reference(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    """A failed NGSPICE corner remains a reference error."""
+    _code, marker = _sram_marker_after_corner_failure(
+        monkeypatch, capsys, tmp_path, "reference")
+
+    assert marker["error_kind"] == "reference"
+    assert marker["reference_converged"] is False
 
 
 def test_circuit_sweep_answers_top_level_help(

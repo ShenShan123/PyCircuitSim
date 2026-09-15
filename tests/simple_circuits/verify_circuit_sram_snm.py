@@ -288,7 +288,8 @@ def run_one(bt: BenchTech, nfins: List[int]) -> Dict:
             ng = ngspice_lobe(bt, nfin, work_dir)
         except Exception as exc:  # noqa: BLE001
             print(f"      NGSPICE FAILED: {exc!r}")
-            corner_rows.append({"nfin": nfin, "error": repr(exc)})
+            corner_rows.append({"nfin": nfin, "error": repr(exc),
+                                "stage": "reference"})
             continue
         ng_snm = snm_from_lobes(ng["q"], ng["qb"])
 
@@ -299,7 +300,7 @@ def run_one(bt: BenchTech, nfins: List[int]) -> Dict:
         except Exception as exc:  # noqa: BLE001
             print(f"      {model_label} FAILED: {exc!r}")
             corner_rows.append({"nfin": nfin, "ng_snm": ng_snm,
-                                "error": repr(exc)})
+                                "error": repr(exc), "stage": "candidate"})
             continue
         dn_snm = snm_from_lobes(dn["q"], dn["qb"])
 
@@ -434,6 +435,8 @@ def main(argv: List[str] | None = None) -> int:
         n_pass += int(r["all_positive"])
         comparable = [c for c in r["corners"] if "error" not in c]
         corner_errors = [c for c in r["corners"] if "error" in c]
+        reference_errors = [c for c in corner_errors
+                            if c.get("stage") == "reference"]
         marker_status = (
             "error" if corner_errors else
             ("pass" if r["all_positive"] else "fail")
@@ -468,8 +471,12 @@ def main(argv: List[str] | None = None) -> int:
                 "force_ic": r["force_ic"],
             },
             error="; ".join(c["error"] for c in corner_errors),
-            reference_converged=not corner_errors,
+            # Each corner errors in exactly one engine; attribute it to that
+            # engine rather than marking both as unconverged.
+            reference_converged=not reference_errors,
             candidate_converged=not corner_errors,
+            error_kind=(("reference" if reference_errors else "candidate")
+                        if corner_errors else ""),
             **RunSpec.from_environment().result_fields(),
         ).marker())
     n_total = len(results)
