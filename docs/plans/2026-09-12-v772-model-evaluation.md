@@ -1,7 +1,11 @@
 # V7.7.2 saved-model evaluation, started 2026-09-12
 
-Status: fifth arm preparing after a reproduced hierarchy AC-summary defect;
-no new accuracy result is claimed. The user authorized
+Status: closed on 2026-09-21. The fifth arm stopped at 3,429 jobs on the
+derived-row misclassification recorded in
+[round 1](../accuracy/v775-quick-round1.md); its repair and the SRAM
+attribution repair are now on `main`, and the saved bundles were scored
+instead by the V7.7.5 diagnostic rounds. No new accuracy result is claimed
+by this schedule. The user authorized
 evaluation after the separate training-only task finished. Its 80 saved
 bundles and completion inventory remain untouched. The current package stays
 V7.7.5; V7.7.2 identifies the trained models, not this evaluation runtime.

@@ -1,8 +1,12 @@
 # V7.7.2 consolidated full-terminal campaign
 
-Status: training. The user consolidated V7.7.1 and V7.7.2 into one campaign
-and requested automatic evaluation after training. There is one 80-model
-refresh and one final V7.7.2 campaign publication. No accuracy promotion is
+Status: training complete on 2026-09-11 with 80/80 bundles. The campaign's
+automatic evaluation never finished; the saved bundles were scored instead by
+the V7.7.5 diagnostic [round 1](../accuracy/v775-quick-round1.md) and
+[round 2](../accuracy/v775-round2.md), which are not a clean qualification.
+The user consolidated V7.7.1 and V7.7.2 into one campaign and requested
+automatic evaluation after training. There is one 80-model refresh and one
+final V7.7.2 campaign publication. No accuracy promotion is
 claimed yet. V7.7.2 identifies the frozen campaign; the current package release
 is maintained separately in the [root README](../../README.md).
 

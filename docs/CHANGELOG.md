@@ -17,6 +17,130 @@ remain in Git history.
 
 ## V7.7 — full-terminal-only NN stack
 
+### V7.7.6 — NN-side voltage limiting (planned)
+
+Opened 2026-09-21 after round 2. LEVEL=75/76 raise `CandidateSupportError` on
+any evaluation outside the persisted normalization box, and no NN-side limiter
+precedes that check, so an intermediate Newton iterate can end a solve whose
+physical answer is inside the box. Across both rounds, 440 reference-only
+diagnostic runs found every accepted NGSPICE trajectory inside support for
+every case that raised such an error. The
+[plan](plans/2026-09-21-v776-nn-voltage-limiting.md) records the evidence, the
+contract constraints, and the gating: the limiter perturbs floating-point
+results, so it ships disabled until a full accuracy re-gate clears it, and it
+must first pass the latch-basin contract. No accuracy claim; the release stays
+V7.7.5.
+
+The evaluation-arm harness repairs reached `main` in merge `b688412`: the ten
+commits of `eval/v775-round2`, which are the harness both rounds actually ran
+on. They retain DC-sweep endpoints within roundoff tolerance, compare signed
+source currents in the lifted-source canary, widen unidentifiable subthreshold
+reference windows and keep those rows as diagnostic `ERROR`s, emit terminal and
+hierarchy AC phase, cover every applicable device-integrity corner, and
+attribute candidate-only failures in derived CMRR/PSRR and SRAM rows. Each
+carries its regression test; the collected suite goes from 1,101 to 1,160.
+Endpoints, phase and window selection change numerical results, so no score
+measured before this merge transfers to the merged runtime: both rounds stay
+pinned to their own arms, and the V7.7.6 re-gate needs a separately
+provenanced one.
+
+Repository cleanup. Published both V7.7.5 round reports under `docs/accuracy/`
+with the index and its preservation hash. Removed the uncalled
+`_DirectNetFullBase` compatibility alias, whose only occurrence in any worktree
+was its own definition; that changes the tracked source inventory hash although
+no numerical path moved. Closed three stale statuses: V7.7.1 is superseded by
+V7.7.2, V7.7.2 finished training on 2026-09-11 but never completed a scored
+campaign, and the 2026-09-12 evaluation schedule closed when its fifth arm
+stopped at 3,429 jobs. Extended `.gitignore` to model bundles and tensor
+artifacts anywhere in the tree, so checkpoints and simulation results stay on
+disk and out of the patch. Local cleanup removed 21 `__pycache__` directories
+(160 files), the Ruff and pytest caches (168 KiB), an empty `docs/issue_report/`,
+and two worktree registrations whose directories no longer exist. Datasets,
+checkpoints, every campaign worktree, and all of `results/` are untouched; that
+deletion is local and is not part of the Git patch.
+
+Verification: 1,160 project tests passed, zero skipped, with the five existing
+CPU pin-memory warnings. Focused Ruff checks (`F401`, `F811`, `F821`, `F841`),
+the preserved-report checksums, and all 188 local Markdown links passed. No
+re-gate, training, or PyCMG suite was run for this cleanup, and no accuracy
+result is claimed.
+
+### 2026-09-15 — V7.7.5 checkpoint targeted round 2
+
+After round 1, the user chose a targeted round 2 and asked for both harness
+defects to be fixed first ([report](accuracy/v775-round2.md)). It covers the 23
+remaining simple-v2 cases at nominal (920 cells) and the ring and Miller gates
+at OMP 2/4 (160 cells), from branch `eval/v775-round2` at `d708d4b`.
+
+Harness fixes, with regression tests red on `39b14f1` and a full suite of
+1,160 passed with none skipped:
+
+- A derived CMRR/PSRR row inherits the error kind of the failed input analysis,
+  so an unconverged candidate exits 1 instead of dispatching as infrastructure.
+- The SRAM gate names the engine that failed a corner, instead of labelling
+  candidate-only failures as reference errors.
+
+In round 2 every error row is attributed to the candidate, and no cell has an
+`infra` verdict.
+
+A reference-only support diagnostic ran 440 runs over every case that raised a
+`CandidateSupportError` and has a DC or transient analysis, for all 40
+checkpoint pairs. Every accepted NGSPICE point is inside the normalization box,
+except NAND2/NOR2 transient samples equal to a start-up spike. Support
+rejections are therefore Newton trial states, a solver-globalization limit, not
+missing training data. The spike comes from NGSPICE's first `uic` step, which
+drives initialized series-stack and inverter-chain nodes past the rails
+(NOR2 `v(pint)` −1.165 V from 0.75 V). It produces size-independent 1.5–1.9 V
+voltage errors that are not model error.
+
+DirectNet-Full: ring and Miller pass OMP 1/2/4 in 40/40 cells with no flips.
+Simple-v2 L1–L4 rows converge 24–25/25, 83–87/90, 107–119/135 and 35–44/45 by
+tier; `beta_multiplier` converges in only 4–8 of 15 rows per size. Unattributed
+systematic errors remain: TSMC5 inverter switching energy is 26.5% high at
+every size, and LDO line regulation is 3–30× worse than the reference slope.
+BSIM-AR-Full completed all 540 cells and converged 1,032 of 1,180 simple-v2
+rows, with all 148 error rows attributed to the candidate. It converges fewer
+rows than DirectNet at L3/L4 (`beta_multiplier` 19/60, `ldo_regulator` 60/80,
+`multistage_buffer_12t` 24/40) and shows the same systematic inverter-energy
+and Miller-gain errors. Its cost is the practical finding: 34–90× DirectNet on
+identical gates, with five xl cells taking 28–52 h each and holding the round
+open for four days after the other 1,075 cells had finished.
+
+### 2026-09-14 — V7.7.5 checkpoint quick round 1
+
+This round scored the 80 V7.7.2-trained bundles shipped with V7.7.5 on a
+nominal, OMP=1 subset of the L0–L4 tiers: 12 cases × 2 families × 4 sizes ×
+5 technologies = 480 cells ([report](accuracy/v775-quick-round1.md)). The
+evaluation runtime is main `d6ae11c` plus the evaluation-branch harness
+repairs (`39b14f1`), which were unmerged while the round ran and reached main
+in merge `b688412`. Its manifests record a distinct evaluation arm,
+not source equivalence. The round supports a continue/stop decision and is not
+a clean qualification.
+
+DirectNet-Full completed all 240 cells. Medium, large and xl pass 20/20
+simple-v1 cells at OMP=1. Small passes 18/20; the misses are switch-cap droop
+on the TSMC6/TSMC7 repeat. Parametric device DC is 128, 129, 127 and 126/129
+by size; the large and xl misses are high-NFIN configurations on TSMC12/16.
+L1–L3 diagnostics converge in 416/420 rows. The L4 5T OTA buffer converges in
+45/60 rows, mostly blocked by support-box rejections.
+
+BSIM-AR-Full completed all 240 cells. Device DC is 128/129 at small and
+129/129 at every larger size. Simple-v1 cells pass 19/20, 18/20, 20/20 and
+20/20 by size. The misses are Miller DC on small TSMC16 and medium TSMC5 and
+SRAM on medium TSMC16, all candidate convergence or support failures. L4
+converges 6, 12, 15 and 13 of 15 rows by size. Its transients ran about
+34–90× slower than DirectNet's.
+
+Two harness defects were found and left unfixed. A nonconverged differential
+pair's derived CMRR row turns the cell into `infra`, and the SRAM gate labels
+candidate-only corner failures as `reference`. The report recounts both as
+candidate `ERROR`s. The first launch exceeded the session's background-task
+memory limit; its 56 interrupted cells are archived and were rerun.
+
+Verification: the report-preservation check verified all pinned checksums, 47
+dataset/campaign contract tests passed with no skips, and local Markdown links
+resolve. Outside Markdown, only the accuracy-index preservation hash changed.
+
 ### 2026-09-12 — V7.7.2 model evaluation scheduled
 
 The completed 80-model training inventory is retained unchanged. A separate
@@ -228,7 +352,7 @@ the bare operating point (`simulation.py` collected-suite coverage
 11 % → 74 %). Verification: 842 tests passed, 0 skipped, 0
 expected failures. No accuracy claim; the release stays V7.7.0.
 
-### V7.7.2 — complete four-terminal model refresh (in progress)
+### V7.7.2 — complete four-terminal model refresh (training complete 2026-09-11)
 
 Prepared a fresh ten-dataset, 80-model S/M/L/XL campaign using the latest
 tested full-terminal generator and harness fixes. The existing dependency
@@ -327,7 +451,15 @@ test used TSMC5, whose local and universal codes coincide). The stale
 skipped, 0 expected failures; the four LEVEL=72 gates and the geometry guard
 (463/463) passed. No campaign was run; both worktrees untouched.
 
-### V7.7.1 — regeneration and retraining (in progress)
+Training closed on 2026-09-11: all 80 bundles carry completion markers in
+`results/v771_r2_checkpoints`. The campaign's automatic clean and simple-v2
+pools never completed — five staged evaluation arms stopped on the harness
+defects recorded in the 2026-09-12 entry above — so V7.7.2 names a trained
+model inventory, not a scored campaign. The saved bundles have been measured
+only by the two V7.7.5 diagnostic rounds, which are explicitly not a clean
+qualification.
+
+### V7.7.1 — regeneration and retraining (superseded by V7.7.2)
 
 Prepared an isolated ten-dataset, 80-bundle full-terminal refresh and a
 persistent dependency runner for the complete clean and simple-v2 harness

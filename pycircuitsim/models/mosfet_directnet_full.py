@@ -468,8 +468,4 @@ class PMOS_DNF(_FullTerminalNNBase):
         return -super().calculate_current(voltages)
 
 
-# Compatibility for private imports in downstream diagnostic scripts.
-_DirectNetFullBase = _FullTerminalNNBase
-
-
 __all__ = ["NMOS_DNF", "PMOS_DNF"]

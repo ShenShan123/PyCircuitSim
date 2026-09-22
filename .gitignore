@@ -44,6 +44,16 @@ external_compact_models/*.py
 # Neural compact-model checkpoints (large binaries, regenerable via training)
 external_compact_models/neural_network/checkpoints/
 
+# Model bundles and tensor artifacts anywhere in the tree. Scored campaigns
+# keep theirs under results/ or an explicit BSIMAR_CHECKPOINT_DIR; none of
+# them belongs in the Git patch.
+checkpoints/
+*.pt
+*.pt.complete
+*.ckpt
+*.npz
+*.npy
+
 # Experiment temp files
 exp_pids.txt
 exp_queue.log

@@ -412,7 +412,8 @@ conda run -n pycircuitsim python scripts/v730_docs_build.py --campaign v772_full
 The [2026-09-12 evaluation schedule](docs/plans/2026-09-12-v772-model-evaluation.md)
 evaluates the 80 saved V7.7.2 bundles on a separately pinned audited runtime,
 in order from devices through L4 feedback systems, including manual gates and
-all applicable catalog corners. Run from its isolated evaluation worktree:
+all applicable catalog corners. That schedule is closed; these commands remain
+the way to run a saved-model arm. Run from its isolated evaluation worktree:
 
 ```bash
 conda run -n pycircuitsim python scripts/v772_evaluate.py --plan
