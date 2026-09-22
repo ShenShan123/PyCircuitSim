@@ -129,7 +129,9 @@ PASSES = [("V7.6.1", load_json("v761_directnet_full_clean")),
           ("V7.6.6", load_json("v766_full_clean")),
           ("V7.7.0", load_json("v770_full_clean")),
           ("V7.7.1", load_json("v771_full_clean")),
-          ("V7.7.2", load_json("v772_full_clean"))]
+          ("V7.7.2", load_json("v772_full_clean")),
+          ("V7.7.2 models / audited runtime 2026-09-12",
+           load_json("v772_eval_20260912_full_clean"))]
 PASS_DATA = dict(PASSES)
 ACTIVE_PASS: Optional[str] = None
 CAMPAIGN_EVIDENCE: Dict[str, Tuple[str, int, int]] = {
@@ -140,6 +142,8 @@ CAMPAIGN_EVIDENCE: Dict[str, Tuple[str, int, int]] = {
     "V7.7.0": ("v770_full_clean", 600, 280),
     "V7.7.1": ("v771_full_clean", 600, 280),
     "V7.7.2": ("v772_full_clean", 600, 280),
+    "V7.7.2 models / audited runtime 2026-09-12":
+        ("v772_eval_20260912_full_clean", 600, 280),
 }
 
 # Every report is rendered from one coherent campaign. A later partial pass is
@@ -646,9 +650,18 @@ def campaign_provenance(tag: str) -> str:
     manifest = json.loads(manifest_path.read_text())
     digest = hashlib.sha256(manifest_path.read_bytes()).hexdigest()
     data_source = manifest.get("dataset_source_commit")
-    training = (f" Dataset/training source: `{data_source}`; identical model/runtime/template "
-                f"inventory SHA-256 `{manifest['model_source_sha256']}`."
-                if data_source else "")
+    training = ""
+    if manifest.get("source_relationship") == "distinct-evaluation-arm":
+        training = (
+            f" Dataset/training source: `{data_source}`; original source inventory "
+            f"SHA-256 `{manifest['training_source_sha256']}`. Evaluation runtime: "
+            f"`{manifest['evaluation_runtime_commit']}`; evaluation inventory SHA-256 "
+            f"`{manifest['evaluation_source_sha256']}`. This is a separate evaluation "
+            "of the saved weights; it does not claim source equivalence or retraining."
+        )
+    elif data_source:
+        training = (f" Dataset/training source: `{data_source}`; identical model/runtime/template "
+                    f"inventory SHA-256 `{manifest['model_source_sha256']}`.")
     return (
         f"Evidence pass: **{version}**. Campaign manifest SHA-256 "
         f"`{digest}` pins gate commit `{manifest['source_commit']}`, "

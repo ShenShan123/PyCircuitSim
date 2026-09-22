@@ -109,7 +109,6 @@ def test_reference_and_candidate_share_biases_and_preserve_current_sign(
     # Deliberately negative oriented drain current so an abs() regression fails.
     current = -axis * 1e-4
     source_current = -current if device == "nmos" else current
-    device_current = current if device == "nmos" else -current
     lines = ["sweep current\n", *[
         f"{voltage:g} {value:g}\n" for voltage, value in zip(gate, source_current)
     ]]
@@ -118,7 +117,7 @@ def test_reference_and_candidate_share_biases_and_preserve_current_sign(
     monkeypatch.setattr(canary, "create_baked_pmos_modelcard", lambda *_args: work_dir / "p.lib")
     parse = Mock()
     monkeypatch.setattr(parser.Parser, "parse_file", parse)
-    solve = Mock(return_value={"g": gate, "i(Mdut)": device_current})
+    solve = Mock(return_value={"g": gate, "i(Vd)": source_current})
     monkeypatch.setattr(simulation, "run_dc_sweep", solve)
 
     reference = canary.run_ngspice_dc_lifted(tech, work_dir, 0.08, device)
@@ -201,3 +200,28 @@ def test_malformed_reference_never_enters_metrics(
     rows = parse_result_markers(capsys.readouterr().out)
     assert len(rows) == 6 and all(row["status"] == "error" for row in rows)
     metrics.assert_not_called()
+@pytest.mark.parametrize("device", ("nmos", "pmos"))
+@pytest.mark.parametrize("branch_sign", (-1.0, 1.0))
+def test_candidate_canary_reads_the_signed_drain_source_branch(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, device: str, branch_sign: float,
+) -> None:
+    """PMOS's legacy scalar magnitude must not invert the physical comparison.
+
+    Both adapters observe i(Vd); opposite current flow must remain opposite,
+    rather than being erased by an absolute-value convention.
+    """
+    from pycircuitsim.parser import Parser
+    from pycircuitsim import simulation
+
+    tech = canary.ALL_TEST_TECHS["TSMC12"]
+    axis = np.linspace(0.0, tech.vdd, 3)
+    gate = axis if device == "nmos" else tech.vdd - axis
+    branch = branch_sign * np.asarray([1.0, 2.0, 3.0]) * 1e-6
+    monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
+    monkeypatch.setattr(Parser, "parse_file", lambda *_args: None)
+    monkeypatch.setattr(simulation, "run_dc_sweep", lambda *_args, **_kwargs: {
+        "g": gate, "i(Vd)": branch, "i(Mdut)": np.abs(branch),
+    })
+    result = canary.run_nn_dc_lifted(tech, tmp_path, 0.0, device)
+    np.testing.assert_allclose(result["sweep"], axis)
+    np.testing.assert_array_equal(result["id"], -branch if device == "nmos" else branch)

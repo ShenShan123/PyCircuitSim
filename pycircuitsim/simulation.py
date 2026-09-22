@@ -409,18 +409,31 @@ def run_dc_sweep(
 
     # Generate sweep values
     # Handle both increasing (step > 0) and decreasing (step < 0) sweeps
+    if step == 0:
+        raise ValueError(f"DC sweep step cannot be zero: {step}")
+    # Repeated addition can move a mathematically exact endpoint just beyond
+    # stop (e.g. 0.8 becomes 0.8000000000000006 on a 5 mV grid). Bound the
+    # accumulated roundoff, capped well below a full step so an off-grid stop
+    # does not create a new sample. Preserve the existing interior trajectory.
+    endpoint_tolerance = min(
+        abs(step) * 1e-3,
+        4 * np.finfo(float).eps * max(abs(start), abs(stop), abs(step))
+        * max(1.0, abs((stop - start) / step)),
+    )
     sweep_values = []
     if step > 0:
         # Increasing sweep: start < stop
         current_value = start
-        while current_value <= stop:
-            sweep_values.append(current_value)
+        while current_value <= stop + endpoint_tolerance:
+            sweep_values.append(
+                stop if abs(current_value - stop) <= endpoint_tolerance else current_value)
             current_value += step
     elif step < 0:
         # Decreasing sweep: start > stop
         current_value = start
-        while current_value >= stop:
-            sweep_values.append(current_value)
+        while current_value >= stop - endpoint_tolerance:
+            sweep_values.append(
+                stop if abs(current_value - stop) <= endpoint_tolerance else current_value)
             current_value += step
     else:
         raise ValueError(f"DC sweep step cannot be zero: {step}")

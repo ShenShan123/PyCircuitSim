@@ -1499,6 +1499,52 @@ def test_result_exit_code_separates_scientific_and_infrastructure_errors(
     assert result_exit_code([result]) == expected
 
 
+def test_derived_row_inherits_candidate_error_from_failed_inputs() -> None:
+    """An unconverged candidate is a scientific ERROR, not a schema fault.
+
+    The derived CMRR row used to report ``result_schema`` whenever its inputs
+    were missing, so an unconverged differential pair exited as an
+    infrastructure failure and stopped the fifth V7.7.2 evaluation arm.
+    """
+    import tests.common.simple_circuit_harness as harness
+
+    case = next(item for item in cases() if item.case_id == "diffpair_ideal")
+    failed = [
+        GateResult(
+            case_id=case.case_id, tech="TSMC5", corner="nominal",
+            analysis=name, role="diagnostic", status="error",
+            error="CandidateConvergenceError: operating point did not converge",
+            candidate_converged=False, execution_state="nonconverged",
+            error_kind="candidate",
+        )
+        for name in ("steering", "differential_ac", "common_mode_ac")
+    ]
+
+    derived = harness._derive_case_metrics(case, failed)
+
+    assert [row.error_kind for row in derived] == ["candidate"]
+    assert result_exit_code([*failed, *derived]) == 1
+
+
+def test_derived_row_with_converged_inputs_remains_schema_error() -> None:
+    """Converged analyses that omit the gain keys are still a harness defect."""
+    import tests.common.simple_circuit_harness as harness
+
+    case = next(item for item in cases() if item.case_id == "diffpair_ideal")
+    converged = [
+        GateResult(
+            case_id=case.case_id, tech="TSMC5", corner="nominal",
+            analysis=name, role="diagnostic", status="diagnostic",
+        )
+        for name in ("differential_ac", "common_mode_ac")
+    ]
+
+    derived = harness._derive_case_metrics(case, converged)
+
+    assert [row.error_kind for row in derived] == ["result_schema"]
+    assert result_exit_code([*converged, *derived]) == 2
+
+
 def test_terminal_current_metrics_report_kcl_and_each_terminal() -> None:
     from tests.common.terminal_integrity import (
         terminal_current_metrics,

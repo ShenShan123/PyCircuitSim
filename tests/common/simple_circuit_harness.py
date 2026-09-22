@@ -3247,6 +3247,21 @@ def _derive_case_metrics(
                     - domain.get(f"{name}_db_ref", float("nan")))
         domain[f"{name}_db_error"] = error
     if missing:
+        # When an input analysis already errored, the ratio is missing because
+        # of that failure: inherit its kind, so an unconverged candidate stays
+        # a scientific ERROR instead of exiting as infrastructure. Only
+        # converged inputs that still lack a finite gain are a schema defect.
+        upstream = [r.error_kind for r in results if r.status == "error"]
+        infrastructure = [kind for kind in upstream if kind not in {
+            "candidate", "reference_metric"}]
+        if not upstream:
+            error_kind = "result_schema"
+        elif infrastructure:
+            error_kind = infrastructure[0]
+        elif "candidate" in upstream:
+            error_kind = "candidate"
+        else:
+            error_kind = "reference_metric"
         return [GateResult(
             case_id=case.case_id, tech=results[0].tech,
             corner=results[0].corner, analysis="derived", role=case.role,
@@ -3255,7 +3270,7 @@ def _derive_case_metrics(
             reference_converged=all(r.reference_converged for r in results),
             candidate_converged=all(r.candidate_converged for r in results),
             execution_state="error",
-            error_kind="result_schema",
+            error_kind=error_kind,
             **provenance,
         )]
     return [GateResult(

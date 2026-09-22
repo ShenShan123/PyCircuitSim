@@ -459,9 +459,16 @@ def _subthreshold_window(
         return np.zeros(grid.shape, dtype=bool)
     lo = floor * 10.0
     hi = min(ceiling * 1e-3, floor * 1e5)
-    if hi <= lo:
-        hi = math.sqrt(lo * ceiling)
-    return (magnitude >= lo) & (magnitude <= hi)
+    window = (magnitude >= lo) & (magnitude <= hi)
+    # The preferred window can be nonempty yet too narrow to identify SS
+    # at hot/low-VDD corners. Use the existing reference-only fallback for
+    # either insufficient points or insufficient current variation; keep
+    # every already-identifiable window unchanged.
+    if (int(np.count_nonzero(window)) < _MIN_SS_WINDOW_POINTS
+            or float(np.ptp(np.log10(magnitude[window]))) < _MIN_SS_DECADES):
+        hi = max(hi, math.sqrt(lo * ceiling))
+        window = (magnitude >= lo) & (magnitude <= hi)
+    return window
 
 
 def _slope_mv_per_decade(
@@ -564,6 +571,8 @@ def suite_metrics(
             ss_window_points=int(np.count_nonzero(window)),
             ss_test_decades_spanned=(
                 float(np.ptp(test_dec[window])) if np.any(window) else 0.0),
+            ss_ref_decades_spanned=(
+                float(np.ptp(ref_dec[window])) if np.any(window) else 0.0),
             ss_test_mv_dec=ss_test, ss_ref_mv_dec=ss_ref,
             ss_error_pct=_relative_error(ss_test, ss_ref),
         )
@@ -635,6 +644,10 @@ class CandidateMetricUnavailable(ValueError):
     """A converged candidate lacks the variation needed for a physical metric."""
 
 
+class ReferenceMetricUnavailable(ValueError):
+    """A complete reference trace has no identifiable subthreshold window."""
+
+
 _DEVICE_METRIC_CONTRACTS: Dict[str, Tuple[str, ...]] = {
     "output": (
         "gds_sat_error_pct", "idsat_error_pct", "knee_vds_error_v",
@@ -674,6 +687,23 @@ def validate_device_metrics(
         or not np.isfinite(payload[name])
     ]
     if invalid:
+        reference_slope_fields = {"ss_test_mv_dec", "ss_ref_mv_dec", "ss_error_pct"}
+        reference_invalid = set(reference_slope_fields)
+        if domain.get("decades_spanned", float("nan")) < 1e-9:
+            reference_invalid.add("log_decade_nrmse_pct")
+        if (
+            spec.suite == "subthreshold"
+            and set(invalid) == reference_invalid
+            and all(isinstance(payload.get(name), (float, np.floating))
+                    and np.isnan(payload[name]) for name in reference_invalid)
+            and (domain.get("ss_window_points", float("inf")) < _MIN_SS_WINDOW_POINTS
+                 or domain.get("ss_ref_decades_spanned", float("inf")) < _MIN_SS_DECADES)
+        ):
+            raise ReferenceMetricUnavailable(
+                "complete reference trace has no identifiable rising subthreshold "
+                f"window ({_MIN_SS_WINDOW_POINTS} points and {_MIN_SS_DECADES:g} "
+                "current decades required); no slope comparison is scored"
+            )
         # This is the declared slope identifiability limit, not a missing
         # metric implementation. Keep malformed payloads and other NaNs loud.
         slope_fields = {"ss_test_mv_dec", "ss_error_pct"}
@@ -787,7 +817,8 @@ def run_sweep(
             **provenance,
         )
     except Exception as exc:  # noqa: BLE001 — an error row keeps its denominator slot
-        unavailable = isinstance(exc, CandidateMetricUnavailable)
+        unavailable = isinstance(exc, (CandidateMetricUnavailable, ReferenceMetricUnavailable))
+        reference_metric_unavailable = isinstance(exc, ReferenceMetricUnavailable)
         return GateResult(
             case_id=f"device_{spec.suite}", tech=bt.name, corner=corner.name,
             analysis=f"{spec.device}_{spec.label}", role="diagnostic",
@@ -803,7 +834,8 @@ def run_sweep(
                 else "infrastructure_error"
             ),
             error_kind=(
-                "candidate" if unavailable
+                "reference_metric" if reference_metric_unavailable
+                else "candidate" if unavailable
                 else "reference" if not reference_converged
                 else "candidate" if "converg" in str(exc).lower()
                 else "infrastructure"

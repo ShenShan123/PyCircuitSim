@@ -40,8 +40,27 @@ def _model_source_hash(root: Path, commit: str) -> str:
 def validate_dataset_source(
     root: Path, dataset_commits: Set[str], source_commit: str,
     declared_dataset_commit: Optional[str] = None,
+    evaluation_runtime_commit: Optional[str] = None,
 ) -> Dict[str, object]:
     """Permit an explicit older data source only for identical numerical code."""
+    if evaluation_runtime_commit is not None:
+        # Reusing verified weights on a corrected runtime is a new experiment,
+        # not an assertion that generation/training code is unchanged.
+        if evaluation_runtime_commit != source_commit:
+            raise ValueError("evaluation runtime pin does not match campaign source commit")
+        if (declared_dataset_commit is None
+                or not re.fullmatch(r"[0-9a-f]{40}", declared_dataset_commit)
+                or dataset_commits != {declared_dataset_commit}):
+            raise ValueError("a distinct evaluation arm requires one explicit dataset source")
+        return {
+            "source_relationship": "distinct-evaluation-arm",
+            "dataset_source_commit": declared_dataset_commit,
+            "evaluation_runtime_commit": evaluation_runtime_commit,
+            "training_source_sha256": _model_source_hash(root, declared_dataset_commit),
+            "evaluation_source_sha256": _model_source_hash(root, source_commit),
+            "model_source_paths": list(MODEL_SOURCE_PATHS),
+            "model_source_excludes": ["*.md"],
+        }
     if not dataset_commits or dataset_commits == {source_commit}:
         if declared_dataset_commit not in (None, source_commit):
             raise ValueError("declared dataset source does not match the bundles")
@@ -209,6 +228,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     parser.add_argument("--pdk-root", type=Path)
     parser.add_argument("--dataset-source-commit",
                         help="explicit source for bundles with identical model/runtime/template code")
+    parser.add_argument("--evaluation-runtime-commit",
+                        help="pin HEAD for a distinct evaluation arm; requires an explicit dataset source")
     parser.add_argument(
         "--verify-group", nargs=3, metavar=("TAG", "VARIANT", "TECH"),
     )
@@ -254,7 +275,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     }
     try:
         source_identity = validate_dataset_source(
-            root, dataset_commits, source_commit, args.dataset_source_commit)
+            root, dataset_commits, source_commit, args.dataset_source_commit,
+            args.evaluation_runtime_commit)
     except ValueError as exc:
         raise SystemExit(str(exc)) from exc
     manifest = {

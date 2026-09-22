@@ -17,6 +17,83 @@ remain in Git history.
 
 ## V7.7 — full-terminal-only NN stack
 
+### 2026-09-12 — V7.7.2 model evaluation scheduled
+
+The completed 80-model training inventory is retained unchanged. A separate
+audited-runtime arm now schedules every gate entry point, catalog corner and
+parametric dimension from devices through L4, with persistent supervision.
+Its manifest explicitly distinguishes the original training source from the
+evaluation source; default exact-source checks remain unchanged. Parametric
+checkpoint auditing now honors `BSIMAR_CHECKPOINT_DIR` and labels LEVEL=76
+correctly. No accuracy promotion or new package release is claimed.
+See the [evaluation schedule](plans/2026-09-12-v772-model-evaluation.md).
+
+The first preflight stopped before NN scoring because exported campaign data
+paths overrode two pytest geometry fixtures. The scheduler now removes those
+paths only for fixture-based contracts; real gates retain explicit dataset
+and checkpoint roots. The failed bootstrap is archived separately and the
+evaluation restarts from a fresh source pin. The PyCMG reference suite passed
+315 tests without skips in that bootstrap.
+
+The first scored arm stopped at 20 completed jobs with four terminal-integrity
+infrastructure failures. Its capacitance path computed a full matrix but did
+not emit the `phase_maxerr_deg` required by the audited AC schema, so all ten
+capacitance rows per affected job were rejected. The second arm records the
+maximum wrapped phase error across the complex 4×4 terminal admittance matrix.
+Known 0°, 30°, and 180° perturbations reproduce the bug and verify the repair.
+Capacitance values, simulator equations, thresholds, and the 19,266-job
+inventory are unchanged; the second arm starts a complete separate pass.
+
+The second arm completed 171 jobs before a TSMC12 hot/low-VDD PMOS device
+diagnostic could not fit subthreshold slope. Deck parity and both converged
+111-point traces were verified. The reference spanned 4.246 decades, but the
+preferred window retained only 0.216; its fallback ran only for an empty
+range. The third arm applies the existing reference-only fallback whenever
+the initial window lacks the required four points or 0.5 decades. Already
+identifiable windows and both fit requirements remain unchanged. Tests cover
+NMOS/PMOS exact exponentials, preservation of valid windows, and continued
+rejection of flat references and malformed metrics. Every earlier arm is
+preserved separately; no model weights or simulator equations changed.
+
+The all-corner NGSPICE device screen also found 12 TSMC5/6/7 hot-corner
+subthreshold references whose current is maximal at zero gate bias. Those
+complete, converged sweeps cannot identify the declared rising-window slope.
+They now produce diagnostic `ERROR` rows of kind `reference_metric`, with
+convergence retained and no scored metrics, instead of halting the campaign
+as infrastructure failures. Flat and decreasing references are covered for
+both polarities. Missing/malformed metrics, failed NGSPICE runs, partial
+traces, and qualification rows cannot use this exception.
+
+The third arm completed all 1,196 device-stage jobs. Review found the
+lifted-source canary's apparent nonconvergence was missing DC endpoints:
+repeated 5 mV additions crossed 0.8 V by roundoff and the strict loop stopped
+one point early, in both sweep directions. A passive RC control reproduced
+160 candidate versus 161 NGSPICE points. The fourth arm tolerates bounded
+endpoint roundoff and stamps the requested final value, while preserving
+interior step values and avoiding an added point for non-divisible spans.
+The third arm's 1,310 completed jobs and 16 interrupted jobs are preserved.
+The separate AR-cache diagnostic also measured a 2.31e-4 relative Jacobian
+deviation on TSMC7 small NMOS against its 1e-4 tolerance; cache-off execution
+remains the scored contract, and that diagnostic failure is retained.
+
+The endpoint repair exposed a canary polarity bug: the PMOS scalar
+`calculate_current()` already uses the project's comparison sign, but the
+canary negated it again, yielding approximately 200% MRE. The candidate now
+reads signed MNA `i(Vd)`, the same observable used by NGSPICE, with matching
+NMOS/PMOS orientation. A boundary test checks both devices and both current
+directions; it cannot hide a wrong sign through an absolute value. Device
+equations and scalar API conventions are unchanged.
+
+The fourth arm completed 3,398 jobs, including devices and L1, then stopped
+at two hierarchy-AC schema errors. The flat/nested summary selected only four
+aggregate fields and discarded the already-computed `phase_maxerr_deg`.
+The fifth arm retains the worst phase error from both representations. Tests
+exercise the complete DC, transient, and AC summary paths and a known 30°
+phase rotation. The other production metric-validator call sites were checked:
+the shared trace comparator and repaired terminal-admittance path emit phase;
+the collector only validates or derives it from recorded per-signal values.
+The simulation code, checkpoint weights, and 19,266-job inventory are unchanged.
+
 ### V7.7.5 — repository cleanup
 
 Removed ten uncalled definitions: the DC last-solution accessor and its

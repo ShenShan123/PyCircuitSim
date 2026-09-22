@@ -657,6 +657,11 @@ def run_terminal_capacitance_bias(
             reference_c.ravel() * 1e15,
         ))
         metrics["max_err"] *= 1e-15
+        # C uses only Im(Y); retain phase information from the full complex
+        # terminal response, using the same wrapped ratio as compare_traces.
+        metrics["phase_maxerr_deg"] = float(np.max(np.abs(np.rad2deg(
+            np.angle(candidate_y / (reference_y + 1e-30)),
+        ))))
         validate_analysis_metrics(analysis, metrics, {})
         domain: Dict[str, Any] = {
             "capacitance_max_error_f": float(

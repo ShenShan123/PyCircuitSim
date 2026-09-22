@@ -15,6 +15,7 @@ from tests.common.simple_circuit_harness import CORNERS, RunSpec
 def run_subthreshold(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, polarity: str,
     *, flat_reference: bool = False, flat_candidate: bool = True,
+    falling_reference: bool = False, reference_failure: bool = False,
 ) -> GateResult:
     """Synthetic curves test metric classification through the real runner."""
     monkeypatch.setenv("PYCIRCUITSIM_NN_FORCE_LEVEL", "75")
@@ -23,10 +24,17 @@ def run_subthreshold(
     grid = np.linspace(min(spec.start, spec.stop), max(spec.start, spec.stop), 111)
     exponential = 1e-12 * 10.0 ** (np.abs(grid) / 0.06)
     reference = np.full_like(grid, 1e-8) if flat_reference else exponential
+    if falling_reference:
+        reference = reference[::-1]
     candidate = np.full_like(grid, 1e-8) if flat_candidate else exponential
     monkeypatch.setattr(device, "get_baked_modelcard", lambda *a, **k: tmp_path / "baked.lib")
     monkeypatch.setattr(device, "physical_deck_mismatch", lambda *a, **k: "")
-    monkeypatch.setattr(device, "run_reference_sweep", lambda *a, **k: device.DeviceTrace(grid, reference))
+    def reference_sweep(*args: object, **kwargs: object) -> device.DeviceTrace:
+        if reference_failure:
+            raise RuntimeError("NGSPICE did not produce a complete sweep")
+        return device.DeviceTrace(grid, reference)
+
+    monkeypatch.setattr(device, "run_reference_sweep", reference_sweep)
     monkeypatch.setattr(device, "run_candidate_sweep", lambda *a, **k: device.DeviceTrace(grid, candidate))
     return device.run_sweep(spec, BENCH["TSMC5"], CORNERS["nominal"], tmp_path, level=75)
 
@@ -58,18 +66,81 @@ def test_characterizable_candidate_still_emits_complete_metrics(
     assert result.domain["ss_test_mv_dec"] == pytest.approx(60.0)
 
 
-def test_flat_reference_is_not_excused_as_a_candidate_failure(
+@pytest.mark.parametrize("polarity", ("nmos", "pmos"))
+@pytest.mark.parametrize("falling", (False, True))
+def test_complete_unidentifiable_reference_is_an_explicit_measurement_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, polarity: str, falling: bool,
+) -> None:
+    result = run_subthreshold(tmp_path, monkeypatch, polarity,
+                              flat_reference=not falling, falling_reference=falling)
+    assert result.status == "error"
+    assert result.error_kind == "reference_metric"
+    assert result.reference_converged and result.candidate_converged
+    assert result_exit_code([result]) == 1
+    assert result.metrics == {}
+    recovered = result.payload()["domain"]["uncharacterized_diagnostic"]
+    assert recovered["ss_ref_mv_dec"] is None
+    assert recovered["ss_window_points"] == 0
+
+
+def test_failed_reference_execution_remains_infrastructure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    result = run_subthreshold(tmp_path, monkeypatch, "nmos", flat_reference=True)
-    assert result.status == "error"
-    assert result.error_kind != "candidate"
+    result = run_subthreshold(tmp_path, monkeypatch, "nmos", reference_failure=True)
+    assert result.error_kind == "reference"
+    assert not result.reference_converged
     assert result_exit_code([result]) == 2
 
 
+@pytest.mark.parametrize("override", (
+    {"candidate_converged": False}, {"reference_converged": False},
+    {"partial": True}, {"metrics": {"nrmse_pct": 0.0}}, {"role": "qualification"},
+))
+def test_unavailable_reference_metric_cannot_excuse_incomplete_or_scored_rows(
+    override: dict[str, object],
+) -> None:
+    kwargs = dict(case_id="device_subthreshold", tech="TSMC5", corner="temp_hot",
+                  analysis="nmos_idvg_log", role="diagnostic", status="error",
+                  error_kind="reference_metric")
+    kwargs.update(override)
+    with pytest.raises(ValueError, match="reference metric unavailability"):
+        GateResult(**kwargs)
+
+
+@pytest.mark.parametrize("polarity", ("nmos", "pmos"))
+@pytest.mark.parametrize("decades", (4.1, 4.25, 4.49, 4.5))
+def test_reference_window_fits_an_identifiable_exponential(
+    polarity: str, decades: float,
+) -> None:
+    """A narrow initial window must not reject an exact multi-decade curve.
+
+    Low-VDD/hot corners can leave <0.5 decades between 10*Ioff and
+    0.001*Imax. The trace still supports the unchanged fit requirements.
+    """
+    spec = next(spec for spec in device.build_sweeps(BENCH["TSMC5"], polarity)
+                if spec.suite == "subthreshold")
+    grid = np.linspace(0.0, decades * 0.06, 111)
+    current = 1e-10 * 10.0 ** (grid / 0.06)
+    if polarity == "pmos":
+        grid, current = -grid[::-1], -current[::-1]
+    metrics, domain = device.suite_metrics(spec, grid, current, current, vdd=0.8)
+    device.validate_device_metrics(spec, metrics, domain)
+    assert domain["ss_ref_mv_dec"] == pytest.approx(60.0)
+    assert domain["ss_test_mv_dec"] == pytest.approx(60.0)
+    assert domain["ss_error_pct"] == pytest.approx(0.0)
+
+
+def test_identifiable_initial_reference_window_is_preserved() -> None:
+    grid = np.linspace(0.0, 0.42, 141)
+    reference = 1e-12 * 10.0 ** (grid / 0.06)
+    expected = (reference >= reference[0] * 10.0) & (reference <= reference.max() * 1e-3)
+    np.testing.assert_array_equal(device._subthreshold_window(grid, reference), expected)
+
+
 @pytest.mark.parametrize("defect", ("missing", "none", "infinite", "unexpected_nan"))
+@pytest.mark.parametrize("flat_reference", (False, True))
 def test_malformed_metric_payload_still_fails_as_infrastructure(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, defect: str, flat_reference: bool,
 ) -> None:
     original = device.suite_metrics
 
@@ -86,7 +157,7 @@ def test_malformed_metric_payload_still_fails_as_infrastructure(
         return metrics, domain
 
     monkeypatch.setattr(device, "suite_metrics", broken_metrics)
-    result = run_subthreshold(tmp_path, monkeypatch, "nmos")
+    result = run_subthreshold(tmp_path, monkeypatch, "nmos", flat_reference=flat_reference)
     assert result.status == "error"
     assert result.error_kind == "infrastructure"
     assert result_exit_code([result]) == 2
