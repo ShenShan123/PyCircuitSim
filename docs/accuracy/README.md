@@ -33,6 +33,7 @@ TSMC5-only and leaves the Miller opamp as `ERROR`.
 
 | file | scope |
 |---|---|
+| [`v775-round3.md`](v775-round3.md) | round 3: the seven never-run campaign suites (device/Miller AC, inverter transient, canary, integrity, hierarchy); off-current and false-convergence findings; diagnostic |
 | [`v775-round2.md`](v775-round2.md) | targeted round 2: remaining simple-v2 cases, ring/Miller OMP 2/4, support attribution, harness fixes; diagnostic |
 | [`v775-quick-round1.md`](v775-quick-round1.md) | nominal OMP=1 L0–L4 quick round on the V7.7.2-trained bundles; diagnostic, not a clean replacement |
 | [`DirectNet-L75-clean.md`](DirectNet-L75-clean.md) | latest clean LEVEL=75 qualification and open gaps |

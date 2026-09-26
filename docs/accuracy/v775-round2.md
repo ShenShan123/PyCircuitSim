@@ -1,6 +1,6 @@
 # V7.7.5 checkpoints — targeted round 2
 
-Date: 2026-09-15
+Run: 2026-09-15 to 2026-09-18; published 2026-09-21.
 
 **Status: scoped diagnostic, not a clean qualification.** Round 2 follows
 [round 1](v775-quick-round1.md) on the same 80 V7.7.2-trained bundles, using
@@ -9,6 +9,17 @@ does not rescore round-1 cells, and does not replace
 [`DirectNet-L75-clean.md`](DirectNet-L75-clean.md) or
 [`BSIM-AR-L76-clean.md`](BSIM-AR-L76-clean.md). Gate and denominator rules are
 owned by [`methodology.md`](methodology.md).
+
+**Verified 2026-09-25.** An independent parser re-read all 1,080 raw verdict
+logs and the support-diagnostic outputs. It reproduced the verdict totals,
+every convergence table, the OMP strictness counts, the per-technology tables,
+all four support-pass record and value counts, and every manifest and
+job-list digest. These statements were corrected in place: support-rejection
+coverage (35 of 100 rows were never checked), the NAND2 spike range, the LDO
+and Miller slope values, the sign of the inverter-energy error on
+TSMC12/16, four BSIM-AR error labels, the SRAM failure mode, the hold-margin
+median, the runtime section, and the NRMSE comparison (two technologies, not
+three).
 
 Round 2 is complete: 1,080/1,080 cells, 913 scientific PASS and 167 FAIL, with
 no cell labelled `infra`. Every error row in both families is attributed to the
@@ -41,7 +52,7 @@ suite passed 1,160 tests with none skipped. In round 2, an `opamp_rejection`
 derived row with missing inputs is recorded as `candidate`, and no cell has
 received an `infra` verdict.
 
-## Support rejections are Newton trial states
+## Support rejections checked against the reference trajectory
 
 LEVEL=75/76 reject every evaluation outside the persisted normalization box,
 and no NN-side voltage limiter precedes that check. For every case that raised
@@ -51,9 +62,10 @@ pairs. The cases were `ota_5t_buffer` transfer and settling, all four
 `current_mirror` analyses, and Miller `opamp` transfer.
 
 All 120 runs completed. All 280 records, 2,875,880 values, are inside support.
-The round-1 `CandidateSupportError`s therefore came from intermediate Newton
-iterates, a solver-globalization limit, not from missing training data. AC
-analyses were not checked directly.
+The 18 round-1 `CandidateSupportError`s in these DC and transient analyses
+therefore came from intermediate Newton iterates, a solver-globalization
+limit, not from missing training data. The other 6, `ota_5t_buffer`
+closed-loop AC rows, were not checked and remain unattributed.
 
 A second pass covered the round-2 cases that raised support errors and have a
 DC or transient analysis: `cascode_stack`, `nand2`, `nor2`,
@@ -62,7 +74,8 @@ ran 240 reference-only runs across all 40 checkpoint pairs. Of 520 records
 covering 12,523,560 values, every DC sweep, compliance sweep, steering sweep,
 and settling or transfer run is inside support.
 
-The only outside points are 2–8 of 2,035 samples in NAND2 and NOR2 transients,
+The only outside points are 2–8 terminal values across 2,035 samples in NAND2
+and NOR2 transients,
 on the devices beside the internal node that the reference start-up drives past
 the rails. Their terminal values equal that spike: NAND2 `Mn_a` Vgs = Vbs =
 −0.985 V, NOR2 `Mp_b` Vds 1.903 V and Vbs 1.915 V, and NOR2 `Mp_a` Vds −1.46 V on
@@ -76,16 +89,21 @@ all 40 checkpoint pairs. All 80 records, 4,019,960 values, are inside support.
 A fourth pass covered `beta_multiplier`, where BSIM-AR rejected `Mp_mir`: its
 operating point and both supply ramps are inside support for all 40 pairs
 (120 records, 424,200 values). Across the four passes the diagnostic ran 440
-reference-only runs, and every support rejection observed in either round is
-now attributed to a Newton trial state rather than to missing training data.
+reference-only runs. Of round 2's 100 support-rejection rows, it covers the 65
+in DC, operating-point and transient analyses of the checked cases. It does
+not cover 33 AC rows (their operating points were never checked) or two
+BSIM-AR `self_biased_cascode` compliance rows, a case no pass included. Every
+checked rejection is a Newton trial state rather than missing training data;
+the unchecked 35 are unattributed.
 
 ## Reference start-up artifact
 
 With `tran ... uic`, NGSPICE's first stored step drives some initialized nodes
 past the rails. On TSMC6, NOR2 `v(pint)` is −1.165 V from `.ic` 0.75 V and NAND2
 `v(nint)` is 0.985 V from `.ic` 0 V; on TSMC5, inverter-chain `v(n1)` is 0.803 V
-against a 0.65 V supply. The resulting 1.46–1.92 V `max_err` on the NAND/NOR
-internal nodes is identical for every checkpoint size, so it is not model error.
+against a 0.65 V supply. The resulting `max_err` on the internal nodes, 0.52–0.99 V
+for NAND2 `v(nint)` and 1.05–1.92 V for NOR2 `v(pint)`, comes from the reference
+spike and is not model error.
 The per-technology maximum voltage error below excludes those two nodes. The
 inverter chain's ~17% amplitude error at every TSMC5 size is consistent with
 the same spike but was not proven.
@@ -132,7 +150,7 @@ inputs. The reference converged in every row.
 | L3 | ring_osc_supply | 5/5 | 5/5 | 5/5 | 5/5 | — |
 | L3 | self_biased_cascode | 2/5 | 5/5 | 4/5 | 5/5 | operating point |
 | L3 | self_biased_cascode_pmos | 3/5 | 5/5 | 5/5 | 5/5 | operating point |
-| L3 | sram6t_modes | 36/40 | 30/40 | 32/40 | 36/40 | write/read DC sweep points near 0.2–0.3 V |
+| L3 | sram6t_modes | 36/40 | 30/40 | 32/40 | 36/40 | write-margin DC sweep points near 0.2–0.3 V |
 | L3 | switchcap_multicycle | 5/5 | 5/5 | 5/5 | 5/5 | — |
 | L3 | transmission_gate_hold | 5/5 | 5/5 | 5/5 | 5/5 | — |
 | L4 | ldo_regulator | 16/20 | 20/20 | 16/20 | 20/20 | DC/GMIN/AC operating point |
@@ -154,7 +172,7 @@ buffers (12T buffer 5/10 at small, 9/10 at xl) but not `beta_multiplier` or
 | L2 | cascode_stack | output resistance error | 11.2% | 114% |
 | L2 | diffpair_active | differential gain error | 2.47% | 10.4% |
 | L2 | diffpair_active | CMRR error | 0.50 dB | 2.8 dB |
-| L2 | inverter_chain | delay / rise-fall error | 1.04% / 0.82% | 2.5% / 4.4% |
+| L2 | inverter_chain | delay / rise-fall error | 1.04% / 0.82% | 2.5% / 4.3% |
 | L2 | inverter_energy | delay error | 0.47% | 2.2% |
 | L2 | inverter_energy | switching energy error | **18.3%** | **27.1%** |
 | L2 | nand2 | delay / rise-fall error | 0.75% / 1.07% | 3.1% / 3.8% |
@@ -169,7 +187,7 @@ buffers (12T buffer 5/10 at small, 9/10 at xl) but not `beta_multiplier` or
 | L3 | opamp_rejection | CMRR / PSRR error | 2.4 / 3.8 dB | 10.3 / 16.5 dB |
 | L3 | ring_osc_supply | period / supply current error | 0.20% / 0.34% | 2.0% / 17.5% |
 | L3 | self_biased_cascode (NMOS / PMOS) | output resistance error | 31% / 43% | 83% / 506% |
-| L3 | sram6t_modes | hold margin / write trip error | 0.16 / 5.0 mV | 1.9 / 9.8 mV |
+| L3 | sram6t_modes | hold margin / write trip error | 0.14 / 5.0 mV | 1.9 / 9.8 mV |
 | L3 | sram6t_modes | read disturb error | 25 mV | 48 mV |
 | L3 | switchcap_multicycle | cycle drift / final sample error | 0.48 / 0.29 mV | 2.2 / 1.5 mV |
 | L3 | transmission_gate_hold | droop error | 0.04 mV | 1.5 mV |
@@ -183,14 +201,17 @@ buffers (12T buffer 5/10 at small, 9/10 at xl) but not `beta_multiplier` or
 Three results need care:
 
 - **LDO line regulation.** The relative error (median 260%) divides by a nearly
-  flat reference slope. NGSPICE gives 0.004–0.008 V/V; DirectNet gives
-  0.015–0.26 V/V. That is a real 3–30× loss of loop gain in the model, even
-  though the regulated output voltage is within 15 mV.
+  flat reference slope. NGSPICE gives 0.0043–0.0105 V/V; DirectNet gives
+  −0.018 to +0.257 V/V. Seven of 18 converged rows have the opposite sign, and
+  ten are 1.4–32× steeper. That is a real loss of line rejection in the model,
+  even though the regulated output voltage is within 15 mV.
 - **Miller differential gain.** The reference is 29–47 V/V at this bias and
-  DirectNet 37–87 V/V, consistent with the open-loop AC weakness recorded in
-  the V7.6.6 report.
-- **Inverter switching energy.** On TSMC5 the error is 26.5% at every size
-  (1.03e-14 J against 8.12e-15 J). Capacity does not change it, so the cause
+  DirectNet 9.2–86.9 V/V, too low in 12 of 19 rows and too high in the rest.
+  The error has no consistent sign. Its size is consistent with the open-loop
+  AC weakness recorded in the V7.6.6 report.
+- **Inverter switching energy.** On TSMC5 the model is 25.8–27.1% high at every
+  size (about 1.03e-14 J against 8.12e-15 J), on TSMC6/7 it is 18–21% high,
+  and on TSMC12/16 it is 2.6–11.6% low. Capacity does not change it, so the cause
   is systematic, not fit quality. The reference start-up spike carries about
   2e-17 J and does not explain it; the cause is unattributed.
 
@@ -225,9 +246,10 @@ reaches 9.9%.
 
 ## BSIM-AR-Full (LEVEL=76)
 
-All 540 cells completed. Runtime dominated the round: the five slowest cells
-took 28–52 h each (xl `ring_osc_supply` on TSMC6/7/12/16, xl `beta_multiplier`
-on TSMC5) against 7–12 h for their completed xl peers. Four of those five still
+All 540 cells completed. Runtime dominated the round: the last five cells to
+finish took 28–53 h each (xl `ring_osc_supply` on TSMC6/7/12/16, xl
+`beta_multiplier` on TSMC5). The same two cases took 6.8–22 h on the other xl
+technologies, and medium TSMC7 `ring_osc_supply` took 37.6 h but finished earlier. Four of those five still
 passed; see the runtime note below.
 
 ### Simple-v2 convergence by tier
@@ -249,22 +271,22 @@ candidate, and the reference converged in every row.
 | L2 | diffpair_active | 20/20 | 20/20 | 20/20 | 20/20 | — |
 | L2 | inverter_chain | 5/5 | 5/5 | 5/5 | 5/5 | — |
 | L2 | inverter_energy | 10/10 | 10/10 | 10/10 | 10/10 | — |
-| L2 | nand2 | 11/15 | 10/15 | 11/15 | 12/15 | support |
-| L2 | nor2 | 14/15 | 14/15 | 14/15 | 11/15 | support |
+| L2 | nand2 | 11/15 | 10/15 | 11/15 | 12/15 | support (7), nonconvergence (9) |
+| L2 | nor2 | 14/15 | 14/15 | 14/15 | 11/15 | support (4), nonconvergence (3) |
 | L2 | transmission_gate_dc | 10/10 | 10/10 | 10/10 | 10/10 | — |
 | L3 | beta_multiplier | **5/15** | **6/15** | **5/15** | **3/15** | OP, supply-ramp start point, support |
 | L3 | bias_tree_fanout_5t / 9t / 17t | 15/15 | 15/15 | 15/15 | 15/15 | — |
 | L3 | diffpair_active_load | 18/20 | 20/20 | 20/20 | 20/20 | support |
 | L3 | opamp_rejection | 20/20 | 20/20 | 20/20 | 20/20 | — |
 | L3 | ring_osc_supply | 5/5 | 5/5 | 5/5 | 5/5 | — |
-| L3 | self_biased_cascode | 2/5 | 4/5 | 5/5 | 3/5 | operating point |
+| L3 | self_biased_cascode | 2/5 | 4/5 | 5/5 | 3/5 | compliance nonconvergence, support |
 | L3 | self_biased_cascode_pmos | 5/5 | 5/5 | 5/5 | 4/5 | operating point |
-| L3 | sram6t_modes | 32/40 | 34/40 | 36/40 | 32/40 | write/read DC sweep points |
+| L3 | sram6t_modes | 32/40 | 34/40 | 36/40 | 32/40 | write-margin DC sweep points |
 | L3 | switchcap_multicycle | 5/5 | 5/5 | 5/5 | 5/5 | — |
 | L3 | transmission_gate_hold | 5/5 | 5/5 | 5/5 | 5/5 | — |
 | L4 | ldo_regulator | **8/20** | 20/20 | 16/20 | 16/20 | support (`Mn_fb`, `Mn_ref`, `Mp_l`), GMIN |
 | L4 | multistage_buffer_12t | **4/10** | 9/10 | 7/10 | **4/10** | support, operating point |
-| L4 | unity_gain_buffer | 14/15 | 15/15 | 15/15 | 15/15 | operating point |
+| L4 | unity_gain_buffer | 14/15 | 15/15 | 15/15 | 15/15 | support |
 
 `beta_multiplier` is the worst case in both families: BSIM-AR converges 19 of
 60 rows against DirectNet's 25 of 60. Capacity does not fix it, and its xl
@@ -280,10 +302,10 @@ cell is the round's only scientific FAIL among the five slowest.
 | L2 | cascode_stack | output resistance error | 10.5% | 560% |
 | L2 | diffpair_active | differential gain error | 3.73% | 15.5% |
 | L2 | diffpair_active | CMRR error | 0.76 dB | 4.8 dB |
-| L2 | inverter_chain | delay / rise-fall error | 1.00% / 0.85% | 2.3% / 3.7% |
+| L2 | inverter_chain | delay / rise-fall error | 1.00% / 0.85% | 2.2% / 3.7% |
 | L2 | inverter_energy | switching energy error | **18.3%** | **32.9%** |
 | L2 | nand2 / nor2 | delay error | 0.59% / 0.53% | 3.0% / 2.2% |
-| L2 | transmission_gate_dc | on-resistance error | 2.75% | 8.4% |
+| L2 | transmission_gate_dc | on-resistance error | 2.75% | 8.3% |
 | L3 | beta_multiplier | bias current error | 3.46% | 16.1% |
 | L3 | bias_tree_fanout (5/9/17T) | bias node error | 1.47 mV | 4.1 mV |
 | L3 | diffpair_active_load | gain error | 1.65% | 18.2% |
@@ -300,7 +322,7 @@ cell is the round's only scientific FAIL among the five slowest.
 | L4 | unity_gain_buffer | closed-loop gain / settling error | 1.18% / 0.44% | 41.7% / 15.7% |
 
 The same three caveats as DirectNet apply, with BSIM-AR's own values: inverter
-switching energy is systematically high (18.3% median, worst 32.9% on TSMC5),
+switching energy is 18–33% high on TSMC5/6/7 and 2–6% low on TSMC12/16,
 the Miller differential gain is unreliable at this bias (median 19.7%, one
 medium TSMC12 row at 1,930%), and output-resistance and line-regulation errors
 are slopes of nearly flat curves.
@@ -319,11 +341,15 @@ are slopes of nearly flat curves.
 
 BSIM-AR's cost is the practical finding of round 2. Cost tracks convergence
 difficulty, not circuit size: `ring_osc_supply` xl took 12 h on TSMC5 but
-28–52 h on the other four technologies, and `beta_multiplier` ranged from
-13 min (medium TSMC12) to 38 h (xl TSMC5) on the same template. Measured
-against DirectNet on identical gates, BSIM-AR ring cells ran 34–60× slower and
-switch-cap cells 37–90×. The last five cells alone held round 2 open for four
-days after the other 1,075 had finished.
+28–53 h on the other four technologies, and `beta_multiplier` ranged from
+38 s (medium TSMC5, stopped by support rejections) to 38 h (xl TSMC5) on the
+same template. Per cell against DirectNet on identical cases, BSIM-AR
+`ring_osc_supply` ran 16–613× slower, `switchcap_multicycle` 33–173×, and the
+OMP-2/4 ring gate 8–643×. Over all 540 paired cells the ratio has a median
+of 39× and spans 0.6–2,516×; BSIM-AR is faster only on a few `ldo_regulator`
+cells that stop early. The last five cells held round 2 open for 33.6 h
+after the other 1,075 had finished. The round took 3.4 days. Wall times are
+measured from log creation to verdict on a shared host, so they include load.
 
 ## Round-2 comparison
 
@@ -332,10 +358,10 @@ days after the other 1,075 had finished.
 | simple-v2 rows converged | **1,047/1,180** | 1,032/1,180 |
 | error rows (all candidate) | 133 | 148 |
 | OMP 1/2/4 strict cells | **40/40** | 37/40 (1 flip) |
-| median NRMSE by technology | 0.57–1.39% | 0.69–1.10% |
-| median MRE by technology | **0.60–0.97%** | 0.87–1.20% |
+| median NRMSE by technology | 0.58–1.39% | 0.69–1.10% |
+| median MRE by technology | **0.61–0.97%** | 0.87–1.20% |
 | median R² by technology | **0.9815–0.9969** | 0.9754–0.9898 |
-| runtime on identical gates | **1×** | 34–90× |
+| runtime per cell on identical cases | **1×** | median 39× (0.6–2,516×) |
 
 The convergence totals are close, but the two families fail on different
 circuits. BSIM-AR converges more rows on `diffpair_active_load` (78/80 against
@@ -347,10 +373,11 @@ against 56/60) and `nor2` (53/60 against 49/60). DirectNet converges more on
 `ring_osc_supply` and bias-tree row.
 
 Neither family is uniformly better on accuracy: DirectNet holds a small edge in
-median MRE and R², BSIM-AR in median NRMSE on three technologies. Both carry
-the same systematic inverter-energy error and the same unreliable Miller
-differential gain. The decisive difference is cost: BSIM-AR needs 34–90× the
-runtime for no consistent accuracy gain, and its worst cells took 28–52 h each.
+median MRE and R², BSIM-AR in median NRMSE on two technologies (TSMC6, TSMC7).
+Both carry the same technology-dependent inverter-energy error and the same
+unreliable Miller differential gain. The decisive difference is cost: BSIM-AR
+needs a median 39× the runtime per cell for no consistent accuracy gain, and
+its worst cells took 28–53 h each.
 On this evidence DirectNet remains the practical default, which matches the
 V7.7.0 policy already recorded in the accuracy index.
 

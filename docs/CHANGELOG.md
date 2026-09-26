@@ -24,7 +24,9 @@ any evaluation outside the persisted normalization box, and no NN-side limiter
 precedes that check, so an intermediate Newton iterate can end a solve whose
 physical answer is inside the box. Across both rounds, 440 reference-only
 diagnostic runs found every accepted NGSPICE trajectory inside support for
-every case that raised such an error. The
+every case that raised such an error in a DC or transient analysis, except
+BSIM-AR `self_biased_cascode`. They cover 65 of round 2's 100 support-rejection
+rows; the 33 AC rows and 2 cascode rows are unattributed. The
 [plan](plans/2026-09-21-v776-nn-voltage-limiting.md) records the evidence, the
 contract constraints, and the gating: the limiter perturbs floating-point
 results, so it ships disabled until a full accuracy re-gate clears it, and it
@@ -65,6 +67,61 @@ the preserved-report checksums, and all 188 local Markdown links passed. No
 re-gate, training, or PyCMG suite was run for this cleanup, and no accuracy
 result is claimed.
 
+### 2026-09-25 — V7.7.5 checkpoint round 3 and round-report verification
+
+Round 3 ([report](accuracy/v775-round3.md)) ran the seven campaign suites that
+neither earlier round covered, on the same 80 bundles: device AC, Miller
+open-loop AC, parametric inverter transient, the lifted-source canary, device
+and terminal integrity, and flat/nested NN netlists. That is 280 nominal OMP=1
+cells from a clean worktree at `b24bfca`: 237 PASS, 43 FAIL, none `infra`.
+
+- DirectNet-Full passes device AC 38/40, Miller open-loop AC 4/20, inverter
+  configurations 398/400, and the canary 120/120.
+- BSIM-AR-Full passes device AC 40/40, Miller open-loop AC 13/20, inverter
+  configurations 400/400, and the canary 120/120.
+- In every scoreable subthreshold row, both families put the off-current above
+  the reference, never below; the median excess is about two decades. 25 of 80
+  rows are too flat to fit a swing at all. Linear-domain NRMSE in the same rows
+  is mostly below 1%.
+
+New solver defect, open: `_pseudo_transient_dc`, the last NN DC fallback,
+leaves capacitor companion state (`_g_eq`/`_i_eq`) on the live circuit. Later
+DC solves on that circuit then converge on a circuit with the capacitors
+replaced by conductances. The reproducer is BSIM-AR medium TSMC16
+`nn_subckt` DC: its output stays at 8–11 mV instead of 0.80 V, with an 80 µA KCL
+residual on a fresh parse. A post-hoc KCL re-stamp of the saved candidate DC
+sweeps in rounds 1–3 found no other affected scored row; the 1,270 device and
+VTC sweeps it skipped contain no capacitor. Round 3 reclassifies that one row
+as `ERROR`. Operating points behind AC and transient analyses are not saved
+and could not be audited. The fix, restoring capacitor state after the
+fallback, changes numerics and needs its own test and re-gate.
+
+Verification of rounds 1–2: independent parsers reproduced every table in both
+reports from the raw logs. Prose errors are corrected in place, and these
+earlier statements are retracted:
+- The BSIM-AR medium ring averaged 269 minutes, not 85, so the medium ring
+  slowdown is about 187×. "34–90×" does not hold: round 1's ring cells ran 35×
+  (small) and 187× (medium) slower, and its switch-cap cells 37× and 93×.
+  Round-2 per-cell ratios have a median of 39× and span 0.6–2,516×.
+- The last five round-2 cells took 28–53 hours each, not 28–52, and held the
+  round open for 33.6 hours, not four days.
+- Of round 1's 24 support rejections, the diagnostic attributes 18; the six
+  `ota_5t_buffer` closed-loop AC rows were never checked.
+- The support diagnostic does not attribute every rejection: 35 of round 2's
+  100 rows were never checked.
+- Inverter switching energy is 18–33% high on TSMC5/6/7 and 2–12% low on
+  TSMC12/16, not uniformly high.
+- The LDO line-regulation and Miller differential-gain errors have mixed sign;
+  they are not a uniform "3–30× loss" or "37–87 V/V".
+- NAND/NOR start-up node errors span 0.52–1.92 V.
+- BSIM-AR beats DirectNet on median NRMSE on two technologies, not three.
+- Four BSIM-AR error labels were wrong.
+The V7.7.6 plan's evidence paragraph now states the support-diagnostic
+coverage.
+
+Verification: 1,160 tests passed before launch, geometry preflight 463/463,
+and the preserved-report checksums verify. No numerical source changed.
+
 ### 2026-09-15 — V7.7.5 checkpoint targeted round 2
 
 After round 1, the user chose a targeted round 2 and asked for both harness
@@ -84,27 +141,30 @@ In round 2 every error row is attributed to the candidate, and no cell has an
 `infra` verdict.
 
 A reference-only support diagnostic ran 440 runs over every case that raised a
-`CandidateSupportError` and has a DC or transient analysis, for all 40
-checkpoint pairs. Every accepted NGSPICE point is inside the normalization box,
-except NAND2/NOR2 transient samples equal to a start-up spike. Support
-rejections are therefore Newton trial states, a solver-globalization limit, not
-missing training data. The spike comes from NGSPICE's first `uic` step, which
-drives initialized series-stack and inverter-chain nodes past the rails
-(NOR2 `v(pint)` −1.165 V from 0.75 V). It produces size-independent 1.5–1.9 V
-voltage errors that are not model error.
+`CandidateSupportError` in a DC or transient analysis, except BSIM-AR
+`self_biased_cascode`, for all 40 checkpoint pairs. Every accepted NGSPICE
+point is inside the normalization box, except NAND2/NOR2 transient samples
+equal to a start-up spike. The 65 checked support rejections of round 2's 100
+are therefore Newton trial states, a solver-globalization limit, not missing
+training data. The spike comes from NGSPICE's first `uic` step, which drives
+initialized series-stack and inverter-chain nodes past the rails (NOR2
+`v(pint)` −1.165 V from 0.75 V). It produces 0.52–1.92 V voltage errors that
+are not model error.
 
 DirectNet-Full: ring and Miller pass OMP 1/2/4 in 40/40 cells with no flips.
 Simple-v2 L1–L4 rows converge 24–25/25, 83–87/90, 107–119/135 and 35–44/45 by
 tier; `beta_multiplier` converges in only 4–8 of 15 rows per size. Unattributed
-systematic errors remain: TSMC5 inverter switching energy is 26.5% high at
-every size, and LDO line regulation is 3–30× worse than the reference slope.
+systematic errors remain: TSMC5 inverter switching energy is 25.8–27.1% high
+at every size, and the LDO line-regulation slope has the wrong sign in 7 of 18
+converged rows and is 1.4–32× steeper in 10.
 BSIM-AR-Full completed all 540 cells and converged 1,032 of 1,180 simple-v2
 rows, with all 148 error rows attributed to the candidate. It converges fewer
 rows than DirectNet at L3/L4 (`beta_multiplier` 19/60, `ldo_regulator` 60/80,
 `multistage_buffer_12t` 24/40) and shows the same systematic inverter-energy
-and Miller-gain errors. Its cost is the practical finding: 34–90× DirectNet on
-identical gates, with five xl cells taking 28–52 h each and holding the round
-open for four days after the other 1,075 cells had finished.
+and Miller-gain errors. Its cost is the practical finding: a median 39×
+DirectNet per cell on identical cases, with the last five cells taking
+28–53 h each and holding the round open 33.6 h after the other 1,075 cells had
+finished.
 
 ### 2026-09-14 — V7.7.5 checkpoint quick round 1
 
@@ -128,8 +188,9 @@ BSIM-AR-Full completed all 240 cells. Device DC is 128/129 at small and
 129/129 at every larger size. Simple-v1 cells pass 19/20, 18/20, 20/20 and
 20/20 by size. The misses are Miller DC on small TSMC16 and medium TSMC5 and
 SRAM on medium TSMC16, all candidate convergence or support failures. L4
-converges 6, 12, 15 and 13 of 15 rows by size. Its transients ran about
-34–90× slower than DirectNet's.
+converges 6, 12, 15 and 13 of 15 rows by size. Its ring cells ran about 35×
+(small) and 187× (medium) slower than DirectNet's, and its switch-cap cells
+37× and 93×.
 
 Two harness defects were found and left unfixed. A nonconverged differential
 pair's derived CMRR row turns the cell into `infra`, and the SRAM gate labels

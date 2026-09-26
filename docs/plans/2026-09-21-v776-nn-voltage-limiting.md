@@ -17,11 +17,12 @@ the box.
 
 ## Evidence
 
-A reference-only diagnostic ran 440 times across rounds 1 and 2, covering every
-case that raised a `CandidateSupportError` and has a DC or transient analysis:
+A reference-only diagnostic ran 440 times across rounds 1 and 2. It covered
 `ota_5t_buffer`, `current_mirror`, Miller `opamp`, `cascode_stack`, `nand2`,
 `nor2`, `diffpair_active_load`, `multistage_buffer_12t`, `unity_gain_buffer`,
-`ldo_regulator` and `beta_multiplier`. It ran only the NGSPICE LEVEL=72
+`ldo_regulator` and `beta_multiplier`. That is every case that raised a
+`CandidateSupportError` in a DC or transient analysis except BSIM-AR
+`self_biased_cascode`. It ran only the NGSPICE LEVEL=72
 reference and checked each accepted terminal voltage against the box of all 40
 checkpoint pairs.
 
@@ -29,8 +30,11 @@ Every accepted point is inside support, except NAND2/NOR2 transient samples
 equal to the documented NGSPICE `uic` start-up spike. Raw evidence is under
 `PyCircuitSim-v775-round2/results/v775_round2/l4_support/`.
 
-Round 2 recorded 36 support-rejection rows for DirectNet and a comparable
-count for BSIM-AR, concentrated in `ldo_regulator`, `beta_multiplier`,
+Round 2 recorded 36 support-rejection rows for DirectNet and 64 for BSIM-AR.
+The diagnostic checked the analyses behind 65 of those 100. The other 35 are 33
+AC rows, whose operating points were never checked, and the two
+`self_biased_cascode` rows; they remain unattributed. The rejections are
+concentrated in `ldo_regulator`, `beta_multiplier`,
 `multistage_buffer_12t` and the logic stacks. The related basin symptom is the
 round's only OMP flip: BSIM-AR medium TSMC12 Miller DC passes at 1 and 2
 threads and fails to converge at 4.
@@ -72,8 +76,8 @@ threads and fails to converge at 4.
 
 ## Open question
 
-Whether the same mechanism explains the BSIM-AR convergence-cost tail: five xl
-cells took 28–52 h each, and cost tracked convergence difficulty rather than
-circuit size. If step damping reduces retry storms, the runtime gap to
-DirectNet (34–90× on identical gates) may narrow; that is a hypothesis, not a
-claim.
+Whether the same mechanism explains the BSIM-AR convergence-cost tail: the
+last five round-2 cells took 28–53 h each, and cost tracked convergence
+difficulty rather than circuit size. If step damping reduces retry storms, the
+runtime gap to DirectNet (a median 39× per round-2 cell on identical cases)
+may narrow; that is a hypothesis, not a claim.

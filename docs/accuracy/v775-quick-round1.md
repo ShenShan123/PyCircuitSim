@@ -11,6 +11,20 @@ run a longer campaign. It does not replace
 OMP 1/2/4 strictness, corner coverage, or complete-pool rules in
 [`methodology.md`](methodology.md).
 
+**Verified 2026-09-25.** An independent parser re-read all 480 raw verdict
+logs. It reproduced every gate count, tier count, physical error and
+per-technology value below, `cells.json`, both manifest digests and both
+job-list digests. The 280 checkpoint hashes also match the r5 and
+[round-3](v775-round3.md) manifests. These statements were corrected in place:
+
+- The BSIM-AR medium ring runtime was an interim value that averaged the two
+  cells finished at the time. Over five technologies it averaged 269 minutes,
+  not 85 minutes, so the medium ring slowdown is about 187×, not 60×.
+- Both maximum-voltage columns cover simple-v2 rows only, not gate traces.
+- The flat-trace ranges for the differential pair, and the rows labelled
+  `Mp_r` and `infra`, now match their logs. The provenance commit list is now
+  complete.
+
 ## Scope
 
 Every cell uses the nominal corner, one CPU thread, and NGSPICE BSIM-CMG
@@ -68,6 +82,9 @@ Failures:
 | large | 40/40 | 41/45 | 20/20 | 12/15 |
 | xl | 40/40 | 45/45 | 20/20 | 12/15 |
 
+L2 and L3 counts include the gate rows in each tier (SRAM in L2; ring, Miller
+and switch-cap in L3). L4 has no gate rows.
+
 Physical errors over converged rows, all sizes pooled (median / worst):
 
 | tier | case | metric | median | worst |
@@ -88,26 +105,29 @@ Physical errors over converged rows, all sizes pooled (median / worst):
 | L4 | ota_5t_buffer | bandwidth error | 1.2% | 14.4% |
 | L4 | ota_5t_buffer | settling error | 0% | 0.17% |
 
-Errors (all `candidate` kind; the reference converged in every row):
+Errors (all attributable to the candidate; the reference converged in every
+row. The derived CMRR row's raw marker says `result_schema`; see
+[Interpretation limits](#interpretation-limits)):
 
 - `ota_5t_buffer` small: 9 of 15 rows. Eight are `CandidateSupportError` on
   TSMC5/6/7/12/16, where an evaluation voltage left the persisted normalization
   box by 5–83 mV. One is a GMIN-retry nonconvergence on TSMC5.
 - `ota_5t_buffer` large TSMC5: DC, transient and AC operating points did not
   converge.
-- `ota_5t_buffer` xl TSMC5: `Mp_r` evaluated at −1.35 V against its
-  −1.30 V support floor.
+- `ota_5t_buffer` xl TSMC5: `Mp_r` evaluated at −1.35 V (transfer and
+  closed-loop AC) and −1.3175 V (settling) against its −1.30 V support floor.
 - `diffpair_ideal` large TSMC5: DC and AC operating points did not converge,
   so derived CMRR has no inputs.
 
 Per-technology aggregates over converged rows, all cases and sizes pooled.
 Medians are used because range-normalized NRMSE and R² diverge on nearly flat
 AC magnitude traces even when the physical gain error is small. Maximum voltage
-error covers DC, operating-point and transient traces only. AC `max_err` is a
-small-signal magnitude per 1 V stimulus (V/V); it reaches 0.30 V/V on
+error covers simple-v2 DC, operating-point and transient traces only. Gate
+traces are excluded and are scored by their gate metrics above. AC `max_err`
+is a small-signal magnitude per 1 V stimulus (V/V); it reaches 0.30 V/V on
 common-source rows and is excluded.
 
-| technology | rows | converged | median NRMSE | rows >10% NRMSE | median MRE | median R² | max DC/transient voltage error |
+| technology | rows | converged | median NRMSE | rows >10% NRMSE | median MRE | median R² | max simple-v2 DC/transient voltage error |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | TSMC5 | 200 | 187 | 0.20% | 6 | 0.57% | 0.9999 | 4.5 mV |
 | TSMC6 | 200 | 198 | 0.51% | 8 | 1.25% | 0.9997 | 22.3 mV |
@@ -117,9 +137,10 @@ common-source rows and is excluded.
 
 ## BSIM-AR-Full (LEVEL=76) — complete
 
-All 240 cells finished. For scale, BSIM-AR ring cells averaged 38 minutes at
-small and 85 minutes at medium (longest 102). DirectNet's averaged 67 and 86
-seconds.
+All 240 cells finished. For scale, BSIM-AR ring cells averaged 39 minutes at
+small and 269 minutes at medium (longest 738, TSMC7). DirectNet's averaged 68
+and 87 seconds. Runtime is measured from log creation to verdict on a shared
+host, so it includes load.
 
 ### Scored gates at OMP=1
 
@@ -136,7 +157,7 @@ droop at most 74% of its allowance.
 
 Failures and errors:
 
-- Device DC small TSMC5: NMOS +125 °C, NRMSE 13.4%.
+- Device DC small TSMC5: NMOS +125 °C, NRMSE 13.5%.
 - SRAM medium TSMC16: the BSIM-AR operating point at NFIN=5 did not converge.
   NGSPICE converged at every corner; see the attribution defect below.
 - Miller DC small TSMC16: the candidate DC sweep did not converge at its first
@@ -153,7 +174,8 @@ Failures and errors:
 | large | 40/40 | **45/45** | **20/20** | **15/15** |
 | xl | 40/40 | **45/45** | **20/20** | 13/15 |
 
-L2–L4 counts include the gate rows in each tier.
+L2 and L3 counts include the gate rows in each tier, as in the DirectNet table.
+L4 has no gate rows.
 
 Errors by tier:
 
@@ -164,7 +186,7 @@ Errors by tier:
   had two convergence failures and one support rejection. TSMC16 had two
   support rejections and one GMIN failure.
 - L4 medium: TSMC12 transfer and TSMC16 transfer/settling rejected `Mp_r`
-  12–40 mV below its −1.60 V floor.
+  13–40 mV below its −1.60 V floor.
 - L4 xl TSMC5: transfer and closed-loop AC rejected `Mn_r` at −1.036 V
   (floor −0.975 V); settling converged. The other four xl technologies
   converged in all three analyses.
@@ -194,10 +216,10 @@ Large converges every row; xl misses only TSMC5's OTA transfer and
 closed-loop AC.
 
 Per-technology aggregates over converged rows, pooled the same way as
-DirectNet. AC `max_err` reaches 1.05 V/V on small TSMC5 common-source rows and
-is excluded from the voltage column.
+DirectNet. The voltage column covers simple-v2 rows only. AC `max_err` reaches
+1.05 V/V on small TSMC5 common-source rows and is excluded from that column.
 
-| technology | rows | converged | median NRMSE | rows >10% NRMSE | median MRE | median R² | max DC/transient voltage error |
+| technology | rows | converged | median NRMSE | rows >10% NRMSE | median MRE | median R² | max simple-v2 DC/transient voltage error |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | TSMC5 | 200 | 197 | 0.34% | 9 | 0.86% | 0.9998 | 17.3 mV |
 | TSMC6 | 200 | 197 | 0.34% | 9 | 1.24% | 0.9999 | 23.9 mV |
@@ -222,32 +244,38 @@ and 12). At medium, DirectNet is ahead: 20/20 and 15/15 against 18/20 and
 errors sit at small and medium.
 
 Runtime is the other difference. Averaged over five technologies, BSIM-AR ring
-cells took 38 minutes at small and 85–102 minutes at medium, against DirectNet's
-67 and 86 seconds (about 34–60×). Switch-cap took 26 and 74 minutes against 42
-and 48 seconds (about 37–90×).
+cells took 39 minutes at small and 269 minutes at medium, against DirectNet's
+68 and 87 seconds (about 35× and 187×). Switch-cap took 27 and 75 minutes
+against 43 and 48 seconds (about 37× and 93×). The medium ring mean is set by
+TSMC7 at 738 minutes; the other four took 68–244 minutes.
 
 ## Interpretation limits
 
-- **Flat-trace metrics.** Differential-pair `differential_ac` rows reach
-  150–2,400% range-normalized NRMSE with a 0.2–2% differential gain error.
-  Common-mode gain is about 1e-8 V/V with an ideal tail, so its relative error
+- **Flat-trace metrics.** Of 38 converged `differential_ac` rows, 18 exceed
+  100% range-normalized NRMSE (116–2,439%) while their differential gain
+  error is 0.3–4.4%. Common-mode gain is 7.6e-9 to 1.4e-7 V/V with an ideal tail, so its relative error
   and the CMRR dB error amplify numerical noise. Read the domain metrics.
-- **Support errors are Newton trial states, not coverage holes.** LEVEL=75/76
+- **Support errors checked against the reference trajectory.** LEVEL=75/76
   reject every evaluation outside the normalization box, and no NN-side
   voltage limiter precedes that check. A follow-up diagnostic ran only the
-  NGSPICE reference for every case that raised a support error in round 1:
+  NGSPICE reference for the DC and transient analyses that raised a support
+  error in round 1:
   `ota_5t_buffer` transfer and settling, all four `current_mirror` analyses,
   and Miller `opamp` transfer. It checked each accepted terminal voltage
   against the box of all 40 checkpoint pairs (source `d708d4b`, evidence in
   `PyCircuitSim-v775-round2/results/v775_round2/l4_support/`). All 280 records,
-  2,875,880 values, are inside support. Every round-1 `CandidateSupportError`
-  therefore came from an intermediate Newton iterate: a solver-globalization
-  limit, not missing training data. AC rows were not checked directly.
+  2,875,880 values, are inside support. Those 18 of round 1's 24
+  `CandidateSupportError` rows therefore came from intermediate Newton
+  iterates: a solver-globalization limit, not missing training data. The other
+  6 are `ota_5t_buffer` closed-loop AC rows; they were not checked and remain
+  unattributed.
 - **Harness misclassification.** When a differential pair's candidate
   operating point does not converge, the derived CMRR row reports
   `result_schema`, the worker exits 2, and the dispatcher labels the cell
   `infra`. The rows are scientific `ERROR`s and are counted that way here.
-  The same defect stopped the fifth staged V7.7.2 arm at 3,429 jobs.
+  The same defect stopped the fifth staged V7.7.2 arm at 3,429 jobs. Both
+  `diffpair_ideal` logs (DirectNet large TSMC5, BSIM-AR small TSMC12) still end
+  in `rc=infra`, because the fixed marker did not exist yet.
 - **SRAM error attribution.** `verify_circuit_sram_snm.py:471-472` sets both
   `reference_converged` and `candidate_converged` from "any NFIN corner
   errored". `GateResult` then infers `error_kind=reference`
@@ -256,20 +284,25 @@ and 48 seconds (about 37–90×).
   BSIM-AR's NFIN=5 operating point did not. The FAIL verdict is correct, the
   marker's attribution is not, and its metric covers only the surviving
   corners. It is counted here as a candidate `ERROR`.
-- **OMP=1 only.** Ring and Miller verdicts lack the OMP 2/4 flip check.
-  TSMC6 repeats TSMC7 and is not independent evidence.
+- **OMP=1 only.** Ring and Miller verdicts lack the OMP 2/4 flip check;
+  [round 2](v775-round2.md) ran it. TSMC6's reference repeats TSMC7's, but its
+  checkpoints are a separate training run: several sizes give identical rows,
+  others differ (methodology §7).
 
 ## Provenance
 
 - Checkpoints: `PyCircuitSim-v771/results/v771_r2_checkpoints`, 80 bundles
-  and 280 artifacts. Every hash matches the r5 evaluation manifest and main's
-  byte-identical copy. The training and dataset source is
+  and 280 artifacts. Every hash matches the r5 evaluation manifest.
+  `PyCircuitSim-v771/results` is a symlink to main's `results/`, so the two
+  paths name one directory. The training and dataset source is
   `6be83348c1f5db6720d7504ed6dcea874a3a7418`.
 - Evaluation source: clean detached worktree `PyCircuitSim-v775-quick` at
   `39b14f11b92dbb9efc4aa00244e5a75613aeb2a4`. That is main `d6ae11c` (V7.7.5)
-  plus the evaluation-branch harness repairs: DC-sweep endpoints,
-  lifted-source canary sign, subthreshold reference windows, and terminal and
-  hierarchy AC phase. The manifest records a `distinct-evaluation-arm`; it does
+  plus nine evaluation-branch commits: the staged-campaign scheduler,
+  fixture isolation from campaign data, every applicable device-integrity
+  corner, terminal admittance phase, subthreshold reference windows and the
+  `reference_metric` error kind, DC-sweep endpoints, lifted-source canary
+  sign, and hierarchy AC phase. The manifest records a `distinct-evaluation-arm`; it does
   not claim numerical-source equivalence. Those repairs were unmerged while
   this round ran and reached `main` in merge `b688412` (2026-09-21), after
   every cell here was scored.
