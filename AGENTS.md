@@ -79,7 +79,13 @@ normalized gs/ds/bs pair inside the absolute `_NR_LIM_WINDOW` (±2.5 V) in
 `mosfet_cmg.py`, which both shapes NR steps and bounds the OSDI internal-node
 solve; LEVEL=75/76 raise on any input outside the persisted normalization box
 (`_check_support`) instead of extrapolating a fit. Both bounds are read by
-collected tests; change the constant and the test together.
+collected tests; change the constant and the test together. The opt-in
+V7.7.6 NN limiter (`PYCIRCUITSIM_NN_NR_LIMIT=1`) evaluates an out-of-box
+Newton trial state at the nearest in-box bias and marks the iteration
+limited. It never accepts a clamped iterate, and `_check_support` still
+rejects a physical answer outside the box. Residual probes and diagnostic
+logging must not evaluate an NN device at an unclamped trial state while its
+limiter is on.
 
 ## Solver contracts
 
@@ -101,6 +107,12 @@ collected tests; change the constant and the test together.
 - Let `_solve_dc_with_retry` try the fast NN path first and enter GMIN retry
   only when `_last_solve_converged` is false. LEVEL=72 follows its own solver
   path.
+- The last NN fallback, `_pseudo_transient_dc`, marches a transient on the
+  live circuit. Restore every real capacitor's companion and integration
+  state before any later DC solve on that circuit. Capacitor stamps read
+  `_g_eq`/`_i_eq` unconditionally, so leaked state makes Newton converge
+  honestly on a different circuit, which `_last_solve_converged` cannot see
+  (V7.7.5 round 3).
 - Implement `.nodeset` as an initial clamp followed by an unconstrained solve.
   A permanently clamped node changes the circuit. This is a `DCSolver`
   argument; the parser does not read a `.nodeset` card.

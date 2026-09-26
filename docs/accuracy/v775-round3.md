@@ -215,7 +215,8 @@ capacitor-free sweeps, which serve as controls.
 The fix belongs in `_pseudo_transient_dc`: restore every capacitor's companion
 state after its transient stage, with a regression test that a DC sweep after a
 fallback matches a fresh-circuit solve. It changes numerics, so it needs its own
-re-gate and is not made here.
+re-gate and is not made here. It shipped in
+[V7.7.6](../CHANGELOG.md#v776--capacitor-state-fix-and-opt-in-nn-limiting).
 
 ## Per-technology aggregates
 

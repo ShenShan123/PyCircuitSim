@@ -2,7 +2,13 @@
 
 Opened 2026-09-21, after the [round-2 evaluation](../accuracy/v775-round2.md).
 No accuracy claim and no retraining: this is a solver-contract change whose
-gating is defined below. Package metadata stays V7.7.5 until release.
+gating is defined below.
+
+**Status: implemented in V7.7.6, off by default.** The knob is
+`PYCIRCUITSIM_NN_NR_LIMIT=1`; the [changelog](../CHANGELOG.md#v776--capacitor-state-fix-and-opt-in-nn-limiting)
+records the design and its contract tests. Success criterion 4 is the
+V7.7.6 evaluation, which runs the full campaign once with the knob off (the
+scored runtime) and once with it on.
 
 ## Problem
 

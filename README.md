@@ -4,12 +4,14 @@ PyCircuitSim is a pure-Python, SPICE-like circuit simulator for BSIM-CMG and
 neural compact models. NGSPICE running the identical BSIM-CMG OSDI model is
 ground truth for every accuracy claim.
 
-Current release: **V7.7.5**.
+Current release: **V7.7.6**.
 
-This maintenance release removes dead code, obsolete report scaffolding, and
-disposable artifacts. It adds no new accuracy campaign; the
-[cleanup ledger](docs/CHANGELOG.md#v775--repository-cleanup) records verification
-and how to recover retired documents from Git history.
+This release fixes an NN DC solver defect: the pseudo-transient fallback left
+capacitor state behind, so later DC solves on that circuit converged on a
+different circuit. It also adds opt-in NN-side Newton limiting
+(`PYCIRCUITSIM_NN_NR_LIMIT=1`, off by default). The
+[changelog](docs/CHANGELOG.md#v776--capacitor-state-fix-and-opt-in-nn-limiting)
+records the change and its evaluation.
 
 The NN runtime is full-terminal-only. DirectNet-Full (LEVEL=75) is the default;
 BSIM-AR-Full (LEVEL=76) is the autoregressive alternative. The old reduced
@@ -663,7 +665,10 @@ Standalone PyCMG helpers currently use local `build/modelcards/` and
 
 CPU, flags-off inference is the scored contract. BSIM-AR's
 `PYCIRCUITSIM_NN_AR_CACHE=1` remains opt-in because it changes float32
-summation order. Training may use CUDA; scored inference stays CPU-only.
+summation order. `PYCIRCUITSIM_NN_NR_LIMIT=1` (V7.7.6) remains opt-in because
+it changes the Newton path whenever an NN trial state leaves the certified
+box; campaign manifests record it. Training may use CUDA; scored inference
+stays CPU-only.
 
 Datasets and checkpoints are ignored by Git. Keep comparison jobs in isolated
 `BSIMAR_DATA_DIR` and `BSIMAR_CHECKPOINT_DIR` roots. Preserve only artifacts

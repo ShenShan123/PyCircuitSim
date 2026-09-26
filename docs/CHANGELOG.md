@@ -17,11 +17,39 @@ remain in Git history.
 
 ## V7.7 — full-terminal-only NN stack
 
-### V7.7.6 — NN-side voltage limiting (planned)
+### V7.7.6 — capacitor-state fix and opt-in NN limiting
 
-Opened 2026-09-21 after round 2. LEVEL=75/76 raise `CandidateSupportError` on
-any evaluation outside the persisted normalization box, and no NN-side limiter
-precedes that check, so an intermediate Newton iterate can end a solve whose
+Released 2026-09-25. Two LEVEL=75/76 solver changes, one fixed and one opt-in:
+
+- **Fix.** `_pseudo_transient_dc`, the last NN DC fallback, now restores
+  every real capacitor's companion and integration state after its transient
+  stage. The leaked `_g_eq`/`_i_eq` made the polishing solve and every later
+  DC solve on that circuit see each capacitor as a 2C/dt conductance plus a
+  current source (round 3's BSIM-AR medium TSMC16 buffer). The fix changes
+  numerics only where the fallback fires on a circuit with a capacitor. A
+  regression test compares a DC point solved after the fallback with a
+  fresh-circuit solve; without the fix it reads 0.067 V against 0.4 V.
+- **Opt-in limiter.** With `PYCIRCUITSIM_NN_NR_LIMIT=1`, an NN evaluation
+  whose source-relative Vds/Vgs/Vbs leaves the persisted normalization box
+  runs at the nearest in-box bias. The companion linearizes there, and the
+  iteration counts as limited, so it is never accepted. `_check_support`
+  still rejects a physical answer outside the box, and a non-convergence
+  message names any input that was still clamped. The limiter is off by
+  default, and it is bit-identical whenever it does not engage. The
+  latch-basin contract now covers the knob: on a tightly certified latch,
+  the hard-`.ic` solve dies on the support check without it and keeps both
+  stored states with it. On two real round-2 support-rejection cells
+  (DirectNet small TSMC12 NAND2 and TSMC5 active-load pair), all four
+  rejected rows converged and the other rows were unchanged.
+- **Provenance.** Campaign manifests record every set numerics knob
+  (`runtime_knobs`), so an arm run with the limiter gets its own digest.
+
+The collected suite goes from 1,160 to 1,171 tests.
+
+Planning record, opened 2026-09-21 after round 2. LEVEL=75/76 raise
+`CandidateSupportError` on any evaluation outside the persisted normalization
+box, and no NN-side limiter precedes that check, so an intermediate Newton
+iterate can end a solve whose
 physical answer is inside the box. Across both rounds, 440 reference-only
 diagnostic runs found every accepted NGSPICE trajectory inside support for
 every case that raised such an error in a DC or transient analysis, except
@@ -30,8 +58,7 @@ rows; the 33 AC rows and 2 cascode rows are unattributed. The
 [plan](plans/2026-09-21-v776-nn-voltage-limiting.md) records the evidence, the
 contract constraints, and the gating: the limiter perturbs floating-point
 results, so it ships disabled until a full accuracy re-gate clears it, and it
-must first pass the latch-basin contract. No accuracy claim; the release stays
-V7.7.5.
+must first pass the latch-basin contract.
 
 The evaluation-arm harness repairs reached `main` in merge `b688412`: the ten
 commits of `eval/v775-round2`, which are the harness both rounds actually ran
@@ -94,7 +121,8 @@ sweeps in rounds 1–3 found no other affected scored row; the 1,270 device and
 VTC sweeps it skipped contain no capacitor. Round 3 reclassifies that one row
 as `ERROR`. Operating points behind AC and transient analyses are not saved
 and could not be audited. The fix, restoring capacitor state after the
-fallback, changes numerics and needs its own test and re-gate.
+fallback, changes numerics and needs its own test and re-gate; it shipped in
+V7.7.6.
 
 Verification of rounds 1–2: independent parsers reproduced every table in both
 reports from the raw logs. Prose errors are corrected in place, and these
