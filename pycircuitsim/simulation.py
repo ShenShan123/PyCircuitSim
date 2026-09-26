@@ -16,6 +16,13 @@ from pycircuitsim.visualizer import Visualizer
 
 _NGSPICE_DEFAULT_FREQUENCY_RELTOL = 1e-3
 
+#: Capacitor attributes a transient march mutates and a DC stamp reads
+#: (directly, or through the next transient's first companion).
+_CAPACITOR_STATE = (
+    "v_prev", "v_prev2", "_i_prev", "_g_eq", "_i_eq",
+    "_use_trapezoidal", "_method",
+)
+
 
 def _circuit_has_nn(circuit: Circuit) -> bool:
     """Return True if the circuit contains a full-terminal NN device.
@@ -62,12 +69,21 @@ def _pseudo_transient_dc(circuit: Circuit):
     function returns — a leaked pseudo-cap would corrupt every later DC
     sweep point and the result CSV.
 
+    The real capacitors' companion and integration state is restored the
+    same way (V7.7.6). `Capacitor.stamp_conductance`/`stamp_rhs` stamp
+    `_g_eq`/`_i_eq` unconditionally, so state left by the transient stage
+    made the polishing solve and every later DC solve on this circuit see
+    each capacitor as a 2C/dt conductance plus a current source: Newton
+    converged honestly on a different circuit (V7.7.5 round 3, BSIM-AR
+    medium TSMC16 buffer: `out` held at 11 mV instead of 0.8 V).
+
     Args:
         circuit: the circuit to solve.
 
     Returns:
         ``(DCSolver, solution)`` — same contract as `solve_fn`.
     """
+    from pycircuitsim.models.passive import Capacitor
     from pycircuitsim.solver import DCSolver, TransientSolver
 
     def _strip_pseudo_caps() -> None:
@@ -77,6 +93,17 @@ def _pseudo_transient_dc(circuit: Circuit):
             if not getattr(c, "name", "").startswith("_pseudo_")
         ]
         circuit.invalidate_topology()
+
+    cap_state = [
+        (cap, {attr: getattr(cap, attr) for attr in _CAPACITOR_STATE})
+        for cap in circuit.components if isinstance(cap, Capacitor)
+    ]
+
+    def _restore_capacitors() -> None:
+        """Return every real capacitor to its pre-fallback state."""
+        for cap, state in cap_state:
+            for attr, value in state.items():
+                setattr(cap, attr, value)
 
     # Settling window: a few RC constants of the pseudo-caps against a
     # ~kΩ-scale node resistance. dt small enough for NR stability; the
@@ -110,10 +137,12 @@ def _pseudo_transient_dc(circuit: Circuit):
     except (np.linalg.LinAlgError, RuntimeError) as exc:
         logger.info("Pseudo-transient DC continuation transient stage failed: %s", exc)
     finally:
-        # Guarantee no pseudo-cap survives the transient stage — it
-        # would otherwise pollute the polishing solve and every later
-        # DC sweep point sharing this circuit object.
+        # Guarantee no pseudo-cap and no transient companion state
+        # survives the transient stage — either would otherwise pollute
+        # the polishing solve and every later DC sweep point sharing this
+        # circuit object.
         _strip_pseudo_caps()
+        _restore_capacitors()
 
     settled.setdefault("0", 0.0)
     settled.setdefault("GND", 0.0)

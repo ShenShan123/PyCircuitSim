@@ -227,6 +227,42 @@ def test_nn_circuits_keep_the_measured_two_level_ladder(
 
 
 # ---------------------------------------------------------------------------
+# Pseudo-transient DC fallback leaves no transient state behind (V7.7.6)
+# ---------------------------------------------------------------------------
+def _loaded_series_circuit(v_in: float) -> Circuit:
+    circuit = _series_circuit(_linear_law(1e-3))
+    circuit.components[0].voltage = v_in
+    circuit.add_component(Capacitor("Cload", ["out", "0"], 5e-15))
+    return circuit
+
+
+def test_dc_solve_after_the_pseudo_transient_fallback_sees_capacitors_open() -> None:
+    """A DC point solved after the fallback must match a fresh circuit.
+
+    The fallback marches a 1 ps transient on the live circuit, and capacitor
+    stamps read the companion ``_g_eq``/``_i_eq`` unconditionally. Leftover
+    state turned a 5 fF load into a 0.01 S conductance for every later point
+    of that DC sweep, and Newton converged honestly on that other circuit
+    (V7.7.5 round 3: an NN buffer output held at 11 mV instead of 0.8 V).
+    """
+    from pycircuitsim.simulation import _pseudo_transient_dc
+
+    circuit = _loaded_series_circuit(0.0)
+    solver, solution = _pseudo_transient_dc(circuit)
+    assert solver._last_solve_converged
+    assert solution["out"] == pytest.approx(0.0, abs=1e-9)
+    cap = next(c for c in circuit.components if c.name == "Cload")
+    assert (cap._g_eq, cap._i_eq, cap.v_prev, cap._i_prev) == (0.0, 0.0, 0.0, 0.0)
+    assert [c.name for c in circuit.components] == ["V1", "R1", "M1", "Cload"]
+
+    circuit.components[0].voltage = 0.8  # the next DC sweep point
+    after = DCSolver(circuit).solve(skip_header=True)
+    fresh = DCSolver(_loaded_series_circuit(0.8)).solve(skip_header=True)
+    assert fresh["out"] == pytest.approx(0.4, abs=1e-9)
+    assert after["out"] == pytest.approx(fresh["out"], abs=1e-12)
+
+
+# ---------------------------------------------------------------------------
 # Limiting and oscillation acceptance
 # ---------------------------------------------------------------------------
 class _AlwaysLimited(ClosedFormDevice):
