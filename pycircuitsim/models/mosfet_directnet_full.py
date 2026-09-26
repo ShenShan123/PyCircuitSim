@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import hashlib
 import math
+import os
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -34,6 +35,12 @@ from neural_network.data.normalize import NormStats  # noqa: E402
 
 
 _OUTPUT_COLUMNS = tuple(FULL_TERMINAL_OUTPUT_COLUMN_ORDER)
+#: V7.7.6 opt-in NN-side Newton limiting (see ``nr_limit_voltages``). It
+#: perturbs floating-point results, so it stays off until a full re-gate
+#: clears it.
+NR_LIMIT_ENV = "PYCIRCUITSIM_NN_NR_LIMIT"
+#: (terminal index in ``nodes``, source-relative input index) per voltage pair.
+_VOLTAGE_INPUTS = ((0, 0), (1, 1), (3, 3))
 _ArtifactBundle = Tuple[torch.nn.Module, NormStats, int, Tuple[str, ...]]
 _ARTIFACT_CACHE: Dict[
     Tuple[Tuple[str, int, int], Tuple[str, int, int], Tuple[str, int, int]],
@@ -219,6 +226,11 @@ class _FullTerminalNNBase(Component):
         self._i_prev_drain = 0.0
         self._i_prev_source = 0.0
         self._i_prev_bulk = 0.0
+        # V7.7.6 NN-side Newton limiting state (see nr_limit_voltages).
+        self._nr_limit_enabled = os.environ.get(NR_LIMIT_ENV, "0") == "1"
+        self._nr_limited = False
+        self._nr_v_eval: Optional[Dict[str, float]] = None
+        self._nr_clamp_note = ""
 
     def _forward_model(self, x: torch.Tensor) -> torch.Tensor:
         """Evaluate the checkpoint; kept as a seam for focused tests."""
@@ -247,6 +259,81 @@ class _FullTerminalNNBase(Component):
                 f"{self.name} is outside certified support at input "
                 f"{index}: {raw[index]} not in [{lower[index]}, "
                 f"{upper[index]}]")
+
+    def reset_nr_limits(self) -> None:
+        """Forget the last limited evaluation; solvers call this at solve entry."""
+        self._nr_limited = False
+        self._nr_v_eval = None
+        self._nr_clamp_note = ""
+
+    def nr_retreat_voltages(self) -> Optional[Dict[str, float]]:
+        """No retreat: a clamped evaluation is already inside the box."""
+        return None
+
+    def nr_limit_voltages(self, voltages: Dict[str, float]) -> Dict[str, float]:
+        """Return the terminal voltages to EVALUATE this device at.
+
+        Off by default: ``voltages`` comes back unchanged and the device is
+        never marked limited, so every solve is bit-identical to V7.7.5.
+
+        With ``PYCIRCUITSIM_NN_NR_LIMIT=1`` (V7.7.6), a Newton trial state
+        whose source-relative (Vds, Vgs, Vbs) leaves the persisted
+        normalization box is evaluated at the nearest point of the box, and
+        the solver linearizes the companion about that point with its true
+        Jacobian, as LEVEL=72 does inside ``_NR_LIM_WINDOW``. A clamped
+        iteration sets ``_nr_limited``, which the solvers never accept as
+        converged, so a physical answer outside the box still fails to
+        converge instead of being extrapolated. The box is the identity
+        inside, so a solve that never leaves it is bit-identical.
+
+        Terminals sharing a node clamp into the intersection of their
+        intervals. A terminal tied to the source, an empty intersection, or
+        a geometry/temperature input outside the box is left for
+        ``_check_support`` to reject.
+        """
+        self._nr_limited = False
+        self._nr_clamp_note = ""
+        if not self._nr_limit_enabled:
+            self._nr_v_eval = None
+            return voltages
+        lower = self._norm_stats.input_min
+        upper = self._norm_stats.input_max
+        source = self.nodes[2]
+        v_s = float(voltages.get(source, 0.0))
+        bounds: Dict[str, Tuple[float, float]] = {}
+        for terminal, index in _VOLTAGE_INPUTS:
+            node = self.nodes[terminal]
+            if node == source:
+                continue
+            low, high = bounds.get(node, (-math.inf, math.inf))
+            bounds[node] = (max(low, float(lower[index])),
+                            min(high, float(upper[index])))
+        clamped: Dict[str, float] = {}
+        notes = []
+        for node, (low, high) in bounds.items():
+            relative = float(voltages.get(node, 0.0)) - v_s
+            if low > high or low <= relative <= high:
+                continue
+            value = v_s + min(max(relative, low), high)
+            # v_s + bound can round one ulp past the bound; step inward.
+            for _ in range(4):
+                if value - v_s > high:
+                    value = math.nextafter(value, -math.inf)
+                elif value - v_s < low:
+                    value = math.nextafter(value, math.inf)
+                else:
+                    break
+            clamped[node] = value
+            notes.append(
+                f"{node}-{source}={relative:.6g} V not in [{low:g}, {high:g}]")
+        if not clamped:
+            self._nr_v_eval = voltages
+            return voltages
+        v_eval = {**voltages, **clamped}
+        self._nr_limited = True
+        self._nr_clamp_note = f"{self.name}: " + ", ".join(notes)
+        self._nr_v_eval = v_eval
+        return v_eval
 
     def _denorm_value(self, name: str, value: float) -> float:
         index = self._stats_idx[name]

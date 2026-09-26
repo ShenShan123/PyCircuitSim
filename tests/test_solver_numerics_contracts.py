@@ -69,6 +69,7 @@ class ClosedFormDevice(NMOS_DNF):
     def __init__(
         self, name: str, nodes: List[str], law: Law, *, control: str = "d",
         capacitance: float = 0.0,
+        support: Optional[Tuple[float, float]] = None,
     ) -> None:
         super().__init__(
             name, nodes, "/synthetic/closed_form_best.pt",
@@ -77,10 +78,22 @@ class ClosedFormDevice(NMOS_DNF):
         self._law = law
         self._control = {"d": 0, "g": 1}[control]
         self._capacitance = capacitance
+        if support is not None:
+            # A certified box on Vds, Vgs and Vbs, as a trained bundle has.
+            low, high = support
+            self._norm_stats = NormStats(
+                mode="zscore",
+                input_mean=np.zeros(7), input_std=np.ones(7),
+                input_min=np.asarray([low, low, 0.0, low, -1e9, -1e9, -1e9]),
+                input_max=np.asarray([high, high, 0.0, high, 1e9, 1e9, 1e9]),
+                output_mean=np.zeros(6), output_std=np.ones(6),
+                output_columns=list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER),
+            )
 
     def _eval(
         self, voltages: Dict[str, float],
     ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, Optional[np.ndarray]]:
+        self._check_support(self._raw_inputs(voltages))
         terminal = [float(voltages.get(node, 0.0)) for node in self.nodes]
         current, slope = self._law(terminal[self._control] - terminal[2])
         currents = np.zeros(4)
@@ -318,6 +331,120 @@ def test_oscillation_average_is_accepted_only_within_tolerance_and_kcl(
     if accepted:
         assert solution["out"] == pytest.approx(0.4, abs=1e-6)
     assert math.isfinite(solution["out"])
+
+
+# ---------------------------------------------------------------------------
+# Opt-in NN-side limiting (V7.7.6)
+# ---------------------------------------------------------------------------
+_CUBIC_A = 1e-2  # i = a*v^3 from 1 V through 1 kOhm: root near 0.393 V
+
+
+def _cubic_load(v: float) -> Tuple[float, float]:
+    return _CUBIC_A * v ** 3, 3.0 * _CUBIC_A * v ** 2
+
+
+_CUBIC_ROOT = min(  # the one real root of 1000*a*v^3 + v - 1 = 0
+    r.real for r in np.roots([1_000.0 * _CUBIC_A, 0.0, 1.0, -1.0])
+    if abs(r.imag) < 1e-12
+)
+
+
+def _cubic_circuit(high: float, *, limit: bool) -> Circuit:
+    circuit = Circuit()
+    circuit.add_component(VoltageSource("V1", ["in", "0"], 1.0))
+    circuit.add_component(Resistor("R1", ["in", "out"], 1_000.0))
+    device = ClosedFormDevice(
+        "M1", ["out", "0", "0", "0"], _cubic_load, support=(-high, high),
+    )
+    device._nr_limit_enabled = limit
+    circuit.add_component(device)
+    return circuit
+
+
+def _solve_without_homotopy(circuit: Circuit) -> Tuple[DCSolver, Dict[str, float]]:
+    """The 0.1 V NN trust region walks ``out`` 0, 0.1, ..., 0.4 V before
+    Newton lands on the root: the 0.4 V iterate is a trial state."""
+    solver = DCSolver(circuit, use_source_stepping=False)
+    return solver, solver.solve(skip_header=True)
+
+
+def test_nn_limiter_is_off_by_default_and_reads_its_environment_knob(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A floating-point-perturbing change ships disabled (AGENTS.md)."""
+    monkeypatch.delenv("PYCIRCUITSIM_NN_NR_LIMIT", raising=False)
+    device = ClosedFormDevice("M1", ["d", "g", "s", "b"], _linear_law(1e-3),
+                              support=(-0.45, 0.45))
+    outside = {"d": 2.0, "g": 0.1, "s": 0.0, "b": 0.0}
+    assert device.nr_limit_voltages(outside) is outside
+    assert device._nr_limited is False
+    monkeypatch.setenv("PYCIRCUITSIM_NN_NR_LIMIT", "1")
+    enabled = ClosedFormDevice("M2", ["d", "g", "s", "b"], _linear_law(1e-3),
+                               support=(-0.45, 0.45))
+    assert enabled._nr_limit_enabled is True
+
+
+def test_nn_limiter_clamps_a_trial_state_into_the_certified_box() -> None:
+    """The evaluation moves to the nearest in-box bias; KCL frame is kept.
+
+    The source stays the reference, a node shared by two terminals takes one
+    value inside both intervals, and the clamped mapping must pass the hard
+    support check even when ``v_s + bound`` rounds one ulp past the bound.
+    """
+    device = ClosedFormDevice("M1", ["x", "x", "s", "b"], _linear_law(1e-3),
+                              support=(-0.45, 0.45))
+    device._nr_limit_enabled = True
+    trial = {"x": 0.1 + 0.9, "s": 0.1, "b": 0.1 - 0.7}
+    v_eval = device.nr_limit_voltages(trial)
+    assert device._nr_limited is True
+    assert v_eval["s"] == trial["s"]
+    assert v_eval["x"] - v_eval["s"] <= 0.45
+    assert v_eval["x"] - v_eval["s"] == pytest.approx(0.45, abs=1e-15)
+    assert v_eval["b"] - v_eval["s"] == pytest.approx(-0.45, abs=1e-15)
+    device._check_support(device._raw_inputs(v_eval))
+    assert "x-s=0.9 V" in device._nr_clamp_note
+    inside = {"x": 0.3, "s": 0.1, "b": 0.1}
+    assert device.nr_limit_voltages(inside) is inside
+    assert device._nr_limited is False
+
+
+def test_nn_limiter_recovers_a_solve_whose_trial_state_left_support() -> None:
+    """The V7.7.6 target: an in-box answer lost to an out-of-box iterate.
+
+    Without the limiter the 0.4 V trial state raises the support error and
+    ends a solve whose answer (0.393 V) is inside the 0.395 V box.
+    """
+    with pytest.raises(ValueError, match="certified support"):
+        _solve_without_homotopy(_cubic_circuit(0.395, limit=False))
+    solver, solution = _solve_without_homotopy(_cubic_circuit(0.395, limit=True))
+    assert solver._last_solve_converged
+    assert solution["out"] == pytest.approx(_CUBIC_ROOT, abs=1e-6)
+
+
+def test_nn_limiter_never_accepts_an_answer_outside_support() -> None:
+    """A real coverage hole must stay an error, never an extrapolation.
+
+    With a 0.30 V box the root is outside: every iterate is clamped, no
+    iteration is accepted, and the failure message names the clamped input.
+    """
+    circuit = _cubic_circuit(0.30, limit=True)
+    solver, _ = _solve_without_homotopy(circuit)
+    assert solver._last_solve_converged is False
+    assert "NN limiter still clamping M1: out-0=" in solver_module.nn_limiter_note(circuit)
+    assert solver_module.nn_limiter_note(_cubic_circuit(0.30, limit=False)) == ""
+
+
+def test_nn_limiter_is_bit_identical_when_it_never_engages() -> None:
+    """Inside the box the limiter is the identity, so results match exactly.
+
+    The same 0 -> 0.4 V walk stays inside a 0.45 V box.
+    """
+    solutions = []
+    for limit in (False, True):
+        solver, solution = _solve_without_homotopy(_cubic_circuit(0.45, limit=limit))
+        assert solver._last_solve_converged
+        solutions.append(solution)
+    assert solutions[0] == solutions[1]
 
 
 # ---------------------------------------------------------------------------
@@ -612,20 +739,28 @@ def _tanh_transconductor(v_gate: float) -> Tuple[float, float]:
     return _LATCH_I0 * math.tanh(x), _LATCH_I0 / (_LATCH_W * math.cosh(x) ** 2)
 
 
-def _latch() -> Circuit:
+#: A certified box just around both stored states (0.051 V and 0.749 V).
+_LATCH_SUPPORT = (0.0, 0.755)
+
+
+def _latch(
+    support: Optional[Tuple[float, float]] = None, *, nn_nr_limit: bool = False,
+) -> Circuit:
     """Two cross-coupled transconductors: loop gain R*I0/W = 3.5 > 1.
 
     Stable states are ``V_mid +/- R*I0*tanh(3.5)``; the symmetric point is
-    the unstable saddle.
+    the unstable saddle.  ``support`` certifies the devices only inside that
+    box; ``nn_nr_limit`` turns the V7.7.6 NN limiter on.
     """
     circuit = Circuit()
     circuit.add_component(VoltageSource("Vmid", ["mid", "0"], _LATCH_MID))
     circuit.add_component(Resistor("Rq", ["q", "mid"], _LATCH_R))
     circuit.add_component(Resistor("Rqb", ["qb", "mid"], _LATCH_R))
-    circuit.add_component(
-        ClosedFormDevice("Mq", ["q", "qb", "0", "0"], _tanh_transconductor, control="g"))
-    circuit.add_component(
-        ClosedFormDevice("Mqb", ["qb", "q", "0", "0"], _tanh_transconductor, control="g"))
+    for name, nodes in (("Mq", ["q", "qb", "0", "0"]), ("Mqb", ["qb", "q", "0", "0"])):
+        device = ClosedFormDevice(
+            name, nodes, _tanh_transconductor, control="g", support=support)
+        device._nr_limit_enabled = nn_nr_limit
+        circuit.add_component(device)
     circuit.add_component(Capacitor("Cq", ["q", "0"], 2e-15))
     circuit.add_component(Capacitor("Cqb", ["qb", "0"], 2e-15))
     return circuit
@@ -655,7 +790,28 @@ def test_hard_ic_operating_point_lands_in_the_requested_basin(
 
 
 @pytest.mark.parametrize(("state", "q0", "qb0"), _STORED_STATES)
-@pytest.mark.parametrize("perturbation", ("reference", "refine_output"))
+def test_nn_limiter_keeps_both_latch_states_when_trial_states_leave_support(
+    state: str, q0: float, qb0: float,
+) -> None:
+    """The limiter engages on the hard-``.ic`` solve and keeps its basin.
+
+    Inside a box tight around the stored states, the release solve's trial
+    states leave support: without the limiter the solve dies on the support
+    check; with it the latch converges in the pinned state.
+    """
+    with pytest.raises(ValueError, match="certified support"):
+        DCSolver(_latch(_LATCH_SUPPORT), force_ic=True,
+                 initial_guess={"q": q0, "qb": qb0}).solve(skip_header=True)
+    solver = DCSolver(_latch(_LATCH_SUPPORT, nn_nr_limit=True), force_ic=True,
+                      initial_guess={"q": q0, "qb": qb0})
+    solution = solver.solve(skip_header=True)
+    assert solver._last_solve_converged
+    assert _latch_state(solution["q"], solution["qb"]) == state
+
+
+@pytest.mark.parametrize(("state", "q0", "qb0"), _STORED_STATES)
+@pytest.mark.parametrize(
+    "perturbation", ("reference", "refine_output", "nn_nr_limit"))
 def test_latch_retains_both_stored_states_under_every_opt_in_march(
     state: str, q0: float, qb0: float, perturbation: str,
 ) -> None:
@@ -663,11 +819,14 @@ def test_latch_retains_both_stored_states_under_every_opt_in_march(
 
     The reference march is the scored fixed-grid path; ``refine_output`` is
     the one surviving opt-in fidelity control that changes how the march is
-    taken.  Any new opt-in knob that can perturb a basin belongs in this
-    parametrization before it is used.
+    taken, and ``nn_nr_limit`` is the V7.7.6 NN limiter on a certified box
+    around both states.  Any new opt-in knob that can perturb a basin
+    belongs in this parametrization before it is used.
     """
+    limited = perturbation == "nn_nr_limit"
     solver = TransientSolver(
-        _latch(), t_stop=2e-9, dt=1e-11,
+        _latch(_LATCH_SUPPORT if limited else None, nn_nr_limit=limited),
+        t_stop=2e-9, dt=1e-11,
         initial_guess={"q": q0, "qb": qb0, "mid": _LATCH_MID},
         refine_output=(perturbation == "refine_output"),
     )

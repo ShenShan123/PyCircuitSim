@@ -12,6 +12,7 @@ import numpy as np
 
 from pycircuitsim.parser import Parser
 from pycircuitsim.circuit import Circuit
+from pycircuitsim.solver import nn_limiter_note
 from pycircuitsim.visualizer import Visualizer
 
 _NGSPICE_DEFAULT_FREQUENCY_RELTOL = 1e-3
@@ -430,7 +431,8 @@ def run_dc_sweep(
     if (require_convergence
             and not getattr(op_solver, "_last_solve_converged", True)):
         source_component.value = original_value
-        raise RuntimeError("DC operating point did not converge")
+        raise RuntimeError(
+            f"DC operating point did not converge{nn_limiter_note(circuit)}")
     logger.info(f"DC operating point computed: {len(op_solution)} nodes")
 
     # STAGE 2: Use OP solution as initial guess for sweep
@@ -539,7 +541,7 @@ def run_dc_sweep(
                 source_component.value = original_value
                 raise RuntimeError(
                     f"DC sweep point {point_num} at {current_value:g} "
-                    "did not converge"
+                    f"did not converge{nn_limiter_note(circuit)}"
                 )
 
             # Store this solution for next point's initial guess
@@ -904,6 +906,7 @@ def run_ac_sweep(
     if not getattr(dc_solver, "_last_solve_converged", True):
         raise RuntimeError(
             "AC analysis requires a converged DC operating point"
+            f"{nn_limiter_note(circuit)}"
         )
 
     logger.info("DC operating point computed")

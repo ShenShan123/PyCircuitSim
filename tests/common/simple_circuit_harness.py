@@ -1576,7 +1576,7 @@ def _run_candidate_ac_trace(
         _solve_dc_with_retry,
         build_ac_frequencies,
     )
-    from pycircuitsim.solver import ACSolver, DCSolver
+    from pycircuitsim.solver import ACSolver, DCSolver, nn_limiter_note
 
     parser = parse_netlist(path)
     circuit = parser.circuit
@@ -1594,6 +1594,7 @@ def _run_candidate_ac_trace(
     if not converged:
         raise CandidateConvergenceError(
             "candidate AC operating point did not converge"
+            f"{nn_limiter_note(circuit)}"
         )
     frequencies = build_ac_frequencies(parser.analysis_params)
     raw = ACSolver(circuit, dc_solution=dc_solution).solve(frequencies)
@@ -1609,7 +1610,7 @@ def _run_candidate_op_trace(
 ) -> Trace:
     """Solve one NN operating point and expose nodes plus source currents."""
     from pycircuitsim.simulation import _circuit_has_nn, _solve_dc_with_retry
-    from pycircuitsim.solver import DCSolver
+    from pycircuitsim.solver import DCSolver, nn_limiter_note
 
     parser = parse_netlist(path)
     circuit = parser.circuit
@@ -1630,6 +1631,7 @@ def _run_candidate_op_trace(
     if not converged:
         raise CandidateConvergenceError(
             "candidate operating point did not converge"
+            f"{nn_limiter_note(circuit)}"
         )
     raw: Dict[str, Any] = dict(solution)
     for component in circuit.components:

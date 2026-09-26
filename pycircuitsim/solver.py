@@ -405,6 +405,39 @@ def _has_full_stamp_device(circuit: Circuit) -> bool:
     return val
 
 
+def _nn_limiter_clamping(circuit: Circuit) -> bool:
+    """True while the opt-in V7.7.6 NN limiter clamps a device evaluation.
+
+    Only a full-terminal NN device with ``PYCIRCUITSIM_NN_NR_LIMIT=1`` sets
+    this; LEVEL=72 limiting keeps its own path, and with the knob off the
+    result is always False.
+    """
+    if not _has_nn_device(circuit):
+        return False
+    from pycircuitsim.models.mosfet_directnet_full import _FullTerminalNNBase
+    return any(
+        isinstance(c, _FullTerminalNNBase) and c._nr_limited
+        for c in circuit.components
+    )
+
+
+def nn_limiter_note(circuit: Circuit) -> str:
+    """Suffix for a non-convergence message naming still-clamped NN inputs.
+
+    Empty unless the opt-in V7.7.6 limiter clamped the last evaluation, in
+    which case the returned iterate lies outside certified support: the
+    failure is a support limit, not a trial-state excursion.
+    """
+    if not _nn_limiter_clamping(circuit):
+        return ""
+    from pycircuitsim.models.mosfet_directnet_full import _FullTerminalNNBase
+    notes = [
+        c._nr_clamp_note for c in circuit.components
+        if isinstance(c, _FullTerminalNNBase) and c._nr_limited
+    ]
+    return f" (NN limiter still clamping {'; '.join(notes)})"
+
+
 def _require_nn_caps(circuit: Circuit) -> None:
     """Tell every NN device that this analysis reads charge Jacobians.
 
@@ -434,7 +467,8 @@ def _stamp_mosfet_dc(
     The NR linearization stamps the complete four-terminal current Jacobian and
     its equivalent current source.
 
-    Devices exposing ``nr_limit_voltages`` (LEVEL=72) are EVALUATED at the
+    Devices exposing ``nr_limit_voltages`` (LEVEL=72; LEVEL=75/76 when the
+    opt-in V7.7.6 NN limiter is on) are EVALUATED at the
     limited bias V0' that method returns, and the whole companion —
     conductances AND i_eq — linearizes about V0' (V7.5.0, SPICE-style
     damped limiting). The extrapolated line keeps the true derivative, so
@@ -1219,6 +1253,14 @@ class DCSolver:
                                     conductances[comp.name] = {"gm": g_m, "gds": g_ds, "gmb": g_mb}
                             except (NotImplementedError, AttributeError):
                                 pass
+                            except ValueError:
+                                # V7.7.6: with the opt-in NN limiter on, a
+                                # post-step trial state may lie outside
+                                # certified support; the next stamp clamps
+                                # it, so skip this log sample instead of
+                                # ending the solve. Limiter off: unchanged.
+                                if not getattr(comp, "_nr_limit_enabled", False):
+                                    raise
 
                         iter_info = IterationInfo(
                             iteration=iteration,
@@ -1302,7 +1344,11 @@ class DCSolver:
                         threshold = self.vntol + self.reltol * v_abs
                         max_rel_variance = max(max_rel_variance, variance / (threshold + 1e-30))
 
-                    if max_rel_variance < 10.0:
+                    # V7.7.6: while an NN limiter clamps, the average is
+                    # refused below anyway, and probing it would evaluate
+                    # the NN at an unclamped trial state outside support.
+                    if (max_rel_variance < 10.0
+                            and not _nn_limiter_clamping(self.circuit)):
                         # Oscillating within tolerance — but only accept
                         # the averaged solution if it also satisfies the
                         # MNA residual test (Phase 6b). A small inter-
@@ -2498,9 +2544,12 @@ class TransientSolver:
                 # MNA residual test (Phase 6b) — a small variance does
                 # not prove the average is a physical fixed point.
                 residual_ok = True
+                # V7.7.6: skip the probe while an NN limiter clamps (see
+                # the DC twin); the limiter gate below refuses the average.
                 if max_rel_variance < 10.0 and (
                         _has_nn_device(self.circuit)
-                        or _has_full_stamp_device(self.circuit)):
+                        or _has_full_stamp_device(self.circuit)) and (
+                        not _nn_limiter_clamping(self.circuit)):
                     # V7.5.1: gate extended to BSIM-CMG circuits — an
                     # averaged garbage point that commits here corrupts the
                     # charge history and, through the 1/dt companion, every

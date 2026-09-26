@@ -424,7 +424,10 @@ def _require_converged_op(
 ) -> Dict[str, float]:
     """Reject a DC operating point that did not reach a physical fixed point."""
     if not getattr(solver, "_last_solve_converged", True):
-        raise RuntimeError(f"{stage} did not converge")
+        from pycircuitsim.solver import nn_limiter_note
+        circuit = getattr(solver, "circuit", None)
+        note = nn_limiter_note(circuit) if circuit is not None else ""
+        raise RuntimeError(f"{stage} did not converge{note}")
     return solution
 
 
