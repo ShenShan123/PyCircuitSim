@@ -30,6 +30,7 @@ from tests.common.circuit_benchmarks import (
     run_directnet_transient, run_ngspice_wrdata,
 )
 from tests.common.gate_result import GateResult
+from tests.common.trace_archive import archive_trace_pair
 from tests.common.simple_circuit_catalog import (
     AnalysisSpec, CircuitCase, DeviceRoleSpec, DIAGNOSTIC,
 )
@@ -3117,6 +3118,11 @@ def run_case_analysis(
         partial = candidate.partial
         metrics, domain = compare_traces(
             candidate, references[0], resolved_analysis, vdd=bt.vdd,
+        )
+        archive_trace_pair(
+            case.case_id, bt.name, analysis.name, candidate.axis_name,
+            candidate.axis, candidate.signals,
+            references[0].axis, references[0].signals, corner=corner.name,
         )
         if candidate.partial:
             return GateResult(

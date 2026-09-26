@@ -41,6 +41,7 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
     RingOscParams, ngspice_ringosc, directnet_ringosc,
 )
 from tests.common.gate_result import GateResult  # noqa: E402
+from tests.common.trace_archive import archive_trace_pair  # noqa: E402
 from tests.common.base import parse_csv_choices  # noqa: E402
 from tests.common.simple_circuit_harness import RunSpec  # noqa: E402
 
@@ -132,6 +133,9 @@ def run_one(bt: BenchTech) -> Dict:
         print(f"    {model_label} FAILED: {exc!r}")
         return {"tech": bt.name, "ng_period": ng_per, "error": repr(exc)}
 
+    archive_trace_pair("ring_osc", bt.name, "transient", "time",
+                       dn["time"], {"v(n5)": dn["v(n5)"]},
+                       ng["time"], {"v(n5)": ng["v(n5)"]})
     dn_per = _period_from_wave(dn["time"], dn["v(n5)"], mid, SETTLE)
     note = " (partial waveform — NR truncated)" if partial else ""
     print(f"    {model_label} period = {dn_per*1e12:.2f} ps{note}")

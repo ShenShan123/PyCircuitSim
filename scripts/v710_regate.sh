@@ -198,6 +198,8 @@ if [ "${1:-}" = "_one" ]; then
 
   iso="$SCRATCH/${tag}_${variant}_${tlc}_${suite}_omp${omp}"
   export PYCIRCUITSIM_SIMPLE_RESULTS="$iso/simple" PYCIRCUITSIM_NN_RESULTS="$iso/nn"
+  # Every compared candidate/reference trace pair, for waveform plots.
+  export PYCIRCUITSIM_TRACE_ARCHIVE="$iso/traces"
   mkdir -p "$PYCIRCUITSIM_SIMPLE_RESULTS" "$PYCIRCUITSIM_NN_RESULTS"
 
   case_args=()

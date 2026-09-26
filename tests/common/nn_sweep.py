@@ -70,6 +70,7 @@ from tests.common.nn_gate import (  # noqa: E402
     run_pycircuitsim_nn_pmos_dc,
 )
 from tests.common.simple_circuit_harness import RunSpec  # noqa: E402
+from tests.common.trace_archive import archive_trace_pair  # noqa: E402
 
 # Techs in scope for V6.3.2: the four TSMC nodes with V6.3.1 DirectNet
 # checkpoints. ASAP7 excluded.
@@ -481,6 +482,10 @@ def run_single_nn_dc(
             allow_missing_stop=True,
         )
         candidate_converged = True
+        archive_trace_pair(
+            "nn_multi_tech_dc", tech.name, cfg.label, "|vgs|",
+            tx[t_order], {"id": test["id"][t_order]},
+            rx[r_order], {"id": ref["id"][r_order]})
         m = curve_metrics(
             rx[r_order], ref["id"][r_order], tx[t_order], test["id"][t_order])
     except Exception as exc:  # noqa: BLE001 — report, never crash the sweep
@@ -528,6 +533,10 @@ def run_single_nn_inv(
                 allow_missing_stop=True,
             )
             candidate_converged = True
+            archive_trace_pair(
+                "nn_multi_tech_tran", tech.name, cfg.label, "sweep",
+                test["sweep"], {"v(out)": test["vout"]},
+                ref["sweep"], {"v(out)": ref["vout"]})
             m = curve_metrics(
                 ref["sweep"], ref["vout"], test["sweep"], test["vout"])
         else:
@@ -556,6 +565,10 @@ def run_single_nn_inv(
                 label=f"{cfg.label} candidate",
             )
             candidate_converged = True
+            archive_trace_pair(
+                "nn_multi_tech_tran", tech.name, cfg.label, "time",
+                test["time"], {"v(out)": test["v(out)"]},
+                ref["time"], {"v(out)": ref["v(out)"]})
             m = curve_metrics(
                 ref["time"], ref["v(out)"], test["time"], test["v(out)"],
                 x_min=TRAN_STARTUP_EXCL)

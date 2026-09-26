@@ -59,6 +59,7 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
     directnet_sram_6t,
 )
 from tests.common.gate_result import GateResult  # noqa: E402
+from tests.common.trace_archive import archive_trace_pair  # noqa: E402
 from tests.common.base import parse_csv_choices  # noqa: E402
 from tests.common.simple_circuit_harness import RunSpec  # noqa: E402
 
@@ -303,6 +304,9 @@ def run_one(bt: BenchTech, nfins: List[int]) -> Dict:
                                 "error": repr(exc), "stage": "candidate"})
             continue
         dn_snm = snm_from_lobes(dn["q"], dn["qb"])
+        archive_trace_pair("sram_snm", bt.name, "butterfly_lobe", "v(q)",
+                           dn["q"], {"v(qb)": dn["qb"]},
+                           ng["q"], {"v(qb)": ng["qb"]}, corner=f"nfin{nfin}")
 
         grid = np.linspace(0.0, bt.vdd, 300)
         ng_i = np.interp(grid, ng["q"], ng["qb"])

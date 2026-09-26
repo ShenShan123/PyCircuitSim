@@ -248,6 +248,43 @@ def test_error_result_names_execution_state_and_origin() -> None:
     assert result.payload()["error_kind"] == "candidate"
 
 
+def test_trace_archive_is_off_by_default_and_round_trips_scored_traces(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Waveform plots must show the exact traces a verdict scored (V7.7.6).
+
+    Standalone gate runs write nothing extra; a campaign cell stores both
+    engines' raw axes and signals, complex AC values included, and a write
+    failure is reported without ending the gate.
+    """
+    from tests.common.trace_archive import ENV, archive_trace_pair, load_trace_pair
+
+    axis = np.linspace(0.0, 1.0, 5)
+    candidate = {"v(out)": axis * (1 + 1j), "v(only_candidate)": axis}
+    reference = {"v(out)": axis * (1 - 1j)}
+    monkeypatch.delenv(ENV, raising=False)
+    assert archive_trace_pair("case", "TSMC5", "ac", "frequency", axis,
+                              candidate, axis[::-1], reference) is None
+
+    monkeypatch.setenv(ENV, str(tmp_path / "traces"))
+    path = archive_trace_pair("case", "TSMC5", "ac/1", "frequency", axis,
+                              candidate, axis[::-1], reference, corner="nfin2")
+    assert path == tmp_path / "traces" / "case__TSMC5__nfin2__ac_1.npz"
+    loaded = load_trace_pair(path)
+    assert loaded["meta"]["signals"] == ["v(out)"]
+    assert loaded["meta"]["axis"] == "frequency"
+    np.testing.assert_array_equal(loaded["reference_axis"], axis[::-1])
+    cand, ref = loaded["signals"]["v(out)"]
+    np.testing.assert_array_equal(cand, candidate["v(out)"])
+    np.testing.assert_array_equal(ref, reference["v(out)"])
+
+    blocker = tmp_path / "blocked"
+    blocker.write_text("not a directory")
+    monkeypatch.setenv(ENV, str(blocker))
+    assert archive_trace_pair("case", "TSMC5", "dc", "sweep", axis,
+                              reference, axis, reference) is None
+
+
 @pytest.mark.parametrize(
     ("axis", "message"),
     (

@@ -42,6 +42,7 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
     OpAmpParams, ngspice_opamp, directnet_opamp,
 )
 from tests.common.gate_result import GateResult  # noqa: E402
+from tests.common.trace_archive import archive_trace_pair  # noqa: E402
 from tests.common.base import parse_csv_choices  # noqa: E402
 from tests.common.simple_circuit_harness import RunSpec  # noqa: E402
 
@@ -152,6 +153,9 @@ def run_one(bt: BenchTech) -> Dict:
         return {"tech": bt.name, "ng_gain": ng_gain, "ng_trip": ng_trip,
                 "error": repr(exc)}
 
+    archive_trace_pair("opamp", bt.name, "dc_transfer", "sweep",
+                       dn["sweep"], {"v(vout)": dn["vout"]},
+                       ng["sweep"], {"v(vout)": ng["vout"]})
     dn_gain, dn_trip, dn_slew = _gain_trip(dn["sweep"], dn["vout"], bt.vdd)
     print(f"    {model_label} gain={dn_gain:.1f}  trip={dn_trip:.4f}V  "
           f"slew(step)={dn_slew*1e3:.2f}mV")

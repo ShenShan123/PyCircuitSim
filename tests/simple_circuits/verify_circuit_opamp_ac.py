@@ -47,6 +47,7 @@ from tests.common.circuit_ac import (  # noqa: E402
     fmt_hz, fmt_ratio,
 )
 from tests.common.gate_result import GateResult, result_exit_code  # noqa: E402
+from tests.common.trace_archive import archive_trace_pair  # noqa: E402
 from tests.common.simple_circuit_catalog import AnalysisSpec  # noqa: E402
 from tests.common.simple_circuit_harness import (  # noqa: E402
     RunSpec,
@@ -238,6 +239,8 @@ def _eval_opamp_ac(
     )
 
     state["stage"] = "result_schema"
+    archive_trace_pair("opamp_ac", tech, "open_loop", "frequency",
+                       freqs, {"v(vout)": v_dn}, freqs, {"v(vout)": v_ng})
     m = ac_metrics_extended(freqs, v_dn, v_ng)
     aggregate = full_metrics(np.abs(v_dn), np.abs(v_ng))
     # Gate on the three physically meaningful opamp FOMs: DC-gain level (dB),

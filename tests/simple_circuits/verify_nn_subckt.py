@@ -36,6 +36,7 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
     parse_netlist,
 )
 from tests.common.gate_result import GateResult, result_exit_code  # noqa: E402
+from tests.common.trace_archive import archive_trace_pair  # noqa: E402
 from tests.common.simple_circuit_catalog import AnalysisSpec  # noqa: E402
 from tests.common.subcircuit_catalog import SUBCKT_ANALYSES  # noqa: E402
 from tests.common.simple_circuit_harness import (  # noqa: E402
@@ -320,6 +321,11 @@ def run_nn_subckt_analysis(
                 "flat or hierarchical transient ended early"
             )
         stage = "metrics"
+        archive_trace_pair(
+            "nn_subckt", bt.name, analysis.name, flat_trace.axis_name,
+            flat_trace.axis, flat_trace.signals,
+            reference_trace.axis, reference_trace.signals,
+        )
         flat_metrics, _flat_domain = compare_traces(
             flat_trace, reference_trace, analysis, vdd=bt.vdd,
         )

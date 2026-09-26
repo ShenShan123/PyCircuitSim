@@ -61,6 +61,7 @@ from tests.common.base import (  # noqa: E402
     run_ngspice_subprocess,
 )
 from tests.common.gate_result import GateResult, result_exit_code  # noqa: E402
+from tests.common.trace_archive import archive_trace_pair  # noqa: E402
 from tests.common.nn_gate import (  # noqa: E402
     ALL_TEST_TECHS,
     OSDI_PATH,
@@ -281,6 +282,9 @@ def main(argv: List[str] | None = None) -> int:
                     **provenance,
                 ))
                 continue
+            archive_trace_pair("nn_lifted_source_dc", tk, analysis, "vgs",
+                               test["sweep"], {"id": test["id"]},
+                               ref["sweep"], {"id": ref["id"]})
             m = curve_metrics(ref["sweep"], ref["id"], test["sweep"], test["id"])
             ok = m["nrmse"] <= DC_NRMSE_PASS
             n_pass += int(ok)

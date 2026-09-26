@@ -51,6 +51,7 @@ from tests.common.circuit_benchmarks import (  # noqa: E402
     SwitchCapParams, ngspice_switchcap, directnet_switchcap,
 )
 from tests.common.gate_result import GateResult  # noqa: E402
+from tests.common.trace_archive import archive_trace_pair  # noqa: E402
 from tests.common.base import parse_csv_choices  # noqa: E402
 from tests.common.simple_circuit_harness import RunSpec  # noqa: E402
 
@@ -134,6 +135,9 @@ def run_one(bt: BenchTech) -> Dict:
         return {"tech": bt.name, "ng_charge": ng_charge,
                 "ng_droop": ng_droop, "error": repr(exc)}
 
+    archive_trace_pair("switchcap", bt.name, "transient", "time",
+                       dn["time"], {"v(vsamp)": dn["vsamp"]},
+                       ng["time"], {"v(vsamp)": ng["vsamp"]})
     note = " (partial — NR truncated)" if partial else ""
     dn_charge = _at(dn["time"], dn["vsamp"], SAMPLE_END)
     dn_droop = (_at(dn["time"], dn["vsamp"], HOLD_START)
