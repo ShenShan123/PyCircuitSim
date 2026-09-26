@@ -57,6 +57,7 @@ need no simulator and run in the collected `pytest` suite. Each owns one seam:
 | `test_v771_campaign.py` | V7.7.1/V7.7.2 resume, GPU identity, release isolation, and predecessor dependency |
 | `test_campaign_source_equivalence.py`, `test_campaign_training_handoff.py` | numerical-source identity and evaluation after successful training |
 | `test_release_metadata.py` | package/README release identity |
+| `test_campaign_report_tools.py` | the technology × case × model matrix keeps ERROR rows out of its medians |
 | `test_hermetic_gate_suites.py` | wiring, not assertions: runs the three simulator-free gate suites |
 
 Three gate scripts need no simulator at all —

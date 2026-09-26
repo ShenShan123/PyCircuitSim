@@ -553,6 +553,14 @@ conda run -n pycircuitsim python scripts/v730_docs_build.py \
   --campaign v770_full_clean
 conda run -n pycircuitsim python scripts/v730_docs_build.py \
   --campaign v770_full_clean --check
+
+# Per-case figures and the technology x case x model matrix, from the same
+# cells; each archives its compared traces under $V710_SCRATCH/<cell>/traces.
+conda run -n pycircuitsim python scripts/campaign_waveform_plots.py \
+  --scratch /tmp/pycircuitsim-v770-full --out results/v770_full_clean/waveforms
+conda run -n pycircuitsim python scripts/campaign_case_matrix.py \
+  --pool results/v770_full_clean --title V7.7.0 \
+  --out results/v770_full_clean/case_matrix.md
 ```
 
 `v710_regate.sh` requires `NN_PY` to name an executable interpreter with NumPy
