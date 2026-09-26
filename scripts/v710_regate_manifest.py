@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
@@ -18,6 +19,19 @@ MODEL_SOURCE_PATHS = (
     "external_compact_models/", "pycircuitsim/", "circuit_templates/", "PDKs/",
     "requirements.txt", "environment.yml", "pyproject.toml",
 )
+#: Opt-in environment knobs that change solver numerics. The manifest records
+#: every one that is set, so an arm run with a knob gets its own digest and is
+#: never mistaken for the flags-off scored contract.
+NUMERICS_KNOBS = (
+    "PYCIRCUITSIM_NN_NR_LIMIT", "PYCIRCUITSIM_TRAN_REFINE",
+    "PYCIRCUITSIM_TRAN_REFINE_MAXDT", "PYCIRCUITSIM_MNA_ORDERING",
+)
+
+
+def runtime_knobs() -> Dict[str, str]:
+    """Return the numerics-changing knobs set in this process environment."""
+    return {name: os.environ[name] for name in NUMERICS_KNOBS
+            if os.environ.get(name)}
 
 
 def _model_source_hash(root: Path, commit: str) -> str:
@@ -297,6 +311,7 @@ def main(argv: Optional[List[str]] = None) -> int:
         "pdk_sha256": _pdk_hashes(
             args.pdk_root, {tech for _tag, _variant, tech in groups},
         ),
+        "runtime_knobs": runtime_knobs(),
     }
     content = json.dumps(manifest, indent=2, sort_keys=True) + "\n"
     args.output.parent.mkdir(parents=True, exist_ok=True)

@@ -556,6 +556,22 @@ def test_campaign_manifest_detects_checkpoint_mutation(tmp_path: Path) -> None:
         _verify_group(manifest, checkpoints, group)
 
 
+def test_campaign_manifest_records_numerics_knobs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An arm run with an opt-in solver knob must not share the scored digest.
+
+    The V7.7.6 NN limiter is re-gated as its own arm from the same commit,
+    checkpoints and jobs; only the recorded knob separates the manifests.
+    """
+    for name in manifest_module.NUMERICS_KNOBS:
+        monkeypatch.delenv(name, raising=False)
+    assert manifest_module.runtime_knobs() == {}
+    monkeypatch.setenv("PYCIRCUITSIM_NN_NR_LIMIT", "1")
+    monkeypatch.setenv("PYCIRCUITSIM_TRAN_REFINE", "")
+    assert manifest_module.runtime_knobs() == {"PYCIRCUITSIM_NN_NR_LIMIT": "1"}
+
+
 def test_dataset_generator_marks_untracked_templates_dirty(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
