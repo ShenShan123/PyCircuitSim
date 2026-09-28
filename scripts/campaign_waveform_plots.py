@@ -13,8 +13,9 @@ Usage:
   python scripts/campaign_waveform_plots.py --scratch <V710_SCRATCH> \
       [--scratch ...] --out results/<campaign>/waveforms [--jobs 16]
 
-Writes ``<out>/<suite>/<case>/<tech>/<corner>__<analysis>.png`` and
-``<out>/index.csv`` (figure, sizes present per family, missing sizes).
+Writes ``<out>/<level>/<case>/<tech>/<corner>__<analysis>.png`` (levels
+L0-L4 as in ``circuit_templates/``, plus ``hier``) and ``<out>/index.csv``
+(figure, level, missing sizes per family).
 """
 from __future__ import annotations
 
@@ -34,6 +35,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from tests.common.trace_archive import load_trace_pair  # noqa: E402
+
+sys.path.insert(0, str(ROOT / "scripts"))
+from campaign_case_matrix import label, suite_tiers  # noqa: E402
 
 FAMILIES = (("dnf", "DirectNet-Full (L75)"), ("tff", "BSIM-AR-Full (L76)"))
 SIZES = ("small", "medium", "large", "xl")
@@ -105,7 +109,7 @@ def plot_one(item: Tuple[Key, Dict[Tuple[str, str], Path], Path]) -> List[str]:
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
 
-    key, members, out = item
+    key, members, out, level = item
     suite, case, tech, corner, analysis = key
     loaded = {member: load_trace_pair(path) for member, path in members.items()}
     first = next(iter(loaded.values()))
@@ -116,7 +120,7 @@ def plot_one(item: Tuple[Key, Dict[Tuple[str, str], Path], Path]) -> List[str]:
         squeeze=False, sharex="col",
     )
     missing_by_family = []
-    for col, (tag, label) in enumerate(FAMILIES):
+    for col, (tag, family_label) in enumerate(FAMILIES):
         present = [size for size in SIZES if (tag, size) in loaded]
         missing_by_family.append(
             " ".join(size for size in SIZES if size not in present) or "-")
@@ -149,18 +153,18 @@ def plot_one(item: Tuple[Key, Dict[Tuple[str, str], Path], Path]) -> List[str]:
             for spine in ("top", "right"):
                 ax.spines[spine].set_visible(False)
             if row == 0:
-                ax.set_title(label, fontsize=10)
+                ax.set_title(family_label, fontsize=10)
                 ax.legend(fontsize=7, frameon=False, loc="best")
         axes[-1][col].set_xlabel(AXIS_LABEL.get(axis_name, f"{axis_name} (V)"),
                                  fontsize=9)
     fig.suptitle(f"{case} · {tech} · {analysis} · {corner}", fontsize=11)
     fig.tight_layout()
-    dest = out / suite / case / tech / f"{corner}__{analysis}.png"
+    dest = out / level / label(suite) / tech / f"{case}__{corner}__{analysis}.png"
     dest.parent.mkdir(parents=True, exist_ok=True)
     fig.savefig(dest, dpi=110)
     plt.close(fig)
-    return [str(dest.relative_to(out)), suite, case, tech, corner, analysis,
-            *missing_by_family]
+    return [str(dest.relative_to(out)), level, suite, case, tech, corner,
+            analysis, *missing_by_family]
 
 
 def main() -> int:
@@ -174,13 +178,20 @@ def main() -> int:
     if not groups:
         print("no trace archives found", file=sys.stderr)
         return 2
-    items = [(key, members, args.out) for key, members in sorted(groups.items())]
+    tiers = suite_tiers()
+    unplaced = sorted({key[0] for key in groups} - set(tiers))
+    if unplaced:
+        print(f"suites without a level: {unplaced}", file=sys.stderr)
+        return 2
+    items = [(key, members, args.out, tiers[key[0]])
+             for key, members in sorted(groups.items())]
     with multiprocessing.Pool(args.jobs) as pool:
         rows = pool.map(plot_one, items, chunksize=4)
     args.out.mkdir(parents=True, exist_ok=True)
     with (args.out / "index.csv").open("w", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow(["figure", "suite", "case", "tech", "corner", "analysis",
+        writer.writerow(["figure", "level", "suite", "case", "tech", "corner",
+                         "analysis",
                          "dnf_missing", "tff_missing"])
         writer.writerows(rows)
     print(f"{len(rows)} figures -> {args.out}")
