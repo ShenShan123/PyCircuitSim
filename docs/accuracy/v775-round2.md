@@ -21,6 +21,12 @@ TSMC12/16, four BSIM-AR error labels, the SRAM failure mode, the hold-margin
 median, the runtime section, and the NRMSE comparison (two technologies, not
 three).
 
+**Corrected by the V7.7.6 evaluation.** Three DirectNet small
+`diffpair_active_load` steering rows (TSMC6/7 PMOS, TSMC12 NMOS) sat on
+capacitor state leaked by the pseudo-transient fallback. Their `v(out)` NRMSE
+is 0.01–0.04%, not 2.1–4.6%, and one TSMC12 AC row converges
+([details](v776-evaluation.md#change-from-v775)).
+
 Round 2 is complete: 1,080/1,080 cells, 913 scientific PASS and 167 FAIL, with
 no cell labelled `infra`. Every error row in both families is attributed to the
 candidate model, and the NGSPICE reference converged in every row.

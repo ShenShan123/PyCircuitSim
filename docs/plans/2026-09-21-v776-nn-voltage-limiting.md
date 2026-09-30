@@ -8,7 +8,9 @@ gating is defined below.
 `PYCIRCUITSIM_NN_NR_LIMIT=1`; the [changelog](../CHANGELOG.md#v776--capacitor-state-fix-and-opt-in-nn-limiting)
 records the design and its contract tests. Success criterion 4 is the
 V7.7.6 evaluation, which runs the full campaign once with the knob off (the
-scored runtime) and once with it on.
+scored runtime) and once with it on. Its [result](../accuracy/v776-evaluation.md#nn-limiter-re-gate):
+criteria 2–3 met, criterion 1 partly (71 of 128 support rejections converge),
+and no default flip proposed.
 
 ## Problem
 

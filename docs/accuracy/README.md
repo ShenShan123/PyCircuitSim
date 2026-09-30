@@ -6,6 +6,8 @@ Ground truth is NGSPICE using the identical BSIM-CMG LEVEL=72 OSDI model. Read
 The [V7.7.2 refresh](../plans/2026-09-05-v772-full-retraining.md) is in progress.
 Its fresh S/M/L/XL evidence will replace the reports only after complete
 collection and validation; the measurements below remain historical controls.
+Its first complete single-commit pass is the [V7.7.6 evaluation](v776-evaluation.md);
+whether to promote it into the clean reports is undecided.
 The corrected solver on `main` awaits its separately provenanced
 [V7.7.3 evaluation arm](../plans/2026-09-06-v773-corrected-solver-arm.md).
 The package release is recorded in the [root README](../../README.md); V7.7.5
@@ -33,6 +35,8 @@ TSMC5-only and leaves the Miller opamp as `ERROR`.
 
 | file | scope |
 |---|---|
+| [`v776-evaluation.md`](v776-evaluation.md) | V7.7.6 full campaign, 1,840 cells per arm with the NN limiter off (scored) and on: gates, L0–L4 levels, per-technology error, V7.7.5 corrections, limiter re-gate |
+| [`v776-case-matrix-off.md`](v776-case-matrix-off.md), [`v776-case-matrix-on.md`](v776-case-matrix-on.md) | technology × test case × model tables for each V7.7.6 arm |
 | [`v775-round3.md`](v775-round3.md) | round 3: the seven never-run campaign suites (device/Miller AC, inverter transient, canary, integrity, hierarchy); off-current and false-convergence findings; diagnostic |
 | [`v775-round2.md`](v775-round2.md) | targeted round 2: remaining simple-v2 cases, ring/Miller OMP 2/4, support attribution, harness fixes; diagnostic |
 | [`v775-quick-round1.md`](v775-quick-round1.md) | nominal OMP=1 L0–L4 quick round on the V7.7.2-trained bundles; diagnostic, not a clean replacement |

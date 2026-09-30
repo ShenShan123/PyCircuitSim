@@ -17,6 +17,44 @@ remain in Git history.
 
 ## V7.7 — full-terminal-only NN stack
 
+### 2026-09-30 — V7.7.6 evaluation
+
+The V7.7.6 runtime scored the 80 V7.7.2-trained bundles on all 1,840 nominal
+cells the campaign generator emits, in one pass from a clean worktree at
+`ff4234b`, twice: limiter off (scored) and on (`PYCIRCUITSIM_NN_NR_LIMIT=1`)
+([report](accuracy/v776-evaluation.md); model × test circuit × technology
+tables for the [off](accuracy/v776-case-matrix-off.md) and
+[on](accuracy/v776-case-matrix-on.md) arms).
+
+- No cell is `infra`. `off`: 1,602 PASS, 238 FAIL; `on`: 1,638 PASS, 202 FAIL.
+  NGSPICE converged in all 7,232 rows per arm, and every `ERROR` is a
+  candidate failure.
+- 7,151 of 7,232 rows are bit-identical to V7.7.5 rounds 1–3, and every
+  scored field matches in 7,214, so every gate verdict carries over. The
+  capacitor-state fix changes 15 scored rows (and 63 unscored diagnostic
+  payloads) and corrects four published V7.7.5 values. Three DirectNet small
+  `diffpair_active_load` steering rows (round 2) drop from 2.1–4.6% to
+  0.01–0.04% `v(out)` NRMSE. Round 3's BSIM-AR medium TSMC16 `nn_subckt` AC row
+  is an `ERROR`, not a 43% NRMSE row. Reruns with the fix disabled reproduce the
+  V7.7.5 rows exactly. The other three scored changes are error labels fixed in
+  `b688412`.
+- The limiter converts 71 of 128 support-rejection rows to converged rows
+  (36 cells FAIL → PASS) and changes no row that converges without it. One
+  row stays a support rejection: an accepted NOR2 transient point 5 µV past
+  the box. 56 become non-convergence, 17 with the final iterate still
+  clamped. Changed BSIM-AR cells take a median 3.2× longer; one takes 8.7 h
+  against 75 s and still fails. The default stays off; a flip is not proposed.
+- BSIM-AR costs 67× DirectNet in cell-hours (2,067 against 31); the longest
+  cell ran 57 h.
+
+A host reboot killed 68 in-flight cells, which reran from scratch on
+byte-identical manifests. Verification: 1,174 tests and geometry 463/463 before
+launch. The V7.7.5 round summarizers reran unchanged and fail closed on this
+campaign. A KCL re-stamp of every scored DC sweep (3,930 off, 3,957 on) found
+no point off a fixed point; the worst is 0.45× the acceptance threshold. An
+independent re-parse of all 5,520 raw logs reproduced the report; its seven
+corrections are applied. The preserved-report checksums verify.
+
 ### V7.7.6 — capacitor-state fix and opt-in NN limiting
 
 Released 2026-09-25. Two LEVEL=75/76 solver changes, one fixed and one opt-in:

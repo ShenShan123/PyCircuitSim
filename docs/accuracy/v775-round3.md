@@ -217,6 +217,9 @@ state after its transient stage, with a regression test that a DC sweep after a
 fallback matches a fresh-circuit solve. It changes numerics, so it needs its own
 re-gate and is not made here. It shipped in
 [V7.7.6](../CHANGELOG.md#v776--capacitor-state-fix-and-opt-in-nn-limiting).
+The [V7.7.6 evaluation](v776-evaluation.md#change-from-v775) measured its
+effect: this report's BSIM-AR medium TSMC16 `nn_subckt` AC row (43% NRMSE) also
+sat on leaked state and is an `ERROR` after the fix.
 
 ## Per-technology aggregates
 
