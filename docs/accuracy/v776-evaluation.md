@@ -8,10 +8,10 @@ technologies × NMOS/PMOS) on every nominal cell the campaign generator emits,
 in two arms that differ only in `PYCIRCUITSIM_NN_NR_LIMIT`. The `off` arm is
 the scored V7.7.6 runtime; the `on` arm is the limiter re-gate (criterion 4 of
 the [plan](../plans/2026-09-21-v776-nn-voltage-limiting.md)). Methodology §5's
-single-campaign condition holds. Publishing it through the clean-report builder
-in place of [`DirectNet-L75-clean.md`](DirectNet-L75-clean.md) and
-[`BSIM-AR-L76-clean.md`](BSIM-AR-L76-clean.md) is a separate decision, not made
-here. Gate rules are owned by [`methodology.md`](methodology.md).
+single-campaign condition holds, and the `off` arm's clean pool is the evidence
+pass of [`DirectNet-L75-clean.md`](DirectNet-L75-clean.md) and
+[`BSIM-AR-L76-clean.md`](BSIM-AR-L76-clean.md). Gate rules are owned by
+[`methodology.md`](methodology.md).
 
 The model × test circuit × technology tables are in
 [`v776-case-matrix-off.md`](v776-case-matrix-off.md) (scored) and
@@ -49,7 +49,7 @@ Every other table uses the 1,680 OMP=1 cells.
 | gate | DN-S | DN-M | DN-L | DN-XL | AR-S | AR-M | AR-L | AR-XL |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | device DC configs (/129) | 128 | 129 | 127 | 126 | 128 | 129 | 129 | 129 |
-| simple-v1 cells (/20) | 18 | 20 | 20 | 20 | 19 | 18 | 20 | 20 |
+| simple-v1 cells at OMP=1 (/20) | 18 | 20 | 20 | 20 | 19 | 18 | 20 | 20 |
 | ring + Miller strict at OMP 1/2/4 (/10) | 10 | 10 | 10 | 10 | 9 | 8 | 10 | 10 |
 | device AC (/10) | 10 | 10 | 10 | 8 | 10 | 10 | 10 | 10 |
 | Miller open-loop AC (/5) | 0 | 0 | 2 | 2 | 1 | 4 | 4 | 4 |
@@ -57,10 +57,12 @@ Every other table uses the 1,680 OMP=1 cells.
 | lifted-source canary configs (/30) | 30 | 30 | 30 | 30 | 30 | 30 | 30 | 30 |
 
 DN = DirectNet-Full (LEVEL=75), AR = BSIM-AR-Full (LEVEL=76); S/M/L/XL = size.
-Every verdict equals V7.7.5 rounds 1–3, whose reports explain each miss
-([round 1](v775-quick-round1.md), [round 2](v775-round2.md),
-[round 3](v775-round3.md)). The one OMP flip is BSIM-AR medium TSMC12 Miller
-DC, which fails at 4 threads. Device and terminal integrity and the NN
+Every verdict equals V7.7.5 rounds 1–3, whose reports (in Git history)
+explain each miss: [round 1](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/v775-quick-round1.md),
+[round 2](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/v775-round2.md), [round 3](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/v775-round3.md). One cell depends on
+the thread count: BSIM-AR medium TSMC12 Miller DC passes at 1 and 2 threads and
+does not converge at 4. The clean reports score it strictly as `ERROR`, so
+BSIM-AR medium is 17/20 there. Device and terminal integrity and the NN
 off-current excess are bit-identical to round 3. So is flat/nested netlist
 agreement, except the BSIM-AR medium TSMC16 rows described below.
 
@@ -114,13 +116,13 @@ Voltage error covers every DC, operating-point and transient voltage trace:
 simple-v2 cases, the four simple-v1 gates, inverter transients and
 `nn_subckt`. It excludes the NAND2/NOR2 stack nodes `v(nint)`/`v(pint)` in
 every analysis, because NGSPICE's `uic` start-up step drives them past the
-rails ([round 2](v775-round2.md)). Every per-technology maximum comes from a
+rails ([round 2](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/v775-round2.md)). Every per-technology maximum comes from a
 free-running ring oscillator: `ring_osc_supply`, or the `ring_osc` gate for
 BSIM-AR TSMC6. A small period error (`ring_osc_supply`: median 0.27%, worst
 3.6% over 40 rows) accumulates into phase drift across the window, so the
 pointwise error measures accumulated phase, not voltage levels. The
 next-largest are one-step (5 mV) VTC trip shifts in `nn_subckt` DC (up to
-775 mV), described in [round 3](v775-round3.md).
+775 mV), described in [round 3](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/v775-round3.md).
 
 ## Change from V7.7.5
 
@@ -239,3 +241,8 @@ Under `PyCircuitSim-v776-eval/results/v776_eval/` (not in Git):
   campaign, the row pairing, the aggregates, the audit, and the reruns with
   the capacitor fix disabled.
 - `interrupted_20260927/`: partial logs of the 68 cells the reboot killed.
+
+The clean-pool verdict logs and collected `data.json` behind the clean reports
+are in `results/v776_full_clean/` of the main checkout. The V7.7.5 raw evidence
+that the "Change from V7.7.5" section compared against was purged on
+2026-10-01; `capfix_repro/` keeps the reruns that attribute the changes.

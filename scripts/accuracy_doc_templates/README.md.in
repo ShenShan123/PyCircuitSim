@@ -11,18 +11,19 @@ runtime evaluation.
 ## Current NN policy
 
 DirectNet-Full LEVEL=75 is the default NN path. BSIM-AR-Full LEVEL=76 is the
-autoregressive alternative. Retired LEVEL=73/74 reports are available in Git
-history; [the changelog](../CHANGELOG.md#v775--repository-cleanup) records their
-last revision.
+autoregressive alternative. Both are the 80 V7.7.2-trained bundles, scored by
+the V7.7.6 runtime. Reports of earlier versions, including retired LEVEL=73/74,
+are available in Git history; [the changelog](../CHANGELOG.md#2026-10-01--v776-report-promotion-and-evidence-purge)
+records the last revision that holds them.
 
 ## Current reports
 
 | file | scope |
 |---|---|
-| [`DirectNet-L75-clean.md`](DirectNet-L75-clean.md) | latest LEVEL=75 clean qualification and gaps |
-| [`BSIM-AR-L76-clean.md`](BSIM-AR-L76-clean.md) | clean LEVEL=76 qualification or explicit incomplete-matrix status |
-| [`BSIM-AR-L76-simple-circuits.md`](BSIM-AR-L76-simple-circuits.md) | TSMC5 LEVEL=76 recovery; not a five-tech matrix |
-| [`simple-circuits-v2-topologies.md`](simple-circuits-v2-topologies.md) | held-out topology and promotion contract |
+| [`DirectNet-L75-clean.md`](DirectNet-L75-clean.md) | LEVEL=75 clean qualification: simple-v1 gates, device and AC suites |
+| [`BSIM-AR-L76-clean.md`](BSIM-AR-L76-clean.md) | LEVEL=76 clean qualification: simple-v1 gates, device and AC suites |
+| [`v776-evaluation.md`](v776-evaluation.md) | the full V7.7.6 campaign behind both clean reports, with the NN limiter off (scored) and on: L0–L4 levels, per-technology error, limiter re-gate, KCL audit |
+| [`v776-case-matrix-off.md`](v776-case-matrix-off.md), [`v776-case-matrix-on.md`](v776-case-matrix-on.md) | technology × test case × model tables for each V7.7.6 arm |
 
 ## Clean scoreboard
 

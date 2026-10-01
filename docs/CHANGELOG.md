@@ -17,6 +17,39 @@ remain in Git history.
 
 ## V7.7 — full-terminal-only NN stack
 
+### 2026-10-01 — V7.7.6 report promotion and evidence purge
+
+- **Clean reports.** `DirectNet-L75-clean.md` and `BSIM-AR-L76-clean.md` now
+  render from the clean pool of the V7.7.6 evaluation's scored arm (`ff4234b`,
+  manifest `297868d0`), replacing the V7.6.6 pass. Strict simple-v1 by size:
+  DirectNet 18, 20, 20, 20/20; BSIM-AR 19, 17, 20, 20/20. The BSIM-AR medium
+  total counts the TSMC12 Miller cell, which fails only at 4 threads, as
+  `ERROR`. The builder registers the pass as `V7.7.6` (`results/v776_full_clean/`,
+  collected from the campaign logs) and pins the new report and index digests;
+  the index is rendered from its template.
+- **Reports.** Removed 14 superseded reports from `docs/accuracy/`: V7.7.5
+  rounds 1–3, the V7.6.x DirectNet recovery, targeted and follow-up reports,
+  the BSIM-AR TSMC5 recovery, two coverage reports, the simple-v2 topology
+  contract and four harness audits. They remain at `bde2c11`, and every link to
+  them now points there. The simple-v2 contract (derived metrics, unconverged
+  payloads, corners, promotion rule) moved into `methodology.md` §2.
+- **Results on disk** (outside Git). Deleted the V7.6.6 and V7.7.1
+  datasets and checkpoints, pilots, setup, diagnostics and test scratch from
+  `results/` (37 → 13 GB), twelve old campaign worktrees (regate-20260827, v771,
+  v771-harness-fix, v772, v772-eval r1–r5, v775 quick/round2/round3) and the
+  15 GB regate artifact directory. Kept the current models' `v771_r2_checkpoints`
+  and `v771_r2_data`, re-verified against the campaign manifest (280 checkpoint
+  artifacts, 10 datasets), their training-campaign records and the V7.7.6
+  evaluation worktree. Branches are untouched, and every removed worktree's HEAD
+  is on a branch.
+
+The coverage tool registers the pass too, and the README scoreboard's
+no-evidence fallback now names V7.7.6 for both families. The two hermetic
+checks that pinned V7.6.6 (registration and scoreboard fallback) now pin
+V7.7.6. Verification: 1,175 tests passed, none skipped. The builder's
+`--check` passes with and without `results/v776_full_clean/`, coverage of the
+pass is 600/600 cells, and every local Markdown link resolves.
+
 ### 2026-09-30 — V7.7.6 evaluation
 
 The V7.7.6 runtime scored the 80 V7.7.2-trained bundles on all 1,840 nominal
@@ -134,7 +167,7 @@ result is claimed.
 
 ### 2026-09-25 — V7.7.5 checkpoint round 3 and round-report verification
 
-Round 3 ([report](accuracy/v775-round3.md)) ran the seven campaign suites that
+Round 3 ([report](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/v775-round3.md)) ran the seven campaign suites that
 neither earlier round covered, on the same 80 bundles: device AC, Miller
 open-loop AC, parametric inverter transient, the lifted-source canary, device
 and terminal integrity, and flat/nested NN netlists. That is 280 nominal OMP=1
@@ -191,7 +224,7 @@ and the preserved-report checksums verify. No numerical source changed.
 ### 2026-09-15 — V7.7.5 checkpoint targeted round 2
 
 After round 1, the user chose a targeted round 2 and asked for both harness
-defects to be fixed first ([report](accuracy/v775-round2.md)). It covers the 23
+defects to be fixed first ([report](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/v775-round2.md)). It covers the 23
 remaining simple-v2 cases at nominal (920 cells) and the ring and Miller gates
 at OMP 2/4 (160 cells), from branch `eval/v775-round2` at `d708d4b`.
 
@@ -236,7 +269,7 @@ finished.
 
 This round scored the 80 V7.7.2-trained bundles shipped with V7.7.5 on a
 nominal, OMP=1 subset of the L0–L4 tiers: 12 cases × 2 families × 4 sizes ×
-5 technologies = 480 cells ([report](accuracy/v775-quick-round1.md)). The
+5 technologies = 480 cells ([report](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/v775-quick-round1.md)). The
 evaluation runtime is main `d6ae11c` plus the evaluation-branch harness
 repairs (`39b14f1`), which were unmerged while the round ran and reached main
 in merge `b688412`. Its manifests record a distinct evaluation arm,
@@ -472,7 +505,7 @@ source of the in-flight V7.7.2 campaign; V7.7.3 is the separately provenanced
 arm that will score the corrected runtime on the V7.7.2 checkpoints and carry
 the items the audit left open. The
 [plan](plans/2026-09-06-v773-corrected-solver-arm.md) lists them with their
-blockers. Opening commit: the [audit](accuracy/v772-harness-audit.md) was
+blockers. Opening commit: the [audit](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/v772-harness-audit.md) was
 compacted into one record of findings, fixes and witnesses, and
 `run_simulation` gained an in-process witness for `.tran`, `.dc`, `.ac` and
 the bare operating point (`simulation.py` collected-suite coverage
@@ -510,7 +543,7 @@ tests exercise the training-to-evaluation barrier and reject changed numerical
 source inputs. Two expected CPU pin-memory warnings remain.
 
 Harness audit closure (2026-09-05, `main` only; the in-flight release
-worktree is untouched). The [audit](accuracy/v772-harness-audit.md) records
+worktree is untouched). The [audit](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/v772-harness-audit.md) records
 each finding and its closure. Two of its proposed fixes were wrong as written:
 the geometry guard takes no `--tech` and read the package dataset directory,
 not the campaign root, so its 463/463 had been measured on the wrong grid; the
@@ -556,7 +589,7 @@ PMOS, and reports diagnostic execution failures; the collector requires all
 six rows per checkpoint group. AC phase now appears in the human report.
 Retained LEVEL=72 suites now fail on mixed PASS/ERROR results and reject an
 unconverged transient initialization; parametric errors update tech status.
-The [audit](accuracy/v772-harness-audit.md#numerical-defects-found-and-fixed)
+The [audit](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/v772-harness-audit.md#numerical-defects-found-and-fixed)
 owns reproductions, verification, and remaining qualification limits. Version
 scope remains V7.7.2; active training and release worktrees are untouched.
 Corrected numerical source requires a separate complete evaluation before
@@ -703,7 +736,7 @@ the unused `find_threshold` probe raises. Collected suite: 562 tests.
 
 Audited V7.6.9's NN compact-model harness for questions that had declarations
 but no independent behavioral witness. The executable report is
-[`v7610-harness-audit.md`](accuracy/v7610-harness-audit.md). No diagnostic was
+[`v7610-harness-audit.md`](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/v7610-harness-audit.md). No diagnostic was
 promoted, no threshold moved, and the frozen `simple-v1` `/20` denominator is
 unchanged.
 
@@ -733,7 +766,7 @@ render/parity cells, and 600/600 clean campaign jobs.
 
 Asked what the harness does not test at all, rather than whether the catalog is
 consistent. The executable review is
-[`v769-harness-audit.md`](accuracy/v769-harness-audit.md). No diagnostic was
+[`v769-harness-audit.md`](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/v769-harness-audit.md). No diagnostic was
 promoted, no threshold moved, and the frozen `simple-v1` `/20` denominator is
 unchanged.
 
@@ -848,7 +881,7 @@ ladder, inverter energy, and NN hierarchy. These are diagnostics, not a new
 published score or threshold campaign.
 
 **Post-change harness audit.** The executable review in
-[`v768-template-harness-audit.md`](accuracy/v768-template-harness-audit.md)
+[`v768-template-harness-audit.md`](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/v768-template-harness-audit.md)
 fixed a derived-row CLI crash, an unmeasurable common-source bandwidth,
 PMOS subthreshold ordering, corner/role geometry enumeration, incomplete-axis
 acceptance, physical-parity gaps, stale diagnostics, and fail-open campaign and
@@ -949,7 +982,7 @@ metric must name a known ratio; an L4 system must declare a transient and not
 every one of them may use `uic`.
 
 **Measured on the served DirectNet L73 `large` checkpoints.** Reported in
-[the coverage report](accuracy/device-and-feedback-coverage-v767.md). The
+[the coverage report](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/device-and-feedback-coverage-v767.md). The
 sharpest result is a two-element reproducer: a diode-connected NMOS fed
 through a resistor from the rail does not satisfy the convergence contract,
 while the same device fed by an ideal current source does, and LEVEL=72
@@ -1047,7 +1080,7 @@ cases enumerate automatically.
   teacher bundle into one checksum-valid S/M/L/XL artifact root. Large has the
   best aggregate DC/transient error among the two three-circuit tiers; the
   full tables and provenance are in
-  [the LEVEL=76 simple-circuit report](accuracy/BSIM-AR-L76-simple-circuits.md).
+  [the LEVEL=76 simple-circuit report](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/BSIM-AR-L76-simple-circuits.md).
 - Rejected polarity hybrids, support-aware stamping, and a physical line
   search. The Medium hybrid worsened switched-capacitor droop to 1.598 mV
   against a 0.650 mV allowance, while the runtime experiments delayed or
@@ -1098,7 +1131,7 @@ cases enumerate automatically.
 - Rejected a device-boundary limiter, an old PMOS warm start that cut device
   DC to 58/129, normalization-only support widening, and an incomplete
   LEVEL=75 detector. Details are in
-  [DirectNet-L75-v763-targeted.md](accuracy/DirectNet-L75-v763-targeted.md).
+  [DirectNet-L75-v763-targeted.md](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/DirectNet-L75-v763-targeted.md).
 
 ### V7.6.2 — clean DirectNet-Full qualification (2026-08-28)
 
@@ -1148,7 +1181,7 @@ cases enumerate automatically.
   support.
 - Generation probes were diagnostic; no checkpoint or circuit result was
   promoted. See
-  [DirectNet-L75-V760-recovery.md](accuracy/DirectNet-L75-V760-recovery.md).
+  [DirectNet-L75-V760-recovery.md](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/DirectNet-L75-V760-recovery.md).
 
 ## V7.5 — AnalogGym migration and evidence repair
 

@@ -20,6 +20,10 @@ owned by [`methodology.md`](methodology.md).
 LEVEL=76 is the supported autoregressive alternative. This scan reports its
 evidence without changing the DirectNet-Full default.
 
+The evidence is the clean pool of the scored (limiter-off) arm of the
+[V7.7.6 evaluation](v776-evaluation.md), which also covers simple-v2, the
+canary, the NN limiter and per-technology error.
+
 ## Headline — circuit gates by tier
 
 <!--HEADLINE-->

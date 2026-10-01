@@ -1157,14 +1157,14 @@ def _check_readme_uses_all_current_families() -> None:
             docs.REPORT_PASS = old_pass
 
 
-def _check_v766_full_clean_registration() -> None:
+def _check_v776_full_clean_registration() -> None:
     """Both full-terminal reports must resolve to one combined clean pass."""
     pass_roots = dict(coverage.PASSES)
-    assert pass_roots["v766-full-clean"].name == "v766_full_clean"
-    assert docs.REPORT_PASS["dnf"] == "V7.6.6"
-    assert docs.REPORT_PASS["tff"] == "V7.6.6"
-    assert docs.CAMPAIGN_EVIDENCE["V7.6.6"] == (
-        "v766_full_clean", 480, 280,
+    assert pass_roots["v776-full-clean"].name == "v776_full_clean"
+    assert docs.REPORT_PASS["dnf"] == "V7.7.6"
+    assert docs.REPORT_PASS["tff"] == "V7.7.6"
+    assert docs.CAMPAIGN_EVIDENCE["V7.7.6"] == (
+        "v776_full_clean", 600, 280,
     )
 
 
@@ -1214,7 +1214,7 @@ def _check_incomplete_reports_preserve_verified_output() -> None:
             with redirect_stdout(io.StringIO()):
                 assert not docs.build_readme(check=False)
             scoreboard = docs.scoreboard()
-            assert "V7.6.6 `large` **20/20** simple-circuit matrix" in scoreboard
+            assert "V7.7.6 `medium` **20/20** simple-circuit matrix" in scoreboard
             assert "V7.5.16 `large`" not in scoreboard
         finally:
             docs.TPL = old_tpl
@@ -1264,7 +1264,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     _check_fail_on_gaps()
     _check_report_payload_completeness()
     _check_readme_uses_all_current_families()
-    _check_v766_full_clean_registration()
+    _check_v776_full_clean_registration()
     _check_incomplete_reports_preserve_verified_output()
     clean_pool = jobs.build_pools()["clean"]
     clean_jobs = len(clean_pool)

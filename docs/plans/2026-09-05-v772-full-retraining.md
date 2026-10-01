@@ -2,8 +2,8 @@
 
 Status: training complete on 2026-09-11 with 80/80 bundles. The campaign's
 automatic evaluation never finished; the saved bundles were scored instead by
-the V7.7.5 diagnostic [round 1](../accuracy/v775-quick-round1.md) and
-[round 2](../accuracy/v775-round2.md), which are not a clean qualification.
+the V7.7.5 diagnostic [round 1](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/v775-quick-round1.md) and
+[round 2](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/v775-round2.md), which are not a clean qualification.
 The user consolidated V7.7.1 and V7.7.2 into one campaign and requested
 automatic evaluation after training. There is one 80-model refresh and one
 final V7.7.2 campaign publication. No accuracy promotion is
@@ -82,7 +82,7 @@ runs the 600 + 1,200 jobs only. The geometry guard was run by hand against
 dispatched from the audited source after training completes, into its own
 output root, before the V7.7.2 reports are finalized.
 
-The [audit follow-up](../accuracy/v772-harness-audit.md#numerical-defects-found-and-fixed)
+The [audit follow-up](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/v772-harness-audit.md#numerical-defects-found-and-fixed)
 also fixes solver numerics on `main`. That corrected runtime is no longer
 numerically identical to the frozen campaign source. Preserve the active arm
 and its provenance; do not apply those changes during execution or claim the

@@ -1,160 +1,161 @@
-# DirectNet-Full (LEVEL=75) — clean large simple-circuit qualification
+# DirectNet-Full (LEVEL=75) — clean full-terminal scan
 
-Date: 2026-09-01
+This default DirectNet family learns six independent OSDI terminal surfaces:
+`i_d`, `i_g`, `i_b`, `qd`, `qg`, and `qb`. Source current and charge are
+closed analytically, and the solver stamps the full current and charge
+Jacobians. LEVEL=72 on the identical BSIM-CMG OSDI model is the reference.
 
-> V7.7.0 policy note: LEVEL=75 is now the default NN runtime and the reduced
-> LEVEL=73/74 implementations are retired. No new numerical campaign was run
-> for that maintenance decision; every limitation recorded below still stands.
+Clean means one uniform run per technology, polarity, and tier with
+`--swa-mode ema --seed 42` through the full-terminal-only trainer.
 
-This is the latest clean, source-pinned qualification of the four-terminal
-`large` DirectNet-Full model. It learns the independent OSDI surfaces
-`i_d`, `i_g`, `i_b`, `qd`, `qg`, and `qb`; source current and charge
-are closed analytically. NGSPICE LEVEL=72 on the identical BSIM-CMG OSDI model
-is ground truth.
+Evidence pass: **V7.7.6**. Campaign manifest SHA-256 `297868d022a20f839516c417f8bf19e7c55eee51dd7844eea1860c1fad3f9b28` pins gate commit `ff4234b56ac2ea0f7f86603753b45bca6edcd9b8`, 600 jobs, and 280 checkpoint artifacts. Raw evidence: `results/v776_full_clean/`. Dataset/training source: `6be83348c1f5db6720d7504ed6dcea874a3a7418`; original source inventory SHA-256 `41f82c77a3ef2aa185f053d1a41d65ff7c4dcbe2ec446510fddf7870de107a64`. Evaluation runtime: `ff4234b56ac2ea0f7f86603753b45bca6edcd9b8`; evaluation inventory SHA-256 `d0d4ed4d52f08b08c2bcf143b940501fbacedf6b9269759f62f3db9f8907c243`. This is a separate evaluation of the saved weights; it does not claim source equivalence or retraining.
 
-The campaign covers the declared gates backed by canonical parameterized
-templates in `circuit_templates/`. Results from earlier checkpoints are
-not mixed into this campaign.
+Gate definitions, strict OMP scoring, denominator rules, and comparability are
+owned by [`methodology.md`](methodology.md).
 
-Gate definitions and denominator rules are owned by
-[`methodology.md`](methodology.md).
+## Status
 
-## Outcome
+LEVEL=75 is the maintained default. This report still gates scientific claims
+on the measured rows; default status does not turn failures into passes.
 
-**The requested simple-circuit qualification passes: 20/20 strict cells with
-zero OMP verdict flips.** The same checkpoints also pass 100/100 parametric
-inverter configurations and 10/10 common-source AC cells.
+The evidence is the clean pool of the scored (limiter-off) arm of the
+[V7.7.6 evaluation](v776-evaluation.md), which also covers simple-v2, the
+canary, the NN limiter and per-technology error.
 
-This is not a general LEVEL=75 production promotion: parametric device DC is
-115/129 and Miller open-loop AC is 2/5.
+## Headline — circuit gates by tier
 
-## Final strict gate table
+| group | strict /20 | ring_osc | opamp | sram_snm | switchcap | flips | open cells |
+|---|---|---|---|---|---|---|---|
+| small | **18/20** | 5/5 | 5/5 | 5/5 | 3/5 | 0 | tsmc6-switchcap, tsmc7-switchcap |
+| medium | **20/20** | 5/5 | 5/5 | 5/5 | 5/5 | 0 | — |
+| large | **20/20** | 5/5 | 5/5 | 5/5 | 5/5 | 0 | — |
+| xl | **20/20** | 5/5 | 5/5 | 5/5 | 5/5 | 0 | — |
 
-Ring and Miller DC were repeated at OMP 1, 2, and 4. SRAM and switch-cap used
-the declared deterministic OMP=1 contract. Every declared job completed and
-all thread-count verdicts agreed.
+## By testcase
 
-| technology | ring oscillator period error | Miller DC gain error | SRAM worst-lobe NRMSE | switch-cap charge error / VDD | strict |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| TSMC5 | **PASS** 0.02% | **PASS** 0.51% | **PASS** 7.35% | **PASS** 0.04% | **4/4** |
-| TSMC6 | **PASS** 0.09% | **PASS** 3.43% | **PASS** 1.96% | **PASS** 0.03% | **4/4** |
-| TSMC7 | **PASS** 0.09% | **PASS** 3.43% | **PASS** 1.96% | **PASS** 0.03% | **4/4** |
-| TSMC12 | **PASS** 0.04% | **PASS** 0.01% | **PASS** 3.20% | **PASS** 0.00% | **4/4** |
-| TSMC16 | **PASS** 0.08% | **PASS** 0.87% | **PASS** 3.50% | **PASS** 0.17% | **4/4** |
-| **all** | **5/5** | **5/5** | **5/5** | **5/5** | **20/20** |
+#### Ring oscillator
 
-The strict thresholds are period error ≤5%, Miller DC gain error ≤10%, SRAM
-worst-lobe NRMSE ≤10% with positive lobes, and switch-cap charge error ≤5% of
-VDD together with the gate's convergence and state checks.
+*Verdict is the gate's exit code; the number is the period error %, gate ≤5 %.*
 
-## Device and inverter error
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
+|---|---|---|---|---|---|
+| small | **PASS** 0.82% | **PASS** 0.09% | **PASS** 0.09% | **PASS** 1.14% | **PASS** 1.99% |
+| medium | **PASS** 0.13% | **PASS** 0.47% | **PASS** 0.47% | **PASS** 0.17% | **PASS** 0.38% |
+| large | **PASS** 0.00% | **PASS** 0.10% | **PASS** 0.93% | **PASS** 0.01% | **PASS** 0.08% |
+| xl | **PASS** 0.40% | **PASS** 0.05% | **PASS** 0.05% | **PASS** 0.08% | **PASS** 0.25% |
 
-Numeric aggregates include only configurations that returned commensurate
-metrics. Explicit failures remain in each denominator.
+#### Two-stage Miller opamp (DC)
 
-### Parametric device DC — 115/129
+*Verdict is the gate's exit code; the number is the open-loop gain error %, gate ≤10 %.*
 
-| technology | pass | mean NRMSE | mean MRE | minimum R² | maximum error |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| TSMC5 | 22/26 | 4.542% | 28.649% | -1.97134 | 494.3 µA |
-| TSMC6 | 22/26 | 5.915% | 28.594% | -4.21186 | 483.6 µA |
-| TSMC7 | 17/21 | 7.267% | 35.207% | -4.21186 | 483.6 µA |
-| TSMC12 | 29/30 | 1.966% | 7.809% | -2.24170 | 198.3 µA |
-| TSMC16 | 25/26 | 2.751% | 9.643% | -2.14903 | 198.3 µA |
-| **all** | **115/129** | — | — | — | — |
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
+|---|---|---|---|---|---|
+| small | **PASS** 7.50% | **PASS** 4.62% | **PASS** 4.62% | **PASS** 1.95% | **PASS** 0.20% |
+| medium | **PASS** 0.69% | **PASS** 1.54% | **PASS** 1.54% | **PASS** 0.78% | **PASS** 1.73% |
+| large | **PASS** 0.19% | **PASS** 3.43% | **PASS** 0.04% | **PASS** 0.10% | **PASS** 0.30% |
+| xl | **PASS** 0.07% | **PASS** 7.51% | **PASS** 7.51% | **PASS** 0.19% | **PASS** 0.04% |
 
-The 14 failures are concentrated in the +125 °C and joint
-length/NFIN/temperature configurations for TSMC5/6/7, plus the TSMC12/16 PMOS
-joint configurations. Increasing circuit closure therefore does not erase
-the remaining hot/joint device error.
+#### 6T SRAM read SNM
 
-### Parametric inverter VTC/transient — 100/100
+*Verdict is the gate's exit code; the number is the worst lobe NRMSE %, gate ≤10 % and all lobes positive.*
 
-| technology | pass | mean NRMSE | mean MRE | minimum R² | maximum voltage error |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| TSMC5 | 20/20 | 0.838% | 3.215% | 0.99114 | 184.6 mV |
-| TSMC6 | 20/20 | 0.827% | 3.438% | 0.99094 | 245.6 mV |
-| TSMC7 | 20/20 | 0.827% | 3.438% | 0.99094 | 245.6 mV |
-| TSMC12 | 20/20 | 0.724% | 3.685% | 0.99196 | 218.0 mV |
-| TSMC16 | 20/20 | 0.779% | 3.582% | 0.99242 | 210.7 mV |
-| **all** | **100/100** | — | — | — | — |
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
+|---|---|---|---|---|---|
+| small | **PASS** 6.10% | **PASS** 1.54% | **PASS** 1.54% | **PASS** 3.71% | **PASS** 1.60% |
+| medium | **PASS** 6.54% | **PASS** 1.74% | **PASS** 1.74% | **PASS** 1.14% | **PASS** 1.30% |
+| large | **PASS** 7.08% | **PASS** 1.96% | **PASS** 1.79% | **PASS** 1.10% | **PASS** 2.32% |
+| xl | **PASS** 6.70% | **PASS** 1.64% | **PASS** 1.64% | **PASS** 2.00% | **PASS** 3.85% |
 
-## AC gates
+#### Switched-capacitor cell
 
-### Common-source device AC — 10/10
+*Verdict is the gate's exit code; the number is the charge error % of VDD, gate ≤5 %.*
 
-Cells report DC-gain error / f3dB ratio / magnitude NRMSE.
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 |
+|---|---|---|---|---|---|
+| small | **PASS** 0.15% | FAIL 0.27%† | FAIL 0.27%† | **PASS** 0.07% | **PASS** 0.08% |
+| medium | **PASS** 0.02% | **PASS** 0.03% | **PASS** 0.03% | **PASS** 0.10% | **PASS** 0.07% |
+| large | **PASS** 0.02% | **PASS** 0.03% | **PASS** 0.00% | **PASS** 0.01% | **PASS** 0.10% |
+| xl | **PASS** 0.06% | **PASS** 0.10% | **PASS** 0.10% | **PASS** 0.01% | **PASS** 0.08% |
 
-| technology | NMOS | PMOS |
-| --- | --- | --- |
-| TSMC5 | **PASS** 0.614 dB / 1.000 / 7.01% | **PASS** 0.255 dB / 0.891 / 2.82% |
-| TSMC6 | **PASS** 0.512 dB / 1.122 / 5.40% | **PASS** 0.240 dB / 1.000 / 2.58% |
-| TSMC7 | **PASS** 0.512 dB / 1.122 / 5.40% | **PASS** 0.240 dB / 1.000 / 2.58% |
-| TSMC12 | **PASS** 0.251 dB / 1.000 / 2.65% | **PASS** 0.394 dB / 1.000 / 4.11% |
-| TSMC16 | **PASS** 0.315 dB / 1.000 / 3.39% | **PASS** 0.488 dB / 1.000 / 5.08% |
+† failed on **hold droop**, the half of this gate the headline number does not show — the metric above is inside its threshold.
 
-### Miller open-loop AC — 2/5
+## By technology
 
-The gate requires DC-gain error ≤3 dB, GBW ratio in [0.6, 1.67], phase-margin
-error ≤15°, a valid refined LEVEL=72 reference bias, and a converged NN
-operating point. Magnitude NRMSE is diagnostic.
+| tech | ring\_osc | opamp | sram\_snm | switchcap | all cells |
+|---|---|---|---|---|---|
+| **TSMC5** | 4/4 | 4/4 | 4/4 | 4/4 | **16/16** |
+| **TSMC6** | 4/4 | 4/4 | 4/4 | 3/4 | **15/16** |
+| **TSMC7** | 4/4 | 4/4 | 4/4 | 3/4 | **15/16** |
+| **TSMC12** | 4/4 | 4/4 | 4/4 | 4/4 | **16/16** |
+| **TSMC16** | 4/4 | 4/4 | 4/4 | 4/4 | **16/16** |
 
-| technology | verdict | DC-gain error | GBW ratio | phase-margin error | magnitude NRMSE |
-| --- | --- | ---: | ---: | ---: | ---: |
-| TSMC5 | **FAIL** | 7.34 dB | 0.999 | 0.207° | 71.2% |
-| TSMC6 | **PASS** | 2.60 dB | 0.986 | 1.09° | 17.6% |
-| TSMC7 | **PASS** | 2.60 dB | 0.986 | 1.09° | 17.6% |
-| TSMC12 | **FAIL** | 9.41 dB | 0.974 | 2.48° | 41.2% |
-| TSMC16 | **ERROR** | — | — | — | — |
+TSMC6 and TSMC7 count as two campaign columns but remain one controlled
+ground-truth repeat.
 
-TSMC16 remains an explicit error because NN DC sweep point 51 at 0.4391 V did
-not converge.
+## By scale
 
-## Training and provenance
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | all |
+|---|---|---|---|---|---|---|
+| small | 4/4 | 3/4 | 3/4 | 4/4 | 4/4 | **18/20** |
+| medium | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 | **20/20** |
+| large | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 | **20/20** |
+| xl | 4/4 | 4/4 | 4/4 | 4/4 | 4/4 | **20/20** |
 
-- Source, data generation, training, and scoring commit:
-  `9cac5e9af8d603fe35231a26e11adfc0494e1b56` (clean).
-- Training matrix: five technologies × NMOS/PMOS, 10 fresh full-terminal
-  datasets and 10 `large` checkpoints, 58,940,980 accepted rows total.
-- Recipe: the full-terminal-only trainer with `--swa-mode ema --seed 42`,
-  trained from scratch in an isolated
-  `BSIMAR_CHECKPOINT_DIR`.
-- Checkpoint bundles: model, normalization sidecar, dataset provenance, and
-  completion marker hashes all validated.
-- Focused pre-gate tests: 46/46 passed. Two CPU pin-memory warnings were
-  emitted; no tests were skipped.
-- Scored campaign: all 60/60 fixed jobs collected; 52 returned exit 0 and
-  eight returned scientific exit 1. Every log has exactly one numeric
-  completion marker, and no log contains an unhandled traceback.
-- Campaign manifest SHA-256:
-  `e97ae8864ba2eb0a42cdf76e221a6f6c8c2018beefb6bdbc245790a2497386a9`.
-- Fixed job-list SHA-256:
-  `cb94baf83a0674f25e94957dfad7c1250329e7b8e1546164537458c8a4a7e281`.
-- Collected data SHA-256:
-  `9c8baa2b9ca2fd2b336cbd76d96c76503378c0bf19c75348adf3e1b59e827e70`.
-- Generated report SHA-256:
-  `781e0993a9bc782806ded4cd95d77dcd3466a16fff66c490f605a09a694ad8af`.
-- LEVEL=72 OSDI SHA-256:
-  `f089f17d5d5b1178c48932ff699960dab3ab509c33b34c798421eccbbf14a78b`.
-- NGSPICE 45.2 SHA-256:
-  `3b931f4ecb53a9e2e650087be470b3decc49654ce2237a204c6cb6b4ab45d764`.
+## Device and AC suites
 
-Raw evidence is under
-`results/directnet_full_simple_20260831/eval_9cac/`; checkpoint and dataset
-artifacts are under `results/directnet_full_simple_20260831/`.
+**Parametric DC — `verify_nn_multi_tech_dc`** *(mean NRMSE % / mean MRE % / min R² / max error µA; passing/total configs in parentheses)*
 
-## Rejected infrastructure attempt
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass |
+|---|---|---|---|---|---|---|
+| small | 1.46 / 7.77 / 0.094 / 47.4 (25/26) | 1.39 / 5.46 / 0.976 / 13.5 | 1.33 / 5.34 / 0.976 / 13.5 | 0.47 / 2.14 / 0.998 / 14.5 | 0.75 / 2.59 / 0.995 / 20.3 | 128/129 |
+| medium | 0.47 / 2.56 / 0.900 / 16.3 | 0.57 / 2.13 / 0.995 / 10 | 0.52 / 1.92 / 0.995 / 10 | 0.34 / 1.22 / 0.981 / 50.3 | 0.36 / 0.88 / 0.994 / 24.4 | 129/129 |
+| large | 0.53 / 2.72 / 0.857 / 18.6 | 0.36 / 1.38 / 0.998 / 4.73 | 0.37 / 1.40 / 0.998 / 15.3 | 0.91 / 2.21 / 0.617 / 269 (29/30) | 1.27 / 2.65 / 0.575 / 243 (25/26) | 127/129 |
+| xl | 0.72 / 3.02 / 0.864 / 18.1 | 0.81 / 2.16 / 0.986 / 53.5 | 0.80 / 1.93 / 0.986 / 53.5 | 1.08 / 2.10 / 0.649 / 271 (29/30) | 1.57 / 3.68 / 0.676 / 201 (24/26) | 126/129 |
 
-The first `eval/` attempt is not evidence. Its detached worktree could not
-resolve the repository's untracked OSDI binary, so NGSPICE reported an unknown
-`bsimcmg` device. The scored `eval_9cac/` campaign started fresh after an
-NGSPICE smoke test and pins the exact OSDI hash above. No rows from the
-rejected attempt are mixed into this report.
+**Parametric transient — `verify_nn_multi_tech_tran`** *(mean NRMSE % / mean MRE % / min R² / max error mV; passing/total configs in parentheses)*
 
-## Qualification decision
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass |
+|---|---|---|---|---|---|---|
+| small | 1.43 / 5.35 / 0.992 / 212 | 1.15 / 3.98 / 0.990 / 255 | 1.15 / 3.98 / 0.990 / 255 | 1.33 / 4.69 / 0.992 / 224 | 1.08 / 4.62 / 0.993 / 205 | 100/100 |
+| medium | 0.84 / 3.36 / 0.991 / 185 | 0.81 / 3.28 / 0.991 / 248 | 0.81 / 3.28 / 0.991 / 248 | 0.74 / 3.71 / 0.992 / 219 | 0.76 / 3.69 / 0.993 / 209 | 100/100 |
+| large | 0.84 / 3.23 / 0.991 / 185 | 0.83 / 3.44 / 0.991 / 246 | 0.82 / 3.26 / 0.991 / 247 | 0.73 / 3.73 / 0.992 / 220 | 0.90 / 3.92 / 0.985 / 304 | 100/100 |
+| xl | 0.81 / 3.33 / 0.991 / 185 | 0.96 / 3.66 / 0.987 / 309 | 0.96 / 3.66 / 0.987 / 309 | 0.78 / 4.08 / 0.992 / 220 (18/20) | 0.74 / 3.60 / 0.993 / 210 | 98/100 |
 
-The four-terminal `large` checkpoints are **qualified for the declared
-simple-circuit matrix**: 20/20 strict cells, 100/100 inverter configurations,
-and 10/10 device AC cells pass. V7.7.0 selects them as the maintained default,
-but that policy does not erase the 14/129 device-DC misses or the three open
-Miller AC cells.
+**Device CS-amp AC** — NMOS / PMOS *(gate: gain0 ≤1.5 dB, f3db ratio ∈[0.7, 1.43], magNRMSE ≤10 %)*
+
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass /10 |
+|---|---|---|---|---|---|---|
+| small | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | **10/10** |
+| medium | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | **10/10** |
+| large | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | ✓ / ✓ | **10/10** |
+| xl | ✓ / ✓ | ✓ / ✗ gain 1.532903659042267 dB, mag 18.43735370877581 % | ✓ / ✗ gain 1.532903659042267 dB, mag 18.43735370877581 % | ✓ / ✓ | ✓ / ✓ | **8/10** |
+
+**Opamp open-loop AC** — DC-gain error *(gate: ≤3 dB, GBW ratio ∈[0.6, 1.67], PM err ≤15°, valid refined reference and converged NN OP)*
+
+| group | TSMC5 | TSMC6 | TSMC7 | TSMC12 | TSMC16 | pass /5 |
+|---|---|---|---|---|---|---|
+| small | FAIL 35.88721989290879 dB | FAIL 20.52463875732854 dB | FAIL 20.52463875732854 dB | FAIL 29.633892841031216 dB | FAIL 4.981802113367884 dB | **0/5** |
+| medium | FAIL 11.863560313084278 dB | FAIL 6.933160269989429 dB | FAIL 6.933160269989429 dB | FAIL 4.643728409274331 dB | FAIL 9.130428912890011 dB | **0/5** |
+| large | FAIL 22.313381041297724 dB | FAIL 15.871229925437895 dB | **PASS** 2.7258360473760916 dB | FAIL 3.0989639478506703 dB | **PASS** 2.8957350278218428 dB | **2/5** |
+| xl | FAIL 12.825476519917373 dB | FAIL 19.370854421110188 dB | FAIL 19.370854421110188 dB | **PASS** 2.201414951034792 dB | **PASS** 0.3479427676108955 dB | **2/5** |
+
+## Interpretation
+
+The tables preserve every scientific failure and every declared parametric
+configuration. Numeric aggregates omit only rows that produced no numeric
+metric; those rows remain in the denominator as `ERROR`. Tier comparisons are
+within this family, and the TSMC6 column is the controlled TSMC7 repeat rather
+than an independent ground truth.
+
+Promotion requires a complete tier to satisfy the declared circuit, device,
+and AC gates. Read scientific failures and explicit `ERROR` rows directly from
+the tables rather than inferring them from model size.
+
+## Reproduction
+
+Checkpoints are `tsmc{5,6,7,12,16}_dnf_{small,medium,large,xl}_{nmos,pmos}`.
+Each requires `_best.pt`, `_norm.npz`, and the checksum-bound
+`_best.pt.complete` marker. The provenance above identifies the selected
+campaign, its source commit, and its artifact hashes. See the repository
+README for the complete generation, training, gate, coverage, and report
+commands.

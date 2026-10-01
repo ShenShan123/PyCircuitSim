@@ -42,7 +42,7 @@ future recovery effort has an instrument that moves before production does.
   this plan may alter a published score.
 - New device suites report metrics and convergence; a threshold is frozen only
   after the promotion rule in
-  [`simple-circuits-v2-topologies.md`](../accuracy/simple-circuits-v2-topologies.md)
+  [`simple-circuits-v2-topologies.md`](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/simple-circuits-v2-topologies.md)
   is satisfied.
 - Scored execution remains CPU with one OpenMP, MKL and Torch thread.
 
@@ -170,7 +170,7 @@ These are contract facts, not a wish list; nothing in this plan needs them.
 ## What was built, and where it differs from the plan
 
 Phases 1–3 shipped. Measurements are in
-[the coverage report](../accuracy/device-and-feedback-coverage-v767.md);
+[the coverage report](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/device-and-feedback-coverage-v767.md);
 the shipped inventory is in [`docs/CHANGELOG.md`](../CHANGELOG.md).
 
 Three deviations, all deliberate:

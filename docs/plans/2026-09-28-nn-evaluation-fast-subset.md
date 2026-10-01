@@ -21,7 +21,7 @@ owns the commands.
 ## Where the time goes
 
 Measured on V7.7.5 rounds 1–3, which together ran the generator's 1,840 nominal
-cells ([round 2 runtime](../accuracy/v775-round2.md#runtime)); wall time from
+cells ([round 2 runtime](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/v775-round2.md#runtime)); wall time from
 log creation to verdict on a shared host, weighted by thread count:
 
 | slice | thread-hours | share |

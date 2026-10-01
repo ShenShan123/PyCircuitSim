@@ -18,6 +18,10 @@ owned by [`methodology.md`](methodology.md).
 LEVEL=75 is the maintained default. This report still gates scientific claims
 on the measured rows; default status does not turn failures into passes.
 
+The evidence is the clean pool of the scored (limiter-off) arm of the
+[V7.7.6 evaluation](v776-evaluation.md), which also covers simple-v2, the
+canary, the NN limiter and per-technology error.
+
 ## Headline — circuit gates by tier
 
 <!--HEADLINE-->

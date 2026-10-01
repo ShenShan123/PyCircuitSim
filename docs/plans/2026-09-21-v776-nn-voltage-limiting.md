@@ -1,6 +1,6 @@
 # V7.7.6 — NN-side voltage limiting for LEVEL=75/76
 
-Opened 2026-09-21, after the [round-2 evaluation](../accuracy/v775-round2.md).
+Opened 2026-09-21, after the [round-2 evaluation](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/v775-round2.md).
 No accuracy claim and no retraining: this is a solver-contract change whose
 gating is defined below.
 

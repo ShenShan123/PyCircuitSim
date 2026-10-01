@@ -18,13 +18,13 @@ from the evidence. Markers:
 
 Available sources (each rendered report is pinned to one complete pass):
 
-    results/v766_full_clean/data.json V7.6.6, full-terminal clean re-gate
-    results/v770_full_clean/data.json V7.7.0, full-terminal clean re-gate
+    results/v776_full_clean/data.json V7.7.6, clean pool of the V7.7.6
+                                      evaluation (limiter off, scored arm)
 
 Run after any re-gate:
 
-    python scripts/v710_regate_collect.py --root results/v770_full_clean
-    python scripts/v730_docs_build.py --campaign v770_full_clean
+    python scripts/v710_regate_collect.py --root results/v776_full_clean
+    python scripts/v730_docs_build.py --campaign v776_full_clean
 """
 from __future__ import annotations
 
@@ -131,7 +131,8 @@ PASSES = [("V7.6.1", load_json("v761_directnet_full_clean")),
           ("V7.7.1", load_json("v771_full_clean")),
           ("V7.7.2", load_json("v772_full_clean")),
           ("V7.7.2 models / audited runtime 2026-09-12",
-           load_json("v772_eval_20260912_full_clean"))]
+           load_json("v772_eval_20260912_full_clean")),
+          ("V7.7.6", load_json("v776_full_clean"))]
 PASS_DATA = dict(PASSES)
 ACTIVE_PASS: Optional[str] = None
 CAMPAIGN_EVIDENCE: Dict[str, Tuple[str, int, int]] = {
@@ -144,14 +145,15 @@ CAMPAIGN_EVIDENCE: Dict[str, Tuple[str, int, int]] = {
     "V7.7.2": ("v772_full_clean", 600, 280),
     "V7.7.2 models / audited runtime 2026-09-12":
         ("v772_eval_20260912_full_clean", 600, 280),
+    "V7.7.6": ("v776_full_clean", 600, 280),
 }
 
 # Every report is rendered from one coherent campaign. A later partial pass is
 # never allowed to backfill itself from older cells and overwrite a complete
 # published report.
 REPORT_PASS: Dict[str, str] = {
-    "dnf": "V7.6.6",
-    "tff": "V7.6.6",
+    "dnf": "V7.7.6",
+    "tff": "V7.7.6",
 }
 
 CURRENT_CLEAN_TAGS = ("dnf", "tff")
@@ -159,11 +161,11 @@ README_REQUIRED_CLEAN_TAGS = ("dnf", "tff")
 
 # A preserved report digest is allowed only when its raw campaign is absent.
 PRESERVED_REPORT_SHA256: Dict[str, str] = {
-    "dnf": "16e0a268af73c328c97a986a64452066c19ff633884e53d12f8a5905aa524c00",
-    "tff": "52770afe913622f9ef5621794347314aa78f23b99b1d3f1b5b7391b4d9996f18",
+    "dnf": "1f07d0495903f9bee3fc6c6505bfd4abc845d11cedfe30ca4c102d1c5b2fac44",
+    "tff": "1aa211c67c8ce411404c281a1361cae807a52ce5a633263fd3c55be8f5d3cbd5",
 }
 PRESERVED_README_SHA256 = (
-    "bbb70c10168182bd8429761b7fb800c0c1f4a3b3fb977f42f8dfcd7c5db39877"
+    "2608bdb7a6a783c2da04b804224fe3eaea4b85d3d7e87df71742c7cb7d63db88"
 )
 
 
@@ -459,12 +461,12 @@ FAMILY_META = {
 # These values are the durable published fallback for the README only; the
 # rendered labels still identify the code state that produced each result.
 HISTORICAL_CLEAN: Dict[str, Tuple[str, str, int, int]] = {
-    "dnf": ("V7.6.6", "large", 20, 20),
-    "tff": ("V7.6.1", "—", 0, 0),
+    "dnf": ("V7.7.6", "medium", 20, 20),
+    "tff": ("V7.7.6", "large", 20, 20),
 }
 HISTORICAL_CLEAN_TEXT = {
-    "dnf": "V7.6.6 `large` **20/20** simple-circuit matrix",
-    "tff": "no complete five-technology clean matrix",
+    "dnf": "V7.7.6 `medium` **20/20** simple-circuit matrix",
+    "tff": "V7.7.6 `large` **20/20** simple-circuit matrix",
 }
 
 

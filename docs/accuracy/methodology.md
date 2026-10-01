@@ -58,16 +58,40 @@ missing gate.
 single-stage, logic, transmission-gate, differential, active-load, self-bias,
 stateful, scale, and closed-feedback behavior. It runs OP, DC, transient, and
 AC analyses from canonical templates in
-`circuit_templates/`.
-The complete contract is in
-[`simple-circuits-v2-topologies.md`](simple-circuits-v2-topologies.md).
+`circuit_templates/`. Each case, its tier, signals, and domain metrics are
+declared in `tests/common/simple_circuit_catalog.py`; the tiers are defined in
+[`circuit_templates/README.md`](../../circuit_templates/README.md).
 
 Simple-v2 rows are **diagnostics**, are held out from training, and do not
-change the historical simple-v1 `/20` denominator. Promotion requires a
-separately versioned denominator, at least three stable LEVEL=72 repeats,
-frozen thresholds, and a complete CPU-pinned campaign. Numerical mismatches
+change the historical simple-v1 `/20` denominator. Numerical mismatches
 remain diagnostic; an uncharacterizable requested cell is an explicit
 `ERROR`.
+
+- **Derived metrics.** CMRR and PSRR come from a pair of AC experiments, so a
+  case naming `derived_metrics` emits one extra `analysis="derived"` row. If
+  an input sweep errored, the derived row is itself an `ERROR`.
+- **Unconverged rows.** A row that does not converge stays an `ERROR`. It may
+  carry an `unconverged_diagnostic` payload from one rerun without the
+  convergence requirement; no scoring path reads it.
+- **Corners.** Nominal is the default. The declared stress matrix adds
+  `temp_cold` (−25 °C), `temp_hot` (125 °C), `vdd_low` (0.85×), `vdd_high`
+  (1.10×), `body_reverse` (0.10×VDD), the fin-ratio corners `pn_n3p2` and
+  `pn_n2p3`, `joint_hot_lowvdd`, `vt_alternate`, `vt_asymmetric`, `ln_20`,
+  `lp_16`, `nfin_high`, `slew_slow` and `load_heavy`. A corner that does not
+  apply to an analysis, or renders a deck identical to nominal, creates no
+  row.
+- **AC phase.** Every AC analysis reports `phase_maxerr_deg` next to the
+  magnitude NRMSE.
+
+Promote simple-v2 into a new score version only when all of these hold:
+
+1. LEVEL=72 produces three repeatable, complete traces at every proposed cell.
+2. Each gate answers one declared question with a frozen threshold and unit.
+3. The exact case/technology/corner/analysis denominator is immutable.
+4. Topology parity, artifact completeness, checkpoint hashes, commit and CPU
+   thread settings are recorded in one campaign.
+5. No partial log or infrastructure failure counts as a pass or leaves the
+   denominator.
 
 ## 3. Determinism and execution
 

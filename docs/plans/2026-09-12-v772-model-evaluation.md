@@ -2,7 +2,7 @@
 
 Status: closed on 2026-09-21. The fifth arm stopped at 3,429 jobs on the
 derived-row misclassification recorded in
-[round 1](../accuracy/v775-quick-round1.md); its repair and the SRAM
+[round 1](https://github.com/ShenShan123/PyCircuitSim/blob/bde2c11/docs/accuracy/v775-quick-round1.md); its repair and the SRAM
 attribution repair are now on `main`, and the saved bundles were scored
 instead by the V7.7.5 diagnostic rounds. No new accuracy result is claimed
 by this schedule. The user authorized

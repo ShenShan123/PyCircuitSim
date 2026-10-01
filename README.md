@@ -569,7 +569,7 @@ and PyTorch. It never falls back to another environment.
 
 `--campaign` requires the selected campaign's complete metrics and matching
 collection provenance before any report is written. Omitting it checks or
-rebuilds the preserved report selection, currently V7.6.6.
+rebuilds the preserved report selection, currently V7.7.6.
 The report builder produces clean LEVEL=75/76 reports only. Named training
 recipes remain supported by the root workflow; their evaluation summaries
 stay in their isolated run directories.

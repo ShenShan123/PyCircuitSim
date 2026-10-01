@@ -40,7 +40,8 @@ MODELS = tuple((tag, size) for tag in ("dnf", "tff")
                for size in ("small", "medium", "large", "xl"))
 HEADER = {"dnf": "DN", "tff": "AR"}
 SIZE = {"small": "S", "medium": "M", "large": "L", "xl": "XL"}
-# Non-catalog suites: the template tier each exercises (docs/accuracy/v775-round3.md).
+# Non-catalog suites: the template tier each exercises (V7.7.5 round-3 report,
+# docs/accuracy/v775-round3.md at bde2c11).
 SUITE_TIER = {
     "verify_nn_multi_tech_dc": "L0", "verify_nn_lifted_source_dc": "L0",
     "verify_device_integrity": "L0", "verify_terminal_integrity": "L0",
