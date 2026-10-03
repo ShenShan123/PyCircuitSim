@@ -1854,6 +1854,25 @@ def _metric_key(signal: str) -> str:
     return re.sub(r"[^a-z0-9]+", "_", signal.lower()).strip("_")
 
 
+def _supply_energy(
+    trace: Trace, current: str, lo: float, hi: float, vdd: float,
+) -> float:
+    """Integrate delivered supply energy on native samples in a shared window.
+
+    Voltage-source current is positive into the supply. Preserve its sign so
+    returned charge cancels delivered charge; a resampled comparison grid can
+    alias short pulses and trapezoidal current ringing into a false energy.
+    """
+    axis, values = _ascending(trace.axis, np.real(trace.signals[current]))
+    interior = (axis > lo) & (axis < hi)
+    times = np.concatenate(([lo], axis[interior], [hi]))
+    samples = np.concatenate((
+        [np.interp(lo, axis, values)], values[interior],
+        [np.interp(hi, axis, values)],
+    ))
+    return float(-vdd * np.trapezoid(samples, times))
+
+
 def _phase_aligned_nrmse(test: np.ndarray, reference: np.ndarray) -> float:
     if test.size < 8 or reference.size != test.size:
         return float("nan")
@@ -2324,20 +2343,11 @@ def _domain_metrics(
         output_ref = _crossing(grid, np.real(reference[output]), vdd / 2.0)
         delay_test = abs(output_test - input_test)
         delay_ref = abs(output_ref - input_ref)
-        energy_test = float(np.trapezoid(
-            np.abs(np.real(candidate[current])), grid,
-        ) * vdd)
-        energy_ref = float(np.trapezoid(
-            np.abs(np.real(reference[current])), grid,
-        ) * vdd)
         pre = max(grid.size // 8, 1)
         leakage_test = float(np.mean(np.abs(np.real(candidate[current][:pre]))))
         leakage_ref = float(np.mean(np.abs(np.real(reference[current][:pre]))))
         domain.update(
             delay_error_pct=_relative_error(delay_test, delay_ref),
-            energy_test_j=energy_test,
-            energy_ref_j=energy_ref,
-            energy_error_pct=_relative_error(energy_test, energy_ref),
             leakage_error_a=abs(leakage_test - leakage_ref),
         )
     if profile in ("source_follower", "gain", "opamp"):
@@ -2850,6 +2860,16 @@ def compare_traces(
         vdd,
         analysis.device_kinds,
     )
+    if analysis.metric_profile == "inverter_energy":
+        current = analysis.signals[2]
+        lo, hi = float(grid[0]), float(grid[-1])
+        energy_test = _supply_energy(candidate, current, lo, hi, vdd)
+        energy_ref = _supply_energy(reference, current, lo, hi, vdd)
+        domain.update(
+            energy_test_j=energy_test,
+            energy_ref_j=energy_ref,
+            energy_error_pct=_relative_error(energy_test, energy_ref),
+        )
     return metrics, domain
 
 

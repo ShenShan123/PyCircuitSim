@@ -17,6 +17,48 @@ remain in Git history.
 
 ## V7.7 — full-terminal-only NN stack
 
+### V7.7.7 — geometry-correct reference modelcards
+
+- Started the [NN accuracy plan](plans/2026-10-01-nn-accuracy-improvement.md).
+  Circuit and LEVEL=72 DC/transient helpers now resolve each device's actual
+  NFIN before baking; the transient merged-card cache and filename include
+  both fin counts. DC card filenames also distinguish fin counts when case
+  labels are reused. Rewriting geometry after default-bin selection was not a
+  valid reference. NFIN=3 is affected in the off region too.
+- Corrected inverter supply energy to signed integration on each engine's
+  native time grid over a shared window. Rectifying and resampling current
+  caused step-dependent apparent errors that the LEVEL=72 control reproduced.
+  The [methodology](accuracy/methodology.md#inverter-supply-energy-v777) owns
+  the new definition; old energy values are not directly comparable.
+- The [Phase 1 report](accuracy/2026-10-03-v777-phase1-attribution.md) records
+  the bin audit, failure ledger, scoped circuit re-baselines, temperature
+  screen, demand census and remaining control failures. No training or full
+  qualification campaign has run; no checkpoint or published report is
+  promoted. V7.7.6 remains the published campaign.
+- Verification: 1,183 collected tests passed, none skipped, including five
+  bin-selection regressions and three energy contracts. The full accuracy
+  improvement plan remains in progress.
+- Added isolated drain-origin dataset preparation with frozen parent split
+  membership/order, raw float64 targets and row identities retained by the
+  loader. New bundle markers record the training source, seed, GPU settings,
+  selected epoch, optimizer/EMA updates and split digest. Training's physical
+  reports now use raw targets and the correct local technology vocabulary.
+  Preparation contracts: 1,186 collected tests passed, none skipped. The
+  registered first model experiment uses both polarities of TSMC5/12.
+
+### 2026-10-01 — NN accuracy plan review round 2
+
+- [Diagnostic experiments](accuracy/2026-10-01-nn-plan-review-round2.md)
+  confirmed leakage gains from smaller current-normalization scales but
+  retracted the claim that those arms fix the drain-origin region: they
+  introduce a dead band and incorrect conductance. Neither advances as-is.
+- Identified reference-bin selection drift, low-current reference
+  quantization, holdout reassignment during data expansion, and large
+  reconstructed source-current errors hidden by exact KCL. The
+  [revised plan](plans/2026-10-01-nn-accuracy-improvement.md) adds prerequisites
+  and acceptance checks. Runtime, training code, preserved bundles and
+  published scores are unchanged; no full qualification campaign was run.
+
 ### 2026-10-01 — V7.7.6 report promotion and evidence purge
 
 - **Clean reports.** `DirectNet-L75-clean.md` and `BSIM-AR-L76-clean.md` now

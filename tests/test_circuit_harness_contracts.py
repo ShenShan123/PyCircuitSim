@@ -1908,6 +1908,69 @@ def test_named_device_roles_build_distinct_osdi_models(tmp_path: Path) -> None:
         assert f".model v768_diffpair_active_load_{role} " in text
 
 
+@pytest.mark.parametrize("adapter", ("circuit", "dc_nmos", "dc_pmos", "dc_inv", "tran"))
+def test_reference_cards_select_each_fin_bin_before_baking(
+    adapter: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Baking geometry cannot repair parameters selected from the wrong bin."""
+    from pycmg import tech as tech_module
+    from pycmg.parser import parse_modelcard
+    from tests.common import bsimcmg_dc as dc, bsimcmg_tran as tran
+    from tests.common import circuit_benchmarks as bench
+
+    def resolve_bin(
+        device: tech_module.DeviceConfig, tech: tech_module.TechConfig,
+        *, L: float, NFIN: float,
+    ) -> str:
+        # U0 stands for a bin-dependent parameter that geometry baking must
+        # preserve. Distinct polarity/length/VT cards use the real resolver API.
+        path = tmp_path / f"{device.model_name}_{L}_{NFIN}.lib"
+        path.write_text(f".model {device.model_name} bsimcmg (\n+ U0={NFIN}\n)\n")
+        return str(path)
+
+    monkeypatch.setattr(tech_module, "resolve_modelcard", resolve_bin)
+    for module in (bench, dc, tran):
+        monkeypatch.setattr(module, "_baked_cache", {})
+    monkeypatch.setattr(tran, "_merged_cache", {})
+    bt = bench.bench_variant(BENCH["TSMC5"], nmos_vt="ulvt", pmos_vt="lvt")
+    vt = bt.profile.default_vt_pair
+    # Same process and directory: a later fin pair must not reuse or overwrite
+    # an earlier merged card (the transient cache previously omitted NFIN).
+    saved: list[tuple[Path, bytes]] = []
+    for nf_n, nf_p in ((2, 2), (5, 10), (10, 3)):
+        if adapter == "circuit":
+            card = bench.get_baked_modelcard(bt, nf_n, tmp_path, nfin_p=nf_p)
+            models = ((bt.nmos_model, nf_n), (bt.pmos_model, nf_p))
+        elif adapter == "tran":
+            config = tran.make_baseline(bt.profile, nfin_n=nf_n, nfin_p=nf_p)
+            merged = tran.get_merged_modelcard(config, tmp_path)
+            saved.append((merged, merged.read_bytes()))
+            card = tran.get_baked_modelcard(config, tmp_path)
+            models = ((vt.nmos_model, nf_n), (vt.pmos_model, nf_p))
+        else:
+            kind = {"dc_nmos": dc.NMOS_IDVGS, "dc_pmos": dc.PMOS_IDVGS,
+                    "dc_inv": dc.INVERTER_VTC}[adapter]
+            config = dc.make_dc_config(
+                bt.profile, kind, nfin_n=nf_n, nfin_p=nf_p,
+            )
+            card = dc.get_baked_modelcard(config, tmp_path)
+            models = ((vt.nmos_model, nf_n), (vt.pmos_model, nf_p))
+            if adapter == "dc_nmos":
+                models = models[:1]
+            elif adapter == "dc_pmos":
+                models = models[1:]
+            control = dc.get_modelcard_for_pycircuitsim(config, tmp_path)
+            saved.append((control, control.read_bytes()))
+            for name, nf in models:
+                assert parse_modelcard(str(control), name).params["u0"] == nf
+        for name, nf in models:
+            params = parse_modelcard(str(card), name).params
+            assert params["u0"] == nf, (adapter, name, nf, params)
+        saved.append((card, card.read_bytes()))
+    for path, content in saved:
+        assert path.read_bytes() == content
+
+
 def test_nn_hierarchy_renderer_uses_selected_family_and_instance_parameters(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

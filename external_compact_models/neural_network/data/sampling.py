@@ -107,3 +107,33 @@ def grouped_split_indices(
         return rng.permutation(values)
 
     return tuple(_flatten(parts) for parts in assigned)  # type: ignore[return-value]
+
+
+def persisted_split_indices(
+    strata: np.ndarray, partition: np.ndarray, rank: np.ndarray,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Restore frozen row order and reject a geometry crossing partitions.
+
+    New samples inherit their whole group's partition. Their ranks may extend
+    a partition, but must never reshuffle its existing rows or move a holdout
+    group into training. The dataset checksum binds these arrays to the data.
+    """
+    n_rows = len(strata)
+    for name, array in (("partition", partition), ("rank", rank)):
+        if array.shape != (n_rows,) or array.dtype.kind not in "iu":
+            raise ValueError(f"persisted split {name} must be an integer row vector")
+    if not np.isin(partition, (0, 1, 2)).all() or np.any(rank < 0):
+        raise ValueError("invalid persisted split partition or rank")
+    for group in _groups(strata):
+        if np.any(partition[group] != partition[group[0]]):
+            raise ValueError("persisted split leaks a geometry group across partitions")
+    splits = []
+    for code in range(3):
+        indices = np.flatnonzero(partition == code)
+        if not len(indices):
+            raise ValueError("persisted split has an empty partition")
+        order = rank[indices]
+        if len(np.unique(order)) != len(order):
+            raise ValueError("persisted split contains duplicate ranks")
+        splits.append(indices[np.argsort(order, kind="stable")])
+    return tuple(splits)  # type: ignore[return-value]

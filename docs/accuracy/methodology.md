@@ -120,6 +120,46 @@ Device AC scores `/10` (NMOS and PMOS × 5 technologies); opamp AC scores
 Charge-sensitive AC gates use the full autograd charge matrix and may move
 independently of DC accuracy.
 
+### Inverter supply energy (V7.7.7)
+
+The `inverter_energy` diagnostic measures net energy delivered by the constant
+VDD source: `E = -VDD × integral(i(Vdd), dt)`. Both engines define positive
+voltage-source current into the source, so returned charge subtracts from
+delivered energy. This is supply energy over the declared observation window,
+including its initial state; it is not total dissipation or input-driver energy.
+
+Integrate each engine's original samples with the trapezoidal rule over the
+same overlapping time window. Interpolate only the two window boundaries.
+Do not integrate the at-most-600-point trace-comparison grid: it can alias
+narrow current pulses. Do not rectify current before integration. Preserve
+step-sensitivity results separately from the scored/default step settings.
+V7.7.6 and earlier energy numbers use the former rectified, resampled metric
+and cannot be compared directly with this definition. The
+[V7.7.7 attribution report](2026-10-03-v777-phase1-attribution.md) records the
+correction; historical reports retain their original contract.
+
+### Low-current diagnostic resolution
+
+Use original float64 reference values and preserve their source row identities;
+inverse-transforming float32 training targets is not a reference. Declare the
+reference quantum `q` before a leakage arm and record it with each result.
+The reviewed labels exhibit `1000 × ulp(Vd)` quantization and the audited
+NGSPICE fixtures exhibit a roughly `2^-43 A` quantum. These measurements are
+scoped to the audited biases, not a universal bound for every terminal or
+geometry. Use the larger applicable measured quantum when comparing them;
+calibrate uncovered regions before registering an arm.
+
+- Report percent current error only for `|I_ref| >= 200q`.
+- Report log-decade error only for `|I_ref| >= 20q`, with zero predictions
+  counted explicitly as unresolved log errors, never hidden by `1e-30`.
+- Below those floors, report absolute error in amperes and quanta. Separate
+  exact zero, signed near-origin, reverse, weak and on-state groups; report
+  sign mistakes separately.
+
+At `q = 2^-43 A`, the percent and log thresholds are approximately 22.7 pA
+and 2.27 pA. Temperature, polarity, VT and geometry remain separate strata.
+These diagnostics do not change existing qualification gates.
+
 Simple-circuit workers emit schema-stable `GateResult` JSON markers containing
 case, technology, corner, analysis, role, convergence state, aggregate trace
 metrics, and domain metrics. The collector consumes these markers before

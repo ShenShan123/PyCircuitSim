@@ -270,7 +270,7 @@ def get_baked_modelcard(bt: BenchTech, nfin: int, work_dir: Path,
     geometry must live inside the .model block. The NMOS block is baked at
     ``nfin``; the PMOS block at ``nfin_p`` (defaults to ``nfin`` — symmetric).
     NMOS/PMOS modelcard SOURCES are resolved from each side's OWN effective VT
-    so asymmetric N/P VT pairs bake correct, distinct cards.
+    and requested NFIN, so asymmetric pairs bake the correct parameter bins.
     """
     nfin_n = int(nfin)
     nfin_p = nfin_n if nfin_p is None else int(nfin_p)
@@ -283,8 +283,8 @@ def get_baked_modelcard(bt: BenchTech, nfin: int, work_dir: Path,
     prof = bt.profile
     vp_n = prof.get_vt_pair(bt.effective_nmos_vt)
     vp_p = prof.get_vt_pair(bt.effective_pmos_vt)
-    nmos_src = prof.get_nmos_modelcard(vp_n, bt.l_nmos)
-    pmos_src = prof.get_pmos_modelcard(vp_p, bt.l_pmos)
+    nmos_src = prof.get_nmos_modelcard(vp_n, bt.l_nmos, nfin_n)
+    pmos_src = prof.get_pmos_modelcard(vp_p, bt.l_pmos, nfin_p)
     if not nmos_src.exists():
         raise FileNotFoundError(f"NMOS modelcard not found: {nmos_src}")
     if not pmos_src.exists():

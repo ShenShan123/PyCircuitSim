@@ -515,6 +515,14 @@ def test_full_terminal_training_writes_runtime_complete_artifacts(
     assert marker["dataset_completion_marker_sha256"] == hashlib.sha256(
         dataset_marker.read_bytes()).hexdigest()
     assert marker["dataset_source_commit"] == "a" * 40
+    training = marker["training"]
+    assert training["seed"] == 760
+    assert training["epochs_run"] == training["selected_epoch"] == 1
+    assert training["optimizer_steps"] == (int(0.8 * n_rows) + 15) // 16
+    assert training["ema_updates"] == 0
+    assert len(training["training_commit"]) == 40
+    assert len(training["split_order_sha256"]) == 64
+    assert training["config"]["trunk_hidden"] == 8
 
 
 def test_full_terminal_transformer_writes_verified_bundle(
@@ -589,3 +597,66 @@ def test_full_terminal_transformer_writes_verified_bundle(
     assert np.all(np.isfinite(current_jacobian))
     assert np.sum(currents) == pytest.approx(0.0, abs=1e-12)
     np.testing.assert_allclose(current_jacobian.sum(axis=0), 0.0, atol=1e-12)
+
+
+def test_origin_overlay_covers_both_signed_gaps_without_zero_duplicates() -> None:
+    nmos = nn_generate.drain_origin_points(0.8, False)
+    pmos = nn_generate.drain_origin_points(0.8, True)
+    assert nmos.shape == (1326, 4)
+    assert np.array_equal(pmos, -nmos)
+    assert np.all(nmos[:, 2] == 0.0)
+    assert not np.any(nmos[:, 0] == 0.0)
+    assert np.min(np.abs(nmos[:, 0])) == pytest.approx(1e-5)
+    assert np.max(np.abs(nmos[:, 0])) == pytest.approx(5e-3)
+    assert len(np.unique(nmos, axis=0)) == len(nmos)
+
+
+def test_persisted_split_keeps_holdouts_when_origin_rows_are_appended() -> None:
+    from neural_network.data.sampling import grouped_split_indices, persisted_split_indices
+
+    strata = np.repeat(np.arange(9), 5)[:, None]
+    splits = grouped_split_indices(strata, 0.6, 0.2, 42)
+    partition = np.empty(len(strata), dtype=np.int8)
+    rank = np.empty(len(strata), dtype=np.int64)
+    for code, indices in enumerate(splits):
+        partition[indices] = code
+        rank[indices] = np.arange(len(indices))
+    # Oversampling a held-out group must never move its original rows to train.
+    heldout = splits[2][0]
+    expanded = np.concatenate([strata, np.repeat(strata[heldout:heldout+1], 50, axis=0)])
+    p = np.concatenate([partition, np.full(50, 2, dtype=np.int8)])
+    r = np.concatenate([rank, np.arange(len(splits[2]), len(splits[2]) + 50)])
+    restored = persisted_split_indices(expanded, p, r)
+    for original, new in zip(splits, restored):
+        assert np.array_equal(original, new[new < len(strata)])
+    assert len(restored[2]) == len(splits[2]) + 50
+    p[-1] = 0
+    with pytest.raises(ValueError, match="leaks a geometry group"):
+        persisted_split_indices(expanded, p, r)
+
+
+def test_loader_retains_exact_raw_targets_and_persisted_row_order(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = 12
+    path = tmp_path / "raw.npz"
+    outputs = np.arange(rows * 6, dtype=np.float64).reshape(rows, 6) * 1.123456789012345e-13
+    partition = np.repeat(np.arange(3, dtype=np.int8), 4)
+    rank = np.tile(np.arange(4)[::-1], 3)
+    np.savez(path, inputs=np.zeros((rows, 4)),
+        geometry=np.column_stack([np.repeat([2, 3, 4], 4),
+            np.full(rows, 16e-9), np.full(rows, 300.15), np.zeros((rows, 12))]),
+        outputs=outputs, meta_output_columns=np.asarray(FULL_COLUMNS),
+        split_partition=partition, split_rank=rank,
+        row_ids=np.arange(rows, dtype=np.int64) + 100)
+    monkeypatch.setattr(
+        "neural_network.eval.loo_labels.get_or_build_tech_variant_labels",
+        lambda *_args, **_kwargs: np.zeros(rows, dtype=int))
+    train, validation, test, _ = dataset_module.load_and_split_bsimar(str(path), "nmos")
+    for code, ds in enumerate((train, validation, test)):
+        indices = np.arange(code * 4, (code + 1) * 4)[::-1]
+        assert np.array_equal(ds.raw_outputs, outputs[indices])
+        assert ds.raw_outputs.dtype == np.float64
+        assert np.array_equal(ds.row_ids, indices + 100)
+    with pytest.raises(ValueError, match="cannot be resplit"):
+        dataset_module.load_and_split_bsimar(str(path), "nmos", split_mode="random")

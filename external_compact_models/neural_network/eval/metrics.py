@@ -1,17 +1,19 @@
 """Physical-units evaluation metrics for BSIMAR predictions."""
 
-from typing import Dict
+from typing import Dict, Optional
 
 import numpy as np
 
-from neural_network.data.normalize import OUTPUT_COLUMN_ORDER
+from neural_network.data.contracts import FULL_TERMINAL_OUTPUT_COLUMN_ORDER
+from neural_network.data.normalize import _NormalizerBase
 
 
 def compute_physical_metrics(
     pred_norm: np.ndarray,
     true_norm: np.ndarray,
-    normalizer,
+    normalizer: _NormalizerBase,
     mre_threshold_pct: float = 0.001,
+    true_physical: Optional[np.ndarray] = None,
 ) -> Dict[str, Dict[str, float]]:
     """Compute per-output metrics after denormalization.
 
@@ -42,7 +44,10 @@ def compute_physical_metrics(
     metrics: Dict[str, Dict[str, float]] = {}
 
     pred_phys = normalizer.denormalize_outputs(pred_norm)
-    true_phys = normalizer.denormalize_outputs(true_norm)
+    true_phys = (normalizer.denormalize_outputs(true_norm)
+                 if true_physical is None else np.asarray(true_physical))
+    if true_phys.shape != pred_phys.shape or not np.isfinite(true_phys).all():
+        raise ValueError("physical references must be finite and match predictions")
 
     # Use the persisted column list, falling back to the canonical six-surface
     # order for bundles created before the field became mandatory.
@@ -50,7 +55,7 @@ def compute_physical_metrics(
         normalizer.stats.output_columns
         if (normalizer.stats is not None
             and normalizer.stats.output_columns is not None)
-        else OUTPUT_COLUMN_ORDER)
+        else FULL_TERMINAL_OUTPUT_COLUMN_ORDER)
 
     for i, name in enumerate(column_names):
         y_t = true_phys[:, i]

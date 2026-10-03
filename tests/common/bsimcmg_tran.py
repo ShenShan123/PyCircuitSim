@@ -137,24 +137,25 @@ def make_baseline(tech: TechProfile,
 # ---------------------------------------------------------------------------
 # Modelcard helpers
 # ---------------------------------------------------------------------------
-_merged_cache: Dict[Tuple[str, str, float, float], Path] = {}
+_merged_cache: Dict[Tuple[str, str, float, float, int, int], Path] = {}
 _baked_cache: Dict[Tuple[str, str, float, float, int, int], Path] = {}
 
 
 def get_merged_modelcard(config: TestConfig, work_dir: Path) -> Path:
     """Get or create merged NMOS+PMOS modelcard (unbaked, for PyCircuitSim)."""
     tech, vt = config.tech, config.vt
-    key = (tech.name, vt.vt_name, config.l_nmos, config.l_pmos)
+    key = (tech.name, vt.vt_name, config.l_nmos, config.l_pmos,
+           config.nfin_n, config.nfin_p)
     if key in _merged_cache:
         return _merged_cache[key]
 
     if tech.single_file:
-        path = tech.get_nmos_modelcard(vt, config.l_nmos)
+        path = tech.get_nmos_modelcard(vt, config.l_nmos, config.nfin_n)
         _merged_cache[key] = path
         return path
 
-    nmos_src = tech.get_nmos_modelcard(vt, config.l_nmos)
-    pmos_src = tech.get_pmos_modelcard(vt, config.l_pmos)
+    nmos_src = tech.get_nmos_modelcard(vt, config.l_nmos, config.nfin_n)
+    pmos_src = tech.get_pmos_modelcard(vt, config.l_pmos, config.nfin_p)
     if not nmos_src.exists():
         raise FileNotFoundError(f"NMOS modelcard not found: {nmos_src}")
     if not pmos_src.exists():
@@ -162,7 +163,10 @@ def get_merged_modelcard(config: TestConfig, work_dir: Path) -> Path:
 
     l_n_nm = round(config.l_nmos * 1e9)
     l_p_nm = round(config.l_pmos * 1e9)
-    merged = work_dir / f"merged_{tech.name}_{vt.vt_name}_ln{l_n_nm}_lp{l_p_nm}.lib"
+    merged = work_dir / (
+        f"merged_{tech.name}_{vt.vt_name}_ln{l_n_nm}_lp{l_p_nm}"
+        f"_nn{config.nfin_n}_np{config.nfin_p}.lib"
+    )
     merged.write_text(nmos_src.read_text() + "\n" + pmos_src.read_text())
     _merged_cache[key] = merged
     return merged

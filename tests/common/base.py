@@ -201,13 +201,15 @@ class TechProfile:
     def default_vt_pair(self) -> VtPair:
         return self.get_vt_pair(self.default_vt)
 
-    def _resolve_tsmc_modelcard(self, pdk_device: str, l_m: float) -> Path:
+    def _resolve_tsmc_modelcard(
+        self, pdk_device: str, l_m: float, nfin: Optional[float] = None,
+    ) -> Path:
         """Generate a TSMC naive modelcard on-the-fly via pycmg.tech.resolve_modelcard.
 
         The old committed ``PDKs/TSMC*/naive/*.l`` files were removed; they
         are now regenerated from the raw PDK and cached under PyCMG's
-        ``build/modelcards/``. Uses ``NFIN=self.default_nfin`` so the correct
-        NFIN-group variant is selected.
+        ``build/modelcards/``. Select the requested NFIN bin before geometry
+        baking; overwriting NFIN later cannot repair a wrong parameter bin.
         """
         from pycmg.tech import TECH_REGISTRY, resolve_modelcard
         tech_config = TECH_REGISTRY[self.name]
@@ -218,20 +220,24 @@ class TechProfile:
         device_config = tech_config.get_device(canonical)
         return Path(resolve_modelcard(
             device_config, tech_config,
-            L=l_m, NFIN=float(self.default_nfin),
+            L=l_m, NFIN=float(self.default_nfin if nfin is None else nfin),
         ))
 
-    def get_nmos_modelcard(self, vt: VtPair, l_nmos: float) -> Path:
-        """Return path to NMOS modelcard file for given VT and L."""
+    def get_nmos_modelcard(
+        self, vt: VtPair, l_nmos: float, nfin: Optional[float] = None,
+    ) -> Path:
+        """Return the NMOS card for VT, L and NFIN (default: profile NFIN)."""
         if self.single_file:
             return MODELCARDS_DIR / self.modelcard_dir / self.single_file_name
-        return self._resolve_tsmc_modelcard(vt.nmos_model, l_nmos)
+        return self._resolve_tsmc_modelcard(vt.nmos_model, l_nmos, nfin)
 
-    def get_pmos_modelcard(self, vt: VtPair, l_pmos: float) -> Path:
-        """Return path to PMOS modelcard file for given VT and L."""
+    def get_pmos_modelcard(
+        self, vt: VtPair, l_pmos: float, nfin: Optional[float] = None,
+    ) -> Path:
+        """Return the PMOS card for VT, L and NFIN (default: profile NFIN)."""
         if self.single_file:
             return MODELCARDS_DIR / self.modelcard_dir / self.single_file_name
-        return self._resolve_tsmc_modelcard(vt.pmos_model, l_pmos)
+        return self._resolve_tsmc_modelcard(vt.pmos_model, l_pmos, nfin)
 
     def is_combo_available(self, vt: VtPair, l_nmos: float, l_pmos: float) -> bool:
         """Check if modelcard files exist for this VT and L combination."""

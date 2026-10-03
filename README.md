@@ -4,14 +4,16 @@ PyCircuitSim is a pure-Python, SPICE-like circuit simulator for BSIM-CMG and
 neural compact models. NGSPICE running the identical BSIM-CMG OSDI model is
 ground truth for every accuracy claim.
 
-Current release: **V7.7.6**.
+Current release: **V7.7.7**.
 
-This release fixes an NN DC solver defect: the pseudo-transient fallback left
-capacitor state behind, so later DC solves on that circuit converged on a
-different circuit. It also adds opt-in NN-side Newton limiting
-(`PYCIRCUITSIM_NN_NR_LIMIT=1`, off by default). The
-[changelog](docs/CHANGELOG.md#v776--capacitor-state-fix-and-opt-in-nn-limiting)
-records the change and its evaluation.
+This release corrects geometry-specific reference modelcards: each device's
+actual fin count now selects the PDK parameter bin before geometry is baked
+into the NGSPICE card. It also corrects inverter supply-energy integration
+to use signed current on the original sample grids. The
+[changelog](docs/CHANGELOG.md#v777--geometry-correct-reference-modelcards)
+records verification and the accuracy work in progress. Published NN scores
+still belong to the V7.7.6 campaign; this repair does not establish new model
+accuracy or promote a checkpoint.
 
 The NN runtime is full-terminal-only. DirectNet-Full (LEVEL=75) is the default;
 BSIM-AR-Full (LEVEL=76) is the autoregressive alternative. The old reduced
@@ -241,6 +243,22 @@ an explicit `--tech` selection controls its included technologies. ASAP7 can
 be generated separately and remains excluded from universal NN training.
 Diagnostic generation with `--allow-rejected-points` writes artifacts but
 does not label them as training-ready.
+
+For the V7.7.7 origin-coverage experiment, prepare isolated control and overlay
+datasets from a preserved canonical parent after committing the source:
+
+```bash
+python scripts/v777_prepare_origin_data.py \
+  --parent results/v771_r2_data/tsmc12_dnf_nmos.npz \
+  --output-root results/nn_accuracy_20261001/pilot/data \
+  --tech tsmc12 --device nmos --workers 8
+```
+
+The command preserves the parent and writes `control/` and `origin/` bundles
+with frozen row identities, geometry-group partitions and original row order.
+Repeat with each selected technology/polarity. The loader uses these persisted
+partitions and rejects random re-splitting or overlay-group promotion. Outputs
+must be new paths; this experiment does not change the default data recipe.
 
 Training settings use the standalone `train` names below, or the same names
 prefixed with `train-` on `flow`:

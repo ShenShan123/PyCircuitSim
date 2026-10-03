@@ -144,10 +144,12 @@ def get_baked_modelcard(config: DCTestConfig, work_dir: Path) -> Path:
     if key in _baked_cache:
         return _baked_cache[key]
 
-    baked = work_dir / f"baked_{config.label}.lib"
+    baked = work_dir / (
+        f"baked_{config.label}_nn{config.nfin_n}_np{config.nfin_p}.lib"
+    )
 
     if config.test_type == NMOS_IDVGS:
-        src = tech.get_nmos_modelcard(vt, config.l_nmos)
+        src = tech.get_nmos_modelcard(vt, config.l_nmos, config.nfin_n)
         if not src.exists():
             raise FileNotFoundError(f"NMOS modelcard: {src}")
         baked.write_text(src.read_text())
@@ -156,7 +158,7 @@ def get_baked_modelcard(config: DCTestConfig, work_dir: Path) -> Path:
                           "TFIN": tech.tfin, "DEVTYPE": 1})
 
     elif config.test_type == PMOS_IDVGS:
-        src = tech.get_pmos_modelcard(vt, config.l_pmos)
+        src = tech.get_pmos_modelcard(vt, config.l_pmos, config.nfin_p)
         if not src.exists():
             raise FileNotFoundError(f"PMOS modelcard: {src}")
         baked.write_text(src.read_text())
@@ -166,11 +168,11 @@ def get_baked_modelcard(config: DCTestConfig, work_dir: Path) -> Path:
 
     else:  # INVERTER_VTC
         if tech.single_file:
-            src = tech.get_nmos_modelcard(vt, config.l_nmos)
+            src = tech.get_nmos_modelcard(vt, config.l_nmos, config.nfin_n)
             baked.write_text(src.read_text())
         else:
-            nmos_src = tech.get_nmos_modelcard(vt, config.l_nmos)
-            pmos_src = tech.get_pmos_modelcard(vt, config.l_pmos)
+            nmos_src = tech.get_nmos_modelcard(vt, config.l_nmos, config.nfin_n)
+            pmos_src = tech.get_pmos_modelcard(vt, config.l_pmos, config.nfin_p)
             if not nmos_src.exists():
                 raise FileNotFoundError(f"NMOS modelcard: {nmos_src}")
             if not pmos_src.exists():
@@ -191,16 +193,18 @@ def get_modelcard_for_pycircuitsim(config: DCTestConfig, work_dir: Path) -> Path
     """Get modelcard path for PyCircuitSim (unbaked)."""
     tech, vt = config.tech, config.vt
     if tech.single_file:
-        return tech.get_nmos_modelcard(vt, config.l_nmos)
+        return tech.get_nmos_modelcard(vt, config.l_nmos, config.nfin_n)
 
     if config.test_type == NMOS_IDVGS:
-        return tech.get_nmos_modelcard(vt, config.l_nmos)
+        return tech.get_nmos_modelcard(vt, config.l_nmos, config.nfin_n)
     elif config.test_type == PMOS_IDVGS:
-        return tech.get_pmos_modelcard(vt, config.l_pmos)
+        return tech.get_pmos_modelcard(vt, config.l_pmos, config.nfin_p)
     else:
-        nmos_src = tech.get_nmos_modelcard(vt, config.l_nmos)
-        pmos_src = tech.get_pmos_modelcard(vt, config.l_pmos)
-        merged = work_dir / f"merged_{config.label}.lib"
+        nmos_src = tech.get_nmos_modelcard(vt, config.l_nmos, config.nfin_n)
+        pmos_src = tech.get_pmos_modelcard(vt, config.l_pmos, config.nfin_p)
+        merged = work_dir / (
+            f"merged_{config.label}_nn{config.nfin_n}_np{config.nfin_p}.lib"
+        )
         if not merged.exists():
             merged.write_text(nmos_src.read_text() + "\n" + pmos_src.read_text())
         return merged

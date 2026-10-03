@@ -21,6 +21,7 @@ from neural_network.data.contracts import (
 from neural_network.data.normalize import _NormalizerBase, normalizer_for
 from neural_network.data.sampling import (
     grouped_split_indices,
+    persisted_split_indices,
     stratified_sample_indices,
 )
 
@@ -41,6 +42,8 @@ class MOSFETDataset(Dataset):
         tech_codes: np.ndarray,
         sample_class: Optional[np.ndarray] = None,
         sample_class_names: Optional[List[str]] = None,
+        raw_outputs: Optional[np.ndarray] = None,
+        row_ids: Optional[np.ndarray] = None,
     ) -> None:
         self.inputs = torch.tensor(inputs_norm, dtype=torch.float32)
         self.outputs = torch.tensor(outputs_norm, dtype=torch.float32)
@@ -49,6 +52,8 @@ class MOSFETDataset(Dataset):
             torch.tensor(sample_class, dtype=torch.int8)
             if sample_class is not None else None)
         self.sample_class_names = sample_class_names
+        self.raw_outputs = raw_outputs
+        self.row_ids = row_ids
 
     def __len__(self) -> int:
         return len(self.inputs)
@@ -277,6 +282,19 @@ def load_and_split_bsimar(
     inputs = data["inputs"]
     geometry = data["geometry"]
     outputs = data["outputs"]
+    row_ids = (data["row_ids"] if "row_ids" in data.files
+               else np.arange(len(outputs), dtype=np.int64))
+    if (row_ids.shape != (len(outputs),) or row_ids.dtype.kind not in "iu"
+            or len(np.unique(row_ids)) != len(row_ids)):
+        raise ValueError("dataset row_ids must be unique integer row identities")
+    frozen_keys = {"split_partition", "split_rank"}
+    frozen = bool(frozen_keys.intersection(data.files))
+    if frozen and not frozen_keys.issubset(data.files):
+        raise ValueError("persisted split needs both partition and rank arrays")
+    partition = data["split_partition"] if frozen else None
+    rank = data["split_rank"] if frozen else None
+    if frozen and (split_mode != "combo" or training_overlay_classes):
+        raise ValueError("persisted split cannot be resplit or promote overlay groups")
     declared_columns = (
         [str(value) for value in data["meta_output_columns"]]
         if "meta_output_columns" in data.files else []
@@ -340,6 +358,9 @@ def load_and_split_bsimar(
         inputs, geometry, outputs = inputs[keep], geometry[keep], outputs[keep]
         tech_codes = tech_codes[keep]
         sample_class = sample_class[keep]
+        row_ids = row_ids[keep]
+        if frozen:
+            partition, rank = partition[keep], rank[keep]
         print(f"  Excluded {exclude_techs}: kept {keep.sum()} samples")
 
     if max_rows is not None and len(outputs) > max_rows:
@@ -350,6 +371,9 @@ def load_and_split_bsimar(
         inputs, geometry, outputs = inputs[idx], geometry[idx], outputs[idx]
         tech_codes = tech_codes[idx]
         sample_class = sample_class[idx]
+        row_ids = row_ids[idx]
+        if frozen:
+            partition, rank = partition[idx], rank[idx]
         print(f"  Capped to {max_rows} rows")
 
     if tech_scope != "universal":
@@ -380,7 +404,12 @@ def load_and_split_bsimar(
         print(f"  tech_scope={tech_scope}: remapped to local vocab "
               f"(size={len(local_table) + 1})")
 
-    if split_mode == "combo":
+    if frozen:
+        combo_strata = np.column_stack([tech_codes, geometry[:, :3]])
+        train_idx, val_idx, test_idx = persisted_split_indices(
+            combo_strata, partition, rank,
+        )
+    elif split_mode == "combo":
         combo_strata = np.column_stack([tech_codes, geometry[:, :3]])
         train_idx, val_idx, test_idx = grouped_split_indices(
             combo_strata, train_ratio, val_ratio, seed,
@@ -413,7 +442,9 @@ def load_and_split_bsimar(
         return MOSFETDataset(
             x, y, tech_codes[idxs],
             sample_class=sample_class[idxs],
-            sample_class_names=sample_class_names)
+            sample_class_names=sample_class_names,
+            raw_outputs=np.asarray(outputs[idxs], dtype=np.float64),
+            row_ids=row_ids[idxs])
 
     train_ds = _make(train_idx)
     val_ds = _make(val_idx)

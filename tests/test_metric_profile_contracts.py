@@ -161,7 +161,7 @@ def _tran_signals(
         return {
             names[0]: _transition(time, 2.0e-9),
             names[1]: _transition(time, 2.5e-9, falling=True),
-            names[2]: 1e-7 + 5e-6 * np.exp(-((time - 2.3e-9) / 0.4e-9) ** 2),
+            names[2]: -(1e-7 + 5e-6 * np.exp(-((time - 2.3e-9) / 0.4e-9) ** 2)),
         }
     if profile in {"inverter_chain", "logic_tran"}:
         result = {
@@ -459,3 +459,63 @@ def test_headline_metrics_report_the_calibrated_mutation_magnitude(
 
 def test_exact_headline_table_names_only_live_profiles() -> None:
     assert set(_EXACT_HEADLINES) <= set(CATALOG_ANALYSES_BY_PROFILE)
+
+
+def test_inverter_energy_subtracts_charge_returned_to_supply() -> None:
+    """Supply current is negative when delivering energy and positive on return."""
+    analysis = CATALOG_ANALYSES_BY_PROFILE["inverter_energy"]
+    time = np.arange(5, dtype=float) * 1e-9
+    trace = Trace("time", time, {
+        "v(in)": np.linspace(0.0, VDD, 5),
+        "v(out)": np.linspace(VDD, 0.0, 5),
+        "i(Vdd)": np.array([-4.0, -4.0, 2.0, 2.0, -4.0]) * 1e-6,
+    })
+
+    _, domain = compare_traces(trace, trace, analysis, vdd=VDD)
+
+    assert domain["energy_ref_j"] == pytest.approx(VDD * 4e-15, rel=1e-12, abs=1e-27)
+    assert domain["energy_test_j"] == domain["energy_ref_j"]
+    assert domain["energy_error_pct"] == 0.0
+
+
+def test_inverter_energy_preserves_pulses_between_comparison_grid_points() -> None:
+    """A narrow supply pulse must contribute even if the plotting grid misses it."""
+    analysis = CATALOG_ANALYSES_BY_PROFILE["inverter_energy"]
+    time = np.linspace(0.0, 4e-9, 4001)
+    reference_signals = {
+        "v(in)": np.linspace(0.0, VDD, len(time)),
+        "v(out)": np.linspace(VDD, 0.0, len(time)),
+        "i(Vdd)": np.full(len(time), -1e-6),
+    }
+    candidate_signals = {name: values.copy() for name, values in reference_signals.items()}
+    candidate_signals["i(Vdd)"][1001] -= 1e-3
+
+    _, domain = compare_traces(
+        Trace("time", time, candidate_signals),
+        Trace("time", time, reference_signals), analysis, vdd=VDD,
+    )
+
+    assert domain["energy_ref_j"] == pytest.approx(VDD * 4e-15, rel=1e-12, abs=1e-27)
+    assert domain["energy_test_j"] == pytest.approx(VDD * 5e-15, rel=1e-12, abs=1e-27)
+    assert domain["energy_error_pct"] == pytest.approx(25.0, rel=1e-12)
+
+
+def test_inverter_energy_integrates_only_the_shared_time_window() -> None:
+    """Unequal start/end samples must not add energy from an unpaired interval."""
+    analysis = CATALOG_ANALYSES_BY_PROFILE["inverter_energy"]
+
+    def trace(time: np.ndarray) -> Trace:
+        return Trace("time", time, {
+            "v(in)": VDD * time / 6e-9,
+            "v(out)": VDD * (1.0 - time / 6e-9),
+            "i(Vdd)": -1e-6 * (1.0 + time / 1e-9),
+        })
+
+    _, domain = compare_traces(
+        trace(np.arange(7) * 1e-9),
+        trace(np.array([0.5, 1.5, 3.0, 5.5]) * 1e-9),
+        analysis, vdd=VDD,
+    )
+
+    assert domain["energy_ref_j"] == pytest.approx(VDD * 20e-15, rel=1e-12, abs=1e-27)
+    assert domain["energy_test_j"] == pytest.approx(domain["energy_ref_j"], rel=1e-12, abs=1e-27)

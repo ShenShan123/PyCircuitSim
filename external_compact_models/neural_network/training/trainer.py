@@ -20,6 +20,8 @@ import os
 import time
 import hashlib
 import json
+import subprocess
+from dataclasses import asdict
 from pathlib import Path
 from typing import Dict, Optional, Sequence, Set, Tuple
 
@@ -321,18 +323,23 @@ def _collect_predictions(
 def _per_tech_report(
     pred_norm: np.ndarray, true_norm: np.ndarray,
     tech_codes: np.ndarray, normalizer: _NormalizerBase,
+    raw_outputs: Optional[np.ndarray] = None,
+    tech_scope: str = "universal",
 ) -> None:
-    from neural_network.config import CODE_TO_TECH_VARIANT
+    from neural_network.config import CODE_TO_TECH_VARIANT, LOCAL_VARIANT_CODES
     from neural_network.eval.metrics import compute_physical_metrics
 
     print(f"\n{'Tech':>15s} | {'n_test':>6s} | "
           f"{'NRMSE%':>8s} | {'R2':>8s}")
     print("-" * 50)
+    code_names = (CODE_TO_TECH_VARIANT if tech_scope == "universal" else
+                  {code: pair for pair, code in LOCAL_VARIANT_CODES[tech_scope].items()})
     for code in sorted(np.unique(tech_codes)):
         mask = tech_codes == code
-        tech, variant = CODE_TO_TECH_VARIANT.get(int(code), ("unk", "unk"))
+        tech, variant = code_names.get(int(code), ("unk", "unk"))
         m = compute_physical_metrics(
-            pred_norm[mask], true_norm[mask], normalizer)
+            pred_norm[mask], true_norm[mask], normalizer,
+            true_physical=None if raw_outputs is None else raw_outputs[mask])
         nr = [v["NRMSE(%)"] for v in m.values()
               if not np.isnan(v["NRMSE(%)"])]
         r2 = [v["R2"] for v in m.values() if not np.isnan(v["R2"])]
@@ -373,7 +380,33 @@ def _train_loop(
     clip_grad: bool = False,
     autoregressive_validation: bool = False,
     autoregressive_training: bool = False,
+    run_metadata: Optional[Dict[str, object]] = None,
 ) -> Tuple[nn.Module, _NormalizerBase]:
+    metadata = run_metadata if run_metadata is not None else {}
+    root = Path(__file__).resolve().parents[3]
+    metadata.update({
+        "seed": int(torch.initial_seed()),
+        "training_commit": subprocess.check_output(
+            ["git", "rev-parse", "HEAD"], cwd=root, text=True).strip(),
+        "training_dirty": bool(subprocess.check_output(
+            ["git", "status", "--porcelain", "--untracked-files=no"],
+            cwd=root, text=True).strip()),
+        "torch": torch.__version__, "cuda": torch.version.cuda,
+        "device": str(device), "visible_devices": os.environ.get("CUDA_VISIBLE_DEVICES"),
+        "gpu_name": torch.cuda.get_device_name(device) if device.type == "cuda" else None,
+        "tf32_matmul": torch.backends.cuda.matmul.allow_tf32,
+        "tf32_cudnn": torch.backends.cudnn.allow_tf32,
+        "deterministic_algorithms": torch.are_deterministic_algorithms_enabled(),
+        "cudnn_deterministic": torch.backends.cudnn.deterministic,
+        "cudnn_benchmark": torch.backends.cudnn.benchmark,
+        "amp": amp, "swa_mode": swa_mode, "ema_decay": ema_decay,
+        "normalization_rule": "asinh-geomean-v1",
+    })
+    split_digest = hashlib.sha256()
+    for name, ds in zip(("train", "validation", "test"), (train_ds, val_ds, test_ds)):
+        split_digest.update(name.encode())
+        split_digest.update(np.asarray(ds.row_ids, dtype=np.int64).tobytes())
+    metadata["split_order_sha256"] = split_digest.hexdigest()
     if amp:
         print("  AMP: bf16 autocast ON (train + validation)")
     if autoregressive_validation and not is_transformer:
@@ -557,6 +590,7 @@ def _train_loop(
             "Pass --overwrite or pick a unique --exp-name.")
 
     best_val = float("inf")
+    selected_epoch = 0
     bad = 0
     print(f"  Training {save_prefix} for {epochs} epochs "
           f"(patience={patience})")
@@ -588,6 +622,7 @@ def _train_loop(
         marker = ""
         if val_loss < best_val - 1e-5:
             best_val = val_loss
+            selected_epoch = epoch
             bad = 0
             state_src = avg_model.module if avg_active else model
             torch.save(state_src.state_dict(), str(best_path))
@@ -609,6 +644,13 @@ def _train_loop(
             break
 
     elapsed = time.time() - t0
+    metadata.update({
+        "epochs_run": epoch, "selected_epoch": selected_epoch,
+        "early_stop_epoch": epoch if bad >= patience else None,
+        "optimizer_steps": epoch * len(train_loader),
+        "ema_updates": epoch * len(train_loader) if swa_mode == "ema" else 0,
+        "wall_seconds": elapsed, "best_validation_loss": best_val,
+    })
     print(f"  Done in {elapsed:.0f}s "
           f"({elapsed / max(epoch, 1):.1f}s/epoch). Best val={best_val:.6f}")
 
@@ -633,10 +675,13 @@ def _train_loop(
         true_norm = true_norm[:, inverse]
 
     from neural_network.eval.metrics import compute_physical_metrics, print_metrics
-    metrics = compute_physical_metrics(pred_norm, true_norm, normalizer)
+    metrics = compute_physical_metrics(
+        pred_norm, true_norm, normalizer, true_physical=test_ds.raw_outputs,
+    )
     print("\nPhysical metrics (test set):")
     print_metrics(metrics)
-    _per_tech_report(pred_norm, true_norm, test_tc, normalizer)
+    _per_tech_report(pred_norm, true_norm, test_tc, normalizer,
+                     test_ds.raw_outputs, str(metadata.get("tech_scope", "universal")))
     print(f"\nSaved checkpoint: {best_path}")
     print(f"Saved norm stats: {norm_path}")
     return model, normalizer
@@ -717,6 +762,9 @@ def train_directnet(
                 f"missing={list(missing)} unexpected={list(unexpected)}")
         print(f"  Warm-started from {init_path.name}")
 
+    run_metadata = {"config": asdict(config), "tech_scope": tech_scope,
+                    "class_weights": class_weights, "init_from": init_from,
+                    "p_unknown": p_unknown, "split_mode": split_mode}
     trained = _train_loop(
         model=model, is_transformer=False,
         train_ds=train_ds, val_ds=val_ds, test_ds=test_ds,
@@ -728,6 +776,7 @@ def train_directnet(
         class_weights=class_weights,
         swa_mode=swa_mode, ema_decay=ema_decay,
         amp=amp,
+        run_metadata=run_metadata,
     )
     checkpoint_path = CHECKPOINT_DIR / f"{save_prefix}_best.pt"
     norm_path = CHECKPOINT_DIR / f"{save_prefix}_norm.npz"
@@ -740,6 +789,7 @@ def train_directnet(
         "normalization_sha256": _sha256_file(norm_path),
         "output_columns": list(FULL_TERMINAL_OUTPUT_COLUMN_ORDER),
         **dataset_provenance,
+        "training": run_metadata,
     }, sort_keys=True, indent=2) + "\n")
     return trained
 
@@ -867,6 +917,13 @@ def train_transformer(
         ),
         "validation_mode": "autoregressive",
     })
+    run_metadata = {"config": {**asdict(config), "max_epochs": epochs,
+                               "batch_size": batch_size, "patience": patience, "lr": lr},
+                    "tech_scope": tech_scope, "class_weights": class_weights,
+                    "init_from": init_from, "p_unknown": p_unknown,
+                    "split_mode": split_mode, "subthresh": subthresh,
+                    "lam_subthresh": lam_subthresh,
+                    "autoregressive_training": autoregressive_training}
     trained = _train_loop(
         model=model, is_transformer=True,
         train_ds=train_ds, val_ds=val_ds, test_ds=test_ds,
@@ -887,6 +944,7 @@ def train_transformer(
         amp=amp,
         autoregressive_validation=True,
         autoregressive_training=autoregressive_training,
+        run_metadata=run_metadata,
     )
     checkpoint_path = CHECKPOINT_DIR / f"{save_prefix}_best.pt"
     norm_path = CHECKPOINT_DIR / f"{save_prefix}_norm.npz"
@@ -894,6 +952,7 @@ def train_transformer(
     marker_path = checkpoint_path.with_suffix(".pt.complete")
     marker_path.write_text(json.dumps({
         "family": "bsimar-full",
+        "training": run_metadata,
         "checkpoint": checkpoint_path.name,
         "checkpoint_sha256": _sha256_file(checkpoint_path),
         "normalization": norm_path.name,
