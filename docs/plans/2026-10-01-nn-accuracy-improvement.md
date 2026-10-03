@@ -154,6 +154,40 @@ not a promoted model; N must also be compared with the preserved baseline.
 No derivative, runtime-transform, BSIM-AR transfer or seed-expansion arm is
 launched on the strength of a failed single-seed screen.
 
+### Registered schedule and selection screens R/S
+
+C/O/N results are recorded in the
+[model comparison](../accuracy/2026-10-03-v777-model-experiments.md). Neither
+O nor N advances: improved qualification totals do not excuse lost physical
+fixed points or N's negative hot interpolated-geometry conductance.
+
+R is independent of that failed normalization arm. Use DirectNet **large** on
+the original frozen C data for TSMC5/12, both polarities, seed 42, 200 epochs,
+patience 201, batch 2048, LR 1e-3, EMA 0.999 and AMP off. Pair the same A100
+UUID per polarity. The control uses an 800-epoch cosine horizon truncated at
+200 updates of the epoch loop; R anneals over the actual 200-epoch budget.
+Both arms have identical optimizer-update counts. This is a fixed-budget
+schedule test, not a comparison of unequal early-stop budgets or a full
+large-model training run. Medium controls already completed their horizons.
+
+Retain each epoch's averaged weights without additional training evaluations
+or RNG draws. S selects among the annealed R snapshots using validation only:
+a frozen, geometry-stratified 50,000-row subset (seed 20261003) of the original
+validation partition, plus origin finite-difference pairs from that same
+partition in the O dataset. Test rows and circuit qualification scores are
+not selection inputs. Reject snapshots whose per-temperature/per-terminal
+p95 or p99 absolute current/charge error exceeds 1.02× the normalized-loss
+selected R snapshot plus 200 current quanta / 1e-20 C, or which introduce
+negative on-state origin slopes. Rank eligible snapshots by worst-temperature
+median off-current log error, then worst-temperature p95 log error, then
+normalized-loss validation error. Zero predictions above the frozen current
+floor make a snapshot ineligible. If none improves that validation ranking,
+retain the ordinary R checkpoint. Package only the selected S checkpoint as
+a complete bundle before the unchanged testcase inventory runs.
+
+No R/S candidate is promoted from this single-seed screen. The original
+four-seed, no-regression, confirmation and five-technology requirements remain.
+
 ## Evidence and priorities
 
 The baseline is the V7.7.2 bundles scored by the

@@ -60,6 +60,10 @@ remain in Git history.
   the denominator and archive its trace before metric extraction. It is not
   an infrastructure/schema failure and has no numeric trip score. Both full
   pilot passes are rerun on this corrected harness rather than relabelled.
+- Added opt-in cosine-horizon control and per-epoch averaged snapshots for
+  the independent R/S experiment. Snapshot capture is verified not to change
+  training weights. Default scheduling and normalized-loss checkpoint selection
+  remain unchanged; intermediate snapshots are not completed runtime bundles.
 
 ### 2026-10-01 — NN accuracy plan review round 2
 

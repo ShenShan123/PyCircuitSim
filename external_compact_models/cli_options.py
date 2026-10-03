@@ -225,6 +225,10 @@ def training_parser(tech_scopes: Sequence[str] = ("universal", "tsmc5", "tsmc6",
     parser.add_argument("--amp", action="store_true")
     parser.add_argument("--id-asinh-scale", type=float,
                         help="Experimental fixed drain-current scale in amperes; train from scratch")
+    parser.add_argument("--cosine-epochs", type=int,
+                        help="Cosine horizon; must cover the requested epoch budget")
+    parser.add_argument("--save-epoch-snapshots", action="store_true",
+                        help="Retain EMA/model snapshots for validation-only selection experiments")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--exclude-techs", type=str)
     parser.add_argument("--num-tech-codes", type=int)

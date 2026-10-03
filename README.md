@@ -270,6 +270,7 @@ prefixed with `train-` on `flow`:
 | Averaging and initialization | `--swa-mode none\|ema\|swa`, `--ema-decay`, `--init-from` |
 | Precision and repeatability | `--amp`, `--cuda` (physical GPU 0), `--seed`; use `--gpus` for an explicit GPU list |
 | Experimental drain transform | `--id-asinh-scale` sets a positive constant in amperes, refits only the training-partition drain mean/std, and requires training from scratch |
+| Schedule/selection experiments | `--cosine-epochs` separates the cosine horizon from the run budget (horizon ≥ budget); `--save-epoch-snapshots` retains checksum-indexed snapshots for validation-only selection |
 | Technology embeddings | `--num-tech-codes`, `--p-unknown` |
 | Class weighting and training-only overlays | `--class-weights`, `--training-overlay-classes` |
 | Autoregressive strategy | `--full-terminal-ar-targets 3\|6`, `--autoregressive-training` |

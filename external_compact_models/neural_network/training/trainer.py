@@ -381,7 +381,12 @@ def _train_loop(
     autoregressive_validation: bool = False,
     autoregressive_training: bool = False,
     run_metadata: Optional[Dict[str, object]] = None,
+    cosine_epochs: Optional[int] = None,
+    save_epoch_snapshots: bool = False,
 ) -> Tuple[nn.Module, _NormalizerBase]:
+    horizon = epochs if cosine_epochs is None else cosine_epochs
+    if horizon < epochs or horizon < 1:
+        raise ValueError("cosine horizon must cover the requested epoch budget")
     metadata = run_metadata if run_metadata is not None else {}
     root = Path(__file__).resolve().parents[3]
     metadata.update({
@@ -400,6 +405,7 @@ def _train_loop(
         "cudnn_deterministic": torch.backends.cudnn.deterministic,
         "cudnn_benchmark": torch.backends.cudnn.benchmark,
         "amp": amp, "swa_mode": swa_mode, "ema_decay": ema_decay,
+        "cosine_epochs": horizon,
     })
     metadata.setdefault("normalization_rule", "asinh-geomean-v1")
     split_digest = hashlib.sha256()
@@ -509,7 +515,7 @@ def _train_loop(
     optimizer = optim.AdamW(
         model.parameters(), lr=lr, weight_decay=weight_decay,
         fused=(device.type == "cuda"))
-    scheduler = CosineAnnealingLR(optimizer, T_max=epochs)
+    scheduler = CosineAnnealingLR(optimizer, T_max=horizon)
     criterion = MAELoss()
 
     # The subthreshold loss reads physical-space stats. Transformer output
@@ -589,6 +595,13 @@ def _train_loop(
             f"Refusing to overwrite {best_path}. "
             "Pass --overwrite or pick a unique --exp-name.")
 
+    snapshot_dir = CHECKPOINT_DIR / f"{save_prefix}_epochs"
+    snapshots = []
+    if save_epoch_snapshots:
+        if snapshot_dir.exists() and not overwrite:
+            raise FileExistsError(f"epoch snapshots already exist: {snapshot_dir}")
+        snapshot_dir.mkdir(parents=True, exist_ok=True)
+
     best_val = float("inf")
     selected_epoch = 0
     bad = 0
@@ -618,6 +631,14 @@ def _train_loop(
             amp=amp, autoregressive=autoregressive_validation)
         scheduler.step()
         lr_now = scheduler.get_last_lr()[0]
+
+        if save_epoch_snapshots:
+            snapshot = snapshot_dir / f"epoch{epoch:04d}.pt"
+            state_src = avg_model.module if avg_active else model
+            torch.save(state_src.state_dict(), snapshot)
+            snapshots.append({"epoch": epoch, "file": snapshot.name,
+                              "sha256": _sha256_file(snapshot),
+                              "validation_loss": val_loss, "lr_after_epoch": lr_now})
 
         marker = ""
         if val_loss < best_val - 1e-5:
@@ -651,6 +672,13 @@ def _train_loop(
         "ema_updates": epoch * len(train_loader) if swa_mode == "ema" else 0,
         "wall_seconds": elapsed, "best_validation_loss": best_val,
     })
+    if save_epoch_snapshots:
+        snapshot_manifest = snapshot_dir / "manifest.json"
+        snapshot_manifest.write_text(json.dumps(snapshots, indent=2) + "\n")
+        metadata["epoch_snapshots"] = {
+            "directory": str(snapshot_dir), "manifest": snapshot_manifest.name,
+            "manifest_sha256": _sha256_file(snapshot_manifest),
+        }
     print(f"  Done in {elapsed:.0f}s "
           f"({elapsed / max(epoch, 1):.1f}s/epoch). Best val={best_val:.6f}")
 
@@ -709,6 +737,8 @@ def train_directnet(
     split_mode: str = "combo",
     training_overlay_classes: Optional[Set[str]] = None,
     id_asinh_scale: Optional[float] = None,
+    cosine_epochs: Optional[int] = None,
+    save_epoch_snapshots: bool = False,
 ) -> Tuple[nn.Module, _NormalizerBase]:
     """Train a six-surface DirectNet-Full checkpoint bundle."""
     from neural_network.models.direct_net import DirectNet
@@ -785,6 +815,8 @@ def train_directnet(
         swa_mode=swa_mode, ema_decay=ema_decay,
         amp=amp,
         run_metadata=run_metadata,
+        cosine_epochs=cosine_epochs,
+        save_epoch_snapshots=save_epoch_snapshots,
     )
     checkpoint_path = CHECKPOINT_DIR / f"{save_prefix}_best.pt"
     norm_path = CHECKPOINT_DIR / f"{save_prefix}_norm.npz"
@@ -836,6 +868,8 @@ def train_transformer(
     full_terminal_ar_target_dim: Optional[int] = None,
     autoregressive_training: bool = False,
     id_asinh_scale: Optional[float] = None,
+    cosine_epochs: Optional[int] = None,
+    save_epoch_snapshots: bool = False,
 ) -> Tuple[nn.Module, _NormalizerBase]:
     """Train a six-surface BSIM-AR-Full checkpoint bundle."""
     from neural_network.models.transformer import TransformerEncoderModel
@@ -961,6 +995,8 @@ def train_transformer(
         autoregressive_validation=True,
         autoregressive_training=autoregressive_training,
         run_metadata=run_metadata,
+        cosine_epochs=cosine_epochs,
+        save_epoch_snapshots=save_epoch_snapshots,
     )
     checkpoint_path = CHECKPOINT_DIR / f"{save_prefix}_best.pt"
     norm_path = CHECKPOINT_DIR / f"{save_prefix}_norm.npz"

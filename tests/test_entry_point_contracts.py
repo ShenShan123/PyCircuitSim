@@ -187,7 +187,10 @@ def _write_smoke_dataset(root: Path) -> Path:
     return data_path
 
 
-def _train_once(data_path: Path, checkpoint_dir: Path, seed: int) -> dict[str, torch.Tensor]:
+def _train_once(
+    data_path: Path, checkpoint_dir: Path, seed: int, *,
+    save_epoch_snapshots: bool = False, cosine_epochs: int | None = None,
+) -> dict[str, torch.Tensor]:
     set_seed(seed)
     trainer.train_directnet(
         str(data_path),
@@ -197,6 +200,7 @@ def _train_once(data_path: Path, checkpoint_dir: Path, seed: int) -> dict[str, t
         ),
         save_prefix="dnf_repeat", device_str="cpu", overwrite=True,
         num_tech_codes=2, p_unknown=0.0, split_mode="random",
+        save_epoch_snapshots=save_epoch_snapshots, cosine_epochs=cosine_epochs,
     )
     return torch.load(checkpoint_dir / "dnf_repeat_best.pt", map_location="cpu")
 
@@ -260,3 +264,34 @@ def test_every_gate_answers_help_and_rejects_an_unknown_flag(
     assert _exit_code(main, ["--help"], monkeypatch) == 0
     assert "usage:" in capsys.readouterr().out.lower()
     assert _exit_code(main, ["--no-such-flag-v772"], monkeypatch) == 2
+
+
+def test_epoch_snapshots_do_not_perturb_training_and_horizon_is_recorded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    path = _write_smoke_dataset(tmp_path)
+    monkeypatch.setattr(
+        'neural_network.eval.loo_labels.get_or_build_tech_variant_labels',
+        lambda *_args, **_kwargs: np.zeros(48, dtype=int))
+    monkeypatch.setattr(trainer, 'CHECKPOINT_DIR', tmp_path)
+    monkeypatch.setattr(trainer, '_NUM_WORKERS', 1)
+    ordinary = _train_once(path, tmp_path, 42)
+    snapshots = _train_once(path, tmp_path, 42, save_epoch_snapshots=True)
+    assert all(torch.equal(ordinary[name], snapshots[name]) for name in ordinary)
+    marker = json.loads((tmp_path / 'dnf_repeat_best.pt.complete').read_text())
+    assert marker['training']['cosine_epochs'] == 2
+    snapshot_dir = Path(marker['training']['epoch_snapshots']['directory'])
+    manifest = snapshot_dir / 'manifest.json'
+    assert hashlib.sha256(manifest.read_bytes()).hexdigest() == marker['training']['epoch_snapshots']['manifest_sha256']
+    records = json.loads(manifest.read_text())
+    assert [r['epoch'] for r in records] == [1, 2]
+    for record in records:
+        assert hashlib.sha256((snapshot_dir / record['file']).read_bytes()).hexdigest() == record['sha256']
+    final_snapshot = torch.load(snapshot_dir / 'epoch0002.pt', weights_only=True)
+    _train_once(path, tmp_path, 42, cosine_epochs=8, save_epoch_snapshots=True)
+    longer_snapshot = torch.load(snapshot_dir / 'epoch0002.pt', weights_only=True)
+    assert any(not torch.equal(final_snapshot[name], longer_snapshot[name]) for name in final_snapshot)
+    marker = json.loads((tmp_path / 'dnf_repeat_best.pt.complete').read_text())
+    assert marker['training']['cosine_epochs'] == 8
+    with pytest.raises(ValueError, match='horizon must cover'):
+        _train_once(path, tmp_path, 42, cosine_epochs=1)
