@@ -32,9 +32,11 @@ remain in Git history.
   the new definition; old energy values are not directly comparable.
 - The [Phase 1 report](accuracy/2026-10-03-v777-phase1-attribution.md) records
   the bin audit, failure ledger, scoped circuit re-baselines, temperature
-  screen, demand census and remaining control failures. No training or full
-  qualification campaign has run; no checkpoint or published report is
-  promoted. V7.7.6 remains the published campaign.
+  screen, demand census and remaining control failures. Subsequent
+  [model experiments](accuracy/2026-10-03-v777-model-experiments.md) trained
+  24 isolated bundles and completed seven scored pilot comparison passes
+  (92 jobs / 366 rows each). No full five-technology qualification campaign
+  or model promotion occurred. V7.7.6 remains the published campaign.
 - Verification: 1,183 collected tests passed, none skipped, including five
   bin-selection regressions and three energy contracts. The full accuracy
   improvement plan remains in progress.
@@ -64,6 +66,12 @@ remain in Git history.
   the independent R/S experiment. Snapshot capture is verified not to change
   training weights. Default scheduling and normalized-loss checkpoint selection
   remain unchanged; intermediate snapshots are not completed runtime bundles.
+- **Model outcome.** O reduces TSMC12 Miller gain error from 4.64 to 0.112 dB.
+  N passes 130/130 pilot qualification rows and raises convergence to 360/366,
+  but loses five baseline solves and introduces a negative-gds point. R fixes
+  the pilot TSMC5 large-model Miller cell but adds a high-NFIN DC failure,
+  lost convergences and negative slopes. S selects identical R weights. All
+  advancement vetoes remain binding; no failed arm is expanded or promoted.
 
 ### 2026-10-01 — NN accuracy plan review round 2
 

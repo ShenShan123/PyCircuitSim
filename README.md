@@ -11,9 +11,15 @@ actual fin count now selects the PDK parameter bin before geometry is baked
 into the NGSPICE card. It also corrects inverter supply-energy integration
 to use signed current on the original sample grids. The
 [changelog](docs/CHANGELOG.md#v777--geometry-correct-reference-modelcards)
-records verification and the accuracy work in progress. Published NN scores
+records verification and the experiment outcomes. Published NN scores
 still belong to the V7.7.6 campaign; this repair does not establish new model
 accuracy or promote a checkpoint.
+
+The completed [V7.7.7 model experiments](docs/accuracy/2026-10-03-v777-model-experiments.md)
+compare origin coverage, scalar normalization, scheduling and checkpoint
+selection on the declared pilot testcases. Several accuracy metrics improve,
+but every changed candidate fails a regression veto; preserved models remain
+the defaults. The report includes all testcase rows and the unexecuted scope.
 
 The NN runtime is full-terminal-only. DirectNet-Full (LEVEL=75) is the default;
 BSIM-AR-Full (LEVEL=76) is the autoregressive alternative. The old reduced
@@ -300,6 +306,30 @@ python main.py train --run-dir results/strategy_compare \
 Recipe bundles use `{tech}_{tag}_{recipe}_{size}_{device}`; `clean` keeps the
 original `{tech}_{tag}_{size}_{device}` stem. Match `--recipe` when evaluating.
 Keep differently configured runs in distinct directories.
+
+For the registered schedule/selection study, a matched-budget training preview
+and validation-only snapshot selection use:
+
+```bash
+python main.py train --run-dir results/r_schedule \
+  --data-dir results/nn_accuracy_20261001/pilot/data/control \
+  --tech tsmc5 --device nmos --model direct --size large \
+  --epochs 200 --patience 201 --cosine-epochs 200 \
+  --save-epoch-snapshots --gpus 0 --dry-run
+
+python scripts/v777_select_checkpoint.py \
+  --checkpoint results/r_schedule/checkpoints/tsmc5_dnf_large_nmos_best.pt \
+  --data results/nn_accuracy_20261001/pilot/data/control/tsmc5_dnf_nmos.npz \
+  --origin-data results/nn_accuracy_20261001/pilot/data/origin/tsmc5_dnf_nmos.npz \
+  --output results/r_schedule/selection/tsmc5_nmos \
+  --tech tsmc5 --device nmos
+```
+
+Remove `--dry-run` to train. Selection requires a completed snapshot-bearing
+bundle and writes a new bundle, its validation row identities and an audit of
+every epoch. It defaults to CPU; `--cuda` uses the GPU selected by
+`CUDA_VISIBLE_DEVICES`. Record that choice with the experiment. The selector
+uses the frozen guards in the plan and does not read circuit test results.
 
 Standalone training accepts explicit versioned datasets, universal scope,
 custom experiment names, and prepared corridor datasets. `--data` requires

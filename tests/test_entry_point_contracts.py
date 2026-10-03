@@ -190,13 +190,14 @@ def _write_smoke_dataset(root: Path) -> Path:
 def _train_once(
     data_path: Path, checkpoint_dir: Path, seed: int, *,
     save_epoch_snapshots: bool = False, cosine_epochs: int | None = None,
+    epochs: int = 2,
 ) -> dict[str, torch.Tensor]:
     set_seed(seed)
     trainer.train_directnet(
         str(data_path),
         config=DirectNetConfig(
             batch_size=16, trunk_hidden=8, trunk_layers=1,
-            max_epochs=2, patience=2,
+            max_epochs=epochs, patience=2,
         ),
         save_prefix="dnf_repeat", device_str="cpu", overwrite=True,
         num_tech_codes=2, p_unknown=0.0, split_mode="random",
@@ -295,3 +296,7 @@ def test_epoch_snapshots_do_not_perturb_training_and_horizon_is_recorded(
     assert marker['training']['cosine_epochs'] == 8
     with pytest.raises(ValueError, match='horizon must cover'):
         _train_once(path, tmp_path, 42, cosine_epochs=1)
+    original_marker = (tmp_path / 'dnf_repeat_best.pt.complete').read_bytes()
+    with pytest.raises(ValueError, match='horizon must cover'):
+        _train_once(path, tmp_path, 42, cosine_epochs=8, epochs=0)
+    assert (tmp_path / 'dnf_repeat_best.pt.complete').read_bytes() == original_marker

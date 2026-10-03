@@ -385,7 +385,7 @@ def _train_loop(
     save_epoch_snapshots: bool = False,
 ) -> Tuple[nn.Module, _NormalizerBase]:
     horizon = epochs if cosine_epochs is None else cosine_epochs
-    if horizon < epochs or horizon < 1:
+    if epochs < 1 or horizon < epochs or horizon < 1:
         raise ValueError("cosine horizon must cover the requested epoch budget")
     metadata = run_metadata if run_metadata is not None else {}
     root = Path(__file__).resolve().parents[3]

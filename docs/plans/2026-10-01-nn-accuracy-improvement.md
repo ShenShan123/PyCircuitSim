@@ -1,6 +1,8 @@
 # Improving NN compact model accuracy
 
-Status: in progress for **V7.7.7**, revision 5 (2026-10-03). Targets are
+Status: **V7.7.7 registered screening cycle complete; candidates rejected**,
+revision 6 (2026-10-03). The longer-term conditional roadmap below is not
+claimed as fully executed. Targets are
 DirectNet-Full LEVEL=75 and BSIM-AR-Full LEVEL=76. Review round 1 ran three
 diagnostic retrains and read-only probes ([findings](#review-round-1-findings)).
 Those reviews changed no model, runtime, or published result. Execution now
@@ -36,11 +38,36 @@ commit on the same GPU architecture.
 
 ## V7.7.7 execution progress (2026-10-03)
 
+The [completed model comparison](../accuracy/2026-10-03-v777-model-experiments.md)
+records 24 training jobs and seven complete scored comparison passes, each
+with 92 jobs and 366 rows. The initial C/O pass that exposed an infrastructure
+classification defect is preserved separately and is not substituted into
+those complete passes.
+
+| Registered screen | Outcome | Decision |
+|---|---|---|
+| O, origin coverage | TSMC12 Miller AC becomes PASS, but fifteen converged rows are lost relative to C. | Reject standalone advancement. |
+| N, fixed `s_id=1e-7 A` on O | All 130 qualification rows pass; 360/366 solves converge. Five C solves are lost, hot TSMC5 NMOS p95 leakage error regresses, and a hot interpolated TSMC12 point has negative gds. | Reject advancement despite headline gains. |
+| R, matched-budget large-model annealing | TSMC5 Miller becomes PASS, but the TSMC12 NFIN=10 device case becomes FAIL, ten convergences are lost, and four new negative gds points appear. | Reject advancement. |
+| S, guarded physical validation selection | Only the ordinary R-selected epoch is eligible in each bundle; weights and all testcase metrics are unchanged. | No selection gain. |
+
+**Stop decision.** Apply the registered vetoes without relaxing thresholds or
+choosing checkpoints from qualification results. No candidate survives to
+seed expansion, BSIM-AR transfer, full five-technology qualification or matrix
+replacement. Keep the preserved controls as the shipped models. The current
+V7.7.7 execution ends with the measured comparisons and reusable experiment
+tools; it does not assert that every scalar scale, coverage strategy or future
+derivative/structural arm is impossible. The unexecuted roadmap items remain
+explicit future research, including the replication noise floor, broader
+coverage, temperature-support policy and conditional derivative labels.
+
 The [Phase 1 attribution report](../accuracy/2026-10-03-v777-phase1-attribution.md)
 owns measurements and limitations. Reproducible scripts, exact launch settings,
 source patches, cards, decks and traces are under
-`results/nn_accuracy_20261001/phase1_reference/`. No checkpoint was retrained or
-promoted. The published campaign remains V7.7.6.
+`results/nn_accuracy_20261001/phase1_reference/`. Phase 1 itself retrained no
+checkpoint. The later model screens are under `pilot/`, `pilot_corrected/`,
+`scalar/` and `schedule/` in the same run root. No checkpoint was promoted.
+The published campaign remains V7.7.6.
 
 - [x] Repair actual-NFIN bin selection in the circuit, LEVEL=72 DC and
   transient card builders; include both fin counts in the transient merged
@@ -77,7 +104,10 @@ promoted. The published campaign remains V7.7.6.
   and row identities, and extend training completion provenance. The registered
   diagnostic screen freezes a conservative quantum; broader calibration is
   still required before leakage acceptance.
-- [ ] Run Phase 0 and the registered training arms in the order below.
+- [x] Reproduce the four medium C bundles bit-for-bit, repeat O controls
+  bit-for-bit, and execute the registered O/N/R/S rejection screens.
+- [ ] Measure four-seed spread and run confirmation/promotion campaigns if a
+  future diagnostic candidate survives. These were not launched on failures.
 
 **Amendments from execution.** Re-baselining is required for non-default fin
 counts starting at NFIN=3, not only NFIN≥4: nominal PMOS off-current changes
@@ -91,10 +121,12 @@ The temperature-onset screen is too sharp and too sparsely sampled to justify
 accepting the entire interpolation interval; it does not resolve the runtime
 temperature-support decision.
 
-**Completion condition.** This progress is not completion of the plan. Local
-checkpoint commits are required before canonical data generation. The requested
-final push to `main` follows completion and verification of the experiment and
-comparison report; a prerequisite commit is not a completed accuracy result.
+**Completion condition.** Local checkpoint commits are required before
+canonical generation. This bounded V7.7.7 execution is complete when every
+registered screen has complete evidence and an acceptance/rejection decision,
+the comparison report and code checks pass, and the requested final commit and
+push are verified. Future roadmap proposals are not marked completed or used
+as accuracy evidence. No model promotion follows a rejected screen.
 
 ### Registered first model experiment
 
