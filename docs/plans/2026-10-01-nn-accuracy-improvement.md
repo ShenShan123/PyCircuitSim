@@ -178,7 +178,8 @@ partition in the O dataset. Test rows and circuit qualification scores are
 not selection inputs. Reject snapshots whose per-temperature/per-terminal
 p95 or p99 absolute current/charge error exceeds 1.02× the normalized-loss
 selected R snapshot plus 200 current quanta / 1e-20 C, or which introduce
-negative on-state origin slopes. Rank eligible snapshots by worst-temperature
+negative on-state origin slopes or worsen resolved-current sign counts in any
+temperature/terminal slice. Rank eligible snapshots by worst-temperature
 median off-current log error, then worst-temperature p95 log error, then
 normalized-loss validation error. Zero predictions above the frozen current
 floor make a snapshot ineligible. If none improves that validation ranking,

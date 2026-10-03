@@ -717,3 +717,21 @@ def test_physical_metrics_use_raw_references_when_supplied() -> None:
     metrics = compute_physical_metrics(normalized, normalized, normalizer,
                                        true_physical=2.0 * truth)
     assert metrics['i_d']['MRE(%)'] == pytest.approx(50.0, rel=1e-6)
+
+
+def test_physical_selector_protects_worst_temperature_and_zero_predictions() -> None:
+    from scripts.v777_select_checkpoint import physical_score
+
+    temperature = np.repeat([248.15, 300.15, 398.15], 4)
+    x = np.tile([0.5, 0., 0., 0.], (12, 1))
+    truth = np.tile([1e-9, 1e-10, 1e-11, 1e-15, 2e-15, 3e-15], (12, 1))
+    predicted = truth.copy()
+    predicted[temperature == 398.15, 0] *= 100.0
+    tails, rank = physical_score(predicted, truth, x, temperature, 1.)
+    assert tails.shape == (3, 2, 8)
+    assert rank == pytest.approx((2.0, 2.0))
+    predicted[0, 0] = 0.0
+    _, rank = physical_score(predicted, truth, x, temperature, 1.)
+    assert not np.isfinite(rank).all()
+    with pytest.raises(ValueError, match='lacks resolved off-current'):
+        physical_score(predicted, truth, x * 0., temperature, 1.)
