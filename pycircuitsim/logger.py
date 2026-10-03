@@ -34,6 +34,7 @@ class IterationInfo:
     deltas: Dict[str, float]
     currents: Dict[str, float]
     conductances: Dict[str, Dict[str, float]]
+    device_voltages: Optional[Dict[str, Dict[str, float]]] = None
 
 
 class Logger:
@@ -216,6 +217,12 @@ class Logger:
                 self._write(f"      {node:>6s}: {delta:12.6g} V")
 
         # Log currents
+        if iter_info.device_voltages:
+            self._write("    MOSFET stamp evaluation voltages (current positive leaving drain):")
+            for device, voltages in sorted(iter_info.device_voltages.items()):
+                values = ", ".join(f"{node}={value:.6g} V"
+                                   for node, value in sorted(voltages.items()))
+                self._write(f"      {device}: {values}")
         if iter_info.currents:
             self._write("    Device Currents:")
             for device, current in sorted(iter_info.currents.items()):

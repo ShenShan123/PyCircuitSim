@@ -886,3 +886,26 @@ def test_ac_solve_stamps_no_gmin_absent_from_the_ngspice_problem() -> None:
     np.testing.assert_allclose(result["out"], expected, rtol=1e-9, atol=0.0)
     with_gmin = abs((1.0 / resistance) / (1.0 / resistance + 1e-12))
     assert with_gmin < 0.91  # the deviation the assertion above would catch
+
+
+def test_iteration_logging_reuses_stamps_without_evaluating_trial_devices(
+    tmp_path: Path,
+) -> None:
+    """Observing Newton must not call a model at its not-yet-limited trial bias."""
+    plain = DCSolver(_series_circuit(_linear_law(1e-3)), use_source_stepping=False)
+    expected = plain.solve()
+    circuit = _series_circuit(_linear_law(1e-3))
+
+    def forbid_diagnostic_evaluation(_voltages: Dict[str, float]) -> float:
+        raise RuntimeError("logger evaluated a trial compact model")
+
+    device = next(c for c in circuit.components if isinstance(c, ClosedFormDevice))
+    device.calculate_current = forbid_diagnostic_evaluation
+    logged = DCSolver(circuit, output_file=tmp_path / 'newton.lis',
+                      use_source_stepping=False)
+    with logged:
+        actual = logged.solve()
+    assert logged._last_solve_converged
+    assert actual == expected
+    text = (tmp_path / 'newton.lis').read_text()
+    assert 'MOSFET stamp evaluation voltages' in text

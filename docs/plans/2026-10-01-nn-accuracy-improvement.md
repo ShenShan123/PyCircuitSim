@@ -73,8 +73,10 @@ promoted. The published campaign remains V7.7.6.
 - [ ] Resolve the LEVEL=72 control failures before using the affected LDO and
   SRAM-mode rows as NN acceptance evidence. Keep their denominator slots and
   preserve failed-control diagnostics separately from candidate results.
-- [ ] Implement persistent split membership/raw-row identities, freeze
-  low-current floors for the full pilot domain and extend training provenance.
+- [x] Implement persistent parent split membership/order, raw float64 targets
+  and row identities, and extend training completion provenance. The registered
+  diagnostic screen freezes a conservative quantum; broader calibration is
+  still required before leakage acceptance.
 - [ ] Run Phase 0 and the registered training arms in the order below.
 
 **Amendments from execution.** Re-baselining is required for non-default fin
@@ -95,6 +97,14 @@ final push to `main` follows completion and verification of the experiment and
 comparison report; a prerequisite commit is not a completed accuracy result.
 
 ### Registered first model experiment
+
+Execution source is local checkpoint `b385118`, isolated in
+`PyCircuitSim-v777-pilot`; data, training logs and bundles are under
+`results/nn_accuracy_20261001/pilot/`. The separate evaluation runtime includes
+the DC logging fix and records its own source commit. The Phase 1 Miller
+matched-bias matrices, fresh-parse candidate residuals, complete branch-current
+snapshots and NMOS/PMOS LEVEL=72 swaps are retained under
+`results/nn_accuracy_20261001/phase1_followup/`.
 
 Use TSMC5 and TSMC12, both polarities, DirectNet medium, the preserved full
 datasets and the existing seed-42 combo split. Freeze each parent row's

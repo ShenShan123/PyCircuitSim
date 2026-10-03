@@ -45,6 +45,12 @@ remain in Git history.
   reports now use raw targets and the correct local technology vocabulary.
   Preparation contracts: 1,186 collected tests passed, none skipped. The
   registered first model experiment uses both polarities of TSMC5/12.
+- Fixed DC iteration logging that re-evaluated compact models at an unlimited
+  Newton trial. Diagnostics now capture the already evaluated terminal stamp
+  and explicitly record its evaluation voltages and signed drain current.
+  The LDO control no longer crashes inside logging, but still reports a later
+  physical non-convergence; it is not relabeled as a pass. Solver contracts,
+  including both stored latch states, pass as part of 1,187 collected tests.
 
 ### 2026-10-01 — NN accuracy plan review round 2
 

@@ -460,6 +460,7 @@ def _stamp_mosfet_dc(
     voltages: Dict[str, float],
     gmin: float,
     limit: bool = True,
+    diagnostics: Optional[Dict[str, Tuple[float, Dict[str, float], Dict[str, float]]]] = None,
 ) -> None:
     """Stamp MOSFET conductance and NR current source to MNA matrix.
 
@@ -500,6 +501,14 @@ def _stamp_mosfet_dc(
             f"MOSFET {mosfet.name} does not expose get_terminal_stamp()"
         )
     i_out, g4 = full_stamp(voltages)
+    if diagnostics is not None:
+        # Observe the evaluated companion before GMIN is added. Never call a
+        # compact model again merely to log a not-yet-limited Newton trial.
+        diagnostics[mosfet.name] = (
+            float(i_out[0]),
+            {"gds": float(g4[0, 0]), "gm": float(g4[0, 1]), "gmb": float(g4[0, 3])},
+            {node: float(voltages.get(node, 0.0)) for node in mosfet.nodes},
+        )
     idx = [node_map.get(n) if n not in ("0", "GND") else None
            for n in mosfet.nodes]
     v_eval = [voltages.get(n, 0.0) for n in mosfet.nodes]
@@ -625,6 +634,7 @@ class DCSolver:
         self.max_iterations = max_iterations
         self.output_file = output_file
         self.logger = logger  # Use external logger if provided
+        self._mosfet_log_values: Dict[str, Tuple[float, Dict[str, float], Dict[str, float]]] = {}
         self.initial_guess = initial_guess
         self.use_source_stepping = use_source_stepping
         self.source_stepping_steps = source_stepping_steps
@@ -1246,28 +1256,24 @@ class DCSolver:
                         conductances = {}
                         for comp in self.circuit.components:
                             try:
+                                if _is_mosfet(comp):
+                                    current, conductance, _ = self._mosfet_log_values[comp.name]
+                                    currents[comp.name] = current
+                                    conductances[comp.name] = conductance
+                                    continue
                                 current = comp.calculate_current(voltages)
                                 currents[comp.name] = current
-                                if _is_mosfet(comp):
-                                    g_ds, g_m, g_mb = comp.get_conductance(voltages)
-                                    conductances[comp.name] = {"gm": g_m, "gds": g_ds, "gmb": g_mb}
                             except (NotImplementedError, AttributeError):
                                 pass
-                            except ValueError:
-                                # V7.7.6: with the opt-in NN limiter on, a
-                                # post-step trial state may lie outside
-                                # certified support; the next stamp clamps
-                                # it, so skip this log sample instead of
-                                # ending the solve. Limiter off: unchanged.
-                                if not getattr(comp, "_nr_limit_enabled", False):
-                                    raise
 
                         iter_info = IterationInfo(
                             iteration=iteration,
                             voltages=voltages.copy(),
                             deltas=dict(zip(nodes, deltas_arr)),
                             currents=currents,
-                            conductances=conductances
+                            conductances=conductances,
+                            device_voltages={name: values[2]
+                                             for name, values in self._mosfet_log_values.items()},
                         )
                         self.logger.log_iteration(point_num=0, iter_info=iter_info)
 
@@ -1558,7 +1564,8 @@ class DCSolver:
     ) -> None:
         """Stamp MOSFET conductance and NR current source to MNA matrix (DC)."""
         _stamp_mosfet_dc(mosfet, mna_matrix, rhs, node_map, voltages, self.gmin,
-                         limit=limit)
+                         limit=limit,
+                         diagnostics=self._mosfet_log_values if self.logger and limit else None)
 
     def _dc_residual_at(
         self,
