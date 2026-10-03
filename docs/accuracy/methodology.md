@@ -186,6 +186,12 @@ A report is publishable only when all of the following hold:
   references are infrastructure failures, not scientific FAILs.
 - An `ERROR` row remains in the denominator while numeric aggregates use only
   rows containing valid metrics.
+- If a converged candidate SRAM never switches in a write-margin sweep where
+  the reference does switch, its trip metric is absent. Keep a candidate
+  `ERROR` with `candidate_converged=true`, no scored metrics and preserved raw
+  traces. This is a scientific missing event (exit 1), not schema corruption.
+  An absent reference trip still fails reference/metric validation; do not
+  turn an uncharacterizable reference into a candidate verdict.
 - A complete, converged reference may lack an identifiable diagnostic metric:
   for example, a hot device whose current does not rise from its off-state
   value has no window for the declared subthreshold-slope fit. These rows use

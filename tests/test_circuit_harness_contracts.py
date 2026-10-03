@@ -2879,3 +2879,36 @@ def test_stimulus_corners_leave_every_nominal_render_unchanged() -> None:
     assert _scale_spice_values("", 2.0) == ""
     assert _scale_spice_values("Cload out 0 <LOGIC_LOAD>", 2.0) == "Cload out 0 <LOGIC_LOAD>"
     assert _scale_spice_values("Cq q 0 2f\nCqb qb 0 2f", 2.0) == "Cq q 0 4f\nCqb qb 0 4f"
+
+
+@pytest.mark.parametrize('reference_switches', (True, False))
+def test_missing_candidate_write_switch_is_scientific_not_infrastructure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, reference_switches: bool,
+) -> None:
+    """A converged cell that never writes has no trip metric, not a broken schema."""
+    from tests.common import simple_circuit_harness as harness
+
+    case = next(c for c in cases() if c.case_id == 'sram6t_modes')
+    analysis = next(a for a in case.analyses if a.name == 'write_margin')
+    bt = BENCH['TSMC5']
+    axis = np.linspace(0.0, bt.vdd, 131)
+    reference = Trace('sweep', axis, {
+        name: (bt.vdd - axis if reference_switches else np.full_like(axis, bt.vdd))
+        for name in analysis.signals
+    }, reference=True)
+    candidate = Trace('sweep', axis, {
+        name: np.full_like(axis, bt.vdd) for name in analysis.signals
+    })
+    monkeypatch.setattr(harness, 'get_case_baked_modelcard', lambda *_a: tmp_path / 'card.lib')
+    monkeypatch.setattr(harness, 'physical_deck_mismatch', lambda *_a, **_k: '')
+    monkeypatch.setattr(harness, 'run_reference_trace', lambda *_a, **_k: reference)
+    monkeypatch.setattr(harness, 'run_candidate_trace', lambda *_a, **_k: (candidate, tmp_path / 'candidate.sp'))
+    monkeypatch.setenv('PYCIRCUITSIM_TRACE_ARCHIVE', str(tmp_path / 'traces'))
+    result = harness.run_case_analysis(case, analysis, bt, CORNERS['nominal'], tmp_path,
+        diagnose_support=False, run_spec=RunSpec(75, 'DirectNet-Full'))
+    assert result.status == 'error'
+    assert result.candidate_converged and result.reference_converged
+    assert result.metrics == {}
+    assert result.error_kind == ('candidate' if reference_switches else 'result_schema')
+    assert result_exit_code([result]) == (1 if reference_switches else 2)
+    assert len(list((tmp_path / 'traces').glob('*.npz'))) == 1

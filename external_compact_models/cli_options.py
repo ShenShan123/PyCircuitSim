@@ -223,6 +223,8 @@ def training_parser(tech_scopes: Sequence[str] = ("universal", "tsmc5", "tsmc6",
     )
     parser.add_argument("--cuda", action="store_true")
     parser.add_argument("--amp", action="store_true")
+    parser.add_argument("--id-asinh-scale", type=float,
+                        help="Experimental fixed drain-current scale in amperes; train from scratch")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--exclude-techs", type=str)
     parser.add_argument("--num-tech-codes", type=int)

@@ -69,6 +69,7 @@ _BACKEND_SAMPLES = {
         "model": "transformer", "size": "large", "device_type": "both", "data": "/tmp/input.npz",
         "epochs": "3", "batch_size": "16", "lr": "0.002", "patience": "7", "max_rows": "100",
         "split_mode": "random", "cuda": True, "amp": True, "seed": "17",
+        "id_asinh_scale": "1e-7",
         "exclude_techs": "tsmc16", "num_tech_codes": "4", "p_unknown": "0.2",
         "tech_scope": "tsmc7", "exp_name": "custom", "overwrite": True, "swa_mode": "swa",
         "ema_decay": "0.9", "class_weights": "subvt_off=3", "training_overlay_classes": "traj_corridor",

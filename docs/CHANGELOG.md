@@ -51,6 +51,15 @@ remain in Git history.
   The LDO control no longer crashes inside logging, but still reports a later
   physical non-convergence; it is not relabeled as a pass. Solver contracts,
   including both stored latch states, pass as part of 1,187 collected tests.
+- Added opt-in `--id-asinh-scale` for the registered scalar screen. It refits
+  only drain normalization on training rows, persists the existing scalar
+  runtime contract, and rejects an unreconciled warm start. Default training
+  keeps its original transform. Same-source O controls precede its N comparison.
+- The O campaign exposed a converged SRAM that never switches during the
+  write-margin sweep. Classify that explicitly as a candidate `ERROR`, retain
+  the denominator and archive its trace before metric extraction. It is not
+  an infrastructure/schema failure and has no numeric trip score. Both full
+  pilot passes are rerun on this corrected harness rather than relabelled.
 
 ### 2026-10-01 — NN accuracy plan review round 2
 

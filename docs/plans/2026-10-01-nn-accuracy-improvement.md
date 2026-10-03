@@ -136,6 +136,24 @@ Already inspected test rows and repeatedly used circuits are development
 evidence. No scoped screen replaces the untouched confirmation inventory or
 the full five-technology qualification campaign.
 
+### Registered scalar screen N (after O)
+
+The O screen's 648 NGSPICE-backed signed-origin points introduce no negative
+on-state `gds`, but coverage alone leaves substantial weak-current error.
+Test the declared constant `s_id=1e-7 A` on the same O datasets, both pilot
+technologies/polarities, seed 42 and the unchanged medium recipe. The constant
+is fixed across bundles, well above the reference quantum, and reduces the
+origin slope demand by three orders of magnitude relative to the rejected
+`1e-10 A` arm. No per-cell scale tuning or warm start is permitted.
+
+Retrain O controls and N from the same source commit, paired on the same
+physical A100, and verify the repeated O control before interpreting N.
+Keep the 648-point origin screen, raw holdout inventory, current quantum,
+92-job circuit inventory and vetoes fixed. O is an experimental data control,
+not a promoted model; N must also be compared with the preserved baseline.
+No derivative, runtime-transform, BSIM-AR transfer or seed-expansion arm is
+launched on the strength of a failed single-seed screen.
+
 ## Evidence and priorities
 
 The baseline is the V7.7.2 bundles scored by the

@@ -331,6 +331,10 @@ class CandidateSupportError(ValueError):
     """The candidate was evaluated outside its certified model support."""
 
 
+class CandidateMetricError(ValueError):
+    """A solved candidate lacks an event present in the valid reference."""
+
+
 def _analysis_number(raw: str) -> float:
     """Parse one number out of an analysis card.
 
@@ -2730,6 +2734,9 @@ def _domain_metrics(
         name = names[0]
         trip_t = _crossing(grid, np.real(candidate[name]), vdd / 2.0)
         trip_r = _crossing(grid, np.real(reference[name]), vdd / 2.0)
+        if np.isfinite(trip_r) and not np.isfinite(trip_t):
+            raise CandidateMetricError(
+                "candidate SRAM does not switch in the declared write-margin sweep")
         domain.update(write_trip_test_v=trip_t, write_trip_ref_v=trip_r,
                       write_trip_error_v=abs(trip_t - trip_r))
     if profile == "logic_vtc":
@@ -3136,13 +3143,13 @@ def run_case_analysis(
         )
         candidate_converged = candidate.converged
         partial = candidate.partial
-        metrics, domain = compare_traces(
-            candidate, references[0], resolved_analysis, vdd=bt.vdd,
-        )
         archive_trace_pair(
             case.case_id, bt.name, analysis.name, candidate.axis_name,
             candidate.axis, candidate.signals,
             references[0].axis, references[0].signals, corner=corner.name,
+        )
+        metrics, domain = compare_traces(
+            candidate, references[0], resolved_analysis, vdd=bt.vdd,
         )
         if candidate.partial:
             return GateResult(
@@ -3197,7 +3204,7 @@ def run_case_analysis(
             execution_state, error_kind = "reference_error", "reference"
         elif isinstance(exc, CandidateConvergenceError):
             execution_state, error_kind = "nonconverged", "candidate"
-        elif isinstance(exc, CandidateSupportError):
+        elif isinstance(exc, (CandidateSupportError, CandidateMetricError)):
             execution_state, error_kind = "error", "candidate"
         elif stage == "candidate":
             execution_state, error_kind = (

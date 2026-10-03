@@ -660,3 +660,60 @@ def test_loader_retains_exact_raw_targets_and_persisted_row_order(
         assert np.array_equal(ds.row_ids, indices + 100)
     with pytest.raises(ValueError, match="cannot be resplit"):
         dataset_module.load_and_split_bsimar(str(path), "nmos", split_mode="random")
+
+
+def test_fixed_id_transform_fits_only_training_rows_and_preserves_other_heads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    rows = 12
+    path = tmp_path / "scale.npz"
+    outputs = (np.arange(rows * 6).reshape(rows, 6) + 1.0) * 1e-8
+    arrays = dict(inputs=np.zeros((rows, 4)),
+        geometry=np.column_stack([np.repeat([2, 3, 4], 4),
+            np.full(rows, 16e-9), np.full(rows, 300.15), np.zeros((rows, 12))]),
+        outputs=outputs, meta_output_columns=np.asarray(FULL_COLUMNS),
+        split_partition=np.repeat(np.arange(3, dtype=np.int8), 4),
+        split_rank=np.tile(np.arange(4), 3))
+    np.savez(path, **arrays)
+    monkeypatch.setattr(
+        "neural_network.eval.loo_labels.get_or_build_tech_variant_labels",
+        lambda *_args, **_kwargs: np.zeros(rows, dtype=int))
+    _, _, _, baseline = dataset_module.load_and_split_bsimar(str(path), "nmos")
+    train, _, _, scaled = dataset_module.load_and_split_bsimar(
+        str(path), "nmos", id_asinh_scale=1e-7)
+    expected = np.arcsinh(outputs[:4, 0] / 1e-7)
+    assert scaled.stats.asinh_scale[0] == 1e-7
+    assert scaled.stats.output_mean[0] == pytest.approx(expected.mean())
+    assert scaled.stats.output_std[0] == pytest.approx(expected.std())
+    assert np.array_equal(scaled.stats.output_mean[1:], baseline.stats.output_mean[1:])
+    assert np.array_equal(scaled.stats.output_std[1:], baseline.stats.output_std[1:])
+    assert np.array_equal(train.raw_outputs, outputs[:4])
+    changed = outputs.copy()
+    changed[4:] *= 1e8
+    np.savez(path, **{**arrays, "outputs": changed})
+    _, _, _, repeat = dataset_module.load_and_split_bsimar(str(path), "nmos", id_asinh_scale=1e-7)
+    assert np.array_equal(scaled.stats.output_mean, repeat.stats.output_mean)
+    assert np.array_equal(scaled.stats.output_std, repeat.stats.output_std)
+    for invalid in (0.0, -1e-7, float('nan'), float('inf')):
+        with pytest.raises(ValueError, match='finite positive scale'):
+            dataset_module.load_and_split_bsimar(str(path), "nmos", id_asinh_scale=invalid)
+
+
+def test_current_scale_change_rejects_unreconciled_warm_start() -> None:
+    for train in (trainer.train_directnet, trainer.train_transformer):
+        with pytest.raises(ValueError, match='train from scratch'):
+            train('/not/read.npz', init_from='old', id_asinh_scale=1e-7)
+
+
+def test_physical_metrics_use_raw_references_when_supplied() -> None:
+    from neural_network.data.normalize import ZScoreNormalizer
+    from neural_network.eval.metrics import compute_physical_metrics
+
+    truth = np.arange(1, 73, dtype=np.float64).reshape(12, 6)
+    normalizer = ZScoreNormalizer().fit(
+        np.zeros((12, 4)), np.ones((12, 15)), truth,
+        output_columns=FULL_COLUMNS)
+    normalized = normalizer.normalize_outputs(truth).astype(np.float32)
+    metrics = compute_physical_metrics(normalized, normalized, normalizer,
+                                       true_physical=2.0 * truth)
+    assert metrics['i_d']['MRE(%)'] == pytest.approx(50.0, rel=1e-6)

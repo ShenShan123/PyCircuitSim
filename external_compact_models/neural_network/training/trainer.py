@@ -400,8 +400,8 @@ def _train_loop(
         "cudnn_deterministic": torch.backends.cudnn.deterministic,
         "cudnn_benchmark": torch.backends.cudnn.benchmark,
         "amp": amp, "swa_mode": swa_mode, "ema_decay": ema_decay,
-        "normalization_rule": "asinh-geomean-v1",
     })
+    metadata.setdefault("normalization_rule", "asinh-geomean-v1")
     split_digest = hashlib.sha256()
     for name, ds in zip(("train", "validation", "test"), (train_ds, val_ds, test_ds)):
         split_digest.update(name.encode())
@@ -708,9 +708,13 @@ def train_directnet(
     amp: bool = False,
     split_mode: str = "combo",
     training_overlay_classes: Optional[Set[str]] = None,
+    id_asinh_scale: Optional[float] = None,
 ) -> Tuple[nn.Module, _NormalizerBase]:
     """Train a six-surface DirectNet-Full checkpoint bundle."""
     from neural_network.models.direct_net import DirectNet
+
+    if id_asinh_scale is not None and init_from is not None:
+        raise ValueError("a changed current transform must train from scratch")
 
     device = torch.device(device_str)
     print(f"DirectNet on {device}; tech codes={num_tech_codes}, "
@@ -727,6 +731,7 @@ def train_directnet(
         tech_scope=tech_scope,
         split_mode=split_mode,
         training_overlay_classes=training_overlay_classes,
+        id_asinh_scale=id_asinh_scale,
     )
     _assert_codes_in_vocab(
         (train_ds, val_ds, test_ds), num_tech_codes, tech_scope)
@@ -764,7 +769,10 @@ def train_directnet(
 
     run_metadata = {"config": asdict(config), "tech_scope": tech_scope,
                     "class_weights": class_weights, "init_from": init_from,
-                    "p_unknown": p_unknown, "split_mode": split_mode}
+                    "p_unknown": p_unknown, "split_mode": split_mode,
+                    "id_asinh_scale": id_asinh_scale,
+                    "normalization_rule": ("asinh-fixed-id-v1" if id_asinh_scale is not None
+                                           else "asinh-geomean-v1")}
     trained = _train_loop(
         model=model, is_transformer=False,
         train_ds=train_ds, val_ds=val_ds, test_ds=test_ds,
@@ -827,9 +835,13 @@ def train_transformer(
     training_overlay_classes: Optional[Set[str]] = None,
     full_terminal_ar_target_dim: Optional[int] = None,
     autoregressive_training: bool = False,
+    id_asinh_scale: Optional[float] = None,
 ) -> Tuple[nn.Module, _NormalizerBase]:
     """Train a six-surface BSIM-AR-Full checkpoint bundle."""
     from neural_network.models.transformer import TransformerEncoderModel
+
+    if id_asinh_scale is not None and init_from is not None:
+        raise ValueError("a changed current transform must train from scratch")
 
     epochs = epochs if epochs is not None else config.max_epochs
     batch_size = batch_size if batch_size is not None else config.batch_size
@@ -862,6 +874,7 @@ def train_transformer(
         tech_scope=tech_scope,
         split_mode=split_mode,
         training_overlay_classes=training_overlay_classes,
+        id_asinh_scale=id_asinh_scale,
     )
     _assert_codes_in_vocab(
         (train_ds, val_ds, test_ds), num_tech_codes, tech_scope)
@@ -923,7 +936,10 @@ def train_transformer(
                     "init_from": init_from, "p_unknown": p_unknown,
                     "split_mode": split_mode, "subthresh": subthresh,
                     "lam_subthresh": lam_subthresh,
-                    "autoregressive_training": autoregressive_training}
+                    "autoregressive_training": autoregressive_training,
+                    "id_asinh_scale": id_asinh_scale,
+                    "normalization_rule": ("asinh-fixed-id-v1" if id_asinh_scale is not None
+                                           else "asinh-geomean-v1")}
     trained = _train_loop(
         model=model, is_transformer=True,
         train_ds=train_ds, val_ds=val_ds, test_ds=test_ds,

@@ -261,6 +261,7 @@ def load_and_split_bsimar(
     tech_scope: str = "universal",
     split_mode: str = "combo",
     training_overlay_classes: Optional[Set[str]] = None,
+    id_asinh_scale: Optional[float] = None,
 ) -> Tuple[MOSFETDataset, MOSFETDataset, MOSFETDataset, _NormalizerBase]:
     """Load, validate, split, and normalize a six-surface dataset.
 
@@ -435,6 +436,18 @@ def load_and_split_bsimar(
         inputs[train_idx], geometry[train_idx], outputs[train_idx],
         output_columns=declared_columns,
     )
+    if id_asinh_scale is not None:
+        if (norm_mode != "asinh" or not np.isfinite(id_asinh_scale)
+                or id_asinh_scale <= 0.0):
+            raise ValueError("id_asinh_scale requires asinh mode and a finite positive scale")
+        # Only the training partition may define the transformed mean/std.
+        # Persist the constant in the existing runtime normalization contract.
+        column = declared_columns.index("i_d")
+        inner = np.arcsinh(outputs[train_idx, column] / id_asinh_scale)
+        normalizer.stats.asinh_scale[column] = id_asinh_scale
+        normalizer.stats.output_mean[column] = inner.mean()
+        spread = float(inner.std())
+        normalizer.stats.output_std[column] = spread if spread >= 1e-12 else 1.0
 
     def _make(idxs: np.ndarray) -> MOSFETDataset:
         x = normalizer.normalize_inputs(inputs[idxs], geometry[idxs])

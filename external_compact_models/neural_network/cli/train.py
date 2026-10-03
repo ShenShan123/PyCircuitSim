@@ -181,6 +181,7 @@ def _run(args: argparse.Namespace) -> None:
         ),
         "init_from": args.init_from,
         "amp": args.amp,
+        "id_asinh_scale": args.id_asinh_scale,
     }
     print(
         f"\n=== Training {args.model} ({args.size}, full-terminal) "
